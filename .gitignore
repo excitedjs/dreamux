@@ -18,6 +18,8 @@ dist/
 common/temp/
 common/deploy/
 common/autoinstallers/*/node_modules/
+# per-project rush temp (e.g. packages/<x>/.rush/temp/shrinkwrap-deps.json)
+**/.rush/temp/
 
 # Per-package lockfiles are still committed so a developer can `cd
 # packages/<x> && npm install && npm test` without running rush at all.
