@@ -26,13 +26,11 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "clean": "rm -rf dist",
-    "prepare": "npm run build",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@larksuiteoapi/node-sdk": "^1.64.0",
+    "@excitedjs/feishu-transport": "workspace:*",
     "better-sqlite3": "^11.5.0",
-    "marked": "^15.0.12",
     "smol-toml": "^1.6.1",
     "ws": "^8.18.0"
   },

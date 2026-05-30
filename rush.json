@@ -34,6 +34,16 @@
       "packageName": "@excitedjs/dreamux",
       "projectFolder": "packages/dreamux",
       "shouldPublish": true
+    },
+    {
+      "packageName": "@excitedjs/feishu-transport",
+      "projectFolder": "packages/channel/feishu-transport",
+      "shouldPublish": true
+    },
+    {
+      "packageName": "@excitedjs/feishu-channel",
+      "projectFolder": "packages/channel/feishu-channel",
+      "shouldPublish": false
     }
   ]
 }

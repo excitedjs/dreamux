@@ -1,28 +1,31 @@
 /**
  * The `FeishuBot` adapter — one per Dispatcher (D3: 1 Dispatcher = 1 Bot).
  *
- * Adapted from claudemux's `plugins/feishu-channel/src/feishu.ts` but
- * dramatically simplified for the dreamux MVP:
- *   - no single-instance lock — each dispatcher owns its own bot identity
- *     (independent appId/appSecret), so cross-process election is moot
- *   - no doc-comment / reaction / edit paths — P0 sendText only
- *   - no access gate at this layer (issue #2 D12 + P0 Trust Model)
+ * Since issue #25 PR1 this is a thin adapter over `@excitedjs/feishu-transport`
+ * (the shared platform-I/O core): all Feishu SDK I/O — the inbound WebSocket,
+ * markdown→card render, content parse, the outbound message API — lives in the
+ * core, the single importer of `@larksuiteoapi/node-sdk`. This file only shapes
+ * the core's surface into the `FeishuBot` interface the server already wires:
+ *   - `start(handler)` registers the `im.message.receive_v1` route, normalizes
+ *     each raw event with the core's `parseInbound`, and forwards a
+ *     `FeishuInboundEvent`. The route handler awaits `handler`, so the message is
+ *     durably enqueued before the SDK acks (the deferred-ACK invariant).
+ *   - `sendText(chatId, text)` delegates to the core's `send({ chatId }, text)`.
+ *     The per-card size guard and the multi-card split both live in the core now.
+ *   - `botOpenId` surfaces the core transport's `selfId`.
  *
- * The real bot wraps the official `@larksuiteoapi/node-sdk`; tests inject
- * a `FakeFeishuBot` via `createFakeFeishuBot()` instead.
+ * Tests inject a `FakeFeishuBot` via `createFakeFeishuBot()` instead of opening
+ * a live connection.
  */
 
-import * as lark from '@larksuiteoapi/node-sdk';
-
-import { parseInbound } from './content.js';
 import {
-  cardToContent,
-  renderMarkdownToCards,
-  FEISHU_CARD_REQUEST_LIMIT_BYTES,
-} from './render.js';
+  createFeishuTransport,
+  parseInbound,
+  type Mention,
+} from '@excitedjs/feishu-transport';
 
-const FEISHU_CARD_CONTENT_SAFE_BYTES = 28 * 1024;
-import type { Mention } from './types.js';
+/** The Feishu event_type carrying inbound chat messages. */
+const IM_MESSAGE_EVENT_TYPE = 'im.message.receive_v1';
 
 export interface FeishuInboundEvent {
   messageId: string;
@@ -32,7 +35,7 @@ export interface FeishuInboundEvent {
   messageType: string;
   /** Raw JSON-encoded content as Feishu delivered it. */
   rawContent: string;
-  /** Parsed text after `content.ts` flattening / mention substitution. */
+  /** Parsed text after the core's content flattening / mention substitution. */
   parsedText: string;
   mentions: Mention[];
   createTime: string;
@@ -55,137 +58,56 @@ export interface FeishuBot {
   close(): Promise<void>;
 }
 
-const IM_MESSAGE_EVENT_TYPE = 'im.message.receive_v1';
-const WS_HANDSHAKE_TIMEOUT_MS = 15_000;
-const WS_STARTUP_GRACE_MS = 30_000;
-
-const sdkLogger = {
-  error: (...m: unknown[]) => console.error('[feishu-sdk]', ...m),
-  warn: (...m: unknown[]) => console.error('[feishu-sdk]', ...m),
-  info: (...m: unknown[]) => console.error('[feishu-sdk]', ...m),
-  debug: () => {},
-  trace: () => {},
-};
-
 export interface CreateBotOptions {
   appId: string;
   appSecret: string;
-  /** Override SDK client (tests). */
-  client?: lark.Client;
 }
 
 export function createFeishuBot(opts: CreateBotOptions): FeishuBot {
-  const client =
-    opts.client ??
-    new lark.Client({
-      appId: opts.appId,
-      appSecret: opts.appSecret,
-      logger: sdkLogger,
-    });
-  let wsClient: lark.WSClient | undefined;
-  let resolvedBotOpenId: string | undefined;
+  const transport = createFeishuTransport({
+    appId: opts.appId,
+    appSecret: opts.appSecret,
+  });
 
   return {
-    appId: opts.appId,
+    get appId(): string {
+      return transport.appId;
+    },
     get botOpenId(): string | undefined {
-      return resolvedBotOpenId;
+      return transport.selfId;
     },
 
     async start(handler: InboundHandler): Promise<void> {
-      resolvedBotOpenId = await resolveBotOpenId(client);
-
-      const dispatcher = new lark.EventDispatcher({
-        logger: sdkLogger,
-      }).register({
+      // The core opens the WebSocket and awaits this route handler before the
+      // SDK acks; awaiting `handler` here keeps the enqueue durable-before-ACK.
+      // `start` rejects if the connection does not come up, so the server's
+      // try/catch can fail the dispatcher loudly rather than leave it dark.
+      await transport.start({
         [IM_MESSAGE_EVENT_TYPE]: async (raw: unknown) => {
           const event = normalizeInboundEvent(raw);
           if (event === null) return;
           await handler(event);
         },
       });
-
-      const ws = new lark.WSClient({
-        appId: opts.appId,
-        appSecret: opts.appSecret,
-        logger: sdkLogger,
-        handshakeTimeoutMs: WS_HANDSHAKE_TIMEOUT_MS,
-        autoReconnect: true,
-        onReady: () => logConn(`bot ${opts.appId} ws ready`),
-        onReconnecting: () => logConn(`bot ${opts.appId} ws reconnecting`),
-        onReconnected: () => logConn(`bot ${opts.appId} ws reconnected`),
-        onError: (err) => logConn(`bot ${opts.appId} ws error: ${err}`),
-      });
-      wsClient = ws;
-
-      const ready = new Promise<void>((resolve) => {
-        const orig = ws.getConnectionStatus;
-        void orig; // satisfy lint; SDK lacks a 'ready' Promise, so we poll
-        const poll = setInterval(() => {
-          if (ws.getConnectionStatus().state === 'connected') {
-            clearInterval(poll);
-            resolve();
-          }
-        }, 100);
-        // Don't keep the loop alive on this poll alone.
-        (poll as { unref?: () => void }).unref?.();
-      });
-
-      void ws.start({ eventDispatcher: dispatcher }).catch((err) => {
-        logConn(`bot ${opts.appId} ws start failed: ${err}`);
-      });
-
-      const cameUp = await Promise.race([
-        ready.then(() => true),
-        new Promise<boolean>((res) =>
-          setTimeout(() => res(false), WS_STARTUP_GRACE_MS),
-        ),
-      ]);
-      if (!cameUp) {
-        logConn(
-          `bot ${opts.appId} ws did not come up within ${WS_STARTUP_GRACE_MS}ms — closing to break the retry loop`,
-        );
-        ws.close();
-        throw new Error(
-          `feishu ws for bot ${opts.appId} did not connect within ${WS_STARTUP_GRACE_MS}ms`,
-        );
-      }
     },
 
     async sendText(chatId: string, text: string): Promise<FeishuSendResult> {
-      const cards = renderMarkdownToCards(text);
-      const ids: string[] = [];
-      for (const card of cards) {
-        const content = cardToContent(card);
-        if (Buffer.byteLength(content, 'utf8') > FEISHU_CARD_CONTENT_SAFE_BYTES) {
-          throw new Error(
-            `card content exceeds ${FEISHU_CARD_REQUEST_LIMIT_BYTES} byte limit`,
-          );
-        }
-        const res = await client.im.message.create({
-          params: { receive_id_type: 'chat_id' },
-          data: {
-            receive_id: chatId,
-            msg_type: 'interactive',
-            content,
-          },
-        });
-        const id = res.data?.message_id;
-        if (id) ids.push(id);
-      }
-      return { messageIds: ids };
+      const { messageIds } = await transport.send({ chatId }, text);
+      return { messageIds };
     },
 
-    async close(): Promise<void> {
-      try {
-        wsClient?.close();
-      } catch (err) {
-        console.error('[feishu] close error', err);
-      }
-      wsClient = undefined;
+    close(): Promise<void> {
+      return transport.close();
     },
   };
 }
 
+/**
+ * Reshape a raw `im.message.receive_v1` payload into a `FeishuInboundEvent`,
+ * using the core's `parseInbound` for the content→text flattening (incl. the
+ * `interactive`-card parse the old in-package copy had lost). Returns `null`
+ * for a payload missing the message_id or chat_id that make it routable.
+ */
 function normalizeInboundEvent(raw: unknown): FeishuInboundEvent | null {
   if (!raw || typeof raw !== 'object') return null;
   const root = raw as Record<string, unknown>;
@@ -199,8 +121,7 @@ function normalizeInboundEvent(raw: unknown): FeishuInboundEvent | null {
   const chatType = (message['chat_type'] as string) ?? '';
   const messageType = (message['message_type'] as string) ?? '';
   const rawContent = (message['content'] as string) ?? '';
-  const mentions =
-    (message['mentions'] as Mention[] | undefined) ?? [];
+  const mentions = (message['mentions'] as Mention[] | undefined) ?? [];
   const createTime = (message['create_time'] as string) ?? '';
 
   if (messageId === '' || chatId === '') return null;
@@ -225,28 +146,6 @@ function normalizeInboundEvent(raw: unknown): FeishuInboundEvent | null {
   };
 }
 
-async function resolveBotOpenId(
-  client: lark.Client,
-): Promise<string | undefined> {
-  try {
-    const res = await client.request<{ bot?: { open_id?: string } }>({
-      method: 'GET',
-      url: '/open-apis/bot/v3/info',
-    });
-    return res.bot?.open_id;
-  } catch (err) {
-    console.error(
-      '[feishu] could not resolve bot open_id (groups requiring @-mention will drop messages):',
-      err,
-    );
-    return undefined;
-  }
-}
-
-function logConn(msg: string): void {
-  console.error(`[feishu] ${new Date().toISOString()} ${msg}`);
-}
-
 // -------------------------------------------------------------- fake (tests)
 
 export interface FakeFeishuBot extends FeishuBot {
@@ -260,8 +159,7 @@ export function createFakeFeishuBot(appId: string = 'fake_bot'): FakeFeishuBot {
   let handler: InboundHandler | null = null;
   let nextMessageId = 1;
   let sendError: Error | null = null;
-  let openId: string | undefined = `ou_${appId}`;
-  void openId;
+  const openId: string | undefined = `ou_${appId}`;
 
   return {
     appId,

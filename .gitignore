@@ -19,6 +19,9 @@ common/temp/
 common/deploy/
 common/autoinstallers/*/node_modules/
 
+# rush per-project build/test caches and logs (transient; contain local paths)
+**/.rush/temp/
+
 # Per-package lockfiles are still committed so a developer can `cd
 # packages/<x> && npm install && npm test` without running rush at all.
 # common/config/rush/pnpm-lock.yaml is the source of truth for rush itself.

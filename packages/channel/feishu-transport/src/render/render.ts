@@ -162,6 +162,32 @@ const TABLE_DEFAULT_PAGE_SIZE = 10
 export const CELL_MAX_BYTES = 4 * 1024
 
 /**
+ * Convert `<@ou_...>` shorthand into the lark_md `<at id="ou_..."></at>`
+ * mention tag, leaving inline code spans untouched. Fenced code block tokens
+ * are excluded upstream by the `token.type === 'code'` guard in
+ * `tokensToElements`; this function only needs to skip backtick-delimited
+ * inline code spans (single or multi-backtick) within the raw text of other
+ * block types.
+ */
+function replaceAtMentions(text: string): string {
+  const parts: string[] = []
+  let lastIndex = 0
+  // Match any inline code span — one or more backticks as the delimiter.
+  const codeSpan = /`+[\s\S]*?`+/g
+  let match: RegExpExecArray | null
+  while ((match = codeSpan.exec(text)) !== null) {
+    // Non-code segment before this span — apply the substitution.
+    parts.push(text.slice(lastIndex, match.index).replace(/<@(ou_[A-Za-z0-9_-]+)>/g, '<at id="$1"></at>'))
+    // Inline code span — pass through unchanged.
+    parts.push(match[0])
+    lastIndex = match.index + match[0].length
+  }
+  // Trailing non-code segment.
+  parts.push(text.slice(lastIndex).replace(/<@(ou_[A-Za-z0-9_-]+)>/g, '<at id="$1"></at>'))
+  return parts.join('')
+}
+
+/**
  * Render a Markdown source into one or more v2 cards.
  *
  * The output is always non-empty: an empty source produces one card with a
@@ -268,7 +294,12 @@ function tokensToElements(tokens: Token[]): {
     const raw = (token as { raw?: string }).raw ?? ''
     const trimmed = raw.replace(/\n+$/, '')
     if (trimmed.length === 0) continue
-    elements.push({ tag: 'markdown', content: trimmed })
+    // Fenced and indented code blocks must not have <@> patterns substituted —
+    // a code example like `<@ou_abc>` must not ping anyone. All other blocks
+    // (paragraphs, lists, blockquotes, …) run through replaceAtMentions, which
+    // skips inline code spans within them.
+    const content = token.type === 'code' ? trimmed : replaceAtMentions(trimmed)
+    elements.push({ tag: 'markdown', content })
   }
 
   if (elements.length === 0 && header === undefined) {
