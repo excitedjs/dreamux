@@ -55,5 +55,6 @@ issues:
 | understand why rush + pnpm | [`decisions/0001-rush-pnpm-monorepo.md`](decisions/0001-rush-pnpm-monorepo.md) |
 | rename or restructure the public CLI / package | [`decisions/0002-cli-and-package-naming.md`](decisions/0002-cli-and-package-naming.md) |
 | add / change a global config key (`~/.dreamux/config.toml`) | [`decisions/0003-global-config-dir.md`](decisions/0003-global-config-dir.md) |
+| touch the anti-leak guardrail (`.gitleaks.toml`, `.npmrc`, CI / hook) | [`decisions/0004-anti-leak-guardrail.md`](decisions/0004-anti-leak-guardrail.md) |
 | write a new decision record / new component doc | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
 | modify the server runtime / Codex protocol handling | the issue links above + read the source — runtime details aren't yet promoted to the KB |
