@@ -284,15 +284,12 @@ export interface FeishuTransport {
    */
   start(routes: InboundRoutes): Promise<void>
   /**
-   * Send a text message to the target chat. Routed by `chat_id`, never by a
-   * message_id, so a forged reply target cannot redirect the message into an
-   * unrelated conversation.
-   *
-   * PR1 reads only `target.chatId` (behavior-identical to the old
-   * `sendText(chatId, text)`). Honoring `target.replyToMessageId` (reply-threading
-   * via `im.message.reply`) and `target.mentionUserIds` (auto @-back) lands in
-   * dreamux#25 PR2 (gap ④), with its own tests; `target.conversationKey` is a
-   * channel-layer routing hint the transport never reads.
+   * Send a text message to the target chat. Without `replyToMessageId`, routing
+   * is by `target.chatId`. With `replyToMessageId`, Feishu's reply endpoint
+   * routes by the source message id; callers must only pass a message id that
+   * was observed in `target.chatId`, never an arbitrary external message id.
+   * `mentionUserIds` are rendered as leading card mentions. `conversationKey`
+   * is a channel-layer routing hint the transport never reads.
    */
   send(target: OutboundTarget, text: string): Promise<FeishuSendResult>
   /**
@@ -457,23 +454,14 @@ export function createFeishuTransport(
       // too large for one card produces several cards, each sent as its own
       // message_id so the recipient sees a threaded continuation.
       //
-      // PR1: addressed by `chatId` only — behavior-identical to the old
-      // `sendText`. `replyToMessageId` / `mentionUserIds` are wired in PR2.
-      const cards = renderMarkdownToCards(text)
+      const cards = renderMarkdownToCards(textWithLeadingMentions(target, text))
       const messageIds: string[] = []
       for (const card of cards) {
         const content = cardToContent(card)
         // Fail fast on a card that could not be split under Feishu's hard cap,
         // preserving dreamux's prior per-card send guard (see assertCardContentFits).
         assertCardContentFits(content)
-        const res = await client.im.message.create({
-          params: { receive_id_type: 'chat_id' },
-          data: {
-            receive_id: target.chatId,
-            msg_type: 'interactive',
-            content,
-          },
-        })
+        const res = await sendInteractiveCard(client, target, content)
         const id = res.data?.message_id
         if (id) messageIds.push(id)
       }
@@ -591,6 +579,43 @@ export function createFeishuTransport(
       wsClient = undefined
     },
   }
+}
+
+type MessageSendResponse = { data?: { message_id?: string } }
+
+type MessageApiWithReply = {
+  reply(args: {
+    path: { message_id: string }
+    data: { msg_type: string; content: string }
+  }): Promise<MessageSendResponse>
+}
+
+async function sendInteractiveCard(
+  client: lark.Client,
+  target: OutboundTarget,
+  content: string,
+): Promise<MessageSendResponse> {
+  const data = { msg_type: 'interactive', content }
+  if (target.replyToMessageId !== undefined) {
+    const messageApi = client.im.message as unknown as MessageApiWithReply
+    return messageApi.reply({
+      path: { message_id: target.replyToMessageId },
+      data,
+    })
+  }
+  return client.im.message.create({
+    params: { receive_id_type: 'chat_id' },
+    data: {
+      receive_id: target.chatId,
+      ...data,
+    },
+  })
+}
+
+function textWithLeadingMentions(target: OutboundTarget, text: string): string {
+  const mentions = target.mentionUserIds ?? []
+  if (mentions.length === 0) return text
+  return `${mentions.map((id) => `<@${id}>`).join(' ')}\n${text}`
 }
 
 /** How many times to try resolving the bot's open_id before giving up. */

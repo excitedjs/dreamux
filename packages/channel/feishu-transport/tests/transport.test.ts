@@ -8,8 +8,7 @@
  * Ported from claudemux's `feishu.test.ts` (the source of truth). The only
  * adaptations: the transport no longer takes a lock path (election moved out of
  * core), and the outbound entry point is `send(target, text)` rather than
- * `sendText(chatId, text)` — the PR1 impl reads only `target.chatId`, so these
- * assertions are unchanged in behavior.
+ * `sendText(chatId, text)`.
  */
 
 import * as lark from '@larksuiteoapi/node-sdk'
@@ -117,13 +116,14 @@ describe('commentFromBatchQuery', () => {
  */
 function stubClient() {
   const create = vi.fn(async () => ({ data: { message_id: 'om_stub' } }))
+  const reply = vi.fn(async () => ({ data: { message_id: 'om_reply_stub' } }))
   const patch = vi.fn(async () => ({}))
   const update = vi.fn(async () => ({}))
   const reactionCreate = vi.fn(async () => ({ data: { reaction_id: 'rk_stub' } }))
   const reactionDelete = vi.fn(async () => ({}))
   const stub = {
     im: {
-      message: { create, patch, update },
+      message: { create, reply, patch, update },
       messageReaction: { create: reactionCreate, delete: reactionDelete },
     },
     drive: {
@@ -135,6 +135,7 @@ function stubClient() {
   return {
     client: stub as unknown as lark.Client,
     create,
+    reply,
     patch,
     update,
     reactionCreate,
@@ -185,6 +186,35 @@ describe('createFeishuTransport — send', () => {
     const result = await transport.send({ chatId: 'oc_chat' }, 'hi')
 
     expect(result.messageIds).toEqual([])
+  })
+
+  test('threads replies under the source message and prefixes @-back mentions', async () => {
+    const stub = stubClient()
+    const transport = buildTransport(stub)
+
+    const result = await transport.send(
+      {
+        chatId: 'oc_chat',
+        replyToMessageId: 'om_source',
+        mentionUserIds: ['ou_sender'],
+      },
+      'done',
+    )
+
+    expect(result.messageIds).toEqual(['om_reply_stub'])
+    expect(stub.create).not.toHaveBeenCalled()
+    expect(stub.reply).toHaveBeenCalledTimes(1)
+    const calls = stub.reply.mock.calls as unknown as Array<
+      [{ path: { message_id: string }; data: { msg_type: string; content: string } }]
+    >
+    const call = calls[0]?.[0]
+    expect(call?.path.message_id).toBe('om_source')
+    expect(call?.data.msg_type).toBe('interactive')
+    const card = JSON.parse(call?.data.content ?? '{}') as {
+      body: { elements: { tag: string; content: string }[] }
+    }
+    expect(card.body.elements[0]?.content).toContain('<at id="ou_sender"></at>')
+    expect(card.body.elements[0]?.content).toContain('done')
   })
 
   test('renders a multi-card body into one im.message.create per card', async () => {

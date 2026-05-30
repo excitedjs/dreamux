@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Thread Feishu replies and drop bot-loop inbound messages",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "LanTingShuXu <lantingshuxu@users.noreply.github.com>"
+}

@@ -23,6 +23,7 @@ import { DispatcherRuntime } from './dispatcher/runtime.js';
 import type { CodexProcess, CodexProcessOptions } from './codex/supervisor.js';
 import type { CodexWsClient } from './codex/rpc.js';
 import { createFeishuBot, type FeishuBot, type FeishuInboundEvent } from './feishu/bot.js';
+import { compatibleFeishuGate } from './channel/feishu-gate.js';
 import { parseCodexArgs, codexArgsToCli } from './runtime/codex-args.js';
 import { resolveBotSecret } from './runtime/secrets.js';
 import { BUILT_IN_DEFAULTS, type DreamuxConfig } from './runtime/config.js';
@@ -181,7 +182,22 @@ export class Server {
       dispatchers: this.repos.dispatchers,
       inbound: this.repos.inbound,
       outbound: {
-        sendText: async (chatId, text) => (await bot.sendText(chatId, text)).messageIds,
+        send: async (target, text) =>
+          (await bot.send(
+            {
+              chatId: target.conversationId,
+              ...(target.replyTo !== undefined
+                ? { replyToMessageId: target.replyTo }
+                : {}),
+              ...(target.mentionUsers !== undefined
+                ? { mentionUserIds: target.mentionUsers }
+                : {}),
+              ...(target.conversationKey !== undefined
+                ? { conversationKey: target.conversationKey }
+                : {}),
+            },
+            text,
+          )).messageIds,
       },
       codexBinPath: this.resolveCodexBinPath(),
       codexProcessFactory: this.opts.codexProcessFactory,
@@ -195,6 +211,19 @@ export class Server {
     try {
       await runtime.start();
       await bot.start(async (event: FeishuInboundEvent) => {
+        const gate = compatibleFeishuGate({
+          senderId: event.senderId,
+          senderType: event.senderType,
+          chatType: event.chatType,
+          botOpenId: bot.botOpenId,
+          mentions: event.mentions,
+        });
+        if (gate.action === 'drop') {
+          console.error(
+            `[server] dropped feishu inbound for dispatcher '${id}': ${gate.reason}`,
+          );
+          return;
+        }
         runtime.enqueueInbound({
           source_chat_id: event.chatId,
           source_message_id: event.messageId,

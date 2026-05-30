@@ -27,10 +27,13 @@ export type { AccessStore } from './contract/access-store.js'
 // ── parse/ — Feishu content → forwardable text + comment-event decode ──
 export {
   parseInbound,
+  narrowMetaFromEvent,
+  toChannelInbound,
   applyMentions,
   extractPostText,
   type InboundMessage,
   type ParsedInbound,
+  type ChannelInbound,
 } from './parse/content.js'
 export {
   normalizeCommentEvent,

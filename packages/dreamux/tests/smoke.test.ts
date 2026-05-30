@@ -65,6 +65,7 @@ function fakeInbound(
     chatId,
     chatType: 'group',
     senderId: 'ou_sender_test',
+    senderType: 'user',
     messageType: 'text',
     rawContent: JSON.stringify({ text }),
     parsedText: text,
@@ -84,6 +85,10 @@ async function waitFor(
     await new Promise((r) => setTimeout(r, 20));
   }
   throw new Error('waitFor timed out');
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 describe('dreamux MVP smoke', () => {
@@ -122,6 +127,11 @@ describe('dreamux MVP smoke', () => {
     await waitFor(() => bot.sentMessages.length >= 1);
     expect(bot.sentMessages[0]).toMatchObject({
       chatId: 'oc_group_a',
+      target: {
+        chatId: 'oc_group_a',
+        replyToMessageId: 'om_1',
+        mentionUserIds: ['ou_sender_test'],
+      },
       text: 'echo: hi',
     });
 
@@ -133,6 +143,47 @@ describe('dreamux MVP smoke', () => {
     const d = server.repos.dispatchers.get('flow');
     expect(d?.thread_id).toMatch(/^thread_fake_/);
     expect(d?.status).toBe('ready');
+  });
+
+  it('compatible Feishu gate drops bot-loop messages before durable enqueue', async () => {
+    server = buildServer({ runtimeDir, fake, bot });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'cli_smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+    await server.start();
+
+    await bot.inject({
+      ...fakeInbound('oc_group_a', 'loop', 'om_loop'),
+      senderId: bot.botOpenId ?? '',
+    });
+
+    await sleep(80);
+    expect(server.repos.inbound.getById(1)).toBeNull();
+    expect(fake.turnsHandled).toBe(0);
+    expect(bot.sentMessages).toEqual([]);
+  });
+
+  it('compatible Feishu gate drops Feishu bot/app sender types', async () => {
+    server = buildServer({ runtimeDir, fake, bot });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'cli_smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+    await server.start();
+
+    await bot.inject({
+      ...fakeInbound('oc_group_a', 'bot says hi', 'om_bot'),
+      senderId: 'ou_peer_bot',
+      senderType: 'bot',
+    });
+
+    await sleep(80);
+    expect(server.repos.inbound.getById(1)).toBeNull();
+    expect(fake.turnsHandled).toBe(0);
+    expect(bot.sentMessages).toEqual([]);
   });
 
   it('FIFO: same-dispatcher messages process serially', async () => {
@@ -229,11 +280,11 @@ describe('dreamux MVP smoke', () => {
     await server.start();
 
     let attempts = 0;
-    const origSend = bot.sendText.bind(bot);
-    bot.sendText = async (chat: string, text: string) => {
+    const origSend = bot.send.bind(bot);
+    bot.send = async (target, text) => {
       attempts++;
       if (attempts === 1) throw new Error('transient feishu hiccup');
-      return origSend(chat, text);
+      return origSend(target, text);
     };
 
     await bot.inject(fakeInbound('oc_group_a', 'retry-me', 'om_r'));
