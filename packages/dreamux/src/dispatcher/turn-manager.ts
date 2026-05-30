@@ -23,11 +23,7 @@ import type { InboundRepo } from '../db/repository.js';
 import type { InboundRow } from '../db/types.js';
 import type { CodexWsClient } from '../codex/rpc.js';
 import { extractAssistantText, runTurn } from '../codex/events.js';
-
-export interface OutboundSink {
-  /** Send `text` to `chatId`; return the array of feishu message_ids sent. */
-  sendText(chatId: string, text: string): Promise<string[]>;
-}
+import { outboundTargetForInbound, type OutboundSink } from '../channel/outbound.js';
 
 export interface TurnManagerOptions {
   dispatcherId: string;
@@ -148,8 +144,8 @@ export class TurnManager {
       this.opts.inbound.markFailed(row.id, msg);
       // Best-effort tell the user something went wrong.
       try {
-        await this.opts.outbound.sendText(
-          row.source_chat_id,
+        await this.opts.outbound.send(
+          outboundTargetForInbound(row),
           `本次请求执行失败：${msg}`,
         );
       } catch (sendErr) {
@@ -159,20 +155,17 @@ export class TurnManager {
     }
 
     this.opts.inbound.markAwaitingOutbound(row.id, assistantText);
-    await this.sendOutbound(row.id, row.source_chat_id, assistantText);
+    await this.sendOutbound(row, assistantText);
   }
 
   /** Send assistant text to feishu with bounded retry. */
-  private async sendOutbound(
-    inboundId: number,
-    chatId: string,
-    text: string,
-  ): Promise<void> {
+  private async sendOutbound(row: InboundRow, text: string): Promise<void> {
     let lastError: unknown;
+    const target = outboundTargetForInbound(row);
     for (let attempt = 0; attempt <= this.outboundRetries; attempt++) {
       try {
-        const ids = await this.opts.outbound.sendText(chatId, text);
-        this.opts.inbound.markCompleted(inboundId, ids);
+        const ids = await this.opts.outbound.send(target, text);
+        this.opts.inbound.markCompleted(row.id, ids);
         return;
       } catch (err) {
         lastError = err;
@@ -184,8 +177,8 @@ export class TurnManager {
       }
     }
     const msg = lastError instanceof Error ? lastError.message : String(lastError);
-    this.log('error', `outbound send failed for inbound ${inboundId}: ${msg}`);
-    this.opts.inbound.markOutboundFailed(inboundId, msg);
+    this.log('error', `outbound send failed for inbound ${row.id}: ${msg}`);
+    this.opts.inbound.markOutboundFailed(row.id, msg);
   }
 
   /**
@@ -210,7 +203,7 @@ export class TurnManager {
         );
         continue;
       }
-      await this.sendOutbound(row.id, row.source_chat_id, row.assistant_text);
+      await this.sendOutbound(row, row.assistant_text);
     }
   }
 
