@@ -22,6 +22,7 @@ common/autoinstallers/*/node_modules/
 # rush per-project build/test caches and logs (transient; contain local paths)
 **/.rush/temp/
 
-# Per-package lockfiles are still committed so a developer can `cd
-# packages/<x> && npm install && npm test` without running rush at all.
-# common/config/rush/pnpm-lock.yaml is the source of truth for rush itself.
+# The only committed lockfile is common/config/rush/pnpm-lock.yaml (the source
+# of truth for the whole workspace). The per-package npm path is retired — no
+# per-package package-lock.json is committed. See
+# .agents/decisions/0006-install-model.md.

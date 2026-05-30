@@ -21,6 +21,7 @@ Design background:
 | Always-loaded agent operating rules | [`CLAUDE.md`](CLAUDE.md) (`AGENTS.md` is a symlink) |
 | Monorepo layout reference | [`.agents/components/repo-structure.md`](.agents/components/repo-structure.md) |
 | Why Rush + pnpm | [`.agents/decisions/0001-rush-pnpm-monorepo.md`](.agents/decisions/0001-rush-pnpm-monorepo.md) |
+| Why the monorepo path is the only install path | [`.agents/decisions/0006-install-model.md`](.agents/decisions/0006-install-model.md) |
 | Why `@excitedjs/dreamux` + `dreamux` CLI + the two legacy aliases | [`.agents/decisions/0002-cli-and-package-naming.md`](.agents/decisions/0002-cli-and-package-naming.md) |
 
 ## Repo layout
@@ -28,37 +29,32 @@ Design background:
 ```
 /
 ├── packages/
-│   └── dreamux/           @excitedjs/dreamux — the only package today
+│   ├── dreamux/           @excitedjs/dreamux — the host server
+│   └── channel/
+│       ├── feishu-transport/   @excitedjs/feishu-transport — platform-I/O core
+│       └── feishu-channel/     @excitedjs/feishu-channel — channel layer (placeholder)
 ├── bin/                   thin forwarders → packages/dreamux/bin/
 ├── rush.json              rush + pnpm + Node version pins
 ├── common/
 │   ├── config/rush/       command-line.json, .npmrc, version-policies.json
 │   └── scripts/install-run-rush.js   minimal rush bootstrap
 ├── .agents/               on-demand knowledge base
-├── .github/workflows/     CI: package typecheck/build/test, KB check, rush smoke
+├── .github/workflows/     CI: rush build/test, KB check, gitleaks
 ├── CLAUDE.md              always-loaded operating rules
 └── AGENTS.md              symlink → CLAUDE.md
 ```
 
 ## Quick start
 
-Two install paths are supported and both work; CI exercises both.
-
-**Per-package** (matches pre-monorepo muscle memory):
-
-```bash
-cd packages/dreamux
-npm install
-npm test
-./bin/dreamux server start
-```
-
-**Monorepo** (required once a second package exists):
+The monorepo path is the single supported install path (the workspace now
+spans three packages wired with `workspace:*`, which `npm` cannot resolve —
+see [decision 0006](.agents/decisions/0006-install-model.md)):
 
 ```bash
 node common/scripts/install-run-rush.js update
 node common/scripts/install-run-rush.js build
 node common/scripts/install-run-rush.js test
+./packages/dreamux/bin/dreamux server start
 ```
 
 Full quick start, config reference, and MVP verification path are in the

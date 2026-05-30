@@ -1,8 +1,18 @@
 # Component: repo structure
 
-Rush + pnpm monorepo since issue #4. The `@excitedjs/dreamux` package
-under `/packages/dreamux/` is the only project today, but the layout is
-ready for additional packages without a second restructure.
+Rush + pnpm monorepo since issue #4. Three packages today, all wired
+through pnpm `workspace:*` and installed via the rush path only (see
+[decision 0006](../decisions/0006-install-model.md)):
+
+| Package | Folder | Role |
+|---|---|---|
+| `@excitedjs/dreamux` | `/packages/dreamux/` | the host server |
+| `@excitedjs/feishu-transport` | `/packages/channel/feishu-transport/` | platform-I/O core; **sole** importer of `@larksuiteoapi/node-sdk` |
+| `@excitedjs/feishu-channel` | `/packages/channel/feishu-channel/` | per-host channel layer (placeholder today) |
+
+The channel refactor (#4) extracted the Feishu platform I/O out of the
+dreamux host into `@excitedjs/feishu-transport`, so the host and the
+sibling claudemux repo import one implementation instead of drifting copies.
 
 ## Top-level
 
@@ -30,7 +40,7 @@ verbatim through the move):
 | `src/codex/` | Codex WS+Unix JSON-RPC client, supervisor, turn collector, init handshake |
 | `src/db/` | SQLite schema + repository |
 | `src/dispatcher/` | DispatcherRuntime, TurnManager, fail-fast approval handler |
-| `src/feishu/` | Bot adapter, content / render (copied verbatim from claudemux) |
+| `src/feishu/` | Thin bot adapter over `@excitedjs/feishu-transport` (`createFeishuTransport` + `parseInbound`); the drifted in-tree `content`/`render`/`types` copies were deleted by #4 |
 | `src/runtime/` | Path builders, env-only secrets, codex-args parser |
 | `src/server.ts` | Top-level `Server` class wiring everything together |
 | `db/migrations/0001_init.sql` | Initial SQLite schema |
@@ -38,17 +48,21 @@ verbatim through the move):
 | `bin/server`, `bin/server-ctl` | Backward-compat aliases shipped before the monorepo split |
 | `tests/` | vitest: smoke (16), bin-launcher (8), codex-0134-live (4) |
 
-## Two installation paths
+## Installation — the rush path only
 
-| Method | When |
-|---|---|
-| `cd packages/dreamux && npm install && npm test` | Single-package workflow; matches pre-monorepo muscle memory |
-| `node common/scripts/install-run-rush.js update` then `rush build && rush test` | Monorepo workflow; required once a second package lands |
+```bash
+node common/scripts/install-run-rush.js update   # then build / test
+node common/scripts/install-run-rush.js build
+node common/scripts/install-run-rush.js test
+```
 
-Both paths must keep working. CI runs the rush path; per-package
-package-lock.json is kept committed so the npm path stays reproducible.
-See [decision 0001](../decisions/0001-rush-pnpm-monorepo.md) for the
-rationale.
+The per-package `cd packages/dreamux && npm install` path is **retired**:
+`@excitedjs/dreamux` now depends on `@excitedjs/feishu-transport` via the
+pnpm `workspace:*` protocol, which `npm` cannot resolve. There is no
+committed per-package `package-lock.json`. External consumers are
+unaffected — pnpm rewrites `workspace:*` to a real version at publish time.
+See [decision 0006](../decisions/0006-install-model.md) (which retires the
+two-paths consequence of [decision 0001](../decisions/0001-rush-pnpm-monorepo.md)).
 
 ## Public surface
 
