@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { applyMentions, extractPostText, parseInbound } from '../src/parse/content'
+import { applyMentions, extractPostText, narrowMetaFromEvent, parseInbound, toChannelInbound } from '../src/parse/content'
 import type { InboundMessage } from '../src/parse/content'
 import type { Mention } from '../src/contract/types'
 
@@ -45,6 +45,113 @@ describe('parseInbound — attachments', () => {
 
   test('an unknown message type is summarized', () => {
     expect(parseInbound(message('audio', { duration: 3 })).text).toBe('(audio message)')
+  })
+})
+
+describe('toChannelInbound', () => {
+  test('preserves flattened text and string-only underscore metadata', () => {
+    expect(
+      toChannelInbound({
+        text: 'hello',
+        meta: {
+          message_id: 'om_1',
+          chat_id: 'oc_1',
+          sender_type: 'user',
+          'root-id': 'dropped',
+          nested: { value: 'dropped' },
+          count: 1,
+          empty_ok: '',
+        },
+      }),
+    ).toEqual({
+      text: 'hello',
+      meta: {
+        message_id: 'om_1',
+        chat_id: 'oc_1',
+        sender_type: 'user',
+        empty_ok: '',
+      },
+    })
+  })
+
+  test('keeps media degradation explicit in the flattened text', () => {
+    const parsed = parseInbound(message('image', { image_key: 'img_v2_abc' }))
+    expect(toChannelInbound(parsed)).toEqual({ text: '(image)', meta: {} })
+  })
+
+  test('empty text degrades to an explicit placeholder', () => {
+    expect(toChannelInbound({ text: '' })).toEqual({
+      text: '(empty message)',
+      meta: {},
+    })
+  })
+})
+
+describe('narrowMetaFromEvent', () => {
+  test('extracts canonical envelope metadata from an event payload', () => {
+    expect(
+      narrowMetaFromEvent({
+        event: {
+          sender: {
+            sender_type: 'user',
+            sender_id: { open_id: 'ou_sender' },
+          },
+          message: {
+            message_id: 'om_1',
+            chat_id: 'oc_1',
+            chat_type: 'group',
+            root_id: 'om_root',
+            parent_id: 'om_parent',
+            create_time: '1780000000000',
+            content: JSON.stringify({ text: 'ignored here' }),
+          },
+        },
+      }),
+    ).toEqual({
+      message_id: 'om_1',
+      chat_id: 'oc_1',
+      chat_type: 'group',
+      sender_id: 'ou_sender',
+      sender_type: 'user',
+      root_id: 'om_root',
+      parent_id: 'om_parent',
+      create_time: '1780000000000',
+    })
+  })
+
+  test('extracts metadata from already-unwrapped event payloads', () => {
+    expect(
+      narrowMetaFromEvent({
+        sender: { sender_type: 'app', sender_id: { open_id: 'ou_app' } },
+        message: {
+          message_id: 'om_2',
+          chat_id: 'oc_2',
+          chat_type: 'p2p',
+        },
+      }),
+    ).toEqual({
+      message_id: 'om_2',
+      chat_id: 'oc_2',
+      chat_type: 'p2p',
+      sender_id: 'ou_app',
+      sender_type: 'app',
+    })
+  })
+
+  test('drops missing, empty, nested, and non-string envelope values', () => {
+    expect(
+      narrowMetaFromEvent({
+        event: {
+          sender: { sender_type: '', sender_id: { open_id: 42 } },
+          message: {
+            message_id: '',
+            chat_id: 'oc_1',
+            chat_type: { nested: true },
+            create_time: 1780000000000,
+          },
+        },
+      }),
+    ).toEqual({ chat_id: 'oc_1' })
   })
 })
 
