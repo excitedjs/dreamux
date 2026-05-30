@@ -3,8 +3,8 @@
 #
 # Resolves its own location (following symlinks) so it works from any cwd
 # AND when invoked via a symlink (e.g. `npm install -g` puts a symlink under
-# the node bin dir). Runs the compiled dist output produced by
-# `npm install` / `npm run build`.
+# the node bin dir). Runs the compiled dist output (built by `rush build` in a
+# source checkout; already present in the published npm package).
 set -eu
 
 SOURCE="${BASH_SOURCE[0]}"
@@ -29,7 +29,7 @@ DIR="$(cd -- "$(dirname -- "$SOURCE")/.." &> /dev/null && pwd)"
 TARGET="$DIR/dist/cli/server.js"
 if [ ! -f "$TARGET" ]; then
   echo "dreamux-server: $TARGET is missing." >&2
-  echo "Run 'npm install' (it runs 'npm run build' via the prepare hook) or 'npm run build' from $DIR first." >&2
+  echo "Build it first from the repo root: node common/scripts/install-run-rush.js build (rush build)." >&2
   exit 1
 fi
 exec node "$TARGET" "$@"
