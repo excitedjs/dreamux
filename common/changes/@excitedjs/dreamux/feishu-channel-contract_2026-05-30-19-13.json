@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "Thread Feishu replies with outbound targets",
+      "comment": "Thread Feishu replies and drop bot-loop inbound messages",
       "type": "patch",
       "packageName": "@excitedjs/dreamux"
     }

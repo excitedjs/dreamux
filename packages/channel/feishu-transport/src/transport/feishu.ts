@@ -284,11 +284,12 @@ export interface FeishuTransport {
    */
   start(routes: InboundRoutes): Promise<void>
   /**
-   * Send a text message to the target chat. When `replyToMessageId` is set, the
-   * message is posted through Feishu's reply endpoint so it threads beneath the
-   * triggering message; `mentionUserIds` are rendered as leading card mentions.
-   * `target.conversationKey` is a channel-layer routing hint the transport
-   * never reads.
+   * Send a text message to the target chat. Without `replyToMessageId`, routing
+   * is by `target.chatId`. With `replyToMessageId`, Feishu's reply endpoint
+   * routes by the source message id; callers must only pass a message id that
+   * was observed in `target.chatId`, never an arbitrary external message id.
+   * `mentionUserIds` are rendered as leading card mentions. `conversationKey`
+   * is a channel-layer routing hint the transport never reads.
    */
   send(target: OutboundTarget, text: string): Promise<FeishuSendResult>
   /**

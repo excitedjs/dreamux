@@ -33,6 +33,7 @@ export interface FeishuInboundEvent {
   chatId: string;
   chatType: string; // 'p2p' | 'group' | ...
   senderId: string;
+  senderType: string;
   messageType: string;
   /** Raw JSON-encoded content as Feishu delivered it. */
   rawContent: string;
@@ -117,6 +118,7 @@ function normalizeInboundEvent(raw: unknown): FeishuInboundEvent | null {
   const sender = (event['sender'] ?? {}) as Record<string, unknown>;
   const senderId =
     ((sender['sender_id'] as Record<string, unknown>)?.['open_id'] as string) ?? '';
+  const senderType = (sender['sender_type'] as string) ?? '';
   const messageId = (message['message_id'] as string) ?? '';
   const chatId = (message['chat_id'] as string) ?? '';
   const chatType = (message['chat_type'] as string) ?? '';
@@ -138,6 +140,7 @@ function normalizeInboundEvent(raw: unknown): FeishuInboundEvent | null {
     chatId,
     chatType,
     senderId,
+    senderType,
     messageType,
     rawContent,
     parsedText: parsed.text,
