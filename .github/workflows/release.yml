@@ -84,12 +84,16 @@ jobs:
       - name: Plan — classify each publishable package against npm
         id: plan
         run: |
-          # Enumerate every Rush project with shouldPublish=true (rush list emits
-          # clean JSON on stdout; its banner goes to stderr). The plan is written
-          # to a TSV file so the loop below runs in this shell (a pipe would put
-          # the counter in a subshell and lose it).
+          # Enumerate every Rush project with shouldPublish=true. The
+          # install-run-rush.js bootstrap prints a banner ("The rush.json
+          # configuration requests Rush version ...") plus rush's own
+          # 'Invoking "rush list --json"' preamble to STDOUT before the JSON, so
+          # we extract the JSON object (first '{' .. last '}') instead of parsing
+          # the whole stream. The plan is written to a TSV file so the loop below
+          # runs in this shell (a pipe would put the counter in a subshell and
+          # lose it).
           node common/scripts/install-run-rush.js list --json 2>/dev/null \
-            | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{for(const p of JSON.parse(s).projects){if(p.shouldPublish)process.stdout.write([p.name,p.version,p.path].join("\t")+"\n")}})' \
+            | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const a=s.indexOf("{"),b=s.lastIndexOf("}");if(a<0||b<a){console.error("release plan: no JSON object found in `rush list --json` output");process.exit(1)}for(const p of JSON.parse(s.slice(a,b+1)).projects){if(p.shouldPublish)process.stdout.write([p.name,p.version,p.path].join("\t")+"\n")}})' \
             > "$RUNNER_TEMP/publishable.tsv"
 
           # Classify a package without conflating a real 404 with a transient
