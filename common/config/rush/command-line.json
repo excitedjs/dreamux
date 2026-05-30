@@ -16,7 +16,12 @@
       "description": "Bulk-runs vitest across every package that declares a `test` script.",
       "enableParallelism": true,
       "ignoreMissingScript": true,
-      "incremental": false
+      "incremental": false,
+      // The test run legitimately writes to stderr (server logs, and the loud
+      // DREAMUX_SKIP_LIVE_CODEX skip notice). Rush otherwise treats any stderr
+      // as a warning and exits non-zero even though every test passed, which
+      // would fail CI on a green run. vitest's own exit code is what gates pass.
+      "allowWarningsInSuccessfulBuild": true
     },
     {
       "name": "typecheck",

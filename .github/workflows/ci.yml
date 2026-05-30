@@ -1,15 +1,16 @@
 # CI for the dreamux monorepo (issue #4).
 #
 # Jobs:
-#   - package — typecheck, build, vitest against the per-package npm path
-#     (matches `cd packages/dreamux && npm install && npm test`)
+#   - rush — bootstrap, build, and test the whole workspace via the monorepo
+#     path (the single supported install path — see decision 0006). This
+#     replaces the old per-package `npm ci` job, which cannot resolve the
+#     `workspace:*` dependency that landed with the channel refactor (#4).
 #   - kb — validate the .agents/ knowledge base (link / orphan check)
-#   - rush — bootstrap & build smoke test of the monorepo path
 #   - gitleaks — secret scan over the full git history (anti-leak guardrail)
 #
 # The rush bootstrap (`node common/scripts/install-run-rush.js update`) is
-# intentionally exercised in CI too, in a separate job, so a broken
-# rush.json fails CI rather than waiting for the next contributor's
+# the only way to install a `workspace:*` graph, so a broken rush.json or
+# lockfile fails CI here rather than waiting for the next contributor's
 # `rush update` to discover it.
 
 name: ci
@@ -21,29 +22,6 @@ on:
     branches: [main]
 
 jobs:
-  package:
-    name: package — typecheck / build / test
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: packages/dreamux
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22.x'
-          cache: npm
-          cache-dependency-path: packages/dreamux/package-lock.json
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm run build
-      - run: npm test
-        env:
-          # No codex binary on the CI runner; opt-in skip with the loud
-          # warning (rather than silent skip — see tests/codex-0134-live.test.ts).
-          DREAMUX_SKIP_LIVE_CODEX: '1'
-
   kb:
     name: knowledge base — link & orphan check
     runs-on: ubuntu-latest
@@ -54,7 +32,7 @@ jobs:
         run: ./.agents/scripts/check.sh
 
   rush:
-    name: rush — bootstrap & build (smoke)
+    name: rush — bootstrap / build / test
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -66,6 +44,12 @@ jobs:
         run: node common/scripts/install-run-rush.js update
       - name: rush build
         run: node common/scripts/install-run-rush.js build
+      - name: rush test
+        run: node common/scripts/install-run-rush.js test
+        env:
+          # No codex binary on the CI runner; opt-in skip with the loud
+          # warning (rather than silent skip — see tests/codex-0134-live.test.ts).
+          DREAMUX_SKIP_LIVE_CODEX: '1'
 
   gitleaks:
     name: gitleaks — secret scan (full history)
@@ -79,7 +63,7 @@ jobs:
     #
     # `gitleaks detect` scans the whole git history, so it catches a secret
     # even if it was added and then "fixed" in a later commit; fetch-depth: 0
-    # gives the job that full history (incl. the committed package-lock.json).
+    # gives the job that full history (incl. the committed pnpm-lock.yaml).
     # The gitleaks binary is pinned and downloaded directly rather than via
     # gitleaks-action, which needs a license key for org repos and would hide
     # the exact command — kept identical to the local hook's invocation.

@@ -7,9 +7,10 @@
  *   - Node >= 22.7.0: matches the runtime requirement of the dreamux server
  *     (per @excitedjs/dreamux package.json's engines.node field).
  *
- * Single-project for now (@excitedjs/dreamux), but the layout is ready to
- * grow into multiple packages — additions go under packages/<name>/ and
- * get registered in the `projects` array below.
+ * Three projects today (@excitedjs/dreamux host, @excitedjs/feishu-transport
+ * core, @excitedjs/feishu-channel placeholder), wired with pnpm workspace:*.
+ * More packages go under packages/<name>/ and get registered in the
+ * `projects` array below.
  *
  * Install / build / test:
  *   node common/scripts/install-run-rush.js update

@@ -49,9 +49,10 @@ const ROOT_BIN_SERVER = join(MONOREPO_ROOT, 'bin', 'server');
 const ROOT_BIN_CTL = join(MONOREPO_ROOT, 'bin', 'server-ctl');
 
 beforeAll(() => {
-  // Acceptance criterion: a built dist/ exists for the package; `npm
-  // install`'s prepare hook produces it. Repo-root shims forward into
-  // this same dist/, so checking the package paths is sufficient.
+  // Acceptance criterion: a built dist/ exists for the package; `rush build`
+  // produces it (the published npm package ships it prebuilt). Repo-root
+  // shims forward into this same dist/, so checking the package paths is
+  // sufficient.
   for (const f of [
     join(PACKAGE_ROOT, 'dist', 'cli', 'dreamux.js'),
     join(PACKAGE_ROOT, 'dist', 'cli', 'server.js'),
@@ -59,7 +60,7 @@ beforeAll(() => {
   ]) {
     if (!existsSync(f)) {
       throw new Error(
-        `dist artefact ${f} is missing — run 'npm run build' before these tests.`,
+        `dist artefact ${f} is missing — run 'rush build' before these tests.`,
       );
     }
   }

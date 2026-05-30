@@ -2,7 +2,8 @@
 # Launcher for the unified `dreamux` CLI (issue #4).
 # Resolves its own location through symlinks so it works from any cwd and
 # via any chain of symlinks (npm-link, ~/bin shortcuts, etc.). Runs the
-# compiled dist output produced by `npm install` / `rush build`.
+# compiled dist output (built by `rush build` in a source checkout; already
+# present in the published npm package).
 set -eu
 
 SOURCE="${BASH_SOURCE[0]}"
@@ -25,7 +26,7 @@ DIR="$(cd -- "$(dirname -- "$SOURCE")/.." &> /dev/null && pwd)"
 TARGET="$DIR/dist/cli/dreamux.js"
 if [ ! -f "$TARGET" ]; then
   echo "dreamux: $TARGET is missing." >&2
-  echo "Run 'npm install' (it runs 'npm run build' via the prepare hook), 'npm run build', or 'rush build' from the monorepo root first." >&2
+  echo "Build it first from the repo root: node common/scripts/install-run-rush.js build (rush build)." >&2
   exit 1
 fi
 exec node "$TARGET" "$@"

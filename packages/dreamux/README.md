@@ -47,27 +47,19 @@ threads, tm registry isolation, cross-machine coordination, web UI.
 
 ## Install / build / test
 
-Two paths; both work, pick whichever fits the workflow.
-
-**Per-package (this directory).** Matches pre-monorepo muscle memory and
-runs the `prepare` hook (`tsc → dist/`):
-
-```bash
-cd packages/dreamux
-npm install
-npm run build       # also runs automatically via `prepare`
-npm run typecheck   # tsc --noEmit (no emit)
-npm test            # smoke + bin-launcher + (live) codex-0134 tests
-```
-
-**Monorepo (from repo root).** Required once a second package exists; CI
-exercises this path so a broken `rush.json` fails CI:
+Use the monorepo (rush) path from the repo root — it is the only supported
+install path. This package depends on `@excitedjs/feishu-transport` via the
+pnpm `workspace:*` protocol, which `npm` cannot resolve, so
+`cd packages/dreamux && npm install` no longer works (see
+[decision 0006](../../.agents/decisions/0006-install-model.md)):
 
 ```bash
 node common/scripts/install-run-rush.js update
 node common/scripts/install-run-rush.js build
 node common/scripts/install-run-rush.js test
 ```
+
+CI exercises this path, so a broken `rush.json` or lockfile fails CI.
 
 The bin launchers shell out to plain `node` against the compiled `dist/`
 output; **no `tsx` is needed at runtime** (PR #6).
@@ -204,7 +196,8 @@ JSON object stored in `dispatchers.codex_args_json`:
 ## Testing
 
 ```bash
-npm test           # smoke + bin-launcher + codex-0134-live
+# from the repo root (the only supported path — see decision 0006)
+node common/scripts/install-run-rush.js test   # smoke + bin-launcher + codex-0134-live
 ```
 
 - `tests/smoke.test.ts` — fake-codex-driven dispatcher behavior:

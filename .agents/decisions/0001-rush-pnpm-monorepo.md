@@ -48,6 +48,10 @@ Concrete shape:
   a future decision retires one. Per-package `package-lock.json` files
   stay committed so the npm path is reproducible; `pnpm-lock.yaml` lives
   in `common/config/rush/` once `rush update` runs.
+  > **Superseded (2026-05-31) by [decision 0006](0006-install-model.md).**
+  > The channel refactor (#4) introduced a `workspace:*` dependency that
+  > `npm` cannot resolve, so the per-package npm path is retired and the
+  > monorepo rush path is now the only supported one.
 - Adding a package = drop it in `packages/<name>/`, register in
   `rush.json`, run `rush update`. No other config edits.
 - First-time `rush update` will download Rush via npx (~3–5s with a warm

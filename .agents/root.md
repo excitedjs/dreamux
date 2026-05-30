@@ -23,11 +23,15 @@ issues:
 ├── rush.json                      rush + pnpm config
 ├── common/                        rush scaffolding (config + bootstrap)
 ├── packages/
-│   └── dreamux/                   @excitedjs/dreamux — the only package today
-│       ├── bin/                   dreamux / server / server-ctl launchers
-│       ├── src/                   admin, cli, codex, db, dispatcher, feishu, runtime
-│       ├── tests/                 vitest (smoke + live-codex + bin-launcher)
-│       └── db/migrations/         SQLite schema migrations
+│   ├── dreamux/                   @excitedjs/dreamux — the host server
+│   │   ├── bin/                   dreamux / server / server-ctl launchers
+│   │   ├── src/                   admin, cli, codex, db, dispatcher, feishu, runtime
+│   │   ├── tests/                 vitest (smoke + live-codex + bin-launcher)
+│   │   └── db/migrations/         SQLite schema migrations
+│   └── channel/
+│       ├── feishu-transport/      @excitedjs/feishu-transport — platform-I/O core
+│       │                          (sole @larksuiteoapi/node-sdk importer)
+│       └── feishu-channel/        @excitedjs/feishu-channel — channel layer (placeholder)
 ├── bin/                           thin redirectors → packages/dreamux/bin/
 ├── .agents/                       this knowledge base
 ├── .github/workflows/             CI
@@ -53,6 +57,7 @@ issues:
 |---|---|
 | add/change a package, move source between packages | [`components/repo-structure.md`](components/repo-structure.md) |
 | understand why rush + pnpm | [`decisions/0001-rush-pnpm-monorepo.md`](decisions/0001-rush-pnpm-monorepo.md) |
+| install / build / test the repo, or wonder why `npm ci` is gone | [`decisions/0006-install-model.md`](decisions/0006-install-model.md) |
 | rename or restructure the public CLI / package | [`decisions/0002-cli-and-package-naming.md`](decisions/0002-cli-and-package-naming.md) |
 | add / change a global config key (`~/.dreamux/config.toml`) | [`decisions/0003-global-config-dir.md`](decisions/0003-global-config-dir.md) |
 | touch the anti-leak guardrail (`.gitleaks.toml`, `.npmrc`, CI / hook) | [`decisions/0004-anti-leak-guardrail.md`](decisions/0004-anti-leak-guardrail.md) |

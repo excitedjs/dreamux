@@ -17,21 +17,33 @@ fix it in the same PR.
 
 `excitedjs/dreamux` is a **Rush + pnpm monorepo** since issue #4.
 
-- `/packages/<name>/` holds publishable packages. Today: `@excitedjs/dreamux`.
+- `/packages/<name>/` holds publishable packages. Today: `@excitedjs/dreamux`
+  (the host), `@excitedjs/feishu-transport` (the platform-I/O core, sole owner
+  of the `@larksuiteoapi/node-sdk` import), and `@excitedjs/feishu-channel`
+  (per-host channel layer, a placeholder today) — see the channel refactor (#4).
 - `/rush.json`, `/common/config/rush/`, `/common/scripts/install-run-rush.js`
   are the rush + pnpm scaffolding.
 - `/bin/` shims forward to `/packages/dreamux/bin/` for backward-compat with
   pre-monorepo PATH entries — see `.agents/decisions/0002-cli-and-package-naming.md`.
 - `/.agents/` is the on-demand knowledge base. Start at `.agents/root.md`.
 
-Two install paths are supported and both must keep working:
+**One install path — the monorepo path.** Build and test through rush:
 
-1. **Per-package** (`cd packages/dreamux && npm install && npm test`) — matches
-   pre-monorepo muscle memory; per-package `package-lock.json` stays committed.
-2. **Monorepo** (`node common/scripts/install-run-rush.js update && rush build && rush test`)
-   — required once a second package exists.
+```
+node common/scripts/install-run-rush.js update   # then build / test
+node common/scripts/install-run-rush.js build
+node common/scripts/install-run-rush.js test
+```
 
-Reasoning: `.agents/decisions/0001-rush-pnpm-monorepo.md`.
+The per-package npm path (`cd packages/dreamux && npm install`) is **retired**:
+`@excitedjs/dreamux` depends on `@excitedjs/feishu-transport` via the pnpm
+`workspace:*` protocol, which `npm` cannot resolve. pnpm rewrites `workspace:*`
+to the real version at publish time, so external `npm install @excitedjs/dreamux`
+is unaffected — only the in-repo per-package path is gone. There is no committed
+per-package `package-lock.json`.
+
+Reasoning: `.agents/decisions/0006-install-model.md` (which retires the
+two-paths consequence of `.agents/decisions/0001-rush-pnpm-monorepo.md`).
 
 ## CLI surface
 
