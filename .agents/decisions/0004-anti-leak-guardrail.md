@@ -50,8 +50,8 @@ Land a layered guardrail:
 - "Non-bypassable" depends on the repo owner enabling the `gitleaks` job as
   a **required status check** in branch protection; the workflow file alone
   does not enforce it.
-- The hook auto-installs only on the rush path. The per-package npm path
-  (`cd packages/dreamux && npm install`) skips it — a contributor opts in
-  with `git config core.hooksPath common/git-hooks`. CI covers either way.
+- The hook auto-installs on the rush path (`rush install` / `rush update`).
+  A contributor who hasn't run rush yet can opt in with
+  `git config core.hooksPath common/git-hooks`. CI covers either way.
 - The red line is also written into [`/CLAUDE.md`](/CLAUDE.md)
   ("Always-binding engineering rules") so every session loads it.

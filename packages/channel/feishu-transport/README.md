@@ -25,15 +25,16 @@ The single place that imports the Feishu SDK.
 - Consumed as a **published, version-pinned package** by both repos; the two
   hosts never depend on each other.
 - Built via rush in topological order (`rush build` builds this before any
-  dependent). Standalone `npm run build` works once its own deps are installed.
+  dependent).
 
 ## Build / test
 
+Built and tested through the monorepo (rush) path — the only supported install
+path (see [decision 0006](../../../.agents/decisions/0006-install-model.md)).
+From the repo root:
+
 ```sh
-# monorepo (preferred)
 node common/scripts/install-run-rush.js update
 node common/scripts/install-run-rush.js build
-
-# per-package
-npm install && npm run build && npm test
+node common/scripts/install-run-rush.js test
 ```

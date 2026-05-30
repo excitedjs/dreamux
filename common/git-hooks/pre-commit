@@ -11,8 +11,8 @@
 # non-bypassable gate. This hook only shortens the feedback loop.
 #
 # Rush installs this script into .git/hooks on `rush install` / `rush update`.
-# For the per-package npm path (cd packages/dreamux && npm install), install it
-# manually:  git config core.hooksPath common/git-hooks
+# If your hooks aren't wired up yet, point git at this directory manually:
+#   git config core.hooksPath common/git-hooks
 
 if ! command -v gitleaks >/dev/null 2>&1; then
   echo "[anti-leak] gitleaks not installed — skipping local scan; CI will enforce." >&2

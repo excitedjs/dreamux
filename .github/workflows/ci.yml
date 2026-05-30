@@ -63,7 +63,7 @@ jobs:
     #
     # `gitleaks detect` scans the whole git history, so it catches a secret
     # even if it was added and then "fixed" in a later commit; fetch-depth: 0
-    # gives the job that full history (incl. the committed package-lock.json).
+    # gives the job that full history (incl. the committed pnpm-lock.yaml).
     # The gitleaks binary is pinned and downloaded directly rather than via
     # gitleaks-action, which needs a license key for org repos and would hide
     # the exact command — kept identical to the local hook's invocation.
