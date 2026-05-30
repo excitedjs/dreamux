@@ -56,5 +56,6 @@ issues:
 | rename or restructure the public CLI / package | [`decisions/0002-cli-and-package-naming.md`](decisions/0002-cli-and-package-naming.md) |
 | add / change a global config key (`~/.dreamux/config.toml`) | [`decisions/0003-global-config-dir.md`](decisions/0003-global-config-dir.md) |
 | touch the anti-leak guardrail (`.gitleaks.toml`, `.npmrc`, CI / hook) | [`decisions/0004-anti-leak-guardrail.md`](decisions/0004-anti-leak-guardrail.md) |
+| touch npm publishing / the release workflows | [`decisions/0005-npm-release-oidc.md`](decisions/0005-npm-release-oidc.md) |
 | write a new decision record / new component doc | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
 | modify the server runtime / Codex protocol handling | the issue links above + read the source — runtime details aren't yet promoted to the KB |

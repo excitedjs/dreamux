@@ -1,0 +1,92 @@
+# Version packages with Rush, the protected-main-safe way.
+#
+# This is the rush-native replacement for `changeset version`, and it is
+# monorepo-wide: `rush publish --apply` bumps every package that has pending
+# change files, not any single package. Instead of pushing a bump commit
+# straight to main (which a protected main with the required gitleaks check
+# would reject), it opens a "version packages" PR:
+#   contributors run `rush change` on their feature PRs (creates change files
+#   under common/changes/);  on merge to main this job runs `rush publish
+#   --apply` to consume those change files into package.json + CHANGELOG bumps,
+#   and raises a PR with the result. A maintainer merges that PR, and the push
+#   to main triggers release.yml, which publishes the new versions via OIDC.
+#
+# The loop is self-breaking: the version PR's own merge carries no new change
+# files, so the next run's `rush publish --apply` produces no diff and no-ops.
+#
+# SCAFFOLDING: with no change files this job no-ops on every push to main —
+# verified locally: `rush publish --apply` exits clean and leaves the tree
+# unchanged when common/changes/ is empty.
+
+name: version packages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: version-packages
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: apply rush change files -> version PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write       # push the release branch (a feature branch, not main)
+      pull-requests: write  # open / update the version PR
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+
+      - name: Apply pending change files (rush)
+        id: apply
+        run: |
+          node common/scripts/install-run-rush.js install
+          # --apply consumes common/changes/*.json into package.json + CHANGELOG
+          # bumps and deletes the change files. No --publish, so nothing is sent
+          # to the registry and no npm token is involved.
+          node common/scripts/install-run-rush.js publish --apply
+          # Scope the change check to the version artifacts only: package.json /
+          # CHANGELOG bumps under packages/ and consumed change files under
+          # common/changes/. This deliberately ignores `rush install` byproducts
+          # (e.g. a freshly generated common/config/rush/pnpm-lock.yaml) so they
+          # never sneak into the version PR or produce a false "changed".
+          if [ -n "$(git status --porcelain -- packages common/changes)" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::No pending change files — nothing to version."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open / update the version PR
+        if: steps.apply.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          branch="release/version-packages"
+          # Public-repo identity: GitHub noreply, never an internal address.
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git checkout -B "$branch"
+          # Stage only version artifacts (bumps + consumed change files), never
+          # install byproducts like a generated pnpm-lock.yaml.
+          git add packages common/changes
+          git commit -m "chore(release): version packages"
+          git push --force-with-lease origin "$branch"
+          if gh pr view "$branch" --json number >/dev/null 2>&1; then
+            echo "Version PR already open for $branch — updated by the force-push."
+          else
+            gh pr create \
+              --base main --head "$branch" \
+              --title "chore(release): version packages" \
+              --body "Automated by \`version.yml\`. Applies pending \`rush change\` files (package.json + CHANGELOG bumps across all changed packages). Merging this PR publishes the new versions via \`release.yml\` (OIDC)."
+          fi
