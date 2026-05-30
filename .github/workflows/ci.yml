@@ -1,9 +1,11 @@
 # CI for the dreamux monorepo (issue #4).
 #
-# Two jobs:
+# Jobs:
 #   - package — typecheck, build, vitest against the per-package npm path
 #     (matches `cd packages/dreamux && npm install && npm test`)
 #   - kb — validate the .agents/ knowledge base (link / orphan check)
+#   - rush — bootstrap & build smoke test of the monorepo path
+#   - gitleaks — secret scan over the full git history (anti-leak guardrail)
 #
 # The rush bootstrap (`node common/scripts/install-run-rush.js update`) is
 # intentionally exercised in CI too, in a separate job, so a broken
@@ -64,3 +66,36 @@ jobs:
         run: node common/scripts/install-run-rush.js update
       - name: rush build
         run: node common/scripts/install-run-rush.js build
+
+  gitleaks:
+    name: gitleaks — secret scan (full history)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Anti-leak guardrail. dreamux is a PUBLIC repo: company-internal content
+    # (Feishu ids, tokens, private-mirror URLs, secrets) must never land in a
+    # commit. This job is the authoritative, non-bypassable gate — the
+    # committed pre-commit hook (common/git-hooks/pre-commit) is only a local
+    # pre-flight that warn-and-passes when gitleaks isn't installed.
+    #
+    # `gitleaks detect` scans the whole git history, so it catches a secret
+    # even if it was added and then "fixed" in a later commit; fetch-depth: 0
+    # gives the job that full history (incl. the committed package-lock.json).
+    # The gitleaks binary is pinned and downloaded directly rather than via
+    # gitleaks-action, which needs a license key for org repos and would hide
+    # the exact command — kept identical to the local hook's invocation.
+    env:
+      GITLEAKS_VERSION: '8.30.1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install gitleaks ${{ env.GITLEAKS_VERSION }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/gitleaks"
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C "$RUNNER_TEMP/gitleaks" gitleaks
+          echo "$RUNNER_TEMP/gitleaks" >> "$GITHUB_PATH"
+      - name: gitleaks version
+        run: gitleaks version
+      - name: gitleaks detect (full history, lockfile included, --exit-code 1)
+        run: gitleaks detect --source . --config .gitleaks.toml --redact --exit-code 1 -v

@@ -1,0 +1,37 @@
+# Anti-leak guardrail config for gitleaks (https://github.com/gitleaks/gitleaks).
+#
+# Keeps gitleaks' built-in rules (private keys, generic high-entropy secrets,
+# cloud / API tokens) via `useDefault`, and adds Feishu identifier / credential
+# formats. Only generic, public formats live here -- no real values and no
+# organization-specific strings -- so this file is safe to commit and never
+# leaks anything itself.
+title = "anti-leak guardrail"
+
+[extend]
+# Inherit gitleaks' built-in ruleset (private keys, generic secrets, tokens).
+useDefault = true
+
+[[rules]]
+id = "feishu-open-id"
+description = "Feishu open_id"
+regex = '''ou_[0-9a-f]{32}'''
+tags = ["feishu", "identifier"]
+
+[[rules]]
+id = "feishu-chat-id"
+description = "Feishu chat_id"
+regex = '''oc_[0-9a-f]{32}'''
+tags = ["feishu", "identifier"]
+
+[[rules]]
+id = "feishu-app-id"
+description = "Feishu app id"
+regex = '''cli_[a-z0-9]{14,}'''
+tags = ["feishu", "credential"]
+
+[allowlist]
+# Documentation placeholder app ids written as a run of x's (e.g.
+# cli_xxxxxxxxxxxxxxxx) are not real values. The anchor keeps anything that is
+# not entirely x's -- i.e. a real-format id -- still flagged.
+description = "Documentation placeholder app ids (a run of x's)."
+regexes = ['''^cli_x+$''']

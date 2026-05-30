@@ -1,0 +1,31 @@
+#!/bin/sh
+# Anti-leak guardrail — local pre-commit secret scan.
+#
+# dreamux is a PUBLIC repo: company-internal content (Feishu ids, tokens,
+# private-mirror registry URLs, secrets) must never be committed. This hook is
+# a fast local pre-flight that scans the *staged* changes with gitleaks before
+# they become a commit, using the committed .gitleaks.toml config.
+#
+# If gitleaks isn't installed it warn-and-passes: the GitHub Actions job runs
+# the authoritative `gitleaks detect` over the full history and is the real,
+# non-bypassable gate. This hook only shortens the feedback loop.
+#
+# Rush installs this script into .git/hooks on `rush install` / `rush update`.
+# For the per-package npm path (cd packages/dreamux && npm install), install it
+# manually:  git config core.hooksPath common/git-hooks
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "[anti-leak] gitleaks not installed — skipping local scan; CI will enforce." >&2
+  echo "[anti-leak] install: https://github.com/gitleaks/gitleaks#installing" >&2
+  exit 0
+fi
+
+repo_root=$(git rev-parse --show-toplevel)
+
+if ! gitleaks protect --staged \
+  --config "$repo_root/.gitleaks.toml" \
+  --redact --exit-code 1 -v; then
+  echo "[anti-leak] gitleaks flagged a potential secret in your staged changes." >&2
+  echo "[anti-leak] Remove it before committing — this is a public repo." >&2
+  exit 1
+fi

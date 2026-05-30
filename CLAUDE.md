@@ -67,6 +67,17 @@ dir)? When in doubt, runtime dir — that's the safer default.
 
 ## Always-binding engineering rules
 
+- **Public repo — never commit company-internal content. (Red line.)**
+  `excitedjs/dreamux` is a public open-source repo. Feishu identifiers
+  (`ou_`/`oc_`/`cli_`), internal tokens/secrets, private-mirror registry URLs,
+  internal hostnames — none of it ever goes in a commit; a leaked commit is
+  public and permanent. The anti-leak guardrail enforces this: the committed
+  `.gitleaks.toml`, the `gitleaks protect --staged` pre-commit hook
+  (`common/git-hooks/pre-commit`), and a full-history `gitleaks detect`
+  CI gate. `.gitleaks.toml` and `.npmrc` are a **shared canonical kept
+  byte-identical with the claudemux repo** — do not edit them in only one repo;
+  if gitleaks false-positives, stop and ask rather than adding a local
+  allowlist, and sync any config change across both repos.
 - **No new runtime dependencies on dev tools.** PR #6 removed `tsx`; do
   not reintroduce it for bin launchers. The launchers exec `node` on
   compiled `dist/` output.
