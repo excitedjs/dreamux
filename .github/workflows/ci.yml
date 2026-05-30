@@ -1,0 +1,66 @@
+# CI for the dreamux monorepo (issue #4).
+#
+# Two jobs:
+#   - package — typecheck, build, vitest against the per-package npm path
+#     (matches `cd packages/dreamux && npm install && npm test`)
+#   - kb — validate the .agents/ knowledge base (link / orphan check)
+#
+# The rush bootstrap (`node common/scripts/install-run-rush.js update`) is
+# intentionally exercised in CI too, in a separate job, so a broken
+# rush.json fails CI rather than waiting for the next contributor's
+# `rush update` to discover it.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  package:
+    name: package — typecheck / build / test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: packages/dreamux
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: npm
+          cache-dependency-path: packages/dreamux/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm test
+        env:
+          # No codex binary on the CI runner; opt-in skip with the loud
+          # warning (rather than silent skip — see tests/codex-0134-live.test.ts).
+          DREAMUX_SKIP_LIVE_CODEX: '1'
+
+  kb:
+    name: knowledge base — link & orphan check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: .agents/scripts/check.sh
+        run: ./.agents/scripts/check.sh
+
+  rush:
+    name: rush — bootstrap & build (smoke)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+      - name: rush update
+        run: node common/scripts/install-run-rush.js update
+      - name: rush build
+        run: node common/scripts/install-run-rush.js build

@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Root-level alias for the @excitedjs/dreamux CLI. Forwards to the real
+# launcher under packages/dreamux/bin/.
+#
+# Why a thin shim at the repo root instead of just packages/dreamux/bin/?
+# Operators who already had `<repo>/bin` on their PATH from pre-monorepo
+# layouts (PR #6 shipped that path) keep working without touching their
+# shell config.
+set -eu
+
+SOURCE="${BASH_SOURCE[0]}"
+hop=0
+while [ -L "$SOURCE" ]; do
+  hop=$((hop + 1))
+  if [ "$hop" -gt 40 ]; then
+    echo "dreamux: too many symlink hops resolving $SOURCE" >&2
+    exit 1
+  fi
+  TARGET="$(readlink "$SOURCE")"
+  if [ "${TARGET:0:1}" = "/" ]; then
+    SOURCE="$TARGET"
+  else
+    SOURCE="$(dirname -- "$SOURCE")/$TARGET"
+  fi
+done
+
+ROOT="$(cd -- "$(dirname -- "$SOURCE")/.." &> /dev/null && pwd)"
+exec "$ROOT/packages/dreamux/bin/dreamux" "$@"

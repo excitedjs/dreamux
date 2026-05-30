@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Backward-compat alias for `dreamux server start`. Pre-monorepo (issue #4)
+# the long-running server entry was at <repo>/bin/server; keep that path
+# alive so operators with old PATH entries don't have to rewrite scripts.
+# New tooling should call `dreamux server start` directly.
+set -eu
+
+SOURCE="${BASH_SOURCE[0]}"
+hop=0
+while [ -L "$SOURCE" ]; do
+  hop=$((hop + 1))
+  if [ "$hop" -gt 40 ]; then
+    echo "dreamux-server: too many symlink hops resolving $SOURCE" >&2
+    exit 1
+  fi
+  TARGET="$(readlink "$SOURCE")"
+  if [ "${TARGET:0:1}" = "/" ]; then
+    SOURCE="$TARGET"
+  else
+    SOURCE="$(dirname -- "$SOURCE")/$TARGET"
+  fi
+done
+
+ROOT="$(cd -- "$(dirname -- "$SOURCE")/.." &> /dev/null && pwd)"
+exec "$ROOT/packages/dreamux/bin/server" "$@"

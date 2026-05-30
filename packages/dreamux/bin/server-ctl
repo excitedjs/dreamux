@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Launcher for server-ctl. See bin/server for resolution details.
+set -eu
+
+SOURCE="${BASH_SOURCE[0]}"
+hop=0
+while [ -L "$SOURCE" ]; do
+  hop=$((hop + 1))
+  if [ "$hop" -gt 40 ]; then
+    echo "server-ctl: too many symlink hops resolving $SOURCE" >&2
+    exit 1
+  fi
+  TARGET="$(readlink "$SOURCE")"
+  if [ "${TARGET:0:1}" = "/" ]; then
+    SOURCE="$TARGET"
+  else
+    SOURCE="$(dirname -- "$SOURCE")/$TARGET"
+  fi
+done
+
+DIR="$(cd -- "$(dirname -- "$SOURCE")/.." &> /dev/null && pwd)"
+TARGET="$DIR/dist/cli/server-ctl.js"
+if [ ! -f "$TARGET" ]; then
+  echo "server-ctl: $TARGET is missing." >&2
+  echo "Run 'npm install' (it runs 'npm run build' via the prepare hook) or 'npm run build' from $DIR first." >&2
+  exit 1
+fi
+exec node "$TARGET" "$@"

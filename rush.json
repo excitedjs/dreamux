@@ -1,0 +1,39 @@
+/**
+ * Rush config for the dreamux monorepo (issue #4).
+ *
+ * Toolchain choices:
+ *   - Rush 5.140.x: stable line that integrates cleanly with pnpm 9.
+ *   - pnpm 9.15.x: keeps lockfile compatible with current pnpm releases.
+ *   - Node >= 22.7.0: matches the runtime requirement of the dreamux server
+ *     (per @excitedjs/dreamux package.json's engines.node field).
+ *
+ * Single-project for now (@excitedjs/dreamux), but the layout is ready to
+ * grow into multiple packages — additions go under packages/<name>/ and
+ * get registered in the `projects` array below.
+ *
+ * Install / build / test:
+ *   node common/scripts/install-run-rush.js update
+ *   node common/scripts/install-run-rush.js build
+ *   node common/scripts/install-run-rush.js test
+ * (Or `npm install -g @microsoft/rush@5.140.0` once, then `rush update`.)
+ */
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/rush/v5/rush.schema.json",
+  "rushVersion": "5.140.0",
+  "pnpmVersion": "9.15.0",
+  "pnpmOptions": {
+    "useWorkspaces": true,
+    "strictPeerDependencies": false
+  },
+  "nodeSupportedVersionRange": ">=22.7.0",
+  "ensureConsistentVersions": false,
+  "projectFolderMinDepth": 2,
+  "projectFolderMaxDepth": 3,
+  "projects": [
+    {
+      "packageName": "@excitedjs/dreamux",
+      "projectFolder": "packages/dreamux",
+      "shouldPublish": true
+    }
+  ]
+}

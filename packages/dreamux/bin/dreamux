@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Launcher for the unified `dreamux` CLI (issue #4).
+# Resolves its own location through symlinks so it works from any cwd and
+# via any chain of symlinks (npm-link, ~/bin shortcuts, etc.). Runs the
+# compiled dist output produced by `npm install` / `rush build`.
+set -eu
+
+SOURCE="${BASH_SOURCE[0]}"
+hop=0
+while [ -L "$SOURCE" ]; do
+  hop=$((hop + 1))
+  if [ "$hop" -gt 40 ]; then
+    echo "dreamux: too many symlink hops resolving $SOURCE" >&2
+    exit 1
+  fi
+  TARGET="$(readlink "$SOURCE")"
+  if [ "${TARGET:0:1}" = "/" ]; then
+    SOURCE="$TARGET"
+  else
+    SOURCE="$(dirname -- "$SOURCE")/$TARGET"
+  fi
+done
+
+DIR="$(cd -- "$(dirname -- "$SOURCE")/.." &> /dev/null && pwd)"
+TARGET="$DIR/dist/cli/dreamux.js"
+if [ ! -f "$TARGET" ]; then
+  echo "dreamux: $TARGET is missing." >&2
+  echo "Run 'npm install' (it runs 'npm run build' via the prepare hook), 'npm run build', or 'rush build' from the monorepo root first." >&2
+  exit 1
+fi
+exec node "$TARGET" "$@"

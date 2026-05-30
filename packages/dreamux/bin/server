@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Launcher for dreamux-server.
+#
+# Resolves its own location (following symlinks) so it works from any cwd
+# AND when invoked via a symlink (e.g. `npm install -g` puts a symlink under
+# the node bin dir). Runs the compiled dist output produced by
+# `npm install` / `npm run build`.
+set -eu
+
+SOURCE="${BASH_SOURCE[0]}"
+# Resolve symlinks until we find the real file. Handles both absolute and
+# relative symlink targets. Bounded by a reasonable loop cap to detect cycles.
+hop=0
+while [ -L "$SOURCE" ]; do
+  hop=$((hop + 1))
+  if [ "$hop" -gt 40 ]; then
+    echo "dreamux-server: too many symlink hops resolving $SOURCE" >&2
+    exit 1
+  fi
+  TARGET="$(readlink "$SOURCE")"
+  if [ "${TARGET:0:1}" = "/" ]; then
+    SOURCE="$TARGET"
+  else
+    SOURCE="$(dirname -- "$SOURCE")/$TARGET"
+  fi
+done
+
+DIR="$(cd -- "$(dirname -- "$SOURCE")/.." &> /dev/null && pwd)"
+TARGET="$DIR/dist/cli/server.js"
+if [ ! -f "$TARGET" ]; then
+  echo "dreamux-server: $TARGET is missing." >&2
+  echo "Run 'npm install' (it runs 'npm run build' via the prepare hook) or 'npm run build' from $DIR first." >&2
+  exit 1
+fi
+exec node "$TARGET" "$@"

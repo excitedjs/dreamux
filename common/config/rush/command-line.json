@@ -1,0 +1,31 @@
+/**
+ * Custom rush commands beyond the built-ins (build, rebuild, install, update).
+ *
+ * `test` and `typecheck` are bulk commands that fan out to every project's
+ * own `npm run <name>` script. enableParallelism=true lets independent
+ * projects run in parallel; ignoreMissingScript=true keeps a future
+ * "docs-only" package from breaking the bulk run.
+ */
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/rush/v5/command-line.schema.json",
+  "commands": [
+    {
+      "name": "test",
+      "commandKind": "bulk",
+      "summary": "Run each project's `npm test` (vitest).",
+      "description": "Bulk-runs vitest across every package that declares a `test` script.",
+      "enableParallelism": true,
+      "ignoreMissingScript": true,
+      "incremental": false
+    },
+    {
+      "name": "typecheck",
+      "commandKind": "bulk",
+      "summary": "Run each project's `npm run typecheck` (tsc --noEmit).",
+      "description": "Bulk-runs TypeScript typecheck across every package that declares a `typecheck` script.",
+      "enableParallelism": true,
+      "ignoreMissingScript": true,
+      "incremental": false
+    }
+  ]
+}

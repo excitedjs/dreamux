@@ -1,0 +1,223 @@
+# @excitedjs/dreamux
+
+The Codex-host server package. One long-running Node process hosts N
+**Dispatchers**; each Dispatcher binds **1 Feishu bot + 1 Codex thread**.
+
+This file is the **package-level** quick start. For the monorepo layout
+and harness pieces, see the top-level
+[`README.md`](../../README.md) and
+[`.agents/root.md`](../../.agents/root.md).
+
+Design background:
+[#1 Proposal](https://github.com/excitedjs/dreamux/issues/1) ·
+[#2 Engineering plan](https://github.com/excitedjs/dreamux/issues/2) ·
+[#4 Monorepo + harness](https://github.com/excitedjs/dreamux/issues/4).
+
+## What this package ships
+
+- The `dreamux` CLI (preferred): `dreamux server start`,
+  `dreamux server status`, `dreamux dispatcher add|remove|list|status|start|stop`.
+- Legacy aliases: `dreamux-server` (= `dreamux server start`) and
+  `server-ctl` (= `dreamux <verb>`). Kept so pre-monorepo operators
+  don't have to rewrite PATH entries; see
+  [`.agents/decisions/0002-cli-and-package-naming.md`](../../.agents/decisions/0002-cli-and-package-naming.md).
+- A SQLite-backed runtime (`dispatchers` + `inbound_buffer`) plus the
+  Feishu / Codex adapters that drive each dispatcher.
+
+## What this MVP does (P0)
+
+- **One Node process, many Dispatchers.** Each Dispatcher = 1 Feishu Bot
+  (independent appId/secret) + 1 long-lived Codex `app-server` child + 1
+  Codex thread.
+- **Single-thread, multi-chat fan-in.** A bot can be invited into multiple
+  groups and DMs; every inbound message goes into the same Codex thread.
+  Outbound replies are routed by the inbound's `source_chat_id`.
+- **No dispatcher↔worktree binding.** Codex picks the worktree at `tm`-call
+  time. The Codex daemon's cwd is `~/.codex-host/dispatchers/<id>/cwd/`
+  (intentionally empty).
+- **FIFO + at-most-once.** One running turn per dispatcher. After a server
+  crash, `running` inbound rows are flipped to `unknown` (the user is told
+  to confirm or resend); `awaiting_outbound` rows are safely retried.
+- **Trusted-local only.** No chat allowlist, `approval-policy=never`. Any
+  other deployment must uplift access control first — see
+  [issue #2 §"信任模型"](https://github.com/excitedjs/dreamux/issues/2).
+
+Explicitly **not** in MVP: approval cards, streaming outbound, per-chat
+threads, tm registry isolation, cross-machine coordination, web UI.
+
+## Install / build / test
+
+Two paths; both work, pick whichever fits the workflow.
+
+**Per-package (this directory).** Matches pre-monorepo muscle memory and
+runs the `prepare` hook (`tsc → dist/`):
+
+```bash
+cd packages/dreamux
+npm install
+npm run build       # also runs automatically via `prepare`
+npm run typecheck   # tsc --noEmit (no emit)
+npm test            # smoke + bin-launcher + (live) codex-0134 tests
+```
+
+**Monorepo (from repo root).** Required once a second package exists; CI
+exercises this path so a broken `rush.json` fails CI:
+
+```bash
+node common/scripts/install-run-rush.js update
+node common/scripts/install-run-rush.js build
+node common/scripts/install-run-rush.js test
+```
+
+The bin launchers shell out to plain `node` against the compiled `dist/`
+output; **no `tsx` is needed at runtime** (PR #6).
+
+## Run the server
+
+```bash
+# Preferred — unified CLI (issue #4)
+./bin/dreamux server start
+
+# Backward-compat alias
+./bin/server
+```
+
+Both work from any cwd and via symlinks (PR #6 + bin-launcher tests).
+
+The server uses two separate home directories — by design (decision 0003):
+
+| Path | Purpose | Source of truth |
+|---|---|---|
+| `~/.dreamux/config.toml`                 | User-editable global config — auto-created on first boot with sensible defaults; edit and restart to apply | the operator |
+| `~/.codex-host/state.db`                 | SQLite (dispatchers + inbound buffer)      | the server |
+| `~/.codex-host/admin.sock`               | Admin Unix socket (`0600`)                 | the server |
+| `~/.codex-host/dispatchers/<id>/cwd/`    | Codex app-server cwd                       | the server |
+| `~/.codex-host/dispatchers/<id>/socket`  | Codex Unix socket                          | the server |
+| `~/.codex-host/dispatchers/<id>/*.log`   | Codex stdout / stderr                      | the server |
+
+`rm -rf ~/.codex-host` is a safe recovery — your config in `~/.dreamux/`
+survives. `runtime_dir` and `admin_socket` paths in the config can move
+the `~/.codex-host` half anywhere you like.
+
+## Configure a dispatcher
+
+```bash
+# Bot secret comes from an env var the server process can see.
+export BOT_SECRET_FLOW='cli_secret_XXX'
+
+./bin/dreamux dispatcher add \
+  --id flow \
+  --bot-app-id cli_aaa \
+  --bot-secret-ref env:BOT_SECRET_FLOW
+
+# Inspect / restart
+./bin/dreamux dispatcher list
+./bin/dreamux dispatcher status --id flow
+./bin/dreamux dispatcher start  --id flow   # if not auto-started
+```
+
+`./bin/server-ctl <args>` still works as an alias.
+
+## MVP verification path (issue #2 §"MVP 验收脚本")
+
+1. `dreamux dispatcher add --id flow --bot-app-id cli_aaa --bot-secret-ref env:BOT_SECRET_FLOW`
+2. `dreamux server start` — dispatcher `flow` goes to `ready`
+3. Invite the bot to a Feishu group A, send `hi`
+4. Server delivers it into the Codex thread; reply goes back to group A
+5. Invite the same bot to a DM, ask "do you remember the 'hi' from earlier?"
+6. Same thread, so the reply confirms — and goes back to the DM
+7. Ask the bot to "run the test suite via tm and summarize"
+8. Codex shells out to `tm`, reads stdout/stderr, replies into the source chat
+9. Repeat with a **different** worktree to prove dispatcher↔worktree decoupling
+10. `pkill node` to crash the server, then restart it
+11. Continue chatting — Codex `thread/resume` restores context
+
+## Configuration reference
+
+Precedence for every config-able value (highest wins): env var →
+per-dispatcher field → `~/.dreamux/config.toml` → built-in default.
+See [decision 0003](../../.agents/decisions/0003-global-config-dir.md).
+
+### Global: `~/.dreamux/config.toml`
+
+Auto-created on first boot with this default (excerpt — open the file
+itself for the inline comments explaining each key):
+
+```toml
+runtime_dir = "~/.codex-host"
+# admin_socket = "~/.codex-host/admin.sock"   # default: <runtime_dir>/admin.sock
+
+[codex]
+bin = "codex"
+approval_policy = "never"        # never | auto | auto-approve | on-failure
+sandbox_mode = "workspace-write" # read-only | workspace-write | danger-full-access
+extra_args = []
+initialize_timeout_ms = 10000
+
+[outbound]
+retries = 3
+retry_delay_ms = 1000
+```
+
+Edit and restart `dreamux server start`. Parse errors fail-fast with a
+`file:line` pointer.
+
+### `codex_args_json` (per-dispatcher, overrides global)
+
+JSON object stored in `dispatchers.codex_args_json`:
+
+```json
+{ "approvalPolicy": "never", "sandboxMode": "workspace-write", "extraArgs": ["--model", "gpt-5"] }
+```
+
+| Field            | Default   | Notes                                                |
+| ---------------- | --------- | ---------------------------------------------------- |
+| `approvalPolicy` | inherits `[codex] approval_policy` from `~/.dreamux/config.toml`, else `"never"` | Must be one of `never`/`auto`/`auto-approve`/`on-failure`. Otherwise startup fails fast (issue #2 §"实现陷阱"). |
+| `sandboxMode`    | inherits `[codex] sandbox_mode`, else `"workspace-write"` | Must be one of `read-only`/`workspace-write`/`danger-full-access` (codex 0.134 enum). Validated at dispatcher startup. |
+| `extraArgs`      | appended *after* global `codex.extra_args` | codex's "last write wins" semantics for `-c key=value` mean a per-dispatcher entry effectively overrides a same-key global. |
+
+### Env vars (highest precedence — escape hatch)
+
+| Var                          | Purpose                                            |
+| ---------------------------- | -------------------------------------------------- |
+| `CODEX_HOST_RUNTIME_DIR`     | Override `runtime_dir`                             |
+| `CODEX_HOST_ADMIN_SOCKET`    | Override admin Unix socket path                    |
+| `CODEX_HOST_CODEX_BIN`       | Override `codex.bin`                               |
+| `DREAMUX_CONFIG_DIR`         | Override `~/.dreamux` (where `config.toml` lives)  |
+| `BOT_SECRET_<NAME>`          | Bot secrets referenced by `env:BOT_SECRET_<NAME>`  |
+| `DREAMUX_SKIP_LIVE_CODEX`    | Opt out of the live codex 0.134 integration test (loud skip) |
+
+## What this MVP does **not** do
+
+(see [issue #2 §"明确不在 MVP 范围"](https://github.com/excitedjs/dreamux/issues/2))
+
+- Multiple threads per dispatcher
+- Per-chat memory
+- Approval / Feishu approval cards
+- Streaming assistant deltas
+- tm CLI changes (`tm --json`, registry namespace)
+- Cross-machine coordination
+- Web UI / Prometheus
+- Migration from old claudemux dispatcher state
+- access gate / chat allowlist / pairing (D12 + Trust Model)
+
+## Testing
+
+```bash
+npm test           # smoke + bin-launcher + codex-0134-live
+```
+
+- `tests/smoke.test.ts` — fake-codex-driven dispatcher behavior:
+  happy path, FIFO, crash recovery (running → unknown), thread/resume
+  failure, outbound retry without turn re-run, approval fail-fast.
+- `tests/bin-launcher.test.ts` — spawns the real bash launchers
+  (`dreamux`, `dreamux-server`, `server-ctl`, plus the repo-root
+  forwarders) from arbitrary cwds and through symlinks; static "no tsx"
+  assertion.
+- `tests/codex-0134-live.test.ts` — spawns a real `codex app-server`
+  (skipped loudly when `codex` is missing or wrong version; opt-in via
+  `DREAMUX_SKIP_LIVE_CODEX=1`).
+
+## License
+
+MIT.
