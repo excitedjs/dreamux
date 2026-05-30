@@ -1,0 +1,17 @@
+{
+  "name": "@excitedjs/feishu-transport",
+  "entries": [
+    {
+      "version": "0.0.1",
+      "tag": "@excitedjs/feishu-transport_v0.0.1",
+      "date": "Sat, 30 May 2026 17:47:51 GMT",
+      "comments": {
+        "patch": [
+          {
+            "comment": "init"
+          }
+        ]
+      }
+    }
+  ]
+}

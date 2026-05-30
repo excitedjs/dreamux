@@ -1,6 +1,6 @@
 {
   "name": "@excitedjs/feishu-transport",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "Shared Feishu platform-I/O core for dreamux and claudemux: connect / receive / send / auth / render / parse + stateless policy (issue excitedjs/dreamux#25).",
   "license": "MIT",
   "type": "module",

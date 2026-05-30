@@ -1,6 +1,6 @@
 {
   "name": "@excitedjs/dreamux",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Codex-host server — single-session MVP. One node process hosts N dispatchers, each binding 1 Feishu bot + 1 Codex thread.",
   "license": "MIT",
   "type": "module",

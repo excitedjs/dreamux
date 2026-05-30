@@ -1,0 +1,22 @@
+{
+  "name": "@excitedjs/dreamux",
+  "entries": [
+    {
+      "version": "0.1.1",
+      "tag": "@excitedjs/dreamux_v0.1.1",
+      "date": "Sat, 30 May 2026 17:47:51 GMT",
+      "comments": {
+        "patch": [
+          {
+            "comment": "init"
+          }
+        ],
+        "dependency": [
+          {
+            "comment": "Updating dependency \"@excitedjs/feishu-transport\" to `0.0.1`"
+          }
+        ]
+      }
+    }
+  ]
+}
