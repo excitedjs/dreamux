@@ -24,6 +24,15 @@ export interface InboundMessage {
 export interface ParsedInbound {
   /** Human-readable text to forward to the engine. */
   text: string
+  /** Optional flat/narrow metadata supplied by the host's event normalizer. */
+  meta?: Record<string, unknown>
+}
+
+export interface ChannelInbound {
+  /** Flattened markdown-ish text suitable for a narrow channel payload. */
+  text: string
+  /** Flat string-only metadata with protocol-safe underscore keys. */
+  meta: Record<string, string>
 }
 
 /**
@@ -60,6 +69,80 @@ export function parseInbound(message: InboundMessage): ParsedInbound {
     default:
       return { text: `(${type} message)` }
   }
+}
+
+/**
+ * Extract canonical, narrow metadata from a Feishu inbound event envelope.
+ *
+ * Content parsing only sees `message.content`; identifiers such as
+ * `message_id`, `chat_id`, and `sender_id` live in the event envelope. Keeping
+ * this Feishu-specific field mapping in core prevents dreamux and claudemux
+ * from copy-drifting it in their host adapters.
+ */
+export function narrowMetaFromEvent(rawEvent: unknown): Record<string, unknown> {
+  if (!rawEvent || typeof rawEvent !== 'object' || Array.isArray(rawEvent)) return {}
+  const root = rawEvent as Record<string, unknown>
+  const event = asRecord(root.event) ?? root
+  const message = asRecord(event.message) ?? {}
+  const sender = asRecord(event.sender) ?? {}
+  const senderId = asRecord(sender.sender_id)
+
+  return omitEmptyStrings({
+    message_id: asString(message.message_id),
+    chat_id: asString(message.chat_id),
+    chat_type: asString(message.chat_type),
+    sender_id: asString(senderId?.open_id),
+    sender_type: asString(sender.sender_type),
+    root_id: asString(message.root_id),
+    parent_id: asString(message.parent_id),
+    create_time: asString(message.create_time),
+  })
+}
+
+/**
+ * Convert parsed inbound content into the channel protocol's narrow payload.
+ *
+ * `parseInbound` owns Feishu content flattening; the host may add raw event
+ * metadata under `parsed.meta` before calling this. This function is deliberately
+ * engine-agnostic: it preserves only text plus a flat string metadata bag. Keys
+ * with hyphens or other protocol-unsafe characters are dropped, and nested /
+ * non-string values are not stringified blindly.
+ */
+export function toChannelInbound(parsed: ParsedInbound): ChannelInbound {
+  const text = parsed.text === '' ? '(empty message)' : parsed.text
+  return { text, meta: sanitizeChannelMeta(parsed.meta) }
+}
+
+const CHANNEL_META_KEY_RE = /^[A-Za-z0-9_]+$/
+
+function sanitizeChannelMeta(meta: Record<string, unknown> | undefined): Record<string, string> {
+  const out: Record<string, string> = {}
+  if (!meta) return out
+  for (const [key, value] of Object.entries(meta)) {
+    if (!CHANNEL_META_KEY_RE.test(key)) continue
+    if (typeof value === 'string') {
+      out[key] = value
+    }
+  }
+  return out
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined
+}
+
+function omitEmptyStrings(input: Record<string, string | undefined>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(input)) {
+    if (value !== undefined && value !== '') out[key] = value
+  }
+  return out
 }
 
 /**
