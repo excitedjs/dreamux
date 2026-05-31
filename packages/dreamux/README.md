@@ -20,7 +20,7 @@ Design background:
 - Legacy aliases: `dreamux-server` (= `dreamux server start`) and
   `server-ctl` (= `dreamux <verb>`). Kept so pre-monorepo operators
   don't have to rewrite PATH entries; see
-  [`.agents/decisions/0002-cli-and-package-naming.md`](../../.agents/decisions/0002-cli-and-package-naming.md).
+  [the CLI naming decision](../../.agents/decisions/cli-and-package-naming.md).
 - A SQLite-backed runtime (`dispatchers` + `inbound_buffer`) plus the
   Feishu / Codex adapters that drive each dispatcher.
 
@@ -51,7 +51,7 @@ Use the monorepo (rush) path from the repo root — it is the only supported
 install path. This package depends on `@excitedjs/feishu-transport` via the
 pnpm `workspace:*` protocol, which `npm` cannot resolve, so
 `cd packages/dreamux && npm install` no longer works (see
-[decision 0006](../../.agents/decisions/0006-install-model.md)):
+[the install-model decision](../../.agents/decisions/install-model.md)):
 
 ```bash
 node common/scripts/install-run-rush.js update
@@ -76,7 +76,8 @@ output; **no `tsx` is needed at runtime** (PR #6).
 
 Both work from any cwd and via symlinks (PR #6 + bin-launcher tests).
 
-The server uses two separate home directories — by design (decision 0003):
+The server uses two separate home directories — by design (see
+[the global-config decision](../../.agents/decisions/global-config-dir.md)):
 
 | Path | Purpose | Source of truth |
 |---|---|---|
@@ -128,7 +129,7 @@ export BOT_SECRET_FLOW='cli_secret_XXX'
 
 Precedence for every config-able value (highest wins): env var →
 per-dispatcher field → `~/.dreamux/config.toml` → built-in default.
-See [decision 0003](../../.agents/decisions/0003-global-config-dir.md).
+See [the global-config decision](../../.agents/decisions/global-config-dir.md).
 
 ### Global: `~/.dreamux/config.toml`
 
@@ -196,7 +197,7 @@ JSON object stored in `dispatchers.codex_args_json`:
 ## Testing
 
 ```bash
-# from the repo root (the only supported path — see decision 0006)
+# from the repo root (the only supported path — see the install-model decision)
 node common/scripts/install-run-rush.js test   # smoke + bin-launcher + codex-0134-live
 ```
 

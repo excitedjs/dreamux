@@ -24,7 +24,7 @@ fix it in the same PR.
 - `/rush.json`, `/common/config/rush/`, `/common/scripts/install-run-rush.js`
   are the rush + pnpm scaffolding.
 - `/bin/` shims forward to `/packages/dreamux/bin/` for backward-compat with
-  pre-monorepo PATH entries — see `.agents/decisions/0002-cli-and-package-naming.md`.
+  pre-monorepo PATH entries — see `.agents/decisions/cli-and-package-naming.md`.
 - `/.agents/` is the on-demand knowledge base. Start at `.agents/root.md`.
 
 **One install path — the monorepo path.** Build and test through rush:
@@ -42,15 +42,15 @@ to the real version at publish time, so external `npm install @excitedjs/dreamux
 is unaffected — only the in-repo per-package path is gone. There is no committed
 per-package `package-lock.json`.
 
-Reasoning: `.agents/decisions/0006-install-model.md` (which retires the
-two-paths consequence of `.agents/decisions/0001-rush-pnpm-monorepo.md`).
+Reasoning: `.agents/decisions/install-model.md` (which retires the
+two-paths consequence of `.agents/decisions/rush-pnpm-monorepo.md`).
 
 ## CLI surface
 
 The user-facing CLI is `dreamux` (subcommands `server start`, `server status`,
 `dispatcher add|remove|list|status|start|stop`). The legacy `dreamux-server`
 and `server-ctl` binaries are kept as aliases — see
-`.agents/decisions/0002-cli-and-package-naming.md`. New documentation and
+`.agents/decisions/cli-and-package-naming.md`. New documentation and
 examples should introduce `dreamux <verb>`.
 
 ## Knowledge-delta protocol
@@ -66,7 +66,7 @@ kinds are in [`.agents/CONTRIBUTING.md`](.agents/CONTRIBUTING.md).
 Run `.agents/scripts/check.sh` before committing KB changes; CI rejects
 what the script rejects.
 
-## Two home directories (decision 0003)
+## Two home directories (global-config decision)
 
 - `~/.dreamux/config.toml` — user-editable global config; auto-created on
   first boot. Source of truth: the operator.

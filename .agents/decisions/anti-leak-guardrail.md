@@ -1,4 +1,4 @@
-# 0004 — Anti-leak guardrail (gitleaks)
+# Anti-leak guardrail (gitleaks)
 
 - **Status:** Accepted
 - **Date:** 2026-05-30

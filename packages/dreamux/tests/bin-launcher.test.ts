@@ -5,7 +5,7 @@
  *   1. The package-local launchers under packages/dreamux/bin/:
  *      `dreamux`, `server`, `server-ctl`.
  *   2. The repo-root forwarders under <repo>/bin/ that operators with
- *      pre-monorepo PATH entries still rely on (issue #4, decision 0002).
+ *      pre-monorepo PATH entries still rely on (issue #4, CLI naming decision).
  *
  * Each launcher must:
  *   - work from any cwd (resolve its own location via $BASH_SOURCE)

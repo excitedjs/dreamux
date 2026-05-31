@@ -14,7 +14,7 @@
  *   1. dispatchers.codex_args_json (this JSON)
  *   2. global defaults from ~/.dreamux/config.toml (passed in as `defaults`)
  *   3. hardcoded fallbacks (`'never'`, `'workspace-write'`, `[]`)
- * Per the feat/global-config-dir work — see decision 0003.
+ * Per the feat/global-config-dir work — see the global-config decision.
  *
  * `approvalPolicy` not in the trusted-local allowlist fails-fast at startup
  * (issue #2 §"实现陷阱"): dispatcher refuses to come up if the policy may

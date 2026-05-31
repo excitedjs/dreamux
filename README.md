@@ -20,9 +20,9 @@ Design background:
 | Architecture, decisions, knowledge-delta protocol | [`.agents/root.md`](.agents/root.md) |
 | Always-loaded agent operating rules | [`CLAUDE.md`](CLAUDE.md) (`AGENTS.md` is a symlink) |
 | Monorepo layout reference | [`.agents/components/repo-structure.md`](.agents/components/repo-structure.md) |
-| Why Rush + pnpm | [`.agents/decisions/0001-rush-pnpm-monorepo.md`](.agents/decisions/0001-rush-pnpm-monorepo.md) |
-| Why the monorepo path is the only install path | [`.agents/decisions/0006-install-model.md`](.agents/decisions/0006-install-model.md) |
-| Why `@excitedjs/dreamux` + `dreamux` CLI + the two legacy aliases | [`.agents/decisions/0002-cli-and-package-naming.md`](.agents/decisions/0002-cli-and-package-naming.md) |
+| Why Rush + pnpm | [`.agents/decisions/rush-pnpm-monorepo.md`](.agents/decisions/rush-pnpm-monorepo.md) |
+| Why the monorepo path is the only install path | [`.agents/decisions/install-model.md`](.agents/decisions/install-model.md) |
+| Why `@excitedjs/dreamux` + `dreamux` CLI + the two legacy aliases | [`.agents/decisions/cli-and-package-naming.md`](.agents/decisions/cli-and-package-naming.md) |
 
 ## Repo layout
 
@@ -48,7 +48,7 @@ Design background:
 
 The monorepo path is the single supported install path (the workspace now
 spans three packages wired with `workspace:*`, which `npm` cannot resolve —
-see [decision 0006](.agents/decisions/0006-install-model.md)):
+see [the install-model decision](.agents/decisions/install-model.md)):
 
 ```bash
 node common/scripts/install-run-rush.js update

@@ -1,4 +1,4 @@
-# 0002 — Package name `@excitedjs/dreamux`, unified `dreamux` CLI
+# Package name `@excitedjs/dreamux`, unified `dreamux` CLI
 
 - **Status:** Accepted
 - **Date:** 2026-05-28

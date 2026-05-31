@@ -30,7 +30,7 @@ The single place that imports the Feishu SDK.
 ## Build / test
 
 Built and tested through the monorepo (rush) path — the only supported install
-path (see [decision 0006](../../../.agents/decisions/0006-install-model.md)).
+path (see [the install-model decision](../../../.agents/decisions/install-model.md)).
 From the repo root:
 
 ```sh

@@ -1,4 +1,4 @@
-# 0001 — Adopt Rush + pnpm for the dreamux monorepo
+# Adopt Rush + pnpm for the dreamux monorepo
 
 - **Status:** Accepted
 - **Date:** 2026-05-28
@@ -48,7 +48,7 @@ Concrete shape:
   a future decision retires one. Per-package `package-lock.json` files
   stay committed so the npm path is reproducible; `pnpm-lock.yaml` lives
   in `common/config/rush/` once `rush update` runs.
-  > **Superseded (2026-05-31) by [decision 0006](0006-install-model.md).**
+  > **Superseded (2026-05-31) by [the install-model decision](install-model.md).**
   > The channel refactor (#4) introduced a `workspace:*` dependency that
   > `npm` cannot resolve, so the per-package npm path is retired and the
   > monorepo rush path is now the only supported one.

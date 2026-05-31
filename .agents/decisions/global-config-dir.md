@@ -1,4 +1,4 @@
-# 0003 — Global config in `~/.dreamux/config.toml`
+# Global config in `~/.dreamux/config.toml`
 
 - **Status:** Accepted
 - **Date:** 2026-05-28
@@ -79,7 +79,7 @@ Secrets (per-dispatcher `bot_secret_ref`) deliberately stay in env vars
 - The file is created with mode `0600`. Operators expecting world-readable
   configs need to chmod after the fact (and document why).
 - Two directories now matter: `~/.dreamux/` (user-editable) and
-  `~/.codex-host/` (server state). README + decision-0001 link the two so
+  `~/.codex-host/` (server state). README + the Rush + pnpm decision link the two so
   newcomers see the split.
 
 **Foot-guns:**
