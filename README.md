@@ -39,7 +39,7 @@ Design background:
 │   ├── config/rush/       command-line.json, .npmrc, version-policies.json
 │   └── scripts/install-run-rush.js   minimal rush bootstrap
 ├── .agents/               on-demand knowledge base
-├── .github/workflows/     CI: rush build/test, KB check, gitleaks
+├── .github/workflows/     CI: rush change/typecheck/build/test, shellcheck, KB check, author/gitleaks gates
 ├── CLAUDE.md              always-loaded operating rules
 └── AGENTS.md              symlink → CLAUDE.md
 ```
