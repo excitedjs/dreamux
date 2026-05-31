@@ -62,5 +62,6 @@ issues:
 | add / change a global config key (`~/.dreamux/config.toml`) | [`decisions/0003-global-config-dir.md`](decisions/0003-global-config-dir.md) |
 | touch the anti-leak guardrail (`.gitleaks.toml`, `.npmrc`, CI / hook) | [`decisions/0004-anti-leak-guardrail.md`](decisions/0004-anti-leak-guardrail.md) |
 | touch npm publishing / the release workflows | [`decisions/0005-npm-release-oidc.md`](decisions/0005-npm-release-oidc.md) |
+| add or verify Rush change files | [`components/repo-structure.md#rush-change-files`](components/repo-structure.md#rush-change-files) |
 | write a new decision record / new component doc | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
 | modify the server runtime / Codex protocol handling | the issue links above + read the source — runtime details aren't yet promoted to the KB |
