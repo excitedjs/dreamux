@@ -64,6 +64,52 @@ unaffected — pnpm rewrites `workspace:*` to a real version at publish time.
 See [decision 0006](../decisions/0006-install-model.md) (which retires the
 two-paths consequence of [decision 0001](../decisions/0001-rush-pnpm-monorepo.md)).
 
+## Rush change files
+
+Release-facing changes need Rush change files under
+`/common/changes/<package>/`. Always validate them before pushing:
+
+```bash
+node common/scripts/install-run-rush.js change --verify --no-fetch
+```
+
+Rush can generate change files non-interactively when every changed package
+uses the same release type and message:
+
+```bash
+node common/scripts/install-run-rush.js change \
+  --bulk \
+  --message "Short release note" \
+  --bump-type patch \
+  --target-branch main \
+  --no-fetch \
+  --overwrite
+```
+
+Use `--email "<git author>"` only when Rush cannot infer the author from git.
+Do not paste real email addresses into chat or issue comments; some channels
+treat them as sensitive data.
+
+When changed packages need different release notes, write one JSON file per
+package instead of forcing `--bulk`. The accepted schema is:
+
+```json
+{
+  "changes": [
+    {
+      "comment": "Short release note",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "<git author>"
+}
+```
+
+Then run the same `rush change --verify --no-fetch` command. This keeps
+multi-package release notes precise while still using Rush as the validator.
+
 ## Public surface
 
 - npm package: `@excitedjs/dreamux`
