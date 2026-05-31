@@ -1,11 +1,10 @@
-import { isBotSenderType, type Mention } from '@excitedjs/feishu-transport';
+import { isBotSenderType } from '@excitedjs/feishu-transport';
 
 export interface CompatibleFeishuGateInput {
   senderId: string;
   senderType?: string;
   chatType: string;
   botOpenId?: string;
-  mentions?: Mention[];
 }
 
 export type CompatibleFeishuGateResult =

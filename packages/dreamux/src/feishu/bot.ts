@@ -20,10 +20,14 @@
 
 import {
   createFeishuTransport,
+  narrowMetaFromEvent,
   parseInbound,
+  toChannelInbound,
   type Mention,
   type OutboundTarget,
 } from '@excitedjs/feishu-transport';
+
+import type { ChannelOutboundTarget } from '../channel/outbound.js';
 
 /** The Feishu event_type carrying inbound chat messages. */
 const IM_MESSAGE_EVENT_TYPE = 'im.message.receive_v1';
@@ -104,36 +108,54 @@ export function createFeishuBot(opts: CreateBotOptions): FeishuBot {
   };
 }
 
+export function channelOutboundToFeishuTarget(
+  target: ChannelOutboundTarget,
+): OutboundTarget {
+  return {
+    chatId: target.conversationId,
+    ...(target.replyTo !== undefined
+      ? { replyToMessageId: target.replyTo }
+      : {}),
+    ...(target.mentionUsers !== undefined
+      ? { mentionUserIds: target.mentionUsers }
+      : {}),
+    ...(target.conversationKey !== undefined
+      ? { conversationKey: target.conversationKey }
+      : {}),
+  };
+}
+
 /**
  * Reshape a raw `im.message.receive_v1` payload into a `FeishuInboundEvent`,
- * using the core's `parseInbound` for the content→text flattening (incl. the
- * `interactive`-card parse the old in-package copy had lost). Returns `null`
- * for a payload missing the message_id or chat_id that make it routable.
+ * using the core's `parseInbound` + `narrowMetaFromEvent` + `toChannelInbound`
+ * for content flattening and event-envelope metadata. Returns `null` for a
+ * payload missing the message_id or chat_id that make it routable.
  */
 function normalizeInboundEvent(raw: unknown): FeishuInboundEvent | null {
   if (!raw || typeof raw !== 'object') return null;
   const root = raw as Record<string, unknown>;
   const event = (root['event'] ?? root) as Record<string, unknown>;
   const message = (event['message'] ?? {}) as Record<string, unknown>;
-  const sender = (event['sender'] ?? {}) as Record<string, unknown>;
-  const senderId =
-    ((sender['sender_id'] as Record<string, unknown>)?.['open_id'] as string) ?? '';
-  const senderType = (sender['sender_type'] as string) ?? '';
-  const messageId = (message['message_id'] as string) ?? '';
-  const chatId = (message['chat_id'] as string) ?? '';
-  const chatType = (message['chat_type'] as string) ?? '';
   const messageType = (message['message_type'] as string) ?? '';
   const rawContent = (message['content'] as string) ?? '';
   const mentions = (message['mentions'] as Mention[] | undefined) ?? [];
-  const createTime = (message['create_time'] as string) ?? '';
-
-  if (messageId === '' || chatId === '') return null;
-
   const parsed = parseInbound({
     message_type: messageType,
     content: rawContent,
     mentions,
   });
+  const payload = toChannelInbound({
+    ...parsed,
+    meta: narrowMetaFromEvent(raw),
+  });
+  const messageId = payload.meta['message_id'] ?? '';
+  const chatId = payload.meta['chat_id'] ?? '';
+  const chatType = payload.meta['chat_type'] ?? '';
+  const senderId = payload.meta['sender_id'] ?? '';
+  const senderType = payload.meta['sender_type'] ?? '';
+  const createTime = payload.meta['create_time'] ?? '';
+
+  if (messageId === '' || chatId === '') return null;
 
   return {
     messageId,
@@ -143,7 +165,7 @@ function normalizeInboundEvent(raw: unknown): FeishuInboundEvent | null {
     senderType,
     messageType,
     rawContent,
-    parsedText: parsed.text,
+    parsedText: payload.text,
     mentions,
     createTime,
     raw,
