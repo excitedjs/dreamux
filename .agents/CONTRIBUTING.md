@@ -22,7 +22,7 @@ being terse.
 
 - new package added / removed under `packages/`
 - a CLI subcommand added / removed / renamed (issue #4 made `dreamux` the
-  unified surface — see decision 0002)
+  unified surface — see [the CLI naming decision](decisions/cli-and-package-naming.md))
 - a settled design decision after debate (write a decision record)
 - a new external dependency that materially shapes the runtime (a
   database engine swap, a new IPC mechanism)
@@ -52,7 +52,7 @@ being terse.
 | Kind | When to use | Naming |
 |---|---|---|
 | `components/<thing>.md` | A piece big enough to have its own contract / mental model (server, CLI, codex-client, feishu-bot, repo-structure) | kebab-case, no number |
-| `decisions/NNNN-<slug>.md` | A choice that was debated and settled; future maintainers need the *why* | 4-digit zero-padded number, kebab-case slug |
+| `decisions/<slug>.md` | A choice that was debated and settled; future maintainers need the *why* | topic slug, kebab-case, no sequence number |
 | `domains/<area>.md` | A cross-cutting contract that spans multiple components | kebab-case |
 | `proposals/<slug>.md` | An active design under discussion | kebab-case |
 | `research/<slug>.md` | A frozen investigation snapshot; must end with an explicit "disposition" section (Promoted / Deferred / Out of scope) | kebab-case |
@@ -61,7 +61,7 @@ being terse.
 ## Decision record template
 
 ```markdown
-# NNNN — <decision title>
+# <decision title>
 
 - **Status:** Accepted | In progress | Superseded by [link]
 - **Date:** YYYY-MM-DD

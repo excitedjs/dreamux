@@ -1,4 +1,4 @@
-# 0005 — npm release via OIDC trusted publishing
+# npm release via OIDC trusted publishing
 
 - **Status:** Accepted (scaffolding; unexecutable until a publishable package builds)
 - **Date:** 2026-05-30
@@ -26,7 +26,7 @@ Three hard constraints shaped the design:
   package is configured on npmjs.com individually. But one workflow *run* can
   publish many packages: each `npm publish` does its own OIDC exchange, so every
   package just lists the same workflow file as its trusted publisher.
-- **Main is protected.** The anti-leak guardrail (decision 0004) makes the
+- **Main is protected.** The [anti-leak guardrail](anti-leak-guardrail.md) makes the
   `gitleaks` check required on `main`, so CI cannot push a version-bump commit
   straight to `main` with the default `GITHUB_TOKEN`.
 

@@ -42,8 +42,8 @@ issues:
 
 - [`components/`](components/) — one doc per piece (repo-structure today;
   server / codex-client / feishu-bot / cli to be added as they stabilize).
-- [`decisions/`](decisions/) — accepted decision records. Newest at the
-  top of the index in each file's frontmatter; ordered numerically.
+- [`decisions/README.md`](decisions/README.md) — accepted decision records,
+  indexed by topic slug. Do not prefix new records with sequence numbers.
 - `domains/`, `proposals/`, `research/`, `rules/` — empty for now; add
   here when material grows past a single file's worth.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — when to update this KB, how to
@@ -56,12 +56,13 @@ issues:
 | You're about to ... | Read first |
 |---|---|
 | add/change a package, move source between packages | [`components/repo-structure.md`](components/repo-structure.md) |
-| understand why rush + pnpm | [`decisions/0001-rush-pnpm-monorepo.md`](decisions/0001-rush-pnpm-monorepo.md) |
-| install / build / test the repo, or wonder why `npm ci` is gone | [`decisions/0006-install-model.md`](decisions/0006-install-model.md) |
-| rename or restructure the public CLI / package | [`decisions/0002-cli-and-package-naming.md`](decisions/0002-cli-and-package-naming.md) |
-| add / change a global config key (`~/.dreamux/config.toml`) | [`decisions/0003-global-config-dir.md`](decisions/0003-global-config-dir.md) |
-| touch the anti-leak guardrail (`.gitleaks.toml`, `.npmrc`, CI / hook) | [`decisions/0004-anti-leak-guardrail.md`](decisions/0004-anti-leak-guardrail.md) |
-| touch npm publishing / the release workflows | [`decisions/0005-npm-release-oidc.md`](decisions/0005-npm-release-oidc.md) |
+| browse decisions by topic | [`decisions/README.md`](decisions/README.md) |
+| understand why rush + pnpm | [`decisions/rush-pnpm-monorepo.md`](decisions/rush-pnpm-monorepo.md) |
+| install / build / test the repo, or wonder why `npm ci` is gone | [`decisions/install-model.md`](decisions/install-model.md) |
+| rename or restructure the public CLI / package | [`decisions/cli-and-package-naming.md`](decisions/cli-and-package-naming.md) |
+| add / change a global config key (`~/.dreamux/config.toml`) | [`decisions/global-config-dir.md`](decisions/global-config-dir.md) |
+| touch the anti-leak guardrail (`.gitleaks.toml`, `.npmrc`, CI / hook) | [`decisions/anti-leak-guardrail.md`](decisions/anti-leak-guardrail.md) |
+| touch npm publishing / the release workflows | [`decisions/npm-release-oidc.md`](decisions/npm-release-oidc.md) |
 | add or verify Rush change files | [`components/repo-structure.md#rush-change-files`](components/repo-structure.md#rush-change-files) |
 | write a new decision record / new component doc | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
 | modify the server runtime / Codex protocol handling | the issue links above + read the source — runtime details aren't yet promoted to the KB |

@@ -98,7 +98,7 @@ export const DEFAULT_CONFIG_TOML = `# dreamux global configuration (~/.dreamux/c
 # Edit this file and restart \`dreamux server start\` to apply changes.
 # Runtime data (SQLite, sockets, dispatcher logs) lives separately in
 # \`runtime_dir\` below — this file holds only user-editable settings.
-# See .agents/decisions/0003-global-config-dir.md for the design rationale.
+# See .agents/decisions/global-config-dir.md for the design rationale.
 #
 # Precedence (highest wins):
 #   1. environment variables (CODEX_HOST_RUNTIME_DIR, CODEX_HOST_ADMIN_SOCKET,
@@ -288,7 +288,7 @@ function mergeWithDefaults(raw: unknown, file: string): DreamuxConfig {
     'codex.',
   );
   // Validate approval_policy against the same allowlist as codex-args.ts.
-  // Keep the two in sync — see decision 0001 / issue #2 §"信任模型".
+  // Keep the two in sync — see the Rush + pnpm decision / issue #2 §"信任模型".
   const ALLOWED_POLICIES = new Set([
     'never',
     'auto',

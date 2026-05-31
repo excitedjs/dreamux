@@ -1,4 +1,4 @@
-# 0006 — One install path: the monorepo (rush) path only
+# One install path: the monorepo (rush) path only
 
 - **Status:** Accepted
 - **Date:** 2026-05-31
@@ -7,7 +7,7 @@
 
 ## Context
 
-[Decision 0001](0001-rush-pnpm-monorepo.md) committed the repo to keeping
+[The Rush + pnpm decision](rush-pnpm-monorepo.md) committed the repo to keeping
 **two** install paths working "until a future decision retires one":
 
 1. **Per-package** — `cd packages/dreamux && npm install && npm test`, backed
@@ -41,7 +41,7 @@ which install model to keep.
   moves into the `rush` job, which now runs `rush update` → `rush build` →
   `rush test` (`DREAMUX_SKIP_LIVE_CODEX=1`, no codex binary on the runner).
 
-Path 1 was always framed as "pre-monorepo muscle memory." Decision 0001 itself
+Path 1 was always framed as "pre-monorepo muscle memory." The Rush + pnpm decision itself
 made the monorepo path "required once a second package lands"; three packages
 now exist, so retiring path 1 is the natural close-out, not a new constraint.
 
@@ -58,7 +58,8 @@ now exist, so retiring path 1 is the natural close-out, not a new constraint.
   the exact breakage this record removes.
 - **Guards:** the `rush` CI job is the authoritative install/build/test gate;
   `CLAUDE.md`, `README.md`, and `components/repo-structure.md` all describe the
-  single path; this record supersedes the "two paths" consequence of 0001.
+  single path; this record supersedes the "two paths" consequence of
+  [the Rush + pnpm decision](rush-pnpm-monorepo.md).
 
 ## Alternatives considered
 
