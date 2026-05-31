@@ -255,6 +255,14 @@ export function applyMentions(text: string, mentions: Mention[] | undefined): st
   return out
 }
 
+/** Return the display name for an open_id in a Feishu mention list, if present. */
+export function mentionName(
+  mentions: Mention[] | undefined,
+  openId: string,
+): string | undefined {
+  return mentions?.find((m) => m.id?.open_id === openId)?.name
+}
+
 /**
  * Flatten a Feishu rich-text "post" payload into plain text. A post is
  * locale-wrapped (`{ zh_cn: { title, content } }`) and its body is an array of
