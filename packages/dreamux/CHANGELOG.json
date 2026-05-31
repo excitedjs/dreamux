@@ -2,6 +2,23 @@
   "name": "@excitedjs/dreamux",
   "entries": [
     {
+      "version": "0.1.2",
+      "tag": "@excitedjs/dreamux_v0.1.2",
+      "date": "Sun, 31 May 2026 07:02:52 GMT",
+      "comments": {
+        "patch": [
+          {
+            "comment": "Thread Feishu replies and drop bot-loop inbound messages"
+          }
+        ],
+        "dependency": [
+          {
+            "comment": "Updating dependency \"@excitedjs/feishu-transport\" to `0.0.2`"
+          }
+        ]
+      }
+    },
+    {
       "version": "0.1.1",
       "tag": "@excitedjs/dreamux_v0.1.1",
       "date": "Sat, 30 May 2026 17:49:32 GMT",
