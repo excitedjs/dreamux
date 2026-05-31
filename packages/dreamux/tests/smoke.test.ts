@@ -122,6 +122,11 @@ describe('dreamux MVP smoke', () => {
     await waitFor(() => bot.sentMessages.length >= 1);
     expect(bot.sentMessages[0]).toMatchObject({
       chatId: 'oc_group_a',
+      target: {
+        chatId: 'oc_group_a',
+        replyToMessageId: 'om_1',
+        mentionUserIds: ['ou_sender_test'],
+      },
       text: 'echo: hi',
     });
 
@@ -229,11 +234,11 @@ describe('dreamux MVP smoke', () => {
     await server.start();
 
     let attempts = 0;
-    const origSend = bot.sendText.bind(bot);
-    bot.sendText = async (chat: string, text: string) => {
+    const origSend = bot.send.bind(bot);
+    bot.send = async (target, text) => {
       attempts++;
       if (attempts === 1) throw new Error('transient feishu hiccup');
-      return origSend(chat, text);
+      return origSend(target, text);
     };
 
     await bot.inject(fakeInbound('oc_group_a', 'retry-me', 'om_r'));

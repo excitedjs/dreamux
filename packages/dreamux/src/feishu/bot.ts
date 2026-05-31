@@ -10,8 +10,8 @@
  *     each raw event with the core's `parseInbound`, and forwards a
  *     `FeishuInboundEvent`. The route handler awaits `handler`, so the message is
  *     durably enqueued before the SDK acks (the deferred-ACK invariant).
- *   - `sendText(chatId, text)` delegates to the core's `send({ chatId }, text)`.
- *     The per-card size guard and the multi-card split both live in the core now.
+ *   - `send(target, text)` delegates to the core transport, preserving reply
+ *     threading / @-back metadata from the durable inbound row.
  *   - `botOpenId` surfaces the core transport's `selfId`.
  *
  * Tests inject a `FakeFeishuBot` via `createFakeFeishuBot()` instead of opening
@@ -22,6 +22,7 @@ import {
   createFeishuTransport,
   parseInbound,
   type Mention,
+  type OutboundTarget,
 } from '@excitedjs/feishu-transport';
 
 /** The Feishu event_type carrying inbound chat messages. */
@@ -54,7 +55,7 @@ export interface FeishuBot {
   readonly appId: string;
   readonly botOpenId: string | undefined;
   start(handler: InboundHandler): Promise<void>;
-  sendText(chatId: string, text: string): Promise<FeishuSendResult>;
+  send(target: OutboundTarget, text: string): Promise<FeishuSendResult>;
   close(): Promise<void>;
 }
 
@@ -91,8 +92,8 @@ export function createFeishuBot(opts: CreateBotOptions): FeishuBot {
       });
     },
 
-    async sendText(chatId: string, text: string): Promise<FeishuSendResult> {
-      const { messageIds } = await transport.send({ chatId }, text);
+    async send(target: OutboundTarget, text: string): Promise<FeishuSendResult> {
+      const { messageIds } = await transport.send(target, text);
       return { messageIds };
     },
 
@@ -149,13 +150,23 @@ function normalizeInboundEvent(raw: unknown): FeishuInboundEvent | null {
 // -------------------------------------------------------------- fake (tests)
 
 export interface FakeFeishuBot extends FeishuBot {
-  readonly sentMessages: Array<{ chatId: string; text: string; messageIds: string[] }>;
+  readonly sentMessages: Array<{
+    chatId: string;
+    target: OutboundTarget;
+    text: string;
+    messageIds: string[];
+  }>;
   inject(event: FeishuInboundEvent): Promise<void>;
   setSendError(err: Error | null): void;
 }
 
 export function createFakeFeishuBot(appId: string = 'fake_bot'): FakeFeishuBot {
-  const sent: Array<{ chatId: string; text: string; messageIds: string[] }> = [];
+  const sent: Array<{
+    chatId: string;
+    target: OutboundTarget;
+    text: string;
+    messageIds: string[];
+  }> = [];
   let handler: InboundHandler | null = null;
   let nextMessageId = 1;
   let sendError: Error | null = null;
@@ -169,12 +180,12 @@ export function createFakeFeishuBot(appId: string = 'fake_bot'): FakeFeishuBot {
     async start(h: InboundHandler): Promise<void> {
       handler = h;
     },
-    async sendText(chatId: string, text: string): Promise<FeishuSendResult> {
+    async send(target: OutboundTarget, text: string): Promise<FeishuSendResult> {
       if (sendError !== null) {
         throw sendError;
       }
       const id = `om_fake_${nextMessageId++}`;
-      sent.push({ chatId, text, messageIds: [id] });
+      sent.push({ chatId: target.chatId, target, text, messageIds: [id] });
       return { messageIds: [id] };
     },
     async close(): Promise<void> {
