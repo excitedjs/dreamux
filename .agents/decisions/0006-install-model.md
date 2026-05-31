@@ -38,8 +38,9 @@ which install model to keep.
   version (`@excitedjs/feishu-transport: 0.0.1`) in the **published** manifest.
 - No per-package `package-lock.json` is committed.
 - CI's `package` job (`npm ci`) is removed; its typecheck/build/test coverage
-  moves into the `rush` job, which now runs `rush update` → `rush build` →
-  `rush test` (`DREAMUX_SKIP_LIVE_CODEX=1`, no codex binary on the runner).
+  moves into the `rush` job, which now runs `rush update` → `rush typecheck` →
+  `rush build` → `rush test` (`DREAMUX_SKIP_LIVE_CODEX=1`, no codex binary on
+  the runner).
 
 Path 1 was always framed as "pre-monorepo muscle memory." Decision 0001 itself
 made the monorepo path "required once a second package lands"; three packages
@@ -56,7 +57,9 @@ now exist, so retiring path 1 is the natural close-out, not a new constraint.
 - **Foot-gun:** don't re-add a per-package `package-lock.json` or a `package`
   CI job — `npm` cannot lock a `workspace:*` graph, so either would reintroduce
   the exact breakage this record removes.
-- **Guards:** the `rush` CI job is the authoritative install/build/test gate;
+- **Guards:** the `rush` CI job is the authoritative
+  install/typecheck/build/test gate; PRs also run `rush change --verify` against
+  the base branch so release-surface changes declare Rush change files.
   `CLAUDE.md`, `README.md`, and `components/repo-structure.md` all describe the
   single path; this record supersedes the "two paths" consequence of 0001.
 

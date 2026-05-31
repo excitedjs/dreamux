@@ -1,9 +1,14 @@
 # CI for the dreamux monorepo (issue #4).
 #
 # Jobs:
-#   - rush — bootstrap, build, and test the whole workspace via the monorepo
-#     path (the single supported install path — see decision 0006). This
-#     replaces the old per-package `npm ci` job, which cannot resolve the
+#   - rush-change-status — PR release-surface changes must declare Rush change
+#     files under common/changes/.
+#   - commit-metadata — reject commit author addresses that would leak an
+#     internal/company machine identity into the public repo.
+#   - shellcheck — lint committed shell entry points and hooks.
+#   - rush — bootstrap, typecheck, build, and test the whole workspace via the
+#     monorepo path (the single supported install path — see decision 0006).
+#     This replaces the old per-package `npm ci` job, which cannot resolve the
 #     `workspace:*` dependency that landed with the channel refactor (#4).
 #   - kb — validate the .agents/ knowledge base (link / orphan check)
 #   - gitleaks — secret scan over the full git history (anti-leak guardrail)
@@ -20,8 +25,104 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
+  rush-change-status:
+    name: rush change — declaration check
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+      - name: Fetch PR base
+        run: git fetch origin "${{ github.base_ref }}" --depth=1
+      - name: Verify Rush change files
+        run: node common/scripts/install-run-rush.js change --verify --target-branch "origin/${{ github.base_ref }}" --no-fetch
+
+  commit-metadata:
+    name: commit metadata — author email check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check commit author emails
+        run: |
+          set -euo pipefail
+
+          zero=0000000000000000000000000000000000000000
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            commits=$(git log --format='%H' \
+              "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}")
+          elif [ "${{ github.event_name }}" = workflow_dispatch ]; then
+            commits=$(git log -1 --format='%H' HEAD)
+          elif [ "${{ github.event.before }}" = "$zero" ]; then
+            commits=$(git log -1 --format='%H' "${{ github.event.after }}")
+          else
+            commits=$(git log --format='%H' \
+              "${{ github.event.before }}..${{ github.event.after }}")
+          fi
+
+          fail=0
+          while IFS= read -r c; do
+            [ -z "$c" ] && continue
+            email=$(git log -1 --format='%ae' "$c")
+            case "$email" in
+              *@users.noreply.github.com|github-actions[bot]@users.noreply.github.com)
+                continue
+                ;;
+              *@bytedance.com|*@*.bytedance.com|*@byted.org|*@*.byted.org|*@localhost|*@*.local|*@local)
+                echo "::error::commit $c uses a non-public author email: $email"
+                fail=1
+                ;;
+              *@*)
+                continue
+                ;;
+              *)
+                echo "::error::commit $c has an invalid author email: $email"
+                fail=1
+                ;;
+            esac
+          done <<< "$commits"
+          [ "$fail" = 0 ]
+
+  shellcheck:
+    name: shellcheck
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck (linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+      - name: Install shellcheck (macos)
+        if: runner.os == 'macOS'
+        run: brew install shellcheck
+      - name: shellcheck
+        run: |
+          shellcheck \
+            .agents/scripts/check.sh \
+            common/git-hooks/pre-commit \
+            bin/dreamux \
+            bin/server \
+            bin/server-ctl
+
   kb:
     name: knowledge base — link & orphan check
     runs-on: ubuntu-latest
@@ -32,8 +133,12 @@ jobs:
         run: ./.agents/scripts/check.sh
 
   rush:
-    name: rush — bootstrap / build / test
-    runs-on: ubuntu-latest
+    name: rush — bootstrap / typecheck / build / test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -42,6 +147,8 @@ jobs:
           node-version: '22.x'
       - name: rush update
         run: node common/scripts/install-run-rush.js update
+      - name: rush typecheck
+        run: node common/scripts/install-run-rush.js typecheck
       - name: rush build
         run: node common/scripts/install-run-rush.js build
       - name: rush test
