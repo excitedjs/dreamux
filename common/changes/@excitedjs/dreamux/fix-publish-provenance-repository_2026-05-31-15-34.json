@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Add repository field so npm provenance validation passes on OIDC publish",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "YourWildDad <15624809+YourWildDad@users.noreply.github.com>"
+}

@@ -3,6 +3,11 @@
   "version": "0.1.2",
   "description": "Codex-host server — single-session MVP. One node process hosts N dispatchers, each binding 1 Feishu bot + 1 Codex thread.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/excitedjs/dreamux.git",
+    "directory": "packages/dreamux"
+  },
   "type": "module",
   "main": "./dist/server.js",
   "engines": {

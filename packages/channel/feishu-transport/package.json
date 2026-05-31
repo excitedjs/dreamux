@@ -3,6 +3,11 @@
   "version": "0.0.2",
   "description": "Shared Feishu platform-I/O core for dreamux and claudemux: connect / receive / send / auth / render / parse + stateless policy (issue excitedjs/dreamux#25).",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/excitedjs/dreamux.git",
+    "directory": "packages/channel/feishu-transport"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Add repository field so npm provenance validation passes on OIDC publish",
+      "type": "none",
+      "packageName": "@excitedjs/feishu-transport"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-transport",
+  "email": "YourWildDad <15624809+YourWildDad@users.noreply.github.com>"
+}
