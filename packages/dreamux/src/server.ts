@@ -22,7 +22,12 @@ import type { DispatcherRow, DispatcherStatus } from './db/types.js';
 import { DispatcherRuntime } from './dispatcher/runtime.js';
 import type { CodexProcess, CodexProcessOptions } from './codex/supervisor.js';
 import type { CodexWsClient } from './codex/rpc.js';
-import { createFeishuBot, type FeishuBot, type FeishuInboundEvent } from './feishu/bot.js';
+import {
+  channelOutboundToFeishuTarget,
+  createFeishuBot,
+  type FeishuBot,
+  type FeishuInboundEvent,
+} from './feishu/bot.js';
 import { compatibleFeishuGate } from './channel/feishu-gate.js';
 import { parseCodexArgs, codexArgsToCli } from './runtime/codex-args.js';
 import { resolveBotSecret } from './runtime/secrets.js';
@@ -183,21 +188,7 @@ export class Server {
       inbound: this.repos.inbound,
       outbound: {
         send: async (target, text) =>
-          (await bot.send(
-            {
-              chatId: target.conversationId,
-              ...(target.replyTo !== undefined
-                ? { replyToMessageId: target.replyTo }
-                : {}),
-              ...(target.mentionUsers !== undefined
-                ? { mentionUserIds: target.mentionUsers }
-                : {}),
-              ...(target.conversationKey !== undefined
-                ? { conversationKey: target.conversationKey }
-                : {}),
-            },
-            text,
-          )).messageIds,
+          (await bot.send(channelOutboundToFeishuTarget(target), text)).messageIds,
       },
       codexBinPath: this.resolveCodexBinPath(),
       codexProcessFactory: this.opts.codexProcessFactory,
@@ -216,7 +207,6 @@ export class Server {
           senderType: event.senderType,
           chatType: event.chatType,
           botOpenId: bot.botOpenId,
-          mentions: event.mentions,
         });
         if (gate.action === 'drop') {
           console.error(
