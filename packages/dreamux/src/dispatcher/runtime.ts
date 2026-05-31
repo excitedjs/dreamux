@@ -33,9 +33,10 @@ import type {
   ThreadResumeResponse,
   ThreadStartResponse,
 } from '../codex/types.js';
-import { TurnManager, type OutboundSink } from './turn-manager.js';
+import { TurnManager } from './turn-manager.js';
 import { createFailFastApprovalHandler } from './approval.js';
 import { dispatcherCodexCwd, dispatcherStdoutLog, dispatcherStderrLog, dispatcherSocketPath } from '../runtime/paths.js';
+import { outboundTargetForInbound, type OutboundSink } from '../channel/outbound.js';
 
 export interface DispatcherRuntimeDeps {
   dispatchers: DispatcherRepo;
@@ -142,8 +143,8 @@ export class DispatcherRuntime {
           const chatId = this.currentInboundChatId;
           if (chatId === null) return;
           try {
-            await this.deps.outbound.sendText(
-              chatId,
+            await this.deps.outbound.send(
+              { conversationId: chatId },
               `Codex 请求了一次审批（${req.method}），但当前 dispatcher 不支持审批 —— 本轮将失败。`,
             );
           } catch {
@@ -285,8 +286,8 @@ export class DispatcherRuntime {
         `inbound ${row.id} was 'running' at restart — marked unknown (at-most-once); chat=${row.source_chat_id}`,
       );
       try {
-        await this.deps.outbound.sendText(
-          row.source_chat_id,
+        await this.deps.outbound.send(
+          outboundTargetForInbound(row),
           `上一次的执行结果未知（server 重启时正在进行）。请确认是否需要重新发送：\n> ${row.parsed_text.slice(0, 200)}`,
         );
       } catch (err) {

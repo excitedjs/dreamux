@@ -181,7 +181,22 @@ export class Server {
       dispatchers: this.repos.dispatchers,
       inbound: this.repos.inbound,
       outbound: {
-        sendText: async (chatId, text) => (await bot.sendText(chatId, text)).messageIds,
+        send: async (target, text) =>
+          (await bot.send(
+            {
+              chatId: target.conversationId,
+              ...(target.replyToMessageId !== undefined
+                ? { replyToMessageId: target.replyToMessageId }
+                : {}),
+              ...(target.mentionUserIds !== undefined
+                ? { mentionUserIds: target.mentionUserIds }
+                : {}),
+              ...(target.conversationKey !== undefined
+                ? { conversationKey: target.conversationKey }
+                : {}),
+            },
+            text,
+          )).messageIds,
       },
       codexBinPath: this.resolveCodexBinPath(),
       codexProcessFactory: this.opts.codexProcessFactory,

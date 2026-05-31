@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Thread Feishu replies with outbound targets",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "LanTingShuXu <lantingshuxu@users.noreply.github.com>"
+}
