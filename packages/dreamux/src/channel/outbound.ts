@@ -1,12 +1,12 @@
 import type { InboundRow } from '../db/types.js';
 
 export interface ChannelOutboundTarget {
-  /** Stable channel-local conversation id. Feishu maps this to chat_id. */
+  /** Stable channel-local conversation id. */
   conversationId: string;
-  /** Optional source message id for channel-native reply threading. */
-  replyToMessageId?: string;
-  /** Optional channel-local user ids to mention in the reply. */
-  mentionUserIds?: string[];
+  /** Optional channel-local source message to thread under. */
+  replyTo?: string;
+  /** Optional channel-local participants to bring into the reply. */
+  mentionUsers?: string[];
   /** Optional host/runtime routing hint, opaque to the channel adapter. */
   conversationKey?: string;
 }
@@ -20,10 +20,10 @@ export function outboundTargetForInbound(row: InboundRow): ChannelOutboundTarget
   return {
     conversationId: row.source_chat_id,
     ...(row.source_message_id !== null
-      ? { replyToMessageId: row.source_message_id }
+      ? { replyTo: row.source_message_id }
       : {}),
     ...(row.sender_id !== null && row.sender_id !== ''
-      ? { mentionUserIds: [row.sender_id] }
+      ? { mentionUsers: [row.sender_id] }
       : {}),
   };
 }
