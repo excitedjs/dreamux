@@ -40,7 +40,7 @@ done < <(grep -rEn --include='*.md' ']\(/[^)]+\)' "$KB_ROOT" 2>/dev/null || true
 
 declare -A all
 while IFS= read -r f; do
-  rel="${f#$KB_ROOT/}"
+  rel="${f#"$KB_ROOT"/}"
   [ "$rel" = "root.md" ] && continue
   all["$rel"]=1
 done < <(find "$KB_ROOT" -type f -name '*.md')
