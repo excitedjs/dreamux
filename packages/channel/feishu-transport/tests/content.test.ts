@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { applyMentions, extractPostText, narrowMetaFromEvent, parseInbound, toChannelInbound } from '../src/parse/content'
+import { applyMentions, extractPostText, mentionName, narrowMetaFromEvent, parseInbound, toChannelInbound } from '../src/parse/content'
 import type { InboundMessage } from '../src/parse/content'
 import type { Mention } from '../src/contract/types'
 
@@ -15,6 +15,16 @@ describe('parseInbound — text', () => {
   test('resolves @-mention placeholders to display names', () => {
     const msg = message('text', { text: '@_user_1 ping' }, [{ key: '@_user_1', name: 'Alice' }])
     expect(parseInbound(msg).text).toBe('@Alice ping')
+  })
+
+  test('finds a mention display name by open_id', () => {
+    const mentions: Mention[] = [
+      { key: '@_user_1', name: 'Alice', id: { open_id: 'ou_a' } },
+      { key: '@_user_2', name: 'Bob', id: { open_id: 'ou_b' } },
+    ]
+    expect(mentionName(mentions, 'ou_b')).toBe('Bob')
+    expect(mentionName(mentions, 'ou_missing')).toBeUndefined()
+    expect(mentionName(undefined, 'ou_b')).toBeUndefined()
   })
 
   test('text with no JSON content falls back gracefully', () => {
