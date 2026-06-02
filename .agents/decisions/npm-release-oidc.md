@@ -103,6 +103,11 @@ OIDC upload**, and all halves are monorepo-wide.
 - The version workflow self-breaks its trigger loop: the version PR's merge
   carries no new change files, so the next `rush publish --apply` is a no-op
   (verified locally with an empty `common/changes/`).
+- The generated `release/version-packages` PR is exempt from the CI
+  `rush change --verify` job. That branch is the result of
+  `rush publish --apply`: it intentionally consumes `common/changes/*` into
+  package.json and changelog updates, so requiring another change file would
+  make the version PR unmergeable.
 
 ## Alternatives considered
 
