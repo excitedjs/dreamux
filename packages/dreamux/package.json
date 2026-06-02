@@ -37,7 +37,8 @@
     "@excitedjs/feishu-transport": "workspace:*",
     "better-sqlite3": "^11.5.0",
     "smol-toml": "^1.6.1",
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "yargs": "^17.7.2"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
