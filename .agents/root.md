@@ -15,6 +15,7 @@ issues:
 - [#1 Proposal](https://github.com/excitedjs/dreamux/issues/1) — original proposal
 - [#2 Engineering plan](https://github.com/excitedjs/dreamux/issues/2) — implementation-ready spec
 - [#4 Monorepo + harness](https://github.com/excitedjs/dreamux/issues/4) — current repo shape
+- [#18 Global bin onboarding](https://github.com/excitedjs/dreamux/issues/18) — `dreamux onboard` / `dreamux serve` design
 
 ## Repo layout (monorepo since issue #4)
 
@@ -46,6 +47,9 @@ issues:
   added as they stabilize).
 - [`decisions/README.md`](decisions/README.md) — accepted decision records,
   indexed by topic slug. Do not prefix new records with sequence numbers.
+- [`proposals/global-bin-onboard-serve.md`](proposals/global-bin-onboard-serve.md)
+  — active issue #18 spec for the global `dreamux` bin, onboarding wizard,
+  service registration, and `serve` runtime.
 - `domains/`, `proposals/`, `research/`, `rules/` — empty for now; add
   here when material grows past a single file's worth.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — when to update this KB, how to
@@ -63,6 +67,7 @@ issues:
 | understand why rush + pnpm | [`decisions/rush-pnpm-monorepo.md`](decisions/rush-pnpm-monorepo.md) |
 | install / build / test the repo, or wonder why `npm ci` is gone | [`decisions/install-model.md`](decisions/install-model.md) |
 | rename or restructure the public CLI / package | [`decisions/cli-and-package-naming.md`](decisions/cli-and-package-naming.md) |
+| implement issue #18 global bin / onboard / serve | [`proposals/global-bin-onboard-serve.md`](proposals/global-bin-onboard-serve.md) + [`decisions/global-bin-onboard-serve.md`](decisions/global-bin-onboard-serve.md) |
 | add / change a global config key (`~/.dreamux/config.toml`) | [`decisions/global-config-dir.md`](decisions/global-config-dir.md) |
 | touch the anti-leak guardrail (`.gitleaks.toml`, `.npmrc`, CI / hook) | [`decisions/anti-leak-guardrail.md`](decisions/anti-leak-guardrail.md) |
 | touch npm publishing / the release workflows | [`decisions/npm-release-oidc.md`](decisions/npm-release-oidc.md) |

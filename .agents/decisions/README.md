@@ -9,7 +9,7 @@ topic slugs remain reviewable and merge-friendly.
 | Theme | Records |
 |---|---|
 | Repository shape | [rush-pnpm-monorepo](rush-pnpm-monorepo.md), [install-model](install-model.md) |
-| Public surface | [cli-and-package-naming](cli-and-package-naming.md), [dispatcher-tm-boundary](dispatcher-tm-boundary.md), [global-config-dir](global-config-dir.md) |
+| Public surface | [cli-and-package-naming](cli-and-package-naming.md), [dispatcher-tm-boundary](dispatcher-tm-boundary.md), [global-bin-onboard-serve](global-bin-onboard-serve.md), [global-config-dir](global-config-dir.md) |
 | Release and safeguards | [npm-release-oidc](npm-release-oidc.md), [anti-leak-guardrail](anti-leak-guardrail.md) |
 
 ## Alphabetical Index
@@ -17,6 +17,7 @@ topic slugs remain reviewable and merge-friendly.
 - [anti-leak-guardrail](anti-leak-guardrail.md)
 - [cli-and-package-naming](cli-and-package-naming.md)
 - [dispatcher-tm-boundary](dispatcher-tm-boundary.md)
+- [global-bin-onboard-serve](global-bin-onboard-serve.md)
 - [global-config-dir](global-config-dir.md)
 - [install-model](install-model.md)
 - [npm-release-oidc](npm-release-oidc.md)
