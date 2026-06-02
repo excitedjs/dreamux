@@ -4,6 +4,18 @@
 codexmux product layer. It is not a Rush package and does not add runtime code
 to `@excitedjs/dreamux`.
 
+`dreamux onboard` installs this marketplace into each dispatcher-private
+`CODEX_HOME` by default with:
+
+```bash
+codex plugin marketplace add excitedjs/dreamux --sparse codex-marketplace
+codex plugin add codexmux@dreamux
+```
+
+Local source checkouts may override the marketplace source to
+`./codex-marketplace`, but the published package must not assume that the
+monorepo root exists next to the global npm install.
+
 ## Files
 
 | Path | Role |
@@ -36,4 +48,3 @@ Do not replace this with bare `@excitedjs/tm@latest`. Do not use
 `tm wait --fresh` for Codex teammates; `--fresh` is Claude-only in tm 2.1.2. A
 self-contained tm artifact can be added later after the thin dispatcher ->
 skill -> tm path is validated end to end.
-

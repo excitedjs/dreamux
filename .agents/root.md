@@ -28,7 +28,7 @@ issues:
 │   ├── dreamux/                   @excitedjs/dreamux — the host server
 │   │   ├── bin/                   single dreamux launcher
 │   │   ├── src/                   admin, cli, codex, db, dispatcher, feishu, runtime
-│   │   ├── tests/                 vitest (smoke + live-codex + bin-launcher)
+│   │   ├── tests/                 vitest (smoke + live-codex + bin-launcher + onboard)
 │   │   └── db/migrations/         SQLite schema migrations
 │   └── channel/
 │       ├── feishu-transport/      @excitedjs/feishu-transport — platform-I/O core

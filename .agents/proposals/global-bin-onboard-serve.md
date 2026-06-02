@@ -200,10 +200,10 @@ Open default inputs:
 
 | Value | Default direction |
 |---|---|
-| Codex marketplace source | Public dreamux / codexmux marketplace source |
-| Codex plugin selector | `codexmux` from that marketplace |
-| Claude marketplace source | Public claudemux marketplace source |
-| Claude plugin selector | `claudemux` from that marketplace |
+| Codex marketplace source | Public `excitedjs/dreamux` with sparse path `codex-marketplace` |
+| Codex plugin selector | `codexmux@dreamux` |
+| Claude marketplace source | Public `excitedjs/claudemux` |
+| Claude plugin selector | `claudemux@claudemux` |
 | Claude install scope | `user` |
 
 Do not commit concrete private identifiers, local user paths, internal
@@ -371,6 +371,10 @@ semantics must be idempotent: if the generated service file already matches
 the desired content, report it as `unchanged`; if the desired content differs,
 report `modified` and reload/restart through the native service manager.
 
+The package launcher resolves its own symlink chain and passes the resolved
+absolute launcher path to the TypeScript CLI via `DREAMUX_BIN`; service unit
+generation uses that value unless the operator supplies `--dreamux-bin`.
+
 ### macOS launchd
 
 Default to a user LaunchAgent:
@@ -439,8 +443,7 @@ Alternatives:
   `CODEX_HOME`, not the operator's default global Codex home.
 - Service registration is user-level only: macOS LaunchAgent and
   `systemd --user`.
-
-## Remaining open implementation details
-
-- The final public marketplace sources / selectors for `codexmux` and
-  `claudemux`.
+- Marketplace defaults for the first implementation are
+  `excitedjs/dreamux --sparse codex-marketplace` plus
+  `codexmux@dreamux` for Codex, and `excitedjs/claudemux` plus
+  `claudemux@claudemux` for Claude.

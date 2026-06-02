@@ -105,6 +105,15 @@ with its final status.
 - Onboarding intentionally keeps daemon-specific Codex plugin and permission
   state in the dispatcher-private Codex home; all touched paths must be
   printed through the onboarding path ledger.
+- The first implementation installs Codexmux from the public
+  `excitedjs/dreamux` repository with sparse marketplace path
+  `codex-marketplace`, using selector `codexmux@dreamux`.
+- The first implementation installs Claudemux from the public
+  `excitedjs/claudemux` marketplace, using selector
+  `claudemux@claudemux`.
+- The `dreamux` launcher passes its resolved absolute path through
+  `DREAMUX_BIN`; service generation uses that path so launchd and
+  systemd execute the same global bin the operator invoked.
 - The operator's default global Codex home remains outside this design's
   write set, so daemon-specific high-risk settings do not leak into the
   user's daily interactive Codex configuration.
