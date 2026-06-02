@@ -45,6 +45,32 @@ export class DispatcherRepo {
     return this.get(input.dispatcher_id)!;
   }
 
+  upsert(input: DispatcherCreateInput): DispatcherRow {
+    const existing = this.get(input.dispatcher_id);
+    if (existing === null) return this.create(input);
+
+    this.db
+      .prepare(
+        `UPDATE dispatchers
+         SET bot_app_id = ?,
+             bot_secret_ref = ?,
+             codex_args_json = ?,
+             codex_cwd = ?,
+             enabled = 1,
+             updated_at = ?
+         WHERE dispatcher_id = ?`,
+      )
+      .run(
+        input.bot_app_id,
+        input.bot_secret_ref,
+        input.codex_args_json ?? '{}',
+        input.codex_cwd ?? null,
+        Date.now(),
+        input.dispatcher_id,
+      );
+    return this.get(input.dispatcher_id)!;
+  }
+
   get(id: string): DispatcherRow | null {
     const row = this.db
       .prepare(`SELECT ${DISPATCHER_COLUMNS} FROM dispatchers WHERE dispatcher_id = ?`)

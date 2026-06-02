@@ -23,10 +23,11 @@ while [ -L "$SOURCE" ]; do
 done
 
 DIR="$(cd -- "$(dirname -- "$SOURCE")/.." &> /dev/null && pwd)"
+DREAMUX_BIN="$(cd -- "$(dirname -- "$SOURCE")" &> /dev/null && pwd)/$(basename -- "$SOURCE")"
 TARGET="$DIR/dist/cli/dreamux.js"
 if [ ! -f "$TARGET" ]; then
   echo "dreamux: $TARGET is missing." >&2
   echo "Build it first from the repo root: node common/scripts/install-run-rush.js build (rush build)." >&2
   exit 1
 fi
-exec node "$TARGET" "$@"
+exec env DREAMUX_BIN="$DREAMUX_BIN" node "$TARGET" "$@"
