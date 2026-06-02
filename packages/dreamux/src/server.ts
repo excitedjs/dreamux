@@ -17,20 +17,11 @@
 import type Database from 'better-sqlite3';
 
 import { openDatabase } from './db/schema.js';
-import { CodexTeammateRepo, DispatcherRepo, InboundRepo } from './db/repository.js';
-import type {
-  CodexTeammateRow,
-  CodexTeammateStatus,
-  DispatcherRow,
-  DispatcherStatus,
-} from './db/types.js';
+import { DispatcherRepo, InboundRepo } from './db/repository.js';
+import type { DispatcherRow, DispatcherStatus } from './db/types.js';
 import { DispatcherRuntime } from './dispatcher/runtime.js';
 import type { CodexProcess, CodexProcessOptions } from './codex/supervisor.js';
 import type { CodexWsClient } from './codex/rpc.js';
-import {
-  CodexTeammateRuntime,
-  type CodexTeammateTurnResult,
-} from './codex/teammate-runtime.js';
 import {
   channelOutboundToFeishuTarget,
   createFeishuBot,
@@ -76,7 +67,6 @@ export interface ServerOptions {
 export interface Repos {
   dispatchers: DispatcherRepo;
   inbound: InboundRepo;
-  teammates: CodexTeammateRepo;
 }
 
 interface DispatcherSlot {
@@ -85,23 +75,16 @@ interface DispatcherSlot {
   bot: FeishuBot;
 }
 
-interface TeammateSlot {
-  row: CodexTeammateRow;
-  runtime: CodexTeammateRuntime;
-}
-
 export class Server {
   readonly repos: Repos;
   private readonly db: Database.Database;
   private readonly slots = new Map<string, DispatcherSlot>();
-  private readonly teammateSlots = new Map<string, TeammateSlot>();
   /**
    * PR #3 review #4: in-flight startDispatcher promises, keyed by id.
    * Two concurrent callers must await the same start, not race to spawn
    * duplicate Codex children / Feishu listeners.
    */
   private readonly starting = new Map<string, Promise<void>>();
-  private readonly startingTeammates = new Map<string, Promise<void>>();
   private admin: AdminSocketServer | null = null;
   private shuttingDown = false;
   private readonly opts: ServerOptions;
@@ -116,9 +99,7 @@ export class Server {
     this.repos = {
       dispatchers: new DispatcherRepo(this.db),
       inbound: new InboundRepo(this.db),
-      teammates: new CodexTeammateRepo(this.db),
     };
-    this.repos.teammates.reconcileStoppedOnBoot();
   }
 
   /** Effective config (caller-supplied or built-in defaults). */
@@ -284,153 +265,6 @@ export class Server {
     return this.slots.get(id)?.runtime ?? null;
   }
 
-  /** Create and start a server-owned Codex teammate daemon. */
-  async spawnTeammate(input: {
-    name: string;
-    cwd: string;
-    codex_args_json?: string;
-    thread_id?: string | null;
-  }): Promise<{
-    name: string;
-    status: CodexTeammateStatus;
-    thread_id: string | null;
-  }> {
-    const row = this.repos.teammates.create({
-      name: input.name,
-      cwd: input.cwd,
-      codex_args_json: input.codex_args_json ?? '{}',
-      thread_id: input.thread_id ?? null,
-    });
-    try {
-      await this.startTeammate(row.name);
-      return this.teammateResult(row.name, row);
-    } catch (err) {
-      await this.stopTeammate(row.name);
-      this.repos.teammates.remove(row.name);
-      throw err;
-    }
-  }
-
-  /** Create or reconfigure a teammate to resume an explicit Codex thread. */
-  async resumeTeammate(input: {
-    name: string;
-    cwd: string;
-    codex_args_json?: string;
-    thread_id: string;
-  }): Promise<{
-    name: string;
-    status: CodexTeammateStatus;
-    thread_id: string | null;
-  }> {
-    const existing = this.repos.teammates.get(input.name);
-    if (existing !== null) await this.stopTeammate(input.name);
-    const row =
-      existing === null
-        ? this.repos.teammates.create({
-            name: input.name,
-            cwd: input.cwd,
-            codex_args_json: input.codex_args_json ?? '{}',
-            thread_id: input.thread_id,
-          })
-        : this.repos.teammates.updateForResume({
-            name: input.name,
-            cwd: input.cwd,
-            codex_args_json: input.codex_args_json ?? '{}',
-            thread_id: input.thread_id,
-          });
-    if (row === null) throw new Error(`no codex teammate '${input.name}'`);
-    await this.startTeammate(row.name);
-    return this.teammateResult(row.name, row);
-  }
-
-  /** Bring one server-owned teammate up. Safe to call when already running. */
-  async startTeammate(name: string): Promise<void> {
-    const inflight = this.startingTeammates.get(name);
-    if (inflight !== undefined) return inflight;
-    const existing = this.teammateSlots.get(name);
-    if (existing !== undefined && existing.runtime.getStatus() === 'ready') return;
-
-    const promise = this.doStartTeammate(name).finally(() => {
-      this.startingTeammates.delete(name);
-    });
-    this.startingTeammates.set(name, promise);
-    return promise;
-  }
-
-  private async doStartTeammate(name: string): Promise<void> {
-    const row = this.repos.teammates.get(name);
-    if (row === null) throw new Error(`no codex teammate '${name}'`);
-    const existing = this.teammateSlots.get(name);
-    if (existing !== undefined) {
-      if (existing.runtime.getStatus() === 'ready') return;
-      await this.stopTeammate(name);
-    }
-
-    const cfg = this.effectiveConfig();
-    const codexArgs = parseCodexArgs(row.codex_args_json, {
-      approvalPolicy: cfg.codex.approval_policy,
-      sandboxMode: cfg.codex.sandbox_mode,
-      extraArgs: cfg.codex.extra_args,
-    });
-    const runtime = new CodexTeammateRuntime(row, {
-      teammates: this.repos.teammates,
-      codexBinPath: this.resolveCodexBinPath(),
-      codexProcessFactory: this.opts.codexProcessFactory,
-      codexClientFactory: this.opts.codexClientFactory,
-      resolveExtraArgs: () => codexArgsToCli(codexArgs),
-      handshakeTimeoutMs: cfg.codex.initialize_timeout_ms,
-    });
-
-    await runtime.start();
-    this.teammateSlots.set(name, { row, runtime });
-    console.error(`[server] codex teammate '${name}' is ready (cwd=${row.cwd})`);
-  }
-
-  async sendTeammate(
-    name: string,
-    prompt: string,
-  ): Promise<CodexTeammateTurnResult> {
-    await this.startTeammate(name);
-    const runtime = this.getTeammateRuntime(name);
-    if (runtime === null) throw new Error(`codex teammate '${name}' is not running`);
-    return runtime.send(prompt);
-  }
-
-  /** Gracefully stop one server-owned teammate, keeping its DB row. */
-  async stopTeammate(name: string): Promise<void> {
-    const slot = this.teammateSlots.get(name);
-    if (slot === undefined) return;
-    try {
-      await slot.runtime.stop();
-    } catch (err) {
-      console.error(`[server] error stopping codex teammate '${name}':`, err);
-    }
-    this.teammateSlots.delete(name);
-  }
-
-  /** Stop and remove one server-owned teammate. */
-  async removeTeammate(name: string): Promise<void> {
-    await this.stopTeammate(name);
-    this.repos.teammates.remove(name);
-  }
-
-  getTeammateRuntime(name: string): CodexTeammateRuntime | null {
-    return this.teammateSlots.get(name)?.runtime ?? null;
-  }
-
-  private teammateResult(
-    name: string,
-    fallback: CodexTeammateRow,
-  ): { name: string; status: CodexTeammateStatus; thread_id: string | null } {
-    const runtime = this.getTeammateRuntime(name);
-    const row = this.repos.teammates.get(name) ?? fallback;
-    return {
-      name: row.name,
-      status: runtime?.getStatus() ?? row.status,
-      thread_id: runtime?.getThreadId() ?? row.thread_id,
-    };
-  }
-
   /** Summary of every declared dispatcher (DB-backed, includes stopped). */
   summarize(): Array<{
     dispatcher_id: string;
@@ -451,27 +285,6 @@ export class Server {
     });
   }
 
-  summarizeTeammates(): Array<{
-    name: string;
-    cwd: string;
-    status: CodexTeammateStatus;
-    thread_id: string | null;
-    last_turn_id: string | null;
-    last_error: string | null;
-  }> {
-    return this.repos.teammates.list().map((row) => {
-      const runtime = this.teammateSlots.get(row.name)?.runtime;
-      return {
-        name: row.name,
-        cwd: row.cwd,
-        status: runtime?.getStatus() ?? row.status,
-        thread_id: runtime?.getThreadId() ?? row.thread_id,
-        last_turn_id: row.last_turn_id,
-        last_error: row.last_error,
-      };
-    });
-  }
-
   /** Graceful shutdown — drain dispatchers, close socket, close DB. */
   async shutdown(): Promise<void> {
     if (this.shuttingDown) return;
@@ -479,9 +292,6 @@ export class Server {
     console.error('[server] shutting down...');
     for (const id of Array.from(this.slots.keys())) {
       await this.stopDispatcher(id);
-    }
-    for (const name of Array.from(this.teammateSlots.keys())) {
-      await this.stopTeammate(name);
     }
     if (this.admin !== null) {
       await this.admin.close();

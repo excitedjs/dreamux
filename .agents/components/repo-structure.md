@@ -37,17 +37,16 @@ verbatim through the move):
 |---|---|
 | `src/admin/` | Unix socket admin protocol + method handlers |
 | `src/cli/` | Entry-point CLIs: `dreamux.ts` (new unified router), `server.ts`, `server-ctl.ts` |
-| `src/codex/` | Codex WS+Unix JSON-RPC client, supervisor, turn collector, init handshake, server-owned teammate runtime |
+| `src/codex/` | Codex WS+Unix JSON-RPC client, supervisor, turn collector, init handshake |
 | `src/db/` | SQLite schema + repository |
 | `src/dispatcher/` | DispatcherRuntime, TurnManager, fail-fast approval handler |
 | `src/feishu/` | Thin bot adapter over `@excitedjs/feishu-transport` (`createFeishuTransport` + `parseInbound`); the drifted in-tree `content`/`render`/`types` copies were deleted by #4 |
 | `src/runtime/` | Path builders, env-only secrets, codex-args parser |
 | `src/server.ts` | Top-level `Server` class wiring everything together |
 | `db/migrations/0001_init.sql` | Initial SQLite schema |
-| `db/migrations/0002_codex_teammates.sql` | Server-owned Codex teammate rows |
 | `bin/dreamux` | Unified CLI launcher (`dreamux server start`, `dreamux dispatcher ...`) |
 | `bin/server`, `bin/server-ctl` | Backward-compat aliases shipped before the monorepo split |
-| `tests/` | vitest: smoke (26), bin-launcher (8), codex-0134-live (4) |
+| `tests/` | vitest: smoke (16), bin-launcher (8), codex-0134-live (4) |
 
 ## Installation — the rush path only
 
@@ -124,7 +123,7 @@ multi-package release notes precise while still using Rush as the validator.
 | Path | Purpose | Source of truth |
 |---|---|---|
 | `~/.dreamux/` | User-editable global config (`config.toml`). Auto-created on first boot. | The operator |
-| `~/.codex-host/` | Server-owned runtime state: SQLite (`state.db`), admin socket, per-dispatcher Codex sockets/logs, per-teammate Codex sockets/logs. | The server |
+| `~/.codex-host/` | Server-owned runtime state: SQLite (`state.db`), admin socket, per-dispatcher codex sockets and logs. | The server |
 
 The split is load-bearing: a `rm -rf ~/.codex-host` recovery never loses
 user-edited settings. See [the global-config decision](../decisions/global-config-dir.md).

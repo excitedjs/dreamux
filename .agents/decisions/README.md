@@ -9,18 +9,18 @@ topic slugs remain reviewable and merge-friendly.
 | Theme | Records |
 |---|---|
 | Repository shape | [rush-pnpm-monorepo](rush-pnpm-monorepo.md), [install-model](install-model.md) |
-| Public surface | [cli-and-package-naming](cli-and-package-naming.md), [global-config-dir](global-config-dir.md), [server-owned-codex-teammates](server-owned-codex-teammates.md) |
+| Public surface | [cli-and-package-naming](cli-and-package-naming.md), [dispatcher-tm-boundary](dispatcher-tm-boundary.md), [global-config-dir](global-config-dir.md) |
 | Release and safeguards | [npm-release-oidc](npm-release-oidc.md), [anti-leak-guardrail](anti-leak-guardrail.md) |
 
 ## Alphabetical Index
 
 - [anti-leak-guardrail](anti-leak-guardrail.md)
 - [cli-and-package-naming](cli-and-package-naming.md)
+- [dispatcher-tm-boundary](dispatcher-tm-boundary.md)
 - [global-config-dir](global-config-dir.md)
 - [install-model](install-model.md)
 - [npm-release-oidc](npm-release-oidc.md)
 - [rush-pnpm-monorepo](rush-pnpm-monorepo.md)
-- [server-owned-codex-teammates](server-owned-codex-teammates.md)
 
 ## Adding a Record
 

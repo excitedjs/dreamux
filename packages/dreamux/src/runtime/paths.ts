@@ -12,10 +12,6 @@
  *       socket                  Codex Unix socket
  *       stdout.log              Codex stdout
  *       stderr.log              Codex stderr (load-bearing for debug)
- *     teammates/<name>/
- *       socket                  server-owned Codex teammate socket
- *       stdout.log              teammate Codex stdout
- *       stderr.log              teammate Codex stderr
  *
  * Issue #2 §"核心设计要点": Dispatcher does NOT bind a worktree; cwd above
  * is the codex daemon's own (intentionally empty) workdir. The dispatcher
@@ -93,20 +89,4 @@ export function dispatcherStdoutLog(id: string): string {
 
 export function dispatcherStderrLog(id: string): string {
   return join(dispatcherDir(id), 'stderr.log');
-}
-
-export function codexTeammateDir(name: string): string {
-  return join(runtimeRoot(), 'teammates', name);
-}
-
-export function codexTeammateSocketPath(name: string): string {
-  return join(codexTeammateDir(name), 'socket');
-}
-
-export function codexTeammateStdoutLog(name: string): string {
-  return join(codexTeammateDir(name), 'stdout.log');
-}
-
-export function codexTeammateStderrLog(name: string): string {
-  return join(codexTeammateDir(name), 'stderr.log');
 }

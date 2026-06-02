@@ -33,8 +33,6 @@ export interface CodexProcessOptions {
   socketPath: string;
   /** Working directory for the daemon. */
   cwd: string;
-  /** Create cwd before spawning. Defaults to true for dispatcher runtime dirs. */
-  createCwd?: boolean;
   /** Where to log stdout. */
   stdoutLogPath: string;
   /** Where to log stderr. */
@@ -81,9 +79,7 @@ export class CodexProcess {
     ];
 
     mkdirSync(dirname(this.opts.socketPath), { recursive: true });
-    if (this.opts.createCwd !== false) {
-      mkdirSync(this.opts.cwd, { recursive: true });
-    }
+    mkdirSync(this.opts.cwd, { recursive: true });
     mkdirSync(dirname(this.opts.stdoutLogPath), { recursive: true });
     // Stale socket from a previous crashed run would otherwise prevent
     // the daemon from binding.

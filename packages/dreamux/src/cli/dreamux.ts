@@ -10,8 +10,6 @@
  *   dreamux dispatcher status --id X
  *   dreamux dispatcher start --id X
  *   dreamux dispatcher stop --id X
- *   dreamux teammate spawn --name X --cwd /repo
- *   dreamux teammate send --name X --prompt "run tests"
  *
  * Implementation note: this binary is a thin router. `server start` delegates
  * to the same entrypoint as the legacy `dreamux-server` (`./server.js`);
@@ -42,13 +40,6 @@ Usage:
   dreamux dispatcher start  --id <ID>
   dreamux dispatcher stop   --id <ID>
   dreamux dispatcher remove --id <ID>
-  dreamux teammate list
-  dreamux teammate spawn --name <NAME> --cwd <PATH> [--codex-args-json <JSON>]
-  dreamux teammate resume --name <NAME> --cwd <PATH> --thread-id <THREAD_ID> \\
-                          [--codex-args-json <JSON>]
-  dreamux teammate send --name <NAME> --prompt <TEXT>
-  dreamux teammate status --name <NAME>
-  dreamux teammate kill --name <NAME>
 
 Environment:
   CODEX_HOST_RUNTIME_DIR    Root dir (default: ~/.codex-host)
@@ -108,11 +99,6 @@ async function main(): Promise<void> {
   if (topic === 'dispatcher') {
     if (sub === undefined) fail("missing 'dispatcher' subcommand");
     await execEntry(SERVER_CTL_ENTRY, ['dispatcher', sub, ...rest]);
-    return;
-  }
-  if (topic === 'teammate') {
-    if (sub === undefined) fail("missing 'teammate' subcommand");
-    await execEntry(SERVER_CTL_ENTRY, ['teammate', sub, ...rest]);
     return;
   }
   fail(`unknown command: ${topic ?? ''}`);
