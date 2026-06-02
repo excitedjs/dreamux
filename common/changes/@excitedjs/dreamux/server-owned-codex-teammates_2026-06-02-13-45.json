@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Host Codex teammate daemons in the dreamux server and expose teammate admin CLI methods",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "YourWildDad <15624809+YourWildDad@users.noreply.github.com>"
+}

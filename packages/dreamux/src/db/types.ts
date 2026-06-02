@@ -68,3 +68,27 @@ export interface InboundCreateInput {
   feishu_event_json: string;
   parsed_text: string;
 }
+
+export type CodexTeammateStatus = DispatcherStatus;
+
+export interface CodexTeammateRow {
+  name: string;
+  cwd: string;
+  codex_args_json: string;
+  thread_id: string | null;
+  status: CodexTeammateStatus;
+  created_at: number;
+  updated_at: number;
+  last_started_at: number | null;
+  last_ready_at: number | null;
+  last_error: string | null;
+  last_turn_id: string | null;
+  last_assistant_text: string | null;
+}
+
+export interface CodexTeammateCreateInput {
+  name: string;
+  cwd: string;
+  codex_args_json?: string;
+  thread_id?: string | null;
+}

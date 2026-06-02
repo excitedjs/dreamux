@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const CURRENT_USER_VERSION = 1;
+const CURRENT_USER_VERSION = 2;
 
 const here = dirname(fileURLToPath(import.meta.url));
 const migrationsDir = join(here, '..', '..', 'db', 'migrations');
@@ -28,6 +28,10 @@ function migrateIfNeeded(db: Database.Database): void {
   const tx = db.transaction(() => {
     if (row < 1) {
       const sql = readFileSync(join(migrationsDir, '0001_init.sql'), 'utf8');
+      db.exec(sql);
+    }
+    if (row < 2) {
+      const sql = readFileSync(join(migrationsDir, '0002_codex_teammates.sql'), 'utf8');
       db.exec(sql);
     }
     db.pragma(`user_version = ${CURRENT_USER_VERSION}`);

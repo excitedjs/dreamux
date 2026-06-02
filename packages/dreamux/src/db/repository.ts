@@ -3,6 +3,9 @@ import type {
   DispatcherCreateInput,
   DispatcherRow,
   DispatcherStatus,
+  CodexTeammateCreateInput,
+  CodexTeammateRow,
+  CodexTeammateStatus,
   InboundCreateInput,
   InboundRow,
   InboundState,
@@ -19,6 +22,11 @@ const INBOUND_COLUMNS = `
   feishu_event_json, parsed_text, state, codex_turn_id, assistant_text,
   feishu_message_ids_json, outbound_error, received_at, started_at,
   completed_at, failed_at, error
+`;
+
+const CODEX_TEAMMATE_COLUMNS = `
+  name, cwd, codex_args_json, thread_id, status, created_at, updated_at,
+  last_started_at, last_ready_at, last_error, last_turn_id, last_assistant_text
 `;
 
 export class DispatcherRepo {
@@ -117,6 +125,89 @@ export class DispatcherRepo {
          WHERE dispatcher_id = ?`,
       )
       .run(newThreadId, lostThreadId, error, Date.now(), id);
+  }
+}
+
+export class CodexTeammateRepo {
+  constructor(private readonly db: Database.Database) {}
+
+  create(input: CodexTeammateCreateInput): CodexTeammateRow {
+    const now = Date.now();
+    this.db
+      .prepare(
+        `INSERT INTO codex_teammates (
+          name, cwd, codex_args_json, thread_id, status, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, 'declared', ?, ?)`,
+      )
+      .run(
+        input.name,
+        input.cwd,
+        input.codex_args_json ?? '{}',
+        input.thread_id ?? null,
+        now,
+        now,
+      );
+    return this.get(input.name)!;
+  }
+
+  get(name: string): CodexTeammateRow | null {
+    const row = this.db
+      .prepare(`SELECT ${CODEX_TEAMMATE_COLUMNS} FROM codex_teammates WHERE name = ?`)
+      .get(name) as CodexTeammateRow | undefined;
+    return row ?? null;
+  }
+
+  list(): CodexTeammateRow[] {
+    return this.db
+      .prepare(`SELECT ${CODEX_TEAMMATE_COLUMNS} FROM codex_teammates ORDER BY created_at ASC`)
+      .all() as CodexTeammateRow[];
+  }
+
+  remove(name: string): void {
+    this.db.prepare(`DELETE FROM codex_teammates WHERE name = ?`).run(name);
+  }
+
+  setStatus(
+    name: string,
+    status: CodexTeammateStatus,
+    extras: { last_error?: string | null; last_started_at?: number; last_ready_at?: number } = {},
+  ): void {
+    const fields: string[] = ['status = ?', 'updated_at = ?'];
+    const values: unknown[] = [status, Date.now()];
+    if ('last_error' in extras) {
+      fields.push('last_error = ?');
+      values.push(extras.last_error ?? null);
+    }
+    if (extras.last_started_at !== undefined) {
+      fields.push('last_started_at = ?');
+      values.push(extras.last_started_at);
+    }
+    if (extras.last_ready_at !== undefined) {
+      fields.push('last_ready_at = ?');
+      values.push(extras.last_ready_at);
+    }
+    values.push(name);
+    this.db
+      .prepare(`UPDATE codex_teammates SET ${fields.join(', ')} WHERE name = ?`)
+      .run(...values);
+  }
+
+  setThreadId(name: string, threadId: string): void {
+    this.db
+      .prepare(
+        `UPDATE codex_teammates SET thread_id = ?, updated_at = ? WHERE name = ?`,
+      )
+      .run(threadId, Date.now(), name);
+  }
+
+  recordTurn(name: string, turnId: string, assistantText: string): void {
+    this.db
+      .prepare(
+        `UPDATE codex_teammates
+         SET last_turn_id = ?, last_assistant_text = ?, updated_at = ?
+         WHERE name = ?`,
+      )
+      .run(turnId, assistantText, Date.now(), name);
   }
 }
 

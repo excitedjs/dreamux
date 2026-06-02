@@ -16,13 +16,15 @@ Design background:
 ## What this package ships
 
 - The `dreamux` CLI (preferred): `dreamux server start`,
-  `dreamux server status`, `dreamux dispatcher add|remove|list|status|start|stop`.
+  `dreamux server status`, `dreamux dispatcher add|remove|list|status|start|stop`,
+  `dreamux teammate spawn|resume|send|list|status|kill`.
 - Legacy aliases: `dreamux-server` (= `dreamux server start`) and
   `server-ctl` (= `dreamux <verb>`). Kept so pre-monorepo operators
   don't have to rewrite PATH entries; see
   [the CLI naming decision](../../.agents/decisions/cli-and-package-naming.md).
-- A SQLite-backed runtime (`dispatchers` + `inbound_buffer`) plus the
-  Feishu / Codex adapters that drive each dispatcher.
+- A SQLite-backed runtime (`dispatchers` + `inbound_buffer` +
+  `codex_teammates`) plus the Feishu / Codex adapters that drive each
+  dispatcher and server-owned Codex teammate.
 
 ## What this MVP does (P0)
 
@@ -87,6 +89,8 @@ The server uses two separate home directories — by design (see
 | `~/.codex-host/dispatchers/<id>/cwd/`    | Codex app-server cwd                       | the server |
 | `~/.codex-host/dispatchers/<id>/socket`  | Codex Unix socket                          | the server |
 | `~/.codex-host/dispatchers/<id>/*.log`   | Codex stdout / stderr                      | the server |
+| `~/.codex-host/teammates/<name>/socket`  | Server-owned Codex teammate socket         | the server |
+| `~/.codex-host/teammates/<name>/*.log`   | Teammate Codex stdout / stderr             | the server |
 
 `rm -rf ~/.codex-host` is a safe recovery — your config in `~/.dreamux/`
 survives. `runtime_dir` and `admin_socket` paths in the config can move
@@ -110,6 +114,23 @@ export BOT_SECRET_FLOW='cli_secret_XXX'
 ```
 
 `./bin/server-ctl <args>` still works as an alias.
+
+## Manage a server-owned Codex teammate
+
+Codex teammates are direct Codex app-server daemons owned by the long-running
+dreamux server. They are useful for clients that need repeated Codex turns
+without spawning their own detached daemon.
+
+```bash
+./bin/dreamux teammate spawn --name worker --cwd /path/to/repo
+./bin/dreamux teammate send --name worker --prompt "run tests"
+./bin/dreamux teammate status --name worker
+./bin/dreamux teammate kill --name worker
+```
+
+The daemon stays alive while the dreamux server process stays alive. If the
+server restarts, the next `teammate send` starts a new app-server process and
+resumes the persisted Codex thread id.
 
 ## MVP verification path (issue #2 §"MVP 验收脚本")
 
@@ -201,9 +222,10 @@ JSON object stored in `dispatchers.codex_args_json`:
 node common/scripts/install-run-rush.js test   # smoke + bin-launcher + codex-0134-live
 ```
 
-- `tests/smoke.test.ts` — fake-codex-driven dispatcher behavior:
+- `tests/smoke.test.ts` — fake-codex-driven dispatcher and teammate behavior:
   happy path, FIFO, crash recovery (running → unknown), thread/resume
-  failure, outbound retry without turn re-run, approval fail-fast.
+  failure, outbound retry without turn re-run, approval fail-fast,
+  server-owned Codex teammate reuse, restart/resume, and admin methods.
 - `tests/bin-launcher.test.ts` — spawns the real bash launchers
   (`dreamux`, `dreamux-server`, `server-ctl`, plus the repo-root
   forwarders) from arbitrary cwds and through symlinks; static "no tsx"

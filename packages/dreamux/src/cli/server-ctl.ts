@@ -12,6 +12,9 @@
  *   server-ctl dispatcher start --id flow
  *   server-ctl dispatcher stop --id flow
  *   server-ctl dispatcher remove --id flow
+ *   server-ctl teammate spawn --name worker --cwd /repo
+ *   server-ctl teammate send --name worker --prompt "run tests"
+ *   server-ctl teammate kill --name worker
  */
 
 import { connect, type Socket } from 'node:net';
@@ -88,6 +91,16 @@ function resolveMethod(obj: string | undefined, verb: string | undefined): strin
       case 'stop': return 'dispatcher.stop';
     }
   }
+  if (o === 'teammate') {
+    switch (v) {
+      case 'spawn': return 'teammate.spawn';
+      case 'resume': return 'teammate.resume';
+      case 'send': return 'teammate.send';
+      case 'kill': return 'teammate.kill';
+      case 'list': return 'teammate.list';
+      case 'status': return 'teammate.status';
+    }
+  }
   return null;
 }
 
@@ -97,6 +110,7 @@ const FLAG_TO_PARAM: Record<string, string> = {
   'bot-secret-ref': 'bot_secret_ref',
   'codex-args-json': 'codex_args_json',
   'codex-cwd': 'codex_cwd',
+  'thread-id': 'thread_id',
 };
 
 function flagsToParams(
@@ -181,6 +195,13 @@ Usage:
   server-ctl dispatcher start --id <ID>
   server-ctl dispatcher stop --id <ID>
   server-ctl dispatcher remove --id <ID>
+  server-ctl teammate list
+  server-ctl teammate spawn --name <NAME> --cwd <PATH> [--codex-args-json <JSON>]
+  server-ctl teammate resume --name <NAME> --cwd <PATH> --thread-id <THREAD_ID> \\
+                             [--codex-args-json <JSON>]
+  server-ctl teammate send --name <NAME> --prompt <TEXT>
+  server-ctl teammate status --name <NAME>
+  server-ctl teammate kill --name <NAME>
 
 Environment:
   CODEX_HOST_ADMIN_SOCKET   override the admin socket path (default: ~/.codex-host/admin.sock)
