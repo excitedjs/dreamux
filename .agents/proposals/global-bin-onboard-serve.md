@@ -13,6 +13,10 @@ Installing `@excitedjs/dreamux` globally exposes one global binary:
 local serving, diagnostics, and the existing dispatcher administration
 surface.
 
+There is no legacy compatibility period for globally installed bins. The
+issue #18 implementation should publish the new single-bin shape directly:
+`dreamux-server` and `server-ctl` are not installed as global aliases.
+
 The canonical first-run path is:
 
 ```bash
@@ -82,17 +86,18 @@ Introspection command scope:
   bot/channel identity, enabled flag, runtime status, thread id, last error,
   and inbound/outbound backlog.
 
-Compatibility commands inside the single `dreamux` binary:
+Old command forms from the current MVP:
 
 ```bash
 dreamux server start
 dreamux server status
 ```
 
-`dreamux serve` is the canonical replacement for `dreamux server start`.
-`dreamux server start` may remain as an alias for existing scripts, but
-the npm package should not publish separate `dreamux-server` or
-`server-ctl` global bins once issue #18 is implemented.
+`dreamux serve` replaces `dreamux server start`. Because there are no
+existing global-bin users to protect, the implementation does not preserve
+these old command forms as compatibility contracts. They may exist
+temporarily during refactoring, but new docs, tests, service units, and the
+published package should target the new command tree directly.
 
 ## Onboard flow
 
@@ -121,7 +126,7 @@ flowchart TD
   `launchctl` on macOS, `systemctl --user` on Linux.
 - The chosen config directory is writable.
 - The chosen runtime directory is writable.
-- The chosen private Codex home root is writable.
+- The default global Codex home is writable.
 
 The command should support `--dry-run`, `--yes`, and non-TTY execution.
 In non-TTY mode every required value must come from flags, env, or existing
@@ -131,15 +136,20 @@ config; missing values fail loudly.
 
 The onboarding command installs two plugin surfaces:
 
-- Codex: install the `codexmux` plugin into the dreamux-managed private
-  Codex home used by `dreamux serve`.
+- Codex: install the `codexmux` plugin into the default global Codex home.
 - Claude: install the `claudemux` plugin for Claude Code so the plugin
   hooks that anchor teammate state are available to `tm`-driven sessions.
 
-Codex installation must run with `CODEX_HOME` pointing at the same private,
-writable Codex home that `dreamux serve` will use for dispatcher
-app-servers. Installing into the operator's interactive default Codex home
-is an explicit separate choice, not the default.
+Codex plugin installation must not use the dispatcher app-server runtime
+home as its target. The operator's default global Codex home is the install
+target for `codexmux` because teammate `tm` sessions do not consume
+dispatcher-local Codex configuration.
+
+This is separate from the dispatcher app-server runtime constraints below:
+`dreamux serve` must still use a private runtime `CODEX_HOME` / control
+socket root for persistent app-server process state. That runtime home is
+not the plugin installation home, and implementation must not rely on it to
+make `codexmux` available to `tm` teammates.
 
 The command should be idempotent:
 
@@ -191,7 +201,7 @@ Known path classes that onboard should disclose:
 |---|---|
 | Global config | `~/.dreamux/config.toml` or the selected config file |
 | Runtime state | `<runtime_dir>/state.db` and migration side effects |
-| Private Codex home | `<codex_home>/config.toml`, `<codex_home>/plugins/`, `<codex_home>/app-server-control/` |
+| Global Codex home | Codex config / plugin files under the default global Codex home |
 | Claude plugin install | the Claude Code marketplace / plugin files under the selected Claude scope |
 | macOS service | `~/Library/LaunchAgents/dev.excited.dreamux.plist` |
 | Linux service | `~/.config/systemd/user/dreamux.service` |
@@ -204,7 +214,6 @@ decide. The guide collects:
 
 - Config directory, defaulting to `~/.dreamux`.
 - Runtime directory, defaulting to `~/.codex-host`.
-- Private Codex home root, defaulting under the runtime directory.
 - Codex binary path; store an absolute path when discovered.
 - Dispatcher id.
 - Dispatcher directory / Codex working root for the long-lived
@@ -246,8 +255,8 @@ itself.
 ### Dispatcher app-server runtime requirements
 
 The dispatcher is a persistent Codex `app-server`. Production `serve`
-must start it in a profile that can bind/listen and can write its private
-Codex home.
+must start it in a profile that can bind/listen and can write its runtime
+Codex home / control directory.
 
 Required constraints:
 
@@ -255,7 +264,7 @@ Required constraints:
   workspace profile.
 - Use a non-restricted profile, or at minimum a network-enabled permission
   profile, so bind/listen is not blocked.
-- Set a private, dreamux-managed `CODEX_HOME` for every dispatcher
+- Set a private, dreamux-managed runtime `CODEX_HOME` for every dispatcher
   app-server.
 - Place app-server control sockets under
   `<CODEX_HOME>/app-server-control/`.
@@ -267,7 +276,7 @@ Suggested layout:
 
 | Path | Owner | Purpose |
 |---|---|---|
-| `<runtime_dir>/dispatchers/<id>/codex-home/` | dreamux | Private `CODEX_HOME` for this dispatcher |
+| `<runtime_dir>/dispatchers/<id>/codex-home/` | dreamux | Runtime `CODEX_HOME` for this dispatcher app-server |
 | `<runtime_dir>/dispatchers/<id>/codex-home/app-server-control/` | dreamux | Codex app-server control sockets |
 | `<runtime_dir>/dispatchers/<id>/cwd/` | dreamux | App-server cwd, intentionally not a worktree |
 | `<runtime_dir>/dispatchers/<id>/stdout.log` | dreamux | Codex stdout |
@@ -296,6 +305,9 @@ dreamux serve
 
 Use argv arrays and native unit files, not shell strings.
 
+The first implementation only supports user-level services. It must not
+install root-scoped macOS LaunchDaemons or root-scoped systemd services.
+
 `dreamux onboard` should delegate service creation to the same code path as
 `dreamux daemon install`, passing the values collected by the wizard. Re-run
 semantics must be idempotent: if the generated service file already matches
@@ -317,10 +329,7 @@ Default to a user LaunchAgent:
 - Start / restart via `launchctl kickstart -k gui/<uid>/dev.excited.dreamux`.
 - Stop via `launchctl bootout gui/<uid>/dev.excited.dreamux`.
 
-Root LaunchDaemons are out of the default path because dreamux uses
-user-owned config, runtime dirs, plugin homes, and secrets. Supporting a
-root-scoped daemon would require a separate trust and secret-handling
-decision.
+Root LaunchDaemons are out of scope for issue #18.
 
 ### Linux systemd
 
@@ -340,9 +349,8 @@ Default to a user service:
 - Uninstall via `systemctl --user disable --now dreamux.service`, remove
   the unit, then `systemctl --user daemon-reload`.
 
-`loginctl enable-linger` is not automatic. It needs explicit operator
-approval because it changes user-session boot behavior and may require
-privileges.
+`loginctl enable-linger` is out of scope for the first implementation
+because it may require privileges and changes user-session boot behavior.
 
 ## Commodity packages
 
@@ -366,17 +374,17 @@ Alternatives:
 - Hand-written CLI parsing and prompt rendering are rejected by issue #18's
   "no homegrown commodity infra" constraint.
 
-## Open maintainer decisions
+## Settled product decisions
 
-- Whether implementation should remove `dreamux-server` and `server-ctl`
-  from the npm tarball immediately, or keep repo-local compatibility shims
-  while publishing only the single global `dreamux` bin.
-- Whether `dreamux onboard` should also offer an explicit opt-in to install
-  `codexmux` into the operator's interactive default Codex home, in
-  addition to the dreamux-managed private `CODEX_HOME`.
-- Whether Linux must support a root-scoped system service in the first
-  issue #18 implementation, or user-level `systemd --user` is the only
-  supported default.
+- No legacy global bins: publish only `dreamux`; do not install
+  `dreamux-server` or `server-ctl`.
+- Codex plugin installation targets the default global Codex home, not a
+  dreamux-private install home.
+- Service registration is user-level only: macOS LaunchAgent and
+  `systemd --user`.
+
+## Remaining open implementation details
+
 - The final public marketplace sources / selectors for `codexmux` and
   `claudemux`.
 - The exact Codex 0.135+ config key used to select the network-enabled

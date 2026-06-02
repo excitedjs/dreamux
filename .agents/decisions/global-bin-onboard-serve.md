@@ -21,17 +21,32 @@ A recent Codex 0.135.0 root-cause check found that dispatcher app-servers
 cannot run under Codex's restricted-network workspace profile in production:
 bind/listen can be blocked, and `/tmp` control socket handling is unsafe for
 this shape. The production dispatcher app-server must run with a profile
-that can bind/listen and must use a private writable `CODEX_HOME`.
+that can bind/listen and must use writable runtime control state.
 
 ## Decision
 
 Design issue #18 around one published global bin, `dreamux`, with
 `dreamux onboard` and `dreamux serve` as the canonical lifecycle commands.
+There are no legacy global-bin users to protect, so the implementation does
+not install `dreamux-server` or `server-ctl` and does not preserve old command
+forms as compatibility contracts.
 
 `dreamux onboard` installs the required Codex / Claude plugins, collects
 dispatcher and channel configuration, and registers a native service manager
 entry. `dreamux serve` runs the existing server in the foreground and lets
 launchd or systemd keep it alive.
+
+Codex plugin installation targets the operator's default global Codex home.
+It does not install `codexmux` into a dreamux-private Codex home. This is
+separate from dispatcher app-server runtime state: `dreamux serve` must give
+persistent dispatcher app-server processes a private runtime `CODEX_HOME` /
+control socket directory, but that runtime home is not the plugin
+installation target.
+
+Service registration is user-level only for issue #18:
+macOS LaunchAgent and Linux `systemd --user`. Root-scoped LaunchDaemons,
+root-scoped systemd services, and automatic `loginctl enable-linger` are out
+of scope.
 
 Use commodity packages for commodity infrastructure:
 
@@ -45,7 +60,7 @@ The dispatcher Codex app-server launched by `dreamux serve` must:
 
 - run outside Codex's restricted-network workspace profile, or at minimum
   use a network-enabled permission profile
-- receive a dreamux-managed private `CODEX_HOME`
+- receive a dreamux-managed private runtime `CODEX_HOME`
 - keep control sockets under `<CODEX_HOME>/app-server-control/`
 - avoid `/tmp` sockets
 
@@ -59,16 +74,16 @@ with its final status.
 - When implemented, this supersedes the package-bin part of
   [cli-and-package-naming](cli-and-package-naming.md):
   the npm package should expose only the `dreamux` global bin.
-- `dreamux server start` can remain as an in-binary compatibility alias,
-  but new docs and service units should use `dreamux serve`.
-- Daemon registration should be native and user-scoped by default:
+- `dreamux server start`, `dreamux-server`, and `server-ctl` are not
+  compatibility surfaces for issue #18.
+- Daemon registration is native and user-scoped:
   `~/Library/LaunchAgents/dev.excited.dreamux.plist` on macOS and
   `~/.config/systemd/user/dreamux.service` on Linux.
 - `serve` should not daemonize itself. Service managers supervise the
   foreground process.
-- Onboarding must not silently mutate the operator's default interactive
-  Codex home. The default Codex plugin install target is the private
-  dreamux-managed `CODEX_HOME` used by the dispatcher app-server.
+- Onboarding intentionally modifies the default global Codex home when
+  installing `codexmux`; all touched paths must be printed through the
+  onboarding path ledger.
 - Dispatcher/channel registration should use the existing admin / repository
   source of truth for the first issue #18 implementation, not a second
   dispatcher config file.
@@ -77,6 +92,12 @@ with its final status.
 
 - **Keep the current three published bins:** rejected for issue #18. The
   explicit product requirement is a single global bin named `dreamux`.
+- **Install Codex plugins into a dreamux-private home:** rejected for the
+  onboarding install target. Teammate `tm` sessions do not consume
+  dispatcher-local Codex configuration, so `codexmux` belongs in the default
+  global Codex home.
+- **Support root-scoped service registration in v1:** rejected. The first
+  implementation is user-level only and requires no root service setup.
 - **Let `serve` daemonize itself:** rejected. launchd and systemd already
   own supervision, restart, logs, and status.
 - **Run dispatcher app-servers under the restricted-network workspace
