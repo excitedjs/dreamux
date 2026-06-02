@@ -1,5 +1,5 @@
 import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { DispatcherRepo } from '../db/repository.js';
 import { openDatabase } from '../db/schema.js';
@@ -66,7 +66,7 @@ export async function runOnboard(
 
   preflightAuth(answers, env);
 
-  const configPath = `${answers.configDir}/config.toml`;
+  const configPath = join(answers.configDir, 'config.toml');
   ensureDirectory(answers.configDir, ledger, 'dreamux config directory', {
     dryRun: answers.dryRun,
   });
