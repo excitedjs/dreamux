@@ -37,11 +37,3 @@ Do not replace this with bare `@excitedjs/tm@latest`. Do not use
 self-contained tm artifact can be added later after the thin dispatcher ->
 skill -> tm path is validated end to end.
 
-## Validation
-
-Validate the plugin and skill structure before pushing:
-
-```bash
-python3 /data00/home/dyzhu/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py ./codex-marketplace/plugins/codexmux
-python3 /data00/home/dyzhu/.codex/skills/.system/skill-creator/scripts/quick_validate.py ./codex-marketplace/plugins/codexmux/skills/codexmux-dispatcher
-```
