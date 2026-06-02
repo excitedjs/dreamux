@@ -4,7 +4,9 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  DISPATCHER_APP_SERVER_SOCKET_PATH_MAX_BYTES,
   formatDispatcherCodexHomeErrors,
+  dispatcherCodexHomeDoctorContext,
   validateDispatcherCodexHome,
 } from '../src/runtime/dispatcher-codex-home.js';
 import { BUILT_IN_DEFAULTS } from '../src/runtime/config.js';
@@ -28,6 +30,16 @@ network_access = true
 [marketplaces.dreamux]
 source = "public"
 
+	[plugins.codexmux]
+	enabled = true
+	`;
+
+const MODEL_ONLY_CONFIG = `model = "gpt-test"
+approval_policy = "never"
+
+[marketplaces.dreamux]
+source = "public"
+
 [plugins.codexmux]
 enabled = true
 `;
@@ -47,15 +59,14 @@ describe('dispatcher private CODEX_HOME doctor', () => {
 
   it('places app-server sockets under the dispatcher private CODEX_HOME', () => {
     expect(dispatcherSocketPath('flow')).toBe(
-      join(
-        dispatcherAppServerControlDir('flow'),
-        'app-server-control.sock',
-      ),
+      join(dispatcherAppServerControlDir('flow'), 'as.sock'),
     );
     expect(dispatcherSocketPath('flow')).toContain(
       join('dispatchers', 'flow', 'codex-home', 'app-server-control'),
     );
     expect(dispatcherSocketPath('flow')).not.toMatch(/^\/tmp(?:\/|$)/);
+    expect(Buffer.byteLength(dispatcherSocketPath('frontend-service'), 'utf8'))
+      .toBeLessThanOrEqual(DISPATCHER_APP_SERVER_SOCKET_PATH_MAX_BYTES);
   });
 
   it('reports every missing dispatcher home requirement', () => {
@@ -66,7 +77,6 @@ describe('dispatcher private CODEX_HOME doctor', () => {
       expect.arrayContaining([
         expect.stringContaining('missing dispatcher Codex config'),
         expect.stringContaining('missing dispatcher CODEX_HOME directory'),
-        expect.stringContaining('missing dispatcher app-server control directory'),
         expect.stringContaining('missing codexmux plugin'),
         expect.stringContaining('missing dispatcher Codex auth state'),
       ]),
@@ -102,6 +112,105 @@ network_access = false
     );
   });
 
+  it('accepts runtime CLI sandbox overrides as effective network state', () => {
+    writeDispatcherHome('flow', MODEL_ONLY_CONFIG);
+
+    const result = validateDispatcherCodexHome('flow', {
+      codexCliArgs: ['-c', 'sandbox_mode=danger-full-access'],
+      env: {},
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.errors).toEqual([]);
+  });
+
+  it('rejects config network when runtime CLI overrides turn it off', () => {
+    writeDispatcherHome('flow', VALID_CONFIG);
+
+    const result = validateDispatcherCodexHome('flow', {
+      codexCliArgs: [
+        '-c',
+        'sandbox_mode=workspace-write',
+        '-c',
+        'sandbox_workspace_write.network_access=false',
+      ],
+      env: {},
+    });
+
+    expect(result.ok).toBe(false);
+    expect(formatDispatcherCodexHomeErrors(result)).toContain(
+      'network-enabled sandbox/profile',
+    );
+  });
+
+  it('accepts Codex 0.135 default_permissions network profile config', () => {
+    writeDispatcherHome(
+      'flow',
+      `model = "gpt-test"
+approval_policy = "never"
+default_permissions = "dispatcher"
+
+[permissions.dispatcher]
+network = { enabled = true }
+`,
+    );
+
+    const result = validateDispatcherCodexHome('flow', { env: {} });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects too-long app-server socket paths before bind', () => {
+    setRuntimeConfig({
+      ...BUILT_IN_DEFAULTS,
+      runtime_dir: join(runtimeDir, 'runtime-root-with-a-long-custom-name'),
+    });
+    writeDispatcherHome('dispatcher-with-long-id', VALID_CONFIG);
+
+    const result = validateDispatcherCodexHome('dispatcher-with-long-id', {
+      env: {},
+    });
+
+    expect(result.ok).toBe(false);
+    expect(formatDispatcherCodexHomeErrors(result)).toContain(
+      'socket path is too long',
+    );
+  });
+
+  it('requires auth environment variables to be non-empty and accepts CODEX_ACCESS_TOKEN', () => {
+    writeDispatcherHome('flow', VALID_CONFIG, { writeAuth: false });
+
+    const emptyAuth = validateDispatcherCodexHome('flow', {
+      env: { OPENAI_API_KEY: '' },
+    });
+    expect(emptyAuth.ok).toBe(false);
+    expect(formatDispatcherCodexHomeErrors(emptyAuth)).toContain(
+      'missing dispatcher Codex auth state',
+    );
+
+    const accessToken = validateDispatcherCodexHome('flow', {
+      env: { CODEX_ACCESS_TOKEN: 'token-test' },
+    });
+    expect(accessToken.ok).toBe(true);
+  });
+
+  it('honors caller-provided doctor context paths', () => {
+    writeDispatcherHome('flow', VALID_CONFIG);
+    const context = dispatcherCodexHomeDoctorContext('flow', {
+      codexCliArgs: ['-c', 'sandbox_mode=danger-full-access'],
+    });
+
+    const result = validateDispatcherCodexHome({
+      ...context,
+      configPath: join(runtimeDir, 'missing-config.toml'),
+    }, { env: {} });
+
+    expect(result.ok).toBe(false);
+    expect(formatDispatcherCodexHomeErrors(result)).toContain(
+      join(runtimeDir, 'missing-config.toml'),
+    );
+  });
+
   it('rejects dispatcher homes without codexmux installed', () => {
     writeDispatcherHome('flow', VALID_CONFIG, { installCodexmux: false });
 
@@ -117,14 +226,15 @@ network_access = false
 function writeDispatcherHome(
   dispatcherId: string,
   config: string,
-  options: { installCodexmux?: boolean } = {},
+  options: { installCodexmux?: boolean; writeAuth?: boolean } = {},
 ): void {
-  mkdirSync(dispatcherAppServerControlDir(dispatcherId), { recursive: true });
   mkdirSync(dispatcherCodexHome(dispatcherId), { recursive: true });
   writeFileSync(dispatcherCodexConfigPath(dispatcherId), config, { mode: 0o600 });
-  writeFileSync(join(dispatcherCodexHome(dispatcherId), 'auth.json'), '{}', {
-    mode: 0o600,
-  });
+  if (options.writeAuth !== false) {
+    writeFileSync(join(dispatcherCodexHome(dispatcherId), 'auth.json'), '{}', {
+      mode: 0o600,
+    });
+  }
 
   if (options.installCodexmux === false) return;
   mkdirSync(

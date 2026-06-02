@@ -12,8 +12,14 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { Server } from '../src/server.js';
@@ -23,7 +29,10 @@ import { createFakeFeishuBot, type FakeFeishuBot, type FeishuInboundEvent } from
 import { createAdminSocketServer } from '../src/admin/socket.js';
 import { BUILT_IN_DEFAULTS } from '../src/runtime/config.js';
 import {
+  dispatcherAppServerControlDir,
+  dispatcherCodexConfigPath,
   dispatcherCodexHome,
+  dispatcherCodexPluginsDir,
   dispatcherSocketPath,
 } from '../src/runtime/paths.js';
 import { startFakeCodex, type FakeCodex } from './fake-codex.js';
@@ -47,6 +56,7 @@ function buildServer(opts: {
   /** Optional spawn counter — bumped each time a NoopCodexProcess is built. */
   spawnCounter?: { count: number };
   capturedCodexOptions?: CodexProcessOptions[];
+  useDefaultCodexHomeDoctor?: boolean;
 }): Server {
   return new Server({
     config: { ...BUILT_IN_DEFAULTS, runtime_dir: opts.runtimeDir },
@@ -60,9 +70,13 @@ function buildServer(opts: {
       return new NoopCodexProcess(o);
     },
     codexClientFactory: () => new CodexWsClient({ url: opts.fake.url }),
-    codexHomeDoctor: () => {
-      /* fake codex tests do not require a real dispatcher CODEX_HOME */
-    },
+    ...(opts.useDefaultCodexHomeDoctor === true
+      ? {}
+      : {
+          codexHomeDoctor: () => {
+            /* fake codex tests do not require a real dispatcher CODEX_HOME */
+          },
+        }),
   });
 }
 
@@ -100,6 +114,35 @@ async function waitFor(
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function writeReadyDispatcherCodexHome(dispatcherId: string): void {
+  mkdirSync(dispatcherCodexHome(dispatcherId), { recursive: true });
+  writeFileSync(
+    dispatcherCodexConfigPath(dispatcherId),
+    `model = "gpt-test"
+approval_policy = "never"
+
+[marketplaces.dreamux]
+source = "public"
+
+[plugins.codexmux]
+enabled = true
+`,
+    { mode: 0o600 },
+  );
+  writeFileSync(join(dispatcherCodexHome(dispatcherId), 'auth.json'), '{}', {
+    mode: 0o600,
+  });
+  mkdirSync(
+    join(
+      dispatcherCodexPluginsDir(dispatcherId),
+      'cache',
+      'dreamux',
+      'codexmux',
+    ),
+    { recursive: true },
+  );
 }
 
 describe('dreamux MVP smoke', () => {
@@ -174,6 +217,35 @@ describe('dreamux MVP smoke', () => {
     expect(capturedCodexOptions[0]?.socketPath).toBe(
       dispatcherSocketPath('flow'),
     );
+  });
+
+  it('runs the default dispatcher CODEX_HOME doctor before spawning the app-server', async () => {
+    rmSync(runtimeDir, { recursive: true, force: true });
+    runtimeDir = mkdtempSync(join(homedir(), '.dreamux-smoke-'));
+    const capturedCodexOptions: CodexProcessOptions[] = [];
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      capturedCodexOptions,
+      useDefaultCodexHomeDoctor: true,
+    });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'env:UNUSED',
+      codex_args_json: JSON.stringify({ sandboxMode: 'danger-full-access' }),
+    });
+    writeReadyDispatcherCodexHome('flow');
+
+    expect(existsSync(dispatcherAppServerControlDir('flow'))).toBe(false);
+    await server.start();
+
+    expect(capturedCodexOptions).toHaveLength(1);
+    expect(capturedCodexOptions[0]?.env?.['CODEX_HOME']).toBe(
+      dispatcherCodexHome('flow'),
+    );
+    expect(existsSync(dispatcherAppServerControlDir('flow'))).toBe(true);
   });
 
   it('compatible Feishu gate drops bot-loop messages before durable enqueue', async () => {

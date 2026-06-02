@@ -135,7 +135,11 @@ export class DispatcherRuntime {
       const extraArgs = this.deps.resolveExtraArgs?.(this.row) ?? [];
       const doctor =
         this.deps.codexHomeDoctor ?? assertDispatcherCodexHomeReady;
-      await doctor(dispatcherCodexHomeDoctorContext(this.dispatcherId));
+      await doctor(
+        dispatcherCodexHomeDoctorContext(this.dispatcherId, {
+          codexCliArgs: extraArgs,
+        }),
+      );
 
       const factory = this.deps.codexProcessFactory ?? ((o) => new CodexProcess(o));
       this.process = factory({

@@ -29,11 +29,17 @@ const PKG_BIN_DREAMUX = join(PACKAGE_ROOT, 'bin', 'dreamux');
 const ROOT_BIN_DREAMUX = join(MONOREPO_ROOT, 'bin', 'dreamux');
 
 beforeAll(() => {
-  const distFile = join(PACKAGE_ROOT, 'dist', 'cli', 'dreamux.js');
-  if (!existsSync(distFile)) {
-    throw new Error(
-      `dist artefact ${distFile} is missing — run 'rush build' before these tests.`,
-    );
+  const distFiles = [
+    join(PACKAGE_ROOT, 'dist', 'cli', 'dreamux.js'),
+    join(PACKAGE_ROOT, 'dist', 'cli', 'server.js'),
+    join(PACKAGE_ROOT, 'dist', 'cli', 'server-ctl.js'),
+  ];
+  for (const distFile of distFiles) {
+    if (!existsSync(distFile)) {
+      throw new Error(
+        `dist artefact ${distFile} is missing — run 'rush build' before these tests.`,
+      );
+    }
   }
 });
 

@@ -32,12 +32,14 @@ async function execEntry(
     env,
     stdio: 'inherit',
   });
-  await new Promise<void>((resolve, reject) => {
+  await new Promise<void>((_resolve, reject) => {
     child.once('error', reject);
     child.once('exit', (code, signal) => {
-      if (signal !== null) process.kill(process.pid, signal);
+      if (signal !== null) {
+        process.kill(process.pid, signal);
+        return;
+      }
       process.exit(code ?? 0);
-      resolve();
     });
   });
   process.exit(0);

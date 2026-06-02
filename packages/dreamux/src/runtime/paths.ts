@@ -99,7 +99,7 @@ export function dispatcherAppServerControlDir(id: string): string {
 }
 
 export function dispatcherSocketPath(id: string): string {
-  return join(dispatcherAppServerControlDir(id), 'app-server-control.sock');
+  return join(dispatcherAppServerControlDir(id), 'as.sock');
 }
 
 export function dispatcherStdoutLog(id: string): string {

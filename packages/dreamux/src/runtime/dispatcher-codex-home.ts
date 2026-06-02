@@ -16,6 +16,8 @@ import {
   dispatcherSocketPath,
 } from './paths.js';
 
+export const DISPATCHER_APP_SERVER_SOCKET_PATH_MAX_BYTES = 103;
+
 export interface DispatcherCodexHomeDoctorContext {
   dispatcherId: string;
   codexHome: string;
@@ -23,6 +25,7 @@ export interface DispatcherCodexHomeDoctorContext {
   pluginsDir: string;
   appServerControlDir: string;
   socketPath: string;
+  codexCliArgs: string[];
 }
 
 export interface DispatcherCodexHomeDoctorResult {
@@ -35,12 +38,18 @@ export type DispatcherCodexHomeDoctor = (
   context: DispatcherCodexHomeDoctorContext,
 ) => void | Promise<void>;
 
+interface DoctorContextOptions {
+  codexCliArgs?: string[];
+}
+
 interface DoctorOptions {
   env?: NodeJS.ProcessEnv;
+  codexCliArgs?: string[];
 }
 
 export function dispatcherCodexHomeDoctorContext(
   dispatcherId: string,
+  options: DoctorContextOptions = {},
 ): DispatcherCodexHomeDoctorContext {
   return {
     dispatcherId,
@@ -49,14 +58,23 @@ export function dispatcherCodexHomeDoctorContext(
     pluginsDir: dispatcherCodexPluginsDir(dispatcherId),
     appServerControlDir: dispatcherAppServerControlDir(dispatcherId),
     socketPath: dispatcherSocketPath(dispatcherId),
+    codexCliArgs: options.codexCliArgs ?? [],
   };
 }
 
 export function validateDispatcherCodexHome(
-  dispatcherId: string,
+  input: string | DispatcherCodexHomeDoctorContext,
   options: DoctorOptions = {},
 ): DispatcherCodexHomeDoctorResult {
-  const context = dispatcherCodexHomeDoctorContext(dispatcherId);
+  const context =
+    typeof input === 'string'
+      ? dispatcherCodexHomeDoctorContext(input, {
+          codexCliArgs: options.codexCliArgs,
+        })
+      : {
+          ...input,
+          codexCliArgs: options.codexCliArgs ?? input.codexCliArgs,
+        };
   const errors: string[] = [];
   const env = options.env ?? process.env;
 
@@ -79,14 +97,15 @@ export function validateDispatcherCodexHome(
   if (!existsSync(context.codexHome)) {
     errors.push(`missing dispatcher CODEX_HOME directory: ${context.codexHome}`);
   }
-  if (!existsSync(context.appServerControlDir)) {
-    errors.push(
-      `missing dispatcher app-server control directory: ${context.appServerControlDir}`,
-    );
-  }
   if (isTmpPath(context.socketPath)) {
     errors.push(
       `dispatcher app-server socket must not be under /tmp: ${context.socketPath}`,
+    );
+  }
+  if (!socketPathFitsUnixLimit(context.socketPath)) {
+    const bytes = Buffer.byteLength(context.socketPath, 'utf8');
+    errors.push(
+      `dispatcher app-server socket path is too long for Unix sockets (${bytes} bytes > ${DISPATCHER_APP_SERVER_SOCKET_PATH_MAX_BYTES} safe bytes): ${context.socketPath}`,
     );
   }
   if (!codexmuxPluginExists(context.pluginsDir)) {
@@ -94,12 +113,17 @@ export function validateDispatcherCodexHome(
   }
 
   if (parsedConfig !== null) {
-    if (!hasNetworkEnabledProfile(parsedConfig)) {
+    const effectiveConfig = applyCliConfigOverrides(
+      parsedConfig,
+      context.codexCliArgs,
+      errors,
+    );
+    if (!hasNetworkEnabledRuntime(effectiveConfig)) {
       errors.push(
-        'dispatcher Codex config must select a network-enabled sandbox/profile',
+        'dispatcher Codex runtime config must select a network-enabled sandbox/profile',
       );
     }
-    if (!hasModel(parsedConfig, env)) {
+    if (!hasModel(effectiveConfig)) {
       errors.push(
         `dispatcher Codex config must define a model in: ${context.configPath}`,
       );
@@ -122,7 +146,7 @@ export function validateDispatcherCodexHome(
 export async function assertDispatcherCodexHomeReady(
   context: DispatcherCodexHomeDoctorContext,
 ): Promise<void> {
-  const result = validateDispatcherCodexHome(context.dispatcherId);
+  const result = validateDispatcherCodexHome(context);
   if (result.ok) return;
   throw new Error(formatDispatcherCodexHomeErrors(result));
 }
@@ -178,7 +202,7 @@ function hasPathSegment(root: string, segment: string, maxDepth: number): boolea
   return false;
 }
 
-function hasNetworkEnabledProfile(config: Record<string, unknown>): boolean {
+function hasNetworkEnabledRuntime(config: Record<string, unknown>): boolean {
   const sandboxMode = stringValue(config['sandbox_mode']);
   if (sandboxMode === 'danger-full-access') return true;
   if (sandboxMode === 'workspace-write') {
@@ -188,18 +212,8 @@ function hasNetworkEnabledProfile(config: Record<string, unknown>): boolean {
     }
   }
 
-  const profileName =
-    stringValue(config['profile']) ??
-    stringValue(config['default_profile']) ??
-    stringValue(config['permission_profile']) ??
-    stringValue(config['default_permissions']);
+  const profileName = stringValue(config['default_permissions']);
   if (profileName === null) return false;
-
-  const profiles = recordValue(config['profiles']);
-  if (profiles !== null) {
-    const profile = recordValue(profiles[profileName]);
-    if (profile !== null && profileAllowsNetwork(profile)) return true;
-  }
 
   const permissions = recordValue(config['permissions']);
   if (permissions !== null) {
@@ -212,8 +226,8 @@ function hasNetworkEnabledProfile(config: Record<string, unknown>): boolean {
 
 function profileAllowsNetwork(profile: Record<string, unknown>): boolean {
   if (stringValue(profile['sandbox_mode']) === 'danger-full-access') return true;
-  if (boolValue(profile['network_access']) === true) return true;
-  if (stringValue(profile['network']) === 'enabled') return true;
+  const network = recordValue(profile['network']);
+  if (network !== null && boolValue(network['enabled']) === true) return true;
 
   const sandbox = recordValue(profile['sandbox_workspace_write']);
   if (sandbox !== null && boolValue(sandbox['network_access']) === true) return true;
@@ -221,19 +235,105 @@ function profileAllowsNetwork(profile: Record<string, unknown>): boolean {
   return false;
 }
 
-function hasModel(
-  config: Record<string, unknown>,
-  env: NodeJS.ProcessEnv,
-): boolean {
+function hasModel(config: Record<string, unknown>): boolean {
   const fromConfig = stringValue(config['model']);
-  if (fromConfig !== null && fromConfig.trim() !== '') return true;
-  const fromEnv = env['CODEX_MODEL'];
-  return fromEnv !== undefined && fromEnv.trim() !== '';
+  return fromConfig !== null && fromConfig.trim() !== '';
 }
 
 function hasAuth(codexHome: string, env: NodeJS.ProcessEnv): boolean {
   if (existsSync(join(codexHome, 'auth.json'))) return true;
-  return env['OPENAI_API_KEY'] !== undefined || env['CODEX_API_KEY'] !== undefined;
+  return ['OPENAI_API_KEY', 'CODEX_API_KEY', 'CODEX_ACCESS_TOKEN'].some(
+    (name) => {
+      const value = env[name];
+      return value !== undefined && value.trim() !== '';
+    },
+  );
+}
+
+function socketPathFitsUnixLimit(path: string): boolean {
+  return (
+    Buffer.byteLength(path, 'utf8') <=
+    DISPATCHER_APP_SERVER_SOCKET_PATH_MAX_BYTES
+  );
+}
+
+function applyCliConfigOverrides(
+  config: Record<string, unknown>,
+  cliArgs: string[],
+  errors: string[],
+): Record<string, unknown> {
+  const effective = cloneRecord(config);
+  for (let i = 0; i < cliArgs.length; i += 1) {
+    const arg = cliArgs[i];
+    if (arg === '-c' || arg === '--config') {
+      const next = cliArgs[i + 1];
+      if (next === undefined) {
+        errors.push(`Codex config override ${arg} is missing key=value`);
+      } else {
+        applyConfigOverride(effective, next, errors);
+        i += 1;
+      }
+      continue;
+    }
+    if (arg.startsWith('--config=')) {
+      applyConfigOverride(effective, arg.slice('--config='.length), errors);
+    }
+  }
+  return effective;
+}
+
+function applyConfigOverride(
+  config: Record<string, unknown>,
+  raw: string,
+  errors: string[],
+): void {
+  const eq = raw.indexOf('=');
+  if (eq <= 0) {
+    errors.push(`Codex config override must be key=value: ${raw}`);
+    return;
+  }
+
+  const key = raw.slice(0, eq).trim();
+  const value = parseCodexConfigValue(raw.slice(eq + 1).trim());
+  const parts = key.split('.').map((p) => p.trim()).filter((p) => p !== '');
+  if (parts.length === 0) {
+    errors.push(`Codex config override has an empty key: ${raw}`);
+    return;
+  }
+
+  let target = config;
+  for (const part of parts.slice(0, -1)) {
+    const existing = target[part];
+    if (!isRecord(existing)) {
+      target[part] = {};
+    }
+    target = target[part] as Record<string, unknown>;
+  }
+  target[parts[parts.length - 1] as string] = value;
+}
+
+function parseCodexConfigValue(raw: string): unknown {
+  try {
+    const parsed = parseToml(`value = ${raw}`);
+    if (isRecord(parsed)) return parsed['value'];
+  } catch {
+    /* Codex treats non-TOML override values as literal strings. */
+  }
+  return raw;
+}
+
+function cloneRecord(record: Record<string, unknown>): Record<string, unknown> {
+  const copy: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(record)) {
+    copy[key] = cloneValue(value);
+  }
+  return copy;
+}
+
+function cloneValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(cloneValue);
+  if (isRecord(value)) return cloneRecord(value);
+  return value;
 }
 
 function isTmpPath(path: string): boolean {
