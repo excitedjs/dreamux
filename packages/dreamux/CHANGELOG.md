@@ -1,6 +1,14 @@
 # Change Log - @excitedjs/dreamux
 
-This log was last generated on Sun, 31 May 2026 07:02:52 GMT and should not be manually modified.
+This log was last generated on Tue, 02 Jun 2026 18:55:21 GMT and should not be manually modified.
+
+## 0.1.3
+Tue, 02 Jun 2026 18:55:21 GMT
+
+### Patches
+
+- Implement dreamux onboard: first-run wizard, dispatcher-private Codex home setup, plugin installation, service registration, and transparent file ledger output.
+- Add the issue #18 dreamux serve foundation: single global bin command tree, dispatcher-private Codex homes, and serve-time Codex home checks.
 
 ## 0.1.2
 Sun, 31 May 2026 07:02:52 GMT
