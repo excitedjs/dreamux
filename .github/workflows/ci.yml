@@ -140,8 +140,7 @@ jobs:
             .agents/scripts/check.sh \
             common/git-hooks/pre-commit \
             bin/dreamux \
-            bin/server \
-            bin/server-ctl
+            packages/dreamux/bin/dreamux
 
   kb:
     name: knowledge base — link & orphan check
