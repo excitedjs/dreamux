@@ -168,8 +168,11 @@ minimal dispatcher-private `config.toml` instead of copying the entire
 global config:
 
 - the `codexmux` plugin and marketplace declaration
-- the selected network-enabled permission profile, including the approval
-  and sandbox settings needed for a persistent app-server
+- the selected network-enabled runtime configuration, including the approval
+  and sandbox settings needed for a persistent app-server. For Codex 0.135,
+  permission-profile fallback uses `default_permissions` plus
+  `[permissions.<name>] network = { enabled = true }`; `serve` must still
+  validate the final effective values after `-c` CLI overrides.
 - required model / provider settings when the operator does not accept the
   Codex defaults
 - the chosen auth mode or auth preflight contract, without storing channel
@@ -283,9 +286,9 @@ SQLite.
 - Start every enabled dispatcher.
 - For each dispatcher, validate the dispatcher-private Codex home before
   starting the app-server: config parse succeeds, `codexmux` is installed
-  in that home, the permission profile is network-enabled, the control
-  socket path is not under `/tmp`, and the selected model / auth contract is
-  usable.
+  in that home, the effective Codex runtime config after `-c` CLI overrides
+  is network-enabled, the control socket path is not under `/tmp` and fits
+  Unix socket path limits, and the selected model / auth contract is usable.
 - For each dispatcher, start one long-lived Codex `app-server` child with
   `CODEX_HOME` set to that dispatcher-private Codex home.
 - Keep running until SIGTERM / SIGINT, then drain dispatchers and close
@@ -315,9 +318,14 @@ Required constraints:
   from the operator's default global Codex home.
 - Place app-server control sockets under
   `<CODEX_HOME>/app-server-control/`.
+- Use a short fixed socket leaf under that directory, and fail preflight when
+  the UTF-8 socket path exceeds the conservative macOS-safe Unix socket
+  limit of 103 bytes.
 - Do not place control sockets in `/tmp`.
-- Create the private `CODEX_HOME` and control directory with owner-only
-  permissions.
+- Create the private `CODEX_HOME` with owner-only permissions. The
+  `app-server-control/` directory is runtime-owned ephemeral state; `serve`
+  creates it before spawning Codex and the doctor must not require it to
+  pre-exist.
 
 Suggested layout:
 
@@ -326,7 +334,7 @@ Suggested layout:
 | `<runtime_dir>/dispatchers/<id>/codex-home/` | dreamux | Runtime, config, and plugin `CODEX_HOME` for this dispatcher app-server |
 | `<runtime_dir>/dispatchers/<id>/codex-home/config.toml` | dreamux | Minimal dispatcher Codex config: `codexmux`, network-enabled permissions, model/provider defaults, and auth contract |
 | `<runtime_dir>/dispatchers/<id>/codex-home/plugins/` | Codex | Installed `codexmux` plugin cache and skill files |
-| `<runtime_dir>/dispatchers/<id>/codex-home/app-server-control/` | dreamux | Codex app-server control sockets |
+| `<runtime_dir>/dispatchers/<id>/codex-home/app-server-control/` | dreamux | Runtime-created Codex app-server control socket directory; current socket leaf is `as.sock` |
 | `<runtime_dir>/dispatchers/<id>/cwd/` | dreamux | App-server cwd, intentionally not a worktree |
 | `<runtime_dir>/dispatchers/<id>/stdout.log` | dreamux | Codex stdout |
 | `<runtime_dir>/dispatchers/<id>/stderr.log` | dreamux | Codex stderr |
@@ -340,8 +348,8 @@ existing runtime state. The app-server control socket can move because it is
 ephemeral process state, but the implementation must not delete dispatcher
 SQLite rows, thread ids, cwd directories, or logs. On first start after the
 layout change, `serve` should stop any stale process using the old flat
-socket path, create the private Codex home, and write future control state
-under `<CODEX_HOME>/app-server-control/`.
+socket path, create the private Codex home and runtime control directory,
+and write future control state under `<CODEX_HOME>/app-server-control/`.
 
 ## Service registration
 
@@ -436,6 +444,3 @@ Alternatives:
 
 - The final public marketplace sources / selectors for `codexmux` and
   `claudemux`.
-- The exact Codex 0.135+ config key used to select the network-enabled
-  permission profile should be pinned during implementation against the
-  current Codex CLI / source.

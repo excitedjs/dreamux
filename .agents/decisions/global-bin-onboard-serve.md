@@ -47,15 +47,18 @@ Plugin installation and app-server control state are different concerns, but
 they intentionally share the dispatcher-private Codex home for issue #18:
 `codexmux` lives under `<CODEX_HOME>/plugins/`, dispatcher Codex user config
 lives in `<CODEX_HOME>/config.toml`, and app-server control sockets live under
-`<CODEX_HOME>/app-server-control/`.
+`<CODEX_HOME>/app-server-control/` with a short socket leaf.
 
 The dispatcher-private `config.toml` is independent. Codex does not inherit
 missing values from the operator's global default Codex home. `dreamux
 onboard` must generate a minimal dispatcher config containing the `codexmux`
-plugin declaration, the network-enabled permission profile / approval /
-sandbox settings required for the persistent app-server, and any required
-model / auth contract. It must not copy the operator's whole global Codex
-config and must not modify that global home in this design slice.
+plugin declaration, the network-enabled runtime config / approval / sandbox
+settings required for the persistent app-server, and any required model /
+auth contract. For Codex 0.135, permission-profile fallback is
+`default_permissions` plus `[permissions.<name>] network = { enabled = true }`,
+and `serve` must validate the final effective values after `-c` CLI
+overrides. It must not copy the operator's whole global Codex config and must
+not modify that global home in this design slice.
 
 Service registration is user-level only for issue #18:
 macOS LaunchAgent and Linux `systemd --user`. Root-scoped LaunchDaemons,
@@ -78,6 +81,9 @@ The dispatcher Codex app-server launched by `dreamux serve` must:
 - load `codexmux` from that private `CODEX_HOME`
 - keep control sockets under `<CODEX_HOME>/app-server-control/`
 - avoid `/tmp` sockets
+- keep Unix socket paths short enough for macOS and Linux `sun_path` limits
+- let `serve` create runtime control directories; the doctor must not require
+  ephemeral `app-server-control/` state to pre-exist
 
 Onboarding must be path-transparent: every file path created or modified
 by `dreamux onboard`, including paths touched through Codex / Claude plugin

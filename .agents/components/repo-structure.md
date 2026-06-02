@@ -122,7 +122,7 @@ multi-package release notes precise while still using Rush as the validator.
 |---|---|---|
 | `~/.dreamux/` | User-editable global config (`config.toml`). Auto-created on first boot. | The operator |
 | `~/.codex-host/` | Server-owned runtime state: SQLite (`state.db`), admin socket, dispatcher logs, and dispatcher-private Codex homes. | The server |
-| `~/.codex-host/dispatchers/<id>/codex-home/` | Dispatcher-private `CODEX_HOME`: Codex config, `plugins/`, and `app-server-control/` sockets for that dispatcher app-server. | The server |
+| `~/.codex-host/dispatchers/<id>/codex-home/` | Dispatcher-private `CODEX_HOME`: Codex config, `plugins/`, and runtime-created `app-server-control/as.sock` for that dispatcher app-server. | The server |
 
 The split is load-bearing: a `rm -rf ~/.codex-host` recovery never loses
 user-edited settings. See [the global-config decision](../decisions/global-config-dir.md).
