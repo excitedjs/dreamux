@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Add the issue #18 dreamux serve foundation: single global bin command tree, dispatcher-private Codex homes, and serve-time Codex home checks.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "288198931+codexmux[bot]@users.noreply.github.com"
+}
