@@ -79,13 +79,19 @@ export async function installUserService(
     unit.platform === 'launchd'
       ? renderLaunchdPlist(options.answers, stdoutLog, stderrLog)
       : renderSystemdUnit(options.answers, stdoutLog, stderrLog);
-  writeTextFile(unit.path, content, options.ledger, `${unit.platform} unit`, {
-    mode: 0o600,
-    dryRun: options.answers.dryRun,
-  });
+  const unitStatus = writeTextFile(
+    unit.path,
+    content,
+    options.ledger,
+    `${unit.platform} unit`,
+    {
+      mode: 0o600,
+      dryRun: options.answers.dryRun,
+    },
+  );
 
   if (unit.platform === 'launchd') {
-    await registerLaunchd(unit.path, options);
+    await registerLaunchd(unit.path, unitStatus, options);
   } else {
     await registerSystemd(unit.path, options);
   }
@@ -109,11 +115,7 @@ export function renderLaunchdPlist(
     RunAtLoad: true,
     KeepAlive: true,
     WorkingDirectory: answers.runtimeDir,
-    EnvironmentVariables: {
-      DREAMUX_CONFIG_DIR: answers.configDir,
-      CODEX_HOST_RUNTIME_DIR: answers.runtimeDir,
-      CODEX_HOST_CODEX_BIN: answers.codexBin,
-    },
+    EnvironmentVariables: managedServiceEnvironment(answers),
     StandardOutPath: stdoutLog,
     StandardErrorPath: stderrLog,
   });
@@ -131,9 +133,9 @@ Description=dreamux dispatcher daemon
 Type=simple
 ExecStart=${systemdEscapeArg(answers.dreamuxBin)} serve
 WorkingDirectory=${systemdEscapeArg(answers.runtimeDir)}
-Environment=DREAMUX_CONFIG_DIR=${systemdEscapeEnv(answers.configDir)}
-Environment=CODEX_HOST_RUNTIME_DIR=${systemdEscapeEnv(answers.runtimeDir)}
-Environment=CODEX_HOST_CODEX_BIN=${systemdEscapeEnv(answers.codexBin)}
+${Object.entries(managedServiceEnvironment(answers))
+  .map(([key, value]) => `Environment=${key}=${systemdEscapeEnv(value)}`)
+  .join('\n')}
 Restart=on-failure
 RestartSec=2s
 StandardOutput=append:${stdoutLog}
@@ -144,23 +146,51 @@ WantedBy=default.target
 `;
 }
 
+export function managedServiceEnvironment(
+  answers: OnboardAnswers,
+): Record<string, string> {
+  return {
+    DREAMUX_CONFIG_DIR: answers.configDir,
+    CODEX_HOST_RUNTIME_DIR: answers.runtimeDir,
+    CODEX_HOST_CODEX_BIN: answers.codexBin,
+  };
+}
+
 async function registerLaunchd(
   unitPath: string,
+  unitStatus: 'created' | 'modified' | 'unchanged',
   options: ServiceInstallOptions,
 ): Promise<void> {
   const uid = options.uid ?? process.getuid?.();
   if (uid === undefined) {
     throw new Error('launchd user service registration requires a numeric uid');
   }
-  await options.runner.run(
+  const serviceTarget = `gui/${uid}/${LAUNCHD_LABEL}`;
+  const loaded = await options.runner.check(
     'launchctl',
-    ['bootstrap', `gui/${uid}`, unitPath],
+    ['print', serviceTarget],
     { dryRun: options.answers.dryRun },
   );
+  if (!loaded) {
+    await options.runner.run(
+      'launchctl',
+      ['bootstrap', `gui/${uid}`, unitPath],
+      { dryRun: options.answers.dryRun },
+    );
+  } else if (unitStatus !== 'unchanged') {
+    await options.runner.run('launchctl', ['bootout', serviceTarget], {
+      dryRun: options.answers.dryRun,
+    });
+    await options.runner.run(
+      'launchctl',
+      ['bootstrap', `gui/${uid}`, unitPath],
+      { dryRun: options.answers.dryRun },
+    );
+  }
   if (options.answers.startService) {
     await options.runner.run(
       'launchctl',
-      ['kickstart', '-k', `gui/${uid}/${LAUNCHD_LABEL}`],
+      ['kickstart', '-k', serviceTarget],
       { dryRun: options.answers.dryRun },
     );
   }

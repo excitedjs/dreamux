@@ -32,7 +32,7 @@ import {
   TransparentFileLedger,
   writeTextFile,
 } from './ledger.js';
-import { installUserService } from './service.js';
+import { installUserService, managedServiceEnvironment } from './service.js';
 import {
   installClaudemuxPlugin,
   installCodexmuxPlugin,
@@ -64,7 +64,9 @@ export async function runOnboard(
   const dreamuxConfig = dreamuxConfigFromAnswers(answers);
   setRuntimeConfig(dreamuxConfig);
 
-  preflightAuth(answers, env);
+  if (!answers.registerService) {
+    preflightAuth(answers, env);
+  }
 
   const configPath = join(answers.configDir, 'config.toml');
   ensureDirectory(answers.configDir, ledger, 'dreamux config directory', {
@@ -136,12 +138,7 @@ export async function runOnboard(
 
   const doctor = runDispatcherDoctor(answers, dreamuxConfig, env);
   if (!answers.dryRun && !doctor.ok) {
-    throw new Error(
-      [
-        `dispatcher '${answers.dispatcherId}' private CODEX_HOME is not ready`,
-        ...doctor.errors.map((error) => `- ${error}`),
-      ].join('\n'),
-    );
+    throw new Error(formatDoctorFailure(answers, doctor));
   }
 
   const service = answers.registerService
@@ -212,10 +209,33 @@ function runDispatcherDoctor(
       context,
     };
   }
+  const doctorEnv = answers.registerService
+    ? managedServiceEnvironment(answers)
+    : env;
   return validateDispatcherCodexHome(context, {
-    env,
+    env: doctorEnv,
     codexCliArgs,
   });
+}
+
+function formatDoctorFailure(
+  answers: OnboardAnswers,
+  doctor: DispatcherCodexHomeDoctorResult,
+): string {
+  const lines = [
+    `dispatcher '${answers.dispatcherId}' private CODEX_HOME is not ready`,
+    ...doctor.errors.map((error) => `- ${error}`),
+  ];
+  if (
+    answers.registerService &&
+    doctor.errors.some((error) => error.includes('missing dispatcher Codex auth state'))
+  ) {
+    lines.push(
+      '- managed service environments do not inherit your interactive shell auth token',
+      `- authenticate the private dispatcher Codex home before registering the service: CODEX_HOME=${doctor.context.codexHome} ${answers.codexBin} login`,
+    );
+  }
+  return lines.join('\n');
 }
 
 function preflightAuth(answers: OnboardAnswers, env: NodeJS.ProcessEnv): void {

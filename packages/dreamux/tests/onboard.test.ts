@@ -8,7 +8,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { parse as parseToml } from 'smol-toml';
 
@@ -28,6 +28,7 @@ import {
 } from '../src/runtime/paths.js';
 
 class FakeRunner implements CommandRunner {
+  launchdLoaded = false;
   readonly calls: Array<{
     command: string;
     args: string[];
@@ -82,8 +83,28 @@ source_type = "github"
       const claudeConfigDir = requiredEnv(options.env, 'CLAUDE_CONFIG_DIR');
       mkdirSync(join(claudeConfigDir, 'plugins'), { recursive: true });
       writeFileSync(
-        join(claudeConfigDir, 'plugins', 'marketplaces.json'),
-        '{"claudemux":"excitedjs/claudemux"}',
+        join(claudeConfigDir, 'settings.json'),
+        JSON.stringify({
+          extraKnownMarketplaces: {
+            claudemux: {
+              source: {
+                source: 'github',
+                repo: 'excitedjs/claudemux',
+              },
+            },
+          },
+        }),
+      );
+      writeFileSync(
+        join(claudeConfigDir, 'plugins', 'known_marketplaces.json'),
+        JSON.stringify({
+          claudemux: {
+            source: {
+              source: 'github',
+              repo: 'excitedjs/claudemux',
+            },
+          },
+        }),
       );
       return;
     }
@@ -92,8 +113,93 @@ source_type = "github"
       const pluginDir = join(claudeConfigDir, 'plugins', 'claudemux');
       mkdirSync(pluginDir, { recursive: true });
       writeFileSync(join(pluginDir, 'plugin.json'), '{"name":"claudemux"}');
+      return;
+    }
+    if (command === 'launchctl' && args[0] === 'bootstrap') {
+      this.launchdLoaded = true;
+      return;
+    }
+    if (command === 'launchctl' && args[0] === 'bootout') {
+      this.launchdLoaded = false;
+      return;
     }
   }
+
+  async check(
+    command: string,
+    args: string[],
+    options: {
+      cwd?: string;
+      env?: NodeJS.ProcessEnv;
+      dryRun?: boolean;
+    } = {},
+  ): Promise<boolean> {
+    void options;
+    return command === 'launchctl' &&
+      args[0] === 'print' &&
+      this.launchdLoaded;
+  }
+
+  async capture(
+    command: string,
+    args: string[],
+    options: {
+      cwd?: string;
+      env?: NodeJS.ProcessEnv;
+      dryRun?: boolean;
+    } = {},
+  ): Promise<string> {
+    void args;
+    void options.cwd;
+    void options.dryRun;
+    if (command !== 'claude') return '';
+    const claudeConfigDir = requiredEnv(options.env, 'CLAUDE_CONFIG_DIR');
+    const installed = existsSync(
+      join(claudeConfigDir, 'plugins', 'claudemux', 'plugin.json'),
+    );
+    return installed ? '[{"name":"claudemux"}]' : '[]';
+  }
+}
+
+function writePrivateCodexAuth(answers: OnboardAnswers): void {
+  const authPath = join(
+    answers.runtimeDir,
+    'dispatchers',
+    answers.dispatcherId,
+    'codex-home',
+    'auth.json',
+  );
+  mkdirSync(dirname(authPath), { recursive: true });
+  writeFileSync(authPath, '{}', { mode: 0o600 });
+}
+
+function writeClaudeMarketplace(answers: OnboardAnswers): void {
+  const settingsPath = join(answers.claudeConfigDir, 'settings.json');
+  mkdirSync(dirname(settingsPath), { recursive: true });
+  writeFileSync(
+    settingsPath,
+    JSON.stringify({
+      extraKnownMarketplaces: {
+        claudemux: {
+          source: {
+            source: 'github',
+            repo: answers.claudeMarketplaceSource,
+          },
+        },
+      },
+    }),
+  );
+}
+
+function countCalls(
+  runner: FakeRunner,
+  command: string,
+  argsPrefix: string[],
+): number {
+  return runner.calls.filter((call) =>
+    call.command === command &&
+    argsPrefix.every((arg, index) => call.args[index] === arg),
+  ).length;
 }
 
 describe('dreamux onboard', () => {
@@ -118,13 +224,14 @@ describe('dreamux onboard', () => {
       botAppId: 'app-test',
       botSecretRef: 'env:DREAMUX_TEST_BOT_SECRET',
     });
+    writePrivateCodexAuth(answers);
 
     const result = await runOnboard({
       answers,
       runner,
       platform: 'linux',
       homeDir: join(root, 'home'),
-      env: { CODEX_ACCESS_TOKEN: 'token-test' },
+      env: { CODEX_ACCESS_TOKEN: 'interactive-token-test' },
     });
 
     expect(result.doctor.ok).toBe(true);
@@ -256,6 +363,88 @@ describe('dreamux onboard', () => {
     expect(ledger.get(join(root, 'runtime', 'state.db'))?.status).toBe(
       'created',
     );
+  });
+
+  it('does not let an interactive shell token satisfy the managed service doctor', async () => {
+    const runner = new FakeRunner();
+    const answers = testAnswers({
+      configDir: join(root, 'config'),
+      runtimeDir: join(root, 'runtime'),
+      claudeConfigDir: join(root, 'claude'),
+      registerService: true,
+    });
+
+    await expect(
+      runOnboard({
+        answers,
+        runner,
+        platform: 'linux',
+        homeDir: join(root, 'home'),
+        env: { CODEX_ACCESS_TOKEN: 'interactive-token-test' },
+      }),
+    ).rejects.toThrow(
+      'managed service environments do not inherit your interactive shell auth token',
+    );
+  });
+
+  it('skips already-installed plugins and already-loaded launchd services on rerun', async () => {
+    const runner = new FakeRunner();
+    const answers = testAnswers({
+      configDir: join(root, 'config'),
+      runtimeDir: join(root, 'runtime'),
+      claudeConfigDir: join(root, 'claude'),
+      registerService: true,
+      startService: true,
+    });
+    writePrivateCodexAuth(answers);
+
+    await runOnboard({
+      answers,
+      runner,
+      platform: 'darwin',
+      homeDir: join(root, 'home'),
+      uid: 501,
+      env: {},
+    });
+    await runOnboard({
+      answers,
+      runner,
+      platform: 'darwin',
+      homeDir: join(root, 'home'),
+      uid: 501,
+      env: {},
+    });
+
+    expect(countCalls(runner, 'codex', ['plugin', 'marketplace', 'add'])).toBe(1);
+    expect(countCalls(runner, 'codex', ['plugin', 'add'])).toBe(1);
+    expect(countCalls(runner, 'claude', ['plugin', 'marketplace', 'add'])).toBe(1);
+    expect(countCalls(runner, 'claude', ['plugin', 'install'])).toBe(1);
+    expect(countCalls(runner, 'launchctl', ['bootstrap'])).toBe(1);
+    expect(countCalls(runner, 'launchctl', ['bootout'])).toBe(0);
+    expect(countCalls(runner, 'launchctl', ['kickstart'])).toBe(2);
+  });
+
+  it('does not re-add an existing Claude marketplace before installing the plugin', async () => {
+    const runner = new FakeRunner();
+    const answers = testAnswers({
+      configDir: join(root, 'config'),
+      runtimeDir: join(root, 'runtime'),
+      claudeConfigDir: join(root, 'claude'),
+      registerService: true,
+    });
+    writePrivateCodexAuth(answers);
+    writeClaudeMarketplace(answers);
+
+    await runOnboard({
+      answers,
+      runner,
+      platform: 'linux',
+      homeDir: join(root, 'home'),
+      env: {},
+    });
+
+    expect(countCalls(runner, 'claude', ['plugin', 'marketplace', 'add'])).toBe(0);
+    expect(countCalls(runner, 'claude', ['plugin', 'install'])).toBe(1);
   });
 
   it('fails non-interactive setup when required channel inputs are missing', () => {
