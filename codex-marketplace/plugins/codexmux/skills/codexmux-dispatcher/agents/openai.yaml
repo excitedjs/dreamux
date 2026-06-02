@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codexmux Dispatcher"
+  short_description: "Delegate bounded work to tm teammates from a dreamux dispatcher."
+  default_prompt: "Use codexmux dispatcher delegation when a request should be handled by a tm teammate."

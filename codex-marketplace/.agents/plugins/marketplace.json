@@ -1,0 +1,20 @@
+{
+  "name": "dreamux",
+  "interface": {
+    "displayName": "Dreamux"
+  },
+  "plugins": [
+    {
+      "name": "codexmux",
+      "source": {
+        "source": "local",
+        "path": "./plugins/codexmux"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

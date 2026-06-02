@@ -18,6 +18,7 @@ sibling claudemux repo import one implementation instead of drifting copies.
 
 | Path | Purpose |
 |---|---|
+| `/codex-marketplace/` | Local Codex marketplace root for the `codexmux` plugin and dispatcher skill; not a Rush package |
 | `/rush.json` | Rush project list + pnpm/Node version pins |
 | `/common/config/rush/` | Rush command definitions (`command-line.json`), pnpm `.npmrc`, version policies, generated `pnpm-lock.yaml` |
 | `/common/scripts/install-run-rush.js` | Bootstrap that shells out to `npx @microsoft/rush@<version>` (see [the Rush + pnpm decision](../decisions/rush-pnpm-monorepo.md)) |

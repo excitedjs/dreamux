@@ -20,6 +20,7 @@ issues:
 
 ```
 /                                  rush monorepo root
+├── codex-marketplace/             local Codex marketplace for codexmux
 ├── rush.json                      rush + pnpm config
 ├── common/                        rush scaffolding (config + bootstrap)
 ├── packages/
@@ -41,7 +42,8 @@ issues:
 ## Navigation
 
 - [`components/`](components/) — one doc per piece (repo-structure today;
-  server / codex-client / feishu-bot / cli to be added as they stabilize).
+  codex-marketplace today; server / codex-client / feishu-bot / cli to be
+  added as they stabilize).
 - [`decisions/README.md`](decisions/README.md) — accepted decision records,
   indexed by topic slug. Do not prefix new records with sequence numbers.
 - `domains/`, `proposals/`, `research/`, `rules/` — empty for now; add
@@ -55,6 +57,7 @@ issues:
 
 | You're about to ... | Read first |
 |---|---|
+| add/change the Codex plugin marketplace or dispatcher skill | [`components/codex-marketplace.md`](components/codex-marketplace.md) |
 | add/change a package, move source between packages | [`components/repo-structure.md`](components/repo-structure.md) |
 | browse decisions by topic | [`decisions/README.md`](decisions/README.md) |
 | understand why rush + pnpm | [`decisions/rush-pnpm-monorepo.md`](decisions/rush-pnpm-monorepo.md) |
