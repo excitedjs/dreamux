@@ -47,7 +47,7 @@ verbatim through the move):
 | `db/migrations/0002_codex_teammates.sql` | Server-owned Codex teammate rows |
 | `bin/dreamux` | Unified CLI launcher (`dreamux server start`, `dreamux dispatcher ...`) |
 | `bin/server`, `bin/server-ctl` | Backward-compat aliases shipped before the monorepo split |
-| `tests/` | vitest: smoke (21), bin-launcher (8), codex-0134-live (4) |
+| `tests/` | vitest: smoke (26), bin-launcher (8), codex-0134-live (4) |
 
 ## Installation — the rush path only
 

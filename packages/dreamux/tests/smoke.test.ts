@@ -476,6 +476,117 @@ describe('dreamux MVP smoke', () => {
     expect(fake.methodLog).toContain('thread/resume');
   });
 
+  it('server-owned codex teammate rebuilds after a degraded connection', async () => {
+    const counter = { count: 0 };
+    server = buildServer({ runtimeDir, fake, bot, spawnCounter: counter });
+    await server.start();
+    await server.spawnTeammate({ name: 'worker', cwd: runtimeDir });
+    await server.sendTeammate('worker', 'before-close');
+    expect(counter.count).toBe(1);
+
+    fake.dropConnections();
+    await waitFor(() => server.getTeammateRuntime('worker')?.getStatus() === 'degraded');
+
+    const after = await server.sendTeammate('worker', 'after-close');
+
+    expect(after.assistant_text).toBe('echo: after-close');
+    expect(counter.count).toBe(2);
+    expect(fake.methodLog.filter((m) => m === 'initialize')).toHaveLength(2);
+    expect(fake.methodLog).toContain('thread/resume');
+    expect(server.getTeammateRuntime('worker')?.getStatus()).toBe('ready');
+  });
+
+  it('server-owned codex teammate resume failure is loud but retryable', async () => {
+    server = buildServer({ runtimeDir, fake, bot });
+    await server.start();
+    await server.spawnTeammate({ name: 'worker', cwd: runtimeDir });
+    const before = await server.sendTeammate('worker', 'before-restart');
+    await server.shutdown();
+
+    fake.setFailResume(true);
+    server = buildServer({ runtimeDir, fake, bot });
+    await server.start();
+
+    await expect(
+      server.sendTeammate('worker', 'after-restart'),
+    ).rejects.toThrow(/could not resume thread/);
+    expect(server.getTeammateRuntime('worker')).toBeNull();
+    const failedRow = server.repos.teammates.get('worker');
+    expect(failedRow?.status).toBe('degraded');
+    expect(failedRow?.thread_id).toBe(before.thread_id);
+    expect(failedRow?.last_error).toMatch(/could not resume thread/);
+
+    fake.setFailResume(false);
+    const after = await server.sendTeammate('worker', 'retry-resume');
+
+    expect(after.thread_id).toBe(before.thread_id);
+    expect(after.assistant_text).toBe('echo: retry-resume');
+    expect(server.getTeammateRuntime('worker')?.getStatus()).toBe('ready');
+  });
+
+  it('teammate.resume can replace an existing failed thread id', async () => {
+    fake.setFailResume(true);
+    server = buildServer({ runtimeDir, fake, bot });
+    await server.start();
+
+    await expect(
+      server.resumeTeammate({
+        name: 'worker',
+        cwd: runtimeDir,
+        thread_id: 'thread_missing',
+      }),
+    ).rejects.toThrow(/could not resume thread/);
+    expect(server.repos.teammates.get('worker')?.status).toBe('degraded');
+
+    fake.setFailResume(false);
+    const resumed = await server.resumeTeammate({
+      name: 'worker',
+      cwd: runtimeDir,
+      thread_id: 'thread_corrected',
+    });
+    const turn = await server.sendTeammate('worker', 'after-correction');
+
+    expect(resumed.thread_id).toBe('thread_corrected');
+    expect(turn.thread_id).toBe('thread_corrected');
+    expect(turn.assistant_text).toBe('echo: after-correction');
+  });
+
+  it('server-owned codex teammate rows reconcile to stopped on server boot', async () => {
+    server = buildServer({ runtimeDir, fake, bot });
+    server.repos.teammates.create({ name: 'worker', cwd: runtimeDir });
+    server.repos.teammates.setStatus('worker', 'ready');
+    await server.shutdown();
+
+    server = buildServer({ runtimeDir, fake, bot });
+    await server.start();
+
+    const row = server.repos.teammates.get('worker');
+    expect(row?.status).toBe('stopped');
+    expect(row?.last_error).toMatch(/server restarted/);
+    const status = await adminMethods['teammate.status']!(server, {
+      name: 'worker',
+    });
+    expect(status).toMatchObject({ name: 'worker', status: 'stopped' });
+  });
+
+  it('teammate.spawn rolls back a row when startup fails', async () => {
+    server = buildServer({ runtimeDir, fake, bot });
+    await server.start();
+
+    await expect(
+      server.spawnTeammate({
+        name: 'worker',
+        cwd: runtimeDir,
+        codex_args_json: '{"approvalPolicy": "bogus"}',
+      }),
+    ).rejects.toThrow(/approvalPolicy/);
+
+    expect(server.repos.teammates.get('worker')).toBeNull();
+    await expect(
+      server.spawnTeammate({ name: 'worker', cwd: runtimeDir }),
+    ).resolves.toMatchObject({ name: 'worker', status: 'ready' });
+  });
+
   it('admin teammate methods spawn, send, report status, and kill', async () => {
     server = buildServer({ runtimeDir, fake, bot });
     await server.start();

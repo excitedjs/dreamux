@@ -136,7 +136,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     const threadId = mustString(params, 'thread_id');
     const codexArgsJson = optionalString(params, 'codex_args_json') ?? '{}';
     try {
-      return await server.spawnTeammate({
+      return await server.resumeTeammate({
         name,
         cwd,
         codex_args_json: codexArgsJson,

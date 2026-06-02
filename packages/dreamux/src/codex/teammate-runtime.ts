@@ -51,6 +51,7 @@ export class CodexTeammateRuntime {
   private threadId: string | null = null;
   private status: CodexTeammateStatus = 'declared';
   private turnQueue: Promise<void> = Promise.resolve();
+  private suppressCloseDegrade = false;
   private readonly log: NonNullable<CodexTeammateRuntimeDeps['log']>;
 
   constructor(
@@ -105,6 +106,7 @@ export class CodexTeammateRuntime {
         this.deps.codexClientFactory ?? ((sock) => new CodexWsClient({ socketPath: sock }));
       this.client = clientFactory(socketPath);
       this.client.onClose((reason) => {
+        if (this.suppressCloseDegrade) return;
         if (this.status === 'stopping' || this.status === 'stopped') return;
         this.log('warn', `codex connection closed: ${reason.message}`);
         this.setStatus('degraded');
@@ -161,6 +163,7 @@ export class CodexTeammateRuntime {
     await this.turnQueue;
     if (this.client !== null) {
       try {
+        this.suppressCloseDegrade = true;
         this.client.close();
       } catch {
         /* best effort */
@@ -189,10 +192,19 @@ export class CodexTeammateRuntime {
       return;
     }
 
-    await this.client.request<ThreadResumeResponse>('thread/resume', {
-      threadId: existing,
-      cwd: this.row.cwd,
-    });
+    try {
+      await this.client.request<ThreadResumeResponse>('thread/resume', {
+        threadId: existing,
+        cwd: this.row.cwd,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Teammate callers explicitly requested this thread. Starting a fresh
+      // thread here would silently lose context, so keep the failure loud.
+      throw new Error(
+        `codex teammate '${this.name}' could not resume thread '${existing}': ${msg}`,
+      );
+    }
     this.threadId = existing;
     this.log('info', `resumed thread ${this.threadId}`);
   }
@@ -226,6 +238,7 @@ export class CodexTeammateRuntime {
   private async cleanupOnFailure(): Promise<void> {
     if (this.client !== null) {
       try {
+        this.suppressCloseDegrade = true;
         this.client.close();
       } catch {
         /* */

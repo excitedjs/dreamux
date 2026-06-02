@@ -167,6 +167,40 @@ export class CodexTeammateRepo {
     this.db.prepare(`DELETE FROM codex_teammates WHERE name = ?`).run(name);
   }
 
+  reconcileStoppedOnBoot(): void {
+    this.db
+      .prepare(
+        `UPDATE codex_teammates
+         SET status = 'stopped', updated_at = ?, last_error = ?
+         WHERE status IN ('starting', 'ready', 'stopping')`,
+      )
+      .run(Date.now(), 'server restarted; teammate daemon is not running');
+  }
+
+  updateForResume(input: CodexTeammateCreateInput): CodexTeammateRow | null {
+    const result = this.db
+      .prepare(
+        `UPDATE codex_teammates
+         SET cwd = ?,
+             codex_args_json = ?,
+             thread_id = ?,
+             status = 'declared',
+             updated_at = ?,
+             last_error = NULL,
+             last_turn_id = NULL,
+             last_assistant_text = NULL
+         WHERE name = ?`,
+      )
+      .run(
+        input.cwd,
+        input.codex_args_json ?? '{}',
+        input.thread_id ?? null,
+        Date.now(),
+        input.name,
+      );
+    return result.changes === 0 ? null : this.get(input.name);
+  }
+
   setStatus(
     name: string,
     status: CodexTeammateStatus,

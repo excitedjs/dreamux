@@ -28,6 +28,12 @@ the admin socket as `teammate.*` methods. CLI tooling can forward to those
 methods with `dreamux teammate ...`; adapters such as `tm` should talk to the
 server instead of spawning detached Codex daemons themselves.
 
+Resume semantics are fail-loud and recoverable. If a saved thread id cannot be
+resumed, dreamux keeps the error and the requested thread id visible; it does
+not silently start a fresh thread. A later `send` retries the same thread, and
+`teammate.resume` can explicitly replace the saved thread id and restart the
+daemon.
+
 The durable state lives in `codex_teammates`:
 
 - `name` is the stable admin/CLI identifier.
@@ -51,12 +57,16 @@ error, not a directory dreamux should silently invent.
 
 - A teammate daemon survives every short-lived `dreamux teammate send` or
   adapter invocation while the server process remains alive.
+- A degraded runtime slot is not terminal. The next start/send tears down a
+  non-ready slot and rebuilds a new Codex app-server process.
 - Server restart does not keep the process alive, but it keeps the DB row and
   `thread_id`; the next `send` starts a new app-server process and resumes the
-  saved thread.
-- `teammate.spawn` creates and starts a row. `teammate.resume` creates a row
-  with an explicit thread id. `teammate.send` lazily starts an existing row if
-  the server has not started that daemon yet.
+  saved thread. Boot reconciles persisted `starting`, `ready`, and `stopping`
+  rows to `stopped` so status does not report a phantom live daemon.
+- `teammate.spawn` creates and starts a row; if startup fails, the new row is
+  rolled back so a corrected spawn does not hit a stale conflict.
+- `teammate.resume` creates a row when absent, or reconfigures an existing row
+  with an explicit thread id before restarting it.
 - `teammate.kill` stops the daemon and removes the row. Keeping a stopped row is
   not part of this slice.
 - The admin layer validates teammate names as single path-safe identifiers
@@ -70,6 +80,12 @@ error, not a directory dreamux should silently invent.
 - **Keep CLI-owned detached daemons:** rejected. It is the failure mode this
   decision fixes; detached children can still be killed when the parent shell is
   reaped.
+- **Silent fresh-thread fallback on resume failure:** rejected. Programmatic
+  teammate callers requested a specific thread; silently replacing it would lose
+  context while making the caller believe continuity was preserved.
+- **Fresh thread with explicit loss signal:** deferred. It would need schema and
+  status fields comparable to the dispatcher `last_lost_thread_id`; this slice
+  keeps the simpler fail-loud path.
 - **Store teammate runtime in the existing dispatcher table:** rejected.
   Dispatchers carry Feishu-specific fields and inbound-buffer semantics that do
   not apply to direct Codex teammates.

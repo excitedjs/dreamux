@@ -118,6 +118,7 @@ export class Server {
       inbound: new InboundRepo(this.db),
       teammates: new CodexTeammateRepo(this.db),
     };
+    this.repos.teammates.reconcileStoppedOnBoot();
   }
 
   /** Effective config (caller-supplied or built-in defaults). */
@@ -300,20 +301,54 @@ export class Server {
       codex_args_json: input.codex_args_json ?? '{}',
       thread_id: input.thread_id ?? null,
     });
+    try {
+      await this.startTeammate(row.name);
+      return this.teammateResult(row.name, row);
+    } catch (err) {
+      await this.stopTeammate(row.name);
+      this.repos.teammates.remove(row.name);
+      throw err;
+    }
+  }
+
+  /** Create or reconfigure a teammate to resume an explicit Codex thread. */
+  async resumeTeammate(input: {
+    name: string;
+    cwd: string;
+    codex_args_json?: string;
+    thread_id: string;
+  }): Promise<{
+    name: string;
+    status: CodexTeammateStatus;
+    thread_id: string | null;
+  }> {
+    const existing = this.repos.teammates.get(input.name);
+    if (existing !== null) await this.stopTeammate(input.name);
+    const row =
+      existing === null
+        ? this.repos.teammates.create({
+            name: input.name,
+            cwd: input.cwd,
+            codex_args_json: input.codex_args_json ?? '{}',
+            thread_id: input.thread_id,
+          })
+        : this.repos.teammates.updateForResume({
+            name: input.name,
+            cwd: input.cwd,
+            codex_args_json: input.codex_args_json ?? '{}',
+            thread_id: input.thread_id,
+          });
+    if (row === null) throw new Error(`no codex teammate '${input.name}'`);
     await this.startTeammate(row.name);
-    const runtime = this.getTeammateRuntime(row.name);
-    return {
-      name: row.name,
-      status: runtime?.getStatus() ?? row.status,
-      thread_id: runtime?.getThreadId() ?? row.thread_id,
-    };
+    return this.teammateResult(row.name, row);
   }
 
   /** Bring one server-owned teammate up. Safe to call when already running. */
   async startTeammate(name: string): Promise<void> {
-    if (this.teammateSlots.has(name)) return;
     const inflight = this.startingTeammates.get(name);
     if (inflight !== undefined) return inflight;
+    const existing = this.teammateSlots.get(name);
+    if (existing !== undefined && existing.runtime.getStatus() === 'ready') return;
 
     const promise = this.doStartTeammate(name).finally(() => {
       this.startingTeammates.delete(name);
@@ -325,7 +360,11 @@ export class Server {
   private async doStartTeammate(name: string): Promise<void> {
     const row = this.repos.teammates.get(name);
     if (row === null) throw new Error(`no codex teammate '${name}'`);
-    if (this.teammateSlots.has(name)) return;
+    const existing = this.teammateSlots.get(name);
+    if (existing !== undefined) {
+      if (existing.runtime.getStatus() === 'ready') return;
+      await this.stopTeammate(name);
+    }
 
     const cfg = this.effectiveConfig();
     const codexArgs = parseCodexArgs(row.codex_args_json, {
@@ -377,6 +416,19 @@ export class Server {
 
   getTeammateRuntime(name: string): CodexTeammateRuntime | null {
     return this.teammateSlots.get(name)?.runtime ?? null;
+  }
+
+  private teammateResult(
+    name: string,
+    fallback: CodexTeammateRow,
+  ): { name: string; status: CodexTeammateStatus; thread_id: string | null } {
+    const runtime = this.getTeammateRuntime(name);
+    const row = this.repos.teammates.get(name) ?? fallback;
+    return {
+      name: row.name,
+      status: runtime?.getStatus() ?? row.status,
+      thread_id: runtime?.getThreadId() ?? row.thread_id,
+    };
   }
 
   /** Summary of every declared dispatcher (DB-backed, includes stopped). */

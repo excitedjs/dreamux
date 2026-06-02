@@ -47,6 +47,10 @@ export interface FakeCodex {
   readonly initializedAt: number | null;
   /** Method names received in order — useful for asserting handshake order. */
   readonly methodLog: ReadonlyArray<string>;
+  /** Drop active clients without stopping the listening fake server. */
+  dropConnections(): void;
+  /** Toggle thread/resume failure for retry-path tests. */
+  setFailResume(value: boolean): void;
   close(): Promise<void>;
 }
 
@@ -58,6 +62,7 @@ export async function startFakeCodex(opts: FakeCodexOptions = {}): Promise<FakeC
   let turnsHandled = 0;
   let nextSrvReqId = 100;
   let initializedAt: number | null = null;
+  let failResume = opts.failResume === true;
   const methodLog: string[] = [];
   const enforceInit = opts.enforceInitHandshake !== false;
 
@@ -123,7 +128,7 @@ export async function startFakeCodex(opts: FakeCodexOptions = {}): Promise<FakeC
       return;
     }
     if (method === 'thread/resume') {
-      if (opts.failResume === true) {
+      if (failResume) {
         send(ws, {
           id,
           error: { code: -32000, message: 'fake codex: resume failed' },
@@ -197,6 +202,14 @@ export async function startFakeCodex(opts: FakeCodexOptions = {}): Promise<FakeC
     },
     get methodLog() {
       return methodLog;
+    },
+    dropConnections(): void {
+      for (const ws of wss.clients) {
+        ws.terminate();
+      }
+    },
+    setFailResume(value: boolean): void {
+      failResume = value;
     },
     async close(): Promise<void> {
       await new Promise<void>((res) => wss.close(() => res()));

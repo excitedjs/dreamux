@@ -124,13 +124,17 @@ without spawning their own detached daemon.
 ```bash
 ./bin/dreamux teammate spawn --name worker --cwd /path/to/repo
 ./bin/dreamux teammate send --name worker --prompt "run tests"
+./bin/dreamux teammate resume --name worker --cwd /path/to/repo --thread-id <THREAD_ID>
 ./bin/dreamux teammate status --name worker
 ./bin/dreamux teammate kill --name worker
 ```
 
 The daemon stays alive while the dreamux server process stays alive. If the
 server restarts, the next `teammate send` starts a new app-server process and
-resumes the persisted Codex thread id.
+resumes the persisted Codex thread id. A failed `thread/resume` is surfaced
+loudly; dreamux does not silently start a fresh thread because that would lose
+the caller's requested context. Use `teammate.resume` to replace the saved
+thread id explicitly.
 
 ## MVP verification path (issue #2 §"MVP 验收脚本")
 
