@@ -10,16 +10,24 @@ import {
 } from './ledger.js';
 import type {
   CommandRunner,
-  OnboardAnswers,
   OnboardFileLedger,
   ServicePlatform,
 } from './types.js';
 
-const LAUNCHD_LABEL = 'dev.excited.dreamux';
-const SYSTEMD_UNIT = 'dreamux.service';
+export const LAUNCHD_LABEL = 'dev.excited.dreamux';
+export const SYSTEMD_UNIT = 'dreamux.service';
+
+export interface ServiceInstallAnswers {
+  configDir: string;
+  runtimeDir: string;
+  codexBin: string;
+  dreamuxBin: string;
+  startService: boolean;
+  dryRun: boolean;
+}
 
 export interface ServiceInstallOptions {
-  answers: OnboardAnswers;
+  answers: ServiceInstallAnswers;
   ledger: OnboardFileLedger;
   runner: CommandRunner;
   platform?: NodeJS.Platform;
@@ -105,7 +113,7 @@ export async function installUserService(
 }
 
 export function renderLaunchdPlist(
-  answers: OnboardAnswers,
+  answers: ServiceInstallAnswers,
   stdoutLog: string,
   stderrLog: string,
 ): string {
@@ -122,7 +130,7 @@ export function renderLaunchdPlist(
 }
 
 export function renderSystemdUnit(
-  answers: OnboardAnswers,
+  answers: ServiceInstallAnswers,
   stdoutLog: string,
   stderrLog: string,
 ): string {
@@ -147,7 +155,7 @@ WantedBy=default.target
 }
 
 export function managedServiceEnvironment(
-  answers: OnboardAnswers,
+  answers: ServiceInstallAnswers,
 ): Record<string, string> {
   return {
     DREAMUX_CONFIG_DIR: answers.configDir,

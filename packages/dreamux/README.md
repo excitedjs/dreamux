@@ -17,10 +17,9 @@ Design background:
 ## What this package ships
 
 - One public CLI bin: `dreamux`. Implemented commands in this slice include
-  `dreamux serve`, `dreamux status`, `dreamux dispatcher ...`, and
-  `dreamux config path|show`; `onboard`, `doctor`, and `daemon ...` command
-  slots follow the issue #18 design and are completed in later implementation
-  slices.
+  `dreamux onboard`, `dreamux serve`, `dreamux status`, `dreamux doctor`,
+  `dreamux daemon ...`, `dreamux dispatcher ...`, and
+  `dreamux config path|show`.
 - A SQLite-backed runtime (`dispatchers` + `inbound_buffer`) plus the
   Feishu / Codex adapters that drive each dispatcher.
 
@@ -83,7 +82,7 @@ The server uses two separate home directories — by design (see
 | `~/.codex-host/admin.sock`               | Admin Unix socket (`0600`)                 | the server |
 | `~/.codex-host/dispatchers/<id>/cwd/`    | Codex app-server cwd                       | the server |
 | `~/.codex-host/dispatchers/<id>/codex-home/` | Dispatcher-private `CODEX_HOME` for Codex config, plugin cache, and app-server control state | the server |
-| `~/.codex-host/dispatchers/<id>/codex-home/app-server-control/app-server-control.sock` | Codex app-server Unix socket | the server |
+| `~/.codex-host/dispatchers/<id>/codex-home/app-server-control/as.sock` | Codex app-server Unix socket | the server |
 | `~/.codex-host/dispatchers/<id>/*.log`   | Codex stdout / stderr                      | the server |
 
 `rm -rf ~/.codex-host` is a safe recovery — your config in `~/.dreamux/`
@@ -203,6 +202,8 @@ node common/scripts/install-run-rush.js test   # smoke + bin-launcher + codex-01
 - `tests/bin-launcher.test.ts` — spawns the real `dreamux` bash launcher
   and repo-root shim from arbitrary cwds and through symlinks; static
   "no tsx" assertion; manifest assertion for the single global bin.
+- `tests/daemon-doctor.test.ts` — covers user-level daemon service control
+  and standalone doctor checks for dispatcher-private `CODEX_HOME` state.
 - `tests/codex-0135-live.test.ts` — spawns a real `codex app-server`
   (skipped loudly when `codex` is missing or wrong version; opt-in via
   `DREAMUX_SKIP_LIVE_CODEX=1`).

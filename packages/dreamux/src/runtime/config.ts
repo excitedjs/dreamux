@@ -215,6 +215,20 @@ export function loadOrInitConfig(
   return { config, configFile: file, createdOnThisBoot };
 }
 
+export function loadConfig(
+  overrides: ConfigPathOverrides = {},
+): { config: DreamuxConfig; configFile: string } {
+  const file = globalConfigFile(overrides);
+  const raw = readFileSync(file, 'utf8');
+  let parsed: unknown;
+  try {
+    parsed = parseToml(raw);
+  } catch (err) {
+    throw formatTomlError(err, file);
+  }
+  return { config: mergeWithDefaults(parsed, file), configFile: file };
+}
+
 /**
  * Atomic create-if-absent. Returns true if this call created the file.
  *
