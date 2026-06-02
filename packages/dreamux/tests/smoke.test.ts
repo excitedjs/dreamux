@@ -21,6 +21,11 @@ import { CodexProcess, type CodexProcessOptions } from '../src/codex/supervisor.
 import { CodexWsClient } from '../src/codex/rpc.js';
 import { createFakeFeishuBot, type FakeFeishuBot, type FeishuInboundEvent } from '../src/feishu/bot.js';
 import { createAdminSocketServer } from '../src/admin/socket.js';
+import { BUILT_IN_DEFAULTS } from '../src/runtime/config.js';
+import {
+  dispatcherCodexHome,
+  dispatcherSocketPath,
+} from '../src/runtime/paths.js';
 import { startFakeCodex, type FakeCodex } from './fake-codex.js';
 
 class NoopCodexProcess extends CodexProcess {
@@ -41,17 +46,23 @@ function buildServer(opts: {
   bot: FakeFeishuBot;
   /** Optional spawn counter — bumped each time a NoopCodexProcess is built. */
   spawnCounter?: { count: number };
+  capturedCodexOptions?: CodexProcessOptions[];
 }): Server {
   return new Server({
+    config: { ...BUILT_IN_DEFAULTS, runtime_dir: opts.runtimeDir },
     databasePath: join(opts.runtimeDir, 'state.db'),
     adminSocketPath: join(opts.runtimeDir, 'admin.sock'),
     skipBotSecret: true,
     botFactory: () => opts.bot,
     codexProcessFactory: (o) => {
       if (opts.spawnCounter !== undefined) opts.spawnCounter.count++;
+      opts.capturedCodexOptions?.push(o);
       return new NoopCodexProcess(o);
     },
     codexClientFactory: () => new CodexWsClient({ url: opts.fake.url }),
+    codexHomeDoctor: () => {
+      /* fake codex tests do not require a real dispatcher CODEX_HOME */
+    },
   });
 }
 
@@ -143,6 +154,26 @@ describe('dreamux MVP smoke', () => {
     const d = server.repos.dispatchers.get('flow');
     expect(d?.thread_id).toMatch(/^thread_fake_/);
     expect(d?.status).toBe('ready');
+  });
+
+  it('starts the dispatcher app-server under the dispatcher private CODEX_HOME', async () => {
+    const capturedCodexOptions: CodexProcessOptions[] = [];
+    server = buildServer({ runtimeDir, fake, bot, capturedCodexOptions });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'cli_smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+
+    await server.start();
+
+    expect(capturedCodexOptions).toHaveLength(1);
+    expect(capturedCodexOptions[0]?.env?.['CODEX_HOME']).toBe(
+      dispatcherCodexHome('flow'),
+    );
+    expect(capturedCodexOptions[0]?.socketPath).toBe(
+      dispatcherSocketPath('flow'),
+    );
   });
 
   it('compatible Feishu gate drops bot-loop messages before durable enqueue', async () => {

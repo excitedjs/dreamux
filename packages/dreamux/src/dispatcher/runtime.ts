@@ -35,7 +35,18 @@ import type {
 } from '../codex/types.js';
 import { TurnManager } from './turn-manager.js';
 import { createFailFastApprovalHandler } from './approval.js';
-import { dispatcherCodexCwd, dispatcherStdoutLog, dispatcherStderrLog, dispatcherSocketPath } from '../runtime/paths.js';
+import {
+  dispatcherCodexCwd,
+  dispatcherCodexHome,
+  dispatcherSocketPath,
+  dispatcherStderrLog,
+  dispatcherStdoutLog,
+} from '../runtime/paths.js';
+import {
+  assertDispatcherCodexHomeReady,
+  dispatcherCodexHomeDoctorContext,
+  type DispatcherCodexHomeDoctor,
+} from '../runtime/dispatcher-codex-home.js';
 import { outboundTargetForInbound, type OutboundSink } from '../channel/outbound.js';
 
 export interface DispatcherRuntimeDeps {
@@ -48,6 +59,8 @@ export interface DispatcherRuntimeDeps {
   codexProcessFactory?: (opts: CodexProcessOptions) => CodexProcess;
   /** Override WS client factory for tests. */
   codexClientFactory?: (socketPath: string) => CodexWsClient;
+  /** Validate the dispatcher-private CODEX_HOME before spawning Codex. */
+  codexHomeDoctor?: DispatcherCodexHomeDoctor;
   /** Codex extraArgs (parsed from dispatcher.codex_args_json). */
   resolveExtraArgs?: (row: DispatcherRow) => string[];
   /** Codex initialize handshake timeout (ms). From ~/.dreamux/config.toml. */
@@ -117,8 +130,12 @@ export class DispatcherRuntime {
       await this.recoverInboundOnStartup();
 
       const cwd = this.row.codex_cwd ?? dispatcherCodexCwd(this.dispatcherId);
+      const codexHome = dispatcherCodexHome(this.dispatcherId);
       const socketPath = dispatcherSocketPath(this.dispatcherId);
       const extraArgs = this.deps.resolveExtraArgs?.(this.row) ?? [];
+      const doctor =
+        this.deps.codexHomeDoctor ?? assertDispatcherCodexHomeReady;
+      await doctor(dispatcherCodexHomeDoctorContext(this.dispatcherId));
 
       const factory = this.deps.codexProcessFactory ?? ((o) => new CodexProcess(o));
       this.process = factory({
@@ -128,6 +145,7 @@ export class DispatcherRuntime {
         stderrLogPath: dispatcherStderrLog(this.dispatcherId),
         binPath: this.deps.codexBinPath,
         extraArgs,
+        env: { ...process.env, CODEX_HOME: codexHome },
       });
       mkdirSync(dirname(socketPath), { recursive: true });
       await this.process.start();

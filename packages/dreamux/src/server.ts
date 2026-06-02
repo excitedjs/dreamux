@@ -32,6 +32,7 @@ import { compatibleFeishuGate } from './channel/feishu-gate.js';
 import { parseCodexArgs, codexArgsToCli } from './runtime/codex-args.js';
 import { resolveBotSecret } from './runtime/secrets.js';
 import { BUILT_IN_DEFAULTS, type DreamuxConfig } from './runtime/config.js';
+import type { DispatcherCodexHomeDoctor } from './runtime/dispatcher-codex-home.js';
 import {
   adminSocketPath,
   databasePath,
@@ -60,6 +61,8 @@ export interface ServerOptions {
   codexProcessFactory?: (opts: CodexProcessOptions) => CodexProcess;
   /** Inject a CodexWsClient factory (tests). */
   codexClientFactory?: (socketPath: string) => CodexWsClient;
+  /** Inject a dispatcher CODEX_HOME doctor (tests). */
+  codexHomeDoctor?: DispatcherCodexHomeDoctor;
   /** Skip resolving bot secret (tests with fake bot). */
   skipBotSecret?: boolean;
 }
@@ -193,6 +196,7 @@ export class Server {
       codexBinPath: this.resolveCodexBinPath(),
       codexProcessFactory: this.opts.codexProcessFactory,
       codexClientFactory: this.opts.codexClientFactory,
+      codexHomeDoctor: this.opts.codexHomeDoctor,
       resolveExtraArgs: () => codexArgsToCli(codexArgs),
       handshakeTimeoutMs: cfg.codex.initialize_timeout_ms,
       outboundRetries: cfg.outbound.retries,
