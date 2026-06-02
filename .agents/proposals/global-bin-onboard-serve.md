@@ -126,7 +126,7 @@ flowchart TD
   `launchctl` on macOS, `systemctl --user` on Linux.
 - The chosen config directory is writable.
 - The chosen runtime directory is writable.
-- The default global Codex home is writable.
+- The dispatcher private Codex home root is writable.
 
 The command should support `--dry-run`, `--yes`, and non-TTY execution.
 In non-TTY mode every required value must come from flags, env, or existing
@@ -136,25 +136,55 @@ config; missing values fail loudly.
 
 The onboarding command installs two plugin surfaces:
 
-- Codex: install the `codexmux` plugin into the default global Codex home.
+- Codex: install the `codexmux` plugin into the dispatcher app-server's
+  private `CODEX_HOME`.
 - Claude: install the `claudemux` plugin for Claude Code so the plugin
   hooks that anchor teammate state are available to `tm`-driven sessions.
 
-Codex plugin installation must not use the dispatcher app-server runtime
-home as its target. The operator's default global Codex home is the install
-target for `codexmux` because teammate `tm` sessions do not consume
-dispatcher-local Codex configuration.
+The `codexmux` consumer is the dispatcher agent, not the `tm` teammates.
+The `codexmux-dispatcher` skill is scoped to the dispatcher agent, and the
+dispatcher is the long-lived Codex app-server launched by `dreamux serve`.
+Codex loads plugins from the `CODEX_HOME` used by that app-server, so
+`codexmux` must be installed into the dispatcher app-server's private
+`CODEX_HOME`.
 
-This is separate from the dispatcher app-server runtime constraints below:
-`dreamux serve` must still use a private runtime `CODEX_HOME` / control
-socket root for persistent app-server process state. That runtime home is
-not the plugin installation home, and implementation must not rely on it to
-make `codexmux` available to `tm` teammates.
+Plugin installation location and app-server control state are separate
+concerns, but they intentionally use the same dispatcher-private Codex home:
+
+- plugin and marketplace config live under `<CODEX_HOME>/config.toml`
+  and plugin files under `<CODEX_HOME>/plugins/`
+- app-server control sockets live under
+  `<CODEX_HOME>/app-server-control/`
+
+Do not install `codexmux` into the operator's default global Codex home for
+issue #18. The daemon's high-risk dispatcher settings belong in the
+dispatcher-private home, keeping the user's daily interactive Codex home on
+its normal safe defaults.
+
+Codex 0.135.0 treats `config.toml` as per-`CODEX_HOME` user config. A
+private dispatcher `CODEX_HOME` does not inherit or include the operator's
+default global Codex config. `dreamux onboard` must therefore generate a
+minimal dispatcher-private `config.toml` instead of copying the entire
+global config:
+
+- the `codexmux` plugin and marketplace declaration
+- the selected network-enabled permission profile, including the approval
+  and sandbox settings needed for a persistent app-server
+- required model / provider settings when the operator does not accept the
+  Codex defaults
+- the chosen auth mode or auth preflight contract, without storing channel
+  secrets in the config
+
+`dreamux onboard` may read the operator's global Codex config only as input
+for prompts. It must not copy the whole file and must not modify the global
+Codex home as part of this design slice.
 
 The command should be idempotent:
 
 - Add / update the configured Codex marketplace source before installing
   `codexmux`.
+- Run the Codex plugin commands with `CODEX_HOME` set to the dispatcher
+  private Codex home.
 - Add / update the configured Claude marketplace source before installing
   `claudemux`.
 - Re-check installed plugin state after each install.
@@ -201,7 +231,7 @@ Known path classes that onboard should disclose:
 |---|---|
 | Global config | `~/.dreamux/config.toml` or the selected config file |
 | Runtime state | `<runtime_dir>/state.db` and migration side effects |
-| Global Codex home | Codex config / plugin files under the default global Codex home |
+| Dispatcher Codex home | `<CODEX_HOME>/config.toml`, `<CODEX_HOME>/plugins/`, `<CODEX_HOME>/app-server-control/`, and auth-state paths used by the dispatcher app-server |
 | Claude plugin install | the Claude Code marketplace / plugin files under the selected Claude scope |
 | macOS service | `~/Library/LaunchAgents/dev.excited.dreamux.plist` |
 | Linux service | `~/.config/systemd/user/dreamux.service` |
@@ -216,8 +246,14 @@ decide. The guide collects:
 - Runtime directory, defaulting to `~/.codex-host`.
 - Codex binary path; store an absolute path when discovered.
 - Dispatcher id.
+- Dispatcher private Codex home, defaulting under the dispatcher runtime
+  directory.
 - Dispatcher directory / Codex working root for the long-lived
   app-server.
+- Dispatcher Codex model / provider selection when the operator does not
+  want Codex defaults.
+- Dispatcher Codex auth mode, or the external auth environment contract
+  that `dreamux serve` must validate.
 - Channel type. The first supported channel is the existing Feishu bot
   channel.
 - Channel app identifier.
@@ -245,7 +281,13 @@ SQLite.
 - Open the runtime directory and SQLite database.
 - Open the admin Unix socket.
 - Start every enabled dispatcher.
-- For each dispatcher, start one long-lived Codex `app-server` child.
+- For each dispatcher, validate the dispatcher-private Codex home before
+  starting the app-server: config parse succeeds, `codexmux` is installed
+  in that home, the permission profile is network-enabled, the control
+  socket path is not under `/tmp`, and the selected model / auth contract is
+  usable.
+- For each dispatcher, start one long-lived Codex `app-server` child with
+  `CODEX_HOME` set to that dispatcher-private Codex home.
 - Keep running until SIGTERM / SIGINT, then drain dispatchers and close
   the admin socket.
 
@@ -266,6 +308,11 @@ Required constraints:
   profile, so bind/listen is not blocked.
 - Set a private, dreamux-managed runtime `CODEX_HOME` for every dispatcher
   app-server.
+- Install and enable `codexmux` in that same private `CODEX_HOME`, because
+  the dispatcher app-server loads its plugins and skills from the home it
+  runs under.
+- Generate a minimal `<CODEX_HOME>/config.toml`; do not rely on inheritance
+  from the operator's default global Codex home.
 - Place app-server control sockets under
   `<CODEX_HOME>/app-server-control/`.
 - Do not place control sockets in `/tmp`.
@@ -276,7 +323,9 @@ Suggested layout:
 
 | Path | Owner | Purpose |
 |---|---|---|
-| `<runtime_dir>/dispatchers/<id>/codex-home/` | dreamux | Runtime `CODEX_HOME` for this dispatcher app-server |
+| `<runtime_dir>/dispatchers/<id>/codex-home/` | dreamux | Runtime, config, and plugin `CODEX_HOME` for this dispatcher app-server |
+| `<runtime_dir>/dispatchers/<id>/codex-home/config.toml` | dreamux | Minimal dispatcher Codex config: `codexmux`, network-enabled permissions, model/provider defaults, and auth contract |
+| `<runtime_dir>/dispatchers/<id>/codex-home/plugins/` | Codex | Installed `codexmux` plugin cache and skill files |
 | `<runtime_dir>/dispatchers/<id>/codex-home/app-server-control/` | dreamux | Codex app-server control sockets |
 | `<runtime_dir>/dispatchers/<id>/cwd/` | dreamux | App-server cwd, intentionally not a worktree |
 | `<runtime_dir>/dispatchers/<id>/stdout.log` | dreamux | Codex stdout |
@@ -378,8 +427,8 @@ Alternatives:
 
 - No legacy global bins: publish only `dreamux`; do not install
   `dreamux-server` or `server-ctl`.
-- Codex plugin installation targets the default global Codex home, not a
-  dreamux-private install home.
+- Codex plugin installation targets the dispatcher app-server's private
+  `CODEX_HOME`, not the operator's default global Codex home.
 - Service registration is user-level only: macOS LaunchAgent and
   `systemd --user`.
 
