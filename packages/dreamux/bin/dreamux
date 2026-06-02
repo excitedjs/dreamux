@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Launcher for the unified `dreamux` CLI (issue #4).
+# Launcher for the single public `dreamux` CLI (issue #18).
 # Resolves its own location through symlinks so it works from any cwd and
 # via any chain of symlinks (npm-link, ~/bin shortcuts, etc.). Runs the
 # compiled dist output (built by `rush build` in a source checkout; already

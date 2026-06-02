@@ -14,9 +14,7 @@
     "node": ">=22.7"
   },
   "bin": {
-    "dreamux": "./bin/dreamux",
-    "dreamux-server": "./bin/server",
-    "server-ctl": "./bin/server-ctl"
+    "dreamux": "./bin/dreamux"
   },
   "files": [
     "bin",
@@ -44,6 +42,7 @@
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.10.0",
     "@types/ws": "^8.5.13",
+    "@types/yargs": "^17.0.35",
     "typescript": "^5.7.0",
     "vitest": "^2.1.0"
   }

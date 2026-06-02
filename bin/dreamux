@@ -1,11 +1,6 @@
 #!/usr/bin/env bash
-# Root-level alias for the @excitedjs/dreamux CLI. Forwards to the real
-# launcher under packages/dreamux/bin/.
-#
-# Why a thin shim at the repo root instead of just packages/dreamux/bin/?
-# Operators who already had `<repo>/bin` on their PATH from pre-monorepo
-# layouts (PR #6 shipped that path) keep working without touching their
-# shell config.
+# Source-checkout convenience shim for the single @excitedjs/dreamux CLI.
+# The published package installs only packages/dreamux/bin/dreamux.
 set -eu
 
 SOURCE="${BASH_SOURCE[0]}"

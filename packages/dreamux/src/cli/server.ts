@@ -1,9 +1,9 @@
 /**
- * `dreamux-server` — the long-running server entry point.
+ * Internal server entry point for `dreamux serve`.
  *
  * Usage:
- *   dreamux-server                  # run in foreground; logs to stderr
- *   dreamux-server --help
+ *   dreamux serve                  # run in foreground; logs to stderr
+ *   dreamux serve --help
  *
  * Configuration sources (highest precedence first):
  *   1. environment variables (CODEX_HOST_RUNTIME_DIR, CODEX_HOST_ADMIN_SOCKET,
@@ -60,10 +60,10 @@ async function main(): Promise<void> {
 }
 
 function printHelp(): void {
-  console.log(`dreamux-server — Codex-host MVP server (excitedjs/dreamux#2)
+  console.log(`dreamux serve — local dreamux server
 
 Usage:
-  dreamux-server [--help]
+  dreamux serve [--help]
 
 Global config:
   ~/.dreamux/config.toml    Auto-created on first boot. Override with the
@@ -85,8 +85,8 @@ Environment overrides (highest precedence):
   BOT_SECRET_<NAME>         Each dispatcher's bot secret (referenced via
                             bot_secret_ref=env:BOT_SECRET_<NAME>)
 
-Add dispatchers via server-ctl:
-  dreamux dispatcher add --id flow --bot-app-id cli_aaa \\
+Add dispatchers:
+  dreamux dispatcher add --id flow --bot-app-id <APP_ID> \\
     --bot-secret-ref env:BOT_SECRET_FLOW
 `);
 }

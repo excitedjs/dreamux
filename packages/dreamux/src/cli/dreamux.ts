@@ -1,107 +1,236 @@
 /**
- * `dreamux` — the unified top-level CLI (issue #4).
+ * `dreamux` — the single public CLI entry point.
  *
- * Subcommands:
- *   dreamux server start                # start the long-running server
- *   dreamux server status               # admin-socket query
- *   dreamux dispatcher add ...          # configure a dispatcher
- *   dreamux dispatcher remove --id X
- *   dreamux dispatcher list
- *   dreamux dispatcher status --id X
- *   dreamux dispatcher start --id X
- *   dreamux dispatcher stop --id X
- *
- * Implementation note: this binary is a thin router. `server start` delegates
- * to the same entrypoint as the legacy `dreamux-server` (`./server.js`);
- * everything else is forwarded to the legacy `server-ctl` flow
- * (`./server-ctl.js`). Both legacy binaries are kept as aliases for users
- * with stale PATH entries (PR #6 shipped them; reverting would break local
- * setups).
+ * Issue #18 replaces the old package-global aliases with one bin. This file
+ * owns the command tree and delegates implementation slices to focused
+ * modules where the runtime already exists.
  */
 
 import { spawn } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import yargs, { type Argv } from 'yargs';
+import { hideBin } from 'yargs/helpers';
+
+import { globalConfigFile } from '../runtime/config.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SERVER_ENTRY = join(HERE, 'server.js');
 const SERVER_CTL_ENTRY = join(HERE, 'server-ctl.js');
 
-function printRootHelp(): void {
-  console.log(`dreamux — Codex-host MVP unified CLI (excitedjs/dreamux#4)
+type DispatcherVerb = 'remove' | 'status' | 'start' | 'stop';
+type DaemonVerb = 'install' | 'uninstall' | 'start' | 'stop' | 'status';
 
-Usage:
-  dreamux server start
-  dreamux server status
-  dreamux dispatcher list
-  dreamux dispatcher add --id <ID> --bot-app-id <APP_ID> \\
-                         --bot-secret-ref env:<VAR> [--codex-args-json <JSON>] [--codex-cwd <PATH>]
-  dreamux dispatcher status --id <ID>
-  dreamux dispatcher start  --id <ID>
-  dreamux dispatcher stop   --id <ID>
-  dreamux dispatcher remove --id <ID>
-
-Environment:
-  CODEX_HOST_RUNTIME_DIR    Root dir (default: ~/.codex-host)
-  CODEX_HOST_ADMIN_SOCKET   Admin Unix socket path
-  CODEX_HOST_CODEX_BIN      Codex binary (default: 'codex' on PATH)
-  BOT_SECRET_<NAME>         Each dispatcher's bot secret (referenced via
-                            bot_secret_ref=env:BOT_SECRET_<NAME>)
-
-The legacy 'dreamux-server' and 'server-ctl' binaries remain available as
-aliases for compatibility; new tooling should call 'dreamux'.
-`);
-}
-
-function fail(msg: string, code = 2): never {
-  console.error(`dreamux: ${msg}\n`);
-  printRootHelp();
-  process.exit(code);
-}
-
-async function execEntry(entry: string, argv: string[]): Promise<never> {
-  // Re-exec node on the target so each subcommand keeps its own argv / process
-  // environment; no shared state to leak between subcommands.
+async function execEntry(
+  entry: string,
+  argv: string[],
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<never> {
   const child = spawn(process.execPath, [entry, ...argv], {
+    env,
     stdio: 'inherit',
   });
-  await new Promise<void>((res, rej) => {
-    child.once('error', rej);
+  await new Promise<void>((resolve, reject) => {
+    child.once('error', reject);
     child.once('exit', (code, signal) => {
       if (signal !== null) process.kill(process.pid, signal);
       process.exit(code ?? 0);
-      res();
+      resolve();
     });
   });
-  process.exit(0); // unreachable; satisfies TS never
+  process.exit(0);
+}
+
+function adminEnv(): NodeJS.ProcessEnv {
+  return { ...process.env, DREAMUX_ADMIN_CLI_NAME: 'dreamux' };
+}
+
+function notImplemented(command: string): never {
+  throw new Error(`${command} is not implemented in this serve-foundation build`);
+}
+
+function requiredString(value: unknown, name: string): string {
+  if (typeof value === 'string' && value.trim() !== '') return value;
+  throw new Error(`missing required option --${name}`);
+}
+
+function optionalString(value: unknown): string | null {
+  if (typeof value !== 'string' || value === '') return null;
+  return value;
+}
+
+function withRequiredDispatcherId<T>(y: Argv<T>): Argv<T & { id: string }> {
+  return y.option('id', {
+    type: 'string',
+    demandOption: true,
+    describe: 'Dispatcher id',
+  }) as Argv<T & { id: string }>;
+}
+
+function buildDispatcherCommands(y: Argv): Argv {
+  return y
+    .command(
+      'list',
+      'List configured dispatchers',
+      (yy) => yy,
+      async () => execEntry(SERVER_CTL_ENTRY, ['dispatcher', 'list'], adminEnv()),
+    )
+    .command(
+      'add',
+      'Add a dispatcher',
+      (yy) =>
+        yy
+          .option('id', {
+            type: 'string',
+            demandOption: true,
+            describe: 'Dispatcher id',
+          })
+          .option('bot-app-id', {
+            type: 'string',
+            demandOption: true,
+            describe: 'Channel bot app id',
+          })
+          .option('bot-secret-ref', {
+            type: 'string',
+            demandOption: true,
+            describe: 'Secret reference, for example env:BOT_SECRET_NAME',
+          })
+          .option('codex-args-json', {
+            type: 'string',
+            describe: 'Dispatcher-specific Codex argument JSON',
+          })
+          .option('codex-cwd', {
+            type: 'string',
+            describe: 'Override dispatcher app-server cwd',
+          }),
+      async (argv) => {
+        const args = [
+          'dispatcher',
+          'add',
+          '--id',
+          requiredString(argv.id, 'id'),
+          '--bot-app-id',
+          requiredString(argv.botAppId, 'bot-app-id'),
+          '--bot-secret-ref',
+          requiredString(argv.botSecretRef, 'bot-secret-ref'),
+        ];
+        const codexArgsJson = optionalString(argv.codexArgsJson);
+        if (codexArgsJson !== null) {
+          args.push('--codex-args-json', codexArgsJson);
+        }
+        const codexCwd = optionalString(argv.codexCwd);
+        if (codexCwd !== null) args.push('--codex-cwd', codexCwd);
+        await execEntry(SERVER_CTL_ENTRY, args, adminEnv());
+      },
+    )
+    .command(
+      ['remove', 'status', 'start', 'stop'],
+      'Manage one dispatcher',
+      withRequiredDispatcherId,
+      async (argv) => {
+        const verb = requiredString(argv._[1], 'dispatcher verb') as DispatcherVerb;
+        await execEntry(
+          SERVER_CTL_ENTRY,
+          ['dispatcher', verb, '--id', requiredString(argv.id, 'id')],
+          adminEnv(),
+        );
+      },
+    )
+    .demandCommand(1, 'Choose a dispatcher command')
+    .strict();
+}
+
+function buildDaemonCommands(y: Argv): Argv {
+  return y
+    .command(
+      ['install', 'uninstall', 'start', 'stop', 'status'],
+      'Manage the user-level service',
+      (yy) => yy,
+      (argv) => notImplemented(`dreamux daemon ${requiredString(argv._[1], 'daemon verb') as DaemonVerb}`),
+    )
+    .demandCommand(1, 'Choose a daemon command')
+    .strict();
+}
+
+function buildConfigCommands(y: Argv): Argv {
+  return y
+    .command(
+      'path',
+      'Print the dreamux global config path',
+      (yy) => yy,
+      () => {
+        console.log(globalConfigFile());
+      },
+    )
+    .command(
+      'show',
+      'Print the dreamux global config file',
+      (yy) => yy,
+      () => {
+        const file = globalConfigFile();
+        if (!existsSync(file)) {
+          throw new Error(`config file does not exist: ${file}`);
+        }
+        process.stdout.write(readFileSync(file, 'utf8'));
+      },
+    )
+    .demandCommand(1, 'Choose a config command')
+    .strict();
 }
 
 async function main(): Promise<void> {
-  const argv = process.argv.slice(2);
-  if (argv.length === 0 || argv[0] === '--help' || argv[0] === '-h') {
-    printRootHelp();
-    return;
-  }
-
-  const [topic, sub, ...rest] = argv;
-  if (topic === 'server') {
-    if (sub === 'start') {
-      await execEntry(SERVER_ENTRY, rest);
-      return;
-    }
-    if (sub === 'status') {
-      // server status is an admin-socket query (server-ctl `server status`).
-      await execEntry(SERVER_CTL_ENTRY, ['server', 'status', ...rest]);
-      return;
-    }
-    fail(`unknown 'server' subcommand: ${sub ?? '(missing)'}`);
-  }
-  if (topic === 'dispatcher') {
-    if (sub === undefined) fail("missing 'dispatcher' subcommand");
-    await execEntry(SERVER_CTL_ENTRY, ['dispatcher', sub, ...rest]);
-    return;
-  }
-  fail(`unknown command: ${topic ?? ''}`);
+  await yargs(hideBin(process.argv))
+    .scriptName('dreamux')
+    .usage('$0 <command> [options]')
+    .command(
+      'onboard',
+      'Run first-time setup',
+      (yy) => yy,
+      () => notImplemented('dreamux onboard'),
+    )
+    .command(
+      'serve',
+      'Run the local server in the foreground',
+      (yy) => yy,
+      async () => execEntry(SERVER_ENTRY, []),
+    )
+    .command(
+      'status',
+      'Show running server status',
+      (yy) => yy,
+      async () => execEntry(SERVER_CTL_ENTRY, ['server', 'status'], adminEnv()),
+    )
+    .command(
+      'doctor',
+      'Run setup diagnostics',
+      (yy) => yy,
+      () => notImplemented('dreamux doctor'),
+    )
+    .command(
+      'daemon <command>',
+      'Manage the user-level service',
+      buildDaemonCommands,
+    )
+    .command(
+      'dispatcher <command>',
+      'Manage dispatchers',
+      buildDispatcherCommands,
+    )
+    .command('config <command>', 'Inspect config', buildConfigCommands)
+    .demandCommand(1, 'Choose a command')
+    .strict()
+    .help()
+    .alias('h', 'help')
+    .fail((msg, err) => {
+      const message = err instanceof Error ? err.message : msg;
+      if (message !== undefined && message !== '') {
+        console.error(`dreamux: ${message}`);
+      }
+      process.exit(err instanceof Error ? 1 : 2);
+    })
+    .parseAsync();
 }
 
 main().catch((err) => {

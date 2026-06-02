@@ -7,7 +7,7 @@
  * Usage:
  *   server-ctl server status
  *   server-ctl dispatcher list
- *   server-ctl dispatcher add --id flow --bot-app-id cli_aaa --bot-secret-ref env:BOT_SECRET_FLOW
+ *   server-ctl dispatcher add --id flow --bot-app-id <APP_ID> --bot-secret-ref env:BOT_SECRET_FLOW
  *   server-ctl dispatcher status --id flow
  *   server-ctl dispatcher start --id flow
  *   server-ctl dispatcher stop --id flow
@@ -45,9 +45,10 @@ function parseArgs(argv: string[]): ParsedArgs {
 }
 
 async function main(): Promise<void> {
+  const programName = process.env['DREAMUX_ADMIN_CLI_NAME'] || 'server-ctl';
   const argv = process.argv.slice(2);
   if (argv.length === 0 || argv[0] === '--help' || argv[0] === '-h') {
-    printHelp();
+    printHelp(programName);
     return;
   }
 
@@ -57,7 +58,7 @@ async function main(): Promise<void> {
   const method = resolveMethod(obj, verb);
   if (method === null) {
     console.error(`unknown command: ${obj ?? ''} ${verb ?? ''}\n`);
-    printHelp();
+    printHelp(programName);
     process.exit(2);
   }
 
@@ -169,18 +170,18 @@ function cryptoRandomId(): string {
   return `cli-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
 }
 
-function printHelp(): void {
-  console.log(`server-ctl — admin CLI for the dreamux server
+function printHelp(programName = 'server-ctl'): void {
+  console.log(`${programName} — admin CLI for the dreamux server
 
 Usage:
-  server-ctl server status
-  server-ctl dispatcher list
-  server-ctl dispatcher add --id <ID> --bot-app-id <APP_ID> \\
+  ${programName} server status
+  ${programName} dispatcher list
+  ${programName} dispatcher add --id <ID> --bot-app-id <APP_ID> \\
                             --bot-secret-ref env:<VAR> [--codex-args-json <JSON>] [--codex-cwd <PATH>]
-  server-ctl dispatcher status --id <ID>
-  server-ctl dispatcher start --id <ID>
-  server-ctl dispatcher stop --id <ID>
-  server-ctl dispatcher remove --id <ID>
+  ${programName} dispatcher status --id <ID>
+  ${programName} dispatcher start --id <ID>
+  ${programName} dispatcher stop --id <ID>
+  ${programName} dispatcher remove --id <ID>
 
 Environment:
   CODEX_HOST_ADMIN_SOCKET   override the admin socket path (default: ~/.codex-host/admin.sock)
@@ -188,6 +189,7 @@ Environment:
 }
 
 main().catch((err) => {
-  console.error(`server-ctl: ${err instanceof Error ? err.message : err}`);
+  const programName = process.env['DREAMUX_ADMIN_CLI_NAME'] || 'server-ctl';
+  console.error(`${programName}: ${err instanceof Error ? err.message : err}`);
   process.exit(1);
 });
