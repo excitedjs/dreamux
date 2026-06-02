@@ -34,8 +34,9 @@
 #     builds is recommended so `npm pack` == CI output);
 #   - a package.json `repository` field pointing at github.com/excitedjs/dreamux
 #     (npm provenance requires it);
-#   - no `workspace:` protocol deps — `npm publish` does NOT rewrite them
-#     (unlike `pnpm publish`); depend only on published versions;
+#   - publish workspace packages through the pnpm-packed tarball only. Raw
+#     `npm publish` from a package directory is forbidden because npm does not
+#     rewrite `workspace:` dependencies into registry-installable semver ranges.
 #   - its own npm trusted-publisher entry (above), or the publish fails loudly.
 #   - FIRST publish is a one-time manual/token bootstrap. npm's trusted-publisher
 #     config lives on a package's settings page, which exists only AFTER the
@@ -158,15 +159,54 @@ jobs:
           node common/scripts/install-run-rush.js install
           node common/scripts/install-run-rush.js build
 
-      - name: Publish each queued package (OIDC trusted publishing)
+      - name: Publish each queued package (pnpm pack + npm OIDC publish)
         if: steps.plan.outputs.count != '0'
         run: |
-          # One `npm publish` per package — each does its own OIDC exchange,
-          # validated against that package's npm trusted-publisher config. No
-          # NODE_AUTH_TOKEN: npm 11.5.1+ uses the GitHub Actions OIDC token.
+          assert_no_workspace_protocols() {
+            local tarball="$1"
+            node - "$tarball" <<'NODE'
+          const { execFileSync } = require("node:child_process");
+          const tarball = process.argv[2];
+          const manifest = JSON.parse(execFileSync("tar", ["-xOf", tarball, "package/package.json"], { encoding: "utf8" }));
+          const dependencyFields = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"];
+          const offenders = [];
+
+          for (const field of dependencyFields) {
+            const entries = manifest[field] ?? {};
+            for (const [name, version] of Object.entries(entries)) {
+              if (typeof version === "string" && version.startsWith("workspace:")) {
+                offenders.push(`${field}.${name}=${version}`);
+              }
+            }
+          }
+
+          if (offenders.length > 0) {
+            console.error(`Packed manifest still contains workspace protocol dependencies: ${offenders.join(", ")}`);
+            process.exit(1);
+          }
+          NODE
+          }
+
+          # pnpm pack rewrites workspace protocol dependencies in the tarball
+          # manifest. npm then publishes that tarball so OIDC trusted publishing
+          # and provenance still come from npm 11.5.1+.
           while IFS="$(printf '\t')" read -r name version path; do
             [ -z "$name" ] && continue
             echo "::group::Publishing $name@$version ($path)"
-            ( cd "$path" && npm publish --provenance --access public )
+            safe_name="$(printf '%s' "$name" | tr '/@' '__')"
+            pack_dir="$RUNNER_TEMP/npm-pack/$safe_name-$version"
+            rm -rf "$pack_dir"
+            mkdir -p "$pack_dir"
+
+            ( cd "$path" && node "$GITHUB_WORKSPACE/common/scripts/install-run-rush-pnpm.js" pack --pack-destination "$pack_dir" )
+            tarball_count="$(find "$pack_dir" -maxdepth 1 -type f -name '*.tgz' | wc -l | tr -d ' ')"
+            if [ "$tarball_count" -ne 1 ]; then
+              echo "::error::Expected exactly one packed tarball for $name@$version, found $tarball_count in $pack_dir."
+              exit 1
+            fi
+            tarball="$(find "$pack_dir" -maxdepth 1 -type f -name '*.tgz' -print -quit)"
+            assert_no_workspace_protocols "$tarball"
+
+            npm publish "$tarball" --provenance --access public
             echo "::endgroup::"
           done < "$RUNNER_TEMP/to-publish.tsv"

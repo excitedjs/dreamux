@@ -60,7 +60,8 @@ The per-package `cd packages/dreamux && npm install` path is **retired**:
 `@excitedjs/dreamux` now depends on `@excitedjs/feishu-transport` via the
 pnpm `workspace:*` protocol, which `npm` cannot resolve. There is no
 committed per-package `package-lock.json`. External consumers are
-unaffected — pnpm rewrites `workspace:*` to a real version at publish time.
+unaffected — the release workflow publishes a pnpm-packed tarball, where pnpm
+rewrites `workspace:*` to real registry versions before npm uploads it.
 See [the install-model decision](../decisions/install-model.md) (which retires
 the two-paths consequence of [the Rush + pnpm decision](../decisions/rush-pnpm-monorepo.md)).
 

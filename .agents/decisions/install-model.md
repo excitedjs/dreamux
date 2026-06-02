@@ -34,8 +34,9 @@ which install model to keep.
 **Keep only the monorepo (rush) path. Retire the per-package npm path.**
 
 - `package.json` dependencies stay on `workspace:*` — the correct idiom for a
-  rush `useWorkspaces: true` repo, and what pnpm already rewrites to a real
-  version (`@excitedjs/feishu-transport: 0.0.1`) in the **published** manifest.
+  rush `useWorkspaces: true` repo. The release workflow must publish a
+  pnpm-packed tarball, where pnpm rewrites those source-only dependencies to
+  real registry versions in the **published** manifest.
 - No per-package `package-lock.json` is committed.
 - CI's `package` job (`npm ci`) is removed; its typecheck/build/test coverage
   moves into the `rush` job, which now runs `rush update` → `rush typecheck` →
@@ -49,9 +50,11 @@ now exist, so retiring path 1 is the natural close-out, not a new constraint.
 ## Consequences
 
 - **External consumers are unaffected.** `workspace:*` is a source-only
-  protocol; pnpm rewrites it to the real published version at publish time, so
+  protocol; the release workflow's `rush-pnpm pack` step rewrites it to the real
+  published version before `npm publish <tarball>`, so
   `npm install @excitedjs/dreamux` resolves `@excitedjs/feishu-transport`
-  normally. Verified against the published `@excitedjs/dreamux@0.1.1` manifest.
+  normally. Raw `npm publish` from a package directory is forbidden because it
+  preserves `workspace:*` in the registry manifest.
 - **In-repo build/test is rush-only.** `cd packages/dreamux && npm install` now
   fails by design. Use `node common/scripts/install-run-rush.js update` first.
 - **Foot-gun:** don't re-add a per-package `package-lock.json` or a `package`

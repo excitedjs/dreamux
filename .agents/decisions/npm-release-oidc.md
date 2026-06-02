@@ -1,6 +1,6 @@
 # npm release via OIDC trusted publishing
 
-- **Status:** Accepted (scaffolding; unexecutable until a publishable package builds)
+- **Status:** Accepted
 - **Date:** 2026-05-30
 - **Affects:** npm publishing of every `shouldPublish` package, `/.github/workflows/`, the rush version mechanism
 - **PR / Issue:** infra/feishu-transport-release
@@ -26,6 +26,11 @@ Three hard constraints shaped the design:
   package is configured on npmjs.com individually. But one workflow *run* can
   publish many packages: each `npm publish` does its own OIDC exchange, so every
   package just lists the same workflow file as its trusted publisher.
+- **Workspace protocol dependencies must be packed by pnpm before npm upload.**
+  Raw `npm publish` from a package directory preserves `workspace:*` in the
+  registry manifest. `rush-pnpm pack` rewrites those source-only dependencies
+  into registry-installable semver in the tarball, and `npm publish <tarball>`
+  still performs the OIDC/provenance upload.
 - **Main is protected.** The [anti-leak guardrail](anti-leak-guardrail.md) makes the
   `gitleaks` check required on `main`, so CI cannot push a version-bump commit
   straight to `main` with the default `GITHUB_TOKEN`.
@@ -39,8 +44,10 @@ Two workflows, both `push: [main]`:
   step enumerates `rush list --json` projects with `shouldPublish: true` and
   **classifies each against npm into three states**: *published* (skip),
   *new version of an existing package* (publish), or *never published* (skip +
-  warn — its first publish needs a one-time token bootstrap, see below). It then
-  loops `npm publish --provenance --access public` over the publish set (one
+  warn — its first publish needs a one-time token bootstrap, see below). For
+  each queued package it runs `rush-pnpm pack` from the package directory,
+  validates that the packed `package.json` contains no `workspace:` dependency,
+  then uploads that tarball with `npm publish --provenance --access public` (one
   OIDC exchange per package). A non-404 lookup error (network / 5xx / auth)
   fails the job loudly rather than being read as "not published". `id-token:
   write`, `setup-node` `registry-url`, `npm install -g npm@11.5.1`, no
@@ -51,8 +58,8 @@ Two workflows, both `push: [main]`:
   changed packages; no registry contact, no token) and opens a "version
   packages" PR rather than pushing to protected `main`.
 
-So **Rush owns versioning, npm owns the OIDC upload**, and both halves are
-monorepo-wide.
+So **Rush owns versioning, pnpm owns the packed registry manifest, npm owns the
+OIDC upload**, and all halves are monorepo-wide.
 
 ## Consequences
 
@@ -85,9 +92,11 @@ monorepo-wide.
   workflow (PR #150) landed *after* the package was first published (PR #148).
 - **Per-package requirements** for a green publish: `shouldPublish: true` in
   rush.json; a build (`npm run build` → `dist`) + a `files` allowlist (`prepack`
-  recommended so `npm pack` == CI output); a `repository` field pointing at
-  github.com/excitedjs/dreamux (npm provenance requires it); and no `workspace:`
-  protocol deps (`npm publish` does not rewrite them, unlike `pnpm publish`).
+  recommended so pack output matches CI output); and a `repository` field
+  pointing at github.com/excitedjs/dreamux (npm provenance requires it).
+  `workspace:` dependencies are valid in source package manifests, but raw
+  `npm publish` from a package directory is forbidden; the release workflow must
+  publish the pnpm-packed tarball.
 - **Optional hardening:** run the publish in a protected GitHub Environment with
   required reviewers (commented in the workflow); if enabled it must match the
   npm trusted-publisher Environment field of every package.
@@ -99,6 +108,9 @@ monorepo-wide.
 
 - **`rush publish --publish` for the upload** — rejected: no provenance,
   token-only auth, incompatible with OIDC tokenless.
+- **Raw `npm publish` from each package directory** — rejected: it keeps
+  `workspace:*` in the published manifest, so external `npm install` fails with
+  `EUNSUPPORTEDPROTOCOL`.
 - **Per-package release workflows** — rejected: N near-identical files that
   drift, fighting Rush's coordinated monorepo model. One looping workflow scales
   by adding a rush.json entry + one npm config. Revisit only if a package needs
