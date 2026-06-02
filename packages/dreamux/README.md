@@ -174,7 +174,7 @@ JSON object stored in `dispatchers.codex_args_json`:
 | `CODEX_HOST_CODEX_BIN`       | Override `codex.bin`                               |
 | `DREAMUX_CONFIG_DIR`         | Override `~/.dreamux` (where `config.toml` lives)  |
 | `BOT_SECRET_<NAME>`          | Bot secrets referenced by `env:BOT_SECRET_<NAME>`  |
-| `DREAMUX_SKIP_LIVE_CODEX`    | Opt out of the live codex 0.134 integration test (loud skip) |
+| `DREAMUX_SKIP_LIVE_CODEX`    | Opt out of the live codex 0.135 integration test (loud skip) |
 
 ## What this MVP does **not** do
 
@@ -194,7 +194,7 @@ JSON object stored in `dispatchers.codex_args_json`:
 
 ```bash
 # from the repo root (the only supported path — see the install-model decision)
-node common/scripts/install-run-rush.js test   # smoke + bin-launcher + codex-0134-live
+node common/scripts/install-run-rush.js test   # smoke + bin-launcher + codex-0135-live
 ```
 
 - `tests/smoke.test.ts` — fake-codex-driven dispatcher behavior:
@@ -203,7 +203,7 @@ node common/scripts/install-run-rush.js test   # smoke + bin-launcher + codex-01
 - `tests/bin-launcher.test.ts` — spawns the real `dreamux` bash launcher
   and repo-root shim from arbitrary cwds and through symlinks; static
   "no tsx" assertion; manifest assertion for the single global bin.
-- `tests/codex-0134-live.test.ts` — spawns a real `codex app-server`
+- `tests/codex-0135-live.test.ts` — spawns a real `codex app-server`
   (skipped loudly when `codex` is missing or wrong version; opt-in via
   `DREAMUX_SKIP_LIVE_CODEX=1`).
 

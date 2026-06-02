@@ -1,14 +1,16 @@
 /**
  * Live integration test against a real codex app-server.
  *
- * Pinned to **codex 0.134.x** — the version family the dreamux MVP was
- * developed and verified against. This test exists to catch the exact two
- * compat bugs fixed in PR #5:
+ * Pinned to **codex 0.135.x** — the version family issue #18's dispatcher
+ * app-server runtime was verified against. This test exists to catch the
+ * two compat bugs fixed in PR #5 plus the issue #18 serve-foundation shape:
  *   - dropped `--approval-policy` flag (now `-c approval_policy=...`)
  *   - LSP-style `initialize` / `initialized` handshake required before
  *     any business RPC
+ *   - app-server listen socket must not live under `/tmp`
+ *   - app-server startup must use a network-enabled sandbox/profile
  *
- * **Default behavior**: codex missing OR version doesn't match `0.134.x`
+ * **Default behavior**: codex missing OR version doesn't match `0.135.x`
  * → the test FAILS loudly. The whole point is to verify compatibility; a
  * silent skip in CI defeats it.
  *
@@ -20,7 +22,7 @@
 import { describe, it, expect } from 'vitest';
 import { execSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { CodexProcess } from '../src/codex/supervisor.js';
@@ -31,8 +33,8 @@ import type { ThreadStartResponse } from '../src/codex/types.js';
 
 export const SKIP_ENV = 'DREAMUX_SKIP_LIVE_CODEX';
 /** The version family this compat test pins. Bump deliberately when the dispatcher is verified against a newer codex line. */
-export const TARGET_VERSION_RE = /^0\.134\./;
-const TARGET_LABEL = '0.134.x';
+export const TARGET_VERSION_RE = /^0\.135\./;
+const TARGET_LABEL = '0.135.x';
 
 export type Detection =
   | { state: 'ok'; version: string }
@@ -75,14 +77,14 @@ function detectCodex(): Detection {
   return classifyDetection(out);
 }
 
-describe('codex 0.134 live integration', () => {
+describe('codex 0.135 live integration', () => {
   const skipRequested = process.env[SKIP_ENV] === '1';
   const detection = detectCodex();
 
   if (skipRequested) {
     // Opt-in skip — loud so it can't be missed in CI / local output.
     console.warn(
-      `[codex-0134-live] SKIPPED via ${SKIP_ENV}=1. ` +
+      `[codex-0135-live] SKIPPED via ${SKIP_ENV}=1. ` +
         `Detected codex: state=${detection.state}` +
         (detection.state !== 'missing' ? ` version=${detection.version}` : '') +
         `. Real codex ${TARGET_LABEL} compatibility is NOT being verified by this run.`,
@@ -115,18 +117,20 @@ describe('codex 0.134 live integration', () => {
     return;
   }
 
-  // From here on we know codex is on PATH and reports a 0.134.x version.
+  // From here on we know codex is on PATH and reports a 0.135.x version.
 
   it(
     `spawns codex ${detection.version}, completes init handshake, starts a thread`,
     async () => {
-      const dir = mkdtempSync(join(tmpdir(), 'dreamux-e2e-'));
+      const dir = mkdtempSync(join(homedir(), '.dreamux-e2e-'));
       const socketPath = join(dir, 'codex.sock');
       const cwd = join(dir, 'cwd');
 
       // Use the same parser the runtime uses — exercises the
       // `-c approval_policy=never` codepath end-to-end.
-      const extraArgs = codexArgsToCli(parseCodexArgs('{}'));
+      const extraArgs = codexArgsToCli(
+        parseCodexArgs('{"sandboxMode":"danger-full-access"}'),
+      );
 
       const proc = new CodexProcess({
         socketPath,
@@ -143,7 +147,7 @@ describe('codex 0.134 live integration', () => {
         try {
           await client.ready();
           const init = await performInitializeHandshake(client);
-          // userAgent shape is daemon-driven (in 0.134 it echoes the
+          // userAgent shape is daemon-driven (older lines echoed the
           // client name into a long descriptor) — don't assert content
           // beyond non-empty string.
           expect(typeof init.userAgent).toBe('string');
@@ -174,15 +178,15 @@ describe('codex 0.134 live integration', () => {
 // of whether codex is installed, and prove that the four detection
 // branches (ok / missing / wrong-version / unparseable) actually behave
 // as the live test above relies on.
-describe('codex 0.134 detection logic', () => {
+describe('codex 0.135 detection logic', () => {
   it('classifies a matching version as ok', () => {
-    expect(classifyDetection('codex-cli 0.134.0')).toEqual({
+    expect(classifyDetection('codex-cli 0.135.0')).toEqual({
       state: 'ok',
-      version: '0.134.0',
+      version: '0.135.0',
     });
-    expect(classifyDetection('codex-cli 0.134.17')).toEqual({
+    expect(classifyDetection('codex-cli 0.135.17')).toEqual({
       state: 'ok',
-      version: '0.134.17',
+      version: '0.135.17',
     });
   });
 
@@ -191,9 +195,9 @@ describe('codex 0.134 detection logic', () => {
       state: 'wrong-version',
       version: '0.133.5',
     });
-    expect(classifyDetection('codex-cli 0.135.0')).toEqual({
+    expect(classifyDetection('codex-cli 0.134.0')).toEqual({
       state: 'wrong-version',
-      version: '0.135.0',
+      version: '0.134.0',
     });
     expect(classifyDetection('codex-cli 1.0.0')).toEqual({
       state: 'wrong-version',

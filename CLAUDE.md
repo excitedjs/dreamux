@@ -109,10 +109,10 @@ dir)? When in doubt, runtime dir — that's the safer default.
   concatenation.
 - **Codex protocol bumps run through `src/codex/handshake.ts` first.** Any
   RPC before `initialize` is rejected with `Not initialized` on codex
-  0.134+ — confirmed end-to-end in `tests/codex-0134-live.test.ts`.
+  0.134+ — confirmed end-to-end in `tests/codex-0135-live.test.ts`.
 - **Tests that depend on a real codex install fail loudly when codex is
   missing**, not silent skip. Opt-in skip via `DREAMUX_SKIP_LIVE_CODEX=1`
-  (see `tests/codex-0134-live.test.ts`'s docstring).
+  (see `tests/codex-0135-live.test.ts`'s docstring).
 
 ## Commits
 
