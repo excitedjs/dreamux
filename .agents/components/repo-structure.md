@@ -24,7 +24,7 @@ sibling claudemux repo import one implementation instead of drifting copies.
 | `/common/scripts/install-run-rush.js` | Bootstrap that shells out to `npx @microsoft/rush@<version>` (see [the Rush + pnpm decision](../decisions/rush-pnpm-monorepo.md)) |
 | `/common/temp/` | Rush working dir (gitignored) |
 | `/packages/dreamux/` | The `@excitedjs/dreamux` package |
-| `/bin/` | Thin shims that forward to `/packages/dreamux/bin/` so pre-monorepo PATH entries keep working |
+| `/bin/` | Source-checkout `dreamux` shim that forwards to `/packages/dreamux/bin/dreamux` |
 | `/.agents/` | This knowledge base |
 | `/.github/workflows/` | CI |
 | `/CLAUDE.md` | Always-loaded agent operating rules; `/AGENTS.md` is a symlink |
@@ -37,7 +37,7 @@ verbatim through the move):
 | Path | Concern |
 |---|---|
 | `src/admin/` | Unix socket admin protocol + method handlers |
-| `src/cli/` | Entry-point CLIs: `dreamux.ts` (new unified router), `server.ts`, `server-ctl.ts` |
+| `src/cli/` | Entry-point CLIs: `dreamux.ts` (single public command tree), `server.ts` and `server-ctl.ts` as internal delegated modules |
 | `src/codex/` | Codex WS+Unix JSON-RPC client, supervisor, turn collector, init handshake |
 | `src/db/` | SQLite schema + repository |
 | `src/dispatcher/` | DispatcherRuntime, TurnManager, fail-fast approval handler |
@@ -45,9 +45,8 @@ verbatim through the move):
 | `src/runtime/` | Path builders, env-only secrets, codex-args parser |
 | `src/server.ts` | Top-level `Server` class wiring everything together |
 | `db/migrations/0001_init.sql` | Initial SQLite schema |
-| `bin/dreamux` | Unified CLI launcher (`dreamux server start`, `dreamux dispatcher ...`) |
-| `bin/server`, `bin/server-ctl` | Backward-compat aliases shipped before the monorepo split |
-| `tests/` | vitest: smoke (16), bin-launcher (8), codex-0134-live (4) |
+| `bin/dreamux` | Single public CLI launcher (`dreamux serve`, `dreamux dispatcher ...`) |
+| `tests/` | vitest: smoke, bin-launcher, dispatcher Codex home doctor, codex live integration |
 
 ## Installation — the rush path only
 
@@ -115,16 +114,15 @@ multi-package release notes precise while still using Rush as the validator.
 
 - npm package: `@excitedjs/dreamux`
 - CLI binaries installed by the package:
-  - `dreamux` (preferred, see [the CLI naming decision](../decisions/cli-and-package-naming.md))
-  - `dreamux-server` (legacy alias)
-  - `server-ctl` (legacy alias)
+  - `dreamux` (see [the global bin decision](../decisions/global-bin-onboard-serve.md))
 
 ## Two home directories the server touches
 
 | Path | Purpose | Source of truth |
 |---|---|---|
 | `~/.dreamux/` | User-editable global config (`config.toml`). Auto-created on first boot. | The operator |
-| `~/.codex-host/` | Server-owned runtime state: SQLite (`state.db`), admin socket, per-dispatcher codex sockets and logs. | The server |
+| `~/.codex-host/` | Server-owned runtime state: SQLite (`state.db`), admin socket, dispatcher logs, and dispatcher-private Codex homes. | The server |
+| `~/.codex-host/dispatchers/<id>/codex-home/` | Dispatcher-private `CODEX_HOME`: Codex config, `plugins/`, and `app-server-control/` sockets for that dispatcher app-server. | The server |
 
 The split is load-bearing: a `rm -rf ~/.codex-host` recovery never loses
 user-edited settings. See [the global-config decision](../decisions/global-config-dir.md).

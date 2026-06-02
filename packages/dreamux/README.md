@@ -11,16 +11,16 @@ and harness pieces, see the top-level
 Design background:
 [#1 Proposal](https://github.com/excitedjs/dreamux/issues/1) ·
 [#2 Engineering plan](https://github.com/excitedjs/dreamux/issues/2) ·
-[#4 Monorepo + harness](https://github.com/excitedjs/dreamux/issues/4).
+[#4 Monorepo + harness](https://github.com/excitedjs/dreamux/issues/4) ·
+[#18 Global bin onboarding](https://github.com/excitedjs/dreamux/issues/18).
 
 ## What this package ships
 
-- The `dreamux` CLI (preferred): `dreamux server start`,
-  `dreamux server status`, `dreamux dispatcher add|remove|list|status|start|stop`.
-- Legacy aliases: `dreamux-server` (= `dreamux server start`) and
-  `server-ctl` (= `dreamux <verb>`). Kept so pre-monorepo operators
-  don't have to rewrite PATH entries; see
-  [the CLI naming decision](../../.agents/decisions/cli-and-package-naming.md).
+- One public CLI bin: `dreamux`. Implemented commands in this slice include
+  `dreamux serve`, `dreamux status`, `dreamux dispatcher ...`, and
+  `dreamux config path|show`; `onboard`, `doctor`, and `daemon ...` command
+  slots follow the issue #18 design and are completed in later implementation
+  slices.
 - A SQLite-backed runtime (`dispatchers` + `inbound_buffer`) plus the
   Feishu / Codex adapters that drive each dispatcher.
 
@@ -34,7 +34,8 @@ Design background:
   Outbound replies are routed by the inbound's `source_chat_id`.
 - **No dispatcher↔worktree binding.** Codex picks the worktree at `tm`-call
   time. The Codex daemon's cwd is `~/.codex-host/dispatchers/<id>/cwd/`
-  (intentionally empty).
+  (intentionally empty), while its private `CODEX_HOME` is
+  `~/.codex-host/dispatchers/<id>/codex-home/`.
 - **FIFO + at-most-once.** One running turn per dispatcher. After a server
   crash, `running` inbound rows are flipped to `unknown` (the user is told
   to confirm or resend); `awaiting_outbound` rows are safely retried.
@@ -67,14 +68,10 @@ output; **no `tsx` is needed at runtime** (PR #6).
 ## Run the server
 
 ```bash
-# Preferred — unified CLI (issue #4)
-./bin/dreamux server start
-
-# Backward-compat alias
-./bin/server
+./bin/dreamux serve
 ```
 
-Both work from any cwd and via symlinks (PR #6 + bin-launcher tests).
+The launcher works from any cwd and via symlinks (PR #6 + bin-launcher tests).
 
 The server uses two separate home directories — by design (see
 [the global-config decision](../../.agents/decisions/global-config-dir.md)):
@@ -85,7 +82,8 @@ The server uses two separate home directories — by design (see
 | `~/.codex-host/state.db`                 | SQLite (dispatchers + inbound buffer)      | the server |
 | `~/.codex-host/admin.sock`               | Admin Unix socket (`0600`)                 | the server |
 | `~/.codex-host/dispatchers/<id>/cwd/`    | Codex app-server cwd                       | the server |
-| `~/.codex-host/dispatchers/<id>/socket`  | Codex Unix socket                          | the server |
+| `~/.codex-host/dispatchers/<id>/codex-home/` | Dispatcher-private `CODEX_HOME` for Codex config, plugin cache, and app-server control state | the server |
+| `~/.codex-host/dispatchers/<id>/codex-home/app-server-control/app-server-control.sock` | Codex app-server Unix socket | the server |
 | `~/.codex-host/dispatchers/<id>/*.log`   | Codex stdout / stderr                      | the server |
 
 `rm -rf ~/.codex-host` is a safe recovery — your config in `~/.dreamux/`
@@ -96,11 +94,11 @@ the `~/.codex-host` half anywhere you like.
 
 ```bash
 # Bot secret comes from an env var the server process can see.
-export BOT_SECRET_FLOW='cli_secret_XXX'
+export BOT_SECRET_FLOW='<bot-secret>'
 
 ./bin/dreamux dispatcher add \
   --id flow \
-  --bot-app-id cli_aaa \
+  --bot-app-id <APP_ID> \
   --bot-secret-ref env:BOT_SECRET_FLOW
 
 # Inspect / restart
@@ -109,12 +107,10 @@ export BOT_SECRET_FLOW='cli_secret_XXX'
 ./bin/dreamux dispatcher start  --id flow   # if not auto-started
 ```
 
-`./bin/server-ctl <args>` still works as an alias.
-
 ## MVP verification path (issue #2 §"MVP 验收脚本")
 
-1. `dreamux dispatcher add --id flow --bot-app-id cli_aaa --bot-secret-ref env:BOT_SECRET_FLOW`
-2. `dreamux server start` — dispatcher `flow` goes to `ready`
+1. `dreamux dispatcher add --id flow --bot-app-id <APP_ID> --bot-secret-ref env:BOT_SECRET_FLOW`
+2. `dreamux serve` — dispatcher `flow` goes to `ready`
 3. Invite the bot to a Feishu group A, send `hi`
 4. Server delivers it into the Codex thread; reply goes back to group A
 5. Invite the same bot to a DM, ask "do you remember the 'hi' from earlier?"
@@ -152,7 +148,7 @@ retries = 3
 retry_delay_ms = 1000
 ```
 
-Edit and restart `dreamux server start`. Parse errors fail-fast with a
+Edit and restart `dreamux serve`. Parse errors fail-fast with a
 `file:line` pointer.
 
 ### `codex_args_json` (per-dispatcher, overrides global)
@@ -204,10 +200,9 @@ node common/scripts/install-run-rush.js test   # smoke + bin-launcher + codex-01
 - `tests/smoke.test.ts` — fake-codex-driven dispatcher behavior:
   happy path, FIFO, crash recovery (running → unknown), thread/resume
   failure, outbound retry without turn re-run, approval fail-fast.
-- `tests/bin-launcher.test.ts` — spawns the real bash launchers
-  (`dreamux`, `dreamux-server`, `server-ctl`, plus the repo-root
-  forwarders) from arbitrary cwds and through symlinks; static "no tsx"
-  assertion.
+- `tests/bin-launcher.test.ts` — spawns the real `dreamux` bash launcher
+  and repo-root shim from arbitrary cwds and through symlinks; static
+  "no tsx" assertion; manifest assertion for the single global bin.
 - `tests/codex-0134-live.test.ts` — spawns a real `codex app-server`
   (skipped loudly when `codex` is missing or wrong version; opt-in via
   `DREAMUX_SKIP_LIVE_CODEX=1`).

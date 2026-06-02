@@ -23,8 +23,9 @@ fix it in the same PR.
   (per-host channel layer, a placeholder today) — see the channel refactor (#4).
 - `/rush.json`, `/common/config/rush/`, `/common/scripts/install-run-rush.js`
   are the rush + pnpm scaffolding.
-- `/bin/` shims forward to `/packages/dreamux/bin/` for backward-compat with
-  pre-monorepo PATH entries — see `.agents/decisions/cli-and-package-naming.md`.
+- `/bin/dreamux` is a source-checkout convenience shim that forwards to
+  `/packages/dreamux/bin/dreamux`; the published package installs only the
+  `dreamux` global bin — see `.agents/decisions/global-bin-onboard-serve.md`.
 - `/.agents/` is the on-demand knowledge base. Start at `.agents/root.md`.
 
 **One install path — the monorepo path.** Build and test through rush:
@@ -47,11 +48,12 @@ two-paths consequence of `.agents/decisions/rush-pnpm-monorepo.md`).
 
 ## CLI surface
 
-The user-facing CLI is `dreamux` (subcommands `server start`, `server status`,
-`dispatcher add|remove|list|status|start|stop`). The legacy `dreamux-server`
-and `server-ctl` binaries are kept as aliases — see
-`.agents/decisions/cli-and-package-naming.md`. New documentation and
-examples should introduce `dreamux <verb>`.
+The user-facing CLI is the single global bin `dreamux`. Current command tree:
+`onboard`, `serve`, `status`, `doctor`, `daemon install|uninstall|start|stop|status`,
+`dispatcher add|remove|list|status|start|stop`, and `config path|show`.
+`dreamux serve` is the foreground server entry point. Do not reintroduce
+global aliases such as `dreamux-server` or `server-ctl`; issue #18 explicitly
+removed the legacy global-bin transition period.
 
 ## Knowledge-delta protocol
 
@@ -72,6 +74,10 @@ what the script rejects.
   first boot. Source of truth: the operator.
 - `~/.codex-host/` — server-owned runtime state (SQLite, sockets, logs).
   Source of truth: the server. Safe to `rm -rf`.
+- `~/.codex-host/dispatchers/<id>/codex-home/` — dispatcher-private
+  `CODEX_HOME` owned by dreamux. It contains the app-server's `config.toml`,
+  plugin cache, and `app-server-control/` socket directory. It is runtime
+  state, not the operator's everyday Codex home.
 
 Never mix them. If a new piece of state needs to be persisted, ask: does
 the operator edit it (→ config) or does the server own it (→ runtime
@@ -95,7 +101,7 @@ dir)? When in doubt, runtime dir — that's the safer default.
   compiled `dist/` output.
 - **Bin launchers resolve their own location through symlinks** so they
   work from any cwd and via `~/bin/<x>` shortcuts. The POSIX symlink-walk
-  loop in `/packages/dreamux/bin/server` is the reference shape; reuse it
+  loop in `/packages/dreamux/bin/dreamux` is the reference shape; reuse it
   verbatim for any new launcher.
 - **Path builders go in `src/runtime/paths.ts` only.** Cross-process file
   contracts (the admin socket path, the codex socket path, the SQLite db

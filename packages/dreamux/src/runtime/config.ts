@@ -95,7 +95,7 @@ export const ALLOWED_SANDBOX_MODES = new Set([
  */
 export const DEFAULT_CONFIG_TOML = `# dreamux global configuration (~/.dreamux/config.toml)
 #
-# Edit this file and restart \`dreamux server start\` to apply changes.
+# Edit this file and restart \`dreamux serve\` to apply changes.
 # Runtime data (SQLite, sockets, dispatcher logs) lives separately in
 # \`runtime_dir\` below — this file holds only user-editable settings.
 # See .agents/decisions/global-config-dir.md for the design rationale.
@@ -180,7 +180,7 @@ export function globalConfigFile(overrides: ConfigPathOverrides = {}): string {
  * fails so the operator can fix the file without spelunking through
  * libraries.
  *
- * Safe to call from `server start` on every boot — first call ensures
+ * Safe to call from `dreamux serve` on every boot — first call ensures
  * the directory and file exist with sensible defaults; subsequent calls
  * just read.
  *

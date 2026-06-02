@@ -28,7 +28,7 @@ import type {
  * have to be threaded through every call site. Keep in sync with package.json.
  */
 const DREAMUX_CLIENT_INFO: ClientInfo = {
-  name: 'dreamux-server',
+  name: 'dreamux',
   title: 'dreamux Codex-host server',
   version: '0.1.0',
 };

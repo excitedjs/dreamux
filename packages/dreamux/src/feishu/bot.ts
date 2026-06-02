@@ -185,7 +185,7 @@ export interface FakeFeishuBot extends FeishuBot {
   setSendError(err: Error | null): void;
 }
 
-export function createFakeFeishuBot(appId: string = 'fake_bot'): FakeFeishuBot {
+export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
   const sent: Array<{
     chatId: string;
     target: OutboundTarget;
@@ -195,7 +195,7 @@ export function createFakeFeishuBot(appId: string = 'fake_bot'): FakeFeishuBot {
   let handler: InboundHandler | null = null;
   let nextMessageId = 1;
   let sendError: Error | null = null;
-  const openId: string | undefined = `ou_${appId}`;
+  const openId: string | undefined = `fake-open-id-${appId}`;
 
   return {
     appId,
@@ -209,7 +209,7 @@ export function createFakeFeishuBot(appId: string = 'fake_bot'): FakeFeishuBot {
       if (sendError !== null) {
         throw sendError;
       }
-      const id = `om_fake_${nextMessageId++}`;
+      const id = `message-fake-${nextMessageId++}`;
       sent.push({ chatId: target.chatId, target, text, messageIds: [id] });
       return { messageIds: [id] };
     },

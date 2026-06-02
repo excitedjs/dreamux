@@ -6,10 +6,10 @@ describe('compatibleFeishuGate', () => {
   it('keeps normal user messages deliverable', () => {
     expect(
       compatibleFeishuGate({
-        senderId: 'ou_user',
+        senderId: 'sender-user',
         senderType: 'user',
         chatType: 'group',
-        botOpenId: 'ou_bot',
+        botOpenId: 'bot-open-id',
       }),
     ).toEqual({ action: 'deliver' });
   });
@@ -20,7 +20,7 @@ describe('compatibleFeishuGate', () => {
         senderId: '',
         senderType: 'user',
         chatType: 'p2p',
-        botOpenId: 'ou_bot',
+        botOpenId: 'bot-open-id',
       }),
     ).toEqual({ action: 'drop', reason: 'missing sender id' });
   });
@@ -28,10 +28,10 @@ describe('compatibleFeishuGate', () => {
   it('drops self-sent bot-loop messages', () => {
     expect(
       compatibleFeishuGate({
-        senderId: 'ou_bot',
+        senderId: 'bot-open-id',
         senderType: 'user',
         chatType: 'group',
-        botOpenId: 'ou_bot',
+        botOpenId: 'bot-open-id',
       }),
     ).toEqual({ action: 'drop', reason: 'message sent by this bot' });
   });
@@ -39,10 +39,10 @@ describe('compatibleFeishuGate', () => {
   it('drops Feishu bot/app sender types', () => {
     expect(
       compatibleFeishuGate({
-        senderId: 'ou_peer_bot',
+        senderId: 'peer-bot',
         senderType: 'app',
         chatType: 'group',
-        botOpenId: 'ou_bot',
+        botOpenId: 'bot-open-id',
       }),
     ).toEqual({ action: 'drop', reason: 'bot sender type: app' });
   });
@@ -50,7 +50,7 @@ describe('compatibleFeishuGate', () => {
   it('drops group messages when bot open_id is unknown', () => {
     expect(
       compatibleFeishuGate({
-        senderId: 'ou_user',
+        senderId: 'sender-user',
         senderType: 'user',
         chatType: 'group',
       }),

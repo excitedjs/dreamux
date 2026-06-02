@@ -174,7 +174,7 @@ function acquirePidLock(
     }
     if (holder !== null && isAlive(holder)) {
       throw new Error(
-        `admin socket lockfile ${lockPath} is held by another live dreamux-server process (pid ${holder}). ` +
+        `admin socket lockfile ${lockPath} is held by another live dreamux serve process (pid ${holder}). ` +
           'Refusing to bind to avoid split-brain admin control. ' +
           'Stop the other instance, or set CODEX_HOST_ADMIN_SOCKET to a different path.',
       );

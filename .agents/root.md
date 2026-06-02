@@ -26,7 +26,7 @@ issues:
 ├── common/                        rush scaffolding (config + bootstrap)
 ├── packages/
 │   ├── dreamux/                   @excitedjs/dreamux — the host server
-│   │   ├── bin/                   dreamux / server / server-ctl launchers
+│   │   ├── bin/                   single dreamux launcher
 │   │   ├── src/                   admin, cli, codex, db, dispatcher, feishu, runtime
 │   │   ├── tests/                 vitest (smoke + live-codex + bin-launcher)
 │   │   └── db/migrations/         SQLite schema migrations

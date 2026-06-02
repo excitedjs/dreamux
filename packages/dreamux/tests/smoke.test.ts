@@ -75,7 +75,7 @@ function fakeInbound(
     messageId: msgId,
     chatId,
     chatType: 'group',
-    senderId: 'ou_sender_test',
+    senderId: 'sender-test',
     senderType: 'user',
     messageType: 'text',
     rawContent: JSON.stringify({ text }),
@@ -111,7 +111,7 @@ describe('dreamux MVP smoke', () => {
   beforeEach(async () => {
     runtimeDir = mkdtempSync(join(tmpdir(), 'dreamux-'));
     fake = await startFakeCodex();
-    bot = createFakeFeishuBot('cli_smoke');
+    bot = createFakeFeishuBot('app-smoke');
   });
 
   afterEach(async () => {
@@ -128,20 +128,20 @@ describe('dreamux MVP smoke', () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.create({
       dispatcher_id: 'flow',
-      bot_app_id: 'cli_smoke',
+      bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
     });
     await server.start();
 
-    await bot.inject(fakeInbound('oc_group_a', 'hi', 'om_1'));
+    await bot.inject(fakeInbound('chat-group-a', 'hi', 'msg-1-id'));
 
     await waitFor(() => bot.sentMessages.length >= 1);
     expect(bot.sentMessages[0]).toMatchObject({
-      chatId: 'oc_group_a',
+      chatId: 'chat-group-a',
       target: {
-        chatId: 'oc_group_a',
-        replyToMessageId: 'om_1',
-        mentionUserIds: ['ou_sender_test'],
+        chatId: 'chat-group-a',
+        replyToMessageId: 'msg-1-id',
+        mentionUserIds: ['sender-test'],
       },
       text: 'echo: hi',
     });
@@ -161,7 +161,7 @@ describe('dreamux MVP smoke', () => {
     server = buildServer({ runtimeDir, fake, bot, capturedCodexOptions });
     server.repos.dispatchers.create({
       dispatcher_id: 'flow',
-      bot_app_id: 'cli_smoke',
+      bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
     });
 
@@ -180,13 +180,13 @@ describe('dreamux MVP smoke', () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.create({
       dispatcher_id: 'flow',
-      bot_app_id: 'cli_smoke',
+      bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
     });
     await server.start();
 
     await bot.inject({
-      ...fakeInbound('oc_group_a', 'loop', 'om_loop'),
+      ...fakeInbound('chat-group-a', 'loop', 'msg-loop'),
       senderId: bot.botOpenId ?? '',
     });
 
@@ -200,14 +200,14 @@ describe('dreamux MVP smoke', () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.create({
       dispatcher_id: 'flow',
-      bot_app_id: 'cli_smoke',
+      bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
     });
     await server.start();
 
     await bot.inject({
-      ...fakeInbound('oc_group_a', 'bot says hi', 'om_bot'),
-      senderId: 'ou_peer_bot',
+      ...fakeInbound('chat-group-a', 'bot says hi', 'msg-bot'),
+      senderId: 'peer-bot',
       senderType: 'bot',
     });
 
@@ -225,13 +225,13 @@ describe('dreamux MVP smoke', () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.create({
       dispatcher_id: 'flow',
-      bot_app_id: 'cli_smoke',
+      bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
     });
     await server.start();
 
-    await bot.inject(fakeInbound('oc_group_a', 'msg-1', 'om_a'));
-    await bot.inject(fakeInbound('oc_group_a', 'msg-2', 'om_b'));
+    await bot.inject(fakeInbound('chat-group-a', 'msg-1', 'msg-a'));
+    await bot.inject(fakeInbound('chat-group-a', 'msg-2', 'msg-b'));
 
     await waitFor(() => bot.sentMessages.length >= 2, 6000);
     expect(bot.sentMessages.map((m) => m.text)).toEqual([
@@ -244,7 +244,7 @@ describe('dreamux MVP smoke', () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.create({
       dispatcher_id: 'flow',
-      bot_app_id: 'cli_smoke',
+      bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
     });
 
@@ -254,9 +254,9 @@ describe('dreamux MVP smoke', () => {
     void insert;
     const row = server.repos.inbound.enqueue({
       dispatcher_id: 'flow',
-      source_chat_id: 'oc_group_a',
-      source_message_id: 'om_pre_crash',
-      sender_id: 'ou_sender',
+      source_chat_id: 'chat-group-a',
+      source_message_id: 'message-pre-crash',
+      sender_id: 'sender',
       feishu_event_json: '{}',
       parsed_text: 'pretend-this-was-running',
     });
@@ -279,7 +279,7 @@ describe('dreamux MVP smoke', () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.create({
       dispatcher_id: 'flow',
-      bot_app_id: 'cli_smoke',
+      bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
     });
     // Pre-seed an existing thread_id so startup will try thread/resume.
@@ -305,7 +305,7 @@ describe('dreamux MVP smoke', () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.create({
       dispatcher_id: 'flow',
-      bot_app_id: 'cli_smoke',
+      bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
     });
     await server.start();
@@ -318,7 +318,7 @@ describe('dreamux MVP smoke', () => {
       return origSend(target, text);
     };
 
-    await bot.inject(fakeInbound('oc_group_a', 'retry-me', 'om_r'));
+    await bot.inject(fakeInbound('chat-group-a', 'retry-me', 'msg-retry'));
 
     await waitFor(() => bot.sentMessages.length >= 1);
     expect(attempts).toBeGreaterThanOrEqual(2);
@@ -333,12 +333,12 @@ describe('dreamux MVP smoke', () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.create({
       dispatcher_id: 'flow',
-      bot_app_id: 'cli_smoke',
+      bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
     });
     await server.start();
 
-    await bot.inject(fakeInbound('oc_group_a', 'do-something', 'om_app'));
+    await bot.inject(fakeInbound('chat-group-a', 'do-something', 'msg-app'));
 
     // The approval rejection sends a hint message; the turn itself completes
     // (codex still emits turn/completed after the server-request), so the
@@ -358,7 +358,7 @@ describe('dreamux MVP smoke', () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.create({
       dispatcher_id: 'flow',
-      bot_app_id: 'cli_smoke',
+      bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
     });
 
@@ -366,9 +366,9 @@ describe('dreamux MVP smoke', () => {
     // *after* accepting the inbound but *before* the worker dequeued it.
     const row = server.repos.inbound.enqueue({
       dispatcher_id: 'flow',
-      source_chat_id: 'oc_backlog',
-      source_message_id: 'om_backlog_1',
-      sender_id: 'ou_sender',
+      source_chat_id: 'chat-backlog',
+      source_message_id: 'msg-backlog_1',
+      sender_id: 'sender',
       feishu_event_json: '{}',
       parsed_text: 'queued-before-crash',
     });
@@ -391,7 +391,7 @@ describe('dreamux MVP smoke', () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.create({
       dispatcher_id: 'flow',
-      bot_app_id: 'cli_smoke',
+      bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
     });
     await server.start();
@@ -443,7 +443,7 @@ describe('dreamux MVP smoke', () => {
     server = buildServer({ runtimeDir, fake, bot, spawnCounter: counter });
     server.repos.dispatchers.create({
       dispatcher_id: 'flow',
-      bot_app_id: 'cli_smoke',
+      bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
     });
     // Don't call server.start() (which would auto-start); race two explicit
