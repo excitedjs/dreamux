@@ -33,11 +33,6 @@ users to protect, so the published package now installs one global bin named
   dreamux serve
   dreamux status
   dreamux doctor
-  dreamux daemon install
-  dreamux daemon uninstall
-  dreamux daemon start
-  dreamux daemon stop
-  dreamux daemon status
   dreamux dispatcher add
   dreamux dispatcher remove
   dreamux dispatcher list

@@ -36,6 +36,12 @@ dispatcher and channel configuration, and registers a native service manager
 entry. `dreamux serve` runs the existing server in the foreground and lets
 launchd or systemd keep it alive.
 
+There is no public `dreamux daemon ...` command tree. The daemon form is
+foreground `dreamux serve` supervised by a native user-level service manager.
+After `dreamux onboard` registers that service, operators use native
+`launchctl` or `systemctl --user` commands for ongoing service start, stop,
+status, and uninstall operations.
+
 Codex plugin installation targets the dispatcher app-server's private
 `CODEX_HOME`, not the operator's default global Codex home. The `codexmux`
 consumer is the dispatcher agent: the dispatcher is the long-lived Codex
@@ -97,12 +103,12 @@ with its final status.
   the npm package should expose only the `dreamux` global bin.
 - `dreamux server start`, `dreamux-server`, and `server-ctl` are not
   compatibility surfaces for issue #18.
-- Daemon registration is native and user-scoped:
+- Service registration is native and user-scoped:
   `~/Library/LaunchAgents/dev.excited.dreamux.plist` on macOS and
   `~/.config/systemd/user/dreamux.service` on Linux.
 - `serve` should not daemonize itself. Service managers supervise the
   foreground process.
-- Onboarding intentionally keeps daemon-specific Codex plugin and permission
+- Onboarding intentionally keeps service-specific Codex plugin and permission
   state in the dispatcher-private Codex home; all touched paths must be
   printed through the onboarding path ledger.
 - The first implementation installs Codexmux from the public
@@ -115,7 +121,7 @@ with its final status.
   `DREAMUX_BIN`; service generation uses that path so launchd and
   systemd execute the same global bin the operator invoked.
 - The operator's default global Codex home remains outside this design's
-  write set, so daemon-specific high-risk settings do not leak into the
+  write set, so service-specific high-risk settings do not leak into the
   user's daily interactive Codex configuration.
 - Dispatcher/channel registration should use the existing admin / repository
   source of truth for the first issue #18 implementation, not a second

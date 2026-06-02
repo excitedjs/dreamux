@@ -1,9 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  existsSync,
   mkdirSync,
   mkdtempSync,
-  readFileSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -12,7 +10,6 @@ import { dirname, join } from 'node:path';
 
 import { DispatcherRepo } from '../src/db/repository.js';
 import { openDatabase } from '../src/db/schema.js';
-import { runDaemonCommand } from '../src/cli/daemon.js';
 import { runDreamuxDoctor } from '../src/cli/doctor.js';
 import { buildDispatcherCodexConfigToml } from '../src/onboard/config-files.js';
 import type { CommandRunner } from '../src/onboard/types.js';
@@ -32,29 +29,6 @@ class FakeRunner implements CommandRunner {
 
   async run(command: string, args: string[]): Promise<void> {
     this.calls.push({ command, args });
-    if (command === 'systemctl' && args.join(' ') === '--user enable --now dreamux.service') {
-      this.systemdEnabled = true;
-      this.systemdActive = true;
-    }
-    if (command === 'systemctl' && args.join(' ') === '--user enable dreamux.service') {
-      this.systemdEnabled = true;
-    }
-    if (command === 'systemctl' && args.join(' ') === '--user start dreamux.service') {
-      this.systemdActive = true;
-    }
-    if (command === 'systemctl' && args.join(' ') === '--user stop dreamux.service') {
-      this.systemdActive = false;
-    }
-    if (command === 'systemctl' && args.join(' ') === '--user disable --now dreamux.service') {
-      this.systemdEnabled = false;
-      this.systemdActive = false;
-    }
-    if (command === 'launchctl' && args[0] === 'bootstrap') {
-      this.launchdLoaded = true;
-    }
-    if (command === 'launchctl' && args[0] === 'bootout') {
-      this.launchdLoaded = false;
-    }
   }
 
   async check(command: string, args: string[]): Promise<boolean> {
@@ -88,7 +62,7 @@ class FakeRunner implements CommandRunner {
   }
 }
 
-describe('dreamux daemon and doctor commands', () => {
+describe('dreamux doctor command', () => {
   let root: string;
   let oldConfigDir: string | undefined;
   let oldRuntimeDir: string | undefined;
@@ -97,7 +71,7 @@ describe('dreamux daemon and doctor commands', () => {
   let oldDreamuxBin: string | undefined;
 
   beforeEach(() => {
-    root = mkdtempSync(join(homedir(), '.dreamux-daemon-'));
+    root = mkdtempSync(join(homedir(), '.dreamux-doctor-'));
     oldConfigDir = process.env['DREAMUX_CONFIG_DIR'];
     oldRuntimeDir = process.env['CODEX_HOST_RUNTIME_DIR'];
     oldAdminSocket = process.env['CODEX_HOST_ADMIN_SOCKET'];
@@ -118,54 +92,6 @@ describe('dreamux daemon and doctor commands', () => {
     restoreEnv('DREAMUX_BIN', oldDreamuxBin);
     resetRuntimeConfig();
     rmSync(root, { recursive: true, force: true });
-  });
-
-  it('installs, starts, stops, and uninstalls the user-level systemd service', async () => {
-    const runner = new FakeRunner();
-    const config = writeConfig();
-
-    const install = await runDaemonCommand({
-      action: 'install',
-      start: true,
-      runner,
-      platform: 'linux',
-      homeDir: join(root, 'home'),
-    });
-
-    expect(install.status).toMatchObject({
-      platform: 'systemd',
-      installed: true,
-      enabled: true,
-      running: true,
-      pid: 1234,
-    });
-    expect(
-      existsSync(join(root, 'home', '.config', 'systemd', 'user', 'dreamux.service')),
-    ).toBe(true);
-    expect(readFileSync(install.status.unitPath, 'utf8')).toContain(
-      `Environment=CODEX_HOST_RUNTIME_DIR=${config.runtimeDir}`,
-    );
-
-    await runDaemonCommand({
-      action: 'stop',
-      runner,
-      platform: 'linux',
-      homeDir: join(root, 'home'),
-    });
-    expect(runner.systemdActive).toBe(false);
-
-    const uninstall = await runDaemonCommand({
-      action: 'uninstall',
-      runner,
-      platform: 'linux',
-      homeDir: join(root, 'home'),
-    });
-    expect(uninstall.status.installed).toBe(false);
-    expect(uninstall.files).toContainEqual({
-      path: join(root, 'home', '.config', 'systemd', 'user', 'dreamux.service'),
-      status: 'removed',
-      reason: 'systemd unit',
-    });
   });
 
   it('reports dispatcher private CODEX_HOME health', async () => {

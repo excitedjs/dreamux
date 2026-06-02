@@ -18,8 +18,7 @@ Design background:
 
 - One public CLI bin: `dreamux`. Implemented commands in this slice include
   `dreamux onboard`, `dreamux serve`, `dreamux status`, `dreamux doctor`,
-  `dreamux daemon ...`, `dreamux dispatcher ...`, and
-  `dreamux config path|show`.
+  `dreamux dispatcher ...`, and `dreamux config path|show`.
 - A SQLite-backed runtime (`dispatchers` + `inbound_buffer`) plus the
   Feishu / Codex adapters that drive each dispatcher.
 
@@ -202,8 +201,9 @@ node common/scripts/install-run-rush.js test   # smoke + bin-launcher + codex-01
 - `tests/bin-launcher.test.ts` — spawns the real `dreamux` bash launcher
   and repo-root shim from arbitrary cwds and through symlinks; static
   "no tsx" assertion; manifest assertion for the single global bin.
-- `tests/daemon-doctor.test.ts` — covers user-level daemon service control
-  and standalone doctor checks for dispatcher-private `CODEX_HOME` state.
+- `tests/doctor.test.ts` — covers standalone doctor checks for
+  dispatcher-private `CODEX_HOME` state, including managed-service auth
+  visibility.
 - `tests/codex-0135-live.test.ts` — spawns a real `codex app-server`
   (skipped loudly when `codex` is missing or wrong version; opt-in via
   `DREAMUX_SKIP_LIVE_CODEX=1`).

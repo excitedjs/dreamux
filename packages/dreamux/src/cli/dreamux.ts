@@ -21,7 +21,6 @@ import {
   type OnboardCliOptions,
 } from '../onboard/wizard.js';
 import type { OnboardRunResult } from '../onboard/types.js';
-import { printDaemonResult, runDaemonCommand } from './daemon.js';
 import { printDoctorResult, runDreamuxDoctor } from './doctor.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -144,66 +143,6 @@ function buildDispatcherCommands(y: Argv): Argv {
       },
     )
     .demandCommand(1, 'Choose a dispatcher command')
-    .strict();
-}
-
-function buildDaemonCommands(y: Argv): Argv {
-  return y
-    .command(
-      'install',
-      'Install or update the user-level service',
-      (yy) =>
-        yy
-          .option('start', {
-            type: 'boolean',
-            describe: 'Start the service after installing it',
-          })
-          .option('dry-run', {
-            type: 'boolean',
-            describe: 'Print planned file changes without writing or registering',
-          }),
-      async (argv) => {
-        const result = await runDaemonCommand({
-          action: 'install',
-          start: argv.start === true,
-          dryRun: argv.dryRun === true,
-        });
-        printDaemonResult(result);
-      },
-    )
-    .command(
-      'uninstall',
-      'Uninstall the user-level service',
-      (yy) => yy,
-      async () => {
-        printDaemonResult(await runDaemonCommand({ action: 'uninstall' }));
-      },
-    )
-    .command(
-      'start',
-      'Start the user-level service',
-      (yy) => yy,
-      async () => {
-        printDaemonResult(await runDaemonCommand({ action: 'start' }));
-      },
-    )
-    .command(
-      'stop',
-      'Stop the user-level service',
-      (yy) => yy,
-      async () => {
-        printDaemonResult(await runDaemonCommand({ action: 'stop' }));
-      },
-    )
-    .command(
-      'status',
-      'Show native user-level service status',
-      (yy) => yy,
-      async () => {
-        printDaemonResult(await runDaemonCommand({ action: 'status' }));
-      },
-    )
-    .demandCommand(1, 'Choose a daemon command')
     .strict();
 }
 
@@ -397,11 +336,6 @@ async function main(): Promise<void> {
         }
         if (!result.ok) process.exitCode = 1;
       },
-    )
-    .command(
-      'daemon <command>',
-      'Manage the user-level service',
-      buildDaemonCommands,
     )
     .command(
       'dispatcher <command>',
