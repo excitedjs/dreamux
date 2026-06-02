@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Implement dreamux onboard: first-run wizard, dispatcher-private Codex home setup, plugin installation, service registration, and transparent file ledger output.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "288198931+codexmux[bot]@users.noreply.github.com"
+}
