@@ -33,6 +33,7 @@ import {
 } from './channel/feishu-gate.js';
 import { formatFeishuMessageForCodex } from './channel/feishu-message.js';
 import { parseCodexArgs, codexArgsToCli } from './runtime/codex-args.js';
+import { feishuMcpCodexArgs } from './codex/mcp-config.js';
 import { resolveBotSecret } from './runtime/secrets.js';
 import { BUILT_IN_DEFAULTS, type DreamuxConfig } from './runtime/config.js';
 import type { DispatcherCodexHomeDoctor } from './runtime/dispatcher-codex-home.js';
@@ -193,6 +194,13 @@ export class Server {
       sandboxMode: cfg.codex.sandbox_mode,
       extraArgs: cfg.codex.extra_args,
     });
+    const codexCliArgs = [
+      ...codexArgsToCli(codexArgs),
+      ...feishuMcpCodexArgs({
+        dispatcherId: id,
+        adminSocketPath: this.opts.adminSocketPath ?? adminSocketPath(),
+      }),
+    ];
     const botSecret = this.opts.skipBotSecret
       ? ''
       : resolveBotSecret(row.bot_secret_ref, cfg);
@@ -213,7 +221,7 @@ export class Server {
       codexProcessFactory: this.opts.codexProcessFactory,
       codexClientFactory: this.opts.codexClientFactory,
       codexHomeDoctor: this.opts.codexHomeDoctor,
-      resolveExtraArgs: () => codexArgsToCli(codexArgs),
+      resolveExtraArgs: () => codexCliArgs,
       handshakeTimeoutMs: cfg.codex.initialize_timeout_ms,
       outboundRetries: cfg.outbound.retries,
       outboundRetryDelayMs: cfg.outbound.retry_delay_ms,

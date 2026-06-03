@@ -344,10 +344,12 @@ or a world-readable file. An unauthenticated HTTP fallback is not allowed.
 
 The MVP MCP tool surface is:
 
-- `reply`: send a message to a Feishu chat, using `chat_id` and optionally
-  `message_id` so topic-mode replies stay in the original topic when Feishu
-  supports it.
-- `react`: add a model-owned reaction to a Feishu message.
+- `reply`: send a message to a Feishu chat. Parameters are `chat_id`, `text`,
+  optional `message_id`, and optional `mention_user_ids`. The `message_id`
+  should be the inbound Feishu message id when the model wants Feishu to keep
+  topic-mode replies under the original topic.
+- `react`: add a model-owned reaction to a Feishu message. Parameters are
+  `message_id` and `emoji`.
 
 `edit_message` and model-owned `remove_reaction` are out of scope for the MVP.
 
