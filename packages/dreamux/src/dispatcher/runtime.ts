@@ -10,9 +10,8 @@
  *
  * Lifecycle: declared → starting → ready → (degraded) → stopping → stopped.
  *
- * Issue #2 §"崩溃与异常恢复":
- *   - On startup, mark stale `running` rows as `unknown` before opening
- *     inbound — at-most-once.
+ * Current MVP:
+ *   - accepted inbound work is process-local and is dropped on restart;
  *   - thread/resume failure does not degrade the whole dispatcher; we
  *     start a fresh thread, record the lost one in last_lost_thread_id,
  *     and post a visible warning to the next source chat.
@@ -22,10 +21,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 import type { DispatcherRow, DispatcherStatus } from '../db/types.js';
-import type {
-  DispatcherRepo,
-  InboundRepo,
-} from '../db/repository.js';
+import type { DispatcherRepo } from '../db/repository.js';
 import { CodexProcess, type CodexProcessOptions } from '../codex/supervisor.js';
 import { CodexWsClient } from '../codex/rpc.js';
 import { performInitializeHandshake } from '../codex/handshake.js';
@@ -33,7 +29,7 @@ import type {
   ThreadResumeResponse,
   ThreadStartResponse,
 } from '../codex/types.js';
-import { TurnManager } from './turn-manager.js';
+import { TurnManager, type InboundTurnInput } from './turn-manager.js';
 import { createFailFastApprovalHandler } from './approval.js';
 import {
   dispatcherCodexCwd,
@@ -46,11 +42,10 @@ import {
   type DispatcherCodexHomeDoctor,
 } from '../runtime/dispatcher-codex-home.js';
 import { dispatcherProcessEnv } from '../runtime/package-bin.js';
-import { outboundTargetForInbound, type OutboundSink } from '../channel/outbound.js';
+import type { OutboundSink } from '../channel/outbound.js';
 
 export interface DispatcherRuntimeDeps {
   dispatchers: DispatcherRepo;
-  inbound: InboundRepo;
   outbound: OutboundSink;
   /** Optional bin path override for tests. */
   codexBinPath?: string;
@@ -100,7 +95,7 @@ export class DispatcherRuntime {
     return this.status;
   }
 
-  /** Called by Feishu inbound right before enqueuing into inbound_buffer. */
+  /** Current running inbound chat, used for approval rejection hints. */
   setCurrentInboundChat(chatId: string | null): void {
     this.currentInboundChatId = chatId;
   }
@@ -111,13 +106,12 @@ export class DispatcherRuntime {
 
   /**
    * Bring the dispatcher up. Order:
-   *  1. crash recovery sweep on inbound_buffer (running → unknown)
-   *  2. spawn codex app-server child
-   *  3. open WS client
-   *  4. install fail-fast approval handler
-   *  5. thread/start (new) or thread/resume (existing)
-   *  6. install turn manager + retry pending outbound
-   *  7. status = ready
+   *  1. spawn codex app-server child
+   *  2. open WS client
+   *  3. install fail-fast approval handler
+   *  4. thread/start (new) or thread/resume (existing)
+   *  5. install turn manager
+   *  6. status = ready
    */
   async start(): Promise<void> {
     this.setStatus('starting');
@@ -126,8 +120,6 @@ export class DispatcherRuntime {
     });
 
     try {
-      await this.recoverInboundOnStartup();
-
       const cwd = this.row.codex_cwd ?? dispatcherCodexCwd(this.dispatcherId);
       const socketPath = dispatcherSocketPath(this.dispatcherId);
       const extraArgs = this.deps.resolveExtraArgs?.(this.row) ?? [];
@@ -192,10 +184,10 @@ export class DispatcherRuntime {
 
       this.turnManager = new TurnManager({
         dispatcherId: this.dispatcherId,
-        inbound: this.deps.inbound,
         getThreadId: () => this.threadId,
         client: this.client,
         outbound: this.deps.outbound,
+        onCurrentChat: (chatId) => this.setCurrentInboundChat(chatId),
         log: this.log,
         ...(this.deps.outboundRetries !== undefined
           ? { outboundRetries: this.deps.outboundRetries }
@@ -204,7 +196,6 @@ export class DispatcherRuntime {
           ? { outboundRetryDelayMs: this.deps.outboundRetryDelayMs }
           : {}),
       });
-      await this.turnManager.retryPendingOutbound();
 
       this.setStatus('ready');
       this.deps.dispatchers.setStatus(this.dispatcherId, 'ready', {
@@ -212,15 +203,6 @@ export class DispatcherRuntime {
         last_error: null,
       });
 
-      // Issue #2 + PR #3 review #1: the durable inbound buffer's contract
-      // says nothing is dropped across a server crash. retryPendingOutbound
-      // covers awaiting_outbound / outbound_failed rows; recoverInboundOnStartup
-      // covers running → unknown. But rows persisted in 'queued' before the
-      // crash are only drained when notify() is invoked, and at startup no
-      // new inbound has arrived yet. Kick the worker once so any
-      // already-queued backlog drains immediately instead of stalling until
-      // the next live message lands.
-      this.turnManager.notify();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.log('error', `start failed: ${msg}`, err);
@@ -278,43 +260,13 @@ export class DispatcherRuntime {
   }
 
   /**
-   * Drain any inbound message arriving for this dispatcher. Called by the
-   * Feishu inbound layer. Returns the assigned inbound row id, or null if
-   * the message was a duplicate.
+   * Queue any accepted inbound message arriving for this dispatcher. Called by
+   * the Feishu inbound layer. Returns false if this process already saw the
+   * message_id.
    */
-  enqueueInbound(input: {
-    source_chat_id: string;
-    source_message_id: string | null;
-    sender_id: string | null;
-    feishu_event_json: string;
-    parsed_text: string;
-  }): number | null {
-    const row = this.deps.inbound.enqueue({
-      dispatcher_id: this.dispatcherId,
-      ...input,
-    });
-    if (row === null) return null;
-    this.setCurrentInboundChat(input.source_chat_id);
-    this.turnManager?.notify();
-    return row.id;
-  }
-
-  private async recoverInboundOnStartup(): Promise<void> {
-    const stale = this.deps.inbound.markRunningAsUnknown(this.dispatcherId);
-    for (const row of stale) {
-      this.log(
-        'warn',
-        `inbound ${row.id} was 'running' at restart — marked unknown (at-most-once); chat=${row.source_chat_id}`,
-      );
-      try {
-        await this.deps.outbound.send(
-          outboundTargetForInbound(row),
-          `上一次的执行结果未知（server 重启时正在进行）。请确认是否需要重新发送：\n> ${row.parsed_text.slice(0, 200)}`,
-        );
-      } catch (err) {
-        this.log('warn', `failed to notify chat about unknown inbound`, err);
-      }
-    }
+  enqueueInbound(input: InboundTurnInput): boolean {
+    if (this.turnManager === null) return false;
+    return this.turnManager.enqueue(input);
   }
 
   /** Graceful stop: stop accepting work, reap codex child. */

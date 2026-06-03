@@ -1,33 +1,35 @@
 /**
- * Per-dispatcher FIFO turn worker.
+ * Per-dispatcher in-memory turn worker.
  *
- * Issue #2 §"Codex 协议处理": the queue worker is the single executor for one
- * dispatcher's Codex thread. Holds an in-memory FIFO; pulls from
- * `inbound_buffer` lazily so we never lose messages across crashes.
- *
- * State machine (transitions are the only ones this worker performs):
- *   queued
- *     └─[worker]→ running
- *           └─[turn/completed]→ awaiting_outbound
- *                   ├─[feishu send OK]→ completed
- *                   └─[feishu send fail]→ outbound_failed → retry → completed
- *           └─[turn/start RPC failure]→ failed
- *
- * Server crash recovery is handled separately by `recoverDispatcher()`:
- *   running          → unknown (at-most-once, see issue #2 §"崩溃与异常恢复")
- *   awaiting_outbound → safe to retry the outbound
- *   outbound_failed   → safe to retry the outbound
+ * Task 7 / top-level design contract:
+ *   - one serialized worker per dispatcher;
+ *   - accepted inbound messages are not persisted;
+ *   - consecutive pending messages from the same chat are coalesced into one
+ *     Codex turn;
+ *   - Feishu message_id redelivery is deduped within this server process.
  */
 
-import type { InboundRepo } from '../db/repository.js';
-import type { InboundRow } from '../db/types.js';
 import type { CodexWsClient } from '../codex/rpc.js';
 import { extractAssistantText, runTurn } from '../codex/events.js';
-import { outboundTargetForInbound, type OutboundSink } from '../channel/outbound.js';
+import {
+  outboundTargetForInbound,
+  type InboundOutboundSource,
+  type OutboundSink,
+} from '../channel/outbound.js';
+
+export const DEFAULT_MESSAGE_ID_DEDUPE_WINDOW = 1024;
+
+export interface InboundTurnInput extends InboundOutboundSource {
+  parsed_text: string;
+}
+
+interface TurnBatch extends InboundOutboundSource {
+  id: number;
+  messages: InboundTurnInput[];
+}
 
 export interface TurnManagerOptions {
   dispatcherId: string;
-  inbound: InboundRepo;
   /** Lazily resolved Codex thread id (set after thread/start | resume). */
   getThreadId(): string | null;
   client: CodexWsClient;
@@ -43,6 +45,10 @@ export interface TurnManagerOptions {
    */
   outboundRetries?: number;
   outboundRetryDelayMs?: number;
+  /** Process-local Feishu message_id dedupe window size. */
+  messageIdDedupeWindow?: number;
+  /** Tracks the currently running chat for approval rejection hints. */
+  onCurrentChat?: (chatId: string | null) => void;
   /** Optional logger; defaults to console.error. */
   log?: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
   /**
@@ -53,12 +59,18 @@ export interface TurnManagerOptions {
 }
 
 export class TurnManager {
+  private readonly queue: TurnBatch[] = [];
+  private readonly seenMessageIds = new Set<string>();
+  private readonly seenMessageIdOrder: string[] = [];
   private running = false;
   private stopped = false;
+  private drainScheduled = false;
   private wakeup: (() => void) | null = null;
+  private nextBatchId = 1;
   private readonly log: NonNullable<TurnManagerOptions['log']>;
   private readonly outboundRetries: number;
   private readonly outboundRetryDelayMs: number;
+  private readonly messageIdDedupeWindow: number;
   private readonly emptyTurnPlaceholder: string;
 
   constructor(private readonly opts: TurnManagerOptions) {
@@ -69,37 +81,73 @@ export class TurnManager {
     });
     this.outboundRetries = opts.outboundRetries ?? 3;
     this.outboundRetryDelayMs = opts.outboundRetryDelayMs ?? 1000;
+    this.messageIdDedupeWindow = Math.max(
+      0,
+      opts.messageIdDedupeWindow ?? DEFAULT_MESSAGE_ID_DEDUPE_WINDOW,
+    );
     this.emptyTurnPlaceholder =
       opts.emptyTurnPlaceholder ?? '本轮没有文本回复。';
   }
 
   /**
-   * Notify the worker that new work may be available.
-   * Idempotent — multiple wakeups collapse into the next loop iteration.
+   * Queue one accepted inbound message. Returns false when the message_id was
+   * already seen in this server process.
    */
-  notify(): void {
+  enqueue(input: InboundTurnInput): boolean {
+    if (this.stopped) return false;
+    if (!this.rememberMessageId(input.source_message_id)) return false;
+
+    const pending = this.queue.find(
+      (batch) => batch.source_chat_id === input.source_chat_id,
+    );
+    if (pending !== undefined) {
+      pending.messages.push(input);
+      pending.source_message_id = input.source_message_id;
+      pending.sender_id = input.sender_id;
+    } else {
+      this.queue.push({
+        id: this.nextBatchId++,
+        source_chat_id: input.source_chat_id,
+        source_message_id: input.source_message_id,
+        sender_id: input.sender_id,
+        messages: [input],
+      });
+    }
+
+    this.notify();
+    return true;
+  }
+
+  /** Notify the worker that new work may be available. */
+  private notify(): void {
     if (this.stopped) return;
     if (this.wakeup !== null) {
       const w = this.wakeup;
       this.wakeup = null;
       w();
+      return;
     }
-    void this.drainLoop();
+    if (this.running || this.drainScheduled) return;
+    this.drainScheduled = true;
+    setTimeout(() => {
+      this.drainScheduled = false;
+      if (!this.stopped) void this.drainLoop();
+    }, 0);
   }
 
-  /** Drain queued rows until the queue is empty or we're stopped. */
+  /** Drain queued batches until the queue is empty or we're stopped. */
   private async drainLoop(): Promise<void> {
     if (this.running) return;
     this.running = true;
     try {
       while (!this.stopped) {
-        const row = this.opts.inbound.takeNextQueued(this.opts.dispatcherId);
-        if (row === null) {
+        const batch = this.queue.shift();
+        if (batch === undefined) {
           await this.waitForNotify();
           if (this.stopped) return;
           continue;
         }
-        await this.processInbound(row);
+        await this.processBatch(batch);
       }
     } finally {
       this.running = false;
@@ -112,60 +160,52 @@ export class TurnManager {
     });
   }
 
-  private async processInbound(row: InboundRow): Promise<void> {
+  private async processBatch(batch: TurnBatch): Promise<void> {
     const threadId = this.opts.getThreadId();
     if (threadId === null) {
       // Should not happen — dispatcher is "ready" only after thread is set.
-      this.log('error', `inbound row ${row.id} dequeued without thread_id`);
-      this.opts.inbound.markFailed(row.id, 'dispatcher has no thread_id');
+      this.log('error', `turn batch ${batch.id} dequeued without thread_id`);
       return;
     }
 
-    // Mark running first (before turn/start) so a crash mid-RPC still
-    // leaves a recoverable trace.
-    this.opts.inbound.markRunning(row.id, null);
-
+    this.opts.onCurrentChat?.(batch.source_chat_id);
     let assistantText: string;
     try {
       const turn = await runTurn(
         this.opts.client,
         threadId,
-        row.parsed_text,
+        batchPrompt(batch),
         this.opts.turnCwd ?? null,
       );
-      // Record the turn id for diagnostics — non-fatal if this column
-      // can't be updated (e.g. row was already advanced by another path).
-      this.opts.inbound.markRunning(row.id, turn.turnId);
       assistantText =
         extractAssistantText(turn) ?? this.emptyTurnPlaceholder;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      this.log('error', `turn execution failed for inbound ${row.id}: ${msg}`);
-      this.opts.inbound.markFailed(row.id, msg);
+      this.log('error', `turn execution failed for batch ${batch.id}: ${msg}`);
       // Best-effort tell the user something went wrong.
       try {
         await this.opts.outbound.send(
-          outboundTargetForInbound(row),
+          outboundTargetForInbound(batch),
           `本次请求执行失败：${msg}`,
         );
       } catch (sendErr) {
         this.log('warn', `error notification also failed`, sendErr);
       }
+      this.opts.onCurrentChat?.(null);
       return;
     }
 
-    this.opts.inbound.markAwaitingOutbound(row.id, assistantText);
-    await this.sendOutbound(row, assistantText);
+    this.opts.onCurrentChat?.(null);
+    await this.sendOutbound(batch, assistantText);
   }
 
-  /** Send assistant text to feishu with bounded retry. */
-  private async sendOutbound(row: InboundRow, text: string): Promise<void> {
+  /** Send assistant text to feishu with bounded in-process retry. */
+  private async sendOutbound(batch: TurnBatch, text: string): Promise<void> {
     let lastError: unknown;
-    const target = outboundTargetForInbound(row);
+    const target = outboundTargetForInbound(batch);
     for (let attempt = 0; attempt <= this.outboundRetries; attempt++) {
       try {
-        const ids = await this.opts.outbound.send(target, text);
-        this.opts.inbound.markCompleted(row.id, ids);
+        await this.opts.outbound.send(target, text);
         return;
       } catch (err) {
         lastError = err;
@@ -177,42 +217,33 @@ export class TurnManager {
       }
     }
     const msg = lastError instanceof Error ? lastError.message : String(lastError);
-    this.log('error', `outbound send failed for inbound ${row.id}: ${msg}`);
-    this.opts.inbound.markOutboundFailed(row.id, msg);
-  }
-
-  /**
-   * Retry rows previously left in awaiting_outbound / outbound_failed
-   * (no Codex turn re-runs — assistant_text is already in the DB).
-   * Called once at dispatcher startup, after thread/resume succeeds.
-   */
-  async retryPendingOutbound(): Promise<void> {
-    const pending = this.opts.inbound.listAwaitingOrFailedOutbound(
-      this.opts.dispatcherId,
-    );
-    for (const row of pending) {
-      if (row.assistant_text === null) {
-        // Should not happen — awaiting_outbound implies assistant_text was set.
-        this.log(
-          'warn',
-          `pending outbound ${row.id} has no assistant_text; marking failed`,
-        );
-        this.opts.inbound.markFailed(
-          row.id,
-          'awaiting_outbound row missing assistant_text',
-        );
-        continue;
-      }
-      await this.sendOutbound(row, row.assistant_text);
-    }
+    this.log('error', `outbound send failed for batch ${batch.id}: ${msg}`);
   }
 
   async stop(): Promise<void> {
     this.stopped = true;
+    this.queue.length = 0;
+    this.opts.onCurrentChat?.(null);
     if (this.wakeup !== null) {
       const w = this.wakeup;
       this.wakeup = null;
       w();
     }
   }
+
+  private rememberMessageId(messageId: string | null): boolean {
+    if (messageId === null || messageId === '') return true;
+    if (this.seenMessageIds.has(messageId)) return false;
+    this.seenMessageIds.add(messageId);
+    this.seenMessageIdOrder.push(messageId);
+    while (this.seenMessageIdOrder.length > this.messageIdDedupeWindow) {
+      const evicted = this.seenMessageIdOrder.shift();
+      if (evicted !== undefined) this.seenMessageIds.delete(evicted);
+    }
+    return true;
+  }
+}
+
+function batchPrompt(batch: TurnBatch): string {
+  return batch.messages.map((message) => message.parsed_text).join('\n\n');
 }

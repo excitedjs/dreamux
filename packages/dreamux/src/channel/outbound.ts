@@ -1,5 +1,3 @@
-import type { InboundRow } from '../db/types.js';
-
 export interface ChannelOutboundTarget {
   /** Stable channel-local conversation id. */
   conversationId: string;
@@ -16,7 +14,15 @@ export interface OutboundSink {
   send(target: ChannelOutboundTarget, text: string): Promise<string[]>;
 }
 
-export function outboundTargetForInbound(row: InboundRow): ChannelOutboundTarget {
+export interface InboundOutboundSource {
+  source_chat_id: string;
+  source_message_id: string | null;
+  sender_id: string | null;
+}
+
+export function outboundTargetForInbound(
+  row: InboundOutboundSource,
+): ChannelOutboundTarget {
   return {
     conversationId: row.source_chat_id,
     ...(row.source_message_id !== null

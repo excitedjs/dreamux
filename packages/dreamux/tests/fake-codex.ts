@@ -8,7 +8,7 @@
  *                                 item/completed (agentMessage)
  *                                 turn/completed
  *
- * Lets tests assert behavior (FIFO, crash recovery, outbound retry, approval
+ * Lets tests assert behavior (queueing, coalescing, outbound retry, approval
  * fail-fast) without spawning a real codex binary.
  */
 

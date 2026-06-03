@@ -8,10 +8,8 @@
  *   3. for each enabled dispatcher: spawn codex, open feishu, start turn worker
  *   4. install SIGTERM/SIGINT handlers for graceful drain
  *
- * Issue #2 §"D1": crash recovery does NOT replay running turns. Per dispatcher,
- * the runtime's startup sweep flips stale `running` → `unknown` before
- * Feishu inbound is opened, so the user gets a visible prompt instead of a
- * silent duplicate turn.
+ * Current MVP: accepted inbound work is process-local. Restarting the server
+ * drops queued and in-flight inbound messages instead of replaying them.
  */
 
 import type Database from 'better-sqlite3';
@@ -203,7 +201,6 @@ export class Server {
 
     const runtime = new DispatcherRuntime(row, {
       dispatchers: this.repos.dispatchers,
-      inbound: this.repos.inbound,
       outbound: {
         send: async (target, text) =>
           (await bot.send(channelOutboundToFeishuTarget(target), text)).messageIds,
@@ -242,14 +239,13 @@ export class Server {
           );
           return;
         }
-        const inboundId = runtime.enqueueInbound({
+        const queued = runtime.enqueueInbound({
           source_chat_id: event.chatId,
           source_message_id: event.messageId,
           sender_id: event.senderId,
-          feishu_event_json: safeStringify(event.raw),
           parsed_text: formatFeishuMessageForCodex(event),
         });
-        if (inboundId !== null) {
+        if (queued) {
           await addReceivedReaction(id, bot, channelState, event);
         }
       });
@@ -362,13 +358,5 @@ async function addReceivedReaction(
       `[server] failed to add the received reaction for dispatcher '${dispatcherId}':`,
       err,
     );
-  }
-}
-
-function safeStringify(value: unknown): string {
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return '{}';
   }
 }

@@ -8,10 +8,10 @@
  * the core's surface into the `FeishuBot` interface the server already wires:
  *   - `start(handler)` registers the `im.message.receive_v1` route, normalizes
  *     each raw event with the core's `parseInbound`, and forwards a
- *     `FeishuInboundEvent`. The route handler awaits `handler`, so the message is
- *     durably enqueued before the SDK acks (the deferred-ACK invariant).
+ *     `FeishuInboundEvent`. The route handler awaits `handler`, so the message
+ *     reaches the server-owned in-memory queue before the SDK acks.
  *   - `send(target, text)` delegates to the core transport, preserving reply
- *     threading / @-back metadata from the durable inbound row.
+ *     threading / @-back metadata from the in-memory inbound batch.
  *   - `botOpenId` surfaces the core transport's `selfId`.
  *
  * Tests inject a `FakeFeishuBot` via `createFakeFeishuBot()` instead of opening
@@ -101,7 +101,7 @@ export function createFeishuBot(
 
     async start(handler: InboundHandler): Promise<void> {
       // The core opens the WebSocket and awaits this route handler before the
-      // SDK acks; awaiting `handler` here keeps the enqueue durable-before-ACK.
+      // SDK acks; awaiting `handler` here keeps gate/queue work before ACK.
       // `start` rejects if the connection does not come up, so the server's
       // try/catch can fail the dispatcher loudly rather than leave it dark.
       await transport.start({
