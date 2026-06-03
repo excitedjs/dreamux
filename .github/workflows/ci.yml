@@ -175,12 +175,12 @@ jobs:
         run: node common/scripts/install-run-rush.js build
       - name: rush typecheck
         run: node common/scripts/install-run-rush.js typecheck
+      - name: install codex for live compatibility test
+        run: |
+          npm install --global @openai/codex@0.135.0
+          codex --version
       - name: rush test
         run: node common/scripts/install-run-rush.js test
-        env:
-          # No codex binary on the CI runner; opt-in skip with the loud
-          # warning (rather than silent skip — see tests/codex-0134-live.test.ts).
-          DREAMUX_SKIP_LIVE_CODEX: '1'
 
   gitleaks:
     name: gitleaks — secret scan (full history)

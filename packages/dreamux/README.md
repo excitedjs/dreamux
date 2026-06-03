@@ -202,11 +202,13 @@ node common/scripts/install-run-rush.js test   # smoke + bin-launcher + codex-01
   and repo-root shim from arbitrary cwds and through symlinks; static
   "no tsx" assertion; manifest assertion for the single global bin.
 - `tests/doctor.test.ts` — covers standalone doctor checks for
-  dispatcher-private `CODEX_HOME` state, including managed-service auth
+  inherited operator Codex home state, including managed-service auth
   visibility.
 - `tests/codex-0135-live.test.ts` — spawns a real `codex app-server`
-  (skipped loudly when `codex` is missing or wrong version; opt-in via
-  `DREAMUX_SKIP_LIVE_CODEX=1`).
+  pinned to the `0.135.x` line. CI installs `@openai/codex@0.135.0` before
+  running tests so this compatibility check is not skipped by default. Local
+  developers can still opt out explicitly with `DREAMUX_SKIP_LIVE_CODEX=1`
+  when the matching Codex binary is unavailable.
 
 ## License
 
