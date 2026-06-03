@@ -7,7 +7,7 @@
  * Usage:
  *   server-ctl server status
  *   server-ctl dispatcher list
- *   server-ctl dispatcher add --id flow --bot-app-id <APP_ID> --bot-secret-ref env:BOT_SECRET_FLOW
+ *   server-ctl dispatcher add --id flow --bot-app-id <APP_ID> --bot-secret-ref config:flow
  *   server-ctl dispatcher status --id flow
  *   server-ctl dispatcher start --id flow
  *   server-ctl dispatcher stop --id flow
@@ -177,7 +177,7 @@ Usage:
   ${programName} server status
   ${programName} dispatcher list
   ${programName} dispatcher add --id <ID> --bot-app-id <APP_ID> \\
-                            --bot-secret-ref env:<VAR> [--codex-args-json <JSON>] [--codex-cwd <PATH>]
+                            --bot-secret-ref config:<ID> [--codex-args-json <JSON>] [--codex-cwd <PATH>]
   ${programName} dispatcher status --id <ID>
   ${programName} dispatcher start --id <ID>
   ${programName} dispatcher stop --id <ID>

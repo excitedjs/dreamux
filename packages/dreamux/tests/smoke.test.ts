@@ -72,9 +72,9 @@ function buildServer(opts: {
     codexClientFactory: () => new CodexWsClient({ url: opts.fake.url }),
     ...(opts.useDefaultCodexHomeDoctor === true
       ? {}
-      : {
+          : {
           codexHomeDoctor: () => {
-            /* fake codex tests do not require a real dispatcher CODEX_HOME */
+            /* fake codex tests do not require a real operator Codex home */
           },
         }),
   });
@@ -120,10 +120,7 @@ function writeReadyDispatcherCodexHome(dispatcherId: string): void {
   mkdirSync(dispatcherCodexHome(dispatcherId), { recursive: true });
   writeFileSync(
     dispatcherCodexConfigPath(dispatcherId),
-    `model = "gpt-test"
-approval_policy = "never"
-
-[marketplaces.dreamux]
+    `[marketplaces.dreamux]
 source = "public"
 
 [plugins.codexmux]
@@ -150,9 +147,12 @@ describe('dreamux MVP smoke', () => {
   let fake: FakeCodex;
   let bot: FakeFeishuBot;
   let server: Server;
+  let previousCodexHome: string | undefined;
 
   beforeEach(async () => {
     runtimeDir = mkdtempSync(join(tmpdir(), 'dreamux-'));
+    previousCodexHome = process.env['CODEX_HOME'];
+    process.env['CODEX_HOME'] = join(runtimeDir, 'codex');
     fake = await startFakeCodex();
     bot = createFakeFeishuBot('app-smoke');
   });
@@ -164,6 +164,8 @@ describe('dreamux MVP smoke', () => {
       /* */
     }
     await fake?.close();
+    if (previousCodexHome === undefined) delete process.env['CODEX_HOME'];
+    else process.env['CODEX_HOME'] = previousCodexHome;
     rmSync(runtimeDir, { recursive: true, force: true });
   });
 
@@ -199,7 +201,7 @@ describe('dreamux MVP smoke', () => {
     expect(d?.status).toBe('ready');
   });
 
-  it('starts the dispatcher app-server under the dispatcher private CODEX_HOME', async () => {
+  it('starts the dispatcher app-server with the inherited operator CODEX_HOME', async () => {
     const capturedCodexOptions: CodexProcessOptions[] = [];
     server = buildServer({ runtimeDir, fake, bot, capturedCodexOptions });
     server.repos.dispatchers.create({
@@ -212,16 +214,17 @@ describe('dreamux MVP smoke', () => {
 
     expect(capturedCodexOptions).toHaveLength(1);
     expect(capturedCodexOptions[0]?.env?.['CODEX_HOME']).toBe(
-      dispatcherCodexHome('flow'),
+      process.env['CODEX_HOME'],
     );
     expect(capturedCodexOptions[0]?.socketPath).toBe(
       dispatcherSocketPath('flow'),
     );
   });
 
-  it('runs the default dispatcher CODEX_HOME doctor before spawning the app-server', async () => {
+  it('creates the app-server socket directory outside CODEX_HOME', async () => {
     rmSync(runtimeDir, { recursive: true, force: true });
     runtimeDir = mkdtempSync(join(homedir(), '.dreamux-smoke-'));
+    process.env['CODEX_HOME'] = join(runtimeDir, 'codex');
     const capturedCodexOptions: CodexProcessOptions[] = [];
     server = buildServer({
       runtimeDir,
@@ -243,9 +246,10 @@ describe('dreamux MVP smoke', () => {
 
     expect(capturedCodexOptions).toHaveLength(1);
     expect(capturedCodexOptions[0]?.env?.['CODEX_HOME']).toBe(
-      dispatcherCodexHome('flow'),
+      process.env['CODEX_HOME'],
     );
     expect(existsSync(dispatcherAppServerControlDir('flow'))).toBe(true);
+    expect(dispatcherAppServerControlDir('flow')).not.toContain('codex-home');
   });
 
   it('compatible Feishu gate drops bot-loop messages before durable enqueue', async () => {

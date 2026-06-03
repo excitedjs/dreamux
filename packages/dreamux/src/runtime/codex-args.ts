@@ -12,7 +12,7 @@
  *
  * Precedence for each field (highest wins):
  *   1. dispatchers.codex_args_json (this JSON)
- *   2. global defaults from ~/.dreamux/config.toml (passed in as `defaults`)
+ *   2. global defaults from ~/.dreamux/config.json (passed in as `defaults`)
  *   3. hardcoded fallbacks (`'never'`, `'workspace-write'`, `[]`)
  * Per the feat/global-config-dir work — see the global-config decision.
  *

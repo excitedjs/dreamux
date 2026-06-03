@@ -19,10 +19,8 @@ export interface OnboardAnswers {
   configDir: string;
   runtimeDir: string;
   dispatcherId: string;
+  dispatcherCwd: string;
   codexBin: string;
-  codexModel: string;
-  codexProvider: string;
-  authEnvVar: string;
   codexMarketplaceSource: string;
   codexMarketplaceSparse: string[];
   codexMarketplaceName: string;
@@ -34,7 +32,7 @@ export interface OnboardAnswers {
   claudeMarketplaceName: string;
   claudePluginRef: string;
   botAppId: string;
-  botSecretRef: string;
+  botAppSecret: string;
   registerService: boolean;
   startService: boolean;
   dreamuxBin: string;

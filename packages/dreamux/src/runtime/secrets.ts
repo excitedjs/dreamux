@@ -1,21 +1,29 @@
-/**
- * Resolve `bot_secret_ref` into the actual app secret.
- *
- * Issue #2 §"开放问题 Q9": P0 supports `env:VAR_NAME` only. Future references
- * (keyring, 1Password, vault) are out of scope.
- */
-export function resolveBotSecret(ref: string): string {
-  if (!ref.startsWith('env:')) {
-    throw new Error(
-      `unsupported bot_secret_ref scheme: ${ref}. P0 only supports env:<VAR>.`,
-    );
+import type { DreamuxConfig } from './config.js';
+
+export function resolveBotSecret(ref: string, config: DreamuxConfig): string {
+  if (ref.startsWith('config:')) {
+    const dispatcherId = ref.slice('config:'.length);
+    const bot = config.feishu.bots[dispatcherId];
+    if (bot === undefined || bot.app_secret.trim() === '') {
+      throw new Error(
+        `missing Feishu app_secret in dreamux config for bot_secret_ref=${ref}`,
+      );
+    }
+    return bot.app_secret;
   }
-  const varName = ref.slice('env:'.length);
-  const value = process.env[varName];
-  if (value === undefined || value === '') {
-    throw new Error(
-      `bot secret env var '${varName}' is not set (referenced by bot_secret_ref=${ref})`,
-    );
+
+  if (ref.startsWith('env:')) {
+    const varName = ref.slice('env:'.length);
+    const value = process.env[varName];
+    if (value === undefined || value === '') {
+      throw new Error(
+        `bot secret env var '${varName}' is not set (referenced by bot_secret_ref=${ref})`,
+      );
+    }
+    return value;
   }
-  return value;
+
+  throw new Error(
+    `unsupported bot_secret_ref scheme: ${ref}. Use config:<dispatcherId>.`,
+  );
 }

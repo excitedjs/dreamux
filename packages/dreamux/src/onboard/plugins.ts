@@ -25,7 +25,7 @@ export interface PluginInstallOptions {
 export async function installCodexmuxPlugin(
   options: PluginInstallOptions,
 ): Promise<void> {
-  ensureDirectory(options.codexHome, options.ledger, 'dispatcher CODEX_HOME', {
+  ensureDirectory(options.codexHome, options.ledger, 'operator Codex home', {
     dryRun: options.answers.dryRun,
   });
   const before = snapshotFiles(options.codexHome);

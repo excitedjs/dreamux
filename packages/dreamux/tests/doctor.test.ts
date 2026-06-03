@@ -11,7 +11,6 @@ import { dirname, join } from 'node:path';
 import { DispatcherRepo } from '../src/db/repository.js';
 import { openDatabase } from '../src/db/schema.js';
 import { runDreamuxDoctor } from '../src/cli/doctor.js';
-import { buildDispatcherCodexConfigToml } from '../src/onboard/config-files.js';
 import type { CommandRunner } from '../src/onboard/types.js';
 import {
   dispatcherCodexConfigPath,
@@ -69,6 +68,7 @@ describe('dreamux doctor command', () => {
   let oldAdminSocket: string | undefined;
   let oldCodexBin: string | undefined;
   let oldDreamuxBin: string | undefined;
+  let oldCodexHome: string | undefined;
 
   beforeEach(() => {
     root = mkdtempSync(join(homedir(), '.dreamux-doctor-'));
@@ -77,11 +77,13 @@ describe('dreamux doctor command', () => {
     oldAdminSocket = process.env['CODEX_HOST_ADMIN_SOCKET'];
     oldCodexBin = process.env['CODEX_HOST_CODEX_BIN'];
     oldDreamuxBin = process.env['DREAMUX_BIN'];
+    oldCodexHome = process.env['CODEX_HOME'];
     delete process.env['CODEX_HOST_RUNTIME_DIR'];
     delete process.env['CODEX_HOST_ADMIN_SOCKET'];
     delete process.env['CODEX_HOST_CODEX_BIN'];
     process.env['DREAMUX_CONFIG_DIR'] = join(root, 'config');
     process.env['DREAMUX_BIN'] = '/usr/local/bin/dreamux';
+    process.env['CODEX_HOME'] = join(root, 'codex');
   });
 
   afterEach(() => {
@@ -90,11 +92,12 @@ describe('dreamux doctor command', () => {
     restoreEnv('CODEX_HOST_ADMIN_SOCKET', oldAdminSocket);
     restoreEnv('CODEX_HOST_CODEX_BIN', oldCodexBin);
     restoreEnv('DREAMUX_BIN', oldDreamuxBin);
+    restoreEnv('CODEX_HOME', oldCodexHome);
     resetRuntimeConfig();
     rmSync(root, { recursive: true, force: true });
   });
 
-  it('reports dispatcher private CODEX_HOME health', async () => {
+  it('reports inherited Codex home health', async () => {
     const runner = new FakeRunner();
     const config = writeConfig();
     writeDispatcher(config.runtimeDir, { auth: true });
@@ -136,29 +139,39 @@ describe('dreamux doctor command', () => {
     expect(result.dispatchers[0]?.foreground.ok).toBe(true);
     expect(result.dispatchers[0]?.managedService?.ok).toBe(false);
     expect(result.dispatchers[0]?.managedService?.errors.join('\n')).toContain(
-      'missing dispatcher Codex auth state',
+      'missing Codex auth state',
     );
   });
 
   function writeConfig(): { runtimeDir: string } {
     const runtimeDir = join(root, 'runtime');
-    const configPath = join(root, 'config', 'config.toml');
+    const configPath = join(root, 'config', 'config.json');
     mkdirSync(dirname(configPath), { recursive: true });
     writeFileSync(
       configPath,
-      `runtime_dir = "${runtimeDir}"
-
-[codex]
-bin = "codex"
-approval_policy = "never"
-sandbox_mode = "workspace-write"
-extra_args = []
-initialize_timeout_ms = 10000
-
-[outbound]
-retries = 3
-retry_delay_ms = 1000
-`,
+      JSON.stringify({
+        runtime_dir: runtimeDir,
+        admin_socket: null,
+        codex: {
+          bin: 'codex',
+          approval_policy: 'never',
+          sandbox_mode: 'workspace-write',
+          extra_args: [],
+          initialize_timeout_ms: 10000,
+        },
+        outbound: {
+          retries: 3,
+          retry_delay_ms: 1000,
+        },
+        feishu: {
+          bots: {
+            flow: {
+              app_id: 'app-test',
+              app_secret: 'secret-test',
+            },
+          },
+        },
+      }),
     );
     return { runtimeDir };
   }
@@ -181,6 +194,14 @@ retry_delay_ms = 1000
         retries: 3,
         retry_delay_ms: 1000,
       },
+      feishu: {
+        bots: {
+          flow: {
+            app_id: 'app-test',
+            app_secret: 'secret-test',
+          },
+        },
+      },
     });
     mkdirSync(dispatcherCodexPluginsDir('flow'), { recursive: true });
     mkdirSync(join(dispatcherCodexPluginsDir('flow'), 'cache', 'dreamux', 'codexmux'), {
@@ -188,13 +209,7 @@ retry_delay_ms = 1000
     });
     writeFileSync(
       dispatcherCodexConfigPath('flow'),
-      buildDispatcherCodexConfigToml({
-        codexHomeConfigPath: dispatcherCodexConfigPath('flow'),
-        model: 'gpt-test',
-        marketplaceName: 'dreamux',
-        marketplaceSource: 'excitedjs/dreamux',
-        pluginRef: 'codexmux@dreamux',
-      }),
+      '[marketplaces.dreamux]\nsource = "excitedjs/dreamux"\n',
     );
     if (options.auth) {
       writeFileSync(join(dispatcherCodexHome('flow'), 'auth.json'), '{}');

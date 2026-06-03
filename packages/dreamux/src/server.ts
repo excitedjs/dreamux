@@ -43,7 +43,7 @@ import { createAdminSocketServer, type AdminSocketServer } from './admin/socket.
 
 export interface ServerOptions {
   /**
-   * Global dreamux config (typically loaded from ~/.dreamux/config.toml by
+   * Global dreamux config (typically loaded from ~/.dreamux/config.json by
    * the CLI entry point). When omitted, the built-in defaults are used —
    * convenient for tests, but in production the CLI is expected to load
    * the file and pass it in so user edits take effect.
@@ -61,7 +61,7 @@ export interface ServerOptions {
   codexProcessFactory?: (opts: CodexProcessOptions) => CodexProcess;
   /** Inject a CodexWsClient factory (tests). */
   codexClientFactory?: (socketPath: string) => CodexWsClient;
-  /** Inject a dispatcher CODEX_HOME doctor (tests). */
+  /** Inject a Codex home doctor (tests). */
   codexHomeDoctor?: DispatcherCodexHomeDoctor;
   /** Skip resolving bot secret (tests with fake bot). */
   skipBotSecret?: boolean;
@@ -114,7 +114,7 @@ export class Server {
    * Final codex binary path. Precedence:
    *   1. ServerOptions.codexBinPath (test seam)
    *   2. CODEX_HOST_CODEX_BIN env (CI / debug escape hatch)
-   *   3. config.codex.bin (~/.dreamux/config.toml)
+   *   3. config.codex.bin (~/.dreamux/config.json)
    *   4. 'codex' (PATH lookup)
    */
   private resolveCodexBinPath(): string | undefined {
@@ -181,7 +181,7 @@ export class Server {
     });
     const botSecret = this.opts.skipBotSecret
       ? ''
-      : resolveBotSecret(row.bot_secret_ref);
+      : resolveBotSecret(row.bot_secret_ref, cfg);
     const bot = this.opts.botFactory
       ? this.opts.botFactory(row, botSecret)
       : createFeishuBot({ appId: row.bot_app_id, appSecret: botSecret });

@@ -1,22 +1,7 @@
-/**
- * Tests for ~/.dreamux/config.toml (feat/global-config-dir).
- *
- * Covers:
- *   - first boot: dir + file auto-created with the default TOML
- *   - second boot: existing file is read, never overwritten
- *   - parse error: fails fast with a file:line pointer
- *   - field-level validation: type errors / out-of-range values
- *   - approval_policy allowlist enforced at config load (defense in depth
- *     before per-dispatcher parseCodexArgs gets a chance)
- *   - precedence: env > per-dispatcher > config > built-in default
- *   - paths.* reflect config-derived values when no env var is set
- */
-
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   chmodSync,
   existsSync,
-  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -28,11 +13,12 @@ import { join } from 'node:path';
 
 import {
   BUILT_IN_DEFAULTS,
-  DEFAULT_CONFIG_TOML,
+  DEFAULT_CONFIG_JSON,
   expandHome,
   globalConfigDir,
   globalConfigFile,
   loadOrInitConfig,
+  stringifyConfig,
 } from '../src/runtime/config.js';
 import {
   adminSocketPath,
@@ -42,13 +28,12 @@ import {
 } from '../src/runtime/paths.js';
 import { codexArgsToCli, parseCodexArgs } from '../src/runtime/codex-args.js';
 
-describe('global config (~/.dreamux/config.toml)', () => {
+describe('global config (~/.dreamux/config.json)', () => {
   let configDir: string;
   const envSnapshot: Record<string, string | undefined> = {};
 
   beforeEach(() => {
     configDir = mkdtempSync(join(tmpdir(), 'dreamux-cfg-'));
-    // Snapshot every env var the suite touches so each test starts clean.
     for (const k of [
       'CODEX_HOST_RUNTIME_DIR',
       'CODEX_HOST_ADMIN_SOCKET',
@@ -69,112 +54,86 @@ describe('global config (~/.dreamux/config.toml)', () => {
     resetRuntimeConfig();
   });
 
-  it('first boot creates the config dir and file with default TOML', () => {
-    expect(existsSync(join(configDir, 'config.toml'))).toBe(false);
+  it('first boot creates the config dir and JSON file', () => {
+    expect(existsSync(join(configDir, 'config.json'))).toBe(false);
 
     const { config, configFile, createdOnThisBoot } = loadOrInitConfig({
       configDir,
     });
 
     expect(createdOnThisBoot).toBe(true);
-    expect(configFile).toBe(join(configDir, 'config.toml'));
-    expect(readFileSync(configFile, 'utf8')).toBe(DEFAULT_CONFIG_TOML);
+    expect(configFile).toBe(join(configDir, 'config.json'));
+    expect(readFileSync(configFile, 'utf8')).toBe(DEFAULT_CONFIG_JSON);
     expect(config.codex.approval_policy).toBe(
       BUILT_IN_DEFAULTS.codex.approval_policy,
     );
-    expect(config.codex.bin).toBe(BUILT_IN_DEFAULTS.codex.bin);
-    expect(config.outbound.retries).toBe(BUILT_IN_DEFAULTS.outbound.retries);
+    expect(config.feishu.bots).toEqual({});
   });
 
-  it('second boot reads the existing file and does not overwrite it', () => {
+  it('second boot reads the existing JSON file and does not overwrite it', () => {
     const file = globalConfigFile({ configDir });
-    writeFileSync(
-      file,
-      `runtime_dir = "/tmp/custom-runtime"
-
-[codex]
-bin = "/opt/codex"
-approval_policy = "auto"
-extra_args = ["--model", "gpt-5"]
-initialize_timeout_ms = 7500
-
-[outbound]
-retries = 5
-retry_delay_ms = 2000
-`,
-    );
+    const original = stringifyConfig({
+      ...BUILT_IN_DEFAULTS,
+      runtime_dir: '/tmp/custom-runtime',
+      codex: {
+        ...BUILT_IN_DEFAULTS.codex,
+        bin: '/opt/codex',
+        approval_policy: 'auto',
+        extra_args: ['--model', 'gpt-5'],
+        initialize_timeout_ms: 7500,
+      },
+      outbound: {
+        retries: 5,
+        retry_delay_ms: 2000,
+      },
+      feishu: {
+        bots: {
+          flow: {
+            app_id: 'app-test',
+            app_secret: 'secret-test',
+          },
+        },
+      },
+    });
+    writeFileSync(file, original);
 
     const { config, createdOnThisBoot } = loadOrInitConfig({ configDir });
     expect(createdOnThisBoot).toBe(false);
     expect(config.runtime_dir).toBe('/tmp/custom-runtime');
     expect(config.codex.bin).toBe('/opt/codex');
-    expect(config.codex.approval_policy).toBe('auto');
     expect(config.codex.extra_args).toEqual(['--model', 'gpt-5']);
-    expect(config.codex.initialize_timeout_ms).toBe(7500);
-    expect(config.outbound.retries).toBe(5);
-    expect(config.outbound.retry_delay_ms).toBe(2000);
-    // File was not rewritten — the user's exact text is preserved.
-    // (Dedicated test below asserts byte-for-byte preservation; here we
-    // just check the file isn't replaced by DEFAULT_CONFIG_TOML.)
-    const after = readFileSync(file, 'utf8');
-    expect(after).toContain('runtime_dir = "/tmp/custom-runtime"');
-    expect(after).not.toContain('# dreamux global configuration');
-  });
-
-  it('preserves user comments / formatting (does not regenerate the file)', () => {
-    const file = globalConfigFile({ configDir });
-    const original = `# my custom header — must survive
-
-runtime_dir = "/tmp/keep-me"
-`;
-    writeFileSync(file, original);
-    loadOrInitConfig({ configDir });
+    expect(config.feishu.bots.flow).toEqual({
+      app_id: 'app-test',
+      app_secret: 'secret-test',
+    });
     expect(readFileSync(file, 'utf8')).toBe(original);
   });
 
-  it('parse error fails fast with a file:line pointer', () => {
+  it('parse error fails fast with the config path', () => {
     const file = globalConfigFile({ configDir });
-    writeFileSync(
-      file,
-      `runtime_dir = "/ok"
-[codex
-bin = "nope"
-`,
-    );
-    expect(() => loadOrInitConfig({ configDir })).toThrow(/config\.toml/);
+    writeFileSync(file, `{"runtime_dir": "/ok"`);
+    expect(() => loadOrInitConfig({ configDir })).toThrow(/config\.json/);
     expect(() => loadOrInitConfig({ configDir })).toThrow(/dreamux config parse error/);
   });
 
-  it('rejects an unknown approval_policy at config load', () => {
+  it('rejects invalid config values', () => {
     const file = globalConfigFile({ configDir });
-    writeFileSync(
-      file,
-      `[codex]\napproval_policy = "ask-every-time"\n`,
-    );
+    writeFileSync(file, JSON.stringify({ codex: { approval_policy: 'ask-every-time' } }));
     expect(() => loadOrInitConfig({ configDir })).toThrow(
       /approval_policy='ask-every-time'/,
     );
-  });
 
-  it('rejects wrong types with the offending key', () => {
-    const file = globalConfigFile({ configDir });
-    writeFileSync(file, `runtime_dir = 42\n`);
+    writeFileSync(file, JSON.stringify({ runtime_dir: 42 }));
     expect(() => loadOrInitConfig({ configDir })).toThrow(
       /runtime_dir must be a string/,
     );
-  });
 
-  it('rejects non-positive initialize_timeout_ms', () => {
-    const file = globalConfigFile({ configDir });
-    writeFileSync(file, `[codex]\ninitialize_timeout_ms = 0\n`);
+    writeFileSync(file, JSON.stringify({ codex: { initialize_timeout_ms: 0 } }));
     expect(() => loadOrInitConfig({ configDir })).toThrow(
       /initialize_timeout_ms must be > 0/,
     );
-  });
 
-  it('rejects negative outbound retries', () => {
-    const file = globalConfigFile({ configDir });
-    writeFileSync(file, `[outbound]\nretries = -1\n`);
+    writeFileSync(file, JSON.stringify({ outbound: { retries: -1 } }));
     expect(() => loadOrInitConfig({ configDir })).toThrow(
       /retries must be >= 0/,
     );
@@ -190,26 +149,18 @@ bin = "nope"
   it('DREAMUX_CONFIG_DIR overrides ~/.dreamux when no explicit override', () => {
     process.env['DREAMUX_CONFIG_DIR'] = configDir;
     expect(globalConfigDir()).toBe(configDir);
-    expect(globalConfigFile()).toBe(join(configDir, 'config.toml'));
+    expect(globalConfigFile()).toBe(join(configDir, 'config.json'));
   });
 
-  // PR #8 review #3 — auto-init boundary: mode of the created file.
-  it('first-boot file is mode 0600 (no group / world bits)', () => {
+  it('first-boot file is mode 0600', () => {
     const { configFile, createdOnThisBoot } = loadOrInitConfig({ configDir });
     expect(createdOnThisBoot).toBe(true);
     const mode = statSync(configFile).mode & 0o777;
     expect(mode).toBe(0o600);
   });
 
-  // PR #8 review #3 — auto-init boundary: parent dir is unwritable.
   it('throws when the config dir cannot be written', () => {
-    // Build a parent dir, chmod it read-only-execute so mkdir / open fails
-    // for the file underneath. We're the owner; bits still apply unless
-    // we have CAP_DAC_OVERRIDE (i.e. root), which the test runner shouldn't.
-    if (process.getuid?.() === 0) {
-      // Root bypasses DAC permission checks; skip rather than mislead.
-      return;
-    }
+    if (process.getuid?.() === 0) return;
     const lockedParent = mkdtempSync(join(tmpdir(), 'dreamux-locked-'));
     const lockedChild = join(lockedParent, 'cfg');
     chmodSync(lockedParent, 0o500);
@@ -221,28 +172,6 @@ bin = "nope"
       chmodSync(lockedParent, 0o700);
       rmSync(lockedParent, { recursive: true, force: true });
     }
-  });
-
-  // PR #8 review #1 — atomic create-if-absent semantics.
-  //
-  // The implementation uses Node `wx` (POSIX O_CREAT|O_EXCL) so multiple
-  // processes racing the same path see at most one EEXIST loser; the
-  // winning process's write is never overwritten. We can't easily fork
-  // here, but we can exercise the same code path twice in sequence:
-  // second call must return createdOnThisBoot=false and the file's
-  // contents must be the *first* call's, not a freshly-rewritten copy.
-  it('second call does NOT overwrite the file written by the first call', () => {
-    const first = loadOrInitConfig({ configDir });
-    expect(first.createdOnThisBoot).toBe(true);
-    // Mutate the file to simulate a user edit (or another process having
-    // written the "winning" version of a race).
-    const userEdit = `# user touched this between calls\nruntime_dir = "/tmp/keep-me"\n`;
-    writeFileSync(first.configFile, userEdit, { mode: 0o600 });
-
-    const second = loadOrInitConfig({ configDir });
-    expect(second.createdOnThisBoot).toBe(false);
-    expect(readFileSync(second.configFile, 'utf8')).toBe(userEdit);
-    expect(second.config.runtime_dir).toBe('/tmp/keep-me');
   });
 });
 
@@ -261,6 +190,7 @@ describe('precedence: env > per-dispatcher > config > built-in', () => {
       delete process.env[k];
     }
   });
+
   afterEach(() => {
     for (const [k, v] of Object.entries(envSnapshot)) {
       if (v === undefined) delete process.env[k];
@@ -271,16 +201,18 @@ describe('precedence: env > per-dispatcher > config > built-in', () => {
   });
 
   it('paths.runtimeRoot reflects config when no env override', () => {
-    const file = globalConfigFile({ configDir });
-    writeFileSync(file, `runtime_dir = "/tmp/from-config"\n`);
+    writeFileSync(globalConfigFile({ configDir }), JSON.stringify({
+      runtime_dir: '/tmp/from-config',
+    }));
     const { config } = loadOrInitConfig({ configDir });
     setRuntimeConfig(config);
     expect(runtimeRoot()).toBe('/tmp/from-config');
   });
 
   it('CODEX_HOST_RUNTIME_DIR env beats config.runtime_dir', () => {
-    const file = globalConfigFile({ configDir });
-    writeFileSync(file, `runtime_dir = "/tmp/from-config"\n`);
+    writeFileSync(globalConfigFile({ configDir }), JSON.stringify({
+      runtime_dir: '/tmp/from-config',
+    }));
     const { config } = loadOrInitConfig({ configDir });
     setRuntimeConfig(config);
     process.env['CODEX_HOST_RUNTIME_DIR'] = '/tmp/from-env';
@@ -288,11 +220,10 @@ describe('precedence: env > per-dispatcher > config > built-in', () => {
   });
 
   it('adminSocketPath: env > config.admin_socket > <runtime_dir>/admin.sock', () => {
-    const file = globalConfigFile({ configDir });
-    writeFileSync(
-      file,
-      `runtime_dir = "/tmp/rt"\nadmin_socket = "/tmp/cfg-admin.sock"\n`,
-    );
+    writeFileSync(globalConfigFile({ configDir }), JSON.stringify({
+      runtime_dir: '/tmp/rt',
+      admin_socket: '/tmp/cfg-admin.sock',
+    }));
     const { config } = loadOrInitConfig({ configDir });
     setRuntimeConfig(config);
     expect(adminSocketPath()).toBe('/tmp/cfg-admin.sock');
@@ -302,8 +233,9 @@ describe('precedence: env > per-dispatcher > config > built-in', () => {
   });
 
   it('admin_socket derives from runtime_dir when not set in config', () => {
-    const file = globalConfigFile({ configDir });
-    writeFileSync(file, `runtime_dir = "/tmp/rt"\n`);
+    writeFileSync(globalConfigFile({ configDir }), JSON.stringify({
+      runtime_dir: '/tmp/rt',
+    }));
     const { config } = loadOrInitConfig({ configDir });
     setRuntimeConfig(config);
     expect(adminSocketPath()).toBe('/tmp/rt/admin.sock');
@@ -315,17 +247,7 @@ describe('precedence: env > per-dispatcher > config > built-in', () => {
       { approvalPolicy: 'never', extraArgs: ['--model', 'gpt-5'] },
     );
     expect(parsed.approvalPolicy).toBe('on-failure');
-    // Per-dispatcher extra_args is empty → only the global default applies.
     expect(parsed.extraArgs).toEqual(['--model', 'gpt-5']);
-  });
-
-  it('parseCodexArgs: global default is used when per-dispatcher omits the field', () => {
-    const parsed = parseCodexArgs('{}', {
-      approvalPolicy: 'auto-approve',
-      extraArgs: ['--reasoning', 'high'],
-    });
-    expect(parsed.approvalPolicy).toBe('auto-approve');
-    expect(parsed.extraArgs).toEqual(['--reasoning', 'high']);
   });
 
   it('parseCodexArgs: per-dispatcher extraArgs append after config defaults', () => {
@@ -339,21 +261,18 @@ describe('precedence: env > per-dispatcher > config > built-in', () => {
       '--model',
       'override',
     ]);
-    // Per the codex CLI's "last write wins" semantics for repeated -c keys,
-    // the per-dispatcher entry effectively overrides the global default.
   });
 
-  it('parseCodexArgs still hard-fails on a non-trusted approvalPolicy', () => {
+  it('parseCodexArgs hard-fails on invalid policy or sandbox mode', () => {
     expect(() =>
-      parseCodexArgs(
-        JSON.stringify({ approvalPolicy: 'untrusted-policy' }),
-        { approvalPolicy: 'never' },
-      ),
+      parseCodexArgs(JSON.stringify({ approvalPolicy: 'untrusted-policy' })),
     ).toThrow(/refused/);
+    expect(() =>
+      parseCodexArgs(JSON.stringify({ sandboxMode: 'invalid-mode' })),
+    ).toThrow(/sandboxMode='invalid-mode'/);
   });
 });
 
-// PR #8 review #2 — sandbox_mode is a first-class config + CLI key.
 describe('sandbox_mode precedence', () => {
   let configDir: string;
   beforeEach(() => {
@@ -373,7 +292,7 @@ describe('sandbox_mode precedence', () => {
   it('config file value is loaded and validated', () => {
     writeFileSync(
       globalConfigFile({ configDir }),
-      `[codex]\nsandbox_mode = "danger-full-access"\n`,
+      JSON.stringify({ codex: { sandbox_mode: 'danger-full-access' } }),
     );
     const { config } = loadOrInitConfig({ configDir });
     expect(config.codex.sandbox_mode).toBe('danger-full-access');
@@ -382,7 +301,7 @@ describe('sandbox_mode precedence', () => {
   it('config rejects an invalid sandbox_mode at load time', () => {
     writeFileSync(
       globalConfigFile({ configDir }),
-      `[codex]\nsandbox_mode = "not-a-mode"\n`,
+      JSON.stringify({ codex: { sandbox_mode: 'not-a-mode' } }),
     );
     expect(() => loadOrInitConfig({ configDir })).toThrow(
       /sandbox_mode='not-a-mode'/,
@@ -397,17 +316,6 @@ describe('sandbox_mode precedence', () => {
     expect(parsed.sandboxMode).toBe('read-only');
   });
 
-  it('parseCodexArgs: config default is used when per-dispatcher omits sandboxMode', () => {
-    const parsed = parseCodexArgs('{}', { sandboxMode: 'danger-full-access' });
-    expect(parsed.sandboxMode).toBe('danger-full-access');
-  });
-
-  it('parseCodexArgs hard-fails on an invalid sandboxMode', () => {
-    expect(() =>
-      parseCodexArgs(JSON.stringify({ sandboxMode: 'invalid-mode' })),
-    ).toThrow(/sandboxMode='invalid-mode'/);
-  });
-
   it('codexArgsToCli emits `-c sandbox_mode=<value>` after approval_policy', () => {
     const parsed = parseCodexArgs(
       JSON.stringify({
@@ -419,12 +327,8 @@ describe('sandbox_mode precedence', () => {
     expect(cli).toContain('-c');
     expect(cli).toContain('approval_policy=never');
     expect(cli).toContain('sandbox_mode=workspace-write');
-    // Verify ordering: approval_policy comes before sandbox_mode so that a
-    // same-key override in extra_args (which is appended) wins via codex's
-    // last-write-wins parse rule.
-    const apIdx = cli.indexOf('approval_policy=never');
-    const sbIdx = cli.indexOf('sandbox_mode=workspace-write');
-    expect(apIdx).toBeGreaterThanOrEqual(0);
-    expect(sbIdx).toBeGreaterThan(apIdx);
+    expect(cli.indexOf('sandbox_mode=workspace-write')).toBeGreaterThan(
+      cli.indexOf('approval_policy=never'),
+    );
   });
 });

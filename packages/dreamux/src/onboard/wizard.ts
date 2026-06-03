@@ -7,7 +7,6 @@ import {
   intro,
   isCancel,
   outro,
-  select,
   text,
 } from '@clack/prompts';
 
@@ -20,10 +19,8 @@ export interface OnboardCliOptions {
   configDir?: string;
   runtimeDir?: string;
   dispatcherId?: string;
+  dispatcherCwd?: string;
   codexBin?: string;
-  codexModel?: string;
-  codexProvider?: string;
-  authEnvVar?: string;
   codexMarketplaceSource?: string;
   codexMarketplaceSparse?: string | string[];
   codexMarketplaceName?: string;
@@ -35,15 +32,13 @@ export interface OnboardCliOptions {
   claudeMarketplaceName?: string;
   claudePluginRef?: string;
   botAppId?: string;
-  botSecretRef?: string;
+  botAppSecret?: string;
   registerService?: boolean;
   startService?: boolean;
   dreamuxBin?: string;
 }
 
 const DEFAULT_DISPATCHER_ID = 'dispatcher';
-const DEFAULT_CODEX_MODEL = 'gpt-5-codex';
-const DEFAULT_CODEX_PROVIDER = 'openai';
 const DEFAULT_CODEX_MARKETPLACE_SOURCE = 'excitedjs/dreamux';
 const DEFAULT_CODEX_MARKETPLACE_SPARSE = [
   '.agents/plugins',
@@ -74,24 +69,15 @@ export async function collectOnboardAnswers(
     'dispatcher id',
     options.dispatcherId ?? DEFAULT_DISPATCHER_ID,
   );
+  const dispatcherCwd = await promptText(
+    'dispatcher cwd',
+    options.dispatcherCwd ?? process.cwd(),
+  );
   const codexBin = await promptText('codex binary', options.codexBin ?? 'codex');
-  const codexModel = await promptText(
-    'dispatcher Codex model',
-    options.codexModel ?? DEFAULT_CODEX_MODEL,
-  );
-  const authEnvVar = await promptSelect(
-    'Codex auth environment variable',
-    options.authEnvVar ?? firstConfiguredAuthEnv(),
-    [
-      { value: 'CODEX_ACCESS_TOKEN', label: 'CODEX_ACCESS_TOKEN' },
-      { value: 'OPENAI_API_KEY', label: 'OPENAI_API_KEY' },
-      { value: 'CODEX_API_KEY', label: 'CODEX_API_KEY' },
-    ],
-  );
   const botAppId = await promptText('channel bot app id', options.botAppId);
-  const botSecretRef = await promptText(
-    'channel bot secret ref',
-    options.botSecretRef ?? 'env:FEISHU_BOT_SECRET',
+  const botAppSecret = await promptText(
+    'channel bot app secret',
+    options.botAppSecret,
   );
   const registerService = await promptConfirm(
     'register the user-level service now?',
@@ -111,11 +97,10 @@ export async function collectOnboardAnswers(
       configDir,
       runtimeDir,
       dispatcherId,
+      dispatcherCwd,
       codexBin,
-      codexModel,
-      authEnvVar,
       botAppId,
-      botSecretRef,
+      botAppSecret,
       registerService,
       startService,
     },
@@ -128,22 +113,22 @@ export function answersFromOptions(
   fromInteractive: boolean,
 ): OnboardAnswers {
   const botAppId = requiredOption(options.botAppId, 'bot-app-id', fromInteractive);
-  const botSecretRef = requiredOption(
-    options.botSecretRef,
-    'bot-secret-ref',
+  const botAppSecret = requiredOption(
+    options.botAppSecret,
+    'bot-app-secret',
     fromInteractive,
   );
-  const authEnvVar = options.authEnvVar ?? firstConfiguredAuthEnv();
-  assertSupportedAuthEnv(authEnvVar);
-
+  const dispatcherCwd = requiredOption(
+    options.dispatcherCwd,
+    'dispatcher-cwd',
+    fromInteractive,
+  );
   return {
     configDir: normalizePath(options.configDir ?? defaultConfigDir(options)),
     runtimeDir: normalizePath(options.runtimeDir ?? defaultRuntimeDir(options)),
     dispatcherId: options.dispatcherId ?? DEFAULT_DISPATCHER_ID,
+    dispatcherCwd: normalizePath(dispatcherCwd),
     codexBin: options.codexBin ?? 'codex',
-    codexModel: options.codexModel ?? DEFAULT_CODEX_MODEL,
-    codexProvider: options.codexProvider ?? DEFAULT_CODEX_PROVIDER,
-    authEnvVar,
     codexMarketplaceSource:
       options.codexMarketplaceSource ?? DEFAULT_CODEX_MARKETPLACE_SOURCE,
     codexMarketplaceSparse: normalizeStringArray(
@@ -167,7 +152,7 @@ export function answersFromOptions(
       options.claudeMarketplaceName ?? DEFAULT_CLAUDE_MARKETPLACE_NAME,
     claudePluginRef: options.claudePluginRef ?? DEFAULT_CLAUDE_PLUGIN_REF,
     botAppId,
-    botSecretRef,
+    botAppSecret,
     registerService: options.registerService ?? true,
     startService: options.startService ?? true,
     dreamuxBin: normalizePath(
@@ -206,19 +191,6 @@ async function promptConfirm(
   return unwrapPrompt(value);
 }
 
-async function promptSelect(
-  label: string,
-  initialValue: string,
-  options: Array<{ value: string; label: string }>,
-): Promise<string> {
-  const value = await select({
-    message: label,
-    initialValue,
-    options,
-  });
-  return unwrapPrompt(value);
-}
-
 function unwrapPrompt<T>(value: T | symbol): T {
   if (isCancel(value)) {
     cancel('onboard cancelled');
@@ -247,23 +219,4 @@ function normalizeStringArray(
 ): string[] {
   if (value === undefined) return fallback;
   return (Array.isArray(value) ? value : [value]).filter((item) => item !== '');
-}
-
-function firstConfiguredAuthEnv(): string {
-  for (const name of ['CODEX_ACCESS_TOKEN', 'OPENAI_API_KEY', 'CODEX_API_KEY']) {
-    if (process.env[name] !== undefined && process.env[name] !== '') return name;
-  }
-  return 'CODEX_ACCESS_TOKEN';
-}
-
-function assertSupportedAuthEnv(name: string): void {
-  if (
-    name !== 'CODEX_ACCESS_TOKEN' &&
-    name !== 'OPENAI_API_KEY' &&
-    name !== 'CODEX_API_KEY'
-  ) {
-    throw new Error(
-      `unsupported Codex auth env var '${name}'; use CODEX_ACCESS_TOKEN, OPENAI_API_KEY, or CODEX_API_KEY`,
-    );
-  }
 }

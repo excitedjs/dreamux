@@ -9,12 +9,11 @@
  *   1. environment variables (CODEX_HOST_RUNTIME_DIR, CODEX_HOST_ADMIN_SOCKET,
  *      CODEX_HOST_CODEX_BIN) — escape hatch for CI / one-off debug runs
  *   2. per-dispatcher fields in SQLite (codex_args_json: approvalPolicy, extraArgs)
- *   3. ~/.dreamux/config.toml — user-editable global defaults; auto-created
+ *   3. ~/.dreamux/config.json — user-editable global defaults and channel secrets; auto-created
  *      with sensible defaults on first boot (see src/runtime/config.ts)
  *   4. built-in defaults compiled into the binary
  *
- * Per-dispatcher secrets stay in env (bot_secret_ref=env:VAR_NAME); they
- * deliberately do not flow through the config file (issue #2 Q9).
+ * Per-dispatcher Feishu secrets live in the dreamux JSON config.
  */
 
 import { mkdirSync } from 'node:fs';
@@ -30,7 +29,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  // Load (or create on first boot) ~/.dreamux/config.toml *before* anything
+  // Load (or create on first boot) ~/.dreamux/config.json *before* anything
   // else looks at runtime paths — paths.* consults the active config for
   // its non-env defaults. A parse error here fails-fast with a file:line
   // pointer; the operator fixes the file and restarts.
@@ -66,11 +65,11 @@ Usage:
   dreamux serve [--help]
 
 Global config:
-  ~/.dreamux/config.toml    Auto-created on first boot. Override with the
+  ~/.dreamux/config.json    Auto-created on first boot. Override with the
                             DREAMUX_CONFIG_DIR env var. Edit and restart to
                             apply. Holds defaults for codex.bin,
                             approval_policy, runtime_dir, outbound retries,
-                            etc. See the file's own comments for keys.
+                            and Feishu channel secrets.
 
 Runtime data (kept separate from config):
   ~/.codex-host/            SQLite, admin socket, per-dispatcher logs.
@@ -81,13 +80,11 @@ Environment overrides (highest precedence):
   CODEX_HOST_RUNTIME_DIR    Overrides config.runtime_dir
   CODEX_HOST_ADMIN_SOCKET   Overrides config.admin_socket
   CODEX_HOST_CODEX_BIN      Overrides config.codex.bin
-  DREAMUX_CONFIG_DIR        Overrides ~/.dreamux (where config.toml lives)
-  BOT_SECRET_<NAME>         Each dispatcher's bot secret (referenced via
-                            bot_secret_ref=env:BOT_SECRET_<NAME>)
+  DREAMUX_CONFIG_DIR        Overrides ~/.dreamux (where config.json lives)
 
 Add dispatchers:
   dreamux dispatcher add --id flow --bot-app-id <APP_ID> \\
-    --bot-secret-ref env:BOT_SECRET_FLOW
+    --bot-secret-ref config:flow
 `);
 }
 

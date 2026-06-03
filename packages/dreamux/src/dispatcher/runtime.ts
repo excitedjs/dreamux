@@ -37,13 +37,11 @@ import { TurnManager } from './turn-manager.js';
 import { createFailFastApprovalHandler } from './approval.js';
 import {
   dispatcherCodexCwd,
-  dispatcherCodexHome,
   dispatcherSocketPath,
   dispatcherStderrLog,
   dispatcherStdoutLog,
 } from '../runtime/paths.js';
 import {
-  assertDispatcherCodexHomeReady,
   dispatcherCodexHomeDoctorContext,
   type DispatcherCodexHomeDoctor,
 } from '../runtime/dispatcher-codex-home.js';
@@ -55,19 +53,19 @@ export interface DispatcherRuntimeDeps {
   outbound: OutboundSink;
   /** Optional bin path override for tests. */
   codexBinPath?: string;
-  /** Override socket / cwd locations (default: ~/.codex-host/dispatchers/<id>/). */
+  /** Override process construction for tests. */
   codexProcessFactory?: (opts: CodexProcessOptions) => CodexProcess;
   /** Override WS client factory for tests. */
   codexClientFactory?: (socketPath: string) => CodexWsClient;
-  /** Validate the dispatcher-private CODEX_HOME before spawning Codex. */
+  /** Optional Codex home validator for tests and explicit diagnostics. */
   codexHomeDoctor?: DispatcherCodexHomeDoctor;
   /** Codex extraArgs (parsed from dispatcher.codex_args_json). */
   resolveExtraArgs?: (row: DispatcherRow) => string[];
-  /** Codex initialize handshake timeout (ms). From ~/.dreamux/config.toml. */
+  /** Codex initialize handshake timeout (ms). From ~/.dreamux/config.json. */
   handshakeTimeoutMs?: number;
-  /** Outbound retry count. From ~/.dreamux/config.toml. */
+  /** Outbound retry count. From ~/.dreamux/config.json. */
   outboundRetries?: number;
-  /** Outbound retry delay (ms). From ~/.dreamux/config.toml. */
+  /** Outbound retry delay (ms). From ~/.dreamux/config.json. */
   outboundRetryDelayMs?: number;
   log?: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
 }
@@ -130,16 +128,15 @@ export class DispatcherRuntime {
       await this.recoverInboundOnStartup();
 
       const cwd = this.row.codex_cwd ?? dispatcherCodexCwd(this.dispatcherId);
-      const codexHome = dispatcherCodexHome(this.dispatcherId);
       const socketPath = dispatcherSocketPath(this.dispatcherId);
       const extraArgs = this.deps.resolveExtraArgs?.(this.row) ?? [];
-      const doctor =
-        this.deps.codexHomeDoctor ?? assertDispatcherCodexHomeReady;
-      await doctor(
-        dispatcherCodexHomeDoctorContext(this.dispatcherId, {
-          codexCliArgs: extraArgs,
-        }),
-      );
+      if (this.deps.codexHomeDoctor !== undefined) {
+        await this.deps.codexHomeDoctor(
+          dispatcherCodexHomeDoctorContext(this.dispatcherId, {
+            codexCliArgs: extraArgs,
+          }),
+        );
+      }
 
       const factory = this.deps.codexProcessFactory ?? ((o) => new CodexProcess(o));
       this.process = factory({
@@ -149,7 +146,7 @@ export class DispatcherRuntime {
         stderrLogPath: dispatcherStderrLog(this.dispatcherId),
         binPath: this.deps.codexBinPath,
         extraArgs,
-        env: { ...process.env, CODEX_HOME: codexHome },
+        env: { ...process.env },
       });
       mkdirSync(dirname(socketPath), { recursive: true });
       await this.process.start();
