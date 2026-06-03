@@ -53,17 +53,23 @@ function buildServer(opts: {
   runtimeDir: string;
   fake: FakeCodex;
   bot: FakeFeishuBot;
+  config?: typeof BUILT_IN_DEFAULTS;
+  skipBotSecret?: boolean;
+  capturedBotSecrets?: string[];
   /** Optional spawn counter — bumped each time a NoopCodexProcess is built. */
   spawnCounter?: { count: number };
   capturedCodexOptions?: CodexProcessOptions[];
   useDefaultCodexHomeDoctor?: boolean;
 }): Server {
   return new Server({
-    config: { ...BUILT_IN_DEFAULTS, runtime_dir: opts.runtimeDir },
+    config: opts.config ?? { ...BUILT_IN_DEFAULTS, runtime_dir: opts.runtimeDir },
     databasePath: join(opts.runtimeDir, 'state.db'),
     adminSocketPath: join(opts.runtimeDir, 'admin.sock'),
-    skipBotSecret: true,
-    botFactory: () => opts.bot,
+    skipBotSecret: opts.skipBotSecret ?? true,
+    botFactory: (_row, secret) => {
+      opts.capturedBotSecrets?.push(secret);
+      return opts.bot;
+    },
     codexProcessFactory: (o) => {
       if (opts.spawnCounter !== undefined) opts.spawnCounter.count++;
       opts.capturedCodexOptions?.push(o);
@@ -204,6 +210,41 @@ describe('dreamux MVP smoke', () => {
     expect(capturedCodexOptions[0]?.socketPath).toBe(
       dispatcherSocketPath('flow'),
     );
+  });
+
+  it('keeps Feishu app secrets in the serve process and out of Codex child options', async () => {
+    const capturedBotSecrets: string[] = [];
+    const capturedCodexOptions: CodexProcessOptions[] = [];
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      skipBotSecret: false,
+      capturedBotSecrets,
+      capturedCodexOptions,
+      config: {
+        ...BUILT_IN_DEFAULTS,
+        runtime_dir: runtimeDir,
+        feishu: {
+          bots: {
+            flow: {
+              app_id: 'app-smoke',
+              app_secret: 'secret-server-only',
+            },
+          },
+        },
+      },
+    });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'config:flow',
+    });
+
+    await server.start();
+
+    expect(capturedBotSecrets).toEqual(['secret-server-only']);
+    expect(JSON.stringify(capturedCodexOptions)).not.toContain('secret-server-only');
   });
 
   it('creates the app-server socket directory outside the global Codex home', async () => {

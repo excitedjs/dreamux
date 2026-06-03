@@ -23,6 +23,7 @@ import {
   narrowMetaFromEvent,
   parseInbound,
   toChannelInbound,
+  type FeishuTransport,
   type Mention,
   type OutboundTarget,
 } from '@excitedjs/feishu-transport';
@@ -69,11 +70,19 @@ export interface CreateBotOptions {
   appSecret: string;
 }
 
-export function createFeishuBot(opts: CreateBotOptions): FeishuBot {
-  const transport = createFeishuTransport({
-    appId: opts.appId,
-    appSecret: opts.appSecret,
-  });
+export interface CreateFeishuBotDeps {
+  createTransport?: (opts: CreateBotOptions) => FeishuTransport;
+}
+
+export function createFeishuBot(
+  opts: CreateBotOptions,
+  deps: CreateFeishuBotDeps = {},
+): FeishuBot {
+  const transport = deps.createTransport?.(opts) ??
+    createFeishuTransport({
+      appId: opts.appId,
+      appSecret: opts.appSecret,
+    });
 
   return {
     get appId(): string {
