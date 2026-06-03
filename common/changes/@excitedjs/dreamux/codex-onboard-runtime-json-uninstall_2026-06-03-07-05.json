@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "调整 onboard 与 dispatcher runtime，使其继承本机 Codex 状态，改用 JSON 配置并新增 uninstall 指令。",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "YourWildDad <15624809+YourWildDad@users.noreply.github.com>"
+}
