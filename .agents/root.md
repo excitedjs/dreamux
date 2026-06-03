@@ -7,10 +7,16 @@ when you need the *why* behind a piece of code or a decision history.
 ## What dreamux is
 
 A long-running Node process that hosts N **Dispatchers**. Each Dispatcher
-binds **1 Feishu bot + 1 Codex thread**; all of that bot's inbound chats
-funnel into the same thread, and outbound replies route back to the
-message's source chat. Background and the full P0 design are in GitHub
-issues:
+binds **1 Feishu channel + 1 Codex app-server child + 1 Codex thread + 1
+Feishu MCP endpoint**. All inbound chats for a dispatcher enter that
+dispatcher's single Codex thread; Feishu outbound is sent only when Codex
+calls the dispatcher-bound `feishu` MCP server. The current top-level
+architecture is:
+
+- [Top-level design](decisions/top-level-design.md) — current source of truth
+  for runtime state, Feishu MCP, access gating, and config shape.
+
+Background and older issue context:
 
 - [#1 Proposal](https://github.com/excitedjs/dreamux/issues/1) — original proposal
 - [#2 Engineering plan](https://github.com/excitedjs/dreamux/issues/2) — implementation-ready spec
@@ -27,9 +33,9 @@ issues:
 │   ├── dreamux/                   @excitedjs/dreamux — the host server
 │   │   ├── bin/                   dreamux and tm launchers
 │   │   ├── skills/                bundled dispatcher Codex skill
-│   │   ├── src/                   admin, cli, codex, db, dispatcher, feishu, runtime
+│   │   ├── src/                   admin, cli, codex, dispatcher, feishu, runtime, legacy db
 │   │   ├── tests/                 vitest (smoke + live-codex + bin-launcher + onboard)
-│   │   └── db/migrations/         SQLite schema migrations
+│   │   └── db/migrations/         legacy SQLite migrations targeted for removal
 │   └── channel/
 │       ├── feishu-transport/      @excitedjs/feishu-transport — platform-I/O core
 │       │                          (sole @larksuiteoapi/node-sdk importer)
@@ -45,6 +51,9 @@ issues:
 - [`components/`](components/) — one doc per piece (repo-structure and
   dispatcher-skill today; server / codex-client / feishu-bot / cli to be
   added as they stabilize).
+- [`decisions/top-level-design.md`](decisions/top-level-design.md) — current
+  top-level design; read this before runtime, Feishu, MCP, config, state, or
+  dispatcher-lifecycle work.
 - [`decisions/README.md`](decisions/README.md) — accepted decision records,
   indexed by topic slug. Do not prefix new records with sequence numbers.
 - [`proposals/global-bin-onboard-serve.md`](proposals/global-bin-onboard-serve.md)
@@ -63,14 +72,15 @@ issues:
 |---|---|
 | add/change the dispatcher Codex skill or `tm` wrapper | [`components/dispatcher-skill.md`](components/dispatcher-skill.md) |
 | add/change a package, move source between packages | [`components/repo-structure.md`](components/repo-structure.md) |
+| modify runtime state, dispatcher lifecycle, Feishu MCP, access gating, or config shape | [`decisions/top-level-design.md`](decisions/top-level-design.md) |
 | browse decisions by topic | [`decisions/README.md`](decisions/README.md) |
 | understand why rush + pnpm | [`decisions/rush-pnpm-monorepo.md`](decisions/rush-pnpm-monorepo.md) |
 | install / build / test the repo, or wonder why `npm ci` is gone | [`decisions/install-model.md`](decisions/install-model.md) |
 | rename or restructure the public CLI / package | [`decisions/cli-and-package-naming.md`](decisions/cli-and-package-naming.md) |
 | implement issue #18 global bin / onboard / serve | [`proposals/global-bin-onboard-serve.md`](proposals/global-bin-onboard-serve.md) + [`decisions/global-bin-onboard-serve.md`](decisions/global-bin-onboard-serve.md) |
-| add / change a global config key (`~/.dreamux/config.json`) | [`decisions/global-config-dir.md`](decisions/global-config-dir.md) |
+| add / change a config key (`~/.dreamux/config.json`) | [`decisions/top-level-design.md`](decisions/top-level-design.md) first, then historical context in [`decisions/global-config-dir.md`](decisions/global-config-dir.md) |
 | touch the anti-leak guardrail (`.gitleaks.toml`, `.npmrc`, CI / hook) | [`decisions/anti-leak-guardrail.md`](decisions/anti-leak-guardrail.md) |
 | touch npm publishing / the release workflows | [`decisions/npm-release-oidc.md`](decisions/npm-release-oidc.md) |
 | add or verify Rush change files | [`components/repo-structure.md#rush-change-files`](components/repo-structure.md#rush-change-files) |
 | write a new decision record / new component doc | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
-| modify the server runtime / Codex protocol handling | the issue links above + read the source — runtime details aren't yet promoted to the KB |
+| modify the server runtime / Codex protocol handling | [`decisions/top-level-design.md`](decisions/top-level-design.md) + read the source |

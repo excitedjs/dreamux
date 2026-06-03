@@ -38,12 +38,12 @@ verbatim through the move):
 | `src/admin/` | Unix socket admin protocol + method handlers |
 | `src/cli/` | Entry-point CLIs: `dreamux.ts` (single public command tree), `server.ts` and `server-ctl.ts` as internal delegated modules |
 | `src/codex/` | Codex WS+Unix JSON-RPC client, supervisor, turn collector, init handshake |
-| `src/db/` | SQLite schema + repository |
+| `src/db/` | Legacy SQLite schema + repository; targeted for removal by [top-level-design](../decisions/top-level-design.md) |
 | `src/dispatcher/` | DispatcherRuntime, TurnManager, fail-fast approval handler |
 | `src/feishu/` | Thin bot adapter over `@excitedjs/feishu-transport` (`createFeishuTransport` + `parseInbound`); the drifted in-tree `content`/`render`/`types` copies were deleted by #4 |
 | `src/runtime/` | Path builders, env-only secrets, codex-args parser |
 | `src/server.ts` | Top-level `Server` class wiring everything together |
-| `db/migrations/0001_init.sql` | Initial SQLite schema |
+| `db/migrations/0001_init.sql` | Legacy SQLite schema; targeted for removal by [top-level-design](../decisions/top-level-design.md) |
 | `bin/dreamux` | Public CLI launcher (`dreamux serve`, `dreamux dispatcher ...`) |
 | `bin/tm` | Public wrapper that forwards to the package-local `@excitedjs/tm` executable |
 | `skills/codexmux-dispatcher/SKILL.md` | Bundled dispatcher Codex skill copied into global `~/.codex/skills/` by onboarding |
@@ -123,13 +123,16 @@ multi-package release notes precise while still using Rush as the validator.
 
 | Path | Purpose | Source of truth |
 |---|---|---|
-| `~/.dreamux/` | User-editable global config (`config.json`), onboarded Feishu bot secrets, and default runtime subtree. Auto-created on first boot. | The operator |
-| `~/.dreamux/runtime/` | Server-owned runtime state: SQLite (`state.db`), admin socket, dispatcher app-server control sockets, and logs. | The server |
+| `~/.dreamux/config.json` | User-editable dreamux config, dispatcher declarations, and local Feishu credentials. Created by `dreamux onboard`; `dreamux serve` fails loudly if it is missing. | The operator |
+| `~/.dreamux/state/` | Server-owned state: `server.json`, admin socket, and per-dispatcher status/access/socket files. | The server |
+| `~/.dreamux/state/<id>/status.json` | Dispatcher runtime status and saved Codex `thread_id`. | The server |
+| `~/.dreamux/state/<id>/access.json` | Dispatcher-local Feishu access gate state. | The server / operator tools |
+| `~/.dreamux/state/<id>/codex.sock` | Runtime-created Codex app-server Unix socket for that dispatcher. | The server |
+| `~/.dreamux/logs/` | Server and per-dispatcher logs, including Codex app-server logs. | The server |
 | `~/.codex/` | Codex global default home: auth, memory, config, and skills used by dispatcher app-server processes. | The operator / Codex |
 | `~/.codex/skills/codexmux-dispatcher/SKILL.md` | Dispatcher skill copied by `dreamux onboard`. | dreamux installer |
-| `~/.dreamux/runtime/dispatchers/<id>/app-server-control/as.sock` | Runtime-created Codex app-server Unix socket for that dispatcher. | The server |
 
-The split is load-bearing: a `rm -rf ~/.dreamux/runtime` recovery never loses
-user-edited dreamux settings or global Codex auth. Dispatcher app-server
-processes do not set `CODEX_HOME`; they use Codex's global default home. See
-[the global-config decision](../decisions/global-config-dir.md).
+The split is load-bearing: a `rm -rf ~/.dreamux/state ~/.dreamux/logs`
+recovery never loses user-edited dreamux settings or global Codex auth.
+Dispatcher app-server processes do not set `CODEX_HOME`; they use Codex's
+global default home. See [top-level-design](../decisions/top-level-design.md).

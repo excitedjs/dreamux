@@ -69,20 +69,28 @@ kinds are in [`.agents/CONTRIBUTING.md`](.agents/CONTRIBUTING.md).
 Run `.agents/scripts/check.sh` before committing KB changes; CI rejects
 what the script rejects.
 
-## Two home directories (global-config decision)
+## Config, state, and logs (top-level design)
 
-- `~/.dreamux/config.toml` — user-editable global config; auto-created on
-  first boot. Source of truth: the operator.
-- `~/.codex-host/` — server-owned runtime state (SQLite, sockets, logs).
-  Source of truth: the server. Safe to `rm -rf`.
-- `~/.codex-host/dispatchers/<id>/codex-home/` — dispatcher-private
-  `CODEX_HOME` owned by dreamux. It contains the app-server's `config.toml`,
-  plugin cache, and `app-server-control/` socket directory. It is runtime
-  state, not the operator's everyday Codex home.
+Current architecture is documented in
+[`.agents/decisions/top-level-design.md`](.agents/decisions/top-level-design.md).
+That record wins over older runtime-dir / SQLite decisions.
 
-Never mix them. If a new piece of state needs to be persisted, ask: does
-the operator edit it (→ config) or does the server own it (→ runtime
-dir)? When in doubt, runtime dir — that's the safer default.
+- `~/.dreamux/config.json` — the only dreamux operator-editable config
+  source. It holds dispatcher declarations and local Feishu credentials.
+  `dreamux serve` must fail loudly when it is missing and tell the operator
+  to run `dreamux onboard`.
+- `~/.dreamux/state/` — server-owned state: `server.json`, `admin.sock`, and
+  per-dispatcher `status.json`, `access.json`, and Codex socket files. Safe to
+  remove when the operator intentionally wants to discard server state.
+- `~/.dreamux/logs/` — server-owned logs, split by component; Codex
+  app-server logs use `~/.dreamux/logs/codex-app-server/<dispatcher>.log`.
+- `~/.codex/` — Codex's own global home for auth, config, memory, and skills.
+  Dispatcher app-server processes follow Codex here; dreamux must not create
+  dispatcher-private `CODEX_HOME` directories for the MVP.
+
+Do not reintroduce `runtime_dir`, SQLite-backed dispatcher state, or
+`~/.codex-host/` as dreamux runtime state unless a new decision record
+explicitly supersedes the top-level design.
 
 ## Always-binding engineering rules
 
@@ -105,8 +113,8 @@ dir)? When in doubt, runtime dir — that's the safer default.
   loop in `/packages/dreamux/bin/dreamux` is the reference shape; reuse it
   verbatim for any new launcher.
 - **Path builders go in `src/runtime/paths.ts` only.** Cross-process file
-  contracts (the admin socket path, the codex socket path, the SQLite db
-  path) drift silently if any other file constructs them by raw string
+  contracts (the admin socket path, dispatcher state files, logs, and Codex
+  socket path) drift silently if any other file constructs them by raw string
   concatenation.
 - **Codex protocol bumps run through `src/codex/handshake.ts` first.** Any
   RPC before `initialize` is rejected with `Not initialized` on codex

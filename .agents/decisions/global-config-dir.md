@@ -1,11 +1,17 @@
 # Global config in `~/.dreamux/config.json`
 
-- **Status:** Accepted, amended by PR #34
+- **Status:** Superseded in runtime/config shape by [top-level-design](top-level-design.md); historical context only
 - **Date:** 2026-05-28
 - **Affects:** server startup, codex CLI invocation, outbound retry policy, paths.* helpers
 - **PR / Issue:** feat/global-config-dir
 
 ## Context
+
+Current implementation guidance lives in [top-level-design](top-level-design.md).
+In particular, the MVP target no longer uses a configurable `runtime_dir`,
+SQLite-backed dispatcher state, automatic config creation at server startup,
+or automatic assistant-text outbound delivery. The record below documents the
+older global-config decision and why it existed.
 
 Pre-config, every dispatcher had to repeat the same `approval_policy=never`
 inside its `codex_args_json`, every operator had to remember

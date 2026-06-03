@@ -5,6 +5,10 @@
 - **Affects:** public CLI surface, onboarding UX, service registration, Codex app-server runtime
 - **PR / Issue:** [issue #18](https://github.com/excitedjs/dreamux/issues/18)
 
+Runtime state and socket path details in this record are superseded by
+[top-level-design](top-level-design.md). The single-bin, onboard, and
+foreground `serve` decisions still stand.
+
 ## Context
 
 Issue #18 asks for a globally installed `dreamux` to expose one bin named
