@@ -112,28 +112,42 @@ export const adminMethods: Record<string, AdminHandler> = {
     return { dispatcher_id: id, status: 'stopped' };
   },
 
-  'mcp.reply': (server, params) => {
+  'mcp.reply': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    mustString(params, 'chat_id');
-    mustString(params, 'text');
-    optionalString(params, 'message_id');
-    optionalStringArray(params, 'mention_user_ids');
-    throw new AdminError(
-      'NOT_IMPLEMENTED',
-      'mcp.reply IPC is reserved for Task 10 serve-owned outbound handling',
-    );
+    mustRunningDispatcher(server, id);
+    const chatId = mustString(params, 'chat_id');
+    const text = mustString(params, 'text');
+    const messageId = optionalString(params, 'message_id');
+    const mentionUserIds = optionalStringArray(params, 'mention_user_ids');
+    try {
+      return await server.replyFromMcp({
+        dispatcherId: id,
+        chatId,
+        text,
+        ...(messageId !== null ? { messageId } : {}),
+        ...(mentionUserIds !== null ? { mentionUserIds } : {}),
+      });
+    } catch (err) {
+      throw new AdminError('OUTBOUND_FAILED', parseMessage(err));
+    }
   },
 
-  'mcp.react': (server, params) => {
+  'mcp.react': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    mustString(params, 'message_id');
-    mustString(params, 'emoji');
-    throw new AdminError(
-      'NOT_IMPLEMENTED',
-      'mcp.react IPC is reserved for Task 10 serve-owned outbound handling',
-    );
+    mustRunningDispatcher(server, id);
+    const messageId = mustString(params, 'message_id');
+    const emoji = mustString(params, 'emoji');
+    try {
+      return await server.reactFromMcp({
+        dispatcherId: id,
+        messageId,
+        emoji,
+      });
+    } catch (err) {
+      throw new AdminError('REACTION_FAILED', parseMessage(err));
+    }
   },
 };
 
@@ -190,4 +204,17 @@ function mustExistingDispatcher(server: Server, id: string): void {
   if (row === null) {
     throw new AdminError('DISPATCHER_NOT_FOUND', `no dispatcher with id '${id}'`);
   }
+}
+
+function mustRunningDispatcher(server: Server, id: string): void {
+  if (server.getRuntime(id) === null) {
+    throw new AdminError(
+      'DISPATCHER_NOT_RUNNING',
+      `dispatcher '${id}' is not running`,
+    );
+  }
+}
+
+function parseMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }

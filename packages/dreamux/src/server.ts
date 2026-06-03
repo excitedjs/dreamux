@@ -46,6 +46,7 @@ import {
 import { createAdminSocketServer, type AdminSocketServer } from './admin/socket.js';
 
 export const RECEIVED_REACTION_EMOJI = 'GLANCE';
+const MAX_PENDING_RECEIVED_REACTION_CLEARS = 1024;
 
 export interface ServerOptions {
   /**
@@ -91,6 +92,21 @@ interface DispatcherSlot {
 
 interface DispatcherChannelState {
   receivedReactions: Map<string, { chatId: string; reactionId: string }>;
+  pendingReceivedReactionClears: Set<string>;
+}
+
+export interface ServerMcpReplyInput {
+  dispatcherId: string;
+  chatId: string;
+  text: string;
+  messageId?: string;
+  mentionUserIds?: string[];
+}
+
+export interface ServerMcpReactInput {
+  dispatcherId: string;
+  messageId: string;
+  emoji: string;
 }
 
 export class Server {
@@ -209,6 +225,7 @@ export class Server {
       : createFeishuBot({ appId: row.bot_app_id, appSecret: botSecret });
     const channelState: DispatcherChannelState = {
       receivedReactions: new Map(),
+      pendingReceivedReactionClears: new Set(),
     };
 
     const runtime = new DispatcherRuntime(row, {
@@ -306,6 +323,43 @@ export class Server {
     return this.slots.get(id)?.runtime ?? null;
   }
 
+  async replyFromMcp(input: ServerMcpReplyInput): Promise<{ message_ids: string[] }> {
+    const slot = this.mustRunningSlot(input.dispatcherId);
+    const result = await slot.bot.send(
+      channelOutboundToFeishuTarget({
+        conversationId: input.chatId,
+        ...(input.messageId !== undefined ? { replyTo: input.messageId } : {}),
+        ...(input.mentionUserIds !== undefined
+          ? { mentionUsers: input.mentionUserIds }
+          : {}),
+      }),
+      input.text,
+    );
+    if (input.messageId !== undefined) {
+      await clearReceivedReaction(
+        input.dispatcherId,
+        slot.bot,
+        slot.channelState,
+        input.messageId,
+      );
+    }
+    return { message_ids: result.messageIds };
+  }
+
+  async reactFromMcp(input: ServerMcpReactInput): Promise<{ reaction_id: string }> {
+    const slot = this.mustRunningSlot(input.dispatcherId);
+    const reactionId = await slot.bot.addReaction(input.messageId, input.emoji);
+    return { reaction_id: reactionId };
+  }
+
+  private mustRunningSlot(id: string): DispatcherSlot {
+    const slot = this.slots.get(id);
+    if (slot === undefined) {
+      throw new Error(`dispatcher '${id}' is not running`);
+    }
+    return slot;
+  }
+
   /** Summary of every declared dispatcher (DB-backed, includes stopped). */
   summarize(): Array<{
     dispatcher_id: string;
@@ -361,16 +415,64 @@ async function addReceivedReaction(
       console.error(
         `[server] Feishu returned no reaction_id for the received reaction in dispatcher '${dispatcherId}'`,
       );
+      channelState.pendingReceivedReactionClears.delete(event.messageId);
       return;
     }
     channelState.receivedReactions.set(event.messageId, {
       chatId: event.chatId,
       reactionId,
     });
+    if (channelState.pendingReceivedReactionClears.has(event.messageId)) {
+      await clearReceivedReaction(
+        dispatcherId,
+        bot,
+        channelState,
+        event.messageId,
+      );
+    }
   } catch (err) {
+    channelState.pendingReceivedReactionClears.delete(event.messageId);
     console.error(
       `[server] failed to add the received reaction for dispatcher '${dispatcherId}':`,
       err,
     );
+  }
+}
+
+async function clearReceivedReaction(
+  dispatcherId: string,
+  bot: FeishuBot,
+  channelState: DispatcherChannelState,
+  messageId: string,
+): Promise<void> {
+  const reaction = channelState.receivedReactions.get(messageId);
+  if (reaction === undefined) {
+    rememberPendingReceivedReactionClear(channelState, messageId);
+    return;
+  }
+  try {
+    await bot.removeReaction(messageId, reaction.reactionId);
+    channelState.receivedReactions.delete(messageId);
+    channelState.pendingReceivedReactionClears.delete(messageId);
+  } catch (err) {
+    console.error(
+      `[server] failed to clear the received reaction for dispatcher '${dispatcherId}' message '${messageId}':`,
+      err,
+    );
+  }
+}
+
+function rememberPendingReceivedReactionClear(
+  channelState: DispatcherChannelState,
+  messageId: string,
+): void {
+  channelState.pendingReceivedReactionClears.add(messageId);
+  while (
+    channelState.pendingReceivedReactionClears.size >
+    MAX_PENDING_RECEIVED_REACTION_CLEARS
+  ) {
+    const oldest = channelState.pendingReceivedReactionClears.values().next().value;
+    if (typeof oldest !== 'string') return;
+    channelState.pendingReceivedReactionClears.delete(oldest);
   }
 }
