@@ -162,9 +162,29 @@ time, admin socket path, and last error.
 child process status, and diagnostic timestamps. It must not contain Feishu
 credentials.
 
-`access.json` stores dispatcher-local access state such as observed chats, gate
-warning inputs, and last gate diagnostics. It must not contain credentials,
-queued inbound messages, or dedupe state.
+`access.json` stores dispatcher-local access state. The MVP shape is:
+
+```json
+{
+  "version": 1,
+  "dm": {
+    "allow_users": ["USER_ID"]
+  },
+  "group": {
+    "allow_chats": ["CHAT_ID"],
+    "follow_users": ["USER_ID"],
+    "require_mention": true
+  },
+  "observed_chats": ["CHAT_ID"],
+  "warnings": [
+    "dispatcher shares one Codex context across multiple Feishu chats"
+  ],
+  "last_gate": null
+}
+```
+
+It must not contain credentials, queued inbound messages, dedupe state, or a
+reaction ledger.
 
 `codex.sock` is the Codex app-server WebSocket-over-Unix-socket endpoint for the
 dispatcher. It is not the Feishu MCP transport. The Feishu MCP default transport
@@ -265,6 +285,10 @@ For group chats, the MVP follows the claudemux Feishu channel shape:
 - the chat must be allowed when a chat allowlist is configured;
 - the sender must be allowed when a follow-user allowlist is configured;
 - the bot must be mentioned for a group message to enter the dispatcher.
+
+When no group chat allowlist or follow-user allowlist is configured, group
+messages are still mention-gated. This keeps bootstrap usable while preventing
+ambient group chatter from entering the dispatcher.
 
 The gate adds a channel-owned received reaction only after a message is accepted
 and enqueued. If the message is rejected, no reaction is added.

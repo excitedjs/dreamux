@@ -28,7 +28,11 @@ import {
   type FeishuBot,
   type FeishuInboundEvent,
 } from './feishu/bot.js';
-import { compatibleFeishuGate } from './channel/feishu-gate.js';
+import {
+  dreamuxFeishuGate,
+  loadDispatcherAccess,
+  saveDispatcherAccess,
+} from './channel/feishu-gate.js';
 import { parseCodexArgs, codexArgsToCli } from './runtime/codex-args.js';
 import { resolveBotSecret } from './runtime/secrets.js';
 import { BUILT_IN_DEFAULTS, type DreamuxConfig } from './runtime/config.js';
@@ -40,6 +44,8 @@ import {
   setRuntimeConfig,
 } from './runtime/paths.js';
 import { createAdminSocketServer, type AdminSocketServer } from './admin/socket.js';
+
+export const RECEIVED_REACTION_EMOJI = 'GLANCE';
 
 export interface ServerOptions {
   /**
@@ -76,6 +82,11 @@ interface DispatcherSlot {
   row: DispatcherRow;
   runtime: DispatcherRuntime;
   bot: FeishuBot;
+  channelState: DispatcherChannelState;
+}
+
+interface DispatcherChannelState {
+  receivedReactions: Map<string, { chatId: string; reactionId: string }>;
 }
 
 export class Server {
@@ -185,6 +196,9 @@ export class Server {
     const bot = this.opts.botFactory
       ? this.opts.botFactory(row, botSecret)
       : createFeishuBot({ appId: row.bot_app_id, appSecret: botSecret });
+    const channelState: DispatcherChannelState = {
+      receivedReactions: new Map(),
+    };
 
     const runtime = new DispatcherRuntime(row, {
       dispatchers: this.repos.dispatchers,
@@ -206,25 +220,37 @@ export class Server {
     try {
       await runtime.start();
       await bot.start(async (event: FeishuInboundEvent) => {
-        const gate = compatibleFeishuGate({
+        const access = loadDispatcherAccess(id);
+        const gate = dreamuxFeishuGate({
           senderId: event.senderId,
           senderType: event.senderType,
+          chatId: event.chatId,
           chatType: event.chatType,
+          mentions: event.mentions,
           botOpenId: bot.botOpenId,
-        });
+        }, access);
+        saveDispatcherAccess(id, gate.access);
+        if (gate.warning !== null) {
+          console.error(
+            `[server] trust-domain warning for dispatcher '${id}': ${gate.warning}`,
+          );
+        }
         if (gate.action === 'drop') {
           console.error(
             `[server] dropped feishu inbound for dispatcher '${id}': ${gate.reason}`,
           );
           return;
         }
-        runtime.enqueueInbound({
+        const inboundId = runtime.enqueueInbound({
           source_chat_id: event.chatId,
           source_message_id: event.messageId,
           sender_id: event.senderId,
           feishu_event_json: safeStringify(event.raw),
           parsed_text: event.parsedText,
         });
+        if (inboundId !== null) {
+          await addReceivedReaction(id, bot, channelState, event);
+        }
       });
     } catch (err) {
       // Failed midway: undo any partial bring-up so a retry isn't
@@ -242,7 +268,7 @@ export class Server {
       throw err;
     }
 
-    this.slots.set(id, { row, runtime, bot });
+    this.slots.set(id, { row, runtime, bot, channelState });
     console.error(
       `[server] dispatcher '${id}' is ready (bot=${row.bot_app_id} cwd=${row.codex_cwd ?? dispatcherCodexCwd(id)})`,
     );
@@ -306,6 +332,35 @@ export class Server {
     } catch (err) {
       console.error('[server] db close error:', err);
     }
+  }
+}
+
+async function addReceivedReaction(
+  dispatcherId: string,
+  bot: FeishuBot,
+  channelState: DispatcherChannelState,
+  event: FeishuInboundEvent,
+): Promise<void> {
+  try {
+    const reactionId = await bot.addReaction(
+      event.messageId,
+      RECEIVED_REACTION_EMOJI,
+    );
+    if (reactionId === '') {
+      console.error(
+        `[server] Feishu returned no reaction_id for the received reaction in dispatcher '${dispatcherId}'`,
+      );
+      return;
+    }
+    channelState.receivedReactions.set(event.messageId, {
+      chatId: event.chatId,
+      reactionId,
+    });
+  } catch (err) {
+    console.error(
+      `[server] failed to add the received reaction for dispatcher '${dispatcherId}':`,
+      err,
+    );
   }
 }
 
