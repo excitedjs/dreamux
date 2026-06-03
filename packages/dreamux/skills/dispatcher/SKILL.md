@@ -1,9 +1,9 @@
 ---
-name: codexmux-dispatcher
+name: dispatcher
 description: Use from a dreamux dispatcher thread when work should be delegated to a tm-managed Codex teammate in a specific repository. Applies to bounded engineering tasks, test runs, codebase inspections, or follow-up work where the dispatcher should spawn/send/wait through the tm CLI exposed by the dreamux package and report the result back to the source chat.
 ---
 
-# Codexmux Dispatcher
+# Dispatcher
 
 Use this skill only from the dispatcher agent. The dreamux server hosts the
 dispatcher lifecycle; it does not own tm teammate daemons, teammate DB rows, or
@@ -17,8 +17,8 @@ dispatcher lifecycle; it does not own tm teammate daemons, teammate DB rows, or
 - Do not use `npx`, `npm exec --package @excitedjs/tm`, or
   `@excitedjs/tm@latest`; the dreamux package owns the tm dependency version.
 - Do not call dreamux admin APIs to create teammate state.
-- Do not infer a repo from the dispatcher cwd. A dispatcher cwd is server-owned
-  runtime space, not a worktree.
+- Do not infer the tm repo path from the dispatcher cwd unless the user or
+  operator explicitly made that cwd the requested repo.
 - Do not ask a tm-managed teammate to spawn another tm teammate.
 
 ## Before Delegating

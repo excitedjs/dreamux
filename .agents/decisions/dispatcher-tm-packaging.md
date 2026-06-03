@@ -82,11 +82,9 @@ At the time of this decision, the branch already contains:
 - `@excitedjs/tm` as a `@excitedjs/dreamux` dependency.
 - `/packages/dreamux/bin/tm`.
 - dispatcher app-server `PATH` injection for the dreamux package bin directory.
-
-The remaining implementation gap is onboarding: it still needs to install the
-bundled dispatcher skill to `<dispatcher cwd>/.codex/skills/dispatcher/`
-instead of the old global Codex skill path, and the bundled skill source
-directory still needs to be aligned to the `dispatcher` name.
+- `dreamux onboard` installs the bundled dispatcher skill to
+  `<dispatcher cwd>/.codex/skills/dispatcher/`.
+- The bundled skill source directory and frontmatter name are `dispatcher`.
 
 ## Alternatives considered
 

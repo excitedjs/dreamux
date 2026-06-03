@@ -14,8 +14,9 @@ import { runDreamuxDoctor } from '../src/cli/doctor.js';
 import type { CommandRunner } from '../src/onboard/types.js';
 import {
   databasePath,
+  dispatcherCodexCwd,
   dispatcherCodexHome,
-  dispatcherCodexSkillsDir,
+  dispatcherWorkspaceSkillPath,
   resetRuntimeConfig,
   setRuntimeConfig,
   stateRoot,
@@ -220,13 +221,10 @@ describe('dreamux doctor command', () => {
         },
       },
     });
-    mkdirSync(join(dispatcherCodexSkillsDir('flow'), 'codexmux-dispatcher'), {
-      recursive: true,
-    });
-    writeFileSync(
-      join(dispatcherCodexSkillsDir('flow'), 'codexmux-dispatcher', 'SKILL.md'),
-      '# test skill\n',
-    );
+    const skillPath = dispatcherWorkspaceSkillPath(dispatcherCodexCwd('flow'));
+    mkdirSync(dirname(skillPath), { recursive: true });
+    writeFileSync(skillPath, '# test skill\n');
+    mkdirSync(dispatcherCodexHome('flow'), { recursive: true });
     if (options.auth) {
       writeFileSync(join(dispatcherCodexHome('flow'), 'auth.json'), '{}');
     }

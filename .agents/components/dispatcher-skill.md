@@ -1,6 +1,6 @@
 # Component: dispatcher skill
 
-`/packages/dreamux/skills/codexmux-dispatcher/SKILL.md` is the bundled Codex
+`/packages/dreamux/skills/dispatcher/SKILL.md` is the bundled Codex
 skill that teaches dispatcher app-server sessions how to delegate product work
 through `tm`.
 
@@ -20,7 +20,7 @@ See [the dispatcher tm packaging decision](../decisions/dispatcher-tm-packaging.
 
 | Path | Role |
 |---|---|
-| `/packages/dreamux/skills/codexmux-dispatcher/SKILL.md` | Bundled dispatcher skill shipped in the npm package |
+| `/packages/dreamux/skills/dispatcher/SKILL.md` | Bundled dispatcher skill shipped in the npm package |
 | `<dispatcher cwd>/.codex/skills/dispatcher/SKILL.md` | Installed copy written by `dreamux onboard` for one dispatcher |
 | `/packages/dreamux/bin/tm` | Public wrapper that forwards to the package-local `@excitedjs/tm` executable |
 

@@ -135,6 +135,7 @@ export class DispatcherRuntime {
         await this.deps.codexHomeDoctor(
           dispatcherCodexHomeDoctorContext(this.dispatcherId, {
             codexCliArgs: extraArgs,
+            dispatcherCwd: cwd,
           }),
         );
       }

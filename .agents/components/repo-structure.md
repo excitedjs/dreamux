@@ -46,7 +46,7 @@ verbatim through the move):
 | `db/migrations/0001_init.sql` | Legacy SQLite schema; targeted for removal by [top-level-design](../decisions/top-level-design.md) |
 | `bin/dreamux` | Public CLI launcher (`dreamux serve`, `dreamux dispatcher ...`) |
 | `bin/tm` | Public wrapper that forwards to the package-local `@excitedjs/tm` executable |
-| `skills/codexmux-dispatcher/SKILL.md` | Bundled dispatcher Codex skill copied into each dispatcher's `<cwd>/.codex/skills/dispatcher/` by onboarding |
+| `skills/dispatcher/SKILL.md` | Bundled dispatcher Codex skill copied into each dispatcher's `<cwd>/.codex/skills/dispatcher/` by onboarding |
 | `tests/` | vitest: smoke, bin-launcher, dispatcher Codex home doctor, codex live integration |
 
 ## Installation — the rush path only

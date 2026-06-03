@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import {
   DISPATCHER_APP_SERVER_SOCKET_PATH_MAX_BYTES,
@@ -12,8 +12,9 @@ import {
 import { BUILT_IN_DEFAULTS } from '../src/runtime/config.js';
 import {
   dispatcherAppServerControlDir,
+  dispatcherCodexCwd,
   dispatcherCodexHome,
-  dispatcherCodexSkillsDir,
+  dispatcherWorkspaceSkillPath,
   dispatcherSocketPath,
   resetRuntimeConfig,
   setRuntimeConfig,
@@ -56,7 +57,7 @@ describe('global Codex home doctor', () => {
     expect(result.errors).toEqual(
       expect.arrayContaining([
         expect.stringContaining('missing Codex home directory'),
-        expect.stringContaining('missing codexmux dispatcher skill'),
+        expect.stringContaining('missing dispatcher skill'),
         expect.stringContaining('missing Codex auth state'),
       ]),
     );
@@ -142,21 +143,21 @@ describe('global Codex home doctor', () => {
     );
   });
 
-  it('rejects global Codex homes without the dispatcher skill installed', () => {
-    writeDispatcherHome('flow', { installCodexmux: false });
+  it('rejects missing workspace-local dispatcher skills', () => {
+    writeDispatcherHome('flow', { installDispatcherSkill: false });
 
     const result = validateDispatcherCodexHome('flow', { env: {} });
 
     expect(result.ok).toBe(false);
     expect(formatDispatcherCodexHomeErrors(result)).toContain(
-      'missing codexmux dispatcher skill',
+      'missing dispatcher skill',
     );
   });
 });
 
 function writeDispatcherHome(
   dispatcherId: string,
-  options: { installCodexmux?: boolean; writeAuth?: boolean } = {},
+  options: { installDispatcherSkill?: boolean; writeAuth?: boolean } = {},
 ): void {
   mkdirSync(dispatcherCodexHome(dispatcherId), { recursive: true });
   if (options.writeAuth !== false) {
@@ -165,12 +166,10 @@ function writeDispatcherHome(
     });
   }
 
-  if (options.installCodexmux === false) return;
-  mkdirSync(join(dispatcherCodexSkillsDir(dispatcherId), 'codexmux-dispatcher'), {
+  if (options.installDispatcherSkill === false) return;
+  const skillPath = dispatcherWorkspaceSkillPath(dispatcherCodexCwd(dispatcherId));
+  mkdirSync(dirname(skillPath), {
     recursive: true,
   });
-  writeFileSync(
-    join(dispatcherCodexSkillsDir(dispatcherId), 'codexmux-dispatcher', 'SKILL.md'),
-    '# test skill\n',
-  );
+  writeFileSync(skillPath, '# test skill\n');
 }

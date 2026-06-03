@@ -14,6 +14,8 @@ import {
   dispatcherDir,
   dispatcherSocketPath,
   dispatcherStatusPath,
+  dispatcherWorkspaceCodexSkillsDir,
+  dispatcherWorkspaceSkillPath,
   dreamuxRoot,
   logsRoot,
   resetRuntimeConfig,
@@ -64,6 +66,13 @@ describe('runtime paths', () => {
     );
     expect(dispatcherSocketPath('dispatcher-a')).toBe(
       join(stateRoot(), 'dispatcher-a', 'codex.sock'),
+    );
+    const workspace = join(root, 'workspace');
+    expect(dispatcherWorkspaceCodexSkillsDir(workspace)).toBe(
+      join(workspace, '.codex', 'skills'),
+    );
+    expect(dispatcherWorkspaceSkillPath(workspace)).toBe(
+      join(workspace, '.codex', 'skills', 'dispatcher', 'SKILL.md'),
     );
   });
 

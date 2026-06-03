@@ -18,6 +18,7 @@ import {
 } from '../runtime/dispatcher-codex-home.js';
 import {
   databasePath as runtimeDatabasePath,
+  dispatcherCodexCwd,
   runtimeRoot,
   setRuntimeConfig,
 } from '../runtime/paths.js';
@@ -197,6 +198,7 @@ function readDispatchers(
       const codexCliArgs = codexArgsToCli(codexArgs);
       const context = dispatcherCodexHomeDoctorContext(row.dispatcher_id, {
         codexCliArgs,
+        dispatcherCwd: row.codex_cwd ?? dispatcherCodexCwd(row.dispatcher_id),
       });
       const foreground = validateDispatcherCodexHome(context, {
         env,
