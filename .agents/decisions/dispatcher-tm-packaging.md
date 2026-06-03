@@ -45,8 +45,15 @@ This is intentionally not `~/.codex/skills/...`. The dispatcher skill is tied
 to the dispatcher workspace and command environment, while Codex auth, memory,
 and user configuration still follow Codex's normal global home.
 
-The installed skill name is `dispatcher`. Future implementation work should
-keep the installed directory and skill frontmatter aligned.
+The bundled source directory, installed directory, and skill frontmatter name
+must all use `dispatcher`. The old `codexmux-dispatcher` source-directory name
+must be renamed away before this design is implemented.
+
+`dreamux uninstall` does not delete this workspace-local skill by default. It
+removes dreamux-owned config, state, logs, and service integration, then reports
+the workspace skill paths created by `onboard` so the operator can remove them
+manually when desired. This avoids deleting files under arbitrary operator
+workspaces during a global uninstall.
 
 ## Consequences
 
@@ -64,6 +71,9 @@ keep the installed directory and skill frontmatter aligned.
   rerun `dreamux onboard` for that dispatcher to restore it.
 - dreamux must not silently mutate the operator's global `~/.codex/skills/`
   for this dispatcher skill.
+- Uninstall is intentionally asymmetric for workspace files: onboarding writes
+  the dispatcher skill into the operator's workspace, while uninstall only
+  reports that path.
 
 ## Current source status
 
@@ -75,7 +85,8 @@ At the time of this decision, the branch already contains:
 
 The remaining implementation gap is onboarding: it still needs to install the
 bundled dispatcher skill to `<dispatcher cwd>/.codex/skills/dispatcher/`
-instead of the old global Codex skill path.
+instead of the old global Codex skill path, and the bundled skill source
+directory still needs to be aligned to the `dispatcher` name.
 
 ## Alternatives considered
 

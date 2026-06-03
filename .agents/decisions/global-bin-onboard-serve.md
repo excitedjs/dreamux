@@ -5,7 +5,8 @@
 - **Affects:** public CLI surface, onboarding UX, service registration, Codex app-server runtime
 - **PR / Issue:** [issue #18](https://github.com/excitedjs/dreamux/issues/18)
 
-Runtime state and socket path details in this record are superseded by
+Runtime state, socket path, Feishu MCP transport, and workspace-skill uninstall
+ownership details in this record are superseded by
 [top-level-design](top-level-design.md). The single-bin, onboard, and
 foreground `serve` decisions still stand.
 Dispatcher `tm` packaging and dispatcher-skill install location are superseded
@@ -89,11 +90,9 @@ The dispatcher Codex app-server launched by `dreamux serve` must:
 - load the dispatcher skill from `<dispatcher cwd>/.codex/skills/dispatcher/`
 - have the dreamux package bin directory on `PATH`, so bare `tm` resolves to
   the package-local `@excitedjs/tm` wrapper
-- keep control sockets under `<runtime_dir>/dispatchers/<id>/app-server-control/`
-- avoid `/tmp` sockets
+- use dreamux-owned state paths defined by
+  [top-level-design](top-level-design.md) for control sockets
 - keep Unix socket paths short enough for macOS and Linux `sun_path` limits
-- let `serve` create runtime control directories; the doctor must not require
-  ephemeral `app-server-control/` state to pre-exist
 
 Onboarding must be path-transparent: every file path created or modified
 by `dreamux onboard`, including the copied dispatcher skill and

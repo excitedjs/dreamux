@@ -1,335 +1,455 @@
 # Top-level design
 
-- **Status:** Accepted target architecture
+- **Status:** Accepted
 - **Date:** 2026-06-03
-- **Affects:** server runtime, dispatcher lifecycle, Feishu channel, Codex MCP, global config, state files, CLI admin surface
-- **PR / Issue:** Local architecture clarification on 2026-06-03; supersedes the persistence and automatic-outbound parts of issue #2 and the runtime-dir parts of `global-config-dir`
+- **Affects:** server runtime, dispatcher lifecycle, Feishu channel, Codex MCP, admin/outbound IPC, global config, state files, logs, CLI admin surface, workspace-local dispatcher skill ownership
+- **PR / Issue:** Local architecture clarification on 2026-06-03; supersedes the persistence and automatic-outbound parts of issue #2, the runtime-dir parts of `global-config-dir`, and loopback HTTP MCP as the default Feishu MCP transport
 
 ## Context
 
-The current source tree still contains a SQLite-backed dispatcher registry,
-a durable inbound buffer, and an automatic "assistant text -> Feishu outbound"
-path. That shape did not reach a working MVP and makes the Feishu channel
-ambiguous when one dispatcher receives messages from multiple chats.
+The MVP goal is to make `dreamux` run as a local dispatcher host:
 
-The target architecture is smaller:
+- Feishu inbound messages reach one dispatcher.
+- The dispatcher injects accepted messages into one Codex thread.
+- Codex can reply to Feishu only by explicitly calling a dispatcher-scoped
+  Feishu MCP tool.
+- Local operator credentials live in `~/.dreamux/config.json`.
 
-- no SQLite for MVP runtime state
-- no configurable runtime directory
-- no automatic Feishu send from raw Codex assistant text
-- one dispatcher owns one Feishu channel instance and one Codex thread
-- outbound Feishu messages are sent only when Codex calls the Feishu MCP tool
+The current source tree accumulated runtime concepts before the MVP worked:
+SQLite state, `runtime_dir`, automatic outbound forwarding of model text, and a
+loopback HTTP MCP listener. Those pieces hide the product boundary and create
+wrong security defaults.
 
-This record is the architecture source of truth for implementation work after
-2026-06-03. Older records remain useful history, but this record wins when they
-describe conflicting runtime state, outbound, or config behavior.
+This decision locks the MVP boundary.
 
-## Decision
+## Architecture
 
-dreamux is a foreground Node server that hosts multiple independent
-dispatchers. Each dispatcher owns:
-
-- one Feishu channel instance
-- one Codex app-server child process
-- one Codex thread
-- one HTTP MCP endpoint for that Feishu channel
-- one in-memory FIFO for accepted inbound Feishu messages
-
-Two dispatchers must never share a Feishu channel, MCP endpoint, Codex thread,
-or dispatcher state file.
+`dreamux serve` is one local Node server. It hosts multiple dispatchers in the
+same process. Each dispatcher owns exactly one Feishu channel, one Codex
+app-server child process, one Codex thread, and one dispatcher-scoped Feishu MCP
+stdio session.
 
 ```mermaid
 flowchart LR
-  feishu[Feishu events] --> channel[Feishu channel]
-  channel --> gate[Access and mention gate]
-  gate --> fifo[Dispatcher in-memory FIFO]
-  fifo --> codex[Codex thread]
-  codex --> mcp[Feishu MCP server]
-  mcp --> channel
+  Feishu["Feishu Open Platform"] <--> Channel["Feishu long-connection channel"]
+  Channel --> Gate["access and mention gate"]
+  Gate --> Queue["in-memory coalescing queue"]
+  Queue --> Codex["Codex app-server child and one Codex thread"]
+  Codex -->|"MCP stdio"| MCP["feishu-mcp stdio shim"]
+  MCP -->|"local outbound RPC over admin.sock"| Outbound["serve-owned dispatcher outbound endpoint"]
+  Outbound --> Channel
 
-  subgraph dispatcher[One dispatcher]
-    channel
-    gate
-    fifo
-    codex
-    mcp
+  subgraph Dispatcher["one dispatcher"]
+    Channel
+    Gate
+    Queue
+    Codex
+    MCP
+    Outbound
   end
 ```
 
-## Config
+Two dispatchers must never share a Feishu app identity, channel instance, MCP
+stdio process, Codex app-server child process, Codex thread, or dispatcher state
+file.
+
+## Trust Domain
+
+One dispatcher is one shared-context trust domain.
+
+All gate-passing inbound messages for a dispatcher enter the same Codex thread.
+If one dispatcher accepts messages from multiple chats, later turns can see
+earlier content from the other chats in that dispatcher. This is intentional for
+the MVP and is not per-chat isolation.
+
+Operators must use separate dispatchers, with separate Feishu app identities,
+when chats should not share context. Future chat-to-session routing is out of
+scope for this decision.
+
+The access gate and `doctor` or `status` surfaces must warn when one dispatcher
+is configured for, or has observed, more than one allowed chat. The warning must
+state that the dispatcher shares one Codex context across those chats.
+
+## Operator Config
 
 `~/.dreamux/config.json` is the only dreamux operator-editable config source.
-If it is missing, `dreamux serve` must fail loudly and tell the operator to run
-`dreamux onboard`; it must not create a silent empty config.
+It holds dispatcher declarations, local Feishu credentials, and the dispatcher
+cwd used for the workspace-local skill install.
 
-Dispatcher declarations live directly in the config file:
+Example shape:
 
 ```json
 {
-  "dispatchers": {
-    "dispatcher-a": {
+  "dispatchers": [
+    {
+      "id": "dispatcher-a",
+      "cwd": "/path/to/workspace",
       "enabled": true,
-      "env": {},
-      "codex": {
-        "cwd": "/path/to/workspace",
-        "extra_args": []
-      },
       "feishu": {
-        "app_id": "<Feishu app id>",
-        "app_secret": "<stored locally>"
+        "app_id": "APP_ID",
+        "app_secret": "APP_SECRET"
+      },
+      "access": {
+        "allow_group_chats": ["CHAT_ID"],
+        "allow_users": ["USER_ID"]
+      },
+      "codex": {
+        "extra_args": [],
+        "extra_env": {
+          "EXAMPLE_FLAG": "1"
+        }
       }
     }
-  }
+  ]
 }
 ```
+
+`feishu.app_id` is a unique dispatcher identity. Across all declared
+dispatchers, including disabled dispatchers, an app id must map to exactly one
+dispatcher. `dreamux serve`, `doctor`, and `onboard` must fail or report a
+blocking error when two dispatchers use the same app id.
 
 Rules:
 
 - Feishu credentials belong only in `~/.dreamux/config.json` for MVP.
 - The config file is owner-only (`0600`) because it may contain local Feishu
   secrets.
-- `dispatchers.<id>.env` is merged over the server process environment before
+- The long-connection MVP uses `app_id` and `app_secret`. Webhook-only fields
+  such as `encrypt_key` and `verification_token` are not part of the MVP schema.
+  If a future webhook fallback adds them, they must be treated as secrets:
+  owner-only config, redacted from `config show`, `status`, `doctor`, and logs,
+  and never passed to Codex or MCP shim processes.
+- `app_secret` must be redacted from `config show`, `status`, `doctor`, and
+  logs.
+- `codex.extra_env` is merged over the server process environment before
   starting that dispatcher's Codex app-server.
-- `dispatchers.<id>.codex.extra_args` is passed to `codex app-server`.
-- dreamux-generated MCP config overrides are appended last, so the dispatcher
-  always receives the Feishu MCP server bound to its own channel.
+- `codex.extra_args` is passed to `codex app-server`.
+- dreamux-generated MCP config overrides are injected last, so the dispatcher
+  always receives the Feishu MCP server for its own channel.
 - dreamux follows Codex's own `~/.codex/` home for Codex auth, config, and
   memory. dreamux must not create dispatcher-private `CODEX_HOME` directories
   for the MVP.
-- The dispatcher skill is installed per dispatcher under
-  `<dispatcher cwd>/.codex/skills/dispatcher/`; see
-  [dispatcher-tm-packaging](dispatcher-tm-packaging.md).
+- dreamux does not pin, bundle, or manage the operator's Codex CLI version.
+  Codex compatibility is enforced by `doctor`, live tests, and version
+  diagnostics.
 
-## State and logs
+## State And Logs
 
-Server-owned state is under `~/.dreamux/state/`:
-
-```text
-~/.dreamux/state/
-  server.json
-  admin.sock
-  dispatcher-a/
-    status.json
-    access.json
-    codex.sock
-```
-
-`server.json` is process-level status only: pid, status, version, started time,
-admin socket path, and last error. It does not contain dispatcher thread ids.
-
-`~/.dreamux/state/<dispatcher-id>/status.json` contains dispatcher runtime
-status, including:
-
-- `thread_id`
-- `status`
-- `last_error`
-- `last_started_at`
-- `last_ready_at`
-
-`~/.dreamux/state/<dispatcher-id>/access.json` contains Feishu access-control
-state for that dispatcher only.
-
-Logs live under `~/.dreamux/logs/`, split by component. Codex app-server logs
-use the shape:
+State and logs are server-owned. They are not operator-editable config.
 
 ```text
-~/.dreamux/logs/codex-app-server/dispatcher-a.log
+~/.dreamux/
+  config.json
+  state/
+    server.json
+    admin.sock
+    dispatcher-a/
+      status.json
+      access.json
+      codex.sock
+  logs/
+    dreamux-server.log
+    feishu-channel/
+      dispatcher-a.log
+    codex-app-server/
+      dispatcher-a.log
 ```
 
-SQLite is not part of the MVP target. Old runtime state, including previous
-SQLite files and obsolete `~/.codex-host/` state, does not need migration.
+`server.json` stores process-level status only: pid, status, version, started
+time, admin socket path, and last error.
 
-## Dispatcher lifecycle
+`status.json` stores dispatcher process status, last-known Codex thread id,
+child process status, and diagnostic timestamps. It must not contain Feishu
+credentials.
 
-On server start:
+`access.json` stores dispatcher-local access state such as observed chats, gate
+warning inputs, and last gate diagnostics. It must not contain credentials,
+queued inbound messages, or dedupe state.
 
-- load `~/.dreamux/config.json`
-- write/update `server.json`
-- open the admin socket
-- start every enabled dispatcher
-- for each dispatcher, start its Feishu channel, HTTP MCP route, Codex
-  app-server child, and Codex thread
+`codex.sock` is the Codex app-server WebSocket-over-Unix-socket endpoint for the
+dispatcher. It is not the Feishu MCP transport. The Feishu MCP default transport
+is stdio.
 
-If a dispatcher has a saved `thread_id`, it first attempts `thread/resume`. If
-resume fails, it starts a fresh thread, writes the new `thread_id`, and logs the
-loss. It must not send an unsolicited Feishu message about the recovery.
+Socket path builders must live in `src/runtime/paths.ts`. They must enforce a
+short Unix socket path budget before spawning child processes. Dispatcher ids are
+sanitized and length-checked so derived `admin.sock` and `codex.sock` paths stay
+within Linux and macOS `sun_path` limits.
 
-Inbound Feishu messages are not persisted. Accepted messages enter an
-in-memory FIFO. If the server restarts while messages are queued or running,
-those messages are lost. The server does not replay them and does not post an
-"unknown previous execution" message.
+There is no `runtime_dir`, no SQLite database, no persisted inbound message
+queue, and no persisted reaction ledger.
 
-## Feishu inbound
+## Dispatcher Lifecycle
 
-Only `im.message.receive_v1` is in scope for MVP, while keeping the channel
-shape extensible.
+On startup, the server:
 
-Accepted Feishu inbound is delivered to Codex as an explicit XML-like message
-block:
+- loads `~/.dreamux/config.json`;
+- validates dispatcher ids, app id uniqueness, socket path budgets, and access
+  gate configuration;
+- starts one Feishu long-connection WebSocket client per dispatcher;
+- starts one Codex app-server child per dispatcher;
+- prepares one dispatcher-scoped Feishu MCP stdio command for the Codex thread;
+- resumes the saved Codex thread id when available.
+
+If a Codex app-server child process exits, or the dispatcher loses the child
+WebSocket connection, the server marks the dispatcher degraded, restarts the
+child with backoff, and attempts to resume the saved thread id.
+
+There is no turn timeout. A stuck Codex turn does not cause a child-process
+restart. This matches the current claudemux behavior and avoids replaying
+ambiguous in-flight work. Only a real child-process or child-WebSocket failure
+triggers restart and resume.
+
+Inbound messages are not persisted. A server restart drops queued and in-flight
+inbound work.
+
+## Feishu Inbound
+
+Inbound transport is Feishu SDK long-connection WebSocket. Webhook delivery is
+out of scope for the MVP.
+
+The MVP handles `im.message.receive_v1`. Other Feishu event kinds are ignored
+until a later decision adds them.
+
+Accepted messages enter one per-dispatcher in-memory queue. The queue is
+serialized: only one Codex turn runs per dispatcher at a time.
+
+Consecutive inbound messages from the same chat are coalesced into one Codex
+turn. If a chat already has a pending batch, new messages for that chat are
+appended to that batch. If the chat has the running turn, new messages become
+the next batch for that chat. Cross-chat batches remain serialized through the
+single dispatcher thread.
+
+The dispatcher keeps an in-memory, bounded `message_id` dedupe window so Feishu
+redelivery does not create duplicate turns during the same server process
+lifetime. This window is safe to lose on restart.
+
+Each inbound message block passed to Codex includes:
 
 ```xml
-<feishu_message chat_id="CHAT_ID" message_id="MESSAGE_ID" chat_type="group" sender_id="SENDER_ID" sender_name="Sender Name">
-Message text
+<feishu_message
+  chat_id="CHAT_ID"
+  chat_type="group"
+  message_id="MESSAGE_ID"
+  sender_id="USER_ID"
+  sender_name="Sender Name"
+  create_time="2026-06-03T00:00:00.000Z">
+Message text after best-effort parsing.
 </feishu_message>
 ```
 
-Keep attributes minimal. `dispatcher_id` is intentionally omitted because one
-Codex app-server only sees the Feishu MCP endpoint for its own dispatcher.
+A coalesced turn contains multiple `feishu_message` blocks from the same chat in
+receive order. The prompt must tell Codex to use the `message_id` it is replying
+to, usually the newest message in the batch.
 
-When parsing fails, Codex still receives the routable identifiers:
+Mention parsing follows the Feishu channel plugin style:
 
 ```xml
-<feishu_message chat_id="CHAT_ID" message_id="MESSAGE_ID" chat_type="group" sender_id="SENDER_ID" sender_name="" parse_status="failed">
-Message text could not be parsed. Use the Feishu skill with message_id="MESSAGE_ID" to retrieve the original content.
-</feishu_message>
+<at id="USER_ID">Display Name</at>
 ```
 
-The inbound prompt should explicitly remind Codex:
+When rich content parsing fails, the dispatcher still passes `message_id`,
+`chat_id`, `sender_id`, and `sender_name` into the Codex turn and instructs Codex
+to use the Feishu skill and `lark-cli` fallback to fetch message text.
 
-> To answer this Feishu message, call the `reply` tool with this message's
-> `chat_id` and `message_id`.
+Messages rejected by the access gate are discarded. Rejected messages do not
+enter the Codex thread.
 
-If Codex finishes a turn without calling `reply`, dreamux does not send
-anything to Feishu.
+## Access Gate
 
-## Feishu access gate
+The access gate is dispatcher-local.
 
-Access state follows the claudemux Feishu channel policy shape:
+For one-on-one chats, the sender must be allowed.
 
-- `dmPolicy`: `pairing | allowlist | disabled`
-- `groupPolicy`: `block | allowlist | follow-user`
-- `allowFrom`: top-level sender allowlist
-- `groups`: per-chat group policy
-- `pending`: pairing requests
+For group chats, the MVP follows the claudemux Feishu channel shape:
 
-Group messages must mention the bot. Direct messages do not need a mention.
+- the chat must be allowed when a chat allowlist is configured;
+- the sender must be allowed when a follow-user allowlist is configured;
+- the bot must be mentioned for a group message to enter the dispatcher.
 
-`groupPolicy: "allowlist"` authorizes groups as units. The group entry may
-require a bot mention and may restrict allowed senders.
+The gate adds a channel-owned received reaction only after a message is accepted
+and enqueued. If the message is rejected, no reaction is added.
 
-`groupPolicy: "follow-user"` does not authorize the group itself. A group
-message is delivered only when the bot is mentioned and the sender is in the
-top-level `allowFrom` list.
-
-If the bot open id cannot be resolved, group messages are dropped and logged
-because mention matching cannot be trusted. Direct messages may still enter.
-
-Only messages that pass the access gate receive the channel-owned "received"
-reaction.
+When one dispatcher is configured for, or observes, multiple allowed chats, the
+gate records an operator warning that those chats share one Codex context.
 
 ## Feishu MCP
 
-dreamux hosts a local HTTP MCP server bound to `127.0.0.1`. A single listener
-may serve multiple dispatcher paths, but each path is bound to exactly one
-dispatcher. Codex receives only the path for its dispatcher.
+Codex sends Feishu outbound actions only through a dispatcher-scoped MCP server.
+Model text is never automatically forwarded to Feishu.
 
-The MCP server name injected into Codex is `feishu`. Tool names are short
-because Codex already scopes calls by MCP server name.
+The default MCP transport between Codex and the Feishu MCP server is stdio.
+`dreamux` injects a per-dispatcher MCP server command into the Codex thread, for
+example:
 
-MVP tools:
-
-- `reply`
-- `react`
-
-`reply` parameters:
-
-```json
-{
-  "chat_id": "CHAT_ID",
-  "message_id": "MESSAGE_ID",
-  "text": "Markdown reply"
-}
+```text
+dreamux feishu-mcp --dispatcher dispatcher-a
 ```
 
-`message_id` is required so Feishu topic replies stay in the topic when the
-source message belongs to one. `chat_id` remains required as an explicit
-conversation boundary and for clearing channel-owned received reactions.
+The stdio process is a thin MCP shim. It is scoped to exactly one dispatcher,
+implements the MCP protocol on stdin/stdout, and forwards outbound requests to
+the live `dreamux serve` process through a dispatcher-scoped outbound RPC on the
+local admin socket. It must not expose a TCP listener.
 
-`reply.text` supports one mention syntax:
+The shim does not read `~/.dreamux/config.json`, does not receive Feishu
+credentials in argv or environment variables, does not create a Feishu SDK
+client, and does not hold channel or reaction state. The only process that reads
+Feishu credentials and owns the Feishu SDK long-connection client is
+`dreamux serve`. The generated command or environment may pass only routing
+metadata such as the dispatcher id and admin socket path.
 
-```xml
-<at id="USER_OPEN_ID"/>
+The serve-owned outbound RPC endpoint performs `reply` and `react` for the
+specified dispatcher. A successful `reply` also clears the current-process
+channel-owned received reaction for the replied message. This keeps Feishu
+credentials and reaction ownership in the same process that added the reaction.
+
+The default stdio design does not need a bearer token because the Codex-facing
+transport is a parent-child pipe and the shim-to-serve hop uses the local
+file-permission-scoped admin socket.
+
+If stdio lifecycle management or per-dispatcher injection proves infeasible, the
+only allowed fallback is loopback HTTP with a mandatory per-boot,
+dispatcher-specific bearer token. The token must be passed through an
+environment variable or file descriptor, or stored in a `0600` file under
+server-owned state. It must never be written to `config.json`, logs, repo files,
+or a world-readable file. An unauthenticated HTTP fallback is not allowed.
+
+The MVP MCP tool surface is:
+
+- `reply`: send a message to a Feishu chat, using `chat_id` and optionally
+  `message_id` so topic-mode replies stay in the original topic when Feishu
+  supports it.
+- `react`: add a model-owned reaction to a Feishu message.
+
+`edit_message` and model-owned `remove_reaction` are out of scope for the MVP.
+
+Reply failures return an MCP tool error and are logged. There is no persisted
+outbound retry queue.
+
+## Reaction Ownership
+
+Channel-owned reactions and model-owned reactions are separate in process
+memory only.
+
+The serve process records the received reactions its channel added during the
+current server process lifetime. After a successful `reply` through the
+serve-owned outbound RPC endpoint, the channel clears only those current-process
+channel-owned reactions for the replied message.
+
+The model-owned `react` tool only adds reactions requested by Codex. The channel
+must not clear model-owned reactions.
+
+Because reaction ownership is not persisted, a server restart can leave an old
+channel-owned received reaction behind. This is an accepted MVP limitation.
+
+## Feishu Skill Fallback
+
+The dispatcher assumes the operator already has the Feishu skill and `lark-cli`
+available in Codex. `dreamux` does not install that skill in this MVP.
+
+When the dispatcher cannot parse inbound rich content, it should tell Codex to
+use the Feishu skill and `lark-cli` with the provided `message_id` to fetch the
+message body.
+
+## Dispatcher Skill And TM
+
+`@excitedjs/tm` is a direct dependency of `@excitedjs/dreamux`. The package ships
+a `tm` bin wrapper.
+
+When `dreamux` starts a dispatcher Codex thread, it injects the package `tm` bin
+location into that thread's `PATH`. This lets the dispatcher skill call bare
+`tm` without constructing long `npx` commands.
+
+During `onboard`, `dreamux` copies the bundled dispatcher skill into:
+
+```text
+<dispatcher cwd>/.codex/skills/dispatcher/SKILL.md
 ```
 
-`react` parameters:
+The workspace-local skill is intentionally not installed into the operator's
+global `~/.codex/skills`.
 
-```json
-{
-  "message_id": "MESSAGE_ID",
-  "emoji": "DONE"
-}
-```
+`uninstall` removes dreamux-owned config, state, logs, and service integration
+by default. It reports workspace-local dispatcher skill paths that were created
+by `onboard`, but it does not delete files under operator workspaces by default.
 
-The `react` result returns the Feishu reaction id when Feishu supplies one.
-`remove_reaction` and `edit_message` are out of scope for MVP. The channel
-still removes its own received reaction after a successful `reply`.
+## CLI And Admin
 
-Outbound Feishu failures are logged and discarded for MVP. They are not
-persisted or retried.
+`dreamux serve` is the foreground server entry point.
 
-An optional per-boot bearer token may protect the local MCP path, but it is not
-a persisted credential and must not complicate the MVP if the implementation
-cost is high.
+The admin socket is local-only and file-permission scoped. CLI commands such as
+`status`, `doctor`, `dispatcher status`, and future dispatcher control commands
+talk to the server through the admin socket. The `feishu-mcp` stdio shim also
+uses this socket for dispatcher-scoped outbound RPC.
 
-## Feishu skill and `lark-cli`
+The admin socket is not the Feishu MCP transport.
 
-The Feishu skill and `lark-cli` are external operator-provided dependencies for
-MVP. dreamux does not install them during `onboard`, and it does not provide a
-`get_message` MCP tool.
+`dreamux dispatcher stop` and `dreamux dispatcher start` are the manual recovery
+path for a stuck turn. Stopping a dispatcher drops its in-memory queue and
+in-flight turn state; starting it follows the normal child start and thread
+resume path.
 
-The only MVP dependency on that stack is the parse-failure instruction telling
-Codex to use the Feishu skill with the `message_id`.
+## Out Of Scope
 
-## Admin and CLI
+- Per-chat Codex threads or chat-to-session routing.
+- Webhook inbound delivery.
+- Webhook-only config fields such as Feishu encrypt keys or verification tokens.
+- SQLite-backed runtime state.
+- Persisted inbound queues.
+- Persisted reaction ledgers or startup cleanup of old reactions.
+- Restarting Codex because a turn is merely slow or stuck.
+- Automatic forwarding of model output to Feishu.
+- Installing or managing the global Feishu Codex skill.
+- Pinning, bundling, or hosting a specific Codex CLI version.
+- Feishu `edit_message` and model-owned `remove_reaction`.
 
-The public CLI remains `dreamux`.
+## Known Limitations
 
-`dreamux onboard` remains the first-run setup path. It writes
-`~/.dreamux/config.json`, prepares state/log directories, installs the user
-service, and prints touched paths.
+- A dispatcher that accepts multiple chats shares one Codex context across those
+  chats. This is a trust-domain choice, not isolation.
+- Server restart drops queued and in-flight inbound messages.
+- Server restart can leave a previously added channel-owned received reaction
+  visible in Feishu because no reaction ledger is persisted.
+- A stuck Codex turn can block that dispatcher queue until the child process or
+  child WebSocket actually fails, or until the operator stops and starts that
+  dispatcher through the admin socket.
+- Same-chat coalescing reduces turn count, but per-chat batches and the
+  cross-chat queue are in-memory and not globally size-bounded in the MVP. A
+  stuck turn plus continued inbound traffic can grow memory until operator
+  intervention or process restart.
+- Codex version drift can still break protocol behavior. `dreamux` detects and
+  reports this through `doctor`, live tests, and version diagnostics instead of
+  pinning Codex.
 
-Dispatcher declaration commands operate on `~/.dreamux/config.json`:
+## Validation Targets
 
-- `dreamux dispatcher add`
-- `dreamux dispatcher remove`
-- `dreamux dispatcher list`
-
-Runtime commands communicate with the live server over the admin socket:
-
-- `dreamux dispatcher start`
-- `dreamux dispatcher stop`
-- `dreamux dispatcher status`
-- `dreamux status`
-
-The admin socket protocol may remain lightweight JSON-RPC or move to another
-small RPC protocol such as gRPC. The architectural invariant is that runtime
-commands talk to the server socket instead of editing live process state
-directly.
-
-When the server is not running, `dreamux status` may read `server.json` and
-dispatcher `status.json` to report the last known state. It must not start the
-server or any dispatcher as a side effect.
-
-## Out of scope
-
-- chat id to Codex thread id routing
-- server-hosted tm runtime management
-- SQLite and inbound persistence
-- migration from old MVP state
-- automatic model-output-to-Feishu delivery
-- `edit_message`
-- model-exposed `remove_reaction`
-- built-in Feishu skill installation
-- onboarding-managed `lark-cli`
-
-## Validation targets
-
-Future implementation work should keep at least these tests:
-
-- fake Feishu inbound reaches Codex as the `feishu_message` block
-- Codex MCP `reply` sends through the dispatcher-bound Feishu channel
-- a Codex turn without `reply` produces no Feishu outbound
-- unauthorized group messages are dropped by the access gate
-- received reaction is added after gate pass and cleared after successful reply
-- dispatcher `thread_id` is restored from `status.json` and replaced after a
-  failed resume
+- Missing `~/.dreamux/config.json` fails loudly and points to `dreamux onboard`.
+- Duplicate Feishu app ids are rejected across all declared dispatchers,
+  including disabled dispatchers.
+- `app_secret` is redacted from config display, status, doctor output, and logs.
+- Socket path builders reject paths that would exceed the supported Unix socket
+  path budget.
+- `dreamux serve` starts one Feishu long-connection WebSocket per dispatcher.
+- A fake `im.message.receive_v1` event reaches the correct Codex thread.
+- Same-chat message bursts are coalesced into one Codex turn.
+- Redelivered `message_id` values are deduped within one server process.
+- Unauthorized messages are dropped before entering Codex.
+- Multi-chat dispatcher access emits an operator-visible trust-domain warning.
+- Codex receives a dispatcher-scoped Feishu MCP stdio shim, not a loopback HTTP
+  listener, on the default path.
+- The `feishu-mcp` shim forwards `reply` and `react` to `dreamux serve` through
+  the local admin socket and never reads Feishu credentials.
+- If HTTP fallback is ever implemented, it refuses to start without a per-boot,
+  dispatcher-specific bearer token delivered through env, fd, or a `0600` state
+  file.
+- Codex text output alone sends nothing to Feishu.
+- The MCP `reply` tool reaches the serve-owned outbound RPC endpoint, sends
+  Feishu output, and clears only current-process channel-owned received
+  reactions for the replied message.
+- The MCP `react` tool adds model-owned reactions that channel cleanup does not
+  remove.
+- Restarting the server does not try to clean up old received reactions.
+- Codex app-server child or child-WebSocket failure triggers backoff restart and
+  thread resume.
+- A stuck turn alone does not trigger child restart.
+- `uninstall` reports workspace-local dispatcher skill paths but does not delete
+  them by default.
