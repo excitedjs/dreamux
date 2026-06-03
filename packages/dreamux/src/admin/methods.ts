@@ -9,6 +9,7 @@
 import type { Server } from '../server.js';
 import { AdminError } from './protocol.js';
 import type { DispatcherStatus, InboundState } from '../db/types.js';
+import { validateDispatcherId } from '../runtime/dispatcher-id.js';
 
 export type AdminHandler = (
   server: Server,
@@ -23,11 +24,20 @@ export const adminMethods: Record<string, AdminHandler> = {
   }),
 
   'dispatcher.add': (server, params) => {
-    const id = mustString(params, 'dispatcher_id');
+    const id = mustDispatcherId(params);
     const botAppId = mustString(params, 'bot_app_id');
     const botSecretRef = mustString(params, 'bot_secret_ref');
     const codexArgsJson = optionalString(params, 'codex_args_json') ?? '{}';
     const codexCwd = optionalString(params, 'codex_cwd');
+    const duplicateApp = server.repos.dispatchers
+      .list()
+      .find((row) => row.bot_app_id === botAppId && row.dispatcher_id !== id);
+    if (duplicateApp !== undefined) {
+      throw new AdminError(
+        'BAD_REQUEST',
+        `bot_app_id '${botAppId}' is already used by dispatcher '${duplicateApp.dispatcher_id}'`,
+      );
+    }
     try {
       const row = server.repos.dispatchers.create({
         dispatcher_id: id,
@@ -55,7 +65,7 @@ export const adminMethods: Record<string, AdminHandler> = {
   },
 
   'dispatcher.remove': async (server, params) => {
-    const id = mustString(params, 'dispatcher_id');
+    const id = mustDispatcherId(params);
     const row = server.repos.dispatchers.get(id);
     if (row === null) {
       throw new AdminError('DISPATCHER_NOT_FOUND', `no dispatcher with id '${id}'`);
@@ -68,7 +78,7 @@ export const adminMethods: Record<string, AdminHandler> = {
   'dispatcher.list': (server) => ({ dispatchers: server.summarize() }),
 
   'dispatcher.status': (server, params) => {
-    const id = mustString(params, 'dispatcher_id');
+    const id = mustDispatcherId(params);
     const row = server.repos.dispatchers.get(id);
     if (row === null) {
       throw new AdminError('DISPATCHER_NOT_FOUND', `no dispatcher with id '${id}'`);
@@ -87,7 +97,7 @@ export const adminMethods: Record<string, AdminHandler> = {
   },
 
   'dispatcher.start': async (server, params) => {
-    const id = mustString(params, 'dispatcher_id');
+    const id = mustDispatcherId(params);
     const row = server.repos.dispatchers.get(id);
     if (row === null) {
       throw new AdminError('DISPATCHER_NOT_FOUND', `no dispatcher with id '${id}'`);
@@ -97,7 +107,7 @@ export const adminMethods: Record<string, AdminHandler> = {
   },
 
   'dispatcher.stop': async (server, params) => {
-    const id = mustString(params, 'dispatcher_id');
+    const id = mustDispatcherId(params);
     await server.stopDispatcher(id);
     return { dispatcher_id: id, status: 'stopped' };
   },
@@ -111,6 +121,18 @@ function mustString(
     throw new AdminError('BAD_REQUEST', `missing or non-string param '${key}'`);
   }
   return params[key] as string;
+}
+
+function mustDispatcherId(
+  params: Record<string, unknown> | undefined,
+): string {
+  const id = mustString(params, 'dispatcher_id');
+  try {
+    return validateDispatcherId(id);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new AdminError('BAD_REQUEST', message);
+  }
 }
 
 function optionalString(

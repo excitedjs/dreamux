@@ -11,6 +11,7 @@ import {
 } from '@clack/prompts';
 
 import { expandHome } from '../runtime/config.js';
+import { validateDispatcherId } from '../runtime/dispatcher-id.js';
 import type { OnboardAnswers } from './types.js';
 
 export interface OnboardCliOptions {
@@ -102,7 +103,9 @@ export function answersFromOptions(
   return {
     configDir: normalizePath(options.configDir ?? defaultConfigDir(options)),
     runtimeDir: normalizePath(options.runtimeDir ?? defaultRuntimeDir(options)),
-    dispatcherId: options.dispatcherId ?? DEFAULT_DISPATCHER_ID,
+    dispatcherId: validateDispatcherId(
+      options.dispatcherId ?? DEFAULT_DISPATCHER_ID,
+    ),
     dispatcherCwd: normalizePath(dispatcherCwd),
     codexBin: options.codexBin ?? 'codex',
     botAppId,

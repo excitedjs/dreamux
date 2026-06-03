@@ -49,7 +49,7 @@ describe('dreamux uninstall', () => {
     mkdirSync(dirname(servicePath), { recursive: true });
     writeFileSync(join(configDir, 'config.json'), JSON.stringify({
       runtime_dir: runtimeDir,
-    }));
+    }), { mode: 0o600 });
     writeFileSync(join(runtimeDir, 'state.db'), '');
     writeFileSync(servicePath, '[Service]\nExecStart=dreamux serve\n');
 
@@ -149,7 +149,13 @@ describe('dreamux uninstall', () => {
       mkdirSync(configDir, { recursive: true });
       mkdirSync(runtimeDir, { recursive: true });
       mkdirSync(dirname(servicePath), { recursive: true });
-      writeFileSync(join(configDir, testCase.file), testCase.content);
+      if (testCase.file === 'config.json') {
+        writeFileSync(join(configDir, testCase.file), testCase.content, {
+          mode: 0o600,
+        });
+      } else {
+        writeFileSync(join(configDir, testCase.file), testCase.content);
+      }
       writeFileSync(join(runtimeDir, 'state.db'), '');
       writeFileSync(servicePath, '[Service]\nExecStart=dreamux serve\n');
 

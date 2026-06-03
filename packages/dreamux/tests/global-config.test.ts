@@ -26,10 +26,17 @@ import {
   adminSocketPath,
   resetRuntimeConfig,
   runtimeRoot,
+  serverJsonPath,
   setRuntimeConfig,
   stateRoot,
 } from '../src/runtime/paths.js';
 import { codexArgsToCli, parseCodexArgs } from '../src/runtime/codex-args.js';
+
+function writeConfigObjectAt(configDir: string, value: unknown): void {
+  writeFileSync(globalConfigFile({ configDir }), JSON.stringify(value), {
+    mode: 0o600,
+  });
+}
 
 describe('global config (~/.dreamux/config.json)', () => {
   let configDir: string;
@@ -56,6 +63,14 @@ describe('global config (~/.dreamux/config.json)', () => {
     rmSync(configDir, { recursive: true, force: true });
     resetRuntimeConfig();
   });
+
+  function writeConfigObject(value: unknown): void {
+    writeConfigObjectAt(configDir, value);
+  }
+
+  function writeConfigText(file: string, content: string, mode = 0o600): void {
+    writeFileSync(file, content, { mode });
+  }
 
   it('first boot creates the config dir and JSON file', () => {
     expect(existsSync(join(configDir, 'config.json'))).toBe(false);
@@ -98,7 +113,7 @@ describe('global config (~/.dreamux/config.json)', () => {
         },
       },
     });
-    writeFileSync(file, original);
+    writeConfigText(file, original);
 
     const { config, createdOnThisBoot } = loadOrInitConfig({ configDir });
     expect(createdOnThisBoot).toBe(false);
@@ -114,7 +129,7 @@ describe('global config (~/.dreamux/config.json)', () => {
 
   it('parse error fails fast with the config path', () => {
     const file = globalConfigFile({ configDir });
-    writeFileSync(file, `{"runtime_dir": "/ok"`);
+    writeConfigText(file, `{"runtime_dir": "/ok"`);
     expect(() => loadOrInitConfig({ configDir })).toThrow(/config\.json/);
     expect(() => loadOrInitConfig({ configDir })).toThrow(/dreamux config parse error/);
   });
@@ -127,6 +142,12 @@ describe('global config (~/.dreamux/config.json)', () => {
     expect(() => loadOrInitConfig({ configDir })).toThrow(/legacy dreamux config/);
     expect(() => loadConfig({ configDir })).toThrow(/Create .*config\.json/);
     expect(existsSync(jsonFile)).toBe(false);
+  });
+
+  it('loadConfig loudly fails when config.json is missing', () => {
+    expect(() => loadConfig({ configDir })).toThrow(/dreamux config is missing/);
+    expect(() => loadConfig({ configDir })).toThrow(/dreamux onboard/);
+    expect(existsSync(globalConfigFile({ configDir }))).toBe(false);
   });
 
   it('redacts Feishu app secrets for display', () => {
@@ -161,26 +182,130 @@ describe('global config (~/.dreamux/config.json)', () => {
   });
 
   it('rejects invalid config values', () => {
-    const file = globalConfigFile({ configDir });
-    writeFileSync(file, JSON.stringify({ codex: { approval_policy: 'ask-every-time' } }));
+    writeConfigObject({ codex: { approval_policy: 'ask-every-time' } });
     expect(() => loadOrInitConfig({ configDir })).toThrow(
       /approval_policy='ask-every-time'/,
     );
 
-    writeFileSync(file, JSON.stringify({ runtime_dir: 42 }));
+    writeConfigObject({ runtime_dir: 42 });
     expect(() => loadOrInitConfig({ configDir })).toThrow(
       /runtime_dir must be a string/,
     );
 
-    writeFileSync(file, JSON.stringify({ codex: { initialize_timeout_ms: 0 } }));
+    writeConfigObject({ codex: { initialize_timeout_ms: 0 } });
     expect(() => loadOrInitConfig({ configDir })).toThrow(
       /initialize_timeout_ms must be > 0/,
     );
 
-    writeFileSync(file, JSON.stringify({ outbound: { retries: -1 } }));
+    writeConfigObject({ outbound: { retries: -1 } });
     expect(() => loadOrInitConfig({ configDir })).toThrow(
       /retries must be >= 0/,
     );
+  });
+
+  it('accepts the MVP Feishu bot schema', () => {
+    writeConfigObject({
+      feishu: {
+        bots: {
+          'dispatcher-a': {
+            app_id: 'app-a',
+            app_secret: 'secret-a',
+          },
+          'dispatcher.b': {
+            app_id: 'app-b',
+            app_secret: 'secret-b',
+          },
+        },
+      },
+    });
+
+    const { config } = loadConfig({ configDir });
+    expect(config.feishu.bots['dispatcher-a']).toEqual({
+      app_id: 'app-a',
+      app_secret: 'secret-a',
+    });
+    expect(config.feishu.bots['dispatcher.b']).toEqual({
+      app_id: 'app-b',
+      app_secret: 'secret-b',
+    });
+  });
+
+  it('rejects unsupported Feishu bot secret fields', () => {
+    writeConfigObject({
+      feishu: {
+        bots: {
+          flow: {
+            app_id: 'app-flow',
+            app_secret: 'secret-flow',
+            encrypt_key: 'future-webhook-only',
+          },
+        },
+      },
+    });
+
+    expect(() => loadConfig({ configDir })).toThrow(/encrypt_key is not supported/);
+    expect(() => loadConfig({ configDir })).toThrow(/only app_id and app_secret/);
+  });
+
+  it('requires unique Feishu app_id values across all dispatchers', () => {
+    writeConfigObject({
+      feishu: {
+        bots: {
+          flow: {
+            app_id: 'app-shared',
+            app_secret: 'secret-flow',
+          },
+          docs: {
+            app_id: 'app-shared',
+            app_secret: 'secret-docs',
+          },
+        },
+      },
+    });
+
+    expect(() => loadConfig({ configDir })).toThrow(/duplicates feishu\.bots\.flow\.app_id/);
+  });
+
+  it('rejects dispatcher ids that would not be stable path segments', () => {
+    writeConfigObject({
+      feishu: {
+        bots: {
+          'team/alpha beta': {
+            app_id: 'app-flow',
+            app_secret: 'secret-flow',
+          },
+        },
+      },
+    });
+
+    expect(() => loadConfig({ configDir })).toThrow(/feishu\.bots key/);
+    expect(() => loadConfig({ configDir })).toThrow(/ASCII letters/);
+  });
+
+  it('requires non-empty Feishu app_id and app_secret values', () => {
+    writeConfigObject({
+      feishu: {
+        bots: {
+          flow: {
+            app_id: '',
+            app_secret: 'secret-flow',
+          },
+        },
+      },
+    });
+    expect(() => loadConfig({ configDir })).toThrow(/app_id must be a non-empty string/);
+
+    writeConfigObject({
+      feishu: {
+        bots: {
+          flow: {
+            app_id: 'app-flow',
+            app_secret: '   ',
+          },
+        },
+      },
+    });
+    expect(() => loadConfig({ configDir })).toThrow(/app_secret must be a non-empty string/);
   });
 
   it('expandHome expands ~/ and bare ~', () => {
@@ -201,6 +326,14 @@ describe('global config (~/.dreamux/config.json)', () => {
     expect(createdOnThisBoot).toBe(true);
     const mode = statSync(configFile).mode & 0o777;
     expect(mode).toBe(0o600);
+  });
+
+  it('rejects existing config files that are not mode 0600', () => {
+    if (process.platform === 'win32') return;
+    const file = globalConfigFile({ configDir });
+    writeConfigText(file, JSON.stringify(BUILT_IN_DEFAULTS), 0o644);
+
+    expect(() => loadConfig({ configDir })).toThrow(/must be mode 0600/);
   });
 
   it('throws when the config dir cannot be written', () => {
@@ -245,9 +378,9 @@ describe('precedence: env > per-dispatcher > config > built-in', () => {
   });
 
   it('runtimeRoot aliases stateRoot and ignores config.runtime_dir', () => {
-    writeFileSync(globalConfigFile({ configDir }), JSON.stringify({
+    writeConfigObjectAt(configDir, {
       runtime_dir: '/tmp/from-config',
-    }));
+    });
     const { config } = loadOrInitConfig({ configDir });
     setRuntimeConfig(config);
     expect(runtimeRoot()).toBe(stateRoot());
@@ -255,9 +388,9 @@ describe('precedence: env > per-dispatcher > config > built-in', () => {
   });
 
   it('CODEX_HOST_RUNTIME_DIR no longer overrides runtime paths', () => {
-    writeFileSync(globalConfigFile({ configDir }), JSON.stringify({
+    writeConfigObjectAt(configDir, {
       runtime_dir: '/tmp/from-config',
-    }));
+    });
     const { config } = loadOrInitConfig({ configDir });
     setRuntimeConfig(config);
     process.env['CODEX_HOST_RUNTIME_DIR'] = '/tmp/from-env';
@@ -265,10 +398,10 @@ describe('precedence: env > per-dispatcher > config > built-in', () => {
   });
 
   it('adminSocketPath is fixed under stateRoot', () => {
-    writeFileSync(globalConfigFile({ configDir }), JSON.stringify({
+    writeConfigObjectAt(configDir, {
       runtime_dir: '/tmp/rt',
       admin_socket: '/tmp/cfg-admin.sock',
-    }));
+    });
     const { config } = loadOrInitConfig({ configDir });
     setRuntimeConfig(config);
     expect(adminSocketPath()).toBe(join(stateRoot(), 'admin.sock'));
@@ -278,12 +411,13 @@ describe('precedence: env > per-dispatcher > config > built-in', () => {
   });
 
   it('admin_socket no longer derives from runtime_dir', () => {
-    writeFileSync(globalConfigFile({ configDir }), JSON.stringify({
+    writeConfigObjectAt(configDir, {
       runtime_dir: '/tmp/rt',
-    }));
+    });
     const { config } = loadOrInitConfig({ configDir });
     setRuntimeConfig(config);
     expect(adminSocketPath()).toBe(join(stateRoot(), 'admin.sock'));
+    expect(serverJsonPath()).toBe(join(stateRoot(), 'server.json'));
   });
 
   it('parseCodexArgs: per-dispatcher overrides config defaults', () => {
@@ -335,19 +469,17 @@ describe('sandbox_mode precedence', () => {
   });
 
   it('config file value is loaded and validated', () => {
-    writeFileSync(
-      globalConfigFile({ configDir }),
-      JSON.stringify({ codex: { sandbox_mode: 'danger-full-access' } }),
-    );
+    writeConfigObjectAt(configDir, {
+      codex: { sandbox_mode: 'danger-full-access' },
+    });
     const { config } = loadOrInitConfig({ configDir });
     expect(config.codex.sandbox_mode).toBe('danger-full-access');
   });
 
   it('config rejects an invalid sandbox_mode at load time', () => {
-    writeFileSync(
-      globalConfigFile({ configDir }),
-      JSON.stringify({ codex: { sandbox_mode: 'not-a-mode' } }),
-    );
+    writeConfigObjectAt(configDir, {
+      codex: { sandbox_mode: 'not-a-mode' },
+    });
     expect(() => loadOrInitConfig({ configDir })).toThrow(
       /sandbox_mode='not-a-mode'/,
     );

@@ -76,23 +76,23 @@ output; **no `tsx` is needed at runtime** (PR #6).
 
 The launcher works from any cwd and via symlinks (PR #6 + bin-launcher tests).
 
-The server keeps operator-edited config separate from runtime state — by design (see
-[the global-config decision](../../.agents/decisions/global-config-dir.md)):
+The server keeps operator-edited config separate from state and logs — by
+design (see [the top-level design](../../.agents/decisions/top-level-design.md)):
 
 | Path | Purpose | Source of truth |
 |---|---|---|
-| `~/.dreamux/config.json`                 | User-editable global config and Feishu bot secrets — auto-created on first boot; edit and restart to apply | the operator |
-| `~/.dreamux/runtime/state.db`            | SQLite (dispatchers + inbound buffer)      | the server |
-| `~/.dreamux/runtime/admin.sock`          | Admin Unix socket (`0600`)                 | the server |
+| `~/.dreamux/config.json`                 | User-editable config and Feishu bot secrets — created by `dreamux onboard`; edit and restart to apply | the operator |
+| `~/.dreamux/state/state.db`              | Legacy SQLite state until the MVP state cleanup lands | the server |
+| `~/.dreamux/state/admin.sock`            | Admin Unix socket (`0600`)                 | the server |
 | dispatcher `codex_cwd`                   | Codex app-server cwd, configured during onboard or dispatcher registration | the operator |
 | `~/.codex/`                              | Codex global default home: auth, memory, config, and skills | the operator / Codex |
 | `~/.codex/skills/codexmux-dispatcher/SKILL.md` | Dispatcher skill copied by `dreamux onboard` | dreamux installer |
-| `~/.dreamux/runtime/dispatchers/<id>/app-server-control/as.sock` | Codex app-server Unix socket | the server |
-| `~/.dreamux/runtime/dispatchers/<id>/*.log` | Codex stdout / stderr                    | the server |
+| `~/.dreamux/state/<id>/codex.sock`       | Codex app-server Unix socket              | the server |
+| `~/.dreamux/logs/codex-app-server/<id>.log` | Codex app-server stdout                 | the server |
 
-`rm -rf ~/.dreamux/runtime` is a safe runtime recovery — your dreamux config
-and global Codex auth survive. `runtime_dir` and `admin_socket` paths in the
-config can move the runtime subtree anywhere you like.
+`rm -rf ~/.dreamux/state ~/.dreamux/logs` is a state/log recovery path — your
+dreamux config and global Codex auth survive. `runtime_dir` and `admin_socket`
+keys in older config files no longer move the effective state or socket paths.
 
 ## Configure a dispatcher
 
@@ -112,9 +112,8 @@ config can move the runtime subtree anywhere you like.
 For normal installs, prefer `dreamux onboard`; it writes
 `feishu.bots.<dispatcher-id>.app_secret` into `~/.dreamux/config.json` and
 registers the dispatcher with `bot_secret_ref=config:<dispatcher-id>`.
-`dreamux config show` redacts these secrets by default; use
-`dreamux config show --raw` only when you intentionally need the unredacted
-local file.
+`dreamux config show` redacts these secrets. There is no CLI raw mode for
+printing the unredacted local file.
 
 ## MVP verification path (issue #2 §"MVP 验收脚本")
 
@@ -132,13 +131,13 @@ local file.
 
 ## Configuration reference
 
-Precedence for every config-able value (highest wins): env var →
+Precedence for Codex-related config values (highest wins): env var →
 per-dispatcher field → `~/.dreamux/config.json` → built-in default.
 See [the global-config decision](../../.agents/decisions/global-config-dir.md).
 
 ### Global: `~/.dreamux/config.json`
 
-Auto-created on first boot with this default shape:
+Created by `dreamux onboard` with this shape:
 
 ```json
 {
@@ -172,6 +171,10 @@ default JSON over it; manually create `config.json` preserving the old
 `runtime_dir` and other settings, add the needed `feishu.bots` entries, then
 move the legacy TOML file aside.
 
+The `runtime_dir` and `admin_socket` keys are legacy compatibility fields.
+Current runtime paths are fixed under `~/.dreamux/state` and
+`~/.dreamux/logs`.
+
 ### `codex_args_json` (per-dispatcher, overrides global)
 
 JSON object stored in `dispatchers.codex_args_json`:
@@ -190,8 +193,8 @@ JSON object stored in `dispatchers.codex_args_json`:
 
 | Var                          | Purpose                                            |
 | ---------------------------- | -------------------------------------------------- |
-| `CODEX_HOST_RUNTIME_DIR`     | Override `runtime_dir`                             |
-| `CODEX_HOST_ADMIN_SOCKET`    | Override admin Unix socket path                    |
+| `CODEX_HOST_RUNTIME_DIR`     | Legacy; no longer changes effective runtime paths  |
+| `CODEX_HOST_ADMIN_SOCKET`    | Legacy; no longer changes the admin socket path    |
 | `CODEX_HOST_CODEX_BIN`       | Override `codex.bin`                               |
 | `DREAMUX_CONFIG_DIR`         | Override `~/.dreamux` (where `config.json` lives)  |
 | `BOT_SECRET_<NAME>`          | Legacy/manual bot secrets referenced by `env:BOT_SECRET_<NAME>` |

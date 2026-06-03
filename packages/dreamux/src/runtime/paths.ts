@@ -28,6 +28,7 @@ import {
   BUILT_IN_DEFAULTS,
   type DreamuxConfig,
 } from './config.js';
+import { validateDispatcherId } from './dispatcher-id.js';
 
 export const DREAMUX_UNIX_SOCKET_PATH_MAX_BYTES = 103;
 
@@ -35,8 +36,8 @@ let currentConfig: DreamuxConfig = BUILT_IN_DEFAULTS;
 
 /**
  * Set the active configuration snapshot. Called once by Server.start() with
- * the result of loadOrInitConfig(); tests can call it to inject a custom
- * snapshot. Idempotent.
+ * the result of loadConfig(); tests can call it to inject a custom snapshot.
+ * Idempotent.
  */
 export function setRuntimeConfig(config: DreamuxConfig): void {
   currentConfig = config;
@@ -57,6 +58,10 @@ export function dreamuxRoot(): string {
 
 export function stateRoot(): string {
   return join(dreamuxRoot(), 'state');
+}
+
+export function serverJsonPath(): string {
+  return join(stateRoot(), 'server.json');
 }
 
 export function logsRoot(): string {
@@ -166,8 +171,5 @@ export function assertUnixSocketPathBudget(path: string, label: string): string 
 }
 
 export function dispatcherPathSegment(id: string): string {
-  if (id.trim() === '') {
-    throw new Error('dispatcher id must not be empty when building paths');
-  }
-  return id.replaceAll(/[^A-Za-z0-9._-]/g, '_');
+  return validateDispatcherId(id);
 }

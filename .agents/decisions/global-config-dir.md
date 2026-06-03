@@ -32,11 +32,12 @@ We needed a user-editable global config that is:
 
 ## Decision
 
-Create `~/.dreamux/config.json` at server startup if absent. Subsequent boots
-merge missing keys with built-in defaults in memory. `dreamux onboard` writes
-the file with mode `0600` and upserts only the current
-`feishu.bots.<dispatcher-id>` entry when the JSON file already exists; existing
-global settings and other bot secrets are preserved.
+Historically this decision created `~/.dreamux/config.json` at server startup
+if absent. The current MVP, superseded by top-level-design, fails loudly when
+the file is missing from `dreamux serve`; `dreamux onboard` creates the file
+with mode `0600` and upserts only the current `feishu.bots.<dispatcher-id>`
+entry when the JSON file already exists. Existing global settings and other bot
+secrets are preserved.
 
 Older installs that have only `~/.dreamux/config.toml` fail fast with an
 explicit migration message. dreamux does not silently create default JSON over
@@ -82,8 +83,8 @@ a same-key global default. See `src/runtime/codex-args.ts`.
 
 Dispatcher rows store `bot_secret_ref=config:<dispatcher-id>` for onboarded
 bots; the actual Feishu app secret lives in `feishu.bots.<dispatcher-id>`.
-`dreamux config show` redacts `app_secret` by default. Operators must pass
-`--raw` explicitly to print the unredacted local file.
+`dreamux config show` redacts `app_secret`; there is no CLI raw mode for
+printing the unredacted local file.
 
 ## Consequences
 
@@ -102,7 +103,7 @@ bots; the actual Feishu app secret lives in `feishu.bots.<dispatcher-id>`.
 - A typo in the JSON file fails server startup
   but does **not** auto-revert to defaults. That's deliberate — silent
   fallback would mask the very mistakes the file is supposed to surface.
-  Use `dreamux config show --raw` when redaction cannot parse a broken file.
+  Fix the JSON file directly when redaction cannot parse it.
 - A legacy `config.toml` without `config.json` fails startup/onboard instead of
   being ignored. Manual migration is required so the old runtime directory and
   dispatcher database remain visible.

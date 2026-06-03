@@ -172,8 +172,8 @@ is stdio.
 
 Socket path builders must live in `src/runtime/paths.ts`. They must enforce a
 short Unix socket path budget before spawning child processes. Dispatcher ids are
-sanitized and length-checked so derived `admin.sock` and `codex.sock` paths stay
-within Linux and macOS `sun_path` limits.
+validated as stable path segments and length-checked so derived `admin.sock` and
+`codex.sock` paths stay within Linux and macOS `sun_path` limits.
 
 There is no `runtime_dir`, no SQLite database, no persisted inbound message
 queue, and no persisted reaction ledger.
