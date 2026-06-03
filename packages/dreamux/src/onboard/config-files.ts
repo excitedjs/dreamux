@@ -3,6 +3,7 @@ import {
   BUILT_IN_DEFAULTS,
   stringifyConfig,
 } from '../runtime/config.js';
+import { validateDispatcherId } from '../runtime/dispatcher-id.js';
 import type { OnboardAnswers } from './types.js';
 
 export function buildDreamuxConfigJson(answers: OnboardAnswers): string {
@@ -13,8 +14,9 @@ export function dreamuxConfigFromAnswers(
   answers: OnboardAnswers,
   existing?: DreamuxConfig,
 ): DreamuxConfig {
+  validateDispatcherId(answers.dispatcherId);
   const base = existing ?? dreamuxConfigDefaultsFromAnswers(answers);
-  return {
+  const next: DreamuxConfig = {
     runtime_dir: base.runtime_dir,
     admin_socket: base.admin_socket,
     codex: {
@@ -32,6 +34,8 @@ export function dreamuxConfigFromAnswers(
       },
     },
   };
+  assertUniqueFeishuAppIds(next);
+  return next;
 }
 
 function dreamuxConfigDefaultsFromAnswers(
@@ -67,4 +71,17 @@ export function dispatcherCodexArgsJson(): string {
     sandboxMode: 'workspace-write',
     extraArgs: [],
   });
+}
+
+function assertUniqueFeishuAppIds(config: DreamuxConfig): void {
+  const seen = new Map<string, string>();
+  for (const [dispatcherId, bot] of Object.entries(config.feishu.bots)) {
+    const existing = seen.get(bot.app_id);
+    if (existing !== undefined && existing !== dispatcherId) {
+      throw new Error(
+        `Feishu app_id for dispatcher '${dispatcherId}' duplicates dispatcher '${existing}'`,
+      );
+    }
+    seen.set(bot.app_id, dispatcherId);
+  }
 }

@@ -15,9 +15,11 @@ import yargs, { type Argv } from 'yargs';
 import { hideBin } from 'yargs/helpers';
 
 import {
+  assertConfigFileMode,
   globalConfigFile,
   redactConfigForDisplay,
 } from '../runtime/config.js';
+import { validateDispatcherId } from '../runtime/dispatcher-id.js';
 import { runOnboard } from '../onboard/run.js';
 import {
   runUninstall,
@@ -65,6 +67,10 @@ function adminEnv(): NodeJS.ProcessEnv {
 function requiredString(value: unknown, name: string): string {
   if (typeof value === 'string' && value.trim() !== '') return value;
   throw new Error(`missing required option --${name}`);
+}
+
+function requiredDispatcherId(value: unknown): string {
+  return validateDispatcherId(requiredString(value, 'id'));
 }
 
 function optionalString(value: unknown): string | null {
@@ -121,7 +127,7 @@ function buildDispatcherCommands(y: Argv): Argv {
           'dispatcher',
           'add',
           '--id',
-          requiredString(argv.id, 'id'),
+          requiredDispatcherId(argv.id),
           '--bot-app-id',
           requiredString(argv.botAppId, 'bot-app-id'),
           '--bot-secret-ref',
@@ -144,7 +150,7 @@ function buildDispatcherCommands(y: Argv): Argv {
         const verb = requiredString(argv._[1], 'dispatcher verb') as DispatcherVerb;
         await execEntry(
           SERVER_CTL_ENTRY,
-          ['dispatcher', verb, '--id', requiredString(argv.id, 'id')],
+          ['dispatcher', verb, '--id', requiredDispatcherId(argv.id)],
           adminEnv(),
         );
       },
@@ -281,20 +287,15 @@ function buildConfigCommands(y: Argv): Argv {
     .command(
       'show',
       'Print the dreamux global config file',
-      (yy) =>
-        yy.option('raw', {
-          type: 'boolean',
-          describe: 'Print unredacted config, including channel secrets',
-        }),
-      (argv) => {
+      (yy) => yy,
+      () => {
         const file = globalConfigFile();
         if (!existsSync(file)) {
           throw new Error(`config file does not exist: ${file}`);
         }
+        assertConfigFileMode(file);
         const raw = readFileSync(file, 'utf8');
-        process.stdout.write(
-          argv.raw === true ? raw : redactConfigForDisplay(raw, file),
-        );
+        process.stdout.write(redactConfigForDisplay(raw, file));
       },
     )
     .demandCommand(1, 'Choose a config command')

@@ -18,6 +18,7 @@ import {
   logsRoot,
   resetRuntimeConfig,
   runtimeRoot,
+  serverJsonPath,
   serverLogPath,
   stateRoot,
   unixSocketPathFitsBudget,
@@ -48,6 +49,7 @@ describe('runtime paths', () => {
     expect(stateRoot()).toBe(join(dreamuxRoot(), 'state'));
     expect(logsRoot()).toBe(join(dreamuxRoot(), 'logs'));
     expect(runtimeRoot()).toBe(stateRoot());
+    expect(serverJsonPath()).toBe(join(stateRoot(), 'server.json'));
     expect(databasePath()).toBe(join(stateRoot(), 'state.db'));
     expect(adminSocketPath()).toBe(join(stateRoot(), 'admin.sock'));
 
@@ -78,10 +80,12 @@ describe('runtime paths', () => {
     );
   });
 
-  it('sanitizes dispatcher ids before using them as path segments', () => {
-    expect(dispatcherDir('team/alpha beta')).toBe(
-      join(stateRoot(), 'team_alpha_beta'),
+  it('rejects dispatcher ids that are not valid path segments', () => {
+    expect(dispatcherDir('dispatcher-a')).toBe(
+      join(stateRoot(), 'dispatcher-a'),
     );
+    expect(() => dispatcherDir('team/alpha beta')).toThrow(/dispatcher id/);
+    expect(() => dispatcherDir('team_alpha_beta')).not.toThrow();
   });
 
   it('rejects Unix socket paths that exceed the safe sun_path budget', () => {

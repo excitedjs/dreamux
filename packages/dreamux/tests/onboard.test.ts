@@ -295,6 +295,7 @@ describe('dreamux onboard', () => {
           },
         },
       }),
+      { mode: 0o600 },
     );
     const answers = testAnswers({
       configDir,
@@ -354,6 +355,58 @@ describe('dreamux onboard', () => {
     } finally {
       db.close();
     }
+  });
+
+  it('rejects a new dispatcher that reuses an existing Feishu app_id', async () => {
+    const runner = new FakeRunner();
+    const configDir = join(root, 'config');
+    const existingConfig = JSON.stringify({
+      runtime_dir: join(root, 'existing-runtime'),
+      admin_socket: null,
+      codex: {
+        bin: 'codex',
+        approval_policy: 'never',
+        sandbox_mode: 'workspace-write',
+        extra_args: [],
+        initialize_timeout_ms: 10000,
+      },
+      outbound: {
+        retries: 3,
+        retry_delay_ms: 1000,
+      },
+      feishu: {
+        bots: {
+          flow: {
+            app_id: 'app-shared',
+            app_secret: 'secret-flow',
+          },
+        },
+      },
+    });
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(join(configDir, 'config.json'), existingConfig, {
+      mode: 0o600,
+    });
+
+    await expect(
+      runOnboard({
+        answers: testAnswers({
+          configDir,
+          dispatcherId: 'docs',
+          botAppId: 'app-shared',
+          botAppSecret: 'secret-docs',
+          registerService: false,
+        }),
+        runner,
+        platform: 'linux',
+        homeDir: join(root, 'home'),
+        env: {},
+      }),
+    ).rejects.toThrow(/duplicates dispatcher 'flow'/);
+
+    expect(readFileSync(join(configDir, 'config.json'), 'utf8')).toBe(
+      existingConfig,
+    );
   });
 
   it('fails non-interactive setup when required channel inputs are missing', () => {

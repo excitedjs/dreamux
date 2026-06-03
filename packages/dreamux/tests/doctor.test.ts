@@ -121,6 +121,21 @@ describe('dreamux doctor command', () => {
     expect(result.dispatchers[0]?.managedService).toBeNull();
   });
 
+  it('does not expose Feishu app secrets in doctor results', async () => {
+    const runner = new FakeRunner();
+    const config = writeConfig();
+    writeDispatcher(config.runtimeDir, { auth: true });
+
+    const result = await runDreamuxDoctor({
+      runner,
+      platform: 'linux',
+      homeDir: join(root, 'home'),
+      env: {},
+    });
+
+    expect(JSON.stringify(result)).not.toContain('secret-test');
+  });
+
   it('checks managed-service dispatcher auth when a service is installed', async () => {
     const runner = new FakeRunner();
     const config = writeConfig();
@@ -173,6 +188,7 @@ describe('dreamux doctor command', () => {
           },
         },
       }),
+      { mode: 0o600 },
     );
     return { runtimeDir };
   }
