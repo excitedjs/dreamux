@@ -54,9 +54,9 @@ status, and uninstall operations.
 
 Dispatcher app-server processes do not set `CODEX_HOME`; they use Codex's
 global default home (`~/.codex`) for auth, config, and memory. The
-`codexmux` consumer is still the dispatcher agent: the dispatcher is the
-long-lived Codex app-server, and its dispatcher skill is scoped to that
-agent's workspace. Onboarding installs that skill by directly copying the
+The consumer is still the dispatcher agent: the dispatcher is the long-lived
+Codex app-server, and its dispatcher skill is scoped to that agent's
+workspace. Onboarding installs that skill by directly copying the
 bundled `SKILL.md` into `<dispatcher cwd>/.codex/skills/dispatcher/SKILL.md`.
 
 Skill installation, Codex global state, and app-server control state are

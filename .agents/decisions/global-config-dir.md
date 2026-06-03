@@ -1,144 +1,74 @@
 # Global config in `~/.dreamux/config.json`
 
-- **Status:** Superseded in runtime/config shape by [top-level-design](top-level-design.md); historical context only
+- **Status:** Superseded by [top-level-design](top-level-design.md); historical context only
 - **Date:** 2026-05-28
-- **Affects:** server startup, codex CLI invocation, outbound retry policy, paths.* helpers
+- **Affects:** server startup, Codex CLI invocation, config ownership
 - **PR / Issue:** feat/global-config-dir
 
 ## Context
 
+This record originally introduced a user-editable dreamux config file so
+operators did not have to repeat Codex defaults and local Feishu credentials in
+source code or service environment variables.
+
 Current implementation guidance lives in [top-level-design](top-level-design.md).
-In particular, the MVP target no longer uses a configurable `runtime_dir`,
-SQLite-backed dispatcher state, automatic config creation at server startup,
-or automatic assistant-text outbound delivery. The record below documents the
-older global-config decision and why it existed.
+The current MVP keeps the same high-level ownership split but replaces the
+older runtime/config shape:
 
-Pre-config, every dispatcher had to repeat the same `approval_policy=never`
-inside its `codex_args_json`, every operator had to remember
-`CODEX_HOST_CODEX_BIN`, and every retry/timeout tuning was a source-level
-constant that needed a rebuild. The runtime data dir originally sat outside
-the user-editable dreamux config tree and risked drifting into a second
-operator-facing home. Mixing user-editable configuration with server-owned
-state (SQLite, sockets, logs) makes recovery unclear.
+- `~/.dreamux/config.json` is the only operator-editable dreamux config source.
+- Dispatcher declarations live in the top-level `dispatchers` array.
+- Server-owned state lives under `~/.dreamux/state/`.
+- Server-owned logs live under `~/.dreamux/logs/`.
+- Dispatcher app-server processes use Codex's global default home
+  (`~/.codex`) for auth, memory, and config.
 
-We needed a user-editable global config that is:
+## Current Rules
 
-- separate from runtime state (so blowing away state can't lose settings)
-- failure-loud (parse error tells the operator exactly which line to fix)
-- backward-compatible (env vars and per-dispatcher fields keep working
-  without an upgrade prompt)
-- able to store local channel secrets created by onboarding without relying on
-  managed-service environment injection
+`dreamux serve` fails loudly when `config.json` is missing or invalid. It does
+not silently create defaults at server startup. `dreamux onboard` creates or
+updates the file with mode `0600`.
 
-## Decision
+The current config shape contains:
 
-Historically this decision created `~/.dreamux/config.json` at server startup
-if absent. The current MVP, superseded by top-level-design, fails loudly when
-the file is missing from `dreamux serve`; `dreamux onboard` creates the file
-with mode `0600` and upserts only the current `feishu.bots.<dispatcher-id>`
-entry when the JSON file already exists. Existing global settings and other bot
-secrets are preserved.
+- Global Codex defaults under `codex`.
+- Dispatcher declarations under `dispatchers`.
+- Per-dispatcher Feishu `app_id` and `app_secret`.
+- Per-dispatcher Codex overrides under `dispatchers[].codex`.
 
-Older installs that have only `~/.dreamux/config.toml` fail fast with an
-explicit migration message. dreamux does not silently create default JSON over
-legacy TOML because doing so can hide the previous `runtime_dir` and dispatcher
-database.
+Webhook-only verification/encryption fields are not part of the MVP config
+schema. SQLite-backed state, durable inbound buffers, and automatic
+assistant-text outbound are also not part of the current runtime contract.
 
-Path overrides:
+`dreamux config show`, `status`, `doctor`, and logs must redact Feishu secrets.
+There is no CLI raw mode for printing the unredacted local config.
 
-- Default config dir: `~/.dreamux/`
-- Override via `DREAMUX_CONFIG_DIR` env (mostly for tests)
+## Precedence
 
-Precedence for every config-able value (highest wins):
+Codex-related values are resolved in this order, highest first:
 
-1. Environment variables — `CODEX_HOST_RUNTIME_DIR`,
-   `CODEX_HOST_ADMIN_SOCKET`, `CODEX_HOST_CODEX_BIN`. Escape hatch for
-   CI / one-off debug runs.
-2. Per-dispatcher fields — `dispatchers.codex_args_json` (`approvalPolicy`,
-   `extraArgs`). Already existed; still authoritative for one dispatcher.
-3. `~/.dreamux/config.json` — global defaults and Feishu bot secrets the operator edits by hand.
-4. Built-in defaults compiled into the binary (`src/runtime/config.ts`
-   `BUILT_IN_DEFAULTS`).
+1. Environment variables, such as `CODEX_HOST_CODEX_BIN`.
+2. Per-dispatcher `dispatchers[].codex` fields.
+3. Global `codex` fields in `~/.dreamux/config.json`.
+4. Built-in defaults compiled into `src/runtime/config.ts`.
 
-Fields sunk into the config (this PR):
-
-| Key | Default | What it replaces |
-|---|---|---|
-| `runtime_dir` | `~/.dreamux/runtime` | Hard-coded default in `paths.runtimeRoot` |
-| `admin_socket` | (derived from `runtime_dir`) | Hard-coded default in `paths.adminSocketPath` |
-| `codex.bin` | `codex` | Hard-coded default in `supervisor.ts` |
-| `codex.approval_policy` | `never` | Per-dispatcher boilerplate in every `codex_args_json` |
-| `codex.sandbox_mode` | `workspace-write` | New: codex 0.134's three-way sandbox choice (`read-only` / `workspace-write` / `danger-full-access`). Was previously only settable via raw `codex.extra_args = ["-c", "sandbox_mode=..."]` with no validation; promoted to a first-class key. |
-| `codex.extra_args` | `[]` | Per-dispatcher boilerplate; also new — no way to set a machine-wide default before |
-| `codex.initialize_timeout_ms` | `10000` | Hard-coded constant in `handshake.ts` |
-| `outbound.retries` | `3` | Hard-coded constant in `turn-manager.ts` |
-| `outbound.retry_delay_ms` | `1000` | Hard-coded constant in `turn-manager.ts` |
-| `feishu.bots.<id>.app_id` | none | Onboarded Feishu app id for dispatcher `<id>` |
-| `feishu.bots.<id>.app_secret` | none | Onboarded Feishu app secret for dispatcher `<id>` |
-
-Per-dispatcher `extraArgs` are **appended** to global `codex.extra_args`,
-not overwritten — relies on codex's "last write wins" semantics for
-repeated `-c key=value`, so a per-dispatcher entry effectively overrides
-a same-key global default. See `src/runtime/codex-args.ts`.
-
-Dispatcher rows store `bot_secret_ref=config:<dispatcher-id>` for onboarded
-bots; the actual Feishu app secret lives in `feishu.bots.<dispatcher-id>`.
-`dreamux config show` redacts `app_secret`; there is no CLI raw mode for
-printing the unredacted local file.
+Per-dispatcher `extra_args` are appended after global `codex.extra_args`, which
+matches Codex's last-write-wins behavior for repeated `-c key=value` options.
 
 ## Consequences
 
-**Costs / constraints:**
+The useful part of this older decision remains: config is operator-owned and
+separate from disposable server state. The current top-level design owns the
+exact schema and runtime path contract.
 
-- On every server boot we now read a file in `~/.dreamux/`. Negligible.
-- The file is created with mode `0600`. Operators expecting world-readable
-  configs need to chmod after the fact (and document why).
-- All dreamux-owned state now sits under `~/.dreamux/`: user-editable config
-  at the root, server-owned runtime state under `~/.dreamux/runtime/`.
-  Global Codex auth, memory, config, and skills remain under Codex's default
-  `~/.codex/` home and are not controlled by dreamux runtime cleanup.
+Operators can recover from bad server state by removing `~/.dreamux/state/` and
+`~/.dreamux/logs/` without losing Feishu credentials or Codex auth.
 
-**Foot-guns:**
+## Alternatives Considered
 
-- A typo in the JSON file fails server startup
-  but does **not** auto-revert to defaults. That's deliberate — silent
-  fallback would mask the very mistakes the file is supposed to surface.
-  Fix the JSON file directly when redaction cannot parse it.
-- A legacy `config.toml` without `config.json` fails startup/onboard instead of
-  being ignored. Manual migration is required so the old runtime directory and
-  dispatcher database remain visible.
-- `codex.sandbox_mode = "danger-full-access"` paired with
-  `approval_policy = "never"` is effectively giving every bot user shell
-  access at the operator's privilege level — only set it when the trust
-  model already covers that (e.g. a tm-cross-worktree flow that needs to
-  chdir out of the dispatcher's cwd). `workspace-write` is the safer
-  default and what the auto-created file ships with.
-- `runtime_dir` and `admin_socket` paths support a leading `~/` for the
-  user's home; bare relative paths pass through unchanged. We considered
-  rejecting relative paths up front but left them alone so downstream
-  errors (file-not-found) keep their original wording.
-- Env vars still win. An operator who exported `CODEX_HOST_CODEX_BIN` in
-  their shell and forgot will keep getting that codex regardless of what
-  the config file says. Logged at startup via the `[server] loaded global
-  config from …` line — env values are not echoed (they could be paths
-  with sensitive context).
-
-## Alternatives considered
-
-- **Put config in a server runtime directory:** rejected. The whole point of
-  the split is that the runtime subtree is `rm -rf`-safe while config is
-  operator-owned; mixing settings into runtime state re-creates the original
-  problem.
-- **TOML or YAML instead of JSON**: JSON is now used for dreamux-owned config.
-  Codex may still maintain its own `~/.codex/config.toml`, but dreamux does not
-  write TOML config files. JSON keeps Feishu secret storage and redaction logic
-  simple and explicit.
-- **No fallback to built-in defaults; require all keys present**:
-  rejected. Forward-compat for adding new keys would force every operator
-  to re-add fields after every upgrade. Built-in defaults make new keys
-  show up with a sensible value and a comment in the file header
-  pointing to the upgrade note.
-- **Rewrite the file on schema bumps to add new keys**: rejected. We'd
-  have to merge user edits with the new template. Operators expect their
-  file to be the source of truth — extending the file is a follow-up
-  decision per upgrade.
+- **Put config under server-owned state:** rejected because state must be
+  removable without losing operator settings.
+- **TOML or YAML instead of JSON:** rejected for dreamux-owned config. JSON
+  keeps local secret storage and redaction logic simple and explicit. Codex may
+  still maintain its own TOML config under `~/.codex`.
+- **Require every key to be present:** rejected. Built-in defaults keep new
+  config keys forward-compatible.

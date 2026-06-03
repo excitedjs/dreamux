@@ -1,6 +1,7 @@
 import type { DreamuxConfig } from '../runtime/config.js';
 import {
   BUILT_IN_DEFAULTS,
+  type DispatcherConfig,
   stringifyConfig,
 } from '../runtime/config.js';
 import { validateDispatcherId } from '../runtime/dispatcher-id.js';
@@ -16,23 +17,16 @@ export function dreamuxConfigFromAnswers(
 ): DreamuxConfig {
   validateDispatcherId(answers.dispatcherId);
   const base = existing ?? dreamuxConfigDefaultsFromAnswers(answers);
+  const dispatchers = base.dispatchers
+    .filter((dispatcher) => dispatcher.id !== answers.dispatcherId)
+    .map(cloneDispatcherConfig);
+  dispatchers.push(dispatcherConfigFromAnswers(answers));
   const next: DreamuxConfig = {
-    runtime_dir: base.runtime_dir,
-    admin_socket: base.admin_socket,
     codex: {
       ...base.codex,
       extra_args: [...base.codex.extra_args],
     },
-    outbound: { ...base.outbound },
-    feishu: {
-      bots: {
-        ...base.feishu.bots,
-        [answers.dispatcherId]: {
-          app_id: answers.botAppId,
-          app_secret: answers.botAppSecret,
-        },
-      },
-    },
+    dispatchers,
   };
   assertUniqueFeishuAppIds(next);
   return next;
@@ -42,8 +36,6 @@ function dreamuxConfigDefaultsFromAnswers(
   answers: OnboardAnswers,
 ): DreamuxConfig {
   return {
-    runtime_dir: answers.runtimeDir,
-    admin_socket: null,
     codex: {
       bin: answers.codexBin,
       approval_policy: 'never',
@@ -51,13 +43,7 @@ function dreamuxConfigDefaultsFromAnswers(
       extra_args: [],
       initialize_timeout_ms: BUILT_IN_DEFAULTS.codex.initialize_timeout_ms,
     },
-    outbound: {
-      retries: BUILT_IN_DEFAULTS.outbound.retries,
-      retry_delay_ms: BUILT_IN_DEFAULTS.outbound.retry_delay_ms,
-    },
-    feishu: {
-      bots: {},
-    },
+    dispatchers: [],
   };
 }
 
@@ -75,13 +61,44 @@ export function dispatcherCodexArgsJson(): string {
 
 function assertUniqueFeishuAppIds(config: DreamuxConfig): void {
   const seen = new Map<string, string>();
-  for (const [dispatcherId, bot] of Object.entries(config.feishu.bots)) {
-    const existing = seen.get(bot.app_id);
-    if (existing !== undefined && existing !== dispatcherId) {
+  for (const dispatcher of config.dispatchers) {
+    const existing = seen.get(dispatcher.feishu.app_id);
+    if (existing !== undefined && existing !== dispatcher.id) {
       throw new Error(
-        `Feishu app_id for dispatcher '${dispatcherId}' duplicates dispatcher '${existing}'`,
+        `Feishu app_id for dispatcher '${dispatcher.id}' duplicates dispatcher '${existing}'`,
       );
     }
-    seen.set(bot.app_id, dispatcherId);
+    seen.set(dispatcher.feishu.app_id, dispatcher.id);
   }
+}
+
+function dispatcherConfigFromAnswers(answers: OnboardAnswers): DispatcherConfig {
+  return {
+    id: answers.dispatcherId,
+    cwd: answers.dispatcherCwd,
+    enabled: true,
+    feishu: {
+      app_id: answers.botAppId,
+      app_secret: answers.botAppSecret,
+    },
+    codex: {
+      approval_policy: 'never',
+      sandbox_mode: 'workspace-write',
+      extra_args: [],
+    },
+  };
+}
+
+function cloneDispatcherConfig(dispatcher: DispatcherConfig): DispatcherConfig {
+  return {
+    id: dispatcher.id,
+    cwd: dispatcher.cwd,
+    enabled: dispatcher.enabled,
+    feishu: { ...dispatcher.feishu },
+    codex: {
+      approval_policy: dispatcher.codex.approval_policy,
+      sandbox_mode: dispatcher.codex.sandbox_mode,
+      extra_args: [...dispatcher.codex.extra_args],
+    },
+  };
 }

@@ -10,12 +10,9 @@ import {
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { DispatcherRepo } from '../src/db/repository.js';
-import { openDatabase } from '../src/db/schema.js';
 import { runUninstall } from '../src/onboard/uninstall.js';
 import type { CommandRunner } from '../src/onboard/types.js';
 import {
-  databasePath,
   dispatcherWorkspaceSkillPath,
   logsRoot,
   resetRuntimeConfig,
@@ -70,18 +67,25 @@ describe('dreamux uninstall', () => {
     mkdirSync(dirname(servicePath), { recursive: true });
     mkdirSync(dirname(workspaceSkillPath), { recursive: true });
     writeFileSync(join(configDir, 'config.json'), JSON.stringify({
-      feishu: {
-        bots: {
-          flow: {
+      dispatchers: [
+        {
+          id: 'flow',
+          cwd: dispatcherCwd,
+          enabled: true,
+          feishu: {
             app_id: 'app-test',
             app_secret: 'secret-test',
           },
+          codex: {
+            approval_policy: null,
+            sandbox_mode: null,
+            extra_args: [],
+          },
         },
-      },
+      ],
     }), { mode: 0o600 });
     writeFileSync(join(logsRoot(), 'dreamux-server.log'), '');
     writeFileSync(workspaceSkillPath, '# workspace skill\n');
-    writeDispatcher('flow', dispatcherCwd);
     writeFileSync(servicePath, '[Service]\nExecStart=dreamux serve\n');
 
     const runner = new FakeRunner();
@@ -192,33 +196,34 @@ describe('dreamux uninstall', () => {
       {
         name: 'legacy TOML only',
         file: 'config.toml',
-        content: 'runtime_dir = "/tmp/old-runtime"\n',
+        content: 'dispatchers = []\n',
         warning: /legacy dreamux config/,
       },
       {
         name: 'invalid JSON syntax',
         file: 'config.json',
-        content: '{"runtime_dir": ',
+        content: '{"dispatchers": ',
         warning: /dreamux config parse error/,
       },
       {
         name: 'invalid JSON value',
         file: 'config.json',
-        content: JSON.stringify({ runtime_dir: 42 }),
-        warning: /runtime_dir must be a string/,
+        content: JSON.stringify({ dispatchers: 42 }),
+        warning: /dispatchers must be an array/,
       },
       {
         name: 'world-readable JSON config',
         file: 'config.json',
         content: JSON.stringify({
-          feishu: {
-            bots: {
-              flow: {
+          dispatchers: [
+            {
+              id: 'flow',
+              feishu: {
                 app_id: 'app-test',
                 app_secret: 'secret-test',
               },
             },
-          },
+          ],
         }),
         warning: /must be mode 0600/,
         mode: 0o644,
@@ -251,7 +256,6 @@ describe('dreamux uninstall', () => {
       } else {
         writeFileSync(join(configDir, testCase.file), testCase.content);
       }
-      writeFileSync(join(stateRoot(), 'state.db'), '');
       writeFileSync(join(logsRoot(), 'dreamux-server.log'), '');
       writeFileSync(servicePath, '[Service]\nExecStart=dreamux serve\n');
 
@@ -280,19 +284,3 @@ describe('dreamux uninstall', () => {
     }
   });
 });
-
-function writeDispatcher(dispatcherId: string, dispatcherCwd: string): void {
-  const db = openDatabase({ path: databasePath() });
-  try {
-    new DispatcherRepo(db).create({
-      dispatcher_id: dispatcherId,
-      bot_app_id: 'app-test',
-      bot_secret_ref: `config:${dispatcherId}`,
-      codex_cwd: dispatcherCwd,
-    });
-  } finally {
-    db.close();
-  }
-
-  expect(existsSync(databasePath())).toBe(true);
-}

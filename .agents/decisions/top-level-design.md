@@ -114,9 +114,9 @@ Rules:
 - Feishu credentials belong only in `~/.dreamux/config.json` for MVP.
 - The config file is owner-only (`0600`) because it may contain local Feishu
   secrets.
-- The long-connection MVP uses `app_id` and `app_secret`. Webhook-only fields
-  such as `encrypt_key` and `verification_token` are not part of the MVP schema.
-  If a future webhook fallback adds them, they must be treated as secrets:
+- The long-connection MVP uses `app_id` and `app_secret`. Webhook-only
+  verification/encryption fields are not part of the MVP schema. If a future
+  webhook fallback adds them, they must be treated as secrets:
   owner-only config, redacted from `config show`, `status`, `doctor`, and logs,
   and never passed to Codex or MCP shim processes.
 - `app_secret` must be redacted from `config show`, `status`, `doctor`, and

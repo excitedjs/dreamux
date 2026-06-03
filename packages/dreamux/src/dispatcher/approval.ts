@@ -7,18 +7,16 @@
  *     or codex escalates anyway), fail loudly — never return null. Silent null
  *     is the trap that hangs the daemon.
  *
- * We surface the rejection back to the inbound's source chat via `onReject`
- * so the user sees "this version does not support approvals" rather than a
- * mute timeout.
+ * `onReject` is an observer hook for logs or metrics. Feishu user-visible
+ * output is MCP reply-only, so this handler must not send channel messages.
  */
 
 import type { ServerRequest } from '../codex/types.js';
 
 export interface ApprovalHandlerOptions {
   /**
-   * Called when a server-request is rejected. Useful for posting a hint
-   * back to the current inbound's source chat. Errors thrown here are
-   * swallowed (the rejection itself still propagates to codex).
+   * Called when a server-request is rejected. Errors thrown here are swallowed
+   * because the rejection itself still propagates to codex.
    */
   onReject?: (req: ServerRequest) => void | Promise<void>;
 }

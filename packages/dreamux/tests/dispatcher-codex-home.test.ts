@@ -28,7 +28,7 @@ describe('global Codex home doctor', () => {
     runtimeDir = mkdtempSync(join(homedir(), '.dreamux-test-'));
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(runtimeDir, 'home');
-    setRuntimeConfig({ ...BUILT_IN_DEFAULTS, runtime_dir: runtimeDir });
+    setRuntimeConfig(BUILT_IN_DEFAULTS);
   });
 
   afterEach(() => {

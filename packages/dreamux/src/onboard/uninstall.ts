@@ -2,9 +2,6 @@ import { existsSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join, resolve, sep } from 'node:path';
 
-import { DispatcherRepo } from '../db/repository.js';
-import { openDatabase } from '../db/schema.js';
-import type { DispatcherRow } from '../db/types.js';
 import { ExecaCommandRunner } from './commands.js';
 import {
   LAUNCHD_LABEL,
@@ -18,9 +15,9 @@ import {
   globalConfigDir,
   globalConfigFile,
   loadConfig,
+  type DispatcherConfig,
 } from '../runtime/config.js';
 import {
-  databasePath,
   dispatcherWorkspaceSkillPath,
   logsRoot,
   stateRoot,
@@ -69,7 +66,7 @@ export async function runUninstall(
   assertSafeOwnedDirectory(stateDir, 'dreamux state directory');
   assertSafeOwnedDirectory(logDir, 'dreamux logs directory');
   assertSafeOwnedDirectory(configDir, 'dreamux config directory');
-  const workspaceSkillPaths = collectWorkspaceSkillPaths();
+  const workspaceSkillPaths = collectWorkspaceSkillPaths(configDir);
 
   await unregisterService({
     unitPath: unit.path,
@@ -112,23 +109,21 @@ function warnIfConfigIsNotReadable(configDir: string, warnings: string[]): void 
   }
 }
 
-function collectWorkspaceSkillPaths(): string[] {
-  const dbPath = databasePath();
-  if (!existsSync(dbPath)) return [];
-  const db = openDatabase({ path: dbPath });
+function collectWorkspaceSkillPaths(configDir: string): string[] {
   try {
-    return new DispatcherRepo(db)
-      .list()
-      .map(dispatcherWorkspaceSkillPathFromRow)
+    return loadConfig({ configDir }).config.dispatchers
+      .map(dispatcherWorkspaceSkillPathFromConfig)
       .filter((path): path is string => path !== null);
-  } finally {
-    db.close();
+  } catch {
+    return [];
   }
 }
 
-function dispatcherWorkspaceSkillPathFromRow(row: DispatcherRow): string | null {
-  if (row.codex_cwd === null || row.codex_cwd.trim() === '') return null;
-  return dispatcherWorkspaceSkillPath(row.codex_cwd);
+function dispatcherWorkspaceSkillPathFromConfig(
+  dispatcher: DispatcherConfig,
+): string | null {
+  if (dispatcher.cwd === null || dispatcher.cwd.trim() === '') return null;
+  return dispatcherWorkspaceSkillPath(dispatcher.cwd);
 }
 
 function reportWorkspaceSkills(

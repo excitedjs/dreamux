@@ -6,7 +6,6 @@
  *   - CodexWsClient (WS connection)
  *   - thread_id (lazily created via thread/start or resumed)
  *   - TurnManager (FIFO worker for this dispatcher)
- *   - approval handler bound to the current "source chat" for hints
  *
  * Lifecycle: declared → starting → ready → (degraded) → stopping → stopped.
  *
@@ -20,8 +19,11 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-import type { DispatcherRow, DispatcherStatus } from '../db/types.js';
-import type { DispatcherRepo } from '../db/repository.js';
+import type {
+  DispatcherRow,
+  DispatcherStatus,
+  DispatcherStore,
+} from '../runtime/dispatcher-store.js';
 import {
   CodexProcess,
   type CodexProcessExit,
@@ -46,14 +48,12 @@ import {
   type DispatcherCodexHomeDoctor,
 } from '../runtime/dispatcher-codex-home.js';
 import { dispatcherProcessEnv } from '../runtime/package-bin.js';
-import type { OutboundSink } from '../channel/outbound.js';
 
 const DEFAULT_RESTART_BACKOFF_BASE_MS = 1000;
 const DEFAULT_RESTART_BACKOFF_MAX_MS = 30_000;
 
 export interface DispatcherRuntimeDeps {
-  dispatchers: DispatcherRepo;
-  outbound: OutboundSink;
+  dispatchers: DispatcherStore;
   /** Optional bin path override for tests. */
   codexBinPath?: string;
   /** Override process construction for tests. */
@@ -66,10 +66,6 @@ export interface DispatcherRuntimeDeps {
   resolveExtraArgs?: (row: DispatcherRow) => string[];
   /** Codex initialize handshake timeout (ms). From ~/.dreamux/config.json. */
   handshakeTimeoutMs?: number;
-  /** Outbound retry count. From ~/.dreamux/config.json. */
-  outboundRetries?: number;
-  /** Outbound retry delay (ms). From ~/.dreamux/config.json. */
-  outboundRetryDelayMs?: number;
   /** Codex child/WS restart backoff base (tests may override). */
   restartBackoffBaseMs?: number;
   /** Codex child/WS restart backoff cap (tests may override). */
@@ -82,7 +78,6 @@ export class DispatcherRuntime {
   private client: CodexWsClient | null = null;
   private turnManager: TurnManager | null = null;
   private threadId: string | null = null;
-  private currentInboundChatId: string | null = null;
   private status: DispatcherStatus = 'declared';
   private readonly log: NonNullable<DispatcherRuntimeDeps['log']>;
   private stopping = false;
@@ -108,11 +103,6 @@ export class DispatcherRuntime {
 
   getStatus(): DispatcherStatus {
     return this.status;
-  }
-
-  /** Current running inbound chat, used for approval rejection hints. */
-  setCurrentInboundChat(chatId: string | null): void {
-    this.currentInboundChatId = chatId;
   }
 
   getThreadId(): string | null {
@@ -196,17 +186,10 @@ export class DispatcherRuntime {
 
     const approvalHandler = createFailFastApprovalHandler({
       onReject: async (req) => {
-        // Best-effort hint to the user, only if we know who is asking.
-        const chatId = this.currentInboundChatId;
-        if (chatId === null) return;
-        try {
-          await this.deps.outbound.send(
-            { conversationId: chatId },
-            `Codex 请求了一次审批（${req.method}），但当前 dispatcher 不支持审批 —— 本轮将失败。`,
-          );
-        } catch {
-          /* nothing useful to do */
-        }
+        this.log(
+          'warn',
+          `rejected Codex approval request '${req.method}'; Feishu outbound is MCP reply-only`,
+        );
       },
     });
     this.client.setServerRequestHandler(approvalHandler);
@@ -230,15 +213,7 @@ export class DispatcherRuntime {
       dispatcherId: this.dispatcherId,
       getThreadId: () => this.threadId,
       client: this.client,
-      outbound: this.deps.outbound,
-      onCurrentChat: (chatId) => this.setCurrentInboundChat(chatId),
       log: this.log,
-      ...(this.deps.outboundRetries !== undefined
-        ? { outboundRetries: this.deps.outboundRetries }
-        : {}),
-      ...(this.deps.outboundRetryDelayMs !== undefined
-        ? { outboundRetryDelayMs: this.deps.outboundRetryDelayMs }
-        : {}),
     });
   }
 
@@ -338,7 +313,6 @@ export class DispatcherRuntime {
     if (process !== null) {
       await process.reap();
     }
-    this.currentInboundChatId = null;
   }
 
   private handleChildExit(exit: CodexProcessExit): void {

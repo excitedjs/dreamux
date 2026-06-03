@@ -7,7 +7,6 @@ import {
   DREAMUX_UNIX_SOCKET_PATH_MAX_BYTES,
   adminSocketPath,
   codexAppServerLogDir,
-  databasePath,
   dispatcherAccessPath,
   dispatcherCodexAppServerErrorLogPath,
   dispatcherCodexAppServerLogPath,
@@ -52,7 +51,6 @@ describe('runtime paths', () => {
     expect(logsRoot()).toBe(join(dreamuxRoot(), 'logs'));
     expect(runtimeRoot()).toBe(stateRoot());
     expect(serverJsonPath()).toBe(join(stateRoot(), 'server.json'));
-    expect(databasePath()).toBe(join(stateRoot(), 'state.db'));
     expect(adminSocketPath()).toBe(join(stateRoot(), 'admin.sock'));
 
     expect(dispatcherDir('dispatcher-a')).toBe(

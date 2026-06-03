@@ -2,7 +2,7 @@
  * The dreamux Server — the long-running Node process that hosts N dispatchers.
  *
  * Lifecycle:
- *   1. open SQLite (migrate if needed)
+ *   1. load dispatcher declarations from config
  *   2. open admin Unix socket (so server-ctl can talk to us even if a
  *      dispatcher fails to come up)
  *   3. for each enabled dispatcher: spawn codex, open feishu, start turn worker
@@ -12,11 +12,6 @@
  * drops queued and in-flight inbound messages instead of replaying them.
  */
 
-import type Database from 'better-sqlite3';
-
-import { openDatabase } from './db/schema.js';
-import { DispatcherRepo, InboundRepo } from './db/repository.js';
-import type { DispatcherRow, DispatcherStatus } from './db/types.js';
 import { DispatcherRuntime } from './dispatcher/runtime.js';
 import type { CodexProcess, CodexProcessOptions } from './codex/supervisor.js';
 import type { CodexWsClient } from './codex/rpc.js';
@@ -36,10 +31,14 @@ import { parseCodexArgs, codexArgsToCli } from './runtime/codex-args.js';
 import { feishuMcpCodexArgs } from './codex/mcp-config.js';
 import { resolveBotSecret } from './runtime/secrets.js';
 import { BUILT_IN_DEFAULTS, type DreamuxConfig } from './runtime/config.js';
+import {
+  DispatcherStore,
+  type DispatcherRow,
+  type DispatcherStatus,
+} from './runtime/dispatcher-store.js';
 import type { DispatcherCodexHomeDoctor } from './runtime/dispatcher-codex-home.js';
 import {
   adminSocketPath,
-  databasePath,
   dispatcherCodexCwd,
   setRuntimeConfig,
 } from './runtime/paths.js';
@@ -56,8 +55,6 @@ export interface ServerOptions {
    * the file and pass it in so user edits take effect.
    */
   config?: DreamuxConfig;
-  /** Override database path (tests). */
-  databasePath?: string;
   /** Override admin socket path (tests). */
   adminSocketPath?: string;
   /** Inject a custom bot factory (tests use this to plug in a fake). */
@@ -79,8 +76,7 @@ export interface ServerOptions {
 }
 
 export interface Repos {
-  dispatchers: DispatcherRepo;
-  inbound: InboundRepo;
+  dispatchers: DispatcherStore;
 }
 
 interface DispatcherSlot {
@@ -111,7 +107,6 @@ export interface ServerMcpReactInput {
 
 export class Server {
   readonly repos: Repos;
-  private readonly db: Database.Database;
   private readonly slots = new Map<string, DispatcherSlot>();
   /**
    * PR #3 review #4: in-flight startDispatcher promises, keyed by id.
@@ -129,10 +124,8 @@ export class Server {
     // happens. paths.runtimeRoot / adminSocketPath / etc. consult this
     // snapshot for non-env defaults (env vars still win).
     setRuntimeConfig(opts.config ?? BUILT_IN_DEFAULTS);
-    this.db = openDatabase({ path: opts.databasePath ?? databasePath() });
     this.repos = {
-      dispatchers: new DispatcherRepo(this.db),
-      inbound: new InboundRepo(this.db),
+      dispatchers: new DispatcherStore(opts.config ?? BUILT_IN_DEFAULTS),
     };
   }
 
@@ -230,18 +223,12 @@ export class Server {
 
     const runtime = new DispatcherRuntime(row, {
       dispatchers: this.repos.dispatchers,
-      outbound: {
-        send: async (target, text) =>
-          (await bot.send(channelOutboundToFeishuTarget(target), text)).messageIds,
-      },
       codexBinPath: this.resolveCodexBinPath(),
       codexProcessFactory: this.opts.codexProcessFactory,
       codexClientFactory: this.opts.codexClientFactory,
       codexHomeDoctor: this.opts.codexHomeDoctor,
       resolveExtraArgs: () => codexCliArgs,
       handshakeTimeoutMs: cfg.codex.initialize_timeout_ms,
-      outboundRetries: cfg.outbound.retries,
-      outboundRetryDelayMs: cfg.outbound.retry_delay_ms,
       restartBackoffBaseMs: this.opts.codexRestartBackoffBaseMs,
       restartBackoffMaxMs: this.opts.codexRestartBackoffMaxMs,
     });
@@ -360,7 +347,7 @@ export class Server {
     return slot;
   }
 
-  /** Summary of every declared dispatcher (DB-backed, includes stopped). */
+  /** Summary of every declared dispatcher (config-backed, includes stopped). */
   summarize(): Array<{
     dispatcher_id: string;
     bot_app_id: string;
@@ -380,7 +367,7 @@ export class Server {
     });
   }
 
-  /** Graceful shutdown — drain dispatchers, close socket, close DB. */
+  /** Graceful shutdown — drain dispatchers and close the admin socket. */
   async shutdown(): Promise<void> {
     if (this.shuttingDown) return;
     this.shuttingDown = true;
@@ -391,11 +378,6 @@ export class Server {
     if (this.admin !== null) {
       await this.admin.close();
       this.admin = null;
-    }
-    try {
-      this.db.close();
-    } catch (err) {
-      console.error('[server] db close error:', err);
     }
   }
 }

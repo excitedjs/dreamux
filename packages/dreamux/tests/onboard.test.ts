@@ -10,8 +10,6 @@ import {
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { DispatcherRepo } from '../src/db/repository.js';
-import { openDatabase } from '../src/db/schema.js';
 import { runOnboard } from '../src/onboard/run.js';
 import {
   answersFromOptions,
@@ -19,7 +17,6 @@ import {
 } from '../src/onboard/wizard.js';
 import type { CommandRunner, OnboardAnswers } from '../src/onboard/types.js';
 import {
-  databasePath,
   dispatcherCodexHome,
   dispatcherWorkspaceSkillPath,
   logsRoot,
@@ -158,10 +155,24 @@ describe('dreamux onboard', () => {
     const dreamuxConfig = JSON.parse(
       readFileSync(join(root, 'config', 'config.json'), 'utf8'),
     ) as Record<string, any>;
-    expect(dreamuxConfig['feishu']['bots']['flow']).toEqual({
-      app_id: 'app-test',
-      app_secret: 'secret-test',
-    });
+    expect(dreamuxConfig['dispatchers']).toEqual([{
+      id: 'flow',
+      cwd: join(root, 'dispatcher-cwd'),
+      enabled: true,
+      feishu: {
+        app_id: 'app-test',
+        app_secret: 'secret-test',
+      },
+      codex: {
+        approval_policy: 'never',
+        sandbox_mode: 'workspace-write',
+        extra_args: [],
+      },
+    }]);
+    expect(dreamuxConfig).not.toHaveProperty('feishu');
+    expect(dreamuxConfig).not.toHaveProperty('runtime_dir');
+    expect(dreamuxConfig).not.toHaveProperty('admin_socket');
+    expect(dreamuxConfig).not.toHaveProperty('outbound');
     expect(
       existsSync(dispatcherWorkspaceSkillPath(answers.dispatcherCwd)),
     ).toBe(true);
@@ -170,27 +181,6 @@ describe('dreamux onboard', () => {
         join(dispatcherCodexHome('flow'), 'skills', 'dispatcher', 'SKILL.md'),
       ),
     ).toBe(false);
-
-    const db = openDatabase({ path: databasePath() });
-    try {
-      const row = new DispatcherRepo(db).get('flow');
-      expect(row).toMatchObject({
-        dispatcher_id: 'flow',
-        bot_app_id: 'app-test',
-        bot_secret_ref: 'config:flow',
-        status: 'declared',
-        enabled: 1,
-        codex_cwd: join(root, 'dispatcher-cwd'),
-      });
-      expect(JSON.parse(row?.codex_args_json ?? '{}')).toEqual({
-        approvalPolicy: 'never',
-        sandboxMode: 'workspace-write',
-        extraArgs: [],
-      });
-    } finally {
-      db.close();
-    }
-
     const ledger = new Map(result.files.map((entry) => [entry.path, entry]));
     expect(ledger.get(join(root, 'config', 'config.json'))?.status).toBe(
       'created',
@@ -206,8 +196,8 @@ describe('dreamux onboard', () => {
     expect(
       ledger.get(join(logsRoot(), 'daemon.stdout.log'))?.status,
     ).toBe('created');
-    expect(ledger.get(databasePath())?.status).toBe(
-      'created',
+    expect(result.files.map((entry) => entry.reason)).not.toContain(
+      'dispatcher database',
     );
   });
 
@@ -266,35 +256,36 @@ describe('dreamux onboard', () => {
     expect(countCalls(runner, 'launchctl', ['kickstart'])).toBe(2);
   });
 
-  it('preserves existing config globals and other Feishu bots on rerun', async () => {
+  it('preserves existing codex globals and other dispatchers on rerun', async () => {
     const runner = new FakeRunner();
-    const existingRuntimeDir = join(root, 'existing-runtime');
     const ignoredRuntimeDir = join(root, 'ignored-runtime');
     const configDir = join(root, 'config');
     mkdirSync(configDir, { recursive: true });
     writeFileSync(
       join(configDir, 'config.json'),
       JSON.stringify({
-        runtime_dir: existingRuntimeDir,
-        admin_socket: join(root, 'admin.sock'),
         codex: {
           approval_policy: 'on-failure',
           sandbox_mode: 'danger-full-access',
           extra_args: ['--model', 'local-default'],
           initialize_timeout_ms: 12345,
         },
-        outbound: {
-          retries: 7,
-          retry_delay_ms: 321,
-        },
-        feishu: {
-          bots: {
-            flow: {
+        dispatchers: [
+          {
+            id: 'flow',
+            cwd: join(root, 'flow-cwd'),
+            enabled: true,
+            feishu: {
               app_id: 'app-flow',
               app_secret: 'secret-flow',
             },
+            codex: {
+              approval_policy: null,
+              sandbox_mode: null,
+              extra_args: [],
+            },
           },
-        },
+        ],
       }),
       { mode: 0o600 },
     );
@@ -319,51 +310,53 @@ describe('dreamux onboard', () => {
     const saved = JSON.parse(
       readFileSync(join(configDir, 'config.json'), 'utf8'),
     ) as Record<string, any>;
-    expect(saved['runtime_dir']).toBe(existingRuntimeDir);
-    expect(saved['admin_socket']).toBe(join(root, 'admin.sock'));
+    expect(saved).not.toHaveProperty('runtime_dir');
+    expect(saved).not.toHaveProperty('admin_socket');
     expect(saved['codex']).toMatchObject({
       approval_policy: 'on-failure',
       sandbox_mode: 'danger-full-access',
       extra_args: ['--model', 'local-default'],
       initialize_timeout_ms: 12345,
     });
-    expect(saved['outbound']).toEqual({
-      retries: 7,
-      retry_delay_ms: 321,
-    });
-    expect(saved['feishu']['bots']).toEqual({
-      flow: {
-        app_id: 'app-flow',
-        app_secret: 'secret-flow',
+    expect(saved).not.toHaveProperty('outbound');
+    expect(saved).not.toHaveProperty('feishu');
+    expect(saved['dispatchers']).toEqual([
+      {
+        id: 'flow',
+        cwd: join(root, 'flow-cwd'),
+        enabled: true,
+        feishu: {
+          app_id: 'app-flow',
+          app_secret: 'secret-flow',
+        },
+        codex: {
+          approval_policy: null,
+          sandbox_mode: null,
+          extra_args: [],
+        },
       },
-      docs: {
-        app_id: 'app-docs',
-        app_secret: 'secret-docs',
+      {
+        id: 'docs',
+        cwd: join(root, 'docs-cwd'),
+        enabled: true,
+        feishu: {
+          app_id: 'app-docs',
+          app_secret: 'secret-docs',
+        },
+        codex: {
+          approval_policy: 'never',
+          sandbox_mode: 'workspace-write',
+          extra_args: [],
+        },
       },
-    });
+    ]);
     expect(existsSync(ignoredRuntimeDir)).toBe(false);
-
-    expect(existsSync(existingRuntimeDir)).toBe(false);
-
-    const db = openDatabase({ path: databasePath() });
-    try {
-      expect(new DispatcherRepo(db).get('docs')).toMatchObject({
-        dispatcher_id: 'docs',
-        bot_app_id: 'app-docs',
-        bot_secret_ref: 'config:docs',
-        codex_cwd: join(root, 'docs-cwd'),
-      });
-    } finally {
-      db.close();
-    }
   });
 
   it('rejects a new dispatcher that reuses an existing Feishu app_id', async () => {
     const runner = new FakeRunner();
     const configDir = join(root, 'config');
     const existingConfig = JSON.stringify({
-      runtime_dir: join(root, 'existing-runtime'),
-      admin_socket: null,
       codex: {
         bin: 'codex',
         approval_policy: 'never',
@@ -371,18 +364,22 @@ describe('dreamux onboard', () => {
         extra_args: [],
         initialize_timeout_ms: 10000,
       },
-      outbound: {
-        retries: 3,
-        retry_delay_ms: 1000,
-      },
-      feishu: {
-        bots: {
-          flow: {
+      dispatchers: [
+        {
+          id: 'flow',
+          cwd: join(root, 'flow-cwd'),
+          enabled: false,
+          feishu: {
             app_id: 'app-shared',
             app_secret: 'secret-flow',
           },
+          codex: {
+            approval_policy: null,
+            sandbox_mode: null,
+            extra_args: [],
+          },
         },
-      },
+      ],
     });
     mkdirSync(configDir, { recursive: true });
     writeFileSync(join(configDir, 'config.json'), existingConfig, {

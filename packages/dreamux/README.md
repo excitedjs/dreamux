@@ -3,59 +3,61 @@
 The Codex-host server package. One long-running Node process hosts N
 **Dispatchers**; each Dispatcher binds **1 Feishu bot + 1 Codex thread**.
 
-This file is the **package-level** quick start. For the monorepo layout
-and harness pieces, see the top-level
-[`README.md`](../../README.md) and
+This file is the **package-level** quick start. For the monorepo layout and
+knowledge base, see the top-level [`README.md`](../../README.md) and
 [`.agents/root.md`](../../.agents/root.md).
 
 Design background:
 [#1 Proposal](https://github.com/excitedjs/dreamux/issues/1) ·
 [#2 Engineering plan](https://github.com/excitedjs/dreamux/issues/2) ·
 [#4 Monorepo + harness](https://github.com/excitedjs/dreamux/issues/4) ·
-[#18 Global bin onboarding](https://github.com/excitedjs/dreamux/issues/18).
+[#18 Global bin onboarding](https://github.com/excitedjs/dreamux/issues/18) ·
+[#36 MVP tracking](https://github.com/excitedjs/dreamux/issues/36).
 
 ## What this package ships
 
 - Public CLI bins: `dreamux` and `tm`. `dreamux` owns onboarding, serving,
-  status, doctor, dispatcher administration, and config commands. `tm` is a
-  wrapper around the package-local `@excitedjs/tm` dependency for dispatcher
-  skills.
+  status, doctor, dispatcher commands, and config commands. `tm` is a wrapper
+  around the package-local `@excitedjs/tm` dependency for dispatcher skills.
 - A bundled dispatcher Codex skill, copied by `dreamux onboard` into
   `<dispatcher cwd>/.codex/skills/dispatcher/SKILL.md`.
-- A SQLite-backed runtime (`dispatchers` + `inbound_buffer`) plus the
-  Feishu / Codex adapters that drive each dispatcher.
+- Config-backed dispatcher declarations, server-owned state/log paths, a
+  Feishu long-connection inbound channel, Codex app-server lifecycle
+  management, and a dispatcher-scoped Feishu MCP shim for model replies.
 
-## What this MVP does (P0)
+## MVP contract
 
 - **One Node process, many Dispatchers.** Each Dispatcher = 1 Feishu Bot
-  (independent appId/secret) + 1 long-lived Codex `app-server` child + 1
-  Codex thread.
-- **Single-thread, multi-chat fan-in.** A bot can be invited into multiple
-  groups and DMs; every inbound message goes into the same Codex thread.
-  Outbound replies are routed by the inbound's `source_chat_id`.
-- **Dispatcher cwd is explicit, Codex state stays global.** The Codex
-  daemon's cwd is configured during `dreamux onboard` or
-  `dreamux dispatcher add --codex-cwd`. Dispatcher app-server processes
-  use Codex's global default home (`~/.codex`) for auth, memory, and config.
-  The dispatcher skill is workspace-local under the dispatcher cwd. dreamux
-  keeps only app-server sockets/logs/SQLite under its runtime directory.
-- **FIFO + at-most-once.** One running turn per dispatcher. After a server
-  crash, `running` inbound rows are flipped to `unknown` (the user is told
-  to confirm or resend); `awaiting_outbound` rows are safely retried.
-- **Trusted-local only.** No chat allowlist, `approval-policy=never`. Any
-  other deployment must uplift access control first — see
-  [issue #2 §"信任模型"](https://github.com/excitedjs/dreamux/issues/2).
+  (`app_id`/`app_secret`) + 1 long-lived Codex `app-server` child + 1 Codex
+  thread.
+- **One dispatcher is one trust domain.** A bot may receive multiple chats, but
+  all accepted messages share one Codex thread. Do not bind unrelated private
+  chats to the same dispatcher.
+- **Dispatcher cwd is explicit, Codex state stays global.** Dispatcher
+  app-server processes use Codex's global default home (`~/.codex`) for auth,
+  memory, and config. The dispatcher skill is workspace-local under the
+  dispatcher cwd.
+- **Inbound state is in memory.** The server keeps only process-local turn
+  queues, message dedupe, coalescing state, and received-reaction ownership.
+  Restarting the server drops unprocessed inbound messages and may leave
+  received reactions behind.
+- **Outbound is MCP reply-only.** Assistant text emitted by Codex is never
+  forwarded to Feishu automatically. The model must call the dispatcher-scoped
+  Feishu MCP tools such as `reply` or `react`.
+- **No webhook surface in MVP.** Feishu inbound uses the SDK long-connection
+  WebSocket path. Webhook-only verification/encryption fields are not part of
+  the config schema.
 
-Explicitly **not** in MVP: approval cards, streaming outbound, per-chat
-threads, tm registry isolation, cross-machine coordination, web UI.
+Explicitly **not** in MVP: per-chat threads, durable inbound buffers,
+automatic assistant-text outbound, HTTP MCP listeners by default, reaction
+ledgers, streaming outbound, tm registry isolation, cross-machine
+coordination, and a web UI.
 
 ## Install / build / test
 
-Use the monorepo (rush) path from the repo root — it is the only supported
-install path. This package depends on `@excitedjs/feishu-transport` via the
-pnpm `workspace:*` protocol, which `npm` cannot resolve, so
-`cd packages/dreamux && npm install` no longer works (see
-[the install-model decision](../../.agents/decisions/install-model.md)):
+Use the monorepo (rush) path from the repo root. It is the only supported
+install path because this package depends on workspace packages through the
+pnpm `workspace:*` protocol:
 
 ```bash
 node common/scripts/install-run-rush.js update
@@ -63,10 +65,8 @@ node common/scripts/install-run-rush.js build
 node common/scripts/install-run-rush.js test
 ```
 
-CI exercises this path, so a broken `rush.json` or lockfile fails CI.
-
-The bin launchers shell out to plain `node` against the compiled `dist/`
-output; **no `tsx` is needed at runtime** (PR #6).
+The bin launchers shell out to plain `node` against compiled `dist/` output;
+no `tsx` is needed at runtime.
 
 ## Run the server
 
@@ -74,76 +74,37 @@ output; **no `tsx` is needed at runtime** (PR #6).
 ./bin/dreamux serve
 ```
 
-The launcher works from any cwd and via symlinks (PR #6 + bin-launcher tests).
+The launcher works from any cwd and via symlinks.
 
-The server keeps operator-edited config separate from state and logs — by
-design (see [the top-level design](../../.agents/decisions/top-level-design.md)):
+The server keeps operator-edited config separate from server-owned state and
+logs:
 
 | Path | Purpose | Source of truth |
 |---|---|---|
-| `~/.dreamux/config.json`                 | User-editable config and Feishu bot secrets — created by `dreamux onboard`; edit and restart to apply | the operator |
-| `~/.dreamux/state/state.db`              | Legacy SQLite state until the MVP state cleanup lands | the server |
-| `~/.dreamux/state/admin.sock`            | Admin Unix socket (`0600`)                 | the server |
-| dispatcher `codex_cwd`                   | Codex app-server cwd, configured during onboard or dispatcher registration | the operator |
-| `~/.codex/`                              | Codex global default home: auth, memory, and config | the operator / Codex |
+| `~/.dreamux/config.json` | User-editable config and Feishu bot secrets, created by `dreamux onboard`; edit and restart to apply | the operator |
+| `~/.dreamux/state/server.json` | Server status snapshot | the server |
+| `~/.dreamux/state/admin.sock` | Admin Unix socket | the server |
+| `~/.dreamux/state/<id>/status.json` | Dispatcher runtime status and Codex thread id | the server |
+| `~/.dreamux/state/<id>/access.json` | Dispatcher-local access-gate state | the server |
+| `~/.dreamux/state/<id>/codex.sock` | Codex app-server Unix socket | the server |
+| `~/.dreamux/logs/codex-app-server/<id>.log` | Codex app-server stdout/stderr | the server |
+| `~/.dreamux/logs/feishu-channel/<id>.log` | Feishu channel logs | the server |
+| `~/.codex/` | Codex global default home: auth, memory, and config | the operator / Codex |
 | `<dispatcher cwd>/.codex/skills/dispatcher/SKILL.md` | Dispatcher skill copied by `dreamux onboard`; reported but not deleted by `dreamux uninstall` | dreamux installer |
-| `~/.dreamux/state/<id>/access.json`      | Dispatcher-local access gate state: allowed DMs, optional group/chat follow-user allowlists, observed chats, and trust-domain warnings | the server |
-| `~/.dreamux/state/<id>/codex.sock`       | Codex app-server Unix socket              | the server |
-| `~/.dreamux/logs/codex-app-server/<id>.log` | Codex app-server stdout                 | the server |
 
-`rm -rf ~/.dreamux/state ~/.dreamux/logs` is a state/log recovery path — your
-dreamux config and global Codex auth survive. `runtime_dir` and `admin_socket`
-keys in older config files no longer move the effective state or socket paths.
+`rm -rf ~/.dreamux/state ~/.dreamux/logs` is a state/log recovery path; dreamux
+config and global Codex auth survive.
 
-## Configure a dispatcher
+## Configure dispatchers
 
-```bash
-./bin/dreamux dispatcher add \
-  --id flow \
-  --bot-app-id <APP_ID> \
-  --bot-secret-ref config:flow \
-  --codex-cwd /path/to/dispatcher/workspace
+For normal installs, run `dreamux onboard`. It writes `~/.dreamux/config.json`
+with mode `0600`, creates state/log directories, installs the workspace skill,
+and registers a user-level service when supported.
 
-# Inspect / restart
-./bin/dreamux dispatcher list
-./bin/dreamux dispatcher status --id flow
-./bin/dreamux dispatcher start  --id flow   # if not auto-started
-```
-
-For normal installs, prefer `dreamux onboard`; it writes
-`feishu.bots.<dispatcher-id>.app_secret` into `~/.dreamux/config.json` and
-registers the dispatcher with `bot_secret_ref=config:<dispatcher-id>`.
-`dreamux config show` redacts these secrets. There is no CLI raw mode for
-printing the unredacted local file.
-
-## MVP verification path (issue #2 §"MVP 验收脚本")
-
-1. `dreamux onboard --dispatcher-id flow --dispatcher-cwd <WORKSPACE> --bot-app-id <APP_ID> --bot-app-secret <APP_SECRET>`
-2. `dreamux serve` — dispatcher `flow` goes to `ready`
-3. Invite the bot to a Feishu group A, send `hi`
-4. Server delivers it into the Codex thread; reply goes back to group A
-5. Invite the same bot to a DM, ask "do you remember the 'hi' from earlier?"
-6. Same thread, so the reply confirms — and goes back to the DM
-7. Ask the bot to "run the test suite via tm and summarize"
-8. Codex shells out to `tm`, reads stdout/stderr, replies into the source chat
-9. Repeat with a **different** worktree to prove dispatcher↔worktree decoupling
-10. `pkill node` to crash the server, then restart it
-11. Continue chatting — Codex `thread/resume` restores context
-
-## Configuration reference
-
-Precedence for Codex-related config values (highest wins): env var →
-per-dispatcher field → `~/.dreamux/config.json` → built-in default.
-See [the global-config decision](../../.agents/decisions/global-config-dir.md).
-
-### Global: `~/.dreamux/config.json`
-
-Created by `dreamux onboard` with this shape:
+Dispatcher declarations live in `config.json`:
 
 ```json
 {
-  "runtime_dir": "~/.dreamux/runtime",
-  "admin_socket": null,
   "codex": {
     "bin": "codex",
     "approval_policy": "never",
@@ -151,91 +112,88 @@ Created by `dreamux onboard` with this shape:
     "extra_args": [],
     "initialize_timeout_ms": 10000
   },
-  "outbound": {
-    "retries": 3,
-    "retry_delay_ms": 1000
-  },
-  "feishu": {
-    "bots": {
-      "flow": {
+  "dispatchers": [
+    {
+      "id": "flow",
+      "cwd": "<WORKSPACE>",
+      "enabled": true,
+      "feishu": {
         "app_id": "<APP_ID>",
         "app_secret": "<APP_SECRET>"
+      },
+      "codex": {
+        "approval_policy": null,
+        "sandbox_mode": null,
+        "extra_args": []
       }
     }
-  }
+  ]
 }
 ```
 
-Edit and restart `dreamux serve`. JSON parse errors fail fast. If an older
-install still has only `~/.dreamux/config.toml`, dreamux refuses to create
-default JSON over it; manually create `config.json` preserving the old
-`runtime_dir` and other settings, add the needed `feishu.bots` entries, then
-move the legacy TOML file aside.
+Edit and restart `dreamux serve` to apply dispatcher declaration changes.
+`app_id` values must be unique across all declared dispatchers, including
+disabled ones. Dispatcher ids use a path-safe character set so they map
+one-to-one to state directories.
 
-The `runtime_dir` and `admin_socket` keys are legacy compatibility fields.
-Current runtime paths are fixed under `~/.dreamux/state` and
-`~/.dreamux/logs`.
+`dreamux config show`, `dreamux status`, `dreamux doctor`, and logs redact
+`app_secret`. There is no CLI raw mode for printing the unredacted local file.
 
-### `codex_args_json` (per-dispatcher, overrides global)
+## Codex configuration precedence
 
-JSON object stored in `dispatchers.codex_args_json`:
+Precedence for Codex-related values, highest first:
 
-```json
-{ "approvalPolicy": "never", "sandboxMode": "workspace-write", "extraArgs": ["--model", "gpt-5"] }
-```
+1. Environment variables, such as `CODEX_HOST_CODEX_BIN`.
+2. Per-dispatcher `dispatchers[].codex` fields.
+3. Global `codex` fields in `~/.dreamux/config.json`.
+4. Built-in defaults compiled into `src/runtime/config.ts`.
 
-| Field            | Default   | Notes                                                |
-| ---------------- | --------- | ---------------------------------------------------- |
-| `approvalPolicy` | inherits `codex.approval_policy` from `~/.dreamux/config.json`, else `"never"` | Must be one of `never`/`auto`/`auto-approve`/`on-failure`. Otherwise startup fails fast (issue #2 §"实现陷阱"). |
-| `sandboxMode`    | inherits `[codex] sandbox_mode`, else `"workspace-write"` | Must be one of `read-only`/`workspace-write`/`danger-full-access` (codex 0.134 enum). Validated at dispatcher startup. |
-| `extraArgs`      | appended *after* global `codex.extra_args` | codex's "last write wins" semantics for `-c key=value` mean a per-dispatcher entry effectively overrides a same-key global. |
+Per-dispatcher `extra_args` are appended after global `codex.extra_args`, which
+matches Codex's last-write-wins behavior for repeated `-c key=value` options.
 
-### Env vars (highest precedence — escape hatch)
+## MCP reply flow
 
-| Var                          | Purpose                                            |
-| ---------------------------- | -------------------------------------------------- |
-| `CODEX_HOST_RUNTIME_DIR`     | Legacy; no longer changes effective runtime paths  |
-| `CODEX_HOST_ADMIN_SOCKET`    | Legacy; no longer changes the admin socket path    |
-| `CODEX_HOST_CODEX_BIN`       | Override `codex.bin`                               |
-| `DREAMUX_CONFIG_DIR`         | Override `~/.dreamux` (where `config.json` lives)  |
-| `BOT_SECRET_<NAME>`          | Legacy/manual bot secrets referenced by `env:BOT_SECRET_<NAME>` |
-| `DREAMUX_SKIP_LIVE_CODEX`    | Opt out of the live Codex app-server integration test (loud skip) |
+Each dispatcher injects a Feishu MCP stdio server into its Codex app-server.
+The stdio shim does not read Feishu secrets. It forwards outbound tool calls to
+the serve process over the admin socket, and the serve process owns the Feishu
+client plus process-local received-reaction cleanup state.
 
-## What this MVP does **not** do
+The model-facing tools include:
 
-(see [issue #2 §"明确不在 MVP 范围"](https://github.com/excitedjs/dreamux/issues/2))
+- `reply`: send a Feishu reply to a target message or chat.
+- `react`: add a model-owned reaction to a Feishu message.
 
-- Multiple threads per dispatcher
-- Per-chat memory
-- Approval / Feishu approval cards
-- Streaming assistant deltas
-- tm CLI changes (`tm --json`, registry namespace)
-- Cross-machine coordination
-- Web UI / Prometheus
-- Migration from old claudemux dispatcher state
-- access gate / chat allowlist / pairing (D12 + Trust Model)
+If the model only emits assistant text, nothing is sent to Feishu.
+
+## MVP verification path
+
+1. `dreamux onboard --dispatcher-id flow --dispatcher-cwd <WORKSPACE> --bot-app-id <APP_ID> --bot-app-secret <APP_SECRET>`
+2. `dreamux serve` starts dispatcher `flow`.
+3. Invite the bot to a Feishu group, send a mention that passes the access gate.
+4. Server injects a `<feishu_message>` block into the Codex thread.
+5. Codex calls the Feishu MCP `reply` tool; the reply is delivered to Feishu.
+6. Send another accepted message from a different chat in the same trust
+   domain; it enters the same Codex thread.
+7. Ask the bot to run teammate work through the bundled `tm` wrapper.
+8. Restart the server and continue chatting; Codex `thread/resume` restores the
+   thread when possible, but in-flight inbound messages are not durable.
 
 ## Testing
 
 ```bash
-# from the repo root (the only supported path — see the install-model decision)
-node common/scripts/install-run-rush.js test   # smoke + bin-launcher + codex-live
+node common/scripts/install-run-rush.js test
 ```
 
-- `tests/smoke.test.ts` — fake-codex-driven dispatcher behavior:
-  happy path, FIFO, crash recovery (running → unknown), thread/resume
-  failure, outbound retry without turn re-run, approval fail-fast.
-- `tests/bin-launcher.test.ts` — spawns the real `dreamux` bash launcher
-  and repo-root shim from arbitrary cwds and through symlinks; static
-  "no tsx" assertion; manifest assertion for the supported global bins.
-- `tests/doctor.test.ts` — covers standalone doctor checks for
-  global Codex home state, including managed-service auth
-  visibility.
-- `tests/codex-live.test.ts` — spawns a real `codex app-server`. CI installs
-  `@openai/codex@latest` before running tests so this compatibility check is
-  not skipped by default and tracks the current Codex CLI. Local developers can
-  still opt out explicitly with `DREAMUX_SKIP_LIVE_CODEX=1` when no Codex
-  binary is available.
+- `tests/smoke.test.ts` — fake-Codex dispatcher behavior: access gate,
+  in-memory turn serialization/coalescing/dedupe, MCP reply-only outbound,
+  thread resume, app-server restart behavior, and approval fail-fast.
+- `tests/bin-launcher.test.ts` — real launcher and repo-root shim behavior from
+  arbitrary cwd and through symlinks.
+- `tests/doctor.test.ts` — standalone doctor checks for config, Codex home,
+  services, and dispatcher workspace skill state.
+- `tests/codex-0135-live.test.ts` and `tests/codex-0136-mcp-live.test.ts` —
+  real Codex app-server compatibility checks. Set `DREAMUX_SKIP_LIVE_CODEX=1`
+  only when no Codex binary is available locally.
 
 ## License
 

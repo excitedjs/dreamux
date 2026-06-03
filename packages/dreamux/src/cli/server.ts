@@ -7,7 +7,7 @@
  *
  * Configuration sources (highest precedence first):
  *   1. CODEX_HOST_CODEX_BIN — escape hatch for CI / one-off debug runs
- *   2. per-dispatcher fields in SQLite (codex_args_json: approvalPolicy, extraArgs)
+ *   2. per-dispatcher fields in ~/.dreamux/config.json (dispatchers[].codex)
  *   3. ~/.dreamux/config.json — user-editable global defaults and channel secrets;
  *      created by `dreamux onboard`
  *   4. built-in defaults compiled into the binary
@@ -66,11 +66,11 @@ Global config:
   ~/.dreamux/config.json    Created by 'dreamux onboard'. Override with the
                             DREAMUX_CONFIG_DIR env var. Edit and restart to
                             apply. Holds defaults for codex.bin,
-                            approval_policy, outbound retries,
+                            approval_policy, dispatcher declarations,
                             and Feishu channel secrets.
 
 Runtime data:
-  ~/.dreamux/state/         server state, admin socket, legacy SQLite state,
+  ~/.dreamux/state/         server state, admin socket,
                             and per-dispatcher Codex sockets.
   ~/.dreamux/logs/          server, Feishu channel, and Codex app-server logs.
 
@@ -78,9 +78,8 @@ Environment overrides (highest precedence):
   CODEX_HOST_CODEX_BIN      Overrides config.codex.bin
   DREAMUX_CONFIG_DIR        Overrides ~/.dreamux (where config.json lives)
 
-Add dispatchers:
-  dreamux dispatcher add --id flow --bot-app-id <APP_ID> \\
-    --bot-secret-ref config:flow
+Dispatcher declarations:
+  Edit ~/.dreamux/config.json dispatchers[] and restart dreamux serve.
 `);
 }
 
