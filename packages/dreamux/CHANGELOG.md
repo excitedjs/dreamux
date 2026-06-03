@@ -1,6 +1,13 @@
 # Change Log - @excitedjs/dreamux
 
-This log was last generated on Wed, 03 Jun 2026 04:29:43 GMT and should not be manually modified.
+This log was last generated on Wed, 03 Jun 2026 07:57:13 GMT and should not be manually modified.
+
+## 0.2.0
+Wed, 03 Jun 2026 07:57:13 GMT
+
+### Minor changes
+
+- 调整 onboard 与 dispatcher runtime，使其继承本机 Codex 状态，改用 JSON 配置并新增 uninstall 指令。
 
 ## 0.1.4
 Wed, 03 Jun 2026 04:29:43 GMT

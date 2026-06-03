@@ -2,6 +2,18 @@
   "name": "@excitedjs/dreamux",
   "entries": [
     {
+      "version": "0.2.0",
+      "tag": "@excitedjs/dreamux_v0.2.0",
+      "date": "Wed, 03 Jun 2026 07:57:13 GMT",
+      "comments": {
+        "minor": [
+          {
+            "comment": "调整 onboard 与 dispatcher runtime，使其继承本机 Codex 状态，改用 JSON 配置并新增 uninstall 指令。"
+          }
+        ]
+      }
+    },
+    {
       "version": "0.1.4",
       "tag": "@excitedjs/dreamux_v0.1.4",
       "date": "Wed, 03 Jun 2026 04:29:43 GMT",
