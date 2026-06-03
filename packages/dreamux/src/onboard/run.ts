@@ -15,7 +15,9 @@ import {
   dispatcherCodexHome,
   dispatcherCodexSkillsDir,
   databasePath,
+  logsRoot,
   setRuntimeConfig,
+  stateRoot,
 } from '../runtime/paths.js';
 import {
   dispatcherCodexHomeDoctorContext,
@@ -66,7 +68,7 @@ export async function runOnboard(
   const dreamuxConfig = dreamuxConfigFromAnswers(answers, existingConfig);
   const effectiveAnswers = {
     ...answers,
-    runtimeDir: dreamuxConfig.runtime_dir,
+    runtimeDir: stateRoot(),
     codexBin: dreamuxConfig.codex.bin,
   };
   setRuntimeConfig(dreamuxConfig);
@@ -74,7 +76,10 @@ export async function runOnboard(
   ensureDirectory(answers.configDir, ledger, 'dreamux config directory', {
     dryRun: answers.dryRun,
   });
-  ensureDirectory(effectiveAnswers.runtimeDir, ledger, 'dreamux runtime directory', {
+  ensureDirectory(stateRoot(), ledger, 'dreamux state directory', {
+    dryRun: answers.dryRun,
+  });
+  ensureDirectory(logsRoot(), ledger, 'dreamux logs directory', {
     dryRun: answers.dryRun,
   });
   writeTextFile(

@@ -27,6 +27,7 @@ import {
   resetRuntimeConfig,
   runtimeRoot,
   setRuntimeConfig,
+  stateRoot,
 } from '../src/runtime/paths.js';
 import { codexArgsToCli, parseCodexArgs } from '../src/runtime/codex-args.js';
 
@@ -243,45 +244,46 @@ describe('precedence: env > per-dispatcher > config > built-in', () => {
     resetRuntimeConfig();
   });
 
-  it('paths.runtimeRoot reflects config when no env override', () => {
+  it('runtimeRoot aliases stateRoot and ignores config.runtime_dir', () => {
     writeFileSync(globalConfigFile({ configDir }), JSON.stringify({
       runtime_dir: '/tmp/from-config',
     }));
     const { config } = loadOrInitConfig({ configDir });
     setRuntimeConfig(config);
-    expect(runtimeRoot()).toBe('/tmp/from-config');
+    expect(runtimeRoot()).toBe(stateRoot());
+    expect(runtimeRoot()).not.toBe('/tmp/from-config');
   });
 
-  it('CODEX_HOST_RUNTIME_DIR env beats config.runtime_dir', () => {
+  it('CODEX_HOST_RUNTIME_DIR no longer overrides runtime paths', () => {
     writeFileSync(globalConfigFile({ configDir }), JSON.stringify({
       runtime_dir: '/tmp/from-config',
     }));
     const { config } = loadOrInitConfig({ configDir });
     setRuntimeConfig(config);
     process.env['CODEX_HOST_RUNTIME_DIR'] = '/tmp/from-env';
-    expect(runtimeRoot()).toBe('/tmp/from-env');
+    expect(runtimeRoot()).toBe(stateRoot());
   });
 
-  it('adminSocketPath: env > config.admin_socket > <runtime_dir>/admin.sock', () => {
+  it('adminSocketPath is fixed under stateRoot', () => {
     writeFileSync(globalConfigFile({ configDir }), JSON.stringify({
       runtime_dir: '/tmp/rt',
       admin_socket: '/tmp/cfg-admin.sock',
     }));
     const { config } = loadOrInitConfig({ configDir });
     setRuntimeConfig(config);
-    expect(adminSocketPath()).toBe('/tmp/cfg-admin.sock');
+    expect(adminSocketPath()).toBe(join(stateRoot(), 'admin.sock'));
 
     process.env['CODEX_HOST_ADMIN_SOCKET'] = '/tmp/env-admin.sock';
-    expect(adminSocketPath()).toBe('/tmp/env-admin.sock');
+    expect(adminSocketPath()).toBe(join(stateRoot(), 'admin.sock'));
   });
 
-  it('admin_socket derives from runtime_dir when not set in config', () => {
+  it('admin_socket no longer derives from runtime_dir', () => {
     writeFileSync(globalConfigFile({ configDir }), JSON.stringify({
       runtime_dir: '/tmp/rt',
     }));
     const { config } = loadOrInitConfig({ configDir });
     setRuntimeConfig(config);
-    expect(adminSocketPath()).toBe('/tmp/rt/admin.sock');
+    expect(adminSocketPath()).toBe(join(stateRoot(), 'admin.sock'));
   });
 
   it('parseCodexArgs: per-dispatcher overrides config defaults', () => {

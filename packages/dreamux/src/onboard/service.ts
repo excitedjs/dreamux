@@ -2,6 +2,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { build as buildPlist } from 'plist';
+import { logsRoot, stateRoot } from '../runtime/paths.js';
 
 import {
   ensureDirectory,
@@ -68,7 +69,7 @@ export async function installUserService(
 ): Promise<ServiceInstallResult> {
   const homeDir = options.homeDir ?? homedir();
   const unit = serviceUnitPath(options.platform, homeDir);
-  const logDir = join(options.answers.runtimeDir, 'logs');
+  const logDir = logsRoot();
   const stdoutLog = join(logDir, 'daemon.stdout.log');
   const stderrLog = join(logDir, 'daemon.stderr.log');
   ensureDirectory(logDir, options.ledger, 'daemon log directory', {
@@ -122,7 +123,7 @@ export function renderLaunchdPlist(
     ProgramArguments: [answers.dreamuxBin, 'serve'],
     RunAtLoad: true,
     KeepAlive: true,
-    WorkingDirectory: answers.runtimeDir,
+    WorkingDirectory: stateRoot(),
     EnvironmentVariables: managedServiceEnvironment(answers),
     StandardOutPath: stdoutLog,
     StandardErrorPath: stderrLog,
@@ -140,7 +141,7 @@ Description=dreamux dispatcher daemon
 [Service]
 Type=simple
 ExecStart=${systemdEscapeArg(answers.dreamuxBin)} serve
-WorkingDirectory=${systemdEscapeArg(answers.runtimeDir)}
+WorkingDirectory=${systemdEscapeArg(stateRoot())}
 ${Object.entries(managedServiceEnvironment(answers))
   .map(([key, value]) => `Environment=${key}=${systemdEscapeEnv(value)}`)
   .join('\n')}
@@ -159,7 +160,6 @@ export function managedServiceEnvironment(
 ): Record<string, string> {
   const env: Record<string, string> = {
     DREAMUX_CONFIG_DIR: answers.configDir,
-    CODEX_HOST_RUNTIME_DIR: answers.runtimeDir,
     CODEX_HOST_CODEX_BIN: answers.codexBin,
   };
   return env;

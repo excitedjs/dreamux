@@ -39,10 +39,10 @@ describe('global Codex home doctor', () => {
 
   it('places app-server sockets under the dreamux dispatcher runtime directory', () => {
     expect(dispatcherSocketPath('flow')).toBe(
-      join(dispatcherAppServerControlDir('flow'), 'as.sock'),
+      join(dispatcherAppServerControlDir('flow'), 'codex.sock'),
     );
     expect(dispatcherSocketPath('flow')).toContain(
-      join('dispatchers', 'flow', 'app-server-control'),
+      join('.dreamux', 'state', 'flow'),
     );
     expect(dispatcherSocketPath('flow')).not.toMatch(/^\/tmp(?:\/|$)/);
     expect(Buffer.byteLength(dispatcherSocketPath('frontend-service'), 'utf8'))
@@ -97,19 +97,12 @@ describe('global Codex home doctor', () => {
   });
 
   it('rejects too-long app-server socket paths before bind', () => {
-    setRuntimeConfig({
-      ...BUILT_IN_DEFAULTS,
-      runtime_dir: join(runtimeDir, 'runtime-root-with-a-long-custom-name'),
-    });
-    writeDispatcherHome('dispatcher-with-long-id');
+    process.env['HOME'] = join(runtimeDir, 'h'.repeat(90));
 
-    const result = validateDispatcherCodexHome('dispatcher-with-long-id', {
-      env: {},
-    });
-
-    expect(result.ok).toBe(false);
-    expect(formatDispatcherCodexHomeErrors(result)).toContain(
-      'socket path is too long',
+    expect(() =>
+      validateDispatcherCodexHome('dispatcher-with-long-id', { env: {} }),
+    ).toThrow(
+      /Codex socket path is too long/,
     );
   });
 

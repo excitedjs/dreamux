@@ -7,14 +7,17 @@ import { join, normalize, sep } from 'node:path';
 import { parse as parseToml, TomlError } from 'smol-toml';
 
 import {
+  DREAMUX_UNIX_SOCKET_PATH_MAX_BYTES,
   dispatcherAppServerControlDir,
   dispatcherCodexConfigPath,
   dispatcherCodexHome,
   dispatcherCodexSkillsDir,
   dispatcherSocketPath,
+  unixSocketPathFitsBudget,
 } from './paths.js';
 
-export const DISPATCHER_APP_SERVER_SOCKET_PATH_MAX_BYTES = 103;
+export const DISPATCHER_APP_SERVER_SOCKET_PATH_MAX_BYTES =
+  DREAMUX_UNIX_SOCKET_PATH_MAX_BYTES;
 
 export interface DispatcherCodexHomeDoctorContext {
   dispatcherId: string;
@@ -95,7 +98,7 @@ export function validateDispatcherCodexHome(
       `dispatcher app-server socket must not be under /tmp: ${context.socketPath}`,
     );
   }
-  if (!socketPathFitsUnixLimit(context.socketPath)) {
+  if (!unixSocketPathFitsBudget(context.socketPath)) {
     const bytes = Buffer.byteLength(context.socketPath, 'utf8');
     errors.push(
       `dispatcher app-server socket path is too long for Unix sockets (${bytes} bytes > ${DISPATCHER_APP_SERVER_SOCKET_PATH_MAX_BYTES} safe bytes): ${context.socketPath}`,
@@ -156,13 +159,6 @@ function hasAuth(codexHome: string, env: NodeJS.ProcessEnv): boolean {
       const value = env[name];
       return value !== undefined && value.trim() !== '';
     },
-  );
-}
-
-function socketPathFitsUnixLimit(path: string): boolean {
-  return (
-    Buffer.byteLength(path, 'utf8') <=
-    DISPATCHER_APP_SERVER_SOCKET_PATH_MAX_BYTES
   );
 }
 

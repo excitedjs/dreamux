@@ -13,10 +13,12 @@ import { openDatabase } from '../src/db/schema.js';
 import { runDreamuxDoctor } from '../src/cli/doctor.js';
 import type { CommandRunner } from '../src/onboard/types.js';
 import {
+  databasePath,
   dispatcherCodexHome,
   dispatcherCodexSkillsDir,
   resetRuntimeConfig,
   setRuntimeConfig,
+  stateRoot,
 } from '../src/runtime/paths.js';
 
 class FakeRunner implements CommandRunner {
@@ -212,8 +214,8 @@ describe('dreamux doctor command', () => {
     if (options.auth) {
       writeFileSync(join(dispatcherCodexHome('flow'), 'auth.json'), '{}');
     }
-    mkdirSync(runtimeDir, { recursive: true });
-    const db = openDatabase({ path: join(runtimeDir, 'state.db') });
+    mkdirSync(stateRoot(), { recursive: true });
+    const db = openDatabase({ path: databasePath() });
     try {
       new DispatcherRepo(db).create({
         dispatcher_id: 'flow',
