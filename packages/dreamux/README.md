@@ -30,10 +30,12 @@ Design background:
 - **Single-thread, multi-chat fan-in.** A bot can be invited into multiple
   groups and DMs; every inbound message goes into the same Codex thread.
   Outbound replies are routed by the inbound's `source_chat_id`.
-- **No dispatcher↔worktree binding.** Codex picks the worktree at `tm`-call
-  time. The Codex daemon's cwd is `~/.codex-host/dispatchers/<id>/cwd/`
-  (intentionally empty), while its private `CODEX_HOME` is
-  `~/.codex-host/dispatchers/<id>/codex-home/`.
+- **Dispatcher cwd is explicit, Codex state stays local.** The Codex
+  daemon's cwd is configured during `dreamux onboard` or
+  `dreamux dispatcher add --codex-cwd`. Dispatcher app-server processes
+  inherit the operator's `CODEX_HOME` (default `~/.codex`), so login state,
+  memory, config, and plugin cache remain local to the operator. dreamux keeps
+  only app-server sockets/logs/SQLite under its runtime directory.
 - **FIFO + at-most-once.** One running turn per dispatcher. After a server
   crash, `running` inbound rows are flipped to `unknown` (the user is told
   to confirm or resend); `awaiting_outbound` rows are safely retried.

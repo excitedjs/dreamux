@@ -10,9 +10,11 @@ import {
 } from './service.js';
 import type { CommandRunner, ServicePlatform } from './types.js';
 import {
+  assertNoLegacyTomlOnly,
   BUILT_IN_DEFAULTS,
   expandHome,
   globalConfigDir,
+  globalConfigFile,
   loadConfig,
 } from '../runtime/config.js';
 
@@ -82,11 +84,11 @@ export async function runUninstall(
 
 function resolveRuntimeDir(configDir: string, explicit: string | undefined): string {
   if (explicit !== undefined && explicit !== '') return explicit;
-  try {
-    return loadConfig({ configDir }).config.runtime_dir;
-  } catch {
+  assertNoLegacyTomlOnly({ configDir });
+  if (!existsSync(globalConfigFile({ configDir }))) {
     return BUILT_IN_DEFAULTS.runtime_dir;
   }
+  return loadConfig({ configDir }).config.runtime_dir;
 }
 
 async function unregisterService(options: {

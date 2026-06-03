@@ -122,9 +122,11 @@ multi-package release notes precise while still using Rush as the validator.
 
 | Path | Purpose | Source of truth |
 |---|---|---|
-| `~/.dreamux/` | User-editable global config (`config.toml`). Auto-created on first boot. | The operator |
-| `~/.codex-host/` | Server-owned runtime state: SQLite (`state.db`), admin socket, dispatcher logs, and dispatcher-private Codex homes. | The server |
-| `~/.codex-host/dispatchers/<id>/codex-home/` | Dispatcher-private `CODEX_HOME`: Codex config, `plugins/`, and runtime-created `app-server-control/as.sock` for that dispatcher app-server. | The server |
+| `~/.dreamux/` | User-editable global config (`config.json`) and onboarded Feishu bot secrets. Auto-created on first boot. | The operator |
+| `~/.codex-host/` | Server-owned runtime state: SQLite (`state.db`), admin socket, dispatcher app-server control sockets, and logs. | The server |
+| operator `CODEX_HOME` (default `~/.codex`) | Codex login state, memory, config, and plugin cache used by dispatcher app-server processes. | The operator |
+| `~/.codex-host/dispatchers/<id>/app-server-control/as.sock` | Runtime-created Codex app-server Unix socket for that dispatcher. | The server |
 
 The split is load-bearing: a `rm -rf ~/.codex-host` recovery never loses
-user-edited settings. See [the global-config decision](../decisions/global-config-dir.md).
+user-edited settings or operator Codex/Claude state. See
+[the global-config decision](../decisions/global-config-dir.md).

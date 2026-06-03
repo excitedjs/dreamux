@@ -116,6 +116,69 @@ describe('dreamux uninstall', () => {
     ).rejects.toThrow(/operator Codex\/Claude state/);
     expect(runner.calls).toEqual([]);
   });
+
+  it('fails fast on legacy or invalid config instead of falling back to the default runtime', async () => {
+    const cases: Array<{
+      name: string;
+      file: string;
+      content: string;
+      error: RegExp;
+    }> = [
+      {
+        name: 'legacy TOML only',
+        file: 'config.toml',
+        content: 'runtime_dir = "/tmp/old-runtime"\n',
+        error: /legacy dreamux config/,
+      },
+      {
+        name: 'invalid JSON syntax',
+        file: 'config.json',
+        content: '{"runtime_dir": ',
+        error: /dreamux config parse error/,
+      },
+      {
+        name: 'invalid JSON value',
+        file: 'config.json',
+        content: JSON.stringify({ runtime_dir: 42 }),
+        error: /runtime_dir must be a string/,
+      },
+    ];
+
+    for (const testCase of cases) {
+      const caseRoot = join(root, testCase.name.replaceAll(' ', '-'));
+      const configDir = join(caseRoot, 'config');
+      const runtimeDir = join(caseRoot, 'runtime');
+      const homeDir = join(caseRoot, 'home');
+      const servicePath = join(
+        homeDir,
+        '.config',
+        'systemd',
+        'user',
+        'dreamux.service',
+      );
+      mkdirSync(configDir, { recursive: true });
+      mkdirSync(runtimeDir, { recursive: true });
+      mkdirSync(dirname(servicePath), { recursive: true });
+      writeFileSync(join(configDir, testCase.file), testCase.content);
+      writeFileSync(join(runtimeDir, 'state.db'), '');
+      writeFileSync(servicePath, '[Service]\nExecStart=dreamux serve\n');
+
+      const runner = new FakeRunner();
+      await expect(
+        runUninstall({
+          configDir,
+          runner,
+          platform: 'linux',
+          homeDir,
+        }),
+      ).rejects.toThrow(testCase.error);
+
+      expect(existsSync(configDir)).toBe(true);
+      expect(existsSync(runtimeDir)).toBe(true);
+      expect(existsSync(servicePath)).toBe(true);
+      expect(runner.calls).toEqual([]);
+    }
+  });
 });
 
 function restoreEnv(name: string, value: string | undefined): void {

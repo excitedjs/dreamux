@@ -4,8 +4,8 @@
 codexmux product layer. It is not a Rush package and does not add runtime code
 to `@excitedjs/dreamux`.
 
-`dreamux onboard` installs Codexmux into each dispatcher-private `CODEX_HOME`
-from the public Git repository by default with:
+`dreamux onboard` installs Codexmux into the operator Codex home used by the
+dispatcher app-server from the public Git repository by default with:
 
 ```bash
 codex plugin marketplace add excitedjs/dreamux --sparse .agents/plugins --sparse codex-marketplace/plugins/codexmux

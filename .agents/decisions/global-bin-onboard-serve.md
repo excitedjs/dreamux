@@ -42,29 +42,21 @@ After `dreamux onboard` registers that service, operators use native
 `launchctl` or `systemctl --user` commands for ongoing service start, stop,
 status, and uninstall operations.
 
-Codex plugin installation targets the dispatcher app-server's private
-`CODEX_HOME`, not the operator's default global Codex home. The `codexmux`
-consumer is the dispatcher agent: the dispatcher is the long-lived Codex
-app-server, and its `codexmux-dispatcher` skill is scoped to that agent.
-Because Codex loads plugins from the `CODEX_HOME` the app-server runs under,
-`codexmux` must be installed into that same dispatcher-private home.
+Dispatcher app-server processes inherit the operator's existing `CODEX_HOME`
+(or Codex's default `~/.codex`) instead of creating a separate Codex state
+root per dispatcher. The `codexmux` consumer is still the dispatcher agent: the dispatcher is
+the long-lived Codex app-server, and its `codexmux-dispatcher` skill is scoped
+to that agent. Because Codex loads plugins from the `CODEX_HOME` the app-server
+runs under, onboarding installs `codexmux` into the operator Codex home that the
+dispatcher will inherit.
 
-Plugin installation and app-server control state are different concerns, but
-they intentionally share the dispatcher-private Codex home for issue #18:
-`codexmux` lives under `<CODEX_HOME>/plugins/`, dispatcher Codex user config
-lives in `<CODEX_HOME>/config.toml`, and app-server control sockets live under
-`<CODEX_HOME>/app-server-control/` with a short socket leaf.
-
-The dispatcher-private `config.toml` is independent. Codex does not inherit
-missing values from the operator's global default Codex home. `dreamux
-onboard` must generate a minimal dispatcher config containing the `codexmux`
-plugin declaration, the network-enabled runtime config / approval / sandbox
-settings required for the persistent app-server, and any required model /
-auth contract. For Codex 0.135, permission-profile fallback is
-`default_permissions` plus `[permissions.<name>] network = { enabled = true }`,
-and `serve` must validate the final effective values after `-c` CLI
-overrides. It must not copy the operator's whole global Codex config and must
-not modify that global home in this design slice.
+Plugin installation and app-server control state are separate concerns:
+`codexmux` and Codex's own config/plugin cache remain under the operator
+Codex home, while dreamux app-server control sockets live under
+`<runtime_dir>/dispatchers/<id>/app-server-control/` with a short socket leaf.
+dreamux does not generate or rewrite a Codex TOML config. Codex model/provider,
+auth, memory, and other user settings follow the operator's local Codex
+installation.
 
 Service registration is user-level only for issue #18:
 macOS LaunchAgent and Linux `systemd --user`. Root-scoped LaunchDaemons,
@@ -77,15 +69,17 @@ Use commodity packages for commodity infrastructure:
 - `@clack/prompts` for the first-run wizard.
 - `execa` for subprocess execution.
 - `plist` for launchd plist generation.
-- The existing `smol-toml` parser for dreamux config.
+- JSON parsing for dreamux config (`~/.dreamux/config.json`). Codex may still
+  manage its own TOML config in the operator Codex home; dreamux does not write
+  TOML config files.
 
 The dispatcher Codex app-server launched by `dreamux serve` must:
 
 - run outside Codex's restricted-network workspace profile, or at minimum
   use a network-enabled permission profile
-- receive a dreamux-managed private runtime `CODEX_HOME`
-- load `codexmux` from that private `CODEX_HOME`
-- keep control sockets under `<CODEX_HOME>/app-server-control/`
+- inherit the operator Codex home
+- load `codexmux` from that inherited Codex home
+- keep control sockets under `<runtime_dir>/dispatchers/<id>/app-server-control/`
 - avoid `/tmp` sockets
 - keep Unix socket paths short enough for macOS and Linux `sun_path` limits
 - let `serve` create runtime control directories; the doctor must not require
@@ -108,9 +102,10 @@ with its final status.
   `~/.config/systemd/user/dreamux.service` on Linux.
 - `serve` should not daemonize itself. Service managers supervise the
   foreground process.
-- Onboarding intentionally keeps service-specific Codex plugin and permission
-  state in the dispatcher-private Codex home; all touched paths must be
-  printed through the onboarding path ledger.
+- Onboarding intentionally keeps Codex plugin and auth state in the operator
+  Codex home that dispatcher app-server processes inherit; all touched paths
+  must be printed through the onboarding path ledger. App-server control
+  sockets remain under dreamux runtime state.
 - The first implementation installs Codexmux from the public
   `excitedjs/dreamux` repository with sparse marketplace paths
   `.agents/plugins` and `codex-marketplace/plugins/codexmux`, using selector
@@ -121,9 +116,9 @@ with its final status.
 - The `dreamux` launcher passes its resolved absolute path through
   `DREAMUX_BIN`; service generation uses that path so launchd and
   systemd execute the same global bin the operator invoked.
-- The operator's default global Codex home remains outside this design's
-  write set, so service-specific high-risk settings do not leak into the
-  user's daily interactive Codex configuration.
+- The operator's Codex home is intentionally reused, so login state, memory,
+  and local Codex configuration follow the operator's machine. dreamux must not
+  delete that home during uninstall.
 - Dispatcher/channel registration should use the existing admin / repository
   source of truth for the first issue #18 implementation, not a second
   dispatcher config file.
@@ -132,11 +127,9 @@ with its final status.
 
 - **Keep the current three published bins:** rejected for issue #18. The
   explicit product requirement is a single global bin named `dreamux`.
-- **Install `codexmux` only into the operator's default global Codex home:**
-  rejected. The dispatcher, not the `tm` teammates, consumes the
-  `codexmux-dispatcher` skill, and the dispatcher app-server loads plugins
-  from the `CODEX_HOME` it runs under. Installing only into the global home
-  would leave the private dispatcher app-server unable to see `codexmux`.
+- **Use a separate Codex state root per dispatcher:** rejected by PR #34. It
+  drops the operator's Codex login state, memory, and local configuration.
+  Dispatcher app-server processes now inherit the operator Codex home instead.
 - **Use project-local cwd config for `codexmux`:** rejected for issue #18.
   Codex project config can affect some trusted-project settings, but plugin
   and marketplace declarations are user-level Codex config and the plugin
@@ -149,6 +142,6 @@ with its final status.
   profile:** rejected. It conflicts with the production requirement that
   the persistent app-server must bind/listen reliably.
 - **Use `/tmp` for app-server sockets:** rejected. The dispatcher runtime
-  needs private, owner-writable control state under its own Codex home.
+  needs private, owner-writable control state under dreamux runtime state.
 - **Use Ink for onboarding:** rejected for now. `dreamux onboard` is a
   finite wizard, not a full-screen terminal application.
