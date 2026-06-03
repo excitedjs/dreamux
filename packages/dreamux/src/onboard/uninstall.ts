@@ -46,6 +46,7 @@ export interface RunUninstallOptions {
 
 export interface UninstallRunResult {
   entries: UninstallEntry[];
+  warnings: string[];
   service: {
     platform: ServicePlatform;
     unitPath: string;
@@ -59,8 +60,9 @@ export async function runUninstall(
   const dryRun = options.dryRun ?? false;
   const configDir = normalizePath(options.configDir ?? globalConfigDir());
   const entries: UninstallEntry[] = [];
+  const warnings: string[] = [];
   const unit = serviceUnitPath(options.platform, options.homeDir ?? homedir());
-  validateConfigIfPresent(configDir);
+  warnIfConfigIsNotReadable(configDir, warnings);
   const stateDir = normalizePath(stateRoot());
   const logDir = normalizePath(logsRoot());
 
@@ -89,6 +91,7 @@ export async function runUninstall(
 
   return {
     entries: entries.sort((a, b) => a.path.localeCompare(b.path)),
+    warnings,
     service: {
       platform: unit.platform,
       unitPath: unit.path,
@@ -96,10 +99,17 @@ export async function runUninstall(
   };
 }
 
-function validateConfigIfPresent(configDir: string): void {
-  assertNoLegacyTomlOnly({ configDir });
-  if (!existsSync(globalConfigFile({ configDir }))) return;
-  loadConfig({ configDir });
+function warnIfConfigIsNotReadable(configDir: string, warnings: string[]): void {
+  try {
+    assertNoLegacyTomlOnly({ configDir });
+    if (!existsSync(globalConfigFile({ configDir }))) return;
+    loadConfig({ configDir });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    warnings.push(
+      `could not validate dreamux config before uninstall; continuing with fixed state/log paths: ${message}`,
+    );
+  }
 }
 
 function collectWorkspaceSkillPaths(): string[] {

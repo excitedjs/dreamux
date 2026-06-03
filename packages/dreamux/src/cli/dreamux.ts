@@ -265,6 +265,9 @@ function printOnboardResult(result: OnboardRunResult): void {
 }
 
 function printUninstallResult(result: UninstallRunResult): void {
+  for (const warning of result.warnings) {
+    console.error(`warning: ${warning}`);
+  }
   console.log('dreamux uninstall file ledger:');
   for (const entry of result.entries) {
     console.log(`${entry.status}\t${entry.path}\t${entry.reason}`);
