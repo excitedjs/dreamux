@@ -110,6 +110,7 @@ describe('feishu-mcp stdio shim', () => {
       jsonrpc: '2.0',
       id: 1,
       result: {
+        protocolVersion: '2024-11-05',
         capabilities: { tools: {} },
         serverInfo: { name: 'dreamux-feishu' },
       },
@@ -118,6 +119,44 @@ describe('feishu-mcp stdio shim', () => {
     writeJson(input, { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
     const tools = await reader.next() as { result: { tools: Array<{ name: string }> } };
     expect(tools.result.tools.map((tool) => tool.name)).toEqual(['reply', 'react']);
+
+    input.end();
+    await run;
+  });
+
+  it('negotiates supported MCP protocol versions and falls back safely', async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const reader = new JsonLineReader(output);
+    const run = runFeishuMcp({
+      dispatcherId: 'dispatcher-a',
+      adminSocketPath: '/tmp/not-used.sock',
+      input,
+      output,
+      log: () => {},
+    });
+
+    writeJson(input, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: { protocolVersion: '2025-06-18' },
+    });
+    expect(await reader.next()).toMatchObject({
+      id: 1,
+      result: { protocolVersion: '2025-06-18' },
+    });
+
+    writeJson(input, {
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'initialize',
+      params: { protocolVersion: '2099-01-01' },
+    });
+    expect(await reader.next()).toMatchObject({
+      id: 2,
+      result: { protocolVersion: '2024-11-05' },
+    });
 
     input.end();
     await run;
@@ -182,6 +221,42 @@ describe('feishu-mcp stdio shim', () => {
     } finally {
       await admin.close();
     }
+  });
+
+  it('returns tool argument validation failures as MCP tool errors', async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const reader = new JsonLineReader(output);
+    const run = runFeishuMcp({
+      dispatcherId: 'dispatcher-a',
+      adminSocketPath: '/tmp/not-used.sock',
+      input,
+      output,
+      log: () => {},
+    });
+
+    writeJson(input, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: {
+        name: 'reply',
+        arguments: { chat_id: 'chat-a' },
+      },
+    });
+    const response = await reader.next() as Record<string, unknown>;
+    expect(response).not.toHaveProperty('error');
+    expect(response).toMatchObject({
+      jsonrpc: '2.0',
+      id: 1,
+      result: {
+        isError: true,
+        content: [{ type: 'text', text: 'text must be a non-empty string' }],
+      },
+    });
+
+    input.end();
+    await run;
   });
 
   it('forwards react tool calls and returns admin errors as MCP tool errors', async () => {

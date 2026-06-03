@@ -43,6 +43,7 @@ import {
   dispatcherWorkspaceSkillPath,
   dispatcherSocketPath,
 } from '../src/runtime/paths.js';
+import { dreamuxBinPath } from '../src/runtime/package-bin.js';
 import { startFakeCodex, type FakeCodex } from './fake-codex.js';
 
 class NoopCodexProcess extends CodexProcess {
@@ -351,10 +352,12 @@ describe('dreamux MVP smoke', () => {
     await server.start();
 
     const args = capturedCodexOptions[0]?.extraArgs ?? [];
+    const dreamuxCommand = `mcp_servers.feishu.command=${JSON.stringify(dreamuxBinPath())}`;
     expect(args).toContain('mcp_servers.feishu.command="operator-feishu"');
     const operatorIdx = args.indexOf('mcp_servers.feishu.command="operator-feishu"');
-    const dreamuxIdx = args.indexOf('mcp_servers.feishu.command="dreamux"');
+    const dreamuxIdx = args.indexOf(dreamuxCommand);
     expect(dreamuxIdx).toBeGreaterThan(operatorIdx);
+    expect(dreamuxBinPath()).toMatch(/\/dreamux$/);
     expect(args).toContain(
       `mcp_servers.feishu.args=["feishu-mcp", "--dispatcher", "flow", "--admin-socket", "${join(runtimeDir, 'admin.sock')}"]`,
     );

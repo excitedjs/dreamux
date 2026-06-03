@@ -29,7 +29,12 @@ interface ToolCallParams {
 }
 
 const JSONRPC_VERSION = '2.0';
-const MCP_PROTOCOL_VERSION = '2024-11-05';
+const DEFAULT_MCP_PROTOCOL_VERSION = '2024-11-05';
+const SUPPORTED_MCP_PROTOCOL_VERSIONS = new Set([
+  '2025-06-18',
+  '2025-03-26',
+  '2024-11-05',
+]);
 
 export async function runFeishuMcp(opts: FeishuMcpOptions): Promise<void> {
   const dispatcherId = validateDispatcherId(opts.dispatcherId);
@@ -78,7 +83,10 @@ async function handleRequest(
   switch (request.method) {
     case 'initialize':
       if (request.id !== undefined) {
-        write(ctx.output, okResponse(request.id, initializeResult()));
+        write(
+          ctx.output,
+          okResponse(request.id, initializeResult(request.params)),
+        );
       }
       return;
     case 'initialized':
@@ -111,9 +119,9 @@ async function handleRequest(
   }
 }
 
-function initializeResult(): Record<string, unknown> {
+function initializeResult(params: unknown): Record<string, unknown> {
   return {
-    protocolVersion: MCP_PROTOCOL_VERSION,
+    protocolVersion: negotiateProtocolVersion(params),
     capabilities: {
       tools: {},
     },
@@ -180,30 +188,48 @@ async function callTool(
   params: unknown,
   ctx: { dispatcherId: string; socketPath: string },
 ): Promise<Record<string, unknown>> {
-  const call = asToolCallParams(params);
-  if (call.name === 'reply') {
-    return forwardToolCall(
-      'mcp.reply',
-      {
-        dispatcher_id: ctx.dispatcherId,
-        ...replyArgs(call.arguments),
-      },
-      ctx.socketPath,
-      'reply',
-    );
+  try {
+    const call = asToolCallParams(params);
+    if (call.name === 'reply') {
+      return forwardToolCall(
+        'mcp.reply',
+        {
+          dispatcher_id: ctx.dispatcherId,
+          ...replyArgs(call.arguments),
+        },
+        ctx.socketPath,
+        'reply',
+      );
+    }
+    if (call.name === 'react') {
+      return forwardToolCall(
+        'mcp.react',
+        {
+          dispatcher_id: ctx.dispatcherId,
+          ...reactArgs(call.arguments),
+        },
+        ctx.socketPath,
+        'react',
+      );
+    }
+    return toolError(`unknown Feishu tool '${String(call.name)}'`);
+  } catch (err) {
+    return toolError(parseMessage(err));
   }
-  if (call.name === 'react') {
-    return forwardToolCall(
-      'mcp.react',
-      {
-        dispatcher_id: ctx.dispatcherId,
-        ...reactArgs(call.arguments),
-      },
-      ctx.socketPath,
-      'react',
-    );
+}
+
+function negotiateProtocolVersion(params: unknown): string {
+  const requested =
+    params !== null && typeof params === 'object' && !Array.isArray(params)
+      ? (params as Record<string, unknown>)['protocolVersion']
+      : undefined;
+  if (
+    typeof requested === 'string' &&
+    SUPPORTED_MCP_PROTOCOL_VERSIONS.has(requested)
+  ) {
+    return requested;
   }
-  return toolError(`unknown Feishu tool '${String(call.name)}'`);
+  return DEFAULT_MCP_PROTOCOL_VERSION;
 }
 
 async function forwardToolCall(

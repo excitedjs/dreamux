@@ -20,6 +20,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { dreamuxBinPath } from '../src/runtime/package-bin.js';
+
 const PACKAGE_ROOT = resolve(
   dirname(fileURLToPath(import.meta.url)),
   '..',
@@ -92,6 +94,18 @@ describe('package bin manifest', () => {
       dreamux: './bin/dreamux',
       tm: './bin/tm',
     });
+  });
+});
+
+describe('runtime dreamux bin resolution', () => {
+  it('uses an absolute package bin path by default', () => {
+    expect(dreamuxBinPath({})).toBe(PKG_BIN_DREAMUX);
+  });
+
+  it('normalizes DREAMUX_BIN overrides to absolute paths', () => {
+    expect(dreamuxBinPath({ DREAMUX_BIN: 'relative/dreamux' })).toBe(
+      resolve('relative/dreamux'),
+    );
   });
 });
 
