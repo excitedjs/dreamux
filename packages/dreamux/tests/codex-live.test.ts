@@ -20,14 +20,16 @@
 
 import { describe, it, expect } from 'vitest';
 import { execSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 
 import { CodexProcess } from '../src/codex/supervisor.js';
 import { CodexWsClient } from '../src/codex/rpc.js';
 import { performInitializeHandshake } from '../src/codex/handshake.js';
+import { feishuMcpCodexArgs } from '../src/codex/mcp-config.js';
 import { codexArgsToCli, parseCodexArgs } from '../src/runtime/codex-args.js';
+import { dreamuxBinPath } from '../src/runtime/package-bin.js';
 import type { ThreadStartResponse } from '../src/codex/types.js';
 
 export const SKIP_ENV = 'DREAMUX_SKIP_LIVE_CODEX';
@@ -65,6 +67,25 @@ function detectCodex(): Detection {
     return { state: 'missing', reason };
   }
   return classifyDetection(out);
+}
+
+function versionAtLeast(version: string, min: string): boolean {
+  const actualParts = version.split('.').map((part) => Number.parseInt(part, 10));
+  const minParts = min.split('.').map((part) => Number.parseInt(part, 10));
+  for (let i = 0; i < Math.max(actualParts.length, minParts.length); i += 1) {
+    const actual = actualParts[i] ?? 0;
+    const expected = minParts[i] ?? 0;
+    if (actual > expected) return true;
+    if (actual < expected) return false;
+  }
+  return true;
+}
+
+interface McpServerStatusListResponse {
+  data: Array<{
+    name: string;
+    tools?: Record<string, { name: string }>;
+  }>;
 }
 
 describe('codex live integration', () => {
@@ -151,6 +172,70 @@ describe('codex live integration', () => {
     },
     30_000,
   );
+
+  it(
+    `spawns codex ${detection.version} with the Feishu stdio MCP shim`,
+    async () => {
+      if (!versionAtLeast(detection.version, '0.136.0')) {
+        throw new Error(
+          `dreamux's Feishu MCP injection gate requires codex >= 0.136.0; detected ${detection.version}`,
+        );
+      }
+
+      const dreamuxBin = dreamuxBinPath();
+      if (!isAbsolute(dreamuxBin) || !existsSync(dreamuxBin)) {
+        throw new Error(
+          `dreamux Feishu MCP live test requires an absolute built dreamux bin path; got ${dreamuxBin}`,
+        );
+      }
+
+      const dir = mkdtempSync(join(homedir(), '.dreamux-e2e-'));
+      const socketPath = join(dir, 'codex.sock');
+      const cwd = join(dir, 'cwd');
+      const extraArgs = [
+        ...codexArgsToCli(
+          parseCodexArgs('{"sandboxMode":"danger-full-access"}'),
+        ),
+        ...feishuMcpCodexArgs({
+          dispatcherId: 'dispatcher-a',
+          adminSocketPath: join(dir, 'admin.sock'),
+          command: dreamuxBin,
+        }),
+      ];
+
+      const proc = new CodexProcess({
+        socketPath,
+        cwd,
+        stdoutLogPath: join(dir, 'stdout.log'),
+        stderrLogPath: join(dir, 'stderr.log'),
+        extraArgs,
+        readyTimeoutMs: 15_000,
+      });
+
+      try {
+        await proc.start();
+        const client = new CodexWsClient({ socketPath });
+        try {
+          await client.ready();
+          await performInitializeHandshake(client);
+          const status = await client.request<McpServerStatusListResponse>(
+            'mcpServerStatus/list',
+            {},
+          );
+          const feishu = status.data.find((server) => server.name === 'feishu');
+          expect(feishu).toBeDefined();
+          expect(feishu?.tools?.['reply']?.name).toBe('reply');
+          expect(feishu?.tools?.['react']?.name).toBe('react');
+        } finally {
+          client.close();
+        }
+      } finally {
+        await proc.reap();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
 });
 
 // Unit coverage of the classification logic itself — these run regardless of
@@ -176,5 +261,11 @@ describe('codex detection logic', () => {
     expect(classifyDetection(null).state).toBe('missing');
     expect(classifyDetection('not a version string').state).toBe('missing');
     expect(classifyDetection('').state).toBe('missing');
+  });
+
+  it('compares codex semver versions', () => {
+    expect(versionAtLeast('0.136.0', '0.136.0')).toBe(true);
+    expect(versionAtLeast('0.137.0', '0.136.0')).toBe(true);
+    expect(versionAtLeast('0.135.9', '0.136.0')).toBe(false);
   });
 });

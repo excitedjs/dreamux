@@ -307,11 +307,13 @@ Codex sends Feishu outbound actions only through a dispatcher-scoped MCP server.
 Model text is never automatically forwarded to Feishu.
 
 The default MCP transport between Codex and the Feishu MCP server is stdio.
-`dreamux` injects a per-dispatcher MCP server command into the Codex thread, for
-example:
+`dreamux` injects a per-dispatcher MCP server command into the Codex thread. The
+generated command path must be an absolute `dreamux` launcher path, resolved from
+the launcher-provided `DREAMUX_BIN` environment variable when available and from
+the package bin path otherwise. Schematically:
 
 ```text
-dreamux feishu-mcp --dispatcher dispatcher-a
+<dreamux-bin> feishu-mcp --dispatcher dispatcher-a
 ```
 
 The stdio process is a thin MCP shim. It is scoped to exactly one dispatcher,
@@ -467,6 +469,9 @@ resume path.
 - Multi-chat dispatcher access emits an operator-visible trust-domain warning.
 - Codex receives a dispatcher-scoped Feishu MCP stdio shim, not a loopback HTTP
   listener, on the default path.
+- The live Codex compatibility gate starts a real Codex app-server with the
+  injected stdio MCP config and asserts `mcpServerStatus/list` exposes the
+  Feishu `reply` and `react` tools.
 - The `feishu-mcp` shim forwards `reply` and `react` to `dreamux serve` through
   the local admin socket and never reads Feishu credentials.
 - If HTTP fallback is ever implemented, it refuses to start without a per-boot,
