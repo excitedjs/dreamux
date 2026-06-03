@@ -13,7 +13,8 @@ import {
 import {
   dispatcherAppServerControlDir,
   dispatcherCodexHome,
-  dispatcherCodexSkillsDir,
+  dispatcherWorkspaceCodexSkillsDir,
+  dispatcherWorkspaceSkillPath,
   databasePath,
   logsRoot,
   setRuntimeConfig,
@@ -95,12 +96,6 @@ export async function runOnboard(
     dryRun: answers.dryRun,
   });
   ensureDirectory(
-    dispatcherCodexSkillsDir(answers.dispatcherId),
-    ledger,
-    'global Codex skills directory',
-    { dryRun: answers.dryRun },
-  );
-  ensureDirectory(
     dispatcherAppServerControlDir(answers.dispatcherId),
     ledger,
     'dispatcher app-server control directory',
@@ -112,9 +107,15 @@ export async function runOnboard(
     'dispatcher cwd',
     { dryRun: answers.dryRun },
   );
+  ensureDirectory(
+    dispatcherWorkspaceCodexSkillsDir(effectiveAnswers.dispatcherCwd),
+    ledger,
+    'workspace-local Codex skills directory',
+    { dryRun: answers.dryRun },
+  );
 
   installDispatcherSkill({
-    skillsDir: dispatcherCodexSkillsDir(answers.dispatcherId),
+    skillPath: dispatcherWorkspaceSkillPath(effectiveAnswers.dispatcherCwd),
     ledger,
     dryRun: answers.dryRun,
   });
@@ -193,6 +194,7 @@ function runDispatcherDoctor(
   const codexCliArgs = codexArgsToCli(codexArgs);
   const context = dispatcherCodexHomeDoctorContext(answers.dispatcherId, {
     codexCliArgs,
+    dispatcherCwd: answers.dispatcherCwd,
   });
   if (answers.dryRun) {
     return {

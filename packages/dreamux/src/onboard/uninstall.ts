@@ -2,6 +2,9 @@ import { existsSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join, resolve, sep } from 'node:path';
 
+import { DispatcherRepo } from '../db/repository.js';
+import { openDatabase } from '../db/schema.js';
+import type { DispatcherRow } from '../db/types.js';
 import { ExecaCommandRunner } from './commands.js';
 import {
   LAUNCHD_LABEL,
@@ -11,12 +14,17 @@ import {
 import type { CommandRunner, ServicePlatform } from './types.js';
 import {
   assertNoLegacyTomlOnly,
-  BUILT_IN_DEFAULTS,
   expandHome,
   globalConfigDir,
   globalConfigFile,
   loadConfig,
 } from '../runtime/config.js';
+import {
+  databasePath,
+  dispatcherWorkspaceSkillPath,
+  logsRoot,
+  stateRoot,
+} from '../runtime/paths.js';
 
 export type UninstallStatus = 'removed' | 'missing' | 'skipped';
 
@@ -50,12 +58,16 @@ export async function runUninstall(
   const runner = options.runner ?? new ExecaCommandRunner();
   const dryRun = options.dryRun ?? false;
   const configDir = normalizePath(options.configDir ?? globalConfigDir());
-  const runtimeDir = normalizePath(resolveRuntimeDir(configDir, options.runtimeDir));
   const entries: UninstallEntry[] = [];
   const unit = serviceUnitPath(options.platform, options.homeDir ?? homedir());
+  validateConfigIfPresent(configDir);
+  const stateDir = normalizePath(stateRoot());
+  const logDir = normalizePath(logsRoot());
 
-  assertSafeOwnedDirectory(runtimeDir, 'dreamux runtime directory');
+  assertSafeOwnedDirectory(stateDir, 'dreamux state directory');
+  assertSafeOwnedDirectory(logDir, 'dreamux logs directory');
   assertSafeOwnedDirectory(configDir, 'dreamux config directory');
+  const workspaceSkillPaths = collectWorkspaceSkillPaths();
 
   await unregisterService({
     unitPath: unit.path,
@@ -70,7 +82,9 @@ export async function runUninstall(
     await runBestEffort(runner, 'systemctl', ['--user', 'daemon-reload'], dryRun);
   }
 
-  removeOwnedDirectory(runtimeDir, entries, 'dreamux runtime directory', dryRun);
+  reportWorkspaceSkills(workspaceSkillPaths, entries);
+  removeOwnedDirectory(stateDir, entries, 'dreamux state directory', dryRun);
+  removeOwnedDirectory(logDir, entries, 'dreamux logs directory', dryRun);
   removeOwnedDirectory(configDir, entries, 'dreamux config directory', dryRun);
 
   return {
@@ -82,13 +96,42 @@ export async function runUninstall(
   };
 }
 
-function resolveRuntimeDir(configDir: string, explicit: string | undefined): string {
-  if (explicit !== undefined && explicit !== '') return explicit;
+function validateConfigIfPresent(configDir: string): void {
   assertNoLegacyTomlOnly({ configDir });
-  if (!existsSync(globalConfigFile({ configDir }))) {
-    return BUILT_IN_DEFAULTS.runtime_dir;
+  if (!existsSync(globalConfigFile({ configDir }))) return;
+  loadConfig({ configDir });
+}
+
+function collectWorkspaceSkillPaths(): string[] {
+  const dbPath = databasePath();
+  if (!existsSync(dbPath)) return [];
+  const db = openDatabase({ path: dbPath });
+  try {
+    return new DispatcherRepo(db)
+      .list()
+      .map(dispatcherWorkspaceSkillPathFromRow)
+      .filter((path): path is string => path !== null);
+  } finally {
+    db.close();
   }
-  return loadConfig({ configDir }).config.runtime_dir;
+}
+
+function dispatcherWorkspaceSkillPathFromRow(row: DispatcherRow): string | null {
+  if (row.codex_cwd === null || row.codex_cwd.trim() === '') return null;
+  return dispatcherWorkspaceSkillPath(row.codex_cwd);
+}
+
+function reportWorkspaceSkills(
+  paths: string[],
+  entries: UninstallEntry[],
+): void {
+  for (const path of uniquePaths(paths)) {
+    entries.push({
+      path,
+      status: existsSync(path) ? 'skipped' : 'missing',
+      reason: 'workspace-local dispatcher skill (not removed)',
+    });
+  }
 }
 
 async function unregisterService(options: {

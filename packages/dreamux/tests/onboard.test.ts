@@ -21,7 +21,7 @@ import type { CommandRunner, OnboardAnswers } from '../src/onboard/types.js';
 import {
   databasePath,
   dispatcherCodexHome,
-  dispatcherCodexSkillsDir,
+  dispatcherWorkspaceSkillPath,
   logsRoot,
   resetRuntimeConfig,
 } from '../src/runtime/paths.js';
@@ -163,10 +163,13 @@ describe('dreamux onboard', () => {
       app_secret: 'secret-test',
     });
     expect(
-      existsSync(
-        join(dispatcherCodexSkillsDir('flow'), 'codexmux-dispatcher', 'SKILL.md'),
-      ),
+      existsSync(dispatcherWorkspaceSkillPath(answers.dispatcherCwd)),
     ).toBe(true);
+    expect(
+      existsSync(
+        join(dispatcherCodexHome('flow'), 'skills', 'dispatcher', 'SKILL.md'),
+      ),
+    ).toBe(false);
 
     const db = openDatabase({ path: databasePath() });
     try {
@@ -193,9 +196,7 @@ describe('dreamux onboard', () => {
       'created',
     );
     expect(
-      ledger.get(
-        join(dispatcherCodexSkillsDir('flow'), 'codexmux-dispatcher', 'SKILL.md'),
-      )?.status,
+      ledger.get(dispatcherWorkspaceSkillPath(answers.dispatcherCwd))?.status,
     ).toBe('created');
     expect(
       ledger.get(
@@ -231,7 +232,7 @@ describe('dreamux onboard', () => {
     );
   });
 
-  it('rewrites global dispatcher skills and skips already-loaded launchd services on rerun', async () => {
+  it('rewrites workspace dispatcher skills and skips already-loaded launchd services on rerun', async () => {
     const runner = new FakeRunner();
     const answers = testAnswers({
       configDir: join(root, 'config'),

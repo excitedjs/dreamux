@@ -20,7 +20,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { Server } from '../src/server.js';
 import { CodexProcess, type CodexProcessOptions } from '../src/codex/supervisor.js';
@@ -30,8 +30,9 @@ import { createAdminSocketServer } from '../src/admin/socket.js';
 import { BUILT_IN_DEFAULTS } from '../src/runtime/config.js';
 import {
   dispatcherAppServerControlDir,
+  dispatcherCodexCwd,
   dispatcherCodexHome,
-  dispatcherCodexSkillsDir,
+  dispatcherWorkspaceSkillPath,
   dispatcherSocketPath,
 } from '../src/runtime/paths.js';
 import { startFakeCodex, type FakeCodex } from './fake-codex.js';
@@ -115,18 +116,16 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function writeReadyDispatcherCodexHome(dispatcherId: string): void {
+function writeReadyDispatcherCodexHome(dispatcherId: string, dispatcherCwd?: string): void {
   mkdirSync(dispatcherCodexHome(dispatcherId), { recursive: true });
   writeFileSync(join(dispatcherCodexHome(dispatcherId), 'auth.json'), '{}', {
     mode: 0o600,
   });
-  mkdirSync(join(dispatcherCodexSkillsDir(dispatcherId), 'codexmux-dispatcher'), {
-    recursive: true,
-  });
-  writeFileSync(
-    join(dispatcherCodexSkillsDir(dispatcherId), 'codexmux-dispatcher', 'SKILL.md'),
-    '# test skill\n',
+  const skillPath = dispatcherWorkspaceSkillPath(
+    dispatcherCwd ?? dispatcherCodexCwd(dispatcherId),
   );
+  mkdirSync(dirname(skillPath), { recursive: true });
+  writeFileSync(skillPath, '# test skill\n');
 }
 
 describe('dreamux MVP smoke', () => {
@@ -224,8 +223,9 @@ describe('dreamux MVP smoke', () => {
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
       codex_args_json: JSON.stringify({ sandboxMode: 'danger-full-access' }),
+      codex_cwd: join(runtimeDir, 'workspace'),
     });
-    writeReadyDispatcherCodexHome('flow');
+    writeReadyDispatcherCodexHome('flow', join(runtimeDir, 'workspace'));
 
     expect(existsSync(dispatcherAppServerControlDir('flow'))).toBe(false);
     await server.start();

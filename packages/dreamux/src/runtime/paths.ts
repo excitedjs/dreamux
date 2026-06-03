@@ -111,6 +111,14 @@ export function dispatcherCodexSkillsDir(id: string): string {
   return join(dispatcherCodexHome(id), 'skills');
 }
 
+export function dispatcherWorkspaceCodexSkillsDir(cwd: string): string {
+  return join(cwd, '.codex', 'skills');
+}
+
+export function dispatcherWorkspaceSkillPath(cwd: string): string {
+  return join(dispatcherWorkspaceCodexSkillsDir(cwd), 'dispatcher', 'SKILL.md');
+}
+
 export function dispatcherAppServerControlDir(id: string): string {
   return dispatcherDir(id);
 }

@@ -21,7 +21,7 @@ Design background:
   wrapper around the package-local `@excitedjs/tm` dependency for dispatcher
   skills.
 - A bundled dispatcher Codex skill, copied by `dreamux onboard` into
-  `~/.codex/skills/codexmux-dispatcher/SKILL.md`.
+  `<dispatcher cwd>/.codex/skills/dispatcher/SKILL.md`.
 - A SQLite-backed runtime (`dispatchers` + `inbound_buffer`) plus the
   Feishu / Codex adapters that drive each dispatcher.
 
@@ -36,9 +36,9 @@ Design background:
 - **Dispatcher cwd is explicit, Codex state stays global.** The Codex
   daemon's cwd is configured during `dreamux onboard` or
   `dreamux dispatcher add --codex-cwd`. Dispatcher app-server processes
-  use Codex's global default home (`~/.codex`) for auth, memory, config, and
-  skills. dreamux keeps only app-server sockets/logs/SQLite under its runtime
-  directory.
+  use Codex's global default home (`~/.codex`) for auth, memory, and config.
+  The dispatcher skill is workspace-local under the dispatcher cwd. dreamux
+  keeps only app-server sockets/logs/SQLite under its runtime directory.
 - **FIFO + at-most-once.** One running turn per dispatcher. After a server
   crash, `running` inbound rows are flipped to `unknown` (the user is told
   to confirm or resend); `awaiting_outbound` rows are safely retried.
@@ -85,8 +85,8 @@ design (see [the top-level design](../../.agents/decisions/top-level-design.md))
 | `~/.dreamux/state/state.db`              | Legacy SQLite state until the MVP state cleanup lands | the server |
 | `~/.dreamux/state/admin.sock`            | Admin Unix socket (`0600`)                 | the server |
 | dispatcher `codex_cwd`                   | Codex app-server cwd, configured during onboard or dispatcher registration | the operator |
-| `~/.codex/`                              | Codex global default home: auth, memory, config, and skills | the operator / Codex |
-| `~/.codex/skills/codexmux-dispatcher/SKILL.md` | Dispatcher skill copied by `dreamux onboard` | dreamux installer |
+| `~/.codex/`                              | Codex global default home: auth, memory, and config | the operator / Codex |
+| `<dispatcher cwd>/.codex/skills/dispatcher/SKILL.md` | Dispatcher skill copied by `dreamux onboard`; reported but not deleted by `dreamux uninstall` | dreamux installer |
 | `~/.dreamux/state/<id>/codex.sock`       | Codex app-server Unix socket              | the server |
 | `~/.dreamux/logs/codex-app-server/<id>.log` | Codex app-server stdout                 | the server |
 

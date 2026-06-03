@@ -229,7 +229,7 @@ function buildUninstallCommand(y: Argv): Argv {
     })
     .option('runtime-dir', {
       type: 'string',
-      describe: 'dreamux runtime directory',
+      describe: 'Legacy option ignored; uninstall removes dreamux state/log paths',
     });
 }
 
