@@ -17,7 +17,9 @@ import {
   expandHome,
   globalConfigDir,
   globalConfigFile,
+  loadConfig,
   loadOrInitConfig,
+  redactConfigForDisplay,
   stringifyConfig,
 } from '../src/runtime/config.js';
 import {
@@ -114,6 +116,47 @@ describe('global config (~/.dreamux/config.json)', () => {
     writeFileSync(file, `{"runtime_dir": "/ok"`);
     expect(() => loadOrInitConfig({ configDir })).toThrow(/config\.json/);
     expect(() => loadOrInitConfig({ configDir })).toThrow(/dreamux config parse error/);
+  });
+
+  it('fails fast when only the legacy TOML config exists', () => {
+    const jsonFile = globalConfigFile({ configDir });
+    const tomlFile = join(configDir, 'config.toml');
+    writeFileSync(tomlFile, 'runtime_dir = "/tmp/old-runtime"\n');
+
+    expect(() => loadOrInitConfig({ configDir })).toThrow(/legacy dreamux config/);
+    expect(() => loadConfig({ configDir })).toThrow(/Create .*config\.json/);
+    expect(existsSync(jsonFile)).toBe(false);
+  });
+
+  it('redacts Feishu app secrets for display', () => {
+    const raw = JSON.stringify({
+      runtime_dir: '/tmp/runtime',
+      feishu: {
+        bots: {
+          flow: {
+            app_id: 'app-flow',
+            app_secret: 'secret-flow',
+          },
+          docs: {
+            app_id: 'app-docs',
+            app_secret: 'secret-docs',
+          },
+        },
+      },
+    });
+
+    const displayed = redactConfigForDisplay(raw, globalConfigFile({ configDir }));
+    expect(displayed).toContain('<redacted>');
+    expect(displayed).not.toContain('secret-flow');
+    expect(displayed).not.toContain('secret-docs');
+    expect(JSON.parse(displayed)).toMatchObject({
+      feishu: {
+        bots: {
+          flow: { app_id: 'app-flow', app_secret: '<redacted>' },
+          docs: { app_id: 'app-docs', app_secret: '<redacted>' },
+        },
+      },
+    });
   });
 
   it('rejects invalid config values', () => {

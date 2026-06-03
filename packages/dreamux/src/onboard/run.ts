@@ -1,9 +1,15 @@
-import { mkdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync, mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 
 import { DispatcherRepo } from '../db/repository.js';
 import { openDatabase } from '../db/schema.js';
 import { codexArgsToCli, parseCodexArgs } from '../runtime/codex-args.js';
+import {
+  assertNoLegacyTomlOnly,
+  globalConfigFile,
+  loadConfig,
+  stringifyConfig,
+} from '../runtime/config.js';
 import {
   dispatcherAppServerControlDir,
   dispatcherCodexHome,
@@ -18,7 +24,6 @@ import {
 } from '../runtime/dispatcher-codex-home.js';
 import { ExecaCommandRunner } from './commands.js';
 import {
-  buildDreamuxConfigJson,
   dispatcherBotSecretRef,
   dispatcherCodexArgsJson,
   dreamuxConfigFromAnswers,
@@ -59,19 +64,25 @@ export async function runOnboard(
   const ledger = options.ledger ?? new TransparentFileLedger();
   const runner = options.runner ?? new ExecaCommandRunner();
   const env = options.env ?? process.env;
-  const dreamuxConfig = dreamuxConfigFromAnswers(answers);
+  const configPath = globalConfigFile({ configDir: answers.configDir });
+  const existingConfig = readExistingDreamuxConfig(answers.configDir);
+  const dreamuxConfig = dreamuxConfigFromAnswers(answers, existingConfig);
+  const effectiveAnswers = {
+    ...answers,
+    runtimeDir: dreamuxConfig.runtime_dir,
+    codexBin: dreamuxConfig.codex.bin,
+  };
   setRuntimeConfig(dreamuxConfig);
 
-  const configPath = join(answers.configDir, 'config.json');
   ensureDirectory(answers.configDir, ledger, 'dreamux config directory', {
     dryRun: answers.dryRun,
   });
-  ensureDirectory(answers.runtimeDir, ledger, 'dreamux runtime directory', {
+  ensureDirectory(effectiveAnswers.runtimeDir, ledger, 'dreamux runtime directory', {
     dryRun: answers.dryRun,
   });
   writeTextFile(
     configPath,
-    buildDreamuxConfigJson(answers),
+    stringifyConfig(dreamuxConfig),
     ledger,
     'dreamux global config',
     { mode: 0o600, dryRun: answers.dryRun },
@@ -94,36 +105,36 @@ export async function runOnboard(
     { dryRun: answers.dryRun },
   );
   ensureDirectory(
-    answers.dispatcherCwd,
+    effectiveAnswers.dispatcherCwd,
     ledger,
     'dispatcher cwd',
     { dryRun: answers.dryRun },
   );
 
   await installCodexmuxPlugin({
-    answers,
+    answers: effectiveAnswers,
     codexHome,
     ledger,
     runner,
   });
 
   await installClaudemuxPlugin({
-    answers,
+    answers: effectiveAnswers,
     codexHome,
     ledger,
     runner,
   });
 
-  registerDispatcher(answers, ledger);
+  registerDispatcher(effectiveAnswers, ledger);
 
-  const doctor = runDispatcherDoctor(answers, dreamuxConfig, env);
-  if (!answers.dryRun && !doctor.ok) {
-    throw new Error(formatDoctorFailure(answers, doctor));
+  const doctor = runDispatcherDoctor(effectiveAnswers, dreamuxConfig, env);
+  if (!effectiveAnswers.dryRun && !doctor.ok) {
+    throw new Error(formatDoctorFailure(effectiveAnswers, doctor));
   }
 
-  const service = answers.registerService
+  const service = effectiveAnswers.registerService
     ? await installUserService({
-        answers,
+        answers: effectiveAnswers,
         ledger,
         runner,
         platform: options.platform,
@@ -137,6 +148,13 @@ export async function runOnboard(
     doctor,
     service,
   };
+}
+
+function readExistingDreamuxConfig(configDir: string) {
+  const configPath = globalConfigFile({ configDir });
+  assertNoLegacyTomlOnly({ configDir });
+  if (!existsSync(configPath)) return undefined;
+  return loadConfig({ configDir }).config;
 }
 
 function registerDispatcher(

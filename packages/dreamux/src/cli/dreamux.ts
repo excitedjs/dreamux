@@ -14,7 +14,10 @@ import { fileURLToPath } from 'node:url';
 import yargs, { type Argv } from 'yargs';
 import { hideBin } from 'yargs/helpers';
 
-import { globalConfigFile } from '../runtime/config.js';
+import {
+  globalConfigFile,
+  redactConfigForDisplay,
+} from '../runtime/config.js';
 import { runOnboard } from '../onboard/run.js';
 import {
   runUninstall,
@@ -320,13 +323,20 @@ function buildConfigCommands(y: Argv): Argv {
     .command(
       'show',
       'Print the dreamux global config file',
-      (yy) => yy,
-      () => {
+      (yy) =>
+        yy.option('raw', {
+          type: 'boolean',
+          describe: 'Print unredacted config, including channel secrets',
+        }),
+      (argv) => {
         const file = globalConfigFile();
         if (!existsSync(file)) {
           throw new Error(`config file does not exist: ${file}`);
         }
-        process.stdout.write(readFileSync(file, 'utf8'));
+        const raw = readFileSync(file, 'utf8');
+        process.stdout.write(
+          argv.raw === true ? raw : redactConfigForDisplay(raw, file),
+        );
       },
     )
     .demandCommand(1, 'Choose a config command')

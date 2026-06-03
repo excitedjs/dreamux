@@ -118,11 +118,7 @@ export function answersFromOptions(
     'bot-app-secret',
     fromInteractive,
   );
-  const dispatcherCwd = requiredOption(
-    options.dispatcherCwd,
-    'dispatcher-cwd',
-    fromInteractive,
-  );
+  const dispatcherCwd = options.dispatcherCwd ?? process.cwd();
   return {
     configDir: normalizePath(options.configDir ?? defaultConfigDir(options)),
     runtimeDir: normalizePath(options.runtimeDir ?? defaultRuntimeDir(options)),

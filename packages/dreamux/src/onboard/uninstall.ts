@@ -1,6 +1,6 @@
 import { existsSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, resolve } from 'node:path';
+import { basename, join, resolve, sep } from 'node:path';
 
 import { ExecaCommandRunner } from './commands.js';
 import {
@@ -51,6 +51,9 @@ export async function runUninstall(
   const runtimeDir = normalizePath(resolveRuntimeDir(configDir, options.runtimeDir));
   const entries: UninstallEntry[] = [];
   const unit = serviceUnitPath(options.platform, options.homeDir ?? homedir());
+
+  assertSafeOwnedDirectory(runtimeDir, 'dreamux runtime directory');
+  assertSafeOwnedDirectory(configDir, 'dreamux config directory');
 
   await unregisterService({
     unitPath: unit.path,
@@ -176,8 +179,41 @@ function assertSafeOwnedDirectory(path: string, reason: string): void {
   ) {
     throw new Error(`refusing to remove unsafe ${reason}: ${path}`);
   }
+  for (const protectedRoot of operatorStateRoots()) {
+    if (isSameOrInside(normalized, protectedRoot)) {
+      throw new Error(
+        `refusing to remove unsafe ${reason}: ${path} is inside operator Codex/Claude state ${protectedRoot}`,
+      );
+    }
+  }
 }
 
 function normalizePath(path: string): string {
   return resolve(expandHome(path));
+}
+
+function operatorStateRoots(): string[] {
+  return uniquePaths([
+    joinHome('.codex'),
+    process.env['CODEX_HOME'],
+    joinHome('.claude'),
+    process.env['CLAUDE_CONFIG_DIR'],
+  ]);
+}
+
+function joinHome(child: string): string {
+  return normalizePath(join(homedir(), child));
+}
+
+function uniquePaths(paths: Array<string | undefined>): string[] {
+  const out = new Set<string>();
+  for (const path of paths) {
+    if (path === undefined || path.trim() === '') continue;
+    out.add(normalizePath(path));
+  }
+  return Array.from(out);
+}
+
+function isSameOrInside(path: string, root: string): boolean {
+  return path === root || path.startsWith(`${root}${sep}`);
 }

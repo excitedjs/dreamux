@@ -12,6 +12,7 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import {
   closeSync,
+  existsSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -92,10 +93,17 @@ export function globalConfigFile(overrides: ConfigPathOverrides = {}): string {
   return join(globalConfigDir(overrides), 'config.json');
 }
 
+export function legacyGlobalConfigFile(
+  overrides: ConfigPathOverrides = {},
+): string {
+  return join(globalConfigDir(overrides), 'config.toml');
+}
+
 export function loadOrInitConfig(
   overrides: ConfigPathOverrides = {},
 ): { config: DreamuxConfig; configFile: string; createdOnThisBoot: boolean } {
   const file = globalConfigFile(overrides);
+  assertNoLegacyTomlOnly(overrides);
   mkdirSync(dirname(file), { recursive: true });
 
   const createdOnThisBoot = atomicWriteIfAbsent(file, DEFAULT_CONFIG_JSON);
@@ -107,11 +115,27 @@ export function loadConfig(
   overrides: ConfigPathOverrides = {},
 ): { config: DreamuxConfig; configFile: string } {
   const file = globalConfigFile(overrides);
+  assertNoLegacyTomlOnly(overrides);
   return { config: readConfigFile(file), configFile: file };
 }
 
 export function stringifyConfig(config: DreamuxConfig): string {
   return `${JSON.stringify(config, null, 2)}\n`;
+}
+
+export function redactConfigForDisplay(raw: string, file: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `dreamux config parse error in ${file}: ${msg}\n` +
+        `Use 'dreamux config show --raw' to print the file without redaction.`,
+    );
+  }
+  redactFeishuSecrets(parsed);
+  return `${JSON.stringify(parsed, null, 2)}\n`;
 }
 
 function readConfigFile(file: string): DreamuxConfig {
@@ -127,6 +151,19 @@ function readConfigFile(file: string): DreamuxConfig {
     );
   }
   return mergeWithDefaults(parsed, file);
+}
+
+export function assertNoLegacyTomlOnly(
+  overrides: ConfigPathOverrides = {},
+): void {
+  const jsonFile = globalConfigFile(overrides);
+  const tomlFile = legacyGlobalConfigFile(overrides);
+  if (existsSync(jsonFile) || !existsSync(tomlFile)) return;
+  throw new Error(
+    `legacy dreamux config detected at ${tomlFile}, but ${jsonFile} does not exist.\n` +
+      'dreamux no longer reads TOML config and will not create default JSON over an existing install, because that can hide the old runtime_dir and dispatcher database.\n' +
+      `Create ${jsonFile} manually from ${tomlFile}, then move ${tomlFile} aside. Preserve runtime_dir/admin_socket/codex/outbound settings and add feishu.bots entries for configured dispatchers.`,
+  );
 }
 
 function atomicWriteIfAbsent(file: string, content: string): boolean {
@@ -374,6 +411,19 @@ function describeType(v: unknown): string {
   if (v === null) return 'null';
   if (Array.isArray(v)) return 'array';
   return typeof v;
+}
+
+function redactFeishuSecrets(value: unknown): void {
+  if (!isPlainObject(value)) return;
+  const feishu = value['feishu'];
+  if (!isPlainObject(feishu)) return;
+  const bots = feishu['bots'];
+  if (!isPlainObject(bots)) return;
+  for (const bot of Object.values(bots)) {
+    if (isPlainObject(bot) && typeof bot['app_secret'] === 'string') {
+      bot['app_secret'] = '<redacted>';
+    }
+  }
 }
 
 export function expandHome(path: string): string {

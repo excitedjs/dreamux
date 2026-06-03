@@ -1,6 +1,6 @@
-# Global config in `~/.dreamux/config.toml`
+# Global config in `~/.dreamux/config.json`
 
-- **Status:** Accepted
+- **Status:** Accepted, amended by PR #34
 - **Date:** 2026-05-28
 - **Affects:** server startup, codex CLI invocation, outbound retry policy, paths.* helpers
 - **PR / Issue:** feat/global-config-dir
@@ -18,18 +18,24 @@ logs) makes `rm -rf ~/.codex-host` recovery dangerous.
 We needed a user-editable global config that is:
 
 - separate from runtime state (so blowing away state can't lose settings)
-- format-stable (preserves user comments / formatting on reload)
 - failure-loud (parse error tells the operator exactly which line to fix)
 - backward-compatible (env vars and per-dispatcher fields keep working
   without an upgrade prompt)
+- able to store local channel secrets created by onboarding without relying on
+  managed-service environment injection
 
 ## Decision
 
-Create `~/.dreamux/config.toml` at server startup if absent, populated with
-a heavily-commented default. Subsequent boots read the file verbatim — we
-never rewrite it. Format is TOML to match codex's own
-`~/.codex/config.toml`. Parser is `smol-toml` (small, maintained, zero deps,
-ESM, surfaces line/column on errors).
+Create `~/.dreamux/config.json` at server startup if absent. Subsequent boots
+merge missing keys with built-in defaults in memory. `dreamux onboard` writes
+the file with mode `0600` and upserts only the current
+`feishu.bots.<dispatcher-id>` entry when the JSON file already exists; existing
+global settings and other bot secrets are preserved.
+
+Older installs that have only `~/.dreamux/config.toml` fail fast with an
+explicit migration message. dreamux does not silently create default JSON over
+legacy TOML because doing so can hide the previous `runtime_dir` and dispatcher
+database.
 
 Path overrides:
 
@@ -43,7 +49,7 @@ Precedence for every config-able value (highest wins):
    CI / one-off debug runs.
 2. Per-dispatcher fields — `dispatchers.codex_args_json` (`approvalPolicy`,
    `extraArgs`). Already existed; still authoritative for one dispatcher.
-3. `~/.dreamux/config.toml` — global defaults the operator edits by hand.
+3. `~/.dreamux/config.json` — global defaults and Feishu bot secrets the operator edits by hand.
 4. Built-in defaults compiled into the binary (`src/runtime/config.ts`
    `BUILT_IN_DEFAULTS`).
 
@@ -60,21 +66,23 @@ Fields sunk into the config (this PR):
 | `codex.initialize_timeout_ms` | `10000` | Hard-coded constant in `handshake.ts` |
 | `outbound.retries` | `3` | Hard-coded constant in `turn-manager.ts` |
 | `outbound.retry_delay_ms` | `1000` | Hard-coded constant in `turn-manager.ts` |
+| `feishu.bots.<id>.app_id` | none | Onboarded Feishu app id for dispatcher `<id>` |
+| `feishu.bots.<id>.app_secret` | none | Onboarded Feishu app secret for dispatcher `<id>` |
 
 Per-dispatcher `extraArgs` are **appended** to global `codex.extra_args`,
 not overwritten — relies on codex's "last write wins" semantics for
 repeated `-c key=value`, so a per-dispatcher entry effectively overrides
 a same-key global default. See `src/runtime/codex-args.ts`.
 
-Secrets (per-dispatcher `bot_secret_ref`) deliberately stay in env vars
-(issue #2 Q9). Sensitive material does not flow through this config file.
+Dispatcher rows store `bot_secret_ref=config:<dispatcher-id>` for onboarded
+bots; the actual Feishu app secret lives in `feishu.bots.<dispatcher-id>`.
+`dreamux config show` redacts `app_secret` by default. Operators must pass
+`--raw` explicitly to print the unredacted local file.
 
 ## Consequences
 
 **Costs / constraints:**
 
-- One new runtime dependency: `smol-toml`. Small (~10 KB), ESM, zero
-  transitive deps. Worth the cost vs. hand-rolling a TOML subset parser.
 - On every server boot we now read a file in `~/.dreamux/`. Negligible.
 - The file is created with mode `0600`. Operators expecting world-readable
   configs need to chmod after the fact (and document why).
@@ -84,10 +92,13 @@ Secrets (per-dispatcher `bot_secret_ref`) deliberately stay in env vars
 
 **Foot-guns:**
 
-- A typo in the TOML file fails server startup with a `file:line` pointer
+- A typo in the JSON file fails server startup
   but does **not** auto-revert to defaults. That's deliberate — silent
   fallback would mask the very mistakes the file is supposed to surface.
-  Documented in the file's own header comment.
+  Use `dreamux config show --raw` when redaction cannot parse a broken file.
+- A legacy `config.toml` without `config.json` fails startup/onboard instead of
+  being ignored. Manual migration is required so the old runtime directory and
+  dispatcher database remain visible.
 - `codex.sandbox_mode = "danger-full-access"` paired with
   `approval_policy = "never"` is effectively giving every bot user shell
   access at the operator's privilege level — only set it when the trust
@@ -109,9 +120,10 @@ Secrets (per-dispatcher `bot_secret_ref`) deliberately stay in env vars
 - **Put config in `~/.codex-host/config.toml`**: rejected. The whole
   point of the split is that `~/.codex-host/` is server state and
   `rm -rf`-safe; mixing settings in there re-creates the original problem.
-- **JSON or YAML instead of TOML**: rejected. TOML matches codex's own
-  `~/.codex/config.toml`, comments are first-class (operators will edit
-  this by hand), and smol-toml has a small, dependency-free footprint.
+- **TOML or YAML instead of JSON**: JSON is now used for dreamux-owned config.
+  Codex may still maintain its own `~/.codex/config.toml`, but dreamux does not
+  write TOML config files. JSON keeps Feishu secret storage and redaction logic
+  simple and explicit.
 - **No fallback to built-in defaults; require all keys present**:
   rejected. Forward-compat for adding new keys would force every operator
   to re-add fields after every upgrade. Built-in defaults make new keys

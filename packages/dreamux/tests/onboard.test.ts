@@ -416,6 +416,96 @@ describe('dreamux onboard', () => {
     expect(countCalls(runner, 'launchctl', ['kickstart'])).toBe(2);
   });
 
+  it('preserves existing config globals and other Feishu bots on rerun', async () => {
+    const runner = new FakeRunner();
+    const existingRuntimeDir = join(root, 'existing-runtime');
+    const ignoredRuntimeDir = join(root, 'ignored-runtime');
+    const configDir = join(root, 'config');
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(
+      join(configDir, 'config.json'),
+      JSON.stringify({
+        runtime_dir: existingRuntimeDir,
+        admin_socket: join(root, 'admin.sock'),
+        codex: {
+          approval_policy: 'on-failure',
+          sandbox_mode: 'danger-full-access',
+          extra_args: ['--model', 'local-default'],
+          initialize_timeout_ms: 12345,
+        },
+        outbound: {
+          retries: 7,
+          retry_delay_ms: 321,
+        },
+        feishu: {
+          bots: {
+            flow: {
+              app_id: 'app-flow',
+              app_secret: 'secret-flow',
+            },
+          },
+        },
+      }),
+    );
+    const answers = testAnswers({
+      configDir,
+      runtimeDir: ignoredRuntimeDir,
+      dispatcherId: 'docs',
+      dispatcherCwd: join(root, 'docs-cwd'),
+      claudeConfigDir: join(root, 'claude'),
+      registerService: false,
+      botAppId: 'app-docs',
+      botAppSecret: 'secret-docs',
+    });
+
+    await runOnboard({
+      answers,
+      runner,
+      platform: 'linux',
+      homeDir: join(root, 'home'),
+      env: { CODEX_ACCESS_TOKEN: 'interactive-token-test' },
+    });
+
+    const saved = JSON.parse(
+      readFileSync(join(configDir, 'config.json'), 'utf8'),
+    ) as Record<string, any>;
+    expect(saved['runtime_dir']).toBe(existingRuntimeDir);
+    expect(saved['admin_socket']).toBe(join(root, 'admin.sock'));
+    expect(saved['codex']).toMatchObject({
+      approval_policy: 'on-failure',
+      sandbox_mode: 'danger-full-access',
+      extra_args: ['--model', 'local-default'],
+      initialize_timeout_ms: 12345,
+    });
+    expect(saved['outbound']).toEqual({
+      retries: 7,
+      retry_delay_ms: 321,
+    });
+    expect(saved['feishu']['bots']).toEqual({
+      flow: {
+        app_id: 'app-flow',
+        app_secret: 'secret-flow',
+      },
+      docs: {
+        app_id: 'app-docs',
+        app_secret: 'secret-docs',
+      },
+    });
+    expect(existsSync(ignoredRuntimeDir)).toBe(false);
+
+    const db = openDatabase({ path: join(existingRuntimeDir, 'state.db') });
+    try {
+      expect(new DispatcherRepo(db).get('docs')).toMatchObject({
+        dispatcher_id: 'docs',
+        bot_app_id: 'app-docs',
+        bot_secret_ref: 'config:docs',
+        codex_cwd: join(root, 'docs-cwd'),
+      });
+    } finally {
+      db.close();
+    }
+  });
+
   it('does not re-add an existing Claude marketplace before installing the plugin', async () => {
     const runner = new FakeRunner();
     const answers = testAnswers({
@@ -449,6 +539,21 @@ describe('dreamux onboard', () => {
     expect(() => answersFromOptions(options, false)).toThrow(
       'non-interactive onboard requires --bot-app-id',
     );
+  });
+
+  it('defaults non-interactive dispatcher cwd to the current working directory', () => {
+    const answers = answersFromOptions(
+      {
+        yes: true,
+        configDir: join(root, 'config'),
+        runtimeDir: join(root, 'runtime'),
+        botAppId: 'app-test',
+        botAppSecret: 'secret-test',
+      },
+      false,
+    );
+
+    expect(answers.dispatcherCwd).toBe(process.cwd());
   });
 });
 

@@ -30,12 +30,18 @@ class FakeRunner implements CommandRunner {
 
 describe('dreamux uninstall', () => {
   let root: string;
+  let previousCodexHome: string | undefined;
+  let previousClaudeConfigDir: string | undefined;
 
   beforeEach(() => {
     root = mkdtempSync(join(homedir(), '.dreamux-uninstall-'));
+    previousCodexHome = process.env['CODEX_HOME'];
+    previousClaudeConfigDir = process.env['CLAUDE_CONFIG_DIR'];
   });
 
   afterEach(() => {
+    restoreEnv('CODEX_HOME', previousCodexHome);
+    restoreEnv('CLAUDE_CONFIG_DIR', previousClaudeConfigDir);
     rmSync(root, { recursive: true, force: true });
   });
 
@@ -74,4 +80,45 @@ describe('dreamux uninstall', () => {
       ['systemctl', ['--user', 'daemon-reload']],
     ]);
   });
+
+  it('refuses to remove operator Codex or Claude state paths', async () => {
+    const runner = new FakeRunner();
+    const configDir = join(root, 'config');
+    const homeDir = join(root, 'home');
+    process.env['CODEX_HOME'] = join(root, 'operator-codex');
+    process.env['CLAUDE_CONFIG_DIR'] = join(root, 'operator-claude');
+
+    for (const unsafeRuntimeDir of [
+      join(homedir(), '.codex'),
+      join(process.env['CODEX_HOME'], 'nested'),
+      join(homedir(), '.claude'),
+      process.env['CLAUDE_CONFIG_DIR'],
+    ]) {
+      await expect(
+        runUninstall({
+          configDir,
+          runtimeDir: unsafeRuntimeDir,
+          runner,
+          platform: 'linux',
+          homeDir,
+        }),
+      ).rejects.toThrow(/operator Codex\/Claude state/);
+    }
+
+    await expect(
+      runUninstall({
+        configDir: join(homedir(), '.claude'),
+        runtimeDir: join(root, 'runtime'),
+        runner,
+        platform: 'linux',
+        homeDir,
+      }),
+    ).rejects.toThrow(/operator Codex\/Claude state/);
+    expect(runner.calls).toEqual([]);
+  });
 });
+
+function restoreEnv(name: string, value: string | undefined): void {
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
+}
