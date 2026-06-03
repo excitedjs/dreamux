@@ -111,6 +111,30 @@ export const adminMethods: Record<string, AdminHandler> = {
     await server.stopDispatcher(id);
     return { dispatcher_id: id, status: 'stopped' };
   },
+
+  'mcp.reply': (server, params) => {
+    const id = mustDispatcherId(params);
+    mustExistingDispatcher(server, id);
+    mustString(params, 'chat_id');
+    mustString(params, 'text');
+    optionalString(params, 'message_id');
+    optionalStringArray(params, 'mention_user_ids');
+    throw new AdminError(
+      'NOT_IMPLEMENTED',
+      'mcp.reply IPC is reserved for Task 10 serve-owned outbound handling',
+    );
+  },
+
+  'mcp.react': (server, params) => {
+    const id = mustDispatcherId(params);
+    mustExistingDispatcher(server, id);
+    mustString(params, 'message_id');
+    mustString(params, 'emoji');
+    throw new AdminError(
+      'NOT_IMPLEMENTED',
+      'mcp.react IPC is reserved for Task 10 serve-owned outbound handling',
+    );
+  },
 };
 
 function mustString(
@@ -146,4 +170,24 @@ function optionalString(
     throw new AdminError('BAD_REQUEST', `param '${key}' must be a string`);
   }
   return v;
+}
+
+function optionalStringArray(
+  params: Record<string, unknown> | undefined,
+  key: string,
+): string[] | null {
+  if (params === undefined) return null;
+  const v = params[key];
+  if (v === undefined || v === null) return null;
+  if (!Array.isArray(v) || v.some((item) => typeof item !== 'string')) {
+    throw new AdminError('BAD_REQUEST', `param '${key}' must be an array of strings`);
+  }
+  return v as string[];
+}
+
+function mustExistingDispatcher(server: Server, id: string): void {
+  const row = server.repos.dispatchers.get(id);
+  if (row === null) {
+    throw new AdminError('DISPATCHER_NOT_FOUND', `no dispatcher with id '${id}'`);
+  }
 }

@@ -31,6 +31,7 @@ import {
 } from '../onboard/wizard.js';
 import type { OnboardRunResult } from '../onboard/types.js';
 import { printDoctorResult, runDreamuxDoctor } from './doctor.js';
+import { runFeishuMcp } from '../mcp/feishu-mcp.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SERVER_ENTRY = join(HERE, 'server.js');
@@ -305,6 +306,21 @@ function buildConfigCommands(y: Argv): Argv {
     .strict();
 }
 
+function buildFeishuMcpCommand(
+  y: Argv,
+): Argv<{ dispatcher: string; adminSocket?: string }> {
+  return y
+    .option('dispatcher', {
+      type: 'string',
+      demandOption: true,
+      describe: 'Dispatcher id this MCP shim is scoped to',
+    })
+    .option('admin-socket', {
+      type: 'string',
+      describe: 'dreamux serve admin socket path',
+    }) as Argv<{ dispatcher: string; adminSocket?: string }>;
+}
+
 async function main(): Promise<void> {
   await yargs(hideBin(process.argv))
     .scriptName('dreamux')
@@ -355,6 +371,17 @@ async function main(): Promise<void> {
       'dispatcher <command>',
       'Manage dispatchers',
       buildDispatcherCommands,
+    )
+    .command(
+      'feishu-mcp',
+      'Run the dispatcher-scoped Feishu MCP stdio shim',
+      buildFeishuMcpCommand,
+      async (argv) => {
+        await runFeishuMcp({
+          dispatcherId: validateDispatcherId(argv.dispatcher),
+          adminSocketPath: argv.adminSocket,
+        });
+      },
     )
     .command('config <command>', 'Inspect config', buildConfigCommands)
     .demandCommand(1, 'Choose a command')

@@ -323,6 +323,43 @@ describe('dreamux MVP smoke', () => {
     expect(JSON.stringify(capturedCodexOptions)).not.toContain('secret-server-only');
   });
 
+  it('injects dispatcher-scoped Feishu MCP config after operator Codex args', async () => {
+    const capturedCodexOptions: CodexProcessOptions[] = [];
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      capturedCodexOptions,
+      config: {
+        ...BUILT_IN_DEFAULTS,
+        runtime_dir: runtimeDir,
+        codex: {
+          ...BUILT_IN_DEFAULTS.codex,
+          extra_args: [
+            '-c',
+            'mcp_servers.feishu.command="operator-feishu"',
+          ],
+        },
+      },
+    });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+
+    await server.start();
+
+    const args = capturedCodexOptions[0]?.extraArgs ?? [];
+    expect(args).toContain('mcp_servers.feishu.command="operator-feishu"');
+    const operatorIdx = args.indexOf('mcp_servers.feishu.command="operator-feishu"');
+    const dreamuxIdx = args.indexOf('mcp_servers.feishu.command="dreamux"');
+    expect(dreamuxIdx).toBeGreaterThan(operatorIdx);
+    expect(args).toContain(
+      `mcp_servers.feishu.args=["feishu-mcp", "--dispatcher", "flow", "--admin-socket", "${join(runtimeDir, 'admin.sock')}"]`,
+    );
+  });
+
   it('creates the app-server socket directory outside the global Codex home', async () => {
     rmSync(runtimeDir, { recursive: true, force: true });
     runtimeDir = mkdtempSync(join(previousHome ?? homedir(), '.dreamux-smoke-'));
