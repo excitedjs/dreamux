@@ -39,6 +39,12 @@ export interface FeishuInboundEvent {
   chatType: string; // 'p2p' | 'group' | ...
   senderId: string;
   senderType: string;
+  /**
+   * Best-effort display name seam for future enrichers. Feishu
+   * im.message.receive_v1 does not provide this in the native event envelope,
+   * so the normal value is intentionally an empty string.
+   */
+  senderName: string;
   messageType: string;
   /** Raw JSON-encoded content as Feishu delivered it. */
   rawContent: string;
@@ -168,6 +174,7 @@ function normalizeInboundEvent(raw: unknown): FeishuInboundEvent | null {
   const senderId = payload.meta['sender_id'] ?? '';
   const senderType = payload.meta['sender_type'] ?? '';
   const createTime = payload.meta['create_time'] ?? '';
+  const senderName = extractSenderName(raw);
 
   if (messageId === '' || chatId === '') return null;
 
@@ -177,6 +184,7 @@ function normalizeInboundEvent(raw: unknown): FeishuInboundEvent | null {
     chatType,
     senderId,
     senderType,
+    senderName,
     messageType,
     rawContent,
     parsedText: payload.text,
@@ -184,6 +192,33 @@ function normalizeInboundEvent(raw: unknown): FeishuInboundEvent | null {
     createTime,
     raw,
   };
+}
+
+function extractSenderName(raw: unknown): string {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return '';
+  const root = raw as Record<string, unknown>;
+  const event = asRecord(root['event']) ?? root;
+  const sender = asRecord(event['sender']);
+  if (sender === undefined) return '';
+  return firstString(
+    sender['sender_name'],
+    sender['display_name'],
+    sender['name'],
+    sender['user_name'],
+  );
+}
+
+function firstString(...values: unknown[]): string {
+  for (const value of values) {
+    if (typeof value === 'string') return value;
+  }
+  return '';
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
 }
 
 // -------------------------------------------------------------- fake (tests)

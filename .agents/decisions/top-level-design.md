@@ -271,6 +271,11 @@ When rich content parsing fails, the dispatcher still passes `message_id`,
 `chat_id`, `sender_id`, and `sender_name` into the Codex turn and instructs Codex
 to use the Feishu skill and `lark-cli` fallback to fetch message text.
 
+`sender_name` is a best-effort seam. Feishu `im.message.receive_v1` does not
+provide a sender display name in the native event envelope today, so the MVP
+emits `sender_name=""` unless a later channel enricher supplies one. Codex should
+use the Feishu skill fallback when it needs a human-readable sender name.
+
 Messages rejected by the access gate are discarded. Rejected messages do not
 enter the Codex thread.
 

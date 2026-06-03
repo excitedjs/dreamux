@@ -101,6 +101,7 @@ function fakeInbound(
     chatType: 'group',
     senderId: 'sender-test',
     senderType: 'user',
+    senderName: '',
     messageType: 'text',
     rawContent: JSON.stringify({ text }),
     parsedText: text,
@@ -132,6 +133,13 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function echoReadableCodexInput(input: string): string {
+  const match = input.match(
+    /<feishu_message\b[^>]*>\n([\s\S]*?)\n<\/feishu_message>/,
+  );
+  return `echo: ${(match?.[1] ?? input).trim()}`;
+}
+
 function writeReadyDispatcherCodexHome(dispatcherId: string, dispatcherCwd?: string): void {
   mkdirSync(dispatcherCodexHome(dispatcherId), { recursive: true });
   writeFileSync(join(dispatcherCodexHome(dispatcherId), 'auth.json'), '{}', {
@@ -155,7 +163,7 @@ describe('dreamux MVP smoke', () => {
     runtimeDir = mkdtempSync(join(tmpdir(), 'dreamux-'));
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(runtimeDir, 'home');
-    fake = await startFakeCodex();
+    fake = await startFakeCodex({ replyFor: echoReadableCodexInput });
     bot = createFakeFeishuBot('app-smoke');
   });
 
@@ -195,6 +203,10 @@ describe('dreamux MVP smoke', () => {
 
     const row = server.repos.inbound.getById(1);
     expect(row?.state).toBe('completed');
+    expect(row?.parsed_text).toContain('<feishu_message');
+    expect(row?.parsed_text).toContain('  sender_name=""');
+    expect(row?.parsed_text).toContain('  create_time=');
+    expect(row?.parsed_text).toContain('hi');
     expect(row?.assistant_text).toBe('echo: hi');
     expect(bot.reactions).toEqual([
       {
@@ -383,7 +395,10 @@ describe('dreamux MVP smoke', () => {
   it('FIFO: same-dispatcher messages process serially', async () => {
     // Restart fake with a slow turn so messages can actually pile up.
     await fake.close();
-    fake = await startFakeCodex({ turnDelayMs: 80 });
+    fake = await startFakeCodex({
+      turnDelayMs: 80,
+      replyFor: echoReadableCodexInput,
+    });
 
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.create({
@@ -450,7 +465,10 @@ describe('dreamux MVP smoke', () => {
 
     await server.shutdown();
     await fake.close();
-    fake = await startFakeCodex({ failResume: true });
+    fake = await startFakeCodex({
+      failResume: true,
+      replyFor: echoReadableCodexInput,
+    });
 
     server = buildServer({ runtimeDir, fake, bot });
     await server.start();
@@ -491,7 +509,10 @@ describe('dreamux MVP smoke', () => {
 
   it('approval fail-fast: server-request causes the turn to fail', async () => {
     await fake.close();
-    fake = await startFakeCodex({ triggerApprovalOnTurn: true });
+    fake = await startFakeCodex({
+      triggerApprovalOnTurn: true,
+      replyFor: echoReadableCodexInput,
+    });
 
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.create({
