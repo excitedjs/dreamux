@@ -40,9 +40,10 @@ which install model to keep.
 - No per-package `package-lock.json` is committed.
 - CI's `package` job (`npm ci`) is removed; its typecheck/build/test coverage
   moves into the `rush` job, which now runs `rush update` → `rush build` →
-  `rush typecheck` → installs `@openai/codex@0.135.0` → `rush test`. The
-  pinned Codex install keeps the live app-server compatibility test in the
-  default CI path instead of skipping a solvable dependency.
+  `rush typecheck` → installs `@openai/codex@latest` → `rush test`. Installing
+  the current Codex CLI keeps the live app-server compatibility test in the
+  default CI path instead of skipping a solvable dependency or pinning users to
+  an older Codex line.
 
 Path 1 was always framed as "pre-monorepo muscle memory." The Rush + pnpm decision itself
 made the monorepo path "required once a second package lands"; three packages

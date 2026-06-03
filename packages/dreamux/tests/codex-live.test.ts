@@ -1,18 +1,17 @@
 /**
  * Live integration test against a real codex app-server.
  *
- * Pinned to **codex 0.135.x** — the version family issue #18's dispatcher
- * app-server runtime was verified against. This test exists to catch the
- * two compat bugs fixed in PR #5 plus the issue #18 serve-foundation shape:
+ * CI installs `@openai/codex@latest` before this test runs. Local developer
+ * machines use whatever `codex` is on PATH. This test exists to catch the
+ * two compat bugs fixed in PR #5 plus the serve-foundation shape:
  *   - dropped `--approval-policy` flag (now `-c approval_policy=...`)
  *   - LSP-style `initialize` / `initialized` handshake required before
  *     any business RPC
  *   - app-server listen socket must not live under `/tmp`
  *   - app-server startup must use a network-enabled sandbox/profile
  *
- * **Default behavior**: codex missing OR version doesn't match `0.135.x`
- * → the test FAILS loudly. The whole point is to verify compatibility; a
- * silent skip in CI defeats it.
+ * **Default behavior**: missing/unparseable `codex --version` fails loudly.
+ * The whole point is to verify compatibility; a silent skip in CI defeats it.
  *
  * **Escape hatch**: set `DREAMUX_SKIP_LIVE_CODEX=1` to explicitly opt out
  * (e.g. dev machines without codex, or pre-merge sandboxes). The skip
@@ -32,14 +31,10 @@ import { codexArgsToCli, parseCodexArgs } from '../src/runtime/codex-args.js';
 import type { ThreadStartResponse } from '../src/codex/types.js';
 
 export const SKIP_ENV = 'DREAMUX_SKIP_LIVE_CODEX';
-/** The version family this compat test pins. Bump deliberately when the dispatcher is verified against a newer codex line. */
-export const TARGET_VERSION_RE = /^0\.135\./;
-const TARGET_LABEL = '0.135.x';
 
 export type Detection =
   | { state: 'ok'; version: string }
-  | { state: 'missing'; reason: string }
-  | { state: 'wrong-version'; version: string };
+  | { state: 'missing'; reason: string };
 
 /**
  * Pure-ish decision logic, split out so it can be unit-tested without
@@ -48,18 +43,13 @@ export type Detection =
  */
 export function classifyDetection(
   rawOutput: string | null,
-  regex: RegExp = TARGET_VERSION_RE,
 ): Detection {
   if (rawOutput === null) {
     return { state: 'missing', reason: 'codex CLI did not respond to --version' };
   }
   const m = rawOutput.match(/(\d+\.\d+\.\d+)/);
   if (!m) return { state: 'missing', reason: `unparseable codex --version output: ${rawOutput}` };
-  const version = m[1]!;
-  if (!regex.test(version)) {
-    return { state: 'wrong-version', version };
-  }
-  return { state: 'ok', version };
+  return { state: 'ok', version: m[1]! };
 }
 
 function detectCodex(): Detection {
@@ -77,17 +67,17 @@ function detectCodex(): Detection {
   return classifyDetection(out);
 }
 
-describe('codex 0.135 live integration', () => {
+describe('codex live integration', () => {
   const skipRequested = process.env[SKIP_ENV] === '1';
   const detection = detectCodex();
 
   if (skipRequested) {
     // Opt-in skip — loud so it can't be missed in CI / local output.
     console.warn(
-      `[codex-0135-live] SKIPPED via ${SKIP_ENV}=1. ` +
+      `[codex-live] SKIPPED via ${SKIP_ENV}=1. ` +
         `Detected codex: state=${detection.state}` +
-        (detection.state !== 'missing' ? ` version=${detection.version}` : '') +
-        `. Real codex ${TARGET_LABEL} compatibility is NOT being verified by this run.`,
+        (detection.state === 'ok' ? ` version=${detection.version}` : '') +
+        `. Real codex app-server compatibility is NOT being verified by this run.`,
     );
     it.skip(`live integration skipped via ${SKIP_ENV}=1`, () => {
       /* skipped on purpose */
@@ -96,28 +86,17 @@ describe('codex 0.135 live integration', () => {
   }
 
   if (detection.state === 'missing') {
-    it(`requires codex ${TARGET_LABEL} on PATH (not installed)`, () => {
+    it('requires codex on PATH', () => {
       throw new Error(
         `dreamux's codex compat test requires the codex CLI on PATH. ` +
           `Detection: ${detection.reason}. ` +
-          `Install codex-cli ${TARGET_LABEL}, or set ${SKIP_ENV}=1 to explicitly opt out (loud skip).`,
+          `Install @openai/codex@latest, or set ${SKIP_ENV}=1 to explicitly opt out (loud skip).`,
       );
     });
     return;
   }
 
-  if (detection.state === 'wrong-version') {
-    it(`requires codex ${TARGET_LABEL} (found ${detection.version})`, () => {
-      throw new Error(
-        `dreamux's codex compat test pins ${TARGET_LABEL} but found ${detection.version}. ` +
-          `Install the matching codex line (or bump TARGET_VERSION_RE if the dispatcher has been verified against a newer one), ` +
-          `or set ${SKIP_ENV}=1 to explicitly opt out (loud skip).`,
-      );
-    });
-    return;
-  }
-
-  // From here on we know codex is on PATH and reports a 0.135.x version.
+  // From here on we know codex is on PATH and reports a parseable version.
 
   it(
     `spawns codex ${detection.version}, completes init handshake, starts a thread`,
@@ -174,33 +153,21 @@ describe('codex 0.135 live integration', () => {
   );
 });
 
-// Unit coverage of the classification logic itself — these run regardless
-// of whether codex is installed, and prove that the four detection
-// branches (ok / missing / wrong-version / unparseable) actually behave
-// as the live test above relies on.
-describe('codex 0.135 detection logic', () => {
-  it('classifies a matching version as ok', () => {
+// Unit coverage of the classification logic itself — these run regardless of
+// whether codex is installed, and prove that detection behaves as the live
+// test above relies on.
+describe('codex detection logic', () => {
+  it('classifies parseable versions as ok', () => {
     expect(classifyDetection('codex-cli 0.135.0')).toEqual({
       state: 'ok',
       version: '0.135.0',
     });
-    expect(classifyDetection('codex-cli 0.135.17')).toEqual({
+    expect(classifyDetection('codex-cli 0.136.0')).toEqual({
       state: 'ok',
-      version: '0.135.17',
-    });
-  });
-
-  it('classifies an older or newer codex line as wrong-version', () => {
-    expect(classifyDetection('codex-cli 0.133.5')).toEqual({
-      state: 'wrong-version',
-      version: '0.133.5',
-    });
-    expect(classifyDetection('codex-cli 0.134.0')).toEqual({
-      state: 'wrong-version',
-      version: '0.134.0',
+      version: '0.136.0',
     });
     expect(classifyDetection('codex-cli 1.0.0')).toEqual({
-      state: 'wrong-version',
+      state: 'ok',
       version: '1.0.0',
     });
   });

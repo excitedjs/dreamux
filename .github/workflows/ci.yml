@@ -177,7 +177,7 @@ jobs:
         run: node common/scripts/install-run-rush.js typecheck
       - name: install codex for live compatibility test
         run: |
-          npm install --global @openai/codex@0.135.0
+          npm install --global @openai/codex@latest
           codex --version
       - name: rush test
         run: node common/scripts/install-run-rush.js test
