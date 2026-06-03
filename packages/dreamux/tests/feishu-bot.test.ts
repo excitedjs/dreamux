@@ -131,12 +131,46 @@ describe('createFeishuBot inbound channel', () => {
       chatType: 'group',
       senderId: 'sender-open-id',
       senderType: 'user',
+      senderName: '',
       messageType: 'text',
       rawContent: JSON.stringify({ text: 'hello @_user_1' }),
       parsedText: 'hello @Ada',
       createTime: '1710000000000',
     });
     expect(received[0]?.mentions).toHaveLength(1);
+  });
+
+  it('uses best-effort sender display name fields when present', async () => {
+    const transport = new FakeTransport();
+    const bot = createFeishuBot(
+      { appId: 'app-test', appSecret: 'secret-test' },
+      { createTransport: () => transport },
+    );
+    const received: FeishuInboundEvent[] = [];
+
+    await bot.start(async (event) => {
+      received.push(event);
+    });
+
+    await transport.dispatch('im.message.receive_v1', {
+      event: {
+        sender: {
+          sender_id: { open_id: 'sender-open-id' },
+          sender_type: 'user',
+          sender_name: 'Ada Sender',
+        },
+        message: {
+          message_id: 'message-id-1',
+          chat_id: 'chat-id-1',
+          chat_type: 'group',
+          message_type: 'text',
+          content: JSON.stringify({ text: 'hello' }),
+          create_time: '1710000000000',
+        },
+      },
+    });
+
+    expect(received[0]?.senderName).toBe('Ada Sender');
   });
 
   it('drops unroutable receive_v1 events before calling the handler', async () => {

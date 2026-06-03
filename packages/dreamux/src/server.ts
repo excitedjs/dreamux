@@ -33,6 +33,7 @@ import {
   loadDispatcherAccess,
   saveDispatcherAccess,
 } from './channel/feishu-gate.js';
+import { formatFeishuMessageForCodex } from './channel/feishu-message.js';
 import { parseCodexArgs, codexArgsToCli } from './runtime/codex-args.js';
 import { resolveBotSecret } from './runtime/secrets.js';
 import { BUILT_IN_DEFAULTS, type DreamuxConfig } from './runtime/config.js';
@@ -246,7 +247,7 @@ export class Server {
           source_message_id: event.messageId,
           sender_id: event.senderId,
           feishu_event_json: safeStringify(event.raw),
-          parsed_text: event.parsedText,
+          parsed_text: formatFeishuMessageForCodex(event),
         });
         if (inboundId !== null) {
           await addReceivedReaction(id, bot, channelState, event);
