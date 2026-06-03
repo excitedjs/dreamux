@@ -24,8 +24,9 @@ fix it in the same PR.
 - `/rush.json`, `/common/config/rush/`, `/common/scripts/install-run-rush.js`
   are the rush + pnpm scaffolding.
 - `/bin/dreamux` is a source-checkout convenience shim that forwards to
-  `/packages/dreamux/bin/dreamux`; the published package installs only the
-  `dreamux` global bin — see `.agents/decisions/global-bin-onboard-serve.md`.
+  `/packages/dreamux/bin/dreamux`; the package also includes a `tm` wrapper
+  used by dispatcher skills — see
+  `.agents/decisions/dispatcher-tm-packaging.md`.
 - `/.agents/` is the on-demand knowledge base. Start at `.agents/root.md`.
 
 **One install path — the monorepo path.** Build and test through rush:
@@ -84,9 +85,12 @@ That record wins over older runtime-dir / SQLite decisions.
   remove when the operator intentionally wants to discard server state.
 - `~/.dreamux/logs/` — server-owned logs, split by component; Codex
   app-server logs use `~/.dreamux/logs/codex-app-server/<dispatcher>.log`.
-- `~/.codex/` — Codex's own global home for auth, config, memory, and skills.
+- `~/.codex/` — Codex's own global home for auth, config, and memory.
   Dispatcher app-server processes follow Codex here; dreamux must not create
   dispatcher-private `CODEX_HOME` directories for the MVP.
+- `<dispatcher cwd>/.codex/skills/dispatcher/SKILL.md` — workspace-local
+  dispatcher skill installed by `dreamux onboard`; do not install this skill
+  into the operator's global `~/.codex/skills/` for the MVP.
 
 Do not reintroduce `runtime_dir`, SQLite-backed dispatcher state, or
 `~/.codex-host/` as dreamux runtime state unless a new decision record

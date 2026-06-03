@@ -1,6 +1,6 @@
-# Package name `@excitedjs/dreamux` and single `dreamux` CLI
+# Package name `@excitedjs/dreamux` and `dreamux` CLI
 
-- **Status:** Accepted; bin-alias portion superseded by [global-bin-onboard-serve](global-bin-onboard-serve.md)
+- **Status:** Accepted; bin-alias portion superseded by [global-bin-onboard-serve](global-bin-onboard-serve.md), dispatcher `tm` bin added by [dispatcher-tm-packaging](dispatcher-tm-packaging.md)
 - **Date:** 2026-05-28
 - **Updated:** 2026-06-02
 - **Affects:** public CLI surface, npm package name, package bin entries
@@ -14,17 +14,21 @@ small router plus old package-global aliases while the host MVP was still
 settling.
 
 Issue #18 replaced that transitional surface. There are no legacy global-bin
-users to protect, so the published package now installs one global bin named
-`dreamux`.
+users to protect, so the public operator CLI is one command named `dreamux`.
+The dispatcher runtime later added a package `tm` wrapper for Codex skill
+delegation; that wrapper is not a dreamux admin CLI.
 
 ## Decision
 
 - npm package name remains **`@excitedjs/dreamux`**.
-- The package installs exactly one public bin:
+- The package installs the public operator bin:
 
   ```json
   { "dreamux": "./bin/dreamux" }
   ```
+
+- The package also installs a dispatcher-runtime `tm` wrapper per
+  [dispatcher-tm-packaging](dispatcher-tm-packaging.md).
 
 - Canonical command tree:
 
@@ -54,7 +58,8 @@ users to protect, so the published package now installs one global bin named
 
 - New code, docs, and READMEs introduce `dreamux <command>`.
 - Do not reintroduce package-global aliases for the server or admin client.
-- Launcher tests assert that `package.json#bin` contains only `dreamux`.
+- Launcher tests assert that `package.json#bin` contains the accepted package
+  bins and no removed server/admin aliases.
 - Command parsing uses `yargs` per the issue #18 design; commodity CLI parsing
   should not be hand-rolled.
 

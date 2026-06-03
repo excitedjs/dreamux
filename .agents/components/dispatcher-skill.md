@@ -5,22 +5,23 @@ skill that teaches dispatcher app-server sessions how to delegate product work
 through `tm`.
 
 It is not installed through Codex plugin marketplaces. `dreamux onboard` copies
-the bundled skill directly into Codex's global default home:
+the bundled skill into each dispatcher's workspace-local Codex skill directory:
 
 ```text
-~/.codex/skills/codexmux-dispatcher/SKILL.md
+<dispatcher cwd>/.codex/skills/dispatcher/SKILL.md
 ```
 
 Dispatcher app-server processes do not set `CODEX_HOME`; they use Codex's
-global default home for auth, config, memory, and skills. This is deliberate so
-the operator's normal `codex login` state is the only auth source.
+global default home for auth, config, and memory. The dispatcher skill is
+workspace-local because it belongs to that dispatcher's command environment.
+See [the dispatcher tm packaging decision](../decisions/dispatcher-tm-packaging.md).
 
 ## Files
 
 | Path | Role |
 |---|---|
 | `/packages/dreamux/skills/codexmux-dispatcher/SKILL.md` | Bundled dispatcher skill shipped in the npm package |
-| `~/.codex/skills/codexmux-dispatcher/SKILL.md` | Installed copy written by `dreamux onboard` |
+| `<dispatcher cwd>/.codex/skills/dispatcher/SKILL.md` | Installed copy written by `dreamux onboard` for one dispatcher |
 | `/packages/dreamux/bin/tm` | Public wrapper that forwards to the package-local `@excitedjs/tm` executable |
 
 ## Runtime Boundary

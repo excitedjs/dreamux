@@ -8,6 +8,8 @@
 Runtime state and socket path details in this record are superseded by
 [top-level-design](top-level-design.md). The single-bin, onboard, and
 foreground `serve` decisions still stand.
+Dispatcher `tm` packaging and dispatcher-skill install location are superseded
+by [dispatcher-tm-packaging](dispatcher-tm-packaging.md).
 
 ## Context
 
@@ -37,10 +39,11 @@ forms as compatibility contracts. The package also exports a `tm` wrapper
 because the dispatcher skill depends on `@excitedjs/tm` as a direct dreamux
 dependency.
 
-`dreamux onboard` copies the bundled dispatcher Codex skill into the global
-default Codex home, collects dispatcher and channel configuration, and
-registers a native service manager entry. `dreamux serve` runs the existing
-server in the foreground and lets launchd or systemd keep it alive.
+`dreamux onboard` copies the bundled dispatcher Codex skill into the
+dispatcher workspace-local Codex skill directory, collects dispatcher and
+channel configuration, and registers a native service manager entry.
+`dreamux serve` runs the existing server in the foreground and lets launchd or
+systemd keep it alive.
 
 There is no public `dreamux daemon ...` command tree. The daemon form is
 foreground `dreamux serve` supervised by a native user-level service manager.
@@ -49,16 +52,16 @@ After `dreamux onboard` registers that service, operators use native
 status, and uninstall operations.
 
 Dispatcher app-server processes do not set `CODEX_HOME`; they use Codex's
-global default home (`~/.codex`) for auth, config, memory, and skills. The
+global default home (`~/.codex`) for auth, config, and memory. The
 `codexmux` consumer is still the dispatcher agent: the dispatcher is the
-long-lived Codex app-server, and its `codexmux-dispatcher` skill is scoped to
-that agent. Onboarding installs that skill by directly copying the bundled
-`SKILL.md` into `~/.codex/skills/codexmux-dispatcher/SKILL.md`.
+long-lived Codex app-server, and its dispatcher skill is scoped to that
+agent's workspace. Onboarding installs that skill by directly copying the
+bundled `SKILL.md` into `<dispatcher cwd>/.codex/skills/dispatcher/SKILL.md`.
 
-Skill installation and app-server control state are separate concerns:
-the dispatcher skill and Codex's own auth/config/memory remain under the
-global Codex home, while dreamux app-server control sockets live under
-`<runtime_dir>/dispatchers/<id>/app-server-control/` with a short socket leaf.
+Skill installation, Codex global state, and app-server control state are
+separate concerns: the dispatcher skill is workspace-local, Codex's own
+auth/config/memory remain under the global Codex home, and dreamux app-server
+control sockets live under dreamux-owned state with a short socket leaf.
 dreamux does not generate or rewrite a Codex TOML config. Codex model/provider,
 auth, memory, and other user settings follow the operator's local Codex
 installation.
@@ -83,7 +86,7 @@ The dispatcher Codex app-server launched by `dreamux serve` must:
 - run outside Codex's restricted-network workspace profile, or at minimum
   use a network-enabled permission profile
 - use Codex's global default home, with no `CODEX_HOME` override
-- load `codexmux-dispatcher` from `~/.codex/skills/`
+- load the dispatcher skill from `<dispatcher cwd>/.codex/skills/dispatcher/`
 - have the dreamux package bin directory on `PATH`, so bare `tm` resolves to
   the package-local `@excitedjs/tm` wrapper
 - keep control sockets under `<runtime_dir>/dispatchers/<id>/app-server-control/`
@@ -110,10 +113,10 @@ status.
 - `serve` should not daemonize itself. Service managers supervise the
   foreground process.
 - Onboarding intentionally keeps Codex auth/config/memory in Codex's global
-  default home. The only Codex-owned file dreamux writes is the dispatcher
-  skill under `~/.codex/skills/codexmux-dispatcher/SKILL.md`; all touched
-  paths must be printed through the onboarding path ledger. App-server control
-  sockets remain under dreamux runtime state.
+  default home while installing the dispatcher skill into the dispatcher's
+  workspace-local `.codex/skills/dispatcher/` directory. All touched paths must
+  be printed through the onboarding path ledger. App-server control sockets
+  remain under dreamux runtime state.
 - The `dreamux` launcher passes its resolved absolute path through
   `DREAMUX_BIN`; service generation uses that path so launchd and
   systemd execute the same global bin the operator invoked.
@@ -133,9 +136,9 @@ status.
 - **Use a separate Codex state root per dispatcher:** rejected. It drops the
   operator's Codex login state, memory, and local configuration. Dispatcher
   app-server processes use Codex's global default home instead.
-- **Use project-local cwd config for `codexmux`:** rejected for issue #18.
-  Codex project config can affect some trusted-project settings, but the
-  dispatcher skill belongs in Codex's global skill directory.
+- **Use the global Codex skill directory for the dispatcher skill:** superseded
+  by [dispatcher-tm-packaging](dispatcher-tm-packaging.md). The dispatcher
+  skill is workspace-local behavior.
 - **Support root-scoped service registration in v1:** rejected. The first
   implementation is user-level only and requires no root service setup.
 - **Let `serve` daemonize itself:** rejected. launchd and systemd already

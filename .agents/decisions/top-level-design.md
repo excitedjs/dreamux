@@ -93,9 +93,12 @@ Rules:
 - `dispatchers.<id>.codex.extra_args` is passed to `codex app-server`.
 - dreamux-generated MCP config overrides are appended last, so the dispatcher
   always receives the Feishu MCP server bound to its own channel.
-- dreamux follows Codex's own `~/.codex/` home for Codex auth, config, memory,
-  and skills. dreamux must not create dispatcher-private `CODEX_HOME`
-  directories for the MVP.
+- dreamux follows Codex's own `~/.codex/` home for Codex auth, config, and
+  memory. dreamux must not create dispatcher-private `CODEX_HOME` directories
+  for the MVP.
+- The dispatcher skill is installed per dispatcher under
+  `<dispatcher cwd>/.codex/skills/dispatcher/`; see
+  [dispatcher-tm-packaging](dispatcher-tm-packaging.md).
 
 ## State and logs
 
