@@ -112,8 +112,9 @@ with its final status.
   state in the dispatcher-private Codex home; all touched paths must be
   printed through the onboarding path ledger.
 - The first implementation installs Codexmux from the public
-  `excitedjs/dreamux` repository with sparse marketplace path
-  `codex-marketplace`, using selector `codexmux@dreamux`.
+  `excitedjs/dreamux` repository with sparse marketplace paths
+  `.agents/plugins` and `codex-marketplace/plugins/codexmux`, using selector
+  `codexmux@dreamux`.
 - The first implementation installs Claudemux from the public
   `excitedjs/claudemux` marketplace, using selector
   `claudemux@claudemux`.

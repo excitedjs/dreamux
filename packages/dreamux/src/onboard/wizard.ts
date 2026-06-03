@@ -45,7 +45,10 @@ const DEFAULT_DISPATCHER_ID = 'dispatcher';
 const DEFAULT_CODEX_MODEL = 'gpt-5-codex';
 const DEFAULT_CODEX_PROVIDER = 'openai';
 const DEFAULT_CODEX_MARKETPLACE_SOURCE = 'excitedjs/dreamux';
-const DEFAULT_CODEX_MARKETPLACE_SPARSE = ['codex-marketplace'];
+const DEFAULT_CODEX_MARKETPLACE_SPARSE = [
+  '.agents/plugins',
+  'codex-marketplace/plugins/codexmux',
+];
 const DEFAULT_CODEX_MARKETPLACE_NAME = 'dreamux';
 const DEFAULT_CODEX_PLUGIN_REF = 'codexmux@dreamux';
 const DEFAULT_CLAUDE_MARKETPLACE_SOURCE = 'excitedjs/claudemux';

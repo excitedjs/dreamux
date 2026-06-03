@@ -18,6 +18,7 @@ sibling claudemux repo import one implementation instead of drifting copies.
 
 | Path | Purpose |
 |---|---|
+| `/.agents/plugins/marketplace.json` | Git Codex marketplace manifest for installing `codexmux` from the public repository root |
 | `/codex-marketplace/` | Local Codex marketplace root for the `codexmux` plugin and dispatcher skill; not a Rush package |
 | `/rush.json` | Rush project list + pnpm/Node version pins |
 | `/common/config/rush/` | Rush command definitions (`command-line.json`), pnpm `.npmrc`, version policies, generated `pnpm-lock.yaml` |

@@ -4,22 +4,27 @@
 codexmux product layer. It is not a Rush package and does not add runtime code
 to `@excitedjs/dreamux`.
 
-`dreamux onboard` installs this marketplace into each dispatcher-private
-`CODEX_HOME` by default with:
+`dreamux onboard` installs Codexmux into each dispatcher-private `CODEX_HOME`
+from the public Git repository by default with:
 
 ```bash
-codex plugin marketplace add excitedjs/dreamux --sparse codex-marketplace
+codex plugin marketplace add excitedjs/dreamux --sparse .agents/plugins --sparse codex-marketplace/plugins/codexmux
 codex plugin add codexmux@dreamux
 ```
 
-Local source checkouts may override the marketplace source to
-`./codex-marketplace`, but the published package must not assume that the
-monorepo root exists next to the global npm install.
+For Git marketplace sources, Codex treats the checked-out repository root as
+the marketplace root. The repository therefore also carries
+`/.agents/plugins/marketplace.json`, whose plugin entry points at
+`./codex-marketplace/plugins/codexmux`. Local source checkouts may override the
+marketplace source to `./codex-marketplace`; that local root keeps its own
+`/codex-marketplace/.agents/plugins/marketplace.json` with paths relative to
+`/codex-marketplace/`.
 
 ## Files
 
 | Path | Role |
 |---|---|
+| `/.agents/plugins/marketplace.json` | Git marketplace metadata named `dreamux`; entries point at `./codex-marketplace/plugins/<name>` relative to the repository root |
 | `/codex-marketplace/.agents/plugins/marketplace.json` | Marketplace metadata named `dreamux`; entries point at `./plugins/<name>` relative to `/codex-marketplace/` |
 | `/codex-marketplace/plugins/codexmux/.codex-plugin/plugin.json` | Codex plugin manifest |
 | `/codex-marketplace/plugins/codexmux/skills/codexmux-dispatcher/SKILL.md` | Dispatcher skill for pinned `tm` delegation |

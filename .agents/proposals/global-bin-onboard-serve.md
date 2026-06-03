@@ -192,7 +192,7 @@ Open default inputs:
 
 | Value | Default direction |
 |---|---|
-| Codex marketplace source | Public `excitedjs/dreamux` with sparse path `codex-marketplace` |
+| Codex marketplace source | Public `excitedjs/dreamux` with sparse paths `.agents/plugins` and `codex-marketplace/plugins/codexmux` |
 | Codex plugin selector | `codexmux@dreamux` |
 | Claude marketplace source | Public `excitedjs/claudemux` |
 | Claude plugin selector | `claudemux@claudemux` |
@@ -440,6 +440,6 @@ Alternatives:
 - Service registration is user-level only: macOS LaunchAgent and
   `systemd --user`.
 - Marketplace defaults for the first implementation are
-  `excitedjs/dreamux --sparse codex-marketplace` plus
-  `codexmux@dreamux` for Codex, and `excitedjs/claudemux` plus
+  `excitedjs/dreamux --sparse .agents/plugins --sparse codex-marketplace/plugins/codexmux`
+  plus `codexmux@dreamux` for Codex, and `excitedjs/claudemux` plus
   `claudemux@claudemux` for Claude.

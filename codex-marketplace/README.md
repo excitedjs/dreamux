@@ -10,7 +10,21 @@ It contains:
 - `plugins/codexmux/skills/codexmux-dispatcher/` — dispatcher instructions for
   pinned `tm` delegation
 
-## Install Locally
+## Install From Git
+
+This is the shape used by `dreamux onboard` for dispatcher-private
+`CODEX_HOME` installs:
+
+```bash
+codex plugin marketplace add excitedjs/dreamux --sparse .agents/plugins --sparse codex-marketplace/plugins/codexmux
+codex plugin add codexmux@dreamux
+```
+
+Codex treats the checked-out repository root as the marketplace root for Git
+sources, so the Git-facing marketplace manifest lives at
+`/.agents/plugins/marketplace.json`.
+
+## Install From A Local Checkout
 
 From the repository root:
 

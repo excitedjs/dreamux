@@ -53,7 +53,11 @@ class FakeRunner implements CommandRunner {
     });
     if (options.dryRun) return;
 
-    if (command === 'codex' && args.join(' ') === 'plugin marketplace add excitedjs/dreamux --sparse codex-marketplace') {
+    if (
+      command === 'codex' &&
+      args.join(' ') ===
+        'plugin marketplace add excitedjs/dreamux --sparse .agents/plugins --sparse codex-marketplace/plugins/codexmux'
+    ) {
       const codexHome = requiredEnv(options.env, 'CODEX_HOME');
       mkdirSync(codexHome, { recursive: true });
       writeFileSync(
@@ -249,7 +253,9 @@ describe('dreamux onboard', () => {
           'add',
           'excitedjs/dreamux',
           '--sparse',
-          'codex-marketplace',
+          '.agents/plugins',
+          '--sparse',
+          'codex-marketplace/plugins/codexmux',
         ],
       ],
       ['codex', ['plugin', 'add', 'codexmux@dreamux']],
@@ -470,7 +476,10 @@ function testAnswers(overrides: Partial<OnboardAnswers>): OnboardAnswers {
     codexProvider: 'openai',
     authEnvVar: 'CODEX_ACCESS_TOKEN',
     codexMarketplaceSource: 'excitedjs/dreamux',
-    codexMarketplaceSparse: ['codex-marketplace'],
+    codexMarketplaceSparse: [
+      '.agents/plugins',
+      'codex-marketplace/plugins/codexmux',
+    ],
     codexMarketplaceName: 'dreamux',
     codexPluginRef: 'codexmux@dreamux',
     claudeBin: 'claude',
