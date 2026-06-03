@@ -36,6 +36,7 @@ verbatim through the move):
 | Path | Concern |
 |---|---|
 | `src/admin/` | Unix socket admin protocol + method handlers |
+| `src/channel/` | Host-side Feishu gate, access state, outbound target mapping, and received-reaction ownership |
 | `src/cli/` | Entry-point CLIs: `dreamux.ts` (single public command tree), `server.ts` and `server-ctl.ts` as internal delegated modules |
 | `src/codex/` | Codex WS+Unix JSON-RPC client, supervisor, turn collector, init handshake |
 | `src/db/` | Legacy SQLite schema + repository; targeted for removal by [top-level-design](../decisions/top-level-design.md) |

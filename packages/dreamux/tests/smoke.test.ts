@@ -22,11 +22,15 @@ import {
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { Server } from '../src/server.js';
+import { RECEIVED_REACTION_EMOJI, Server } from '../src/server.js';
 import { CodexProcess, type CodexProcessOptions } from '../src/codex/supervisor.js';
 import { CodexWsClient } from '../src/codex/rpc.js';
 import { createFakeFeishuBot, type FakeFeishuBot, type FeishuInboundEvent } from '../src/feishu/bot.js';
 import { createAdminSocketServer } from '../src/admin/socket.js';
+import {
+  TRUST_DOMAIN_WARNING,
+  loadDispatcherAccess,
+} from '../src/channel/feishu-gate.js';
 import { BUILT_IN_DEFAULTS } from '../src/runtime/config.js';
 import {
   dispatcherAppServerControlDir,
@@ -100,7 +104,13 @@ function fakeInbound(
     messageType: 'text',
     rawContent: JSON.stringify({ text }),
     parsedText: text,
-    mentions: [],
+    mentions: [
+      {
+        key: '@_user_1',
+        id: { open_id: 'fake-open-id-app-smoke' },
+        name: 'Dispatcher',
+      },
+    ],
     createTime: String(Date.now()),
     raw: { event: { message: { chat_id: chatId, message_id: msgId } } },
   };
@@ -186,6 +196,13 @@ describe('dreamux MVP smoke', () => {
     const row = server.repos.inbound.getById(1);
     expect(row?.state).toBe('completed');
     expect(row?.assistant_text).toBe('echo: hi');
+    expect(bot.reactions).toEqual([
+      {
+        messageId: 'msg-1-id',
+        emoji: RECEIVED_REACTION_EMOJI,
+        reactionId: 'reaction-fake-1',
+      },
+    ]);
 
     // Dispatcher's thread is persisted across server restart.
     const d = server.repos.dispatchers.get('flow');
@@ -277,7 +294,7 @@ describe('dreamux MVP smoke', () => {
     expect(dispatcherAppServerControlDir('flow')).not.toContain('codex-home');
   });
 
-  it('compatible Feishu gate drops bot-loop messages before durable enqueue', async () => {
+  it('access gate drops bot-loop messages before durable enqueue or reaction', async () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.create({
       dispatcher_id: 'flow',
@@ -295,9 +312,10 @@ describe('dreamux MVP smoke', () => {
     expect(server.repos.inbound.getById(1)).toBeNull();
     expect(fake.turnsHandled).toBe(0);
     expect(bot.sentMessages).toEqual([]);
+    expect(bot.reactions).toEqual([]);
   });
 
-  it('compatible Feishu gate drops Feishu bot/app sender types', async () => {
+  it('access gate drops Feishu bot/app sender types before durable enqueue or reaction', async () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.create({
       dispatcher_id: 'flow',
@@ -316,6 +334,50 @@ describe('dreamux MVP smoke', () => {
     expect(server.repos.inbound.getById(1)).toBeNull();
     expect(fake.turnsHandled).toBe(0);
     expect(bot.sentMessages).toEqual([]);
+    expect(bot.reactions).toEqual([]);
+  });
+
+  it('access gate drops unmentioned group messages before durable enqueue or reaction', async () => {
+    server = buildServer({ runtimeDir, fake, bot });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+    await server.start();
+
+    await bot.inject({
+      ...fakeInbound('chat-group-a', 'no mention', 'msg-no-mention'),
+      mentions: [],
+    });
+
+    await sleep(80);
+    expect(server.repos.inbound.getById(1)).toBeNull();
+    expect(fake.turnsHandled).toBe(0);
+    expect(bot.sentMessages).toEqual([]);
+    expect(bot.reactions).toEqual([]);
+  });
+
+  it('records a trust-domain warning when one dispatcher receives multiple chats', async () => {
+    server = buildServer({ runtimeDir, fake, bot });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+    await server.start();
+
+    await bot.inject(fakeInbound('chat-group-a', 'first chat', 'msg-chat-a'));
+    await bot.inject(fakeInbound('chat-group-b', 'second chat', 'msg-chat-b'));
+
+    const access = loadDispatcherAccess('flow');
+    expect(access.observed_chats).toEqual(['chat-group-a', 'chat-group-b']);
+    expect(access.warnings).toEqual([TRUST_DOMAIN_WARNING]);
+    expect(bot.reactions.map((reaction) => reaction.messageId)).toEqual([
+      'msg-chat-a',
+      'msg-chat-b',
+    ]);
+    await waitFor(() => bot.sentMessages.length >= 2);
   });
 
   it('FIFO: same-dispatcher messages process serially', async () => {

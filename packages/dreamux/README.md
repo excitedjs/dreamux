@@ -87,6 +87,7 @@ design (see [the top-level design](../../.agents/decisions/top-level-design.md))
 | dispatcher `codex_cwd`                   | Codex app-server cwd, configured during onboard or dispatcher registration | the operator |
 | `~/.codex/`                              | Codex global default home: auth, memory, and config | the operator / Codex |
 | `<dispatcher cwd>/.codex/skills/dispatcher/SKILL.md` | Dispatcher skill copied by `dreamux onboard`; reported but not deleted by `dreamux uninstall` | dreamux installer |
+| `~/.dreamux/state/<id>/access.json`      | Dispatcher-local access gate state: allowed DMs, optional group/chat follow-user allowlists, observed chats, and trust-domain warnings | the server |
 | `~/.dreamux/state/<id>/codex.sock`       | Codex app-server Unix socket              | the server |
 | `~/.dreamux/logs/codex-app-server/<id>.log` | Codex app-server stdout                 | the server |
 
