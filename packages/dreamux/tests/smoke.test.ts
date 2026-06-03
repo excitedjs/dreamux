@@ -3,10 +3,9 @@
  *
  * Covers the issue #2 verification path against a fake codex + fake feishu:
  *   - happy path: inbound → turn → outbound
- *   - FIFO: two inbound messages process serially in the same thread
+ *   - in-memory queue: same-chat coalescing + serialized turns
  *   - thread/resume on restart (in-process)
  *   - thread/resume failure → visible degradation (last_lost_thread_id set)
- *   - crash recovery: running rows become 'unknown' on restart, user notified
  *   - outbound retry: send fails N times then succeeds
  *   - approval fail-fast: codex server-request causes the turn to fail
  */
@@ -140,6 +139,17 @@ function echoReadableCodexInput(input: string): string {
   return `echo: ${(match?.[1] ?? input).trim()}`;
 }
 
+function captureAndEchoCodexInput(inputs: string[]): (input: string) => string {
+  return (input) => {
+    inputs.push(input);
+    return echoReadableCodexInput(input);
+  };
+}
+
+function feishuMessageBlockCount(input: string): number {
+  return input.match(/<feishu_message\b/g)?.length ?? 0;
+}
+
 function writeReadyDispatcherCodexHome(dispatcherId: string, dispatcherCwd?: string): void {
   mkdirSync(dispatcherCodexHome(dispatcherId), { recursive: true });
   writeFileSync(join(dispatcherCodexHome(dispatcherId), 'auth.json'), '{}', {
@@ -158,12 +168,16 @@ describe('dreamux MVP smoke', () => {
   let bot: FakeFeishuBot;
   let server: Server;
   let previousHome: string | undefined;
+  let codexInputs: string[];
 
   beforeEach(async () => {
     runtimeDir = mkdtempSync(join(tmpdir(), 'dreamux-'));
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(runtimeDir, 'home');
-    fake = await startFakeCodex({ replyFor: echoReadableCodexInput });
+    codexInputs = [];
+    fake = await startFakeCodex({
+      replyFor: captureAndEchoCodexInput(codexInputs),
+    });
     bot = createFakeFeishuBot('app-smoke');
   });
 
@@ -201,13 +215,12 @@ describe('dreamux MVP smoke', () => {
       text: 'echo: hi',
     });
 
-    const row = server.repos.inbound.getById(1);
-    expect(row?.state).toBe('completed');
-    expect(row?.parsed_text).toContain('<feishu_message');
-    expect(row?.parsed_text).toContain('  sender_name=""');
-    expect(row?.parsed_text).toContain('  create_time=');
-    expect(row?.parsed_text).toContain('hi');
-    expect(row?.assistant_text).toBe('echo: hi');
+    expect(server.repos.inbound.getById(1)).toBeNull();
+    expect(codexInputs).toHaveLength(1);
+    expect(codexInputs[0]).toContain('<feishu_message');
+    expect(codexInputs[0]).toContain('  sender_name=""');
+    expect(codexInputs[0]).toContain('  create_time=');
+    expect(codexInputs[0]).toContain('hi');
     expect(bot.reactions).toEqual([
       {
         messageId: 'msg-1-id',
@@ -306,7 +319,7 @@ describe('dreamux MVP smoke', () => {
     expect(dispatcherAppServerControlDir('flow')).not.toContain('codex-home');
   });
 
-  it('access gate drops bot-loop messages before durable enqueue or reaction', async () => {
+  it('access gate drops bot-loop messages before queue or reaction', async () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.create({
       dispatcher_id: 'flow',
@@ -327,7 +340,7 @@ describe('dreamux MVP smoke', () => {
     expect(bot.reactions).toEqual([]);
   });
 
-  it('access gate drops Feishu bot/app sender types before durable enqueue or reaction', async () => {
+  it('access gate drops Feishu bot/app sender types before queue or reaction', async () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.create({
       dispatcher_id: 'flow',
@@ -349,7 +362,7 @@ describe('dreamux MVP smoke', () => {
     expect(bot.reactions).toEqual([]);
   });
 
-  it('access gate drops unmentioned group messages before durable enqueue or reaction', async () => {
+  it('access gate drops unmentioned group messages before queue or reaction', async () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.create({
       dispatcher_id: 'flow',
@@ -392,12 +405,13 @@ describe('dreamux MVP smoke', () => {
     await waitFor(() => bot.sentMessages.length >= 2);
   });
 
-  it('FIFO: same-dispatcher messages process serially', async () => {
+  it('in-memory queue coalesces pending same-chat messages behind a running turn', async () => {
     // Restart fake with a slow turn so messages can actually pile up.
     await fake.close();
+    codexInputs = [];
     fake = await startFakeCodex({
       turnDelayMs: 80,
-      replyFor: echoReadableCodexInput,
+      replyFor: captureAndEchoCodexInput(codexInputs),
     });
 
     server = buildServer({ runtimeDir, fake, bot });
@@ -408,17 +422,49 @@ describe('dreamux MVP smoke', () => {
     });
     await server.start();
 
-    await bot.inject(fakeInbound('chat-group-a', 'msg-1', 'msg-a'));
-    await bot.inject(fakeInbound('chat-group-a', 'msg-2', 'msg-b'));
+    await bot.inject(fakeInbound('chat-group-a', 'running', 'msg-a'));
+    await bot.inject(fakeInbound('chat-group-b', 'batch-1', 'msg-b1'));
+    await bot.inject(fakeInbound('chat-group-b', 'batch-2', 'msg-b2'));
 
     await waitFor(() => bot.sentMessages.length >= 2, 6000);
+    expect(fake.turnsHandled).toBe(2);
+    expect(codexInputs).toHaveLength(2);
+    expect(codexInputs[0]).toContain('running');
+    expect(feishuMessageBlockCount(codexInputs[1] ?? '')).toBe(2);
+    expect(codexInputs[1]).toContain('batch-1');
+    expect(codexInputs[1]).toContain('batch-2');
+    expect(bot.sentMessages[1]?.target).toMatchObject({
+      chatId: 'chat-group-b',
+      replyToMessageId: 'msg-b2',
+      mentionUserIds: ['sender-test'],
+    });
     expect(bot.sentMessages.map((m) => m.text)).toEqual([
-      'echo: msg-1',
-      'echo: msg-2',
+      'echo: running',
+      'echo: batch-1',
     ]);
   });
 
-  it('crash recovery: running rows become unknown + user notified', async () => {
+  it('process-local dedupe drops Feishu redelivery before turn and reaction', async () => {
+    server = buildServer({ runtimeDir, fake, bot });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+    await server.start();
+
+    await bot.inject(fakeInbound('chat-group-a', 'redelivered', 'msg-same'));
+    await bot.inject(fakeInbound('chat-group-a', 'redelivered again', 'msg-same'));
+
+    await waitFor(() => bot.sentMessages.length >= 1);
+    await sleep(120);
+    expect(fake.turnsHandled).toBe(1);
+    expect(bot.reactions).toHaveLength(1);
+    expect(bot.reactions[0]?.messageId).toBe('msg-same');
+    expect(server.repos.inbound.getById(1)).toBeNull();
+  });
+
+  it('ignores legacy persisted running rows on startup', async () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.create({
       dispatcher_id: 'flow',
@@ -426,31 +472,22 @@ describe('dreamux MVP smoke', () => {
       bot_secret_ref: 'env:UNUSED',
     });
 
-    // Pre-seed an inbound row stuck in 'running' as if the previous server
-    // crashed mid-turn.
-    const insert = (server as unknown as { db?: never }); // satisfy TS
-    void insert;
     const row = server.repos.inbound.enqueue({
       dispatcher_id: 'flow',
       source_chat_id: 'chat-group-a',
       source_message_id: 'message-pre-crash',
       sender_id: 'sender',
       feishu_event_json: '{}',
-      parsed_text: 'pretend-this-was-running',
+      parsed_text: 'legacy-running',
     });
     expect(row).not.toBeNull();
     server.repos.inbound.markRunning(row!.id, null);
 
     await server.start();
 
-    // After start, the pre-crashed row is 'unknown' and the chat got a
-    // "result unknown" message.
     const after = server.repos.inbound.getById(row!.id);
-    expect(after?.state).toBe('unknown');
-    expect(after?.error).toMatch(/server restarted/);
-    expect(bot.sentMessages.some((m) => m.text.includes('上一次的执行结果未知'))).toBe(
-      true,
-    );
+    expect(after?.state).toBe('running');
+    expect(bot.sentMessages).toEqual([]);
   });
 
   it('thread/resume failure produces visible degradation, not silent loss', async () => {
@@ -465,9 +502,10 @@ describe('dreamux MVP smoke', () => {
 
     await server.shutdown();
     await fake.close();
+    codexInputs = [];
     fake = await startFakeCodex({
       failResume: true,
-      replyFor: echoReadableCodexInput,
+      replyFor: captureAndEchoCodexInput(codexInputs),
     });
 
     server = buildServer({ runtimeDir, fake, bot });
@@ -509,9 +547,10 @@ describe('dreamux MVP smoke', () => {
 
   it('approval fail-fast: server-request causes the turn to fail', async () => {
     await fake.close();
+    codexInputs = [];
     fake = await startFakeCodex({
       triggerApprovalOnTurn: true,
-      replyFor: echoReadableCodexInput,
+      replyFor: captureAndEchoCodexInput(codexInputs),
     });
 
     server = buildServer({ runtimeDir, fake, bot });
@@ -537,8 +576,7 @@ describe('dreamux MVP smoke', () => {
     ).toBe(true);
   });
 
-  // PR #3 review #1
-  it('queued backlog drains on restart even with no fresh inbound', async () => {
+  it('does not drain legacy persisted queued rows on startup', async () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.create({
       dispatcher_id: 'flow',
@@ -546,8 +584,6 @@ describe('dreamux MVP smoke', () => {
       bot_secret_ref: 'env:UNUSED',
     });
 
-    // Pre-seed a 'queued' inbound row — as if the previous server crashed
-    // *after* accepting the inbound but *before* the worker dequeued it.
     const row = server.repos.inbound.enqueue({
       dispatcher_id: 'flow',
       source_chat_id: 'chat-backlog',
@@ -561,12 +597,9 @@ describe('dreamux MVP smoke', () => {
 
     await server.start();
 
-    // The fix: startup must notify() the turn worker so this row is drained
-    // immediately, not stranded until the next live inbound arrives.
-    await waitFor(() => bot.sentMessages.length >= 1);
-    expect(bot.sentMessages[0]?.text).toBe('echo: queued-before-crash');
     const after = server.repos.inbound.getById(row!.id);
-    expect(after?.state).toBe('completed');
+    expect(after?.state).toBe('queued');
+    expect(bot.sentMessages).toEqual([]);
   });
 
   // PR fix/codex-0134-compat: the daemon expects an LSP-style init handshake
