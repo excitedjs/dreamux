@@ -82,8 +82,14 @@ jobs:
           git add packages common/changes
           git commit -m "chore(release): version packages"
           git push --force-with-lease origin "$branch"
-          if gh pr view "$branch" --json number >/dev/null 2>&1; then
-            echo "Version PR already open for $branch — updated by the force-push."
+          open_pr_number="$(gh pr list \
+            --base main \
+            --head "$branch" \
+            --state open \
+            --json number \
+            --jq '.[0].number // ""')"
+          if [ -n "$open_pr_number" ]; then
+            echo "Version PR #$open_pr_number already open for $branch — updated by the force-push."
           else
             gh pr create \
               --base main --head "$branch" \

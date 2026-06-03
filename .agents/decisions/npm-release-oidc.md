@@ -18,19 +18,20 @@ to be rush-native — and the publish must span every publishable package.
 
 Three hard constraints shaped the design:
 
-- **`rush publish` cannot do OIDC.** Confirmed against Rush 5.140.0:
-  `rush publish` has no `--provenance` flag and authenticates only via
-  `--npm-auth-token` / `common/config/rush/.npmrc-publish` (a token). It cannot
-  do tokenless OIDC or emit provenance.
-- **npm trusted publishing is per-package; `npm publish` is per-package.** Each
-  package is configured on npmjs.com individually. But one workflow *run* can
-  publish many packages: each `npm publish` does its own OIDC exchange, so every
-  package just lists the same workflow file as its trusted publisher.
-- **Workspace protocol dependencies must be packed by pnpm before npm upload.**
-  Raw `npm publish` from a package directory preserves `workspace:*` in the
-  registry manifest. `rush-pnpm pack` rewrites those source-only dependencies
-  into registry-installable semver in the tarball, and `npm publish <tarball>`
-  still performs the OIDC/provenance upload.
+- **Publishing must stay Rush-native.** `rush publish --publish` invokes pnpm's
+  publish path for Rush projects, which lets pnpm rewrite source-only
+  `workspace:*` dependencies into registry-installable semver in the published
+  manifest. Raw `npm publish` from a package directory is forbidden because it
+  preserves `workspace:*` and breaks external installs.
+- **npm trusted publishing is per-package.** Each package is configured on
+  npmjs.com individually, but one workflow *run* can publish many packages:
+  Rush compares every `shouldPublish: true` project against npm and invokes
+  publish only for versions that are not already present.
+- **Provenance is carried through npm's environment contract.** Rush 5.140 has
+  no dedicated `--provenance` flag, but the workflow upgrades npm to 11.5.1+
+  and sets `NPM_CONFIG_PROVENANCE=true` on the Rush publish step. That setting
+  is inherited by the final npm publish process used by pnpm, where npm
+  exchanges the GitHub Actions OIDC id-token for a short-lived publish token.
 - **Main is protected.** The [anti-leak guardrail](anti-leak-guardrail.md) makes the
   `gitleaks` check required on `main`, so CI cannot push a version-bump commit
   straight to `main` with the default `GITHUB_TOKEN`.
@@ -40,26 +41,23 @@ Three hard constraints shaped the design:
 Two workflows, both `push: [main]`:
 
 - **`/.github/workflows/release.yml`** — the OIDC publish, and the single
-  workflow every publishable package registers as its trusted publisher. A plan
-  step enumerates `rush list --json` projects with `shouldPublish: true` and
-  **classifies each against npm into three states**: *published* (skip),
-  *new version of an existing package* (publish), or *never published* (skip +
-  warn — its first publish needs a one-time token bootstrap, see below). For
-  each queued package it runs `rush-pnpm pack` from the package directory,
-  validates that the packed `package.json` contains no `workspace:` dependency,
-  then uploads that tarball with `npm publish --provenance --access public` (one
-  OIDC exchange per package). A non-404 lookup error (network / 5xx / auth)
-  fails the job loudly rather than being read as "not published". `id-token:
-  write`, `setup-node` `registry-url`, `npm install -g npm@11.5.1`, no
-  `NODE_AUTH_TOKEN`. No-ops (green) when nothing is ready to publish.
+  workflow every publishable package registers as its trusted publisher. It
+  installs through Rush, builds the monorepo, then runs
+  `rush publish --include-all --publish --set-access-level public` against the
+  public npm registry. Rush compares every publishable package against npm and
+  invokes pnpm publish only for versions that are not already present.
+  `id-token: write`, `setup-node` `registry-url`, `npm install -g npm@11.5.1`,
+  `NPM_CONFIG_PROVENANCE=true`, no `NODE_AUTH_TOKEN`. No-ops (green) when
+  nothing is ready to publish.
 - **`/.github/workflows/version.yml`** — the rush-native replacement for
   `changeset version`. On merge to `main` it runs `rush publish --apply`
   (consumes `common/changes/*` into package.json + CHANGELOG bumps across all
   changed packages; no registry contact, no token) and opens a "version
   packages" PR rather than pushing to protected `main`.
 
-So **Rush owns versioning, pnpm owns the packed registry manifest, npm owns the
-OIDC upload**, and all halves are monorepo-wide.
+So **Rush owns versioning and publish orchestration, pnpm owns the registry
+manifest rewrite, npm owns the OIDC/provenance upload**, and all halves are
+monorepo-wide.
 
 ## Consequences
 
@@ -69,18 +67,6 @@ OIDC upload**, and all halves are monorepo-wide.
   `excitedjs/dreamux`, workflow **`release.yml`** (the same file for every
   package), environment blank. Adding a package later = a rush.json entry + one
   npm entry; no workflow change.
-- **Any push/merge is always safe — a never-published package is skipped, not
-  failed.** The plan step's three-state classification means a `shouldPublish`
-  package that does not exist on npm yet (e.g. `@excitedjs/dreamux`,
-  `shouldPublish: true`, v0.1.0, currently 404) is **skipped with a warning**,
-  not pushed through a doomed `npm publish`. So merging this PR — and every
-  later push — is green by default. The package is picked up automatically once
-  it has been bootstrapped (see next bullet); no `shouldPublish: false` toggle
-  is needed (and that toggle would be wrong anyway — it also drops the package
-  from `version.yml`'s `rush publish --apply` bumping). Classification reads
-  the registry only, so a misconfigured trusted publisher is **not** mistaken
-  for "absent": such a package exists on npm, so it is queued and its
-  `npm publish` fails loudly — which is the correct signal.
 - **First publish of any package is a one-time token bootstrap, not OIDC.** npm's
   trusted-publisher config lives on a package's settings page, which exists only
   after the package has been published once — so the *first* publish of each
@@ -96,13 +82,16 @@ OIDC upload**, and all halves are monorepo-wide.
   pointing at github.com/excitedjs/dreamux (npm provenance requires it).
   `workspace:` dependencies are valid in source package manifests, but raw
   `npm publish` from a package directory is forbidden; the release workflow must
-  publish the pnpm-packed tarball.
+  use Rush native publish so pnpm prepares the registry manifest.
 - **Optional hardening:** run the publish in a protected GitHub Environment with
   required reviewers (commented in the workflow); if enabled it must match the
   npm trusted-publisher Environment field of every package.
 - The version workflow self-breaks its trigger loop: the version PR's merge
   carries no new change files, so the next `rush publish --apply` is a no-op
   (verified locally with an empty `common/changes/`).
+- The version workflow must only treat an **open** `release/version-packages` PR
+  as reusable. Historical merged or closed PRs with the same head branch are not
+  blockers; when no open version PR exists, the workflow creates a new one.
 - The generated `release/version-packages` PR is exempt from the CI
   `rush change --verify` job. That branch is the result of
   `rush publish --apply`: it intentionally consumes `common/changes/*` into
@@ -111,11 +100,13 @@ OIDC upload**, and all halves are monorepo-wide.
 
 ## Alternatives considered
 
-- **`rush publish --publish` for the upload** — rejected: no provenance,
-  token-only auth, incompatible with OIDC tokenless.
 - **Raw `npm publish` from each package directory** — rejected: it keeps
   `workspace:*` in the published manifest, so external `npm install` fails with
   `EUNSUPPORTEDPROTOCOL`.
+- **Custom `rush-pnpm pack` + `npm publish <tarball>` orchestration** —
+  rejected after review: it duplicates Rush's publish orchestration and is more
+  fragile than the native Rush + pnpm publish path. Provenance is supplied
+  through `NPM_CONFIG_PROVENANCE=true` instead.
 - **Per-package release workflows** — rejected: N near-identical files that
   drift, fighting Rush's coordinated monorepo model. One looping workflow scales
   by adding a rush.json entry + one npm config. Revisit only if a package needs
