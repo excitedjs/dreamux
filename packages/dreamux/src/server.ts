@@ -70,6 +70,10 @@ export interface ServerOptions {
   codexHomeDoctor?: DispatcherCodexHomeDoctor;
   /** Skip resolving bot secret (tests with fake bot). */
   skipBotSecret?: boolean;
+  /** Codex child/WS restart backoff base override (tests). */
+  codexRestartBackoffBaseMs?: number;
+  /** Codex child/WS restart backoff cap override (tests). */
+  codexRestartBackoffMaxMs?: number;
 }
 
 export interface Repos {
@@ -213,6 +217,8 @@ export class Server {
       handshakeTimeoutMs: cfg.codex.initialize_timeout_ms,
       outboundRetries: cfg.outbound.retries,
       outboundRetryDelayMs: cfg.outbound.retry_delay_ms,
+      restartBackoffBaseMs: this.opts.codexRestartBackoffBaseMs,
+      restartBackoffMaxMs: this.opts.codexRestartBackoffMaxMs,
     });
 
     try {
