@@ -176,7 +176,7 @@ function acquirePidLock(
       throw new Error(
         `admin socket lockfile ${lockPath} is held by another live dreamux serve process (pid ${holder}). ` +
           'Refusing to bind to avoid split-brain admin control. ' +
-          'Stop the other instance, or set CODEX_HOST_ADMIN_SOCKET to a different path.',
+          'Stop the other instance before starting a new one.',
       );
     }
     // Stale lock (unreadable PID, or PID belongs to a dead process).
@@ -191,7 +191,7 @@ function acquirePidLock(
   }
   throw new Error(
     `admin socket lockfile ${lockPath} could not be acquired after ${RECLAIM_ATTEMPTS} reclaim attempts; ` +
-      'a competitor is racing us. Retry, or set CODEX_HOST_ADMIN_SOCKET to a different path.',
+      'a competitor is racing us. Retry after the other startup finishes.',
   );
 }
 

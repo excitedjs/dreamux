@@ -1,7 +1,7 @@
 /**
  * `server-ctl` — admin CLI that talks to the server via Unix socket.
  *
- * Connects to the admin socket (CODEX_HOST_ADMIN_SOCKET or default), sends a
+ * Connects to the admin socket under ~/.dreamux/state/admin.sock, sends a
  * single NDJSON request, prints the response, exits.
  *
  * Usage:
@@ -183,8 +183,8 @@ Usage:
   ${programName} dispatcher stop --id <ID>
   ${programName} dispatcher remove --id <ID>
 
-Environment:
-  CODEX_HOST_ADMIN_SOCKET   override the admin socket path (default: ~/.dreamux/runtime/admin.sock)
+Admin socket:
+  ~/.dreamux/state/admin.sock
 `);
 }
 

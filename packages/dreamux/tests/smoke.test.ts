@@ -209,7 +209,8 @@ describe('dreamux MVP smoke', () => {
 
   it('creates the app-server socket directory outside the global Codex home', async () => {
     rmSync(runtimeDir, { recursive: true, force: true });
-    runtimeDir = mkdtempSync(join(homedir(), '.dreamux-smoke-'));
+    runtimeDir = mkdtempSync(join(previousHome ?? homedir(), '.dreamux-smoke-'));
+    process.env['HOME'] = join(runtimeDir, 'home');
     const capturedCodexOptions: CodexProcessOptions[] = [];
     server = buildServer({
       runtimeDir,

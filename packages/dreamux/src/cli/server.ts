@@ -6,8 +6,7 @@
  *   dreamux serve --help
  *
  * Configuration sources (highest precedence first):
- *   1. environment variables (CODEX_HOST_RUNTIME_DIR, CODEX_HOST_ADMIN_SOCKET,
- *      CODEX_HOST_CODEX_BIN) — escape hatch for CI / one-off debug runs
+ *   1. CODEX_HOST_CODEX_BIN — escape hatch for CI / one-off debug runs
  *   2. per-dispatcher fields in SQLite (codex_args_json: approvalPolicy, extraArgs)
  *   3. ~/.dreamux/config.json — user-editable global defaults and channel secrets; auto-created
  *      with sensible defaults on first boot (see src/runtime/config.ts)
@@ -17,11 +16,16 @@
  */
 
 import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
 
 import { Server } from '../server.js';
 import { loadOrInitConfig } from '../runtime/config.js';
-import { adminSocketPath, databasePath, runtimeRoot } from '../runtime/paths.js';
+import {
+  adminSocketPath,
+  codexAppServerLogDir,
+  feishuChannelLogDir,
+  logsRoot,
+  stateRoot,
+} from '../runtime/paths.js';
 
 async function main(): Promise<void> {
   if (process.argv.includes('--help') || process.argv.includes('-h')) {
@@ -42,8 +46,10 @@ async function main(): Promise<void> {
     console.error(`[server] loaded global config from ${configFile}`);
   }
 
-  mkdirSync(runtimeRoot(), { recursive: true });
-  mkdirSync(dirname(databasePath()), { recursive: true });
+  mkdirSync(stateRoot(), { recursive: true });
+  mkdirSync(logsRoot(), { recursive: true });
+  mkdirSync(codexAppServerLogDir(), { recursive: true });
+  mkdirSync(feishuChannelLogDir(), { recursive: true });
 
   const server = new Server({ config });
   await server.start();
@@ -68,18 +74,15 @@ Global config:
   ~/.dreamux/config.json    Auto-created on first boot. Override with the
                             DREAMUX_CONFIG_DIR env var. Edit and restart to
                             apply. Holds defaults for codex.bin,
-                            approval_policy, runtime_dir, outbound retries,
+                            approval_policy, outbound retries,
                             and Feishu channel secrets.
 
 Runtime data:
-  ~/.dreamux/runtime/       SQLite, admin socket, per-dispatcher logs and
-                            app-server control sockets. Override via
-                            'runtime_dir' in config, or
-                            CODEX_HOST_RUNTIME_DIR env (env wins).
+  ~/.dreamux/state/         server state, admin socket, legacy SQLite state,
+                            and per-dispatcher Codex sockets.
+  ~/.dreamux/logs/          server, Feishu channel, and Codex app-server logs.
 
 Environment overrides (highest precedence):
-  CODEX_HOST_RUNTIME_DIR    Overrides config.runtime_dir
-  CODEX_HOST_ADMIN_SOCKET   Overrides config.admin_socket
   CODEX_HOST_CODEX_BIN      Overrides config.codex.bin
   DREAMUX_CONFIG_DIR        Overrides ~/.dreamux (where config.json lives)
 

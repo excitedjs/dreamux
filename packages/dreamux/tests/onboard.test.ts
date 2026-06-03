@@ -19,8 +19,10 @@ import {
 } from '../src/onboard/wizard.js';
 import type { CommandRunner, OnboardAnswers } from '../src/onboard/types.js';
 import {
+  databasePath,
   dispatcherCodexHome,
   dispatcherCodexSkillsDir,
+  logsRoot,
   resetRuntimeConfig,
 } from '../src/runtime/paths.js';
 
@@ -166,7 +168,7 @@ describe('dreamux onboard', () => {
       ),
     ).toBe(true);
 
-    const db = openDatabase({ path: join(root, 'runtime', 'state.db') });
+    const db = openDatabase({ path: databasePath() });
     try {
       const row = new DispatcherRepo(db).get('flow');
       expect(row).toMatchObject({
@@ -201,9 +203,9 @@ describe('dreamux onboard', () => {
       )?.status,
     ).toBe('created');
     expect(
-      ledger.get(join(root, 'runtime', 'logs', 'daemon.stdout.log'))?.status,
+      ledger.get(join(logsRoot(), 'daemon.stdout.log'))?.status,
     ).toBe('created');
-    expect(ledger.get(join(root, 'runtime', 'state.db'))?.status).toBe(
+    expect(ledger.get(databasePath())?.status).toBe(
       'created',
     );
   });
@@ -339,7 +341,9 @@ describe('dreamux onboard', () => {
     });
     expect(existsSync(ignoredRuntimeDir)).toBe(false);
 
-    const db = openDatabase({ path: join(existingRuntimeDir, 'state.db') });
+    expect(existsSync(existingRuntimeDir)).toBe(false);
+
+    const db = openDatabase({ path: databasePath() });
     try {
       expect(new DispatcherRepo(db).get('docs')).toMatchObject({
         dispatcher_id: 'docs',
