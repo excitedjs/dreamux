@@ -1,50 +1,34 @@
-# Release the monorepo's publishable packages to npm via OIDC trusted publishing.
+# Release the monorepo's publishable packages to npm via Rush native publish
+# and npm OIDC trusted publishing.
 #
-# Monorepo-wide: on every push to main this job classifies each Rush project
-# with shouldPublish=true against npm and acts per state, so any push/merge is
-# always safe (it never fails just because a package isn't ready):
-#   - already published (name@version exists)      -> skip
-#   - new version of an existing package           -> publish via OIDC
-#   - never published at all (the package 404s)    -> SKIP + warn: its first
-#       publish must be a one-time manual token bootstrap (see below), after
-#       which this workflow takes over from the next version
-# A non-404 npm lookup error (network / 5xx / auth) fails the job loudly rather
-# than being mistaken for "not published". One workflow run can publish several
-# packages — npm does a fresh OIDC token exchange per `npm publish`, validated
-# against THAT package's trusted-publisher config.
+# The workflow is intentionally Rush-native:
+#   - version.yml runs `rush publish --apply` to consume Rush change files into
+#     package.json and CHANGELOG updates, then opens a version PR.
+#   - after that version PR lands on main, release.yml runs
+#     `rush publish --include-all --publish` so Rush compares every
+#     shouldPublish=true project against npm and invokes pnpm publish only for
+#     versions that are not already published.
 #
-# This is the workflow every publishable package must register as its trusted
-# publisher (npmjs.com -> package Settings -> Trusted Publisher):
+# Do not replace this with raw `npm publish` from a package directory: npm does
+# not rewrite pnpm `workspace:` dependencies. Rush invokes pnpm publish, and
+# pnpm creates the publish manifest/tarball with workspace protocol dependencies
+# rewritten to registry-installable versions before the final upload.
+#
+# OIDC trusted publishing still comes from npm 11.5.1+. Rush 5.140 does not have
+# a `--provenance` flag, but it runs pnpm, and pnpm ultimately shells out to
+# `npm publish`. Setting NPM_CONFIG_PROVENANCE=true on the Rush step is inherited
+# by that final npm process, where npm exchanges the GitHub Actions id-token for
+# a short-lived publish token. There is no long-lived NODE_AUTH_TOKEN / NPM_TOKEN.
+#
+# Each publishable package must already have an npm trusted-publisher entry:
 #   Provider:   GitHub Actions
 #   Owner:      excitedjs
 #   Repository: excitedjs/dreamux
-#   Workflow:   release.yml          <-- this file's name (same for EVERY package)
-#   Environment: (leave blank — none configured; see the commented block below)
-# Each package is configured separately on npm, but they all point at this one
-# file. Add a package -> register it in rush.json (shouldPublish: true) + add one
-# npm trusted-publisher entry pointing here. No workflow change needed.
-#
-# No long-lived npm token. npm 11.5.1+ detects the GitHub Actions OIDC
-# environment and exchanges the short-lived id-token for a publish token
-# automatically — so there is NO NODE_AUTH_TOKEN / NPM_TOKEN anywhere.
-#
-# Per-package requirements for a successful publish (enforce as packages land):
-#   - registered in rush.json with shouldPublish: true;
-#   - a build (npm run build -> dist) + a `files` allowlist (a `prepack` that
-#     builds is recommended so `npm pack` == CI output);
-#   - a package.json `repository` field pointing at github.com/excitedjs/dreamux
-#     (npm provenance requires it);
-#   - publish workspace packages through the pnpm-packed tarball only. Raw
-#     `npm publish` from a package directory is forbidden because npm does not
-#     rewrite `workspace:` dependencies into registry-installable semver ranges.
-#   - its own npm trusted-publisher entry (above), or the publish fails loudly.
-#   - FIRST publish is a one-time manual/token bootstrap. npm's trusted-publisher
-#     config lives on a package's settings page, which exists only AFTER the
-#     package is published once. So publish v1 manually with a token to create
-#     the package, then configure the trusted publisher; this workflow (pure
-#     OIDC) takes over from the next version. (Confirmed via the sibling
-#     claudemux repo: @excitedjs/tm's first version was a token bootstrap — it
-#     carries no provenance, and the OIDC workflow landed after it.)
+#   Workflow:   release.yml
+#   Environment: (leave blank unless the job below is put in an environment)
+# New packages that have never existed on npm still need a one-time bootstrap
+# before setting shouldPublish=true, because npm package settings only exist
+# after the package has been created.
 
 name: release
 
@@ -59,154 +43,41 @@ concurrency:
 
 jobs:
   publish:
-    name: publish changed packages to npm (OIDC trusted publishing)
+    name: rush publish changed packages to npm (OIDC)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
-      contents: read   # checkout only
-      id-token: write  # OIDC token for npm trusted publishing
-    # Hardening (optional, recommended): run the publish in a protected GitHub
-    # Environment with required reviewers, so a real npm publish needs human
-    # approval even on a push to main. If you enable this, create the
-    # environment in repo Settings and also set the same name in the npm
-    # trusted-publisher "Environment" field of every package.
+      contents: read
+      id-token: write
+    # Optional hardening: run the publish in a protected GitHub Environment with
+    # required reviewers. If enabled, set the same environment in each package's
+    # npm trusted-publisher settings.
     # environment: npm-publish
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          # OIDC tokenless trusted publishing needs Node >= 22.14.0; '22'
-          # resolves to the latest 22.x on GitHub-hosted runners (always above
-          # that). registry-url writes the npmjs registry into .npmrc.
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Plan — classify each publishable package against npm
-        id: plan
-        run: |
-          # Enumerate every Rush project with shouldPublish=true. The
-          # install-run-rush.js bootstrap prints a banner ("The rush.json
-          # configuration requests Rush version ...") plus rush's own
-          # 'Invoking "rush list --json"' preamble to STDOUT before the JSON, so
-          # we extract the JSON object (first '{' .. last '}') instead of parsing
-          # the whole stream. The plan is written to a TSV file so the loop below
-          # runs in this shell (a pipe would put the counter in a subshell and
-          # lose it).
-          node common/scripts/install-run-rush.js list --json 2>/dev/null \
-            | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const a=s.indexOf("{"),b=s.lastIndexOf("}");if(a<0||b<a){console.error("release plan: no JSON object found in `rush list --json` output");process.exit(1)}for(const p of JSON.parse(s.slice(a,b+1)).projects){if(p.shouldPublish)process.stdout.write([p.name,p.version,p.path].join("\t")+"\n")}})' \
-            > "$RUNNER_TEMP/publishable.tsv"
-
-          # Classify a package without conflating a real 404 with a transient
-          # failure. Echoes one of: absent | published | new-version. Returns 1
-          # (fails the job) on any npm error that is NOT an E404 — network, 5xx,
-          # auth — so a flaky lookup can never be mistaken for "not published".
-          # `npm view` reads the registry independently of publish auth, so a
-          # missing/misconfigured trusted publisher never shows up here as a 404;
-          # it would surface later as a loud `npm publish` failure, as it should.
-          classify() {
-            local name="$1" version="$2" out
-            if ! out="$(npm view "$name" version 2>&1)"; then
-              if printf '%s\n' "$out" | grep -q 'E404'; then echo absent; return 0; fi
-              printf '::error::npm view %s failed (not an E404): %s\n' "$name" "$out" >&2
-              return 1
-            fi
-            if out="$(npm view "$name@$version" version 2>&1)"; then echo published; return 0; fi
-            if printf '%s\n' "$out" | grep -q 'E404'; then echo new-version; return 0; fi
-            printf '::error::npm view %s@%s failed (not an E404): %s\n' "$name" "$version" "$out" >&2
-            return 1
-          }
-
-          : > "$RUNNER_TEMP/to-publish.tsv"
-          count=0
-          while IFS="$(printf '\t')" read -r name version path; do
-            [ -z "$name" ] && continue
-            # A non-E404 npm error returns 1 here and fails the whole job, by
-            # design — never silently skip a package on a flaky lookup.
-            state="$(classify "$name" "$version")" || exit 1
-            case "$state" in
-              published)
-                echo "::notice::$name@$version is already on npm — skip." ;;
-              absent)
-                # Never published: skip (so a merge / push stays green) and warn.
-                # Its first publish must be a one-time manual token bootstrap;
-                # this OIDC workflow takes over from the next version. See header.
-                echo "::warning::$name has never been published — skipping (merge/push stays green). First publish must be a one-time manual token bootstrap (npm publish v1 with a token to create the package), then configure its npm trusted publisher; this workflow takes over from the next version." ;;
-              new-version)
-                echo "::notice::$name@$version is a new version of an existing package — queueing."
-                printf '%s\t%s\t%s\n' "$name" "$version" "$path" >> "$RUNNER_TEMP/to-publish.tsv"
-                count=$((count + 1)) ;;
-            esac
-          done < "$RUNNER_TEMP/publishable.tsv"
-          echo "count=$count" >> "$GITHUB_OUTPUT"
-          if [ "$count" -eq 0 ]; then
-            echo "::notice::No existing package has an unpublished version — nothing to publish."
-          fi
-
       - name: Upgrade npm for OIDC trusted publishing
-        if: steps.plan.outputs.count != '0'
-        # Two npm thresholds matter:
-        #   >= 9.6.0  — `--provenance` (attestation; still needs a token)
-        #   >= 11.5.1 — OIDC tokenless trusted publishing (GA 2025-07-31): npm
-        #               exchanges the GitHub OIDC token for a short-lived publish
-        #               token, no NODE_AUTH_TOKEN. Node 22 LTS ships npm 10.x,
-        #               below this — so pin the exact version that introduced it.
+        # Node 22 currently ships npm 10.x; tokenless trusted publishing needs
+        # npm 11.5.1+ so the final npm publish process can exchange the GitHub
+        # OIDC id-token for a short-lived npm publish token.
         run: npm install -g npm@11.5.1
 
-      - name: Build (rush, monorepo-aware — one pass for all packages)
-        if: steps.plan.outputs.count != '0'
+      - name: Build (rush, monorepo-aware)
         run: |
           node common/scripts/install-run-rush.js install
           node common/scripts/install-run-rush.js build
 
-      - name: Publish each queued package (pnpm pack + npm OIDC publish)
-        if: steps.plan.outputs.count != '0'
+      - name: Publish changed packages (rush native)
+        env:
+          NPM_CONFIG_PROVENANCE: 'true'
         run: |
-          assert_no_workspace_protocols() {
-            local tarball="$1"
-            node - "$tarball" <<'NODE'
-          const { execFileSync } = require("node:child_process");
-          const tarball = process.argv[2];
-          const manifest = JSON.parse(execFileSync("tar", ["-xOf", tarball, "package/package.json"], { encoding: "utf8" }));
-          const dependencyFields = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"];
-          const offenders = [];
-
-          for (const field of dependencyFields) {
-            const entries = manifest[field] ?? {};
-            for (const [name, version] of Object.entries(entries)) {
-              if (typeof version === "string" && version.startsWith("workspace:")) {
-                offenders.push(`${field}.${name}=${version}`);
-              }
-            }
-          }
-
-          if (offenders.length > 0) {
-            console.error(`Packed manifest still contains workspace protocol dependencies: ${offenders.join(", ")}`);
-            process.exit(1);
-          }
-          NODE
-          }
-
-          # pnpm pack rewrites workspace protocol dependencies in the tarball
-          # manifest. npm then publishes that tarball so OIDC trusted publishing
-          # and provenance still come from npm 11.5.1+.
-          while IFS="$(printf '\t')" read -r name version path; do
-            [ -z "$name" ] && continue
-            echo "::group::Publishing $name@$version ($path)"
-            safe_name="$(printf '%s' "$name" | tr '/@' '__')"
-            pack_dir="$RUNNER_TEMP/npm-pack/$safe_name-$version"
-            rm -rf "$pack_dir"
-            mkdir -p "$pack_dir"
-
-            ( cd "$path" && node "$GITHUB_WORKSPACE/common/scripts/install-run-rush-pnpm.js" pack --pack-destination "$pack_dir" )
-            tarball_count="$(find "$pack_dir" -maxdepth 1 -type f -name '*.tgz' | wc -l | tr -d ' ')"
-            if [ "$tarball_count" -ne 1 ]; then
-              echo "::error::Expected exactly one packed tarball for $name@$version, found $tarball_count in $pack_dir."
-              exit 1
-            fi
-            tarball="$(find "$pack_dir" -maxdepth 1 -type f -name '*.tgz' -print -quit)"
-            assert_no_workspace_protocols "$tarball"
-
-            npm publish "$tarball" --provenance --access public
-            echo "::endgroup::"
-          done < "$RUNNER_TEMP/to-publish.tsv"
+          node common/scripts/install-run-rush.js publish \
+            --include-all \
+            --publish \
+            --set-access-level public \
+            --registry https://registry.npmjs.org
