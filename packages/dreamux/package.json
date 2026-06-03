@@ -14,12 +14,14 @@
     "node": ">=22.7"
   },
   "bin": {
-    "dreamux": "./bin/dreamux"
+    "dreamux": "./bin/dreamux",
+    "tm": "./bin/tm"
   },
   "files": [
     "bin",
     "dist",
     "db",
+    "skills",
     "README.md",
     "LICENSE"
   ],
@@ -33,6 +35,7 @@
   },
   "dependencies": {
     "@excitedjs/feishu-transport": "workspace:*",
+    "@excitedjs/tm": "2.2.1",
     "better-sqlite3": "^11.5.0",
     "smol-toml": "^1.6.1",
     "ws": "^8.18.0",

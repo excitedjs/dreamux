@@ -2,8 +2,8 @@
  * Global dreamux configuration loaded from `~/.dreamux/config.json`.
  *
  * Layout:
- *   ~/.dreamux/        user-editable dreamux configuration and channel secrets
- *   ~/.codex-host/     runtime data (SQLite, sockets, dispatcher logs)
+ *   ~/.dreamux/          dreamux configuration, channel secrets, and runtime
+ *   ~/.dreamux/runtime/  SQLite, sockets, dispatcher logs, and dispatcher state
  *
  * Format: JSON. dreamux does not write TOML files.
  */
@@ -53,7 +53,7 @@ export interface FeishuBotConfig {
 }
 
 export const BUILT_IN_DEFAULTS: DreamuxConfig = {
-  runtime_dir: '~/.codex-host',
+  runtime_dir: '~/.dreamux/runtime',
   admin_socket: null,
   codex: {
     bin: 'codex',

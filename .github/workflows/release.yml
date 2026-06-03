@@ -1,11 +1,12 @@
-# Release the monorepo's publishable packages to npm via Rush native publish
-# and npm OIDC trusted publishing.
+# Version and release the monorepo's publishable packages to npm via Rush native
+# publish and npm OIDC trusted publishing.
 #
 # The workflow is intentionally Rush-native:
-#   - version.yml runs `rush publish --apply` to consume Rush change files into
-#     package.json and CHANGELOG updates, then opens a version PR.
-#   - after that version PR lands on main, release.yml runs
-#     `rush publish --include-all --publish` so Rush compares every
+#   - on a push to main that introduced new Rush change files, this workflow
+#     runs `rush publish --apply` to consume them into package.json and
+#     CHANGELOG updates, then commits that version bump back to main.
+#   - the publish job then checks out main after the version-bump commit and
+#     runs `rush publish --include-all --publish` so Rush compares every
 #     shouldPublish=true project against npm and invokes pnpm publish only for
 #     versions that are not already published.
 #
@@ -29,6 +30,14 @@
 # New packages that have never existed on npm still need a one-time bootstrap
 # before setting shouldPublish=true, because npm package settings only exist
 # after the package has been created.
+#
+# Manual dispatch is a retry hook for main only; npm publishes must not come
+# from feature branches.
+#
+# When a version bump is needed, the release job needs a GitHub App token that
+# is allowed to push the version-bump commit to protected main:
+#   DREAMUX_RELEASE_APP_ID
+#   DREAMUX_RELEASE_APP_PRIVATE_KEY
 
 name: release
 
@@ -38,12 +47,97 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: release
+  group: release-${{ github.ref_name }}
   cancel-in-progress: false
 
+permissions:
+  contents: write
+  id-token: write
+
 jobs:
+  version:
+    name: apply rush change files and push version bump
+    if: github.ref_name == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    outputs:
+      should_publish: ${{ steps.version.outputs.should_publish }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref_name }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+
+      - name: Apply pending change files (rush)
+        id: version
+        env:
+          EVENT: ${{ github.event_name }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          # Push-triggered releases only run when this push introduced a Rush
+          # change file. The bot's own version-bump commit deletes change files
+          # and contains [skip ci], so it cannot loop back into another release.
+          if [ "$EVENT" = push ]; then
+            added="$(git diff --name-only --diff-filter=A "$PUSH_BEFORE" "$PUSH_SHA" -- common/changes | grep -E '^common/changes/.+\.json$' || true)"
+            if [ -z "$added" ]; then
+              echo 'No newly added Rush change files in this push; skipping.'
+              echo "should_publish=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+
+          node common/scripts/install-run-rush.js install
+          # --apply consumes common/changes/*.json into package.json + CHANGELOG
+          # bumps. No --publish here: the separate publish job owns registry I/O.
+          node common/scripts/install-run-rush.js publish --apply
+
+          if [ -z "$(git status --porcelain -- packages common/changes)" ]; then
+            echo 'No version artifacts changed.'
+            if [ "$EVENT" = workflow_dispatch ]; then
+              echo "should_publish=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "should_publish=false" >> "$GITHUB_OUTPUT"
+            fi
+            exit 0
+          fi
+
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "should_publish=true" >> "$GITHUB_OUTPUT"
+
+      - name: Create dreamux release app token
+        if: steps.version.outputs.changed == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.DREAMUX_RELEASE_APP_ID }}
+          private-key: ${{ secrets.DREAMUX_RELEASE_APP_PRIVATE_KEY }}
+
+      - name: Push version bump
+        if: steps.version.outputs.changed == 'true'
+        env:
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add packages common/changes
+          git commit -m "chore(release): version packages [skip ci]"
+          git remote set-url origin "https://x-access-token:${APP_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push origin HEAD:"${GITHUB_REF_NAME}"
+
   publish:
     name: rush publish changed packages to npm (OIDC)
+    needs: version
+    if: needs.version.outputs.should_publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -55,11 +149,15 @@ jobs:
     # environment: npm-publish
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The version job has already pushed the version-bump commit. Checking
+          # out the branch name, not github.sha, gets the package.json versions
+          # that should be published.
+          ref: ${{ github.ref_name }}
 
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          registry-url: 'https://registry.npmjs.org'
 
       - name: Upgrade npm for OIDC trusted publishing
         # Node 22 currently ships npm 10.x; tokenless trusted publishing needs

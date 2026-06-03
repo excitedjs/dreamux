@@ -30,9 +30,8 @@ import { createAdminSocketServer } from '../src/admin/socket.js';
 import { BUILT_IN_DEFAULTS } from '../src/runtime/config.js';
 import {
   dispatcherAppServerControlDir,
-  dispatcherCodexConfigPath,
   dispatcherCodexHome,
-  dispatcherCodexPluginsDir,
+  dispatcherCodexSkillsDir,
   dispatcherSocketPath,
 } from '../src/runtime/paths.js';
 import { startFakeCodex, type FakeCodex } from './fake-codex.js';
@@ -74,7 +73,7 @@ function buildServer(opts: {
       ? {}
           : {
           codexHomeDoctor: () => {
-            /* fake codex tests do not require a real operator Codex home */
+            /* fake codex tests do not require a real global Codex home */
           },
         }),
   });
@@ -118,27 +117,15 @@ function sleep(ms: number): Promise<void> {
 
 function writeReadyDispatcherCodexHome(dispatcherId: string): void {
   mkdirSync(dispatcherCodexHome(dispatcherId), { recursive: true });
-  writeFileSync(
-    dispatcherCodexConfigPath(dispatcherId),
-    `[marketplaces.dreamux]
-source = "public"
-
-[plugins.codexmux]
-enabled = true
-`,
-    { mode: 0o600 },
-  );
   writeFileSync(join(dispatcherCodexHome(dispatcherId), 'auth.json'), '{}', {
     mode: 0o600,
   });
-  mkdirSync(
-    join(
-      dispatcherCodexPluginsDir(dispatcherId),
-      'cache',
-      'dreamux',
-      'codexmux',
-    ),
-    { recursive: true },
+  mkdirSync(join(dispatcherCodexSkillsDir(dispatcherId), 'codexmux-dispatcher'), {
+    recursive: true,
+  });
+  writeFileSync(
+    join(dispatcherCodexSkillsDir(dispatcherId), 'codexmux-dispatcher', 'SKILL.md'),
+    '# test skill\n',
   );
 }
 
@@ -147,12 +134,12 @@ describe('dreamux MVP smoke', () => {
   let fake: FakeCodex;
   let bot: FakeFeishuBot;
   let server: Server;
-  let previousCodexHome: string | undefined;
+  let previousHome: string | undefined;
 
   beforeEach(async () => {
     runtimeDir = mkdtempSync(join(tmpdir(), 'dreamux-'));
-    previousCodexHome = process.env['CODEX_HOME'];
-    process.env['CODEX_HOME'] = join(runtimeDir, 'codex');
+    previousHome = process.env['HOME'];
+    process.env['HOME'] = join(runtimeDir, 'home');
     fake = await startFakeCodex();
     bot = createFakeFeishuBot('app-smoke');
   });
@@ -164,8 +151,8 @@ describe('dreamux MVP smoke', () => {
       /* */
     }
     await fake?.close();
-    if (previousCodexHome === undefined) delete process.env['CODEX_HOME'];
-    else process.env['CODEX_HOME'] = previousCodexHome;
+    if (previousHome === undefined) delete process.env['HOME'];
+    else process.env['HOME'] = previousHome;
     rmSync(runtimeDir, { recursive: true, force: true });
   });
 
@@ -201,7 +188,7 @@ describe('dreamux MVP smoke', () => {
     expect(d?.status).toBe('ready');
   });
 
-  it('starts the dispatcher app-server with the inherited operator CODEX_HOME', async () => {
+  it('starts the dispatcher app-server with global default Codex home and tm on PATH', async () => {
     const capturedCodexOptions: CodexProcessOptions[] = [];
     server = buildServer({ runtimeDir, fake, bot, capturedCodexOptions });
     server.repos.dispatchers.create({
@@ -213,18 +200,16 @@ describe('dreamux MVP smoke', () => {
     await server.start();
 
     expect(capturedCodexOptions).toHaveLength(1);
-    expect(capturedCodexOptions[0]?.env?.['CODEX_HOME']).toBe(
-      process.env['CODEX_HOME'],
-    );
+    expect(capturedCodexOptions[0]?.env?.['CODEX_HOME']).toBeUndefined();
+    expect(capturedCodexOptions[0]?.env?.['PATH']).toContain('/bin');
     expect(capturedCodexOptions[0]?.socketPath).toBe(
       dispatcherSocketPath('flow'),
     );
   });
 
-  it('creates the app-server socket directory outside CODEX_HOME', async () => {
+  it('creates the app-server socket directory outside the global Codex home', async () => {
     rmSync(runtimeDir, { recursive: true, force: true });
     runtimeDir = mkdtempSync(join(homedir(), '.dreamux-smoke-'));
-    process.env['CODEX_HOME'] = join(runtimeDir, 'codex');
     const capturedCodexOptions: CodexProcessOptions[] = [];
     server = buildServer({
       runtimeDir,
@@ -245,9 +230,7 @@ describe('dreamux MVP smoke', () => {
     await server.start();
 
     expect(capturedCodexOptions).toHaveLength(1);
-    expect(capturedCodexOptions[0]?.env?.['CODEX_HOME']).toBe(
-      process.env['CODEX_HOME'],
-    );
+    expect(capturedCodexOptions[0]?.env?.['CODEX_HOME']).toBeUndefined();
     expect(existsSync(dispatcherAppServerControlDir('flow'))).toBe(true);
     expect(dispatcherAppServerControlDir('flow')).not.toContain('codex-home');
   });

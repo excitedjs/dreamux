@@ -162,10 +162,6 @@ export function managedServiceEnvironment(
     CODEX_HOST_RUNTIME_DIR: answers.runtimeDir,
     CODEX_HOST_CODEX_BIN: answers.codexBin,
   };
-  const codexHome = process.env['CODEX_HOME'];
-  if (codexHome !== undefined && codexHome !== '') {
-    env['CODEX_HOME'] = codexHome;
-  }
   return env;
 }
 

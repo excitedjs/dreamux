@@ -21,12 +21,12 @@ issues:
 
 ```
 /                                  rush monorepo root
-├── codex-marketplace/             local Codex marketplace for codexmux
 ├── rush.json                      rush + pnpm config
 ├── common/                        rush scaffolding (config + bootstrap)
 ├── packages/
 │   ├── dreamux/                   @excitedjs/dreamux — the host server
-│   │   ├── bin/                   single dreamux launcher
+│   │   ├── bin/                   dreamux and tm launchers
+│   │   ├── skills/                bundled dispatcher Codex skill
 │   │   ├── src/                   admin, cli, codex, db, dispatcher, feishu, runtime
 │   │   ├── tests/                 vitest (smoke + live-codex + bin-launcher + onboard)
 │   │   └── db/migrations/         SQLite schema migrations
@@ -42,14 +42,14 @@ issues:
 
 ## Navigation
 
-- [`components/`](components/) — one doc per piece (repo-structure today;
-  codex-marketplace today; server / codex-client / feishu-bot / cli to be
+- [`components/`](components/) — one doc per piece (repo-structure and
+  dispatcher-skill today; server / codex-client / feishu-bot / cli to be
   added as they stabilize).
 - [`decisions/README.md`](decisions/README.md) — accepted decision records,
   indexed by topic slug. Do not prefix new records with sequence numbers.
 - [`proposals/global-bin-onboard-serve.md`](proposals/global-bin-onboard-serve.md)
-  — active issue #18 spec for the global `dreamux` bin, onboarding wizard,
-  service registration, and `serve` runtime.
+  — superseded issue #18 proposal; accepted behavior lives in
+  [`decisions/global-bin-onboard-serve.md`](decisions/global-bin-onboard-serve.md).
 - `domains/`, `proposals/`, `research/`, `rules/` — empty for now; add
   here when material grows past a single file's worth.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — when to update this KB, how to
@@ -61,7 +61,7 @@ issues:
 
 | You're about to ... | Read first |
 |---|---|
-| add/change the Codex plugin marketplace or dispatcher skill | [`components/codex-marketplace.md`](components/codex-marketplace.md) |
+| add/change the dispatcher Codex skill or `tm` wrapper | [`components/dispatcher-skill.md`](components/dispatcher-skill.md) |
 | add/change a package, move source between packages | [`components/repo-structure.md`](components/repo-structure.md) |
 | browse decisions by topic | [`decisions/README.md`](decisions/README.md) |
 | understand why rush + pnpm | [`decisions/rush-pnpm-monorepo.md`](decisions/rush-pnpm-monorepo.md) |

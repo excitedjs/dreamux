@@ -3,8 +3,9 @@
  *
  * The pure `gate()` reasons over an `Access` value but never reads or writes
  * it; persistence is the host's job, injected through this interface. Each host
- * backs it differently — dreamux with SQLite under `~/.codex-host` (server-owned
- * runtime state), claudemux with its existing atomic-write `access.json`. Keeping
+ * backs it differently — dreamux with SQLite under `~/.dreamux/runtime`
+ * (server-owned runtime state), claudemux with its existing atomic-write
+ * `access.json`. Keeping
  * `gate` pure with the store injected leaves the gate logic in one place (core)
  * instead of copy-drifting per host. See dreamux#25 §6 (decision D).
  *

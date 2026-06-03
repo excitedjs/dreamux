@@ -29,12 +29,14 @@ Design issue #18 around one published global bin, `dreamux`, with
 `dreamux onboard` and `dreamux serve` as the canonical lifecycle commands.
 There are no legacy global-bin users to protect, so the implementation does
 not install `dreamux-server` or `server-ctl` and does not preserve old command
-forms as compatibility contracts.
+forms as compatibility contracts. The package also exports a `tm` wrapper
+because the dispatcher skill depends on `@excitedjs/tm` as a direct dreamux
+dependency.
 
-`dreamux onboard` installs the required Codex / Claude plugins, collects
-dispatcher and channel configuration, and registers a native service manager
-entry. `dreamux serve` runs the existing server in the foreground and lets
-launchd or systemd keep it alive.
+`dreamux onboard` copies the bundled dispatcher Codex skill into the global
+default Codex home, collects dispatcher and channel configuration, and
+registers a native service manager entry. `dreamux serve` runs the existing
+server in the foreground and lets launchd or systemd keep it alive.
 
 There is no public `dreamux daemon ...` command tree. The daemon form is
 foreground `dreamux serve` supervised by a native user-level service manager.
@@ -42,17 +44,16 @@ After `dreamux onboard` registers that service, operators use native
 `launchctl` or `systemctl --user` commands for ongoing service start, stop,
 status, and uninstall operations.
 
-Dispatcher app-server processes inherit the operator's existing `CODEX_HOME`
-(or Codex's default `~/.codex`) instead of creating a separate Codex state
-root per dispatcher. The `codexmux` consumer is still the dispatcher agent: the dispatcher is
-the long-lived Codex app-server, and its `codexmux-dispatcher` skill is scoped
-to that agent. Because Codex loads plugins from the `CODEX_HOME` the app-server
-runs under, onboarding installs `codexmux` into the operator Codex home that the
-dispatcher will inherit.
+Dispatcher app-server processes do not set `CODEX_HOME`; they use Codex's
+global default home (`~/.codex`) for auth, config, memory, and skills. The
+`codexmux` consumer is still the dispatcher agent: the dispatcher is the
+long-lived Codex app-server, and its `codexmux-dispatcher` skill is scoped to
+that agent. Onboarding installs that skill by directly copying the bundled
+`SKILL.md` into `~/.codex/skills/codexmux-dispatcher/SKILL.md`.
 
-Plugin installation and app-server control state are separate concerns:
-`codexmux` and Codex's own config/plugin cache remain under the operator
-Codex home, while dreamux app-server control sockets live under
+Skill installation and app-server control state are separate concerns:
+the dispatcher skill and Codex's own auth/config/memory remain under the
+global Codex home, while dreamux app-server control sockets live under
 `<runtime_dir>/dispatchers/<id>/app-server-control/` with a short socket leaf.
 dreamux does not generate or rewrite a Codex TOML config. Codex model/provider,
 auth, memory, and other user settings follow the operator's local Codex
@@ -70,15 +71,17 @@ Use commodity packages for commodity infrastructure:
 - `execa` for subprocess execution.
 - `plist` for launchd plist generation.
 - JSON parsing for dreamux config (`~/.dreamux/config.json`). Codex may still
-  manage its own TOML config in the operator Codex home; dreamux does not write
+  manage its own TOML config in its global default home; dreamux does not write
   TOML config files.
 
 The dispatcher Codex app-server launched by `dreamux serve` must:
 
 - run outside Codex's restricted-network workspace profile, or at minimum
   use a network-enabled permission profile
-- inherit the operator Codex home
-- load `codexmux` from that inherited Codex home
+- use Codex's global default home, with no `CODEX_HOME` override
+- load `codexmux-dispatcher` from `~/.codex/skills/`
+- have the dreamux package bin directory on `PATH`, so bare `tm` resolves to
+  the package-local `@excitedjs/tm` wrapper
 - keep control sockets under `<runtime_dir>/dispatchers/<id>/app-server-control/`
 - avoid `/tmp` sockets
 - keep Unix socket paths short enough for macOS and Linux `sun_path` limits
@@ -86,15 +89,15 @@ The dispatcher Codex app-server launched by `dreamux serve` must:
   ephemeral `app-server-control/` state to pre-exist
 
 Onboarding must be path-transparent: every file path created or modified
-by `dreamux onboard`, including paths touched through Codex / Claude plugin
-commands and service-manager registration, must be printed to the operator
-with its final status.
+by `dreamux onboard`, including the copied dispatcher skill and
+service-manager registration, must be printed to the operator with its final
+status.
 
 ## Consequences
 
 - When implemented, this supersedes the package-bin part of
   [cli-and-package-naming](cli-and-package-naming.md):
-  the npm package should expose only the `dreamux` global bin.
+  the npm package exposes `dreamux` and the dispatcher-required `tm` wrapper.
 - `dreamux server start`, `dreamux-server`, and `server-ctl` are not
   compatibility surfaces for issue #18.
 - Service registration is native and user-scoped:
@@ -102,21 +105,15 @@ with its final status.
   `~/.config/systemd/user/dreamux.service` on Linux.
 - `serve` should not daemonize itself. Service managers supervise the
   foreground process.
-- Onboarding intentionally keeps Codex plugin and auth state in the operator
-  Codex home that dispatcher app-server processes inherit; all touched paths
-  must be printed through the onboarding path ledger. App-server control
+- Onboarding intentionally keeps Codex auth/config/memory in Codex's global
+  default home. The only Codex-owned file dreamux writes is the dispatcher
+  skill under `~/.codex/skills/codexmux-dispatcher/SKILL.md`; all touched
+  paths must be printed through the onboarding path ledger. App-server control
   sockets remain under dreamux runtime state.
-- The first implementation installs Codexmux from the public
-  `excitedjs/dreamux` repository with sparse marketplace paths
-  `.agents/plugins` and `codex-marketplace/plugins/codexmux`, using selector
-  `codexmux@dreamux`.
-- The first implementation installs Claudemux from the public
-  `excitedjs/claudemux` marketplace, using selector
-  `claudemux@claudemux`.
 - The `dreamux` launcher passes its resolved absolute path through
   `DREAMUX_BIN`; service generation uses that path so launchd and
   systemd execute the same global bin the operator invoked.
-- The operator's Codex home is intentionally reused, so login state, memory,
+- Codex's global default home is intentionally reused, so login state, memory,
   and local Codex configuration follow the operator's machine. dreamux must not
   delete that home during uninstall.
 - Dispatcher/channel registration should use the existing admin / repository
@@ -125,15 +122,16 @@ with its final status.
 
 ## Alternatives considered
 
-- **Keep the current three published bins:** rejected for issue #18. The
-  explicit product requirement is a single global bin named `dreamux`.
-- **Use a separate Codex state root per dispatcher:** rejected by PR #34. It
-  drops the operator's Codex login state, memory, and local configuration.
-  Dispatcher app-server processes now inherit the operator Codex home instead.
+- **Keep the old three published bins:** rejected for issue #18.
+  `dreamux-server` and `server-ctl` are internal delegated modules, not public
+  compatibility surfaces. The only additional public bin is the dispatcher
+  `tm` wrapper required by the bundled skill.
+- **Use a separate Codex state root per dispatcher:** rejected. It drops the
+  operator's Codex login state, memory, and local configuration. Dispatcher
+  app-server processes use Codex's global default home instead.
 - **Use project-local cwd config for `codexmux`:** rejected for issue #18.
-  Codex project config can affect some trusted-project settings, but plugin
-  and marketplace declarations are user-level Codex config and the plugin
-  cache is rooted in `CODEX_HOME`.
+  Codex project config can affect some trusted-project settings, but the
+  dispatcher skill belongs in Codex's global skill directory.
 - **Support root-scoped service registration in v1:** rejected. The first
   implementation is user-level only and requires no root service setup.
 - **Let `serve` daemonize itself:** rejected. launchd and systemd already

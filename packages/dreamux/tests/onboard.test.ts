@@ -19,9 +19,8 @@ import {
 } from '../src/onboard/wizard.js';
 import type { CommandRunner, OnboardAnswers } from '../src/onboard/types.js';
 import {
-  dispatcherCodexConfigPath,
   dispatcherCodexHome,
-  dispatcherCodexPluginsDir,
+  dispatcherCodexSkillsDir,
   resetRuntimeConfig,
 } from '../src/runtime/paths.js';
 
@@ -51,72 +50,6 @@ class FakeRunner implements CommandRunner {
     });
     if (options.dryRun) return;
 
-    if (
-      command === 'codex' &&
-      args.join(' ') ===
-        'plugin marketplace add excitedjs/dreamux --sparse .agents/plugins --sparse codex-marketplace/plugins/codexmux'
-    ) {
-      const codexHome = requiredEnv(options.env, 'CODEX_HOME');
-      mkdirSync(codexHome, { recursive: true });
-      writeFileSync(
-        join(codexHome, 'config.toml'),
-        `[marketplaces.dreamux]
-source = "excitedjs/dreamux"
-source_type = "github"
-`,
-      );
-      return;
-    }
-    if (command === 'codex' && args.join(' ') === 'plugin add codexmux@dreamux') {
-      const codexHome = requiredEnv(options.env, 'CODEX_HOME');
-      const pluginRoot = join(
-        codexHome,
-        'plugins',
-        'cache',
-        'dreamux',
-        'codexmux',
-        '0.1.0',
-      );
-      mkdirSync(pluginRoot, { recursive: true });
-      writeFileSync(join(pluginRoot, 'plugin.json'), '{"name":"codexmux"}');
-      return;
-    }
-    if (command === 'claude' && args.join(' ') === 'plugin marketplace add excitedjs/claudemux --scope user') {
-      const claudeConfigDir = requiredEnv(options.env, 'CLAUDE_CONFIG_DIR');
-      mkdirSync(join(claudeConfigDir, 'plugins'), { recursive: true });
-      writeFileSync(
-        join(claudeConfigDir, 'settings.json'),
-        JSON.stringify({
-          extraKnownMarketplaces: {
-            claudemux: {
-              source: {
-                source: 'github',
-                repo: 'excitedjs/claudemux',
-              },
-            },
-          },
-        }),
-      );
-      writeFileSync(
-        join(claudeConfigDir, 'plugins', 'known_marketplaces.json'),
-        JSON.stringify({
-          claudemux: {
-            source: {
-              source: 'github',
-              repo: 'excitedjs/claudemux',
-            },
-          },
-        }),
-      );
-      return;
-    }
-    if (command === 'claude' && args.join(' ') === 'plugin install claudemux@claudemux --scope user') {
-      const claudeConfigDir = requiredEnv(options.env, 'CLAUDE_CONFIG_DIR');
-      const pluginDir = join(claudeConfigDir, 'plugins', 'claudemux');
-      mkdirSync(pluginDir, { recursive: true });
-      writeFileSync(join(pluginDir, 'plugin.json'), '{"name":"claudemux"}');
-      return;
-    }
     if (command === 'launchctl' && args[0] === 'bootstrap') {
       this.launchdLoaded = true;
       return;
@@ -151,40 +84,15 @@ source_type = "github"
       dryRun?: boolean;
     } = {},
   ): Promise<string> {
-    void args;
-    void options.cwd;
-    void options.dryRun;
-    if (command !== 'claude') return '';
-    const claudeConfigDir = requiredEnv(options.env, 'CLAUDE_CONFIG_DIR');
-    const installed = existsSync(
-      join(claudeConfigDir, 'plugins', 'claudemux', 'plugin.json'),
-    );
-    return installed ? '[{"name":"claudemux"}]' : '[]';
+    void options;
+    throw new Error(`unexpected capture: ${command} ${args.join(' ')}`);
   }
 }
 
-function writePrivateCodexAuth(answers: OnboardAnswers): void {
+function writeGlobalCodexAuth(answers: OnboardAnswers): void {
   const authPath = join(dispatcherCodexHome(answers.dispatcherId), 'auth.json');
   mkdirSync(dirname(authPath), { recursive: true });
   writeFileSync(authPath, '{}', { mode: 0o600 });
-}
-
-function writeClaudeMarketplace(answers: OnboardAnswers): void {
-  const settingsPath = join(answers.claudeConfigDir, 'settings.json');
-  mkdirSync(dirname(settingsPath), { recursive: true });
-  writeFileSync(
-    settingsPath,
-    JSON.stringify({
-      extraKnownMarketplaces: {
-        claudemux: {
-          source: {
-            source: 'github',
-            repo: answers.claudeMarketplaceSource,
-          },
-        },
-      },
-    }),
-  );
 }
 
 function countCalls(
@@ -200,17 +108,17 @@ function countCalls(
 
 describe('dreamux onboard', () => {
   let root: string;
-  let previousCodexHome: string | undefined;
+  let previousHome: string | undefined;
 
   beforeEach(() => {
     root = mkdtempSync(join(homedir(), '.dreamux-onboard-'));
-    previousCodexHome = process.env['CODEX_HOME'];
-    process.env['CODEX_HOME'] = join(root, 'codex');
+    previousHome = process.env['HOME'];
+    process.env['HOME'] = join(root, 'home');
   });
 
   afterEach(() => {
-    if (previousCodexHome === undefined) delete process.env['CODEX_HOME'];
-    else process.env['CODEX_HOME'] = previousCodexHome;
+    if (previousHome === undefined) delete process.env['HOME'];
+    else process.env['HOME'] = previousHome;
     resetRuntimeConfig();
     rmSync(root, { recursive: true, force: true });
   });
@@ -220,12 +128,11 @@ describe('dreamux onboard', () => {
     const answers = testAnswers({
       configDir: join(root, 'config'),
       runtimeDir: join(root, 'runtime'),
-      claudeConfigDir: join(root, 'claude'),
       dreamuxBin: '/usr/local/bin/dreamux',
       botAppId: 'app-test',
       botAppSecret: 'secret-test',
     });
-    writePrivateCodexAuth(answers);
+    writeGlobalCodexAuth(answers);
 
     const result = await runOnboard({
       answers,
@@ -242,41 +149,9 @@ describe('dreamux onboard', () => {
       started: true,
     });
     expect(runner.calls.map((call) => [call.command, call.args])).toEqual([
-      [
-        'codex',
-        [
-          'plugin',
-          'marketplace',
-          'add',
-          'excitedjs/dreamux',
-          '--sparse',
-          '.agents/plugins',
-          '--sparse',
-          'codex-marketplace/plugins/codexmux',
-        ],
-      ],
-      ['codex', ['plugin', 'add', 'codexmux@dreamux']],
-      [
-        'claude',
-        [
-          'plugin',
-          'marketplace',
-          'add',
-          'excitedjs/claudemux',
-          '--scope',
-          'user',
-        ],
-      ],
-      ['claude', ['plugin', 'install', 'claudemux@claudemux', '--scope', 'user']],
       ['systemctl', ['--user', 'daemon-reload']],
       ['systemctl', ['--user', 'enable', '--now', 'dreamux.service']],
     ]);
-    expect(runner.calls[0]?.env?.['CODEX_HOME']).toBe(
-      dispatcherCodexHome('flow'),
-    );
-    expect(runner.calls[2]?.env?.['CLAUDE_CONFIG_DIR']).toBe(
-      join(root, 'claude'),
-    );
 
     const dreamuxConfig = JSON.parse(
       readFileSync(join(root, 'config', 'config.json'), 'utf8'),
@@ -287,14 +162,7 @@ describe('dreamux onboard', () => {
     });
     expect(
       existsSync(
-        join(
-          dispatcherCodexPluginsDir('flow'),
-          'cache',
-          'dreamux',
-          'codexmux',
-          '0.1.0',
-          'plugin.json',
-        ),
+        join(dispatcherCodexSkillsDir('flow'), 'codexmux-dispatcher', 'SKILL.md'),
       ),
     ).toBe(true);
 
@@ -322,27 +190,10 @@ describe('dreamux onboard', () => {
     expect(ledger.get(join(root, 'config', 'config.json'))?.status).toBe(
       'created',
     );
-    expect(ledger.get(dispatcherCodexConfigPath('flow'))?.status).toBe(
-      'created',
-    );
-    expect(ledger.get(dispatcherCodexConfigPath('flow'))?.reason).toContain(
-      'codex plugin install',
-    );
     expect(
       ledger.get(
-        join(
-          dispatcherCodexPluginsDir('flow'),
-          'cache',
-          'dreamux',
-          'codexmux',
-          '0.1.0',
-          'plugin.json',
-        ),
+        join(dispatcherCodexSkillsDir('flow'), 'codexmux-dispatcher', 'SKILL.md'),
       )?.status,
-    ).toBe('created');
-    expect(
-      ledger.get(join(root, 'claude', 'plugins', 'claudemux', 'plugin.json'))
-        ?.status,
     ).toBe('created');
     expect(
       ledger.get(
@@ -362,7 +213,6 @@ describe('dreamux onboard', () => {
     const answers = testAnswers({
       configDir: join(root, 'config'),
       runtimeDir: join(root, 'runtime'),
-      claudeConfigDir: join(root, 'claude'),
       registerService: true,
     });
 
@@ -379,16 +229,15 @@ describe('dreamux onboard', () => {
     );
   });
 
-  it('skips already-installed plugins and already-loaded launchd services on rerun', async () => {
+  it('rewrites global dispatcher skills and skips already-loaded launchd services on rerun', async () => {
     const runner = new FakeRunner();
     const answers = testAnswers({
       configDir: join(root, 'config'),
       runtimeDir: join(root, 'runtime'),
-      claudeConfigDir: join(root, 'claude'),
       registerService: true,
       startService: true,
     });
-    writePrivateCodexAuth(answers);
+    writeGlobalCodexAuth(answers);
 
     await runOnboard({
       answers,
@@ -407,10 +256,8 @@ describe('dreamux onboard', () => {
       env: {},
     });
 
-    expect(countCalls(runner, 'codex', ['plugin', 'marketplace', 'add'])).toBe(1);
-    expect(countCalls(runner, 'codex', ['plugin', 'add'])).toBe(1);
-    expect(countCalls(runner, 'claude', ['plugin', 'marketplace', 'add'])).toBe(1);
-    expect(countCalls(runner, 'claude', ['plugin', 'install'])).toBe(1);
+    expect(countCalls(runner, 'codex', ['plugin'])).toBe(0);
+    expect(countCalls(runner, 'claude', ['plugin'])).toBe(0);
     expect(countCalls(runner, 'launchctl', ['bootstrap'])).toBe(1);
     expect(countCalls(runner, 'launchctl', ['bootout'])).toBe(0);
     expect(countCalls(runner, 'launchctl', ['kickstart'])).toBe(2);
@@ -452,7 +299,6 @@ describe('dreamux onboard', () => {
       runtimeDir: ignoredRuntimeDir,
       dispatcherId: 'docs',
       dispatcherCwd: join(root, 'docs-cwd'),
-      claudeConfigDir: join(root, 'claude'),
       registerService: false,
       botAppId: 'app-docs',
       botAppSecret: 'secret-docs',
@@ -506,29 +352,6 @@ describe('dreamux onboard', () => {
     }
   });
 
-  it('does not re-add an existing Claude marketplace before installing the plugin', async () => {
-    const runner = new FakeRunner();
-    const answers = testAnswers({
-      configDir: join(root, 'config'),
-      runtimeDir: join(root, 'runtime'),
-      claudeConfigDir: join(root, 'claude'),
-      registerService: true,
-    });
-    writePrivateCodexAuth(answers);
-    writeClaudeMarketplace(answers);
-
-    await runOnboard({
-      answers,
-      runner,
-      platform: 'linux',
-      homeDir: join(root, 'home'),
-      env: {},
-    });
-
-    expect(countCalls(runner, 'claude', ['plugin', 'marketplace', 'add'])).toBe(0);
-    expect(countCalls(runner, 'claude', ['plugin', 'install'])).toBe(1);
-  });
-
   it('fails non-interactive setup when required channel inputs are missing', () => {
     const options: OnboardCliOptions = {
       yes: true,
@@ -564,19 +387,6 @@ function testAnswers(overrides: Partial<OnboardAnswers>): OnboardAnswers {
     dispatcherId: 'flow',
     dispatcherCwd: join(rootForTest(overrides), 'dispatcher-cwd'),
     codexBin: 'codex',
-    codexMarketplaceSource: 'excitedjs/dreamux',
-    codexMarketplaceSparse: [
-      '.agents/plugins',
-      'codex-marketplace/plugins/codexmux',
-    ],
-    codexMarketplaceName: 'dreamux',
-    codexPluginRef: 'codexmux@dreamux',
-    claudeBin: 'claude',
-    claudeConfigDir: join(rootForTest(overrides), 'claude'),
-    claudeMarketplaceSource: 'excitedjs/claudemux',
-    claudeMarketplaceSparse: [],
-    claudeMarketplaceName: 'claudemux',
-    claudePluginRef: 'claudemux@claudemux',
     botAppId: 'app-test',
     botAppSecret: 'secret-test',
     registerService: true,
@@ -591,12 +401,4 @@ function rootForTest(overrides: Partial<OnboardAnswers>): string {
   const fromConfig = overrides.configDir;
   if (fromConfig !== undefined) return join(fromConfig, '..');
   return homedir();
-}
-
-function requiredEnv(env: NodeJS.ProcessEnv | undefined, name: string): string {
-  const value = env?.[name];
-  if (value === undefined || value === '') {
-    throw new Error(`missing test env ${name}`);
-  }
-  return value;
 }

@@ -16,9 +16,12 @@ Design background:
 
 ## What this package ships
 
-- One public CLI bin: `dreamux`. Implemented commands in this slice include
-  `dreamux onboard`, `dreamux serve`, `dreamux status`, `dreamux doctor`,
-  `dreamux dispatcher ...`, and `dreamux config path|show`.
+- Public CLI bins: `dreamux` and `tm`. `dreamux` owns onboarding, serving,
+  status, doctor, dispatcher administration, and config commands. `tm` is a
+  wrapper around the package-local `@excitedjs/tm` dependency for dispatcher
+  skills.
+- A bundled dispatcher Codex skill, copied by `dreamux onboard` into
+  `~/.codex/skills/codexmux-dispatcher/SKILL.md`.
 - A SQLite-backed runtime (`dispatchers` + `inbound_buffer`) plus the
   Feishu / Codex adapters that drive each dispatcher.
 
@@ -30,12 +33,12 @@ Design background:
 - **Single-thread, multi-chat fan-in.** A bot can be invited into multiple
   groups and DMs; every inbound message goes into the same Codex thread.
   Outbound replies are routed by the inbound's `source_chat_id`.
-- **Dispatcher cwd is explicit, Codex state stays local.** The Codex
+- **Dispatcher cwd is explicit, Codex state stays global.** The Codex
   daemon's cwd is configured during `dreamux onboard` or
   `dreamux dispatcher add --codex-cwd`. Dispatcher app-server processes
-  inherit the operator's `CODEX_HOME` (default `~/.codex`), so login state,
-  memory, config, and plugin cache remain local to the operator. dreamux keeps
-  only app-server sockets/logs/SQLite under its runtime directory.
+  use Codex's global default home (`~/.codex`) for auth, memory, config, and
+  skills. dreamux keeps only app-server sockets/logs/SQLite under its runtime
+  directory.
 - **FIFO + at-most-once.** One running turn per dispatcher. After a server
   crash, `running` inbound rows are flipped to `unknown` (the user is told
   to confirm or resend); `awaiting_outbound` rows are safely retried.
@@ -79,16 +82,17 @@ The server keeps operator-edited config separate from runtime state — by desig
 | Path | Purpose | Source of truth |
 |---|---|---|
 | `~/.dreamux/config.json`                 | User-editable global config and Feishu bot secrets — auto-created on first boot; edit and restart to apply | the operator |
-| `~/.codex-host/state.db`                 | SQLite (dispatchers + inbound buffer)      | the server |
-| `~/.codex-host/admin.sock`               | Admin Unix socket (`0600`)                 | the server |
+| `~/.dreamux/runtime/state.db`            | SQLite (dispatchers + inbound buffer)      | the server |
+| `~/.dreamux/runtime/admin.sock`          | Admin Unix socket (`0600`)                 | the server |
 | dispatcher `codex_cwd`                   | Codex app-server cwd, configured during onboard or dispatcher registration | the operator |
-| operator `CODEX_HOME` (default `~/.codex`) | Codex login state, memory, config, and plugin cache | the operator |
-| `~/.codex-host/dispatchers/<id>/app-server-control/as.sock` | Codex app-server Unix socket | the server |
-| `~/.codex-host/dispatchers/<id>/*.log`   | Codex stdout / stderr                      | the server |
+| `~/.codex/`                              | Codex global default home: auth, memory, config, and skills | the operator / Codex |
+| `~/.codex/skills/codexmux-dispatcher/SKILL.md` | Dispatcher skill copied by `dreamux onboard` | dreamux installer |
+| `~/.dreamux/runtime/dispatchers/<id>/app-server-control/as.sock` | Codex app-server Unix socket | the server |
+| `~/.dreamux/runtime/dispatchers/<id>/*.log` | Codex stdout / stderr                    | the server |
 
-`rm -rf ~/.codex-host` is a safe recovery — your config in `~/.dreamux/`
-survives. `runtime_dir` and `admin_socket` paths in the config can move
-the `~/.codex-host` half anywhere you like.
+`rm -rf ~/.dreamux/runtime` is a safe runtime recovery — your dreamux config
+and global Codex auth survive. `runtime_dir` and `admin_socket` paths in the
+config can move the runtime subtree anywhere you like.
 
 ## Configure a dispatcher
 
@@ -138,7 +142,7 @@ Auto-created on first boot with this default shape:
 
 ```json
 {
-  "runtime_dir": "~/.codex-host",
+  "runtime_dir": "~/.dreamux/runtime",
   "admin_socket": null,
   "codex": {
     "bin": "codex",
@@ -219,9 +223,9 @@ node common/scripts/install-run-rush.js test   # smoke + bin-launcher + codex-li
   failure, outbound retry without turn re-run, approval fail-fast.
 - `tests/bin-launcher.test.ts` — spawns the real `dreamux` bash launcher
   and repo-root shim from arbitrary cwds and through symlinks; static
-  "no tsx" assertion; manifest assertion for the single global bin.
+  "no tsx" assertion; manifest assertion for the supported global bins.
 - `tests/doctor.test.ts` — covers standalone doctor checks for
-  inherited operator Codex home state, including managed-service auth
+  global Codex home state, including managed-service auth
   visibility.
 - `tests/codex-live.test.ts` — spawns a real `codex app-server`. CI installs
   `@openai/codex@latest` before running tests so this compatibility check is

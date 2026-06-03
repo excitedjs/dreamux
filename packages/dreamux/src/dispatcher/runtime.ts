@@ -45,6 +45,7 @@ import {
   dispatcherCodexHomeDoctorContext,
   type DispatcherCodexHomeDoctor,
 } from '../runtime/dispatcher-codex-home.js';
+import { dispatcherProcessEnv } from '../runtime/package-bin.js';
 import { outboundTargetForInbound, type OutboundSink } from '../channel/outbound.js';
 
 export interface DispatcherRuntimeDeps {
@@ -146,7 +147,7 @@ export class DispatcherRuntime {
         stderrLogPath: dispatcherStderrLog(this.dispatcherId),
         binPath: this.deps.codexBinPath,
         extraArgs,
-        env: { ...process.env },
+        env: dispatcherProcessEnv(),
       });
       mkdirSync(dirname(socketPath), { recursive: true });
       await this.process.start();

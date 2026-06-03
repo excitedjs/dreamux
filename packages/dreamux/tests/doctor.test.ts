@@ -13,9 +13,8 @@ import { openDatabase } from '../src/db/schema.js';
 import { runDreamuxDoctor } from '../src/cli/doctor.js';
 import type { CommandRunner } from '../src/onboard/types.js';
 import {
-  dispatcherCodexConfigPath,
   dispatcherCodexHome,
-  dispatcherCodexPluginsDir,
+  dispatcherCodexSkillsDir,
   resetRuntimeConfig,
   setRuntimeConfig,
 } from '../src/runtime/paths.js';
@@ -68,7 +67,7 @@ describe('dreamux doctor command', () => {
   let oldAdminSocket: string | undefined;
   let oldCodexBin: string | undefined;
   let oldDreamuxBin: string | undefined;
-  let oldCodexHome: string | undefined;
+  let oldHome: string | undefined;
 
   beforeEach(() => {
     root = mkdtempSync(join(homedir(), '.dreamux-doctor-'));
@@ -77,13 +76,13 @@ describe('dreamux doctor command', () => {
     oldAdminSocket = process.env['CODEX_HOST_ADMIN_SOCKET'];
     oldCodexBin = process.env['CODEX_HOST_CODEX_BIN'];
     oldDreamuxBin = process.env['DREAMUX_BIN'];
-    oldCodexHome = process.env['CODEX_HOME'];
+    oldHome = process.env['HOME'];
     delete process.env['CODEX_HOST_RUNTIME_DIR'];
     delete process.env['CODEX_HOST_ADMIN_SOCKET'];
     delete process.env['CODEX_HOST_CODEX_BIN'];
     process.env['DREAMUX_CONFIG_DIR'] = join(root, 'config');
     process.env['DREAMUX_BIN'] = '/usr/local/bin/dreamux';
-    process.env['CODEX_HOME'] = join(root, 'codex');
+    process.env['HOME'] = join(root, 'home');
   });
 
   afterEach(() => {
@@ -92,12 +91,12 @@ describe('dreamux doctor command', () => {
     restoreEnv('CODEX_HOST_ADMIN_SOCKET', oldAdminSocket);
     restoreEnv('CODEX_HOST_CODEX_BIN', oldCodexBin);
     restoreEnv('DREAMUX_BIN', oldDreamuxBin);
-    restoreEnv('CODEX_HOME', oldCodexHome);
+    restoreEnv('HOME', oldHome);
     resetRuntimeConfig();
     rmSync(root, { recursive: true, force: true });
   });
 
-  it('reports inherited Codex home health', async () => {
+  it('reports global Codex home health', async () => {
     const runner = new FakeRunner();
     const config = writeConfig();
     writeDispatcher(config.runtimeDir, { auth: true });
@@ -203,13 +202,12 @@ describe('dreamux doctor command', () => {
         },
       },
     });
-    mkdirSync(dispatcherCodexPluginsDir('flow'), { recursive: true });
-    mkdirSync(join(dispatcherCodexPluginsDir('flow'), 'cache', 'dreamux', 'codexmux'), {
+    mkdirSync(join(dispatcherCodexSkillsDir('flow'), 'codexmux-dispatcher'), {
       recursive: true,
     });
     writeFileSync(
-      dispatcherCodexConfigPath('flow'),
-      '[marketplaces.dreamux]\nsource = "excitedjs/dreamux"\n',
+      join(dispatcherCodexSkillsDir('flow'), 'codexmux-dispatcher', 'SKILL.md'),
+      '# test skill\n',
     );
     if (options.auth) {
       writeFileSync(join(dispatcherCodexHome('flow'), 'auth.json'), '{}');

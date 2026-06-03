@@ -183,48 +183,6 @@ function buildOnboardCommand(y: Argv): Argv {
       type: 'string',
       describe: 'Codex CLI binary or absolute path',
     })
-    .option('codex-marketplace-source', {
-      type: 'string',
-      describe: 'Codex plugin marketplace source',
-    })
-    .option('codex-marketplace-sparse', {
-      type: 'array',
-      string: true,
-      describe: 'Sparse checkout path for the Codex marketplace source',
-    })
-    .option('codex-marketplace-name', {
-      type: 'string',
-      describe: 'Codex marketplace name',
-    })
-    .option('codex-plugin-ref', {
-      type: 'string',
-      describe: 'Codex plugin ref, e.g. codexmux@dreamux',
-    })
-    .option('claude-bin', {
-      type: 'string',
-      describe: 'Claude CLI binary or absolute path',
-    })
-    .option('claude-config-dir', {
-      type: 'string',
-      describe: 'Claude config directory used for plugin installation',
-    })
-    .option('claude-marketplace-source', {
-      type: 'string',
-      describe: 'Claude plugin marketplace source',
-    })
-    .option('claude-marketplace-sparse', {
-      type: 'array',
-      string: true,
-      describe: 'Sparse checkout path for the Claude marketplace source',
-    })
-    .option('claude-marketplace-name', {
-      type: 'string',
-      describe: 'Claude marketplace name',
-    })
-    .option('claude-plugin-ref', {
-      type: 'string',
-      describe: 'Claude plugin ref, e.g. claudemux@claudemux',
-    })
     .option('bot-app-id', {
       type: 'string',
       describe: 'Channel bot app id',

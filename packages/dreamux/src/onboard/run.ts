@@ -13,7 +13,7 @@ import {
 import {
   dispatcherAppServerControlDir,
   dispatcherCodexHome,
-  dispatcherCodexPluginsDir,
+  dispatcherCodexSkillsDir,
   databasePath,
   setRuntimeConfig,
 } from '../runtime/paths.js';
@@ -28,6 +28,7 @@ import {
   dispatcherCodexArgsJson,
   dreamuxConfigFromAnswers,
 } from './config-files.js';
+import { installDispatcherSkill } from './dispatcher-skill.js';
 import {
   ensureDirectory,
   recordFileTreeChanges,
@@ -36,10 +37,6 @@ import {
   writeTextFile,
 } from './ledger.js';
 import { installUserService, managedServiceEnvironment } from './service.js';
-import {
-  installClaudemuxPlugin,
-  installCodexmuxPlugin,
-} from './plugins.js';
 import type {
   CommandRunner,
   OnboardAnswers,
@@ -89,13 +86,13 @@ export async function runOnboard(
   );
 
   const codexHome = dispatcherCodexHome(answers.dispatcherId);
-  ensureDirectory(codexHome, ledger, 'operator Codex home', {
+  ensureDirectory(codexHome, ledger, 'global Codex home', {
     dryRun: answers.dryRun,
   });
   ensureDirectory(
-    dispatcherCodexPluginsDir(answers.dispatcherId),
+    dispatcherCodexSkillsDir(answers.dispatcherId),
     ledger,
-    'dispatcher Codex plugins directory',
+    'global Codex skills directory',
     { dryRun: answers.dryRun },
   );
   ensureDirectory(
@@ -111,18 +108,10 @@ export async function runOnboard(
     { dryRun: answers.dryRun },
   );
 
-  await installCodexmuxPlugin({
-    answers: effectiveAnswers,
-    codexHome,
+  installDispatcherSkill({
+    skillsDir: dispatcherCodexSkillsDir(answers.dispatcherId),
     ledger,
-    runner,
-  });
-
-  await installClaudemuxPlugin({
-    answers: effectiveAnswers,
-    codexHome,
-    ledger,
-    runner,
+    dryRun: answers.dryRun,
   });
 
   registerDispatcher(effectiveAnswers, ledger);
@@ -230,7 +219,7 @@ function formatDoctorFailure(
   ) {
     lines.push(
       '- managed service environments do not inherit your interactive shell auth token',
-      `- authenticate the Codex home before registering the service: CODEX_HOME=${doctor.context.codexHome} ${answers.codexBin} login`,
+      `- authenticate the global Codex home before registering the service: ${answers.codexBin} login`,
     );
   }
   return lines.join('\n');

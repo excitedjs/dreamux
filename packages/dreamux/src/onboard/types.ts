@@ -21,16 +21,6 @@ export interface OnboardAnswers {
   dispatcherId: string;
   dispatcherCwd: string;
   codexBin: string;
-  codexMarketplaceSource: string;
-  codexMarketplaceSparse: string[];
-  codexMarketplaceName: string;
-  codexPluginRef: string;
-  claudeBin: string;
-  claudeConfigDir: string;
-  claudeMarketplaceSource: string;
-  claudeMarketplaceSparse: string[];
-  claudeMarketplaceName: string;
-  claudePluginRef: string;
   botAppId: string;
   botAppSecret: string;
   registerService: boolean;

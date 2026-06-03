@@ -33,27 +33,30 @@ Three hard constraints shaped the design:
   is inherited by the final npm publish process used by pnpm, where npm
   exchanges the GitHub Actions OIDC id-token for a short-lived publish token.
 - **Main is protected.** The [anti-leak guardrail](anti-leak-guardrail.md) makes the
-  `gitleaks` check required on `main`, so CI cannot push a version-bump commit
-  straight to `main` with the default `GITHUB_TOKEN`.
+  `gitleaks` check required on `main`, so the workflow uses a GitHub App token
+  rather than the default `GITHUB_TOKEN` when it pushes the bot version-bump
+  commit to `main`.
 
 ## Decision
 
-Two workflows, both `push: [main]`:
+One workflow, `push: [main]` plus manual dispatch:
 
-- **`/.github/workflows/release.yml`** — the OIDC publish, and the single
-  workflow every publishable package registers as its trusted publisher. It
-  installs through Rush, builds the monorepo, then runs
+- **`/.github/workflows/release.yml`** — the single release pipeline and the
+  workflow every publishable package registers as its trusted publisher. On a
+  push to `main`, it first checks whether that push introduced new Rush change
+  files under `/common/changes/`. If not, it no-ops, which prevents the bot's
+  own release commit from looping. If yes, it installs through Rush and runs
+  `rush publish --apply` to consume those change files into package.json and
+  CHANGELOG bumps across all changed packages. It commits those version
+  artifacts back to `main` with a GitHub App token, then a separate publish job
+  checks out the updated branch, builds the monorepo, and runs
   `rush publish --include-all --publish --set-access-level public` against the
   public npm registry. Rush compares every publishable package against npm and
   invokes pnpm publish only for versions that are not already present.
-  `id-token: write`, `setup-node` `registry-url`, `npm install -g npm@11.5.1`,
-  `NPM_CONFIG_PROVENANCE=true`, no `NODE_AUTH_TOKEN`. No-ops (green) when
-  nothing is ready to publish.
-- **`/.github/workflows/version.yml`** — the rush-native replacement for
-  `changeset version`. On merge to `main` it runs `rush publish --apply`
-  (consumes `common/changes/*` into package.json + CHANGELOG bumps across all
-  changed packages; no registry contact, no token) and opens a "version
-  packages" PR rather than pushing to protected `main`.
+  `id-token: write`, `npm install -g npm@11.5.1`,
+  `NPM_CONFIG_PROVENANCE=true`, no `NODE_AUTH_TOKEN`. Manual dispatch is a
+  retry hook for `main` only; packages are never published from feature
+  branches.
 
 So **Rush owns versioning and publish orchestration, pnpm owns the registry
 manifest rewrite, npm owns the OIDC/provenance upload**, and all halves are
@@ -83,20 +86,18 @@ monorepo-wide.
   `workspace:` dependencies are valid in source package manifests, but raw
   `npm publish` from a package directory is forbidden; the release workflow must
   use Rush native publish so pnpm prepares the registry manifest.
+- **Required GitHub App secrets:** `DREAMUX_RELEASE_APP_ID` and
+  `DREAMUX_RELEASE_APP_PRIVATE_KEY`. The App must be allowed to push the
+  release bot commit to protected `main`.
 - **Optional hardening:** run the publish in a protected GitHub Environment with
   required reviewers (commented in the workflow); if enabled it must match the
   npm trusted-publisher Environment field of every package.
-- The version workflow self-breaks its trigger loop: the version PR's merge
-  carries no new change files, so the next `rush publish --apply` is a no-op
-  (verified locally with an empty `common/changes/`).
-- The version workflow must only treat an **open** `release/version-packages` PR
-  as reusable. Historical merged or closed PRs with the same head branch are not
-  blockers; when no open version PR exists, the workflow creates a new one.
-- The generated `release/version-packages` PR is exempt from the CI
-  `rush change --verify` job. That branch is the result of
-  `rush publish --apply`: it intentionally consumes `common/changes/*` into
-  package.json and changelog updates, so requiring another change file would
-  make the version PR unmergeable.
+- The workflow self-breaks its trigger loop: push-triggered runs proceed only
+  when the push added a Rush change file under `/common/changes/`. The bot
+  version-bump commit consumes those files and includes `[skip ci]`, so it does
+  not start a redundant CI/release run. Manual dispatch on `main` skips this
+  change-file guard so maintainers can retry publishing already-versioned
+  packages after a transient npm or OIDC failure.
 
 ## Alternatives considered
 
@@ -111,6 +112,7 @@ monorepo-wide.
   drift, fighting Rush's coordinated monorepo model. One looping workflow scales
   by adding a rush.json entry + one npm config. Revisit only if a package needs
   different release governance (its own environment / reviewers).
-- **Single-run version+publish that pushes the bump to `main`** (the claudemux
-  shape) — rejected: needs a GitHub App token to push to protected `main`; the
-  version-PR model needs no extra secret.
+- **Separate version PR workflow** — rejected after the claudemux release flow
+  proved the operational shape: a merge to `main` should be enough to version
+  and publish packages. The PR model avoided a GitHub App secret, but it made
+  every release a second maintainer action.

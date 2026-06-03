@@ -1,7 +1,7 @@
 /**
- * Filesystem layout for the codex-host server runtime.
+ * Filesystem layout for the dreamux server runtime.
  *
- * Default root: ~/.codex-host/  (override via env CODEX_HOST_RUNTIME_DIR
+ * Default root: ~/.dreamux/runtime/  (override via env CODEX_HOST_RUNTIME_DIR
  * or `runtime_dir` in ~/.dreamux/config.json — env wins, see config.ts).
  * Layout:
  *   <root>/
@@ -12,11 +12,10 @@
  *       stdout.log              Codex stdout
  *       stderr.log              Codex stderr (load-bearing for debug)
  *
- * Dispatchers intentionally inherit the operator's existing CODEX_HOME (or
- * Codex's own default when the env var is unset). Runtime/socket/log/db state
- * is still owned by dreamux under runtimeRoot(). Dispatcher cwd is configured
- * during onboard and stored on the dispatcher row; dispatcherCodexCwd() exists
- * only as a legacy fallback.
+ * Dispatchers intentionally do not set CODEX_HOME. Codex app-server processes
+ * use Codex's global default home (`~/.codex`) for auth, config, and skills.
+ * Dispatcher cwd is configured during onboard and stored on the dispatcher row;
+ * dispatcherCodexCwd() exists only as a legacy fallback.
  *
  * Issue ~/.dreamux/ config (feat/global-config-dir): paths.* functions
  * read an optionally-injected `DreamuxConfig` snapshot for non-env
@@ -56,7 +55,7 @@ export function getRuntimeConfig(): DreamuxConfig {
 export function runtimeRoot(): string {
   const fromEnv = process.env['CODEX_HOST_RUNTIME_DIR'];
   if (fromEnv !== undefined && fromEnv !== '') return fromEnv;
-  return expandHome(currentConfig.runtime_dir) || join(homedir(), '.codex-host');
+  return expandHome(currentConfig.runtime_dir) || join(homedir(), '.dreamux', 'runtime');
 }
 
 export function databasePath(): string {
@@ -81,8 +80,6 @@ export function dispatcherCodexCwd(id: string): string {
 }
 
 export function operatorCodexHome(): string {
-  const fromEnv = process.env['CODEX_HOME'];
-  if (fromEnv !== undefined && fromEnv !== '') return fromEnv;
   return join(homedir(), '.codex');
 }
 
@@ -95,8 +92,8 @@ export function dispatcherCodexConfigPath(id: string): string {
   return join(dispatcherCodexHome(id), 'config.toml');
 }
 
-export function dispatcherCodexPluginsDir(id: string): string {
-  return join(dispatcherCodexHome(id), 'plugins');
+export function dispatcherCodexSkillsDir(id: string): string {
+  return join(dispatcherCodexHome(id), 'skills');
 }
 
 export function dispatcherAppServerControlDir(id: string): string {

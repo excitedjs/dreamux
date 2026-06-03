@@ -2,9 +2,8 @@
 #
 # Jobs:
 #   - rush-change-status — PR release-surface changes must declare Rush change
-#     files under common/changes/. The generated release/version-packages PR is
-#     exempt because it is the output of `rush publish --apply`, which consumes
-#     those change files into package.json and changelog updates.
+#     files under common/changes/. Release version bumps are committed by
+#     release.yml after merge, so no generated version PR is expected.
 #   - commit-metadata — reject machine-local / malformed commit author emails
 #     (generic, committed) plus an optional private domain denylist supplied via
 #     the AUTHOR_EMAIL_DENYLIST_REGEX repo variable (kept out of this file).
@@ -36,7 +35,7 @@ permissions:
 jobs:
   rush-change-status:
     name: rush change — declaration check
-    if: github.event_name == 'pull_request' && github.head_ref != 'release/version-packages'
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

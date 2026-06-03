@@ -10,10 +10,10 @@
 Pre-config, every dispatcher had to repeat the same `approval_policy=never`
 inside its `codex_args_json`, every operator had to remember
 `CODEX_HOST_CODEX_BIN`, and every retry/timeout tuning was a source-level
-constant that needed a rebuild. The runtime data dir (`~/.codex-host/`)
-also did double duty as "where you'd edit settings if there were any" —
-mixing user-editable configuration with server-owned state (SQLite, sockets,
-logs) makes `rm -rf ~/.codex-host` recovery dangerous.
+constant that needed a rebuild. The runtime data dir originally sat outside
+the user-editable dreamux config tree and risked drifting into a second
+operator-facing home. Mixing user-editable configuration with server-owned
+state (SQLite, sockets, logs) makes recovery unclear.
 
 We needed a user-editable global config that is:
 
@@ -57,7 +57,7 @@ Fields sunk into the config (this PR):
 
 | Key | Default | What it replaces |
 |---|---|---|
-| `runtime_dir` | `~/.codex-host` | Hard-coded default in `paths.runtimeRoot` |
+| `runtime_dir` | `~/.dreamux/runtime` | Hard-coded default in `paths.runtimeRoot` |
 | `admin_socket` | (derived from `runtime_dir`) | Hard-coded default in `paths.adminSocketPath` |
 | `codex.bin` | `codex` | Hard-coded default in `supervisor.ts` |
 | `codex.approval_policy` | `never` | Per-dispatcher boilerplate in every `codex_args_json` |
@@ -86,9 +86,10 @@ bots; the actual Feishu app secret lives in `feishu.bots.<dispatcher-id>`.
 - On every server boot we now read a file in `~/.dreamux/`. Negligible.
 - The file is created with mode `0600`. Operators expecting world-readable
   configs need to chmod after the fact (and document why).
-- Two directories now matter: `~/.dreamux/` (user-editable) and
-  `~/.codex-host/` (server state). README + the Rush + pnpm decision link the two so
-  newcomers see the split.
+- All dreamux-owned state now sits under `~/.dreamux/`: user-editable config
+  at the root, server-owned runtime state under `~/.dreamux/runtime/`.
+  Global Codex auth, memory, config, and skills remain under Codex's default
+  `~/.codex/` home and are not controlled by dreamux runtime cleanup.
 
 **Foot-guns:**
 
@@ -117,9 +118,10 @@ bots; the actual Feishu app secret lives in `feishu.bots.<dispatcher-id>`.
 
 ## Alternatives considered
 
-- **Put config in `~/.codex-host/config.toml`**: rejected. The whole
-  point of the split is that `~/.codex-host/` is server state and
-  `rm -rf`-safe; mixing settings in there re-creates the original problem.
+- **Put config in a server runtime directory:** rejected. The whole point of
+  the split is that the runtime subtree is `rm -rf`-safe while config is
+  operator-owned; mixing settings into runtime state re-creates the original
+  problem.
 - **TOML or YAML instead of JSON**: JSON is now used for dreamux-owned config.
   Codex may still maintain its own `~/.codex/config.toml`, but dreamux does not
   write TOML config files. JSON keeps Feishu secret storage and redaction logic

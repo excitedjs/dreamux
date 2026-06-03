@@ -1,9 +1,10 @@
 /**
- * Acceptance tests for the single public dreamux bin.
+ * Acceptance tests for the package launchers.
  *
  * The launcher must work from any cwd, follow symlinks, and shell out to
  * compiled dist output with plain node. Issue #18 removes package-global
- * legacy aliases; this test also pins the package manifest to one bin.
+ * legacy aliases; this test also pins the package manifest to the supported
+ * public bins.
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';
@@ -26,6 +27,7 @@ const PACKAGE_ROOT = resolve(
 const MONOREPO_ROOT = resolve(PACKAGE_ROOT, '..', '..');
 
 const PKG_BIN_DREAMUX = join(PACKAGE_ROOT, 'bin', 'dreamux');
+const PKG_BIN_TM = join(PACKAGE_ROOT, 'bin', 'tm');
 const ROOT_BIN_DREAMUX = join(MONOREPO_ROOT, 'bin', 'dreamux');
 
 beforeAll(() => {
@@ -81,12 +83,24 @@ const LAUNCHERS: LauncherCase[] = [
 ];
 
 describe('package bin manifest', () => {
-  it('publishes only the dreamux global bin', () => {
+  it('publishes only the supported global bins', () => {
     const manifest = JSON.parse(
       readFileSync(join(PACKAGE_ROOT, 'package.json'), 'utf8'),
     ) as { bin?: Record<string, string> };
 
-    expect(manifest.bin).toEqual({ dreamux: './bin/dreamux' });
+    expect(manifest.bin).toEqual({
+      dreamux: './bin/dreamux',
+      tm: './bin/tm',
+    });
+  });
+});
+
+describe('packages/dreamux/bin/tm', () => {
+  it('forwards to the package-local @excitedjs/tm executable without tsx', () => {
+    const script = readFileSync(PKG_BIN_TM, 'utf8');
+
+    expect(script).toContain('node_modules/.bin/tm');
+    expect(script).not.toMatch(/\btsx\b/);
   });
 });
 

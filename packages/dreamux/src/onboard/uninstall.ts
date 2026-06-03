@@ -197,9 +197,7 @@ function normalizePath(path: string): string {
 function operatorStateRoots(): string[] {
   return uniquePaths([
     joinHome('.codex'),
-    process.env['CODEX_HOME'],
     joinHome('.claude'),
-    process.env['CLAUDE_CONFIG_DIR'],
   ]);
 }
 

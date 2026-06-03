@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Launcher for the tm CLI bundled as a direct @excitedjs/dreamux dependency.
+# Resolves its own location through symlinks so it works from npm global bins,
+# npm-link, and source-checkout shortcuts.
+set -eu
+
+SOURCE="${BASH_SOURCE[0]}"
+hop=0
+while [ -L "$SOURCE" ]; do
+  hop=$((hop + 1))
+  if [ "$hop" -gt 40 ]; then
+    echo "tm: too many symlink hops resolving $SOURCE" >&2
+    exit 1
+  fi
+  TARGET="$(readlink "$SOURCE")"
+  if [ "${TARGET:0:1}" = "/" ]; then
+    SOURCE="$TARGET"
+  else
+    SOURCE="$(dirname -- "$SOURCE")/$TARGET"
+  fi
+done
+
+DIR="$(cd -- "$(dirname -- "$SOURCE")/.." &> /dev/null && pwd)"
+TARGET="$DIR/node_modules/.bin/tm"
+if [ ! -x "$TARGET" ]; then
+  echo "tm: $TARGET is missing." >&2
+  echo "Install dependencies first from the repo root: node common/scripts/install-run-rush.js update." >&2
+  exit 1
+fi
+exec "$TARGET" "$@"

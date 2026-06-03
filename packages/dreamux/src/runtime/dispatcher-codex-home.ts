@@ -1,10 +1,8 @@
 import {
   existsSync,
   readFileSync,
-  readdirSync,
-  statSync,
 } from 'node:fs';
-import { basename, join, normalize, sep } from 'node:path';
+import { join, normalize, sep } from 'node:path';
 
 import { parse as parseToml, TomlError } from 'smol-toml';
 
@@ -12,7 +10,7 @@ import {
   dispatcherAppServerControlDir,
   dispatcherCodexConfigPath,
   dispatcherCodexHome,
-  dispatcherCodexPluginsDir,
+  dispatcherCodexSkillsDir,
   dispatcherSocketPath,
 } from './paths.js';
 
@@ -22,7 +20,7 @@ export interface DispatcherCodexHomeDoctorContext {
   dispatcherId: string;
   codexHome: string;
   configPath: string;
-  pluginsDir: string;
+  skillsDir: string;
   appServerControlDir: string;
   socketPath: string;
   codexCliArgs: string[];
@@ -55,7 +53,7 @@ export function dispatcherCodexHomeDoctorContext(
     dispatcherId,
     codexHome: dispatcherCodexHome(dispatcherId),
     configPath: dispatcherCodexConfigPath(dispatcherId),
-    pluginsDir: dispatcherCodexPluginsDir(dispatcherId),
+    skillsDir: dispatcherCodexSkillsDir(dispatcherId),
     appServerControlDir: dispatcherAppServerControlDir(dispatcherId),
     socketPath: dispatcherSocketPath(dispatcherId),
     codexCliArgs: options.codexCliArgs ?? [],
@@ -78,9 +76,7 @@ export function validateDispatcherCodexHome(
   const errors: string[] = [];
   const env = options.env ?? process.env;
 
-  if (!existsSync(context.configPath)) {
-    errors.push(`missing Codex config: ${context.configPath}`);
-  } else {
+  if (existsSync(context.configPath)) {
     try {
       const parsed = parseToml(readFileSync(context.configPath, 'utf8'));
       if (!isRecord(parsed)) {
@@ -105,8 +101,8 @@ export function validateDispatcherCodexHome(
       `dispatcher app-server socket path is too long for Unix sockets (${bytes} bytes > ${DISPATCHER_APP_SERVER_SOCKET_PATH_MAX_BYTES} safe bytes): ${context.socketPath}`,
     );
   }
-  if (!codexmuxPluginExists(context.pluginsDir)) {
-    errors.push(`missing codexmux plugin under: ${context.pluginsDir}`);
+  if (!codexmuxDispatcherSkillExists(context.skillsDir)) {
+    errors.push(`missing codexmux dispatcher skill under: ${context.skillsDir}`);
   }
 
   if (!hasAuth(context.codexHome, env)) {
@@ -149,36 +145,8 @@ function formatTomlError(err: unknown, file: string): string {
   return `Codex config parse error in ${file}: ${msg}`;
 }
 
-function codexmuxPluginExists(root: string): boolean {
-  return hasPathSegment(root, 'codexmux', 5);
-}
-
-function hasPathSegment(root: string, segment: string, maxDepth: number): boolean {
-  if (!existsSync(root)) return false;
-  const stack: Array<{ path: string; depth: number }> = [{ path: root, depth: 0 }];
-  while (stack.length > 0) {
-    const current = stack.pop();
-    if (current === undefined) continue;
-    if (basename(current.path) === segment) return true;
-    if (current.depth >= maxDepth) continue;
-    let entries: string[];
-    try {
-      entries = readdirSync(current.path);
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      const child = join(current.path, entry);
-      try {
-        if (statSync(child).isDirectory()) {
-          stack.push({ path: child, depth: current.depth + 1 });
-        }
-      } catch {
-        /* ignore transient filesystem races */
-      }
-    }
-  }
-  return false;
+function codexmuxDispatcherSkillExists(root: string): boolean {
+  return existsSync(join(root, 'codexmux-dispatcher', 'SKILL.md'));
 }
 
 function hasAuth(codexHome: string, env: NodeJS.ProcessEnv): boolean {

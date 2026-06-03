@@ -184,7 +184,7 @@ Usage:
   ${programName} dispatcher remove --id <ID>
 
 Environment:
-  CODEX_HOST_ADMIN_SOCKET   override the admin socket path (default: ~/.codex-host/admin.sock)
+  CODEX_HOST_ADMIN_SOCKET   override the admin socket path (default: ~/.dreamux/runtime/admin.sock)
 `);
 }
 

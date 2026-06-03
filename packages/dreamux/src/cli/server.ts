@@ -71,9 +71,10 @@ Global config:
                             approval_policy, runtime_dir, outbound retries,
                             and Feishu channel secrets.
 
-Runtime data (kept separate from config):
-  ~/.codex-host/            SQLite, admin socket, per-dispatcher logs.
-                            Override via 'runtime_dir' in config, or
+Runtime data:
+  ~/.dreamux/runtime/       SQLite, admin socket, per-dispatcher logs and
+                            app-server control sockets. Override via
+                            'runtime_dir' in config, or
                             CODEX_HOST_RUNTIME_DIR env (env wins).
 
 Environment overrides (highest precedence):

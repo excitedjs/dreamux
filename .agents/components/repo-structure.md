@@ -18,8 +18,6 @@ sibling claudemux repo import one implementation instead of drifting copies.
 
 | Path | Purpose |
 |---|---|
-| `/.agents/plugins/marketplace.json` | Git Codex marketplace manifest for installing `codexmux` from the public repository root |
-| `/codex-marketplace/` | Local Codex marketplace root for the `codexmux` plugin and dispatcher skill; not a Rush package |
 | `/rush.json` | Rush project list + pnpm/Node version pins |
 | `/common/config/rush/` | Rush command definitions (`command-line.json`), pnpm `.npmrc`, version policies, generated `pnpm-lock.yaml` |
 | `/common/scripts/install-run-rush.js` | Bootstrap that shells out to `npx @microsoft/rush@<version>` (see [the Rush + pnpm decision](../decisions/rush-pnpm-monorepo.md)) |
@@ -46,7 +44,9 @@ verbatim through the move):
 | `src/runtime/` | Path builders, env-only secrets, codex-args parser |
 | `src/server.ts` | Top-level `Server` class wiring everything together |
 | `db/migrations/0001_init.sql` | Initial SQLite schema |
-| `bin/dreamux` | Single public CLI launcher (`dreamux serve`, `dreamux dispatcher ...`) |
+| `bin/dreamux` | Public CLI launcher (`dreamux serve`, `dreamux dispatcher ...`) |
+| `bin/tm` | Public wrapper that forwards to the package-local `@excitedjs/tm` executable |
+| `skills/codexmux-dispatcher/SKILL.md` | Bundled dispatcher Codex skill copied into global `~/.codex/skills/` by onboarding |
 | `tests/` | vitest: smoke, bin-launcher, dispatcher Codex home doctor, codex live integration |
 
 ## Installation — the rush path only
@@ -117,16 +117,19 @@ multi-package release notes precise while still using Rush as the validator.
 - npm package: `@excitedjs/dreamux`
 - CLI binaries installed by the package:
   - `dreamux` (see [the global bin decision](../decisions/global-bin-onboard-serve.md))
+  - `tm` (wrapper around the package dependency used by dispatcher skills)
 
-## Two home directories the server touches
+## Runtime and Codex state
 
 | Path | Purpose | Source of truth |
 |---|---|---|
-| `~/.dreamux/` | User-editable global config (`config.json`) and onboarded Feishu bot secrets. Auto-created on first boot. | The operator |
-| `~/.codex-host/` | Server-owned runtime state: SQLite (`state.db`), admin socket, dispatcher app-server control sockets, and logs. | The server |
-| operator `CODEX_HOME` (default `~/.codex`) | Codex login state, memory, config, and plugin cache used by dispatcher app-server processes. | The operator |
-| `~/.codex-host/dispatchers/<id>/app-server-control/as.sock` | Runtime-created Codex app-server Unix socket for that dispatcher. | The server |
+| `~/.dreamux/` | User-editable global config (`config.json`), onboarded Feishu bot secrets, and default runtime subtree. Auto-created on first boot. | The operator |
+| `~/.dreamux/runtime/` | Server-owned runtime state: SQLite (`state.db`), admin socket, dispatcher app-server control sockets, and logs. | The server |
+| `~/.codex/` | Codex global default home: auth, memory, config, and skills used by dispatcher app-server processes. | The operator / Codex |
+| `~/.codex/skills/codexmux-dispatcher/SKILL.md` | Dispatcher skill copied by `dreamux onboard`. | dreamux installer |
+| `~/.dreamux/runtime/dispatchers/<id>/app-server-control/as.sock` | Runtime-created Codex app-server Unix socket for that dispatcher. | The server |
 
-The split is load-bearing: a `rm -rf ~/.codex-host` recovery never loses
-user-edited settings or operator Codex/Claude state. See
+The split is load-bearing: a `rm -rf ~/.dreamux/runtime` recovery never loses
+user-edited dreamux settings or global Codex auth. Dispatcher app-server
+processes do not set `CODEX_HOME`; they use Codex's global default home. See
 [the global-config decision](../decisions/global-config-dir.md).
