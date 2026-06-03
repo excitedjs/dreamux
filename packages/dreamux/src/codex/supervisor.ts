@@ -47,6 +47,13 @@ export interface CodexProcessOptions {
   readyTimeoutMs?: number;
 }
 
+export interface CodexProcessExit {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+}
+
+export type CodexProcessExitHandler = (exit: CodexProcessExit) => void;
+
 /** A handle to one running codex app-server child process. */
 export class CodexProcess {
   readonly socketPath: string;
@@ -54,6 +61,7 @@ export class CodexProcess {
   private child: ChildProcess | null = null;
   private _pid: number | null = null;
   private reaped = false;
+  private readonly exitHandlers: CodexProcessExitHandler[] = [];
 
   constructor(private readonly opts: CodexProcessOptions) {
     this.socketPath = opts.socketPath;
@@ -62,6 +70,10 @@ export class CodexProcess {
 
   get pid(): number | null {
     return this._pid;
+  }
+
+  onExit(handler: CodexProcessExitHandler): void {
+    this.exitHandlers.push(handler);
   }
 
   /** Spawn the daemon and resolve once its listen socket is bound. */
@@ -129,6 +141,16 @@ export class CodexProcess {
     // Future post-spawn `error` emissions must not crash the supervisor.
     child.on('error', () => {
       /* daemon-side error, can no longer affect this process */
+    });
+    child.once('exit', (code, signal) => {
+      if (this.reaped) return;
+      for (const handler of this.exitHandlers) {
+        try {
+          handler({ code, signal });
+        } catch {
+          /* exit observers must not poison process event dispatch */
+        }
+      }
     });
 
     try {

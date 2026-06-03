@@ -22,7 +22,11 @@ import { dirname } from 'node:path';
 
 import type { DispatcherRow, DispatcherStatus } from '../db/types.js';
 import type { DispatcherRepo } from '../db/repository.js';
-import { CodexProcess, type CodexProcessOptions } from '../codex/supervisor.js';
+import {
+  CodexProcess,
+  type CodexProcessExit,
+  type CodexProcessOptions,
+} from '../codex/supervisor.js';
 import { CodexWsClient } from '../codex/rpc.js';
 import { performInitializeHandshake } from '../codex/handshake.js';
 import type {
@@ -44,6 +48,9 @@ import {
 import { dispatcherProcessEnv } from '../runtime/package-bin.js';
 import type { OutboundSink } from '../channel/outbound.js';
 
+const DEFAULT_RESTART_BACKOFF_BASE_MS = 1000;
+const DEFAULT_RESTART_BACKOFF_MAX_MS = 30_000;
+
 export interface DispatcherRuntimeDeps {
   dispatchers: DispatcherRepo;
   outbound: OutboundSink;
@@ -63,6 +70,10 @@ export interface DispatcherRuntimeDeps {
   outboundRetries?: number;
   /** Outbound retry delay (ms). From ~/.dreamux/config.json. */
   outboundRetryDelayMs?: number;
+  /** Codex child/WS restart backoff base (tests may override). */
+  restartBackoffBaseMs?: number;
+  /** Codex child/WS restart backoff cap (tests may override). */
+  restartBackoffMaxMs?: number;
   log?: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
 }
 
@@ -74,6 +85,10 @@ export class DispatcherRuntime {
   private currentInboundChatId: string | null = null;
   private status: DispatcherStatus = 'declared';
   private readonly log: NonNullable<DispatcherRuntimeDeps['log']>;
+  private stopping = false;
+  private restarting = false;
+  private restartAttempts = 0;
+  private restartTimer: NodeJS.Timeout | null = null;
 
   constructor(
     public readonly row: DispatcherRow,
@@ -114,94 +129,17 @@ export class DispatcherRuntime {
    *  6. status = ready
    */
   async start(): Promise<void> {
+    this.stopping = false;
+    this.restarting = false;
+    this.clearRestartTimer();
     this.setStatus('starting');
     this.deps.dispatchers.setStatus(this.dispatcherId, 'starting', {
       last_started_at: Date.now(),
     });
 
     try {
-      const cwd = this.row.codex_cwd ?? dispatcherCodexCwd(this.dispatcherId);
-      const socketPath = dispatcherSocketPath(this.dispatcherId);
-      const extraArgs = this.deps.resolveExtraArgs?.(this.row) ?? [];
-      if (this.deps.codexHomeDoctor !== undefined) {
-        await this.deps.codexHomeDoctor(
-          dispatcherCodexHomeDoctorContext(this.dispatcherId, {
-            codexCliArgs: extraArgs,
-            dispatcherCwd: cwd,
-          }),
-        );
-      }
-
-      const factory = this.deps.codexProcessFactory ?? ((o) => new CodexProcess(o));
-      this.process = factory({
-        socketPath,
-        cwd,
-        stdoutLogPath: dispatcherStdoutLog(this.dispatcherId),
-        stderrLogPath: dispatcherStderrLog(this.dispatcherId),
-        binPath: this.deps.codexBinPath,
-        extraArgs,
-        env: dispatcherProcessEnv(),
-      });
-      mkdirSync(dirname(socketPath), { recursive: true });
-      await this.process.start();
-
-      const clientFactory =
-        this.deps.codexClientFactory ?? ((sock) => new CodexWsClient({ socketPath: sock }));
-      this.client = clientFactory(socketPath);
-      await this.client.ready();
-
-      const approvalHandler = createFailFastApprovalHandler({
-        onReject: async (req) => {
-          // Best-effort hint to the user, only if we know who is asking.
-          const chatId = this.currentInboundChatId;
-          if (chatId === null) return;
-          try {
-            await this.deps.outbound.send(
-              { conversationId: chatId },
-              `Codex 请求了一次审批（${req.method}），但当前 dispatcher 不支持审批 —— 本轮将失败。`,
-            );
-          } catch {
-            /* nothing useful to do */
-          }
-        },
-      });
-      this.client.setServerRequestHandler(approvalHandler);
-
-      // codex 0.134+ LSP-style handshake — must precede thread/start or
-      // any other RPC, otherwise codex answers everything with
-      // `Not initialized` (see src/codex/handshake.ts).
-      const initResponse = await performInitializeHandshake(this.client, {
-        ...(this.deps.handshakeTimeoutMs !== undefined
-          ? { timeoutMs: this.deps.handshakeTimeoutMs }
-          : {}),
-      });
-      this.log(
-        'info',
-        `codex initialized: ${initResponse.userAgent} (home=${initResponse.codexHome}, ${initResponse.platformOs})`,
-      );
-
-      await this.resolveThread();
-
-      this.turnManager = new TurnManager({
-        dispatcherId: this.dispatcherId,
-        getThreadId: () => this.threadId,
-        client: this.client,
-        outbound: this.deps.outbound,
-        onCurrentChat: (chatId) => this.setCurrentInboundChat(chatId),
-        log: this.log,
-        ...(this.deps.outboundRetries !== undefined
-          ? { outboundRetries: this.deps.outboundRetries }
-          : {}),
-        ...(this.deps.outboundRetryDelayMs !== undefined
-          ? { outboundRetryDelayMs: this.deps.outboundRetryDelayMs }
-          : {}),
-      });
-
-      this.setStatus('ready');
-      this.deps.dispatchers.setStatus(this.dispatcherId, 'ready', {
-        last_ready_at: Date.now(),
-        last_error: null,
-      });
+      await this.startCodexRuntime();
+      this.markReady();
 
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -215,9 +153,98 @@ export class DispatcherRuntime {
     }
   }
 
+  private async startCodexRuntime(): Promise<void> {
+    const cwd = this.row.codex_cwd ?? dispatcherCodexCwd(this.dispatcherId);
+    const socketPath = dispatcherSocketPath(this.dispatcherId);
+    const extraArgs = this.deps.resolveExtraArgs?.(this.row) ?? [];
+    if (this.deps.codexHomeDoctor !== undefined) {
+      await this.deps.codexHomeDoctor(
+        dispatcherCodexHomeDoctorContext(this.dispatcherId, {
+          codexCliArgs: extraArgs,
+          dispatcherCwd: cwd,
+        }),
+      );
+    }
+
+    const factory = this.deps.codexProcessFactory ?? ((o) => new CodexProcess(o));
+    const process = factory({
+      socketPath,
+      cwd,
+      stdoutLogPath: dispatcherStdoutLog(this.dispatcherId),
+      stderrLogPath: dispatcherStderrLog(this.dispatcherId),
+      binPath: this.deps.codexBinPath,
+      extraArgs,
+      env: dispatcherProcessEnv(),
+    });
+    this.process = process;
+    process.onExit((exit) => {
+      if (this.process !== process) return;
+      this.handleChildExit(exit);
+    });
+    mkdirSync(dirname(socketPath), { recursive: true });
+    await process.start();
+
+    const clientFactory =
+      this.deps.codexClientFactory ?? ((sock) => new CodexWsClient({ socketPath: sock }));
+    const client = clientFactory(socketPath);
+    this.client = client;
+    client.onClose((reason) => {
+      if (this.client !== client) return;
+      this.handleClientClose(reason);
+    });
+    await client.ready();
+
+    const approvalHandler = createFailFastApprovalHandler({
+      onReject: async (req) => {
+        // Best-effort hint to the user, only if we know who is asking.
+        const chatId = this.currentInboundChatId;
+        if (chatId === null) return;
+        try {
+          await this.deps.outbound.send(
+            { conversationId: chatId },
+            `Codex 请求了一次审批（${req.method}），但当前 dispatcher 不支持审批 —— 本轮将失败。`,
+          );
+        } catch {
+          /* nothing useful to do */
+        }
+      },
+    });
+    this.client.setServerRequestHandler(approvalHandler);
+
+    // codex 0.134+ LSP-style handshake — must precede thread/start or
+    // any other RPC, otherwise codex answers everything with
+    // `Not initialized` (see src/codex/handshake.ts).
+    const initResponse = await performInitializeHandshake(this.client, {
+      ...(this.deps.handshakeTimeoutMs !== undefined
+        ? { timeoutMs: this.deps.handshakeTimeoutMs }
+        : {}),
+    });
+    this.log(
+      'info',
+      `codex initialized: ${initResponse.userAgent} (home=${initResponse.codexHome}, ${initResponse.platformOs})`,
+    );
+
+    await this.resolveThread();
+
+    this.turnManager = new TurnManager({
+      dispatcherId: this.dispatcherId,
+      getThreadId: () => this.threadId,
+      client: this.client,
+      outbound: this.deps.outbound,
+      onCurrentChat: (chatId) => this.setCurrentInboundChat(chatId),
+      log: this.log,
+      ...(this.deps.outboundRetries !== undefined
+        ? { outboundRetries: this.deps.outboundRetries }
+        : {}),
+      ...(this.deps.outboundRetryDelayMs !== undefined
+        ? { outboundRetryDelayMs: this.deps.outboundRetryDelayMs }
+        : {}),
+    });
+  }
+
   private async resolveThread(): Promise<void> {
     if (this.client === null) throw new Error('client not initialized');
-    const existing = this.row.thread_id;
+    const existing = this.threadId ?? this.row.thread_id;
     if (existing === null) {
       // Fresh thread.
       const res = await this.client.request<ThreadStartResponse>(
@@ -271,37 +298,133 @@ export class DispatcherRuntime {
 
   /** Graceful stop: stop accepting work, reap codex child. */
   async stop(): Promise<void> {
+    this.stopping = true;
+    this.clearRestartTimer();
     this.setStatus('stopping');
     this.deps.dispatchers.setStatus(this.dispatcherId, 'stopping');
-    if (this.turnManager !== null) await this.turnManager.stop();
-    if (this.client !== null) {
-      try {
-        this.client.close();
-      } catch {
-        /* best effort */
-      }
-    }
-    if (this.process !== null) {
-      await this.process.reap();
-    }
+    await this.teardownCodexRuntime();
     this.setStatus('stopped');
     this.deps.dispatchers.setStatus(this.dispatcherId, 'stopped');
   }
 
   private async cleanupOnFailure(): Promise<void> {
-    if (this.client !== null) {
+    this.clearRestartTimer();
+    const wasStopping = this.stopping;
+    this.stopping = true;
+    try {
+      await this.teardownCodexRuntime();
+    } finally {
+      this.stopping = wasStopping;
+    }
+  }
+
+  private async teardownCodexRuntime(): Promise<void> {
+    const turnManager = this.turnManager;
+    this.turnManager = null;
+    if (turnManager !== null) await turnManager.stop();
+
+    const client = this.client;
+    this.client = null;
+    if (client !== null) {
       try {
-        this.client.close();
+        client.close();
       } catch {
         /* */
       }
-      this.client = null;
     }
-    if (this.process !== null) {
-      await this.process.reap();
-      this.process = null;
+
+    const process = this.process;
+    this.process = null;
+    if (process !== null) {
+      await process.reap();
     }
-    this.turnManager = null;
+    this.currentInboundChatId = null;
+  }
+
+  private handleChildExit(exit: CodexProcessExit): void {
+    const details =
+      exit.signal !== null ? `signal=${exit.signal}` : `code=${exit.code ?? 'null'}`;
+    this.scheduleRestart(`codex app-server child exited (${details})`);
+  }
+
+  private handleClientClose(reason: Error): void {
+    this.scheduleRestart(`codex app-server websocket closed: ${reason.message}`);
+  }
+
+  private scheduleRestart(reason: string): void {
+    if (this.stopping || this.restartTimer !== null || this.restarting) return;
+    const attempt = this.restartAttempts + 1;
+    this.restartAttempts = attempt;
+    const delay = this.restartDelayMs(attempt);
+    this.log('warn', `${reason}; restarting in ${delay}ms`);
+    this.setStatus('degraded');
+    this.deps.dispatchers.setStatus(this.dispatcherId, 'degraded', {
+      last_error: reason,
+    });
+    this.restartTimer = setTimeout(() => {
+      this.restartTimer = null;
+      void this.restartCodexRuntime(reason);
+    }, delay);
+  }
+
+  private async restartCodexRuntime(reason: string): Promise<void> {
+    if (this.stopping) return;
+    this.restarting = true;
+    let retryReason: string | null = null;
+    this.setStatus('starting');
+    this.deps.dispatchers.setStatus(this.dispatcherId, 'starting', {
+      last_started_at: Date.now(),
+    });
+    try {
+      await this.teardownCodexRuntime();
+      if (this.stopping) return;
+      await this.startCodexRuntime();
+      if (this.stopping) {
+        await this.teardownCodexRuntime();
+        return;
+      }
+      this.restartAttempts = 0;
+      this.markReady();
+      this.log('info', `restarted codex app-server after: ${reason}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.log('error', `restart failed: ${msg}`, err);
+      this.setStatus('degraded');
+      this.deps.dispatchers.setStatus(this.dispatcherId, 'degraded', {
+        last_error: msg,
+      });
+      await this.teardownCodexRuntime();
+      retryReason = `codex app-server restart failed: ${msg}`;
+    } finally {
+      this.restarting = false;
+    }
+    if (retryReason !== null) this.scheduleRestart(retryReason);
+  }
+
+  private restartDelayMs(attempt: number): number {
+    const base = Math.max(
+      0,
+      this.deps.restartBackoffBaseMs ?? DEFAULT_RESTART_BACKOFF_BASE_MS,
+    );
+    const max = Math.max(
+      base,
+      this.deps.restartBackoffMaxMs ?? DEFAULT_RESTART_BACKOFF_MAX_MS,
+    );
+    return Math.min(max, base * 2 ** Math.max(0, attempt - 1));
+  }
+
+  private clearRestartTimer(): void {
+    if (this.restartTimer === null) return;
+    clearTimeout(this.restartTimer);
+    this.restartTimer = null;
+  }
+
+  private markReady(): void {
+    this.setStatus('ready');
+    this.deps.dispatchers.setStatus(this.dispatcherId, 'ready', {
+      last_ready_at: Date.now(),
+      last_error: null,
+    });
   }
 
   private setStatus(s: DispatcherStatus): void {

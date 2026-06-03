@@ -22,7 +22,12 @@ import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { RECEIVED_REACTION_EMOJI, Server } from '../src/server.js';
-import { CodexProcess, type CodexProcessOptions } from '../src/codex/supervisor.js';
+import {
+  CodexProcess,
+  type CodexProcessExit,
+  type CodexProcessExitHandler,
+  type CodexProcessOptions,
+} from '../src/codex/supervisor.js';
 import { CodexWsClient } from '../src/codex/rpc.js';
 import { createFakeFeishuBot, type FakeFeishuBot, type FeishuInboundEvent } from '../src/feishu/bot.js';
 import { createAdminSocketServer } from '../src/admin/socket.js';
@@ -63,6 +68,10 @@ function buildServer(opts: {
   spawnCounter?: { count: number };
   capturedCodexOptions?: CodexProcessOptions[];
   useDefaultCodexHomeDoctor?: boolean;
+  codexProcessFactory?: (opts: CodexProcessOptions) => CodexProcess;
+  codexClientFactory?: () => CodexWsClient;
+  codexRestartBackoffBaseMs?: number;
+  codexRestartBackoffMaxMs?: number;
 }): Server {
   return new Server({
     config: opts.config ?? { ...BUILT_IN_DEFAULTS, runtime_dir: opts.runtimeDir },
@@ -76,9 +85,12 @@ function buildServer(opts: {
     codexProcessFactory: (o) => {
       if (opts.spawnCounter !== undefined) opts.spawnCounter.count++;
       opts.capturedCodexOptions?.push(o);
-      return new NoopCodexProcess(o);
+      return opts.codexProcessFactory?.(o) ?? new NoopCodexProcess(o);
     },
-    codexClientFactory: () => new CodexWsClient({ url: opts.fake.url }),
+    codexClientFactory: () =>
+      opts.codexClientFactory?.() ?? new CodexWsClient({ url: opts.fake.url }),
+    codexRestartBackoffBaseMs: opts.codexRestartBackoffBaseMs,
+    codexRestartBackoffMaxMs: opts.codexRestartBackoffMaxMs,
     ...(opts.useDefaultCodexHomeDoctor === true
       ? {}
           : {
@@ -87,6 +99,28 @@ function buildServer(opts: {
           },
         }),
   });
+}
+
+class ControllableCodexProcess extends CodexProcess {
+  readonly exitHandlers: CodexProcessExitHandler[] = [];
+  startCount = 0;
+  reapCount = 0;
+
+  override async start(): Promise<void> {
+    this.startCount++;
+  }
+
+  override async reap(): Promise<void> {
+    this.reapCount++;
+  }
+
+  override onExit(handler: CodexProcessExitHandler): void {
+    this.exitHandlers.push(handler);
+  }
+
+  emitExit(exit: CodexProcessExit = { code: 1, signal: null }): void {
+    for (const handler of this.exitHandlers) handler(exit);
+  }
 }
 
 function fakeInbound(
@@ -670,6 +704,147 @@ describe('dreamux MVP smoke', () => {
     await Promise.all([a, b]);
     expect(counter.count).toBe(1);
     expect(server.getRuntime('flow')?.getStatus()).toBe('ready');
+  });
+
+  it('restarts the Codex child with backoff and resumes the saved thread after child exit', async () => {
+    const processes: ControllableCodexProcess[] = [];
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      codexProcessFactory: (opts) => {
+        const process = new ControllableCodexProcess(opts);
+        processes.push(process);
+        return process;
+      },
+      codexRestartBackoffBaseMs: 5,
+      codexRestartBackoffMaxMs: 5,
+    });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+    await server.start();
+    const firstThreadId = server.repos.dispatchers.get('flow')?.thread_id;
+    expect(firstThreadId).toMatch(/^thread_fake_/);
+    expect(processes).toHaveLength(1);
+
+    processes[0]!.emitExit({ code: 9, signal: null });
+
+    await waitFor(() => processes.length >= 2);
+    await waitFor(() => server.getRuntime('flow')?.getStatus() === 'ready');
+    expect(server.repos.dispatchers.get('flow')?.thread_id).toBe(firstThreadId);
+    expect(fake.methodLog.filter((method) => method === 'thread/resume'))
+      .toHaveLength(1);
+    expect(processes[0]?.reapCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it('manual dispatcher stop cancels a pending restart and start resumes the thread', async () => {
+    const processes: ControllableCodexProcess[] = [];
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      codexProcessFactory: (opts) => {
+        const process = new ControllableCodexProcess(opts);
+        processes.push(process);
+        return process;
+      },
+      codexRestartBackoffBaseMs: 100,
+      codexRestartBackoffMaxMs: 100,
+    });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+    await server.start();
+    const firstThreadId = server.repos.dispatchers.get('flow')?.thread_id;
+    expect(firstThreadId).toMatch(/^thread_fake_/);
+
+    processes[0]!.emitExit({ code: 9, signal: null });
+    await waitFor(() => server.getRuntime('flow')?.getStatus() === 'degraded');
+
+    await server.stopDispatcher('flow');
+    await sleep(150);
+    expect(processes).toHaveLength(1);
+
+    await server.startDispatcher('flow');
+    await waitFor(() => server.getRuntime('flow')?.getStatus() === 'ready');
+    expect(processes).toHaveLength(2);
+    expect(server.repos.dispatchers.get('flow')?.thread_id).toBe(firstThreadId);
+    expect(fake.methodLog.filter((method) => method === 'thread/resume'))
+      .toHaveLength(1);
+  });
+
+  it('restarts and resumes when the Codex child WebSocket dies', async () => {
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      codexClientFactory: () => new CodexWsClient({ url: fake.url }),
+      codexRestartBackoffBaseMs: 5,
+      codexRestartBackoffMaxMs: 5,
+    });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+    await server.start();
+    const firstThreadId = server.repos.dispatchers.get('flow')?.thread_id;
+    expect(firstThreadId).toMatch(/^thread_fake_/);
+
+    const oldFake = fake;
+    codexInputs = [];
+    fake = await startFakeCodex({
+      replyFor: captureAndEchoCodexInput(codexInputs),
+    });
+    await oldFake.close();
+
+    await waitFor(() => fake.methodLog.includes('thread/resume'), 3000);
+    await waitFor(() => server.getRuntime('flow')?.getStatus() === 'ready');
+    expect(server.repos.dispatchers.get('flow')?.thread_id).toBe(firstThreadId);
+    expect(fake.methodLog).not.toContain('thread/start');
+  });
+
+  it('does not restart a dispatcher for a slow in-flight turn', async () => {
+    await fake.close();
+    codexInputs = [];
+    fake = await startFakeCodex({
+      turnDelayMs: 200,
+      replyFor: captureAndEchoCodexInput(codexInputs),
+    });
+    const processes: ControllableCodexProcess[] = [];
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      codexProcessFactory: (opts) => {
+        const process = new ControllableCodexProcess(opts);
+        processes.push(process);
+        return process;
+      },
+      codexRestartBackoffBaseMs: 5,
+      codexRestartBackoffMaxMs: 5,
+    });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+    await server.start();
+
+    await bot.inject(fakeInbound('chat-group-a', 'slow turn', 'msg-slow'));
+    await sleep(80);
+    expect(server.getRuntime('flow')?.getStatus()).toBe('ready');
+    expect(processes).toHaveLength(1);
+    expect(bot.sentMessages).toEqual([]);
+
+    await waitFor(() => bot.sentMessages.length >= 1, 1000);
+    expect(processes).toHaveLength(1);
+    expect(bot.sentMessages[0]?.text).toBe('echo: slow turn');
   });
 });
 
