@@ -1,6 +1,13 @@
 # Change Log - @excitedjs/dreamux
 
-This log was last generated on Tue, 02 Jun 2026 18:55:21 GMT and should not be manually modified.
+This log was last generated on Wed, 03 Jun 2026 04:29:43 GMT and should not be manually modified.
+
+## 0.1.4
+Wed, 03 Jun 2026 04:29:43 GMT
+
+### Patches
+
+- Fix onboard Codex marketplace installation from the public dreamux repository.
 
 ## 0.1.3
 Tue, 02 Jun 2026 18:55:21 GMT

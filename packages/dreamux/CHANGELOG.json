@@ -2,6 +2,18 @@
   "name": "@excitedjs/dreamux",
   "entries": [
     {
+      "version": "0.1.4",
+      "tag": "@excitedjs/dreamux_v0.1.4",
+      "date": "Wed, 03 Jun 2026 04:29:43 GMT",
+      "comments": {
+        "patch": [
+          {
+            "comment": "Fix onboard Codex marketplace installation from the public dreamux repository."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.1.3",
       "tag": "@excitedjs/dreamux_v0.1.3",
       "date": "Tue, 02 Jun 2026 18:55:21 GMT",
