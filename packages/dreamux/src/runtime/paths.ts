@@ -107,10 +107,6 @@ export function dispatcherCodexConfigPath(id: string): string {
   return join(dispatcherCodexHome(id), 'config.toml');
 }
 
-export function dispatcherCodexSkillsDir(id: string): string {
-  return join(dispatcherCodexHome(id), 'skills');
-}
-
 export function dispatcherWorkspaceCodexSkillsDir(cwd: string): string {
   return join(cwd, '.codex', 'skills');
 }

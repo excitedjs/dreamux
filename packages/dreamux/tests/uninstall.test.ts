@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -180,30 +181,47 @@ describe('dreamux uninstall', () => {
     expect(runner.calls).toEqual([]);
   });
 
-  it('fails fast on legacy or invalid config instead of falling back to the default runtime', async () => {
+  it('warns on legacy, invalid, or non-owner-only config and still uninstalls', async () => {
     const cases: Array<{
       name: string;
       file: string;
       content: string;
-      error: RegExp;
+      warning: RegExp;
+      mode?: number;
     }> = [
       {
         name: 'legacy TOML only',
         file: 'config.toml',
         content: 'runtime_dir = "/tmp/old-runtime"\n',
-        error: /legacy dreamux config/,
+        warning: /legacy dreamux config/,
       },
       {
         name: 'invalid JSON syntax',
         file: 'config.json',
         content: '{"runtime_dir": ',
-        error: /dreamux config parse error/,
+        warning: /dreamux config parse error/,
       },
       {
         name: 'invalid JSON value',
         file: 'config.json',
         content: JSON.stringify({ runtime_dir: 42 }),
-        error: /runtime_dir must be a string/,
+        warning: /runtime_dir must be a string/,
+      },
+      {
+        name: 'world-readable JSON config',
+        file: 'config.json',
+        content: JSON.stringify({
+          feishu: {
+            bots: {
+              flow: {
+                app_id: 'app-test',
+                app_secret: 'secret-test',
+              },
+            },
+          },
+        }),
+        warning: /must be mode 0600/,
+        mode: 0o644,
       },
     ];
 
@@ -225,9 +243,11 @@ describe('dreamux uninstall', () => {
       mkdirSync(logsRoot(), { recursive: true });
       mkdirSync(dirname(servicePath), { recursive: true });
       if (testCase.file === 'config.json') {
-        writeFileSync(join(configDir, testCase.file), testCase.content, {
+        const configPath = join(configDir, testCase.file);
+        writeFileSync(configPath, testCase.content, {
           mode: 0o600,
         });
+        if (testCase.mode !== undefined) chmodSync(configPath, testCase.mode);
       } else {
         writeFileSync(join(configDir, testCase.file), testCase.content);
       }
@@ -237,20 +257,23 @@ describe('dreamux uninstall', () => {
 
       const runner = new FakeRunner();
       try {
-        await expect(
-          runUninstall({
-            configDir,
-            runner,
-            platform: 'linux',
-            homeDir,
-          }),
-        ).rejects.toThrow(testCase.error);
+        const result = await runUninstall({
+          configDir,
+          runner,
+          platform: 'linux',
+          homeDir,
+        });
 
-        expect(existsSync(configDir)).toBe(true);
-        expect(existsSync(stateRoot())).toBe(true);
-        expect(existsSync(logsRoot())).toBe(true);
-        expect(existsSync(servicePath)).toBe(true);
-        expect(runner.calls).toEqual([]);
+        expect(result.warnings).toHaveLength(1);
+        expect(result.warnings[0]).toMatch(testCase.warning);
+        expect(existsSync(configDir)).toBe(false);
+        expect(existsSync(stateRoot())).toBe(false);
+        expect(existsSync(logsRoot())).toBe(false);
+        expect(existsSync(servicePath)).toBe(false);
+        expect(runner.calls.map((call) => [call.command, call.args])).toEqual([
+          ['systemctl', ['--user', 'disable', '--now', 'dreamux.service']],
+          ['systemctl', ['--user', 'daemon-reload']],
+        ]);
       } finally {
         process.env['HOME'] = previousCaseHome;
       }
