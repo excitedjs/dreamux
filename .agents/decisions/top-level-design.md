@@ -230,8 +230,17 @@ out of scope for the MVP.
 The MVP handles `im.message.receive_v1`. Other Feishu event kinds are ignored
 until a later decision adds them.
 
-Accepted messages enter one per-dispatcher in-memory queue. The queue is
-serialized: only one Codex turn runs per dispatcher at a time.
+After the access gate accepts a message, the channel layer applies a
+per-dispatcher delivery buffer before handing work to the dispatcher runtime:
+
+- a 1 second jitter window batches bursty inbound messages before delivery;
+- each dispatcher delivery thread accepts at most 10 messages per 10 seconds;
+- messages beyond that rate are explicitly rejected and logged by the channel
+  layer, do not enter Codex, and do not receive the channel-owned received
+  reaction.
+
+After channel flush, accepted messages enter one per-dispatcher in-memory queue.
+The queue is serialized: only one Codex turn runs per dispatcher at a time.
 
 Consecutive inbound messages from the same chat are coalesced into one Codex
 turn. If a chat already has a pending batch, new messages for that chat are
@@ -239,9 +248,10 @@ appended to that batch. If the chat has the running turn, new messages become
 the next batch for that chat. Cross-chat batches remain serialized through the
 single dispatcher thread.
 
-The dispatcher keeps an in-memory, bounded `message_id` dedupe window so Feishu
-redelivery does not create duplicate turns during the same server process
-lifetime. This window is safe to lose on restart.
+The channel keeps an in-memory, bounded `message_id` dedupe window so Feishu
+redelivery does not create duplicate turns or duplicate received reactions
+during the same server process lifetime. This window is safe to lose on
+restart.
 
 Each inbound message block passed to Codex includes:
 
@@ -441,10 +451,9 @@ resume path.
 - A stuck Codex turn can block that dispatcher queue until the child process or
   child WebSocket actually fails, or until the operator stops and starts that
   dispatcher through the admin socket.
-- Same-chat coalescing reduces turn count, but per-chat batches and the
-  cross-chat queue are in-memory and not globally size-bounded in the MVP. A
-  stuck turn plus continued inbound traffic can grow memory until operator
-  intervention or process restart.
+- Same-chat coalescing reduces turn count, and channel ingress is rate-bounded.
+  A stuck turn can still build an in-memory backlog at the accepted channel
+  rate until operator intervention or process restart.
 - Codex version drift can still break protocol behavior. `dreamux` detects and
   reports this through `doctor`, live tests, and version diagnostics instead of
   pinning Codex.
@@ -459,6 +468,9 @@ resume path.
   path budget.
 - `dreamux serve` starts one Feishu long-connection WebSocket per dispatcher.
 - A fake `im.message.receive_v1` event reaches the correct Codex thread.
+- Channel ingress applies a 1 second jitter buffer before dispatcher delivery.
+- Channel ingress rejects and logs messages beyond 10 accepted messages per 10
+  seconds per dispatcher delivery thread.
 - Same-chat message bursts are coalesced into one Codex turn.
 - Redelivered `message_id` values are deduped within one server process.
 - Unauthorized messages are dropped before entering Codex.

@@ -63,6 +63,9 @@ function buildServer(opts: {
   spawnCounter?: { count: number };
   capturedCodexOptions?: CodexProcessOptions[];
   useDefaultCodexHomeDoctor?: boolean;
+  channelJitterMs?: number;
+  channelRateLimitWindowMs?: number;
+  channelRateLimitMaxMessages?: number;
 }): Server {
   return new Server({
     config: opts.config ?? { ...BUILT_IN_DEFAULTS, runtime_dir: opts.runtimeDir },
@@ -78,6 +81,9 @@ function buildServer(opts: {
       opts.capturedCodexOptions?.push(o);
       return new NoopCodexProcess(o);
     },
+    channelJitterMs: opts.channelJitterMs ?? 1,
+    channelRateLimitWindowMs: opts.channelRateLimitWindowMs,
+    channelRateLimitMaxMessages: opts.channelRateLimitMaxMessages,
     codexClientFactory: () => new CodexWsClient({ url: opts.fake.url }),
     ...(opts.useDefaultCodexHomeDoctor === true
       ? {}
@@ -462,6 +468,39 @@ describe('dreamux MVP smoke', () => {
     expect(bot.reactions).toHaveLength(1);
     expect(bot.reactions[0]?.messageId).toBe('msg-same');
     expect(server.repos.inbound.getById(1)).toBeNull();
+  });
+
+  it('channel ingress rate limit rejects overflow before turn and reaction', async () => {
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      channelRateLimitWindowMs: 10_000,
+      channelRateLimitMaxMessages: 2,
+    });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+    await server.start();
+
+    await bot.inject(fakeInbound('chat-group-a', 'one', 'msg-limit-1'));
+    await bot.inject(fakeInbound('chat-group-a', 'two', 'msg-limit-2'));
+    await bot.inject(fakeInbound('chat-group-a', 'three', 'msg-limit-3'));
+
+    await waitFor(() => bot.sentMessages.length >= 1);
+    await sleep(80);
+    expect(bot.reactions.map((reaction) => reaction.messageId)).toEqual([
+      'msg-limit-1',
+      'msg-limit-2',
+    ]);
+    expect(fake.turnsHandled).toBe(1);
+    expect(codexInputs).toHaveLength(1);
+    expect(feishuMessageBlockCount(codexInputs[0] ?? '')).toBe(2);
+    expect(codexInputs[0]).toContain('one');
+    expect(codexInputs[0]).toContain('two');
+    expect(codexInputs[0]).not.toContain('three');
   });
 
   it('ignores legacy persisted running rows on startup', async () => {

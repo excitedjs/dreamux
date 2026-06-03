@@ -31,6 +31,10 @@ import {
   loadDispatcherAccess,
   saveDispatcherAccess,
 } from './channel/feishu-gate.js';
+import {
+  ChannelInboundDeliveryBuffer,
+  type ChannelInboundDeliveryInput,
+} from './channel/inbound-delivery.js';
 import { formatFeishuMessageForCodex } from './channel/feishu-message.js';
 import { parseCodexArgs, codexArgsToCli } from './runtime/codex-args.js';
 import { resolveBotSecret } from './runtime/secrets.js';
@@ -70,6 +74,12 @@ export interface ServerOptions {
   codexHomeDoctor?: DispatcherCodexHomeDoctor;
   /** Skip resolving bot secret (tests with fake bot). */
   skipBotSecret?: boolean;
+  /** Channel ingress jitter override (tests). Production default is 1000ms. */
+  channelJitterMs?: number;
+  /** Channel ingress rate-limit window override (tests). */
+  channelRateLimitWindowMs?: number;
+  /** Channel ingress rate-limit max messages override (tests). */
+  channelRateLimitMaxMessages?: number;
 }
 
 export interface Repos {
@@ -81,6 +91,7 @@ interface DispatcherSlot {
   row: DispatcherRow;
   runtime: DispatcherRuntime;
   bot: FeishuBot;
+  inboundDelivery: ChannelInboundDeliveryBuffer;
   channelState: DispatcherChannelState;
 }
 
@@ -214,6 +225,22 @@ export class Server {
       outboundRetries: cfg.outbound.retries,
       outboundRetryDelayMs: cfg.outbound.retry_delay_ms,
     });
+    const inboundDelivery = new ChannelInboundDeliveryBuffer({
+      deliveryThreadId: id,
+      jitterMs: this.opts.channelJitterMs,
+      rateLimitWindowMs: this.opts.channelRateLimitWindowMs,
+      rateLimitMaxMessages: this.opts.channelRateLimitMaxMessages,
+      deliver: async (batch) => {
+        for (const input of batch) {
+          const queued = runtime.enqueueInbound(input);
+          if (!queued) {
+            console.error(
+              `[server] rejected feishu inbound for dispatcher '${id}' after channel flush: duplicate or unavailable message_id=${input.source_message_id ?? '<missing>'}`,
+            );
+          }
+        }
+      },
+    });
 
     try {
       await runtime.start();
@@ -239,13 +266,14 @@ export class Server {
           );
           return;
         }
-        const queued = runtime.enqueueInbound({
+        const input: ChannelInboundDeliveryInput = {
           source_chat_id: event.chatId,
           source_message_id: event.messageId,
           sender_id: event.senderId,
           parsed_text: formatFeishuMessageForCodex(event),
-        });
-        if (queued) {
+        };
+        const accepted = inboundDelivery.accept(input);
+        if (accepted.accepted) {
           await addReceivedReaction(id, bot, channelState, event);
         }
       });
@@ -262,10 +290,11 @@ export class Server {
       } catch {
         /* */
       }
+      inboundDelivery.stop();
       throw err;
     }
 
-    this.slots.set(id, { row, runtime, bot, channelState });
+    this.slots.set(id, { row, runtime, bot, inboundDelivery, channelState });
     console.error(
       `[server] dispatcher '${id}' is ready (bot=${row.bot_app_id} cwd=${row.codex_cwd ?? dispatcherCodexCwd(id)})`,
     );
@@ -280,6 +309,7 @@ export class Server {
     } catch (err) {
       console.error(`[server] error closing bot for '${id}':`, err);
     }
+    slot.inboundDelivery.stop();
     try {
       await slot.runtime.stop();
     } catch (err) {
