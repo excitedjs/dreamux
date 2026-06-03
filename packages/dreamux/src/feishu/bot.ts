@@ -69,6 +69,7 @@ export interface FeishuBot {
   start(handler: InboundHandler): Promise<void>;
   send(target: OutboundTarget, text: string): Promise<FeishuSendResult>;
   addReaction(messageId: string, emoji: string): Promise<string>;
+  removeReaction(messageId: string, reactionId: string): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -120,6 +121,10 @@ export function createFeishuBot(
 
     addReaction(messageId: string, emoji: string): Promise<string> {
       return transport.addReaction(messageId, emoji);
+    },
+
+    removeReaction(messageId: string, reactionId: string): Promise<void> {
+      return transport.removeReaction(messageId, reactionId);
     },
 
     close(): Promise<void> {
@@ -235,9 +240,14 @@ export interface FakeFeishuBot extends FeishuBot {
     emoji: string;
     reactionId: string;
   }>;
+  readonly removedReactions: Array<{
+    messageId: string;
+    reactionId: string;
+  }>;
   inject(event: FeishuInboundEvent): Promise<void>;
   setSendError(err: Error | null): void;
   setReactionError(err: Error | null): void;
+  setRemoveReactionError(err: Error | null): void;
 }
 
 export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
@@ -252,10 +262,15 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
   let nextReactionId = 1;
   let sendError: Error | null = null;
   let reactionError: Error | null = null;
+  let removeReactionError: Error | null = null;
   const openId: string | undefined = `fake-open-id-${appId}`;
   const reactions: Array<{
     messageId: string;
     emoji: string;
+    reactionId: string;
+  }> = [];
+  const removedReactions: Array<{
+    messageId: string;
     reactionId: string;
   }> = [];
 
@@ -283,6 +298,12 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
       reactions.push({ messageId, emoji, reactionId });
       return reactionId;
     },
+    async removeReaction(messageId: string, reactionId: string): Promise<void> {
+      if (removeReactionError !== null) {
+        throw removeReactionError;
+      }
+      removedReactions.push({ messageId, reactionId });
+    },
     async close(): Promise<void> {
       handler = null;
     },
@@ -291,6 +312,9 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
     },
     get reactions() {
       return reactions;
+    },
+    get removedReactions() {
+      return removedReactions;
     },
     async inject(event: FeishuInboundEvent): Promise<void> {
       if (handler === null) throw new Error('fake bot not started');
@@ -301,6 +325,9 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
     },
     setReactionError(err: Error | null): void {
       reactionError = err;
+    },
+    setRemoveReactionError(err: Error | null): void {
+      removeReactionError = err;
     },
   };
 }

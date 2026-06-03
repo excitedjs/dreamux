@@ -31,6 +31,7 @@ import {
 import { CodexWsClient } from '../src/codex/rpc.js';
 import { createFakeFeishuBot, type FakeFeishuBot, type FeishuInboundEvent } from '../src/feishu/bot.js';
 import { createAdminSocketServer } from '../src/admin/socket.js';
+import { sendAdminRequest } from '../src/admin/client.js';
 import {
   TRUST_DOMAIN_WARNING,
   loadDispatcherAccess,
@@ -361,6 +362,145 @@ describe('dreamux MVP smoke', () => {
     expect(args).toContain(
       `mcp_servers.feishu.args=["feishu-mcp", "--dispatcher", "flow", "--admin-socket", "${join(runtimeDir, 'admin.sock')}"]`,
     );
+  });
+
+  it('mcp.reply sends through the serve-owned bot and clears received reaction', async () => {
+    await fake.close();
+    codexInputs = [];
+    fake = await startFakeCodex({
+      turnDelayMs: 2000,
+      replyFor: captureAndEchoCodexInput(codexInputs),
+    });
+    server = buildServer({ runtimeDir, fake, bot });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+    await server.start();
+
+    await bot.inject(fakeInbound('chat-group-a', 'needs reply', 'msg-mcp-reply'));
+    await waitFor(() => bot.reactions.length === 1);
+
+    const result = await sendAdminRequest(
+      'mcp.reply',
+      {
+        dispatcher_id: 'flow',
+        chat_id: 'chat-group-a',
+        message_id: 'msg-mcp-reply',
+        text: 'manual mcp reply',
+        mention_user_ids: ['sender-test'],
+      },
+      { socketPath: join(runtimeDir, 'admin.sock') },
+    ) as { message_ids: string[] };
+
+    expect(result.message_ids).toEqual(['message-fake-1']);
+    expect(bot.sentMessages[0]).toMatchObject({
+      chatId: 'chat-group-a',
+      target: {
+        chatId: 'chat-group-a',
+        replyToMessageId: 'msg-mcp-reply',
+        mentionUserIds: ['sender-test'],
+      },
+      text: 'manual mcp reply',
+    });
+    expect(bot.removedReactions).toEqual([
+      {
+        messageId: 'msg-mcp-reply',
+        reactionId: 'reaction-fake-1',
+      },
+    ]);
+  });
+
+  it('mcp.reply clears a received reaction even when reply wins the add-reaction race', async () => {
+    await fake.close();
+    codexInputs = [];
+    fake = await startFakeCodex({
+      turnDelayMs: 2000,
+      replyFor: captureAndEchoCodexInput(codexInputs),
+    });
+
+    let releaseReaction!: () => void;
+    let markReactionStarted!: () => void;
+    const reactionStarted = new Promise<void>((resolve) => {
+      markReactionStarted = resolve;
+    });
+    const reactionBlocked = new Promise<void>((resolve) => {
+      releaseReaction = resolve;
+    });
+    const originalAddReaction = bot.addReaction.bind(bot);
+    bot.addReaction = async (messageId, emoji) => {
+      markReactionStarted();
+      await reactionBlocked;
+      return originalAddReaction(messageId, emoji);
+    };
+
+    server = buildServer({ runtimeDir, fake, bot });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+    await server.start();
+
+    const injected = bot.inject(
+      fakeInbound('chat-group-a', 'fast reply', 'msg-race-reaction'),
+    );
+    await reactionStarted;
+
+    const result = await sendAdminRequest(
+      'mcp.reply',
+      {
+        dispatcher_id: 'flow',
+        chat_id: 'chat-group-a',
+        message_id: 'msg-race-reaction',
+        text: 'manual race reply',
+      },
+      { socketPath: join(runtimeDir, 'admin.sock') },
+    ) as { message_ids: string[] };
+
+    expect(result.message_ids).toEqual(['message-fake-1']);
+    expect(bot.removedReactions).toEqual([]);
+
+    releaseReaction();
+    await injected;
+    await waitFor(() => bot.removedReactions.length === 1);
+    expect(bot.removedReactions).toEqual([
+      {
+        messageId: 'msg-race-reaction',
+        reactionId: 'reaction-fake-1',
+      },
+    ]);
+  });
+
+  it('mcp.react adds a model-owned reaction without clearing received reactions', async () => {
+    server = buildServer({ runtimeDir, fake, bot });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+    await server.start();
+
+    const result = await sendAdminRequest(
+      'mcp.react',
+      {
+        dispatcher_id: 'flow',
+        message_id: 'msg-model-react',
+        emoji: 'THUMBSUP',
+      },
+      { socketPath: join(runtimeDir, 'admin.sock') },
+    ) as { reaction_id: string };
+
+    expect(result.reaction_id).toBe('reaction-fake-1');
+    expect(bot.reactions).toEqual([
+      {
+        messageId: 'msg-model-react',
+        emoji: 'THUMBSUP',
+        reactionId: 'reaction-fake-1',
+      },
+    ]);
+    expect(bot.removedReactions).toEqual([]);
   });
 
   it('creates the app-server socket directory outside the global Codex home', async () => {
