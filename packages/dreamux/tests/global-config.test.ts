@@ -85,62 +85,73 @@ describe('global config (~/.dreamux/config.json)', () => {
     expect(config.codex.approval_policy).toBe(
       BUILT_IN_DEFAULTS.codex.approval_policy,
     );
-    expect(config.feishu.bots).toEqual({});
+    expect(config.dispatchers).toEqual([]);
   });
 
   it('second boot reads the existing JSON file and does not overwrite it', () => {
     const file = globalConfigFile({ configDir });
     const original = stringifyConfig({
-      ...BUILT_IN_DEFAULTS,
-      runtime_dir: '/tmp/custom-runtime',
       codex: {
-        ...BUILT_IN_DEFAULTS.codex,
         bin: '/opt/codex',
         approval_policy: 'auto',
+        sandbox_mode: 'workspace-write',
         extra_args: ['--model', 'gpt-5'],
         initialize_timeout_ms: 7500,
       },
-      outbound: {
-        retries: 5,
-        retry_delay_ms: 2000,
-      },
-      feishu: {
-        bots: {
-          flow: {
+      dispatchers: [
+        {
+          id: 'flow',
+          cwd: '/workspace/flow',
+          enabled: true,
+          feishu: {
             app_id: 'app-test',
             app_secret: 'secret-test',
           },
+          codex: {
+            approval_policy: null,
+            sandbox_mode: 'danger-full-access',
+            extra_args: ['--profile', 'flow'],
+            extra_env: {},
+          },
         },
-      },
+      ],
     });
     writeConfigText(file, original);
 
     const { config, createdOnThisBoot } = loadOrInitConfig({ configDir });
     expect(createdOnThisBoot).toBe(false);
-    expect(config.runtime_dir).toBe('/tmp/custom-runtime');
     expect(config.codex.bin).toBe('/opt/codex');
     expect(config.codex.extra_args).toEqual(['--model', 'gpt-5']);
-    expect(config.feishu.bots.flow).toEqual({
-      app_id: 'app-test',
-      app_secret: 'secret-test',
+    expect(config.dispatchers[0]).toMatchObject({
+      id: 'flow',
+      cwd: '/workspace/flow',
+      enabled: true,
+      feishu: {
+        app_id: 'app-test',
+        app_secret: 'secret-test',
+      },
     });
     expect(readFileSync(file, 'utf8')).toBe(original);
   });
 
   it('parse error fails fast with the config path', () => {
     const file = globalConfigFile({ configDir });
-    writeConfigText(file, `{"runtime_dir": "/ok"`);
+    writeConfigText(file, `{"dispatchers": [`);
     expect(() => loadOrInitConfig({ configDir })).toThrow(/config\.json/);
-    expect(() => loadOrInitConfig({ configDir })).toThrow(/dreamux config parse error/);
+    expect(() => loadOrInitConfig({ configDir })).toThrow(
+      /dreamux config parse error/,
+    );
   });
 
   it('fails fast when only the legacy TOML config exists', () => {
     const jsonFile = globalConfigFile({ configDir });
     const tomlFile = join(configDir, 'config.toml');
-    writeFileSync(tomlFile, 'runtime_dir = "/tmp/old-runtime"\n');
+    writeFileSync(tomlFile, 'dispatchers = []\n');
 
-    expect(() => loadOrInitConfig({ configDir })).toThrow(/legacy dreamux config/);
-    expect(() => loadConfig({ configDir })).toThrow(/Create .*config\.json/);
+    expect(() => loadOrInitConfig({ configDir })).toThrow(
+      /legacy dreamux config/,
+    );
+    expect(() => loadConfig({ configDir })).toThrow(/dispatchers array/);
     expect(existsSync(jsonFile)).toBe(false);
   });
 
@@ -152,19 +163,21 @@ describe('global config (~/.dreamux/config.json)', () => {
 
   it('redacts Feishu app secrets for display', () => {
     const raw = JSON.stringify({
-      runtime_dir: '/tmp/runtime',
-      feishu: {
-        bots: {
-          flow: {
+      dispatchers: [
+        {
+          id: 'flow',
+          feishu: {
             app_id: 'app-flow',
             app_secret: 'secret-flow',
           },
-          docs: {
-            app_id: 'app-docs',
+        },
+        {
+          id: 'docs',
+          nested: {
             app_secret: 'secret-docs',
           },
         },
-      },
+      ],
     });
 
     const displayed = redactConfigForDisplay(raw, globalConfigFile({ configDir }));
@@ -172,12 +185,10 @@ describe('global config (~/.dreamux/config.json)', () => {
     expect(displayed).not.toContain('secret-flow');
     expect(displayed).not.toContain('secret-docs');
     expect(JSON.parse(displayed)).toMatchObject({
-      feishu: {
-        bots: {
-          flow: { app_id: 'app-flow', app_secret: '<redacted>' },
-          docs: { app_id: 'app-docs', app_secret: '<redacted>' },
-        },
-      },
+      dispatchers: [
+        { feishu: { app_id: 'app-flow', app_secret: '<redacted>' } },
+        { nested: { app_secret: '<redacted>' } },
+      ],
     });
   });
 
@@ -187,9 +198,9 @@ describe('global config (~/.dreamux/config.json)', () => {
       /approval_policy='ask-every-time'/,
     );
 
-    writeConfigObject({ runtime_dir: 42 });
+    writeConfigObject({ state_path: '/tmp/custom-state' });
     expect(() => loadOrInitConfig({ configDir })).toThrow(
-      /runtime_dir must be a string/,
+      /state_path is not supported/,
     );
 
     writeConfigObject({ codex: { initialize_timeout_ms: 0 } });
@@ -197,115 +208,207 @@ describe('global config (~/.dreamux/config.json)', () => {
       /initialize_timeout_ms must be > 0/,
     );
 
-    writeConfigObject({ outbound: { retries: -1 } });
+    writeConfigObject({
+      dispatchers: [
+        {
+          id: 'flow',
+          enabled: 'yes',
+          feishu: { app_id: 'app-flow', app_secret: 'secret-flow' },
+        },
+      ],
+    });
     expect(() => loadOrInitConfig({ configDir })).toThrow(
-      /retries must be >= 0/,
+      /enabled must be a boolean/,
     );
   });
 
-  it('accepts the MVP Feishu bot schema', () => {
+  it('accepts the MVP dispatcher array schema', () => {
     writeConfigObject({
-      feishu: {
-        bots: {
-          'dispatcher-a': {
+      dispatchers: [
+        {
+          id: 'dispatcher-a',
+          cwd: '~/workspace-a',
+          enabled: true,
+          feishu: {
             app_id: 'app-a',
             app_secret: 'secret-a',
           },
-          'dispatcher.b': {
+          codex: {
+            extra_args: ['--model', 'gpt-5'],
+            extra_env: {
+              EXAMPLE_FLAG: '1',
+            },
+          },
+        },
+        {
+          id: 'dispatcher.b',
+          feishu: {
             app_id: 'app-b',
             app_secret: 'secret-b',
           },
         },
-      },
+      ],
     });
 
     const { config } = loadConfig({ configDir });
-    expect(config.feishu.bots['dispatcher-a']).toEqual({
-      app_id: 'app-a',
-      app_secret: 'secret-a',
-    });
-    expect(config.feishu.bots['dispatcher.b']).toEqual({
-      app_id: 'app-b',
-      app_secret: 'secret-b',
-    });
-  });
-
-  it('rejects unsupported Feishu bot secret fields', () => {
-    writeConfigObject({
+    expect(config.dispatchers[0]).toMatchObject({
+      id: 'dispatcher-a',
+      enabled: true,
       feishu: {
-        bots: {
-          flow: {
-            app_id: 'app-flow',
-            app_secret: 'secret-flow',
-            encrypt_key: 'future-webhook-only',
-          },
+        app_id: 'app-a',
+        app_secret: 'secret-a',
+      },
+      codex: {
+        approval_policy: null,
+        sandbox_mode: null,
+        extra_args: ['--model', 'gpt-5'],
+        extra_env: {
+          EXAMPLE_FLAG: '1',
         },
       },
     });
+    expect(config.dispatchers[0]?.cwd).not.toContain('~');
+    expect(config.dispatchers[1]).toMatchObject({
+      id: 'dispatcher.b',
+      cwd: null,
+      enabled: true,
+      feishu: {
+        app_id: 'app-b',
+        app_secret: 'secret-b',
+      },
+    });
+  });
 
-    expect(() => loadConfig({ configDir })).toThrow(/encrypt_key is not supported/);
-    expect(() => loadConfig({ configDir })).toThrow(/only app_id and app_secret/);
+  it('rejects unsupported dispatcher secret fields', () => {
+    writeConfigObject({
+      dispatchers: [
+        {
+          id: 'flow',
+          feishu: {
+            app_id: 'app-flow',
+            app_secret: 'secret-flow',
+            callback_secret: 'future-only',
+          },
+        },
+      ],
+    });
+
+    expect(() => loadConfig({ configDir })).toThrow(
+      /callback_secret is not supported/,
+    );
+  });
+
+  it('keeps access out of config and validates extra_env fields', () => {
+    writeConfigObject({
+      dispatchers: [
+        {
+          id: 'flow',
+          feishu: {
+            app_id: 'app-flow',
+            app_secret: 'secret-flow',
+          },
+          access: {},
+        },
+      ],
+    });
+    expect(() => loadConfig({ configDir })).toThrow(
+      /access is not supported/,
+    );
+
+    writeConfigObject({
+      dispatchers: [
+        {
+          id: 'flow',
+          feishu: {
+            app_id: 'app-flow',
+            app_secret: 'secret-flow',
+          },
+          codex: {
+            extra_env: {
+              EXAMPLE_FLAG: 1,
+            },
+          },
+        },
+      ],
+    });
+    expect(() => loadConfig({ configDir })).toThrow(
+      /codex\.extra_env\.EXAMPLE_FLAG must be a string/,
+    );
   });
 
   it('requires unique Feishu app_id values across all dispatchers', () => {
     writeConfigObject({
-      feishu: {
-        bots: {
-          flow: {
+      dispatchers: [
+        {
+          id: 'flow',
+          enabled: false,
+          feishu: {
             app_id: 'app-shared',
             app_secret: 'secret-flow',
           },
-          docs: {
+        },
+        {
+          id: 'docs',
+          feishu: {
             app_id: 'app-shared',
             app_secret: 'secret-docs',
           },
         },
-      },
+      ],
     });
 
-    expect(() => loadConfig({ configDir })).toThrow(/duplicates feishu\.bots\.flow\.app_id/);
+    expect(() => loadConfig({ configDir })).toThrow(
+      /duplicates dispatcher 'flow'/,
+    );
   });
 
   it('rejects dispatcher ids that would not be stable path segments', () => {
     writeConfigObject({
-      feishu: {
-        bots: {
-          'team/alpha beta': {
+      dispatchers: [
+        {
+          id: 'team/alpha beta',
+          feishu: {
             app_id: 'app-flow',
             app_secret: 'secret-flow',
           },
         },
-      },
+      ],
     });
 
-    expect(() => loadConfig({ configDir })).toThrow(/feishu\.bots key/);
+    expect(() => loadConfig({ configDir })).toThrow(/dispatchers\[0\]\.id/);
     expect(() => loadConfig({ configDir })).toThrow(/ASCII letters/);
   });
 
   it('requires non-empty Feishu app_id and app_secret values', () => {
     writeConfigObject({
-      feishu: {
-        bots: {
-          flow: {
+      dispatchers: [
+        {
+          id: 'flow',
+          feishu: {
             app_id: '',
             app_secret: 'secret-flow',
           },
         },
-      },
+      ],
     });
-    expect(() => loadConfig({ configDir })).toThrow(/app_id must be a non-empty string/);
+    expect(() => loadConfig({ configDir })).toThrow(
+      /app_id must be a non-empty string/,
+    );
 
     writeConfigObject({
-      feishu: {
-        bots: {
-          flow: {
+      dispatchers: [
+        {
+          id: 'flow',
+          feishu: {
             app_id: 'app-flow',
             app_secret: '   ',
           },
         },
-      },
+      ],
     });
-    expect(() => loadConfig({ configDir })).toThrow(/app_secret must be a non-empty string/);
+    expect(() => loadConfig({ configDir })).toThrow(
+      /app_secret must be a non-empty string/,
+    );
   });
 
   it('expandHome expands ~/ and bare ~', () => {
@@ -352,7 +455,7 @@ describe('global config (~/.dreamux/config.json)', () => {
   });
 });
 
-describe('precedence: env > per-dispatcher > config > built-in', () => {
+describe('runtime path precedence', () => {
   let configDir: string;
   const envSnapshot: Record<string, string | undefined> = {};
 
@@ -377,20 +480,8 @@ describe('precedence: env > per-dispatcher > config > built-in', () => {
     resetRuntimeConfig();
   });
 
-  it('runtimeRoot aliases stateRoot and ignores config.runtime_dir', () => {
-    writeConfigObjectAt(configDir, {
-      runtime_dir: '/tmp/from-config',
-    });
-    const { config } = loadOrInitConfig({ configDir });
-    setRuntimeConfig(config);
-    expect(runtimeRoot()).toBe(stateRoot());
-    expect(runtimeRoot()).not.toBe('/tmp/from-config');
-  });
-
-  it('CODEX_HOST_RUNTIME_DIR no longer overrides runtime paths', () => {
-    writeConfigObjectAt(configDir, {
-      runtime_dir: '/tmp/from-config',
-    });
+  it('runtimeRoot aliases stateRoot and ignores legacy env overrides', () => {
+    writeConfigObjectAt(configDir, {});
     const { config } = loadOrInitConfig({ configDir });
     setRuntimeConfig(config);
     process.env['CODEX_HOST_RUNTIME_DIR'] = '/tmp/from-env';
@@ -398,24 +489,10 @@ describe('precedence: env > per-dispatcher > config > built-in', () => {
   });
 
   it('adminSocketPath is fixed under stateRoot', () => {
-    writeConfigObjectAt(configDir, {
-      runtime_dir: '/tmp/rt',
-      admin_socket: '/tmp/cfg-admin.sock',
-    });
+    writeConfigObjectAt(configDir, {});
     const { config } = loadOrInitConfig({ configDir });
     setRuntimeConfig(config);
-    expect(adminSocketPath()).toBe(join(stateRoot(), 'admin.sock'));
-
     process.env['CODEX_HOST_ADMIN_SOCKET'] = '/tmp/env-admin.sock';
-    expect(adminSocketPath()).toBe(join(stateRoot(), 'admin.sock'));
-  });
-
-  it('admin_socket no longer derives from runtime_dir', () => {
-    writeConfigObjectAt(configDir, {
-      runtime_dir: '/tmp/rt',
-    });
-    const { config } = loadOrInitConfig({ configDir });
-    setRuntimeConfig(config);
     expect(adminSocketPath()).toBe(join(stateRoot(), 'admin.sock'));
     expect(serverJsonPath()).toBe(join(stateRoot(), 'server.json'));
   });
@@ -454,9 +531,11 @@ describe('precedence: env > per-dispatcher > config > built-in', () => {
 
 describe('sandbox_mode precedence', () => {
   let configDir: string;
+
   beforeEach(() => {
     configDir = mkdtempSync(join(tmpdir(), 'dreamux-sandbox-'));
   });
+
   afterEach(() => {
     rmSync(configDir, { recursive: true, force: true });
     resetRuntimeConfig();

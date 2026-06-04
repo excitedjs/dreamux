@@ -2,11 +2,11 @@
  * Smoke tests for the dreamux MVP.
  *
  * Covers the issue #2 verification path against a fake codex + fake feishu:
- *   - happy path: inbound → turn → outbound
+ *   - happy path: inbound → turn injection, with MCP reply as the only outbound
  *   - in-memory queue: same-chat coalescing + serialized turns
  *   - thread/resume on restart (in-process)
  *   - thread/resume failure → visible degradation (last_lost_thread_id set)
- *   - outbound retry: send fails N times then succeeds
+ *   - MCP reply sends through the serve-owned bot
  *   - approval fail-fast: codex server-request causes the turn to fail
  */
 
@@ -35,8 +35,9 @@ import { sendAdminRequest } from '../src/admin/client.js';
 import {
   TRUST_DOMAIN_WARNING,
   loadDispatcherAccess,
+  saveDispatcherAccess,
 } from '../src/channel/feishu-gate.js';
-import { BUILT_IN_DEFAULTS } from '../src/runtime/config.js';
+import { BUILT_IN_DEFAULTS, type DreamuxConfig } from '../src/runtime/config.js';
 import {
   dispatcherAppServerControlDir,
   dispatcherCodexCwd,
@@ -63,7 +64,7 @@ function buildServer(opts: {
   runtimeDir: string;
   fake: FakeCodex;
   bot: FakeFeishuBot;
-  config?: typeof BUILT_IN_DEFAULTS;
+  config?: DreamuxConfig;
   skipBotSecret?: boolean;
   capturedBotSecrets?: string[];
   /** Optional spawn counter — bumped each time a NoopCodexProcess is built. */
@@ -76,8 +77,7 @@ function buildServer(opts: {
   codexRestartBackoffMaxMs?: number;
 }): Server {
   return new Server({
-    config: opts.config ?? { ...BUILT_IN_DEFAULTS, runtime_dir: opts.runtimeDir },
-    databasePath: join(opts.runtimeDir, 'state.db'),
+    config: opts.config ?? BUILT_IN_DEFAULTS,
     adminSocketPath: join(opts.runtimeDir, 'admin.sock'),
     skipBotSecret: opts.skipBotSecret ?? true,
     botFactory: (_row, secret) => {
@@ -129,8 +129,9 @@ function fakeInbound(
   chatId: string,
   text: string,
   msgId: string,
+  overrides: Partial<FeishuInboundEvent> = {},
 ): FeishuInboundEvent {
-  return {
+  const base: FeishuInboundEvent = {
     messageId: msgId,
     chatId,
     chatType: 'group',
@@ -150,6 +151,7 @@ function fakeInbound(
     createTime: String(Date.now()),
     raw: { event: { message: { chat_id: chatId, message_id: msgId } } },
   };
+  return { ...base, ...overrides };
 }
 
 async function waitFor(
@@ -198,6 +200,31 @@ function writeReadyDispatcherCodexHome(dispatcherId: string, dispatcherCwd?: str
   writeFileSync(skillPath, '# test skill\n');
 }
 
+function configWithDispatcher(
+  overrides: Partial<DreamuxConfig['dispatchers'][number]> = {},
+): DreamuxConfig {
+  return {
+    ...BUILT_IN_DEFAULTS,
+    dispatchers: [
+      {
+        id: overrides.id ?? 'flow',
+        cwd: overrides.cwd ?? null,
+        enabled: overrides.enabled ?? true,
+        feishu: overrides.feishu ?? {
+          app_id: 'app-smoke',
+          app_secret: 'secret-server-only',
+        },
+        codex: overrides.codex ?? {
+          approval_policy: null,
+          sandbox_mode: null,
+          extra_args: [],
+          extra_env: {},
+        },
+      },
+    ],
+  };
+}
+
 describe('dreamux MVP smoke', () => {
   let runtimeDir: string;
   let fake: FakeCodex;
@@ -229,7 +256,7 @@ describe('dreamux MVP smoke', () => {
     rmSync(runtimeDir, { recursive: true, force: true });
   });
 
-  it('happy path: inbound → codex turn → outbound', async () => {
+  it('happy path: inbound reaches Codex, and assistant text is not auto-sent', async () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.create({
       dispatcher_id: 'flow',
@@ -240,18 +267,9 @@ describe('dreamux MVP smoke', () => {
 
     await bot.inject(fakeInbound('chat-group-a', 'hi', 'msg-1-id'));
 
-    await waitFor(() => bot.sentMessages.length >= 1);
-    expect(bot.sentMessages[0]).toMatchObject({
-      chatId: 'chat-group-a',
-      target: {
-        chatId: 'chat-group-a',
-        replyToMessageId: 'msg-1-id',
-        mentionUserIds: ['sender-test'],
-      },
-      text: 'echo: hi',
-    });
-
-    expect(server.repos.inbound.getById(1)).toBeNull();
+    await waitFor(() => codexInputs.length === 1);
+    await sleep(80);
+    expect(bot.sentMessages).toEqual([]);
     expect(codexInputs).toHaveLength(1);
     expect(codexInputs[0]).toContain('<feishu_message');
     expect(codexInputs[0]).toContain('  sender_name=""');
@@ -290,6 +308,36 @@ describe('dreamux MVP smoke', () => {
     );
   });
 
+  it('merges dispatcher extra_env into the Codex child environment', async () => {
+    const capturedCodexOptions: CodexProcessOptions[] = [];
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      capturedCodexOptions,
+      config: configWithDispatcher({
+        codex: {
+          approval_policy: null,
+          sandbox_mode: null,
+          extra_args: [],
+          extra_env: {
+            DREAMUX_EXAMPLE_FLAG: 'enabled',
+            PATH: '/custom/bin',
+          },
+        },
+      }),
+    });
+
+    await server.start();
+
+    expect(capturedCodexOptions).toHaveLength(1);
+    expect(capturedCodexOptions[0]?.env?.['DREAMUX_EXAMPLE_FLAG']).toBe(
+      'enabled',
+    );
+    expect(capturedCodexOptions[0]?.env?.['PATH']).toContain('/custom/bin');
+    expect(capturedCodexOptions[0]?.env?.['CODEX_HOME']).toBeUndefined();
+  });
+
   it('keeps Feishu app secrets in the serve process and out of Codex child options', async () => {
     const capturedBotSecrets: string[] = [];
     const capturedCodexOptions: CodexProcessOptions[] = [];
@@ -300,23 +348,12 @@ describe('dreamux MVP smoke', () => {
       skipBotSecret: false,
       capturedBotSecrets,
       capturedCodexOptions,
-      config: {
-        ...BUILT_IN_DEFAULTS,
-        runtime_dir: runtimeDir,
+      config: configWithDispatcher({
         feishu: {
-          bots: {
-            flow: {
-              app_id: 'app-smoke',
-              app_secret: 'secret-server-only',
-            },
-          },
+          app_id: 'app-smoke',
+          app_secret: 'secret-server-only',
         },
-      },
-    });
-    server.repos.dispatchers.create({
-      dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'config:flow',
+      }),
     });
 
     await server.start();
@@ -334,7 +371,6 @@ describe('dreamux MVP smoke', () => {
       capturedCodexOptions,
       config: {
         ...BUILT_IN_DEFAULTS,
-        runtime_dir: runtimeDir,
         codex: {
           ...BUILT_IN_DEFAULTS.codex,
           extra_args: [
@@ -404,6 +440,9 @@ describe('dreamux MVP smoke', () => {
       },
       text: 'manual mcp reply',
     });
+    await waitFor(() => fake.turnsHandled === 1);
+    await sleep(2200);
+    expect(bot.sentMessages).toHaveLength(1);
     expect(bot.removedReactions).toEqual([
       {
         messageId: 'msg-mcp-reply',
@@ -548,7 +587,6 @@ describe('dreamux MVP smoke', () => {
     });
 
     await sleep(80);
-    expect(server.repos.inbound.getById(1)).toBeNull();
     expect(fake.turnsHandled).toBe(0);
     expect(bot.sentMessages).toEqual([]);
     expect(bot.reactions).toEqual([]);
@@ -570,7 +608,6 @@ describe('dreamux MVP smoke', () => {
     });
 
     await sleep(80);
-    expect(server.repos.inbound.getById(1)).toBeNull();
     expect(fake.turnsHandled).toBe(0);
     expect(bot.sentMessages).toEqual([]);
     expect(bot.reactions).toEqual([]);
@@ -591,10 +628,49 @@ describe('dreamux MVP smoke', () => {
     });
 
     await sleep(80);
-    expect(server.repos.inbound.getById(1)).toBeNull();
     expect(fake.turnsHandled).toBe(0);
     expect(bot.sentMessages).toEqual([]);
     expect(bot.reactions).toEqual([]);
+  });
+
+  it('reads access gate configuration from access.json and allows configured DMs', async () => {
+    saveDispatcherAccess('flow', {
+      version: 1,
+      dm: {
+        allow_users: ['sender-dm'],
+      },
+      group: {
+        allow_chats: ['chat-group-a'],
+        follow_users: ['sender-dm'],
+        require_mention: true,
+      },
+      observed_chats: [],
+      warnings: [],
+      last_gate: null,
+    });
+    server = buildServer({ runtimeDir, fake, bot });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+    await server.start();
+
+    await bot.inject(fakeInbound('chat-dm', 'dm hello', 'msg-dm', {
+      chatType: 'p2p',
+      senderId: 'sender-dm',
+      mentions: [],
+    }));
+
+    await waitFor(() => fake.turnsHandled === 1);
+    const access = loadDispatcherAccess('flow');
+    expect(access.dm.allow_users).toEqual(['sender-dm']);
+    expect(access.group.allow_chats).toEqual(['chat-group-a']);
+    expect(access.group.follow_users).toEqual(['sender-dm']);
+    expect(access.observed_chats).toEqual(['chat-dm']);
+    expect(bot.reactions.map((reaction) => reaction.messageId)).toEqual([
+      'msg-dm',
+    ]);
   });
 
   it('records a trust-domain warning when one dispatcher receives multiple chats', async () => {
@@ -616,7 +692,8 @@ describe('dreamux MVP smoke', () => {
       'msg-chat-a',
       'msg-chat-b',
     ]);
-    await waitFor(() => bot.sentMessages.length >= 2);
+    await waitFor(() => fake.turnsHandled === 2);
+    expect(bot.sentMessages).toEqual([]);
   });
 
   it('in-memory queue coalesces pending same-chat messages behind a running turn', async () => {
@@ -640,22 +717,14 @@ describe('dreamux MVP smoke', () => {
     await bot.inject(fakeInbound('chat-group-b', 'batch-1', 'msg-b1'));
     await bot.inject(fakeInbound('chat-group-b', 'batch-2', 'msg-b2'));
 
-    await waitFor(() => bot.sentMessages.length >= 2, 6000);
+    await waitFor(() => fake.turnsHandled === 2, 6000);
     expect(fake.turnsHandled).toBe(2);
     expect(codexInputs).toHaveLength(2);
     expect(codexInputs[0]).toContain('running');
     expect(feishuMessageBlockCount(codexInputs[1] ?? '')).toBe(2);
     expect(codexInputs[1]).toContain('batch-1');
     expect(codexInputs[1]).toContain('batch-2');
-    expect(bot.sentMessages[1]?.target).toMatchObject({
-      chatId: 'chat-group-b',
-      replyToMessageId: 'msg-b2',
-      mentionUserIds: ['sender-test'],
-    });
-    expect(bot.sentMessages.map((m) => m.text)).toEqual([
-      'echo: running',
-      'echo: batch-1',
-    ]);
+    expect(bot.sentMessages).toEqual([]);
   });
 
   it('process-local dedupe drops Feishu redelivery before turn and reaction', async () => {
@@ -670,47 +739,16 @@ describe('dreamux MVP smoke', () => {
     await bot.inject(fakeInbound('chat-group-a', 'redelivered', 'msg-same'));
     await bot.inject(fakeInbound('chat-group-a', 'redelivered again', 'msg-same'));
 
-    await waitFor(() => bot.sentMessages.length >= 1);
+    await waitFor(() => fake.turnsHandled === 1);
     await sleep(120);
     expect(fake.turnsHandled).toBe(1);
     expect(bot.reactions).toHaveLength(1);
     expect(bot.reactions[0]?.messageId).toBe('msg-same');
-    expect(server.repos.inbound.getById(1)).toBeNull();
-  });
-
-  it('ignores legacy persisted running rows on startup', async () => {
-    server = buildServer({ runtimeDir, fake, bot });
-    server.repos.dispatchers.create({
-      dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
-    });
-
-    const row = server.repos.inbound.enqueue({
-      dispatcher_id: 'flow',
-      source_chat_id: 'chat-group-a',
-      source_message_id: 'message-pre-crash',
-      sender_id: 'sender',
-      feishu_event_json: '{}',
-      parsed_text: 'legacy-running',
-    });
-    expect(row).not.toBeNull();
-    server.repos.inbound.markRunning(row!.id, null);
-
-    await server.start();
-
-    const after = server.repos.inbound.getById(row!.id);
-    expect(after?.state).toBe('running');
-    expect(bot.sentMessages).toEqual([]);
   });
 
   it('thread/resume failure produces visible degradation, not silent loss', async () => {
-    server = buildServer({ runtimeDir, fake, bot });
-    server.repos.dispatchers.create({
-      dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
-    });
+    const config = configWithDispatcher();
+    server = buildServer({ runtimeDir, fake, bot, config });
     // Pre-seed an existing thread_id so startup will try thread/resume.
     server.repos.dispatchers.setThreadId('flow', 'thread_was_lost');
 
@@ -722,7 +760,7 @@ describe('dreamux MVP smoke', () => {
       replyFor: captureAndEchoCodexInput(codexInputs),
     });
 
-    server = buildServer({ runtimeDir, fake, bot });
+    server = buildServer({ runtimeDir, fake, bot, config });
     await server.start();
 
     const d = server.repos.dispatchers.get('flow');
@@ -732,31 +770,6 @@ describe('dreamux MVP smoke', () => {
     // last_error is cleared when dispatcher reaches 'ready' again; the
     // durable evidence of degradation is last_lost_thread_id above.
     expect(d?.status).toBe('ready');
-  });
-
-  it('outbound retry: send fails then succeeds; turn does not re-run', async () => {
-    server = buildServer({ runtimeDir, fake, bot });
-    server.repos.dispatchers.create({
-      dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
-    });
-    await server.start();
-
-    let attempts = 0;
-    const origSend = bot.send.bind(bot);
-    bot.send = async (target, text) => {
-      attempts++;
-      if (attempts === 1) throw new Error('transient feishu hiccup');
-      return origSend(target, text);
-    };
-
-    await bot.inject(fakeInbound('chat-group-a', 'retry-me', 'msg-retry'));
-
-    await waitFor(() => bot.sentMessages.length >= 1);
-    expect(attempts).toBeGreaterThanOrEqual(2);
-    expect(fake.turnsHandled).toBe(1); // turn was not re-run
-    expect(bot.sentMessages[0]?.text).toBe('echo: retry-me');
   });
 
   it('approval fail-fast: server-request causes the turn to fail', async () => {
@@ -777,42 +790,8 @@ describe('dreamux MVP smoke', () => {
 
     await bot.inject(fakeInbound('chat-group-a', 'do-something', 'msg-app'));
 
-    // The approval rejection sends a hint message; the turn itself completes
-    // (codex still emits turn/completed after the server-request), so the
-    // dispatcher ends in 'completed'. The user-visible hint is the test.
-    await waitFor(
-      () =>
-        bot.sentMessages.some((m) => m.text.includes('不支持审批')) ||
-        bot.sentMessages.length >= 1,
-    );
-    expect(
-      bot.sentMessages.some((m) => m.text.includes('不支持审批')),
-    ).toBe(true);
-  });
-
-  it('does not drain legacy persisted queued rows on startup', async () => {
-    server = buildServer({ runtimeDir, fake, bot });
-    server.repos.dispatchers.create({
-      dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
-    });
-
-    const row = server.repos.inbound.enqueue({
-      dispatcher_id: 'flow',
-      source_chat_id: 'chat-backlog',
-      source_message_id: 'msg-backlog_1',
-      sender_id: 'sender',
-      feishu_event_json: '{}',
-      parsed_text: 'queued-before-crash',
-    });
-    expect(row).not.toBeNull();
-    expect(row!.state).toBe('queued');
-
-    await server.start();
-
-    const after = server.repos.inbound.getById(row!.id);
-    expect(after?.state).toBe('queued');
+    await waitFor(() => fake.turnsHandled === 1);
+    await sleep(120);
     expect(bot.sentMessages).toEqual([]);
   });
 
@@ -1022,9 +1001,10 @@ describe('dreamux MVP smoke', () => {
     expect(processes).toHaveLength(1);
     expect(bot.sentMessages).toEqual([]);
 
-    await waitFor(() => bot.sentMessages.length >= 1, 1000);
+    await waitFor(() => fake.turnsHandled === 1, 1000);
+    await sleep(220);
     expect(processes).toHaveLength(1);
-    expect(bot.sentMessages[0]?.text).toBe('echo: slow turn');
+    expect(bot.sentMessages).toEqual([]);
   });
 });
 
@@ -1035,7 +1015,6 @@ describe('admin socket hardening', () => {
   beforeEach(() => {
     runtimeDir = mkdtempSync(join(tmpdir(), 'dreamux-admin-'));
     stubServer = new Server({
-      databasePath: join(runtimeDir, 'state.db'),
       adminSocketPath: join(runtimeDir, 'admin.sock'),
     });
   });

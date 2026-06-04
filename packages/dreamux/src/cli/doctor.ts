@@ -1,11 +1,10 @@
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 
-import { DispatcherRepo } from '../db/repository.js';
-import { openDatabase } from '../db/schema.js';
 import { codexArgsToCli, parseCodexArgs } from '../runtime/codex-args.js';
 import {
   BUILT_IN_DEFAULTS,
+  type DispatcherConfig,
   globalConfigDir,
   globalConfigFile,
   loadConfig,
@@ -17,10 +16,9 @@ import {
   type DispatcherCodexHomeDoctorResult,
 } from '../runtime/dispatcher-codex-home.js';
 import {
-  databasePath as runtimeDatabasePath,
   dispatcherCodexCwd,
-  runtimeRoot,
   setRuntimeConfig,
+  stateRoot,
 } from '../runtime/paths.js';
 import { ExecaCommandRunner } from '../onboard/commands.js';
 import {
@@ -65,8 +63,7 @@ export interface DispatcherDoctorReport {
 export interface DreamuxDoctorResult {
   ok: boolean;
   configFile: string;
-  runtimeDir: string;
-  databasePath: string;
+  stateDir: string;
   service: ServiceStatus;
   checks: DoctorCheck[];
   dispatchers: DispatcherDoctorReport[];
@@ -82,16 +79,9 @@ export async function runDreamuxDoctor(
   setRuntimeConfig(config);
 
   checks.push({
-    name: 'runtime directory',
-    ok: existsSync(runtimeRoot()),
-    detail: runtimeRoot(),
-  });
-
-  const dbPath = runtimeDatabasePath();
-  checks.push({
-    name: 'runtime database',
-    ok: existsSync(dbPath),
-    detail: dbPath,
+    name: 'state directory',
+    ok: existsSync(stateRoot()),
+    detail: stateRoot(),
   });
 
   checks.push({
@@ -114,9 +104,7 @@ export async function runDreamuxDoctor(
       : `not installed at ${service.unitPath}`,
   });
 
-  const dispatchers = existsSync(dbPath)
-    ? readDispatchers(config, options.env ?? process.env, service)
-    : [];
+  const dispatchers = readDispatchers(config, options.env ?? process.env, service);
   if (dispatchers.length === 0) {
     checks.push({
       name: 'dispatchers',
@@ -134,8 +122,7 @@ export async function runDreamuxDoctor(
   return {
     ok,
     configFile,
-    runtimeDir: runtimeRoot(),
-    databasePath: dbPath,
+    stateDir: stateRoot(),
     service,
     checks,
     dispatchers,
@@ -145,8 +132,7 @@ export async function runDreamuxDoctor(
 export function printDoctorResult(result: DreamuxDoctorResult): void {
   console.log(`dreamux doctor: ${result.ok ? 'ok' : 'failed'}`);
   console.log(`config: ${result.configFile}`);
-  console.log(`runtime: ${result.runtimeDir}`);
-  console.log(`database: ${result.databasePath}`);
+  console.log(`state: ${result.stateDir}`);
   for (const check of result.checks) {
     console.log(`${check.ok ? 'ok' : 'fail'}\t${check.name}\t${check.detail}`);
   }
@@ -186,46 +172,54 @@ function readDispatchers(
   env: NodeJS.ProcessEnv,
   service: ServiceStatus,
 ): DispatcherDoctorReport[] {
-  const db = openDatabase({ path: runtimeDatabasePath() });
-  try {
-    const repo = new DispatcherRepo(db);
-    return repo.list().map((row) => {
-      const codexArgs = parseCodexArgs(row.codex_args_json, {
-        approvalPolicy: config.codex.approval_policy,
-        sandboxMode: config.codex.sandbox_mode,
-        extraArgs: config.codex.extra_args,
-      });
-      const codexCliArgs = codexArgsToCli(codexArgs);
-      const context = dispatcherCodexHomeDoctorContext(row.dispatcher_id, {
-        codexCliArgs,
-        dispatcherCwd: row.codex_cwd ?? dispatcherCodexCwd(row.dispatcher_id),
-      });
-      const foreground = validateDispatcherCodexHome(context, {
-        env,
-        codexCliArgs,
-      });
-      const managedService = service.installed
-        ? validateDispatcherCodexHome(context, {
-            env: managedServiceEnvironment({
-              configDir: globalConfigDir(),
-              runtimeDir: runtimeRoot(),
-              codexBin: process.env['CODEX_HOST_CODEX_BIN'] || config.codex.bin,
-              dreamuxBin: process.env['DREAMUX_BIN'] ?? process.argv[1],
-              startService: false,
-              dryRun: false,
-            }),
-            codexCliArgs,
-          })
-        : null;
-      return {
-        id: row.dispatcher_id,
-        foreground,
-        managedService,
-      };
+  return config.dispatchers.map((dispatcher) => {
+    const codexArgs = parseCodexArgs(dispatcherCodexArgsJson(dispatcher), {
+      approvalPolicy: config.codex.approval_policy,
+      sandboxMode: config.codex.sandbox_mode,
+      extraArgs: config.codex.extra_args,
     });
-  } finally {
-    db.close();
-  }
+    const codexCliArgs = codexArgsToCli(codexArgs);
+    const context = dispatcherCodexHomeDoctorContext(dispatcher.id, {
+      codexCliArgs,
+      dispatcherCwd: dispatcher.cwd ?? dispatcherCodexCwd(dispatcher.id),
+    });
+    const foreground = validateDispatcherCodexHome(context, {
+      env,
+      codexCliArgs,
+    });
+    const managedService = service.installed
+      ? validateDispatcherCodexHome(context, {
+          env: managedServiceEnvironment({
+            configDir: globalConfigDir(),
+            runtimeDir: stateRoot(),
+            codexBin: process.env['CODEX_HOST_CODEX_BIN'] || config.codex.bin,
+            dreamuxBin: process.env['DREAMUX_BIN'] ?? process.argv[1],
+            startService: false,
+            dryRun: false,
+          }),
+          codexCliArgs,
+        })
+      : null;
+    return {
+      id: dispatcher.id,
+      foreground,
+      managedService,
+    };
+  });
+}
+
+function dispatcherCodexArgsJson(dispatcher: DispatcherConfig): string {
+  return JSON.stringify({
+    ...(dispatcher.codex.approval_policy !== null
+      ? { approvalPolicy: dispatcher.codex.approval_policy }
+      : {}),
+    ...(dispatcher.codex.sandbox_mode !== null
+      ? { sandboxMode: dispatcher.codex.sandbox_mode }
+      : {}),
+    ...(dispatcher.codex.extra_args.length > 0
+      ? { extraArgs: dispatcher.codex.extra_args }
+      : {}),
+  });
 }
 
 async function getServiceStatus(options: DoctorOptions): Promise<ServiceStatus> {

@@ -8,7 +8,7 @@
 
 import type { Server } from '../server.js';
 import { AdminError } from './protocol.js';
-import type { DispatcherStatus, InboundState } from '../db/types.js';
+import type { DispatcherStatus } from '../runtime/dispatcher-store.js';
 import { validateDispatcherId } from '../runtime/dispatcher-id.js';
 
 export type AdminHandler = (
@@ -24,55 +24,21 @@ export const adminMethods: Record<string, AdminHandler> = {
   }),
 
   'dispatcher.add': (server, params) => {
-    const id = mustDispatcherId(params);
-    const botAppId = mustString(params, 'bot_app_id');
-    const botSecretRef = mustString(params, 'bot_secret_ref');
-    const codexArgsJson = optionalString(params, 'codex_args_json') ?? '{}';
-    const codexCwd = optionalString(params, 'codex_cwd');
-    const duplicateApp = server.repos.dispatchers
-      .list()
-      .find((row) => row.bot_app_id === botAppId && row.dispatcher_id !== id);
-    if (duplicateApp !== undefined) {
-      throw new AdminError(
-        'BAD_REQUEST',
-        `bot_app_id '${botAppId}' is already used by dispatcher '${duplicateApp.dispatcher_id}'`,
-      );
-    }
-    try {
-      const row = server.repos.dispatchers.create({
-        dispatcher_id: id,
-        bot_app_id: botAppId,
-        bot_secret_ref: botSecretRef,
-        codex_args_json: codexArgsJson,
-        codex_cwd: codexCwd ?? null,
-      });
-      return { dispatcher_id: row.dispatcher_id, status: row.status };
-    } catch (err) {
-      if (err && typeof err === 'object') {
-        const code = (err as { code?: string }).code;
-        if (
-          code === 'SQLITE_CONSTRAINT_UNIQUE' ||
-          code === 'SQLITE_CONSTRAINT_PRIMARYKEY'
-        ) {
-          throw new AdminError(
-            'CONFLICT',
-            `dispatcher_id or bot_app_id already exists: ${(err as Error).message}`,
-          );
-        }
-      }
-      throw err;
-    }
+    void server;
+    void params;
+    throw new AdminError(
+      'UNSUPPORTED',
+      'dispatcher declarations live in ~/.dreamux/config.json; edit the dispatchers array and restart dreamux serve',
+    );
   },
 
   'dispatcher.remove': async (server, params) => {
-    const id = mustDispatcherId(params);
-    const row = server.repos.dispatchers.get(id);
-    if (row === null) {
-      throw new AdminError('DISPATCHER_NOT_FOUND', `no dispatcher with id '${id}'`);
-    }
-    await server.stopDispatcher(id);
-    server.repos.dispatchers.remove(id);
-    return { dispatcher_id: id };
+    void server;
+    void params;
+    throw new AdminError(
+      'UNSUPPORTED',
+      'dispatcher declarations live in ~/.dreamux/config.json; edit the dispatchers array and restart dreamux serve',
+    );
   },
 
   'dispatcher.list': (server) => ({ dispatchers: server.summarize() }),
@@ -84,7 +50,6 @@ export const adminMethods: Record<string, AdminHandler> = {
       throw new AdminError('DISPATCHER_NOT_FOUND', `no dispatcher with id '${id}'`);
     }
     const runtime = server.getRuntime(id);
-    const counts: Record<InboundState, number> = server.repos.inbound.countByState(id);
     return {
       dispatcher_id: row.dispatcher_id,
       bot_app_id: row.bot_app_id,
@@ -92,7 +57,6 @@ export const adminMethods: Record<string, AdminHandler> = {
       thread_id: runtime?.getThreadId() ?? row.thread_id,
       last_lost_thread_id: row.last_lost_thread_id,
       last_error: row.last_error,
-      inbound_buffer: counts,
     };
   },
 

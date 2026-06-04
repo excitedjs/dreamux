@@ -8,17 +8,13 @@ import {
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { DispatcherRepo } from '../src/db/repository.js';
-import { openDatabase } from '../src/db/schema.js';
 import { runDreamuxDoctor } from '../src/cli/doctor.js';
 import type { CommandRunner } from '../src/onboard/types.js';
 import {
-  databasePath,
   dispatcherCodexCwd,
   dispatcherCodexHome,
   dispatcherWorkspaceSkillPath,
   resetRuntimeConfig,
-  setRuntimeConfig,
   stateRoot,
 } from '../src/runtime/paths.js';
 
@@ -101,8 +97,8 @@ describe('dreamux doctor command', () => {
 
   it('reports global Codex home health', async () => {
     const runner = new FakeRunner();
-    const config = writeConfig();
-    writeDispatcher(config.runtimeDir, { auth: true });
+    writeConfig();
+    writeDispatcherHome({ auth: true });
 
     const result = await runDreamuxDoctor({
       runner,
@@ -124,8 +120,8 @@ describe('dreamux doctor command', () => {
 
   it('does not expose Feishu app secrets in doctor results', async () => {
     const runner = new FakeRunner();
-    const config = writeConfig();
-    writeDispatcher(config.runtimeDir, { auth: true });
+    writeConfig();
+    writeDispatcherHome({ auth: true });
 
     const result = await runDreamuxDoctor({
       runner,
@@ -139,8 +135,8 @@ describe('dreamux doctor command', () => {
 
   it('checks managed-service dispatcher auth when a service is installed', async () => {
     const runner = new FakeRunner();
-    const config = writeConfig();
-    writeDispatcher(config.runtimeDir, { auth: false });
+    writeConfig();
+    writeDispatcherHome({ auth: false });
     const servicePath = join(root, 'home', '.config', 'systemd', 'user', 'dreamux.service');
     mkdirSync(dirname(servicePath), { recursive: true });
     writeFileSync(servicePath, '[Service]\nExecStart=/usr/local/bin/dreamux serve\n');
@@ -160,15 +156,12 @@ describe('dreamux doctor command', () => {
     );
   });
 
-  function writeConfig(): { runtimeDir: string } {
-    const runtimeDir = join(root, 'runtime');
+  function writeConfig(): void {
     const configPath = join(root, 'config', 'config.json');
     mkdirSync(dirname(configPath), { recursive: true });
     writeFileSync(
       configPath,
       JSON.stringify({
-        runtime_dir: runtimeDir,
-        admin_socket: null,
         codex: {
           bin: 'codex',
           approval_policy: 'never',
@@ -176,51 +169,28 @@ describe('dreamux doctor command', () => {
           extra_args: [],
           initialize_timeout_ms: 10000,
         },
-        outbound: {
-          retries: 3,
-          retry_delay_ms: 1000,
-        },
-        feishu: {
-          bots: {
-            flow: {
+        dispatchers: [
+          {
+            id: 'flow',
+            cwd: dispatcherCodexCwd('flow'),
+            enabled: true,
+            feishu: {
               app_id: 'app-test',
               app_secret: 'secret-test',
             },
+            codex: {
+              approval_policy: null,
+              sandbox_mode: null,
+              extra_args: [],
+            },
           },
-        },
+        ],
       }),
       { mode: 0o600 },
     );
-    return { runtimeDir };
   }
 
-  function writeDispatcher(
-    runtimeDir: string,
-    options: { auth: boolean },
-  ): void {
-    setRuntimeConfig({
-      runtime_dir: runtimeDir,
-      admin_socket: null,
-      codex: {
-        bin: 'codex',
-        approval_policy: 'never',
-        sandbox_mode: 'workspace-write',
-        extra_args: [],
-        initialize_timeout_ms: 10000,
-      },
-      outbound: {
-        retries: 3,
-        retry_delay_ms: 1000,
-      },
-      feishu: {
-        bots: {
-          flow: {
-            app_id: 'app-test',
-            app_secret: 'secret-test',
-          },
-        },
-      },
-    });
+  function writeDispatcherHome(options: { auth: boolean }): void {
     const skillPath = dispatcherWorkspaceSkillPath(dispatcherCodexCwd('flow'));
     mkdirSync(dirname(skillPath), { recursive: true });
     writeFileSync(skillPath, '# test skill\n');
@@ -229,21 +199,6 @@ describe('dreamux doctor command', () => {
       writeFileSync(join(dispatcherCodexHome('flow'), 'auth.json'), '{}');
     }
     mkdirSync(stateRoot(), { recursive: true });
-    const db = openDatabase({ path: databasePath() });
-    try {
-      new DispatcherRepo(db).create({
-        dispatcher_id: 'flow',
-        bot_app_id: 'app-test',
-        bot_secret_ref: 'env:DREAMUX_TEST_BOT_SECRET',
-        codex_args_json: JSON.stringify({
-          approvalPolicy: 'never',
-          sandboxMode: 'workspace-write',
-          extraArgs: [],
-        }),
-      });
-    } finally {
-      db.close();
-    }
   }
 });
 

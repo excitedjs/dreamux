@@ -3,13 +3,16 @@ import type { DreamuxConfig } from './config.js';
 export function resolveBotSecret(ref: string, config: DreamuxConfig): string {
   if (ref.startsWith('config:')) {
     const dispatcherId = ref.slice('config:'.length);
-    const bot = config.feishu.bots[dispatcherId];
-    if (bot === undefined || bot.app_secret.trim() === '') {
+    const dispatcher = config.dispatchers.find((item) => item.id === dispatcherId);
+    if (
+      dispatcher === undefined ||
+      dispatcher.feishu.app_secret.trim() === ''
+    ) {
       throw new Error(
         `missing Feishu app_secret in dreamux config for bot_secret_ref=${ref}`,
       );
     }
-    return bot.app_secret;
+    return dispatcher.feishu.app_secret;
   }
 
   if (ref.startsWith('env:')) {

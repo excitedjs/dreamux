@@ -1,29 +1,31 @@
 /**
  * Per-dispatcher in-memory turn worker.
  *
- * Task 7 / top-level design contract:
+ * Contract:
  *   - one serialized worker per dispatcher;
  *   - accepted inbound messages are not persisted;
  *   - consecutive pending messages from the same chat are coalesced into one
  *     Codex turn;
- *   - Feishu message_id redelivery is deduped within this server process.
+ *   - Feishu message_id redelivery is deduped within this server process;
+ *   - Codex text output alone does not send anything to Feishu.
  */
 
+import { runTurn } from '../codex/events.js';
 import type { CodexWsClient } from '../codex/rpc.js';
-import { extractAssistantText, runTurn } from '../codex/events.js';
-import {
-  outboundTargetForInbound,
-  type InboundOutboundSource,
-  type OutboundSink,
-} from '../channel/outbound.js';
 
 export const DEFAULT_MESSAGE_ID_DEDUPE_WINDOW = 1024;
 
-export interface InboundTurnInput extends InboundOutboundSource {
+export interface InboundTurnSource {
+  source_chat_id: string;
+  source_message_id: string | null;
+  sender_id: string | null;
+}
+
+export interface InboundTurnInput extends InboundTurnSource {
   parsed_text: string;
 }
 
-interface TurnBatch extends InboundOutboundSource {
+interface TurnBatch extends InboundTurnSource {
   id: number;
   messages: InboundTurnInput[];
 }
@@ -33,29 +35,15 @@ export interface TurnManagerOptions {
   /** Lazily resolved Codex thread id (set after thread/start | resume). */
   getThreadId(): string | null;
   client: CodexWsClient;
-  outbound: OutboundSink;
   /**
-   * Codex cwd to pass on each turn/start. Issue #2 §"开放问题 Q1": for MVP
-   * we leave this null (thread cwd is set once at thread/start time).
+   * Codex cwd to pass on each turn/start. Issue #2 Q1: for MVP we leave
+   * this null because thread cwd is set once at thread/start time.
    */
   turnCwd?: string | null;
-  /**
-   * Outbound retry policy. P0 simple linear retry; production should add
-   * exponential backoff (out of MVP scope).
-   */
-  outboundRetries?: number;
-  outboundRetryDelayMs?: number;
   /** Process-local Feishu message_id dedupe window size. */
   messageIdDedupeWindow?: number;
-  /** Tracks the currently running chat for approval rejection hints. */
-  onCurrentChat?: (chatId: string | null) => void;
   /** Optional logger; defaults to console.error. */
   log?: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
-  /**
-   * Fallback assistant text when codex finished a turn without an
-   * `agentMessage` item. Issue #2 §"开放问题 Q4".
-   */
-  emptyTurnPlaceholder?: string;
 }
 
 export class TurnManager {
@@ -68,10 +56,7 @@ export class TurnManager {
   private wakeup: (() => void) | null = null;
   private nextBatchId = 1;
   private readonly log: NonNullable<TurnManagerOptions['log']>;
-  private readonly outboundRetries: number;
-  private readonly outboundRetryDelayMs: number;
   private readonly messageIdDedupeWindow: number;
-  private readonly emptyTurnPlaceholder: string;
 
   constructor(private readonly opts: TurnManagerOptions) {
     this.log = opts.log ?? ((lvl, msg, err) => {
@@ -79,14 +64,10 @@ export class TurnManager {
       if (err !== undefined) console.error(prefix, msg, err);
       else console.error(prefix, msg);
     });
-    this.outboundRetries = opts.outboundRetries ?? 3;
-    this.outboundRetryDelayMs = opts.outboundRetryDelayMs ?? 1000;
     this.messageIdDedupeWindow = Math.max(
       0,
       opts.messageIdDedupeWindow ?? DEFAULT_MESSAGE_ID_DEDUPE_WINDOW,
     );
-    this.emptyTurnPlaceholder =
-      opts.emptyTurnPlaceholder ?? '本轮没有文本回复。';
   }
 
   /**
@@ -163,67 +144,26 @@ export class TurnManager {
   private async processBatch(batch: TurnBatch): Promise<void> {
     const threadId = this.opts.getThreadId();
     if (threadId === null) {
-      // Should not happen — dispatcher is "ready" only after thread is set.
       this.log('error', `turn batch ${batch.id} dequeued without thread_id`);
       return;
     }
 
-    this.opts.onCurrentChat?.(batch.source_chat_id);
-    let assistantText: string;
     try {
-      const turn = await runTurn(
+      await runTurn(
         this.opts.client,
         threadId,
         batchPrompt(batch),
         this.opts.turnCwd ?? null,
       );
-      assistantText =
-        extractAssistantText(turn) ?? this.emptyTurnPlaceholder;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.log('error', `turn execution failed for batch ${batch.id}: ${msg}`);
-      // Best-effort tell the user something went wrong.
-      try {
-        await this.opts.outbound.send(
-          outboundTargetForInbound(batch),
-          `本次请求执行失败：${msg}`,
-        );
-      } catch (sendErr) {
-        this.log('warn', `error notification also failed`, sendErr);
-      }
-      this.opts.onCurrentChat?.(null);
-      return;
     }
-
-    this.opts.onCurrentChat?.(null);
-    await this.sendOutbound(batch, assistantText);
-  }
-
-  /** Send assistant text to feishu with bounded in-process retry. */
-  private async sendOutbound(batch: TurnBatch, text: string): Promise<void> {
-    let lastError: unknown;
-    const target = outboundTargetForInbound(batch);
-    for (let attempt = 0; attempt <= this.outboundRetries; attempt++) {
-      try {
-        await this.opts.outbound.send(target, text);
-        return;
-      } catch (err) {
-        lastError = err;
-        if (attempt < this.outboundRetries) {
-          await new Promise<void>((r) =>
-            setTimeout(r, this.outboundRetryDelayMs),
-          );
-        }
-      }
-    }
-    const msg = lastError instanceof Error ? lastError.message : String(lastError);
-    this.log('error', `outbound send failed for batch ${batch.id}: ${msg}`);
   }
 
   async stop(): Promise<void> {
     this.stopped = true;
     this.queue.length = 0;
-    this.opts.onCurrentChat?.(null);
     if (this.wakeup !== null) {
       const w = this.wakeup;
       this.wakeup = null;

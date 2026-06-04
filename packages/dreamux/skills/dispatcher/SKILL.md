@@ -100,7 +100,7 @@ codex daemon (pid N) exited before binding /tmp/teammate-codex/<name>/socket
 
 That means the Codex app-server daemon did not become reachable. Do not retry
 silently; report the environment failure and ask the operator to verify
-`codex app-server --listen unix:///tmp/codexmux-check.sock` in the dispatcher
+`codex app-server --listen unix:///tmp/dispatcher-check.sock` in the dispatcher
 environment.
 
 Do not say the dreamux server lost or recovered teammate state. The server does

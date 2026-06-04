@@ -117,6 +117,7 @@ describe('dreamuxFeishuGate', () => {
       'chat-group-b',
     ]);
   });
+
 });
 
 describe('dispatcher access state files', () => {

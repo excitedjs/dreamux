@@ -46,8 +46,8 @@ to the dispatcher workspace and command environment, while Codex auth, memory,
 and user configuration still follow Codex's normal global home.
 
 The bundled source directory, installed directory, and skill frontmatter name
-must all use `dispatcher`. The old `codexmux-dispatcher` source-directory name
-must be renamed away before this design is implemented.
+must all use `dispatcher`. Older package-specific source-directory names must
+be renamed away before this design is implemented.
 
 `dreamux uninstall` does not delete this workspace-local skill by default. It
 removes dreamux-owned config, state, logs, and service integration, then reports

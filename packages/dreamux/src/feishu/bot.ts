@@ -28,8 +28,6 @@ import {
   type OutboundTarget,
 } from '@excitedjs/feishu-transport';
 
-import type { ChannelOutboundTarget } from '../channel/outbound.js';
-
 /** The Feishu event_type carrying inbound chat messages. */
 const IM_MESSAGE_EVENT_TYPE = 'im.message.receive_v1';
 
@@ -80,6 +78,17 @@ export interface CreateBotOptions {
 
 export interface CreateFeishuBotDeps {
   createTransport?: (opts: CreateBotOptions) => FeishuTransport;
+}
+
+export interface ChannelOutboundTarget {
+  /** Stable channel-local conversation id. */
+  conversationId: string;
+  /** Optional channel-local source message to thread under. */
+  replyTo?: string;
+  /** Optional channel-local participants to bring into the reply. */
+  mentionUsers?: string[];
+  /** Optional host/runtime routing hint, opaque to the channel adapter. */
+  conversationKey?: string;
 }
 
 export function createFeishuBot(

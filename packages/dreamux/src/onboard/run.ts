@@ -1,8 +1,5 @@
-import { existsSync, mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { existsSync } from 'node:fs';
 
-import { DispatcherRepo } from '../db/repository.js';
-import { openDatabase } from '../db/schema.js';
 import { codexArgsToCli, parseCodexArgs } from '../runtime/codex-args.js';
 import {
   assertNoLegacyTomlOnly,
@@ -15,7 +12,6 @@ import {
   dispatcherCodexHome,
   dispatcherWorkspaceCodexSkillsDir,
   dispatcherWorkspaceSkillPath,
-  databasePath,
   logsRoot,
   setRuntimeConfig,
   stateRoot,
@@ -27,15 +23,12 @@ import {
 } from '../runtime/dispatcher-codex-home.js';
 import { ExecaCommandRunner } from './commands.js';
 import {
-  dispatcherBotSecretRef,
   dispatcherCodexArgsJson,
   dreamuxConfigFromAnswers,
 } from './config-files.js';
 import { installDispatcherSkill } from './dispatcher-skill.js';
 import {
   ensureDirectory,
-  recordFileTreeChanges,
-  snapshotFiles,
   TransparentFileLedger,
   writeTextFile,
 } from './ledger.js';
@@ -120,8 +113,6 @@ export async function runOnboard(
     dryRun: answers.dryRun,
   });
 
-  registerDispatcher(effectiveAnswers, ledger);
-
   const doctor = runDispatcherDoctor(effectiveAnswers, dreamuxConfig, env);
   if (!effectiveAnswers.dryRun && !doctor.ok) {
     throw new Error(formatDoctorFailure(effectiveAnswers, doctor));
@@ -150,35 +141,6 @@ function readExistingDreamuxConfig(configDir: string) {
   assertNoLegacyTomlOnly({ configDir });
   if (!existsSync(configPath)) return undefined;
   return loadConfig({ configDir }).config;
-}
-
-function registerDispatcher(
-  answers: OnboardAnswers,
-  ledger: OnboardFileLedger,
-): void {
-  const dbPath = databasePath();
-  ensureDirectory(dirname(dbPath), ledger, 'dispatcher database directory', {
-    dryRun: answers.dryRun,
-  });
-  if (answers.dryRun) {
-    ledger.record(dbPath, 'created', 'dispatcher database');
-    return;
-  }
-  mkdirSync(dirname(dbPath), { recursive: true });
-  const before = snapshotFiles(dirname(dbPath));
-  const db = openDatabase({ path: dbPath });
-  try {
-    new DispatcherRepo(db).upsert({
-      dispatcher_id: answers.dispatcherId,
-      bot_app_id: answers.botAppId,
-      bot_secret_ref: dispatcherBotSecretRef(answers.dispatcherId),
-      codex_args_json: dispatcherCodexArgsJson(),
-      codex_cwd: answers.dispatcherCwd,
-    });
-  } finally {
-    db.close();
-  }
-  recordFileTreeChanges(dirname(dbPath), before, ledger, 'dispatcher database');
 }
 
 function runDispatcherDoctor(

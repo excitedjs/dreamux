@@ -2,8 +2,9 @@
  * Collects a Codex turn from the JSON-RPC notification stream.
  *
  * Adapted from claudemux's `plugins/claudemux/core/src/engines/codex/events.ts`.
- * We drop the token-usage bookkeeping (P0 doesn't need it) and the
- * `notLoaded` items merging (assistant text is enough for outbound).
+ * We drop token-usage bookkeeping and `notLoaded` item merging. Feishu
+ * outbound delivery is MCP reply-only, so collected assistant text is for
+ * diagnostics and tests rather than channel forwarding.
  */
 
 import type { CodexWsClient } from './rpc.js';

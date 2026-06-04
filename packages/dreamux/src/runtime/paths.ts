@@ -6,7 +6,6 @@
  *     state/
  *       server.json
  *       admin.sock
- *       state.db              legacy SQLite location until Task 11 removes it
  *       <dispatcher-id>/
  *         status.json
  *         access.json
@@ -16,9 +15,9 @@
  *       codex-app-server/
  *         <dispatcher-id>.log
  *
- * `runtime_dir` is no longer an effective runtime contract. The legacy
- * runtimeRoot() function remains as a compatibility alias for stateRoot()
- * while older call sites are retired.
+ * `runtime_dir` is not an effective runtime contract. The legacy runtimeRoot()
+ * function remains as a compatibility alias for stateRoot() while older call
+ * sites are retired.
  */
 
 import { homedir } from 'node:os';
@@ -73,10 +72,6 @@ export function logsRoot(): string {
  */
 export function runtimeRoot(): string {
   return stateRoot();
-}
-
-export function databasePath(): string {
-  return join(stateRoot(), 'state.db');
 }
 
 export function adminSocketPath(): string {

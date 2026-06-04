@@ -8,8 +8,8 @@
  *                                 item/completed (agentMessage)
  *                                 turn/completed
  *
- * Lets tests assert behavior (queueing, coalescing, outbound retry, approval
- * fail-fast) without spawning a real codex binary.
+ * Lets tests assert behavior (queueing, coalescing, MCP reply-only outbound,
+ * approval fail-fast) without spawning a real codex binary.
  */
 
 import { createServer, type Server as HttpServer } from 'node:http';
