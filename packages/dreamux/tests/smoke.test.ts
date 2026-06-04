@@ -993,7 +993,13 @@ describe('dreamux MVP smoke', () => {
       warnings: [],
       last_gate: null,
     });
-    server = buildServer({ runtimeDir, fake, bot });
+    const channel = captureLogger('channel');
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      channelLoggerFactory: () => channel.logger,
+    });
     server.repos.dispatchers.create({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
@@ -1015,6 +1021,229 @@ describe('dreamux MVP smoke', () => {
     expect(bot.reactions).toEqual([]);
     const entry = loadChatBots('flow').chats['chat-group-a'];
     expect(entry?.trusted ?? []).not.toContain('peer-bot-2');
+
+    // Issue #77: the unauthorized introduce is diagnosed before the gate runs,
+    // with the stable reason — not silently surfaced as the gate's eventual
+    // `bot not mentioned` drop.
+    const lines = channel.lines();
+    const diag = lines.find((l) => l['msg'] === 'introduce detected but not authorized');
+    expect(diag).toMatchObject({
+      chat_id: 'chat-group-a',
+      sender_id: 'stranger',
+      message_id: 'msg-introduce-stranger',
+      reason: 'sender_not_followed',
+    });
+    // The original gate behavior is unchanged: with a non-empty follow_users the
+    // sender still drops on the follow-user gate afterwards.
+    expect(
+      lines.some(
+        (l) =>
+          l['msg'] === 'feishu inbound dropped' &&
+          l['reason'] === 'sender not allowed by follow-user gate',
+      ),
+    ).toBe(true);
+    // No-leak: the diagnostic carries only ids/reason — never the message body,
+    // the mentioned peer's open_id, or the mention display name.
+    const text = channel.text();
+    expect(text).not.toContain('/introduce');
+    expect(text).not.toContain('peer-bot-2');
+    expect(text).not.toContain('Peer');
+  });
+
+  it('diagnoses an unauthorized /introduce when follow_users is empty (would surface as bot-not-mentioned)', async () => {
+    // The misleading case from issue #77: with follow_users empty the follow-user
+    // gate is skipped, so the eventual drop reason is the require_mention
+    // `bot not mentioned` — which looks like the user simply forgot to @ the bot.
+    saveDispatcherAccess('flow', {
+      version: 1,
+      dm: { allow_users: [] },
+      group: {
+        allow_chats: ['chat-group-a'],
+        follow_users: [],
+        require_mention: true,
+      },
+      observed_chats: [],
+      warnings: [],
+      last_gate: null,
+    });
+    const channel = captureLogger('channel');
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      channelLoggerFactory: () => channel.logger,
+    });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+    await server.start();
+
+    await bot.inject(
+      fakeInbound('chat-group-a', '/introduce', 'msg-introduce-empty-follow', {
+        senderId: 'sender-test',
+        mentions: [{ key: '@_user_9', id: { open_id: 'peer-bot-3' }, name: 'Peer' }],
+      }),
+    );
+
+    await sleep(60);
+    expect(fake.turnsHandled).toBe(0);
+    expect(bot.reactions).toEqual([]);
+    expect(loadChatBots('flow').chats['chat-group-a']?.trusted ?? []).not.toContain('peer-bot-3');
+
+    const lines = channel.lines();
+    expect(lines.find((l) => l['msg'] === 'introduce detected but not authorized')).toMatchObject({
+      chat_id: 'chat-group-a',
+      sender_id: 'sender-test',
+      message_id: 'msg-introduce-empty-follow',
+      reason: 'sender_not_followed',
+    });
+    // Same gate drop as before the diagnostic existed.
+    expect(
+      lines.some(
+        (l) => l['msg'] === 'feishu inbound dropped' && l['reason'] === 'bot not mentioned',
+      ),
+    ).toBe(true);
+  });
+
+  it('diagnoses an unauthorized /introduce when the chat is not allowlisted', async () => {
+    saveDispatcherAccess('flow', {
+      version: 1,
+      dm: { allow_users: [] },
+      group: {
+        allow_chats: ['chat-group-other'],
+        follow_users: ['sender-test'],
+        require_mention: true,
+      },
+      observed_chats: [],
+      warnings: [],
+      last_gate: null,
+    });
+    const channel = captureLogger('channel');
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      channelLoggerFactory: () => channel.logger,
+    });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+    await server.start();
+
+    await bot.inject(
+      fakeInbound('chat-group-a', '/introduce', 'msg-introduce-other-chat', {
+        senderId: 'sender-test',
+        mentions: [{ key: '@_user_9', id: { open_id: 'peer-bot-4' }, name: 'Peer' }],
+      }),
+    );
+
+    await sleep(60);
+    expect(fake.turnsHandled).toBe(0);
+    expect(loadChatBots('flow').chats['chat-group-a']?.trusted ?? []).not.toContain('peer-bot-4');
+
+    expect(
+      channel.lines().find((l) => l['msg'] === 'introduce detected but not authorized'),
+    ).toMatchObject({
+      chat_id: 'chat-group-a',
+      sender_id: 'sender-test',
+      message_id: 'msg-introduce-other-chat',
+      reason: 'chat_not_allowlisted',
+    });
+  });
+
+  it('diagnoses an unauthorized /introduce sent as a direct message (non_group)', async () => {
+    saveDispatcherAccess('flow', {
+      version: 1,
+      dm: { allow_users: ['sender-test'] },
+      group: {
+        allow_chats: ['chat-group-a'],
+        follow_users: ['sender-test'],
+        require_mention: true,
+      },
+      observed_chats: [],
+      warnings: [],
+      last_gate: null,
+    });
+    const channel = captureLogger('channel');
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      channelLoggerFactory: () => channel.logger,
+    });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+    await server.start();
+
+    await bot.inject(
+      fakeInbound('chat-dm', '/introduce', 'msg-introduce-dm', {
+        chatType: 'p2p',
+        senderId: 'sender-test',
+        mentions: [],
+      }),
+    );
+
+    await waitFor(() => fake.turnsHandled === 1);
+    // Diagnosed as non_group, then delivered normally as an ordinary DM — the
+    // introduce trust path never fires outside a group.
+    expect(
+      channel.lines().find((l) => l['msg'] === 'introduce detected but not authorized'),
+    ).toMatchObject({
+      chat_id: 'chat-dm',
+      sender_id: 'sender-test',
+      message_id: 'msg-introduce-dm',
+      reason: 'non_group',
+    });
+  });
+
+  it('an authorized /introduce is consumed without emitting the unauthorized diagnostic', async () => {
+    saveDispatcherAccess('flow', {
+      version: 1,
+      dm: { allow_users: [] },
+      group: {
+        allow_chats: ['chat-group-a'],
+        follow_users: ['sender-test'],
+        require_mention: true,
+      },
+      observed_chats: [],
+      warnings: [],
+      last_gate: null,
+    });
+    const channel = captureLogger('channel');
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      channelLoggerFactory: () => channel.logger,
+    });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+    await server.start();
+
+    await bot.inject(
+      fakeInbound('chat-group-a', '/introduce', 'msg-introduce-ok', {
+        senderId: 'sender-test',
+        mentions: [{ key: '@_user_9', id: { open_id: 'peer-bot-5' }, name: 'Peer Bot' }],
+      }),
+    );
+
+    await sleep(60);
+    // Consumed: trust written, no enqueue, and crucially no unauthorized diagnostic.
+    expect(fake.turnsHandled).toBe(0);
+    expect(loadChatBots('flow').chats['chat-group-a']?.trusted).toEqual(['peer-bot-5']);
+    const lines = channel.lines();
+    expect(lines.some((l) => l['msg'] === 'introduce consumed')).toBe(true);
+    expect(lines.some((l) => l['msg'] === 'introduce detected but not authorized')).toBe(false);
   });
 
   it('records a trust-domain warning when one dispatcher receives multiple chats', async () => {

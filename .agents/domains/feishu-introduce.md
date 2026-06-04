@@ -49,6 +49,23 @@ introduced are the message's other mentions; they are recorded as **trusted**
 for that chat and the `/introduce` message is consumed (never delivered to Codex
 as a turn).
 
+## Unauthorized-introduce diagnostic (issue #77)
+
+A `/introduce` whose sender is not authorized is **not** consumed: it falls
+through to `dreamuxFeishuGate` and is dropped like any other group message —
+most misleadingly as `bot not mentioned`, because the introduce path waives the
+mention requirement that the gate still enforces. To keep this one-glance
+diagnosable, `introduceDenyReason` (`channel/introduce.ts`) is the discriminated
+source of truth — `canRunIntroduce` is its boolean projection — returning a
+stable, grep-able code: `non_group`, `empty_sender_id`, `chat_not_allowlisted`,
+`sender_not_followed`. When `detectIntroduce` matches but the reason is
+non-null, `server.ts` emits one channel log `introduce detected but not
+authorized` carrying only `chat_id`/`sender_id`/`message_id`/`reason` (never the
+message body, mentioned peer open_ids, or mention names), then continues into
+the **unchanged** gate. This is observability only: gate decisions, trust
+writes, baseline arming, and authorized-introduce consume behavior are
+unchanged.
+
 ## Awareness vs trust
 
 `chat-bots.json` tracks two sets per chat that must never be conflated:

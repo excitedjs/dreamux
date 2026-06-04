@@ -19,6 +19,7 @@ import {
 import {
   canRunIntroduce,
   detectIntroduce,
+  introduceDenyReason,
   introducedPeers,
 } from '../src/channel/introduce.js';
 import {
@@ -77,6 +78,67 @@ describe('canRunIntroduce — sender-scoped, not group-scoped', () => {
     expect(
       canRunIntroduce(access, { chatType: 'p2p', chatId: 'chat-a', senderId: 'user-a' }),
     ).toBe(false);
+  });
+});
+
+describe('introduceDenyReason — stable diagnostic codes (issue #77)', () => {
+  // canRunIntroduce is the boolean projection; every reason code maps 1:1 to a
+  // rejection point and is logged verbatim, so an operator can tell an
+  // introduce blocked by the allowlist apart from an ordinary gate drop.
+  it('returns null (authorized) for an allowlisted sender in an allowlisted chat', () => {
+    const access = state({ allow_chats: ['chat-a'], follow_users: ['user-a'] });
+    expect(
+      introduceDenyReason(access, { chatType: 'group', chatId: 'chat-a', senderId: 'user-a' }),
+    ).toBeNull();
+  });
+
+  it('reports non_group for a direct message', () => {
+    const access = state({ allow_chats: ['chat-a'], follow_users: ['user-a'] });
+    expect(
+      introduceDenyReason(access, { chatType: 'p2p', chatId: 'chat-a', senderId: 'user-a' }),
+    ).toBe('non_group');
+  });
+
+  it('reports empty_sender_id when the sender id is missing', () => {
+    const access = state({ allow_chats: ['chat-a'], follow_users: ['user-a'] });
+    expect(
+      introduceDenyReason(access, { chatType: 'group', chatId: 'chat-a', senderId: '' }),
+    ).toBe('empty_sender_id');
+  });
+
+  it('reports chat_not_allowlisted when the chat is not explicitly allowlisted', () => {
+    const access = state({ allow_chats: ['chat-a'], follow_users: ['user-a'] });
+    expect(
+      introduceDenyReason(access, { chatType: 'group', chatId: 'chat-other', senderId: 'user-a' }),
+    ).toBe('chat_not_allowlisted');
+  });
+
+  it('reports sender_not_followed when follow_users is empty (the misleading case)', () => {
+    const access = state({ allow_chats: ['chat-a'], follow_users: [] });
+    expect(
+      introduceDenyReason(access, { chatType: 'group', chatId: 'chat-a', senderId: 'anyone' }),
+    ).toBe('sender_not_followed');
+  });
+
+  it('reports sender_not_followed when follow_users is non-empty but excludes the sender', () => {
+    const access = state({ allow_chats: ['chat-a'], follow_users: ['user-a'] });
+    expect(
+      introduceDenyReason(access, { chatType: 'group', chatId: 'chat-a', senderId: 'user-x' }),
+    ).toBe('sender_not_followed');
+  });
+
+  it('stays consistent with canRunIntroduce across every branch', () => {
+    const access = state({ allow_chats: ['chat-a'], follow_users: ['user-a'] });
+    const inputs = [
+      { chatType: 'group', chatId: 'chat-a', senderId: 'user-a' },
+      { chatType: 'p2p', chatId: 'chat-a', senderId: 'user-a' },
+      { chatType: 'group', chatId: 'chat-a', senderId: '' },
+      { chatType: 'group', chatId: 'chat-other', senderId: 'user-a' },
+      { chatType: 'group', chatId: 'chat-a', senderId: 'user-x' },
+    ];
+    for (const input of inputs) {
+      expect(canRunIntroduce(access, input)).toBe(introduceDenyReason(access, input) === null);
+    }
   });
 });
 

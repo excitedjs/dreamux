@@ -34,28 +34,53 @@ export interface IntroduceAuthInput {
 }
 
 /**
- * True when `senderId` may run `/introduce` in this chat.
+ * Stable, machine-grep-able reason an `/introduce` was not authorized. Each
+ * value maps one-to-one to a rejection point in `introduceDenyReason`; they are
+ * logged verbatim so an operator can tell "introduce blocked by allowlist" apart
+ * from an ordinary gate drop (issue #77). They carry no message content.
+ */
+export type IntroduceDenyReason =
+  | 'non_group'
+  | 'empty_sender_id'
+  | 'chat_not_allowlisted'
+  | 'sender_not_followed';
+
+/**
+ * The reason `senderId` may NOT run `/introduce` in this chat, or `null` when it
+ * is authorized. This is the single source of truth for the issue #62 hard
+ * contract; `canRunIntroduce` is the boolean projection of it.
  *
- * Sender-scoped, not group-scoped (the issue #62 hard contract): the chat must
- * be explicitly allowlisted AND the sender must be on the per-chat sender
- * allowlist. Empty allowlists do not authorize anyone — there is no "any member
- * of an allowlisted group" path.
+ * Sender-scoped, not group-scoped: the chat must be explicitly allowlisted AND
+ * the sender must be on the per-chat sender allowlist. Empty allowlists do not
+ * authorize anyone — there is no "any member of an allowlisted group" path.
+ */
+export function introduceDenyReason(
+  access: DispatcherAccessState,
+  input: IntroduceAuthInput,
+): IntroduceDenyReason | null {
+  if (input.chatType !== 'group') return 'non_group';
+  if (input.senderId === '') return 'empty_sender_id';
+  // The chat must be explicitly allowlisted. An empty allow_chats means "every
+  // chat" for normal delivery, but for a trust-changing command we require the
+  // chat to be named, so introduce never fires in an incidental group.
+  if (!access.group.allow_chats.includes(input.chatId)) return 'chat_not_allowlisted';
+  // The sender must be explicitly allowlisted. An empty follow_users authorizes
+  // nobody for introduce — this is the line that makes the rule sender-scoped
+  // rather than "any member of an allowlisted group".
+  if (!access.group.follow_users.includes(input.senderId)) return 'sender_not_followed';
+  return null;
+}
+
+/**
+ * True when `senderId` may run `/introduce` in this chat. Boolean projection of
+ * `introduceDenyReason`; kept as a named predicate so callers on the consume
+ * path read clearly and stay byte-identical to the pre-issue-#77 behavior.
  */
 export function canRunIntroduce(
   access: DispatcherAccessState,
   input: IntroduceAuthInput,
 ): boolean {
-  if (input.chatType !== 'group') return false;
-  if (input.senderId === '') return false;
-  // The chat must be explicitly allowlisted. An empty allow_chats means "every
-  // chat" for normal delivery, but for a trust-changing command we require the
-  // chat to be named, so introduce never fires in an incidental group.
-  if (!access.group.allow_chats.includes(input.chatId)) return false;
-  // The sender must be explicitly allowlisted. An empty follow_users authorizes
-  // nobody for introduce — this is the line that makes the rule sender-scoped
-  // rather than "any member of an allowlisted group".
-  if (!access.group.follow_users.includes(input.senderId)) return false;
-  return true;
+  return introduceDenyReason(access, input) === null;
 }
 
 /**

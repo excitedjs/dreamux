@@ -29,8 +29,8 @@ import {
   saveDispatcherAccess,
 } from './channel/feishu-gate.js';
 import {
-  canRunIntroduce,
   detectIntroduce,
+  introduceDenyReason,
   introducedPeers,
 } from './channel/introduce.js';
 import {
@@ -344,25 +344,41 @@ export class Server {
               ...(event.senderName !== '' ? { name: event.senderName } : {}),
             });
           }
-          if (
-            detectIntroduce(event.messageType, event.rawContent, event.mentions) &&
-            canRunIntroduce(access, {
+          if (detectIntroduce(event.messageType, event.rawContent, event.mentions)) {
+            const denyReason = introduceDenyReason(access, {
               chatType: event.chatType,
               chatId: event.chatId,
               senderId: event.senderId,
-            })
-          ) {
-            const peers = introducedPeers(event.mentions, bot.botOpenId);
-            if (peers.length > 0) trustIntroducedBots(id, event.chatId, peers);
+            });
+            if (denyReason === null) {
+              const peers = introducedPeers(event.mentions, bot.botOpenId);
+              if (peers.length > 0) trustIntroducedBots(id, event.chatId, peers);
+              channelLog.info(
+                {
+                  chat_id: event.chatId,
+                  sender_id: event.senderId,
+                  trusted_peers: peers.length,
+                },
+                'introduce consumed',
+              );
+              return;
+            }
+            // Issue #77: a `/introduce` that the sender is not authorized to run
+            // would otherwise fall through and surface as an ordinary gate drop
+            // (e.g. `bot not mentioned`, because the introduce path deliberately
+            // waives the mention requirement that the gate enforces), hiding the
+            // real cause. Emit one diagnostic with the stable deny reason, then
+            // let the normal gate run unchanged — trust is not written and no
+            // baseline is armed on this path.
             channelLog.info(
               {
                 chat_id: event.chatId,
                 sender_id: event.senderId,
-                trusted_peers: peers.length,
+                message_id: event.messageId,
+                reason: denyReason,
               },
-              'introduce consumed',
+              'introduce detected but not authorized',
             );
-            return;
           }
 
           const gate = dreamuxFeishuGate({
