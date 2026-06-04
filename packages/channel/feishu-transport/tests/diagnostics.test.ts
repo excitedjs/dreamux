@@ -139,12 +139,12 @@ describe('createTransportDiagnostics — injected logger routing', () => {
 
     expect(calls[0]?.level).toBe('warn')
     expect(calls[0]?.message).toBe('could not fetch:')
-    expect(calls[0]?.fields?.['source']).toBe('feishu-transport-connection')
+    expect(calls[0]?.fields?.['source']).toBe('feishu-transport-diagnostic')
     expect(calls[0]?.fields?.['err']).toMatchObject({ message: 'boom' })
     expect(calls[1]).toEqual({
       level: 'warn',
       message: 'no open_id',
-      fields: { source: 'feishu-transport-connection' },
+      fields: { source: 'feishu-transport-diagnostic' },
     })
   })
 

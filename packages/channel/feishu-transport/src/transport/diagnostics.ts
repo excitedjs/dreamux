@@ -83,8 +83,10 @@ export interface TransportDiagnostics {
 
 /** Source tag stamped on injected SDK lines, mirroring the stderr `[feishu-sdk]` prefix. */
 const SDK_SOURCE = 'feishu-sdk'
-/** Source tag stamped on injected connection lines. */
+/** Source tag stamped on injected WebSocket connection-lifecycle lines. */
 const CONNECTION_SOURCE = 'feishu-transport-connection'
+/** Source tag stamped on injected best-effort failure diagnostics (non-connection). */
+const DIAGNOSTIC_SOURCE = 'feishu-transport-diagnostic'
 
 /**
  * Build the per-instance diagnostics for a transport. With no `logger` the
@@ -131,8 +133,8 @@ export function createTransportDiagnostics(logger?: TransportLogger): TransportD
       logger.warn(
         message,
         err !== undefined
-          ? { source: CONNECTION_SOURCE, err: serializeErr(err) }
-          : { source: CONNECTION_SOURCE },
+          ? { source: DIAGNOSTIC_SOURCE, err: serializeErr(err) }
+          : { source: DIAGNOSTIC_SOURCE },
       )
     },
   }

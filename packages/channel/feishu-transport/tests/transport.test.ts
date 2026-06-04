@@ -18,6 +18,7 @@ import {
   commentFromBatchQuery,
   createFeishuTransport,
 } from '../src/transport/feishu'
+import type { TransportLogger } from '../src/transport/diagnostics'
 
 /**
  * One `drive.v1.fileComment.batchQuery` response item, in the exact shape the
@@ -351,5 +352,52 @@ describe('createFeishuTransport — editText', () => {
     )
     expect(stub.patch).not.toHaveBeenCalled()
     expect(stub.update).not.toHaveBeenCalled()
+  })
+})
+
+describe('createFeishuTransport — injected logger safety boundary (#74)', () => {
+  test('a sentinel appSecret and message body never reach the injected logger', async () => {
+    // Sentinels fed through the *real* transport inputs — the credentials and an
+    // outbound body — so this proves the adapter does not surface them, rather
+    // than asserting against strings the test never passed in.
+    const SECRET = 'fake-not-a-real-secret'
+    const BODY = 'do-not-log-body'
+
+    const calls: Array<{ message: string; fields?: Record<string, unknown> }> = []
+    const record = (message: string, fields?: Record<string, unknown>) => {
+      calls.push({ message, fields })
+    }
+    const logger: TransportLogger = {
+      error: record,
+      warn: record,
+      info: record,
+      debug: record,
+      trace: record,
+    }
+
+    const stub = stubClient()
+    const transport = createFeishuTransport(
+      { appId: 'app', appSecret: SECRET },
+      { client: stub.client, logger },
+    )
+
+    // Send a real body (no log on success), then force the doc-comment fetch to
+    // fail so the best-effort `diagnostic()` sink actually runs.
+    await transport.send({ chatId: 'oc_chat' }, BODY)
+    const drive = (
+      stub.client as unknown as {
+        drive: { fileComment: { batchQuery: ReturnType<typeof vi.fn> } }
+      }
+    ).drive
+    drive.fileComment.batchQuery.mockRejectedValueOnce(new Error('network down'))
+    const comment = await transport.fetchDocComment('tok', 'docx', 'cmt')
+
+    expect(comment).toBeNull()
+    // The diagnostic path ran (so the assertion below is not vacuous)…
+    expect(calls.length).toBeGreaterThan(0)
+    // …yet neither sentinel appears anywhere in what the logger received.
+    const haystack = JSON.stringify(calls)
+    expect(haystack).not.toContain(SECRET)
+    expect(haystack).not.toContain(BODY)
   })
 })
