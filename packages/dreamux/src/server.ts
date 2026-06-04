@@ -62,6 +62,7 @@ import {
 import {
   createLogger,
   loggerToLevelFn,
+  pinoToTransportLogger,
   type DreamuxLogger,
 } from './runtime/logger.js';
 import { createAdminSocketServer, type AdminSocketServer } from './admin/socket.js';
@@ -287,14 +288,21 @@ export class Server {
     const botSecret = this.opts.skipBotSecret
       ? ''
       : resolveBotSecret(row.bot_secret_ref, cfg);
+    // Build the per-dispatcher channel logger first so it can be injected into
+    // the bot/transport — the transport's own SDK / connection diagnostics then
+    // land in this same `logs/feishu-channel/<id>.log`, not on bare stderr.
+    const channelLog = this.channelLoggerFactory(id);
     const bot = this.opts.botFactory
       ? this.opts.botFactory(row, botSecret)
-      : createFeishuBot({ appId: row.bot_app_id, appSecret: botSecret });
+      : createFeishuBot({
+          appId: row.bot_app_id,
+          appSecret: botSecret,
+          logger: pinoToTransportLogger(channelLog),
+        });
     const channelState: DispatcherChannelState = {
       inboundReactions: new Map(),
       pendingReceivedReactionClears: new Set(),
     };
-    const channelLog = this.channelLoggerFactory(id);
 
     const runtime = new DispatcherRuntime(row, {
       dispatchers: this.repos.dispatchers,

@@ -70,22 +70,42 @@ Settled choices (as implemented):
   to a JSON-RPC envelope across the parse-error / unknown-method / admin-failure
   paths.
 
-### Deferred: `feishu-transport` package logging
+### Closed by #74: `feishu-transport` package logging
 
 The transport package's own `[feishu-sdk]` / connection-lifecycle lines
-(`reconnecting` / `reconnected` / `error` / startup-timeout) are **explicitly
-deferred** from this PR (Codex blocker #1). `FeishuTransportOptions` exposes
-only `client?` today; `sdkLogger` and `logConnection` are module-level
-singletons, so wiring a host logger in means a new public option + a published
-`@excitedjs/feishu-transport` minor version bump — out of scope for a host-side
-logging PR, and it would not change behaviour (default unchanged).
+(`reconnecting` / `reconnected` / `error` / startup-timeout) were **explicitly
+deferred** from the #70 PR (Codex blocker #1) and are now folded in by
+[#74](https://github.com/excitedjs/dreamux/issues/74).
 
-This defer does **not** lose those lines in practice: the transport routes them
-to **stderr**, and a daemonized `dreamux serve` already redirects stderr to
+`FeishuTransportOptions` gains an additive public `logger?` — a package-owned
+minimal `TransportLogger` interface (`packages/channel/feishu-transport/src/transport/diagnostics.ts`),
+**not** a reverse dependency on dreamux/pino. A per-instance
+`createTransportDiagnostics(logger?)` derives the SDK logger (one object shared
+by `lark.Client` / `EventDispatcher` / `WSClient`), the connection-lifecycle
+sink, and the best-effort `diagnostic()` sink (doc-comment / metadata /
+bot-info / socket-close failures). Instance-level, never a mutable global, so
+several dispatchers in one process never cross-write each other's logs. With no
+logger injected, the historical stderr behavior is preserved **byte-for-byte**
+(the `[feishu-sdk]` prefix, the `[feishu-transport] <ISO> <line>` connection
+lines, the best-effort `[feishu-transport] <message>` diagnostics — all to
+stderr, never a byte to stdout). The Lark-SDK-on-stdout corruption guard is
+unchanged: the default path stays on `console.error`, and the injected path
+never targets stdout.
+
+dreamux wires it through `Server`: the per-dispatcher `channelLog` is built
+**before** the bot, adapted via `pinoToTransportLogger` (`runtime/logger.ts`),
+and passed `createFeishuBot({ …, logger }) → createFeishuTransport(creds, { logger })`,
+so transport SDK/connection lines land in `logs/feishu-channel/<id>.log`.
+Safety boundary: the adapter only forwards the transport's own diagnostic
+`source`/`err` fields — never `appSecret`, raw events, `rawContent`, parsed
+text, or reply/card bodies — so routing into the channel log neither widens the
+secret/body surface nor pollutes the MCP stdout stream.
+
+Before #74 these lines were not lost, only unstructured: the transport routed
+them to **stderr**, and a daemonized `dreamux serve` already redirects stderr to
 `~/.dreamux/logs/daemon.stderr.log` (`onboard/service.ts` launchd
-`StandardErrorPath` / systemd `StandardError=append:`). They persist there
-unstructured and unsplit. Folding them into the per-dispatcher channel log is
-tracked in [#74](https://github.com/excitedjs/dreamux/issues/74).
+`StandardErrorPath` / systemd `StandardError=append:`). The default (no-logger)
+path keeps exactly that behavior.
 
 ## Logging convention (for future code)
 

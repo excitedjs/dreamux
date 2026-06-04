@@ -29,6 +29,7 @@
 import { chmodSync, mkdirSync, openSync } from 'node:fs';
 import { dirname } from 'node:path';
 
+import type { TransportLogger } from '@excitedjs/feishu-transport';
 import pino, {
   type DestinationStream,
   type Logger,
@@ -144,4 +145,27 @@ function serializeErr(err: unknown): { message: string; stack?: string } {
       : { message: err.message };
   }
   return { message: String(err) };
+}
+
+/**
+ * Adapt a `DreamuxLogger` (pino) to the `@excitedjs/feishu-transport`
+ * `TransportLogger` seam, so the transport's own SDK / connection diagnostics
+ * fold into the same per-dispatcher channel log as the host's channel
+ * decisions. pino takes `(mergingObject, message)`, the transport seam emits
+ * `(message, fields?)` — this flips the argument order and supplies an empty
+ * object when the transport carried no fields.
+ *
+ * The transport only ever passes its own diagnostic source fields (an SDK/
+ * connection `source` tag and a serialized `err`); it never hands message
+ * bodies or credentials to the logger, so this adapter forwards `fields`
+ * verbatim without re-redacting (the pino `redact` config still applies).
+ */
+export function pinoToTransportLogger(logger: DreamuxLogger): TransportLogger {
+  return {
+    error: (message, fields) => logger.error(fields ?? {}, message),
+    warn: (message, fields) => logger.warn(fields ?? {}, message),
+    info: (message, fields) => logger.info(fields ?? {}, message),
+    debug: (message, fields) => logger.debug(fields ?? {}, message),
+    trace: (message, fields) => logger.trace(fields ?? {}, message),
+  };
 }

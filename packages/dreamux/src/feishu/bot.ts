@@ -31,6 +31,7 @@ import {
   type FeishuTransport,
   type Mention,
   type OutboundTarget,
+  type TransportLogger,
 } from '@excitedjs/feishu-transport';
 
 /** The Feishu event_type carrying inbound chat messages. */
@@ -99,6 +100,15 @@ export interface FeishuBot {
 export interface CreateBotOptions {
   appId: string;
   appSecret: string;
+  /**
+   * Structured logger for the underlying transport's own diagnostics (Lark SDK
+   * logging, WebSocket connection lifecycle, best-effort fetch/close failures).
+   * Forwarded verbatim to `createFeishuTransport`. Omit to keep the transport's
+   * historical stderr behavior. The server injects the dispatcher's
+   * per-dispatcher channel logger here so connection/SDK lines land in
+   * `logs/feishu-channel/<id>.log` alongside the host's own channel decisions.
+   */
+  logger?: TransportLogger;
 }
 
 export interface CreateFeishuBotDeps {
@@ -121,10 +131,17 @@ export function createFeishuBot(
   deps: CreateFeishuBotDeps = {},
 ): FeishuBot {
   const transport = deps.createTransport?.(opts) ??
-    createFeishuTransport({
-      appId: opts.appId,
-      appSecret: opts.appSecret,
-    });
+    createFeishuTransport(
+      {
+        appId: opts.appId,
+        appSecret: opts.appSecret,
+      },
+      // Forward the host's logger so the transport's own SDK / connection
+      // diagnostics fold into the per-dispatcher channel log. `undefined` keeps
+      // the transport's default stderr behavior, so always passing the option
+      // object is safe and keeps the real wiring path explicit.
+      { logger: opts.logger },
+    );
 
   return {
     get appId(): string {

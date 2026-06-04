@@ -39,6 +39,11 @@ import {
   reconnectingLogLine,
   startupTimeoutLogLine,
 } from './connection.js'
+import {
+  createTransportDiagnostics,
+  type TransportDiagnostics,
+  type TransportLogger,
+} from './diagnostics.js'
 
 /** Cap on a single WebSocket handshake before it is aborted into a retry. */
 const WS_HANDSHAKE_TIMEOUT_MS = 15_000
@@ -50,23 +55,6 @@ const WS_HANDSHAKE_TIMEOUT_MS = 15_000
  * loop, so the transport cuts the attempt off.
  */
 const WS_STARTUP_GRACE_MS = 30_000
-
-/**
- * A Lark-SDK logger that writes every line to stderr.
- *
- * Hosts that run over an MCP stdio transport reserve stdout for the JSON-RPC
- * stream; the SDK's default logger writes to stdout, which corrupts it. Routing
- * the SDK's logger to stderr keeps stdout clean while the SDK's diagnostics
- * stay visible in the host's log. (Harmless for dreamux, which does not use
- * stdout for a protocol stream.)
- */
-const sdkLogger = {
-  error: (...msg: unknown[]) => console.error('[feishu-sdk]', ...msg),
-  warn: (...msg: unknown[]) => console.error('[feishu-sdk]', ...msg),
-  info: (...msg: unknown[]) => console.error('[feishu-sdk]', ...msg),
-  debug: (...msg: unknown[]) => console.error('[feishu-sdk]', ...msg),
-  trace: (...msg: unknown[]) => console.error('[feishu-sdk]', ...msg),
-}
 
 /** Outcome of an outbound send. */
 export interface FeishuSendResult {
@@ -347,6 +335,19 @@ export interface FeishuTransportOptions {
    * built from `creds`. Tests pass a stub; production never sets this.
    */
   client?: lark.Client
+  /**
+   * Structured logger for this transport's own diagnostics — the Lark SDK's
+   * logging, the WebSocket connection lifecycle, and the best-effort failures
+   * of the doc-comment / metadata / bot-info / socket-close paths. Additive and
+   * opt-in: with no logger the transport keeps its historical stderr behavior
+   * byte-for-byte (the `[feishu-sdk]` / `[feishu-transport]` prefixes, the ISO
+   * connection lines, and never a byte to stdout). A host injects this to fold
+   * the transport's lines into its own per-component log; see
+   * `./diagnostics.ts` for the seam and its safety boundary. Instance-level: the
+   * transport derives its SDK and connection sinks from this one logger, so
+   * several dispatchers in one process never cross-write each other's logs.
+   */
+  logger?: TransportLogger
 }
 
 /**
@@ -362,12 +363,17 @@ export function createFeishuTransport(
   creds: FeishuCredentials,
   options: FeishuTransportOptions = {},
 ): FeishuTransport {
+  // One diagnostics seam per transport instance: with no injected logger it
+  // reproduces the historical stderr behavior byte-for-byte; with one it routes
+  // structured into the host's log. Built before the SDK client so all three
+  // SDK objects below share this instance's single SDK logger.
+  const diag = createTransportDiagnostics(options.logger)
   const client =
     options.client ??
     new lark.Client({
       appId: creds.appId,
       appSecret: creds.appSecret,
-      logger: sdkLogger,
+      logger: diag.sdkLogger,
     })
   let wsClient: lark.WSClient | undefined
   let resolvedSelfId: string | undefined
@@ -378,8 +384,8 @@ export function createFeishuTransport(
    * this transport rather than threading a lock through here.
    */
   async function openInbound(routes: InboundRoutes): Promise<void> {
-    resolvedSelfId = await resolveBotOpenId(client)
-    const dispatcher = new lark.EventDispatcher({ logger: sdkLogger }).register(routes)
+    resolvedSelfId = await resolveBotOpenId(client, diag)
+    const dispatcher = new lark.EventDispatcher({ logger: diag.sdkLogger }).register(routes)
 
     // Resolves the first time the connection reaches `ready`; the startup
     // watchdog below races against it.
@@ -391,8 +397,9 @@ export function createFeishuTransport(
     const ws = new lark.WSClient({
       appId: creds.appId,
       appSecret: creds.appSecret,
-      // Route the SDK's own logging to stderr — see `sdkLogger`.
-      logger: sdkLogger,
+      // Route the SDK's own logging through this instance's diagnostics seam —
+      // stderr by default, the host's log when a logger is injected.
+      logger: diag.sdkLogger,
       // Bound a stuck WebSocket handshake so it fails into a retry rather
       // than holding a stuck DNS / NAT path open indefinitely.
       handshakeTimeoutMs: WS_HANDSHAKE_TIMEOUT_MS,
@@ -401,17 +408,17 @@ export function createFeishuTransport(
       // failing connection is observable instead of a silent retry loop.
       autoReconnect: true,
       onReady: () => {
-        logConnection('Feishu WebSocket connection is ready')
+        diag.connection('Feishu WebSocket connection is ready')
         markReady()
       },
-      onReconnecting: () => logConnection(reconnectingLogLine()),
-      onReconnected: () => logConnection(reconnectedLogLine()),
-      onError: (err) => logConnection(connectionErrorLogLine(err)),
+      onReconnecting: () => diag.connection(reconnectingLogLine()),
+      onReconnected: () => diag.connection(reconnectedLogLine()),
+      onError: (err) => diag.connection(connectionErrorLogLine(err), 'error'),
     })
     wsClient = ws
 
     void ws.start({ eventDispatcher: dispatcher }).catch((err: unknown) => {
-      logConnection(connectionErrorLogLine(err))
+      diag.connection(connectionErrorLogLine(err), 'error')
     })
 
     // The SDK retries pullConnectConfig with no delay until it first
@@ -422,7 +429,7 @@ export function createFeishuTransport(
     const cameUp = await raceConnectionReady(ready)
     if (!cameUp) {
       const gaveUp = ws.getConnectionStatus().state === 'failed'
-      logConnection(startupTimeoutLogLine(WS_STARTUP_GRACE_MS, gaveUp))
+      diag.connection(startupTimeoutLogLine(WS_STARTUP_GRACE_MS, gaveUp), 'error')
       ws.close()
       // Fail loud rather than leave a dispatcher whose bot is silently dark:
       // the host (dreamux's server) cleans up and surfaces the failure. A host
@@ -544,10 +551,7 @@ export function createFeishuTransport(
         })
         return commentFromBatchQuery(res.data?.items ?? [], commentId)
       } catch (err) {
-        console.error(
-          `[feishu-transport] could not fetch comment ${commentId} on ${fileToken}:`,
-          err,
-        )
+        diag.diagnostic(`could not fetch comment ${commentId} on ${fileToken}:`, err)
         return null
       }
     },
@@ -563,7 +567,7 @@ export function createFeishuTransport(
         if (!meta) return null
         return { title: meta.title ?? '', url: meta.url ?? '' }
       } catch (err) {
-        console.error(`[feishu-transport] could not fetch metadata for ${fileToken}:`, err)
+        diag.diagnostic(`could not fetch metadata for ${fileToken}:`, err)
         return null
       }
     },
@@ -574,7 +578,7 @@ export function createFeishuTransport(
       } catch (err) {
         // A close on an already-closed socket is expected; anything else
         // (e.g. the SDK's close surface changed) is worth a diagnostic line.
-        console.error('[feishu-transport] error while closing the Feishu WebSocket:', err)
+        diag.diagnostic('error while closing the Feishu WebSocket:', err)
       }
       wsClient = undefined
     },
@@ -632,7 +636,10 @@ const BOT_INFO_ATTEMPTS = 3
  * failure is logged with that consequence spelled out, and a transient error
  * is retried a few times before the transport gives up.
  */
-async function resolveBotOpenId(client: lark.Client): Promise<string | undefined> {
+async function resolveBotOpenId(
+  client: lark.Client,
+  diag: TransportDiagnostics,
+): Promise<string | undefined> {
   for (let attempt = 1; attempt <= BOT_INFO_ATTEMPTS; attempt++) {
     try {
       const res = await client.request<{ bot?: { open_id?: string } }>({
@@ -643,8 +650,8 @@ async function resolveBotOpenId(client: lark.Client): Promise<string | undefined
       if (openId) return openId
       // A well-formed response that simply lacks the field will not improve
       // on retry — stop here rather than spend the remaining attempts.
-      console.error(
-        '[feishu-transport] bot info response carried no open_id — groups that ' +
+      diag.diagnostic(
+        'bot info response carried no open_id — groups that ' +
           'require an @-mention will drop every message until the channel restarts',
       )
       return undefined
@@ -653,8 +660,8 @@ async function resolveBotOpenId(client: lark.Client): Promise<string | undefined
         await delay(attempt * 500)
         continue
       }
-      console.error(
-        `[feishu-transport] could not resolve the bot open_id after ${BOT_INFO_ATTEMPTS} ` +
+      diag.diagnostic(
+        `could not resolve the bot open_id after ${BOT_INFO_ATTEMPTS} ` +
           'attempts — groups that require an @-mention will drop every message ' +
           'until the channel restarts:',
         err,
@@ -668,11 +675,6 @@ async function resolveBotOpenId(client: lark.Client): Promise<string | undefined
 /** Resolve after `ms` milliseconds — the backoff between bot-info attempts. */
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-/** Write a timestamped connection-lifecycle line to the host's stderr log. */
-function logConnection(line: string): void {
-  console.error(`[feishu-transport] ${new Date().toISOString()} ${line}`)
 }
 
 /**

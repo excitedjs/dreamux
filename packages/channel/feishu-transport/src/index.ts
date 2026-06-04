@@ -94,6 +94,7 @@ export {
   type InboundRoutes,
   type RouteHandler,
 } from './transport/feishu.js'
+export type { TransportLogger } from './transport/diagnostics.js'
 
 // ── small shared util ──
 export { isRecord, asString } from './json.js'
