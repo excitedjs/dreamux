@@ -447,7 +447,7 @@ describe('codex live integration', () => {
       // Onboard the live sender onto the global allow-user list so the folded
       // group messages are delivered (empty `allow_users` authorizes nobody
       // under the follow-user gate).
-      saveDispatcherAccess('live', {
+      await saveDispatcherAccess('live', {
         version: 2,
         allow_users: ['sender-live'],
         group: { policy: 'follow-user', allow_chats: [], require_mention: true },
