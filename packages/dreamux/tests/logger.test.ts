@@ -7,7 +7,7 @@
  * honor DREAMUX_CONFIG_DIR, so injection — not an env var — is the seam.)
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -52,12 +52,16 @@ describe('logger factory', () => {
     expect(contents).toContain('"name":"server"');
   });
 
-  it('tightens a pre-existing wider-permission file to 0600', () => {
+  it('tightens a pre-existing wider-permission file to 0600', async () => {
     const filePath = join(dir, 'pre.log');
     writeFileSync(filePath, '', { mode: 0o644 });
     const logger = createLogger({ filePath, stderr: false });
     logger.info('x');
-    expect(statSync(filePath).mode & 0o777).toBe(0o600);
+    // The defensive re-tighten is a fire-and-forget async chmod (createLogger
+    // stays synchronous, the gate bans *Sync), so poll until it lands.
+    await vi.waitFor(() =>
+      expect(statSync(filePath).mode & 0o777).toBe(0o600),
+    );
   });
 
   it('redacts credential fields by default', () => {

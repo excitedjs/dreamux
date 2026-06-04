@@ -24,8 +24,8 @@ describe('restart intent marker', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('writes and reads a marker, then consumes per target exactly once', () => {
-    writeRestartIntent({
+  it('writes and reads a marker, then consumes per target exactly once', async () => {
+    await writeRestartIntent({
       targets: ['flow', 'ops'],
       announce: 'Restart completed.',
       now: 1_000,
@@ -33,7 +33,7 @@ describe('restart intent marker', () => {
     });
     expect(existsSync(path)).toBe(true);
 
-    const consumer = RestartIntentConsumer.load({ now: 2_000, path });
+    const consumer = await RestartIntentConsumer.load({ now: 2_000, path });
     // Loading deletes the file (single reader).
     expect(existsSync(path)).toBe(false);
 
@@ -45,8 +45,8 @@ describe('restart intent marker', () => {
     expect(consumer.claim('other', 2_000)).toBeNull();
   });
 
-  it('defaults the announce text and dedupes/trims targets', () => {
-    writeRestartIntent({
+  it('defaults the announce text and dedupes/trims targets', async () => {
+    await writeRestartIntent({
       targets: ['flow', ' flow ', '', 'ops'],
       now: 0,
       path,
@@ -59,9 +59,9 @@ describe('restart intent marker', () => {
     expect(file.targets).toEqual(['flow', 'ops']);
   });
 
-  it('ignores a marker past its TTL at load time', () => {
-    writeRestartIntent({ targets: ['flow'], now: 0, path });
-    const consumer = RestartIntentConsumer.load({
+  it('ignores a marker past its TTL at load time', async () => {
+    await writeRestartIntent({ targets: ['flow'], now: 0, path });
+    const consumer = await RestartIntentConsumer.load({
       now: DEFAULT_RESTART_INTENT_TTL_MS + 1,
       path,
     });
@@ -69,9 +69,9 @@ describe('restart intent marker', () => {
     expect(consumer.claim('flow', DEFAULT_RESTART_INTENT_TTL_MS + 1)).toBeNull();
   });
 
-  it('re-checks the TTL at claim time for late starters', () => {
-    writeRestartIntent({ targets: ['flow'], ttlMs: 100, now: 0, path });
-    const consumer = RestartIntentConsumer.load({ now: 50, path });
+  it('re-checks the TTL at claim time for late starters', async () => {
+    await writeRestartIntent({ targets: ['flow'], ttlMs: 100, now: 0, path });
+    const consumer = await RestartIntentConsumer.load({ now: 50, path });
     // Within TTL at load, but claimed after expiry.
     expect(consumer.claim('flow', 200)).toBeNull();
   });
@@ -106,11 +106,13 @@ describe('restart intent marker', () => {
     expect(existsSync(path)).toBe(false);
   });
 
-  it('yields an empty consumer for a missing or malformed marker', () => {
-    expect(RestartIntentConsumer.load({ now: 0, path }).claim('flow', 0)).toBeNull();
+  it('yields an empty consumer for a missing or malformed marker', async () => {
+    expect(
+      (await RestartIntentConsumer.load({ now: 0, path })).claim('flow', 0),
+    ).toBeNull();
 
     writeFileSync(path, 'not json', { mode: 0o600 });
-    const consumer = RestartIntentConsumer.load({ now: 0, path });
+    const consumer = await RestartIntentConsumer.load({ now: 0, path });
     expect(existsSync(path)).toBe(false);
     expect(consumer.claim('flow', 0)).toBeNull();
   });

@@ -16,7 +16,7 @@
  *     and post a visible warning to the next source chat.
  */
 
-import { mkdirSync } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import type {
@@ -157,19 +157,19 @@ export class DispatcherRuntime {
     this.restarting = false;
     this.clearRestartTimer();
     this.setStatus('starting');
-    this.deps.dispatchers.setStatus(this.dispatcherId, 'starting', {
+    await this.deps.dispatchers.setStatus(this.dispatcherId, 'starting', {
       last_started_at: Date.now(),
     });
 
     try {
       await this.startCodexRuntime();
-      this.markReady();
+      await this.markReady();
 
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.log('error', `start failed: ${msg}`, err);
       this.setStatus('degraded');
-      this.deps.dispatchers.setStatus(this.dispatcherId, 'degraded', {
+      await this.deps.dispatchers.setStatus(this.dispatcherId, 'degraded', {
         last_error: msg,
       });
       await this.cleanupOnFailure();
@@ -205,7 +205,7 @@ export class DispatcherRuntime {
       if (this.process !== process) return;
       this.handleChildExit(exit);
     });
-    mkdirSync(dirname(socketPath), { recursive: true });
+    await mkdir(dirname(socketPath), { recursive: true });
     await process.start();
 
     const clientFactory =
@@ -264,7 +264,7 @@ export class DispatcherRuntime {
         {},
       );
       this.threadId = res.thread.id;
-      this.deps.dispatchers.setThreadId(this.dispatcherId, this.threadId);
+      await this.deps.dispatchers.setThreadId(this.dispatcherId, this.threadId);
       this.log('info', `started fresh thread ${this.threadId}`);
       return;
     }
@@ -287,7 +287,7 @@ export class DispatcherRuntime {
         {},
       );
       this.threadId = res.thread.id;
-      this.deps.dispatchers.recordLostThread(
+      await this.deps.dispatchers.recordLostThread(
         this.dispatcherId,
         existing,
         this.threadId,
@@ -318,10 +318,10 @@ export class DispatcherRuntime {
     this.stopping = true;
     this.clearRestartTimer();
     this.setStatus('stopping');
-    this.deps.dispatchers.setStatus(this.dispatcherId, 'stopping');
+    await this.deps.dispatchers.setStatus(this.dispatcherId, 'stopping');
     await this.teardownCodexRuntime();
     this.setStatus('stopped');
-    this.deps.dispatchers.setStatus(this.dispatcherId, 'stopped');
+    await this.deps.dispatchers.setStatus(this.dispatcherId, 'stopped');
   }
 
   private async cleanupOnFailure(): Promise<void> {
@@ -374,9 +374,16 @@ export class DispatcherRuntime {
     const delay = this.restartDelayMs(attempt);
     this.log('warn', `${reason}; restarting in ${delay}ms`);
     this.setStatus('degraded');
-    this.deps.dispatchers.setStatus(this.dispatcherId, 'degraded', {
-      last_error: reason,
-    });
+    // scheduleRestart runs from synchronous event handlers (ws close, child
+    // exit); the durable status write is best-effort here — persist it without
+    // blocking, logging (never throwing) on failure. The restart timer's later
+    // 'starting'/'ready' writes are awaited, so they cannot be reordered behind
+    // this one within the backoff delay.
+    void this.deps.dispatchers
+      .setStatus(this.dispatcherId, 'degraded', { last_error: reason })
+      .catch((err) =>
+        this.log('warn', 'failed to persist degraded status', err),
+      );
     this.restartTimer = setTimeout(() => {
       this.restartTimer = null;
       void this.restartCodexRuntime(reason);
@@ -388,7 +395,7 @@ export class DispatcherRuntime {
     this.restarting = true;
     let retryReason: string | null = null;
     this.setStatus('starting');
-    this.deps.dispatchers.setStatus(this.dispatcherId, 'starting', {
+    await this.deps.dispatchers.setStatus(this.dispatcherId, 'starting', {
       last_started_at: Date.now(),
     });
     try {
@@ -400,13 +407,13 @@ export class DispatcherRuntime {
         return;
       }
       this.restartAttempts = 0;
-      this.markReady();
+      await this.markReady();
       this.log('info', `restarted codex app-server after: ${reason}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.log('error', `restart failed: ${msg}`, err);
       this.setStatus('degraded');
-      this.deps.dispatchers.setStatus(this.dispatcherId, 'degraded', {
+      await this.deps.dispatchers.setStatus(this.dispatcherId, 'degraded', {
         last_error: msg,
       });
       await this.teardownCodexRuntime();
@@ -435,9 +442,9 @@ export class DispatcherRuntime {
     this.restartTimer = null;
   }
 
-  private markReady(): void {
+  private async markReady(): Promise<void> {
     this.setStatus('ready');
-    this.deps.dispatchers.setStatus(this.dispatcherId, 'ready', {
+    await this.deps.dispatchers.setStatus(this.dispatcherId, 'ready', {
       last_ready_at: Date.now(),
       last_error: null,
     });

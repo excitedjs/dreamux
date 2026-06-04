@@ -240,27 +240,29 @@ describe('chat-bots store — awareness vs trust are separate', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it('observing a bot records awareness but never trust', () => {
-    observeKnownBot('d1', 'chat-a', { openId: 'peer-a', name: 'Peer A' });
-    const entry = loadChatBots('d1').chats['chat-a'];
+  it('observing a bot records awareness but never trust', async () => {
+    await observeKnownBot('d1', 'chat-a', { openId: 'peer-a', name: 'Peer A' });
+    const entry = (await loadChatBots('d1')).chats['chat-a'];
     expect(entry?.known).toEqual(['peer-a']);
     expect(entry?.trusted ?? []).toEqual([]);
-    expect(trustedBotIds('d1', 'chat-a').has('peer-a')).toBe(false);
+    expect((await trustedBotIds('d1', 'chat-a')).has('peer-a')).toBe(false);
   });
 
-  it('introducing a bot records trust (and awareness)', () => {
-    const added = trustIntroducedBots('d1', 'chat-a', [{ openId: 'peer-a', name: 'Peer A' }]);
+  it('introducing a bot records trust (and awareness)', async () => {
+    const added = await trustIntroducedBots('d1', 'chat-a', [
+      { openId: 'peer-a', name: 'Peer A' },
+    ]);
     expect(added).toEqual(['peer-a']);
-    const entry = loadChatBots('d1').chats['chat-a'];
+    const entry = (await loadChatBots('d1')).chats['chat-a'];
     expect(entry?.trusted).toEqual(['peer-a']);
     expect(entry?.known).toEqual(['peer-a']);
-    expect(trustedBotIds('d1', 'chat-a').has('peer-a')).toBe(true);
+    expect((await trustedBotIds('d1', 'chat-a')).has('peer-a')).toBe(true);
   });
 
-  it('recordBotAdded is idempotent by event id and flags a baseline', () => {
-    expect(recordBotAdded('d1', 'chat-a', 'evt-1')).toBe(true);
-    expect(recordBotAdded('d1', 'chat-a', 'evt-1')).toBe(false);
-    expect(loadChatBots('d1').chats['chat-a']?.needsBaseline).toBe(true);
+  it('recordBotAdded is idempotent by event id and flags a baseline', async () => {
+    expect(await recordBotAdded('d1', 'chat-a', 'evt-1')).toBe(true);
+    expect(await recordBotAdded('d1', 'chat-a', 'evt-1')).toBe(false);
+    expect((await loadChatBots('d1')).chats['chat-a']?.needsBaseline).toBe(true);
   });
 });
 
@@ -282,53 +284,57 @@ describe('chat-bots store — one-shot pending context (issue #69)', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it('arms a generation-stamped pending baseline carrying the trusted bots', () => {
-    trustIntroducedBots('d1', 'chat-a', [{ openId: 'peer-a', name: 'Peer A' }]);
-    const pending = pendingBaseline('d1', 'chat-a');
+  it('arms a generation-stamped pending baseline carrying the trusted bots', async () => {
+    await trustIntroducedBots('d1', 'chat-a', [{ openId: 'peer-a', name: 'Peer A' }]);
+    const pending = await pendingBaseline('d1', 'chat-a');
     expect(pending.needsBaseline).toBe(true);
     expect(pending.generation).toBe(1);
     expect(pending.trusted).toEqual([{ openId: 'peer-a', name: 'Peer A' }]);
   });
 
-  it('only trusted (not passively known) bots ride the pending baseline', () => {
-    observeKnownBot('d1', 'chat-a', { openId: 'known-only', name: 'Known' });
-    trustIntroducedBots('d1', 'chat-a', [{ openId: 'peer-a', name: 'Peer A' }]);
-    expect(pendingBaseline('d1', 'chat-a').trusted).toEqual([
+  it('only trusted (not passively known) bots ride the pending baseline', async () => {
+    await observeKnownBot('d1', 'chat-a', { openId: 'known-only', name: 'Known' });
+    await trustIntroducedBots('d1', 'chat-a', [{ openId: 'peer-a', name: 'Peer A' }]);
+    expect((await pendingBaseline('d1', 'chat-a')).trusted).toEqual([
       { openId: 'peer-a', name: 'Peer A' },
     ]);
   });
 
-  it('re-introducing an already-trusted bot does not re-arm the one-shot', () => {
-    trustIntroducedBots('d1', 'chat-a', [{ openId: 'peer-a' }]);
-    clearBaselineIfCurrent('d1', 'chat-a', pendingBaseline('d1', 'chat-a').generation);
-    expect(pendingBaseline('d1', 'chat-a').needsBaseline).toBe(false);
-    const added = trustIntroducedBots('d1', 'chat-a', [{ openId: 'peer-a' }]);
+  it('re-introducing an already-trusted bot does not re-arm the one-shot', async () => {
+    await trustIntroducedBots('d1', 'chat-a', [{ openId: 'peer-a' }]);
+    await clearBaselineIfCurrent(
+      'd1',
+      'chat-a',
+      (await pendingBaseline('d1', 'chat-a')).generation,
+    );
+    expect((await pendingBaseline('d1', 'chat-a')).needsBaseline).toBe(false);
+    const added = await trustIntroducedBots('d1', 'chat-a', [{ openId: 'peer-a' }]);
     expect(added).toEqual([]);
-    expect(pendingBaseline('d1', 'chat-a').needsBaseline).toBe(false);
+    expect((await pendingBaseline('d1', 'chat-a')).needsBaseline).toBe(false);
   });
 
-  it('clears the flag when the generation still matches the snapshot', () => {
-    trustIntroducedBots('d1', 'chat-a', [{ openId: 'peer-a' }]);
-    const snapshot = pendingBaseline('d1', 'chat-a');
-    clearBaselineIfCurrent('d1', 'chat-a', snapshot.generation);
-    expect(pendingBaseline('d1', 'chat-a').needsBaseline).toBe(false);
+  it('clears the flag when the generation still matches the snapshot', async () => {
+    await trustIntroducedBots('d1', 'chat-a', [{ openId: 'peer-a' }]);
+    const snapshot = await pendingBaseline('d1', 'chat-a');
+    await clearBaselineIfCurrent('d1', 'chat-a', snapshot.generation);
+    expect((await pendingBaseline('d1', 'chat-a')).needsBaseline).toBe(false);
   });
 
-  it('does NOT clear when a newer event bumped the generation mid-enqueue', () => {
-    trustIntroducedBots('d1', 'chat-a', [{ openId: 'peer-a' }]);
-    const stale = pendingBaseline('d1', 'chat-a'); // generation 1
+  it('does NOT clear when a newer event bumped the generation mid-enqueue', async () => {
+    await trustIntroducedBots('d1', 'chat-a', [{ openId: 'peer-a' }]);
+    const stale = await pendingBaseline('d1', 'chat-a'); // generation 1
     // A second /introduce arrives before the stale clear runs.
-    trustIntroducedBots('d1', 'chat-a', [{ openId: 'peer-b' }]); // generation 2
-    clearBaselineIfCurrent('d1', 'chat-a', stale.generation);
-    const after = pendingBaseline('d1', 'chat-a');
+    await trustIntroducedBots('d1', 'chat-a', [{ openId: 'peer-b' }]); // generation 2
+    await clearBaselineIfCurrent('d1', 'chat-a', stale.generation);
+    const after = await pendingBaseline('d1', 'chat-a');
     expect(after.needsBaseline).toBe(true);
     expect(after.trusted).toEqual([{ openId: 'peer-a' }, { openId: 'peer-b' }]);
   });
 
-  it('listChatBots returns known and trusted separately, with names', () => {
-    observeKnownBot('d1', 'chat-a', { openId: 'known-a', name: 'Known A' });
-    trustIntroducedBots('d1', 'chat-a', [{ openId: 'peer-a', name: 'Peer A' }]);
-    const listing = listChatBots('d1', 'chat-a');
+  it('listChatBots returns known and trusted separately, with names', async () => {
+    await observeKnownBot('d1', 'chat-a', { openId: 'known-a', name: 'Known A' });
+    await trustIntroducedBots('d1', 'chat-a', [{ openId: 'peer-a', name: 'Peer A' }]);
+    const listing = await listChatBots('d1', 'chat-a');
     expect(listing.known).toEqual([
       { openId: 'known-a', name: 'Known A' },
       { openId: 'peer-a', name: 'Peer A' },
@@ -336,9 +342,9 @@ describe('chat-bots store — one-shot pending context (issue #69)', () => {
     expect(listing.trusted).toEqual([{ openId: 'peer-a', name: 'Peer A' }]);
   });
 
-  it('returns empty listings/baseline for an unknown chat', () => {
-    expect(listChatBots('d1', 'nope')).toEqual({ known: [], trusted: [] });
-    expect(pendingBaseline('d1', 'nope')).toEqual({
+  it('returns empty listings/baseline for an unknown chat', async () => {
+    expect(await listChatBots('d1', 'nope')).toEqual({ known: [], trusted: [] });
+    expect(await pendingBaseline('d1', 'nope')).toEqual({
       needsBaseline: false,
       generation: 0,
       trusted: [],

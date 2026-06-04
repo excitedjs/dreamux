@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Remove all synchronous blocking IO from package source (fs/promises + async child_process) and add a permanent ESLint gate (n/no-sync + import/syntax backstops via the shared @excitedjs/eslint-config) wired through rush lint, CI, and the pre-commit hook (issue #85)",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

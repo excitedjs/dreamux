@@ -54,12 +54,12 @@ export async function runDaemonInstall(
 
   // Fail loudly when the operator has not run onboard yet — daemon install
   // re-registers an existing setup, it does not create one.
-  const { config } = loadConfig({ configDir: globalConfigDir() });
+  const { config } = await loadConfig({ configDir: globalConfigDir() });
   setRuntimeConfig(config);
 
   const codexBin = dryRun
     ? config.codex.bin
-    : resolveServiceExecutable(config.codex.bin, env);
+    : await resolveServiceExecutable(config.codex.bin, env);
   // Pin the managed service to a stable system Node (issue #83) rather than the
   // current process Node — otherwise running `daemon install` from a
   // version-manager Node would re-pin the service to that unstable Node.

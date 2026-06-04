@@ -18,14 +18,7 @@ import {
   type ChildProcess,
   type SpawnOptions,
 } from 'node:child_process';
-import {
-  closeSync,
-  existsSync,
-  mkdirSync,
-  openSync,
-  rmSync,
-  statSync,
-} from 'node:fs';
+import { mkdir, open, rm, stat } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 export interface CodexProcessOptions {
@@ -90,26 +83,29 @@ export class CodexProcess {
       ...(this.opts.extraArgs ?? []),
     ];
 
-    mkdirSync(dirname(this.opts.socketPath), { recursive: true });
-    mkdirSync(this.opts.cwd, { recursive: true });
-    mkdirSync(dirname(this.opts.stdoutLogPath), { recursive: true });
+    await mkdir(dirname(this.opts.socketPath), { recursive: true });
+    await mkdir(this.opts.cwd, { recursive: true });
+    await mkdir(dirname(this.opts.stdoutLogPath), { recursive: true });
     // Stale socket from a previous crashed run would otherwise prevent
     // the daemon from binding.
-    if (existsSync(this.opts.socketPath)) {
-      try {
-        rmSync(this.opts.socketPath, { force: true });
-      } catch {
-        /* ignore — bind will fail loudly if it really is busy */
-      }
+    try {
+      await rm(this.opts.socketPath, { force: true });
+    } catch {
+      /* ignore — bind will fail loudly if it really is busy */
     }
 
-    const stdoutFd = openSync(this.opts.stdoutLogPath, 'a', 0o600);
-    const stderrFd = openSync(this.opts.stderrLogPath, 'a', 0o600);
+    // Open the log files as FileHandles and hand their fds to the child's
+    // stdio. The handles are kept in locals (referenced by the finally below)
+    // so they cannot be garbage-collected — and thus closed out from under the
+    // child — between open and spawn. They are closed once the child owns the
+    // inherited fds, matching the previous openSync/closeSync timing.
+    const stdoutHandle = await open(this.opts.stdoutLogPath, 'a', 0o600);
+    const stderrHandle = await open(this.opts.stderrLogPath, 'a', 0o600);
     const spawnOpts: SpawnOptions = {
       cwd: this.opts.cwd,
       env: this.opts.env ?? process.env,
       detached: true, // its own process group, so we can group-kill on reap
-      stdio: ['ignore', stdoutFd, stderrFd],
+      stdio: ['ignore', stdoutHandle.fd, stderrHandle.fd],
     };
 
     let child: ChildProcess;
@@ -129,8 +125,8 @@ export class CodexProcess {
         });
       });
     } finally {
-      closeSync(stdoutFd);
-      closeSync(stderrFd);
+      await stdoutHandle.close();
+      await stderrHandle.close();
     }
 
     if (child.pid === undefined) {
@@ -184,12 +180,10 @@ export class CodexProcess {
       // the exact failure this guards against.
       killProcessGroup(pid, 'SIGKILL');
     }
-    if (existsSync(this.opts.socketPath)) {
-      try {
-        rmSync(this.opts.socketPath, { force: true });
-      } catch {
-        /* best effort */
-      }
+    try {
+      await rm(this.opts.socketPath, { force: true });
+    } catch {
+      /* best effort */
     }
     this.child = null;
   }
@@ -202,13 +196,11 @@ async function waitForSocket(
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (existsSync(path)) {
-      try {
-        const st = statSync(path);
-        if (st.isSocket()) return;
-      } catch {
-        /* race; keep polling */
-      }
+    try {
+      const st = await stat(path);
+      if (st.isSocket()) return;
+    } catch {
+      /* not bound yet or race; keep polling */
     }
     if (!isProcessAlive(pid)) {
       throw new Error(

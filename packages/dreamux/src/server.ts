@@ -226,9 +226,13 @@ export class Server {
 
   /** Bring up admin socket + all enabled dispatchers. */
   async start(): Promise<void> {
+    // Restore each dispatcher's persisted status.json into the in-memory store
+    // before any row is listed or launched (the constructor only seeded
+    // config-derived defaults — the status read is async).
+    await this.repos.dispatchers.hydrate();
     // Load (and delete) any restart marker before bringing dispatchers up, so
     // the snapshot is in memory when each resumed dispatcher claims its notice.
-    this.restartIntent = RestartIntentConsumer.load({ now: Date.now() });
+    this.restartIntent = await RestartIntentConsumer.load({ now: Date.now() });
 
     this.admin = createAdminSocketServer(
       this,
@@ -331,13 +335,13 @@ export class Server {
     try {
       await runtime.start();
       await bot.start({
-        onBotMemberAdded: (added) => {
+        onBotMemberAdded: async (added) => {
           // Issue #62 Phase 1/4: record that the bot joined a chat so a later
           // baseline can be injected. Idempotent by event id; no notification.
-          recordBotAdded(id, added.chatId, added.eventId);
+          await recordBotAdded(id, added.chatId, added.eventId);
         },
         onMessage: async (event: FeishuInboundEvent) => {
-          const access = loadDispatcherAccess(id);
+          const access = await loadDispatcherAccess(id);
 
           // Issue #62: peer-bot awareness + `/introduce`, evaluated before the
           // delivery gate. A bot seen in an authorized chat becomes *known*
@@ -349,7 +353,7 @@ export class Server {
             isBotSenderType(event.senderType) &&
             access.group.allow_chats.includes(event.chatId)
           ) {
-            observeKnownBot(id, event.chatId, {
+            await observeKnownBot(id, event.chatId, {
               openId: event.senderId,
               ...(event.senderName !== '' ? { name: event.senderName } : {}),
             });
@@ -362,7 +366,9 @@ export class Server {
             });
             if (denyReason === null) {
               const peers = introducedPeers(event.mentions, bot.botOpenId);
-              if (peers.length > 0) trustIntroducedBots(id, event.chatId, peers);
+              if (peers.length > 0) {
+                await trustIntroducedBots(id, event.chatId, peers);
+              }
               channelLog.info(
                 {
                   chat_id: event.chatId,
@@ -391,6 +397,10 @@ export class Server {
             );
           }
 
+          const trustedBots =
+            event.chatType === 'group'
+              ? await trustedBotIds(id, event.chatId)
+              : undefined;
           const gate = dreamuxFeishuGate({
             senderId: event.senderId,
             senderType: event.senderType,
@@ -398,11 +408,9 @@ export class Server {
             chatType: event.chatType,
             mentions: event.mentions,
             botOpenId: bot.botOpenId,
-            ...(event.chatType === 'group'
-              ? { trustedBotIds: trustedBotIds(id, event.chatId) }
-              : {}),
+            ...(trustedBots !== undefined ? { trustedBotIds: trustedBots } : {}),
           }, access);
-          saveDispatcherAccess(id, gate.access);
+          await saveDispatcherAccess(id, gate.access);
           if (gate.warning !== null) {
             channelLog.warn(
               { chat_id: event.chatId, warning: gate.warning },
@@ -428,7 +436,9 @@ export class Server {
           // `/introduce` / bot-added that re-arms the flag mid-enqueue is not
           // clobbered by the clear below.
           const baseline =
-            event.chatType === 'group' ? pendingBaseline(id, event.chatId) : null;
+            event.chatType === 'group'
+              ? await pendingBaseline(id, event.chatId)
+              : null;
           const injectBots =
             baseline !== null && baseline.needsBaseline && baseline.trusted.length > 0;
           const input: InboundTurnInput = {
@@ -466,7 +476,7 @@ export class Server {
             // actually submitted, and only if the generation is still current.
             // `duplicate` / `stopped` / `failed` leave the context pending.
             if (injectBots) {
-              clearBaselineIfCurrent(id, event.chatId, baseline.generation);
+              await clearBaselineIfCurrent(id, event.chatId, baseline.generation);
             }
             await setInboundReaction(
               id,
@@ -642,10 +652,10 @@ export class Server {
    * the model-facing `list_chat_bots` MCP tool. Reads the per-dispatcher
    * chat-bots store directly, so it does not require a running dispatcher slot.
    */
-  listChatBotsFromMcp(
+  async listChatBotsFromMcp(
     input: ServerMcpListChatBotsInput,
-  ): ServerMcpListChatBotsResult {
-    const listing = listChatBots(input.dispatcherId, input.chatId);
+  ): Promise<ServerMcpListChatBotsResult> {
+    const listing = await listChatBots(input.dispatcherId, input.chatId);
     return {
       chat_id: input.chatId,
       known: listing.known.map(toWireChatBot),

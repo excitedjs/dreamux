@@ -286,7 +286,7 @@ describe('dreamux MVP smoke', () => {
     // Empty `allow_users` now authorizes nobody (the follow-user fix), so
     // tests that exercise delivery need this seed; tests that assert a drop
     // override it or rely on a different gate reason (no mention, bot sender).
-    saveDispatcherAccess('flow', {
+    await saveDispatcherAccess('flow', {
       version: 2,
       allow_users: ['sender-test'],
       group: { policy: 'follow-user', allow_chats: [], require_mention: true },
@@ -812,7 +812,7 @@ describe('dreamux MVP smoke', () => {
   });
 
   it('reads access gate configuration from access.json and allows configured DMs', async () => {
-    saveDispatcherAccess('flow', {
+    await saveDispatcherAccess('flow', {
       version: 2,
       allow_users: ['sender-dm'],
       group: {
@@ -839,7 +839,7 @@ describe('dreamux MVP smoke', () => {
     }));
 
     await waitFor(() => fake.turnsHandled === 1);
-    const access = loadDispatcherAccess('flow');
+    const access = await loadDispatcherAccess('flow');
     expect(access.allow_users).toEqual(['sender-dm']);
     expect(access.group.policy).toEqual('allowlist');
     expect(access.group.allow_chats).toEqual(['chat-group-a']);
@@ -855,7 +855,7 @@ describe('dreamux MVP smoke', () => {
   });
 
   it('consumes a no-@ /introduce from an allowlisted sender and records trust without enqueue or reactions', async () => {
-    saveDispatcherAccess('flow', {
+    await saveDispatcherAccess('flow', {
       version: 2,
       allow_users: ['sender-test'],
       group: {
@@ -888,13 +888,13 @@ describe('dreamux MVP smoke', () => {
     expect(bot.sentMessages).toEqual([]);
     expect(bot.reactions).toEqual([]);
     // The peer bot is now trusted for this chat (and known), but not the sender.
-    const entry = loadChatBots('flow').chats['chat-group-a'];
+    const entry = (await loadChatBots('flow')).chats['chat-group-a'];
     expect(entry?.trusted).toEqual(['peer-bot-1']);
     expect(entry?.known).toEqual(['peer-bot-1']);
   });
 
   it('injects a one-shot group_bots context on the next group message after /introduce', async () => {
-    saveDispatcherAccess('flow', {
+    await saveDispatcherAccess('flow', {
       version: 2,
       allow_users: ['sender-test'],
       group: {
@@ -934,11 +934,11 @@ describe('dreamux MVP smoke', () => {
     await bot.inject(fakeInbound('chat-group-a', 'and again', 'msg-after-2'));
     await waitFor(() => codexInputs.length === 2);
     expect(codexInputs[1]).not.toContain('<group_bots');
-    expect(loadChatBots('flow').chats['chat-group-a']?.needsBaseline).toBe(false);
+    expect((await loadChatBots('flow')).chats['chat-group-a']?.needsBaseline).toBe(false);
   });
 
   it('mcp.list_chat_bots returns the chat known + trusted bots with names', async () => {
-    saveDispatcherAccess('flow', {
+    await saveDispatcherAccess('flow', {
       version: 2,
       allow_users: ['sender-test'],
       group: {
@@ -994,7 +994,7 @@ describe('dreamux MVP smoke', () => {
   });
 
   it('does NOT consume /introduce from a non-allowlisted sender (no trust, dropped by the gate)', async () => {
-    saveDispatcherAccess('flow', {
+    await saveDispatcherAccess('flow', {
       version: 2,
       allow_users: ['sender-test'],
       group: {
@@ -1032,7 +1032,7 @@ describe('dreamux MVP smoke', () => {
     // and the bot was not mentioned). No trust written, no enqueue, no reactions.
     expect(fake.turnsHandled).toBe(0);
     expect(bot.reactions).toEqual([]);
-    const entry = loadChatBots('flow').chats['chat-group-a'];
+    const entry = (await loadChatBots('flow')).chats['chat-group-a'];
     expect(entry?.trusted ?? []).not.toContain('peer-bot-2');
 
     // Issue #77: the unauthorized introduce is diagnosed before the gate runs,
@@ -1069,7 +1069,7 @@ describe('dreamux MVP smoke', () => {
     // unauthorized, and because the gate is mention-first the eventual drop
     // reason is `bot not mentioned` — which looks like the user simply forgot to
     // @ the bot, hiding the real cause that the issue #77 diagnostic names.
-    saveDispatcherAccess('flow', {
+    await saveDispatcherAccess('flow', {
       version: 2,
       allow_users: [],
       group: {
@@ -1105,7 +1105,7 @@ describe('dreamux MVP smoke', () => {
     await sleep(60);
     expect(fake.turnsHandled).toBe(0);
     expect(bot.reactions).toEqual([]);
-    expect(loadChatBots('flow').chats['chat-group-a']?.trusted ?? []).not.toContain('peer-bot-3');
+    expect((await loadChatBots('flow')).chats['chat-group-a']?.trusted ?? []).not.toContain('peer-bot-3');
 
     const lines = channel.lines();
     expect(lines.find((l) => l['msg'] === 'introduce detected but not authorized')).toMatchObject({
@@ -1123,7 +1123,7 @@ describe('dreamux MVP smoke', () => {
   });
 
   it('diagnoses an unauthorized /introduce when the chat is not allowlisted', async () => {
-    saveDispatcherAccess('flow', {
+    await saveDispatcherAccess('flow', {
       version: 2,
       allow_users: ['sender-test'],
       group: {
@@ -1158,7 +1158,7 @@ describe('dreamux MVP smoke', () => {
 
     await sleep(60);
     expect(fake.turnsHandled).toBe(0);
-    expect(loadChatBots('flow').chats['chat-group-a']?.trusted ?? []).not.toContain('peer-bot-4');
+    expect((await loadChatBots('flow')).chats['chat-group-a']?.trusted ?? []).not.toContain('peer-bot-4');
 
     expect(
       channel.lines().find((l) => l['msg'] === 'introduce detected but not authorized'),
@@ -1171,7 +1171,7 @@ describe('dreamux MVP smoke', () => {
   });
 
   it('diagnoses an unauthorized /introduce sent as a direct message (non_group)', async () => {
-    saveDispatcherAccess('flow', {
+    await saveDispatcherAccess('flow', {
       version: 2,
       allow_users: ['sender-test'],
       group: {
@@ -1219,7 +1219,7 @@ describe('dreamux MVP smoke', () => {
   });
 
   it('an authorized /introduce is consumed without emitting the unauthorized diagnostic', async () => {
-    saveDispatcherAccess('flow', {
+    await saveDispatcherAccess('flow', {
       version: 2,
       allow_users: ['sender-test'],
       group: {
@@ -1255,7 +1255,7 @@ describe('dreamux MVP smoke', () => {
     await sleep(60);
     // Consumed: trust written, no enqueue, and crucially no unauthorized diagnostic.
     expect(fake.turnsHandled).toBe(0);
-    expect(loadChatBots('flow').chats['chat-group-a']?.trusted).toEqual(['peer-bot-5']);
+    expect((await loadChatBots('flow')).chats['chat-group-a']?.trusted).toEqual(['peer-bot-5']);
     const lines = channel.lines();
     expect(lines.some((l) => l['msg'] === 'introduce consumed')).toBe(true);
     expect(lines.some((l) => l['msg'] === 'introduce detected but not authorized')).toBe(false);
@@ -1273,7 +1273,7 @@ describe('dreamux MVP smoke', () => {
     await bot.inject(fakeInbound('chat-group-a', 'first chat', 'msg-chat-a'));
     await bot.inject(fakeInbound('chat-group-b', 'second chat', 'msg-chat-b'));
 
-    const access = loadDispatcherAccess('flow');
+    const access = await loadDispatcherAccess('flow');
     expect(access.observed_chats).toEqual(['chat-group-a', 'chat-group-b']);
     expect(access.warnings).toEqual([TRUST_DOMAIN_WARNING]);
     expect(bot.reactions.map((reaction) => reaction.messageId)).toEqual([
@@ -1547,7 +1547,7 @@ describe('dreamux MVP smoke', () => {
     const config = configWithDispatcher();
     server = buildServer({ runtimeDir, fake, bot, config });
     // Pre-seed an existing thread_id so startup will try thread/resume.
-    server.repos.dispatchers.setThreadId('flow', 'thread_was_lost');
+    await server.repos.dispatchers.setThreadId('flow', 'thread_was_lost');
 
     await server.shutdown();
     await fake.close();
@@ -1572,12 +1572,12 @@ describe('dreamux MVP smoke', () => {
   it('injects a restart notice into a resumed target after daemon restart --notify-resumed', async () => {
     const config = configWithDispatcher();
     server = buildServer({ runtimeDir, fake, bot, config });
-    server.repos.dispatchers.setThreadId('flow', 'thread_seed');
+    await server.repos.dispatchers.setThreadId('flow', 'thread_seed');
     await server.start();
     await server.shutdown();
 
     // Marker written by `daemon restart --notify-resumed --dispatcher flow`.
-    writeRestartIntent({
+    await writeRestartIntent({
       targets: ['flow'],
       announce: 'Restart completed.',
       now: Date.now(),
@@ -1598,7 +1598,7 @@ describe('dreamux MVP smoke', () => {
   it('does not inject a restart notice without a marker (plain resume)', async () => {
     const config = configWithDispatcher();
     server = buildServer({ runtimeDir, fake, bot, config });
-    server.repos.dispatchers.setThreadId('flow', 'thread_seed');
+    await server.repos.dispatchers.setThreadId('flow', 'thread_seed');
     await server.start();
     await server.shutdown();
     codexInputs = [];

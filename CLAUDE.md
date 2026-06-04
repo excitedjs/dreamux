@@ -17,10 +17,12 @@ fix it in the same PR.
 
 `excitedjs/dreamux` is a **Rush + pnpm monorepo** since issue #4.
 
-- `/packages/<name>/` holds publishable packages. Today: `@excitedjs/dreamux`
+- `/packages/<name>/` holds packages. Publishable today: `@excitedjs/dreamux`
   (the host), `@excitedjs/feishu-transport` (the platform-I/O core, sole owner
   of the `@larksuiteoapi/node-sdk` import), and `@excitedjs/feishu-channel`
   (per-host channel layer, a placeholder today) — see the channel refactor (#4).
+  Private (unpublished): `@excitedjs/eslint-config`, the shared ESLint flat
+  config that is the single source of the synchronous-blocking-IO ban (#85).
 - `/rush.json`, `/common/config/rush/`, `/common/scripts/install-run-rush.js`
   are the rush + pnpm scaffolding.
 - `/bin/dreamux` is a source-checkout convenience shim that forwards to
@@ -116,6 +118,17 @@ explicitly supersedes the top-level design.
   byte-identical with the claudemux repo** — do not edit them in only one repo;
   if gitleaks false-positives, stop and ask rather than adding a local
   allowlist, and sync any config change across both repos.
+- **No synchronous blocking IO in package source. (#85.)** dreamux is one
+  event loop hosting N dispatchers; a `*Sync` fs/`child_process` call stalls
+  every dispatcher. `n/no-sync` (plus import / syntax backstops, shared via
+  `@excitedjs/eslint-config`) makes `/packages/*/src/**` a hard error; use
+  `node:fs/promises` and the async `child_process` API. `tests/**` allows sync
+  `fs` fixtures but still bans sync `child_process` (two audited exemptions
+  carry reasoned `eslint-disable`s). `runtime/logger.ts` keeps
+  `pino.destination({ sync: true })` deliberately — a config flag, not a `*Sync`
+  call. Enforced by `rush lint` (CI + pre-commit). The config is pure-syntactic,
+  so `no-floating-promises` is unavailable: audit a newly-`async` function's
+  callers by hand. See `.agents/decisions/no-sync-io-lint-gate.md`.
 - **No new runtime dependencies on dev tools.** PR #6 removed `tsx`; do
   not reintroduce it for bin launchers. The launchers exec `node` on
   compiled `dist/` output.

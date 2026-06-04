@@ -8,8 +8,9 @@
 #     (generic, committed) plus an optional private domain denylist supplied via
 #     the AUTHOR_EMAIL_DENYLIST_REGEX repo variable (kept out of this file).
 #   - shellcheck — lint committed shell entry points and hooks.
-#   - rush — bootstrap, build, typecheck, and test the whole workspace via the
-#     monorepo path (the single supported install path — see decision 0006).
+#   - rush — bootstrap, build, typecheck, lint, and test the whole workspace via
+#     the monorepo path (the single supported install path — see decision 0006).
+#     The lint step enforces the issue #85 synchronous-blocking-IO ban.
 #     This replaces the old per-package `npm ci` job, which cannot resolve the
 #     `workspace:*` dependency that landed with the channel refactor (#4).
 #   - kb — validate the .agents/ knowledge base (link / orphan check)
@@ -153,7 +154,7 @@ jobs:
         run: ./.agents/scripts/check.sh
 
   rush:
-    name: rush — bootstrap / build / typecheck / test (${{ matrix.os }})
+    name: rush — bootstrap / build / typecheck / lint / test (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -174,6 +175,11 @@ jobs:
         run: node common/scripts/install-run-rush.js build
       - name: rush typecheck
         run: node common/scripts/install-run-rush.js typecheck
+      # Enforce the issue #85 synchronous-blocking-IO ban (n/no-sync + import /
+      # syntax backstops, shared via @excitedjs/eslint-config). src/** is a hard
+      # error on any *Sync IO; tests/** is audited via reasoned disables.
+      - name: rush lint
+        run: node common/scripts/install-run-rush.js lint
       - name: install codex for live compatibility test
         run: |
           npm install --global @openai/codex@latest

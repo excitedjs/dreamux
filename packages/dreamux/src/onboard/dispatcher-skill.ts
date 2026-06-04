@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -14,13 +14,13 @@ const DISPATCHER_SKILL_SOURCE = join(
   'SKILL.md',
 );
 
-export function installDispatcherSkill(options: {
+export async function installDispatcherSkill(options: {
   skillPath: string;
   ledger: OnboardFileLedger;
   dryRun: boolean;
-}): void {
-  const content = readDispatcherSkill();
-  writeTextFile(
+}): Promise<void> {
+  const content = await readDispatcherSkill();
+  await writeTextFile(
     options.skillPath,
     content,
     options.ledger,
@@ -29,9 +29,15 @@ export function installDispatcherSkill(options: {
   );
 }
 
-function readDispatcherSkill(): string {
-  if (!existsSync(DISPATCHER_SKILL_SOURCE)) {
-    throw new Error(`missing bundled dispatcher skill: ${DISPATCHER_SKILL_SOURCE}`);
+async function readDispatcherSkill(): Promise<string> {
+  try {
+    return await readFile(DISPATCHER_SKILL_SOURCE, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new Error(
+        `missing bundled dispatcher skill: ${DISPATCHER_SKILL_SOURCE}`,
+      );
+    }
+    throw err;
   }
-  return readFileSync(DISPATCHER_SKILL_SOURCE, 'utf8');
 }

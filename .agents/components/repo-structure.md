@@ -1,6 +1,6 @@
 # Component: repo structure
 
-Rush + pnpm monorepo since issue #4. Three packages today, all wired
+Rush + pnpm monorepo since issue #4. Four packages today, all wired
 through pnpm `workspace:*` and installed via the rush path only (see
 [the install-model decision](../decisions/install-model.md)):
 
@@ -9,6 +9,7 @@ through pnpm `workspace:*` and installed via the rush path only (see
 | `@excitedjs/dreamux` | `/packages/dreamux/` | the host server |
 | `@excitedjs/feishu-transport` | `/packages/channel/feishu-transport/` | platform-I/O core; **sole** importer of `@larksuiteoapi/node-sdk` |
 | `@excitedjs/feishu-channel` | `/packages/channel/feishu-channel/` | per-host channel layer (placeholder today) |
+| `@excitedjs/eslint-config` | `/packages/eslint-config/` | private (unpublished) shared ESLint flat config; single source of the synchronous-blocking-IO ban (see [the no-sync-io decision](../decisions/no-sync-io-lint-gate.md)) |
 
 The channel refactor (#4) extracted the Feishu platform I/O out of the
 dreamux host into `@excitedjs/feishu-transport`, so the host and the
@@ -53,10 +54,17 @@ verbatim through the move):
 ## Installation — the rush path only
 
 ```bash
-node common/scripts/install-run-rush.js update   # then build / test
+node common/scripts/install-run-rush.js update   # then build / lint / test
 node common/scripts/install-run-rush.js build
+node common/scripts/install-run-rush.js lint
 node common/scripts/install-run-rush.js test
 ```
+
+`rush lint` is a Rush bulk command that runs each package's `eslint .` against
+the shared `@excitedjs/eslint-config`. It enforces the synchronous-blocking-IO
+ban (`src/**` is a hard error; `tests/**` is audited) — see
+[the no-sync-io decision](../decisions/no-sync-io-lint-gate.md). CI runs it in
+the `rush` job; the pre-commit hook lints staged `.ts` as a local pre-flight.
 
 The per-package `cd packages/dreamux && npm install` path is **retired**:
 `@excitedjs/dreamux` now depends on `@excitedjs/feishu-transport` via the

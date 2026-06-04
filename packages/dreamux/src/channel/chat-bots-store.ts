@@ -19,14 +19,7 @@
  * sanitized into a path segment. Owner-only (0600); writes are atomic.
  */
 
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  writeFileSync,
-} from 'node:fs';
+import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import { dispatcherChatBotsPath } from '../runtime/paths.js';
@@ -121,24 +114,28 @@ function peerBotsFrom(entry: ChatBotsEntry, openIds: string[]): PeerBot[] {
  * file is not security-critical — it only affects peer-bot discovery — so a
  * load failure degrades to an empty store rather than throwing.
  */
-export function loadChatBots(dispatcherId: string): ChatBotsState {
+export async function loadChatBots(
+  dispatcherId: string,
+): Promise<ChatBotsState> {
   const path = dispatcherChatBotsPath(dispatcherId);
-  if (!existsSync(path)) return defaultChatBotsState();
   try {
-    const parsed = JSON.parse(readFileSync(path, 'utf8')) as unknown;
+    const parsed = JSON.parse(await readFile(path, 'utf8')) as unknown;
     return normalizeChatBots(parsed);
   } catch {
     return defaultChatBotsState();
   }
 }
 
-export function saveChatBots(dispatcherId: string, state: ChatBotsState): void {
+export async function saveChatBots(
+  dispatcherId: string,
+  state: ChatBotsState,
+): Promise<void> {
   const path = dispatcherChatBotsPath(dispatcherId);
-  mkdirSync(dirname(path), { recursive: true });
+  await mkdir(dirname(path), { recursive: true });
   const tmp = `${path}.tmp-${process.pid}-${tmpCounter++}`;
-  writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
-  chmodSync(tmp, 0o600);
-  renameSync(tmp, path);
+  await writeFile(tmp, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+  await chmod(tmp, 0o600);
+  await rename(tmp, path);
 }
 
 function entryFor(state: ChatBotsState, chatId: string): ChatBotsEntry {
@@ -150,32 +147,32 @@ function entryFor(state: ChatBotsState, chatId: string): ChatBotsEntry {
 }
 
 /** Record a passively observed peer bot as *known* (awareness only). */
-export function observeKnownBot(
+export async function observeKnownBot(
   dispatcherId: string,
   chatId: string,
   bot: PeerBot,
-): void {
+): Promise<void> {
   if (bot.openId === '') return;
-  const state = loadChatBots(dispatcherId);
+  const state = await loadChatBots(dispatcherId);
   const entry = entryFor(state, chatId);
   let changed = recordName(entry, bot);
   if (!entry.known.includes(bot.openId)) {
     entry.known.push(bot.openId);
     changed = true;
   }
-  if (changed) saveChatBots(dispatcherId, state);
+  if (changed) await saveChatBots(dispatcherId, state);
 }
 
 /**
  * Record peer bots introduced by an allowlisted `/introduce` as *trusted*.
  * Trusted bots are also known. Returns the open_ids newly added to trust.
  */
-export function trustIntroducedBots(
+export async function trustIntroducedBots(
   dispatcherId: string,
   chatId: string,
   bots: PeerBot[],
-): string[] {
-  const state = loadChatBots(dispatcherId);
+): Promise<string[]> {
+  const state = await loadChatBots(dispatcherId);
   const entry = entryFor(state, chatId);
   const added: string[] = [];
   let changed = false;
@@ -196,7 +193,7 @@ export function trustIntroducedBots(
   // (issue #69). Re-introducing already-trusted bots changes nothing, so it
   // does not re-arm the one-shot.
   if (added.length > 0) markBaseline(entry);
-  if (changed) saveChatBots(dispatcherId, state);
+  if (changed) await saveChatBots(dispatcherId, state);
   return added;
 }
 
@@ -206,11 +203,11 @@ export function trustIntroducedBots(
  * enqueue, injects the trusted bots when `needsBaseline`, and clears via
  * `clearBaselineIfCurrent` only after a successful submission.
  */
-export function pendingBaseline(
+export async function pendingBaseline(
   dispatcherId: string,
   chatId: string,
-): PendingBaseline {
-  const entry = loadChatBots(dispatcherId).chats[chatId];
+): Promise<PendingBaseline> {
+  const entry = (await loadChatBots(dispatcherId)).chats[chatId];
   if (entry === undefined) {
     return { needsBaseline: false, generation: 0, trusted: [] };
   }
@@ -227,25 +224,25 @@ export function pendingBaseline(
  * that arrived mid-enqueue bumps the generation, so this no-ops rather than
  * dropping the newer pending context (issue #69).
  */
-export function clearBaselineIfCurrent(
+export async function clearBaselineIfCurrent(
   dispatcherId: string,
   chatId: string,
   generation: number,
-): void {
-  const state = loadChatBots(dispatcherId);
+): Promise<void> {
+  const state = await loadChatBots(dispatcherId);
   const entry = state.chats[chatId];
   if (entry === undefined || !entry.needsBaseline) return;
   if (entry.baselineGeneration !== generation) return;
   entry.needsBaseline = false;
-  saveChatBots(dispatcherId, state);
+  await saveChatBots(dispatcherId, state);
 }
 
 /** Known and trusted peer bots for one chat (the `list_chat_bots` tool). */
-export function listChatBots(
+export async function listChatBots(
   dispatcherId: string,
   chatId: string,
-): ChatBotsListing {
-  const entry = loadChatBots(dispatcherId).chats[chatId];
+): Promise<ChatBotsListing> {
+  const entry = (await loadChatBots(dispatcherId)).chats[chatId];
   if (entry === undefined) return { known: [], trusted: [] };
   return {
     known: peerBotsFrom(entry, entry.known),
@@ -254,8 +251,11 @@ export function listChatBots(
 }
 
 /** The trust set the gate consults for one chat. */
-export function trustedBotIds(dispatcherId: string, chatId: string): Set<string> {
-  return new Set(loadChatBots(dispatcherId).chats[chatId]?.trusted ?? []);
+export async function trustedBotIds(
+  dispatcherId: string,
+  chatId: string,
+): Promise<Set<string>> {
+  return new Set((await loadChatBots(dispatcherId)).chats[chatId]?.trusted ?? []);
 }
 
 /**
@@ -263,12 +263,12 @@ export function trustedBotIds(dispatcherId: string, chatId: string): Set<string>
  * baseline injection. Idempotent by event id — a redelivered event is a no-op.
  * Returns true when the event was newly recorded.
  */
-export function recordBotAdded(
+export async function recordBotAdded(
   dispatcherId: string,
   chatId: string,
   eventId: string,
-): boolean {
-  const state = loadChatBots(dispatcherId);
+): Promise<boolean> {
+  const state = await loadChatBots(dispatcherId);
   const entry = entryFor(state, chatId);
   if (eventId !== '' && entry.seenEventIds.includes(eventId)) return false;
   if (eventId !== '') {
@@ -276,7 +276,7 @@ export function recordBotAdded(
     while (entry.seenEventIds.length > MAX_SEEN_EVENT_IDS) entry.seenEventIds.shift();
   }
   markBaseline(entry);
-  saveChatBots(dispatcherId, state);
+  await saveChatBots(dispatcherId, state);
   return true;
 }
 

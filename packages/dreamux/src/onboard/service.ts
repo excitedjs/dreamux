@@ -1,7 +1,17 @@
-import { accessSync, constants, existsSync, rmSync } from 'node:fs';
-import { realpath } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { access, realpath, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
+
+/** Async existence probe — the fs/promises replacement for `existsSync`. */
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 import { build as buildPlist } from 'plist';
 import { expandHome } from '../runtime/config.js';
@@ -87,14 +97,14 @@ export async function installUserService(
   const logDir = logsRoot();
   const stdoutLog = join(logDir, 'daemon.stdout.log');
   const stderrLog = join(logDir, 'daemon.stderr.log');
-  ensureDirectory(logDir, options.ledger, 'daemon log directory', {
+  await ensureDirectory(logDir, options.ledger, 'daemon log directory', {
     dryRun: options.answers.dryRun,
   });
-  ensureTextFile(stdoutLog, '', options.ledger, 'daemon stdout log', {
+  await ensureTextFile(stdoutLog, '', options.ledger, 'daemon stdout log', {
     mode: 0o600,
     dryRun: options.answers.dryRun,
   });
-  ensureTextFile(stderrLog, '', options.ledger, 'daemon stderr log', {
+  await ensureTextFile(stderrLog, '', options.ledger, 'daemon stderr log', {
     mode: 0o600,
     dryRun: options.answers.dryRun,
   });
@@ -103,7 +113,7 @@ export async function installUserService(
     unit.platform === 'launchd'
       ? renderLaunchdPlist(options.answers, stdoutLog, stderrLog)
       : renderSystemdUnit(options.answers, stdoutLog, stderrLog);
-  const unitStatus = writeTextFile(
+  const unitStatus = await writeTextFile(
     unit.path,
     content,
     options.ledger,
@@ -232,24 +242,24 @@ export async function validateManagedServiceLaunch(
   };
 }
 
-export function resolveServiceExecutable(
+export async function resolveServiceExecutable(
   command: string,
   env: NodeJS.ProcessEnv = process.env,
-): string {
+): Promise<string> {
   const trimmed = command.trim();
   if (trimmed === '') {
     throw new Error('managed service executable path is empty');
   }
   if (trimmed.includes('/') || trimmed.startsWith('~')) {
     const candidate = resolve(expandHome(trimmed));
-    assertExecutable(candidate, command);
+    await assertExecutable(candidate, command);
     return candidate;
   }
 
   for (const dir of (env['PATH'] ?? '').split(delimiter)) {
     if (dir === '') continue;
     const candidate = join(dir, trimmed);
-    if (isExecutable(candidate)) return candidate;
+    if (await isExecutable(candidate)) return candidate;
   }
 
   throw new Error(
@@ -274,7 +284,7 @@ export function nodeVersionSatisfies(raw: string): boolean {
  */
 export interface ServiceNodeProbe {
   realpath: (path: string) => Promise<string>;
-  isExecutable: (path: string) => boolean;
+  isExecutable: (path: string) => Promise<boolean>;
 }
 
 export const defaultServiceNodeProbe: ServiceNodeProbe = {
@@ -375,7 +385,7 @@ export async function selectServiceNodeBin(
 ): Promise<string> {
   const probe = options.probe ?? defaultServiceNodeProbe;
   for (const candidate of stableNodeCandidates(options.platform)) {
-    if (!probe.isExecutable(candidate)) continue;
+    if (!(await probe.isExecutable(candidate))) continue;
     if ((await detectServiceNodeVersionManager(candidate, probe)) !== null) {
       continue;
     }
@@ -446,7 +456,7 @@ export async function stabilizeHomebrewCellarNode(
   links.push(`${cellar.prefix}/opt/node/bin/node`, `${cellar.prefix}/bin/node`);
 
   for (const link of links) {
-    if (!probe.isExecutable(link)) continue;
+    if (!(await probe.isExecutable(link))) continue;
     try {
       if ((await probe.realpath(link)) === resolved) return link;
     } catch {
@@ -481,14 +491,14 @@ function uniqueNonEmpty(values: string[]): string[] {
   return out;
 }
 
-function assertExecutable(path: string, label: string): void {
-  if (isExecutable(path)) return;
+async function assertExecutable(path: string, label: string): Promise<void> {
+  if (await isExecutable(path)) return;
   throw new Error(`managed service executable is not runnable: ${label}`);
 }
 
-function isExecutable(path: string): boolean {
+async function isExecutable(path: string): Promise<boolean> {
   try {
-    accessSync(path, constants.X_OK);
+    await access(path, constants.X_OK);
     return true;
   } catch {
     return false;
@@ -635,8 +645,8 @@ export async function removeUserService(
     );
   }
 
-  const existed = existsSync(unit.path);
-  if (existed && !dryRun) rmSync(unit.path, { force: true });
+  const existed = await pathExists(unit.path);
+  if (existed && !dryRun) await rm(unit.path, { force: true });
 
   if (unit.platform === 'systemd') {
     await runServiceBestEffort(options.runner, 'systemctl', ['--user', 'daemon-reload'], dryRun);

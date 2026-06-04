@@ -7,7 +7,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { access, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -437,6 +437,16 @@ function printServiceWarnings(
   }
 }
 
+/** Async existence probe — the fs/promises replacement for `existsSync`. */
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function buildConfigCommands(y: Argv): Argv {
   return y
     .command(
@@ -451,13 +461,13 @@ function buildConfigCommands(y: Argv): Argv {
       'show',
       'Print the dreamux global config file',
       (yy) => yy,
-      () => {
+      async () => {
         const file = globalConfigFile();
-        if (!existsSync(file)) {
+        if (!(await pathExists(file))) {
           throw new Error(`config file does not exist: ${file}`);
         }
-        assertConfigFileMode(file);
-        const raw = readFileSync(file, 'utf8');
+        await assertConfigFileMode(file);
+        const raw = await readFile(file, 'utf8');
         process.stdout.write(redactConfigForDisplay(raw, file));
       },
     )

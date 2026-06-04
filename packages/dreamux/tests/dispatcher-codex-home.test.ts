@@ -38,7 +38,7 @@ describe('global Codex home doctor', () => {
     rmSync(runtimeDir, { recursive: true, force: true });
   });
 
-  it('places app-server sockets under the dreamux dispatcher runtime directory', () => {
+  it('places app-server sockets under the dreamux dispatcher runtime directory', async () => {
     expect(dispatcherSocketPath('flow')).toBe(
       join(dispatcherAppServerControlDir('flow'), 'codex.sock'),
     );
@@ -50,8 +50,8 @@ describe('global Codex home doctor', () => {
       .toBeLessThanOrEqual(DISPATCHER_APP_SERVER_SOCKET_PATH_MAX_BYTES);
   });
 
-  it('reports every missing Codex home requirement', () => {
-    const result = validateDispatcherCodexHome('flow', { env: {} });
+  it('reports every missing Codex home requirement', async () => {
+    const result = await validateDispatcherCodexHome('flow', { env: {} });
 
     expect(result.ok).toBe(false);
     expect(result.errors).toEqual(
@@ -63,28 +63,28 @@ describe('global Codex home doctor', () => {
     );
   });
 
-  it('accepts a minimal global Codex home prepared by onboard', () => {
+  it('accepts a minimal global Codex home prepared by onboard', async () => {
     writeDispatcherHome('flow');
 
-    const result = validateDispatcherCodexHome('flow', { env: {} });
+    const result = await validateDispatcherCodexHome('flow', { env: {} });
 
     expect(result.ok).toBe(true);
     expect(result.errors).toEqual([]);
   });
 
-  it('does not require a Codex config file in the global Codex home', () => {
+  it('does not require a Codex config file in the global Codex home', async () => {
     writeDispatcherHome('flow');
 
-    const result = validateDispatcherCodexHome('flow', { env: {} });
+    const result = await validateDispatcherCodexHome('flow', { env: {} });
 
     expect(result.ok).toBe(true);
     expect(result.errors).toEqual([]);
   });
 
-  it('ignores runtime CLI overrides when checking static Codex home readiness', () => {
+  it('ignores runtime CLI overrides when checking static Codex home readiness', async () => {
     writeDispatcherHome('flow');
 
-    const result = validateDispatcherCodexHome('flow', {
+    const result = await validateDispatcherCodexHome('flow', {
       codexCliArgs: [
         '-c',
         'sandbox_mode=workspace-write',
@@ -97,20 +97,18 @@ describe('global Codex home doctor', () => {
     expect(result.ok).toBe(true);
   });
 
-  it('rejects too-long app-server socket paths before bind', () => {
+  it('rejects too-long app-server socket paths before bind', async () => {
     process.env['HOME'] = join(runtimeDir, 'h'.repeat(90));
 
-    expect(() =>
+    await expect(
       validateDispatcherCodexHome('dispatcher-with-long-id', { env: {} }),
-    ).toThrow(
-      /Codex socket path is too long/,
-    );
+    ).rejects.toThrow(/Codex socket path is too long/);
   });
 
-  it('requires auth environment variables to be non-empty and accepts CODEX_ACCESS_TOKEN', () => {
+  it('requires auth environment variables to be non-empty and accepts CODEX_ACCESS_TOKEN', async () => {
     writeDispatcherHome('flow', { writeAuth: false });
 
-    const emptyAuth = validateDispatcherCodexHome('flow', {
+    const emptyAuth = await validateDispatcherCodexHome('flow', {
       env: { OPENAI_API_KEY: '' },
     });
     expect(emptyAuth.ok).toBe(false);
@@ -118,13 +116,13 @@ describe('global Codex home doctor', () => {
       'missing Codex auth state',
     );
 
-    const accessToken = validateDispatcherCodexHome('flow', {
+    const accessToken = await validateDispatcherCodexHome('flow', {
       env: { CODEX_ACCESS_TOKEN: 'token-test' },
     });
     expect(accessToken.ok).toBe(true);
   });
 
-  it('reports invalid caller-provided Codex config paths', () => {
+  it('reports invalid caller-provided Codex config paths', async () => {
     writeDispatcherHome('flow');
     const badConfigPath = join(runtimeDir, 'bad-config.toml');
     writeFileSync(badConfigPath, 'not toml =');
@@ -132,7 +130,7 @@ describe('global Codex home doctor', () => {
       codexCliArgs: ['-c', 'sandbox_mode=danger-full-access'],
     });
 
-    const result = validateDispatcherCodexHome({
+    const result = await validateDispatcherCodexHome({
       ...context,
       configPath: badConfigPath,
     }, { env: {} });
@@ -143,10 +141,10 @@ describe('global Codex home doctor', () => {
     );
   });
 
-  it('rejects missing workspace-local dispatcher skills', () => {
+  it('rejects missing workspace-local dispatcher skills', async () => {
     writeDispatcherHome('flow', { installDispatcherSkill: false });
 
-    const result = validateDispatcherCodexHome('flow', { env: {} });
+    const result = await validateDispatcherCodexHome('flow', { env: {} });
 
     expect(result.ok).toBe(false);
     expect(formatDispatcherCodexHomeErrors(result)).toContain(

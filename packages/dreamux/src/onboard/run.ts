@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { access } from 'node:fs/promises';
 
 import { codexArgsToCli, parseCodexArgs } from '../runtime/codex-args.js';
 import {
@@ -68,10 +68,10 @@ export async function runOnboard(
   const runner = options.runner ?? new ExecaCommandRunner();
   const env = options.env ?? process.env;
   const configPath = globalConfigFile({ configDir: answers.configDir });
-  const existingConfig = readExistingDreamuxConfig(answers.configDir);
+  const existingConfig = await readExistingDreamuxConfig(answers.configDir);
   const dreamuxConfig = dreamuxConfigFromAnswers(answers, existingConfig);
   const serviceCodexBin = answers.registerService && !answers.dryRun
-    ? resolveServiceExecutable(dreamuxConfig.codex.bin, env)
+    ? await resolveServiceExecutable(dreamuxConfig.codex.bin, env)
     : dreamuxConfig.codex.bin;
   const serviceNodeBin = answers.registerService && !answers.dryRun
     ? await selectServiceNodeBin({
@@ -89,16 +89,16 @@ export async function runOnboard(
   };
   setRuntimeConfig(dreamuxConfig);
 
-  ensureDirectory(answers.configDir, ledger, 'dreamux config directory', {
+  await ensureDirectory(answers.configDir, ledger, 'dreamux config directory', {
     dryRun: answers.dryRun,
   });
-  ensureDirectory(stateRoot(), ledger, 'dreamux state directory', {
+  await ensureDirectory(stateRoot(), ledger, 'dreamux state directory', {
     dryRun: answers.dryRun,
   });
-  ensureDirectory(logsRoot(), ledger, 'dreamux logs directory', {
+  await ensureDirectory(logsRoot(), ledger, 'dreamux logs directory', {
     dryRun: answers.dryRun,
   });
-  writeTextFile(
+  await writeTextFile(
     configPath,
     stringifyConfig(dreamuxConfig),
     ledger,
@@ -107,35 +107,35 @@ export async function runOnboard(
   );
 
   const codexHome = dispatcherCodexHome(answers.dispatcherId);
-  ensureDirectory(codexHome, ledger, 'global Codex home', {
+  await ensureDirectory(codexHome, ledger, 'global Codex home', {
     dryRun: answers.dryRun,
   });
-  ensureDirectory(
+  await ensureDirectory(
     dispatcherAppServerControlDir(answers.dispatcherId),
     ledger,
     'dispatcher app-server control directory',
     { dryRun: answers.dryRun },
   );
-  ensureDirectory(
+  await ensureDirectory(
     effectiveAnswers.dispatcherCwd,
     ledger,
     'dispatcher cwd',
     { dryRun: answers.dryRun },
   );
-  ensureDirectory(
+  await ensureDirectory(
     dispatcherWorkspaceCodexSkillsDir(effectiveAnswers.dispatcherCwd),
     ledger,
     'workspace-local Codex skills directory',
     { dryRun: answers.dryRun },
   );
 
-  installDispatcherSkill({
+  await installDispatcherSkill({
     skillPath: dispatcherWorkspaceSkillPath(effectiveAnswers.dispatcherCwd),
     ledger,
     dryRun: answers.dryRun,
   });
 
-  const doctor = runDispatcherDoctor(effectiveAnswers, dreamuxConfig, env);
+  const doctor = await runDispatcherDoctor(effectiveAnswers, dreamuxConfig, env);
   if (!effectiveAnswers.dryRun && !doctor.ok) {
     throw new Error(formatDoctorFailure(effectiveAnswers, doctor));
   }
@@ -175,18 +175,28 @@ function formatServiceLaunchFailure(errors: string[]): string {
   ].join('\n');
 }
 
-function readExistingDreamuxConfig(configDir: string) {
+async function readExistingDreamuxConfig(configDir: string) {
   const configPath = globalConfigFile({ configDir });
-  assertNoLegacyTomlOnly({ configDir });
-  if (!existsSync(configPath)) return undefined;
-  return loadConfig({ configDir }).config;
+  await assertNoLegacyTomlOnly({ configDir });
+  if (!(await pathExists(configPath))) return undefined;
+  return (await loadConfig({ configDir })).config;
 }
 
-function runDispatcherDoctor(
+/** Async existence probe — the fs/promises replacement for `existsSync`. */
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function runDispatcherDoctor(
   answers: EffectiveOnboardAnswers,
   dreamuxConfig: ReturnType<typeof dreamuxConfigFromAnswers>,
   env: NodeJS.ProcessEnv,
-): DispatcherCodexHomeDoctorResult {
+): Promise<DispatcherCodexHomeDoctorResult> {
   const codexArgs = parseCodexArgs(dispatcherCodexArgsJson(), {
     approvalPolicy: dreamuxConfig.codex.approval_policy,
     sandboxMode: dreamuxConfig.codex.sandbox_mode,
@@ -207,7 +217,7 @@ function runDispatcherDoctor(
   const doctorEnv = answers.registerService
     ? managedServiceEnvironment(answers)
     : env;
-  return validateDispatcherCodexHome(context, {
+  return await validateDispatcherCodexHome(context, {
     env: doctorEnv,
     codexCliArgs,
   });

@@ -232,20 +232,20 @@ describe('dispatcher access state files', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it('defaults a missing access.json to the secure follow-user shape', () => {
-    const loaded = loadDispatcherAccess('flow');
+  it('defaults a missing access.json to the secure follow-user shape', async () => {
+    const loaded = await loadDispatcherAccess('flow');
     expect(loaded).toEqual(defaultDispatcherAccessState());
     expect(loaded.version).toBe(2);
     expect(loaded.allow_users).toEqual([]);
     expect(loaded.group.policy).toBe('follow-user');
   });
 
-  it('writes owner-only v2 state and round-trips', () => {
+  it('writes owner-only v2 state and round-trips', async () => {
     const access = state({
       allow_users: ['sender-allowed'],
       observed_chats: ['chat-group-a'],
     });
-    saveDispatcherAccess('flow', access);
+    await saveDispatcherAccess('flow', access);
 
     const path = dispatcherAccessPath('flow');
     expect(existsSync(path)).toBe(true);
@@ -259,23 +259,23 @@ describe('dispatcher access state files', () => {
     // The legacy fields must not be written back.
     expect(onDisk.dm).toBeUndefined();
     expect(onDisk.group.follow_users).toBeUndefined();
-    expect(loadDispatcherAccess('flow')).toEqual(access);
+    expect(await loadDispatcherAccess('flow')).toEqual(access);
   });
 
   describe('v1 → v2 migration', () => {
-    it('lifts legacy dm.allow_users into the global list (follow-user)', () => {
+    it('lifts legacy dm.allow_users into the global list (follow-user)', async () => {
       writeRawAccess('flow', {
         version: 1,
         dm: { allow_users: ['user-a'] },
         group: { allow_chats: [], follow_users: [], require_mention: true },
       });
-      const access = loadDispatcherAccess('flow');
+      const access = await loadDispatcherAccess('flow');
       expect(access.version).toBe(2);
       expect(access.allow_users).toEqual(['user-a']);
       expect(access.group.policy).toBe('follow-user');
     });
 
-    it('preserves a legacy follow_users restriction as follow-user, not allowlist', () => {
+    it('preserves a legacy follow_users restriction as follow-user, not allowlist', async () => {
       // Both lists set: the sender restriction must NOT be silently relaxed to
       // chat-only allowlist gating (that would let any chat member talk).
       writeRawAccess('flow', {
@@ -287,13 +287,13 @@ describe('dispatcher access state files', () => {
           require_mention: true,
         },
       });
-      const access = loadDispatcherAccess('flow');
+      const access = await loadDispatcherAccess('flow');
       expect(access.allow_users).toEqual(['user-a']);
       expect(access.group.policy).toBe('follow-user');
       expect(access.group.allow_chats).toEqual(['chat-group-a']);
     });
 
-    it('infers allowlist when only a chat allowlist is configured', () => {
+    it('infers allowlist when only a chat allowlist is configured', async () => {
       writeRawAccess('flow', {
         version: 1,
         dm: { allow_users: [] },
@@ -303,10 +303,10 @@ describe('dispatcher access state files', () => {
           require_mention: true,
         },
       });
-      expect(loadDispatcherAccess('flow').group.policy).toBe('allowlist');
+      expect((await loadDispatcherAccess('flow')).group.policy).toBe('allowlist');
     });
 
-    it('merges and de-duplicates dm.allow_users and group.follow_users', () => {
+    it('merges and de-duplicates dm.allow_users and group.follow_users', async () => {
       writeRawAccess('flow', {
         version: 1,
         dm: { allow_users: ['user-a', 'user-b'] },
@@ -316,14 +316,14 @@ describe('dispatcher access state files', () => {
           require_mention: true,
         },
       });
-      expect(loadDispatcherAccess('flow').allow_users).toEqual([
+      expect((await loadDispatcherAccess('flow')).allow_users).toEqual([
         'user-a',
         'user-b',
         'user-c',
       ]);
     });
 
-    it('honors an explicit group.policy over inference', () => {
+    it('honors an explicit group.policy over inference', async () => {
       writeRawAccess('flow', {
         version: 2,
         allow_users: ['user-a'],
@@ -333,16 +333,16 @@ describe('dispatcher access state files', () => {
           require_mention: true,
         },
       });
-      expect(loadDispatcherAccess('flow').group.policy).toBe('allowlist');
+      expect((await loadDispatcherAccess('flow')).group.policy).toBe('allowlist');
     });
 
-    it('rejects an invalid group.policy', () => {
+    it('rejects an invalid group.policy', async () => {
       writeRawAccess('flow', {
         version: 2,
         allow_users: [],
         group: { policy: 'nonsense', allow_chats: [], require_mention: true },
       });
-      expect(() => loadDispatcherAccess('flow')).toThrow(/group\.policy/);
+      await expect(loadDispatcherAccess('flow')).rejects.toThrow(/group\.policy/);
     });
   });
 });

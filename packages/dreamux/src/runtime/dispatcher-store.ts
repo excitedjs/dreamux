@@ -1,10 +1,4 @@
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import type { DispatcherConfig, DreamuxConfig } from './config.js';
@@ -58,12 +52,28 @@ interface DispatcherStatusFile {
 
 export class DispatcherStore {
   private readonly rows = new Map<string, DispatcherRow>();
+  private readonly seedDispatchers: readonly DispatcherConfig[];
 
   constructor(config: DreamuxConfig) {
     const now = Date.now();
+    this.seedDispatchers = config.dispatchers;
+    // Build in-memory rows from config only. Persisted per-dispatcher status
+    // files are merged later by `hydrate()`: that read is async and must not
+    // run in a constructor.
     for (const dispatcher of config.dispatchers) {
-      const row = rowFromConfig(dispatcher, now);
-      this.rows.set(row.dispatcher_id, row);
+      this.rows.set(dispatcher.id, rowDefaults(dispatcher, now));
+    }
+  }
+
+  /**
+   * Merge each dispatcher's persisted `status.json` into its in-memory row.
+   * Restores thread_id / status / timestamps across restarts. The server calls
+   * this once during `start()`, before any dispatcher is launched. Idempotent.
+   */
+  async hydrate(): Promise<void> {
+    const now = Date.now();
+    for (const dispatcher of this.seedDispatchers) {
+      this.rows.set(dispatcher.id, await rowFromConfig(dispatcher, now));
     }
   }
 
@@ -131,12 +141,12 @@ export class DispatcherStore {
     return this.list().filter((row) => row.enabled === 1);
   }
 
-  remove(id: string): void {
+  async remove(id: string): Promise<void> {
     this.rows.delete(id);
-    rmSync(dispatcherStatusPath(id), { force: true });
+    await rm(dispatcherStatusPath(id), { force: true });
   }
 
-  setStatus(
+  async setStatus(
     id: string,
     status: DispatcherStatus,
     extras: {
@@ -144,7 +154,7 @@ export class DispatcherStore {
       last_started_at?: number;
       last_ready_at?: number;
     } = {},
-  ): void {
+  ): Promise<void> {
     const row = this.mustRow(id);
     row.status = status;
     row.updated_at = Date.now();
@@ -155,28 +165,28 @@ export class DispatcherStore {
     if (extras.last_ready_at !== undefined) {
       row.last_ready_at = extras.last_ready_at;
     }
-    this.persist(row);
+    await this.persist(row);
   }
 
-  setThreadId(id: string, threadId: string): void {
+  async setThreadId(id: string, threadId: string): Promise<void> {
     const row = this.mustRow(id);
     row.thread_id = threadId;
     row.updated_at = Date.now();
-    this.persist(row);
+    await this.persist(row);
   }
 
-  recordLostThread(
+  async recordLostThread(
     id: string,
     lostThreadId: string,
     newThreadId: string,
     error: string,
-  ): void {
+  ): Promise<void> {
     const row = this.mustRow(id);
     row.thread_id = newThreadId;
     row.last_lost_thread_id = lostThreadId;
     row.last_error = error;
     row.updated_at = Date.now();
-    this.persist(row);
+    await this.persist(row);
   }
 
   private mustRow(id: string): DispatcherRow {
@@ -185,8 +195,8 @@ export class DispatcherStore {
     return row;
   }
 
-  private persist(row: DispatcherRow): void {
-    mkdirSync(dirname(dispatcherStatusPath(row.dispatcher_id)), {
+  private async persist(row: DispatcherRow): Promise<void> {
+    await mkdir(dirname(dispatcherStatusPath(row.dispatcher_id)), {
       recursive: true,
     });
     const status: DispatcherStatusFile = {
@@ -200,7 +210,7 @@ export class DispatcherStore {
       last_error: row.last_error,
       last_lost_thread_id: row.last_lost_thread_id,
     };
-    writeFileSync(
+    await writeFile(
       dispatcherStatusPath(row.dispatcher_id),
       `${JSON.stringify(status, null, 2)}\n`,
       { mode: 0o600 },
@@ -208,17 +218,35 @@ export class DispatcherStore {
   }
 }
 
-function rowFromConfig(config: DispatcherConfig, now: number): DispatcherRow {
-  const status = readStatusFile(config.id);
+/** Config-only row (no persisted status); used before `hydrate()` runs. */
+function rowDefaults(config: DispatcherConfig, now: number): DispatcherRow {
   return {
     dispatcher_id: config.id,
     bot_app_id: config.feishu.app_id,
     bot_secret_ref: `config:${config.id}`,
     codex_args_json: dispatcherCodexArgsJson(config),
     codex_cwd: config.cwd,
+    thread_id: null,
+    status: 'declared',
+    enabled: config.enabled ? 1 : 0,
+    created_at: now,
+    updated_at: now,
+    last_started_at: null,
+    last_ready_at: null,
+    last_error: null,
+    last_lost_thread_id: null,
+  };
+}
+
+async function rowFromConfig(
+  config: DispatcherConfig,
+  now: number,
+): Promise<DispatcherRow> {
+  const status = await readStatusFile(config.id);
+  return {
+    ...rowDefaults(config, now),
     thread_id: status?.thread_id ?? null,
     status: status?.status ?? 'declared',
-    enabled: config.enabled ? 1 : 0,
     created_at: status?.updated_at ?? now,
     updated_at: status?.updated_at ?? now,
     last_started_at: status?.last_started_at ?? null,
@@ -244,11 +272,14 @@ function dispatcherCodexArgsJson(config: DispatcherConfig): string {
   return JSON.stringify(raw);
 }
 
-function readStatusFile(id: string): DispatcherStatusFile | null {
+async function readStatusFile(
+  id: string,
+): Promise<DispatcherStatusFile | null> {
   const path = dispatcherStatusPath(id);
-  if (!existsSync(path)) return null;
   try {
-    const raw = JSON.parse(readFileSync(path, 'utf8')) as Partial<DispatcherStatusFile>;
+    const raw = JSON.parse(
+      await readFile(path, 'utf8'),
+    ) as Partial<DispatcherStatusFile>;
     if (raw.version !== 1 || raw.dispatcher_id !== id) return null;
     return {
       version: 1,

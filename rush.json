@@ -32,6 +32,11 @@
   "projectFolderMaxDepth": 3,
   "projects": [
     {
+      "packageName": "@excitedjs/eslint-config",
+      "projectFolder": "packages/eslint-config",
+      "shouldPublish": false
+    },
+    {
       "packageName": "@excitedjs/dreamux",
       "projectFolder": "packages/dreamux",
       "shouldPublish": true

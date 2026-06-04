@@ -1,26 +1,78 @@
 #!/bin/sh
-# Anti-leak guardrail — local pre-commit secret scan.
+# Local pre-commit pre-flight. Two fast, non-authoritative gates that shorten
+# the feedback loop before CI:
 #
-# dreamux is a PUBLIC repo: company-internal content (Feishu ids, tokens,
-# private-mirror registry URLs, secrets) must never be committed. This hook is
-# a fast local pre-flight that scans the *staged* changes with gitleaks before
-# they become a commit, using the committed .gitleaks.toml config.
+#   1. no-sync-io (issue #85) — lint staged TypeScript against each package's
+#      ESLint flat config (the n/no-sync ban + import / syntax backstops). src/**
+#      is a hard error on any *Sync IO; tests/** is audited via reasoned disables.
+#   2. anti-leak — scan the *staged* changes with gitleaks. dreamux is a PUBLIC
+#      repo: company-internal content (Feishu ids, tokens, private-mirror
+#      registry URLs, secrets) must never be committed.
 #
-# If gitleaks isn't installed it warn-and-passes: the GitHub Actions job runs
-# the authoritative `gitleaks detect` over the full history and is the real,
-# non-bypassable gate. This hook only shortens the feedback loop.
+# Both gates warn-and-pass when their tool isn't installed: the GitHub Actions
+# jobs (`rush lint`; `gitleaks detect` over the full history) are the real,
+# non-bypassable gates. This hook only shortens the loop.
 #
 # Rush installs this script into .git/hooks on `rush install` / `rush update`.
 # If your hooks aren't wired up yet, point git at this directory manually:
 #   git config core.hooksPath common/git-hooks
 
+repo_root=$(git rev-parse --show-toplevel)
+
+# --- 1. no-sync-io gate (issue #85) ------------------------------------------
+# Lint only the staged .ts files, each against its owning package's flat config.
+staged_ts=$(git diff --cached --name-only --diff-filter=ACM -- '*.ts')
+if [ -n "$staged_ts" ]; then
+  eslint_failed=0
+  eslint_missing=0
+  oldifs=$IFS
+  IFS='
+'
+  set -f # filenames are literal; do not glob-expand them
+  for f in $staged_ts; do
+    [ -n "$f" ] || continue
+    # Walk up to the nearest ancestor holding an eslint.config.js (package root).
+    d=$(dirname "$f")
+    pkg=""
+    while [ "$d" != "." ] && [ "$d" != "/" ]; do
+      if [ -f "$repo_root/$d/eslint.config.js" ]; then
+        pkg=$d
+        break
+      fi
+      d=$(dirname "$d")
+    done
+    [ -n "$pkg" ] || continue
+    eslint_bin="$repo_root/$pkg/node_modules/.bin/eslint"
+    if [ ! -x "$eslint_bin" ]; then
+      eslint_missing=1
+      continue
+    fi
+    rel=${f#"$pkg"/}
+    if ! (
+      cd "$repo_root/$pkg" || exit 1
+      "$eslint_bin" "$rel"
+    ); then
+      eslint_failed=1
+    fi
+  done
+  set +f
+  IFS=$oldifs
+  if [ "$eslint_failed" = 1 ]; then
+    echo "[no-sync-io] ESLint flagged staged TypeScript (issue #85 sync-IO gate)." >&2
+    echo "[no-sync-io] Fix it before committing — CI runs the same rule." >&2
+    exit 1
+  fi
+  if [ "$eslint_missing" = 1 ]; then
+    echo "[no-sync-io] eslint not installed in a package — skipped there; CI will enforce." >&2
+  fi
+fi
+
+# --- 2. anti-leak gate -------------------------------------------------------
 if ! command -v gitleaks >/dev/null 2>&1; then
   echo "[anti-leak] gitleaks not installed — skipping local scan; CI will enforce." >&2
   echo "[anti-leak] install: https://github.com/gitleaks/gitleaks#installing" >&2
   exit 0
 fi
-
-repo_root=$(git rev-parse --show-toplevel)
 
 if ! gitleaks protect --staged \
   --config "$repo_root/.gitleaks.toml" \

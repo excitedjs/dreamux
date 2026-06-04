@@ -16,8 +16,18 @@
  *     reparsing stream).
  *   - `sync: true` everywhere. The shim and tests need synchronous writes; the
  *     server avoids a flush-on-shutdown lifecycle. No log line is lost on exit.
- *   - Files are opened `0o600` (mkdir + open + chmod), matching the Codex
- *     supervisor and the `0600` posture of `config.json` / state files.
+ *     This is a deliberate, kept design choice (issue #85): `pino.destination`'s
+ *     `sync` is a config flag, not a `*Sync` call, so it is outside the
+ *     synchronous-blocking-IO lint gate, and switching to an async destination
+ *     would force a `flushSync()` in a `process.on('exit')` handler — re-adding
+ *     unavoidable sync IO in the one truly sync-only context, plus a log-tail
+ *     loss risk in the short-lived `feishu-mcp` shim.
+ *   - Files are created `0o600` and their parent directory `mkdir`-ed by
+ *     `pino.destination` itself (`{ mkdir: true, mode: 0o600 }`). That open is
+ *     internal to pino/SonicBoom, not application sync IO, so `createLogger`
+ *     stays synchronous (the `Server` constructor builds loggers synchronously)
+ *     while our own code holds no `fs.*Sync` calls. Matches the `0600` posture
+ *     of `config.json` / state files.
  *   - Credentials are removed declaratively via pino `redact`. Message *bodies*
  *     are NOT redacted — they are simply never passed to the logger (callers
  *     log ids, never `parsed_text` / `rawContent` / reply text).
@@ -26,8 +36,7 @@
  *     inject a tmp `filePath`; they must not expect an env var to move logs.
  */
 
-import { chmodSync, mkdirSync, openSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { chmod } from 'node:fs/promises';
 
 import type { TransportLogger } from '@excitedjs/feishu-transport';
 import pino, {
@@ -90,15 +99,31 @@ function resolveLevel(level?: pino.Level): pino.Level {
 }
 
 /**
- * Open a log file at `path` with owner-only permissions. Creates the parent
- * directory, appends, and chmods to `0o600` so a pre-existing wider-permission
- * file is tightened rather than trusted.
+ * Open a log file at `path` with owner-only permissions. pino/SonicBoom creates
+ * the parent directory (`mkdir: true`) and the append-mode file with `0o600`
+ * (`mode`) itself; that open is internal to pino, not application sync IO, so
+ * this stays a synchronous factory with no `fs.*Sync` of our own (issue #85).
+ *
+ * `mode` is applied only when SonicBoom *creates* the file; a pre-existing
+ * wider-permission log (an older build, or manual tampering) would otherwise
+ * keep its looser bits. We tighten it to 0600 defensively with a fire-and-forget
+ * async `chmod`: `createLogger` stays synchronous (the `Server` constructor
+ * builds loggers synchronously), and async `chmod` is not a `*Sync` call, so the
+ * issue #85 gate holds while the `0600` posture of `config.json` / state files
+ * is preserved. Errors are swallowed — the create-time `mode` already covers the
+ * common (new-file) path.
  */
 function openLogFileStream(path: string): DestinationStream {
-  mkdirSync(dirname(path), { recursive: true });
-  const fd = openSync(path, 'a', 0o600);
-  chmodSync(path, 0o600);
-  return pino.destination({ fd, sync: true });
+  const stream = pino.destination({
+    dest: path,
+    mkdir: true,
+    mode: 0o600,
+    sync: true,
+  });
+  void chmod(path, 0o600).catch(() => {
+    /* best-effort hardening of a pre-existing wider-permission file */
+  });
+  return stream;
 }
 
 export function createLogger(opts: CreateLoggerOptions = {}): DreamuxLogger {

@@ -15,7 +15,7 @@
  * Per-dispatcher Feishu secrets live in the dreamux JSON config.
  */
 
-import { mkdirSync } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
 
 import { Server } from '../server.js';
 import { loadConfig } from '../runtime/config.js';
@@ -39,13 +39,13 @@ async function main(): Promise<void> {
 
   // Load ~/.dreamux/config.json before anything else starts. Missing or invalid
   // config is a setup error; `dreamux serve` must not silently create defaults.
-  const { config, configFile } = loadConfig();
+  const { config, configFile } = await loadConfig();
 
-  mkdirSync(stateRoot(), { recursive: true });
-  mkdirSync(logsRoot(), { recursive: true });
-  mkdirSync(codexAppServerLogDir(), { recursive: true });
-  mkdirSync(feishuChannelLogDir(), { recursive: true });
-  mkdirSync(feishuMcpLogDir(), { recursive: true });
+  await mkdir(stateRoot(), { recursive: true });
+  await mkdir(logsRoot(), { recursive: true });
+  await mkdir(codexAppServerLogDir(), { recursive: true });
+  await mkdir(feishuChannelLogDir(), { recursive: true });
+  await mkdir(feishuMcpLogDir(), { recursive: true });
 
   // The CLI is the only constructor of file-backed loggers; everything else
   // (tests) gets stderr-only defaults. Both stream to stderr too, so a

@@ -1,6 +1,16 @@
-import { existsSync, rmSync } from 'node:fs';
+import { access, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join, resolve, sep } from 'node:path';
+
+/** Async existence probe — the fs/promises replacement for `existsSync`. */
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 import { ExecaCommandRunner } from './commands.js';
 import { removeUserService } from './service.js';
@@ -54,14 +64,14 @@ export async function runUninstall(
   const configDir = normalizePath(options.configDir ?? globalConfigDir());
   const entries: UninstallEntry[] = [];
   const warnings: string[] = [];
-  warnIfConfigIsNotReadable(configDir, warnings);
+  await warnIfConfigIsNotReadable(configDir, warnings);
   const stateDir = normalizePath(stateRoot());
   const logDir = normalizePath(logsRoot());
 
   assertSafeOwnedDirectory(stateDir, 'dreamux state directory');
   assertSafeOwnedDirectory(logDir, 'dreamux logs directory');
   assertSafeOwnedDirectory(configDir, 'dreamux config directory');
-  const workspaceSkillPaths = collectWorkspaceSkillPaths(configDir);
+  const workspaceSkillPaths = await collectWorkspaceSkillPaths(configDir);
 
   // Service removal (unit-only) is shared with `dreamux daemon uninstall`.
   const removal = await removeUserService({
@@ -77,10 +87,10 @@ export async function runUninstall(
     reason: `${removal.platform} unit`,
   });
 
-  reportWorkspaceSkills(workspaceSkillPaths, entries);
-  removeOwnedDirectory(stateDir, entries, 'dreamux state directory', dryRun);
-  removeOwnedDirectory(logDir, entries, 'dreamux logs directory', dryRun);
-  removeOwnedDirectory(configDir, entries, 'dreamux config directory', dryRun);
+  await reportWorkspaceSkills(workspaceSkillPaths, entries);
+  await removeOwnedDirectory(stateDir, entries, 'dreamux state directory', dryRun);
+  await removeOwnedDirectory(logDir, entries, 'dreamux logs directory', dryRun);
+  await removeOwnedDirectory(configDir, entries, 'dreamux config directory', dryRun);
 
   return {
     entries: entries.sort((a, b) => a.path.localeCompare(b.path)),
@@ -92,11 +102,14 @@ export async function runUninstall(
   };
 }
 
-function warnIfConfigIsNotReadable(configDir: string, warnings: string[]): void {
+async function warnIfConfigIsNotReadable(
+  configDir: string,
+  warnings: string[],
+): Promise<void> {
   try {
-    assertNoLegacyTomlOnly({ configDir });
-    if (!existsSync(globalConfigFile({ configDir }))) return;
-    loadConfig({ configDir });
+    await assertNoLegacyTomlOnly({ configDir });
+    if (!(await pathExists(globalConfigFile({ configDir })))) return;
+    await loadConfig({ configDir });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     warnings.push(
@@ -105,9 +118,9 @@ function warnIfConfigIsNotReadable(configDir: string, warnings: string[]): void 
   }
 }
 
-function collectWorkspaceSkillPaths(configDir: string): string[] {
+async function collectWorkspaceSkillPaths(configDir: string): Promise<string[]> {
   try {
-    return loadConfig({ configDir }).config.dispatchers
+    return (await loadConfig({ configDir })).config.dispatchers
       .map(dispatcherWorkspaceSkillPathFromConfig)
       .filter((path): path is string => path !== null);
   } catch {
@@ -122,41 +135,41 @@ function dispatcherWorkspaceSkillPathFromConfig(
   return dispatcherWorkspaceSkillPath(dispatcher.cwd);
 }
 
-function reportWorkspaceSkills(
+async function reportWorkspaceSkills(
   paths: string[],
   entries: UninstallEntry[],
-): void {
+): Promise<void> {
   for (const path of uniquePaths(paths)) {
     entries.push({
       path,
-      status: existsSync(path) ? 'skipped' : 'missing',
+      status: (await pathExists(path)) ? 'skipped' : 'missing',
       reason: 'workspace-local dispatcher skill (not removed)',
     });
   }
 }
 
-function removeOwnedDirectory(
+async function removeOwnedDirectory(
   path: string,
   entries: UninstallEntry[],
   reason: string,
   dryRun: boolean,
-): void {
+): Promise<void> {
   assertSafeOwnedDirectory(path, reason);
-  removePath(path, entries, reason, dryRun);
+  await removePath(path, entries, reason, dryRun);
 }
 
-function removePath(
+async function removePath(
   path: string,
   entries: UninstallEntry[],
   reason: string,
   dryRun: boolean,
-): void {
-  if (!existsSync(path)) {
+): Promise<void> {
+  if (!(await pathExists(path))) {
     entries.push({ path, status: 'missing', reason });
     return;
   }
   if (!dryRun) {
-    rmSync(path, {
+    await rm(path, {
       recursive: true,
       force: true,
     });

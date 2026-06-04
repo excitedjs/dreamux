@@ -31,6 +31,15 @@
       "enableParallelism": true,
       "ignoreMissingScript": true,
       "incremental": false
+    },
+    {
+      "name": "lint",
+      "commandKind": "bulk",
+      "summary": "Run each project's `npm run lint` (eslint).",
+      "description": "Bulk-runs ESLint across every package that declares a `lint` script. Enforces the synchronous-blocking-IO ban (issue #85) via @excitedjs/eslint-config. Pure-syntactic — needs no prior build.",
+      "enableParallelism": true,
+      "ignoreMissingScript": true,
+      "incremental": false
     }
   ]
 }

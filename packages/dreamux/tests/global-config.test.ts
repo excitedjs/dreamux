@@ -72,10 +72,10 @@ describe('global config (~/.dreamux/config.json)', () => {
     writeFileSync(file, content, { mode });
   }
 
-  it('first boot creates the config dir and JSON file', () => {
+  it('first boot creates the config dir and JSON file', async () => {
     expect(existsSync(join(configDir, 'config.json'))).toBe(false);
 
-    const { config, configFile, createdOnThisBoot } = loadOrInitConfig({
+    const { config, configFile, createdOnThisBoot } = await loadOrInitConfig({
       configDir,
     });
 
@@ -88,7 +88,7 @@ describe('global config (~/.dreamux/config.json)', () => {
     expect(config.dispatchers).toEqual([]);
   });
 
-  it('second boot reads the existing JSON file and does not overwrite it', () => {
+  it('second boot reads the existing JSON file and does not overwrite it', async () => {
     const file = globalConfigFile({ configDir });
     const original = stringifyConfig({
       codex: {
@@ -118,7 +118,7 @@ describe('global config (~/.dreamux/config.json)', () => {
     });
     writeConfigText(file, original);
 
-    const { config, createdOnThisBoot } = loadOrInitConfig({ configDir });
+    const { config, createdOnThisBoot } = await loadOrInitConfig({ configDir });
     expect(createdOnThisBoot).toBe(false);
     expect(config.codex.bin).toBe('/opt/codex');
     expect(config.codex.extra_args).toEqual(['--model', 'gpt-5']);
@@ -134,34 +134,34 @@ describe('global config (~/.dreamux/config.json)', () => {
     expect(readFileSync(file, 'utf8')).toBe(original);
   });
 
-  it('parse error fails fast with the config path', () => {
+  it('parse error fails fast with the config path', async () => {
     const file = globalConfigFile({ configDir });
     writeConfigText(file, `{"dispatchers": [`);
-    expect(() => loadOrInitConfig({ configDir })).toThrow(/config\.json/);
-    expect(() => loadOrInitConfig({ configDir })).toThrow(
+    await expect(loadOrInitConfig({ configDir })).rejects.toThrow(/config\.json/);
+    await expect(loadOrInitConfig({ configDir })).rejects.toThrow(
       /dreamux config parse error/,
     );
   });
 
-  it('fails fast when only the legacy TOML config exists', () => {
+  it('fails fast when only the legacy TOML config exists', async () => {
     const jsonFile = globalConfigFile({ configDir });
     const tomlFile = join(configDir, 'config.toml');
     writeFileSync(tomlFile, 'dispatchers = []\n');
 
-    expect(() => loadOrInitConfig({ configDir })).toThrow(
+    await expect(loadOrInitConfig({ configDir })).rejects.toThrow(
       /legacy dreamux config/,
     );
-    expect(() => loadConfig({ configDir })).toThrow(/dispatchers array/);
+    await expect(loadConfig({ configDir })).rejects.toThrow(/dispatchers array/);
     expect(existsSync(jsonFile)).toBe(false);
   });
 
-  it('loadConfig loudly fails when config.json is missing', () => {
-    expect(() => loadConfig({ configDir })).toThrow(/dreamux config is missing/);
-    expect(() => loadConfig({ configDir })).toThrow(/dreamux onboard/);
+  it('loadConfig loudly fails when config.json is missing', async () => {
+    await expect(loadConfig({ configDir })).rejects.toThrow(/dreamux config is missing/);
+    await expect(loadConfig({ configDir })).rejects.toThrow(/dreamux onboard/);
     expect(existsSync(globalConfigFile({ configDir }))).toBe(false);
   });
 
-  it('redacts Feishu app secrets for display', () => {
+  it('redacts Feishu app secrets for display', async () => {
     const raw = JSON.stringify({
       dispatchers: [
         {
@@ -192,19 +192,19 @@ describe('global config (~/.dreamux/config.json)', () => {
     });
   });
 
-  it('rejects invalid config values', () => {
+  it('rejects invalid config values', async () => {
     writeConfigObject({ codex: { approval_policy: 'ask-every-time' } });
-    expect(() => loadOrInitConfig({ configDir })).toThrow(
+    await expect(loadOrInitConfig({ configDir })).rejects.toThrow(
       /approval_policy='ask-every-time'/,
     );
 
     writeConfigObject({ state_path: '/tmp/custom-state' });
-    expect(() => loadOrInitConfig({ configDir })).toThrow(
+    await expect(loadOrInitConfig({ configDir })).rejects.toThrow(
       /state_path is not supported/,
     );
 
     writeConfigObject({ codex: { initialize_timeout_ms: 0 } });
-    expect(() => loadOrInitConfig({ configDir })).toThrow(
+    await expect(loadOrInitConfig({ configDir })).rejects.toThrow(
       /initialize_timeout_ms must be > 0/,
     );
 
@@ -217,12 +217,12 @@ describe('global config (~/.dreamux/config.json)', () => {
         },
       ],
     });
-    expect(() => loadOrInitConfig({ configDir })).toThrow(
+    await expect(loadOrInitConfig({ configDir })).rejects.toThrow(
       /enabled must be a boolean/,
     );
   });
 
-  it('accepts the MVP dispatcher array schema', () => {
+  it('accepts the MVP dispatcher array schema', async () => {
     writeConfigObject({
       dispatchers: [
         {
@@ -250,7 +250,7 @@ describe('global config (~/.dreamux/config.json)', () => {
       ],
     });
 
-    const { config } = loadConfig({ configDir });
+    const { config } = await loadConfig({ configDir });
     expect(config.dispatchers[0]).toMatchObject({
       id: 'dispatcher-a',
       enabled: true,
@@ -279,7 +279,7 @@ describe('global config (~/.dreamux/config.json)', () => {
     });
   });
 
-  it('rejects unsupported dispatcher secret fields', () => {
+  it('rejects unsupported dispatcher secret fields', async () => {
     writeConfigObject({
       dispatchers: [
         {
@@ -293,12 +293,12 @@ describe('global config (~/.dreamux/config.json)', () => {
       ],
     });
 
-    expect(() => loadConfig({ configDir })).toThrow(
+    await expect(loadConfig({ configDir })).rejects.toThrow(
       /callback_secret is not supported/,
     );
   });
 
-  it('keeps access out of config and validates extra_env fields', () => {
+  it('keeps access out of config and validates extra_env fields', async () => {
     writeConfigObject({
       dispatchers: [
         {
@@ -311,7 +311,7 @@ describe('global config (~/.dreamux/config.json)', () => {
         },
       ],
     });
-    expect(() => loadConfig({ configDir })).toThrow(
+    await expect(loadConfig({ configDir })).rejects.toThrow(
       /access is not supported/,
     );
 
@@ -331,12 +331,12 @@ describe('global config (~/.dreamux/config.json)', () => {
         },
       ],
     });
-    expect(() => loadConfig({ configDir })).toThrow(
+    await expect(loadConfig({ configDir })).rejects.toThrow(
       /codex\.extra_env\.EXAMPLE_FLAG must be a string/,
     );
   });
 
-  it('requires unique Feishu app_id values across all dispatchers', () => {
+  it('requires unique Feishu app_id values across all dispatchers', async () => {
     writeConfigObject({
       dispatchers: [
         {
@@ -357,12 +357,12 @@ describe('global config (~/.dreamux/config.json)', () => {
       ],
     });
 
-    expect(() => loadConfig({ configDir })).toThrow(
+    await expect(loadConfig({ configDir })).rejects.toThrow(
       /duplicates dispatcher 'flow'/,
     );
   });
 
-  it('rejects dispatcher ids that would not be stable path segments', () => {
+  it('rejects dispatcher ids that would not be stable path segments', async () => {
     writeConfigObject({
       dispatchers: [
         {
@@ -375,11 +375,11 @@ describe('global config (~/.dreamux/config.json)', () => {
       ],
     });
 
-    expect(() => loadConfig({ configDir })).toThrow(/dispatchers\[0\]\.id/);
-    expect(() => loadConfig({ configDir })).toThrow(/ASCII letters/);
+    await expect(loadConfig({ configDir })).rejects.toThrow(/dispatchers\[0\]\.id/);
+    await expect(loadConfig({ configDir })).rejects.toThrow(/ASCII letters/);
   });
 
-  it('requires non-empty Feishu app_id and app_secret values', () => {
+  it('requires non-empty Feishu app_id and app_secret values', async () => {
     writeConfigObject({
       dispatchers: [
         {
@@ -391,7 +391,7 @@ describe('global config (~/.dreamux/config.json)', () => {
         },
       ],
     });
-    expect(() => loadConfig({ configDir })).toThrow(
+    await expect(loadConfig({ configDir })).rejects.toThrow(
       /app_id must be a non-empty string/,
     );
 
@@ -406,46 +406,46 @@ describe('global config (~/.dreamux/config.json)', () => {
         },
       ],
     });
-    expect(() => loadConfig({ configDir })).toThrow(
+    await expect(loadConfig({ configDir })).rejects.toThrow(
       /app_secret must be a non-empty string/,
     );
   });
 
-  it('expandHome expands ~/ and bare ~', () => {
+  it('expandHome expands ~/ and bare ~', async () => {
     expect(expandHome('~/x')).toMatch(/[/\\]x$/);
     expect(expandHome('~/x').startsWith('/')).toBe(true);
     expect(expandHome('~')).not.toContain('~');
     expect(expandHome('/abs/path')).toBe('/abs/path');
   });
 
-  it('DREAMUX_CONFIG_DIR overrides ~/.dreamux when no explicit override', () => {
+  it('DREAMUX_CONFIG_DIR overrides ~/.dreamux when no explicit override', async () => {
     process.env['DREAMUX_CONFIG_DIR'] = configDir;
     expect(globalConfigDir()).toBe(configDir);
     expect(globalConfigFile()).toBe(join(configDir, 'config.json'));
   });
 
-  it('first-boot file is mode 0600', () => {
-    const { configFile, createdOnThisBoot } = loadOrInitConfig({ configDir });
+  it('first-boot file is mode 0600', async () => {
+    const { configFile, createdOnThisBoot } = await loadOrInitConfig({ configDir });
     expect(createdOnThisBoot).toBe(true);
     const mode = statSync(configFile).mode & 0o777;
     expect(mode).toBe(0o600);
   });
 
-  it('rejects existing config files that are not mode 0600', () => {
+  it('rejects existing config files that are not mode 0600', async () => {
     if (process.platform === 'win32') return;
     const file = globalConfigFile({ configDir });
     writeConfigText(file, JSON.stringify(BUILT_IN_DEFAULTS), 0o644);
 
-    expect(() => loadConfig({ configDir })).toThrow(/must be mode 0600/);
+    await expect(loadConfig({ configDir })).rejects.toThrow(/must be mode 0600/);
   });
 
-  it('throws when the config dir cannot be written', () => {
+  it('throws when the config dir cannot be written', async () => {
     if (process.getuid?.() === 0) return;
     const lockedParent = mkdtempSync(join(tmpdir(), 'dreamux-locked-'));
     const lockedChild = join(lockedParent, 'cfg');
     chmodSync(lockedParent, 0o500);
     try {
-      expect(() => loadOrInitConfig({ configDir: lockedChild })).toThrow(
+      await expect(loadOrInitConfig({ configDir: lockedChild })).rejects.toThrow(
         /EACCES|EPERM|permission/i,
       );
     } finally {
@@ -480,24 +480,24 @@ describe('runtime path precedence', () => {
     resetRuntimeConfig();
   });
 
-  it('runtimeRoot aliases stateRoot and ignores legacy env overrides', () => {
+  it('runtimeRoot aliases stateRoot and ignores legacy env overrides', async () => {
     writeConfigObjectAt(configDir, {});
-    const { config } = loadOrInitConfig({ configDir });
+    const { config } = await loadOrInitConfig({ configDir });
     setRuntimeConfig(config);
     process.env['CODEX_HOST_RUNTIME_DIR'] = '/tmp/from-env';
     expect(runtimeRoot()).toBe(stateRoot());
   });
 
-  it('adminSocketPath is fixed under stateRoot', () => {
+  it('adminSocketPath is fixed under stateRoot', async () => {
     writeConfigObjectAt(configDir, {});
-    const { config } = loadOrInitConfig({ configDir });
+    const { config } = await loadOrInitConfig({ configDir });
     setRuntimeConfig(config);
     process.env['CODEX_HOST_ADMIN_SOCKET'] = '/tmp/env-admin.sock';
     expect(adminSocketPath()).toBe(join(stateRoot(), 'admin.sock'));
     expect(serverJsonPath()).toBe(join(stateRoot(), 'server.json'));
   });
 
-  it('parseCodexArgs: per-dispatcher overrides config defaults', () => {
+  it('parseCodexArgs: per-dispatcher overrides config defaults', async () => {
     const parsed = parseCodexArgs(
       JSON.stringify({ approvalPolicy: 'on-failure' }),
       { approvalPolicy: 'never', extraArgs: ['--model', 'gpt-5'] },
@@ -506,7 +506,7 @@ describe('runtime path precedence', () => {
     expect(parsed.extraArgs).toEqual(['--model', 'gpt-5']);
   });
 
-  it('parseCodexArgs: per-dispatcher extraArgs append after config defaults', () => {
+  it('parseCodexArgs: per-dispatcher extraArgs append after config defaults', async () => {
     const parsed = parseCodexArgs(
       JSON.stringify({ extraArgs: ['--model', 'override'] }),
       { approvalPolicy: 'never', extraArgs: ['--model', 'default'] },
@@ -519,7 +519,7 @@ describe('runtime path precedence', () => {
     ]);
   });
 
-  it('parseCodexArgs hard-fails on invalid policy or sandbox mode', () => {
+  it('parseCodexArgs hard-fails on invalid policy or sandbox mode', async () => {
     expect(() =>
       parseCodexArgs(JSON.stringify({ approvalPolicy: 'untrusted-policy' })),
     ).toThrow(/refused/);
@@ -541,30 +541,30 @@ describe('sandbox_mode precedence', () => {
     resetRuntimeConfig();
   });
 
-  it('default config has sandbox_mode = workspace-write', () => {
+  it('default config has sandbox_mode = workspace-write', async () => {
     expect(BUILT_IN_DEFAULTS.codex.sandbox_mode).toBe('workspace-write');
-    const { config } = loadOrInitConfig({ configDir });
+    const { config } = await loadOrInitConfig({ configDir });
     expect(config.codex.sandbox_mode).toBe('workspace-write');
   });
 
-  it('config file value is loaded and validated', () => {
+  it('config file value is loaded and validated', async () => {
     writeConfigObjectAt(configDir, {
       codex: { sandbox_mode: 'danger-full-access' },
     });
-    const { config } = loadOrInitConfig({ configDir });
+    const { config } = await loadOrInitConfig({ configDir });
     expect(config.codex.sandbox_mode).toBe('danger-full-access');
   });
 
-  it('config rejects an invalid sandbox_mode at load time', () => {
+  it('config rejects an invalid sandbox_mode at load time', async () => {
     writeConfigObjectAt(configDir, {
       codex: { sandbox_mode: 'not-a-mode' },
     });
-    expect(() => loadOrInitConfig({ configDir })).toThrow(
+    await expect(loadOrInitConfig({ configDir })).rejects.toThrow(
       /sandbox_mode='not-a-mode'/,
     );
   });
 
-  it('parseCodexArgs: per-dispatcher sandboxMode overrides config default', () => {
+  it('parseCodexArgs: per-dispatcher sandboxMode overrides config default', async () => {
     const parsed = parseCodexArgs(
       JSON.stringify({ sandboxMode: 'read-only' }),
       { sandboxMode: 'danger-full-access' },
@@ -572,7 +572,7 @@ describe('sandbox_mode precedence', () => {
     expect(parsed.sandboxMode).toBe('read-only');
   });
 
-  it('codexArgsToCli emits `-c sandbox_mode=<value>` after approval_policy', () => {
+  it('codexArgsToCli emits `-c sandbox_mode=<value>` after approval_policy', async () => {
     const parsed = parseCodexArgs(
       JSON.stringify({
         approvalPolicy: 'never',

@@ -1,8 +1,15 @@
-import {
-  existsSync,
-  readFileSync,
-} from 'node:fs';
+import { access, readFile } from 'node:fs/promises';
 import { join, normalize, sep } from 'node:path';
+
+/** Async existence probe — the fs/promises replacement for `existsSync`. */
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 import { parse as parseToml, TomlError } from 'smol-toml';
 
@@ -71,10 +78,10 @@ export function dispatcherCodexHomeDoctorContext(
   };
 }
 
-export function validateDispatcherCodexHome(
+export async function validateDispatcherCodexHome(
   input: string | DispatcherCodexHomeDoctorContext,
   options: DoctorOptions = {},
-): DispatcherCodexHomeDoctorResult {
+): Promise<DispatcherCodexHomeDoctorResult> {
   const context =
     typeof input === 'string'
       ? dispatcherCodexHomeDoctorContext(input, {
@@ -87,9 +94,9 @@ export function validateDispatcherCodexHome(
   const errors: string[] = [];
   const env = options.env ?? process.env;
 
-  if (existsSync(context.configPath)) {
+  if (await pathExists(context.configPath)) {
     try {
-      const parsed = parseToml(readFileSync(context.configPath, 'utf8'));
+      const parsed = parseToml(await readFile(context.configPath, 'utf8'));
       if (!isRecord(parsed)) {
         errors.push(`Codex config must be a TOML table: ${context.configPath}`);
       }
@@ -98,7 +105,7 @@ export function validateDispatcherCodexHome(
     }
   }
 
-  if (!existsSync(context.codexHome)) {
+  if (!(await pathExists(context.codexHome))) {
     errors.push(`missing Codex home directory: ${context.codexHome}`);
   }
   if (isTmpPath(context.socketPath)) {
@@ -112,11 +119,11 @@ export function validateDispatcherCodexHome(
       `dispatcher app-server socket path is too long for Unix sockets (${bytes} bytes > ${DISPATCHER_APP_SERVER_SOCKET_PATH_MAX_BYTES} safe bytes): ${context.socketPath}`,
     );
   }
-  if (!dispatcherSkillExists(context.skillPath)) {
+  if (!(await dispatcherSkillExists(context.skillPath))) {
     errors.push(`missing dispatcher skill: ${context.skillPath}`);
   }
 
-  if (!hasAuth(context.codexHome, env)) {
+  if (!(await hasAuth(context.codexHome, env))) {
     errors.push(
       `missing Codex auth state in ${context.codexHome} or a supported auth environment variable`,
     );
@@ -132,7 +139,7 @@ export function validateDispatcherCodexHome(
 export async function assertDispatcherCodexHomeReady(
   context: DispatcherCodexHomeDoctorContext,
 ): Promise<void> {
-  const result = validateDispatcherCodexHome(context);
+  const result = await validateDispatcherCodexHome(context);
   if (result.ok) return;
   throw new Error(formatDispatcherCodexHomeErrors(result));
 }
@@ -156,12 +163,15 @@ function formatTomlError(err: unknown, file: string): string {
   return `Codex config parse error in ${file}: ${msg}`;
 }
 
-function dispatcherSkillExists(skillPath: string): boolean {
-  return existsSync(skillPath);
+async function dispatcherSkillExists(skillPath: string): Promise<boolean> {
+  return pathExists(skillPath);
 }
 
-function hasAuth(codexHome: string, env: NodeJS.ProcessEnv): boolean {
-  if (existsSync(join(codexHome, 'auth.json'))) return true;
+async function hasAuth(
+  codexHome: string,
+  env: NodeJS.ProcessEnv,
+): Promise<boolean> {
+  if (await pathExists(join(codexHome, 'auth.json'))) return true;
   return ['OPENAI_API_KEY', 'CODEX_API_KEY', 'CODEX_ACCESS_TOKEN'].some(
     (name) => {
       const value = env[name];

@@ -27,6 +27,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
     "clean": "rm -rf dist",
@@ -44,9 +45,11 @@
     "plist": "^5.0.0"
   },
   "devDependencies": {
+    "@excitedjs/eslint-config": "workspace:*",
     "@types/node": "^22.10.0",
     "@types/ws": "^8.5.13",
     "@types/yargs": "^17.0.35",
+    "eslint": "^9.39.0",
     "typescript": "^5.7.0",
     "vitest": "^2.1.0"
   }

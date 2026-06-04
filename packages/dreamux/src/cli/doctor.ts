@@ -1,7 +1,17 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { access, readFile } from 'node:fs/promises';
 import { homedir, userInfo } from 'node:os';
 
 import { parse as parsePlist, type PlistValue } from 'plist';
+
+/** Async existence probe — the fs/promises replacement for `existsSync`. */
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 import { codexArgsToCli, parseCodexArgs } from '../runtime/codex-args.js';
 import {
@@ -90,12 +100,12 @@ export async function runDreamuxDoctor(
   const runner = options.runner ?? new ExecaCommandRunner();
   const checks: DoctorCheck[] = [];
   const configDir = globalConfigDir();
-  const { config, configFile } = readConfigForDoctor(configDir, checks);
+  const { config, configFile } = await readConfigForDoctor(configDir, checks);
   setRuntimeConfig(config);
 
   checks.push({
     name: 'state directory',
-    ok: existsSync(stateRoot()),
+    ok: await pathExists(stateRoot()),
     detail: stateRoot(),
   });
 
@@ -130,7 +140,11 @@ export async function runDreamuxDoctor(
     options.nodeProbe ?? defaultServiceNodeProbe,
   );
 
-  const dispatchers = readDispatchers(config, options.env ?? process.env, service);
+  const dispatchers = await readDispatchers(
+    config,
+    options.env ?? process.env,
+    service,
+  );
   if (dispatchers.length === 0) {
     checks.push({
       name: 'dispatchers',
@@ -172,12 +186,12 @@ export function printDoctorResult(result: DreamuxDoctorResult): void {
   }
 }
 
-function readConfigForDoctor(
+async function readConfigForDoctor(
   configDir: string,
   checks: DoctorCheck[],
-): { config: DreamuxConfig; configFile: string } {
+): Promise<{ config: DreamuxConfig; configFile: string }> {
   try {
-    const loaded = loadConfig({ configDir });
+    const loaded = await loadConfig({ configDir });
     checks.push({
       name: 'config',
       ok: true,
@@ -198,39 +212,41 @@ function readConfigForDoctor(
   }
 }
 
-function readDispatchers(
+async function readDispatchers(
   config: DreamuxConfig,
   env: NodeJS.ProcessEnv,
   service: ServiceStatus,
-): DispatcherDoctorReport[] {
-  return config.dispatchers.map((dispatcher) => {
-    const codexArgs = parseCodexArgs(dispatcherCodexArgsJson(dispatcher), {
-      approvalPolicy: config.codex.approval_policy,
-      sandboxMode: config.codex.sandbox_mode,
-      extraArgs: config.codex.extra_args,
-    });
-    const codexCliArgs = codexArgsToCli(codexArgs);
-    const context = dispatcherCodexHomeDoctorContext(dispatcher.id, {
-      codexCliArgs,
-      dispatcherCwd: dispatcher.cwd ?? dispatcherCodexCwd(dispatcher.id),
-    });
-    const foreground = validateDispatcherCodexHome(context, {
-      env,
-      codexCliArgs,
-    });
-    const managedServiceEnv = service.environment ?? {};
-    const managedService = service.installed
-      ? validateDispatcherCodexHome(context, {
-          env: managedServiceEnv,
-          codexCliArgs,
-        })
-      : null;
-    return {
-      id: dispatcher.id,
-      foreground,
-      managedService,
-    };
-  });
+): Promise<DispatcherDoctorReport[]> {
+  return Promise.all(
+    config.dispatchers.map(async (dispatcher) => {
+      const codexArgs = parseCodexArgs(dispatcherCodexArgsJson(dispatcher), {
+        approvalPolicy: config.codex.approval_policy,
+        sandboxMode: config.codex.sandbox_mode,
+        extraArgs: config.codex.extra_args,
+      });
+      const codexCliArgs = codexArgsToCli(codexArgs);
+      const context = dispatcherCodexHomeDoctorContext(dispatcher.id, {
+        codexCliArgs,
+        dispatcherCwd: dispatcher.cwd ?? dispatcherCodexCwd(dispatcher.id),
+      });
+      const foreground = await validateDispatcherCodexHome(context, {
+        env,
+        codexCliArgs,
+      });
+      const managedServiceEnv = service.environment ?? {};
+      const managedService = service.installed
+        ? await validateDispatcherCodexHome(context, {
+            env: managedServiceEnv,
+            codexCliArgs,
+          })
+        : null;
+      return {
+        id: dispatcher.id,
+        foreground,
+        managedService,
+      };
+    }),
+  );
 }
 
 function dispatcherCodexArgsJson(dispatcher: DispatcherConfig): string {
@@ -261,7 +277,7 @@ async function launchdStatus(
   runner: CommandRunner,
   uid?: number,
 ): Promise<ServiceStatus> {
-  const installed = existsSync(unitPath);
+  const installed = await pathExists(unitPath);
   const target = launchdTarget(uid);
   let raw = '';
   let loaded = false;
@@ -273,7 +289,7 @@ async function launchdStatus(
   }
   const pid = parseLaunchdPid(raw);
   const unitFile = installed
-    ? parseLaunchdPlist(readFileSync(unitPath, 'utf8'))
+    ? parseLaunchdPlist(await readFile(unitPath, 'utf8'))
     : { environment: null, execStart: null };
   return {
     platform: 'launchd',
@@ -314,14 +330,15 @@ async function systemdStatus(
   } catch {
     raw = '';
   }
-  const unitFile = existsSync(unitPath)
-    ? parseSystemdUnit(readFileSync(unitPath, 'utf8'))
+  const installed = await pathExists(unitPath);
+  const unitFile = installed
+    ? parseSystemdUnit(await readFile(unitPath, 'utf8'))
     : { environment: null, execStart: null };
   const props = parseSystemdProperties(raw);
   return {
     platform: 'systemd',
     unitPath,
-    installed: existsSync(unitPath),
+    installed,
     enabled,
     loaded: props['LoadState'] === 'loaded',
     running: active || props['ActiveState'] === 'active',

@@ -36,10 +36,12 @@ Background and older issue context:
 │   │   ├── src/                   admin, cli, codex, dispatcher, feishu, runtime, legacy db
 │   │   ├── tests/                 vitest (smoke + live-codex + bin-launcher + onboard)
 │   │   └── db/migrations/         legacy SQLite migrations targeted for removal
-│   └── channel/
-│       ├── feishu-transport/      @excitedjs/feishu-transport — platform-I/O core
-│       │                          (sole @larksuiteoapi/node-sdk importer)
-│       └── feishu-channel/        @excitedjs/feishu-channel — channel layer (placeholder)
+│   ├── channel/
+│   │   ├── feishu-transport/      @excitedjs/feishu-transport — platform-I/O core
+│   │   │                          (sole @larksuiteoapi/node-sdk importer)
+│   │   └── feishu-channel/        @excitedjs/feishu-channel — channel layer (placeholder)
+│   └── eslint-config/             @excitedjs/eslint-config — shared lint config
+│                                  (private; no-sync-IO gate, issue #85)
 ├── bin/                           thin redirectors → packages/dreamux/bin/
 ├── .agents/                       this knowledge base
 ├── .github/workflows/             CI

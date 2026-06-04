@@ -1,12 +1,15 @@
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
+import { access, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+
+/** Async existence probe — the fs/promises replacement for `existsSync`. */
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 import type {
   OnboardFileLedger,
@@ -44,47 +47,47 @@ export interface WriteOptions {
 
 export type FileSnapshot = Map<string, Buffer>;
 
-export function ensureDirectory(
+export async function ensureDirectory(
   path: string,
   ledger: OnboardFileLedger,
   reason: string,
   options: { dryRun?: boolean } = {},
-): void {
-  if (existsSync(path)) {
-    if (!statSync(path).isDirectory()) {
+): Promise<void> {
+  if (await pathExists(path)) {
+    if (!(await stat(path)).isDirectory()) {
       throw new Error(`expected directory but found a file: ${path}`);
     }
     ledger.record(path, 'unchanged', reason);
     return;
   }
   if (!options.dryRun) {
-    mkdirSync(path, { recursive: true });
+    await mkdir(path, { recursive: true });
   }
   ledger.record(path, 'created', reason);
 }
 
-export function writeTextFile(
+export async function writeTextFile(
   path: string,
   content: string,
   ledger: OnboardFileLedger,
   reason: string,
   options: WriteOptions = {},
-): OnboardFileStatus {
+): Promise<OnboardFileStatus> {
   const parent = dirname(path);
-  ensureDirectory(parent, ledger, `parent directory for ${reason}`, {
+  await ensureDirectory(parent, ledger, `parent directory for ${reason}`, {
     dryRun: options.dryRun,
   });
 
   let status: OnboardFileStatus;
-  if (!existsSync(path)) {
+  if (!(await pathExists(path))) {
     status = 'created';
   } else {
-    const current = readFileSync(path, 'utf8');
+    const current = await readFile(path, 'utf8');
     status = current === content ? 'unchanged' : 'modified';
   }
 
   if (!options.dryRun && status !== 'unchanged') {
-    writeFileSync(path, content, {
+    await writeFile(path, content, {
       mode: options.mode,
     });
   }
@@ -92,23 +95,23 @@ export function writeTextFile(
   return status;
 }
 
-export function ensureTextFile(
+export async function ensureTextFile(
   path: string,
   initialContent: string,
   ledger: OnboardFileLedger,
   reason: string,
   options: WriteOptions = {},
-): OnboardFileStatus {
+): Promise<OnboardFileStatus> {
   const parent = dirname(path);
-  ensureDirectory(parent, ledger, `parent directory for ${reason}`, {
+  await ensureDirectory(parent, ledger, `parent directory for ${reason}`, {
     dryRun: options.dryRun,
   });
-  if (existsSync(path)) {
+  if (await pathExists(path)) {
     ledger.record(path, 'unchanged', reason);
     return 'unchanged';
   }
   if (!options.dryRun) {
-    writeFileSync(path, initialContent, {
+    await writeFile(path, initialContent, {
       mode: options.mode,
     });
   }
@@ -116,33 +119,33 @@ export function ensureTextFile(
   return 'created';
 }
 
-export function snapshotFiles(root: string): FileSnapshot {
+export async function snapshotFiles(root: string): Promise<FileSnapshot> {
   const out: FileSnapshot = new Map();
-  if (!existsSync(root)) return out;
+  if (!(await pathExists(root))) return out;
   const stack = [root];
   while (stack.length > 0) {
     const current = stack.pop();
     if (current === undefined) continue;
-    const stat = statSync(current);
-    if (stat.isFile()) {
-      out.set(current, readFileSync(current));
+    const info = await stat(current);
+    if (info.isFile()) {
+      out.set(current, await readFile(current));
       continue;
     }
-    if (!stat.isDirectory()) continue;
-    for (const entry of readdirSync(current)) {
+    if (!info.isDirectory()) continue;
+    for (const entry of await readdir(current)) {
       stack.push(join(current, entry));
     }
   }
   return out;
 }
 
-export function recordFileTreeChanges(
+export async function recordFileTreeChanges(
   root: string,
   before: FileSnapshot,
   ledger: OnboardFileLedger,
   reason: string,
-): void {
-  const after = snapshotFiles(root);
+): Promise<void> {
+  const after = await snapshotFiles(root);
   for (const [path, content] of after) {
     const previous = before.get(path);
     const status =

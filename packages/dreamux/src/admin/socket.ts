@@ -7,13 +7,7 @@
  */
 
 import { createServer, type Server as NetServer, type Socket } from 'node:net';
-import {
-  chmodSync,
-  existsSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { chmod, readFile, rm, writeFile } from 'node:fs/promises';
 
 import type { Server } from '../server.js';
 import {
@@ -32,9 +26,9 @@ export interface AdminSocketServer {
 export interface AdminSocketOptions {
   /**
    * Override the chmod implementation. Tests inject a throwing fn to assert
-   * the fail-fast cleanup path (PR #3 review #2). Default: `fs.chmodSync`.
+   * the fail-fast cleanup path (PR #3 review #2). Default: `fs/promises.chmod`.
    */
-  chmodFn?: (path: string, mode: number) => void;
+  chmodFn?: (path: string, mode: number) => void | Promise<void>;
   /**
    * Override the liveness probe for the lockfile holder PID. Production uses
    * `process.kill(pid, 0)`; tests inject a stub so they can assert behavior
@@ -60,7 +54,7 @@ export function createAdminSocketServer(
   socketPath: string,
   options: AdminSocketOptions = {},
 ): AdminSocketServer {
-  const chmod = options.chmodFn ?? chmodSync;
+  const chmodFn = options.chmodFn ?? chmod;
   const isAlive = options.isPidAlive ?? defaultIsPidAlive;
   const myPid = options.selfPid ?? process.pid;
   const lockPath = `${socketPath}.lock`;
@@ -80,14 +74,12 @@ export function createAdminSocketServer(
       // hold it, nobody else can be inside this start() concurrently.
       // Stale pidfiles (dead holder) are reclaimed up to RECLAIM_ATTEMPTS
       // times; a live holder always loses the race.
-      acquirePidLock(lockPath, myPid, isAlive);
+      await acquirePidLock(lockPath, myPid, isAlive);
       holdLock = true;
 
       try {
         // Lock is held — stale socket cleanup is now race-free.
-        if (existsSync(socketPath)) {
-          rmSync(socketPath, { force: true });
-        }
+        await rm(socketPath, { force: true });
 
         netServer = createServer((sock) => handleConnection(server, sock));
         await new Promise<void>((res, rej) => {
@@ -98,7 +90,7 @@ export function createAdminSocketServer(
         // PR #3 review #2: chmod is a hard requirement, not best-effort —
         // a 0666 admin socket exposes server-ctl methods to every local user.
         try {
-          chmod(socketPath, 0o600);
+          await chmodFn(socketPath, 0o600);
         } catch (e) {
           const chmodErr = e instanceof Error ? e.message : String(e);
           throw new Error(
@@ -115,11 +107,11 @@ export function createAdminSocketServer(
           await new Promise<void>((res) => closing.close(() => res()));
         }
         try {
-          rmSync(socketPath, { force: true });
+          await rm(socketPath, { force: true });
         } catch {
           /* best-effort */
         }
-        releasePidLock(lockPath, myPid);
+        await releasePidLock(lockPath, myPid);
         holdLock = false;
         throw err;
       }
@@ -130,13 +122,13 @@ export function createAdminSocketServer(
         await new Promise<void>((res) => netServer!.close(() => res()));
         netServer = null;
         try {
-          rmSync(socketPath, { force: true });
+          await rm(socketPath, { force: true });
         } catch {
           /* */
         }
       }
       if (holdLock) {
-        releasePidLock(lockPath, myPid);
+        await releasePidLock(lockPath, myPid);
         holdLock = false;
       }
     },
@@ -155,19 +147,19 @@ export function createAdminSocketServer(
  * RECLAIM_ATTEMPTS bounds the retry so a pathologically broken filesystem
  * doesn't spin forever.
  */
-function acquirePidLock(
+async function acquirePidLock(
   lockPath: string,
   myPid: number,
   isAlive: (pid: number) => boolean,
-): void {
+): Promise<void> {
   for (let attempt = 0; attempt < RECLAIM_ATTEMPTS; attempt++) {
     try {
-      writeFileSync(lockPath, `${myPid}\n`, { flag: 'wx', mode: 0o600 });
+      await writeFile(lockPath, `${myPid}\n`, { flag: 'wx', mode: 0o600 });
       return;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
     }
-    const holder = readPidFile(lockPath);
+    const holder = await readPidFile(lockPath);
     if (holder === myPid) {
       // Re-entrant — shouldn't happen in normal use, but treat as held.
       return;
@@ -184,7 +176,7 @@ function acquirePidLock(
     // same stale file simply wins this round of `wx`, and we'll see *their*
     // live PID on the next iteration and bail out.
     try {
-      rmSync(lockPath, { force: true });
+      await rm(lockPath, { force: true });
     } catch {
       /* concurrent reclaim — retry the wx open */
     }
@@ -200,19 +192,19 @@ function acquirePidLock(
  * file was already reclaimed by a competitor (e.g. we were paused long
  * enough for our PID to look dead) must not delete the new holder's lock.
  */
-function releasePidLock(lockPath: string, myPid: number): void {
-  if (readPidFile(lockPath) !== myPid) return;
+async function releasePidLock(lockPath: string, myPid: number): Promise<void> {
+  if ((await readPidFile(lockPath)) !== myPid) return;
   try {
-    rmSync(lockPath, { force: true });
+    await rm(lockPath, { force: true });
   } catch {
     /* best-effort */
   }
 }
 
-function readPidFile(path: string): number | null {
+async function readPidFile(path: string): Promise<number | null> {
   let txt: string;
   try {
-    txt = readFileSync(path, 'utf8').trim();
+    txt = (await readFile(path, 'utf8')).trim();
   } catch {
     return null;
   }

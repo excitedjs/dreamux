@@ -20,13 +20,7 @@
  *     start`) does not claim a stale notice.
  */
 
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import { restartIntentPath } from '../runtime/paths.js';
@@ -64,7 +58,9 @@ export interface WriteRestartIntentOptions {
  * Persist the restart marker. Must be called *before* triggering the service
  * manager restart so the marker is durable if the caller is killed.
  */
-export function writeRestartIntent(options: WriteRestartIntentOptions): string {
+export async function writeRestartIntent(
+  options: WriteRestartIntentOptions,
+): Promise<string> {
   const path = options.path ?? restartIntentPath();
   const file: RestartIntentFile = {
     version: 1,
@@ -76,8 +72,8 @@ export function writeRestartIntent(options: WriteRestartIntentOptions): string {
         : DEFAULT_RESTART_ANNOUNCE,
     targets: dedupeNonEmpty(options.targets),
   };
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(file, null, 2)}\n`, { mode: 0o600 });
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, `${JSON.stringify(file, null, 2)}\n`, { mode: 0o600 });
   return path;
 }
 
@@ -89,9 +85,11 @@ export function writeRestartIntent(options: WriteRestartIntentOptions): string {
  * self-update path where the caller is reaped before reaching here keeps the
  * marker (durability), which is the intended behaviour (issue #78).
  */
-export function clearRestartIntent(path: string = restartIntentPath()): void {
+export async function clearRestartIntent(
+  path: string = restartIntentPath(),
+): Promise<void> {
   try {
-    rmSync(path, { force: true });
+    await rm(path, { force: true });
   } catch {
     /* best effort */
   }
@@ -116,7 +114,7 @@ export interface NotifyResumedRestartOptions {
 export async function notifyResumedRestart(
   options: NotifyResumedRestartOptions,
 ): Promise<void> {
-  const path = writeRestartIntent({
+  const path = await writeRestartIntent({
     targets: options.targets,
     ...(options.announce !== undefined ? { announce: options.announce } : {}),
     now: options.now,
@@ -125,7 +123,7 @@ export async function notifyResumedRestart(
   try {
     await options.runControl();
   } catch (err) {
-    clearRestartIntent(path);
+    await clearRestartIntent(path);
     throw err;
   }
 }
@@ -154,19 +152,20 @@ export class RestartIntentConsumer {
    * missing / malformed / expired marker yields an empty consumer (and the
    * stale file is removed). This is the only reader of the marker file.
    */
-  static load(options: { now: number; path?: string } = { now: 0 }): RestartIntentConsumer {
+  static async load(
+    options: { now: number; path?: string } = { now: 0 },
+  ): Promise<RestartIntentConsumer> {
     const path = options.path ?? restartIntentPath();
     const empty = new RestartIntentConsumer('', 0, new Set());
-    if (!existsSync(path)) return empty;
     let parsed: RestartIntentFile | null = null;
     try {
-      parsed = JSON.parse(readFileSync(path, 'utf8')) as RestartIntentFile;
+      parsed = JSON.parse(await readFile(path, 'utf8')) as RestartIntentFile;
     } catch {
       parsed = null;
     }
     // Single reader: drop the file regardless of validity so it never replays.
     try {
-      rmSync(path, { force: true });
+      await rm(path, { force: true });
     } catch {
       /* best effort */
     }

@@ -246,7 +246,7 @@ describe('dreamux cross-module e2e', () => {
     // Onboard the canonical sender onto the global allow-user list so a
     // mentioned group message is delivered (empty `allow_users` authorizes
     // nobody under the follow-user gate).
-    saveDispatcherAccess('flow', {
+    await saveDispatcherAccess('flow', {
       version: 2,
       allow_users: ['sender-test'],
       group: { policy: 'follow-user', allow_chats: [], require_mention: true },
@@ -348,7 +348,9 @@ describe('dreamux cross-module e2e', () => {
     );
     await waitFor(() => codexInputs.length === 1);
     await waitFor(() => bot.reactions.length === 2);
-    expect(loadDispatcherAccess('flow').observed_chats).toEqual(['chat-group-a']);
+    expect((await loadDispatcherAccess('flow')).observed_chats).toEqual([
+      'chat-group-a',
+    ]);
 
     await server.shutdown();
     server = buildServer({ runtimeDir, fake, bot });

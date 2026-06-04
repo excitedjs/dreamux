@@ -8,6 +8,7 @@
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';
+// eslint-disable-next-line no-restricted-imports -- black-box launcher acceptance test: it execs the compiled `dreamux`/`tm` bins as real child processes and asserts on captured stdout/exit code; spawnSync keeps each case one synchronous assertion with no async lifecycle to leak between tests (issue #85 test-scope carve-out).
 import { spawnSync } from 'node:child_process';
 import {
   existsSync,

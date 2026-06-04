@@ -9,16 +9,18 @@
 
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
-import {
-  closeSync,
-  existsSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  statSync,
-  writeSync,
-} from 'node:fs';
+import { access, mkdir, open, readFile, stat } from 'node:fs/promises';
 import { validateDispatcherId } from './dispatcher-id.js';
+
+/** Async existence probe — the fs/promises replacement for `existsSync`. */
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export interface DreamuxConfig {
   codex: {
@@ -94,24 +96,28 @@ export function legacyGlobalConfigFile(
   return join(globalConfigDir(overrides), 'config.toml');
 }
 
-export function loadOrInitConfig(
+export async function loadOrInitConfig(
   overrides: ConfigPathOverrides = {},
-): { config: DreamuxConfig; configFile: string; createdOnThisBoot: boolean } {
+): Promise<{
+  config: DreamuxConfig;
+  configFile: string;
+  createdOnThisBoot: boolean;
+}> {
   const file = globalConfigFile(overrides);
-  assertNoLegacyTomlOnly(overrides);
-  mkdirSync(dirname(file), { recursive: true });
+  await assertNoLegacyTomlOnly(overrides);
+  await mkdir(dirname(file), { recursive: true });
 
-  const createdOnThisBoot = atomicWriteIfAbsent(file, DEFAULT_CONFIG_JSON);
-  const config = readConfigFile(file);
+  const createdOnThisBoot = await atomicWriteIfAbsent(file, DEFAULT_CONFIG_JSON);
+  const config = await readConfigFile(file);
   return { config, configFile: file, createdOnThisBoot };
 }
 
-export function loadConfig(
+export async function loadConfig(
   overrides: ConfigPathOverrides = {},
-): { config: DreamuxConfig; configFile: string } {
+): Promise<{ config: DreamuxConfig; configFile: string }> {
   const file = globalConfigFile(overrides);
-  assertNoLegacyTomlOnly(overrides);
-  return { config: readConfigFile(file), configFile: file };
+  await assertNoLegacyTomlOnly(overrides);
+  return { config: await readConfigFile(file), configFile: file };
 }
 
 export function stringifyConfig(config: DreamuxConfig): string {
@@ -133,15 +139,15 @@ export function redactConfigForDisplay(raw: string, file: string): string {
   return `${JSON.stringify(parsed, null, 2)}\n`;
 }
 
-function readConfigFile(file: string): DreamuxConfig {
-  if (!existsSync(file)) {
+async function readConfigFile(file: string): Promise<DreamuxConfig> {
+  if (!(await pathExists(file))) {
     throw new Error(
       `dreamux config is missing at ${file}.\n` +
         'Run `dreamux onboard` to create it before starting the server.',
     );
   }
-  assertConfigFileMode(file);
-  const raw = readFileSync(file, 'utf8');
+  await assertConfigFileMode(file);
+  const raw = await readFile(file, 'utf8');
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -155,12 +161,12 @@ function readConfigFile(file: string): DreamuxConfig {
   return mergeWithDefaults(parsed, file);
 }
 
-export function assertNoLegacyTomlOnly(
+export async function assertNoLegacyTomlOnly(
   overrides: ConfigPathOverrides = {},
-): void {
+): Promise<void> {
   const jsonFile = globalConfigFile(overrides);
   const tomlFile = legacyGlobalConfigFile(overrides);
-  if (existsSync(jsonFile) || !existsSync(tomlFile)) return;
+  if ((await pathExists(jsonFile)) || !(await pathExists(tomlFile))) return;
   throw new Error(
     `legacy dreamux config detected at ${tomlFile}, but ${jsonFile} does not exist.\n` +
       'dreamux no longer reads TOML config and will not create default JSON over an existing install.\n' +
@@ -168,25 +174,28 @@ export function assertNoLegacyTomlOnly(
   );
 }
 
-function atomicWriteIfAbsent(file: string, content: string): boolean {
-  let fd: number;
+async function atomicWriteIfAbsent(
+  file: string,
+  content: string,
+): Promise<boolean> {
+  let handle;
   try {
-    fd = openSync(file, 'wx', 0o600);
+    handle = await open(file, 'wx', 0o600);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'EEXIST') return false;
     throw err;
   }
   try {
-    writeSync(fd, content);
+    await handle.writeFile(content);
   } finally {
-    closeSync(fd);
+    await handle.close();
   }
   return true;
 }
 
-export function assertConfigFileMode(file: string): void {
+export async function assertConfigFileMode(file: string): Promise<void> {
   if (process.platform === 'win32') return;
-  const mode = statSync(file).mode & 0o777;
+  const mode = (await stat(file)).mode & 0o777;
   if (mode === 0o600) return;
   throw new Error(
     `dreamux config file must be mode 0600: ${file} has mode 0${mode.toString(8)}`,

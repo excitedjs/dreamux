@@ -3,13 +3,7 @@ import {
   isBotSenderType,
   type Mention,
 } from '@excitedjs/feishu-transport';
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  writeFileSync,
-} from 'node:fs';
+import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import { dispatcherAccessPath } from '../runtime/paths.js';
@@ -113,10 +107,19 @@ export function defaultDispatcherAccessState(): DispatcherAccessState {
   };
 }
 
-export function loadDispatcherAccess(dispatcherId: string): DispatcherAccessState {
+export async function loadDispatcherAccess(
+  dispatcherId: string,
+): Promise<DispatcherAccessState> {
   const path = dispatcherAccessPath(dispatcherId);
-  if (!existsSync(path)) return defaultDispatcherAccessState();
-  const raw = readFileSync(path, 'utf8');
+  let raw: string;
+  try {
+    raw = await readFile(path, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return defaultDispatcherAccessState();
+    }
+    throw err;
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -127,14 +130,14 @@ export function loadDispatcherAccess(dispatcherId: string): DispatcherAccessStat
   return readDispatcherAccess(parsed, path);
 }
 
-export function saveDispatcherAccess(
+export async function saveDispatcherAccess(
   dispatcherId: string,
   access: DispatcherAccessState,
-): void {
+): Promise<void> {
   const path = dispatcherAccessPath(dispatcherId);
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(access, null, 2)}\n`, { mode: 0o600 });
-  chmodSync(path, 0o600);
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, `${JSON.stringify(access, null, 2)}\n`, { mode: 0o600 });
+  await chmod(path, 0o600);
 }
 
 export function dreamuxFeishuGate(
