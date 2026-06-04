@@ -59,6 +59,11 @@ Background and older issue context:
 - [`proposals/global-bin-onboard-serve.md`](proposals/global-bin-onboard-serve.md)
   — superseded issue #18 proposal; accepted behavior lives in
   [`decisions/global-bin-onboard-serve.md`](decisions/global-bin-onboard-serve.md).
+- [`proposals/post-mvp-hardening.md`](proposals/post-mvp-hardening.md) —
+  consolidated post-MVP hardening proposal (bounded state, restart/startup
+  reconciliation, access surface, message-format, CLI/diagnostic robustness);
+  groups the deferred epic follow-ups + the #58 ultracode findings into the next
+  workstream.
 - `domains/`, `proposals/`, `research/`, `rules/` — empty for now; add
   here when material grows past a single file's worth.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — when to update this KB, how to
