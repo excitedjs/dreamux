@@ -17,14 +17,40 @@ import { dispatcherAccessPath } from '../runtime/paths.js';
 export const TRUST_DOMAIN_WARNING =
   'dispatcher shares one Codex context across multiple Feishu chats';
 
+/**
+ * Group-access mode — which trust model gates group messages.
+ *
+ *  - `block`       — every group message is dropped.
+ *  - `allowlist`   — the *group* is the unit of trust: a chat must be in
+ *                    `group.allow_chats`, and any member there may speak
+ *                    (subject to `group.require_mention`).
+ *  - `follow-user` — the *sender* is the unit of trust: the group needs no
+ *                    authorization (`allow_chats` is ignored), a message is
+ *                    always mention-gated, and the sender's open_id must be on
+ *                    the top-level `allow_users` list — the same list that
+ *                    authorizes direct messages.
+ */
+export type GroupPolicy = 'block' | 'allowlist' | 'follow-user';
+
 export interface DispatcherAccessState {
-  version: 1;
-  dm: {
-    allow_users: string[];
-  };
+  /**
+   * Schema version. `1` was the legacy two-list shape (`dm.allow_users` +
+   * `group.follow_users`); `2` unifies them into the top-level `allow_users`
+   * and adds the explicit `group.policy`. `readDispatcherAccess` migrates a v1
+   * file forward by field presence; the marker just records that the rewrite
+   * happened.
+   */
+  version: 2;
+  /**
+   * The single global allowlist of sender open_ids, shared by direct messages
+   * and the group `follow-user` policy (the dreamux equivalent of the transport
+   * gate's top-level `allowFrom`). An empty list authorizes nobody.
+   */
+  allow_users: string[];
   group: {
+    policy: GroupPolicy;
+    /** Authorized chat_ids — consulted only under the `allowlist` policy. */
     allow_chats: string[];
-    follow_users: string[];
     require_mention: boolean;
   };
   observed_chats: string[];
@@ -74,13 +100,11 @@ export type DreamuxFeishuGateResult =
 
 export function defaultDispatcherAccessState(): DispatcherAccessState {
   return {
-    version: 1,
-    dm: {
-      allow_users: [],
-    },
+    version: 2,
+    allow_users: [],
     group: {
+      policy: 'follow-user',
       allow_chats: [],
-      follow_users: [],
       require_mention: true,
     },
     observed_chats: [],
@@ -133,7 +157,7 @@ export function dreamuxFeishuGate(
 
   if (input.chatType === 'p2p') {
     if (senderIsBot) return drop(`bot sender type: ${input.senderType}`);
-    if (!access.dm.allow_users.includes(input.senderId)) {
+    if (!access.allow_users.includes(input.senderId)) {
       return drop('direct sender not allowed');
     }
     return deliver(access, input, now);
@@ -143,25 +167,48 @@ export function dreamuxFeishuGate(
     return drop(`unsupported chat type: ${input.chatType}`);
   }
 
-  if (access.group.allow_chats.length > 0 &&
-    !access.group.allow_chats.includes(input.chatId)) {
+  const policy = access.group.policy;
+  if (policy === 'block') {
+    return drop('group messages are blocked (group policy: block)');
+  }
+
+  // Under `allowlist` the group is the unit of trust: the chat must be named.
+  // Under `follow-user` the chat allowlist is intentionally ignored — the group
+  // needs no authorization, only the sender does.
+  if (policy === 'allowlist' && !access.group.allow_chats.includes(input.chatId)) {
     return drop('group chat not allowed');
   }
 
   if (senderIsBot) {
     // A peer bot speaks only if it was introduced (trusted) for this chat by an
     // allowlisted `/introduce`. Trusted bots bypass the mention gate because a
-    // bot cannot @-mention us; untrusted bots are dropped as before.
+    // bot cannot @-mention us; untrusted bots are dropped as before. This is
+    // per-chat trust (`trustedBotIds` is scoped to this chat by the caller) and
+    // is never reached through the human `allow_users` list.
     if (input.trustedBotIds?.has(input.senderId) ?? false) {
       return deliver(access, input, now);
     }
     return drop(`bot sender type: ${input.senderType}`);
   }
 
-  if (access.group.follow_users.length > 0 &&
-    !access.group.follow_users.includes(input.senderId)) {
-    return drop('sender not allowed by follow-user gate');
+  if (policy === 'follow-user') {
+    // A deliberate @-mention is always required — without it the bot would
+    // react to every message in the group. The flag `group.require_mention`
+    // governs only the `allowlist` policy.
+    if (input.botOpenId === undefined) {
+      return drop('group message requires a bot mention but bot open_id is unknown');
+    }
+    if (!isBotMentioned(input.mentions, input.botOpenId)) {
+      return drop('bot not mentioned');
+    }
+    if (!access.allow_users.includes(input.senderId)) {
+      return drop('sender not on allowlist');
+    }
+    return deliver(access, input, now);
   }
+
+  // policy === 'allowlist': the chat is already authorized above; any member
+  // may speak, subject to the configurable mention gate.
   if (access.group.require_mention) {
     if (input.botOpenId === undefined) {
       return drop('group message requires a bot mention but bot open_id is unknown');
@@ -235,24 +282,45 @@ function readDispatcherAccess(
   const group = isRecord(raw['group']) ? raw['group'] : {};
   const lastGate = raw['last_gate'];
 
+  // v2 unifies three possible sources of allowed senders into one list:
+  //   - top-level `allow_users` (v2),
+  //   - legacy `dm.allow_users` (v1 direct allowlist),
+  //   - legacy `group.follow_users` (v1 group sender allowlist).
+  // They are merged and de-duplicated; the legacy fields are read but never
+  // written back, so the first save collapses the file to the v2 shape. The
+  // union means DM access becomes `dm.allow_users ∪ group.follow_users` — for
+  // the common case (the two were equal, or dm ⊇ follow) DM is unchanged.
+  const topAllow = readStringArray(raw, 'allow_users', [], path);
+  const legacyDmAllow = readStringArray(dm, 'allow_users', [], path);
+  const legacyFollow = readStringArray(group, 'follow_users', [], path);
+  const allowUsers = [...new Set([...topAllow, ...legacyDmAllow, ...legacyFollow])];
+  const allowChats = readStringArray(
+    group,
+    'allow_chats',
+    defaults.group.allow_chats,
+    path,
+  );
+
+  // Group policy: an explicit value always wins. Otherwise infer from the
+  // legacy shape — a non-empty `follow_users` is the strongest signal the
+  // operator wanted sender-scoped gating, so preserve it as `follow-user`
+  // (never silently relax it to chat-only `allowlist`); then a non-empty
+  // `allow_chats` means chat-scoped gating; else the secure default.
+  const explicitPolicy = readGroupPolicy(group['policy'], path);
+  const policy: GroupPolicy =
+    explicitPolicy ??
+    (legacyFollow.length > 0
+      ? 'follow-user'
+      : allowChats.length > 0
+        ? 'allowlist'
+        : defaults.group.policy);
+
   return {
-    version: 1,
-    dm: {
-      allow_users: readStringArray(dm, 'allow_users', defaults.dm.allow_users, path),
-    },
+    version: 2,
+    allow_users: allowUsers,
     group: {
-      allow_chats: readStringArray(
-        group,
-        'allow_chats',
-        defaults.group.allow_chats,
-        path,
-      ),
-      follow_users: readStringArray(
-        group,
-        'follow_users',
-        defaults.group.follow_users,
-        path,
-      ),
+      policy,
+      allow_chats: allowChats,
       require_mention: readBoolean(
         group,
         'require_mention',
@@ -271,6 +339,19 @@ function readDispatcherAccess(
       ? null
       : readGateDiagnostic(lastGate, path),
   };
+}
+
+function readGroupPolicy(
+  value: unknown,
+  path: string,
+): GroupPolicy | undefined {
+  if (value === undefined) return undefined;
+  if (value !== 'block' && value !== 'allowlist' && value !== 'follow-user') {
+    throw new Error(
+      `dispatcher access error in ${path}: group.policy must be block, allowlist, or follow-user`,
+    );
+  }
+  return value;
 }
 
 function readGateDiagnostic(raw: unknown, path: string): GateDiagnostic {

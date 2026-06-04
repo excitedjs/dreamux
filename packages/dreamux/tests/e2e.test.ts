@@ -15,7 +15,10 @@ import {
   Server,
 } from '../src/server.js';
 import { sendAdminRequest } from '../src/admin/client.js';
-import { loadDispatcherAccess } from '../src/channel/feishu-gate.js';
+import {
+  loadDispatcherAccess,
+  saveDispatcherAccess,
+} from '../src/channel/feishu-gate.js';
 import { CodexWsClient } from '../src/codex/rpc.js';
 import {
   CodexProcess,
@@ -240,6 +243,17 @@ describe('dreamux cross-module e2e', () => {
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(runtimeDir, 'home');
     writeReadyDispatcherWorkspace('flow');
+    // Onboard the canonical sender onto the global allow-user list so a
+    // mentioned group message is delivered (empty `allow_users` authorizes
+    // nobody under the follow-user gate).
+    saveDispatcherAccess('flow', {
+      version: 2,
+      allow_users: ['sender-test'],
+      group: { policy: 'follow-user', allow_chats: [], require_mention: true },
+      observed_chats: [],
+      warnings: [],
+      last_gate: null,
+    });
     codexInputs = [];
     fake = await startFakeCodex({
       replyFor: captureCodexInputs(codexInputs),

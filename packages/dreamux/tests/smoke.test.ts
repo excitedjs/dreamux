@@ -279,6 +279,19 @@ describe('dreamux MVP smoke', () => {
       replyFor: captureAndEchoCodexInput(codexInputs),
     });
     bot = createFakeFeishuBot('app-smoke');
+    // Suite baseline: the canonical sender is onboarded onto the global
+    // allow-user list, so a mentioned group message from it is delivered.
+    // Empty `allow_users` now authorizes nobody (the follow-user fix), so
+    // tests that exercise delivery need this seed; tests that assert a drop
+    // override it or rely on a different gate reason (no mention, bot sender).
+    saveDispatcherAccess('flow', {
+      version: 2,
+      allow_users: ['sender-test'],
+      group: { policy: 'follow-user', allow_chats: [], require_mention: true },
+      observed_chats: [],
+      warnings: [],
+      last_gate: null,
+    });
   });
 
   afterEach(async () => {
@@ -798,13 +811,11 @@ describe('dreamux MVP smoke', () => {
 
   it('reads access gate configuration from access.json and allows configured DMs', async () => {
     saveDispatcherAccess('flow', {
-      version: 1,
-      dm: {
-        allow_users: ['sender-dm'],
-      },
+      version: 2,
+      allow_users: ['sender-dm'],
       group: {
+        policy: 'allowlist',
         allow_chats: ['chat-group-a'],
-        follow_users: ['sender-dm'],
         require_mention: true,
       },
       observed_chats: [],
@@ -827,9 +838,9 @@ describe('dreamux MVP smoke', () => {
 
     await waitFor(() => fake.turnsHandled === 1);
     const access = loadDispatcherAccess('flow');
-    expect(access.dm.allow_users).toEqual(['sender-dm']);
+    expect(access.allow_users).toEqual(['sender-dm']);
+    expect(access.group.policy).toEqual('allowlist');
     expect(access.group.allow_chats).toEqual(['chat-group-a']);
-    expect(access.group.follow_users).toEqual(['sender-dm']);
     expect(access.observed_chats).toEqual(['chat-dm']);
     expect(bot.reactions.map((reaction) => reaction.messageId)).toEqual([
       'msg-dm',
@@ -843,11 +854,11 @@ describe('dreamux MVP smoke', () => {
 
   it('consumes a no-@ /introduce from an allowlisted sender and records trust without enqueue or reactions', async () => {
     saveDispatcherAccess('flow', {
-      version: 1,
-      dm: { allow_users: [] },
+      version: 2,
+      allow_users: ['sender-test'],
       group: {
+        policy: 'allowlist',
         allow_chats: ['chat-group-a'],
-        follow_users: ['sender-test'],
         require_mention: true,
       },
       observed_chats: [],
@@ -882,11 +893,11 @@ describe('dreamux MVP smoke', () => {
 
   it('injects a one-shot group_bots context on the next group message after /introduce', async () => {
     saveDispatcherAccess('flow', {
-      version: 1,
-      dm: { allow_users: [] },
+      version: 2,
+      allow_users: ['sender-test'],
       group: {
+        policy: 'allowlist',
         allow_chats: ['chat-group-a'],
-        follow_users: ['sender-test'],
         require_mention: true,
       },
       observed_chats: [],
@@ -926,11 +937,11 @@ describe('dreamux MVP smoke', () => {
 
   it('mcp.list_chat_bots returns the chat known + trusted bots with names', async () => {
     saveDispatcherAccess('flow', {
-      version: 1,
-      dm: { allow_users: [] },
+      version: 2,
+      allow_users: ['sender-test'],
       group: {
+        policy: 'allowlist',
         allow_chats: ['chat-group-a'],
-        follow_users: ['sender-test'],
         require_mention: true,
       },
       observed_chats: [],
@@ -982,11 +993,11 @@ describe('dreamux MVP smoke', () => {
 
   it('does NOT consume /introduce from a non-allowlisted sender (no trust, dropped by the gate)', async () => {
     saveDispatcherAccess('flow', {
-      version: 1,
-      dm: { allow_users: [] },
+      version: 2,
+      allow_users: ['sender-test'],
       group: {
+        policy: 'allowlist',
         allow_chats: ['chat-group-a'],
-        follow_users: ['sender-test'],
         require_mention: true,
       },
       observed_chats: [],
@@ -1033,13 +1044,14 @@ describe('dreamux MVP smoke', () => {
       message_id: 'msg-introduce-stranger',
       reason: 'sender_not_followed',
     });
-    // The original gate behavior is unchanged: with a non-empty follow_users the
-    // sender still drops on the follow-user gate afterwards.
+    // The unauthorized introduce still falls through to the gate, which drops it
+    // — here as `bot not mentioned`, since the stranger mentioned only the peer
+    // bot. The issue #77 diagnostic above is what names the real cause.
     expect(
       lines.some(
         (l) =>
           l['msg'] === 'feishu inbound dropped' &&
-          l['reason'] === 'sender not allowed by follow-user gate',
+          l['reason'] === 'bot not mentioned',
       ),
     ).toBe(true);
     // No-leak: the diagnostic carries only ids/reason — never the message body,
@@ -1050,16 +1062,17 @@ describe('dreamux MVP smoke', () => {
     expect(text).not.toContain('Peer');
   });
 
-  it('diagnoses an unauthorized /introduce when follow_users is empty (would surface as bot-not-mentioned)', async () => {
-    // The misleading case from issue #77: with follow_users empty the follow-user
-    // gate is skipped, so the eventual drop reason is the require_mention
-    // `bot not mentioned` — which looks like the user simply forgot to @ the bot.
+  it('diagnoses an unauthorized /introduce when allow_users is empty (would surface as bot-not-mentioned)', async () => {
+    // The misleading case from issue #77: with allow_users empty the sender is
+    // unauthorized, and because the gate is mention-first the eventual drop
+    // reason is `bot not mentioned` — which looks like the user simply forgot to
+    // @ the bot, hiding the real cause that the issue #77 diagnostic names.
     saveDispatcherAccess('flow', {
-      version: 1,
-      dm: { allow_users: [] },
+      version: 2,
+      allow_users: [],
       group: {
+        policy: 'follow-user',
         allow_chats: ['chat-group-a'],
-        follow_users: [],
         require_mention: true,
       },
       observed_chats: [],
@@ -1109,11 +1122,11 @@ describe('dreamux MVP smoke', () => {
 
   it('diagnoses an unauthorized /introduce when the chat is not allowlisted', async () => {
     saveDispatcherAccess('flow', {
-      version: 1,
-      dm: { allow_users: [] },
+      version: 2,
+      allow_users: ['sender-test'],
       group: {
+        policy: 'allowlist',
         allow_chats: ['chat-group-other'],
-        follow_users: ['sender-test'],
         require_mention: true,
       },
       observed_chats: [],
@@ -1157,11 +1170,11 @@ describe('dreamux MVP smoke', () => {
 
   it('diagnoses an unauthorized /introduce sent as a direct message (non_group)', async () => {
     saveDispatcherAccess('flow', {
-      version: 1,
-      dm: { allow_users: ['sender-test'] },
+      version: 2,
+      allow_users: ['sender-test'],
       group: {
+        policy: 'follow-user',
         allow_chats: ['chat-group-a'],
-        follow_users: ['sender-test'],
         require_mention: true,
       },
       observed_chats: [],
@@ -1205,11 +1218,11 @@ describe('dreamux MVP smoke', () => {
 
   it('an authorized /introduce is consumed without emitting the unauthorized diagnostic', async () => {
     saveDispatcherAccess('flow', {
-      version: 1,
-      dm: { allow_users: [] },
+      version: 2,
+      allow_users: ['sender-test'],
       group: {
+        policy: 'allowlist',
         allow_chats: ['chat-group-a'],
-        follow_users: ['sender-test'],
         require_mention: true,
       },
       observed_chats: [],

@@ -1,13 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 
 import {
   TRUST_DOMAIN_WARNING,
@@ -20,10 +22,8 @@ import {
 import { dispatcherAccessPath, resetRuntimeConfig } from '../src/runtime/paths.js';
 
 describe('dreamuxFeishuGate', () => {
-  it('delivers direct messages only from allowed senders', () => {
-    const access = state({
-      dm: { allow_users: ['sender-allowed'] },
-    });
+  it('delivers direct messages only from senders on the global allow-user list', () => {
+    const access = state({ allow_users: ['sender-allowed'] });
 
     expect(gate({ chatType: 'p2p', senderId: 'sender-allowed' }, access))
       .toMatchObject({ action: 'deliver' });
@@ -35,7 +35,7 @@ describe('dreamuxFeishuGate', () => {
   });
 
   it('drops self-sent, bot-sender, and missing-sender messages', () => {
-    const access = state();
+    const access = state({ allow_users: ['sender-allowed'] });
 
     expect(gate({ senderId: '' }, access)).toMatchObject({
       action: 'drop',
@@ -52,56 +52,151 @@ describe('dreamuxFeishuGate', () => {
       });
   });
 
-  it('requires a bot mention before group delivery', () => {
-    const access = state();
-
-    expect(gate({}, access)).toMatchObject({ action: 'deliver' });
-    expect(gate({ mentions: [] }, access)).toMatchObject({
-      action: 'drop',
-      reason: 'bot not mentioned',
+  describe('follow-user policy — the global allow-user list gates every group', () => {
+    const access = state({
+      allow_users: ['sender-allowed'],
+      group: { policy: 'follow-user', allow_chats: [], require_mention: true },
     });
-    expect(gate({ botOpenId: undefined }, access)).toMatchObject({
-      action: 'drop',
-      reason: 'group message requires a bot mention but bot open_id is unknown',
+
+    it('delivers a global allow-user who @-mentions the bot in any group', () => {
+      expect(gate({ chatId: 'chat-group-a' }, access)).toMatchObject({
+        action: 'deliver',
+      });
+      // A different group the operator never configured — still delivered.
+      expect(gate({ chatId: 'chat-group-z' }, access)).toMatchObject({
+        action: 'deliver',
+      });
+    });
+
+    it('ignores a configured chat allowlist under follow-user', () => {
+      // allow_chats names only chat-group-a, but follow-user does not gate on
+      // the chat: an allow-user is delivered in an unlisted chat all the same.
+      const scoped = state({
+        allow_users: ['sender-allowed'],
+        group: {
+          policy: 'follow-user',
+          allow_chats: ['chat-group-a'],
+          require_mention: true,
+        },
+      });
+      expect(gate({ chatId: 'chat-group-z' }, scoped)).toMatchObject({
+        action: 'deliver',
+      });
+    });
+
+    it('drops a sender who is not on the global allow-user list', () => {
+      expect(gate({ senderId: 'sender-other' }, access)).toMatchObject({
+        action: 'drop',
+        reason: 'sender not on allowlist',
+      });
+    });
+
+    it('always requires an @-mention, regardless of require_mention', () => {
+      expect(gate({ mentions: [] }, access)).toMatchObject({
+        action: 'drop',
+        reason: 'bot not mentioned',
+      });
+      const noMentionFlag = state({
+        allow_users: ['sender-allowed'],
+        group: {
+          policy: 'follow-user',
+          allow_chats: [],
+          require_mention: false,
+        },
+      });
+      expect(gate({ mentions: [] }, noMentionFlag)).toMatchObject({
+        action: 'drop',
+        reason: 'bot not mentioned',
+      });
+    });
+
+    it('drops when the bot open_id is unknown', () => {
+      expect(gate({ botOpenId: undefined }, access)).toMatchObject({
+        action: 'drop',
+        reason: 'group message requires a bot mention but bot open_id is unknown',
+      });
     });
   });
 
-  it('enforces configured group chat allowlists', () => {
+  describe('allowlist policy — the chat is the unit of trust', () => {
     const access = state({
-      group: {
-        ...defaultDispatcherAccessState().group,
-        allow_chats: ['chat-group-a'],
-      },
+      // No global allow-user: allowlist mode trusts the group, not the sender.
+      group: { policy: 'allowlist', allow_chats: ['chat-group-a'], require_mention: true },
     });
 
-    expect(gate({ chatId: 'chat-group-a' }, access)).toMatchObject({
-      action: 'deliver',
+    it('delivers any member of an authorized chat once the bot is mentioned', () => {
+      expect(gate({ chatId: 'chat-group-a', senderId: 'anyone' }, access))
+        .toMatchObject({ action: 'deliver' });
     });
-    expect(gate({ chatId: 'chat-group-b' }, access)).toMatchObject({
-      action: 'drop',
-      reason: 'group chat not allowed',
+
+    it('drops a chat that is not on the allowlist', () => {
+      expect(gate({ chatId: 'chat-group-b' }, access)).toMatchObject({
+        action: 'drop',
+        reason: 'group chat not allowed',
+      });
+    });
+
+    it('honors require_mention in allowlist mode', () => {
+      expect(gate({ chatId: 'chat-group-a', mentions: [] }, access))
+        .toMatchObject({ action: 'drop', reason: 'bot not mentioned' });
+
+      const open = state({
+        group: { policy: 'allowlist', allow_chats: ['chat-group-a'], require_mention: false },
+      });
+      expect(gate({ chatId: 'chat-group-a', mentions: [] }, open))
+        .toMatchObject({ action: 'deliver' });
     });
   });
 
-  it('enforces follow-user allowlists across groups', () => {
-    const access = state({
-      group: {
-        ...defaultDispatcherAccessState().group,
-        follow_users: ['sender-allowed'],
-      },
+  describe('block policy', () => {
+    it('drops every group message', () => {
+      const access = state({
+        allow_users: ['sender-allowed'],
+        group: { policy: 'block', allow_chats: [], require_mention: true },
+      });
+      expect(gate({}, access)).toMatchObject({
+        action: 'drop',
+        reason: 'group messages are blocked (group policy: block)',
+      });
+    });
+  });
+
+  describe('peer-bot trust is per-chat and never reached through allow_users', () => {
+    const botBase = { senderId: 'peer-bot', senderType: 'bot' };
+
+    it('drops an un-introduced bot sender', () => {
+      const access = state({ group: { policy: 'allowlist', allow_chats: ['chat-group-a'], require_mention: true } });
+      expect(gate(botBase, access)).toMatchObject({ action: 'drop' });
     });
 
-    expect(gate({ senderId: 'sender-allowed' }, access)).toMatchObject({
-      action: 'deliver',
+    it('delivers an introduced (trusted) bot sender without a mention, under follow-user', () => {
+      const access = state({
+        allow_users: ['sender-allowed'],
+        group: { policy: 'follow-user', allow_chats: [], require_mention: true },
+      });
+      expect(
+        gate({ ...botBase, mentions: [], trustedBotIds: new Set(['peer-bot']) }, access),
+      ).toMatchObject({ action: 'deliver' });
     });
-    expect(gate({ senderId: 'sender-other' }, access)).toMatchObject({
-      action: 'drop',
-      reason: 'sender not allowed by follow-user gate',
+  });
+
+  it('shares one global list across direct and follow-user group delivery', () => {
+    const access = state({
+      allow_users: ['shared-user'],
+      group: { policy: 'follow-user', allow_chats: [], require_mention: true },
     });
+    expect(gate({ chatType: 'p2p', senderId: 'shared-user' }, access))
+      .toMatchObject({ action: 'deliver' });
+    expect(gate({ chatType: 'group', senderId: 'shared-user' }, access))
+      .toMatchObject({ action: 'deliver' });
   });
 
   it('records a trust-domain warning when one dispatcher observes multiple chats', () => {
-    const first = gate({ chatId: 'chat-group-a' }, state());
+    const access = state({
+      allow_users: ['sender-allowed'],
+      group: { policy: 'follow-user', allow_chats: [], require_mention: true },
+    });
+    const first = gate({ chatId: 'chat-group-a' }, access);
     expect(first.action).toBe('deliver');
     if (first.action !== 'deliver') throw new Error('unreachable');
     expect(first.warning).toBeNull();
@@ -117,7 +212,6 @@ describe('dreamuxFeishuGate', () => {
       'chat-group-b',
     ]);
   });
-
 });
 
 describe('dispatcher access state files', () => {
@@ -138,11 +232,17 @@ describe('dispatcher access state files', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it('defaults missing access.json and writes owner-only access state', () => {
-    expect(loadDispatcherAccess('flow')).toEqual(defaultDispatcherAccessState());
+  it('defaults a missing access.json to the secure follow-user shape', () => {
+    const loaded = loadDispatcherAccess('flow');
+    expect(loaded).toEqual(defaultDispatcherAccessState());
+    expect(loaded.version).toBe(2);
+    expect(loaded.allow_users).toEqual([]);
+    expect(loaded.group.policy).toBe('follow-user');
+  });
 
+  it('writes owner-only v2 state and round-trips', () => {
     const access = state({
-      dm: { allow_users: ['sender-allowed'] },
+      allow_users: ['sender-allowed'],
       observed_chats: ['chat-group-a'],
     });
     saveDispatcherAccess('flow', access);
@@ -150,26 +250,123 @@ describe('dispatcher access state files', () => {
     const path = dispatcherAccessPath('flow');
     expect(existsSync(path)).toBe(true);
     expect(statSync(path).mode & 0o777).toBe(0o600);
-    expect(JSON.parse(readFileSync(path, 'utf8'))).toMatchObject({
-      dm: { allow_users: ['sender-allowed'] },
-      observed_chats: ['chat-group-a'],
+    const onDisk = JSON.parse(readFileSync(path, 'utf8'));
+    expect(onDisk).toMatchObject({
+      version: 2,
+      allow_users: ['sender-allowed'],
+      group: { policy: 'follow-user' },
     });
+    // The legacy fields must not be written back.
+    expect(onDisk.dm).toBeUndefined();
+    expect(onDisk.group.follow_users).toBeUndefined();
     expect(loadDispatcherAccess('flow')).toEqual(access);
   });
+
+  describe('v1 → v2 migration', () => {
+    it('lifts legacy dm.allow_users into the global list (follow-user)', () => {
+      writeRawAccess('flow', {
+        version: 1,
+        dm: { allow_users: ['user-a'] },
+        group: { allow_chats: [], follow_users: [], require_mention: true },
+      });
+      const access = loadDispatcherAccess('flow');
+      expect(access.version).toBe(2);
+      expect(access.allow_users).toEqual(['user-a']);
+      expect(access.group.policy).toBe('follow-user');
+    });
+
+    it('preserves a legacy follow_users restriction as follow-user, not allowlist', () => {
+      // Both lists set: the sender restriction must NOT be silently relaxed to
+      // chat-only allowlist gating (that would let any chat member talk).
+      writeRawAccess('flow', {
+        version: 1,
+        dm: { allow_users: [] },
+        group: {
+          allow_chats: ['chat-group-a'],
+          follow_users: ['user-a'],
+          require_mention: true,
+        },
+      });
+      const access = loadDispatcherAccess('flow');
+      expect(access.allow_users).toEqual(['user-a']);
+      expect(access.group.policy).toBe('follow-user');
+      expect(access.group.allow_chats).toEqual(['chat-group-a']);
+    });
+
+    it('infers allowlist when only a chat allowlist is configured', () => {
+      writeRawAccess('flow', {
+        version: 1,
+        dm: { allow_users: [] },
+        group: {
+          allow_chats: ['chat-group-a'],
+          follow_users: [],
+          require_mention: true,
+        },
+      });
+      expect(loadDispatcherAccess('flow').group.policy).toBe('allowlist');
+    });
+
+    it('merges and de-duplicates dm.allow_users and group.follow_users', () => {
+      writeRawAccess('flow', {
+        version: 1,
+        dm: { allow_users: ['user-a', 'user-b'] },
+        group: {
+          allow_chats: [],
+          follow_users: ['user-b', 'user-c'],
+          require_mention: true,
+        },
+      });
+      expect(loadDispatcherAccess('flow').allow_users).toEqual([
+        'user-a',
+        'user-b',
+        'user-c',
+      ]);
+    });
+
+    it('honors an explicit group.policy over inference', () => {
+      writeRawAccess('flow', {
+        version: 2,
+        allow_users: ['user-a'],
+        group: {
+          policy: 'allowlist',
+          allow_chats: ['chat-group-a'],
+          require_mention: true,
+        },
+      });
+      expect(loadDispatcherAccess('flow').group.policy).toBe('allowlist');
+    });
+
+    it('rejects an invalid group.policy', () => {
+      writeRawAccess('flow', {
+        version: 2,
+        allow_users: [],
+        group: { policy: 'nonsense', allow_chats: [], require_mention: true },
+      });
+      expect(() => loadDispatcherAccess('flow')).toThrow(/group\.policy/);
+    });
+  });
 });
+
+function writeRawAccess(id: string, raw: unknown): void {
+  const path = dispatcherAccessPath(id);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(raw), 'utf8');
+}
 
 function state(
   overrides: Partial<DispatcherAccessState> = {},
 ): DispatcherAccessState {
+  const base = defaultDispatcherAccessState();
   return {
-    ...defaultDispatcherAccessState(),
+    ...base,
     ...overrides,
+    group: { ...base.group, ...(overrides.group ?? {}) },
   };
 }
 
 function gate(
   overrides: Partial<Parameters<typeof dreamuxFeishuGate>[0]> = {},
-  access = state(),
+  access = state({ allow_users: ['sender-allowed'] }),
 ) {
   return dreamuxFeishuGate(
     {

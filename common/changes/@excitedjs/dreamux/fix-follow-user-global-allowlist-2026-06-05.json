@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux",
+      "comment": "Fix the follow-user group-access semantics: the dispatcher runtime gate (dreamuxFeishuGate) now gates group delivery on a single global allow-user list shared with direct messages, instead of a separate group.follow_users list, so a sender on the global allowlist who @-mentions the bot is delivered in any group (issue #79). The access.json shape is unified to v2: a top-level allow_users list plus an explicit group.policy (block | allowlist | follow-user); v1 files are migrated forward by readDispatcherAccess (legacy dm.allow_users and group.follow_users are merged and de-duplicated, the policy is inferred, and the first save rewrites the file). An empty allow_users now authorizes nobody, consistent with direct messages. /introduce sender authorization moves to the global allow_users list while still requiring the chat to be named in allow_chats.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

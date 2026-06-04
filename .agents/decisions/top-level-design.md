@@ -174,17 +174,15 @@ time, admin socket path, and last error.
 child process status, and diagnostic timestamps. It must not contain Feishu
 credentials.
 
-`access.json` stores dispatcher-local access state. The MVP shape is:
+`access.json` stores dispatcher-local access state. The shape is:
 
 ```json
 {
-  "version": 1,
-  "dm": {
-    "allow_users": ["USER_ID"]
-  },
+  "version": 2,
+  "allow_users": ["USER_ID"],
   "group": {
+    "policy": "follow-user",
     "allow_chats": ["CHAT_ID"],
-    "follow_users": ["USER_ID"],
     "require_mention": true
   },
   "observed_chats": ["CHAT_ID"],
@@ -194,6 +192,27 @@ credentials.
   "last_gate": null
 }
 ```
+
+`allow_users` is a single global allowlist of sender open_ids, shared by direct
+messages and the group `follow-user` policy — the dreamux equivalent of the
+transport gate's top-level `allowFrom`. An empty list authorizes nobody. There
+is no separate per-group sender list.
+
+`group.policy` is one of `block`, `allowlist`, or `follow-user`:
+
+- `block` — every group message is dropped.
+- `allowlist` — the *group* is the unit of trust: a chat must be in
+  `allow_chats`, and any member there may speak (subject to `require_mention`).
+- `follow-user` — the *sender* is the unit of trust: the group needs no
+  authorization (`allow_chats` is ignored), a message is always mention-gated,
+  and the sender must be on the global `allow_users` list.
+
+The legacy v1 shape (`dm.allow_users` + a separate `group.follow_users`) is read
+and migrated forward by `readDispatcherAccess`: the two legacy sender lists are
+merged into `allow_users`, the policy is inferred (a non-empty `follow_users` →
+`follow-user`, else a non-empty `allow_chats` → `allowlist`, else the default
+`follow-user`), and the first save rewrites the file to the v2 shape. The legacy
+fields are never written back.
 
 It must not contain credentials, queued inbound messages, dedupe state, or a
 reaction ledger.
@@ -302,19 +321,30 @@ enter the Codex thread.
 
 ## Access Gate
 
-The access gate is dispatcher-local.
+The access gate is dispatcher-local. The runtime gate is `dreamuxFeishuGate`
+(`packages/dreamux/src/channel/feishu-gate.ts`); the transport `gate()` is the
+claudemux-ported reference and is not on the dreamux delivery path.
 
-For one-on-one chats, the sender must be allowed.
+For one-on-one chats, the sender must be on the global `allow_users` list.
 
-For group chats, the MVP follows the claudemux Feishu channel shape:
+For group chats, behavior follows `group.policy` (see the access.json shape
+above):
 
-- the chat must be allowed when a chat allowlist is configured;
-- the sender must be allowed when a follow-user allowlist is configured;
-- the bot must be mentioned for a group message to enter the dispatcher.
+- under `follow-user`, a message is delivered when the bot is @-mentioned and
+  the sender is on the global `allow_users` list — in *any* group, with no chat
+  allowlist required. This is the same list that authorizes direct messages.
+- under `allowlist`, the chat must be in `allow_chats`; any member there may
+  speak, gated by `require_mention`.
+- under `block`, every group message is dropped.
 
-When no group chat allowlist or follow-user allowlist is configured, group
-messages are still mention-gated. This keeps bootstrap usable while preventing
-ambient group chatter from entering the dispatcher.
+An empty `allow_users` authorizes nobody — consistent with direct messages.
+There is no "any member of a group" path: bootstrap is done by onboarding a
+sender onto `allow_users`, not by leaving the list empty.
+
+`/introduce` is a trust-changing command and is gated more tightly than
+delivery: regardless of policy it requires the chat to be named in `allow_chats`
+**and** the sender to be on the global `allow_users` list. Peer-bot trust is
+per-chat (`chat-bots.json`) and is never reached through `allow_users`.
 
 The gate adds a channel-owned received reaction only after a message is accepted
 and enqueued. If the message is rejected, no reaction is added.

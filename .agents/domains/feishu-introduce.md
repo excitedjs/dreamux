@@ -35,8 +35,9 @@ the allowlist**. No `@`-mention of our bot is required, and the group's
 
 The authorization is sender-scoped, not group-scoped. `canRunIntroduce`
 (`channel/introduce.ts`) requires the chat to be explicitly in
-`group.allow_chats` **and** the sender to be explicitly in `group.follow_users`.
-An empty `follow_users` authorizes nobody — "any member of an allowlisted group"
+`group.allow_chats` **and** the sender to be on the global `allow_users` list
+(the same list that gates direct messages and `follow-user` group delivery).
+An empty `allow_users` authorizes nobody — "any member of an allowlisted group"
 is deliberately **not** a path, and `canRunIntroduce` never reuses a broad
 group-authorization predicate that would trust the group without checking the
 sender's identity. A bot sender is never on the human allowlist, so ambient

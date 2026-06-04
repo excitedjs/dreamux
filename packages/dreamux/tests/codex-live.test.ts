@@ -45,6 +45,7 @@ import {
   type FakeFeishuBot,
   type FeishuInboundEvent,
 } from '../src/feishu/bot.js';
+import { saveDispatcherAccess } from '../src/channel/feishu-gate.js';
 import { BUILT_IN_DEFAULTS, type DreamuxConfig } from '../src/runtime/config.js';
 import type {
   ServerNotification,
@@ -442,6 +443,17 @@ describe('codex live integration', () => {
 
       process.env['HOME'] = runtimeHome;
       process.env['CODEX_HOME'] = previousCodexHome ?? join(operatorHome, '.codex');
+      // Onboard the live sender onto the global allow-user list so the folded
+      // group messages are delivered (empty `allow_users` authorizes nobody
+      // under the follow-user gate).
+      saveDispatcherAccess('live', {
+        version: 2,
+        allow_users: ['sender-live'],
+        group: { policy: 'follow-user', allow_chats: [], require_mention: true },
+        observed_chats: [],
+        warnings: [],
+        last_gate: null,
+      });
 
       try {
         server = new Server({

@@ -51,7 +51,8 @@ export type IntroduceDenyReason =
  * contract; `canRunIntroduce` is the boolean projection of it.
  *
  * Sender-scoped, not group-scoped: the chat must be explicitly allowlisted AND
- * the sender must be on the per-chat sender allowlist. Empty allowlists do not
+ * the sender must be on the global `allow_users` list (the same list that gates
+ * direct messages and `follow-user` group delivery). Empty allowlists do not
  * authorize anyone — there is no "any member of an allowlisted group" path.
  */
 export function introduceDenyReason(
@@ -60,14 +61,18 @@ export function introduceDenyReason(
 ): IntroduceDenyReason | null {
   if (input.chatType !== 'group') return 'non_group';
   if (input.senderId === '') return 'empty_sender_id';
-  // The chat must be explicitly allowlisted. An empty allow_chats means "every
-  // chat" for normal delivery, but for a trust-changing command we require the
-  // chat to be named, so introduce never fires in an incidental group.
+  // The chat must be explicitly allowlisted. Under the `follow-user` policy an
+  // empty `allow_chats` means "every chat" for normal delivery, but a
+  // trust-changing command always requires the chat to be named, so introduce
+  // never fires in an incidental group regardless of the group policy.
   if (!access.group.allow_chats.includes(input.chatId)) return 'chat_not_allowlisted';
-  // The sender must be explicitly allowlisted. An empty follow_users authorizes
-  // nobody for introduce — this is the line that makes the rule sender-scoped
-  // rather than "any member of an allowlisted group".
-  if (!access.group.follow_users.includes(input.senderId)) return 'sender_not_followed';
+  // The sender must be on the global allow-user list — the same list that gates
+  // direct messages and `follow-user` group delivery. An empty list authorizes
+  // nobody, keeping the rule sender-scoped rather than "any member of an
+  // allowlisted group". The `sender_not_followed` code name predates the
+  // single-list unification (issue #79) but still reads correctly: the sender
+  // is not a followed/allow-listed user.
+  if (!access.allow_users.includes(input.senderId)) return 'sender_not_followed';
   return null;
 }
 
