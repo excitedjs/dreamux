@@ -82,13 +82,21 @@ export function detectIntroduce(
   } catch {
     return false;
   }
+  // Strip leading Feishu mention keys longest-first: keys can be prefixes of
+  // one another (`@_user_1` vs `@_user_10`), so checking the shorter key first
+  // would consume a partial token and leave a stray suffix, false-negating an
+  // `@`-prefixed `/introduce`. (Same longest-key-first rule used for rendering.)
+  const keys = mentions
+    .map((m) => m.key)
+    .filter((key) => key !== '')
+    .sort((a, b) => b.length - a.length);
   let remaining = text.trimStart();
   let progress = true;
   while (progress) {
     progress = false;
-    for (const m of mentions) {
-      if (m.key !== '' && remaining.startsWith(m.key)) {
-        remaining = remaining.slice(m.key.length).trimStart();
+    for (const key of keys) {
+      if (remaining.startsWith(key)) {
+        remaining = remaining.slice(key.length).trimStart();
         progress = true;
         break;
       }

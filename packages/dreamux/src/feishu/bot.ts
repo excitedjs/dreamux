@@ -66,10 +66,13 @@ export type BotMemberAddedHandler = (
 ) => void | Promise<void>;
 
 /**
- * The event-registry seam (issue #62 Phase 1). `start` takes one handler per
- * Feishu event type instead of a single message handler, so new event types
- * register here without growing branches in `Server` or the transport. Each
- * route still awaits its handler before the SDK acks (queue-before-ACK).
+ * The typed event-route seam (issue #62 Phase 1). `start` takes one handler per
+ * Feishu event type instead of a single message handler, so a new event type is
+ * wired by adding a field here and a transport route, without growing branches
+ * in `Server`. This is a small typed seam, not yet a generic
+ * `eventType -> handler` registry; if a third event type lands, promote this to
+ * a map. Each route still awaits its handler before the SDK acks
+ * (queue-before-ACK).
  */
 export interface FeishuInboundRoutes {
   /** `im.message.receive_v1` — a chat message. */

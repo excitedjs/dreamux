@@ -89,6 +89,18 @@ describe('detectIntroduce — no @-mention required', () => {
     ).toBe(true);
   });
 
+  it('strips the longest mention key first when keys overlap', () => {
+    // `@_user_1` is a prefix of `@_user_10`; checking the shorter key first
+    // would consume a partial token and false-negate the command.
+    const mentions: Mention[] = [
+      { key: '@_user_1', id: { open_id: 'a' } },
+      { key: '@_user_10', id: { open_id: 'b' } },
+    ];
+    expect(
+      detectIntroduce('text', textContent('@_user_10 /introduce'), mentions),
+    ).toBe(true);
+  });
+
   it('does not match /introduce in the middle of a message', () => {
     expect(detectIntroduce('text', textContent('hello /introduce'), [])).toBe(false);
   });

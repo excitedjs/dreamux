@@ -1,24 +1,25 @@
-# Feishu event-registry seam + group `/introduce`
+# Feishu event-route seam + group `/introduce`
 
 - **Status:** Implemented (issue #62, first increment). Invite-code/pairing and
   rich attachments are deferred to follow-up PRs — see Deferred below.
 - **Source:** https://github.com/excitedjs/dreamux/issues/62
-- **Affects:** `/packages/dreamux/src/feishu/bot.ts`,
-  `/packages/dreamux/src/channel/introduce.ts`,
-  `/packages/dreamux/src/channel/chat-bots-store.ts`,
-  `/packages/dreamux/src/channel/feishu-gate.ts`,
-  `/packages/dreamux/src/server.ts`,
-  `/packages/dreamux/src/runtime/paths.ts`
+- **Affects:** `packages/dreamux/src/feishu/bot.ts`,
+  `packages/dreamux/src/channel/introduce.ts`,
+  `packages/dreamux/src/channel/chat-bots-store.ts`,
+  `packages/dreamux/src/channel/feishu-gate.ts`,
+  `packages/dreamux/src/server.ts`,
+  `packages/dreamux/src/runtime/paths.ts`
 
-## Event-registry seam (Phase 1)
+## Event-route seam (Phase 1)
 
 `FeishuBot.start` takes a `FeishuInboundRoutes` object — one handler per Feishu
 event type — instead of a single message handler. The bot builds the transport
 route table from it and registers `im.message.receive_v1` always and
 `im.chat.member.bot.added_v1` when an `onBotMemberAdded` handler is supplied.
 Each route still awaits its handler before the SDK acks, preserving the
-queue-before-ACK invariant. New event types register here without growing
-branches in `Server` or the transport.
+queue-before-ACK invariant. This is a small typed seam, not yet a generic
+`eventType -> handler` registry; a third event type is the cue to promote it to
+a map so `FeishuBot` does not grow one optional field per event.
 
 `im.chat.member.bot.added_v1` is recorded idempotently by Feishu event id and
 flags the chat for a future baseline injection; it emits no model notification.

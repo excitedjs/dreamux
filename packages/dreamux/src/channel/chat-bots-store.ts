@@ -34,6 +34,9 @@ import { dispatcherChatBotsPath } from '../runtime/paths.js';
 /** Retain at most this many recent bot-added event ids per chat for dedupe. */
 const MAX_SEEN_EVENT_IDS = 200;
 
+/** Monotonic per-process counter so concurrent writes never share a temp path. */
+let tmpCounter = 0;
+
 export interface ChatBotsEntry {
   /** Passively observed peer-bot open_ids — awareness only, never trust. */
   known: string[];
@@ -84,7 +87,7 @@ export function loadChatBots(dispatcherId: string): ChatBotsState {
 export function saveChatBots(dispatcherId: string, state: ChatBotsState): void {
   const path = dispatcherChatBotsPath(dispatcherId);
   mkdirSync(dirname(path), { recursive: true });
-  const tmp = `${path}.tmp-${process.pid}`;
+  const tmp = `${path}.tmp-${process.pid}-${tmpCounter++}`;
   writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
   chmodSync(tmp, 0o600);
   renameSync(tmp, path);

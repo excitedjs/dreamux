@@ -69,7 +69,7 @@ Background and older issue context:
   deduped message submits `turn/start`, and reactions move through the
   received / in-progress / cleared states.
 - [`domains/feishu-introduce.md`](domains/feishu-introduce.md)
-  — issue #62 first increment: the Feishu event-registry seam, and the group
+  — issue #62 first increment: the Feishu typed event-route seam, and the group
   `/introduce` hard contract (no `@`-mention required; the sender must be
   allowlisted; awareness never grants trust).
 - `proposals/`, `research/`, `rules/` — add here when material grows past a

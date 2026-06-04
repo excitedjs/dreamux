@@ -41,6 +41,7 @@ import {
   loadDispatcherAccess,
   saveDispatcherAccess,
 } from '../src/channel/feishu-gate.js';
+import { loadChatBots } from '../src/channel/chat-bots-store.js';
 import { BUILT_IN_DEFAULTS, type DreamuxConfig } from '../src/runtime/config.js';
 import {
   dispatcherAppServerControlDir,
@@ -702,6 +703,82 @@ describe('dreamux MVP smoke', () => {
       RECEIVED_REACTION_EMOJI,
       IN_PROGRESS_REACTION_EMOJI,
     ]);
+  });
+
+  it('consumes a no-@ /introduce from an allowlisted sender and records trust without enqueue or reactions', async () => {
+    saveDispatcherAccess('flow', {
+      version: 1,
+      dm: { allow_users: [] },
+      group: {
+        allow_chats: ['chat-group-a'],
+        follow_users: ['sender-test'],
+        require_mention: true,
+      },
+      observed_chats: [],
+      warnings: [],
+      last_gate: null,
+    });
+    server = buildServer({ runtimeDir, fake, bot });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+    await server.start();
+
+    // No @-mention of our bot — only the peer bot being introduced is mentioned.
+    await bot.inject(
+      fakeInbound('chat-group-a', '/introduce', 'msg-introduce', {
+        mentions: [{ key: '@_user_9', id: { open_id: 'peer-bot-1' }, name: 'Peer' }],
+      }),
+    );
+
+    await sleep(60);
+    // Consumed before the gate: no Codex turn, no outbound, no reactions.
+    expect(fake.turnsHandled).toBe(0);
+    expect(bot.sentMessages).toEqual([]);
+    expect(bot.reactions).toEqual([]);
+    // The peer bot is now trusted for this chat (and known), but not the sender.
+    const entry = loadChatBots('flow').chats['chat-group-a'];
+    expect(entry?.trusted).toEqual(['peer-bot-1']);
+    expect(entry?.known).toEqual(['peer-bot-1']);
+  });
+
+  it('does NOT consume /introduce from a non-allowlisted sender (no trust, dropped by the gate)', async () => {
+    saveDispatcherAccess('flow', {
+      version: 1,
+      dm: { allow_users: [] },
+      group: {
+        allow_chats: ['chat-group-a'],
+        follow_users: ['sender-test'],
+        require_mention: true,
+      },
+      observed_chats: [],
+      warnings: [],
+      last_gate: null,
+    });
+    server = buildServer({ runtimeDir, fake, bot });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+    await server.start();
+
+    await bot.inject(
+      fakeInbound('chat-group-a', '/introduce', 'msg-introduce-stranger', {
+        senderId: 'stranger',
+        mentions: [{ key: '@_user_9', id: { open_id: 'peer-bot-2' }, name: 'Peer' }],
+      }),
+    );
+
+    await sleep(60);
+    // Not consumed as introduce; falls to the gate and is dropped (not allowlisted,
+    // and the bot was not mentioned). No trust written, no enqueue, no reactions.
+    expect(fake.turnsHandled).toBe(0);
+    expect(bot.reactions).toEqual([]);
+    const entry = loadChatBots('flow').chats['chat-group-a'];
+    expect(entry?.trusted ?? []).not.toContain('peer-bot-2');
   });
 
   it('records a trust-domain warning when one dispatcher receives multiple chats', async () => {
