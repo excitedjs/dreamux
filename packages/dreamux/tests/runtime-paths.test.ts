@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import {
@@ -30,7 +30,7 @@ describe('runtime paths', () => {
   let previousHome: string | undefined;
 
   beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), 'dreamux-paths-'));
+    root = mkdtempSync(join('/tmp', 'dreamux-paths-'));
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(root, 'home');
     delete process.env['CODEX_HOST_RUNTIME_DIR'];

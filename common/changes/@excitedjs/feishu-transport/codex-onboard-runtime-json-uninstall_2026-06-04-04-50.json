@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Export the access-state persistence contract used by host channel gates.",
+      "type": "minor",
+      "packageName": "@excitedjs/feishu-transport"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-transport",
+  "email": "YourWildDad <15624809+YourWildDad@users.noreply.github.com>"
+}
