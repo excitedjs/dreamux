@@ -34,10 +34,10 @@
 # Manual dispatch is a retry hook for main only; npm publishes must not come
 # from feature branches.
 #
-# When a version bump is needed, the release job needs a GitHub App token that
-# is allowed to push the version-bump commit to protected main:
-#   DREAMUX_RELEASE_APP_ID
-#   DREAMUX_RELEASE_APP_PRIVATE_KEY
+# When a version bump is needed, the release job pushes the generated
+# package.json / CHANGELOG commit back to main with the workflow GITHUB_TOKEN.
+# This repository's main protection must continue to allow that bot push, or a
+# future stricter protection rule must grant github-actions[bot] a bypass.
 
 name: release
 
@@ -78,18 +78,18 @@ jobs:
         id: version
         env:
           EVENT: ${{ github.event_name }}
-          PUSH_BEFORE: ${{ github.event.before }}
-          PUSH_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
 
-          # Push-triggered releases only run when this push introduced a Rush
-          # change file. The bot's own version-bump commit deletes change files
-          # and contains [skip ci], so it cannot loop back into another release.
+          # Push-triggered releases run whenever main has pending Rush change
+          # files. This covers the normal merge path and lets a later workflow
+          # repair retry a release that previously failed after the change files
+          # had already landed. The bot's own version-bump commit deletes those
+          # files and contains [skip ci], so it cannot loop.
           if [ "$EVENT" = push ]; then
-            added="$(git diff --name-only --diff-filter=A "$PUSH_BEFORE" "$PUSH_SHA" -- common/changes | grep -E '^common/changes/.+\.json$' || true)"
-            if [ -z "$added" ]; then
-              echo 'No newly added Rush change files in this push; skipping.'
+            pending="$(find common/changes -type f -name '*.json' -print -quit 2>/dev/null || true)"
+            if [ -z "$pending" ]; then
+              echo 'No pending Rush change files on main; skipping.'
               echo "should_publish=false" >> "$GITHUB_OUTPUT"
               exit 0
             fi
@@ -113,25 +113,17 @@ jobs:
           echo "changed=true" >> "$GITHUB_OUTPUT"
           echo "should_publish=true" >> "$GITHUB_OUTPUT"
 
-      - name: Create dreamux release app token
-        if: steps.version.outputs.changed == 'true'
-        id: app-token
-        uses: actions/create-github-app-token@v1
-        with:
-          app-id: ${{ secrets.DREAMUX_RELEASE_APP_ID }}
-          private-key: ${{ secrets.DREAMUX_RELEASE_APP_PRIVATE_KEY }}
-
       - name: Push version bump
         if: steps.version.outputs.changed == 'true'
         env:
-          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
           git add packages common/changes
           git commit -m "chore(release): version packages [skip ci]"
-          git remote set-url origin "https://x-access-token:${APP_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git push origin HEAD:"${GITHUB_REF_NAME}"
 
   publish:
