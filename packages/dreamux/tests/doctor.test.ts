@@ -8,6 +8,8 @@ import {
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
+import { build as buildPlist } from 'plist';
+
 import { runDreamuxDoctor } from '../src/cli/doctor.js';
 import type { CommandRunner } from '../src/onboard/types.js';
 import {
@@ -22,6 +24,8 @@ class FakeRunner implements CommandRunner {
   systemdEnabled = false;
   systemdActive = false;
   launchdLoaded = false;
+  readonly nodeVersions = new Map<string, string>();
+  readonly failedHelpCommands = new Set<string>();
   readonly calls: Array<{ command: string; args: string[] }> = [];
 
   async run(command: string, args: string[]): Promise<void> {
@@ -29,6 +33,8 @@ class FakeRunner implements CommandRunner {
   }
 
   async check(command: string, args: string[]): Promise<boolean> {
+    this.calls.push({ command, args });
+    if (args[0] === '--help') return !this.failedHelpCommands.has(command);
     if (command === 'codex' && args.join(' ') === '--help') return true;
     if (command === 'systemctl' && args.join(' ') === '--user is-enabled dreamux.service') {
       return this.systemdEnabled;
@@ -43,6 +49,10 @@ class FakeRunner implements CommandRunner {
   }
 
   async capture(command: string, args: string[]): Promise<string> {
+    this.calls.push({ command, args });
+    if (args[0] === '--version') {
+      return this.nodeVersions.get(command) ?? 'v22.7.0';
+    }
     if (command === 'systemctl' && args[0] === '--user' && args[1] === 'show') {
       return [
         'LoadState=loaded',
@@ -154,6 +164,112 @@ describe('dreamux doctor command', () => {
     expect(result.dispatchers[0]?.managedService?.errors.join('\n')).toContain(
       'missing Codex auth state',
     );
+  });
+
+  it('checks the installed systemd service environment instead of recomputing it', async () => {
+    const runner = new FakeRunner();
+    writeConfig();
+    writeDispatcherHome({ auth: true });
+    const servicePath = join(root, 'home', '.config', 'systemd', 'user', 'dreamux.service');
+    mkdirSync(dirname(servicePath), { recursive: true });
+    writeFileSync(
+      servicePath,
+      [
+        '[Service]',
+        'ExecStart=/service/dreamux serve',
+        'Environment=DREAMUX_NODE_BIN=/service/node',
+        'Environment=CODEX_HOST_CODEX_BIN=/service/codex\\\\x20literal',
+        'Environment=PATH=/service/bin:/usr/bin:/bin',
+        '',
+      ].join('\n'),
+    );
+    runner.nodeVersions.set('/service/node', 'v18.0.0');
+
+    const result = await runDreamuxDoctor({
+      runner,
+      platform: 'linux',
+      homeDir: join(root, 'home'),
+      env: {},
+    });
+
+    expect(result.ok).toBe(false);
+    expect(
+      result.checks.find((check) => check.name === 'managed service Node binary'),
+    ).toMatchObject({
+      ok: false,
+      detail: expect.stringContaining('/service/node'),
+    });
+    expect(runner.calls).toContainEqual({
+      command: '/service/node',
+      args: ['--version'],
+    });
+    expect(runner.calls).not.toContainEqual({
+      command: process.execPath,
+      args: ['--version'],
+    });
+    expect(result.service.environment?.['CODEX_HOST_CODEX_BIN']).toBe(
+      '/service/codex\\x20literal',
+    );
+  });
+
+  it('checks the installed launchd plist environment instead of failing unconditionally', async () => {
+    const runner = new FakeRunner();
+    runner.launchdLoaded = true;
+    writeConfig();
+    writeDispatcherHome({ auth: true });
+    const servicePath = join(
+      root,
+      'home',
+      'Library',
+      'LaunchAgents',
+      'dev.excited.dreamux.plist',
+    );
+    mkdirSync(dirname(servicePath), { recursive: true });
+    writeFileSync(
+      servicePath,
+      buildPlist({
+        Label: 'dev.excited.dreamux',
+        ProgramArguments: ['/service/dreamux', 'serve'],
+        RunAtLoad: true,
+        KeepAlive: true,
+        EnvironmentVariables: {
+          DREAMUX_CONFIG_DIR: join(root, 'config'),
+          HOME: join(root, 'home'),
+          DREAMUX_NODE_BIN: '/service/node',
+          CODEX_HOST_CODEX_BIN: '/service/codex',
+          PATH: '/service/bin:/usr/bin:/bin',
+        },
+      }),
+    );
+    runner.nodeVersions.set('/service/node', 'v22.7.0');
+
+    const result = await runDreamuxDoctor({
+      runner,
+      platform: 'darwin',
+      homeDir: join(root, 'home'),
+      uid: 501,
+      env: {},
+    });
+
+    expect(result.ok, JSON.stringify(result, null, 2)).toBe(true);
+    expect(result.service.environment).toMatchObject({
+      DREAMUX_NODE_BIN: '/service/node',
+      CODEX_HOST_CODEX_BIN: '/service/codex',
+      PATH: '/service/bin:/usr/bin:/bin',
+    });
+    expect(result.service.execStart).toEqual(['/service/dreamux', 'serve']);
+    expect(runner.calls).toContainEqual({
+      command: '/service/node',
+      args: ['--version'],
+    });
+    expect(runner.calls).toContainEqual({
+      command: '/service/dreamux',
+      args: ['--help'],
+    });
+    expect(runner.calls).toContainEqual({
+      command: '/service/codex',
+      args: ['--help'],
+    });
   });
 
   function writeConfig(): void {

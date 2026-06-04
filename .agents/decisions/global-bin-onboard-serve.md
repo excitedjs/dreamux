@@ -46,6 +46,14 @@ channel configuration, and registers a native service manager entry.
 `dreamux serve` runs the existing server in the foreground and lets launchd or
 systemd keep it alive.
 
+The generated service environment must be self-sufficient. It must not rely on
+interactive shell startup files such as `.zshrc` to make Node or Codex
+available. During onboarding, dreamux captures the Node executable that is
+running onboarding, validates that it satisfies the package's supported Node
+range, resolves the Codex executable to a runnable path for managed service use,
+seeds `HOME` for clean user-service probes, and renders those values into the
+user service environment.
+
 There is no public `dreamux daemon ...` command tree. The daemon form is
 foreground `dreamux serve` supervised by a native user-level service manager.
 After `dreamux onboard` registers that service, operators use native
@@ -119,6 +127,10 @@ status.
 - The `dreamux` launcher passes its resolved absolute path through
   `DREAMUX_BIN`; service generation uses that path so launchd and
   systemd execute the same global bin the operator invoked.
+- The `dreamux` launcher honors `DREAMUX_NODE_BIN` when present, falling back to
+  `node` for ordinary interactive and npm-bin use. Service generation sets
+  `DREAMUX_NODE_BIN` and a minimal `PATH` so nvm-installed Node works without
+  sourcing shell rc files.
 - Codex's global default home is intentionally reused, so login state, memory,
   and local Codex configuration follow the operator's machine. dreamux must not
   delete that home during uninstall.

@@ -10,6 +10,8 @@ import {
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
+import { parse as parsePlist } from 'plist';
+
 import { runOnboard } from '../src/onboard/run.js';
 import {
   answersFromOptions,
@@ -25,6 +27,8 @@ import {
 
 class FakeRunner implements CommandRunner {
   launchdLoaded = false;
+  nodeVersion = 'v22.7.0';
+  readonly failedHelpCommands = new Set<string>();
   readonly calls: Array<{
     command: string;
     args: string[];
@@ -69,6 +73,9 @@ class FakeRunner implements CommandRunner {
     } = {},
   ): Promise<boolean> {
     void options;
+    if (args[0] === '--help') {
+      return !this.failedHelpCommands.has(command);
+    }
     return command === 'launchctl' &&
       args[0] === 'print' &&
       this.launchdLoaded;
@@ -84,6 +91,7 @@ class FakeRunner implements CommandRunner {
     } = {},
   ): Promise<string> {
     void options;
+    if (args[0] === '--version') return this.nodeVersion;
     throw new Error(`unexpected capture: ${command} ${args.join(' ')}`);
   }
 }
@@ -194,6 +202,14 @@ describe('dreamux onboard', () => {
         join(root, 'home', '.config', 'systemd', 'user', 'dreamux.service'),
       )?.status,
     ).toBe('created');
+    const serviceUnit = readFileSync(
+      join(root, 'home', '.config', 'systemd', 'user', 'dreamux.service'),
+      'utf8',
+    );
+    expect(serviceUnit).toContain(`Environment=DREAMUX_NODE_BIN=${process.execPath}`);
+    expect(serviceUnit).toContain(`Environment=CODEX_HOST_CODEX_BIN=${process.execPath}`);
+    expect(serviceUnit).toContain(`Environment=HOME=${join(root, 'home')}`);
+    expect(serviceUnit).toContain(`Environment=PATH=${dirname(process.execPath)}`);
     expect(
       ledger.get(join(logsRoot(), 'daemon.stdout.log'))?.status,
     ).toBe('created');
@@ -221,6 +237,31 @@ describe('dreamux onboard', () => {
     ).rejects.toThrow(
       'managed service environments do not inherit your interactive shell auth token',
     );
+  });
+
+  it('fails before systemd registration when the service cannot execute the launcher', async () => {
+    const runner = new FakeRunner();
+    const answers = testAnswers({
+      configDir: join(root, 'config'),
+      runtimeDir: join(root, 'runtime'),
+      registerService: true,
+      dreamuxBin: '/usr/local/bin/dreamux',
+    });
+    writeGlobalCodexAuth(answers);
+    runner.failedHelpCommands.add(answers.dreamuxBin);
+
+    await expect(
+      runOnboard({
+        answers,
+        runner,
+        platform: 'linux',
+        homeDir: join(root, 'home'),
+        env: {},
+      }),
+    ).rejects.toThrow('managed service cannot execute dreamux launcher');
+
+    expect(countCalls(runner, 'systemctl', ['--user', 'daemon-reload'])).toBe(0);
+    expect(countCalls(runner, 'systemctl', ['--user', 'enable'])).toBe(0);
   });
 
   it('rewrites workspace dispatcher skills and skips already-loaded launchd services on rerun', async () => {
@@ -255,6 +296,21 @@ describe('dreamux onboard', () => {
     expect(countCalls(runner, 'launchctl', ['bootstrap'])).toBe(1);
     expect(countCalls(runner, 'launchctl', ['bootout'])).toBe(0);
     expect(countCalls(runner, 'launchctl', ['kickstart'])).toBe(2);
+
+    const launchdPlist = parsePlist(
+      readFileSync(
+        join(root, 'home', 'Library', 'LaunchAgents', 'dev.excited.dreamux.plist'),
+        'utf8',
+      ),
+    ) as Record<string, any>;
+    expect(launchdPlist['EnvironmentVariables']).toMatchObject({
+      DREAMUX_NODE_BIN: process.execPath,
+      CODEX_HOST_CODEX_BIN: process.execPath,
+      HOME: join(root, 'home'),
+    });
+    expect(launchdPlist['EnvironmentVariables']['PATH']).toContain(
+      dirname(process.execPath),
+    );
   });
 
   it('preserves existing codex globals and other dispatchers on rerun', async () => {
@@ -444,7 +500,7 @@ function testAnswers(overrides: Partial<OnboardAnswers>): OnboardAnswers {
     runtimeDir: join(rootForTest(overrides), 'runtime'),
     dispatcherId: 'flow',
     dispatcherCwd: join(rootForTest(overrides), 'dispatcher-cwd'),
-    codexBin: 'codex',
+    codexBin: process.execPath,
     botAppId: 'app-test',
     botAppSecret: 'secret-test',
     registerService: true,

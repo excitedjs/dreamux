@@ -30,4 +30,5 @@ if [ ! -f "$TARGET" ]; then
   echo "Build it first from the repo root: node common/scripts/install-run-rush.js build (rush build)." >&2
   exit 1
 fi
-exec env DREAMUX_BIN="$DREAMUX_BIN" node "$TARGET" "$@"
+NODE_BIN="${DREAMUX_NODE_BIN:-node}"
+exec env DREAMUX_BIN="$DREAMUX_BIN" "$NODE_BIN" "$TARGET" "$@"

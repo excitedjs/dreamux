@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Fix managed service startup when Node is provided by nvm.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

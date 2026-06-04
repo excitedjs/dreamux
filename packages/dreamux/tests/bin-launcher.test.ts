@@ -176,7 +176,8 @@ for (const c of LAUNCHERS) {
     if (c.execsNodeDirectly === true) {
       it('execs plain node against the compiled dist target', () => {
         const script = readFileSync(c.bin, 'utf8');
-        expect(script).toMatch(/exec env DREAMUX_BIN="\$DREAMUX_BIN" node "\$TARGET"/);
+        expect(script).toContain('NODE_BIN="${DREAMUX_NODE_BIN:-node}"');
+        expect(script).toMatch(/exec env DREAMUX_BIN="\$DREAMUX_BIN" "\$NODE_BIN" "\$TARGET"/);
       });
     }
 

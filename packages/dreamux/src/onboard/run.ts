@@ -32,13 +32,20 @@ import {
   TransparentFileLedger,
   writeTextFile,
 } from './ledger.js';
-import { installUserService, managedServiceEnvironment } from './service.js';
+import {
+  installUserService,
+  managedServiceEnvironment,
+  resolveServiceExecutable,
+  validateManagedServiceLaunch,
+} from './service.js';
 import type {
   CommandRunner,
   OnboardAnswers,
   OnboardFileLedger,
   OnboardRunResult,
 } from './types.js';
+
+type EffectiveOnboardAnswers = OnboardAnswers & { nodeBin: string };
 
 export interface RunOnboardOptions {
   answers: OnboardAnswers;
@@ -60,10 +67,14 @@ export async function runOnboard(
   const configPath = globalConfigFile({ configDir: answers.configDir });
   const existingConfig = readExistingDreamuxConfig(answers.configDir);
   const dreamuxConfig = dreamuxConfigFromAnswers(answers, existingConfig);
+  const serviceCodexBin = answers.registerService && !answers.dryRun
+    ? resolveServiceExecutable(dreamuxConfig.codex.bin, env)
+    : dreamuxConfig.codex.bin;
   const effectiveAnswers = {
     ...answers,
     runtimeDir: stateRoot(),
-    codexBin: dreamuxConfig.codex.bin,
+    codexBin: serviceCodexBin,
+    nodeBin: process.execPath,
   };
   setRuntimeConfig(dreamuxConfig);
 
@@ -117,6 +128,15 @@ export async function runOnboard(
   if (!effectiveAnswers.dryRun && !doctor.ok) {
     throw new Error(formatDoctorFailure(effectiveAnswers, doctor));
   }
+  if (effectiveAnswers.registerService && !effectiveAnswers.dryRun) {
+    const serviceLaunch = await validateManagedServiceLaunch(
+      effectiveAnswers,
+      runner,
+    );
+    if (!serviceLaunch.ok) {
+      throw new Error(formatServiceLaunchFailure(serviceLaunch.errors));
+    }
+  }
 
   const service = effectiveAnswers.registerService
     ? await installUserService({
@@ -136,6 +156,14 @@ export async function runOnboard(
   };
 }
 
+function formatServiceLaunchFailure(errors: string[]): string {
+  return [
+    'dreamux managed service launch environment is not ready',
+    ...errors.map((error) => `- ${error}`),
+    '- rerun dreamux onboard from the desired Node/Codex install, or pass explicit --dreamux-bin / --codex-bin values',
+  ].join('\n');
+}
+
 function readExistingDreamuxConfig(configDir: string) {
   const configPath = globalConfigFile({ configDir });
   assertNoLegacyTomlOnly({ configDir });
@@ -144,7 +172,7 @@ function readExistingDreamuxConfig(configDir: string) {
 }
 
 function runDispatcherDoctor(
-  answers: OnboardAnswers,
+  answers: EffectiveOnboardAnswers,
   dreamuxConfig: ReturnType<typeof dreamuxConfigFromAnswers>,
   env: NodeJS.ProcessEnv,
 ): DispatcherCodexHomeDoctorResult {
@@ -175,7 +203,7 @@ function runDispatcherDoctor(
 }
 
 function formatDoctorFailure(
-  answers: OnboardAnswers,
+  answers: EffectiveOnboardAnswers,
   doctor: DispatcherCodexHomeDoctorResult,
 ): string {
   const lines = [
