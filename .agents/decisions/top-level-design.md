@@ -148,11 +148,24 @@ State and logs are server-owned. They are not operator-editable config.
       codex.sock
   logs/
     dreamux-server.log
+    daemon.stdout.log          when run as a daemon (onboard service redirect)
+    daemon.stderr.log
     feishu-channel/
       dispatcher-a.log
+    feishu-mcp/
+      dispatcher-a.log         feishu-mcp stdio shim diagnostics (issue #70)
     codex-app-server/
-      dispatcher-a.log
+      dispatcher-a.log         Codex app-server child stdout
+      dispatcher-a.stderr.log  Codex app-server child stderr
 ```
+
+Host logging (issue #70): `dreamux serve`, the Feishu channel (gate
+deliver/drop, inbound submit, outbound, `/introduce`), and dispatcher lifecycle
+write structured `pino` JSON to these files (and mirror to stderr so a
+foreground `serve` stays visible). Path builders live in `src/runtime/paths.ts`;
+logger construction lives in `src/runtime/logger.ts`. Message bodies are never
+logged; `app_secret` is redacted. See
+[the logging decision](logging.md).
 
 `server.json` stores process-level status only: pid, status, version, started
 time, admin socket path, and last error.

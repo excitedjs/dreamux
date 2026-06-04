@@ -32,6 +32,8 @@ import {
 import type { OnboardRunResult } from '../onboard/types.js';
 import { printDoctorResult, runDreamuxDoctor } from './doctor.js';
 import { runFeishuMcp } from '../mcp/feishu-mcp.js';
+import { createLogger } from '../runtime/logger.js';
+import { feishuMcpLogPath } from '../runtime/paths.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SERVER_ENTRY = join(HERE, 'server.js');
@@ -377,9 +379,17 @@ async function main(): Promise<void> {
       'Run the dispatcher-scoped Feishu MCP stdio shim',
       buildFeishuMcpCommand,
       async (argv) => {
+        const dispatcherId = validateDispatcherId(argv.dispatcher);
+        // stdout is the JSON-RPC transport — the shim's diagnostics persist to
+        // logs/feishu-mcp/<id>.log and stderr, never stdout.
+        const log = createLogger({
+          name: `feishu-mcp/${dispatcherId}`,
+          filePath: feishuMcpLogPath(dispatcherId),
+        });
         await runFeishuMcp({
-          dispatcherId: validateDispatcherId(argv.dispatcher),
+          dispatcherId,
           adminSocketPath: argv.adminSocket,
+          log: (message) => log.info(message),
         });
       },
     )

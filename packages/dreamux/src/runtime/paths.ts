@@ -141,6 +141,23 @@ export function feishuChannelLogDir(): string {
   return join(logsRoot(), 'feishu-channel');
 }
 
+/** Per-dispatcher channel log: gate decisions, inbound, outbound, introduce. */
+export function feishuChannelLogPath(id: string): string {
+  return join(feishuChannelLogDir(), `${dispatcherPathSegment(id)}.log`);
+}
+
+export function feishuMcpLogDir(): string {
+  return join(logsRoot(), 'feishu-mcp');
+}
+
+/**
+ * Per-dispatcher Feishu MCP stdio shim log. The shim's stdout is the JSON-RPC
+ * transport, so its diagnostics persist here (and to stderr) — never stdout.
+ */
+export function feishuMcpLogPath(id: string): string {
+  return join(feishuMcpLogDir(), `${dispatcherPathSegment(id)}.log`);
+}
+
 export function dispatcherCodexAppServerLogPath(id: string): string {
   return join(codexAppServerLogDir(), `${dispatcherPathSegment(id)}.log`);
 }

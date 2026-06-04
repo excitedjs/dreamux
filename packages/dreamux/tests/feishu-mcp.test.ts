@@ -315,4 +315,77 @@ describe('feishu-mcp stdio shim', () => {
       await admin.close();
     }
   });
+
+  // Issue #70: stdout is the JSON-RPC transport. Diagnostics must go to the
+  // `log` seam (file/stderr), never stdout — even on parse errors, unknown
+  // methods, and admin-forwarding failures. A regression here corrupts the
+  // Codex<->shim protocol stream.
+  it('never writes non-protocol output to stdout, even on error paths', async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const rawLines: string[] = [];
+    output.setEncoding('utf8');
+    let pending = '';
+    output.on('data', (chunk: string) => {
+      pending += chunk;
+      let idx: number;
+      while ((idx = pending.indexOf('\n')) !== -1) {
+        const line = pending.slice(0, idx);
+        pending = pending.slice(idx + 1);
+        if (line.trim() !== '') rawLines.push(line);
+      }
+    });
+    const logMessages: string[] = [];
+    const run = runFeishuMcp({
+      dispatcherId: 'dispatcher-a',
+      // A socket that does not exist forces the admin-forwarding path to throw,
+      // which exercises the `log` diagnostic seam.
+      adminSocketPath: '/tmp/dreamux-nonexistent-70.sock',
+      input,
+      output,
+      log: (message) => logMessages.push(message),
+    });
+
+    // Malformed JSON line — parse error path.
+    input.write('this is not json\n');
+    // Unknown method.
+    writeJson(input, { jsonrpc: '2.0', id: 1, method: 'no/such/method', params: {} });
+    // A tools/call that forwards to the (missing) admin socket and throws.
+    writeJson(input, {
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: {
+        name: 'reply',
+        arguments: { chat_id: 'chat-a', text: 'hello' },
+      },
+    });
+
+    input.end();
+    await run;
+    // Give the output stream a tick to flush any trailing line.
+    await new Promise((resolve) => setImmediate(resolve));
+
+    // Every line on stdout is a well-formed JSON-RPC envelope — including the
+    // parse-error, unknown-method, and admin-failure paths.
+    expect(rawLines.length).toBe(3);
+    const parsed = rawLines.map(
+      (line) => JSON.parse(line) as Record<string, unknown>,
+    );
+    for (const envelope of parsed) {
+      expect(envelope['jsonrpc']).toBe('2.0');
+    }
+    // Parse error (id null) and unknown-method (id 1) are JSON-RPC errors; the
+    // admin-forwarding failure (id 2) is returned as an in-band MCP tool error,
+    // never a raw diagnostic on stdout.
+    expect(parsed[0]).toMatchObject({ id: null, error: { code: -32700 } });
+    expect(parsed[1]).toMatchObject({ id: 1, error: { code: -32601 } });
+    expect(parsed[2]).toMatchObject({ id: 2, result: { isError: true } });
+
+    // Whatever the shim sent to its `log` seam must never appear on stdout.
+    const stdout = rawLines.join('\n');
+    for (const message of logMessages) {
+      expect(stdout).not.toContain(message);
+    }
+  });
 });

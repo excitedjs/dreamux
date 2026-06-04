@@ -19,11 +19,15 @@ import { mkdirSync } from 'node:fs';
 
 import { Server } from '../server.js';
 import { loadConfig } from '../runtime/config.js';
+import { createLogger } from '../runtime/logger.js';
 import {
   adminSocketPath,
   codexAppServerLogDir,
   feishuChannelLogDir,
+  feishuChannelLogPath,
+  feishuMcpLogDir,
   logsRoot,
+  serverLogPath,
   stateRoot,
 } from '../runtime/paths.js';
 
@@ -36,19 +40,30 @@ async function main(): Promise<void> {
   // Load ~/.dreamux/config.json before anything else starts. Missing or invalid
   // config is a setup error; `dreamux serve` must not silently create defaults.
   const { config, configFile } = loadConfig();
-  console.error(`[server] loaded global config from ${configFile}`);
 
   mkdirSync(stateRoot(), { recursive: true });
   mkdirSync(logsRoot(), { recursive: true });
   mkdirSync(codexAppServerLogDir(), { recursive: true });
   mkdirSync(feishuChannelLogDir(), { recursive: true });
+  mkdirSync(feishuMcpLogDir(), { recursive: true });
 
-  const server = new Server({ config });
+  // The CLI is the only constructor of file-backed loggers; everything else
+  // (tests) gets stderr-only defaults. Both stream to stderr too, so a
+  // foreground `serve` stays visible.
+  const logger = createLogger({ name: 'server', filePath: serverLogPath() });
+  logger.info({ config_file: configFile }, 'loaded global config');
+
+  const server = new Server({
+    config,
+    logger,
+    channelLoggerFactory: (id) =>
+      createLogger({ name: `channel/${id}`, filePath: feishuChannelLogPath(id) }),
+  });
   await server.start();
-  console.error(`[server] up; admin socket: ${adminSocketPath()}`);
+  logger.info({ admin_socket: adminSocketPath() }, 'server up');
 
   const shutdown = async (signal: string): Promise<void> => {
-    console.error(`[server] received ${signal}`);
+    logger.info({ signal }, 'received signal');
     await server.shutdown();
     process.exit(0);
   };

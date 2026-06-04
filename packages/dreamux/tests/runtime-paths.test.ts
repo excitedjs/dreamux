@@ -11,6 +11,10 @@ import {
   dispatcherCodexAppServerErrorLogPath,
   dispatcherCodexAppServerLogPath,
   dispatcherDir,
+  feishuChannelLogDir,
+  feishuChannelLogPath,
+  feishuMcpLogDir,
+  feishuMcpLogPath,
   dispatcherSocketPath,
   dispatcherStatusPath,
   dispatcherWorkspaceCodexSkillsDir,
@@ -84,6 +88,14 @@ describe('runtime paths', () => {
     );
     expect(dispatcherCodexAppServerErrorLogPath('dispatcher-a')).toBe(
       join(logsRoot(), 'codex-app-server', 'dispatcher-a.stderr.log'),
+    );
+    expect(feishuChannelLogDir()).toBe(join(logsRoot(), 'feishu-channel'));
+    expect(feishuChannelLogPath('dispatcher-a')).toBe(
+      join(logsRoot(), 'feishu-channel', 'dispatcher-a.log'),
+    );
+    expect(feishuMcpLogDir()).toBe(join(logsRoot(), 'feishu-mcp'));
+    expect(feishuMcpLogPath('dispatcher-a')).toBe(
+      join(logsRoot(), 'feishu-mcp', 'dispatcher-a.log'),
     );
   });
 
