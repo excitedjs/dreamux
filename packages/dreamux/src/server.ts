@@ -45,8 +45,8 @@ import {
 } from './runtime/paths.js';
 import { createAdminSocketServer, type AdminSocketServer } from './admin/socket.js';
 
-export const RECEIVED_REACTION_EMOJI = 'GLANCE';
-export const IN_PROGRESS_REACTION_EMOJI = 'ON_IT';
+export const RECEIVED_REACTION_EMOJI = 'Get';
+export const IN_PROGRESS_REACTION_EMOJI = 'OnIt';
 const MAX_PENDING_RECEIVED_REACTION_CLEARS = 1024;
 
 export interface ServerOptions {
