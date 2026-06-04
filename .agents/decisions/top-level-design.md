@@ -360,6 +360,9 @@ The MVP MCP tool surface is:
   topic-mode replies under the original topic.
 - `react`: add a model-owned reaction to a Feishu message. Parameters are
   `message_id` and `emoji`.
+- `list_chat_bots` (issue #69): read-only query of a group chat's known +
+  trusted peer bots (names + open_ids). Parameter is `chat_id`. Forwards an
+  `mcp.list_chat_bots` admin request to the serve-owned, store-backed reader.
 
 `edit_message` and model-owned `remove_reaction` are out of scope for the MVP.
 

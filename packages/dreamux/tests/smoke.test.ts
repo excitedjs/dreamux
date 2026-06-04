@@ -539,6 +539,110 @@ describe('dreamux MVP smoke', () => {
     ]);
   });
 
+  it('adds the in-progress reaction before cancelling the received one (add-then-cancel)', async () => {
+    server = buildServer({ runtimeDir, fake, bot });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+    await server.start();
+
+    await bot.inject(fakeInbound('chat-group-a', 'hi', 'msg-order'));
+
+    await waitFor(
+      () => bot.reactions.length === 2 && bot.removedReactions.length === 1,
+    );
+    // The received->in_progress transition must add the new reaction before it
+    // removes the previous one, so the message never shows zero reactions.
+    const addInProgress = bot.reactionOps.findIndex(
+      (op) => op.op === 'add' && op.emoji === IN_PROGRESS_REACTION_EMOJI,
+    );
+    const removeReceived = bot.reactionOps.findIndex(
+      (op) => op.op === 'remove' && op.reactionId === 'reaction-fake-1',
+    );
+    expect(addInProgress).toBeGreaterThanOrEqual(0);
+    expect(removeReceived).toBeGreaterThan(addInProgress);
+  });
+
+  it('reply wins the received->in_progress replacement race without leaving a dangling reaction', async () => {
+    await fake.close();
+    codexInputs = [];
+    fake = await startFakeCodex({
+      turnDelayMs: 2000,
+      replyFor: captureAndEchoCodexInput(codexInputs),
+    });
+
+    let releaseInProgress!: () => void;
+    let markInProgressStarted!: () => void;
+    const inProgressStarted = new Promise<void>((resolve) => {
+      markInProgressStarted = resolve;
+    });
+    const inProgressBlocked = new Promise<void>((resolve) => {
+      releaseInProgress = resolve;
+    });
+    const originalAddReaction = bot.addReaction.bind(bot);
+    bot.addReaction = async (messageId, emoji) => {
+      if (emoji === IN_PROGRESS_REACTION_EMOJI) {
+        markInProgressStarted();
+        await inProgressBlocked;
+      }
+      return originalAddReaction(messageId, emoji);
+    };
+
+    server = buildServer({ runtimeDir, fake, bot });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+    await server.start();
+
+    const injected = bot.inject(
+      fakeInbound('chat-group-a', 'fast reply', 'msg-replace-race'),
+    );
+    // The received reaction is added; the in-progress add is now blocked.
+    await inProgressStarted;
+    await waitFor(() => bot.reactions.length === 1);
+
+    await sendAdminRequest(
+      'mcp.reply',
+      {
+        dispatcher_id: 'flow',
+        chat_id: 'chat-group-a',
+        message_id: 'msg-replace-race',
+        text: 'manual reply mid-transition',
+      },
+      { socketPath: join(runtimeDir, 'admin.sock') },
+    );
+    // The reply removed the received reaction (the only one in the ledger).
+    expect(bot.removedReactions).toEqual([
+      { messageId: 'msg-replace-race', reactionId: 'reaction-fake-1' },
+    ]);
+
+    // Now the in-progress add lands; it must be removed (late pending clear),
+    // not stored and left dangling.
+    releaseInProgress();
+    await injected;
+    await waitFor(() => bot.removedReactions.length === 2);
+    expect(bot.removedReactions).toEqual([
+      { messageId: 'msg-replace-race', reactionId: 'reaction-fake-1' },
+      { messageId: 'msg-replace-race', reactionId: 'reaction-fake-2' },
+    ]);
+    expect(bot.reactions).toEqual([
+      {
+        messageId: 'msg-replace-race',
+        emoji: RECEIVED_REACTION_EMOJI,
+        reactionId: 'reaction-fake-1',
+      },
+      {
+        messageId: 'msg-replace-race',
+        emoji: IN_PROGRESS_REACTION_EMOJI,
+        reactionId: 'reaction-fake-2',
+      },
+    ]);
+  });
+
   it('mcp.react adds a model-owned reaction without clearing received reactions', async () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.create({
@@ -742,6 +846,106 @@ describe('dreamux MVP smoke', () => {
     const entry = loadChatBots('flow').chats['chat-group-a'];
     expect(entry?.trusted).toEqual(['peer-bot-1']);
     expect(entry?.known).toEqual(['peer-bot-1']);
+  });
+
+  it('injects a one-shot group_bots context on the next group message after /introduce', async () => {
+    saveDispatcherAccess('flow', {
+      version: 1,
+      dm: { allow_users: [] },
+      group: {
+        allow_chats: ['chat-group-a'],
+        follow_users: ['sender-test'],
+        require_mention: true,
+      },
+      observed_chats: [],
+      warnings: [],
+      last_gate: null,
+    });
+    server = buildServer({ runtimeDir, fake, bot });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+    await server.start();
+
+    // /introduce trusts the peer bot and arms the one-shot context.
+    await bot.inject(
+      fakeInbound('chat-group-a', '/introduce', 'msg-intro', {
+        mentions: [{ key: '@_user_9', id: { open_id: 'peer-bot-1' }, name: 'Peer Bot' }],
+      }),
+    );
+    await sleep(40);
+    expect(fake.turnsHandled).toBe(0);
+
+    // Next delivered group message carries the trusted bots once.
+    await bot.inject(fakeInbound('chat-group-a', 'hello again', 'msg-after-1'));
+    await waitFor(() => codexInputs.length === 1);
+    expect(codexInputs[0]).toContain('<group_bots');
+    expect(codexInputs[0]).toContain('open_id="peer-bot-1"');
+    expect(codexInputs[0]).toContain('name="Peer Bot"');
+
+    // The message after that does NOT — it was a one-shot, cleared after submit.
+    await bot.inject(fakeInbound('chat-group-a', 'and again', 'msg-after-2'));
+    await waitFor(() => codexInputs.length === 2);
+    expect(codexInputs[1]).not.toContain('<group_bots');
+    expect(loadChatBots('flow').chats['chat-group-a']?.needsBaseline).toBe(false);
+  });
+
+  it('mcp.list_chat_bots returns the chat known + trusted bots with names', async () => {
+    saveDispatcherAccess('flow', {
+      version: 1,
+      dm: { allow_users: [] },
+      group: {
+        allow_chats: ['chat-group-a'],
+        follow_users: ['sender-test'],
+        require_mention: true,
+      },
+      observed_chats: [],
+      warnings: [],
+      last_gate: null,
+    });
+    server = buildServer({ runtimeDir, fake, bot });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+    await server.start();
+
+    // Trust one bot via /introduce, and passively observe another bot sender.
+    await bot.inject(
+      fakeInbound('chat-group-a', '/introduce', 'msg-intro-list', {
+        mentions: [{ key: '@_user_9', id: { open_id: 'peer-bot-1' }, name: 'Peer Bot' }],
+      }),
+    );
+    await bot.inject(
+      fakeInbound('chat-group-a', 'ambient bot chatter', 'msg-bot-obs', {
+        senderId: 'known-bot-2',
+        senderType: 'bot',
+        senderName: 'Ambient Bot',
+      }),
+    );
+    await sleep(40);
+
+    const result = (await sendAdminRequest(
+      'mcp.list_chat_bots',
+      { dispatcher_id: 'flow', chat_id: 'chat-group-a' },
+      { socketPath: join(runtimeDir, 'admin.sock') },
+    )) as {
+      chat_id: string;
+      known: Array<{ open_id: string; name?: string }>;
+      trusted: Array<{ open_id: string; name?: string }>;
+    };
+
+    expect(result.chat_id).toBe('chat-group-a');
+    expect(result.trusted).toEqual([{ open_id: 'peer-bot-1', name: 'Peer Bot' }]);
+    expect(result.known).toEqual(
+      expect.arrayContaining([
+        { open_id: 'peer-bot-1', name: 'Peer Bot' },
+        { open_id: 'known-bot-2', name: 'Ambient Bot' },
+      ]),
+    );
   });
 
   it('does NOT consume /introduce from a non-allowlisted sender (no trust, dropped by the gate)', async () => {

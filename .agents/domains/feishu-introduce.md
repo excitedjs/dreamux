@@ -7,6 +7,9 @@
   `packages/dreamux/src/channel/introduce.ts`,
   `packages/dreamux/src/channel/chat-bots-store.ts`,
   `packages/dreamux/src/channel/feishu-gate.ts`,
+  `packages/dreamux/src/channel/feishu-message.ts`,
+  `packages/dreamux/src/mcp/feishu-mcp.ts`,
+  `packages/dreamux/src/admin/methods.ts`,
   `packages/dreamux/src/server.ts`,
   `packages/dreamux/src/runtime/paths.ts`
 
@@ -62,6 +65,31 @@ omitted, no bot sender is ever delivered — preserving prior behavior. Recordin
 a human open_id as "trusted" is harmless: the gate only bypasses for a bot
 *sender*, so a human entry never widens access.
 
+## One-shot trusted-bot context (issue #69)
+
+When `/introduce` newly trusts a bot — or the bot is added to a chat — the chat
+is flagged `needsBaseline` and its `baselineGeneration` is bumped
+(`chat-bots-store.ts`). On the next **delivered** group message,
+`formatFeishuMessageForCodex` appends a one-shot `<group_bots>` block listing the
+chat's **trusted** bots (name + open_id), so the model can map a peer bot's
+open_id to a name. Passive `known` bots are deliberately not pushed here; they
+are queried on demand via `list_chat_bots`.
+
+The clear is **commit-after-notify and generation-safe**: the deliver path
+snapshots the generation before enqueue and clears `needsBaseline` only after
+`enqueueInbound` returns `submitted`, and only via `clearBaselineIfCurrent`,
+which no-ops if a newer `/introduce` / bot-added bumped the generation
+mid-enqueue. `duplicate` / `stopped` / `failed` leave the context pending.
+
+## `list_chat_bots` query tool
+
+A model-facing Feishu MCP tool (`mcp/feishu-mcp.ts`) returns a chat's `known` and
+`trusted` peer bots as two separated arrays of `{ open_id, name? }`, for context
+recovery after compaction. It forwards an `mcp.list_chat_bots` request over the
+0600 admin socket to the read-only `Server.listChatBotsFromMcp`, which reads the
+`chat-bots-store` directly (no running slot required). Same transport shape as
+`reply` / `react`; no operator CLI surface.
+
 ## Deferred to follow-up PRs
 
 Not in this increment, tracked on issue #62:
@@ -69,5 +97,9 @@ Not in this increment, tracked on issue #62:
 - Invite-code pairing, the shared `Access` contract migration, and the
   operator approve/deny surface (`access.*` admin methods + CLI).
 - Rich inbound attachments (bounded authorized downloads, token references).
-- One-shot baseline discovery-context injection and a list-known-bots tool.
 - `doc_comment` handling.
+
+(The one-shot discovery-context injection and the list-known-bots tool landed in
+issue #69 — see the two sections above; the add-then-cancel reaction ordering it
+also carried is in
+[`/.agents/domains/non-blocking-dispatcher-inbound.md`](/.agents/domains/non-blocking-dispatcher-inbound.md).)

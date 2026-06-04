@@ -125,10 +125,14 @@ inbound.
   `input.messageId` after the model reply is sent.
 - Replace the single `receivedReactions` map with a channel-owned inbound
   reaction ledger that stores the current reaction id and state per message id.
-  Feishu reactions are replaced by removing the previous channel-owned reaction
-  id and adding the new emoji.
+  A reaction is replaced **add-then-cancel** (issue #69): add the new emoji
+  first, store it, then remove the previous channel-owned reaction id, so the
+  message never shows a zero-reaction window during `[received] → [in progress]`.
+  A failed or empty add keeps the previous reaction and ledger entry.
 - Keep `pendingReceivedReactionClears`: an MCP reply can still clear before an
-  async add/replace reaction call finishes.
+  async add/replace reaction call finishes. With add-then-cancel, a late clear
+  removes the just-added reaction and does not store it; the previous reaction is
+  already taken by `clearInboundReaction`, which read the ledger before any store.
 
 `packages/dreamux/src/channel/feishu-message.ts`
 
@@ -144,7 +148,8 @@ The channel-owned reaction has three visible states:
   `[received]`. "Immediately" means before Codex submission, not before
   access/dedupe.
 - Codex accepts `turn/start`: replace with `[in progress]` immediately at
-  submission acceptance, not at model consumption.
+  submission acceptance, not at model consumption. The replacement is
+  add-then-cancel (add `[in progress]`, then remove `[received]`).
 - The model replies through MCP `reply` for that `message_id`: remove the
   channel-owned reaction.
 

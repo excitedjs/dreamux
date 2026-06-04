@@ -30,6 +30,28 @@ describe('formatFeishuMessageForCodex', () => {
     expect(block).toContain('  sender_name="Ada &amp; Bob"');
   });
 
+  it('omits the group_bots block when no trusted bots are supplied', () => {
+    expect(formatFeishuMessageForCodex(event(), {})).not.toContain('<group_bots');
+    expect(formatFeishuMessageForCodex(event(), { trustedBots: [] })).not.toContain(
+      '<group_bots',
+    );
+  });
+
+  it('renders a one-shot group_bots block of trusted bots with escaped values', () => {
+    const block = formatFeishuMessageForCodex(event(), {
+      trustedBots: [
+        { openId: 'ou-peer-a', name: 'Peer & "A"' },
+        { openId: 'ou-peer-b' },
+      ],
+    });
+    expect(block).toContain(
+      '<group_bots note="trusted bots in this group; a bot speaks without @-mentioning us">',
+    );
+    expect(block).toContain('  <bot name="Peer &amp; &quot;A&quot;" open_id="ou-peer-a" />');
+    expect(block).toContain('  <bot name="" open_id="ou-peer-b" />');
+    expect(block.endsWith('</group_bots>\n</feishu_message>')).toBe(true);
+  });
+
   it('adds a Feishu skill fallback note when text content cannot be parsed', () => {
     const block = formatFeishuMessageForCodex(
       event({

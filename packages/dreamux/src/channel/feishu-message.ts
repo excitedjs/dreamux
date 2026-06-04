@@ -1,11 +1,25 @@
 import type { Mention } from '@excitedjs/feishu-transport';
 
 import type { FeishuInboundEvent } from '../feishu/bot.js';
+import type { PeerBot } from './chat-bots-store.js';
 
 export const FEISHU_SKILL_FALLBACK_NOTE =
   'Parser note: message text may be incomplete. Use the Feishu skill with the chat_id and message_id above to fetch the original message when needed.';
 
-export function formatFeishuMessageForCodex(event: FeishuInboundEvent): string {
+export interface FormatFeishuMessageOptions {
+  /**
+   * Trusted peer bots to surface once, as a `<group_bots>` block (issue #69).
+   * Injected only on the first delivered group message after an `/introduce`
+   * (or bot-added) so the model can map a bot open_id to a name. Trusted only —
+   * passive `known` bots are queried via `list_chat_bots`, not pushed here.
+   */
+  trustedBots?: PeerBot[];
+}
+
+export function formatFeishuMessageForCodex(
+  event: FeishuInboundEvent,
+  options: FormatFeishuMessageOptions = {},
+): string {
   const attrs: Array<[string, string]> = [
     ['chat_id', event.chatId],
     ['chat_type', event.chatType],
@@ -18,6 +32,7 @@ export function formatFeishuMessageForCodex(event: FeishuInboundEvent): string {
   const fallback = shouldAddFallbackNote(event)
     ? `\n\n${FEISHU_SKILL_FALLBACK_NOTE}`
     : '';
+  const groupBots = renderGroupBots(options.trustedBots ?? []);
 
   const attrLines = attrs.map(
     ([key, value]) => `  ${key}="${escapeXmlAttribute(value)}"`,
@@ -27,8 +42,25 @@ export function formatFeishuMessageForCodex(event: FeishuInboundEvent): string {
   return [
     '<feishu_message',
     ...attrLines,
-    `${body}${fallback}`,
+    `${body}${fallback}${groupBots}`,
     '</feishu_message>',
+  ].join('\n');
+}
+
+/**
+ * Render the one-shot trusted-bot discovery block. Empty string when there are
+ * no trusted bots, so the common path is byte-for-byte unchanged.
+ */
+function renderGroupBots(trustedBots: PeerBot[]): string {
+  if (trustedBots.length === 0) return '';
+  const lines = trustedBots.map((bot) => {
+    const name = bot.name ?? '';
+    return `  <bot name="${escapeXmlAttribute(name)}" open_id="${escapeXmlAttribute(bot.openId)}" />`;
+  });
+  return [
+    '\n\n<group_bots note="trusted bots in this group; a bot speaks without @-mentioning us">',
+    ...lines,
+    '</group_bots>',
   ].join('\n');
 }
 
