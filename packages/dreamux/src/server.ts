@@ -470,15 +470,40 @@ export class Server {
 
   async replyFromMcp(input: ServerMcpReplyInput): Promise<{ message_ids: string[] }> {
     const slot = this.mustRunningSlot(input.dispatcherId);
-    const result = await slot.bot.send(
-      channelOutboundToFeishuTarget({
-        conversationId: input.chatId,
-        ...(input.messageId !== undefined ? { replyTo: input.messageId } : {}),
-        ...(input.mentionUserIds !== undefined
-          ? { mentionUsers: input.mentionUserIds }
-          : {}),
-      }),
-      input.text,
+    let result: { messageIds: string[] };
+    try {
+      result = await slot.bot.send(
+        channelOutboundToFeishuTarget({
+          conversationId: input.chatId,
+          ...(input.messageId !== undefined ? { replyTo: input.messageId } : {}),
+          ...(input.mentionUserIds !== undefined
+            ? { mentionUsers: input.mentionUserIds }
+            : {}),
+        }),
+        input.text,
+      );
+    } catch (err) {
+      // Persist the outbound failure so a daemon can later tell whether a model
+      // reply ever left the host. The message body (`input.text`) is omitted.
+      slot.log.error(
+        {
+          dispatcher_id: input.dispatcherId,
+          chat_id: input.chatId,
+          message_id: input.messageId,
+          err: errInfo(err),
+        },
+        'feishu reply failed',
+      );
+      throw err;
+    }
+    slot.log.info(
+      {
+        dispatcher_id: input.dispatcherId,
+        chat_id: input.chatId,
+        message_id: input.messageId,
+        message_ids: result.messageIds,
+      },
+      'feishu reply sent',
     );
     if (input.messageId !== undefined) {
       await clearInboundReaction(
@@ -494,7 +519,30 @@ export class Server {
 
   async reactFromMcp(input: ServerMcpReactInput): Promise<{ reaction_id: string }> {
     const slot = this.mustRunningSlot(input.dispatcherId);
-    const reactionId = await slot.bot.addReaction(input.messageId, input.emoji);
+    let reactionId: string;
+    try {
+      reactionId = await slot.bot.addReaction(input.messageId, input.emoji);
+    } catch (err) {
+      slot.log.error(
+        {
+          dispatcher_id: input.dispatcherId,
+          message_id: input.messageId,
+          emoji: input.emoji,
+          err: errInfo(err),
+        },
+        'feishu react failed',
+      );
+      throw err;
+    }
+    slot.log.info(
+      {
+        dispatcher_id: input.dispatcherId,
+        message_id: input.messageId,
+        emoji: input.emoji,
+        reaction_id: reactionId,
+      },
+      'feishu react sent',
+    );
     return { reaction_id: reactionId };
   }
 

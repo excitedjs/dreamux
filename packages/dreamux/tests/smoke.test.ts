@@ -906,6 +906,137 @@ describe('dreamux MVP smoke', () => {
     expect(capture.text()).not.toContain(SECRET_BODY);
   });
 
+  // Issue #70 (PR #75 review): outbound reply/react must be diagnosable —
+  // success and failure — without leaking the reply body. The admin layer
+  // turning a failure into a response does not replace a persistent log.
+  it('logs a successful outbound reply with ids but never the reply text', async () => {
+    const capture = captureLogger('channel/flow');
+    const REPLY_BODY = 'REPLY-BODY-MUST-NOT-LEAK';
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      channelLoggerFactory: () => capture.logger,
+    });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+    await server.start();
+
+    const result = await server.replyFromMcp({
+      dispatcherId: 'flow',
+      chatId: 'chat-group-a',
+      messageId: 'msg-reply',
+      text: REPLY_BODY,
+    });
+    expect(result.message_ids).toEqual(['message-fake-1']);
+
+    const sent = capture
+      .lines()
+      .find((line) => line['msg'] === 'feishu reply sent');
+    expect(sent).toMatchObject({
+      dispatcher_id: 'flow',
+      chat_id: 'chat-group-a',
+      message_id: 'msg-reply',
+      message_ids: ['message-fake-1'],
+    });
+    expect(capture.text()).not.toContain(REPLY_BODY);
+  });
+
+  it('logs a failed outbound reply with the error summary and rethrows (no body)', async () => {
+    const capture = captureLogger('channel/flow');
+    const REPLY_BODY = 'FAILED-REPLY-BODY-MUST-NOT-LEAK';
+    bot.setSendError(new Error('feishu send boom'));
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      channelLoggerFactory: () => capture.logger,
+    });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+    await server.start();
+
+    await expect(
+      server.replyFromMcp({
+        dispatcherId: 'flow',
+        chatId: 'chat-group-a',
+        messageId: 'msg-reply-fail',
+        text: REPLY_BODY,
+      }),
+    ).rejects.toThrow('feishu send boom');
+
+    const failed = capture
+      .lines()
+      .find((line) => line['msg'] === 'feishu reply failed');
+    expect(failed).toMatchObject({
+      dispatcher_id: 'flow',
+      chat_id: 'chat-group-a',
+      message_id: 'msg-reply-fail',
+    });
+    expect((failed?.['err'] as { message: string }).message).toBe(
+      'feishu send boom',
+    );
+    expect(capture.text()).not.toContain(REPLY_BODY);
+  });
+
+  it('logs outbound react success and failure with ids and emoji', async () => {
+    const capture = captureLogger('channel/flow');
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      channelLoggerFactory: () => capture.logger,
+    });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+    await server.start();
+
+    const ok = await server.reactFromMcp({
+      dispatcherId: 'flow',
+      messageId: 'msg-react',
+      emoji: 'THUMBSUP',
+    });
+    expect(ok.reaction_id).toBe('reaction-fake-1');
+    const sent = capture
+      .lines()
+      .find((line) => line['msg'] === 'feishu react sent');
+    expect(sent).toMatchObject({
+      dispatcher_id: 'flow',
+      message_id: 'msg-react',
+      emoji: 'THUMBSUP',
+      reaction_id: 'reaction-fake-1',
+    });
+
+    bot.setReactionError(new Error('feishu react boom'));
+    await expect(
+      server.reactFromMcp({
+        dispatcherId: 'flow',
+        messageId: 'msg-react-fail',
+        emoji: 'EYES',
+      }),
+    ).rejects.toThrow('feishu react boom');
+    const failed = capture
+      .lines()
+      .find((line) => line['msg'] === 'feishu react failed');
+    expect(failed).toMatchObject({
+      dispatcher_id: 'flow',
+      message_id: 'msg-react-fail',
+      emoji: 'EYES',
+    });
+    expect((failed?.['err'] as { message: string }).message).toBe(
+      'feishu react boom',
+    );
+  });
+
   it('submits each pending inbound with turn/start while Codex folds active-turn input', async () => {
     // Restart fake with a slow active turn so later submissions fold into it.
     await fake.close();

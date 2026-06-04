@@ -125,9 +125,15 @@ settle the design in comments, then implement — rather than landing a PR first
   "SUCCESS WITH WARNINGS" from the JSON lines on stderr — same class of stderr
   output the old `console.error` calls produced, not a failure.
 - Tests gate the security defaults: redacted `app_secret`, message body absent
-  from the persisted log, `0o600` files (incl. tightening a wider pre-existing
-  file), per-dispatcher capture isolation, level threshold, and the
-  `feishu-mcp` stdout JSON-RPC contract across error paths.
+  from the persisted log (inbound drop/submit **and** outbound reply/react),
+  `0o600` files (incl. tightening a wider pre-existing file), per-dispatcher
+  capture isolation, level threshold, and the `feishu-mcp` stdout JSON-RPC
+  contract across error paths.
+- Outbound `reply`/`react` log both success (ids: `message_ids` / `reaction_id`,
+  `emoji`) and failure (error summary) to the per-dispatcher channel log, never
+  the reply `text`. The admin layer turning a failure into an `OUTBOUND_FAILED`
+  / `REACTION_FAILED` response does **not** replace the persistent log
+  (PR #75 review).
 
 ## Alternatives considered
 
