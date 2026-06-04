@@ -25,6 +25,7 @@ class FakeRunner implements CommandRunner {
   systemdEnabled = false;
   systemdActive = false;
   launchdLoaded = false;
+  lingerEnabled = false;
   readonly nodeVersions = new Map<string, string>();
   readonly failedHelpCommands = new Set<string>();
   readonly calls: Array<{ command: string; args: string[] }> = [];
@@ -65,6 +66,9 @@ class FakeRunner implements CommandRunner {
     }
     if (command === 'launchctl' && args[0] === 'print' && this.launchdLoaded) {
       return 'state = running\npid = 1234\n';
+    }
+    if (command === 'loginctl' && args[0] === 'show-user') {
+      return `Linger=${this.lingerEnabled ? 'yes' : 'no'}`;
     }
     throw new Error(`unexpected capture: ${command} ${args.join(' ')}`);
   }
@@ -215,6 +219,7 @@ describe('dreamux doctor command', () => {
 
   it('warns (without failing) when the service Node is bound to a version manager', async () => {
     const runner = new FakeRunner();
+    runner.lingerEnabled = true; // not under test here; keep the linger check green
     writeConfig();
     writeDispatcherHome({ auth: true });
     const nvmNode = join(
@@ -266,6 +271,7 @@ describe('dreamux doctor command', () => {
 
   it('flags a system-looking shim that realpaths into a version manager', async () => {
     const runner = new FakeRunner();
+    runner.lingerEnabled = true; // not under test here; keep the linger check green
     writeConfig();
     writeDispatcherHome({ auth: true });
     const servicePath = join(root, 'home', '.config', 'systemd', 'user', 'dreamux.service');
@@ -403,6 +409,78 @@ describe('dreamux doctor command', () => {
       args: ['--help'],
     });
   });
+
+  it('flags disabled systemd lingering on an installed service', async () => {
+    const runner = new FakeRunner();
+    runner.lingerEnabled = false;
+    writeConfig();
+    writeDispatcherHome({ auth: true });
+    writeValidSystemdUnit();
+
+    const result = await runDreamuxDoctor({
+      runner,
+      platform: 'linux',
+      homeDir: join(root, 'home'),
+      userName: 'someone',
+      env: {},
+    });
+
+    const linger = result.checks.find((check) => check.name === 'systemd linger');
+    expect(linger).toMatchObject({ ok: false });
+    expect(linger?.detail).toContain('enable-linger');
+    expect(result.ok).toBe(false);
+  });
+
+  it('passes the linger check when lingering is enabled', async () => {
+    const runner = new FakeRunner();
+    runner.lingerEnabled = true;
+    writeConfig();
+    writeDispatcherHome({ auth: true });
+    writeValidSystemdUnit();
+
+    const result = await runDreamuxDoctor({
+      runner,
+      platform: 'linux',
+      homeDir: join(root, 'home'),
+      userName: 'someone',
+      env: {},
+    });
+
+    expect(result.checks.find((check) => check.name === 'systemd linger')).toMatchObject({
+      ok: true,
+    });
+  });
+
+  it('skips the linger check when no service is installed', async () => {
+    const runner = new FakeRunner();
+    writeConfig();
+    writeDispatcherHome({ auth: true });
+
+    const result = await runDreamuxDoctor({
+      runner,
+      platform: 'linux',
+      homeDir: join(root, 'home'),
+      env: {},
+    });
+
+    expect(result.checks.find((check) => check.name === 'systemd linger')).toBeUndefined();
+  });
+
+  function writeValidSystemdUnit(): void {
+    const servicePath = join(root, 'home', '.config', 'systemd', 'user', 'dreamux.service');
+    mkdirSync(dirname(servicePath), { recursive: true });
+    writeFileSync(
+      servicePath,
+      [
+        '[Service]',
+        `ExecStart=${process.env['DREAMUX_BIN']} serve`,
+        `Environment=DREAMUX_NODE_BIN=${process.execPath}`,
+        'Environment=CODEX_HOST_CODEX_BIN=codex',
+        'Environment=PATH=/usr/bin:/bin',
+        '',
+      ].join('\n'),
+    );
+  }
 
   function writeConfig(): void {
     const configPath = join(root, 'config', 'config.json');

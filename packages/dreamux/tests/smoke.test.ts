@@ -49,7 +49,9 @@ import {
   dispatcherCodexHome,
   dispatcherWorkspaceSkillPath,
   dispatcherSocketPath,
+  restartIntentPath,
 } from '../src/runtime/paths.js';
+import { writeRestartIntent } from '../src/daemon/restart-intent.js';
 import { dreamuxBinPath } from '../src/runtime/package-bin.js';
 import { createLogger, type DreamuxLogger } from '../src/runtime/logger.js';
 import { startFakeCodex, type FakeCodex } from './fake-codex.js';
@@ -1565,6 +1567,48 @@ describe('dreamux MVP smoke', () => {
     // last_error is cleared when dispatcher reaches 'ready' again; the
     // durable evidence of degradation is last_lost_thread_id above.
     expect(d?.status).toBe('ready');
+  });
+
+  it('injects a restart notice into a resumed target after daemon restart --notify-resumed', async () => {
+    const config = configWithDispatcher();
+    server = buildServer({ runtimeDir, fake, bot, config });
+    server.repos.dispatchers.setThreadId('flow', 'thread_seed');
+    await server.start();
+    await server.shutdown();
+
+    // Marker written by `daemon restart --notify-resumed --dispatcher flow`.
+    writeRestartIntent({
+      targets: ['flow'],
+      announce: 'Restart completed.',
+      now: Date.now(),
+      path: restartIntentPath(),
+    });
+    expect(existsSync(restartIntentPath())).toBe(true);
+
+    server = buildServer({ runtimeDir, fake, bot, config });
+    await server.start();
+
+    await waitFor(() => codexInputs.includes('Restart completed.'));
+    // The thread was resumed (not freshly started) and the notice rode in.
+    expect(server.repos.dispatchers.get('flow')?.thread_id).toBe('thread_seed');
+    // The marker is one-shot: consumed on load and deleted from disk.
+    expect(existsSync(restartIntentPath())).toBe(false);
+  });
+
+  it('does not inject a restart notice without a marker (plain resume)', async () => {
+    const config = configWithDispatcher();
+    server = buildServer({ runtimeDir, fake, bot, config });
+    server.repos.dispatchers.setThreadId('flow', 'thread_seed');
+    await server.start();
+    await server.shutdown();
+    codexInputs = [];
+
+    server = buildServer({ runtimeDir, fake, bot, config });
+    await server.start();
+
+    await sleep(150);
+    expect(codexInputs).toEqual([]);
+    expect(server.repos.dispatchers.get('flow')?.thread_id).toBe('thread_seed');
   });
 
   it('approval fail-fast: server-request causes the turn to fail', async () => {

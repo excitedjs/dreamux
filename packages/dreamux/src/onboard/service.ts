@@ -1,4 +1,4 @@
-import { accessSync, constants } from 'node:fs';
+import { accessSync, constants, existsSync, rmSync } from 'node:fs';
 import { realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
@@ -47,6 +47,15 @@ export interface ServiceInstallResult {
   unitPath: string;
   registered: boolean;
   started: boolean;
+  /**
+   * systemd `--user` only: whether `loginctl enable-linger` succeeded so the
+   * service starts at boot without an interactive login. null when not
+   * applicable (launchd, or a dry run). Failure is non-fatal and surfaced via
+   * `warnings`.
+   */
+  lingerEnabled: boolean | null;
+  /** Non-fatal operator-facing warnings (e.g. linger could not be enabled). */
+  warnings: string[];
 }
 
 export function serviceUnitPath(
@@ -105,10 +114,14 @@ export async function installUserService(
     },
   );
 
+  let lingerEnabled: boolean | null = null;
+  const warnings: string[] = [];
   if (unit.platform === 'launchd') {
     await registerLaunchd(unit.path, unitStatus, options);
   } else {
-    await registerSystemd(unit.path, options);
+    const systemd = await registerSystemd(unit.path, options);
+    lingerEnabled = systemd.lingerEnabled;
+    warnings.push(...systemd.warnings);
   }
 
   return {
@@ -116,6 +129,8 @@ export async function installUserService(
     unitPath: unit.path,
     registered: true,
     started: options.answers.startService,
+    lingerEnabled,
+    warnings,
   };
 }
 
@@ -527,7 +542,7 @@ async function registerLaunchd(
 async function registerSystemd(
   unitPath: string,
   options: ServiceInstallOptions,
-): Promise<void> {
+): Promise<{ lingerEnabled: boolean | null; warnings: string[] }> {
   await options.runner.run('systemctl', ['--user', 'daemon-reload'], {
     dryRun: options.answers.dryRun,
   });
@@ -538,6 +553,109 @@ async function registerSystemd(
     dryRun: options.answers.dryRun,
   });
   options.ledger.record(unitPath, 'unchanged', 'systemd user service registered');
+
+  // `systemctl --user enable` only schedules the service for an *active login
+  // session*. On a headless box with no graphical/SSH login the service never
+  // starts at boot. `loginctl enable-linger` is what makes a user service boot
+  // without a login — without it, "enabled" silently fails to autostart on
+  // reboot. Best-effort: a strict polkit / non-root setup may deny it, but that
+  // must not fail onboard / daemon install (issue #78).
+  const { lingerEnabled, warnings } = await enableSystemdLinger(options);
+  return { lingerEnabled, warnings };
+}
+
+/**
+ * Enable systemd user lingering for the calling user, best-effort. Returns the
+ * outcome plus any operator-facing warning. Skipped (null) on a dry run.
+ */
+export async function enableSystemdLinger(
+  options: Pick<ServiceInstallOptions, 'runner'> & {
+    answers: Pick<ServiceInstallAnswers, 'dryRun'>;
+  },
+): Promise<{ lingerEnabled: boolean | null; warnings: string[] }> {
+  if (options.answers.dryRun) return { lingerEnabled: null, warnings: [] };
+  const ok = await options.runner.check('loginctl', ['enable-linger']);
+  if (ok) return { lingerEnabled: true, warnings: [] };
+  return {
+    lingerEnabled: false,
+    warnings: [
+      'could not enable systemd lingering (loginctl enable-linger); the service ' +
+        'will not start at boot until you log in. Enable it manually with: ' +
+        'loginctl enable-linger',
+    ],
+  };
+}
+
+export interface ServiceRemoveOptions {
+  runner: CommandRunner;
+  platform?: NodeJS.Platform;
+  homeDir?: string;
+  uid?: number;
+  dryRun?: boolean;
+}
+
+export interface ServiceRemoveResult {
+  platform: ServicePlatform;
+  unitPath: string;
+  /** Whether the unit file existed and was removed. */
+  removed: boolean;
+}
+
+/**
+ * Unregister and remove the user-level service unit only. Shared by the
+ * top-level `dreamux uninstall` (which then also removes config/state/logs) and
+ * `dreamux daemon uninstall` (which removes *nothing else*). Best-effort on the
+ * service-manager calls — the unit-file removal is authoritative.
+ */
+export async function removeUserService(
+  options: ServiceRemoveOptions,
+): Promise<ServiceRemoveResult> {
+  const homeDir = options.homeDir ?? homedir();
+  const unit = serviceUnitPath(options.platform, homeDir);
+  const dryRun = options.dryRun ?? false;
+
+  if (unit.platform === 'launchd') {
+    const uid = options.uid ?? process.getuid?.();
+    if (uid === undefined) {
+      throw new Error('launchd user service uninstall requires a numeric uid');
+    }
+    const serviceTarget = `gui/${uid}/${LAUNCHD_LABEL}`;
+    const loaded = await options.runner.check('launchctl', ['print', serviceTarget], {
+      dryRun,
+    });
+    if (loaded) {
+      await runServiceBestEffort(options.runner, 'launchctl', ['bootout', serviceTarget], dryRun);
+    }
+  } else {
+    await runServiceBestEffort(
+      options.runner,
+      'systemctl',
+      ['--user', 'disable', '--now', SYSTEMD_UNIT],
+      dryRun,
+    );
+  }
+
+  const existed = existsSync(unit.path);
+  if (existed && !dryRun) rmSync(unit.path, { force: true });
+
+  if (unit.platform === 'systemd') {
+    await runServiceBestEffort(options.runner, 'systemctl', ['--user', 'daemon-reload'], dryRun);
+  }
+
+  return { platform: unit.platform, unitPath: unit.path, removed: existed };
+}
+
+async function runServiceBestEffort(
+  runner: CommandRunner,
+  command: string,
+  args: string[],
+  dryRun: boolean,
+): Promise<void> {
+  try {
+    await runner.run(command, args, { dryRun });
+  } catch {
+    /* The unit may already be absent or stopped; file removal is authoritative. */
+  }
 }
 
 function systemdEscapeArg(value: string): string {

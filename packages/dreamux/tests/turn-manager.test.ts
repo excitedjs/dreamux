@@ -67,6 +67,67 @@ describe('TurnManager inbound submission', () => {
   });
 });
 
+describe('TurnManager restart-notice injection', () => {
+  it('injects the notice as a turn when the thread is bound and idle', async () => {
+    const client = new FakeCodexClient();
+    const manager = new TurnManager({
+      dispatcherId: 'flow',
+      getThreadId: () => 'thread-1',
+      client: client as never,
+    });
+
+    await expect(manager.injectNotice('Restart completed.')).resolves.toEqual({
+      status: 'submitted',
+      turnId: 'turn-1',
+    });
+    expect(client.inputs).toEqual(['Restart completed.']);
+  });
+
+  it('skips when a real inbound has already woken the thread', async () => {
+    const client = new FakeCodexClient();
+    const manager = new TurnManager({
+      dispatcherId: 'flow',
+      getThreadId: () => 'thread-1',
+      client: client as never,
+    });
+
+    await manager.enqueue(input('msg-1', 'real work'));
+    await expect(manager.injectNotice('Restart completed.')).resolves.toEqual({
+      status: 'skipped',
+    });
+    expect(client.inputs).toEqual(['real work']);
+  });
+
+  it('fails (does not throw) when no thread is bound', async () => {
+    const client = new FakeCodexClient();
+    const manager = new TurnManager({
+      dispatcherId: 'flow',
+      getThreadId: () => null,
+      client: client as never,
+    });
+
+    const result = await manager.injectNotice('Restart completed.');
+    expect(result.status).toBe('failed');
+    expect(client.inputs).toEqual([]);
+  });
+
+  it('injects at most once', async () => {
+    const client = new FakeCodexClient();
+    const manager = new TurnManager({
+      dispatcherId: 'flow',
+      getThreadId: () => 'thread-1',
+      client: client as never,
+    });
+
+    await expect(manager.injectNotice('Restart completed.')).resolves
+      .toMatchObject({ status: 'submitted' });
+    await expect(manager.injectNotice('Restart completed.')).resolves.toEqual({
+      status: 'skipped',
+    });
+    expect(client.inputs).toEqual(['Restart completed.']);
+  });
+});
+
 function input(messageId: string, text: string) {
   return {
     source_chat_id: 'chat-a',

@@ -29,6 +29,7 @@ import {
 class FakeRunner implements CommandRunner {
   launchdLoaded = false;
   nodeVersion = 'v22.7.0';
+  lingerEnableOk = true;
   readonly failedHelpCommands = new Set<string>();
   readonly calls: Array<{
     command: string;
@@ -76,6 +77,9 @@ class FakeRunner implements CommandRunner {
     void options;
     if (args[0] === '--help') {
       return !this.failedHelpCommands.has(command);
+    }
+    if (command === 'loginctl' && args[0] === 'enable-linger') {
+      return this.lingerEnableOk;
     }
     return command === 'launchctl' &&
       args[0] === 'print' &&
@@ -164,6 +168,8 @@ describe('dreamux onboard', () => {
       platform: 'systemd',
       registered: true,
       started: true,
+      lingerEnabled: true,
+      warnings: [],
     });
     expect(runner.calls.map((call) => [call.command, call.args])).toEqual([
       ['systemctl', ['--user', 'daemon-reload']],
@@ -300,6 +306,38 @@ describe('dreamux onboard', () => {
     expect(serviceUnit).not.toContain(
       'Environment=DREAMUX_NODE_BIN=/usr/local/bin/node',
     );
+  });
+
+  it('degrades (does not fail) when systemd lingering cannot be enabled', async () => {
+    const runner = new FakeRunner();
+    runner.lingerEnableOk = false;
+    const answers = testAnswers({
+      configDir: join(root, 'config'),
+      runtimeDir: join(root, 'runtime'),
+      registerService: true,
+    });
+    writeGlobalCodexAuth(answers);
+
+    const result = await runOnboard({
+      answers,
+      runner,
+      platform: 'linux',
+      homeDir: join(root, 'home'),
+      env: { CODEX_ACCESS_TOKEN: 'interactive-token-test' },
+      nodeProbe: noSystemNodeProbe,
+    });
+
+    expect(result.service).toMatchObject({
+      platform: 'systemd',
+      registered: true,
+      lingerEnabled: false,
+    });
+    expect(result.service?.warnings.join(' ')).toContain('enable-linger');
+    // daemon-reload + enable still ran; linger failure is non-fatal.
+    expect(runner.calls.map((call) => [call.command, call.args])).toEqual([
+      ['systemctl', ['--user', 'daemon-reload']],
+      ['systemctl', ['--user', 'enable', '--now', 'dreamux.service']],
+    ]);
   });
 
   it('does not let an interactive shell token satisfy the managed service doctor', async () => {

@@ -51,9 +51,16 @@ two-paths consequence of `.agents/decisions/rush-pnpm-monorepo.md`).
 ## CLI surface
 
 The user-facing CLI is the single global bin `dreamux`. Current command tree:
-`onboard`, `serve`, `status`, `doctor`, `daemon install|uninstall|start|stop|status`,
-`dispatcher add|remove|list|status|start|stop`, and `config path|show`.
-`dreamux serve` is the foreground server entry point. Do not reintroduce
+`onboard`, `uninstall`, `serve`, `status`, `doctor`,
+`daemon install|uninstall|start|stop|restart`,
+`dispatcher add|remove|list|status|start|stop`, `feishu-mcp`, and
+`config path|show`. `dreamux serve` is the foreground server entry point. The
+`daemon` group wraps the native user-level service manager (Linux
+`systemctl --user`, macOS `launchctl`); `daemon uninstall` removes only the
+service unit, whereas top-level `dreamux uninstall` removes config/state/logs
+too. `daemon restart --notify-resumed --dispatcher <id>` drops a one-shot
+restart marker before restarting, so a resumed dispatcher gets a
+`Restart completed.` turn injected — see issue #78. Do not reintroduce
 global aliases such as `dreamux-server` or `server-ctl`; issue #18 explicitly
 removed the legacy global-bin transition period.
 

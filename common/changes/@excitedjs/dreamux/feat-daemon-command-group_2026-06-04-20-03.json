@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Add daemon command group (install/uninstall/start/stop/restart), enable systemd linger so the user service starts at boot, and inject a restart-completed notice into resumed dispatchers after daemon restart --notify-resumed",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

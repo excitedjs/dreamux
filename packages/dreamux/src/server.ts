@@ -66,6 +66,7 @@ import {
   type DreamuxLogger,
 } from './runtime/logger.js';
 import { createAdminSocketServer, type AdminSocketServer } from './admin/socket.js';
+import { RestartIntentConsumer } from './daemon/restart-intent.js';
 
 export const RECEIVED_REACTION_EMOJI = 'Get';
 export const IN_PROGRESS_REACTION_EMOJI = 'OnIt';
@@ -176,6 +177,11 @@ export class Server {
    */
   private readonly starting = new Map<string, Promise<void>>();
   private admin: AdminSocketServer | null = null;
+  /**
+   * One-shot restart-notice snapshot loaded at start(). Null until start();
+   * each resumed dispatcher claims its notice once as it comes up (issue #78).
+   */
+  private restartIntent: RestartIntentConsumer | null = null;
   private shuttingDown = false;
   private readonly opts: ServerOptions;
   private readonly log: DreamuxLogger;
@@ -220,6 +226,10 @@ export class Server {
 
   /** Bring up admin socket + all enabled dispatchers. */
   async start(): Promise<void> {
+    // Load (and delete) any restart marker before bringing dispatchers up, so
+    // the snapshot is in memory when each resumed dispatcher claims its notice.
+    this.restartIntent = RestartIntentConsumer.load({ now: Date.now() });
+
     this.admin = createAdminSocketServer(
       this,
       this.opts.adminSocketPath ?? adminSocketPath(),
@@ -504,6 +514,25 @@ export class Server {
       },
       'dispatcher ready',
     );
+
+    // Restart-notice injection happens here — after the slot is registered and
+    // the bot is listening — so the resumed turn can reply through Feishu. Only
+    // a thread that was actually resumed and is a named restart target gets a
+    // notice; cold boots and crash auto-heals never reach this path with a live
+    // marker. Best-effort: a failure must not fail the dispatcher (issue #78).
+    if (runtime.wasThreadResumed()) {
+      const notice = this.restartIntent?.claim(id, Date.now()) ?? null;
+      if (notice !== null) {
+        try {
+          await runtime.injectRestartNotice(notice);
+        } catch (err) {
+          channelLog.warn(
+            { dispatcher_id: id, err: errInfo(err) },
+            'restart notice injection errored',
+          );
+        }
+      }
+    }
   }
 
   /** Gracefully stop one dispatcher. Idempotent. */

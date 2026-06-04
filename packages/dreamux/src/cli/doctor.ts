@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, userInfo } from 'node:os';
 
 import { parse as parsePlist, type PlistValue } from 'plist';
 
@@ -42,6 +42,8 @@ export interface DoctorOptions {
   homeDir?: string;
   uid?: number;
   nodeProbe?: ServiceNodeProbe;
+  /** Override the user checked for systemd lingering (tests). */
+  userName?: string;
 }
 
 export interface ServiceStatus {
@@ -116,6 +118,11 @@ export async function runDreamuxDoctor(
       ? `installed at ${service.unitPath}`
       : `not installed at ${service.unitPath}`,
   });
+  if (service.platform === 'systemd' && service.installed) {
+    checks.push(
+      await systemdLingerCheck(runner, options.userName ?? userInfo().username),
+    );
+  }
   await addManagedServiceLaunchChecks(
     checks,
     service,
@@ -323,6 +330,35 @@ async function systemdStatus(
     environment: unitFile.environment,
     execStart: unitFile.execStart,
   };
+}
+
+async function systemdLingerCheck(
+  runner: CommandRunner,
+  userName: string,
+): Promise<DoctorCheck> {
+  const fix =
+    'enable it with `loginctl enable-linger` (or rerun `dreamux daemon install`)';
+  try {
+    const raw = await runner.capture('loginctl', [
+      'show-user',
+      userName,
+      '--property=Linger',
+    ]);
+    const ok = /Linger=yes/.test(raw);
+    return {
+      name: 'systemd linger',
+      ok,
+      detail: ok
+        ? `enabled for ${userName}; the service starts at boot`
+        : `disabled for ${userName}; the service will not start at boot without an interactive login — ${fix}`,
+    };
+  } catch (err) {
+    return {
+      name: 'systemd linger',
+      ok: false,
+      detail: `could not determine lingering for ${userName} (${err instanceof Error ? err.message : String(err)}) — ${fix}`,
+    };
+  }
 }
 
 async function addManagedServiceLaunchChecks(

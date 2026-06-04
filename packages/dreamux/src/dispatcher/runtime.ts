@@ -85,6 +85,13 @@ export class DispatcherRuntime {
   private client: CodexWsClient | null = null;
   private turnManager: TurnManager | null = null;
   private threadId: string | null = null;
+  /**
+   * Whether the most recent thread resolution resumed an existing Codex thread
+   * (true) rather than starting a fresh one or recovering from a failed resume.
+   * Consulted by the server right after the slot is ready to decide whether a
+   * `daemon restart` notice should be injected (issue #78).
+   */
+  private threadResumed = false;
   private status: DispatcherStatus = 'declared';
   private readonly log: NonNullable<DispatcherRuntimeDeps['log']>;
   private stopping = false;
@@ -114,6 +121,26 @@ export class DispatcherRuntime {
 
   getThreadId(): string | null {
     return this.threadId;
+  }
+
+  /** True when the live thread was resumed (not freshly started/recovered). */
+  wasThreadResumed(): boolean {
+    return this.threadResumed;
+  }
+
+  /**
+   * Inject a best-effort one-shot restart notice into the resumed thread. The
+   * server calls this only after the dispatcher slot is ready (so the resumed
+   * turn can reply through Feishu). Never throws — failures are logged.
+   */
+  async injectRestartNotice(text: string): Promise<void> {
+    if (this.turnManager === null) return;
+    const result = await this.turnManager.injectNotice(text);
+    if (result.status === 'submitted') {
+      this.log('info', 'restart notice injected into resumed thread');
+    } else if (result.status === 'skipped') {
+      this.log('info', 'restart notice skipped; a live inbound already arrived');
+    }
   }
 
   /**
@@ -226,6 +253,9 @@ export class DispatcherRuntime {
 
   private async resolveThread(): Promise<void> {
     if (this.client === null) throw new Error('client not initialized');
+    // Each resolution recomputes whether we resumed; a fresh start or a
+    // resume-failure recovery must not look like a resume to the notice gate.
+    this.threadResumed = false;
     const existing = this.threadId ?? this.row.thread_id;
     if (existing === null) {
       // Fresh thread.
@@ -243,6 +273,7 @@ export class DispatcherRuntime {
         threadId: existing,
       });
       this.threadId = existing;
+      this.threadResumed = true;
       this.log('info', `resumed thread ${this.threadId}`);
     } catch (err) {
       // Visible degradation (issue #2 Q11): start a fresh thread, record loss.

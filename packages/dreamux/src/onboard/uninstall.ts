@@ -3,11 +3,7 @@ import { homedir } from 'node:os';
 import { basename, join, resolve, sep } from 'node:path';
 
 import { ExecaCommandRunner } from './commands.js';
-import {
-  LAUNCHD_LABEL,
-  serviceUnitPath,
-  SYSTEMD_UNIT,
-} from './service.js';
+import { removeUserService } from './service.js';
 import type { CommandRunner, ServicePlatform } from './types.js';
 import {
   assertNoLegacyTomlOnly,
@@ -58,7 +54,6 @@ export async function runUninstall(
   const configDir = normalizePath(options.configDir ?? globalConfigDir());
   const entries: UninstallEntry[] = [];
   const warnings: string[] = [];
-  const unit = serviceUnitPath(options.platform, options.homeDir ?? homedir());
   warnIfConfigIsNotReadable(configDir, warnings);
   const stateDir = normalizePath(stateRoot());
   const logDir = normalizePath(logsRoot());
@@ -68,18 +63,19 @@ export async function runUninstall(
   assertSafeOwnedDirectory(configDir, 'dreamux config directory');
   const workspaceSkillPaths = collectWorkspaceSkillPaths(configDir);
 
-  await unregisterService({
-    unitPath: unit.path,
-    platform: unit.platform,
+  // Service removal (unit-only) is shared with `dreamux daemon uninstall`.
+  const removal = await removeUserService({
     runner,
-    dryRun,
+    platform: options.platform,
+    homeDir: options.homeDir ?? homedir(),
     uid: options.uid,
+    dryRun,
   });
-  removePath(unit.path, entries, `${unit.platform} unit`, dryRun);
-
-  if (unit.platform === 'systemd') {
-    await runBestEffort(runner, 'systemctl', ['--user', 'daemon-reload'], dryRun);
-  }
+  entries.push({
+    path: removal.unitPath,
+    status: removal.removed ? 'removed' : 'missing',
+    reason: `${removal.platform} unit`,
+  });
 
   reportWorkspaceSkills(workspaceSkillPaths, entries);
   removeOwnedDirectory(stateDir, entries, 'dreamux state directory', dryRun);
@@ -90,8 +86,8 @@ export async function runUninstall(
     entries: entries.sort((a, b) => a.path.localeCompare(b.path)),
     warnings,
     service: {
-      platform: unit.platform,
-      unitPath: unit.path,
+      platform: removal.platform,
+      unitPath: removal.unitPath,
     },
   };
 }
@@ -136,56 +132,6 @@ function reportWorkspaceSkills(
       status: existsSync(path) ? 'skipped' : 'missing',
       reason: 'workspace-local dispatcher skill (not removed)',
     });
-  }
-}
-
-async function unregisterService(options: {
-  unitPath: string;
-  platform: ServicePlatform;
-  runner: CommandRunner;
-  dryRun: boolean;
-  uid?: number;
-}): Promise<void> {
-  if (options.platform === 'launchd') {
-    const uid = options.uid ?? process.getuid?.();
-    if (uid === undefined) {
-      throw new Error('launchd user service uninstall requires a numeric uid');
-    }
-    const serviceTarget = `gui/${uid}/${LAUNCHD_LABEL}`;
-    const loaded = await options.runner.check(
-      'launchctl',
-      ['print', serviceTarget],
-      { dryRun: options.dryRun },
-    );
-    if (loaded) {
-      await runBestEffort(
-        options.runner,
-        'launchctl',
-        ['bootout', serviceTarget],
-        options.dryRun,
-      );
-    }
-    return;
-  }
-
-  await runBestEffort(
-    options.runner,
-    'systemctl',
-    ['--user', 'disable', '--now', SYSTEMD_UNIT],
-    options.dryRun,
-  );
-}
-
-async function runBestEffort(
-  runner: CommandRunner,
-  command: string,
-  args: string[],
-  dryRun: boolean,
-): Promise<void> {
-  try {
-    await runner.run(command, args, { dryRun });
-  } catch {
-    /* The unit may already be absent or stopped; file deletion below is authoritative. */
   }
 }
 

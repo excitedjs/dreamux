@@ -12,6 +12,14 @@ foreground `serve` decisions still stand.
 Dispatcher `tm` packaging and dispatcher-skill install location are superseded
 by [dispatcher-tm-packaging](dispatcher-tm-packaging.md).
 
+Two service-management decisions below are **reversed by
+[issue #78](https://github.com/excitedjs/dreamux/issues/78)**: there is now a
+public `dreamux daemon install|uninstall|start|stop|restart` command group, and
+`dreamux onboard` / `daemon install` now enable `loginctl enable-linger`
+(best-effort) so a `systemd --user` service starts at boot without an
+interactive login. See [the amendment](#amendment-issue-78-daemon-group--linger)
+at the end of this record.
+
 ## Context
 
 Issue #18 asks for a globally installed `dreamux` to expose one bin named
@@ -75,6 +83,8 @@ foreground `dreamux serve` supervised by a native user-level service manager.
 After `dreamux onboard` registers that service, operators use native
 `launchctl` or `systemctl --user` commands for ongoing service start, stop,
 status, and uninstall operations.
+*(Reversed by issue #78 — see the
+[amendment](#amendment-issue-78-daemon-group--linger).)*
 
 Dispatcher app-server processes do not set `CODEX_HOME`; they use Codex's
 global default home (`~/.codex`) for auth, config, and memory. The
@@ -92,9 +102,11 @@ auth, memory, and other user settings follow the operator's local Codex
 installation.
 
 Service registration is user-level only for issue #18:
-macOS LaunchAgent and Linux `systemd --user`. Root-scoped LaunchDaemons,
-root-scoped systemd services, and automatic `loginctl enable-linger` are out
-of scope.
+macOS LaunchAgent and Linux `systemd --user`. Root-scoped LaunchDaemons and
+root-scoped systemd services are out of scope. Automatic
+`loginctl enable-linger` was out of scope for issue #18 but is **now enabled
+(best-effort) by issue #78** — see the
+[amendment](#amendment-issue-78-daemon-group--linger).
 
 Use commodity packages for commodity infrastructure:
 
@@ -183,3 +195,36 @@ status.
   needs private, owner-writable control state under dreamux runtime state.
 - **Use Ink for onboarding:** rejected for now. `dreamux onboard` is a
   finite wizard, not a full-screen terminal application.
+
+## Amendment (issue #78): daemon group + linger
+
+[Issue #78](https://github.com/excitedjs/dreamux/issues/78) reverses two
+narrow decisions above. Everything else in this record stands.
+
+- **A public `dreamux daemon` command group exists**:
+  `daemon install|uninstall|start|stop|restart`. `start|stop|restart` are thin
+  cross-platform wrappers over the native manager
+  ([`/packages/dreamux/src/daemon/service-control.ts`](/packages/dreamux/src/daemon/service-control.ts));
+  `install`/`uninstall` reuse the onboard service slice
+  ([`/packages/dreamux/src/daemon/install.ts`](/packages/dreamux/src/daemon/install.ts)).
+  `daemon uninstall` removes only the service unit; top-level
+  `dreamux uninstall` still removes config/state/logs. Native `systemctl`/
+  `launchctl` remain valid; the group is a convenience and the home of the new
+  `restart` verb (which did not exist before).
+- **`loginctl enable-linger` is enabled best-effort** by both `onboard` and
+  `daemon install`, single-sourced in
+  [`/packages/dreamux/src/onboard/service.ts`](/packages/dreamux/src/onboard/service.ts)
+  (`enableSystemdLinger`). Failure (strict polkit / non-root) is non-fatal: it
+  surfaces a warning with the manual fix. `dreamux doctor` now reports a
+  `systemd linger` check.
+- **`daemon restart --notify-resumed --dispatcher <id>`** drops a one-shot
+  marker ([`/packages/dreamux/src/daemon/restart-intent.ts`](/packages/dreamux/src/daemon/restart-intent.ts),
+  path via `restartIntentPath()`) *before* triggering the restart — durable if
+  the caller is reaped during a self-update. The freshly started server loads
+  and deletes the marker once, and injects a `Restart completed.` turn into each
+  named dispatcher whose thread actually resumed. The injection happens after
+  the dispatcher slot is ready (so the resumed turn can reply through Feishu),
+  skips when a real inbound already woke the thread (there is no FIFO queue —
+  `TurnManager.injectNotice` detects an in-flight inbound), and never fails the
+  dispatcher start or the restart. Cold boots and crash auto-heals do not reach
+  the injection path with a live marker.

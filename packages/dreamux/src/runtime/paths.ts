@@ -63,6 +63,16 @@ export function serverJsonPath(): string {
   return join(stateRoot(), 'server.json');
 }
 
+/**
+ * One-shot marker dropped by `dreamux daemon restart --notify-resumed` before
+ * it triggers the service-manager restart. The freshly started server reads it
+ * once, deletes it, and injects a "restart completed" notice into the named
+ * resumed dispatchers. Server-owned state; safe to delete.
+ */
+export function restartIntentPath(): string {
+  return join(stateRoot(), 'restart-intent.json');
+}
+
 export function logsRoot(): string {
   return join(dreamuxRoot(), 'logs');
 }

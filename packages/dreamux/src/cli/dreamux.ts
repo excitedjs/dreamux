@@ -30,6 +30,20 @@ import {
   type OnboardCliOptions,
 } from '../onboard/wizard.js';
 import type { OnboardRunResult } from '../onboard/types.js';
+import {
+  runDaemonInstall,
+  runDaemonUninstall,
+  type DaemonInstallResult,
+} from '../daemon/install.js';
+import {
+  controlUserService,
+  type DaemonVerb,
+} from '../daemon/service-control.js';
+import {
+  DEFAULT_RESTART_ANNOUNCE,
+  notifyResumedRestart,
+} from '../daemon/restart-intent.js';
+import { ExecaCommandRunner } from '../onboard/commands.js';
 import { printDoctorResult, runDreamuxDoctor } from './doctor.js';
 import { runFeishuMcp } from '../mcp/feishu-mcp.js';
 import { createLogger } from '../runtime/logger.js';
@@ -264,6 +278,7 @@ function printOnboardResult(result: OnboardRunResult): void {
     console.log(
       `dreamux onboard service: ${result.service.platform} ${result.service.unitPath}`,
     );
+    printServiceWarnings(result.service.lingerEnabled, result.service.warnings);
   }
 }
 
@@ -278,6 +293,148 @@ function printUninstallResult(result: UninstallRunResult): void {
   console.log(
     `dreamux uninstall service: ${result.service.platform} ${result.service.unitPath}`,
   );
+}
+
+function buildDaemonCommands(y: Argv): Argv {
+  return y
+    .command(
+      'install',
+      'Register (or re-register) the user-level service from config',
+      (yy) =>
+        yy
+          .option('start', {
+            type: 'boolean',
+            default: true,
+            describe: 'Start the service after registration',
+          })
+          .option('dry-run', {
+            type: 'boolean',
+            describe: 'Print the planned actions without writing or registering',
+          }),
+      async (argv) => {
+        const result = await runDaemonInstall({
+          startService: argv.start !== false,
+          dryRun: argv.dryRun === true,
+        });
+        printDaemonInstallResult(result);
+      },
+    )
+    .command(
+      'uninstall',
+      'Remove the user-level service unit only (keeps config, state, logs)',
+      (yy) =>
+        yy.option('dry-run', {
+          type: 'boolean',
+          describe: 'Print the planned removal without unregistering',
+        }),
+      async (argv) => {
+        const result = await runDaemonUninstall({ dryRun: argv.dryRun === true });
+        console.log(
+          `dreamux daemon uninstall: ${result.platform} unit ${result.removed ? 'removed' : 'absent'} at ${result.unitPath}`,
+        );
+      },
+    )
+    .command(
+      'start',
+      'Start the user-level service',
+      (yy) => yy,
+      async () => runDaemonControl('start'),
+    )
+    .command(
+      'stop',
+      'Stop the user-level service',
+      (yy) => yy,
+      async () => runDaemonControl('stop'),
+    )
+    .command(
+      'restart',
+      'Restart the user-level service',
+      (yy) =>
+        yy
+          .option('notify-resumed', {
+            type: 'boolean',
+            describe:
+              'After the restart, inject a one-shot notice into the named resumed dispatcher(s)',
+          })
+          .option('dispatcher', {
+            type: 'string',
+            array: true,
+            describe:
+              'Dispatcher id to notify (required with --notify-resumed; repeatable)',
+          })
+          .option('announce', {
+            type: 'string',
+            describe: `Notice text to inject (default: "${DEFAULT_RESTART_ANNOUNCE}")`,
+          }),
+      async (argv) => {
+        await handleDaemonRestart(argv);
+      },
+    )
+    .demandCommand(1, 'Choose a daemon command')
+    .strict();
+}
+
+async function runDaemonControl(verb: DaemonVerb): Promise<void> {
+  const result = await controlUserService(verb, {
+    runner: new ExecaCommandRunner(),
+  });
+  const issued = result.commands
+    .map((cmd) => `${cmd.command} ${cmd.args.join(' ')}`)
+    .join('; ');
+  console.log(
+    `dreamux daemon ${verb}: ${result.platform}${issued === '' ? ' (no-op)' : ` (${issued})`}`,
+  );
+}
+
+async function handleDaemonRestart(argv: unknown): Promise<void> {
+  const args = argv as {
+    notifyResumed?: boolean;
+    dispatcher?: string[];
+    announce?: string;
+  };
+  if (args.notifyResumed !== true) {
+    await runDaemonControl('restart');
+    return;
+  }
+
+  const targets = (args.dispatcher ?? []).map((id) => validateDispatcherId(id));
+  if (targets.length === 0) {
+    throw new Error('--notify-resumed requires at least one --dispatcher <id>');
+  }
+  console.log(
+    `dreamux daemon restart: will notify resumed dispatcher(s) ${targets.join(', ')}`,
+  );
+  // Marker first (durable across a self-update reap), restart second, and roll
+  // the marker back if the restart command fails while we are still alive.
+  await notifyResumedRestart({
+    targets,
+    ...(args.announce !== undefined ? { announce: args.announce } : {}),
+    now: Date.now(),
+    runControl: () => runDaemonControl('restart'),
+  });
+}
+
+function printDaemonInstallResult(result: DaemonInstallResult): void {
+  console.log('dreamux daemon install file ledger:');
+  for (const entry of result.files) {
+    console.log(`${entry.status}\t${entry.path}\t${entry.reason}`);
+  }
+  console.log(
+    `dreamux daemon install service: ${result.service.platform} ${result.service.unitPath}`,
+  );
+  printServiceWarnings(result.service.lingerEnabled, result.service.warnings);
+}
+
+function printServiceWarnings(
+  lingerEnabled: boolean | null,
+  warnings: string[],
+): void {
+  if (lingerEnabled === true) {
+    console.log('dreamux service: systemd lingering enabled (starts at boot)');
+  }
+  for (const warning of warnings) {
+    console.error(`warning: ${warning}`);
+  }
 }
 
 function buildConfigCommands(y: Argv): Argv {
@@ -368,6 +525,11 @@ async function main(): Promise<void> {
         }
         if (!result.ok) process.exitCode = 1;
       },
+    )
+    .command(
+      'daemon <command>',
+      'Manage the dreamux user-level service',
+      buildDaemonCommands,
     )
     .command(
       'dispatcher <command>',

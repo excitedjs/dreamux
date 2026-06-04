@@ -29,6 +29,17 @@ export type InboundDeliveryResult =
   | { status: 'submitted'; turnId: string }
   | { status: 'failed'; error: Error };
 
+/**
+ * Result of a best-effort restart-notice injection. `skipped` means a real
+ * inbound had already been handed to Codex (it woke the thread on its own, so a
+ * synthetic notice would be redundant) — see issue #78.
+ */
+export type NoticeInjectionResult =
+  | { status: 'stopped' }
+  | { status: 'skipped' }
+  | { status: 'submitted'; turnId: string }
+  | { status: 'failed'; error: Error };
+
 export interface InboundDeliveryHooks {
   /**
    * Called after process-local dedupe accepts the message and before
@@ -57,6 +68,13 @@ export class TurnManager {
   private readonly seenMessageIds = new Set<string>();
   private readonly seenMessageIdOrder: string[] = [];
   private stopped = false;
+  /**
+   * Set once any real inbound has been accepted and handed to Codex. There is
+   * no FIFO queue here — inbound submission folds onto Codex's active turn — so
+   * this flag is what lets a best-effort restart-notice injection detect an
+   * in-flight inbound and skip rather than wake the thread twice (issue #78).
+   */
+  private inboundSubmitted = false;
   private readonly log: NonNullable<TurnManagerOptions['log']>;
   private readonly messageIdDedupeWindow: number;
 
@@ -84,6 +102,9 @@ export class TurnManager {
     if (!this.rememberMessageId(input.source_message_id)) {
       return { status: 'duplicate' };
     }
+    // Mark before any await so a concurrent restart-notice injection observes
+    // that a real inbound is in flight and skips itself.
+    this.inboundSubmitted = true;
 
     await this.notifyAccepted(input, hooks);
 
@@ -109,6 +130,43 @@ export class TurnManager {
         `turn/start submission failed for message ${input.source_message_id ?? '<none>'}: ${error.message}`,
         error,
       );
+      return { status: 'failed', error };
+    }
+  }
+
+  /**
+   * Best-effort one-shot notice injected after a `daemon restart --notify-
+   * resumed` resumes this dispatcher's thread. Skips if the manager is stopped,
+   * if a real inbound has already woken the thread, or if no thread is bound.
+   * A submission failure is reported, never thrown — it must not fail the
+   * dispatcher's start or the restart.
+   */
+  async injectNotice(text: string): Promise<NoticeInjectionResult> {
+    if (this.stopped) return { status: 'stopped' };
+    if (this.inboundSubmitted) return { status: 'skipped' };
+
+    const threadId = this.opts.getThreadId();
+    if (threadId === null) {
+      const error = new Error('restart notice injected without thread_id');
+      this.log('error', error.message);
+      return { status: 'failed', error };
+    }
+
+    // Mark before submitting so a racing real inbound is not double-counted and
+    // a second injection cannot fire.
+    this.inboundSubmitted = true;
+    try {
+      const res = await submitTurnStart(
+        this.opts.client,
+        threadId,
+        text,
+        this.opts.turnCwd ?? null,
+      );
+      this.log('info', `injected restart notice into thread ${threadId}`);
+      return { status: 'submitted', turnId: res.turn.id };
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      this.log('warn', `restart notice injection failed: ${error.message}`, error);
       return { status: 'failed', error };
     }
   }
