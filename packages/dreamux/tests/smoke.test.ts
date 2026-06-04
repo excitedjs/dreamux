@@ -35,6 +35,7 @@ import { sendAdminRequest } from '../src/admin/client.js';
 import {
   TRUST_DOMAIN_WARNING,
   loadDispatcherAccess,
+  saveDispatcherAccess,
 } from '../src/channel/feishu-gate.js';
 import { BUILT_IN_DEFAULTS, type DreamuxConfig } from '../src/runtime/config.js';
 import {
@@ -213,7 +214,6 @@ function configWithDispatcher(
           app_id: 'app-smoke',
           app_secret: 'secret-server-only',
         },
-        access: overrides.access ?? null,
         codex: overrides.codex ?? {
           approval_policy: null,
           sandbox_mode: null,
@@ -633,17 +633,26 @@ describe('dreamux MVP smoke', () => {
     expect(bot.reactions).toEqual([]);
   });
 
-  it('bridges dispatcher access config into access.json and allows configured DMs', async () => {
-    server = buildServer({
-      runtimeDir,
-      fake,
-      bot,
-      config: configWithDispatcher({
-        access: {
-          allow_group_chats: ['chat-group-a'],
-          allow_users: ['sender-dm'],
-        },
-      }),
+  it('reads access gate configuration from access.json and allows configured DMs', async () => {
+    saveDispatcherAccess('flow', {
+      version: 1,
+      dm: {
+        allow_users: ['sender-dm'],
+      },
+      group: {
+        allow_chats: ['chat-group-a'],
+        follow_users: ['sender-dm'],
+        require_mention: true,
+      },
+      observed_chats: [],
+      warnings: [],
+      last_gate: null,
+    });
+    server = buildServer({ runtimeDir, fake, bot });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'env:UNUSED',
     });
     await server.start();
 

@@ -163,7 +163,6 @@ describe('dreamux onboard', () => {
         app_id: 'app-test',
         app_secret: 'secret-test',
       },
-      access: null,
       codex: {
         approval_policy: 'never',
         sandbox_mode: 'workspace-write',
@@ -331,7 +330,6 @@ describe('dreamux onboard', () => {
           app_id: 'app-flow',
           app_secret: 'secret-flow',
         },
-        access: null,
         codex: {
           approval_policy: null,
           sandbox_mode: null,
@@ -347,7 +345,6 @@ describe('dreamux onboard', () => {
           app_id: 'app-docs',
           app_secret: 'secret-docs',
         },
-        access: null,
         codex: {
           approval_policy: 'never',
           sandbox_mode: 'workspace-write',

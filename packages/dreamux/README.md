@@ -121,10 +121,6 @@ Dispatcher declarations live in `config.json`:
         "app_id": "<APP_ID>",
         "app_secret": "<APP_SECRET>"
       },
-      "access": {
-        "allow_group_chats": ["<CHAT_ID>"],
-        "allow_users": ["<USER_ID>"]
-      },
       "codex": {
         "approval_policy": null,
         "sandbox_mode": null,
@@ -143,11 +139,28 @@ Edit and restart `dreamux serve` to apply dispatcher declaration changes.
 disabled ones. Dispatcher ids use a path-safe character set so they map
 one-to-one to state directories.
 
-`access.allow_users` configures allowed direct-message senders and the
-group follow-user gate. `access.allow_group_chats` restricts group chats when
-non-empty. The server bridges these operator-owned fields into
-`~/.dreamux/state/<id>/access.json`, preserving runtime observations and
-warnings there.
+Access-gate allowlists are not part of `config.json`. Configure them in
+`~/.dreamux/state/<id>/access.json`:
+
+```json
+{
+  "version": 1,
+  "dm": {
+    "allow_users": ["<USER_ID>"]
+  },
+  "group": {
+    "allow_chats": ["<CHAT_ID>"],
+    "follow_users": ["<USER_ID>"],
+    "require_mention": true
+  },
+  "observed_chats": [],
+  "warnings": [],
+  "last_gate": null
+}
+```
+
+The server reads `access.json` directly at runtime and preserves runtime
+observations and warnings in the same file.
 
 `dreamux config show`, `dreamux status`, `dreamux doctor`, and logs redact
 `app_secret`. There is no CLI raw mode for printing the unredacted local file.

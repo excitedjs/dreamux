@@ -13,7 +13,6 @@ import {
 import { dirname } from 'node:path';
 
 import { dispatcherAccessPath } from '../runtime/paths.js';
-import type { DispatcherAccessConfig } from '../runtime/config.js';
 
 export const TRUST_DOMAIN_WARNING =
   'dispatcher shares one Codex context across multiple Feishu chats';
@@ -104,26 +103,6 @@ export function saveDispatcherAccess(
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(access, null, 2)}\n`, { mode: 0o600 });
   chmodSync(path, 0o600);
-}
-
-export function applyDispatcherAccessConfig(
-  access: DispatcherAccessState,
-  config: DispatcherAccessConfig,
-): DispatcherAccessState {
-  return {
-    ...access,
-    dm: {
-      ...access.dm,
-      allow_users: [...new Set(config.allow_users)],
-    },
-    group: {
-      ...access.group,
-      allow_chats: [...new Set(config.allow_group_chats)],
-      // The operator-facing allow_users list is intentionally shared by DM
-      // access and the group follow-user gate.
-      follow_users: [...new Set(config.allow_users)],
-    },
-  };
 }
 
 export function dreamuxFeishuGate(

@@ -22,7 +22,6 @@ import {
   type FeishuInboundEvent,
 } from './feishu/bot.js';
 import {
-  applyDispatcherAccessConfig,
   dreamuxFeishuGate,
   loadDispatcherAccess,
   saveDispatcherAccess,
@@ -239,18 +238,6 @@ export class Server {
     });
 
     try {
-      if (
-        dispatcherConfig?.access !== null &&
-        dispatcherConfig?.access !== undefined
-      ) {
-        saveDispatcherAccess(
-          id,
-          applyDispatcherAccessConfig(
-            loadDispatcherAccess(id),
-            dispatcherConfig.access,
-          ),
-        );
-      }
       await runtime.start();
       await bot.start(async (event: FeishuInboundEvent) => {
         const access = loadDispatcherAccess(id);

@@ -45,13 +45,7 @@ export interface DispatcherConfig {
     app_id: string;
     app_secret: string;
   };
-  access: DispatcherAccessConfig | null;
   codex: DispatcherCodexConfig;
-}
-
-export interface DispatcherAccessConfig {
-  allow_group_chats: string[];
-  allow_users: string[];
 }
 
 export interface DispatcherCodexConfig {
@@ -297,7 +291,7 @@ function readDispatchers(rawDispatchers: unknown, file: string): DispatcherConfi
     }
     rejectUnknownKeys(
       raw,
-      new Set(['id', 'cwd', 'enabled', 'feishu', 'access', 'codex']),
+      new Set(['id', 'cwd', 'enabled', 'feishu', 'codex']),
       file,
       prefix,
     );
@@ -328,7 +322,6 @@ function readDispatchers(rawDispatchers: unknown, file: string): DispatcherConfi
       cwd: cwd === null ? null : expandHome(cwd),
       enabled: readOptionalBoolean(raw, 'enabled', true, file, prefix),
       feishu,
-      access: readDispatcherAccess(raw['access'], file, prefix),
       codex: readDispatcherCodex(raw['codex'], file, prefix),
     });
   }
@@ -350,36 +343,6 @@ function readDispatcherFeishu(
   return {
     app_id: requireNonEmptyString(rawFeishu, 'app_id', file, prefix),
     app_secret: requireNonEmptyString(rawFeishu, 'app_secret', file, prefix),
-  };
-}
-
-function readDispatcherAccess(
-  rawAccess: unknown,
-  file: string,
-  dispatcherPrefix: string,
-): DispatcherAccessConfig | null {
-  if (rawAccess === undefined || rawAccess === null) return null;
-  const prefix = `${dispatcherPrefix}access.`;
-  if (!isPlainObject(rawAccess)) {
-    throw new Error(
-      `dreamux config error in ${file}: ${dispatcherPrefix}access must be an object (got ${describeType(rawAccess)})`,
-    );
-  }
-  rejectUnknownKeys(
-    rawAccess,
-    new Set(['allow_group_chats', 'allow_users']),
-    file,
-    prefix,
-  );
-  return {
-    allow_group_chats: requireStringArray(
-      rawAccess,
-      'allow_group_chats',
-      [],
-      file,
-      prefix,
-    ),
-    allow_users: requireStringArray(rawAccess, 'allow_users', [], file, prefix),
   };
 }
 

@@ -239,10 +239,6 @@ describe('global config (~/.dreamux/config.json)', () => {
               EXAMPLE_FLAG: '1',
             },
           },
-          access: {
-            allow_group_chats: ['chat-group-a'],
-            allow_users: ['sender-allowed'],
-          },
         },
         {
           id: 'dispatcher.b',
@@ -269,10 +265,6 @@ describe('global config (~/.dreamux/config.json)', () => {
         extra_env: {
           EXAMPLE_FLAG: '1',
         },
-      },
-      access: {
-        allow_group_chats: ['chat-group-a'],
-        allow_users: ['sender-allowed'],
       },
     });
     expect(config.dispatchers[0]?.cwd).not.toContain('~');
@@ -306,7 +298,7 @@ describe('global config (~/.dreamux/config.json)', () => {
     );
   });
 
-  it('validates dispatcher access and extra_env fields', () => {
+  it('keeps access out of config and validates extra_env fields', () => {
     writeConfigObject({
       dispatchers: [
         {
@@ -315,14 +307,12 @@ describe('global config (~/.dreamux/config.json)', () => {
             app_id: 'app-flow',
             app_secret: 'secret-flow',
           },
-          access: {
-            allow_group_chats: 'chat-group-a',
-          },
+          access: {},
         },
       ],
     });
     expect(() => loadConfig({ configDir })).toThrow(
-      /access\.allow_group_chats must be an array of strings/,
+      /access is not supported/,
     );
 
     writeConfigObject({

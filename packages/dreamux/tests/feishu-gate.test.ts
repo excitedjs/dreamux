@@ -11,7 +11,6 @@ import { join } from 'node:path';
 
 import {
   TRUST_DOMAIN_WARNING,
-  applyDispatcherAccessConfig,
   defaultDispatcherAccessState,
   dreamuxFeishuGate,
   loadDispatcherAccess,
@@ -119,32 +118,6 @@ describe('dreamuxFeishuGate', () => {
     ]);
   });
 
-  it('applies operator access config while preserving runtime diagnostics', () => {
-    const access = state({
-      observed_chats: ['chat-group-a'],
-      warnings: [TRUST_DOMAIN_WARNING],
-      last_gate: {
-        at: 1,
-        action: 'deliver',
-        chat_id: 'chat-group-a',
-        chat_type: 'group',
-        sender_id: 'sender-allowed',
-      },
-    });
-
-    expect(applyDispatcherAccessConfig(access, {
-      allow_group_chats: ['chat-group-b', 'chat-group-b'],
-      allow_users: ['sender-dm', 'sender-dm'],
-    })).toEqual({
-      ...access,
-      dm: { allow_users: ['sender-dm'] },
-      group: {
-        ...access.group,
-        allow_chats: ['chat-group-b'],
-        follow_users: ['sender-dm'],
-      },
-    });
-  });
 });
 
 describe('dispatcher access state files', () => {

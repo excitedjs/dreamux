@@ -81,7 +81,6 @@ function dispatcherConfigFromAnswers(answers: OnboardAnswers): DispatcherConfig 
       app_id: answers.botAppId,
       app_secret: answers.botAppSecret,
     },
-    access: null,
     codex: {
       approval_policy: 'never',
       sandbox_mode: 'workspace-write',
@@ -97,12 +96,6 @@ function cloneDispatcherConfig(dispatcher: DispatcherConfig): DispatcherConfig {
     cwd: dispatcher.cwd,
     enabled: dispatcher.enabled,
     feishu: { ...dispatcher.feishu },
-    access: dispatcher.access === null
-      ? null
-      : {
-          allow_group_chats: [...dispatcher.access.allow_group_chats],
-          allow_users: [...dispatcher.access.allow_users],
-        },
     codex: {
       approval_policy: dispatcher.codex.approval_policy,
       sandbox_mode: dispatcher.codex.sandbox_mode,

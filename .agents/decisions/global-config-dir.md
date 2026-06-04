@@ -33,8 +33,10 @@ The current config shape contains:
 - Global Codex defaults under `codex`.
 - Dispatcher declarations under `dispatchers`.
 - Per-dispatcher Feishu `app_id` and `app_secret`.
-- Per-dispatcher access gate inputs under `dispatchers[].access`.
 - Per-dispatcher Codex overrides under `dispatchers[].codex`.
+
+Per-dispatcher access gate allowlists do not live in `config.json`; the current
+runtime reads them directly from `~/.dreamux/state/<dispatcher>/access.json`.
 
 Webhook-only verification/encryption fields are not part of the MVP config
 schema. SQLite-backed state, durable inbound buffers, and automatic
