@@ -27,6 +27,8 @@ export interface FakeCodexOptions {
   triggerApprovalOnTurn?: boolean;
   /** Delay between turn/start ack and the eventual turn/completed (ms). */
   turnDelayMs?: number;
+  /** Acknowledge turn/start but never emit turn/completed. */
+  holdTurns?: boolean;
   /**
    * If true, mimic real codex 0.134 behavior: any non-`initialize` RPC
    * before the `initialized` notification arrives returns
@@ -152,6 +154,7 @@ export async function startFakeCodex(opts: FakeCodexOptions = {}): Promise<FakeC
 
       const input = extractText(params['input']);
       const reply = opts.replyFor ? opts.replyFor(input) : `echo: ${input}`;
+      if (opts.holdTurns === true) return;
 
       void (async () => {
         await delay(opts.turnDelayMs ?? 10);

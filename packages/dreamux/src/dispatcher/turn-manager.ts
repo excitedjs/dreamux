@@ -44,6 +44,11 @@ export interface TurnManagerOptions {
   messageIdDedupeWindow?: number;
   /** Optional logger; defaults to console.error. */
   log?: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
+  /**
+   * Called when a queued batch starts moving into Codex. This is intentionally
+   * fire-and-forget so channel status updates cannot block turn injection.
+   */
+  onBatchStart?: (messages: readonly InboundTurnInput[]) => void | Promise<void>;
 }
 
 export class TurnManager {
@@ -154,10 +159,28 @@ export class TurnManager {
         threadId,
         batchPrompt(batch),
         this.opts.turnCwd ?? null,
+        { onStarted: () => this.notifyBatchStart(batch) },
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.log('error', `turn execution failed for batch ${batch.id}: ${msg}`);
+    }
+  }
+
+  private notifyBatchStart(batch: TurnBatch): void {
+    try {
+      const result = this.opts.onBatchStart?.(batch.messages);
+      if (result !== undefined) {
+        void Promise.resolve(result).catch((err: unknown) => {
+          this.log(
+            'warn',
+            `batch-start hook failed for batch ${batch.id}`,
+            err,
+          );
+        });
+      }
+    } catch (err) {
+      this.log('warn', `batch-start hook failed for batch ${batch.id}`, err);
     }
   }
 

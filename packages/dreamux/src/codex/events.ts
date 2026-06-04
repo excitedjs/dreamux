@@ -26,6 +26,11 @@ export interface TurnCollector {
   awaitTurn(): Promise<CollectedTurn>;
 }
 
+export interface RunTurnOptions {
+  /** Called after Codex accepts `turn/start`, before waiting for completion. */
+  onStarted?: () => void;
+}
+
 /**
  * Subscribe to turn notifications for one thread. Returns a collector
  * whose `awaitTurn()` resolves on `turn/completed`. Items arriving on the
@@ -83,6 +88,7 @@ export async function runTurn(
   threadId: string,
   prompt: string,
   cwd: string | null,
+  opts: RunTurnOptions = {},
 ): Promise<CollectedTurn> {
   const collector = subscribeTurnCollection(client, threadId);
   const input: UserInput[] = [
@@ -92,6 +98,7 @@ export async function runTurn(
     'turn/start',
     cwd === null ? { threadId, input } : { threadId, input, cwd },
   );
+  opts.onStarted?.();
   return collector.awaitTurn();
 }
 

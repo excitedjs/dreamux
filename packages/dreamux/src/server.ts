@@ -13,6 +13,7 @@
  */
 
 import { DispatcherRuntime } from './dispatcher/runtime.js';
+import type { InboundTurnInput } from './dispatcher/turn-manager.js';
 import type { CodexProcess, CodexProcessOptions } from './codex/supervisor.js';
 import type { CodexWsClient } from './codex/rpc.js';
 import {
@@ -235,6 +236,11 @@ export class Server {
       extraEnv: dispatcherConfig?.codex.extra_env ?? {},
       restartBackoffBaseMs: this.opts.codexRestartBackoffBaseMs,
       restartBackoffMaxMs: this.opts.codexRestartBackoffMaxMs,
+      onTurnBatchStart: (messages) => {
+        for (const message of messages) {
+          void addReceivedReaction(id, bot, channelState, message);
+        }
+      },
     });
 
     try {
@@ -261,15 +267,12 @@ export class Server {
           );
           return;
         }
-        const queued = runtime.enqueueInbound({
+        runtime.enqueueInbound({
           source_chat_id: event.chatId,
           source_message_id: event.messageId,
           sender_id: event.senderId,
           parsed_text: formatFeishuMessageForCodex(event),
         });
-        if (queued) {
-          await addReceivedReaction(id, bot, channelState, event);
-        }
       });
     } catch (err) {
       // Failed midway: undo any partial bring-up so a retry isn't
@@ -390,34 +393,38 @@ async function addReceivedReaction(
   dispatcherId: string,
   bot: FeishuBot,
   channelState: DispatcherChannelState,
-  event: FeishuInboundEvent,
+  message: InboundTurnInput,
 ): Promise<void> {
+  const messageId = message.source_message_id;
+  if (messageId === null || messageId === '') {
+    return;
+  }
   try {
     const reactionId = await bot.addReaction(
-      event.messageId,
+      messageId,
       RECEIVED_REACTION_EMOJI,
     );
     if (reactionId === '') {
       console.error(
         `[server] Feishu returned no reaction_id for the received reaction in dispatcher '${dispatcherId}'`,
       );
-      channelState.pendingReceivedReactionClears.delete(event.messageId);
+      channelState.pendingReceivedReactionClears.delete(messageId);
       return;
     }
-    channelState.receivedReactions.set(event.messageId, {
-      chatId: event.chatId,
+    channelState.receivedReactions.set(messageId, {
+      chatId: message.source_chat_id,
       reactionId,
     });
-    if (channelState.pendingReceivedReactionClears.has(event.messageId)) {
+    if (channelState.pendingReceivedReactionClears.has(messageId)) {
       await clearReceivedReaction(
         dispatcherId,
         bot,
         channelState,
-        event.messageId,
+        messageId,
       );
     }
   } catch (err) {
-    channelState.pendingReceivedReactionClears.delete(event.messageId);
+    channelState.pendingReceivedReactionClears.delete(messageId);
     console.error(
       `[server] failed to add the received reaction for dispatcher '${dispatcherId}':`,
       err,

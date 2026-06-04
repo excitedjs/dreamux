@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Make queued inbound reactions reflect Codex turn start.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

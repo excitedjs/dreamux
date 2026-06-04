@@ -293,8 +293,10 @@ When no group chat allowlist or follow-user allowlist is configured, group
 messages are still mention-gated. This keeps bootstrap usable while preventing
 ambient group chatter from entering the dispatcher.
 
-The gate adds a channel-owned received reaction only after a message is accepted
-and enqueued. If the message is rejected, no reaction is added.
+The channel adds a channel-owned received reaction only when that message's
+batch starts moving into Codex. If a message is accepted but still queued behind
+an in-flight dispatcher turn, it does not get the same received marker yet. If
+the message is rejected, no reaction is added.
 
 When one dispatcher is configured for, or observes, multiple allowed chats, the
 gate records an operator warning that those chats share one Codex context.
@@ -447,6 +449,9 @@ resume path.
   cross-chat queue are in-memory and not globally size-bounded in the MVP. A
   stuck turn plus continued inbound traffic can grow memory until operator
   intervention or process restart.
+- Messages queued behind an in-flight dispatcher turn are accepted in memory but
+  are not marked with the channel-owned received reaction until their batch
+  starts moving into Codex.
 - Codex version drift can still break protocol behavior. `dreamux` detects and
   reports this through `doctor`, live tests, and version diagnostics instead of
   pinning Codex.
@@ -465,6 +470,8 @@ resume path.
 - Redelivered `message_id` values are deduped within one server process.
 - Unauthorized messages are dropped before entering Codex.
 - Multi-chat dispatcher access emits an operator-visible trust-domain warning.
+- Messages queued behind an in-flight dispatcher turn do not receive the same
+  channel-owned reaction used for batches that have started moving into Codex.
 - Codex receives a dispatcher-scoped Feishu MCP stdio shim, not a loopback HTTP
   listener, on the default path.
 - The live Codex compatibility gate starts a real Codex app-server with the

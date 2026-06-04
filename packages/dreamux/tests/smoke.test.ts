@@ -688,6 +688,7 @@ describe('dreamux MVP smoke', () => {
     const access = loadDispatcherAccess('flow');
     expect(access.observed_chats).toEqual(['chat-group-a', 'chat-group-b']);
     expect(access.warnings).toEqual([TRUST_DOMAIN_WARNING]);
+    await waitFor(() => bot.reactions.length === 2);
     expect(bot.reactions.map((reaction) => reaction.messageId)).toEqual([
       'msg-chat-a',
       'msg-chat-b',
@@ -725,6 +726,42 @@ describe('dreamux MVP smoke', () => {
     expect(codexInputs[1]).toContain('batch-1');
     expect(codexInputs[1]).toContain('batch-2');
     expect(bot.sentMessages).toEqual([]);
+  });
+
+  it('does not add received reactions while inbound is queued behind a running turn', async () => {
+    await fake.close();
+    codexInputs = [];
+    fake = await startFakeCodex({
+      holdTurns: true,
+      replyFor: captureAndEchoCodexInput(codexInputs),
+    });
+
+    server = buildServer({ runtimeDir, fake, bot });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+    await server.start();
+
+    await bot.inject(fakeInbound('chat-group-a', 'running', 'msg-running'));
+    await waitFor(() => fake.turnsHandled === 1);
+    await waitFor(() => bot.reactions.length === 1);
+
+    expect(codexInputs).toHaveLength(1);
+    expect(codexInputs[0]).toContain('running');
+    expect(bot.reactions.map((reaction) => reaction.messageId)).toEqual([
+      'msg-running',
+    ]);
+
+    await bot.inject(fakeInbound('chat-group-b', 'queued', 'msg-queued'));
+    await sleep(120);
+
+    expect(fake.turnsHandled).toBe(1);
+    expect(codexInputs).toHaveLength(1);
+    expect(bot.reactions.map((reaction) => reaction.messageId)).toEqual([
+      'msg-running',
+    ]);
   });
 
   it('process-local dedupe drops Feishu redelivery before turn and reaction', async () => {

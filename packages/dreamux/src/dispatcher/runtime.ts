@@ -72,6 +72,8 @@ export interface DispatcherRuntimeDeps {
   restartBackoffBaseMs?: number;
   /** Codex child/WS restart backoff cap (tests may override). */
   restartBackoffMaxMs?: number;
+  /** Channel-visible status hook for batches that are starting Codex delivery. */
+  onTurnBatchStart?: (messages: readonly InboundTurnInput[]) => void | Promise<void>;
   log?: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
 }
 
@@ -216,6 +218,7 @@ export class DispatcherRuntime {
       getThreadId: () => this.threadId,
       client: this.client,
       log: this.log,
+      onBatchStart: this.deps.onTurnBatchStart,
     });
   }
 
