@@ -121,10 +121,17 @@ Dispatcher declarations live in `config.json`:
         "app_id": "<APP_ID>",
         "app_secret": "<APP_SECRET>"
       },
+      "access": {
+        "allow_group_chats": ["<CHAT_ID>"],
+        "allow_users": ["<USER_ID>"]
+      },
       "codex": {
         "approval_policy": null,
         "sandbox_mode": null,
-        "extra_args": []
+        "extra_args": [],
+        "extra_env": {
+          "EXAMPLE_FLAG": "1"
+        }
       }
     }
   ]
@@ -135,6 +142,12 @@ Edit and restart `dreamux serve` to apply dispatcher declaration changes.
 `app_id` values must be unique across all declared dispatchers, including
 disabled ones. Dispatcher ids use a path-safe character set so they map
 one-to-one to state directories.
+
+`access.allow_users` configures allowed direct-message senders and the
+group follow-user gate. `access.allow_group_chats` restricts group chats when
+non-empty. The server bridges these operator-owned fields into
+`~/.dreamux/state/<id>/access.json`, preserving runtime observations and
+warnings there.
 
 `dreamux config show`, `dreamux status`, `dreamux doctor`, and logs redact
 `app_secret`. There is no CLI raw mode for printing the unredacted local file.
@@ -150,6 +163,9 @@ Precedence for Codex-related values, highest first:
 
 Per-dispatcher `extra_args` are appended after global `codex.extra_args`, which
 matches Codex's last-write-wins behavior for repeated `-c key=value` options.
+Per-dispatcher `extra_env` is merged over the server process environment before
+spawning that dispatcher app-server; dreamux still removes `CODEX_HOME` so
+Codex keeps using its global default home.
 
 ## MCP reply flow
 

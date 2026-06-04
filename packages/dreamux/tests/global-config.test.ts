@@ -111,6 +111,7 @@ describe('global config (~/.dreamux/config.json)', () => {
             approval_policy: null,
             sandbox_mode: 'danger-full-access',
             extra_args: ['--profile', 'flow'],
+            extra_env: {},
           },
         },
       ],
@@ -234,6 +235,13 @@ describe('global config (~/.dreamux/config.json)', () => {
           },
           codex: {
             extra_args: ['--model', 'gpt-5'],
+            extra_env: {
+              EXAMPLE_FLAG: '1',
+            },
+          },
+          access: {
+            allow_group_chats: ['chat-group-a'],
+            allow_users: ['sender-allowed'],
           },
         },
         {
@@ -258,6 +266,13 @@ describe('global config (~/.dreamux/config.json)', () => {
         approval_policy: null,
         sandbox_mode: null,
         extra_args: ['--model', 'gpt-5'],
+        extra_env: {
+          EXAMPLE_FLAG: '1',
+        },
+      },
+      access: {
+        allow_group_chats: ['chat-group-a'],
+        allow_users: ['sender-allowed'],
       },
     });
     expect(config.dispatchers[0]?.cwd).not.toContain('~');
@@ -288,6 +303,46 @@ describe('global config (~/.dreamux/config.json)', () => {
 
     expect(() => loadConfig({ configDir })).toThrow(
       /callback_secret is not supported/,
+    );
+  });
+
+  it('validates dispatcher access and extra_env fields', () => {
+    writeConfigObject({
+      dispatchers: [
+        {
+          id: 'flow',
+          feishu: {
+            app_id: 'app-flow',
+            app_secret: 'secret-flow',
+          },
+          access: {
+            allow_group_chats: 'chat-group-a',
+          },
+        },
+      ],
+    });
+    expect(() => loadConfig({ configDir })).toThrow(
+      /access\.allow_group_chats must be an array of strings/,
+    );
+
+    writeConfigObject({
+      dispatchers: [
+        {
+          id: 'flow',
+          feishu: {
+            app_id: 'app-flow',
+            app_secret: 'secret-flow',
+          },
+          codex: {
+            extra_env: {
+              EXAMPLE_FLAG: 1,
+            },
+          },
+        },
+      ],
+    });
+    expect(() => loadConfig({ configDir })).toThrow(
+      /codex\.extra_env\.EXAMPLE_FLAG must be a string/,
     );
   });
 

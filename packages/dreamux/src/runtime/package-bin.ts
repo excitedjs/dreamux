@@ -17,10 +17,15 @@ export function dreamuxBinPath(
 
 export function dispatcherProcessEnv(
   baseEnv: NodeJS.ProcessEnv = process.env,
+  extraEnv: Record<string, string> = {},
 ): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {
+  const mergedEnv: NodeJS.ProcessEnv = {
     ...baseEnv,
-    PATH: prependPath(packageBinDirs(baseEnv), baseEnv['PATH']),
+    ...extraEnv,
+  };
+  const env: NodeJS.ProcessEnv = {
+    ...mergedEnv,
+    PATH: prependPath(packageBinDirs(mergedEnv), mergedEnv['PATH']),
   };
   delete env['CODEX_HOME'];
   return env;

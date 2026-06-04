@@ -163,10 +163,12 @@ describe('dreamux onboard', () => {
         app_id: 'app-test',
         app_secret: 'secret-test',
       },
+      access: null,
       codex: {
         approval_policy: 'never',
         sandbox_mode: 'workspace-write',
         extra_args: [],
+        extra_env: {},
       },
     }]);
     expect(dreamuxConfig).not.toHaveProperty('feishu');
@@ -329,10 +331,12 @@ describe('dreamux onboard', () => {
           app_id: 'app-flow',
           app_secret: 'secret-flow',
         },
+        access: null,
         codex: {
           approval_policy: null,
           sandbox_mode: null,
           extra_args: [],
+          extra_env: {},
         },
       },
       {
@@ -343,10 +347,12 @@ describe('dreamux onboard', () => {
           app_id: 'app-docs',
           app_secret: 'secret-docs',
         },
+        access: null,
         codex: {
           approval_policy: 'never',
           sandbox_mode: 'workspace-write',
           extra_args: [],
+          extra_env: {},
         },
       },
     ]);

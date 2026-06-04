@@ -22,6 +22,7 @@ import {
   type FeishuInboundEvent,
 } from './feishu/bot.js';
 import {
+  applyDispatcherAccessConfig,
   dreamuxFeishuGate,
   loadDispatcherAccess,
   saveDispatcherAccess,
@@ -198,6 +199,9 @@ export class Server {
     if (this.slots.has(id)) return;
 
     const cfg = this.effectiveConfig();
+    const dispatcherConfig = cfg.dispatchers.find(
+      (dispatcher) => dispatcher.id === id,
+    );
     const codexArgs = parseCodexArgs(row.codex_args_json, {
       approvalPolicy: cfg.codex.approval_policy,
       sandboxMode: cfg.codex.sandbox_mode,
@@ -229,11 +233,24 @@ export class Server {
       codexHomeDoctor: this.opts.codexHomeDoctor,
       resolveExtraArgs: () => codexCliArgs,
       handshakeTimeoutMs: cfg.codex.initialize_timeout_ms,
+      extraEnv: dispatcherConfig?.codex.extra_env ?? {},
       restartBackoffBaseMs: this.opts.codexRestartBackoffBaseMs,
       restartBackoffMaxMs: this.opts.codexRestartBackoffMaxMs,
     });
 
     try {
+      if (
+        dispatcherConfig?.access !== null &&
+        dispatcherConfig?.access !== undefined
+      ) {
+        saveDispatcherAccess(
+          id,
+          applyDispatcherAccessConfig(
+            loadDispatcherAccess(id),
+            dispatcherConfig.access,
+          ),
+        );
+      }
       await runtime.start();
       await bot.start(async (event: FeishuInboundEvent) => {
         const access = loadDispatcherAccess(id);

@@ -239,6 +239,8 @@ function dispatcherCodexArgsJson(config: DispatcherConfig): string {
   if (config.codex.extra_args.length > 0) {
     raw['extraArgs'] = config.codex.extra_args;
   }
+  // codex.extra_env is applied to the child process environment, not encoded
+  // into CLI args.
   return JSON.stringify(raw);
 }
 

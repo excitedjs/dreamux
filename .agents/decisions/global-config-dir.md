@@ -33,6 +33,7 @@ The current config shape contains:
 - Global Codex defaults under `codex`.
 - Dispatcher declarations under `dispatchers`.
 - Per-dispatcher Feishu `app_id` and `app_secret`.
+- Per-dispatcher access gate inputs under `dispatchers[].access`.
 - Per-dispatcher Codex overrides under `dispatchers[].codex`.
 
 Webhook-only verification/encryption fields are not part of the MVP config
@@ -47,12 +48,14 @@ There is no CLI raw mode for printing the unredacted local config.
 Codex-related values are resolved in this order, highest first:
 
 1. Environment variables, such as `CODEX_HOST_CODEX_BIN`.
-2. Per-dispatcher `dispatchers[].codex` fields.
+2. Per-dispatcher `dispatchers[].codex` fields, including `extra_env`.
 3. Global `codex` fields in `~/.dreamux/config.json`.
 4. Built-in defaults compiled into `src/runtime/config.ts`.
 
 Per-dispatcher `extra_args` are appended after global `codex.extra_args`, which
 matches Codex's last-write-wins behavior for repeated `-c key=value` options.
+Per-dispatcher `extra_env` is merged over the server process environment before
+spawning that dispatcher's Codex app-server.
 
 ## Consequences
 

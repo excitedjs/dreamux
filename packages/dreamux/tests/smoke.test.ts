@@ -128,8 +128,9 @@ function fakeInbound(
   chatId: string,
   text: string,
   msgId: string,
+  overrides: Partial<FeishuInboundEvent> = {},
 ): FeishuInboundEvent {
-  return {
+  const base: FeishuInboundEvent = {
     messageId: msgId,
     chatId,
     chatType: 'group',
@@ -149,6 +150,7 @@ function fakeInbound(
     createTime: String(Date.now()),
     raw: { event: { message: { chat_id: chatId, message_id: msgId } } },
   };
+  return { ...base, ...overrides };
 }
 
 async function waitFor(
@@ -211,10 +213,12 @@ function configWithDispatcher(
           app_id: 'app-smoke',
           app_secret: 'secret-server-only',
         },
+        access: overrides.access ?? null,
         codex: overrides.codex ?? {
           approval_policy: null,
           sandbox_mode: null,
           extra_args: [],
+          extra_env: {},
         },
       },
     ],
@@ -302,6 +306,36 @@ describe('dreamux MVP smoke', () => {
     expect(capturedCodexOptions[0]?.socketPath).toBe(
       dispatcherSocketPath('flow'),
     );
+  });
+
+  it('merges dispatcher extra_env into the Codex child environment', async () => {
+    const capturedCodexOptions: CodexProcessOptions[] = [];
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      capturedCodexOptions,
+      config: configWithDispatcher({
+        codex: {
+          approval_policy: null,
+          sandbox_mode: null,
+          extra_args: [],
+          extra_env: {
+            DREAMUX_EXAMPLE_FLAG: 'enabled',
+            PATH: '/custom/bin',
+          },
+        },
+      }),
+    });
+
+    await server.start();
+
+    expect(capturedCodexOptions).toHaveLength(1);
+    expect(capturedCodexOptions[0]?.env?.['DREAMUX_EXAMPLE_FLAG']).toBe(
+      'enabled',
+    );
+    expect(capturedCodexOptions[0]?.env?.['PATH']).toContain('/custom/bin');
+    expect(capturedCodexOptions[0]?.env?.['CODEX_HOME']).toBeUndefined();
   });
 
   it('keeps Feishu app secrets in the serve process and out of Codex child options', async () => {
@@ -597,6 +631,37 @@ describe('dreamux MVP smoke', () => {
     expect(fake.turnsHandled).toBe(0);
     expect(bot.sentMessages).toEqual([]);
     expect(bot.reactions).toEqual([]);
+  });
+
+  it('bridges dispatcher access config into access.json and allows configured DMs', async () => {
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      config: configWithDispatcher({
+        access: {
+          allow_group_chats: ['chat-group-a'],
+          allow_users: ['sender-dm'],
+        },
+      }),
+    });
+    await server.start();
+
+    await bot.inject(fakeInbound('chat-dm', 'dm hello', 'msg-dm', {
+      chatType: 'p2p',
+      senderId: 'sender-dm',
+      mentions: [],
+    }));
+
+    await waitFor(() => fake.turnsHandled === 1);
+    const access = loadDispatcherAccess('flow');
+    expect(access.dm.allow_users).toEqual(['sender-dm']);
+    expect(access.group.allow_chats).toEqual(['chat-group-a']);
+    expect(access.group.follow_users).toEqual(['sender-dm']);
+    expect(access.observed_chats).toEqual(['chat-dm']);
+    expect(bot.reactions.map((reaction) => reaction.messageId)).toEqual([
+      'msg-dm',
+    ]);
   });
 
   it('records a trust-domain warning when one dispatcher receives multiple chats', async () => {

@@ -45,13 +45,20 @@ export interface DispatcherConfig {
     app_id: string;
     app_secret: string;
   };
+  access: DispatcherAccessConfig | null;
   codex: DispatcherCodexConfig;
+}
+
+export interface DispatcherAccessConfig {
+  allow_group_chats: string[];
+  allow_users: string[];
 }
 
 export interface DispatcherCodexConfig {
   approval_policy: string | null;
   sandbox_mode: string | null;
   extra_args: string[];
+  extra_env: Record<string, string>;
 }
 
 export const BUILT_IN_DEFAULTS: DreamuxConfig = {
@@ -290,7 +297,7 @@ function readDispatchers(rawDispatchers: unknown, file: string): DispatcherConfi
     }
     rejectUnknownKeys(
       raw,
-      new Set(['id', 'cwd', 'enabled', 'feishu', 'codex']),
+      new Set(['id', 'cwd', 'enabled', 'feishu', 'access', 'codex']),
       file,
       prefix,
     );
@@ -321,6 +328,7 @@ function readDispatchers(rawDispatchers: unknown, file: string): DispatcherConfi
       cwd: cwd === null ? null : expandHome(cwd),
       enabled: readOptionalBoolean(raw, 'enabled', true, file, prefix),
       feishu,
+      access: readDispatcherAccess(raw['access'], file, prefix),
       codex: readDispatcherCodex(raw['codex'], file, prefix),
     });
   }
@@ -345,6 +353,36 @@ function readDispatcherFeishu(
   };
 }
 
+function readDispatcherAccess(
+  rawAccess: unknown,
+  file: string,
+  dispatcherPrefix: string,
+): DispatcherAccessConfig | null {
+  if (rawAccess === undefined || rawAccess === null) return null;
+  const prefix = `${dispatcherPrefix}access.`;
+  if (!isPlainObject(rawAccess)) {
+    throw new Error(
+      `dreamux config error in ${file}: ${dispatcherPrefix}access must be an object (got ${describeType(rawAccess)})`,
+    );
+  }
+  rejectUnknownKeys(
+    rawAccess,
+    new Set(['allow_group_chats', 'allow_users']),
+    file,
+    prefix,
+  );
+  return {
+    allow_group_chats: requireStringArray(
+      rawAccess,
+      'allow_group_chats',
+      [],
+      file,
+      prefix,
+    ),
+    allow_users: requireStringArray(rawAccess, 'allow_users', [], file, prefix),
+  };
+}
+
 function readDispatcherCodex(
   rawCodex: unknown,
   file: string,
@@ -352,7 +390,12 @@ function readDispatcherCodex(
 ): DispatcherCodexConfig {
   const prefix = `${dispatcherPrefix}codex.`;
   if (rawCodex === undefined) {
-    return { approval_policy: null, sandbox_mode: null, extra_args: [] };
+    return {
+      approval_policy: null,
+      sandbox_mode: null,
+      extra_args: [],
+      extra_env: {},
+    };
   }
   if (!isPlainObject(rawCodex)) {
     throw new Error(
@@ -361,7 +404,7 @@ function readDispatcherCodex(
   }
   rejectUnknownKeys(
     rawCodex,
-    new Set(['approval_policy', 'sandbox_mode', 'extra_args']),
+    new Set(['approval_policy', 'sandbox_mode', 'extra_args', 'extra_env']),
     file,
     prefix,
   );
@@ -381,6 +424,7 @@ function readDispatcherCodex(
     approval_policy: approvalPolicy,
     sandbox_mode: sandboxMode,
     extra_args: requireStringArray(rawCodex, 'extra_args', [], file, prefix),
+    extra_env: requireStringRecord(rawCodex, 'extra_env', {}, file, prefix),
   };
 }
 
@@ -485,6 +529,32 @@ function requireStringArray(
     }
     return item;
   });
+}
+
+function requireStringRecord(
+  obj: Record<string, unknown>,
+  key: string,
+  fallback: Record<string, string>,
+  file: string,
+  prefix = '',
+): Record<string, string> {
+  const v = obj[key];
+  if (v === undefined) return { ...fallback };
+  if (!isPlainObject(v)) {
+    throw new Error(
+      `dreamux config error in ${file}: ${prefix}${key} must be an object of strings (got ${describeType(v)})`,
+    );
+  }
+  const out: Record<string, string> = {};
+  for (const [entryKey, entryValue] of Object.entries(v)) {
+    if (typeof entryValue !== 'string') {
+      throw new Error(
+        `dreamux config error in ${file}: ${prefix}${key}.${entryKey} must be a string (got ${describeType(entryValue)})`,
+      );
+    }
+    out[entryKey] = entryValue;
+  }
+  return out;
 }
 
 function requirePositiveInt(

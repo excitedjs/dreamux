@@ -66,6 +66,8 @@ export interface DispatcherRuntimeDeps {
   resolveExtraArgs?: (row: DispatcherRow) => string[];
   /** Codex initialize handshake timeout (ms). From ~/.dreamux/config.json. */
   handshakeTimeoutMs?: number;
+  /** Per-dispatcher environment overrides from config. */
+  extraEnv?: Record<string, string>;
   /** Codex child/WS restart backoff base (tests may override). */
   restartBackoffBaseMs?: number;
   /** Codex child/WS restart backoff cap (tests may override). */
@@ -164,7 +166,7 @@ export class DispatcherRuntime {
       stderrLogPath: dispatcherStderrLog(this.dispatcherId),
       binPath: this.deps.codexBinPath,
       extraArgs,
-      env: dispatcherProcessEnv(),
+      env: dispatcherProcessEnv(globalThis.process.env, this.deps.extraEnv ?? {}),
     });
     this.process = process;
     process.onExit((exit) => {
