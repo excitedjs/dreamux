@@ -1942,25 +1942,35 @@ describe('admin socket hardening', () => {
     // hit the cleanup branch.
     writeFileSync(sockPath, 'leftover-from-crash');
 
-    const a = createAdminSocketServer(stubServer, sockPath, { selfPid: 11111 });
+    // Both contenders treat both PIDs as live. This mirrors production, where
+    // two real `dreamux serve` processes each see the other's *real, live* PID:
+    // whoever loses the atomic `wx` lock race reads a live holder and bails
+    // *before* touching the socket (it never reclaims a live holder's lock).
+    // Lock acquisition is async, so which contender wins the `wx` race is
+    // scheduling-dependent — assert the invariant (exactly one wins, mutual
+    // exclusion) rather than a fixed winner.
+    const bothAlive = (pid: number): boolean => pid === 11111 || pid === 22222;
+    const a = createAdminSocketServer(stubServer, sockPath, {
+      selfPid: 11111,
+      isPidAlive: bothAlive,
+    });
     const b = createAdminSocketServer(stubServer, sockPath, {
       selfPid: 22222,
-      // From b's perspective, the holder pid 11111 is alive (a holds it).
-      isPidAlive: (pid) => pid === 11111,
+      isPidAlive: bothAlive,
     });
 
     const results = await Promise.allSettled([a.start(), b.start()]);
     const wonA = results[0].status === 'fulfilled';
     const wonB = results[1].status === 'fulfilled';
-    expect(wonA && !wonB).toBe(true);
+    expect(wonA !== wonB).toBe(true);
 
-    // a's socket file must still exist and still be listenable — i.e.
-    // b's losing path did NOT rmSync it out from under a.
+    // The winner's socket file must still exist and still be listenable — i.e.
+    // the loser's bail path did NOT rm it out from under the winner.
     const { existsSync, statSync } = await import('node:fs');
     expect(existsSync(sockPath)).toBe(true);
     expect(statSync(sockPath).isSocket()).toBe(true);
 
-    await a.close();
+    await (wonA ? a : b).close();
   });
 
   // Reclaim path: a pidfile naming a dead process is stale and must not
