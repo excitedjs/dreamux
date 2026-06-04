@@ -77,8 +77,10 @@ describe('createFeishuBot inbound channel', () => {
     );
     const received: FeishuInboundEvent[] = [];
 
-    await bot.start(async (event) => {
-      received.push(event);
+    await bot.start({
+      onMessage: async (event) => {
+        received.push(event);
+      },
     });
 
     expect(createdWith).toEqual([
@@ -148,8 +150,10 @@ describe('createFeishuBot inbound channel', () => {
     );
     const received: FeishuInboundEvent[] = [];
 
-    await bot.start(async (event) => {
-      received.push(event);
+    await bot.start({
+      onMessage: async (event) => {
+        received.push(event);
+      },
     });
 
     await transport.dispatch('im.message.receive_v1', {
@@ -180,8 +184,10 @@ describe('createFeishuBot inbound channel', () => {
       { createTransport: () => transport },
     );
     const received: FeishuInboundEvent[] = [];
-    await bot.start(async (event) => {
-      received.push(event);
+    await bot.start({
+      onMessage: async (event) => {
+        received.push(event);
+      },
     });
 
     const delivered = await transport.dispatch('im.message.receive_v1', {
@@ -201,5 +207,31 @@ describe('createFeishuBot inbound channel', () => {
 
     expect(delivered).toBe(true);
     expect(received).toEqual([]);
+  });
+
+  it('registers the bot-added route only when a handler is provided (issue #62 seam)', async () => {
+    const transport = new FakeTransport();
+    const bot = createFeishuBot(
+      { appId: 'app-test', appSecret: 'secret-test' },
+      { createTransport: () => transport },
+    );
+    const added: Array<{ chatId: string; eventId: string }> = [];
+    await bot.start({
+      onMessage: async () => {},
+      onBotMemberAdded: (event) => {
+        added.push({ chatId: event.chatId, eventId: event.eventId });
+      },
+    });
+
+    expect(Object.keys(transport.routes ?? {})).toEqual([
+      'im.message.receive_v1',
+      'im.chat.member.bot.added_v1',
+    ]);
+
+    await transport.dispatch('im.chat.member.bot.added_v1', {
+      header: { event_id: 'evt-1' },
+      event: { chat_id: 'chat-id-1' },
+    });
+    expect(added).toEqual([{ chatId: 'chat-id-1', eventId: 'evt-1' }]);
   });
 });

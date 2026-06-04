@@ -49,6 +49,14 @@ export interface DreamuxFeishuGateInput {
   mentions?: Mention[];
   botOpenId?: string;
   now?: number;
+  /**
+   * Peer-bot open_ids trusted in this chat via an allowlisted `/introduce`
+   * (issue #62). A bot sender is normally dropped; a trusted bot's group
+   * message is delivered without an @-mention (bots cannot @-mention us).
+   * `undefined` for direct messages and for callers that do not track trust,
+   * in which case no bot sender is ever delivered — preserving prior behavior.
+   */
+  trustedBotIds?: ReadonlySet<string>;
 }
 
 export type DreamuxFeishuGateResult =
@@ -121,11 +129,10 @@ export function dreamuxFeishuGate(
   if (input.botOpenId !== undefined && input.senderId === input.botOpenId) {
     return drop('message sent by this bot');
   }
-  if (isBotSenderType(input.senderType)) {
-    return drop(`bot sender type: ${input.senderType}`);
-  }
+  const senderIsBot = isBotSenderType(input.senderType);
 
   if (input.chatType === 'p2p') {
+    if (senderIsBot) return drop(`bot sender type: ${input.senderType}`);
     if (!access.dm.allow_users.includes(input.senderId)) {
       return drop('direct sender not allowed');
     }
@@ -140,6 +147,17 @@ export function dreamuxFeishuGate(
     !access.group.allow_chats.includes(input.chatId)) {
     return drop('group chat not allowed');
   }
+
+  if (senderIsBot) {
+    // A peer bot speaks only if it was introduced (trusted) for this chat by an
+    // allowlisted `/introduce`. Trusted bots bypass the mention gate because a
+    // bot cannot @-mention us; untrusted bots are dropped as before.
+    if (input.trustedBotIds?.has(input.senderId) ?? false) {
+      return deliver(access, input, now);
+    }
+    return drop(`bot sender type: ${input.senderType}`);
+  }
+
   if (access.group.follow_users.length > 0 &&
     !access.group.follow_users.includes(input.senderId)) {
     return drop('sender not allowed by follow-user gate');

@@ -144,6 +144,7 @@ State and logs are server-owned. They are not operator-editable config.
     dispatcher-a/
       status.json
       access.json
+      chat-bots.json
       codex.sock
   logs/
     dreamux-server.log
@@ -183,6 +184,15 @@ credentials.
 
 It must not contain credentials, queued inbound messages, dedupe state, or a
 reaction ledger.
+
+`chat-bots.json` stores per-dispatcher peer-bot discovery state, keyed by
+chat_id (issue #62). Each chat tracks a `known` set (bots passively observed in
+an authorized chat — awareness only) and a `trusted` set (bots introduced by an
+allowlisted `/introduce` — the only set the gate consults to let a peer bot's
+group message through). The two sets must never be conflated: observation never
+grants trust. It also records bot-added baseline bookkeeping (`needsBaseline`,
+`seenEventIds` for idempotent `im.chat.member.bot.added_v1` handling). It is
+server-owned discovery state, safe to delete; it holds no credentials.
 
 `codex.sock` is the Codex app-server WebSocket-over-Unix-socket endpoint for the
 dispatcher. It is not the Feishu MCP transport. The Feishu MCP default transport

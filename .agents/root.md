@@ -68,6 +68,10 @@ Background and older issue context:
   — final issue #63 runtime model for accepted Feishu inbound: every accepted
   deduped message submits `turn/start`, and reactions move through the
   received / in-progress / cleared states.
+- [`domains/feishu-introduce.md`](domains/feishu-introduce.md)
+  — issue #62 first increment: the Feishu event-registry seam, and the group
+  `/introduce` hard contract (no `@`-mention required; the sender must be
+  allowlisted; awareness never grants trust).
 - `proposals/`, `research/`, `rules/` — add here when material grows past a
   single file's worth.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — when to update this KB, how to

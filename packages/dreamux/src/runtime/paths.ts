@@ -157,6 +157,16 @@ export function dispatcherAccessPath(id: string): string {
   return join(dispatcherDir(id), 'access.json');
 }
 
+/**
+ * Per-dispatcher peer-bot awareness/trust store. One file per dispatcher,
+ * keyed internally by chat_id, holds the *known* (passively observed) and
+ * *trusted* (introduced via an allowlisted `/introduce`) peer-bot open_ids
+ * plus the bot-added baseline bookkeeping. Server-owned state; safe to delete.
+ */
+export function dispatcherChatBotsPath(id: string): string {
+  return join(dispatcherDir(id), 'chat-bots.json');
+}
+
 export function unixSocketPathFitsBudget(path: string): boolean {
   return Buffer.byteLength(path, 'utf8') <= DREAMUX_UNIX_SOCKET_PATH_MAX_BYTES;
 }

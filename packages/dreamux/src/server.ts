@@ -22,11 +22,23 @@ import {
   type FeishuBot,
   type FeishuInboundEvent,
 } from './feishu/bot.js';
+import { isBotSenderType } from '@excitedjs/feishu-transport';
 import {
   dreamuxFeishuGate,
   loadDispatcherAccess,
   saveDispatcherAccess,
 } from './channel/feishu-gate.js';
+import {
+  canRunIntroduce,
+  detectIntroduce,
+  introducedPeers,
+} from './channel/introduce.js';
+import {
+  observeKnownBot,
+  recordBotAdded,
+  trustIntroducedBots,
+  trustedBotIds,
+} from './channel/chat-bots-store.js';
 import { formatFeishuMessageForCodex } from './channel/feishu-message.js';
 import { parseCodexArgs, codexArgsToCli } from './runtime/codex-args.js';
 import { feishuMcpCodexArgs } from './codex/mcp-config.js';
@@ -249,60 +261,99 @@ export class Server {
 
     try {
       await runtime.start();
-      await bot.start(async (event: FeishuInboundEvent) => {
-        const access = loadDispatcherAccess(id);
-        const gate = dreamuxFeishuGate({
-          senderId: event.senderId,
-          senderType: event.senderType,
-          chatId: event.chatId,
-          chatType: event.chatType,
-          mentions: event.mentions,
-          botOpenId: bot.botOpenId,
-        }, access);
-        saveDispatcherAccess(id, gate.access);
-        if (gate.warning !== null) {
-          console.error(
-            `[server] trust-domain warning for dispatcher '${id}': ${gate.warning}`,
-          );
-        }
-        if (gate.action === 'drop') {
-          console.error(
-            `[server] dropped feishu inbound for dispatcher '${id}': ${gate.reason}`,
-          );
-          return;
-        }
-        const input: InboundTurnInput = {
-          source_chat_id: event.chatId,
-          source_message_id: event.messageId,
-          sender_id: event.senderId,
-          parsed_text: formatFeishuMessageForCodex(event),
-        };
-        const delivery = await runtime.enqueueInbound(input, {
-          onAccepted: async (acceptedInput) => {
+      await bot.start({
+        onBotMemberAdded: (added) => {
+          // Issue #62 Phase 1/4: record that the bot joined a chat so a later
+          // baseline can be injected. Idempotent by event id; no notification.
+          recordBotAdded(id, added.chatId, added.eventId);
+        },
+        onMessage: async (event: FeishuInboundEvent) => {
+          const access = loadDispatcherAccess(id);
+
+          // Issue #62: peer-bot awareness + `/introduce`, evaluated before the
+          // delivery gate. A bot seen in an authorized chat becomes *known*
+          // (awareness only, never trust). `/introduce` from an allowlisted
+          // sender records the named peer bots as *trusted* and is consumed —
+          // it never reaches Codex as a normal turn. No `@`-mention is required.
+          if (
+            event.chatType === 'group' &&
+            isBotSenderType(event.senderType) &&
+            access.group.allow_chats.includes(event.chatId)
+          ) {
+            observeKnownBot(id, event.chatId, {
+              openId: event.senderId,
+              ...(event.senderName !== '' ? { name: event.senderName } : {}),
+            });
+          }
+          if (
+            detectIntroduce(event.messageType, event.rawContent, event.mentions) &&
+            canRunIntroduce(access, {
+              chatType: event.chatType,
+              chatId: event.chatId,
+              senderId: event.senderId,
+            })
+          ) {
+            const peers = introducedPeers(event.mentions, bot.botOpenId);
+            if (peers.length > 0) trustIntroducedBots(id, event.chatId, peers);
+            return;
+          }
+
+          const gate = dreamuxFeishuGate({
+            senderId: event.senderId,
+            senderType: event.senderType,
+            chatId: event.chatId,
+            chatType: event.chatType,
+            mentions: event.mentions,
+            botOpenId: bot.botOpenId,
+            ...(event.chatType === 'group'
+              ? { trustedBotIds: trustedBotIds(id, event.chatId) }
+              : {}),
+          }, access);
+          saveDispatcherAccess(id, gate.access);
+          if (gate.warning !== null) {
+            console.error(
+              `[server] trust-domain warning for dispatcher '${id}': ${gate.warning}`,
+            );
+          }
+          if (gate.action === 'drop') {
+            console.error(
+              `[server] dropped feishu inbound for dispatcher '${id}': ${gate.reason}`,
+            );
+            return;
+          }
+          const input: InboundTurnInput = {
+            source_chat_id: event.chatId,
+            source_message_id: event.messageId,
+            sender_id: event.senderId,
+            parsed_text: formatFeishuMessageForCodex(event),
+          };
+          const delivery = await runtime.enqueueInbound(input, {
+            onAccepted: async (acceptedInput) => {
+              await setInboundReaction(
+                id,
+                bot,
+                channelState,
+                acceptedInput,
+                RECEIVED_REACTION_EMOJI,
+                'received',
+              );
+            },
+          });
+          if (delivery.status === 'submitted') {
             await setInboundReaction(
               id,
               bot,
               channelState,
-              acceptedInput,
-              RECEIVED_REACTION_EMOJI,
-              'received',
+              input,
+              IN_PROGRESS_REACTION_EMOJI,
+              'in_progress',
             );
-          },
-        });
-        if (delivery.status === 'submitted') {
-          await setInboundReaction(
-            id,
-            bot,
-            channelState,
-            input,
-            IN_PROGRESS_REACTION_EMOJI,
-            'in_progress',
-          );
-        } else if (delivery.status === 'failed') {
-          console.error(
-            `[server] failed to submit Feishu inbound for dispatcher '${id}': ${delivery.error.message}`,
-          );
-        }
+          } else if (delivery.status === 'failed') {
+            console.error(
+              `[server] failed to submit Feishu inbound for dispatcher '${id}': ${delivery.error.message}`,
+            );
+          }
+        },
       });
     } catch (err) {
       // Failed midway: undo any partial bring-up so a retry isn't

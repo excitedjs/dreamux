@@ -6,10 +6,12 @@
  * markdown→card render, content parse, the outbound message API — lives in the
  * core, the single importer of `@larksuiteoapi/node-sdk`. This file only shapes
  * the core's surface into the `FeishuBot` interface the server already wires:
- *   - `start(handler)` registers the `im.message.receive_v1` route, normalizes
- *     each raw event with the core's `parseInbound`, and forwards a
- *     `FeishuInboundEvent`. The route handler awaits `handler`, so the server
- *     gates and submits accepted inbound before the SDK acks.
+ *   - `start(routes)` takes one handler per Feishu event type (issue #62 seam):
+ *     `onMessage` for `im.message.receive_v1` (normalized via the core's
+ *     `parseInbound` into a `FeishuInboundEvent`) and an optional
+ *     `onBotMemberAdded` for `im.chat.member.bot.added_v1`. Each route awaits
+ *     its handler, so the server gates and submits accepted inbound before the
+ *     SDK acks.
  *   - `send(target, text)` delegates to the core transport, preserving reply
  *     threading / @-back metadata from the in-memory inbound batch.
  *   - `botOpenId` surfaces the core transport's `selfId`.
@@ -19,10 +21,13 @@
  */
 
 import {
+  BOT_MEMBER_ADDED_EVENT_TYPE,
   createFeishuTransport,
   narrowMetaFromEvent,
+  normalizeBotMemberAddedEvent,
   parseInbound,
   toChannelInbound,
+  type FeishuBotMemberAddedEvent,
   type FeishuTransport,
   type Mention,
   type OutboundTarget,
@@ -56,6 +61,23 @@ export interface FeishuInboundEvent {
 
 export type InboundHandler = (event: FeishuInboundEvent) => void | Promise<void>;
 
+export type BotMemberAddedHandler = (
+  event: FeishuBotMemberAddedEvent,
+) => void | Promise<void>;
+
+/**
+ * The event-registry seam (issue #62 Phase 1). `start` takes one handler per
+ * Feishu event type instead of a single message handler, so new event types
+ * register here without growing branches in `Server` or the transport. Each
+ * route still awaits its handler before the SDK acks (queue-before-ACK).
+ */
+export interface FeishuInboundRoutes {
+  /** `im.message.receive_v1` — a chat message. */
+  onMessage: InboundHandler;
+  /** `im.chat.member.bot.added_v1` — the bot was added to a chat. Optional. */
+  onBotMemberAdded?: BotMemberAddedHandler;
+}
+
 export interface FeishuSendResult {
   /** message_id of each card sent, in order. Empty if Feishu omitted ids. */
   messageIds: string[];
@@ -64,7 +86,7 @@ export interface FeishuSendResult {
 export interface FeishuBot {
   readonly appId: string;
   readonly botOpenId: string | undefined;
-  start(handler: InboundHandler): Promise<void>;
+  start(routes: FeishuInboundRoutes): Promise<void>;
   send(target: OutboundTarget, text: string): Promise<FeishuSendResult>;
   addReaction(messageId: string, emoji: string): Promise<string>;
   removeReaction(messageId: string, reactionId: string): Promise<void>;
@@ -109,18 +131,27 @@ export function createFeishuBot(
       return transport.selfId;
     },
 
-    async start(handler: InboundHandler): Promise<void> {
-      // The core opens the WebSocket and awaits this route handler before the
-      // SDK acks; awaiting `handler` here keeps gate/submission work before ACK.
+    async start(routes: FeishuInboundRoutes): Promise<void> {
+      // The core opens the WebSocket and awaits each route handler before the
+      // SDK acks; awaiting here keeps gate/submission work before ACK.
       // `start` rejects if the connection does not come up, so the server's
       // try/catch can fail the dispatcher loudly rather than leave it dark.
-      await transport.start({
+      const table: Record<string, (raw: unknown) => Promise<void>> = {
         [IM_MESSAGE_EVENT_TYPE]: async (raw: unknown) => {
           const event = normalizeInboundEvent(raw);
           if (event === null) return;
-          await handler(event);
+          await routes.onMessage(event);
         },
-      });
+      };
+      if (routes.onBotMemberAdded !== undefined) {
+        const onBotMemberAdded = routes.onBotMemberAdded;
+        table[BOT_MEMBER_ADDED_EVENT_TYPE] = async (raw: unknown) => {
+          const event = normalizeBotMemberAddedEvent(raw);
+          if (event === null) return;
+          await onBotMemberAdded(event);
+        };
+      }
+      await transport.start(table);
     },
 
     async send(target: OutboundTarget, text: string): Promise<FeishuSendResult> {
@@ -254,6 +285,7 @@ export interface FakeFeishuBot extends FeishuBot {
     reactionId: string;
   }>;
   inject(event: FeishuInboundEvent): Promise<void>;
+  injectBotMemberAdded(event: FeishuBotMemberAddedEvent): Promise<void>;
   setSendError(err: Error | null): void;
   setReactionError(err: Error | null): void;
   setRemoveReactionError(err: Error | null): void;
@@ -266,7 +298,7 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
     text: string;
     messageIds: string[];
   }> = [];
-  let handler: InboundHandler | null = null;
+  let routes: FeishuInboundRoutes | null = null;
   let nextMessageId = 1;
   let nextReactionId = 1;
   let sendError: Error | null = null;
@@ -288,8 +320,8 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
     get botOpenId(): string | undefined {
       return openId;
     },
-    async start(h: InboundHandler): Promise<void> {
-      handler = h;
+    async start(r: FeishuInboundRoutes): Promise<void> {
+      routes = r;
     },
     async send(target: OutboundTarget, text: string): Promise<FeishuSendResult> {
       if (sendError !== null) {
@@ -314,7 +346,7 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
       removedReactions.push({ messageId, reactionId });
     },
     async close(): Promise<void> {
-      handler = null;
+      routes = null;
     },
     get sentMessages() {
       return sent;
@@ -326,8 +358,12 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
       return removedReactions;
     },
     async inject(event: FeishuInboundEvent): Promise<void> {
-      if (handler === null) throw new Error('fake bot not started');
-      await handler(event);
+      if (routes === null) throw new Error('fake bot not started');
+      await routes.onMessage(event);
+    },
+    async injectBotMemberAdded(event: FeishuBotMemberAddedEvent): Promise<void> {
+      if (routes === null) throw new Error('fake bot not started');
+      await routes.onBotMemberAdded?.(event);
     },
     setSendError(err: Error | null): void {
       sendError = err;
