@@ -48,11 +48,27 @@ systemd keep it alive.
 
 The generated service environment must be self-sufficient. It must not rely on
 interactive shell startup files such as `.zshrc` to make Node or Codex
-available. During onboarding, dreamux captures the Node executable that is
-running onboarding, validates that it satisfies the package's supported Node
-range, resolves the Codex executable to a runnable path for managed service use,
-seeds `HOME` for clean user-service probes, and renders those values into the
-user service environment.
+available. During onboarding, dreamux selects a service Node, validates that it
+satisfies the package's supported Node range, resolves the Codex executable to a
+runnable path for managed service use, seeds `HOME` for clean user-service
+probes, and renders those values into the user service environment.
+
+The service Node is not the onboarding Node frozen unconditionally. Onboarding
+prefers a stable system Node from a platform-aware candidate list (macOS covers
+Homebrew under `/opt/homebrew` and `/usr/local`; Linux covers `/usr/local/bin`,
+`/usr/bin`, `/bin`), accepting the first candidate that exists, is not bound to
+a version manager, and satisfies `MIN_SERVICE_NODE_VERSION`. It falls back to
+the onboarding Node (`process.execPath`) only when no stable candidate
+qualifies. The candidate's own path — a stable symlink, never its `realpath` —
+is what gets persisted, which keeps the volatile Homebrew Cellar path out of the
+service; when the fallback Node is itself a Cellar path, onboarding best-effort
+remaps it to the matching Homebrew `opt/...` symlink and otherwise persists it
+unchanged. The fallback reproduces the original fragility when onboarding runs
+under a version-manager Node, which is exactly what the `dreamux doctor`
+stability advisory exists to surface. Selection and that advisory share one
+async, injectable version-manager predicate (resolving symlinks before
+matching nvm/fnm/asdf/volta markers, including the macOS fnm default under
+`~/Library/Application Support/fnm/`) so they cannot drift apart.
 
 There is no public `dreamux daemon ...` command tree. The daemon form is
 foreground `dreamux serve` supervised by a native user-level service manager.
@@ -129,8 +145,14 @@ status.
   systemd execute the same global bin the operator invoked.
 - The `dreamux` launcher honors `DREAMUX_NODE_BIN` when present, falling back to
   `node` for ordinary interactive and npm-bin use. Service generation sets
-  `DREAMUX_NODE_BIN` and a minimal `PATH` so nvm-installed Node works without
+  `DREAMUX_NODE_BIN` (to the selected stable Node, see above) and a minimal
+  `PATH` whose first entry is that Node's directory, so the service runs without
   sourcing shell rc files.
+- `dreamux doctor` emits a non-fatal `warn`-severity advisory when the installed
+  service `DREAMUX_NODE_BIN` resolves into a version manager. The advisory keeps
+  the check `ok: true` so it never flips the doctor exit code — a version
+  manager-bound but currently-runnable service stays green with a visible
+  warning that points the operator to rerun `dreamux onboard`.
 - Codex's global default home is intentionally reused, so login state, memory,
   and local Codex configuration follow the operator's machine. dreamux must not
   delete that home during uninstall.

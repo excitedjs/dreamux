@@ -36,6 +36,8 @@ import {
   installUserService,
   managedServiceEnvironment,
   resolveServiceExecutable,
+  selectServiceNodeBin,
+  type ServiceNodeProbe,
   validateManagedServiceLaunch,
 } from './service.js';
 import type {
@@ -55,6 +57,7 @@ export interface RunOnboardOptions {
   homeDir?: string;
   uid?: number;
   env?: NodeJS.ProcessEnv;
+  nodeProbe?: ServiceNodeProbe;
 }
 
 export async function runOnboard(
@@ -70,11 +73,19 @@ export async function runOnboard(
   const serviceCodexBin = answers.registerService && !answers.dryRun
     ? resolveServiceExecutable(dreamuxConfig.codex.bin, env)
     : dreamuxConfig.codex.bin;
+  const serviceNodeBin = answers.registerService && !answers.dryRun
+    ? await selectServiceNodeBin({
+        platform: options.platform ?? process.platform,
+        currentNodeBin: process.execPath,
+        runner,
+        probe: options.nodeProbe,
+      })
+    : process.execPath;
   const effectiveAnswers = {
     ...answers,
     runtimeDir: stateRoot(),
     codexBin: serviceCodexBin,
-    nodeBin: process.execPath,
+    nodeBin: serviceNodeBin,
   };
   setRuntimeConfig(dreamuxConfig);
 

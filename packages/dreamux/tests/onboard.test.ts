@@ -18,6 +18,7 @@ import {
   type OnboardCliOptions,
 } from '../src/onboard/wizard.js';
 import type { CommandRunner, OnboardAnswers } from '../src/onboard/types.js';
+import type { ServiceNodeProbe } from '../src/onboard/service.js';
 import {
   dispatcherCodexHome,
   dispatcherWorkspaceSkillPath,
@@ -96,6 +97,14 @@ class FakeRunner implements CommandRunner {
   }
 }
 
+// No stable system Node exists: every candidate is skipped, so onboarding
+// falls back to the current Node (process.execPath). Keeps the assertions on
+// DREAMUX_NODE_BIN hermetic regardless of what the test host has installed.
+const noSystemNodeProbe: ServiceNodeProbe = {
+  realpath: async (path) => path,
+  isExecutable: () => false,
+};
+
 function writeGlobalCodexAuth(answers: OnboardAnswers): void {
   const authPath = join(dispatcherCodexHome(answers.dispatcherId), 'auth.json');
   mkdirSync(dirname(authPath), { recursive: true });
@@ -147,6 +156,7 @@ describe('dreamux onboard', () => {
       platform: 'linux',
       homeDir: join(root, 'home'),
       env: { CODEX_ACCESS_TOKEN: 'interactive-token-test' },
+      nodeProbe: noSystemNodeProbe,
     });
 
     expect(result.doctor.ok).toBe(true);
@@ -218,6 +228,80 @@ describe('dreamux onboard', () => {
     );
   });
 
+  it('pins the service to a stable system Node and leads PATH with its directory', async () => {
+    const runner = new FakeRunner();
+    const answers = testAnswers({
+      configDir: join(root, 'config'),
+      runtimeDir: join(root, 'runtime'),
+      dreamuxBin: '/usr/local/bin/dreamux',
+    });
+    writeGlobalCodexAuth(answers);
+    // /usr/local/bin/node exists, is not version-manager-bound, satisfies the
+    // minimum version, so it wins over process.execPath.
+    const stableNodeProbe: ServiceNodeProbe = {
+      realpath: async (path) => path,
+      isExecutable: (path) => path === '/usr/local/bin/node',
+    };
+
+    await runOnboard({
+      answers,
+      runner,
+      platform: 'linux',
+      homeDir: join(root, 'home'),
+      env: { CODEX_ACCESS_TOKEN: 'interactive-token-test' },
+      nodeProbe: stableNodeProbe,
+    });
+
+    const serviceUnit = readFileSync(
+      join(root, 'home', '.config', 'systemd', 'user', 'dreamux.service'),
+      'utf8',
+    );
+    expect(serviceUnit).toContain('Environment=DREAMUX_NODE_BIN=/usr/local/bin/node');
+    expect(serviceUnit).toContain('Environment=PATH=/usr/local/bin');
+    expect(serviceUnit).not.toContain(
+      `Environment=DREAMUX_NODE_BIN=${process.execPath}`,
+    );
+  });
+
+  it('excludes a version-manager-bound candidate and falls back to the current Node', async () => {
+    const runner = new FakeRunner();
+    const answers = testAnswers({
+      configDir: join(root, 'config'),
+      runtimeDir: join(root, 'runtime'),
+      dreamuxBin: '/usr/local/bin/dreamux',
+    });
+    writeGlobalCodexAuth(answers);
+    // /usr/local/bin/node is executable but realpaths into an nvm install, so
+    // it must be skipped and onboarding falls back to process.execPath.
+    const vmShimProbe: ServiceNodeProbe = {
+      realpath: async (path) =>
+        path === '/usr/local/bin/node'
+          ? `${join(root, 'home')}/.nvm/versions/node/v22.7.0/bin/node`
+          : path,
+      isExecutable: (path) => path === '/usr/local/bin/node',
+    };
+
+    await runOnboard({
+      answers,
+      runner,
+      platform: 'linux',
+      homeDir: join(root, 'home'),
+      env: { CODEX_ACCESS_TOKEN: 'interactive-token-test' },
+      nodeProbe: vmShimProbe,
+    });
+
+    const serviceUnit = readFileSync(
+      join(root, 'home', '.config', 'systemd', 'user', 'dreamux.service'),
+      'utf8',
+    );
+    expect(serviceUnit).toContain(
+      `Environment=DREAMUX_NODE_BIN=${process.execPath}`,
+    );
+    expect(serviceUnit).not.toContain(
+      'Environment=DREAMUX_NODE_BIN=/usr/local/bin/node',
+    );
+  });
+
   it('does not let an interactive shell token satisfy the managed service doctor', async () => {
     const runner = new FakeRunner();
     const answers = testAnswers({
@@ -281,6 +365,7 @@ describe('dreamux onboard', () => {
       homeDir: join(root, 'home'),
       uid: 501,
       env: {},
+      nodeProbe: noSystemNodeProbe,
     });
     await runOnboard({
       answers,
@@ -289,6 +374,7 @@ describe('dreamux onboard', () => {
       homeDir: join(root, 'home'),
       uid: 501,
       env: {},
+      nodeProbe: noSystemNodeProbe,
     });
 
     expect(countCalls(runner, 'codex', ['plugin'])).toBe(0);

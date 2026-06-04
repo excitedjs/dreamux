@@ -12,6 +12,7 @@ import { build as buildPlist } from 'plist';
 
 import { runDreamuxDoctor } from '../src/cli/doctor.js';
 import type { CommandRunner } from '../src/onboard/types.js';
+import type { ServiceNodeProbe } from '../src/onboard/service.js';
 import {
   dispatcherCodexCwd,
   dispatcherCodexHome,
@@ -210,6 +211,137 @@ describe('dreamux doctor command', () => {
     expect(result.service.environment?.['CODEX_HOST_CODEX_BIN']).toBe(
       '/service/codex\\x20literal',
     );
+  });
+
+  it('warns (without failing) when the service Node is bound to a version manager', async () => {
+    const runner = new FakeRunner();
+    writeConfig();
+    writeDispatcherHome({ auth: true });
+    const nvmNode = join(
+      root,
+      'home',
+      '.nvm',
+      'versions',
+      'node',
+      'v22.7.0',
+      'bin',
+      'node',
+    );
+    const servicePath = join(root, 'home', '.config', 'systemd', 'user', 'dreamux.service');
+    mkdirSync(dirname(servicePath), { recursive: true });
+    writeFileSync(
+      servicePath,
+      [
+        '[Service]',
+        'ExecStart=/service/dreamux serve',
+        `Environment=DREAMUX_NODE_BIN=${nvmNode}`,
+        'Environment=CODEX_HOST_CODEX_BIN=/service/codex',
+        'Environment=PATH=/service/bin:/usr/bin:/bin',
+        '',
+      ].join('\n'),
+    );
+    runner.nodeVersions.set(nvmNode, 'v22.7.0');
+
+    const result = await runDreamuxDoctor({
+      runner,
+      platform: 'linux',
+      homeDir: join(root, 'home'),
+      env: {},
+    });
+
+    // The Node runs today, so the binary check stays green and result.ok holds.
+    expect(result.ok).toBe(true);
+    expect(
+      result.checks.find((check) => check.name === 'managed service Node binary'),
+    ).toMatchObject({ ok: true });
+    const advisory = result.checks.find(
+      (check) => check.name === 'managed service Node stability',
+    );
+    expect(advisory).toMatchObject({
+      ok: true,
+      severity: 'warn',
+      detail: expect.stringContaining('nvm'),
+    });
+  });
+
+  it('flags a system-looking shim that realpaths into a version manager', async () => {
+    const runner = new FakeRunner();
+    writeConfig();
+    writeDispatcherHome({ auth: true });
+    const servicePath = join(root, 'home', '.config', 'systemd', 'user', 'dreamux.service');
+    mkdirSync(dirname(servicePath), { recursive: true });
+    writeFileSync(
+      servicePath,
+      [
+        '[Service]',
+        'ExecStart=/service/dreamux serve',
+        'Environment=DREAMUX_NODE_BIN=/usr/local/bin/node',
+        'Environment=CODEX_HOST_CODEX_BIN=/service/codex',
+        'Environment=PATH=/service/bin:/usr/bin:/bin',
+        '',
+      ].join('\n'),
+    );
+    runner.nodeVersions.set('/usr/local/bin/node', 'v22.7.0');
+    const shimProbe: ServiceNodeProbe = {
+      isExecutable: () => true,
+      realpath: async (path) =>
+        path === '/usr/local/bin/node'
+          ? '/Users/u/Library/Application Support/fnm/node-versions/v22/installation/bin/node'
+          : path,
+    };
+
+    const result = await runDreamuxDoctor({
+      runner,
+      platform: 'linux',
+      homeDir: join(root, 'home'),
+      env: {},
+      nodeProbe: shimProbe,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(
+      result.checks.find(
+        (check) => check.name === 'managed service Node stability',
+      ),
+    ).toMatchObject({ ok: true, severity: 'warn', detail: expect.stringContaining('fnm') });
+  });
+
+  it('does not warn when the service Node is a stable system path', async () => {
+    const runner = new FakeRunner();
+    writeConfig();
+    writeDispatcherHome({ auth: true });
+    const servicePath = join(root, 'home', '.config', 'systemd', 'user', 'dreamux.service');
+    mkdirSync(dirname(servicePath), { recursive: true });
+    writeFileSync(
+      servicePath,
+      [
+        '[Service]',
+        'ExecStart=/service/dreamux serve',
+        'Environment=DREAMUX_NODE_BIN=/usr/local/bin/node',
+        'Environment=CODEX_HOST_CODEX_BIN=/service/codex',
+        'Environment=PATH=/service/bin:/usr/bin:/bin',
+        '',
+      ].join('\n'),
+    );
+    runner.nodeVersions.set('/usr/local/bin/node', 'v22.7.0');
+    const stableProbe: ServiceNodeProbe = {
+      isExecutable: () => true,
+      realpath: async (path) => path,
+    };
+
+    const result = await runDreamuxDoctor({
+      runner,
+      platform: 'linux',
+      homeDir: join(root, 'home'),
+      env: {},
+      nodeProbe: stableProbe,
+    });
+
+    expect(
+      result.checks.find(
+        (check) => check.name === 'managed service Node stability',
+      ),
+    ).toBeUndefined();
   });
 
   it('checks the installed launchd plist environment instead of failing unconditionally', async () => {

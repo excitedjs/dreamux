@@ -24,9 +24,12 @@ import {
 } from '../runtime/paths.js';
 import { ExecaCommandRunner } from '../onboard/commands.js';
 import {
+  defaultServiceNodeProbe,
+  detectServiceNodeVersionManager,
   LAUNCHD_LABEL,
   MIN_SERVICE_NODE_VERSION,
   nodeVersionSatisfies,
+  type ServiceNodeProbe,
   serviceUnitPath,
   SYSTEMD_UNIT,
 } from '../onboard/service.js';
@@ -38,6 +41,7 @@ export interface DoctorOptions {
   platform?: NodeJS.Platform;
   homeDir?: string;
   uid?: number;
+  nodeProbe?: ServiceNodeProbe;
 }
 
 export interface ServiceStatus {
@@ -57,6 +61,10 @@ export interface DoctorCheck {
   name: string;
   ok: boolean;
   detail: string;
+  // Advisory severity for an `ok: true` check that still warrants attention
+  // (e.g. a version-manager-bound Node that runs today but is fragile). A
+  // `warn` never flips `result.ok` or the CLI exit code; it stays visible.
+  severity?: 'warn';
 }
 
 export interface DispatcherDoctorReport {
@@ -108,7 +116,12 @@ export async function runDreamuxDoctor(
       ? `installed at ${service.unitPath}`
       : `not installed at ${service.unitPath}`,
   });
-  await addManagedServiceLaunchChecks(checks, service, runner);
+  await addManagedServiceLaunchChecks(
+    checks,
+    service,
+    runner,
+    options.nodeProbe ?? defaultServiceNodeProbe,
+  );
 
   const dispatchers = readDispatchers(config, options.env ?? process.env, service);
   if (dispatchers.length === 0) {
@@ -140,7 +153,12 @@ export function printDoctorResult(result: DreamuxDoctorResult): void {
   console.log(`config: ${result.configFile}`);
   console.log(`state: ${result.stateDir}`);
   for (const check of result.checks) {
-    console.log(`${check.ok ? 'ok' : 'fail'}\t${check.name}\t${check.detail}`);
+    const label = check.ok
+      ? check.severity === 'warn'
+        ? 'warn'
+        : 'ok'
+      : 'fail';
+    console.log(`${label}\t${check.name}\t${check.detail}`);
   }
   for (const dispatcher of result.dispatchers) {
     printDispatcherDoctor(dispatcher);
@@ -311,6 +329,7 @@ async function addManagedServiceLaunchChecks(
   checks: DoctorCheck[],
   service: ServiceStatus,
   runner: CommandRunner,
+  probe: ServiceNodeProbe,
 ): Promise<void> {
   if (!service.installed) return;
   const env = service.environment;
@@ -334,6 +353,19 @@ async function addManagedServiceLaunchChecks(
   const serviceEnv = env as Record<string, string>;
   const nodeBin = serviceEnv['DREAMUX_NODE_BIN'];
   checks.push(await checkNodeLaunch(nodeBin, serviceEnv, runner));
+
+  // Drift advisory: the service Node runs today but is bound to a version
+  // manager, so a version switch/cleanup will break it. Surface it visibly
+  // without failing — reuses the same predicate selection uses.
+  const manager = await detectServiceNodeVersionManager(nodeBin, probe);
+  if (manager !== null) {
+    checks.push({
+      name: 'managed service Node stability',
+      ok: true,
+      severity: 'warn',
+      detail: `${nodeBin} resolves into ${manager}-managed Node; a version switch or cleanup will break the managed service. Rerun dreamux onboard to repin to a stable Node.`,
+    });
+  }
 
   const dreamuxBin = service.execStart?.[0];
   checks.push(
