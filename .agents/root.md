@@ -64,6 +64,11 @@ Background and older issue context:
   reconciliation, access surface, message-format, CLI/diagnostic robustness);
   groups the deferred epic follow-ups + the #58 ultracode findings into the next
   workstream.
+- [`proposals/feishu-bot-trust-context.md`](proposals/feishu-bot-trust-context.md)
+  — issue #69 follow-up to #62: trusted-bot next-message context, a
+  `list_chat_bots` query tool, and add-then-cancel reaction ordering
+  (implemented; settled behavior in `domains/feishu-introduce.md` +
+  `domains/non-blocking-dispatcher-inbound.md`).
 - [`domains/non-blocking-dispatcher-inbound.md`](domains/non-blocking-dispatcher-inbound.md)
   — final issue #63 runtime model for accepted Feishu inbound: every accepted
   deduped message submits `turn/start`, and reactions move through the

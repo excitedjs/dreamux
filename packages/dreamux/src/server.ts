@@ -34,11 +34,15 @@ import {
   introducedPeers,
 } from './channel/introduce.js';
 import {
+  clearBaselineIfCurrent,
+  listChatBots,
   observeKnownBot,
+  pendingBaseline,
   recordBotAdded,
   trustIntroducedBots,
   trustedBotIds,
 } from './channel/chat-bots-store.js';
+import type { PeerBot } from './channel/chat-bots-store.js';
 import { formatFeishuMessageForCodex } from './channel/feishu-message.js';
 import { parseCodexArgs, codexArgsToCli } from './runtime/codex-args.js';
 import { feishuMcpCodexArgs } from './codex/mcp-config.js';
@@ -143,6 +147,22 @@ export interface ServerMcpReactInput {
   dispatcherId: string;
   messageId: string;
   emoji: string;
+}
+
+export interface ServerMcpListChatBotsInput {
+  dispatcherId: string;
+  chatId: string;
+}
+
+export interface WireChatBot {
+  open_id: string;
+  name?: string;
+}
+
+export interface ServerMcpListChatBotsResult {
+  chat_id: string;
+  known: WireChatBot[];
+  trusted: WireChatBot[];
 }
 
 export class Server {
@@ -368,11 +388,23 @@ export class Server {
             );
             return;
           }
+          // Issue #69: a group with pending discovery context gets a one-shot
+          // `<group_bots>` block of its trusted bots on this delivery. We
+          // snapshot the generation before enqueue so a concurrent
+          // `/introduce` / bot-added that re-arms the flag mid-enqueue is not
+          // clobbered by the clear below.
+          const baseline =
+            event.chatType === 'group' ? pendingBaseline(id, event.chatId) : null;
+          const injectBots =
+            baseline !== null && baseline.needsBaseline && baseline.trusted.length > 0;
           const input: InboundTurnInput = {
             source_chat_id: event.chatId,
             source_message_id: event.messageId,
             sender_id: event.senderId,
-            parsed_text: formatFeishuMessageForCodex(event),
+            parsed_text: formatFeishuMessageForCodex(
+              event,
+              injectBots ? { trustedBots: baseline.trusted } : {},
+            ),
           };
           const delivery = await runtime.enqueueInbound(input, {
             onAccepted: async (acceptedInput) => {
@@ -396,6 +428,12 @@ export class Server {
               },
               'feishu inbound submitted',
             );
+            // Commit-after-notify: only clear the one-shot once the turn is
+            // actually submitted, and only if the generation is still current.
+            // `duplicate` / `stopped` / `failed` leave the context pending.
+            if (injectBots) {
+              clearBaselineIfCurrent(id, event.chatId, baseline.generation);
+            }
             await setInboundReaction(
               id,
               bot,
@@ -546,6 +584,22 @@ export class Server {
     return { reaction_id: reactionId };
   }
 
+  /**
+   * Read-only query of one chat's known + trusted peer bots (issue #69). Backs
+   * the model-facing `list_chat_bots` MCP tool. Reads the per-dispatcher
+   * chat-bots store directly, so it does not require a running dispatcher slot.
+   */
+  listChatBotsFromMcp(
+    input: ServerMcpListChatBotsInput,
+  ): ServerMcpListChatBotsResult {
+    const listing = listChatBots(input.dispatcherId, input.chatId);
+    return {
+      chat_id: input.chatId,
+      known: listing.known.map(toWireChatBot),
+      trusted: listing.trusted.map(toWireChatBot),
+    };
+  }
+
   private mustRunningSlot(id: string): DispatcherSlot {
     const slot = this.slots.get(id);
     if (slot === undefined) {
@@ -589,6 +643,13 @@ export class Server {
   }
 }
 
+function toWireChatBot(bot: PeerBot): WireChatBot {
+  return {
+    open_id: bot.openId,
+    ...(bot.name !== undefined && bot.name !== '' ? { name: bot.name } : {}),
+  };
+}
+
 async function setInboundReaction(
   dispatcherId: string,
   bot: FeishuBot,
@@ -603,6 +664,51 @@ async function setInboundReaction(
   if (channelState.pendingReceivedReactionClears.has(messageId)) return;
 
   const previous = channelState.inboundReactions.get(messageId);
+
+  // Add-then-cancel (issue #69): add the new reaction FIRST so the message
+  // never shows zero reactions during the received -> in_progress transition,
+  // then cancel the previous one. A failed/empty add keeps the previous
+  // reaction and ledger entry rather than leaving the message bare.
+  let reactionId: string;
+  try {
+    reactionId = await bot.addReaction(messageId, emoji);
+  } catch (err) {
+    log.warn(
+      { dispatcher_id: dispatcherId, message_id: messageId, err: errInfo(err) },
+      `failed to add the ${state} reaction`,
+    );
+    return;
+  }
+  if (reactionId === '') {
+    log.warn(
+      { dispatcher_id: dispatcherId, message_id: messageId },
+      `Feishu returned no reaction_id for the ${state} reaction`,
+    );
+    return;
+  }
+
+  // A reply may have cleared this message while the add was in flight. Remove
+  // the just-added reaction and do not store it; the previous reaction was
+  // already taken by clearInboundReaction, which read the ledger before any
+  // store here. This preserves the reply-wins-the-race guarantee.
+  if (channelState.pendingReceivedReactionClears.has(messageId)) {
+    try {
+      await bot.removeReaction(messageId, reactionId);
+    } catch (err) {
+      log.warn(
+        { dispatcher_id: dispatcherId, message_id: messageId, err: errInfo(err) },
+        `failed to clear the late ${state} reaction`,
+      );
+    }
+    return;
+  }
+
+  channelState.inboundReactions.set(messageId, {
+    chatId: input.source_chat_id,
+    reactionId,
+    state,
+  });
+
   if (previous !== undefined) {
     try {
       await bot.removeReaction(messageId, previous.reactionId);
@@ -612,40 +718,6 @@ async function setInboundReaction(
         `failed to replace the ${previous.state} reaction`,
       );
     }
-    channelState.inboundReactions.delete(messageId);
-  }
-  if (channelState.pendingReceivedReactionClears.has(messageId)) return;
-
-  try {
-    const reactionId = await bot.addReaction(messageId, emoji);
-    if (reactionId === '') {
-      log.warn(
-        { dispatcher_id: dispatcherId, message_id: messageId },
-        `Feishu returned no reaction_id for the ${state} reaction`,
-      );
-      return;
-    }
-    if (channelState.pendingReceivedReactionClears.has(messageId)) {
-      try {
-        await bot.removeReaction(messageId, reactionId);
-      } catch (err) {
-        log.warn(
-          { dispatcher_id: dispatcherId, message_id: messageId, err: errInfo(err) },
-          `failed to clear the late ${state} reaction`,
-        );
-      }
-      return;
-    }
-    channelState.inboundReactions.set(messageId, {
-      chatId: input.source_chat_id,
-      reactionId,
-      state,
-    });
-  } catch (err) {
-    log.warn(
-      { dispatcher_id: dispatcherId, message_id: messageId, err: errInfo(err) },
-      `failed to add the ${state} reaction`,
-    );
   }
 }
 

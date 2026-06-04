@@ -2,6 +2,18 @@
   "name": "@excitedjs/dreamux",
   "entries": [
     {
+      "version": "0.5.0",
+      "tag": "@excitedjs/dreamux_v0.5.0",
+      "date": "Thu, 04 Jun 2026 17:12:55 GMT",
+      "comments": {
+        "minor": [
+          {
+            "comment": "Inject a one-shot <group_bots> context of a group's trusted bots on the first delivered message after /introduce (commit-after-notify, generation-safe clear); add a model-facing list_chat_bots MCP tool (backed by a read-only mcp.list_chat_bots admin method) returning a chat's known + trusted bots; and change the inbound reaction lifecycle to add-then-cancel so the message never shows a zero-reaction window during the received -> in-progress transition."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.4.0",
       "tag": "@excitedjs/dreamux_v0.4.0",
       "date": "Thu, 04 Jun 2026 15:47:28 GMT",

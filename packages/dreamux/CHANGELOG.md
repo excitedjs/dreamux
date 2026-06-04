@@ -1,6 +1,13 @@
 # Change Log - @excitedjs/dreamux
 
-This log was last generated on Thu, 04 Jun 2026 15:47:28 GMT and should not be manually modified.
+This log was last generated on Thu, 04 Jun 2026 17:12:55 GMT and should not be manually modified.
+
+## 0.5.0
+Thu, 04 Jun 2026 17:12:55 GMT
+
+### Minor changes
+
+- Inject a one-shot <group_bots> context of a group's trusted bots on the first delivered message after /introduce (commit-after-notify, generation-safe clear); add a model-facing list_chat_bots MCP tool (backed by a read-only mcp.list_chat_bots admin method) returning a chat's known + trusted bots; and change the inbound reaction lifecycle to add-then-cancel so the message never shows a zero-reaction window during the received -> in-progress transition.
 
 ## 0.4.0
 Thu, 04 Jun 2026 15:47:28 GMT

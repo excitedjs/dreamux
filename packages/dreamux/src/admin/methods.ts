@@ -113,6 +113,16 @@ export const adminMethods: Record<string, AdminHandler> = {
       throw new AdminError('REACTION_FAILED', parseMessage(err));
     }
   },
+
+  // Read-only: lists a chat's known + trusted peer bots (issue #69). Reads the
+  // per-dispatcher chat-bots store, so it does not require a running slot — only
+  // a declared dispatcher.
+  'mcp.list_chat_bots': (server, params) => {
+    const id = mustDispatcherId(params);
+    mustExistingDispatcher(server, id);
+    const chatId = mustString(params, 'chat_id');
+    return server.listChatBotsFromMcp({ dispatcherId: id, chatId });
+  },
 };
 
 function mustString(

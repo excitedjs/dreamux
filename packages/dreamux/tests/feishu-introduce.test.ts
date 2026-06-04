@@ -22,8 +22,11 @@ import {
   introducedPeers,
 } from '../src/channel/introduce.js';
 import {
+  clearBaselineIfCurrent,
+  listChatBots,
   loadChatBots,
   observeKnownBot,
+  pendingBaseline,
   recordBotAdded,
   trustIntroducedBots,
   trustedBotIds,
@@ -192,5 +195,87 @@ describe('chat-bots store — awareness vs trust are separate', () => {
     expect(recordBotAdded('d1', 'chat-a', 'evt-1')).toBe(true);
     expect(recordBotAdded('d1', 'chat-a', 'evt-1')).toBe(false);
     expect(loadChatBots('d1').chats['chat-a']?.needsBaseline).toBe(true);
+  });
+});
+
+describe('chat-bots store — one-shot pending context (issue #69)', () => {
+  let root: string;
+  let previousHome: string | undefined;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'dreamux-chatbots-pending-'));
+    previousHome = process.env['HOME'];
+    process.env['HOME'] = join(root, 'home');
+    resetRuntimeConfig();
+  });
+
+  afterEach(() => {
+    if (previousHome === undefined) delete process.env['HOME'];
+    else process.env['HOME'] = previousHome;
+    resetRuntimeConfig();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('arms a generation-stamped pending baseline carrying the trusted bots', () => {
+    trustIntroducedBots('d1', 'chat-a', [{ openId: 'peer-a', name: 'Peer A' }]);
+    const pending = pendingBaseline('d1', 'chat-a');
+    expect(pending.needsBaseline).toBe(true);
+    expect(pending.generation).toBe(1);
+    expect(pending.trusted).toEqual([{ openId: 'peer-a', name: 'Peer A' }]);
+  });
+
+  it('only trusted (not passively known) bots ride the pending baseline', () => {
+    observeKnownBot('d1', 'chat-a', { openId: 'known-only', name: 'Known' });
+    trustIntroducedBots('d1', 'chat-a', [{ openId: 'peer-a', name: 'Peer A' }]);
+    expect(pendingBaseline('d1', 'chat-a').trusted).toEqual([
+      { openId: 'peer-a', name: 'Peer A' },
+    ]);
+  });
+
+  it('re-introducing an already-trusted bot does not re-arm the one-shot', () => {
+    trustIntroducedBots('d1', 'chat-a', [{ openId: 'peer-a' }]);
+    clearBaselineIfCurrent('d1', 'chat-a', pendingBaseline('d1', 'chat-a').generation);
+    expect(pendingBaseline('d1', 'chat-a').needsBaseline).toBe(false);
+    const added = trustIntroducedBots('d1', 'chat-a', [{ openId: 'peer-a' }]);
+    expect(added).toEqual([]);
+    expect(pendingBaseline('d1', 'chat-a').needsBaseline).toBe(false);
+  });
+
+  it('clears the flag when the generation still matches the snapshot', () => {
+    trustIntroducedBots('d1', 'chat-a', [{ openId: 'peer-a' }]);
+    const snapshot = pendingBaseline('d1', 'chat-a');
+    clearBaselineIfCurrent('d1', 'chat-a', snapshot.generation);
+    expect(pendingBaseline('d1', 'chat-a').needsBaseline).toBe(false);
+  });
+
+  it('does NOT clear when a newer event bumped the generation mid-enqueue', () => {
+    trustIntroducedBots('d1', 'chat-a', [{ openId: 'peer-a' }]);
+    const stale = pendingBaseline('d1', 'chat-a'); // generation 1
+    // A second /introduce arrives before the stale clear runs.
+    trustIntroducedBots('d1', 'chat-a', [{ openId: 'peer-b' }]); // generation 2
+    clearBaselineIfCurrent('d1', 'chat-a', stale.generation);
+    const after = pendingBaseline('d1', 'chat-a');
+    expect(after.needsBaseline).toBe(true);
+    expect(after.trusted).toEqual([{ openId: 'peer-a' }, { openId: 'peer-b' }]);
+  });
+
+  it('listChatBots returns known and trusted separately, with names', () => {
+    observeKnownBot('d1', 'chat-a', { openId: 'known-a', name: 'Known A' });
+    trustIntroducedBots('d1', 'chat-a', [{ openId: 'peer-a', name: 'Peer A' }]);
+    const listing = listChatBots('d1', 'chat-a');
+    expect(listing.known).toEqual([
+      { openId: 'known-a', name: 'Known A' },
+      { openId: 'peer-a', name: 'Peer A' },
+    ]);
+    expect(listing.trusted).toEqual([{ openId: 'peer-a', name: 'Peer A' }]);
+  });
+
+  it('returns empty listings/baseline for an unknown chat', () => {
+    expect(listChatBots('d1', 'nope')).toEqual({ known: [], trusted: [] });
+    expect(pendingBaseline('d1', 'nope')).toEqual({
+      needsBaseline: false,
+      generation: 0,
+      trusted: [],
+    });
   });
 });

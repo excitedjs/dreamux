@@ -44,8 +44,19 @@ export interface ChatBotsEntry {
   trusted: string[];
   /** Best-effort open_id → display name map for known/trusted bots. */
   names: Record<string, string>;
-  /** Set when the bot is added to this chat; consumed by a later baseline inject. */
+  /**
+   * Set when this chat has pending discovery context to inject once (a bot was
+   * added, or an `/introduce` newly trusted a bot). Consumed by the next
+   * delivered group message; see `pendingBaseline` / `clearBaselineIfCurrent`.
+   */
   needsBaseline: boolean;
+  /**
+   * Monotonic counter bumped every time `needsBaseline` is (re)set. The deliver
+   * path snapshots it before enqueue and only clears the flag if it is still
+   * current, so a newer `/introduce` / bot-added event arriving mid-enqueue is
+   * not clobbered by a stale clear (issue #69, generation-safe one-shot clear).
+   */
+  baselineGeneration: number;
   /** Recent bot-added event ids, for idempotent member-event handling. */
   seenEventIds: string[];
 }
@@ -60,12 +71,49 @@ export interface PeerBot {
   name?: string;
 }
 
+/** The pending one-shot discovery context for one chat (issue #69). */
+export interface PendingBaseline {
+  /** Whether this chat has discovery context waiting to be injected. */
+  needsBaseline: boolean;
+  /** Snapshot of the entry's generation, for a generation-safe clear. */
+  generation: number;
+  /** The chat's trusted peer bots (open_id + best-effort name). */
+  trusted: PeerBot[];
+}
+
+/** Known and trusted peer bots for one chat, for the `list_chat_bots` tool. */
+export interface ChatBotsListing {
+  known: PeerBot[];
+  trusted: PeerBot[];
+}
+
 export function defaultChatBotsState(): ChatBotsState {
   return { version: 1, chats: {} };
 }
 
 function emptyEntry(): ChatBotsEntry {
-  return { known: [], trusted: [], names: {}, needsBaseline: false, seenEventIds: [] };
+  return {
+    known: [],
+    trusted: [],
+    names: {},
+    needsBaseline: false,
+    baselineGeneration: 0,
+    seenEventIds: [],
+  };
+}
+
+/** Flag a chat as having pending discovery context, bumping its generation. */
+function markBaseline(entry: ChatBotsEntry): void {
+  entry.needsBaseline = true;
+  entry.baselineGeneration += 1;
+}
+
+/** Build PeerBot records (open_id + best-effort name) for a set of open_ids. */
+function peerBotsFrom(entry: ChatBotsEntry, openIds: string[]): PeerBot[] {
+  return openIds.map((openId) => {
+    const name = entry.names[openId];
+    return name !== undefined && name !== '' ? { openId, name } : { openId };
+  });
 }
 
 /**
@@ -144,8 +192,65 @@ export function trustIntroducedBots(
       changed = true;
     }
   }
+  // A newly trusted bot is pending discovery context for the next message
+  // (issue #69). Re-introducing already-trusted bots changes nothing, so it
+  // does not re-arm the one-shot.
+  if (added.length > 0) markBaseline(entry);
   if (changed) saveChatBots(dispatcherId, state);
   return added;
+}
+
+/**
+ * The chat's pending one-shot discovery context, snapshotted for a
+ * generation-safe clear (issue #69). The deliver path reads this before
+ * enqueue, injects the trusted bots when `needsBaseline`, and clears via
+ * `clearBaselineIfCurrent` only after a successful submission.
+ */
+export function pendingBaseline(
+  dispatcherId: string,
+  chatId: string,
+): PendingBaseline {
+  const entry = loadChatBots(dispatcherId).chats[chatId];
+  if (entry === undefined) {
+    return { needsBaseline: false, generation: 0, trusted: [] };
+  }
+  return {
+    needsBaseline: entry.needsBaseline,
+    generation: entry.baselineGeneration,
+    trusted: peerBotsFrom(entry, entry.trusted),
+  };
+}
+
+/**
+ * Clear the pending-context flag only if the chat's generation still matches
+ * the snapshot taken before enqueue. A newer `/introduce` / bot-added event
+ * that arrived mid-enqueue bumps the generation, so this no-ops rather than
+ * dropping the newer pending context (issue #69).
+ */
+export function clearBaselineIfCurrent(
+  dispatcherId: string,
+  chatId: string,
+  generation: number,
+): void {
+  const state = loadChatBots(dispatcherId);
+  const entry = state.chats[chatId];
+  if (entry === undefined || !entry.needsBaseline) return;
+  if (entry.baselineGeneration !== generation) return;
+  entry.needsBaseline = false;
+  saveChatBots(dispatcherId, state);
+}
+
+/** Known and trusted peer bots for one chat (the `list_chat_bots` tool). */
+export function listChatBots(
+  dispatcherId: string,
+  chatId: string,
+): ChatBotsListing {
+  const entry = loadChatBots(dispatcherId).chats[chatId];
+  if (entry === undefined) return { known: [], trusted: [] };
+  return {
+    known: peerBotsFrom(entry, entry.known),
+    trusted: peerBotsFrom(entry, entry.trusted),
+  };
 }
 
 /** The trust set the gate consults for one chat. */
@@ -170,7 +275,7 @@ export function recordBotAdded(
     entry.seenEventIds.push(eventId);
     while (entry.seenEventIds.length > MAX_SEEN_EVENT_IDS) entry.seenEventIds.shift();
   }
-  entry.needsBaseline = true;
+  markBaseline(entry);
   saveChatBots(dispatcherId, state);
   return true;
 }
@@ -204,6 +309,11 @@ function normalizeEntry(raw: unknown): ChatBotsEntry {
   entry.trusted = stringArray(obj['trusted']);
   entry.seenEventIds = stringArray(obj['seenEventIds']);
   entry.needsBaseline = obj['needsBaseline'] === true;
+  entry.baselineGeneration =
+    typeof obj['baselineGeneration'] === 'number' &&
+    Number.isFinite(obj['baselineGeneration'])
+      ? obj['baselineGeneration']
+      : 0;
   const names = obj['names'];
   if (names !== null && typeof names === 'object' && !Array.isArray(names)) {
     for (const [k, v] of Object.entries(names as Record<string, unknown>)) {

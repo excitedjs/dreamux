@@ -181,6 +181,22 @@ function feishuTools(): Array<Record<string, unknown>> {
         required: ['message_id', 'emoji'],
       },
     },
+    {
+      name: 'list_chat_bots',
+      description:
+        'List the peer bots known and trusted in a Feishu group chat (names + open_ids). Use to recover bot identities after a context compaction.',
+      inputSchema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          chat_id: {
+            type: 'string',
+            description: 'Feishu chat id from the inbound feishu_message block.',
+          },
+        },
+        required: ['chat_id'],
+      },
+    },
   ];
 }
 
@@ -210,6 +226,17 @@ async function callTool(
         },
         ctx.socketPath,
         'react',
+      );
+    }
+    if (call.name === 'list_chat_bots') {
+      return forwardToolCall(
+        'mcp.list_chat_bots',
+        {
+          dispatcher_id: ctx.dispatcherId,
+          ...listChatBotsArgs(call.arguments),
+        },
+        ctx.socketPath,
+        'list_chat_bots',
       );
     }
     return toolError(`unknown Feishu tool '${String(call.name)}'`);
@@ -281,6 +308,13 @@ function reactArgs(value: unknown): Record<string, unknown> {
   return {
     message_id: requireString(obj, 'message_id'),
     emoji: requireString(obj, 'emoji'),
+  };
+}
+
+function listChatBotsArgs(value: unknown): Record<string, unknown> {
+  const obj = asRecord(value, 'list_chat_bots arguments');
+  return {
+    chat_id: requireString(obj, 'chat_id'),
   };
 }
 

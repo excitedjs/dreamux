@@ -287,6 +287,11 @@ export interface FakeFeishuBot extends FeishuBot {
     messageId: string;
     reactionId: string;
   }>;
+  /** Combined add/remove timeline, in call order (tests assert ordering). */
+  readonly reactionOps: Array<
+    | { op: 'add'; messageId: string; emoji: string; reactionId: string }
+    | { op: 'remove'; messageId: string; reactionId: string }
+  >;
   inject(event: FeishuInboundEvent): Promise<void>;
   injectBotMemberAdded(event: FeishuBotMemberAddedEvent): Promise<void>;
   setSendError(err: Error | null): void;
@@ -317,6 +322,7 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
     messageId: string;
     reactionId: string;
   }> = [];
+  const reactionOps: FakeFeishuBot['reactionOps'] = [];
 
   return {
     appId,
@@ -340,6 +346,7 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
       }
       const reactionId = `reaction-fake-${nextReactionId++}`;
       reactions.push({ messageId, emoji, reactionId });
+      reactionOps.push({ op: 'add', messageId, emoji, reactionId });
       return reactionId;
     },
     async removeReaction(messageId: string, reactionId: string): Promise<void> {
@@ -347,6 +354,7 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
         throw removeReactionError;
       }
       removedReactions.push({ messageId, reactionId });
+      reactionOps.push({ op: 'remove', messageId, reactionId });
     },
     async close(): Promise<void> {
       routes = null;
@@ -359,6 +367,9 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
     },
     get removedReactions() {
       return removedReactions;
+    },
+    get reactionOps() {
+      return reactionOps;
     },
     async inject(event: FeishuInboundEvent): Promise<void> {
       if (routes === null) throw new Error('fake bot not started');
