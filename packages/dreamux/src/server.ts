@@ -9,10 +9,11 @@
  *   4. install SIGTERM/SIGINT handlers for graceful drain
  *
  * Current MVP: accepted inbound work is process-local. Restarting the server
- * drops queued and in-flight inbound messages instead of replaying them.
+ * drops in-flight inbound submissions instead of replaying them.
  */
 
 import { DispatcherRuntime } from './dispatcher/runtime.js';
+import type { InboundTurnInput } from './dispatcher/turn-manager.js';
 import type { CodexProcess, CodexProcessOptions } from './codex/supervisor.js';
 import type { CodexWsClient } from './codex/rpc.js';
 import {
@@ -45,6 +46,7 @@ import {
 import { createAdminSocketServer, type AdminSocketServer } from './admin/socket.js';
 
 export const RECEIVED_REACTION_EMOJI = 'GLANCE';
+export const IN_PROGRESS_REACTION_EMOJI = 'ON_IT';
 const MAX_PENDING_RECEIVED_REACTION_CLEARS = 1024;
 
 export interface ServerOptions {
@@ -87,8 +89,16 @@ interface DispatcherSlot {
 }
 
 interface DispatcherChannelState {
-  receivedReactions: Map<string, { chatId: string; reactionId: string }>;
+  inboundReactions: Map<string, InboundReactionLedgerEntry>;
   pendingReceivedReactionClears: Set<string>;
+}
+
+type InboundReactionState = 'received' | 'in_progress';
+
+interface InboundReactionLedgerEntry {
+  chatId: string;
+  reactionId: string;
+  state: InboundReactionState;
 }
 
 export interface ServerMcpReplyInput {
@@ -220,7 +230,7 @@ export class Server {
       ? this.opts.botFactory(row, botSecret)
       : createFeishuBot({ appId: row.bot_app_id, appSecret: botSecret });
     const channelState: DispatcherChannelState = {
-      receivedReactions: new Map(),
+      inboundReactions: new Map(),
       pendingReceivedReactionClears: new Set(),
     };
 
@@ -261,14 +271,37 @@ export class Server {
           );
           return;
         }
-        const queued = runtime.enqueueInbound({
+        const input: InboundTurnInput = {
           source_chat_id: event.chatId,
           source_message_id: event.messageId,
           sender_id: event.senderId,
           parsed_text: formatFeishuMessageForCodex(event),
+        };
+        const delivery = await runtime.enqueueInbound(input, {
+          onAccepted: async (acceptedInput) => {
+            await setInboundReaction(
+              id,
+              bot,
+              channelState,
+              acceptedInput,
+              RECEIVED_REACTION_EMOJI,
+              'received',
+            );
+          },
         });
-        if (queued) {
-          await addReceivedReaction(id, bot, channelState, event);
+        if (delivery.status === 'submitted') {
+          await setInboundReaction(
+            id,
+            bot,
+            channelState,
+            input,
+            IN_PROGRESS_REACTION_EMOJI,
+            'in_progress',
+          );
+        } else if (delivery.status === 'failed') {
+          console.error(
+            `[server] failed to submit Feishu inbound for dispatcher '${id}': ${delivery.error.message}`,
+          );
         }
       });
     } catch (err) {
@@ -327,7 +360,7 @@ export class Server {
       input.text,
     );
     if (input.messageId !== undefined) {
-      await clearReceivedReaction(
+      await clearInboundReaction(
         input.dispatcherId,
         slot.bot,
         slot.channelState,
@@ -386,63 +419,81 @@ export class Server {
   }
 }
 
-async function addReceivedReaction(
+async function setInboundReaction(
   dispatcherId: string,
   bot: FeishuBot,
   channelState: DispatcherChannelState,
-  event: FeishuInboundEvent,
+  input: InboundTurnInput,
+  emoji: string,
+  state: InboundReactionState,
 ): Promise<void> {
+  const messageId = input.source_message_id;
+  if (messageId === null || messageId === '') return;
+  if (channelState.pendingReceivedReactionClears.has(messageId)) return;
+
+  const previous = channelState.inboundReactions.get(messageId);
+  if (previous !== undefined) {
+    try {
+      await bot.removeReaction(messageId, previous.reactionId);
+    } catch (err) {
+      console.error(
+        `[server] failed to replace the ${previous.state} reaction for dispatcher '${dispatcherId}' message '${messageId}':`,
+        err,
+      );
+    }
+    channelState.inboundReactions.delete(messageId);
+  }
+  if (channelState.pendingReceivedReactionClears.has(messageId)) return;
+
   try {
-    const reactionId = await bot.addReaction(
-      event.messageId,
-      RECEIVED_REACTION_EMOJI,
-    );
+    const reactionId = await bot.addReaction(messageId, emoji);
     if (reactionId === '') {
       console.error(
-        `[server] Feishu returned no reaction_id for the received reaction in dispatcher '${dispatcherId}'`,
+        `[server] Feishu returned no reaction_id for the ${state} reaction in dispatcher '${dispatcherId}'`,
       );
-      channelState.pendingReceivedReactionClears.delete(event.messageId);
       return;
     }
-    channelState.receivedReactions.set(event.messageId, {
-      chatId: event.chatId,
-      reactionId,
-    });
-    if (channelState.pendingReceivedReactionClears.has(event.messageId)) {
-      await clearReceivedReaction(
-        dispatcherId,
-        bot,
-        channelState,
-        event.messageId,
-      );
+    if (channelState.pendingReceivedReactionClears.has(messageId)) {
+      try {
+        await bot.removeReaction(messageId, reactionId);
+      } catch (err) {
+        console.error(
+          `[server] failed to clear the late ${state} reaction for dispatcher '${dispatcherId}' message '${messageId}':`,
+          err,
+        );
+      }
+      return;
     }
+    channelState.inboundReactions.set(messageId, {
+      chatId: input.source_chat_id,
+      reactionId,
+      state,
+    });
   } catch (err) {
-    channelState.pendingReceivedReactionClears.delete(event.messageId);
     console.error(
-      `[server] failed to add the received reaction for dispatcher '${dispatcherId}':`,
+      `[server] failed to add the ${state} reaction for dispatcher '${dispatcherId}':`,
       err,
     );
   }
 }
 
-async function clearReceivedReaction(
+async function clearInboundReaction(
   dispatcherId: string,
   bot: FeishuBot,
   channelState: DispatcherChannelState,
   messageId: string,
 ): Promise<void> {
-  const reaction = channelState.receivedReactions.get(messageId);
+  rememberPendingReceivedReactionClear(channelState, messageId);
+  const reaction = channelState.inboundReactions.get(messageId);
   if (reaction === undefined) {
-    rememberPendingReceivedReactionClear(channelState, messageId);
     return;
   }
   try {
     await bot.removeReaction(messageId, reaction.reactionId);
-    channelState.receivedReactions.delete(messageId);
-    channelState.pendingReceivedReactionClears.delete(messageId);
+    channelState.inboundReactions.delete(messageId);
   } catch (err) {
     console.error(
-      `[server] failed to clear the received reaction for dispatcher '${dispatcherId}' message '${messageId}':`,
+      `[server] failed to clear the ${reaction.state} reaction for dispatcher '${dispatcherId}' message '${messageId}':`,
       err,
     );
   }

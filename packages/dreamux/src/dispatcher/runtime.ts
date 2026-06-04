@@ -35,7 +35,12 @@ import type {
   ThreadResumeResponse,
   ThreadStartResponse,
 } from '../codex/types.js';
-import { TurnManager, type InboundTurnInput } from './turn-manager.js';
+import {
+  TurnManager,
+  type InboundDeliveryHooks,
+  type InboundDeliveryResult,
+  type InboundTurnInput,
+} from './turn-manager.js';
 import { createFailFastApprovalHandler } from './approval.js';
 import {
   dispatcherCodexCwd,
@@ -264,13 +269,17 @@ export class DispatcherRuntime {
   }
 
   /**
-   * Queue any accepted inbound message arriving for this dispatcher. Called by
-   * the Feishu inbound layer. Returns false if this process already saw the
-   * message_id.
+   * Submit any accepted inbound message arriving for this dispatcher. Called by
+   * the Feishu inbound layer.
    */
-  enqueueInbound(input: InboundTurnInput): boolean {
-    if (this.turnManager === null) return false;
-    return this.turnManager.enqueue(input);
+  async enqueueInbound(
+    input: InboundTurnInput,
+    hooks: InboundDeliveryHooks = {},
+  ): Promise<InboundDeliveryResult> {
+    if (this.turnManager === null) {
+      return { status: 'failed', error: new Error('turn manager not initialized') };
+    }
+    return this.turnManager.enqueue(input, hooks);
   }
 
   /** Graceful stop: stop accepting work, reap codex child. */

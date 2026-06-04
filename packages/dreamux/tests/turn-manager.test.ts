@@ -4,20 +4,34 @@ import { TurnManager } from '../src/dispatcher/turn-manager.js';
 import type { NotificationHandler } from '../src/codex/rpc.js';
 import type { ServerNotification, TurnStartResponse } from '../src/codex/types.js';
 
-describe('TurnManager in-memory queue', () => {
-  it('coalesces same-chat messages enqueued in the same tick without outbound', async () => {
+describe('TurnManager inbound submission', () => {
+  it('submits every accepted message through turn/start without coalescing', async () => {
     const client = new FakeCodexClient();
     const manager = new TurnManager({
       dispatcherId: 'flow',
       getThreadId: () => 'thread-1',
       client: client as never,
     });
+    const accepted: string[] = [];
 
-    expect(manager.enqueue(input('msg-1', 'first'))).toBe(true);
-    expect(manager.enqueue(input('msg-2', 'second'))).toBe(true);
+    await expect(
+      manager.enqueue(input('msg-1', 'first'), {
+        onAccepted: (acceptedInput) => {
+          accepted.push(acceptedInput.source_message_id);
+        },
+      }),
+    ).resolves.toEqual({ status: 'submitted', turnId: 'turn-1' });
+    await expect(
+      manager.enqueue(input('msg-2', 'second'), {
+        onAccepted: (acceptedInput) => {
+          accepted.push(acceptedInput.source_message_id);
+        },
+      }),
+    ).resolves.toEqual({ status: 'submitted', turnId: 'turn-2' });
 
-    await waitFor(() => client.inputs.length === 1);
-    expect(client.inputs).toEqual(['first\n\nsecond']);
+    expect(accepted).toEqual(['msg-1', 'msg-2']);
+    expect(client.methods).toEqual(['turn/start', 'turn/start']);
+    expect(client.inputs).toEqual(['first', 'second']);
   });
 
   it('bounds the process-local message_id dedupe window', async () => {
@@ -29,20 +43,21 @@ describe('TurnManager in-memory queue', () => {
       messageIdDedupeWindow: 2,
     });
 
-    expect(manager.enqueue(input('msg-1', 'first'))).toBe(true);
-    await waitFor(() => client.inputs.length === 1);
+    await expect(manager.enqueue(input('msg-1', 'first'))).resolves
+      .toMatchObject({ status: 'submitted' });
 
-    expect(manager.enqueue(input('msg-2', 'second'))).toBe(true);
-    await waitFor(() => client.inputs.length === 2);
+    await expect(manager.enqueue(input('msg-2', 'second'))).resolves
+      .toMatchObject({ status: 'submitted' });
 
-    expect(manager.enqueue(input('msg-3', 'third'))).toBe(true);
-    await waitFor(() => client.inputs.length === 3);
+    await expect(manager.enqueue(input('msg-3', 'third'))).resolves
+      .toMatchObject({ status: 'submitted' });
 
-    expect(manager.enqueue(input('msg-2', 'second still in window'))).toBe(false);
-    expect(manager.enqueue(input('msg-1', 'first redelivered after eviction')))
-      .toBe(true);
+    await expect(manager.enqueue(input('msg-2', 'second still in window')))
+      .resolves.toEqual({ status: 'duplicate' });
+    await expect(
+      manager.enqueue(input('msg-1', 'first redelivered after eviction')),
+    ).resolves.toMatchObject({ status: 'submitted' });
 
-    await waitFor(() => client.inputs.length === 4);
     expect(client.inputs).toEqual([
       'first',
       'second',
@@ -63,6 +78,7 @@ function input(messageId: string, text: string) {
 
 class FakeCodexClient {
   readonly inputs: string[] = [];
+  readonly methods: string[] = [];
   private readonly handlers: NotificationHandler[] = [];
   private nextTurnId = 1;
 
@@ -72,6 +88,7 @@ class FakeCodexClient {
 
   async request<R>(method: string, params: unknown): Promise<R> {
     if (method !== 'turn/start') throw new Error(`unexpected method ${method}`);
+    this.methods.push(method);
     const p = params as {
       threadId: string;
       input: Array<{ text: string }>;
@@ -103,16 +120,4 @@ class FakeCodexClient {
   private emit(notification: ServerNotification): void {
     for (const handler of this.handlers) handler(notification);
   }
-}
-
-async function waitFor(
-  predicate: () => boolean,
-  timeoutMs = 1000,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error('waitFor timed out');
 }

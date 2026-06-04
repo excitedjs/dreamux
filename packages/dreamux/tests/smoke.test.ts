@@ -3,7 +3,7 @@
  *
  * Covers the issue #2 verification path against a fake codex + fake feishu:
  *   - happy path: inbound → turn injection, with MCP reply as the only outbound
- *   - in-memory queue: same-chat coalescing + serialized turns
+ *   - inbound delivery: one accepted Feishu message → one turn/start
  *   - thread/resume on restart (in-process)
  *   - thread/resume failure → visible degradation (last_lost_thread_id set)
  *   - MCP reply sends through the serve-owned bot
@@ -21,7 +21,11 @@ import {
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { RECEIVED_REACTION_EMOJI, Server } from '../src/server.js';
+import {
+  IN_PROGRESS_REACTION_EMOJI,
+  RECEIVED_REACTION_EMOJI,
+  Server,
+} from '../src/server.js';
 import {
   CodexProcess,
   type CodexProcessExit,
@@ -281,6 +285,17 @@ describe('dreamux MVP smoke', () => {
         emoji: RECEIVED_REACTION_EMOJI,
         reactionId: 'reaction-fake-1',
       },
+      {
+        messageId: 'msg-1-id',
+        emoji: IN_PROGRESS_REACTION_EMOJI,
+        reactionId: 'reaction-fake-2',
+      },
+    ]);
+    expect(bot.removedReactions).toEqual([
+      {
+        messageId: 'msg-1-id',
+        reactionId: 'reaction-fake-1',
+      },
     ]);
 
     // Dispatcher's thread is persisted across server restart.
@@ -416,7 +431,7 @@ describe('dreamux MVP smoke', () => {
     await server.start();
 
     await bot.inject(fakeInbound('chat-group-a', 'needs reply', 'msg-mcp-reply'));
-    await waitFor(() => bot.reactions.length === 1);
+    await waitFor(() => bot.reactions.length === 2);
 
     const result = await sendAdminRequest(
       'mcp.reply',
@@ -447,6 +462,10 @@ describe('dreamux MVP smoke', () => {
       {
         messageId: 'msg-mcp-reply',
         reactionId: 'reaction-fake-1',
+      },
+      {
+        messageId: 'msg-mcp-reply',
+        reactionId: 'reaction-fake-2',
       },
     ]);
   });
@@ -507,6 +526,13 @@ describe('dreamux MVP smoke', () => {
     expect(bot.removedReactions).toEqual([
       {
         messageId: 'msg-race-reaction',
+        reactionId: 'reaction-fake-1',
+      },
+    ]);
+    expect(bot.reactions).toEqual([
+      {
+        messageId: 'msg-race-reaction',
+        emoji: RECEIVED_REACTION_EMOJI,
         reactionId: 'reaction-fake-1',
       },
     ]);
@@ -670,6 +696,11 @@ describe('dreamux MVP smoke', () => {
     expect(access.observed_chats).toEqual(['chat-dm']);
     expect(bot.reactions.map((reaction) => reaction.messageId)).toEqual([
       'msg-dm',
+      'msg-dm',
+    ]);
+    expect(bot.reactions.map((reaction) => reaction.emoji)).toEqual([
+      RECEIVED_REACTION_EMOJI,
+      IN_PROGRESS_REACTION_EMOJI,
     ]);
   });
 
@@ -690,18 +721,21 @@ describe('dreamux MVP smoke', () => {
     expect(access.warnings).toEqual([TRUST_DOMAIN_WARNING]);
     expect(bot.reactions.map((reaction) => reaction.messageId)).toEqual([
       'msg-chat-a',
+      'msg-chat-a',
+      'msg-chat-b',
       'msg-chat-b',
     ]);
     await waitFor(() => fake.turnsHandled === 2);
     expect(bot.sentMessages).toEqual([]);
   });
 
-  it('in-memory queue coalesces pending same-chat messages behind a running turn', async () => {
-    // Restart fake with a slow turn so messages can actually pile up.
+  it('submits each pending inbound with turn/start while Codex folds active-turn input', async () => {
+    // Restart fake with a slow active turn so later submissions fold into it.
     await fake.close();
     codexInputs = [];
     fake = await startFakeCodex({
-      turnDelayMs: 80,
+      activeTurnFolding: true,
+      turnDelayMs: 300,
       replyFor: captureAndEchoCodexInput(codexInputs),
     });
 
@@ -717,13 +751,16 @@ describe('dreamux MVP smoke', () => {
     await bot.inject(fakeInbound('chat-group-b', 'batch-1', 'msg-b1'));
     await bot.inject(fakeInbound('chat-group-b', 'batch-2', 'msg-b2'));
 
-    await waitFor(() => fake.turnsHandled === 2, 6000);
-    expect(fake.turnsHandled).toBe(2);
-    expect(codexInputs).toHaveLength(2);
+    await waitFor(() => fake.turnsHandled === 3, 6000);
+    await waitFor(() => fake.turnsCompleted === 1, 6000);
+    expect(fake.turnsHandled).toBe(3);
+    expect(fake.methodLog.filter((method) => method === 'turn/start'))
+      .toHaveLength(3);
+    expect(codexInputs).toHaveLength(1);
     expect(codexInputs[0]).toContain('running');
-    expect(feishuMessageBlockCount(codexInputs[1] ?? '')).toBe(2);
-    expect(codexInputs[1]).toContain('batch-1');
-    expect(codexInputs[1]).toContain('batch-2');
+    expect(feishuMessageBlockCount(codexInputs[0] ?? '')).toBe(3);
+    expect(codexInputs[0]).toContain('batch-1');
+    expect(codexInputs[0]).toContain('batch-2');
     expect(bot.sentMessages).toEqual([]);
   });
 
@@ -742,8 +779,12 @@ describe('dreamux MVP smoke', () => {
     await waitFor(() => fake.turnsHandled === 1);
     await sleep(120);
     expect(fake.turnsHandled).toBe(1);
-    expect(bot.reactions).toHaveLength(1);
+    expect(bot.reactions).toHaveLength(2);
     expect(bot.reactions[0]?.messageId).toBe('msg-same');
+    expect(bot.reactions[1]).toMatchObject({
+      messageId: 'msg-same',
+      emoji: IN_PROGRESS_REACTION_EMOJI,
+    });
   });
 
   it('thread/resume failure produces visible degradation, not silent loss', async () => {
@@ -793,6 +834,36 @@ describe('dreamux MVP smoke', () => {
     await waitFor(() => fake.turnsHandled === 1);
     await sleep(120);
     expect(bot.sentMessages).toEqual([]);
+  });
+
+  it('keeps only the received reaction when turn/start is refused before accept', async () => {
+    await fake.close();
+    codexInputs = [];
+    fake = await startFakeCodex({
+      failTurnStart: true,
+      replyFor: captureAndEchoCodexInput(codexInputs),
+    });
+
+    server = buildServer({ runtimeDir, fake, bot });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+    await server.start();
+
+    await bot.inject(fakeInbound('chat-group-a', 'will fail', 'msg-start-fail'));
+
+    await sleep(120);
+    expect(fake.turnsHandled).toBe(0);
+    expect(bot.reactions).toEqual([
+      {
+        messageId: 'msg-start-fail',
+        emoji: RECEIVED_REACTION_EMOJI,
+        reactionId: 'reaction-fake-1',
+      },
+    ]);
+    expect(bot.removedReactions).toEqual([]);
   });
 
   // PR fix/codex-0134-compat: the daemon expects an LSP-style init handshake

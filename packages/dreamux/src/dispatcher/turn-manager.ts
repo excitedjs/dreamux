@@ -1,16 +1,14 @@
 /**
- * Per-dispatcher in-memory turn worker.
+ * Per-dispatcher in-memory inbound submitter.
  *
  * Contract:
- *   - one serialized worker per dispatcher;
  *   - accepted inbound messages are not persisted;
- *   - consecutive pending messages from the same chat are coalesced into one
- *     Codex turn;
  *   - Feishu message_id redelivery is deduped within this server process;
+ *   - one accepted inbound message becomes one Codex `turn/start` submission;
  *   - Codex text output alone does not send anything to Feishu.
  */
 
-import { runTurn } from '../codex/events.js';
+import { submitTurnStart } from '../codex/events.js';
 import type { CodexWsClient } from '../codex/rpc.js';
 
 export const DEFAULT_MESSAGE_ID_DEDUPE_WINDOW = 1024;
@@ -25,9 +23,18 @@ export interface InboundTurnInput extends InboundTurnSource {
   parsed_text: string;
 }
 
-interface TurnBatch extends InboundTurnSource {
-  id: number;
-  messages: InboundTurnInput[];
+export type InboundDeliveryResult =
+  | { status: 'duplicate' }
+  | { status: 'stopped' }
+  | { status: 'submitted'; turnId: string }
+  | { status: 'failed'; error: Error };
+
+export interface InboundDeliveryHooks {
+  /**
+   * Called after process-local dedupe accepts the message and before
+   * `turn/start` is submitted.
+   */
+  onAccepted?: (input: InboundTurnInput) => void | Promise<void>;
 }
 
 export interface TurnManagerOptions {
@@ -47,14 +54,9 @@ export interface TurnManagerOptions {
 }
 
 export class TurnManager {
-  private readonly queue: TurnBatch[] = [];
   private readonly seenMessageIds = new Set<string>();
   private readonly seenMessageIdOrder: string[] = [];
-  private running = false;
   private stopped = false;
-  private drainScheduled = false;
-  private wakeup: (() => void) | null = null;
-  private nextBatchId = 1;
   private readonly log: NonNullable<TurnManagerOptions['log']>;
   private readonly messageIdDedupeWindow: number;
 
@@ -71,103 +73,63 @@ export class TurnManager {
   }
 
   /**
-   * Queue one accepted inbound message. Returns false when the message_id was
-   * already seen in this server process.
+   * Submit one accepted inbound message to Codex. Returns duplicate when this
+   * process already saw the message_id.
    */
-  enqueue(input: InboundTurnInput): boolean {
-    if (this.stopped) return false;
-    if (!this.rememberMessageId(input.source_message_id)) return false;
-
-    const pending = this.queue.find(
-      (batch) => batch.source_chat_id === input.source_chat_id,
-    );
-    if (pending !== undefined) {
-      pending.messages.push(input);
-      pending.source_message_id = input.source_message_id;
-      pending.sender_id = input.sender_id;
-    } else {
-      this.queue.push({
-        id: this.nextBatchId++,
-        source_chat_id: input.source_chat_id,
-        source_message_id: input.source_message_id,
-        sender_id: input.sender_id,
-        messages: [input],
-      });
+  async enqueue(
+    input: InboundTurnInput,
+    hooks: InboundDeliveryHooks = {},
+  ): Promise<InboundDeliveryResult> {
+    if (this.stopped) return { status: 'stopped' };
+    if (!this.rememberMessageId(input.source_message_id)) {
+      return { status: 'duplicate' };
     }
 
-    this.notify();
-    return true;
-  }
+    await this.notifyAccepted(input, hooks);
 
-  /** Notify the worker that new work may be available. */
-  private notify(): void {
-    if (this.stopped) return;
-    if (this.wakeup !== null) {
-      const w = this.wakeup;
-      this.wakeup = null;
-      w();
-      return;
-    }
-    if (this.running || this.drainScheduled) return;
-    this.drainScheduled = true;
-    setTimeout(() => {
-      this.drainScheduled = false;
-      if (!this.stopped) void this.drainLoop();
-    }, 0);
-  }
-
-  /** Drain queued batches until the queue is empty or we're stopped. */
-  private async drainLoop(): Promise<void> {
-    if (this.running) return;
-    this.running = true;
-    try {
-      while (!this.stopped) {
-        const batch = this.queue.shift();
-        if (batch === undefined) {
-          await this.waitForNotify();
-          if (this.stopped) return;
-          continue;
-        }
-        await this.processBatch(batch);
-      }
-    } finally {
-      this.running = false;
-    }
-  }
-
-  private waitForNotify(): Promise<void> {
-    return new Promise<void>((res) => {
-      this.wakeup = res;
-    });
-  }
-
-  private async processBatch(batch: TurnBatch): Promise<void> {
     const threadId = this.opts.getThreadId();
     if (threadId === null) {
-      this.log('error', `turn batch ${batch.id} dequeued without thread_id`);
-      return;
+      const error = new Error('inbound submitted without thread_id');
+      this.log('error', error.message);
+      return { status: 'failed', error };
     }
 
     try {
-      await runTurn(
+      const res = await submitTurnStart(
         this.opts.client,
         threadId,
-        batchPrompt(batch),
+        input.parsed_text,
         this.opts.turnCwd ?? null,
       );
+      return { status: 'submitted', turnId: res.turn.id };
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      this.log('error', `turn execution failed for batch ${batch.id}: ${msg}`);
+      const error = err instanceof Error ? err : new Error(String(err));
+      this.log(
+        'error',
+        `turn/start submission failed for message ${input.source_message_id ?? '<none>'}: ${error.message}`,
+        error,
+      );
+      return { status: 'failed', error };
     }
   }
 
   async stop(): Promise<void> {
     this.stopped = true;
-    this.queue.length = 0;
-    if (this.wakeup !== null) {
-      const w = this.wakeup;
-      this.wakeup = null;
-      w();
+  }
+
+  private async notifyAccepted(
+    input: InboundTurnInput,
+    hooks: InboundDeliveryHooks,
+  ): Promise<void> {
+    if (hooks.onAccepted === undefined) return;
+    try {
+      await hooks.onAccepted(input);
+    } catch (err) {
+      this.log(
+        'warn',
+        `accepted-inbound hook failed for message ${input.source_message_id ?? '<none>'}`,
+        err,
+      );
     }
   }
 
@@ -182,8 +144,4 @@ export class TurnManager {
     }
     return true;
   }
-}
-
-function batchPrompt(batch: TurnBatch): string {
-  return batch.messages.map((message) => message.parsed_text).join('\n\n');
 }

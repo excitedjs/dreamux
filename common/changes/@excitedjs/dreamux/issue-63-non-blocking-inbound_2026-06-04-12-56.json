@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux",
+      "comment": "Submit accepted Feishu inbound with non-blocking turn/start delivery and three-state reactions.",
+      "type": "patch"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "YourWildDad@users.noreply.github.com"
+}

@@ -75,6 +75,26 @@ export function subscribeTurnCollection(
 }
 
 /**
+ * Send a `turn/start` request and resolve once Codex accepts the submission.
+ * This is the production Feishu inbound primitive: it intentionally does not
+ * wait for `turn/completed`.
+ */
+export async function submitTurnStart(
+  client: CodexWsClient,
+  threadId: string,
+  prompt: string,
+  cwd: string | null,
+): Promise<TurnStartResponse> {
+  const input: UserInput[] = [
+    { type: 'text', text: prompt, text_elements: [] },
+  ];
+  return client.request<TurnStartResponse>(
+    'turn/start',
+    cwd === null ? { threadId, input } : { threadId, input, cwd },
+  );
+}
+
+/**
  * Send a `turn/start` request and await `turn/completed`.
  * Returns the collected turn, or throws on RPC failure.
  */
@@ -85,13 +105,7 @@ export async function runTurn(
   cwd: string | null,
 ): Promise<CollectedTurn> {
   const collector = subscribeTurnCollection(client, threadId);
-  const input: UserInput[] = [
-    { type: 'text', text: prompt, text_elements: [] },
-  ];
-  await client.request<TurnStartResponse>(
-    'turn/start',
-    cwd === null ? { threadId, input } : { threadId, input, cwd },
-  );
+  await submitTurnStart(client, threadId, prompt, cwd);
   return collector.awaitTurn();
 }
 

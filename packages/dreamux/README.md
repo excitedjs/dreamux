@@ -214,15 +214,18 @@ node common/scripts/install-run-rush.js test
 ```
 
 - `tests/smoke.test.ts` — fake-Codex dispatcher behavior: access gate,
-  in-memory turn serialization/coalescing/dedupe, MCP reply-only outbound,
-  thread resume, app-server restart behavior, and approval fail-fast.
+  per-message turn/start inbound submission, process-local dedupe, reaction
+  tri-state, MCP reply-only outbound, thread resume, app-server restart
+  behavior, and approval fail-fast.
 - `tests/bin-launcher.test.ts` — real launcher and repo-root shim behavior from
   arbitrary cwd and through symlinks.
 - `tests/doctor.test.ts` — standalone doctor checks for config, Codex home,
   services, and dispatcher workspace skill state.
-- `tests/codex-0135-live.test.ts` and `tests/codex-0136-mcp-live.test.ts` —
-  real Codex app-server compatibility checks. Set `DREAMUX_SKIP_LIVE_CODEX=1`
-  only when no Codex binary is available locally.
+- `tests/codex-live.test.ts` — real Codex app-server compatibility checks,
+  plus the issue #63 mid-turn model gate. Set `DREAMUX_SKIP_LIVE_CODEX=1` only
+  when no Codex binary is available locally. Public CI loud-skips the model
+  gate unless `DREAMUX_RUN_LIVE_MODEL_GATE=1` is set in an environment with
+  usable Codex model auth.
 
 ## License
 

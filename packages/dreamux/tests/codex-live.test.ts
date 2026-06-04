@@ -16,6 +16,11 @@
  * **Escape hatch**: set `DREAMUX_SKIP_LIVE_CODEX=1` to explicitly opt out
  * (e.g. dev machines without codex, or pre-merge sandboxes). The skip
  * emits a loud `console.warn` so it's visible in test output.
+ *
+ * The issue #63 mid-turn model gate needs a usable Codex model login, not just
+ * the app-server binary. It runs by default outside CI. CI loud-skips that one
+ * gate unless `DREAMUX_RUN_LIVE_MODEL_GATE=1` is set, because public CI cannot
+ * assume an operator's interactive Codex auth is available.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -25,14 +30,29 @@ import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 
 import { CodexProcess } from '../src/codex/supervisor.js';
-import { CodexWsClient } from '../src/codex/rpc.js';
+import { CodexWsClient, type CodexWsClientOptions } from '../src/codex/rpc.js';
 import { performInitializeHandshake } from '../src/codex/handshake.js';
 import { feishuMcpCodexArgs } from '../src/codex/mcp-config.js';
 import { codexArgsToCli, parseCodexArgs } from '../src/runtime/codex-args.js';
 import { dreamuxBinPath } from '../src/runtime/package-bin.js';
-import type { ThreadStartResponse } from '../src/codex/types.js';
+import {
+  IN_PROGRESS_REACTION_EMOJI,
+  RECEIVED_REACTION_EMOJI,
+  Server,
+} from '../src/server.js';
+import {
+  createFakeFeishuBot,
+  type FakeFeishuBot,
+  type FeishuInboundEvent,
+} from '../src/feishu/bot.js';
+import { BUILT_IN_DEFAULTS, type DreamuxConfig } from '../src/runtime/config.js';
+import type {
+  ServerNotification,
+  ThreadStartResponse,
+} from '../src/codex/types.js';
 
 export const SKIP_ENV = 'DREAMUX_SKIP_LIVE_CODEX';
+export const MODEL_GATE_ENV = 'DREAMUX_RUN_LIVE_MODEL_GATE';
 
 export type Detection =
   | { state: 'ok'; version: string }
@@ -88,9 +108,158 @@ interface McpServerStatusListResponse {
   }>;
 }
 
+interface RecordedRequest {
+  method: string;
+  params: unknown;
+  sentAt: number;
+  ackedAt: number | null;
+  result: unknown;
+  error: string | null;
+}
+
+interface RecordedNotification {
+  at: number;
+  notification: ServerNotification;
+}
+
+class RecordingCodexWsClient extends CodexWsClient {
+  readonly requests: RecordedRequest[] = [];
+  readonly notifications: RecordedNotification[] = [];
+
+  constructor(opts: CodexWsClientOptions) {
+    super(opts);
+    this.onNotification((notification) => {
+      this.notifications.push({ at: Date.now(), notification });
+    });
+  }
+
+  override async request<R = unknown>(
+    method: string,
+    params: unknown,
+  ): Promise<R> {
+    const record: RecordedRequest = {
+      method,
+      params,
+      sentAt: Date.now(),
+      ackedAt: null,
+      result: null,
+      error: null,
+    };
+    this.requests.push(record);
+    try {
+      const result = await super.request<R>(method, params);
+      record.ackedAt = Date.now();
+      record.result = result;
+      return result;
+    } catch (err) {
+      record.ackedAt = Date.now();
+      record.error = err instanceof Error ? err.message : String(err);
+      throw err;
+    }
+  }
+}
+
+function fakeInbound(
+  chatId: string,
+  text: string,
+  messageId: string,
+): FeishuInboundEvent {
+  return {
+    messageId,
+    chatId,
+    chatType: 'group',
+    senderId: 'sender-live',
+    senderType: 'user',
+    senderName: 'Live Tester',
+    messageType: 'text',
+    rawContent: JSON.stringify({ text }),
+    parsedText: text,
+    mentions: [
+      {
+        key: '@_user_1',
+        id: { open_id: 'fake-open-id-app-live' },
+        name: 'Dispatcher',
+      },
+    ],
+    createTime: String(Date.now()),
+    raw: { event: { message: { chat_id: chatId, message_id: messageId } } },
+  };
+}
+
+function liveConfig(dispatcherCwd: string, codexHomeEnv: string): DreamuxConfig {
+  return {
+    ...BUILT_IN_DEFAULTS,
+    codex: {
+      ...BUILT_IN_DEFAULTS.codex,
+      sandbox_mode: 'danger-full-access',
+      initialize_timeout_ms: 15_000,
+    },
+    dispatchers: [
+      {
+        id: 'live',
+        cwd: dispatcherCwd,
+        enabled: true,
+        feishu: {
+          app_id: 'app-live',
+          app_secret: 'secret-server-only',
+        },
+        codex: {
+          approval_policy: null,
+          sandbox_mode: null,
+          extra_args: [],
+          extra_env: {
+            HOME: codexHomeEnv,
+          },
+        },
+      },
+    ],
+  };
+}
+
+async function waitFor(
+  predicate: () => boolean,
+  timeoutMs = 10_000,
+  label = 'condition',
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`waitFor timed out: ${label}`);
+}
+
+function notifications(
+  client: RecordingCodexWsClient,
+  method: string,
+): RecordedNotification[] {
+  return client.notifications.filter(
+    (entry) => entry.notification.method === method,
+  );
+}
+
+function hasCommandExecutionStarted(client: RecordingCodexWsClient): boolean {
+  return notifications(client, 'item/started').some((entry) => {
+    const params = entry.notification.params;
+    if (params === null || typeof params !== 'object') return false;
+    const item = (params as Record<string, unknown>)['item'];
+    return (
+      item !== null &&
+      typeof item === 'object' &&
+      (item as Record<string, unknown>)['type'] === 'commandExecution'
+    );
+  });
+}
+
+function turnStartRequests(client: RecordingCodexWsClient): RecordedRequest[] {
+  return client.requests.filter((request) => request.method === 'turn/start');
+}
+
 describe('codex live integration', () => {
   const skipRequested = process.env[SKIP_ENV] === '1';
   const detection = detectCodex();
+  const runModelGate =
+    process.env[MODEL_GATE_ENV] === '1' || process.env['CI'] !== 'true';
 
   if (skipRequested) {
     // Opt-in skip — loud so it can't be missed in CI / local output.
@@ -118,6 +287,13 @@ describe('codex live integration', () => {
   }
 
   // From here on we know codex is on PATH and reports a parseable version.
+  if (!runModelGate) {
+    console.warn(
+      `[codex-live] issue #63 mid-turn model gate SKIPPED in CI. ` +
+        `Set ${MODEL_GATE_ENV}=1 in an environment with usable Codex model auth ` +
+        `to verify the real model/tool folding path.`,
+    );
+  }
 
   it(
     `spawns codex ${detection.version}, completes init handshake, starts a thread`,
@@ -235,6 +411,142 @@ describe('codex live integration', () => {
       }
     },
     30_000,
+  );
+
+  (runModelGate ? it : it.skip)(
+    `folds mid-turn Feishu inbound submitted via turn/start and completes reaction tri-state`,
+    async () => {
+      if (!versionAtLeast(detection.version, '0.136.0')) {
+        throw new Error(
+          `dreamux's issue #63 live gate requires codex >= 0.136.0; detected ${detection.version}`,
+        );
+      }
+
+      const dreamuxBin = dreamuxBinPath();
+      if (!isAbsolute(dreamuxBin) || !existsSync(dreamuxBin)) {
+        throw new Error(
+          `dreamux issue #63 live gate requires an absolute built dreamux bin path; got ${dreamuxBin}`,
+        );
+      }
+
+      const operatorHome = homedir();
+      const previousHome = process.env['HOME'];
+      const previousCodexHome = process.env['CODEX_HOME'];
+      const dir = mkdtempSync(join(operatorHome, '.dreamux-issue63-live-'));
+      const runtimeHome = join(dir, 'home');
+      const dispatcherCwd = join(dir, 'cwd');
+      const adminSocket = join(dir, 'admin.sock');
+      const bot = createFakeFeishuBot('app-live');
+      let client: RecordingCodexWsClient | null = null;
+      let server: Server | null = null;
+
+      process.env['HOME'] = runtimeHome;
+      process.env['CODEX_HOME'] = previousCodexHome ?? join(operatorHome, '.codex');
+
+      try {
+        server = new Server({
+          config: liveConfig(dispatcherCwd, operatorHome),
+          adminSocketPath: adminSocket,
+          skipBotSecret: true,
+          botFactory: () => bot,
+          codexClientFactory: (socketPath) => {
+            client = new RecordingCodexWsClient({ socketPath });
+            return client;
+          },
+          codexHomeDoctor: () => {
+            /* real Codex auth is supplied through CODEX_HOME above */
+          },
+        });
+        await server.start();
+        expect(client).not.toBeNull();
+        const liveClient = client!;
+        const marker = `ISSUE63_LIVE_MARKER_${Date.now()}`;
+        const startMessageId = 'msg-live-start';
+        const markerMessageId = 'msg-live-marker';
+        const startPrompt = [
+          'Integration gate for dreamux issue #63.',
+          'Do exactly this sequence:',
+          '1. First call exec_command with cmd "sleep 6; echo issue63-sleep-done" and wait until it completes.',
+          '2. After that command returns, inspect any later Feishu inbound message folded into this same turn.',
+          '3. When you see a later message containing a token that starts with ISSUE63_LIVE_MARKER_, call the Feishu MCP reply tool.',
+          '4. Reply to that later message, not this setup message, and include the marker token verbatim in the reply text.',
+          'Do not send any plain assistant answer before the Feishu MCP reply call.',
+        ].join('\n');
+
+        await bot.inject(fakeInbound('chat-live', startPrompt, startMessageId));
+        await waitFor(
+          () => turnStartRequests(liveClient).length === 1,
+          10_000,
+          'first turn/start accepted',
+        );
+        await waitFor(
+          () => hasCommandExecutionStarted(liveClient),
+          45_000,
+          'command execution started before marker injection',
+        );
+        expect(notifications(liveClient, 'turn/completed')).toHaveLength(0);
+
+        await bot.inject(
+          fakeInbound(
+            'chat-live',
+            `Please handle this folded marker now: ${marker}`,
+            markerMessageId,
+          ),
+        );
+        const markerTurnStart = turnStartRequests(liveClient)[1];
+        expect(markerTurnStart).toBeDefined();
+        expect(markerTurnStart!.ackedAt).not.toBeNull();
+        expect(notifications(liveClient, 'turn/completed')).toHaveLength(0);
+
+        await waitFor(
+          () => bot.sentMessages.some((message) => message.text.includes(marker)),
+          120_000,
+          'model replied through Feishu MCP with folded marker',
+        );
+
+        const markerReply = bot.sentMessages.find((message) =>
+          message.text.includes(marker),
+        );
+        expect(markerReply).toMatchObject({
+          chatId: 'chat-live',
+          target: {
+            chatId: 'chat-live',
+            replyToMessageId: markerMessageId,
+          },
+        });
+
+        await waitFor(
+          () => notifications(liveClient, 'turn/completed').length >= 1,
+          30_000,
+          'active turn completed',
+        );
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        expect(turnStartRequests(liveClient)).toHaveLength(2);
+        expect(notifications(liveClient, 'turn/completed')).toHaveLength(1);
+
+        const markerReactions = bot.reactions.filter(
+          (reaction) => reaction.messageId === markerMessageId,
+        );
+        expect(markerReactions.map((reaction) => reaction.emoji)).toEqual([
+          RECEIVED_REACTION_EMOJI,
+          IN_PROGRESS_REACTION_EMOJI,
+        ]);
+        const markerRemoved = bot.removedReactions.filter(
+          (reaction) => reaction.messageId === markerMessageId,
+        );
+        expect(markerRemoved.map((reaction) => reaction.reactionId)).toEqual(
+          markerReactions.map((reaction) => reaction.reactionId),
+        );
+      } finally {
+        await server?.shutdown();
+        if (previousHome === undefined) delete process.env['HOME'];
+        else process.env['HOME'] = previousHome;
+        if (previousCodexHome === undefined) delete process.env['CODEX_HOME'];
+        else process.env['CODEX_HOME'] = previousCodexHome;
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+    180_000,
   );
 });
 

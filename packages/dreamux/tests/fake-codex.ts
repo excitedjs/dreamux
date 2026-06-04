@@ -8,8 +8,9 @@
  *                                 item/completed (agentMessage)
  *                                 turn/completed
  *
- * Lets tests assert behavior (queueing, coalescing, MCP reply-only outbound,
- * approval fail-fast) without spawning a real codex binary.
+ * Lets tests assert behavior (inbound submission, optional active-turn folding,
+ * MCP reply-only outbound, approval fail-fast) without spawning a real codex
+ * binary.
  */
 
 import { createServer, type Server as HttpServer } from 'node:http';
@@ -28,6 +29,11 @@ export interface FakeCodexOptions {
   /** Delay between turn/start ack and the eventual turn/completed (ms). */
   turnDelayMs?: number;
   /**
+   * If true, additional turn/start requests while a fake turn is active are
+   * accepted and folded into that active turn instead of completing separately.
+   */
+  activeTurnFolding?: boolean;
+  /**
    * If true, mimic real codex 0.134 behavior: any non-`initialize` RPC
    * before the `initialized` notification arrives returns
    * `{error: {message: 'Not initialized'}}`. Default: true.
@@ -42,7 +48,10 @@ export interface FakeCodexOptions {
 
 export interface FakeCodex {
   readonly url: string;
+  /** Number of turn/start requests accepted by the fake. */
   readonly turnsHandled: number;
+  /** Number of turn/completed notifications emitted by the fake. */
+  readonly turnsCompleted: number;
   /** True once the client has completed the init handshake. */
   readonly initializedAt: number | null;
   /** Method names received in order — useful for asserting handshake order. */
@@ -56,11 +65,17 @@ export async function startFakeCodex(opts: FakeCodexOptions = {}): Promise<FakeC
   let nextThreadId = 1;
   let nextTurnId = 1;
   let turnsHandled = 0;
+  let turnsCompleted = 0;
   let nextSrvReqId = 100;
   let initializedAt: number | null = null;
   const methodLog: string[] = [];
   const enforceInit = opts.enforceInitHandshake !== false;
   const clients = new Set<WebSocket>();
+  let activeTurn: {
+    threadId: string;
+    turnId: string;
+    inputs: string[];
+  } | null = null;
 
   wss.on('connection', (ws: WebSocket) => {
     clients.add(ws);
@@ -146,12 +161,20 @@ export async function startFakeCodex(opts: FakeCodexOptions = {}): Promise<FakeC
         return;
       }
       const tid = String(params['threadId']);
+      const input = extractText(params['input']);
+      if (opts.activeTurnFolding === true && activeTurn !== null) {
+        const submissionId = `turn_fake_${nextTurnId++}`;
+        activeTurn.inputs.push(input);
+        send(ws, { id, result: { turn: { id: submissionId } } });
+        turnsHandled++;
+        return;
+      }
       const turnId = `turn_fake_${nextTurnId++}`;
       send(ws, { id, result: { turn: { id: turnId } } });
       turnsHandled++;
-
-      const input = extractText(params['input']);
-      const reply = opts.replyFor ? opts.replyFor(input) : `echo: ${input}`;
+      if (opts.activeTurnFolding === true) {
+        activeTurn = { threadId: tid, turnId, inputs: [input] };
+      }
 
       void (async () => {
         await delay(opts.turnDelayMs ?? 10);
@@ -164,6 +187,17 @@ export async function startFakeCodex(opts: FakeCodexOptions = {}): Promise<FakeC
           });
           await delay(20);
         }
+        const completionInputs =
+          opts.activeTurnFolding === true && activeTurn?.turnId === turnId
+            ? activeTurn.inputs.slice()
+            : [input];
+        if (opts.activeTurnFolding === true && activeTurn?.turnId === turnId) {
+          activeTurn = null;
+        }
+        const completionInput = completionInputs.join('\n\n');
+        const reply = opts.replyFor
+          ? opts.replyFor(completionInput)
+          : `echo: ${completionInput}`;
         if (reply !== null) {
           send(ws, {
             method: 'item/completed',
@@ -179,6 +213,7 @@ export async function startFakeCodex(opts: FakeCodexOptions = {}): Promise<FakeC
           method: 'turn/completed',
           params: { threadId: tid, turn: { id: turnId, items: [] } },
         });
+        turnsCompleted++;
       })();
       return;
     }
@@ -194,6 +229,9 @@ export async function startFakeCodex(opts: FakeCodexOptions = {}): Promise<FakeC
     url,
     get turnsHandled() {
       return turnsHandled;
+    },
+    get turnsCompleted() {
+      return turnsCompleted;
     },
     get initializedAt() {
       return initializedAt;

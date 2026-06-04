@@ -64,8 +64,12 @@ Background and older issue context:
   reconciliation, access surface, message-format, CLI/diagnostic robustness);
   groups the deferred epic follow-ups + the #58 ultracode findings into the next
   workstream.
-- `domains/`, `proposals/`, `research/`, `rules/` — empty for now; add
-  here when material grows past a single file's worth.
+- [`domains/non-blocking-dispatcher-inbound.md`](domains/non-blocking-dispatcher-inbound.md)
+  — final issue #63 runtime model for accepted Feishu inbound: every accepted
+  deduped message submits `turn/start`, and reactions move through the
+  received / in-progress / cleared states.
+- `proposals/`, `research/`, `rules/` — add here when material grows past a
+  single file's worth.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — when to update this KB, how to
   format docs, the knowledge-delta protocol.
 - [`scripts/check.sh`](scripts/check.sh) — link / orphan checker. Run
@@ -87,6 +91,7 @@ Background and older issue context:
 | add / change a config key (`~/.dreamux/config.json`) | [`decisions/top-level-design.md`](decisions/top-level-design.md) first, then historical context in [`decisions/global-config-dir.md`](decisions/global-config-dir.md) |
 | touch the anti-leak guardrail (`.gitleaks.toml`, `.npmrc`, CI / hook) | [`decisions/anti-leak-guardrail.md`](decisions/anti-leak-guardrail.md) |
 | touch npm publishing / the release workflows | [`decisions/npm-release-oidc.md`](decisions/npm-release-oidc.md) |
+| change dispatcher inbound delivery, turn submission, or received-reaction timing | [`domains/non-blocking-dispatcher-inbound.md`](domains/non-blocking-dispatcher-inbound.md) + [`decisions/top-level-design.md`](decisions/top-level-design.md) + read the source |
 | add or verify Rush change files | [`components/repo-structure.md#rush-change-files`](components/repo-structure.md#rush-change-files) |
 | write a new decision record / new component doc | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
 | modify the server runtime / Codex protocol handling | [`decisions/top-level-design.md`](decisions/top-level-design.md) + read the source |

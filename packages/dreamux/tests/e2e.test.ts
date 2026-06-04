@@ -9,7 +9,11 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { PassThrough } from 'node:stream';
 
-import { RECEIVED_REACTION_EMOJI, Server } from '../src/server.js';
+import {
+  IN_PROGRESS_REACTION_EMOJI,
+  RECEIVED_REACTION_EMOJI,
+  Server,
+} from '../src/server.js';
 import { sendAdminRequest } from '../src/admin/client.js';
 import { loadDispatcherAccess } from '../src/channel/feishu-gate.js';
 import { CodexWsClient } from '../src/codex/rpc.js';
@@ -263,7 +267,7 @@ describe('dreamux cross-module e2e', () => {
     await bot.inject(fakeInbound('chat-group-a', 'please reply', 'msg-e2e-1'));
 
     await waitFor(() => codexInputs.length === 1);
-    await waitFor(() => bot.reactions.length === 1);
+    await waitFor(() => bot.reactions.length === 2);
     expect(codexInputs[0]).toContain('<feishu_message');
     expect(codexInputs[0]).toContain('sender_name="Ada"');
     expect(codexInputs[0]).toContain('please reply');
@@ -272,6 +276,11 @@ describe('dreamux cross-module e2e', () => {
         messageId: 'msg-e2e-1',
         emoji: RECEIVED_REACTION_EMOJI,
         reactionId: 'reaction-fake-1',
+      },
+      {
+        messageId: 'msg-e2e-1',
+        emoji: IN_PROGRESS_REACTION_EMOJI,
+        reactionId: 'reaction-fake-2',
       },
     ]);
 
@@ -309,6 +318,10 @@ describe('dreamux cross-module e2e', () => {
         messageId: 'msg-e2e-1',
         reactionId: 'reaction-fake-1',
       },
+      {
+        messageId: 'msg-e2e-1',
+        reactionId: 'reaction-fake-2',
+      },
     ]);
   });
 
@@ -320,7 +333,7 @@ describe('dreamux cross-module e2e', () => {
       fakeInbound('chat-group-a', 'restart before reply', 'msg-restart'),
     );
     await waitFor(() => codexInputs.length === 1);
-    await waitFor(() => bot.reactions.length === 1);
+    await waitFor(() => bot.reactions.length === 2);
     expect(loadDispatcherAccess('flow').observed_chats).toEqual(['chat-group-a']);
 
     await server.shutdown();
@@ -342,12 +355,22 @@ describe('dreamux cross-module e2e', () => {
       },
     });
     expect(bot.sentMessages).toHaveLength(1);
-    expect(bot.removedReactions).toEqual([]);
+    expect(bot.removedReactions).toEqual([
+      {
+        messageId: 'msg-restart',
+        reactionId: 'reaction-fake-1',
+      },
+    ]);
     expect(bot.reactions).toEqual([
       {
         messageId: 'msg-restart',
         emoji: RECEIVED_REACTION_EMOJI,
         reactionId: 'reaction-fake-1',
+      },
+      {
+        messageId: 'msg-restart',
+        emoji: IN_PROGRESS_REACTION_EMOJI,
+        reactionId: 'reaction-fake-2',
       },
     ]);
   });
