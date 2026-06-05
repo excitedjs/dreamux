@@ -139,6 +139,7 @@ function fakeInbound(
     chatId,
     chatType: 'group',
     senderId: 'sender-test',
+    senderUnionId: '',
     senderType: 'user',
     senderName: 'Ada',
     messageType: 'text',

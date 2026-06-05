@@ -133,12 +133,27 @@ unchanged.
 - **trusted** — bots introduced by an allowlisted `/introduce`. Only this set
   lets a peer bot's group message through the gate.
 
-`dreamuxFeishuGate` drops every bot sender except one whose open_id is in the
-chat's trusted set (passed as `trustedBotIds`); a trusted bot is delivered
-without an `@`-mention because a bot cannot mention us. When `trustedBotIds` is
-omitted, no bot sender is ever delivered — preserving prior behavior. Recording
-a human open_id as "trusted" is harmless: the gate only bypasses for a bot
-*sender*, so a human entry never widens access.
+`dreamuxFeishuGate` drops every bot sender except one whose **open_id or
+union_id** is in the chat's trusted set (passed as `trustedBotIds`); a trusted
+bot is delivered without an `@`-mention because a bot cannot mention us. When
+`trustedBotIds` is omitted, no bot sender is ever delivered — preserving prior
+behavior. Recording a human open_id as "trusted" is harmless: the gate only
+bypasses for a bot *sender*, so a human entry never widens access.
+
+> **Why union_id, not open_id alone.** A Feishu `open_id` is scoped to one app,
+> so the same peer bot can present a different `open_id` when it is *mentioned*
+> in a `/introduce` (resolved in the mentioning context) than when it later
+> *sends* a message (resolved in ours). Matching trust on `open_id` alone then
+> drops the very bot the operator just introduced — observed live as a
+> `bot sender type: bot` drop right after an `introduce consumed` for the same
+> peer. `union_id` is stable for one entity across a developer's apps, so
+> `introducedPeers` records a peer's `union_id` when it differs from the
+> `open_id`, `chat-bots-store` keeps it in a separate `trustedUnionIds` list,
+> and `trustedBotIds()` folds both id kinds into the gate's match set. The
+> bridge is best-effort: it works when the `/introduce` mention and the inbound
+> sender both expose a `union_id` (permission-dependent), and never regresses
+> the open_id path. `trustedUnionIds` is deliberately kept out of the display
+> surfaces (`<group_bots>`, `list_chat_bots`), which stay open_id-only.
 
 ## One-shot trusted-bot context (issue #69)
 

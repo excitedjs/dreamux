@@ -394,6 +394,26 @@ describe('introducedPeers', () => {
       { openId: 'peer-b' },
     ]);
   });
+
+  it('records a distinct union_id so a later send under another open_id matches', () => {
+    const mentions: Mention[] = [
+      { key: '@_user_1', id: { open_id: 'peer-open', union_id: 'peer-union' }, name: 'Peer' },
+    ];
+    expect(introducedPeers(mentions, 'self-bot')).toEqual([
+      { openId: 'peer-open', name: 'Peer', unionId: 'peer-union' },
+    ]);
+  });
+
+  it('omits union_id when it duplicates the open_id we keyed on', () => {
+    const mentions: Mention[] = [
+      { key: '@_user_1', id: { open_id: 'peer-open', union_id: 'peer-open' } },
+      { key: '@_user_2', id: { union_id: 'peer-union-only' } },
+    ];
+    expect(introducedPeers(mentions, 'self-bot')).toEqual([
+      { openId: 'peer-open' },
+      { openId: 'peer-union-only' },
+    ]);
+  });
 });
 
 describe('introduceAckText', () => {
@@ -475,6 +495,22 @@ describe('chat-bots store — awareness vs trust are separate', () => {
     expect(entry?.trusted).toEqual(['peer-a']);
     expect(entry?.known).toEqual(['peer-a']);
     expect((await trustedBotIds('d1', 'chat-a')).has('peer-a')).toBe(true);
+  });
+
+  it("folds a peer's union_id into the gate trust set without polluting display", async () => {
+    await trustIntroducedBots('d1', 'chat-a', [
+      { openId: 'peer-open', unionId: 'peer-union', name: 'Peer' },
+    ]);
+    const set = await trustedBotIds('d1', 'chat-a');
+    // The gate matches a sender by either its open_id or its union_id.
+    expect(set.has('peer-open')).toBe(true);
+    expect(set.has('peer-union')).toBe(true);
+    // Display surfaces stay open_id-only — the union_id never leaks into them.
+    const entry = (await loadChatBots('d1')).chats['chat-a'];
+    expect(entry?.trusted).toEqual(['peer-open']);
+    expect((await listChatBots('d1', 'chat-a')).trusted).toEqual([
+      { openId: 'peer-open', name: 'Peer' },
+    ]);
   });
 
   it('recordBotAdded is idempotent by event id and flags a baseline', async () => {

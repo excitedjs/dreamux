@@ -35,6 +35,15 @@ export interface ChatBotsEntry {
   known: string[];
   /** Introduced peer-bot open_ids — the gate's trust set for this chat. */
   trusted: string[];
+  /**
+   * Introduced peer-bot `union_id`s, when a `/introduce` mention carried one
+   * that differs from its `open_id`. A bot's `open_id` is app-scoped, so a peer
+   * mentioned under one `open_id` can send under another; `union_id` is stable
+   * across one developer's apps and bridges that gap. Kept apart from `trusted`
+   * so display paths (`<group_bots>`, `list_chat_bots`) keep showing only
+   * `open_id`s — these feed the gate's match set only.
+   */
+  trustedUnionIds: string[];
   /** Best-effort open_id → display name map for known/trusted bots. */
   names: Record<string, string>;
   /**
@@ -61,6 +70,13 @@ export interface ChatBotsState {
 
 export interface PeerBot {
   openId: string;
+  /**
+   * The peer's `union_id` when Feishu provided one that differs from `openId`.
+   * Recorded so a bot mentioned under an app-scoped `open_id` can still be
+   * matched when it later sends under a different `open_id` (see
+   * `ChatBotsEntry.trustedUnionIds`).
+   */
+  unionId?: string;
   name?: string;
 }
 
@@ -88,6 +104,7 @@ function emptyEntry(): ChatBotsEntry {
   return {
     known: [],
     trusted: [],
+    trustedUnionIds: [],
     names: {},
     needsBaseline: false,
     baselineGeneration: 0,
@@ -188,6 +205,15 @@ export async function trustIntroducedBots(
       added.push(bot.openId);
       changed = true;
     }
+    if (
+      bot.unionId !== undefined &&
+      bot.unionId !== '' &&
+      bot.unionId !== bot.openId &&
+      !entry.trustedUnionIds.includes(bot.unionId)
+    ) {
+      entry.trustedUnionIds.push(bot.unionId);
+      changed = true;
+    }
   }
   // A newly trusted bot is pending discovery context for the next message
   // (issue #69). Re-introducing already-trusted bots changes nothing, so it
@@ -250,12 +276,18 @@ export async function listChatBots(
   };
 }
 
-/** The trust set the gate consults for one chat. */
+/**
+ * The trust set the gate consults for one chat — the chat's trusted `open_id`s
+ * plus any recorded `union_id`s. Both id kinds are folded into one set because
+ * the gate only does membership tests against a sender's `open_id` or
+ * `union_id`; the two never collide (Feishu prefixes them `ou_` vs `on_`).
+ */
 export async function trustedBotIds(
   dispatcherId: string,
   chatId: string,
 ): Promise<Set<string>> {
-  return new Set((await loadChatBots(dispatcherId)).chats[chatId]?.trusted ?? []);
+  const entry = (await loadChatBots(dispatcherId)).chats[chatId];
+  return new Set([...(entry?.trusted ?? []), ...(entry?.trustedUnionIds ?? [])]);
 }
 
 /**
@@ -307,6 +339,7 @@ function normalizeEntry(raw: unknown): ChatBotsEntry {
   const obj = raw as Record<string, unknown>;
   entry.known = stringArray(obj['known']);
   entry.trusted = stringArray(obj['trusted']);
+  entry.trustedUnionIds = stringArray(obj['trustedUnionIds']);
   entry.seenEventIds = stringArray(obj['seenEventIds']);
   entry.needsBaseline = obj['needsBaseline'] === true;
   entry.baselineGeneration =

@@ -171,6 +171,7 @@ function fakeInbound(
     chatId,
     chatType: 'group',
     senderId: 'sender-live',
+    senderUnionId: '',
     senderType: 'user',
     senderName: 'Live Tester',
     messageType: 'text',

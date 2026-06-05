@@ -63,6 +63,14 @@ export interface GateDiagnostic {
 
 export interface DreamuxFeishuGateInput {
   senderId: string;
+  /**
+   * The sender's `union_id`, when Feishu provided one. A peer bot's `open_id`
+   * is app-scoped, so the `open_id` it sends under can differ from the one it
+   * was mentioned (and trusted) under. `union_id` is stable across one
+   * developer's apps, so the bot-trust check matches on it too. Optional;
+   * callers that do not track it preserve `open_id`-only matching.
+   */
+  senderUnionId?: string;
   senderType?: string;
   chatId: string;
   chatType: string;
@@ -187,8 +195,16 @@ export function dreamuxFeishuGate(
     // allowlisted `/introduce`. Trusted bots bypass the mention gate because a
     // bot cannot @-mention us; untrusted bots are dropped as before. This is
     // per-chat trust (`trustedBotIds` is scoped to this chat by the caller) and
-    // is never reached through the human `allow_users` list.
-    if (input.trustedBotIds?.has(input.senderId) ?? false) {
+    // is never reached through the human `allow_users` list. A bot's open_id is
+    // app-scoped, so it may have been introduced under a different open_id than
+    // the one it now sends under; the trust set also carries union_ids, matched
+    // here against the sender's union_id, to bridge that gap.
+    const trusted =
+      (input.trustedBotIds?.has(input.senderId) ?? false) ||
+      (input.senderUnionId !== undefined &&
+        input.senderUnionId !== '' &&
+        (input.trustedBotIds?.has(input.senderUnionId) ?? false));
+    if (trusted) {
       return deliver(access, input, now);
     }
     return drop(`bot sender type: ${input.senderType}`);

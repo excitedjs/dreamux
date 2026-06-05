@@ -178,6 +178,49 @@ describe('dreamuxFeishuGate', () => {
         gate({ ...botBase, mentions: [], trustedBotIds: new Set(['peer-bot']) }, access),
       ).toMatchObject({ action: 'deliver' });
     });
+
+    // A peer bot's open_id is app-scoped: it can be introduced under the open_id
+    // resolved in a mention but later send under a different open_id. The trust
+    // set carries its (stable) union_id, so the gate must match on the sender's
+    // union_id even when the open_id does not.
+    it('delivers a trusted bot whose send-time open_id differs but union_id matches', () => {
+      const access = state({
+        allow_users: ['sender-allowed'],
+        group: { policy: 'follow-user', allow_chats: [], require_mention: true },
+      });
+      const trustedBotIds = new Set(['peer-open-mentioned', 'peer-union']);
+      expect(
+        gate(
+          {
+            senderId: 'peer-open-sent',
+            senderUnionId: 'peer-union',
+            senderType: 'bot',
+            mentions: [],
+            trustedBotIds,
+          },
+          access,
+        ),
+      ).toMatchObject({ action: 'deliver' });
+    });
+
+    it('still drops a bot when neither its open_id nor union_id is trusted', () => {
+      const access = state({
+        allow_users: ['sender-allowed'],
+        group: { policy: 'follow-user', allow_chats: [], require_mention: true },
+      });
+      expect(
+        gate(
+          {
+            senderId: 'peer-open-sent',
+            senderUnionId: 'peer-union-other',
+            senderType: 'bot',
+            mentions: [],
+            trustedBotIds: new Set(['peer-open-mentioned', 'peer-union']),
+          },
+          access,
+        ),
+      ).toMatchObject({ action: 'drop', reason: 'bot sender type: bot' });
+    });
   });
 
   it('shares one global list across direct and follow-user group delivery', () => {

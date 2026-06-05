@@ -116,6 +116,12 @@ export function narrowMetaFromEvent(rawEvent: unknown): Record<string, unknown> 
     chat_id: asString(message.chat_id),
     chat_type: asString(message.chat_type),
     sender_id: asString(senderId?.open_id),
+    // The cross-app-stable identifier. A bot's `open_id` is scoped to one app,
+    // so the same bot can present different `open_id`s when mentioned (resolved
+    // in the mentioning context) versus when it sends (resolved in ours);
+    // `union_id` is stable for the same entity across one developer's apps and
+    // bridges that gap for peer-bot trust matching.
+    sender_union_id: asString(senderId?.union_id),
     sender_type: asString(sender.sender_type),
     root_id: asString(message.root_id),
     parent_id: asString(message.parent_id),

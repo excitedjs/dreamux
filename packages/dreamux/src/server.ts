@@ -454,6 +454,7 @@ export class Server {
               : undefined;
           const gate = dreamuxFeishuGate({
             senderId: event.senderId,
+            ...(event.senderUnionId !== '' ? { senderUnionId: event.senderUnionId } : {}),
             senderType: event.senderType,
             chatId: event.chatId,
             chatType: event.chatType,
@@ -474,6 +475,11 @@ export class Server {
                 chat_id: event.chatId,
                 chat_type: event.chatType,
                 sender_id: event.senderId,
+                // Surfaced so a `bot sender type` drop right after an
+                // `introduce consumed` is self-diagnosing: an introduced peer
+                // whose send-time open_id differs from its mention open_id is
+                // matched by union_id, and seeing it here pins that case down.
+                ...(event.senderUnionId !== '' ? { sender_union_id: event.senderUnionId } : {}),
                 message_id: event.messageId,
                 reason: gate.reason,
               },

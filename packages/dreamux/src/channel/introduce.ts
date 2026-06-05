@@ -183,7 +183,16 @@ export function introducedPeers(
     const openId = m.id?.open_id ?? m.id?.union_id ?? '';
     if (openId === '' || openId === selfOpenId || seen.has(openId)) continue;
     seen.add(openId);
-    peers.push(m.name !== undefined ? { openId, name: m.name } : { openId });
+    const peer: PeerBot = { openId };
+    if (m.name !== undefined) peer.name = m.name;
+    // Record the union_id only when it adds information — i.e. a distinct id
+    // from the open_id we keyed on. It lets the gate match this peer later even
+    // if it sends under a different (app-scoped) open_id.
+    const unionId = m.id?.union_id;
+    if (unionId !== undefined && unionId !== '' && unionId !== openId) {
+      peer.unionId = unionId;
+    }
+    peers.push(peer);
   }
   return peers;
 }
