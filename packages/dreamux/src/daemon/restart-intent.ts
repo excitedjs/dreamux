@@ -207,6 +207,23 @@ export class RestartIntentConsumer {
       );
       return empty;
     }
+    // A correctly-versioned marker can still carry malformed fields. Treat that
+    // like any other corrupt marker: warn + drop, never throw or misread. A
+    // non-array `targets` would otherwise crash `dedupeNonEmpty`, and a
+    // non-numeric `created_at_ms`/`ttl_ms` would produce a NaN expiry.
+    if (
+      !Number.isFinite(parsed.created_at_ms) ||
+      !Number.isFinite(parsed.ttl_ms) ||
+      !Array.isArray(parsed.targets) ||
+      !parsed.targets.every((target) => typeof target === 'string')
+    ) {
+      warn(
+        `restart marker ${path} ignored: malformed fields ` +
+          '(created_at_ms/ttl_ms must be finite numbers, targets a string array); ' +
+          'dropped it. A requested restart notice will not be delivered.',
+      );
+      return empty;
+    }
     const expiresAtMs = parsed.created_at_ms + parsed.ttl_ms;
     if (options.now > expiresAtMs) return empty;
     const announce =
@@ -216,7 +233,7 @@ export class RestartIntentConsumer {
     return new RestartIntentConsumer(
       announce,
       expiresAtMs,
-      new Set(dedupeNonEmpty(parsed.targets ?? [])),
+      new Set(dedupeNonEmpty(parsed.targets)),
     );
   }
 

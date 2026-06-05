@@ -218,9 +218,11 @@ and the legacy v1 shape (`dm.allow_users` + a separate `group.follow_users`) is
 no longer read, merged, or inferred. dreamux 0.x does not auto-migrate this file
 because it holds access authorization — silently inferring old permissions could
 relax or revoke access. An absent `group.policy` on a v2 file defaults to the
-secure `follow-user`; it is not inferred from other fields. To move past an
-incompatible file the operator deletes it (returning to the secure default — no
-one is authorized until reconfigured) and re-authorizes access.
+secure `follow-user`; it is not inferred from other fields. `access.json` is
+operator-edited directly (there is no grant command, and `dreamux onboard` does
+not touch it), so the recovery path for an incompatible file is: delete it
+(returning to the secure default — no one is authorized) and recreate it in the
+v2 shape with `allow_users` and `group.policy`.
 
 It must not contain credentials, queued inbound messages, dedupe state, or a
 reaction ledger.

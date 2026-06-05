@@ -304,10 +304,10 @@ describe('dispatcher access state files', () => {
       );
     });
 
-    it('error names the action: delete to reset, then re-authorize', async () => {
+    it('error names the action: delete to reset, then recreate a v2 file', async () => {
       writeRawAccess('flow', { version: 1, dm: { allow_users: ['user-a'] } });
       await expect(loadDispatcherAccess('flow')).rejects.toThrow(
-        /Delete it.*re-authorize/s,
+        /Delete it.*recreate it as a v2 access\.json/s,
       );
     });
 

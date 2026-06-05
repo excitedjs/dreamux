@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "Unify persisted-file version policy (issue #98). BREAKING: dispatcher access.json is now v2-only; the legacy v1 shape (dm.allow_users + group.follow_users) is no longer auto-migrated and an unsupported/missing version fails loud. Rebuild: delete the dispatcher's access.json to return to the secure default (no one authorized until reconfigured), then re-authorize access (e.g. re-run onboard / re-issue grants) and restart. status.json and restart-intent.json now warn-and-rebuild / warn-and-drop on incompatible or malformed content instead of silently discarding; neither hard-fatals the server.",
+      "comment": "Unify persisted-file version policy (issue #98). BREAKING: dispatcher access.json is now v2-only; the legacy v1 shape (dm.allow_users + group.follow_users) is no longer auto-migrated and an unsupported/missing version fails loud. Rebuild: delete the dispatcher's access.json to return to the secure default (no one authorized), then recreate it as a v2 access.json with allow_users and group.policy (see the access.json section in the dreamux README) and restart; note that `dreamux onboard` does not restore access grants. status.json and restart-intent.json now warn-and-rebuild / warn-and-drop on incompatible, malformed, or invalid-field content instead of silently discarding or misreading; neither hard-fatals the server.",
       "type": "minor",
       "packageName": "@excitedjs/dreamux"
     }

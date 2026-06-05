@@ -139,4 +139,56 @@ describe('dispatcher status hydration (issue #98: warn + rebuild)', () => {
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toMatch(/dispatcher id mismatch/);
   });
+
+  it('warns and rebuilds when v1/id match but key fields are malformed', async () => {
+    // A numeric thread_id / bad status / non-finite updated_at must not be
+    // silently coerced (that would drop a resumable thread or change status).
+    for (const bad of [
+      { thread_id: 123 },
+      { status: 'bogus' },
+      { updated_at: 'nope' },
+      { last_started_at: 'soon' },
+    ]) {
+      writeRawStatus('flow', {
+        version: 1,
+        dispatcher_id: 'flow',
+        thread_id: 'thread-x',
+        status: 'ready',
+        updated_at: 123,
+        last_started_at: 100,
+        last_ready_at: null,
+        last_error: null,
+        last_lost_thread_id: null,
+        ...bad,
+      });
+      const store = new DispatcherStore(configWith());
+      const warnings: string[] = [];
+      await store.hydrate((m) => warnings.push(m));
+
+      const row = store.get('flow');
+      expect(row?.status).toBe('declared');
+      expect(row?.thread_id).toBeNull();
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toMatch(/malformed v1 fields/);
+    }
+  });
+
+  it('treats an absent nullable field as a benign null (no warn)', async () => {
+    // Omitted diagnostic fields default to null; a valid thread still resumes.
+    writeRawStatus('flow', {
+      version: 1,
+      dispatcher_id: 'flow',
+      thread_id: 'thread-x',
+      status: 'ready',
+      updated_at: 123,
+    });
+    const store = new DispatcherStore(configWith());
+    const warnings: string[] = [];
+    await store.hydrate((m) => warnings.push(m));
+
+    const row = store.get('flow');
+    expect(row?.thread_id).toBe('thread-x');
+    expect(row?.last_started_at).toBeNull();
+    expect(warnings).toEqual([]);
+  });
 });

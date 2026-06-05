@@ -155,4 +155,53 @@ describe('restart intent marker', () => {
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toMatch(/unsupported version/);
   });
+
+  it('warns and drops a v1 marker whose targets is not a string array', async () => {
+    // A non-array targets would otherwise crash dedupeNonEmpty at server start.
+    writeFileSync(
+      path,
+      JSON.stringify({
+        version: 1,
+        created_at_ms: 0,
+        ttl_ms: DEFAULT_RESTART_INTENT_TTL_MS,
+        announce: 'x',
+        targets: { flow: true },
+      }),
+      { mode: 0o600 },
+    );
+    const warnings: string[] = [];
+    const consumer = await RestartIntentConsumer.load({
+      now: 0,
+      path,
+      warn: (m) => warnings.push(m),
+    });
+    expect(existsSync(path)).toBe(false);
+    expect(consumer.claim('flow', 0)).toBeNull();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/malformed fields/);
+  });
+
+  it('warns and drops a v1 marker with non-numeric created_at_ms/ttl_ms', async () => {
+    writeFileSync(
+      path,
+      JSON.stringify({
+        version: 1,
+        created_at_ms: 'soon',
+        ttl_ms: null,
+        announce: 'x',
+        targets: ['flow'],
+      }),
+      { mode: 0o600 },
+    );
+    const warnings: string[] = [];
+    const consumer = await RestartIntentConsumer.load({
+      now: 0,
+      path,
+      warn: (m) => warnings.push(m),
+    });
+    expect(existsSync(path)).toBe(false);
+    expect(consumer.claim('flow', 0)).toBeNull();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/malformed fields/);
+  });
 });

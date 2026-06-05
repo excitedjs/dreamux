@@ -144,13 +144,11 @@ Access-gate allowlists are not part of `config.json`. Configure them in
 
 ```json
 {
-  "version": 1,
-  "dm": {
-    "allow_users": ["<USER_ID>"]
-  },
+  "version": 2,
+  "allow_users": ["<USER_ID>"],
   "group": {
+    "policy": "follow-user",
     "allow_chats": ["<CHAT_ID>"],
-    "follow_users": ["<USER_ID>"],
     "require_mention": true
   },
   "observed_chats": [],
@@ -158,6 +156,15 @@ Access-gate allowlists are not part of `config.json`. Configure them in
   "last_gate": null
 }
 ```
+
+`access.json` is v2-only. `allow_users` is the single global allowlist of
+sender open_ids, shared by direct messages and the group `follow-user` policy.
+`group.policy` is one of `block`, `allowlist`, or `follow-user`; under
+`allowlist` the gate consults `allow_chats`, under `follow-user` it ignores
+`allow_chats` and gates on `allow_users`. dreamux 0.x does not migrate older
+shapes: an unsupported or missing `version` fails loud at startup. To reset,
+delete the file (secure default: no one authorized) and recreate it in this v2
+shape.
 
 The server reads `access.json` directly at runtime and preserves runtime
 observations and warnings in the same file.

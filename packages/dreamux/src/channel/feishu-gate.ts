@@ -298,8 +298,9 @@ function readDispatcherAccess(
       `dispatcher access error in ${path}: unsupported schema version (found ${found}, expected 2).\n` +
         'dreamux 0.x does not migrate old access state. This file controls access ' +
         'authorization and old permissions will not be inferred. Delete it to return ' +
-        'to the secure default (no one is authorized until reconfigured), then ' +
-        're-authorize access (e.g. re-run onboard / re-issue grants) and restart.',
+        'to the secure default (no one is authorized), then recreate it as a v2 ' +
+        'access.json — set `allow_users` and `group.policy` — and restart. See the ' +
+        'access.json section in the dreamux README for the v2 shape.',
     );
   }
   const defaults = defaultDispatcherAccessState();
