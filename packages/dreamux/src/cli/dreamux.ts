@@ -44,6 +44,7 @@ import {
   notifyResumedRestart,
 } from '../daemon/restart-intent.js';
 import { ExecaCommandRunner } from '../onboard/commands.js';
+import { readPackagedChangelog } from './changelog.js';
 import { printDoctorResult, runDreamuxDoctor } from './doctor.js';
 import { runFeishuMcp } from '../mcp/feishu-mcp.js';
 import { createLogger } from '../runtime/logger.js';
@@ -566,6 +567,19 @@ async function main(): Promise<void> {
       },
     )
     .command('config <command>', 'Inspect config', buildConfigCommands)
+    .command(
+      'changelog',
+      "Print the installed package's changelog (read before upgrading)",
+      (yy) =>
+        yy.option('json', {
+          type: 'boolean',
+          describe: 'Print the raw CHANGELOG.json instead of CHANGELOG.md',
+        }),
+      async (argv) => {
+        const text = await readPackagedChangelog({ json: argv.json === true });
+        process.stdout.write(text.endsWith('\n') ? text : `${text}\n`);
+      },
+    )
     .demandCommand(1, 'Choose a command')
     .strict()
     .help()

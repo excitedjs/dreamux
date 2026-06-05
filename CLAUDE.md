@@ -55,8 +55,12 @@ two-paths consequence of `.agents/decisions/rush-pnpm-monorepo.md`).
 The user-facing CLI is the single global bin `dreamux`. Current command tree:
 `onboard`, `uninstall`, `serve`, `status`, `doctor`,
 `daemon install|uninstall|start|stop|restart`,
-`dispatcher add|remove|list|status|start|stop`, `feishu-mcp`, and
-`config path|show`. `dreamux serve` is the foreground server entry point. The
+`dispatcher add|remove|list|status|start|stop`, `feishu-mcp`,
+`config path|show`, and `changelog [--json]`. `dreamux changelog` prints the
+installed package's rush-generated `CHANGELOG.md` (or `CHANGELOG.json` with
+`--json`) — an offline read of the installed version, the upgrade-time
+information entry point for the 0.x fail-loud + rebuild policy (issue #98).
+`dreamux serve` is the foreground server entry point. The
 `daemon` group wraps the native user-level service manager (Linux
 `systemctl --user`, macOS `launchctl`); `daemon uninstall` removes only the
 service unit, whereas top-level `dreamux uninstall` removes config/state/logs
@@ -146,6 +150,36 @@ explicitly supersedes the top-level design.
 - **Tests that depend on a real codex install fail loudly when codex is
   missing**, not silent skip. Opt-in skip via `DREAMUX_SKIP_LIVE_CODEX=1`
   (see `tests/codex-0135-live.test.ts`'s docstring).
+
+## Changelog responsibility (user-visible upgrade blockers)
+
+In 0.x dreamux does **not** ship automatic schema migrations: incompatible
+config/state is handled by fail-loud + an explicit rebuild (issue #98). The
+changelog is the only upgrade-time information channel, so any change that can
+block or break a user's upgrade **must** ship a rush change file describing it.
+
+A change is an upgrade blocker if it touches any of:
+
+- config file schema or field semantics;
+- user directory structure or runtime/state/cache paths;
+- `access` / `state` / `status` / `restart-intent` (and similar) persisted file
+  formats;
+- `onboard` / `daemon` / service-unit behavior;
+- bundled skills, dispatcher working directory, or `.codex/skills` structure;
+- anything a user or an LLM must manually rebuild, delete, or migrate across the
+  upgrade.
+
+Rules:
+
+- Write the note via `rush change` (it feeds the rush-generated
+  `packages/dreamux/CHANGELOG.md` / `CHANGELOG.json`). Never hand-edit the
+  generated changelog files — a release regenerates them and the edit is lost.
+- In the change comment, lead breaking notes with a `BREAKING:` line and, when
+  the user must act, a `Rebuild:` line naming the exact file/path to recreate,
+  so a model reading `dreamux changelog --json` can parse the required action.
+- The matching read path is the bundled `dreamux-maintenance` skill's
+  "Upgrade Flow": install new package → `dreamux changelog` → handle
+  breaking/rebuild notes → `daemon restart` / `onboard`.
 
 ## Commits
 

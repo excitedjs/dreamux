@@ -6,6 +6,11 @@ app-server orchestration, Feishu MCP shim, state, and logs.
 ## Responsibilities
 
 - Own the `dreamux` and `tm` package bins.
+- Ship `CHANGELOG.md` / `CHANGELOG.json` inside the package (`files`) so
+  `dreamux changelog` can read the installed version's notes offline. Any
+  user-visible upgrade blocker in this package must carry a rush change file —
+  see the root `CLAUDE.md` "Changelog responsibility" rule. Never hand-edit the
+  generated changelog files.
 - Load operator config and server-owned state.
 - Start, stop, and supervise dispatcher Codex app-server processes.
 - Manage Codex threads, turn submission, restart notices, and fail-fast approval

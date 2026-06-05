@@ -45,7 +45,16 @@ delegation; that wrapper is not a dreamux admin CLI.
   dreamux dispatcher stop
   dreamux config path
   dreamux config show
+  dreamux changelog
+  dreamux changelog --json
   ```
+
+- `dreamux changelog` prints the installed package's rush-generated
+  `CHANGELOG.md` (`--json` prints `CHANGELOG.json`). It is an offline,
+  deterministic read of the *installed* version — the upgrade-time information
+  entry point for the 0.x fail-loud + rebuild policy (issue #98). Both changelog
+  files must stay in `packages/dreamux/package.json` `files` or the command
+  reads nothing after publish.
 
 - `dreamux serve` is the foreground server entry point. Service managers also
   invoke `dreamux serve`.

@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Add the `dreamux changelog` command (and `--json`) that prints the installed package's bundled CHANGELOG, and ship CHANGELOG.md/CHANGELOG.json in the package files. This is the upgrade-time information entry point for the 0.x fail-loud + rebuild policy (issue #98).",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

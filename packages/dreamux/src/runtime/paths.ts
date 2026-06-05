@@ -152,6 +152,20 @@ export function bundledSkillDir(skillName: BundledSkillName): string {
   return join(bundledSkillsDir(), skillName);
 }
 
+/**
+ * Packaged changelog files, shipped inside the installed package so that
+ * `dreamux changelog` is an offline, deterministic read of the *installed*
+ * version's release notes. Both files are rush-generated; they must stay in
+ * `package.json` `files` or these paths resolve outside the published tarball.
+ */
+export function packagedChangelogMarkdownPath(): string {
+  return join(PACKAGE_ROOT, 'CHANGELOG.md');
+}
+
+export function packagedChangelogJsonPath(): string {
+  return join(PACKAGE_ROOT, 'CHANGELOG.json');
+}
+
 export function dispatcherAppServerControlDir(id: string): string {
   return dispatcherDir(id);
 }

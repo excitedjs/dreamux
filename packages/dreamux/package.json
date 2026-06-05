@@ -22,7 +22,9 @@
     "dist",
     "skills",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md",
+    "CHANGELOG.json"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",

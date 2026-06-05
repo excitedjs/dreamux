@@ -74,6 +74,40 @@ dreamux config show
 For questions about active turns, steering, background commands, and repeated
 responses after compaction, read `references/codex-turns.md`.
 
+## Upgrade Flow
+
+Dreamux is in 0.x and does not ship automatic schema migrations. Incompatible
+config/state is handled by fail-loud + an explicit rebuild, not by silent
+conversion. Before installing or upgrading, read the changelog and resolve any
+breaking changes first; only then restart.
+
+1. Install the new package, then read the changelog it ships:
+
+```bash
+dreamux changelog          # CHANGELOG.md (human-readable)
+dreamux changelog --json   # CHANGELOG.json (machine-readable)
+```
+
+   `dreamux changelog` reads the *installed* package — run it after installing
+   the new version, not before. It cannot show notes for a version you have not
+   installed yet.
+
+2. Act on any breaking/rebuild notes before starting the new version:
+   - Rebuild or move aside config/state files the changelog calls out (for
+     example a Feishu `access.json` that is no longer schema-compatible — it
+     holds access grants and is not auto-migrated, so it must be recreated).
+   - Do not expect old permissions or recovery state to be inferred; the
+     changelog states exactly what to recreate.
+
+3. Only after the changelog actions are done, complete the upgrade:
+
+```bash
+dreamux daemon restart
+# or, for first install / re-registration:
+dreamux onboard
+dreamux daemon install
+```
+
 ## Restart Policy
 
 - If only the service wrapper changed, use `dreamux daemon restart`.
