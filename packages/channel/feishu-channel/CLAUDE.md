@@ -42,7 +42,7 @@ For fallback:
 
 ```xml
 <attachment type="file" name="debug.zip" key="FILE_KEY" status="not_downloaded" reason="missing_scope">
-lark-cli im +messages-resources-download --message-id MSG_ID --file-key FILE_KEY --type file --output ./debug.zip
+lark-cli im +messages-resources-download --message-id MSG_ID --file-key FILE_KEY --type file --output ./feishu-attachment-file
 </attachment>
 ```
 
