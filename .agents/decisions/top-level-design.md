@@ -469,12 +469,13 @@ directory into:
 
 The workspace-local skills are intentionally not installed into the operator's
 global `~/.codex/skills`. The installer creates a missing `.codex/skills`
-parent, replaces stale or broken symlinks, and migrates a legacy copied
-`dispatcher` directory only when its `SKILL.md` exactly matches a known
-Dreamux-managed fingerprint. Other real user files or directories are left
-untouched with a startup diagnostic and an onboard `skipped` ledger entry.
-Custom symlinks in these bundled skill slots are treated as Dreamux-managed
-links and may be replaced; use a real file or directory to opt out.
+parent and replaces stale or broken symlinks. Real user files or directories
+are left untouched with a startup diagnostic and an onboard `skipped` ledger
+entry — including an old hand-copied `dispatcher` directory, which Dreamux no
+longer fingerprints and migrates (issue #98); the operator removes or renames
+it to let startup recreate the bundled symlink. Custom symlinks in these
+bundled skill slots are treated as Dreamux-managed links and may be replaced;
+use a real file or directory to opt out.
 
 `uninstall` removes dreamux-owned config, state, logs, and service integration
 by default. It reports workspace-local bundled skill paths, but it does not

@@ -57,10 +57,10 @@ The runtime installer is intentionally symlink-only:
 
 - correct symlinks are left unchanged
 - stale or broken symlinks are replaced
-- a legacy copied `dispatcher` directory whose `SKILL.md` exactly matches a
-  known Dreamux-managed fingerprint is migrated to a symlink
 - real user files/directories are not overwritten; startup logs a diagnostic
-  and onboard reports the path as `skipped`
+  and onboard reports the path as `skipped`. This includes an old hand-copied
+  `dispatcher` directory — Dreamux no longer fingerprints and migrates it
+  (issue #98); remove or rename it to let startup recreate the bundled symlink
 - custom symlinks in these bundled skill slots are treated as replaceable
   Dreamux-managed links; use a real file or directory to opt out
 - missing `.codex/skills` directories are created

@@ -238,4 +238,3 @@ async function replaceSkillSymlink(
     );
   }
 }
-
