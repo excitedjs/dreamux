@@ -4,15 +4,31 @@
  * Trigger rule (deliberately different from claudemux):
  *
  *   In a group, a `/introduce` message triggers **if and only if the sender is
- *   on the allowlist**. No `@`-mention of our bot is required, and the group's
- *   `require_mention` setting is ignored on this path.
+ *   authorized to run it under the group's policy**. No `@`-mention of our bot
+ *   is required, and the group's `require_mention` setting is ignored on this
+ *   path.
  *
- *   "Sender on the allowlist" is sender-scoped, NOT group-scoped: it is not
- *   enough for the chat to be authorized — the *sender* must be explicitly
- *   allowlisted for the chat. An open group (no per-sender allowlist) does NOT
- *   authorize introduce. `canRunIntroduce` therefore never reuses a broad
- *   group-authorization predicate that would trust the group without checking
- *   the sender's identity.
+ * Authorization mirrors the delivery gate (`dreamuxFeishuGate`) for the same
+ * group policy, minus the @-mention requirement that introduce deliberately
+ * waives. The parity is exact except for two divergences that are intentional
+ * (issue #62), not accidental — keep them when "aligning" the two gates:
+ *
+ *   - `block`       — never authorized (the gate drops every group message).
+ *   - `follow-user` — the chat needs no authorization; `allow_chats` is ignored
+ *                     exactly as the gate ignores it. The sender must be on the
+ *                     global `allow_users` list.
+ *   - `allowlist`   — the chat must be named in `allow_chats` (the group is the
+ *                     unit of trust). The sender must ALSO be on `allow_users` —
+ *                     this is the #62 divergence: a trust-changing command is
+ *                     sender-scoped even in an allowlisted group, whereas the
+ *                     delivery gate lets any member of an allowlisted group
+ *                     speak. "Any member of an allowlisted group" is therefore
+ *                     deliberately NOT a path to introduce.
+ *
+ * Before issue #79/#82 made the gate policy-aware, introduce kept a hardcoded
+ * `chat_not_allowlisted` check for *every* policy — so an `allow_users` sender
+ * could chat in a brand-new `follow-user` group but could never `/introduce`
+ * there. That accidental split is the bug this contract now closes.
  *
  * The peer bots being introduced are the message's @-mentions (excluding our
  * own bot); the host records them as *trusted* for the chat. Recording a human
@@ -43,6 +59,7 @@ export interface IntroduceAuthInput {
 export type IntroduceDenyReason =
   | 'non_group'
   | 'empty_sender_id'
+  | 'group_blocked'
   | 'chat_not_allowlisted'
   | 'sender_not_followed';
 
@@ -51,10 +68,16 @@ export type IntroduceDenyReason =
  * is authorized. This is the single source of truth for the issue #62 hard
  * contract; `canRunIntroduce` is the boolean projection of it.
  *
- * Sender-scoped, not group-scoped: the chat must be explicitly allowlisted AND
- * the sender must be on the global `allow_users` list (the same list that gates
- * direct messages and `follow-user` group delivery). Empty allowlists do not
- * authorize anyone — there is no "any member of an allowlisted group" path.
+ * Policy-aware, mirroring `dreamuxFeishuGate`'s group branch for the same policy
+ * (minus the @-mention requirement introduce waives):
+ *   - `block`       → `group_blocked` (the gate drops every group message).
+ *   - `follow-user` → `allow_chats` is ignored exactly as the gate ignores it;
+ *                     only the sender's membership in `allow_users` matters.
+ *   - `allowlist`   → the chat must be in `allow_chats` (chat-as-unit-of-trust)
+ *                     AND the sender must be on `allow_users` (the #62 sender
+ *                     scoping that the delivery gate does not impose).
+ * Empty allowlists authorize nobody — there is no "any member of an allowlisted
+ * group" path.
  */
 export function introduceDenyReason(
   access: DispatcherAccessState,
@@ -62,11 +85,20 @@ export function introduceDenyReason(
 ): IntroduceDenyReason | null {
   if (input.chatType !== 'group') return 'non_group';
   if (input.senderId === '') return 'empty_sender_id';
-  // The chat must be explicitly allowlisted. Under the `follow-user` policy an
-  // empty `allow_chats` means "every chat" for normal delivery, but a
-  // trust-changing command always requires the chat to be named, so introduce
-  // never fires in an incidental group regardless of the group policy.
-  if (!access.group.allow_chats.includes(input.chatId)) return 'chat_not_allowlisted';
+  const policy = access.group.policy;
+  // `block` drops every group message; a trust-changing command is no exception.
+  // (Before this was explicit, `block` blocked introduce only by accident — its
+  // empty `allow_chats` tripped `chat_not_allowlisted`. Once `follow-user` stops
+  // checking `allow_chats`, the block case needs its own guard.)
+  if (policy === 'block') return 'group_blocked';
+  // Under `allowlist` the group is the unit of trust, so the chat must be named.
+  // Under `follow-user` the chat allowlist is intentionally ignored — the group
+  // needs no authorization, exactly as the delivery gate ignores it. This is the
+  // line that was previously hardcoded for every policy and split introduce from
+  // the gate (issue #82 made the gate policy-aware but left this behind).
+  if (policy === 'allowlist' && !access.group.allow_chats.includes(input.chatId)) {
+    return 'chat_not_allowlisted';
+  }
   // The sender must be on the global allow-user list — the same list that gates
   // direct messages and `follow-user` group delivery. An empty list authorizes
   // nobody, keeping the rule sender-scoped rather than "any member of an

@@ -30,19 +30,48 @@ flags the chat for a future baseline injection; it emits no model notification.
 
 ## `/introduce` hard contract
 
-In a group, a `/introduce` message triggers **if and only if the sender is on
-the allowlist**. No `@`-mention of our bot is required, and the group's
-`require_mention` setting is ignored on this path.
+In a group, a `/introduce` message triggers **if and only if the sender is
+authorized to run it under the group's policy**. No `@`-mention of our bot is
+required, and the group's `require_mention` setting is ignored on this path.
 
-The authorization is sender-scoped, not group-scoped. `canRunIntroduce`
-(`channel/introduce.ts`) requires the chat to be explicitly in
-`group.allow_chats` **and** the sender to be on the global `allow_users` list
-(the same list that gates direct messages and `follow-user` group delivery).
-An empty `allow_users` authorizes nobody — "any member of an allowlisted group"
-is deliberately **not** a path, and `canRunIntroduce` never reuses a broad
-group-authorization predicate that would trust the group without checking the
-sender's identity. A bot sender is never on the human allowlist, so ambient
-self-introduction by an arbitrary bot does not trigger introduce.
+Authorization (`introduceDenyReason` / `canRunIntroduce` in
+`channel/introduce.ts`) **mirrors the delivery gate `dreamuxFeishuGate` for the
+same `group.policy`**, minus the `@`-mention requirement introduce deliberately
+waives:
+
+- `block` → never authorized (`group_blocked`); the gate drops every group
+  message, and a trust-changing command is no exception.
+- `follow-user` → `group.allow_chats` is **ignored**, exactly as the delivery
+  gate ignores it. The group needs no authorization; only the sender's
+  membership in the global `allow_users` list matters. An allow_user can
+  therefore `/introduce` in any group, including a brand-new one that is not in
+  `allow_chats`.
+- `allowlist` → the chat must be in `group.allow_chats` (the group is the unit
+  of trust) **and** the sender must be on `allow_users`. This sender check is an
+  intentional divergence from the delivery gate (issue #62): the delivery gate
+  lets any member of an allowlisted chat speak, but a trust-changing command is
+  sender-scoped — "any member of an allowlisted group" is deliberately **not** a
+  path to introduce.
+
+An empty `allow_users` authorizes nobody. A bot sender is never on the human
+allowlist, so ambient self-introduction by an arbitrary bot does not trigger
+introduce.
+
+> **Gate ↔ introduce parity.** The two paths must agree under `block` and
+> `follow-user`, and diverge under `allowlist` only by the sender check above.
+> This is asserted by a table-driven test in `tests/feishu-introduce.test.ts`
+> ("gate vs introduce parity") so accidental drift fails CI. The bug that
+> motivated this contract was exactly such a drift: issue #82 made
+> `dreamuxFeishuGate` policy-aware (so `follow-user` stopped checking
+> `allow_chats`) but left `canRunIntroduce` with a hardcoded `allow_chats`
+> requirement for *every* policy. The result: an `allow_users` sender could chat
+> in a brand-new `follow-user` group (after `@`-mentioning the bot) but could
+> never `/introduce` there — it was diagnosed as `chat_not_allowlisted`. Issues
+> #77 and #87 then built on the frozen behavior without revisiting it. The
+> awareness path in `server.ts` (`observeKnownBot`, gated on
+> `allow_chats.includes`) is the *same* hardcoded-`allow_chats` shape one layer
+> up — out of scope here (it tracks `known` bots, not trust), but a candidate
+> for the same follow-user alignment.
 
 Detection (`detectIntroduce`) is text-only and strips leading Feishu mention
 placeholder tokens before matching `^/introduce`, so an `@`-prefixed
@@ -82,8 +111,12 @@ most misleadingly as `bot not mentioned`, because the introduce path waives the
 mention requirement that the gate still enforces. To keep this one-glance
 diagnosable, `introduceDenyReason` (`channel/introduce.ts`) is the discriminated
 source of truth — `canRunIntroduce` is its boolean projection — returning a
-stable, grep-able code: `non_group`, `empty_sender_id`, `chat_not_allowlisted`,
-`sender_not_followed`. When `detectIntroduce` matches but the reason is
+stable, grep-able code: `non_group`, `empty_sender_id`, `group_blocked`,
+`chat_not_allowlisted`, `sender_not_followed`. `group_blocked` is the `block`
+policy; `chat_not_allowlisted` is the `allowlist` policy only (under
+`follow-user` the chat allowlist is ignored, so an off-allowlist sender there is
+`sender_not_followed`, never `chat_not_allowlisted`). When `detectIntroduce`
+matches but the reason is
 non-null, `server.ts` emits one channel log `introduce detected but not
 authorized` carrying only `chat_id`/`sender_id`/`message_id`/`reason` (never the
 message body, mentioned peer open_ids, or mention names), then continues into

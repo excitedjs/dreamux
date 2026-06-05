@@ -49,39 +49,102 @@ function textContent(text: string): string {
   return JSON.stringify({ text });
 }
 
-describe('canRunIntroduce — sender-scoped, not group-scoped', () => {
+describe('canRunIntroduce — allowlist policy: sender-scoped, not group-scoped', () => {
   it('authorizes an allowlisted sender in an allowlisted chat', () => {
-    const access = state({ allow_users: ['user-a'], group: { allow_chats: ['chat-a'] } });
+    const access = state({
+      allow_users: ['user-a'],
+      group: { policy: 'allowlist', allow_chats: ['chat-a'] },
+    });
     expect(
       canRunIntroduce(access, { chatType: 'group', chatId: 'chat-a', senderId: 'user-a' }),
     ).toBe(true);
   });
 
   it('rejects a non-allowlisted sender even in an allowlisted chat', () => {
-    const access = state({ allow_users: ['user-a'], group: { allow_chats: ['chat-a'] } });
+    const access = state({
+      allow_users: ['user-a'],
+      group: { policy: 'allowlist', allow_chats: ['chat-a'] },
+    });
     expect(
       canRunIntroduce(access, { chatType: 'group', chatId: 'chat-a', senderId: 'user-x' }),
     ).toBe(false);
   });
 
   it('rejects an allowlisted sender in a chat that is not allowlisted', () => {
-    const access = state({ allow_users: ['user-a'], group: { allow_chats: ['chat-a'] } });
+    const access = state({
+      allow_users: ['user-a'],
+      group: { policy: 'allowlist', allow_chats: ['chat-a'] },
+    });
     expect(
       canRunIntroduce(access, { chatType: 'group', chatId: 'chat-other', senderId: 'user-a' }),
     ).toBe(false);
   });
 
   it('does NOT treat "any member of an allowlisted group" as authorized (empty allowlist)', () => {
-    const access = state({ allow_users: [], group: { allow_chats: ['chat-a'] } });
+    const access = state({
+      allow_users: [],
+      group: { policy: 'allowlist', allow_chats: ['chat-a'] },
+    });
     expect(
       canRunIntroduce(access, { chatType: 'group', chatId: 'chat-a', senderId: 'anyone' }),
     ).toBe(false);
   });
 
   it('never fires for direct messages', () => {
-    const access = state({ allow_users: ['user-a'], group: { allow_chats: ['chat-a'] } });
+    const access = state({
+      allow_users: ['user-a'],
+      group: { policy: 'allowlist', allow_chats: ['chat-a'] },
+    });
     expect(
       canRunIntroduce(access, { chatType: 'p2p', chatId: 'chat-a', senderId: 'user-a' }),
+    ).toBe(false);
+  });
+});
+
+describe('canRunIntroduce — follow-user policy: allow_chats is ignored', () => {
+  // The bug this PR fixes: under `follow-user` the delivery gate ignores
+  // `allow_chats`, but introduce used to demand the chat be named anyway, so an
+  // `allow_users` sender could chat in a brand-new group yet never `/introduce`
+  // there. Authorization must now mirror the gate: only `allow_users` matters.
+  it('authorizes an allow_user in a group that is NOT in allow_chats', () => {
+    const access = state({
+      allow_users: ['user-a'],
+      group: { policy: 'follow-user', allow_chats: [] },
+    });
+    expect(
+      canRunIntroduce(access, { chatType: 'group', chatId: 'brand-new-chat', senderId: 'user-a' }),
+    ).toBe(true);
+  });
+
+  it('authorizes an allow_user even when allow_chats names only other chats', () => {
+    const access = state({
+      allow_users: ['user-a'],
+      group: { policy: 'follow-user', allow_chats: ['some-other-chat'] },
+    });
+    expect(
+      canRunIntroduce(access, { chatType: 'group', chatId: 'brand-new-chat', senderId: 'user-a' }),
+    ).toBe(true);
+  });
+
+  it('rejects a sender who is not on allow_users, regardless of the chat', () => {
+    const access = state({
+      allow_users: ['user-a'],
+      group: { policy: 'follow-user', allow_chats: [] },
+    });
+    expect(
+      canRunIntroduce(access, { chatType: 'group', chatId: 'brand-new-chat', senderId: 'stranger' }),
+    ).toBe(false);
+  });
+});
+
+describe('canRunIntroduce — block policy never authorizes', () => {
+  it('rejects even an allow_user in an otherwise-named chat', () => {
+    const access = state({
+      allow_users: ['user-a'],
+      group: { policy: 'block', allow_chats: ['chat-a'] },
+    });
+    expect(
+      canRunIntroduce(access, { chatType: 'group', chatId: 'chat-a', senderId: 'user-a' }),
     ).toBe(false);
   });
 });
@@ -91,49 +154,122 @@ describe('introduceDenyReason — stable diagnostic codes (issue #77)', () => {
   // rejection point and is logged verbatim, so an operator can tell an
   // introduce blocked by the allowlist apart from an ordinary gate drop.
   it('returns null (authorized) for an allowlisted sender in an allowlisted chat', () => {
-    const access = state({ allow_users: ['user-a'], group: { allow_chats: ['chat-a'] } });
+    const access = state({
+      allow_users: ['user-a'],
+      group: { policy: 'allowlist', allow_chats: ['chat-a'] },
+    });
     expect(
       introduceDenyReason(access, { chatType: 'group', chatId: 'chat-a', senderId: 'user-a' }),
     ).toBeNull();
   });
 
+  it('returns null (authorized) for an allow_user in an unconfigured follow-user group', () => {
+    const access = state({
+      allow_users: ['user-a'],
+      group: { policy: 'follow-user', allow_chats: [] },
+    });
+    expect(
+      introduceDenyReason(access, {
+        chatType: 'group',
+        chatId: 'brand-new-chat',
+        senderId: 'user-a',
+      }),
+    ).toBeNull();
+  });
+
   it('reports non_group for a direct message', () => {
-    const access = state({ allow_users: ['user-a'], group: { allow_chats: ['chat-a'] } });
+    const access = state({
+      allow_users: ['user-a'],
+      group: { policy: 'allowlist', allow_chats: ['chat-a'] },
+    });
     expect(
       introduceDenyReason(access, { chatType: 'p2p', chatId: 'chat-a', senderId: 'user-a' }),
     ).toBe('non_group');
   });
 
   it('reports empty_sender_id when the sender id is missing', () => {
-    const access = state({ allow_users: ['user-a'], group: { allow_chats: ['chat-a'] } });
+    const access = state({
+      allow_users: ['user-a'],
+      group: { policy: 'allowlist', allow_chats: ['chat-a'] },
+    });
     expect(
       introduceDenyReason(access, { chatType: 'group', chatId: 'chat-a', senderId: '' }),
     ).toBe('empty_sender_id');
   });
 
-  it('reports chat_not_allowlisted when the chat is not explicitly allowlisted', () => {
-    const access = state({ allow_users: ['user-a'], group: { allow_chats: ['chat-a'] } });
+  it('reports group_blocked under the block policy', () => {
+    const access = state({
+      allow_users: ['user-a'],
+      group: { policy: 'block', allow_chats: ['chat-a'] },
+    });
+    expect(
+      introduceDenyReason(access, { chatType: 'group', chatId: 'chat-a', senderId: 'user-a' }),
+    ).toBe('group_blocked');
+  });
+
+  it('reports chat_not_allowlisted under allowlist when the chat is not named', () => {
+    const access = state({
+      allow_users: ['user-a'],
+      group: { policy: 'allowlist', allow_chats: ['chat-a'] },
+    });
     expect(
       introduceDenyReason(access, { chatType: 'group', chatId: 'chat-other', senderId: 'user-a' }),
     ).toBe('chat_not_allowlisted');
   });
 
+  it('does NOT report chat_not_allowlisted under follow-user (allow_chats is ignored)', () => {
+    const access = state({
+      allow_users: ['user-a'],
+      group: { policy: 'follow-user', allow_chats: ['some-other-chat'] },
+    });
+    expect(
+      introduceDenyReason(access, { chatType: 'group', chatId: 'chat-other', senderId: 'user-a' }),
+    ).toBeNull();
+  });
+
   it('reports sender_not_followed when allow_users is empty (the misleading case)', () => {
-    const access = state({ allow_users: [], group: { allow_chats: ['chat-a'] } });
+    const access = state({
+      allow_users: [],
+      group: { policy: 'allowlist', allow_chats: ['chat-a'] },
+    });
     expect(
       introduceDenyReason(access, { chatType: 'group', chatId: 'chat-a', senderId: 'anyone' }),
     ).toBe('sender_not_followed');
   });
 
   it('reports sender_not_followed when allow_users is non-empty but excludes the sender', () => {
-    const access = state({ allow_users: ['user-a'], group: { allow_chats: ['chat-a'] } });
+    const access = state({
+      allow_users: ['user-a'],
+      group: { policy: 'allowlist', allow_chats: ['chat-a'] },
+    });
     expect(
       introduceDenyReason(access, { chatType: 'group', chatId: 'chat-a', senderId: 'user-x' }),
     ).toBe('sender_not_followed');
   });
 
+  it('reports sender_not_followed under follow-user for a non-allow_user (NOT chat_not_allowlisted)', () => {
+    // The regression guard for this PR: a stranger in an unconfigured follow-user
+    // group must be denied for being off the allowlist, never for the chat being
+    // unlisted — that proves the chat check is skipped under follow-user.
+    const access = state({
+      allow_users: ['user-a'],
+      group: { policy: 'follow-user', allow_chats: [] },
+    });
+    expect(
+      introduceDenyReason(access, {
+        chatType: 'group',
+        chatId: 'brand-new-chat',
+        senderId: 'stranger',
+      }),
+    ).toBe('sender_not_followed');
+  });
+
   it('stays consistent with canRunIntroduce across every branch', () => {
-    const access = state({ allow_users: ['user-a'], group: { allow_chats: ['chat-a'] } });
+    const cases: DispatcherAccessState[] = [
+      state({ allow_users: ['user-a'], group: { policy: 'allowlist', allow_chats: ['chat-a'] } }),
+      state({ allow_users: ['user-a'], group: { policy: 'follow-user', allow_chats: [] } }),
+      state({ allow_users: ['user-a'], group: { policy: 'block', allow_chats: ['chat-a'] } }),
+    ];
     const inputs = [
       { chatType: 'group', chatId: 'chat-a', senderId: 'user-a' },
       { chatType: 'p2p', chatId: 'chat-a', senderId: 'user-a' },
@@ -141,10 +277,70 @@ describe('introduceDenyReason — stable diagnostic codes (issue #77)', () => {
       { chatType: 'group', chatId: 'chat-other', senderId: 'user-a' },
       { chatType: 'group', chatId: 'chat-a', senderId: 'user-x' },
     ];
-    for (const input of inputs) {
-      expect(canRunIntroduce(access, input)).toBe(introduceDenyReason(access, input) === null);
+    for (const access of cases) {
+      for (const input of inputs) {
+        expect(canRunIntroduce(access, input)).toBe(introduceDenyReason(access, input) === null);
+      }
     }
   });
+});
+
+describe('gate vs introduce parity — follow-user semantics must not drift', () => {
+  // The user asked review to verify that the normal delivery gate and the
+  // introduce gate agree under follow-user. Encode it so accidental drift fails
+  // CI rather than relying on a human reviewer. We hold the @-mention satisfied
+  // (introduce waives it; the gate requires it) and the sender human, then
+  // compare `dreamuxFeishuGate` deliver/drop against introduce authorization.
+  //
+  // They must agree for `block` and `follow-user`. Under `allowlist` they
+  // diverge BY DESIGN (issue #62): the gate lets any member of an allowlisted
+  // chat speak, but introduce additionally requires the sender on `allow_users`
+  // because it changes trust. That one divergence is asserted explicitly below.
+  const POLICIES = ['block', 'follow-user', 'allowlist'] as const;
+  const MENTION: Mention[] = [{ key: '@_bot', id: { open_id: 'self-bot' } }];
+
+  for (const policy of POLICIES) {
+    for (const chatInList of [false, true]) {
+      for (const senderInList of [false, true]) {
+        it(`policy=${policy} chatInList=${chatInList} senderInList=${senderInList}`, () => {
+          const access = state({
+            allow_users: senderInList ? ['user-a'] : [],
+            group: { policy, allow_chats: chatInList ? ['chat-a'] : [] },
+          });
+          const gate = dreamuxFeishuGate(
+            {
+              senderId: 'user-a',
+              senderType: 'user',
+              chatId: 'chat-a',
+              chatType: 'group',
+              mentions: MENTION,
+              botOpenId: 'self-bot',
+              now: 1_700_000_000_000,
+            },
+            access,
+          );
+          const gateDelivers = gate.action === 'deliver';
+          const introAuthorized =
+            introduceDenyReason(access, {
+              chatType: 'group',
+              chatId: 'chat-a',
+              senderId: 'user-a',
+            }) === null;
+
+          const intentionalAllowlistDivergence =
+            policy === 'allowlist' && chatInList && !senderInList;
+          if (intentionalAllowlistDivergence) {
+            // Gate delivers (any member of the allowlisted chat), introduce does
+            // not (trust-changing command is sender-scoped, #62).
+            expect(gateDelivers).toBe(true);
+            expect(introAuthorized).toBe(false);
+          } else {
+            expect(introAuthorized).toBe(gateDelivers);
+          }
+        });
+      }
+    }
+  }
 });
 
 describe('detectIntroduce — no @-mention required', () => {

@@ -901,6 +901,167 @@ describe('dreamux MVP smoke', () => {
     expect(entry?.known).toEqual(['peer-bot-1']);
   });
 
+  it('follow-user: consumes a bare /introduce from an allow_user in an UNCONFIGURED group', async () => {
+    // The reported bug: under follow-user the delivery gate ignores allow_chats,
+    // but introduce used to demand the chat be named — so an allow_user in a
+    // brand-new group could never /introduce. allow_chats is empty here and the
+    // chat is not listed, yet the command must consume, trust, and ack.
+    await saveDispatcherAccess('flow', {
+      version: 2,
+      allow_users: ['sender-test'],
+      group: {
+        policy: 'follow-user',
+        allow_chats: [],
+        require_mention: true,
+      },
+      observed_chats: [],
+      warnings: [],
+      last_gate: null,
+    });
+    server = buildServer({ runtimeDir, fake, bot });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+    await server.start();
+
+    // No @-mention of our bot — only the peer bot being introduced is mentioned.
+    await bot.inject(
+      fakeInbound('chat-group-new', '/introduce', 'msg-introduce-fu-bare', {
+        mentions: [{ key: '@_user_9', id: { open_id: 'peer-bot-fu-1' }, name: 'Peer' }],
+      }),
+    );
+
+    await sleep(60);
+    expect(fake.turnsHandled).toBe(0);
+    expect(bot.sentMessages).toEqual([
+      {
+        chatId: 'chat-group-new',
+        target: { chatId: 'chat-group-new' },
+        text: '✅ 已认识本群 1 个伙伴：@Peer',
+        messageIds: ['message-fake-1'],
+      },
+    ]);
+    expect(bot.reactions).toEqual([]);
+    const entry = (await loadChatBots('flow')).chats['chat-group-new'];
+    expect(entry?.trusted).toEqual(['peer-bot-fu-1']);
+    expect(entry?.known).toEqual(['peer-bot-fu-1']);
+  });
+
+  it('follow-user: consumes an @-bot /introduce from an allow_user in an UNCONFIGURED group', async () => {
+    // Mentioning our bot must not change the introduce path — it still consumes,
+    // trusts, and acks without reaching Codex (the mention requirement is waived
+    // for introduce, not required).
+    await saveDispatcherAccess('flow', {
+      version: 2,
+      allow_users: ['sender-test'],
+      group: {
+        policy: 'follow-user',
+        allow_chats: [],
+        require_mention: true,
+      },
+      observed_chats: [],
+      warnings: [],
+      last_gate: null,
+    });
+    server = buildServer({ runtimeDir, fake, bot });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+    await server.start();
+
+    // @ our bot AND the peer bot being introduced.
+    await bot.inject(
+      fakeInbound('chat-group-new', '/introduce', 'msg-introduce-fu-at', {
+        mentions: [
+          { key: '@_user_1', id: { open_id: 'fake-open-id-app-smoke' }, name: 'Dispatcher' },
+          { key: '@_user_9', id: { open_id: 'peer-bot-fu-2' }, name: 'Peer' },
+        ],
+      }),
+    );
+
+    await sleep(60);
+    expect(fake.turnsHandled).toBe(0);
+    expect(bot.sentMessages).toEqual([
+      {
+        chatId: 'chat-group-new',
+        target: { chatId: 'chat-group-new' },
+        text: '✅ 已认识本群 1 个伙伴：@Peer',
+        messageIds: ['message-fake-1'],
+      },
+    ]);
+    expect(bot.reactions).toEqual([]);
+    const entry = (await loadChatBots('flow')).chats['chat-group-new'];
+    expect(entry?.trusted).toEqual(['peer-bot-fu-2']);
+    expect(entry?.known).toEqual(['peer-bot-fu-2']);
+  });
+
+  it('follow-user: does NOT consume /introduce from a non-allow_user in an UNCONFIGURED group', async () => {
+    // The regression guard: a stranger in an unconfigured follow-user group must
+    // be denied for being off the allowlist (`sender_not_followed`), NEVER for
+    // the chat being unlisted — that proves the chat check is skipped under
+    // follow-user. Normal gate behavior is preserved: it still falls through and
+    // drops as `bot not mentioned`.
+    await saveDispatcherAccess('flow', {
+      version: 2,
+      allow_users: ['sender-test'],
+      group: {
+        policy: 'follow-user',
+        allow_chats: [],
+        require_mention: true,
+      },
+      observed_chats: [],
+      warnings: [],
+      last_gate: null,
+    });
+    const channel = captureLogger('channel');
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      channelLoggerFactory: () => channel.logger,
+    });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+    await server.start();
+
+    await bot.inject(
+      fakeInbound('chat-group-new', '/introduce', 'msg-introduce-fu-stranger', {
+        senderId: 'stranger',
+        mentions: [{ key: '@_user_9', id: { open_id: 'peer-bot-fu-3' }, name: 'Peer' }],
+      }),
+    );
+
+    await sleep(60);
+    expect(fake.turnsHandled).toBe(0);
+    expect(bot.sentMessages).toEqual([]);
+    expect(bot.reactions).toEqual([]);
+    expect((await loadChatBots('flow')).chats['chat-group-new']?.trusted ?? []).not.toContain(
+      'peer-bot-fu-3',
+    );
+
+    const lines = channel.lines();
+    expect(lines.find((l) => l['msg'] === 'introduce detected but not authorized')).toMatchObject({
+      chat_id: 'chat-group-new',
+      sender_id: 'stranger',
+      message_id: 'msg-introduce-fu-stranger',
+      // Must be sender-scoped, not chat-scoped — the whole point of the fix.
+      reason: 'sender_not_followed',
+    });
+    // Normal follow-user gate still runs and drops the stranger's message.
+    expect(
+      lines.some(
+        (l) => l['msg'] === 'feishu inbound dropped' && l['reason'] === 'bot not mentioned',
+      ),
+    ).toBe(true);
+  });
+
   it('does not ack an authorized /introduce with no external peer', async () => {
     await saveDispatcherAccess('flow', {
       version: 2,
