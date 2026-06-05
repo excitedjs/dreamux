@@ -219,12 +219,21 @@ reaction ledger.
 
 `chat-bots.json` stores per-dispatcher peer-bot discovery state, keyed by
 chat_id (issue #62). Each chat tracks a `known` set (bots passively observed in
-an authorized chat — awareness only) and a `trusted` set (bots introduced by an
-allowlisted `/introduce` — the only set the gate consults to let a peer bot's
-group message through). The two sets must never be conflated: observation never
-grants trust. It also records bot-added baseline bookkeeping (`needsBaseline`,
-`seenEventIds` for idempotent `im.chat.member.bot.added_v1` handling). It is
-server-owned discovery state, safe to delete; it holds no credentials.
+an authorized chat — awareness only) and a `trusted` set (peer-bot open_ids
+introduced by an allowlisted `/introduce`). The gate consults trust through
+`trustedBotIds()`, which folds the `trusted` open_ids together with a parallel
+`trustedUnionIds` set into one match set — a peer bot is let through when its
+send-time open_id **or** its union_id is trusted. The union bridge exists
+because a Feishu open_id is app-scoped, so a bot mentioned under one open_id can
+send under another; the union_id (stable across one developer's apps) reconnects
+them. `trustedUnionIds` is a load-bearing part of the trust contract, not
+disposable: dropping it on migration/cleanup would silently re-break the
+introduce→deliver path for any such bot. It is kept out of the display surfaces
+(`<group_bots>`, `list_chat_bots`), which stay open_id-only. The known/trusted
+sets must never be conflated: observation never grants trust. The file also
+records bot-added baseline bookkeeping (`needsBaseline`, `seenEventIds` for
+idempotent `im.chat.member.bot.added_v1` handling). It is server-owned discovery
+state, safe to delete; it holds no credentials.
 
 `codex.sock` is the Codex app-server WebSocket-over-Unix-socket endpoint for the
 dispatcher. It is not the Feishu MCP transport. The Feishu MCP default transport

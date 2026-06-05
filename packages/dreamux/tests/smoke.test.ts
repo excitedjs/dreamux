@@ -353,6 +353,51 @@ describe('dreamux MVP smoke', () => {
     expect(d?.status).toBe('ready');
   });
 
+  it('bridges a peer bot whose send-time open_id differs from its introduce open_id via union_id', async () => {
+    // End-to-end wiring regression for the union_id bridge: an allowlisted
+    // human `/introduce`s a peer bot (mention carries open_id A + union_id U);
+    // the peer later sends under a *different* app-scoped open_id B but the same
+    // union_id U. open_id-only trust would drop it as `bot sender type: bot`;
+    // the union_id match must carry it through server.ts → trust store → gate.
+    server = buildServer({ runtimeDir, fake, bot });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+    await server.start();
+
+    // 1) Allowlisted human introduces the peer bot. Consumed, never a turn.
+    await bot.inject(
+      fakeInbound('chat-group-a', '/introduce', 'msg-introduce', {
+        senderId: 'sender-test',
+        senderType: 'user',
+        mentions: [
+          {
+            key: '@_user_1',
+            id: { open_id: 'peer-open-mentioned', union_id: 'peer-union' },
+            name: 'Peer',
+          },
+        ],
+      }),
+    );
+
+    // 2) The peer bot sends under a different open_id but the same union_id,
+    //    with no mention (a bot cannot @-mention us).
+    await bot.inject(
+      fakeInbound('chat-group-a', 'hello from the peer bot', 'msg-peer', {
+        senderId: 'peer-open-sent',
+        senderUnionId: 'peer-union',
+        senderType: 'bot',
+        senderName: 'Peer',
+        mentions: [],
+      }),
+    );
+
+    await waitFor(() => codexInputs.length === 1);
+    expect(codexInputs[0]).toContain('hello from the peer bot');
+  });
+
   it('starts the dispatcher app-server with global default Codex home and tm on PATH', async () => {
     const capturedCodexOptions: CodexProcessOptions[] = [];
     server = buildServer({ runtimeDir, fake, bot, capturedCodexOptions });
