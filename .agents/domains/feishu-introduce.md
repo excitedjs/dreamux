@@ -2,7 +2,8 @@
 
 - **Status:** Implemented (issue #62, first increment). Invite-code/pairing and
   rich attachments are deferred to follow-up PRs — see Deferred below.
-- **Source:** https://github.com/excitedjs/dreamux/issues/62
+- **Source:** https://github.com/excitedjs/dreamux/issues/62,
+  https://github.com/excitedjs/dreamux/issues/87
 - **Affects:** `packages/dreamux/src/feishu/bot.ts`,
   `packages/dreamux/src/channel/introduce.ts`,
   `packages/dreamux/src/channel/chat-bots-store.ts`,
@@ -49,6 +50,29 @@ placeholder tokens before matching `^/introduce`, so an `@`-prefixed
 introduced are the message's other mentions; they are recorded as **trusted**
 for that chat and the `/introduce` message is consumed (never delivered to Codex
 as a turn).
+
+## Authorized-introduce channel ack (issue #87)
+
+When an authorized group `/introduce` names at least one external peer bot, the
+channel sends one immediate best-effort ack to the group after the trust store
+write succeeds:
+
+```text
+✅ 已认识本群 N 个伙伴：@Name ...
+```
+
+The ack counts the peers mentioned in this `/introduce`, not only newly added
+trust entries. Re-introducing an already-trusted peer therefore still acks the
+current external mentions, matching the explicit user action. The channel
+excludes the dispatcher bot itself. If Feishu omits a peer display name, the ack
+uses `@伙伴` as the stable fallback rather than displaying a raw open_id.
+
+The ack is channel-owned and best-effort. A send failure is logged as
+`introduce ack failed` with structured fields (`dispatcher_id`, `chat_id`,
+`message_id`, `peer_count`, `err`), but it does not roll back trust, does not
+submit a Codex turn, does not add a reaction, and does not fail the message
+handler. An authorized `/introduce` with no external peer still consumes the
+command but sends no ack.
 
 ## Unauthorized-introduce diagnostic (issue #77)
 

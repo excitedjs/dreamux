@@ -26,6 +26,7 @@ import type { DispatcherAccessState } from './feishu-gate.js';
 import type { PeerBot } from './chat-bots-store.js';
 
 const INTRODUCE_RE = /^\/introduce(?:\s|$)/i;
+const UNKNOWN_PEER_LABEL = '伙伴';
 
 export interface IntroduceAuthInput {
   chatType: string;
@@ -153,4 +154,27 @@ export function introducedPeers(
     peers.push(m.name !== undefined ? { openId, name: m.name } : { openId });
   }
   return peers;
+}
+
+/**
+ * User-visible channel ack for an authorized `/introduce`. The fallback avoids
+ * exposing raw open_id values when Feishu did not provide a display name.
+ */
+export function introduceAckText(peers: PeerBot[]): string | null {
+  if (peers.length === 0) return null;
+  const items = peers.map((peer) => `@${displayNameForAck(peer)}`).join(' ');
+  return `✅ 已认识本群 ${peers.length} 个伙伴：${items}`;
+}
+
+function displayNameForAck(peer: PeerBot): string {
+  const name = peer.name !== undefined ? safeInlineText(peer.name) : '';
+  return name !== '' ? name : UNKNOWN_PEER_LABEL;
+}
+
+function safeInlineText(value: string): string {
+  return value
+    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+    .replace(/[`*[\]]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }

@@ -883,14 +883,154 @@ describe('dreamux MVP smoke', () => {
     );
 
     await sleep(60);
-    // Consumed before the gate: no Codex turn, no outbound, no reactions.
+    // Consumed before the gate: no Codex turn or reactions. The channel sends
+    // one immediate best-effort ack to the group, not a threaded reply.
     expect(fake.turnsHandled).toBe(0);
-    expect(bot.sentMessages).toEqual([]);
+    expect(bot.sentMessages).toEqual([
+      {
+        chatId: 'chat-group-a',
+        target: { chatId: 'chat-group-a' },
+        text: '✅ 已认识本群 1 个伙伴：@Peer',
+        messageIds: ['message-fake-1'],
+      },
+    ]);
     expect(bot.reactions).toEqual([]);
     // The peer bot is now trusted for this chat (and known), but not the sender.
     const entry = (await loadChatBots('flow')).chats['chat-group-a'];
     expect(entry?.trusted).toEqual(['peer-bot-1']);
     expect(entry?.known).toEqual(['peer-bot-1']);
+  });
+
+  it('does not ack an authorized /introduce with no external peer', async () => {
+    await saveDispatcherAccess('flow', {
+      version: 2,
+      allow_users: ['sender-test'],
+      group: {
+        policy: 'allowlist',
+        allow_chats: ['chat-group-a'],
+        require_mention: true,
+      },
+      observed_chats: [],
+      warnings: [],
+      last_gate: null,
+    });
+    server = buildServer({ runtimeDir, fake, bot });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+    await server.start();
+
+    await bot.inject(
+      fakeInbound('chat-group-a', '/introduce', 'msg-introduce-self-only', {
+        mentions: [
+          {
+            key: '@_user_1',
+            id: { open_id: 'fake-open-id-app-smoke' },
+            name: 'Dispatcher',
+          },
+        ],
+      }),
+    );
+
+    await sleep(60);
+    expect(fake.turnsHandled).toBe(0);
+    expect(bot.sentMessages).toEqual([]);
+    expect(bot.reactions).toEqual([]);
+    expect((await loadChatBots('flow')).chats['chat-group-a']?.trusted ?? []).toEqual([]);
+  });
+
+  it('keeps /introduce trust when the best-effort ack send fails', async () => {
+    await saveDispatcherAccess('flow', {
+      version: 2,
+      allow_users: ['sender-test'],
+      group: {
+        policy: 'allowlist',
+        allow_chats: ['chat-group-a'],
+        require_mention: true,
+      },
+      observed_chats: [],
+      warnings: [],
+      last_gate: null,
+    });
+    const channel = captureLogger('channel');
+    bot.setSendError(new Error('feishu send boom'));
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      channelLoggerFactory: () => channel.logger,
+    });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+    await server.start();
+
+    await expect(
+      bot.inject(
+        fakeInbound('chat-group-a', '/introduce', 'msg-introduce-ack-fails', {
+          mentions: [{ key: '@_user_9', id: { open_id: 'peer-bot-ack-fail' }, name: 'Peer' }],
+        }),
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(fake.turnsHandled).toBe(0);
+    expect(bot.sentMessages).toEqual([]);
+    expect(bot.reactions).toEqual([]);
+    expect((await loadChatBots('flow')).chats['chat-group-a']?.trusted).toEqual([
+      'peer-bot-ack-fail',
+    ]);
+    const failed = channel.lines().find((l) => l['msg'] === 'introduce ack failed');
+    expect(failed).toMatchObject({
+      dispatcher_id: 'flow',
+      chat_id: 'chat-group-a',
+      message_id: 'msg-introduce-ack-fails',
+      peer_count: 1,
+    });
+    expect((failed?.['err'] as { message: string }).message).toBe('feishu send boom');
+    expect(channel.lines().some((l) => l['msg'] === 'introduce consumed')).toBe(true);
+  });
+
+  it('acks already-trusted peers when they are reintroduced', async () => {
+    await saveDispatcherAccess('flow', {
+      version: 2,
+      allow_users: ['sender-test'],
+      group: {
+        policy: 'allowlist',
+        allow_chats: ['chat-group-a'],
+        require_mention: true,
+      },
+      observed_chats: [],
+      warnings: [],
+      last_gate: null,
+    });
+    server = buildServer({ runtimeDir, fake, bot });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+    await server.start();
+
+    const intro = (messageId: string): FeishuInboundEvent =>
+      fakeInbound('chat-group-a', '/introduce', messageId, {
+        mentions: [{ key: '@_user_9', id: { open_id: 'peer-bot-repeat' }, name: 'Peer Bot' }],
+      });
+    await bot.inject(intro('msg-introduce-repeat-1'));
+    await bot.inject(intro('msg-introduce-repeat-2'));
+
+    expect(fake.turnsHandled).toBe(0);
+    expect(bot.reactions).toEqual([]);
+    expect((await loadChatBots('flow')).chats['chat-group-a']?.trusted).toEqual([
+      'peer-bot-repeat',
+    ]);
+    expect(bot.sentMessages.map((message) => message.text)).toEqual([
+      '✅ 已认识本群 1 个伙伴：@Peer Bot',
+      '✅ 已认识本群 1 个伙伴：@Peer Bot',
+    ]);
   });
 
   it('injects a one-shot group_bots context on the next group message after /introduce', async () => {
@@ -1031,6 +1171,7 @@ describe('dreamux MVP smoke', () => {
     // Not consumed as introduce; falls to the gate and is dropped (not allowlisted,
     // and the bot was not mentioned). No trust written, no enqueue, no reactions.
     expect(fake.turnsHandled).toBe(0);
+    expect(bot.sentMessages).toEqual([]);
     expect(bot.reactions).toEqual([]);
     const entry = (await loadChatBots('flow')).chats['chat-group-a'];
     expect(entry?.trusted ?? []).not.toContain('peer-bot-2');

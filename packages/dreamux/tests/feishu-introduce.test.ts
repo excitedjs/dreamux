@@ -19,6 +19,7 @@ import {
 import {
   canRunIntroduce,
   detectIntroduce,
+  introduceAckText,
   introduceDenyReason,
   introducedPeers,
 } from '../src/channel/introduce.js';
@@ -196,6 +197,27 @@ describe('introducedPeers', () => {
       { openId: 'peer-a', name: 'Peer A' },
       { openId: 'peer-b' },
     ]);
+  });
+});
+
+describe('introduceAckText', () => {
+  it('counts every introduced peer and renders display names', () => {
+    expect(
+      introduceAckText([
+        { openId: 'peer-a', name: 'Peer A' },
+        { openId: 'peer-b', name: 'Peer B' },
+      ]),
+    ).toBe('✅ 已认识本群 2 个伙伴：@Peer A @Peer B');
+  });
+
+  it('uses a stable non-id fallback when Feishu omits a display name', () => {
+    expect(introduceAckText([{ openId: 'peer-a' }])).toBe(
+      '✅ 已认识本群 1 个伙伴：@伙伴',
+    );
+  });
+
+  it('returns null when there is no external peer to acknowledge', () => {
+    expect(introduceAckText([])).toBeNull();
   });
 });
 

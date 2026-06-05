@@ -30,6 +30,7 @@ import {
 } from './channel/feishu-gate.js';
 import {
   detectIntroduce,
+  introduceAckText,
   introduceDenyReason,
   introducedPeers,
 } from './channel/introduce.js';
@@ -135,6 +136,47 @@ interface InboundReactionLedgerEntry {
   chatId: string;
   reactionId: string;
   state: InboundReactionState;
+}
+
+async function sendIntroduceAck(input: {
+  dispatcherId: string;
+  bot: FeishuBot;
+  log: DreamuxLogger;
+  chatId: string;
+  messageId: string;
+  peers: PeerBot[];
+}): Promise<void> {
+  const text = introduceAckText(input.peers);
+  if (text === null) return;
+  let result: { messageIds: string[] };
+  try {
+    result = await input.bot.send(
+      channelOutboundToFeishuTarget({ conversationId: input.chatId }),
+      text,
+    );
+  } catch (err) {
+    input.log.error(
+      {
+        dispatcher_id: input.dispatcherId,
+        chat_id: input.chatId,
+        message_id: input.messageId,
+        peer_count: input.peers.length,
+        err: errInfo(err),
+      },
+      'introduce ack failed',
+    );
+    return;
+  }
+  input.log.info(
+    {
+      dispatcher_id: input.dispatcherId,
+      chat_id: input.chatId,
+      message_id: input.messageId,
+      peer_count: input.peers.length,
+      message_ids: result.messageIds,
+    },
+    'introduce ack sent',
+  );
 }
 
 export interface ServerMcpReplyInput {
@@ -368,6 +410,14 @@ export class Server {
               const peers = introducedPeers(event.mentions, bot.botOpenId);
               if (peers.length > 0) {
                 await trustIntroducedBots(id, event.chatId, peers);
+                await sendIntroduceAck({
+                  dispatcherId: id,
+                  bot,
+                  log: channelLog,
+                  chatId: event.chatId,
+                  messageId: event.messageId,
+                  peers,
+                });
               }
               channelLog.info(
                 {

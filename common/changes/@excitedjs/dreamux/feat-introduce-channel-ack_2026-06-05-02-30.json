@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Add a best-effort Feishu channel acknowledgement for authorized group /introduce commands.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}
