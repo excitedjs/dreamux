@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Add package-level CLAUDE/AGENTS guidance; no runtime change",
+      "type": "patch",
+      "packageName": "@excitedjs/feishu-transport"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-transport",
+  "email": "053700@gmail.com"
+}
