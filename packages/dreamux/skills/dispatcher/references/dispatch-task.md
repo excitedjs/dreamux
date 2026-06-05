@@ -82,8 +82,10 @@ The pieces a teammate cannot derive from its own checkout:
    `CLAUDE.md` / `AGENTS.md` / knowledge base), write the prompt in the repo's
    product terms rather than pasting file paths or "Read X first" hints. The
    repo's own disclosure is more current than any snapshot the dispatcher
-   carries. Pointing at a session-local artifact you just created (a PR URL, a
-   `/tmp` file) is fine -- that is current state, not a stale knowledge path.
+   carries. Referencing a current session artifact you just produced, such as a
+   PR or issue number, is fine -- that is live state, not a stale knowledge
+   path. Keep any reference to a private or scratch location to the teammate's
+   own prompt; never let it reach a public commit, PR, or comment.
 
 ## Wait Phase
 

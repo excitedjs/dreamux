@@ -37,9 +37,14 @@ tm history --id <full-or-prefix>
 tm resume --engine <engine> --repo /absolute/repo --id <sid-or-thread-id>
 ```
 
-`tm resume <name>` without an id delegates selection to the engine's own
-"latest session" behavior; use it only when you lack an id clue. Read
-`tm history --help` and `tm resume --help` for current fields and flags.
+Prefer `resumeCommand` or an explicit `--id` whenever you have one -- that is
+the unambiguous path. The name form `tm resume <name>` without an id does not
+hand the choice to the engine: tm itself probes its live, archived, and history
+state for that name and routes the single matching candidate. When more than one
+candidate matches, it asks for `--engine claude|codex` to break the tie rather
+than guessing. Use the name form only when you lack an id clue, and pass
+`--engine` if tm reports an ambiguous match. Read `tm history --help` and
+`tm resume --help` for current fields and flags.
 
 ## When The User Hands You A Session Id
 
