@@ -169,8 +169,10 @@ export async function assertNoLegacyTomlOnly(
   if ((await pathExists(jsonFile)) || !(await pathExists(tomlFile))) return;
   throw new Error(
     `legacy dreamux config detected at ${tomlFile}, but ${jsonFile} does not exist.\n` +
-      'dreamux no longer reads TOML config and will not create default JSON over an existing install.\n' +
-      `Create ${jsonFile} manually with a dispatchers array, then move ${tomlFile} aside.`,
+      'dreamux 0.x does not migrate TOML config; it will not read it or write default ' +
+      'JSON over an existing install.\n' +
+      `Recreate the config as JSON (run \`dreamux onboard\`, or write ${jsonFile} with a ` +
+      `dispatchers array), then move ${tomlFile} aside.`,
   );
 }
 

@@ -172,7 +172,12 @@ time, admin socket path, and last error.
 
 `status.json` stores dispatcher process status, last-known Codex thread id,
 child process status, and diagnostic timestamps. It must not contain Feishu
-credentials.
+credentials. It is server-owned, rebuildable recovery state: on an
+incompatible/unknown version, malformed JSON, or a dispatcher-id mismatch,
+`hydrate()` warns and rebuilds the row from config defaults (a saved thread_id
+may not be resumed) — it never silently discards and never hard-fatals the
+server (issue #98). Likewise the one-shot `restart-intent.json` marker: a
+malformed or unknown-version marker is warned and dropped, not silently ignored.
 
 `access.json` stores dispatcher-local access state. The shape is:
 
@@ -207,12 +212,15 @@ is no separate per-group sender list.
   authorization (`allow_chats` is ignored), a message is always mention-gated,
   and the sender must be on the global `allow_users` list.
 
-The legacy v1 shape (`dm.allow_users` + a separate `group.follow_users`) is read
-and migrated forward by `readDispatcherAccess`: the two legacy sender lists are
-merged into `allow_users`, the policy is inferred (a non-empty `follow_users` →
-`follow-user`, else a non-empty `allow_chats` → `allowlist`, else the default
-`follow-user`), and the first save rewrites the file to the v2 shape. The legacy
-fields are never written back.
+`access.json` is **v2-only** (issue #98). `readDispatcherAccess` requires
+`version === 2`; any other or missing version fails loud with rebuild guidance,
+and the legacy v1 shape (`dm.allow_users` + a separate `group.follow_users`) is
+no longer read, merged, or inferred. dreamux 0.x does not auto-migrate this file
+because it holds access authorization — silently inferring old permissions could
+relax or revoke access. An absent `group.policy` on a v2 file defaults to the
+secure `follow-user`; it is not inferred from other fields. To move past an
+incompatible file the operator deletes it (returning to the secure default — no
+one is authorized until reconfigured) and re-authorizes access.
 
 It must not contain credentials, queued inbound messages, dedupe state, or a
 reaction ledger.

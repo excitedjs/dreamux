@@ -28,11 +28,11 @@ export type GroupPolicy = 'block' | 'allowlist' | 'follow-user';
 
 export interface DispatcherAccessState {
   /**
-   * Schema version. `1` was the legacy two-list shape (`dm.allow_users` +
-   * `group.follow_users`); `2` unifies them into the top-level `allow_users`
-   * and adds the explicit `group.policy`. `readDispatcherAccess` migrates a v1
-   * file forward by field presence; the marker just records that the rewrite
-   * happened.
+   * Schema version. The only supported value is `2`: a single top-level
+   * `allow_users` list plus an explicit `group.policy`. Per issue #98, dreamux
+   * 0.x does not auto-migrate older shapes — `readDispatcherAccess` fails loud
+   * on any other (or missing) version and tells the operator to recreate the
+   * file, since it holds access authorization and cannot be inferred safely.
    */
   version: 2;
   /**
@@ -288,23 +288,25 @@ function readDispatcherAccess(
   if (!isRecord(raw)) {
     throw new Error(`dispatcher access error in ${path}: top-level must be an object`);
   }
+  // v2-only: the legacy v1 shape (`dm.allow_users` + `group.follow_users`) is no
+  // longer read or inferred. An unsupported or missing version fails loud — this
+  // file holds access authorization, so dreamux refuses to guess old permissions.
+  if (raw['version'] !== 2) {
+    const found =
+      raw['version'] === undefined ? 'missing' : JSON.stringify(raw['version']);
+    throw new Error(
+      `dispatcher access error in ${path}: unsupported schema version (found ${found}, expected 2).\n` +
+        'dreamux 0.x does not migrate old access state. This file controls access ' +
+        'authorization and old permissions will not be inferred. Delete it to return ' +
+        'to the secure default (no one is authorized until reconfigured), then ' +
+        're-authorize access (e.g. re-run onboard / re-issue grants) and restart.',
+    );
+  }
   const defaults = defaultDispatcherAccessState();
-  const dm = isRecord(raw['dm']) ? raw['dm'] : {};
   const group = isRecord(raw['group']) ? raw['group'] : {};
   const lastGate = raw['last_gate'];
 
-  // v2 unifies three possible sources of allowed senders into one list:
-  //   - top-level `allow_users` (v2),
-  //   - legacy `dm.allow_users` (v1 direct allowlist),
-  //   - legacy `group.follow_users` (v1 group sender allowlist).
-  // They are merged and de-duplicated; the legacy fields are read but never
-  // written back, so the first save collapses the file to the v2 shape. The
-  // union means DM access becomes `dm.allow_users ∪ group.follow_users` — for
-  // the common case (the two were equal, or dm ⊇ follow) DM is unchanged.
-  const topAllow = readStringArray(raw, 'allow_users', [], path);
-  const legacyDmAllow = readStringArray(dm, 'allow_users', [], path);
-  const legacyFollow = readStringArray(group, 'follow_users', [], path);
-  const allowUsers = [...new Set([...topAllow, ...legacyDmAllow, ...legacyFollow])];
+  const allowUsers = readStringArray(raw, 'allow_users', [], path);
   const allowChats = readStringArray(
     group,
     'allow_chats',
@@ -312,19 +314,10 @@ function readDispatcherAccess(
     path,
   );
 
-  // Group policy: an explicit value always wins. Otherwise infer from the
-  // legacy shape — a non-empty `follow_users` is the strongest signal the
-  // operator wanted sender-scoped gating, so preserve it as `follow-user`
-  // (never silently relax it to chat-only `allowlist`); then a non-empty
-  // `allow_chats` means chat-scoped gating; else the secure default.
-  const explicitPolicy = readGroupPolicy(group['policy'], path);
+  // Group policy: an explicit value wins; an absent field falls back to the
+  // secure default. No inference from other fields — that was the v1 migration.
   const policy: GroupPolicy =
-    explicitPolicy ??
-    (legacyFollow.length > 0
-      ? 'follow-user'
-      : allowChats.length > 0
-        ? 'allowlist'
-        : defaults.group.policy);
+    readGroupPolicy(group['policy'], path) ?? defaults.group.policy;
 
   return {
     version: 2,

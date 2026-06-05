@@ -106,14 +106,53 @@ describe('restart intent marker', () => {
     expect(existsSync(path)).toBe(false);
   });
 
-  it('yields an empty consumer for a missing or malformed marker', async () => {
-    expect(
-      (await RestartIntentConsumer.load({ now: 0, path })).claim('flow', 0),
-    ).toBeNull();
+  it('yields an empty consumer for a missing marker without warning', async () => {
+    const warnings: string[] = [];
+    const consumer = await RestartIntentConsumer.load({
+      now: 0,
+      path,
+      warn: (m) => warnings.push(m),
+    });
+    expect(consumer.claim('flow', 0)).toBeNull();
+    // Missing marker is the common case (no restart notice requested): quiet.
+    expect(warnings).toEqual([]);
+  });
 
+  it('warns and drops a malformed marker (issue #98: not silent)', async () => {
     writeFileSync(path, 'not json', { mode: 0o600 });
-    const consumer = await RestartIntentConsumer.load({ now: 0, path });
+    const warnings: string[] = [];
+    const consumer = await RestartIntentConsumer.load({
+      now: 0,
+      path,
+      warn: (m) => warnings.push(m),
+    });
     expect(existsSync(path)).toBe(false);
     expect(consumer.claim('flow', 0)).toBeNull();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/not valid JSON/);
+  });
+
+  it('warns and drops a marker with an unknown version', async () => {
+    writeFileSync(
+      path,
+      JSON.stringify({
+        version: 2,
+        created_at_ms: 0,
+        ttl_ms: DEFAULT_RESTART_INTENT_TTL_MS,
+        announce: 'x',
+        targets: ['flow'],
+      }),
+      { mode: 0o600 },
+    );
+    const warnings: string[] = [];
+    const consumer = await RestartIntentConsumer.load({
+      now: 0,
+      path,
+      warn: (m) => warnings.push(m),
+    });
+    expect(existsSync(path)).toBe(false);
+    expect(consumer.claim('flow', 0)).toBeNull();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/unsupported version/);
   });
 });

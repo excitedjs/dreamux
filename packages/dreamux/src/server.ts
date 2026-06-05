@@ -272,10 +272,13 @@ export class Server {
     // Restore each dispatcher's persisted status.json into the in-memory store
     // before any row is listed or launched (the constructor only seeded
     // config-derived defaults — the status read is async).
-    await this.repos.dispatchers.hydrate();
+    await this.repos.dispatchers.hydrate((message) => this.log.warn(message));
     // Load (and delete) any restart marker before bringing dispatchers up, so
     // the snapshot is in memory when each resumed dispatcher claims its notice.
-    this.restartIntent = await RestartIntentConsumer.load({ now: Date.now() });
+    this.restartIntent = await RestartIntentConsumer.load({
+      now: Date.now(),
+      warn: (message) => this.log.warn(message),
+    });
 
     this.admin = createAdminSocketServer(
       this,

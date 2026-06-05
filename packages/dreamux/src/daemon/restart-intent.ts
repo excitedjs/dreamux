@@ -149,19 +149,32 @@ export class RestartIntentConsumer {
 
   /**
    * Read the marker (if any), delete it from disk, and return a consumer. A
-   * missing / malformed / expired marker yields an empty consumer (and the
-   * stale file is removed). This is the only reader of the marker file.
+   * missing or expired marker yields an empty consumer quietly. A malformed or
+   * unknown-version marker also yields an empty consumer, but is reported via
+   * `warn` (issue #98): a bad marker is dropped, not silently ignored, because a
+   * restart notice the operator explicitly requested would otherwise vanish
+   * without a trace. The file is removed regardless of validity (single reader,
+   * never replays). This is the only reader of the marker file.
    */
   static async load(
-    options: { now: number; path?: string } = { now: 0 },
+    options: { now: number; path?: string; warn?: (message: string) => void } = {
+      now: 0,
+    },
   ): Promise<RestartIntentConsumer> {
     const path = options.path ?? restartIntentPath();
+    const warn = options.warn ?? ((message) => console.warn(message));
     const empty = new RestartIntentConsumer('', 0, new Set());
-    let parsed: RestartIntentFile | null = null;
+
+    let text: string | null = null;
     try {
-      parsed = JSON.parse(await readFile(path, 'utf8')) as RestartIntentFile;
-    } catch {
-      parsed = null;
+      text = await readFile(path, 'utf8');
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        warn(
+          `restart marker ${path} could not be read ` +
+            `(${err instanceof Error ? err.message : String(err)}); dropping it.`,
+        );
+      }
     }
     // Single reader: drop the file regardless of validity so it never replays.
     try {
@@ -169,7 +182,31 @@ export class RestartIntentConsumer {
     } catch {
       /* best effort */
     }
-    if (parsed === null || parsed.version !== 1) return empty;
+    if (text === null) return empty;
+
+    let parsed: RestartIntentFile | null = null;
+    try {
+      parsed = JSON.parse(text) as RestartIntentFile;
+    } catch (err) {
+      warn(
+        `restart marker ${path} is not valid JSON ` +
+          `(${err instanceof Error ? err.message : String(err)}); dropped it. ` +
+          'A requested restart notice will not be delivered.',
+      );
+      return empty;
+    }
+    if (parsed === null || parsed.version !== 1) {
+      const found =
+        parsed === null || parsed.version === undefined
+          ? 'missing'
+          : JSON.stringify(parsed.version);
+      warn(
+        `restart marker ${path} ignored: unsupported version ` +
+          `(found ${found}, expected 1); dropped it. ` +
+          'A requested restart notice will not be delivered.',
+      );
+      return empty;
+    }
     const expiresAtMs = parsed.created_at_ms + parsed.ttl_ms;
     if (options.now > expiresAtMs) return empty;
     const announce =
