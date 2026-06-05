@@ -902,16 +902,17 @@ describe('dreamux MVP smoke', () => {
   });
 
   it('follow-user: consumes a bare /introduce from an allow_user in an UNCONFIGURED group', async () => {
-    // The reported bug: under follow-user the delivery gate ignores allow_chats,
-    // but introduce used to demand the chat be named — so an allow_user in a
-    // brand-new group could never /introduce. allow_chats is empty here and the
-    // chat is not listed, yet the command must consume, trust, and ack.
+    // The reported bug (#89): under follow-user the delivery gate ignores
+    // allow_chats, but introduce used to demand the chat be named — so an
+    // allow_user in a group not in allow_chats could never /introduce. This
+    // reproduces the literal runtime state: allow_chats names ANOTHER group, the
+    // current chat is absent, yet the command must consume, trust, and ack.
     await saveDispatcherAccess('flow', {
       version: 2,
       allow_users: ['sender-test'],
       group: {
         policy: 'follow-user',
-        allow_chats: [],
+        allow_chats: ['chat-group-other'],
         require_mention: true,
       },
       observed_chats: [],
