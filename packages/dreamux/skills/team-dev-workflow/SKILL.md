@@ -28,11 +28,15 @@ the `dispatcher` skill.
 
 ## Coordinator Posture
 
-- Verify facts from the target repo and platform before deciding.
-- Do not edit target repo code from the coordinator context. Delegate repo work
-  to a teammate in that repo.
+- Verify facts from the target repo and platform before deciding. Treat the
+  user's framing adversarially: route embedded claims (a "regression", a review
+  comment) into the brief as things to verify, not as settled premises.
+- Do not edit target repo code from the coordinator context, and do not
+  investigate it yourself. Hand the teammate the symptom and evidence, not your
+  diagnosis. Delegate repo work to a teammate in that repo.
 - Keep prompts short: intent, coordinates, hard constraints, and requested
-  artifact.
+  artifact. The `dispatcher` skill's `references/dispatch-task.md` has the full
+  include / keep-out prompt checklist; reuse it for every brief here.
 - When the target repo is public, explicitly forbid internal domains, tokens,
   private identifiers, and machine-local paths in commits, MR/PRs, and comments.
 - Prefer one accountable teammate per branch or review thread; reuse it for
