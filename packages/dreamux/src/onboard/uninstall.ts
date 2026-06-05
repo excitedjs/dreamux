@@ -24,7 +24,7 @@ import {
   type DispatcherConfig,
 } from '../runtime/config.js';
 import {
-  dispatcherWorkspaceSkillPath,
+  dispatcherWorkspaceSkillDirs,
   logsRoot,
   stateRoot,
 } from '../runtime/paths.js';
@@ -121,18 +121,17 @@ async function warnIfConfigIsNotReadable(
 async function collectWorkspaceSkillPaths(configDir: string): Promise<string[]> {
   try {
     return (await loadConfig({ configDir })).config.dispatchers
-      .map(dispatcherWorkspaceSkillPathFromConfig)
-      .filter((path): path is string => path !== null);
+      .flatMap(dispatcherWorkspaceSkillPathsFromConfig);
   } catch {
     return [];
   }
 }
 
-function dispatcherWorkspaceSkillPathFromConfig(
+function dispatcherWorkspaceSkillPathsFromConfig(
   dispatcher: DispatcherConfig,
-): string | null {
-  if (dispatcher.cwd === null || dispatcher.cwd.trim() === '') return null;
-  return dispatcherWorkspaceSkillPath(dispatcher.cwd);
+): string[] {
+  if (dispatcher.cwd === null || dispatcher.cwd.trim() === '') return [];
+  return dispatcherWorkspaceSkillDirs(dispatcher.cwd);
 }
 
 async function reportWorkspaceSkills(
@@ -143,7 +142,7 @@ async function reportWorkspaceSkills(
     entries.push({
       path,
       status: (await pathExists(path)) ? 'skipped' : 'missing',
-      reason: 'workspace-local dispatcher skill (not removed)',
+      reason: 'workspace-local bundled skill (not removed)',
     });
   }
 }

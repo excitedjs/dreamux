@@ -13,7 +13,7 @@ import { dirname, join } from 'node:path';
 import { runUninstall } from '../src/onboard/uninstall.js';
 import type { CommandRunner } from '../src/onboard/types.js';
 import {
-  dispatcherWorkspaceSkillPath,
+  dispatcherWorkspaceSkillDirs,
   logsRoot,
   resetRuntimeConfig,
   stateRoot,
@@ -60,12 +60,14 @@ describe('dreamux uninstall', () => {
     const homeDir = join(root, 'home');
     const servicePath = join(homeDir, '.config', 'systemd', 'user', 'dreamux.service');
     const dispatcherCwd = join(root, 'workspace');
-    const workspaceSkillPath = dispatcherWorkspaceSkillPath(dispatcherCwd);
+    const workspaceSkillDirs = dispatcherWorkspaceSkillDirs(dispatcherCwd);
     mkdirSync(configDir, { recursive: true });
     mkdirSync(stateRoot(), { recursive: true });
     mkdirSync(logsRoot(), { recursive: true });
     mkdirSync(dirname(servicePath), { recursive: true });
-    mkdirSync(dirname(workspaceSkillPath), { recursive: true });
+    for (const skillDir of workspaceSkillDirs) {
+      mkdirSync(skillDir, { recursive: true });
+    }
     writeFileSync(join(configDir, 'config.json'), JSON.stringify({
       dispatchers: [
         {
@@ -85,7 +87,9 @@ describe('dreamux uninstall', () => {
       ],
     }), { mode: 0o600 });
     writeFileSync(join(logsRoot(), 'dreamux-server.log'), '');
-    writeFileSync(workspaceSkillPath, '# workspace skill\n');
+    for (const skillDir of workspaceSkillDirs) {
+      writeFileSync(join(skillDir, 'SKILL.md'), '# workspace skill\n');
+    }
     writeFileSync(servicePath, '[Service]\nExecStart=dreamux serve\n');
 
     const runner = new FakeRunner();
@@ -100,18 +104,20 @@ describe('dreamux uninstall', () => {
     expect(existsSync(stateRoot())).toBe(false);
     expect(existsSync(logsRoot())).toBe(false);
     expect(existsSync(servicePath)).toBe(false);
-    expect(existsSync(workspaceSkillPath)).toBe(true);
+    for (const skillDir of workspaceSkillDirs) {
+      expect(existsSync(skillDir)).toBe(true);
+    }
     expect(result.entries).toEqual(
       expect.arrayContaining([
         { status: 'removed', path: configDir, reason: 'dreamux config directory' },
         { status: 'removed', path: servicePath, reason: 'systemd unit' },
         { status: 'removed', path: stateRoot(), reason: 'dreamux state directory' },
         { status: 'removed', path: logsRoot(), reason: 'dreamux logs directory' },
-        {
-          status: 'skipped',
-          path: workspaceSkillPath,
-          reason: 'workspace-local dispatcher skill (not removed)',
-        },
+        ...workspaceSkillDirs.map((skillDir) => ({
+          status: 'skipped' as const,
+          path: skillDir,
+          reason: 'workspace-local bundled skill (not removed)',
+        })),
       ]),
     );
     expect(runner.calls.map((call) => [call.command, call.args])).toEqual([

@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-06-03
-- **Affects:** server runtime, dispatcher lifecycle, Feishu channel, Codex MCP, admin/outbound IPC, global config, state files, logs, CLI admin surface, workspace-local dispatcher skill ownership
+- **Affects:** server runtime, dispatcher lifecycle, Feishu channel, Codex MCP, admin/outbound IPC, global config, state files, logs, CLI admin surface, workspace-local bundled skill ownership
 - **PR / Issue:** Local architecture clarification on 2026-06-03; supersedes the persistence and automatic-outbound parts of issue #2, the runtime-dir parts of `global-config-dir`, and loopback HTTP MCP as the default Feishu MCP transport
 
 ## Context
@@ -443,21 +443,25 @@ message body.
 a `tm` bin wrapper.
 
 When `dreamux` starts a dispatcher Codex thread, it injects the package `tm` bin
-location into that thread's `PATH`. This lets the dispatcher skill call bare
+location into that thread's `PATH`. This lets the dispatcher skills call bare
 `tm` without constructing long `npx` commands.
 
-During `onboard`, `dreamux` copies the bundled dispatcher skill into:
+The npm package ships bundled Codex skills under `/packages/dreamux/skills/`.
+During `onboard` and dispatcher startup, `dreamux` symlinks each bundled skill
+directory into:
 
 ```text
-<dispatcher cwd>/.codex/skills/dispatcher/SKILL.md
+<dispatcher cwd>/.codex/skills/<skill-name>
 ```
 
-The workspace-local skill is intentionally not installed into the operator's
-global `~/.codex/skills`.
+The workspace-local skills are intentionally not installed into the operator's
+global `~/.codex/skills`. The installer creates a missing `.codex/skills`
+parent, replaces stale or broken symlinks, and leaves real user files or
+directories untouched with a startup diagnostic.
 
 `uninstall` removes dreamux-owned config, state, logs, and service integration
-by default. It reports workspace-local dispatcher skill paths that were created
-by `onboard`, but it does not delete files under operator workspaces by default.
+by default. It reports workspace-local bundled skill paths, but it does not
+delete files under operator workspaces by default.
 
 ## CLI And Admin
 
@@ -541,5 +545,5 @@ resume path.
 - Codex app-server child or child-WebSocket failure triggers backoff restart and
   thread resume.
 - A stuck turn alone does not trigger child restart.
-- `uninstall` reports workspace-local dispatcher skill paths but does not delete
+- `uninstall` reports workspace-local bundled skill paths but does not delete
   them by default.

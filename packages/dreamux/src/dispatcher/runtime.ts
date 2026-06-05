@@ -53,6 +53,7 @@ import {
   type DispatcherCodexHomeDoctor,
 } from '../runtime/dispatcher-codex-home.js';
 import { dispatcherProcessEnv } from '../runtime/package-bin.js';
+import { installBundledWorkspaceSkills } from '../runtime/bundled-skills.js';
 
 const DEFAULT_RESTART_BACKOFF_BASE_MS = 1000;
 const DEFAULT_RESTART_BACKOFF_MAX_MS = 30_000;
@@ -181,6 +182,22 @@ export class DispatcherRuntime {
     const cwd = this.row.codex_cwd ?? dispatcherCodexCwd(this.dispatcherId);
     const socketPath = dispatcherSocketPath(this.dispatcherId);
     const extraArgs = this.deps.resolveExtraArgs?.(this.row) ?? [];
+    const skillInstallResults = await installBundledWorkspaceSkills({
+      dispatcherCwd: cwd,
+    });
+    for (const result of skillInstallResults) {
+      if (result.status === 'skipped') {
+        this.log(
+          'warn',
+          `bundled skill '${result.skillName}' not installed at ${result.targetPath}: ${result.reason}`,
+        );
+      } else if (result.status === 'linked' || result.status === 'replaced') {
+        this.log(
+          'info',
+          `bundled skill '${result.skillName}' ${result.status} at ${result.targetPath}`,
+        );
+      }
+    }
     if (this.deps.codexHomeDoctor !== undefined) {
       await this.deps.codexHomeDoctor(
         dispatcherCodexHomeDoctorContext(this.dispatcherId, {

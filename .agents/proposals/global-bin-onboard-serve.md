@@ -11,8 +11,8 @@ binding behavior now lives in the accepted decision:
 
 - `@excitedjs/dreamux` exports `dreamux` plus the dispatcher-required `tm`
   wrapper.
-- `dreamux onboard` copies the bundled dispatcher Codex skill into each
-  dispatcher's workspace-local `.codex/skills/dispatcher/` directory.
+- `dreamux onboard` installs bundled Codex skill symlinks into each
+  dispatcher's workspace-local `.codex/skills/` directory.
 - Dispatcher app-server processes use Codex's global default home for auth,
   config, and memory; dreamux does not set `CODEX_HOME`.
 - dreamux-owned state defaults to `~/.dreamux/state/`, and logs default to

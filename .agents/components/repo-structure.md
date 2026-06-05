@@ -48,7 +48,7 @@ verbatim through the move):
 | `db/migrations/0001_init.sql` | Legacy SQLite schema; targeted for removal by [top-level-design](../decisions/top-level-design.md) |
 | `bin/dreamux` | Public CLI launcher (`dreamux serve`, `dreamux dispatcher ...`) |
 | `bin/tm` | Public wrapper that forwards to the package-local `@excitedjs/tm` executable |
-| `skills/dispatcher/SKILL.md` | Bundled dispatcher Codex skill copied into each dispatcher's `<cwd>/.codex/skills/dispatcher/` by onboarding |
+| `skills/` | Bundled Codex skills symlinked into each dispatcher's `<cwd>/.codex/skills/<skill-name>` by onboarding and dispatcher startup |
 | `tests/` | vitest: smoke, bin-launcher, dispatcher Codex home doctor, codex live integration |
 
 ## Installation — the rush path only
@@ -140,11 +140,11 @@ multi-package release notes precise while still using Rush as the validator.
 | `~/.dreamux/state/<id>/codex.sock` | Runtime-created Codex app-server Unix socket for that dispatcher. | The server |
 | `~/.dreamux/logs/` | Server and per-dispatcher logs, including Codex app-server logs. | The server |
 | `~/.codex/` | Codex global default home: auth, memory, and config used by dispatcher app-server processes. | The operator / Codex |
-| `<dispatcher cwd>/.codex/skills/dispatcher/SKILL.md` | Dispatcher skill copied by `dreamux onboard`. | dreamux installer |
+| `<dispatcher cwd>/.codex/skills/<skill-name>` | Workspace-local bundled skill symlink. | dreamux installer |
 
 The split is load-bearing: a `rm -rf ~/.dreamux/state ~/.dreamux/logs`
 recovery never loses user-edited dreamux settings or global Codex auth.
 Dispatcher app-server processes do not set `CODEX_HOME`; they use Codex's
-global default home for auth, memory, and config. The dispatcher skill is
+global default home for auth, memory, and config. The bundled skills are
 workspace-local. See [top-level-design](../decisions/top-level-design.md) and
 [dispatcher-tm-packaging](../decisions/dispatcher-tm-packaging.md).

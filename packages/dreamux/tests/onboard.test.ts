@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -21,6 +22,7 @@ import type { CommandRunner, OnboardAnswers } from '../src/onboard/types.js';
 import type { ServiceNodeProbe } from '../src/onboard/service.js';
 import {
   dispatcherCodexHome,
+  dispatcherWorkspaceSkillDirs,
   dispatcherWorkspaceSkillPath,
   logsRoot,
   resetRuntimeConfig,
@@ -201,6 +203,9 @@ describe('dreamux onboard', () => {
     expect(
       existsSync(dispatcherWorkspaceSkillPath(answers.dispatcherCwd)),
     ).toBe(true);
+    for (const skillDir of dispatcherWorkspaceSkillDirs(answers.dispatcherCwd)) {
+      expect(lstatSync(skillDir).isSymbolicLink()).toBe(true);
+    }
     expect(
       existsSync(
         join(dispatcherCodexHome('flow'), 'skills', 'dispatcher', 'SKILL.md'),
@@ -210,9 +215,9 @@ describe('dreamux onboard', () => {
     expect(ledger.get(join(root, 'config', 'config.json'))?.status).toBe(
       'created',
     );
-    expect(
-      ledger.get(dispatcherWorkspaceSkillPath(answers.dispatcherCwd))?.status,
-    ).toBe('created');
+    for (const skillDir of dispatcherWorkspaceSkillDirs(answers.dispatcherCwd)) {
+      expect(ledger.get(skillDir)?.status).toBe('created');
+    }
     expect(
       ledger.get(
         join(root, 'home', '.config', 'systemd', 'user', 'dreamux.service'),

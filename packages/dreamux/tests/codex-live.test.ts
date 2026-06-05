@@ -26,7 +26,7 @@
 import { describe, it, expect } from 'vitest';
 // eslint-disable-next-line no-restricted-imports -- live-Codex probe: a one-shot `execSync` reads the operator's interactive Codex auth/login state to decide whether the live model-gate case can run at all; it is setup, not the code under test, and must complete before the suite proceeds (issue #85 test-scope carve-out).
 import { execSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 
@@ -442,6 +442,7 @@ describe('codex live integration', () => {
       let client: RecordingCodexWsClient | null = null;
       let server: Server | null = null;
 
+      mkdirSync(dispatcherCwd, { recursive: true });
       process.env['HOME'] = runtimeHome;
       process.env['CODEX_HOME'] = previousCodexHome ?? join(operatorHome, '.codex');
       // Onboard the live sender onto the global allow-user list so the folded

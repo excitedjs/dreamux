@@ -11,7 +11,6 @@ import {
   dispatcherAppServerControlDir,
   dispatcherCodexHome,
   dispatcherWorkspaceCodexSkillsDir,
-  dispatcherWorkspaceSkillPath,
   logsRoot,
   setRuntimeConfig,
   stateRoot,
@@ -130,7 +129,7 @@ export async function runOnboard(
   );
 
   await installDispatcherSkill({
-    skillPath: dispatcherWorkspaceSkillPath(effectiveAnswers.dispatcherCwd),
+    dispatcherCwd: effectiveAnswers.dispatcherCwd,
     ledger,
     dryRun: answers.dryRun,
   });

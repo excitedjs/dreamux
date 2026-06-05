@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-06-03
-- **Affects:** `@excitedjs/dreamux` package dependencies, package bins, dispatcher Codex environment, dispatcher skill installation
+- **Affects:** `@excitedjs/dreamux` package dependencies, package bins, dispatcher Codex environment, bundled skill installation
 - **PR / Issue:** Local architecture clarification on 2026-06-03; supersedes the `npx @excitedjs/tm` dispatcher-skill command shape and the global dispatcher-skill install path
 
 ## Context
@@ -34,24 +34,28 @@ dreamux package `bin/` directory to that child process `PATH`. The dispatcher
 skill must invoke bare `tm`, never `npx`, `npm exec`, or a version-qualified
 package command.
 
-`dreamux onboard` installs the bundled dispatcher skill into each dispatcher's
-workspace-local Codex skill directory:
+Dreamux ships a small set of bundled Codex skills in the npm package:
+`dispatcher`, `team-dev-workflow`, and `dreamux-maintenance`.
+
+`dreamux onboard` and dispatcher startup install these bundled skills into each
+dispatcher's workspace-local Codex skill directory as symlinks:
 
 ```text
-<dispatcher cwd>/.codex/skills/dispatcher/SKILL.md
+<dispatcher cwd>/.codex/skills/<skill-name> -> <dreamux package>/skills/<skill-name>
 ```
 
 This is intentionally not `~/.codex/skills/...`. The dispatcher skill is tied
-to the dispatcher workspace and command environment, while Codex auth, memory,
-and user configuration still follow Codex's normal global home.
+to the dispatcher workspace and command environment, and the workflow /
+maintenance skills should appear only in that same dispatcher context. Codex
+auth, memory, and user configuration still follow Codex's normal global home.
 
 The bundled source directory, installed directory, and skill frontmatter name
-must all use `dispatcher`. Older package-specific source-directory names must
-be renamed away before this design is implemented.
+must match for each shipped skill. Older package-specific source-directory names
+must be renamed away before this design is implemented.
 
-`dreamux uninstall` does not delete this workspace-local skill by default. It
+`dreamux uninstall` does not delete these workspace-local skills by default. It
 removes dreamux-owned config, state, logs, and service integration, then reports
-the workspace skill paths created by `onboard` so the operator can remove them
+the workspace skill paths created by Dreamux so the operator can remove them
 manually when desired. This avoids deleting files under arbitrary operator
 workspaces during a global uninstall.
 
@@ -65,15 +69,22 @@ workspaces during a global uninstall.
   normal package dependency update and release note.
 - Dispatcher prompts and skills stay short: use `tm spawn`, `tm send`, and
   `tm wait`.
-- Onboard must write the dispatcher skill once per dispatcher cwd. A machine
-  with multiple dispatchers may have multiple workspace-local installed copies.
-- Removing or recreating a dispatcher workspace can remove its installed skill;
-  rerun `dreamux onboard` for that dispatcher to restore it.
+- Onboard and dispatcher startup install bundled skills once per dispatcher cwd.
+  A machine with multiple dispatchers may have multiple workspace-local
+  symlink sets.
+- Correct symlinks are left unchanged. Stale or broken symlinks are replaced.
+  Real user files or directories are not overwritten; startup logs a diagnostic.
+- A missing `.codex/skills` directory is created, but a missing dispatcher cwd
+  is a startup error.
+- Unsupported symlink platforms or permission failures fail loudly; Dreamux does
+  not copy bundled skills as a fallback.
+- Removing or recreating a dispatcher workspace can remove its installed skill
+  symlinks; rerun `dreamux onboard` or restart the dispatcher to restore them.
 - dreamux must not silently mutate the operator's global `~/.codex/skills/`
-  for this dispatcher skill.
+  for these dispatcher-scoped skills.
 - Uninstall is intentionally asymmetric for workspace files: onboarding writes
-  the dispatcher skill into the operator's workspace, while uninstall only
-  reports that path.
+  symlinks into the operator's workspace, while uninstall only reports those
+  paths.
 
 ## Current source status
 
@@ -82,9 +93,10 @@ At the time of this decision, the branch already contains:
 - `@excitedjs/tm` as a `@excitedjs/dreamux` dependency.
 - `/packages/dreamux/bin/tm`.
 - dispatcher app-server `PATH` injection for the dreamux package bin directory.
-- `dreamux onboard` installs the bundled dispatcher skill to
-  `<dispatcher cwd>/.codex/skills/dispatcher/`.
-- The bundled skill source directory and frontmatter name are `dispatcher`.
+- `dreamux onboard` and dispatcher startup install bundled skill symlinks to
+  `<dispatcher cwd>/.codex/skills/<skill-name>`.
+- The bundled skill source directories and frontmatter names match their public
+  skill names.
 
 ## Alternatives considered
 

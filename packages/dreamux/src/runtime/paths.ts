@@ -21,7 +21,8 @@
  */
 
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   BUILT_IN_DEFAULTS,
@@ -30,6 +31,16 @@ import {
 import { validateDispatcherId } from './dispatcher-id.js';
 
 export const DREAMUX_UNIX_SOCKET_PATH_MAX_BYTES = 103;
+const HERE = dirname(fileURLToPath(import.meta.url));
+const PACKAGE_ROOT = dirname(dirname(HERE));
+
+export const BUNDLED_SKILL_NAMES = [
+  'dispatcher',
+  'team-dev-workflow',
+  'dreamux-maintenance',
+] as const;
+
+export type BundledSkillName = typeof BUNDLED_SKILL_NAMES[number];
 
 let currentConfig: DreamuxConfig = BUILT_IN_DEFAULTS;
 
@@ -116,8 +127,29 @@ export function dispatcherWorkspaceCodexSkillsDir(cwd: string): string {
   return join(cwd, '.codex', 'skills');
 }
 
+export function dispatcherWorkspaceSkillDir(
+  cwd: string,
+  skillName: BundledSkillName,
+): string {
+  return join(dispatcherWorkspaceCodexSkillsDir(cwd), skillName);
+}
+
+export function dispatcherWorkspaceSkillDirs(cwd: string): string[] {
+  return BUNDLED_SKILL_NAMES.map((skillName) =>
+    dispatcherWorkspaceSkillDir(cwd, skillName),
+  );
+}
+
 export function dispatcherWorkspaceSkillPath(cwd: string): string {
-  return join(dispatcherWorkspaceCodexSkillsDir(cwd), 'dispatcher', 'SKILL.md');
+  return join(dispatcherWorkspaceSkillDir(cwd, 'dispatcher'), 'SKILL.md');
+}
+
+export function bundledSkillsDir(): string {
+  return join(PACKAGE_ROOT, 'skills');
+}
+
+export function bundledSkillDir(skillName: BundledSkillName): string {
+  return join(bundledSkillsDir(), skillName);
 }
 
 export function dispatcherAppServerControlDir(id: string): string {

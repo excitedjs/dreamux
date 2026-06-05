@@ -1,0 +1,91 @@
+---
+name: dreamux-maintenance
+description: Diagnose and operate a Dreamux installation. Use when the user asks about dreamux serve or daemon startup, dispatcher status, missing replies, stuck turns, restart behavior, Codex app-server readiness, logs, config, or workspace-local bundled skills.
+---
+
+# Dreamux Maintenance
+
+Use this skill for operational diagnosis of an installed Dreamux host. Keep the
+work factual: read the current config, status, logs, and command help before
+explaining a failure or taking action.
+
+## Safety
+
+- Do not edit `~/.dreamux`, `~/.codex`, service units, shell startup files, or
+  environment variables without explaining the reason first.
+- Do not paste bot IDs, tokens, private chat IDs, internal hostnames, or
+  machine-local paths into public issues, PRs, or commits.
+- Prefer diagnostics and restart commands that preserve state. Do not remove
+  state or logs unless the operator explicitly asks.
+- Do not copy bundled skills into a dispatcher workspace. Dreamux installs them
+  as symlinks under `<dispatcher cwd>/.codex/skills/`.
+
+## Quick Triage
+
+1. Identify the host mode:
+   - foreground: `dreamux serve`
+   - service-managed: `dreamux daemon start`, `dreamux daemon stop`, or
+     `dreamux daemon restart`
+2. Read setup health:
+
+```bash
+dreamux doctor
+```
+
+3. Inspect the server and dispatcher:
+
+```bash
+dreamux status
+dreamux dispatcher list
+dreamux dispatcher status --id <dispatcher-id>
+```
+
+4. Inspect config without exposing secrets:
+
+```bash
+dreamux config path
+dreamux config show
+```
+
+5. Read only the relevant logs from `~/.dreamux/logs/`:
+   - `dreamux-server.log`
+   - `codex-app-server/<dispatcher-id>.log`
+   - `codex-app-server/<dispatcher-id>.stderr.log`
+   - `feishu-channel/<dispatcher-id>.log`
+   - `feishu-mcp/<dispatcher-id>.log`
+
+## Common Symptoms
+
+| Symptom | First checks |
+|---|---|
+| Dispatcher does not start | `dreamux doctor`, dispatcher cwd exists, Codex auth exists, bundled skill symlinks are readable. |
+| Inbound accepted but no reply | Dispatcher status, Codex app-server log, whether the turn is still active. |
+| Restart did not announce recovery | `dreamux daemon restart --notify-resumed --dispatcher <id>` was used, and the dispatcher resumed an existing thread. |
+| `tm` not found inside dispatcher | Dreamux package `bin/` directory is on dispatcher process `PATH`; rerun `dreamux doctor`. |
+| Skill changes did not appear | Verify `<dispatcher cwd>/.codex/skills/<name>` is a symlink to the installed Dreamux package skill directory. |
+
+## Turn Mechanics
+
+For questions about active turns, steering, background commands, and repeated
+responses after compaction, read `references/codex-turns.md`.
+
+## Restart Policy
+
+- If only the service wrapper changed, use `dreamux daemon restart`.
+- If a dispatcher is busy, prefer observing status first; restarting can drop
+  in-memory pending work.
+- To announce a controlled restart to resumed dispatchers:
+
+```bash
+dreamux daemon restart --notify-resumed --dispatcher <dispatcher-id>
+```
+
+## Closeout
+
+Report:
+
+- commands run
+- relevant status or log evidence
+- whether the issue is config, permissions, Codex app-server readiness,
+  dispatcher turn state, or product behavior
+- the smallest safe next action

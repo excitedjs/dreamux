@@ -5,6 +5,7 @@ import { join } from 'node:path';
 
 import {
   DREAMUX_UNIX_SOCKET_PATH_MAX_BYTES,
+  BUNDLED_SKILL_NAMES,
   adminSocketPath,
   codexAppServerLogDir,
   dispatcherAccessPath,
@@ -19,6 +20,7 @@ import {
   dispatcherSocketPath,
   dispatcherStatusPath,
   dispatcherWorkspaceCodexSkillsDir,
+  dispatcherWorkspaceSkillDirs,
   dispatcherWorkspaceSkillPath,
   dreamuxRoot,
   logsRoot,
@@ -79,6 +81,11 @@ describe('runtime paths', () => {
     );
     expect(dispatcherWorkspaceSkillPath(workspace)).toBe(
       join(workspace, '.codex', 'skills', 'dispatcher', 'SKILL.md'),
+    );
+    expect(dispatcherWorkspaceSkillDirs(workspace)).toEqual(
+      BUNDLED_SKILL_NAMES.map((skillName) =>
+        join(workspace, '.codex', 'skills', skillName),
+      ),
     );
   });
 

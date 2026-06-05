@@ -276,6 +276,7 @@ describe('dreamux MVP smoke', () => {
     runtimeDir = mkdtempSync(join(tmpdir(), 'dreamux-'));
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(runtimeDir, 'home');
+    mkdirSync(dispatcherCodexCwd('flow'), { recursive: true });
     codexInputs = [];
     fake = await startFakeCodex({
       replyFor: captureAndEchoCodexInput(codexInputs),
