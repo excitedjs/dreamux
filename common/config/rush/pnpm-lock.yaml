@@ -62,6 +62,9 @@ importers:
       '@clack/prompts':
         specifier: ^1.5.0
         version: 1.5.0
+      '@excitedjs/feishu-channel':
+        specifier: workspace:*
+        version: link:../channel/feishu-channel
       '@excitedjs/feishu-transport':
         specifier: workspace:*
         version: link:../channel/feishu-transport

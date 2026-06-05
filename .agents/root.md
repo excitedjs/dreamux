@@ -39,7 +39,9 @@ Background and older issue context:
 │   ├── channel/
 │   │   ├── feishu-transport/      @excitedjs/feishu-transport — platform-I/O core
 │   │   │                          (sole @larksuiteoapi/node-sdk importer)
-│   │   └── feishu-channel/        @excitedjs/feishu-channel — channel layer (placeholder)
+│   │   └── feishu-channel/        @excitedjs/feishu-channel — Feishu channel
+│   │                              layer (Codex-facing inbound body,
+│   │                              attachments, cache/fallback)
 │   └── eslint-config/             @excitedjs/eslint-config — shared lint config
 │                                  (private; no-sync-IO gate, issue #85)
 ├── bin/                           thin redirectors → packages/dreamux/bin/
@@ -94,6 +96,7 @@ Background and older issue context:
 | change dispatcher `tm` packaging, PATH injection, or skill install location | [`decisions/dispatcher-tm-packaging.md`](decisions/dispatcher-tm-packaging.md) |
 | add/change a package, move source between packages | [`components/repo-structure.md`](components/repo-structure.md) |
 | modify runtime state, dispatcher lifecycle, Feishu MCP, access gating, or config shape | [`decisions/top-level-design.md`](decisions/top-level-design.md) |
+| change Feishu inbound attachment downloads, cache, or Codex-facing message body | [`decisions/feishu-inbound-attachments.md`](decisions/feishu-inbound-attachments.md) |
 | browse decisions by topic | [`decisions/README.md`](decisions/README.md) |
 | understand why rush + pnpm | [`decisions/rush-pnpm-monorepo.md`](decisions/rush-pnpm-monorepo.md) |
 | install / build / test the repo, or wonder why `npm ci` is gone | [`decisions/install-model.md`](decisions/install-model.md) |

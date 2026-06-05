@@ -25,6 +25,7 @@
  */
 
 import * as lark from '@larksuiteoapi/node-sdk'
+import type { Readable } from 'node:stream'
 
 import type { OutboundTarget } from '../contract/outbound.js'
 import {
@@ -154,6 +155,25 @@ export interface FeishuDocMeta {
   title: string
   /** Browser URL of the document. */
   url: string
+}
+
+export type FeishuMessageResourceType = 'file' | 'image'
+
+export interface FeishuMessageResourceRequest {
+  messageId: string
+  fileKey: string
+  type: FeishuMessageResourceType
+}
+
+export interface FeishuMessageResourceResponse {
+  stream: Readable
+  headers: Record<string, unknown>
+}
+
+export interface FeishuMessageResourceFetcher {
+  fetchMessageResource(
+    request: FeishuMessageResourceRequest,
+  ): Promise<FeishuMessageResourceResponse>
 }
 
 /** Document types the drive file-comment API serves; others have no comment API. */
@@ -313,6 +333,14 @@ export interface FeishuTransport {
    * type with no metadata API or on any API failure, and never throws.
    */
   fetchDocMeta(fileToken: string, fileType: string): Promise<FeishuDocMeta | null>
+  /**
+   * Raw Feishu message-resource download. The transport only exposes the Lark
+   * SDK / JSAPI stream; caching, filenames, size caps, timeout policy, and
+   * model-facing fallback text belong to the channel layer.
+   */
+  fetchMessageResource(
+    request: FeishuMessageResourceRequest,
+  ): Promise<FeishuMessageResourceResponse>
   /** Close the connection and release every resource it holds. */
   close(): Promise<void>
 }
@@ -569,6 +597,22 @@ export function createFeishuTransport(
       } catch (err) {
         diag.diagnostic(`could not fetch metadata for ${fileToken}:`, err)
         return null
+      }
+    },
+
+    async fetchMessageResource(
+      request: FeishuMessageResourceRequest,
+    ): Promise<FeishuMessageResourceResponse> {
+      const res = await client.im.v1.messageResource.get({
+        path: {
+          message_id: request.messageId,
+          file_key: request.fileKey,
+        },
+        params: { type: request.type },
+      })
+      return {
+        stream: res.getReadableStream(),
+        headers: res.headers as Record<string, unknown>,
       }
     },
 

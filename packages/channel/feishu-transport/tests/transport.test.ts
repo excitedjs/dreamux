@@ -12,6 +12,7 @@
  */
 
 import * as lark from '@larksuiteoapi/node-sdk'
+import { Readable } from 'node:stream'
 import { describe, expect, test, vi } from 'vitest'
 import {
   FEISHU_CARD_CONTENT_SAFE_BYTES,
@@ -122,8 +123,13 @@ function stubClient() {
   const update = vi.fn(async () => ({}))
   const reactionCreate = vi.fn(async () => ({ data: { reaction_id: 'rk_stub' } }))
   const reactionDelete = vi.fn(async () => ({}))
+  const messageResourceGet = vi.fn(async () => ({
+    getReadableStream: () => Readable.from([Buffer.from('resource bytes')]),
+    headers: { 'content-type': 'application/octet-stream' },
+  }))
   const stub = {
     im: {
+      v1: { messageResource: { get: messageResourceGet } },
       message: { create, reply, patch, update },
       messageReaction: { create: reactionCreate, delete: reactionDelete },
     },
@@ -141,6 +147,7 @@ function stubClient() {
     update,
     reactionCreate,
     reactionDelete,
+    messageResourceGet,
   }
 }
 
@@ -272,6 +279,31 @@ describe('createFeishuTransport — reactions', () => {
     const call = calls[0]?.[0]
     expect(call?.path.message_id).toBe('om_target')
     expect(call?.path.reaction_id).toBe('rk_stub')
+  })
+})
+
+describe('createFeishuTransport — message resources', () => {
+  test('fetchMessageResource delegates to the raw Lark message resource API', async () => {
+    const stub = stubClient()
+    const transport = buildTransport(stub)
+
+    const result = await transport.fetchMessageResource({
+      messageId: 'om_target',
+      fileKey: 'file-key',
+      type: 'file',
+    })
+
+    expect(stub.messageResourceGet).toHaveBeenCalledTimes(1)
+    expect(stub.messageResourceGet).toHaveBeenCalledWith({
+      path: { message_id: 'om_target', file_key: 'file-key' },
+      params: { type: 'file' },
+    })
+    expect(result.headers).toEqual({ 'content-type': 'application/octet-stream' })
+    const chunks: Buffer[] = []
+    for await (const chunk of result.stream) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+    }
+    expect(Buffer.concat(chunks).toString('utf8')).toBe('resource bytes')
   })
 })
 

@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "Add package-level CLAUDE/AGENTS guidance; no runtime change",
+      "comment": "Expose structured inbound resources and a raw message-resource fetch seam for channel-owned attachment handling.",
       "type": "patch",
       "packageName": "@excitedjs/feishu-transport"
     }

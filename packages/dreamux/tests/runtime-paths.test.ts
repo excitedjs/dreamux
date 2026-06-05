@@ -11,6 +11,7 @@ import {
   dispatcherCodexAppServerErrorLogPath,
   dispatcherCodexAppServerLogPath,
   dispatcherDir,
+  dispatcherFeishuAttachmentCacheDir,
   feishuChannelLogDir,
   feishuChannelLogPath,
   feishuMcpLogDir,
@@ -65,6 +66,9 @@ describe('runtime paths', () => {
     );
     expect(dispatcherAccessPath('dispatcher-a')).toBe(
       join(stateRoot(), 'dispatcher-a', 'access.json'),
+    );
+    expect(dispatcherFeishuAttachmentCacheDir('dispatcher-a')).toBe(
+      join(stateRoot(), 'dispatcher-a', 'feishu-attachments'),
     );
     expect(dispatcherSocketPath('dispatcher-a')).toBe(
       join(stateRoot(), 'dispatcher-a', 'codex.sock'),

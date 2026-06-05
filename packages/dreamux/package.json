@@ -34,6 +34,7 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
+    "@excitedjs/feishu-channel": "workspace:*",
     "@excitedjs/feishu-transport": "workspace:*",
     "@excitedjs/tm": "2.2.1",
     "smol-toml": "^1.6.1",

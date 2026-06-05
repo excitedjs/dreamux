@@ -24,8 +24,20 @@ export interface InboundMessage {
 export interface ParsedInbound {
   /** Human-readable text to forward to the engine. */
   text: string
+  /** Structured message resources discovered in Feishu content. */
+  resources?: InboundResource[]
   /** Optional flat/narrow metadata supplied by the host's event normalizer. */
   meta?: Record<string, unknown>
+}
+
+export type InboundResourceType = 'file' | 'image'
+
+export interface InboundResource {
+  type: InboundResourceType
+  /** Feishu message resource key (`file_key` / `image_key`) when present. */
+  key?: string
+  /** Original user-facing filename. Treat as display text, never a path. */
+  name?: string
 }
 
 export interface ChannelInbound {
@@ -59,10 +71,22 @@ export function parseInbound(message: InboundMessage): ParsedInbound {
     case 'post':
       return { text: extractPostText(content) }
     case 'image':
-      return { text: '(image)' }
+      return {
+        text: '(image message)',
+        resources: [{
+          type: 'image',
+          ...(typeof content.image_key === 'string' ? { key: content.image_key } : {}),
+        }],
+      }
     case 'file': {
-      const fileName = typeof content.file_name === 'string' ? content.file_name : 'unknown'
-      return { text: `(file: ${fileName})` }
+      return {
+        text: '(file message)',
+        resources: [{
+          type: 'file',
+          ...(typeof content.file_key === 'string' ? { key: content.file_key } : {}),
+          ...(typeof content.file_name === 'string' ? { name: content.file_name } : {}),
+        }],
+      }
     }
     case 'interactive':
       return { text: extractInteractiveText(content) }

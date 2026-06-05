@@ -16,6 +16,7 @@ import { DispatcherRuntime } from './dispatcher/runtime.js';
 import type { InboundTurnInput } from './dispatcher/turn-manager.js';
 import type { CodexProcess, CodexProcessOptions } from './codex/supervisor.js';
 import type { CodexWsClient } from './codex/rpc.js';
+import { formatFeishuMessageForCodex } from '@excitedjs/feishu-channel';
 import {
   channelOutboundToFeishuTarget,
   createFeishuBot,
@@ -44,7 +45,6 @@ import {
   trustedBotIds,
 } from './channel/chat-bots-store.js';
 import type { PeerBot } from './channel/chat-bots-store.js';
-import { formatFeishuMessageForCodex } from './channel/feishu-message.js';
 import { parseCodexArgs, codexArgsToCli } from './runtime/codex-args.js';
 import { feishuMcpCodexArgs } from './codex/mcp-config.js';
 import { resolveBotSecret } from './runtime/secrets.js';
@@ -58,6 +58,7 @@ import type { DispatcherCodexHomeDoctor } from './runtime/dispatcher-codex-home.
 import {
   adminSocketPath,
   dispatcherCodexCwd,
+  dispatcherFeishuAttachmentCacheDir,
   setRuntimeConfig,
 } from './runtime/paths.js';
 import {
@@ -491,14 +492,19 @@ export class Server {
               : null;
           const injectBots =
             baseline !== null && baseline.needsBaseline && baseline.trusted.length > 0;
+          const formatted = await formatFeishuMessageForCodex(
+            event,
+            {
+              cacheDir: dispatcherFeishuAttachmentCacheDir(id),
+              resourceFetcher: bot,
+              ...(injectBots ? { trustedBots: baseline.trusted } : {}),
+            },
+          );
           const input: InboundTurnInput = {
             source_chat_id: event.chatId,
             source_message_id: event.messageId,
             sender_id: event.senderId,
-            parsed_text: formatFeishuMessageForCodex(
-              event,
-              injectBots ? { trustedBots: baseline.trusted } : {},
-            ),
+            parsed_text: formatted.formattedText,
           };
           const delivery = await runtime.enqueueInbound(input, {
             onAccepted: async (acceptedInput) => {

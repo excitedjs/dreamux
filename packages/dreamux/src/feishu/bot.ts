@@ -28,7 +28,11 @@ import {
   parseInbound,
   toChannelInbound,
   type FeishuBotMemberAddedEvent,
+  type FeishuMessageResourceFetcher,
+  type FeishuMessageResourceRequest,
+  type FeishuMessageResourceResponse,
   type FeishuTransport,
+  type InboundResource,
   type Mention,
   type OutboundTarget,
   type TransportLogger,
@@ -54,6 +58,8 @@ export interface FeishuInboundEvent {
   rawContent: string;
   /** Parsed text after the core's content flattening / mention substitution. */
   parsedText: string;
+  /** Structured Feishu resources discovered in the message content. */
+  resources?: InboundResource[];
   mentions: Mention[];
   createTime: string;
   /** The full original Feishu event payload (for storage / audit). */
@@ -87,13 +93,16 @@ export interface FeishuSendResult {
   messageIds: string[];
 }
 
-export interface FeishuBot {
+export interface FeishuBot extends FeishuMessageResourceFetcher {
   readonly appId: string;
   readonly botOpenId: string | undefined;
   start(routes: FeishuInboundRoutes): Promise<void>;
   send(target: OutboundTarget, text: string): Promise<FeishuSendResult>;
   addReaction(messageId: string, emoji: string): Promise<string>;
   removeReaction(messageId: string, reactionId: string): Promise<void>;
+  fetchMessageResource(
+    request: FeishuMessageResourceRequest,
+  ): Promise<FeishuMessageResourceResponse>;
   close(): Promise<void>;
 }
 
@@ -187,6 +196,12 @@ export function createFeishuBot(
       return transport.removeReaction(messageId, reactionId);
     },
 
+    fetchMessageResource(
+      request: FeishuMessageResourceRequest,
+    ): Promise<FeishuMessageResourceResponse> {
+      return transport.fetchMessageResource(request);
+    },
+
     close(): Promise<void> {
       return transport.close();
     },
@@ -253,6 +268,7 @@ function normalizeInboundEvent(raw: unknown): FeishuInboundEvent | null {
     messageType,
     rawContent,
     parsedText: payload.text,
+    resources: parsed.resources ?? [],
     mentions,
     createTime,
     raw,
@@ -314,6 +330,10 @@ export interface FakeFeishuBot extends FeishuBot {
   setSendError(err: Error | null): void;
   setReactionError(err: Error | null): void;
   setRemoveReactionError(err: Error | null): void;
+  setMessageResource(
+    fileKey: string,
+    resource: FeishuMessageResourceResponse | Error | null,
+  ): void;
 }
 
 export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
@@ -329,6 +349,7 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
   let sendError: Error | null = null;
   let reactionError: Error | null = null;
   let removeReactionError: Error | null = null;
+  const messageResources = new Map<string, FeishuMessageResourceResponse | Error>();
   const openId: string | undefined = `fake-open-id-${appId}`;
   const reactions: Array<{
     messageId: string;
@@ -373,6 +394,16 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
       removedReactions.push({ messageId, reactionId });
       reactionOps.push({ op: 'remove', messageId, reactionId });
     },
+    async fetchMessageResource(
+      request: FeishuMessageResourceRequest,
+    ): Promise<FeishuMessageResourceResponse> {
+      const resource = messageResources.get(request.fileKey);
+      if (resource === undefined) {
+        throw new Error(`no fake Feishu resource for key ${request.fileKey}`);
+      }
+      if (resource instanceof Error) throw resource;
+      return resource;
+    },
     async close(): Promise<void> {
       routes = null;
     },
@@ -404,6 +435,16 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
     },
     setRemoveReactionError(err: Error | null): void {
       removeReactionError = err;
+    },
+    setMessageResource(
+      fileKey: string,
+      resource: FeishuMessageResourceResponse | Error | null,
+    ): void {
+      if (resource === null) {
+        messageResources.delete(fileKey);
+      } else {
+        messageResources.set(fileKey, resource);
+      }
     },
   };
 }

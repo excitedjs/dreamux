@@ -37,20 +37,25 @@ describe('parseInbound — text', () => {
 })
 
 describe('parseInbound — attachments', () => {
-  test('an image message becomes a short text marker', () => {
+  test('an image message exposes a structured resource', () => {
     expect(parseInbound(message('image', { image_key: 'img_v2_abc' }))).toEqual({
-      text: '(image)',
+      text: '(image message)',
+      resources: [{ type: 'image', key: 'img_v2_abc' }],
     })
   })
 
-  test('a file message names the file in its text', () => {
+  test('a file message exposes a structured resource', () => {
     expect(parseInbound(message('file', { file_name: 'report.pdf', file_key: 'k' }))).toEqual({
-      text: '(file: report.pdf)',
+      text: '(file message)',
+      resources: [{ type: 'file', key: 'k', name: 'report.pdf' }],
     })
   })
 
-  test('a file message with no name falls back to "unknown"', () => {
-    expect(parseInbound(message('file', { file_key: 'k' })).text).toBe('(file: unknown)')
+  test('a file message with no key still records the attachment type', () => {
+    expect(parseInbound(message('file', { file_name: 'report.pdf' }))).toEqual({
+      text: '(file message)',
+      resources: [{ type: 'file', name: 'report.pdf' }],
+    })
   })
 
   test('an unknown message type is summarized', () => {
@@ -86,7 +91,7 @@ describe('toChannelInbound', () => {
 
   test('keeps media degradation explicit in the flattened text', () => {
     const parsed = parseInbound(message('image', { image_key: 'img_v2_abc' }))
-    expect(toChannelInbound(parsed)).toEqual({ text: '(image)', meta: {} })
+    expect(toChannelInbound(parsed)).toEqual({ text: '(image message)', meta: {} })
   })
 
   test('empty text degrades to an explicit placeholder', () => {

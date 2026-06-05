@@ -35,6 +35,8 @@ export {
   type InboundMessage,
   type ParsedInbound,
   type ChannelInbound,
+  type InboundResource,
+  type InboundResourceType,
 } from './parse/content.js'
 export {
   normalizeBotMemberAddedEvent,
@@ -91,6 +93,10 @@ export {
   type FeishuDocComment,
   type FeishuDocCommentReply,
   type FeishuDocMeta,
+  type FeishuMessageResourceFetcher,
+  type FeishuMessageResourceRequest,
+  type FeishuMessageResourceResponse,
+  type FeishuMessageResourceType,
   type InboundRoutes,
   type RouteHandler,
 } from './transport/feishu.js'

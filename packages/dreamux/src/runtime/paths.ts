@@ -194,6 +194,11 @@ export function dispatcherChatBotsPath(id: string): string {
   return join(dispatcherDir(id), 'chat-bots.json');
 }
 
+/** Per-dispatcher Feishu inbound attachment cache, owned by the server. */
+export function dispatcherFeishuAttachmentCacheDir(id: string): string {
+  return join(dispatcherDir(id), 'feishu-attachments');
+}
+
 export function unixSocketPathFitsBudget(path: string): boolean {
   return Buffer.byteLength(path, 'utf8') <= DREAMUX_UNIX_SOCKET_PATH_MAX_BYTES;
 }
