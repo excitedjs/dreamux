@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Match trusted peer bots by union_id as well as open_id, so an introduced bot whose send-time open_id differs from its mention open_id is still delivered; the inbound drop diagnostic now carries sender_union_id",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

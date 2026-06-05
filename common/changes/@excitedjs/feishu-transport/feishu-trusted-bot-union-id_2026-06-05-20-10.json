@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "narrowMetaFromEvent now surfaces the sender union_id (sender_union_id) so hosts can match a peer bot whose app-scoped open_id differs between mention and send contexts",
+      "type": "patch",
+      "packageName": "@excitedjs/feishu-transport"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-transport",
+  "email": "053700@gmail.com"
+}
