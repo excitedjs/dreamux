@@ -133,12 +133,25 @@ unchanged.
 - **trusted** — bots introduced by an allowlisted `/introduce`. Only this set
   lets a peer bot's group message through the gate.
 
-`dreamuxFeishuGate` drops every bot sender except one whose open_id is in the
-chat's trusted set (passed as `trustedBotIds`); a trusted bot is delivered
-without an `@`-mention because a bot cannot mention us. When `trustedBotIds` is
-omitted, no bot sender is ever delivered — preserving prior behavior. Recording
-a human open_id as "trusted" is harmless: the gate only bypasses for a bot
-*sender*, so a human entry never widens access.
+Trust identity is **strictly the mention `open_id`** (`introducedPeers`): a
+mention with no `open_id` is skipped, with no fallback to `union_id`/`user_id`
+(issue #102). Within one receiving app a peer bot's `open_id` is the same in the
+"mentioned" and "sender" contexts, so the mention `open_id` recorded here is
+exactly what the gate later matches against the bot's sender `open_id`.
+
+`dreamuxFeishuGate` drops every bot sender unless **both** hold: its sender
+`open_id` is in the chat's trusted set (passed as `trustedBotIds`) **and** the
+message `@`-mentions this bot. Trust is a precondition for entry, not a bypass of
+the mention gate (issue #102, aligned with the upstream lineage where peer-bot
+messages must address the bot before entering the conversation). When
+`trustedBotIds` is omitted, no bot sender is ever delivered. Recording a human
+open_id as "trusted" is harmless: the gate only consults the trusted set for a
+bot *sender*, so a human entry never widens access.
+
+`union_id` is never used for trust matching or persistence. A `sender_union_id`
+field may appear in the `feishu inbound dropped` diagnostic log only — it helps
+an operator tell "same bot, different app-scoped open_id" from "different
+entity" after a drop, and is never consulted by the gate.
 
 ## One-shot trusted-bot context (issue #69)
 

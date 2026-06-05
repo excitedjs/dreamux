@@ -116,6 +116,10 @@ export function narrowMetaFromEvent(rawEvent: unknown): Record<string, unknown> 
     chat_id: asString(message.chat_id),
     chat_type: asString(message.chat_type),
     sender_id: asString(senderId?.open_id),
+    // Diagnostic only. A bot's open_id is app-scoped, so a dropped peer-bot
+    // message's union_id helps an operator tell "same bot, different scope" from
+    // "different entity" after the fact. It is never used for access matching.
+    sender_union_id: asString(senderId?.union_id),
     sender_type: asString(sender.sender_type),
     root_id: asString(message.root_id),
     parent_id: asString(message.parent_id),

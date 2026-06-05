@@ -170,8 +170,15 @@ export function detectIntroduce(
 
 /**
  * The peer bots an `/introduce` names — every @-mention except our own bot.
- * The sender-type check in the gate is what actually scopes trust to bots, so
- * a stray human mention recorded here can never widen access.
+ *
+ * Trust identity is **only** a mention's `open_id`. A mention that lacks
+ * `open_id` is skipped — we never fall back to `union_id` or `user_id` (issue
+ * #102). Within one receiving app a peer bot's `open_id` is stable across the
+ * "mentioned" and "sender" contexts, so the mention `open_id` recorded here is
+ * exactly what the inbound gate later matches against the bot's sender
+ * `open_id`; a `union_id`/`user_id` would not. The sender-type check in the
+ * gate is what actually scopes trust to bots, so a stray human mention recorded
+ * here can never widen access.
  */
 export function introducedPeers(
   mentions: Mention[],
@@ -180,7 +187,7 @@ export function introducedPeers(
   const peers: PeerBot[] = [];
   const seen = new Set<string>();
   for (const m of mentions) {
-    const openId = m.id?.open_id ?? m.id?.union_id ?? '';
+    const openId = m.id?.open_id ?? '';
     if (openId === '' || openId === selfOpenId || seen.has(openId)) continue;
     seen.add(openId);
     peers.push(m.name !== undefined ? { openId, name: m.name } : { openId });

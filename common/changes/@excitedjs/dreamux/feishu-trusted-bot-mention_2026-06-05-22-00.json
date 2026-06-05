@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Trusted peer-bot inbound now requires both a trusted sender open_id and an @-mention of this bot; introduce trusts only mention open_id (no union_id/user_id fallback); add diagnostic-only sender_union_id to inbound-drop logs (issue #102)",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

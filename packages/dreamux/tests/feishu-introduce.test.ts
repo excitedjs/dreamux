@@ -387,11 +387,34 @@ describe('introducedPeers', () => {
       { key: '@_user_1', id: { open_id: 'self-bot' }, name: 'Us' },
       { key: '@_user_2', id: { open_id: 'peer-a' }, name: 'Peer A' },
       { key: '@_user_3', id: { open_id: 'peer-a' }, name: 'Peer A again' },
-      { key: '@_user_4', id: { union_id: 'peer-b' } },
     ];
     expect(introducedPeers(mentions, 'self-bot')).toEqual([
       { openId: 'peer-a', name: 'Peer A' },
-      { openId: 'peer-b' },
+    ]);
+  });
+
+  // #102: trust identity is strictly the mention open_id. A mention with no
+  // open_id is skipped — no union_id / user_id fallback — so the trusted set
+  // only ever holds ids the inbound gate can match against a sender open_id.
+  it('skips a mention that has no open_id (no union_id/user_id fallback)', () => {
+    const mentions: Mention[] = [
+      { key: '@_user_1', id: { union_id: 'peer-union' }, name: 'Union Only' },
+      { key: '@_user_2', id: { user_id: 'peer-user' }, name: 'User Only' },
+      { key: '@_user_3', name: 'No Id' },
+      { key: '@_user_4', id: { open_id: 'peer-a' }, name: 'Peer A' },
+    ];
+    expect(introducedPeers(mentions, 'self-bot')).toEqual([
+      { openId: 'peer-a', name: 'Peer A' },
+    ]);
+  });
+
+  it('keeps only the open_id when a mention carries both open_id and union_id', () => {
+    const mentions: Mention[] = [
+      { key: '@_user_1', id: { open_id: 'peer-a', union_id: 'peer-union' }, name: 'Peer A' },
+    ];
+    // No `unionId` field on the result — union_id never enters trust.
+    expect(introducedPeers(mentions, 'self-bot')).toEqual([
+      { openId: 'peer-a', name: 'Peer A' },
     ]);
   });
 });
@@ -427,16 +450,34 @@ describe('gate trust — only introduced bots may speak in a group', () => {
     now: 1_700_000_000_000,
   };
 
+  // A peer bot @-mentioning us is encoded as a mention resolving to botOpenId.
+  const mentionUs = [{ key: '@_bot', id: { open_id: 'self-bot' } }];
+
   it('drops a bot sender that has not been introduced', () => {
     const access = state({ group: { policy: 'allowlist', allow_chats: ['chat-a'] } });
-    expect(dreamuxFeishuGate(base, access)).toMatchObject({ action: 'drop' });
+    expect(
+      dreamuxFeishuGate({ ...base, mentions: mentionUs }, access),
+    ).toMatchObject({ action: 'drop' });
   });
 
-  it('delivers a bot sender that was introduced (trusted), without a mention', () => {
+  it('delivers a trusted bot that @-mentions us', () => {
     const access = state({ group: { policy: 'allowlist', allow_chats: ['chat-a'] } });
     expect(
-      dreamuxFeishuGate({ ...base, trustedBotIds: new Set(['peer-bot']) }, access),
+      dreamuxFeishuGate(
+        { ...base, mentions: mentionUs, trustedBotIds: new Set(['peer-bot']) },
+        access,
+      ),
     ).toMatchObject({ action: 'deliver' });
+  });
+
+  it('drops a trusted bot that does NOT @-mention us (#102)', () => {
+    const access = state({ group: { policy: 'allowlist', allow_chats: ['chat-a'] } });
+    expect(
+      dreamuxFeishuGate(
+        { ...base, mentions: [], trustedBotIds: new Set(['peer-bot']) },
+        access,
+      ),
+    ).toMatchObject({ action: 'drop', reason: 'bot not mentioned' });
   });
 });
 
@@ -558,6 +599,16 @@ describe('chat-bots store — one-shot pending context (issue #69)', () => {
       { openId: 'peer-a', name: 'Peer A' },
     ]);
     expect(listing.trusted).toEqual([{ openId: 'peer-a', name: 'Peer A' }]);
+  });
+
+  // #102: a peer introduced without a name still trusts its open_id; the
+  // listing omits `name` entirely rather than echoing the raw open_id as a name.
+  it('trusts an open_id with no name and omits name in the listing', async () => {
+    await trustIntroducedBots('d1', 'chat-a', [{ openId: 'peer-noname' }]);
+    expect((await trustedBotIds('d1', 'chat-a')).has('peer-noname')).toBe(true);
+    const listing = await listChatBots('d1', 'chat-a');
+    expect(listing.trusted).toEqual([{ openId: 'peer-noname' }]);
+    expect(listing.trusted[0]).not.toHaveProperty('name');
   });
 
   it('returns empty listings/baseline for an unknown chat', async () => {

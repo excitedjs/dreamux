@@ -71,10 +71,11 @@ export interface DreamuxFeishuGateInput {
   now?: number;
   /**
    * Peer-bot open_ids trusted in this chat via an allowlisted `/introduce`
-   * (issue #62). A bot sender is normally dropped; a trusted bot's group
-   * message is delivered without an @-mention (bots cannot @-mention us).
-   * `undefined` for direct messages and for callers that do not track trust,
-   * in which case no bot sender is ever delivered — preserving prior behavior.
+   * (issue #62, #102). A bot sender is dropped unless its open_id is in this
+   * set AND the message @-mentions this bot — trust is a precondition, not a
+   * bypass of the mention gate. `undefined` for direct messages and for callers
+   * that do not track trust, in which case no bot sender is ever delivered —
+   * preserving prior behavior.
    */
   trustedBotIds?: ReadonlySet<string>;
 }
@@ -184,14 +185,21 @@ export function dreamuxFeishuGate(
 
   if (senderIsBot) {
     // A peer bot speaks only if it was introduced (trusted) for this chat by an
-    // allowlisted `/introduce`. Trusted bots bypass the mention gate because a
-    // bot cannot @-mention us; untrusted bots are dropped as before. This is
-    // per-chat trust (`trustedBotIds` is scoped to this chat by the caller) and
-    // is never reached through the human `allow_users` list.
-    if (input.trustedBotIds?.has(input.senderId) ?? false) {
-      return deliver(access, input, now);
+    // allowlisted `/introduce` AND it @-mentions this bot (issue #102, aligned
+    // with upstream lineage): trust is a precondition for entry, not a bypass of
+    // the mention gate. Untrusted bots are dropped regardless of mention. This
+    // is per-chat trust (`trustedBotIds` is scoped to this chat by the caller)
+    // and is never reached through the human `allow_users` list.
+    if (!(input.trustedBotIds?.has(input.senderId) ?? false)) {
+      return drop(`bot sender type: ${input.senderType}`);
     }
-    return drop(`bot sender type: ${input.senderType}`);
+    if (input.botOpenId === undefined) {
+      return drop('group message requires a bot mention but bot open_id is unknown');
+    }
+    if (!isBotMentioned(input.mentions, input.botOpenId)) {
+      return drop('bot not mentioned');
+    }
+    return deliver(access, input, now);
   }
 
   if (policy === 'follow-user') {

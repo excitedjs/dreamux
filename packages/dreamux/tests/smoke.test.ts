@@ -352,6 +352,73 @@ describe('dreamux MVP smoke', () => {
     expect(d?.status).toBe('ready');
   });
 
+  it('introduce (no @ to us) trusts peer bots; trusted bot inbound requires @ (issue #102)', async () => {
+    const self = 'fake-open-id-app-smoke'; // the fake bot's own open_id
+    const atUs = [{ key: '@_bot', id: { open_id: self }, name: 'Dispatcher' }];
+    server = buildServer({ runtimeDir, fake, bot });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+    await server.start();
+
+    // 1) Allow-listed human runs /introduce mentioning two peer bots WITHOUT
+    //    @-mentioning us. Both peers are trusted by their mention open_id.
+    await bot.inject(
+      fakeInbound('chat-group-a', '/introduce', 'msg-intro', {
+        senderId: 'sender-test',
+        senderType: 'user',
+        mentions: [
+          { key: '@_user_1', id: { open_id: 'peer-bee' }, name: 'Bee' },
+          { key: '@_user_2', id: { open_id: 'peer-cee' } }, // no name
+        ],
+      }),
+    );
+
+    // list_chat_bots exposes trusted as { open_id, name? }; missing name omitted.
+    const listing = await server.listChatBotsFromMcp({
+      dispatcherId: 'flow',
+      chatId: 'chat-group-a',
+    });
+    expect(listing.chat_id).toBe('chat-group-a');
+    expect(listing.trusted).toEqual([
+      { open_id: 'peer-bee', name: 'Bee' },
+      { open_id: 'peer-cee' },
+    ]);
+
+    // 2) Trusted bot that @-mentions us → delivered to Codex.
+    await bot.inject(
+      fakeInbound('chat-group-a', 'hello from bee', 'msg-bee', {
+        senderId: 'peer-bee',
+        senderType: 'bot',
+        senderName: 'Bee',
+        mentions: atUs,
+      }),
+    );
+    await waitFor(() => codexInputs.length === 1);
+    expect(codexInputs[0]).toContain('hello from bee');
+
+    // 3) Trusted bot WITHOUT an @ → dropped (no new Codex turn).
+    await bot.inject(
+      fakeInbound('chat-group-a', 'no at here', 'msg-bee-noat', {
+        senderId: 'peer-bee',
+        senderType: 'bot',
+        mentions: [],
+      }),
+    );
+    // 4) Untrusted bot WITH an @ → dropped.
+    await bot.inject(
+      fakeInbound('chat-group-a', 'stranger', 'msg-dee', {
+        senderId: 'peer-dee',
+        senderType: 'bot',
+        mentions: atUs,
+      }),
+    );
+    await sleep(120);
+    expect(codexInputs).toHaveLength(1);
+  });
+
   it('starts the dispatcher app-server with global default Codex home and tm on PATH', async () => {
     const capturedCodexOptions: CodexProcessOptions[] = [];
     server = buildServer({ runtimeDir, fake, bot, capturedCodexOptions });

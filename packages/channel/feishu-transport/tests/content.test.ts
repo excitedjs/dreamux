@@ -134,6 +134,27 @@ describe('narrowMetaFromEvent', () => {
     })
   })
 
+  test('extracts the sender union_id (diagnostic) when present', () => {
+    expect(
+      narrowMetaFromEvent({
+        event: {
+          sender: {
+            sender_type: 'bot',
+            sender_id: { open_id: 'ou_sender', union_id: 'on_union' },
+          },
+          message: { message_id: 'om_3', chat_id: 'oc_3', chat_type: 'group' },
+        },
+      }),
+    ).toEqual({
+      message_id: 'om_3',
+      chat_id: 'oc_3',
+      chat_type: 'group',
+      sender_id: 'ou_sender',
+      sender_union_id: 'on_union',
+      sender_type: 'bot',
+    })
+  })
+
   test('extracts metadata from already-unwrapped event payloads', () => {
     expect(
       narrowMetaFromEvent({

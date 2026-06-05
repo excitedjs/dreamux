@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "narrowMetaFromEvent surfaces a diagnostic sender_union_id from the inbound event; it is observability-only and never used for access matching (issue #102)",
+      "type": "patch",
+      "packageName": "@excitedjs/feishu-transport"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-transport",
+  "email": "053700@gmail.com"
+}

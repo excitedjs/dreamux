@@ -46,6 +46,13 @@ export interface FeishuInboundEvent {
   chatId: string;
   chatType: string; // 'p2p' | 'group' | ...
   senderId: string;
+  /**
+   * The sender's `union_id`, when Feishu provides it. Diagnostic only — it is
+   * surfaced in inbound-drop logs to help tell "same bot, different app-scoped
+   * open_id" apart from "different entity", and is never used for access
+   * gating. Absent when Feishu omits it.
+   */
+  senderUnionId?: string;
   senderType: string;
   /**
    * Best-effort display name seam for future enrichers. Feishu
@@ -252,6 +259,7 @@ function normalizeInboundEvent(raw: unknown): FeishuInboundEvent | null {
   const chatId = payload.meta['chat_id'] ?? '';
   const chatType = payload.meta['chat_type'] ?? '';
   const senderId = payload.meta['sender_id'] ?? '';
+  const senderUnionId = payload.meta['sender_union_id'] ?? '';
   const senderType = payload.meta['sender_type'] ?? '';
   const createTime = payload.meta['create_time'] ?? '';
   const senderName = extractSenderName(raw);
@@ -263,6 +271,7 @@ function normalizeInboundEvent(raw: unknown): FeishuInboundEvent | null {
     chatId,
     chatType,
     senderId,
+    ...(senderUnionId !== '' ? { senderUnionId } : {}),
     senderType,
     senderName,
     messageType,

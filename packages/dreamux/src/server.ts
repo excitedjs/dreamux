@@ -474,6 +474,13 @@ export class Server {
                 chat_id: event.chatId,
                 chat_type: event.chatType,
                 sender_id: event.senderId,
+                // Diagnostic only (issue #102): when a peer-bot message is
+                // dropped, its union_id helps tell "same bot, different
+                // app-scoped open_id" from "different entity". Not used for
+                // gating.
+                ...(event.senderUnionId !== undefined && event.senderUnionId !== ''
+                  ? { sender_union_id: event.senderUnionId }
+                  : {}),
                 message_id: event.messageId,
                 reason: gate.reason,
               },

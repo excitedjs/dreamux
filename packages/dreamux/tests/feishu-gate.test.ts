@@ -163,20 +163,46 @@ describe('dreamuxFeishuGate', () => {
 
   describe('peer-bot trust is per-chat and never reached through allow_users', () => {
     const botBase = { senderId: 'peer-bot', senderType: 'bot' };
+    // The default `gate` helper mention list @-mentions `bot-open-id`, the bot's
+    // own open_id, so a bot message that keeps it counts as "@-mentions us".
+    const mentionUs = [{ key: '@_bot', id: { open_id: 'bot-open-id' } }];
 
     it('drops an un-introduced bot sender', () => {
       const access = state({ group: { policy: 'allowlist', allow_chats: ['chat-group-a'], require_mention: true } });
       expect(gate(botBase, access)).toMatchObject({ action: 'drop' });
     });
 
-    it('delivers an introduced (trusted) bot sender without a mention, under follow-user', () => {
+    it('delivers a trusted bot that @-mentions us, under follow-user', () => {
+      const access = state({
+        allow_users: ['sender-allowed'],
+        group: { policy: 'follow-user', allow_chats: [], require_mention: true },
+      });
+      expect(
+        gate(
+          { ...botBase, mentions: mentionUs, trustedBotIds: new Set(['peer-bot']) },
+          access,
+        ),
+      ).toMatchObject({ action: 'deliver' });
+    });
+
+    it('drops a trusted bot that does NOT @-mention us (#102: trust is not a mention bypass)', () => {
       const access = state({
         allow_users: ['sender-allowed'],
         group: { policy: 'follow-user', allow_chats: [], require_mention: true },
       });
       expect(
         gate({ ...botBase, mentions: [], trustedBotIds: new Set(['peer-bot']) }, access),
-      ).toMatchObject({ action: 'deliver' });
+      ).toMatchObject({ action: 'drop', reason: 'bot not mentioned' });
+    });
+
+    it('drops an untrusted bot even when it @-mentions us', () => {
+      const access = state({
+        allow_users: ['sender-allowed'],
+        group: { policy: 'follow-user', allow_chats: [], require_mention: true },
+      });
+      expect(
+        gate({ ...botBase, mentions: mentionUs, trustedBotIds: new Set() }, access),
+      ).toMatchObject({ action: 'drop', reason: 'bot sender type: bot' });
     });
   });
 
