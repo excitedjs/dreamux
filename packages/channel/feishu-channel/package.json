@@ -3,11 +3,6 @@
   "version": "0.0.0",
   "description": "dreamux-side Feishu channel layer (inbound filter + conversation→thread mapping + forwarding) on top of @excitedjs/feishu-transport. PR0 scaffold (issue excitedjs/dreamux#25).",
   "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/excitedjs/dreamux.git",
-    "directory": "packages/channel/feishu-channel"
-  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

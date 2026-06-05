@@ -7,9 +7,8 @@
  *   - Node >= 22.7.0: matches the runtime requirement of the dreamux server
  *     (per @excitedjs/dreamux package.json's engines.node field).
  *
- * Three publishable projects today (@excitedjs/dreamux host,
- * @excitedjs/feishu-transport core, @excitedjs/feishu-channel layer), wired
- * with pnpm workspace:*.
+ * Three projects today (@excitedjs/dreamux host, @excitedjs/feishu-transport
+ * core, @excitedjs/feishu-channel placeholder), wired with pnpm workspace:*.
  * More packages go under packages/<name>/ and get registered in the
  * `projects` array below.
  *
@@ -50,7 +49,7 @@
     {
       "packageName": "@excitedjs/feishu-channel",
       "projectFolder": "packages/channel/feishu-channel",
-      "shouldPublish": true
+      "shouldPublish": false
     }
   ]
 }

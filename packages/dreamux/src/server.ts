@@ -16,7 +16,6 @@ import { DispatcherRuntime } from './dispatcher/runtime.js';
 import type { InboundTurnInput } from './dispatcher/turn-manager.js';
 import type { CodexProcess, CodexProcessOptions } from './codex/supervisor.js';
 import type { CodexWsClient } from './codex/rpc.js';
-import { formatFeishuMessageForCodex } from '@excitedjs/feishu-channel';
 import {
   channelOutboundToFeishuTarget,
   createFeishuBot,
@@ -35,6 +34,7 @@ import {
   introduceDenyReason,
   introducedPeers,
 } from './channel/introduce.js';
+import { formatFeishuMessageForCodex } from './channel/feishu-message.js';
 import {
   clearBaselineIfCurrent,
   listChatBots,

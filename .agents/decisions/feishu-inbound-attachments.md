@@ -79,6 +79,14 @@ block.
 
 ## Consequences
 
+### Issue #97 release correction
+
+`@excitedjs/feishu-channel@0.0.1` was manually bootstrapped on npm after issue
+#97, but the immediate install fix keeps `@excitedjs/dreamux` independent from
+that package at runtime. The formatter stays host-local until Dreamux
+deliberately imports the channel package again and the release plan includes the
+channel package as a publish-chain participant.
+
 - Gate drop / pair / unauthorized paths must not download resources because
   Dreamux invokes the channel formatter only after `dreamuxFeishuGate()` returns
   `deliver`.

@@ -52,7 +52,8 @@ useful and bounded. They are not part of the minimal core contract.
 ## Upstream / Downstream Contract
 
 - Upstream: `@excitedjs/feishu-transport` low-level Lark operations.
-- Downstream: `@excitedjs/dreamux`, which consumes structured channel output or
-  final agent-facing text.
+- Intended downstream: `@excitedjs/dreamux`. After issue #97, Dreamux does not
+  depend on this package at runtime until the channel package is deliberately
+  reintroduced into the published dependency graph.
 - Dreamux may provide cache roots, limits, and logging hooks, but the channel
   owns how resources are downloaded, cached, represented, and degraded.

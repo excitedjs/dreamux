@@ -89,13 +89,13 @@ monorepo-wide.
   `workspace:` dependencies are valid in source package manifests, but raw
   `npm publish` from a package directory is forbidden; the release workflow must
   use Rush native publish so pnpm prepares the registry manifest.
-- **Runtime workspace dependencies must be publishable.** If a `shouldPublish:
+- **Runtime workspace dependencies must be deliberate.** If a `shouldPublish:
   true` package depends on a sibling workspace package at runtime, that sibling
-  must also be `shouldPublish: true` before the dependency reaches a released
-  manifest. Issue #97 exposed the failure mode: pnpm rewrote
-  `@excitedjs/dreamux`'s `workspace:*` dependency on
-  `@excitedjs/feishu-channel` to a concrete version, but Rush did not publish
-  that sibling package, so external `npm install` failed with a missing
+  must either already be part of the publish chain or stay out of the runtime
+  dependency graph until it is truly consumed. Issue #97 exposed the failure
+  mode: pnpm rewrote `@excitedjs/dreamux`'s ahead-of-use
+  `@excitedjs/feishu-channel` dependency to a concrete version, while the
+  sibling was not publishable, so external `npm install` failed with a missing
   registry dependency.
 - **No release GitHub App secrets are required for the current branch
   protection.** The repository action setting must keep workflow tokens writable

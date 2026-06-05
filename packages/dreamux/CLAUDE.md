@@ -12,16 +12,18 @@ app-server orchestration, Feishu MCP shim, state, and logs.
   handling.
 - Own access-gate decisions, dispatcher trust-domain policy, reaction state, and
   outbound Feishu MCP request routing.
-- Consume Feishu channel products from `@excitedjs/feishu-channel`: structured
-  inbound results or final agent-facing message text.
+- For issue #97, keep Feishu inbound formatter consumption host-local until
+  `@excitedjs/feishu-channel` is intentionally reintroduced as a runtime
+  dependency and publish-chain participant.
 
 ## Boundaries
 
 - Do not spread Lark SDK or raw Feishu JSAPI details into Dreamux core. Direct
   platform calls belong in `@excitedjs/feishu-transport`; channel semantics
-  belong in `@excitedjs/feishu-channel`.
+  are intended to move to `@excitedjs/feishu-channel` once the runtime package
+  dependency is deliberately restored.
 - Do not reimplement Feishu attachment download/cache/serialization logic in
-  this package once the channel package owns it.
+  this package beyond the host-local issue #97 bridge.
 - Do not assemble channel-specific `<attachment>` bodies in server/runtime code;
   call the channel layer and submit its output to Codex.
 - Do not create dispatcher-private `CODEX_HOME` directories for the MVP.
@@ -33,9 +35,9 @@ app-server orchestration, Feishu MCP shim, state, and logs.
 
 ## Upstream / Downstream Contract
 
-- Upstream: `@excitedjs/feishu-channel` for channel behavior and
-  `@excitedjs/feishu-transport` only for already-established low-level
-  platform primitives currently consumed by Dreamux.
+- Upstream: `@excitedjs/feishu-transport` for low-level platform primitives
+  currently consumed by Dreamux; `@excitedjs/feishu-channel` becomes an
+  upstream runtime dependency only when Dreamux imports it again deliberately.
 - Downstream: Codex app-server, dispatcher workspace skills, and operator CLI
   workflows.
 - If a new feature needs both Feishu semantics and Codex-facing formatting,
@@ -45,7 +47,9 @@ app-server orchestration, Feishu MCP shim, state, and logs.
 
 - Server and dispatcher orchestration tests should assert that Dreamux consumes
   channel outputs and submits them to Codex.
-- Channel formatting details should be tested in `@excitedjs/feishu-channel`,
-  not duplicated in Dreamux host tests.
+- While the issue #97 bridge is host-local, formatter behavior may be covered
+  in Dreamux host tests. Once the channel package is the runtime dependency
+  again, channel formatting details should live in `@excitedjs/feishu-channel`
+  tests.
 - Keep fixtures public-safe: use placeholder chat, message, user, app, and
   resource identifiers.

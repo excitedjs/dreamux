@@ -8,7 +8,7 @@ through pnpm `workspace:*` and installed via the rush path only (see
 |---|---|---|
 | `@excitedjs/dreamux` | `/packages/dreamux/` | the host server |
 | `@excitedjs/feishu-transport` | `/packages/channel/feishu-transport/` | platform-I/O core; **sole** importer of `@larksuiteoapi/node-sdk` |
-| `@excitedjs/feishu-channel` | `/packages/channel/feishu-channel/` | per-host channel layer; published because `@excitedjs/dreamux` depends on it at runtime |
+| `@excitedjs/feishu-channel` | `/packages/channel/feishu-channel/` | per-host channel layer (placeholder today) |
 | `@excitedjs/eslint-config` | `/packages/eslint-config/` | private (unpublished) shared ESLint flat config; single source of the synchronous-blocking-IO ban (see [the no-sync-io decision](../decisions/no-sync-io-lint-gate.md)) |
 
 The channel refactor (#4) extracted the Feishu platform I/O out of the
@@ -67,12 +67,10 @@ ban (`src/**` is a hard error; `tests/**` is audited) — see
 the `rush` job; the pre-commit hook lints staged `.ts` as a local pre-flight.
 
 The per-package `cd packages/dreamux && npm install` path is **retired**:
-`@excitedjs/dreamux` now depends on sibling workspace packages such as
-`@excitedjs/feishu-transport` and `@excitedjs/feishu-channel` via the pnpm
-`workspace:*` protocol, which `npm` cannot resolve. There is no committed
-per-package `package-lock.json`. External consumers are unaffected only when
-every runtime workspace dependency is also `shouldPublish: true` in
-`/rush.json`: the release workflow publishes a pnpm-packed tarball, where pnpm
+`@excitedjs/dreamux` now depends on `@excitedjs/feishu-transport` via the
+pnpm `workspace:*` protocol, which `npm` cannot resolve. There is no
+committed per-package `package-lock.json`. External consumers are
+unaffected — the release workflow publishes a pnpm-packed tarball, where pnpm
 rewrites `workspace:*` to real registry versions before npm uploads it.
 See [the install-model decision](../decisions/install-model.md) (which retires
 the two-paths consequence of [the Rush + pnpm decision](../decisions/rush-pnpm-monorepo.md)).

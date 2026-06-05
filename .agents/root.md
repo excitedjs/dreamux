@@ -40,8 +40,8 @@ Background and older issue context:
 │   │   ├── feishu-transport/      @excitedjs/feishu-transport — platform-I/O core
 │   │   │                          (sole @larksuiteoapi/node-sdk importer)
 │   │   └── feishu-channel/        @excitedjs/feishu-channel — Feishu channel
-│   │                              layer (Codex-facing inbound body,
-│   │                              attachments, cache/fallback)
+│   │                              layer staging package; not a dreamux
+│   │                              runtime dependency after issue #97
 │   └── eslint-config/             @excitedjs/eslint-config — shared lint config
 │                                  (private; no-sync-IO gate, issue #85)
 ├── bin/                           thin redirectors → packages/dreamux/bin/
