@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Fix the published npm install path by depending on a published Feishu channel package.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "noreply@github.com"
+}
