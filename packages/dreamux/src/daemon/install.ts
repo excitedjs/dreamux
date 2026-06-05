@@ -25,7 +25,7 @@ import { TransparentFileLedger } from '../onboard/ledger.js';
 import type { CommandRunner, OnboardFileLedgerEntry } from '../onboard/types.js';
 import { globalConfigDir, loadConfig } from '../runtime/config.js';
 import { dreamuxBinPath } from '../runtime/package-bin.js';
-import { setRuntimeConfig, stateRoot } from '../runtime/paths.js';
+import { setRuntimeConfig } from '../runtime/paths.js';
 
 export interface DaemonInstallOptions {
   startService?: boolean;
@@ -73,7 +73,6 @@ export async function runDaemonInstall(
       });
   const answers: ServiceInstallAnswers = {
     configDir: globalConfigDir(),
-    runtimeDir: stateRoot(),
     codexBin,
     dreamuxBin: dreamuxBinPath(env),
     nodeBin,

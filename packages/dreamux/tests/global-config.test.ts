@@ -25,7 +25,6 @@ import {
 import {
   adminSocketPath,
   resetRuntimeConfig,
-  runtimeRoot,
   serverJsonPath,
   setRuntimeConfig,
   stateRoot,
@@ -478,14 +477,6 @@ describe('runtime path precedence', () => {
     }
     rmSync(configDir, { recursive: true, force: true });
     resetRuntimeConfig();
-  });
-
-  it('runtimeRoot aliases stateRoot and ignores legacy env overrides', async () => {
-    writeConfigObjectAt(configDir, {});
-    const { config } = await loadOrInitConfig({ configDir });
-    setRuntimeConfig(config);
-    process.env['CODEX_HOST_RUNTIME_DIR'] = '/tmp/from-env';
-    expect(runtimeRoot()).toBe(stateRoot());
   });
 
   it('adminSocketPath is fixed under stateRoot', async () => {

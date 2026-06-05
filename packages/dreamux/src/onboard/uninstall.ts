@@ -39,7 +39,6 @@ export interface UninstallEntry {
 
 export interface RunUninstallOptions {
   configDir?: string;
-  runtimeDir?: string;
   runner?: CommandRunner;
   platform?: NodeJS.Platform;
   homeDir?: string;

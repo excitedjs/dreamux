@@ -35,7 +35,6 @@ export const SERVICE_PATH_DEFAULTS = ['/usr/local/bin', '/usr/bin', '/bin'];
 
 export interface ServiceInstallAnswers {
   configDir: string;
-  runtimeDir: string;
   codexBin: string;
   dreamuxBin: string;
   nodeBin: string;

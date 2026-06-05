@@ -15,9 +15,8 @@
  *       codex-app-server/
  *         <dispatcher-id>.log
  *
- * `runtime_dir` is not an effective runtime contract. The legacy runtimeRoot()
- * function remains as a compatibility alias for stateRoot() while older call
- * sites are retired.
+ * `stateRoot()` is the single root for dreamux-owned state. The old
+ * `runtime_dir` concept (and its `runtimeRoot()` alias) was retired in issue #98.
  */
 
 import { homedir } from 'node:os';
@@ -86,13 +85,6 @@ export function restartIntentPath(): string {
 
 export function logsRoot(): string {
   return join(dreamuxRoot(), 'logs');
-}
-
-/**
- * Legacy compatibility alias. New code should call stateRoot().
- */
-export function runtimeRoot(): string {
-  return stateRoot();
 }
 
 export function adminSocketPath(): string {

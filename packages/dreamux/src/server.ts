@@ -233,7 +233,7 @@ export class Server {
   constructor(opts: ServerOptions = {}) {
     this.opts = opts;
     // Install the config snapshot before any paths.* / runtime.* lookup
-    // happens. paths.runtimeRoot / adminSocketPath / etc. consult this
+    // happens. paths.stateRoot / adminSocketPath / etc. consult this
     // snapshot for non-env defaults (env vars still win).
     setRuntimeConfig(opts.config ?? BUILT_IN_DEFAULTS);
     // Default loggers are stderr-only (zero files opened) so tests that

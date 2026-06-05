@@ -1,10 +1,8 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import {
   access,
   lstat,
   mkdir,
-  readFile,
-  readdir,
   realpath,
   rename,
   rm,
@@ -36,12 +34,6 @@ export type BundledSkillInstallStatus =
   | 'replaced'
   | 'unchanged'
   | 'skipped';
-
-const LEGACY_COPIED_DISPATCHER_SKILL_SHA256 = new Set([
-  // Pre-symlink Dreamux wrote exactly this dispatcher SKILL.md copy.
-  // Only exact unmodified copies are migrated automatically.
-  '4dca0986d2e7ecde171ac3436718eaa1fefe599dacfdc2d20c90d2cf1d443be1',
-]);
 
 export interface BundledSkillInstallResult {
   skillName: BundledSkillName;
@@ -138,28 +130,9 @@ async function installOneSkill(options: {
   }
 
   if (!targetInfo.isSymbolicLink()) {
-    const legacyCopiedSkill = await isLegacyCopiedDispatcherSkill({
-      skillName: options.skillName,
-      targetPath,
-      targetInfo,
-    });
-    if (legacyCopiedSkill) {
-      if (!options.dryRun) {
-        await replaceLegacyCopiedDirectoryWithSymlink(
-          sourcePath,
-          targetPath,
-          options.skillName,
-        );
-      }
-      return {
-        skillName: options.skillName,
-        sourcePath,
-        targetPath,
-        status: 'replaced',
-        reason:
-          'migrated a legacy Dreamux-copied dispatcher skill directory to the bundled symlink',
-      };
-    }
+    // A real file or directory at the skill path is left untouched. dreamux 0.x
+    // does not migrate old hand-copied skill directories (issue #98); the
+    // operator removes or renames it to opt back into the bundled symlink.
     return {
       skillName: options.skillName,
       sourcePath,
@@ -216,28 +189,6 @@ async function assertBundledSkillSource(
   }
 }
 
-async function isLegacyCopiedDispatcherSkill(options: {
-  skillName: BundledSkillName;
-  targetPath: string;
-  targetInfo: Awaited<ReturnType<typeof lstat>>;
-}): Promise<boolean> {
-  if (options.skillName !== 'dispatcher' || !options.targetInfo.isDirectory()) {
-    return false;
-  }
-  try {
-    const entries = await readdir(options.targetPath);
-    if (entries.length !== 1 || entries[0] !== 'SKILL.md') return false;
-    const skillFile = resolve(options.targetPath, 'SKILL.md');
-    const skillInfo = await stat(skillFile);
-    if (!skillInfo.isFile()) return false;
-    const content = await readFile(skillFile);
-    const hash = createHash('sha256').update(content).digest('hex');
-    return LEGACY_COPIED_DISPATCHER_SKILL_SHA256.has(hash);
-  } catch {
-    return false;
-  }
-}
-
 async function resolvedSymlinkTarget(path: string): Promise<string | null> {
   try {
     return await realpath(path);
@@ -288,30 +239,3 @@ async function replaceSkillSymlink(
   }
 }
 
-async function replaceLegacyCopiedDirectoryWithSymlink(
-  sourcePath: string,
-  targetPath: string,
-  skillName: BundledSkillName,
-): Promise<void> {
-  const parent = dirname(targetPath);
-  const suffix = randomUUID();
-  const temporaryLink = resolve(parent, `.${skillName}.dreamux-next-${suffix}`);
-  const backupPath = resolve(parent, `.${skillName}.dreamux-legacy-${suffix}`);
-  let backupCreated = false;
-  try {
-    await createSkillSymlink(sourcePath, temporaryLink, skillName);
-    await rename(targetPath, backupPath);
-    backupCreated = true;
-    await rename(temporaryLink, targetPath);
-    await rm(backupPath, { recursive: true });
-  } catch (err) {
-    await rm(temporaryLink, { force: true, recursive: false }).catch(() => {});
-    if (backupCreated && !(await pathExists(targetPath))) {
-      await rename(backupPath, targetPath).catch(() => {});
-    }
-    const detail = err instanceof Error ? err.message : String(err);
-    throw new Error(
-      `failed to migrate legacy copied bundled skill '${skillName}' at ${targetPath}: ${detail}`,
-    );
-  }
-}

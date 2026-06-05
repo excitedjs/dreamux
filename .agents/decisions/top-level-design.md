@@ -246,7 +246,10 @@ validated as stable path segments and length-checked so derived `admin.sock` and
 `codex.sock` paths stay within Linux and macOS `sun_path` limits.
 
 There is no `runtime_dir`, no SQLite database, no persisted inbound message
-queue, and no persisted reaction ledger.
+queue, and no persisted reaction ledger. `stateRoot()` is the single state root;
+the last `runtime_dir` leftovers — the `runtimeRoot()` alias, the onboard
+`runtimeDir` answer/field, and the `--runtime-dir` CLI option — were deleted in
+issue #98 (the option now fails loud as an unknown argument).
 
 ## Dispatcher Lifecycle
 

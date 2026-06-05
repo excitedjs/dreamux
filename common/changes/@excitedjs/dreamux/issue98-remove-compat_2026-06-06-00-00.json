@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Remove dead 0.x compatibility shims (issue #98). Delete the old copied-dispatcher-skill -> bundled-symlink fingerprint migration: a real directory at a bundled skill path is now always left untouched ('skipped'). Rebuild: if a dispatcher workspace still has an old hand-copied skill directory under .codex/skills/, remove or rename it so startup recreates the bundled symlink. Also delete the dead runtime_dir leftovers: the runtimeRoot() alias, the onboard runtimeDir answer, and the CLI --runtime-dir option, which previously was accepted-and-ignored and now fails loud as an unknown argument. No change to bundled-skill install/update, service unit re-registration, or service Node path selection.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

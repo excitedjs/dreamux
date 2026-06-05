@@ -76,7 +76,11 @@ describe('bundled workspace skill installer', () => {
     expect(realpathSync(target)).toBe(realpathSync(bundledSkillDir('dispatcher')));
   });
 
-  it('migrates the legacy copied dispatcher skill directory to a symlink', async () => {
+  it('leaves an old hand-copied dispatcher skill directory untouched (no migration)', async () => {
+    // issue #98: dreamux no longer fingerprints and migrates a previously
+    // copied dispatcher skill directory. A real directory at the skill path is
+    // left as-is; the operator removes or renames it to opt back into the
+    // bundled symlink.
     const target = dispatcherWorkspaceSkillDir(dispatcherCwd, 'dispatcher');
     mkdirSync(target, { recursive: true });
     writeFileSync(join(target, 'SKILL.md'), LEGACY_COPIED_DISPATCHER_SKILL);
@@ -86,29 +90,10 @@ describe('bundled workspace skill installer', () => {
       result.skillName === 'dispatcher'
     );
 
-    expect(dispatcherResult?.status).toBe('replaced');
-    expect(dispatcherResult?.reason).toContain('legacy Dreamux-copied');
-    expect(lstatSync(target).isSymbolicLink()).toBe(true);
-    expect(realpathSync(target)).toBe(realpathSync(bundledSkillDir('dispatcher')));
-  });
-
-  it('does not migrate a modified legacy dispatcher skill directory', async () => {
-    const target = dispatcherWorkspaceSkillDir(dispatcherCwd, 'dispatcher');
-    mkdirSync(target, { recursive: true });
-    writeFileSync(
-      join(target, 'SKILL.md'),
-      `${LEGACY_COPIED_DISPATCHER_SKILL}\n# local edit\n`,
-    );
-
-    const results = await installBundledWorkspaceSkills({ dispatcherCwd });
-    const dispatcherResult = results.find((result) =>
-      result.skillName === 'dispatcher'
-    );
-
     expect(dispatcherResult?.status).toBe('skipped');
     expect(lstatSync(target).isSymbolicLink()).toBe(false);
-    expect(readFileSync(join(target, 'SKILL.md'), 'utf8')).toContain(
-      '# local edit',
+    expect(readFileSync(join(target, 'SKILL.md'), 'utf8')).toBe(
+      LEGACY_COPIED_DISPATCHER_SKILL,
     );
   });
 

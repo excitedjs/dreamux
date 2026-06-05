@@ -18,7 +18,6 @@ export interface OnboardCliOptions {
   yes?: boolean;
   dryRun?: boolean;
   configDir?: string;
-  runtimeDir?: string;
   dispatcherId?: string;
   dispatcherCwd?: string;
   codexBin?: string;
@@ -41,10 +40,6 @@ export async function collectOnboardAnswers(
   const configDir = await promptText(
     'dreamux config directory',
     defaultConfigDir(options),
-  );
-  const runtimeDir = await promptText(
-    'dreamux runtime directory',
-    defaultRuntimeDir(options),
   );
   const dispatcherId = await promptText(
     'dispatcher id',
@@ -76,7 +71,6 @@ export async function collectOnboardAnswers(
     {
       ...options,
       configDir,
-      runtimeDir,
       dispatcherId,
       dispatcherCwd,
       codexBin,
@@ -102,7 +96,6 @@ export function answersFromOptions(
   const dispatcherCwd = options.dispatcherCwd ?? process.cwd();
   return {
     configDir: normalizePath(options.configDir ?? defaultConfigDir(options)),
-    runtimeDir: normalizePath(options.runtimeDir ?? defaultRuntimeDir(options)),
     dispatcherId: validateDispatcherId(
       options.dispatcherId ?? DEFAULT_DISPATCHER_ID,
     ),
@@ -121,10 +114,6 @@ export function answersFromOptions(
 
 function defaultConfigDir(options: OnboardCliOptions): string {
   return options.configDir ?? join(homedir(), '.dreamux');
-}
-
-function defaultRuntimeDir(options: OnboardCliOptions): string {
-  return options.runtimeDir ?? join(homedir(), '.dreamux', 'runtime');
 }
 
 async function promptText(label: string, initialValue?: string): Promise<string> {

@@ -149,9 +149,7 @@ describe('dreamux onboard', () => {
   it('writes dispatcher state, records subprocess files, and passes the serve doctor', async () => {
     const runner = new FakeRunner();
     const answers = testAnswers({
-      configDir: join(root, 'config'),
-      runtimeDir: join(root, 'runtime'),
-      dreamuxBin: '/usr/local/bin/dreamux',
+      configDir: join(root, 'config'),      dreamuxBin: '/usr/local/bin/dreamux',
       botAppId: 'app-test',
       botAppSecret: 'secret-test',
     });
@@ -243,9 +241,7 @@ describe('dreamux onboard', () => {
   it('reports skipped bundled skill conflicts during onboard', async () => {
     const runner = new FakeRunner();
     const answers = testAnswers({
-      configDir: join(root, 'config'),
-      runtimeDir: join(root, 'runtime'),
-      registerService: false,
+      configDir: join(root, 'config'),      registerService: false,
       startService: false,
     });
     writeGlobalCodexAuth(answers);
@@ -276,9 +272,7 @@ describe('dreamux onboard', () => {
   it('pins the service to a stable system Node and leads PATH with its directory', async () => {
     const runner = new FakeRunner();
     const answers = testAnswers({
-      configDir: join(root, 'config'),
-      runtimeDir: join(root, 'runtime'),
-      dreamuxBin: '/usr/local/bin/dreamux',
+      configDir: join(root, 'config'),      dreamuxBin: '/usr/local/bin/dreamux',
     });
     writeGlobalCodexAuth(answers);
     // /usr/local/bin/node exists, is not version-manager-bound, satisfies the
@@ -311,9 +305,7 @@ describe('dreamux onboard', () => {
   it('excludes a version-manager-bound candidate and falls back to the current Node', async () => {
     const runner = new FakeRunner();
     const answers = testAnswers({
-      configDir: join(root, 'config'),
-      runtimeDir: join(root, 'runtime'),
-      dreamuxBin: '/usr/local/bin/dreamux',
+      configDir: join(root, 'config'),      dreamuxBin: '/usr/local/bin/dreamux',
     });
     writeGlobalCodexAuth(answers);
     // /usr/local/bin/node is executable but realpaths into an nvm install, so
@@ -351,9 +343,7 @@ describe('dreamux onboard', () => {
     const runner = new FakeRunner();
     runner.lingerEnableOk = false;
     const answers = testAnswers({
-      configDir: join(root, 'config'),
-      runtimeDir: join(root, 'runtime'),
-      registerService: true,
+      configDir: join(root, 'config'),      registerService: true,
     });
     writeGlobalCodexAuth(answers);
 
@@ -382,9 +372,7 @@ describe('dreamux onboard', () => {
   it('does not let an interactive shell token satisfy the managed service doctor', async () => {
     const runner = new FakeRunner();
     const answers = testAnswers({
-      configDir: join(root, 'config'),
-      runtimeDir: join(root, 'runtime'),
-      registerService: true,
+      configDir: join(root, 'config'),      registerService: true,
     });
 
     await expect(
@@ -403,9 +391,7 @@ describe('dreamux onboard', () => {
   it('fails before systemd registration when the service cannot execute the launcher', async () => {
     const runner = new FakeRunner();
     const answers = testAnswers({
-      configDir: join(root, 'config'),
-      runtimeDir: join(root, 'runtime'),
-      registerService: true,
+      configDir: join(root, 'config'),      registerService: true,
       dreamuxBin: '/usr/local/bin/dreamux',
     });
     writeGlobalCodexAuth(answers);
@@ -428,9 +414,7 @@ describe('dreamux onboard', () => {
   it('rewrites workspace dispatcher skills and skips already-loaded launchd services on rerun', async () => {
     const runner = new FakeRunner();
     const answers = testAnswers({
-      configDir: join(root, 'config'),
-      runtimeDir: join(root, 'runtime'),
-      registerService: true,
+      configDir: join(root, 'config'),      registerService: true,
       startService: true,
     });
     writeGlobalCodexAuth(answers);
@@ -478,7 +462,6 @@ describe('dreamux onboard', () => {
 
   it('preserves existing codex globals and other dispatchers on rerun', async () => {
     const runner = new FakeRunner();
-    const ignoredRuntimeDir = join(root, 'ignored-runtime');
     const configDir = join(root, 'config');
     mkdirSync(configDir, { recursive: true });
     writeFileSync(
@@ -511,7 +494,6 @@ describe('dreamux onboard', () => {
     );
     const answers = testAnswers({
       configDir,
-      runtimeDir: ignoredRuntimeDir,
       dispatcherId: 'docs',
       dispatcherCwd: join(root, 'docs-cwd'),
       registerService: false,
@@ -572,7 +554,6 @@ describe('dreamux onboard', () => {
         },
       },
     ]);
-    expect(existsSync(ignoredRuntimeDir)).toBe(false);
   });
 
   it('rejects a new dispatcher that reuses an existing Feishu app_id', async () => {
@@ -632,9 +613,7 @@ describe('dreamux onboard', () => {
   it('fails non-interactive setup when required channel inputs are missing', () => {
     const options: OnboardCliOptions = {
       yes: true,
-      configDir: join(root, 'config'),
-      runtimeDir: join(root, 'runtime'),
-    };
+      configDir: join(root, 'config'),    };
 
     expect(() => answersFromOptions(options, false)).toThrow(
       'non-interactive onboard requires --bot-app-id',
@@ -645,9 +624,7 @@ describe('dreamux onboard', () => {
     const answers = answersFromOptions(
       {
         yes: true,
-        configDir: join(root, 'config'),
-        runtimeDir: join(root, 'runtime'),
-        botAppId: 'app-test',
+        configDir: join(root, 'config'),        botAppId: 'app-test',
         botAppSecret: 'secret-test',
       },
       false,
@@ -660,7 +637,6 @@ describe('dreamux onboard', () => {
 function testAnswers(overrides: Partial<OnboardAnswers>): OnboardAnswers {
   return {
     configDir: join(rootForTest(overrides), 'config'),
-    runtimeDir: join(rootForTest(overrides), 'runtime'),
     dispatcherId: 'flow',
     dispatcherCwd: join(rootForTest(overrides), 'dispatcher-cwd'),
     codexBin: process.execPath,

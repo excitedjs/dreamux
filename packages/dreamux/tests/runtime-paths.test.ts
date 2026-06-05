@@ -25,7 +25,6 @@ import {
   dreamuxRoot,
   logsRoot,
   resetRuntimeConfig,
-  runtimeRoot,
   serverJsonPath,
   serverLogPath,
   stateRoot,
@@ -56,7 +55,6 @@ describe('runtime paths', () => {
     expect(dreamuxRoot()).toBe(join(homedir(), '.dreamux'));
     expect(stateRoot()).toBe(join(dreamuxRoot(), 'state'));
     expect(logsRoot()).toBe(join(dreamuxRoot(), 'logs'));
-    expect(runtimeRoot()).toBe(stateRoot());
     expect(serverJsonPath()).toBe(join(stateRoot(), 'server.json'));
     expect(adminSocketPath()).toBe(join(stateRoot(), 'admin.sock'));
 

@@ -82,7 +82,6 @@ export async function runOnboard(
     : process.execPath;
   const effectiveAnswers = {
     ...answers,
-    runtimeDir: stateRoot(),
     codexBin: serviceCodexBin,
     nodeBin: serviceNodeBin,
   };

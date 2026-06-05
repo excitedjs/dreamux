@@ -191,10 +191,6 @@ function buildOnboardCommand(y: Argv): Argv {
       type: 'string',
       describe: 'dreamux global config directory',
     })
-    .option('runtime-dir', {
-      type: 'string',
-      describe: 'dreamux runtime directory',
-    })
     .option('dispatcher-id', {
       type: 'string',
       describe: 'Dispatcher id to create or update',
@@ -244,10 +240,6 @@ function buildUninstallCommand(y: Argv): Argv {
     .option('config-dir', {
       type: 'string',
       describe: 'dreamux global config directory',
-    })
-    .option('runtime-dir', {
-      type: 'string',
-      describe: 'Legacy option ignored; uninstall removes dreamux state/log paths',
     });
 }
 
@@ -255,12 +247,10 @@ async function handleUninstall(argv: unknown): Promise<void> {
   const args = argv as {
     dryRun?: boolean;
     configDir?: string;
-    runtimeDir?: string;
   };
   const result = await runUninstall({
     dryRun: args.dryRun,
     configDir: args.configDir,
-    runtimeDir: args.runtimeDir,
   });
   printUninstallResult(result);
 }

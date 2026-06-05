@@ -17,7 +17,6 @@ export type ServicePlatform = 'launchd' | 'systemd';
 
 export interface OnboardAnswers {
   configDir: string;
-  runtimeDir: string;
   dispatcherId: string;
   dispatcherCwd: string;
   codexBin: string;
