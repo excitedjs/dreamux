@@ -78,8 +78,9 @@ responses after compaction, read `references/codex-turns.md`.
 
 Dreamux is in 0.x and does not ship automatic schema migrations. Incompatible
 config/state is handled by fail-loud + an explicit rebuild, not by silent
-conversion. Before installing or upgrading, read the changelog and resolve any
-breaking changes first; only then restart.
+conversion. `dreamux changelog` reads the *installed* package, so the order is:
+install the new package, run `dreamux changelog`, handle any breaking/rebuild
+notes, and only then restart or re-register.
 
 1. Install the new package, then read the changelog it ships:
 

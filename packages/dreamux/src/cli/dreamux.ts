@@ -569,7 +569,7 @@ async function main(): Promise<void> {
     .command('config <command>', 'Inspect config', buildConfigCommands)
     .command(
       'changelog',
-      "Print the installed package's changelog (read before upgrading)",
+      "Print the installed package's changelog (run after install, before restart/onboard)",
       (yy) =>
         yy.option('json', {
           type: 'boolean',
