@@ -6,7 +6,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 
 import {
@@ -34,7 +34,6 @@ import { BUILT_IN_DEFAULTS, type DreamuxConfig } from '../src/runtime/config.js'
 import {
   dispatcherCodexCwd,
   dispatcherCodexHome,
-  dispatcherWorkspaceSkillPath,
 } from '../src/runtime/paths.js';
 import { startFakeCodex, type FakeCodex } from './fake-codex.js';
 
@@ -223,11 +222,7 @@ function writeReadyDispatcherWorkspace(dispatcherId: string): void {
   writeFileSync(join(dispatcherCodexHome(dispatcherId), 'auth.json'), '{}', {
     mode: 0o600,
   });
-  const skillPath = dispatcherWorkspaceSkillPath(
-    dispatcherCodexCwd(dispatcherId),
-  );
-  mkdirSync(dirname(skillPath), { recursive: true });
-  writeFileSync(skillPath, '# test skill\n');
+  mkdirSync(dispatcherCodexCwd(dispatcherId), { recursive: true });
 }
 
 describe('dreamux cross-module e2e', () => {

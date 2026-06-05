@@ -17,6 +17,8 @@ import type {
   OnboardFileStatus,
 } from './types.js';
 
+type WriteFileStatus = Exclude<OnboardFileStatus, 'skipped'>;
+
 export class TransparentFileLedger implements OnboardFileLedger {
   private readonly seen = new Map<string, OnboardFileLedgerEntry>();
 
@@ -72,13 +74,13 @@ export async function writeTextFile(
   ledger: OnboardFileLedger,
   reason: string,
   options: WriteOptions = {},
-): Promise<OnboardFileStatus> {
+): Promise<WriteFileStatus> {
   const parent = dirname(path);
   await ensureDirectory(parent, ledger, `parent directory for ${reason}`, {
     dryRun: options.dryRun,
   });
 
-  let status: OnboardFileStatus;
+  let status: WriteFileStatus;
   if (!(await pathExists(path))) {
     status = 'created';
   } else {
@@ -101,7 +103,7 @@ export async function ensureTextFile(
   ledger: OnboardFileLedger,
   reason: string,
   options: WriteOptions = {},
-): Promise<OnboardFileStatus> {
+): Promise<WriteFileStatus> {
   const parent = dirname(path);
   await ensureDirectory(parent, ledger, `parent directory for ${reason}`, {
     dryRun: options.dryRun,
@@ -164,5 +166,6 @@ function mergeStatus(
 ): OnboardFileStatus {
   if (a === 'created' || b === 'created') return 'created';
   if (a === 'modified' || b === 'modified') return 'modified';
+  if (a === 'skipped' || b === 'skipped') return 'skipped';
   return 'unchanged';
 }

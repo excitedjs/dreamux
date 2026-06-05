@@ -15,11 +15,16 @@ export async function installDispatcherSkill(options: {
       ? 'created'
       : result.status === 'replaced'
         ? 'modified'
-        : 'unchanged';
+        : result.status === 'skipped'
+          ? 'skipped'
+          : 'unchanged';
+    const reason = result.status === 'skipped'
+      ? `workspace-local bundled skill symlink skipped: ${result.skillName}; ${result.reason}`
+      : `workspace-local bundled skill symlink: ${result.skillName}`;
     options.ledger.record(
       result.targetPath,
       status,
-      `workspace-local bundled skill symlink: ${result.skillName}`,
+      reason,
     );
   }
 }

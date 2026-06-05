@@ -19,6 +19,9 @@ explaining a failure or taking action.
   state or logs unless the operator explicitly asks.
 - Do not copy bundled skills into a dispatcher workspace. Dreamux installs them
   as symlinks under `<dispatcher cwd>/.codex/skills/`.
+- Treat bundled skill paths as Dreamux-managed slots. A custom symlink at one
+  of those paths can be replaced by Dreamux; use a real directory or file only
+  when deliberately opting out of the bundled skill.
 
 ## Quick Triage
 
@@ -63,6 +66,8 @@ dreamux config show
 | Restart did not announce recovery | `dreamux daemon restart --notify-resumed --dispatcher <id>` was used, and the dispatcher resumed an existing thread. |
 | `tm` not found inside dispatcher | Dreamux package `bin/` directory is on dispatcher process `PATH`; rerun `dreamux doctor`. |
 | Skill changes did not appear | Verify `<dispatcher cwd>/.codex/skills/<name>` is a symlink to the installed Dreamux package skill directory. |
+| Skill path is a real file or directory | Dreamux leaves it untouched. If this is an intentional override, keep it; otherwise rename or remove it and restart the dispatcher. |
+| Skill symlink is broken after an upgrade | Restart the dispatcher or rerun `dreamux onboard`; startup recreates stale or broken bundled skill symlinks. |
 
 ## Turn Mechanics
 

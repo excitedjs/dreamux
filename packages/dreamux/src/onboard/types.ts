@@ -1,6 +1,6 @@
 import type { DispatcherCodexHomeDoctorResult } from '../runtime/dispatcher-codex-home.js';
 
-export type OnboardFileStatus = 'created' | 'modified' | 'unchanged';
+export type OnboardFileStatus = 'created' | 'modified' | 'unchanged' | 'skipped';
 
 export interface OnboardFileLedgerEntry {
   path: string;

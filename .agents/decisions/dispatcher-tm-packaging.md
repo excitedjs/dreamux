@@ -73,7 +73,13 @@ workspaces during a global uninstall.
   A machine with multiple dispatchers may have multiple workspace-local
   symlink sets.
 - Correct symlinks are left unchanged. Stale or broken symlinks are replaced.
-  Real user files or directories are not overwritten; startup logs a diagnostic.
+  A legacy copied `dispatcher` directory whose `SKILL.md` matches a known
+  Dreamux-managed fingerprint is migrated to a symlink. Real user files or
+  directories are not overwritten; startup logs a diagnostic and onboard reports
+  the path as `skipped`.
+- Custom symlinks at bundled skill paths are treated as Dreamux-managed links
+  and may be replaced. Operators who intentionally opt out should use a real
+  file or directory at that skill path.
 - A missing `.codex/skills` directory is created, but a missing dispatcher cwd
   is a startup error.
 - Unsupported symlink platforms or permission failures fail loudly; Dreamux does

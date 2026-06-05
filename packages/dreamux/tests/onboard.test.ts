@@ -23,6 +23,7 @@ import type { ServiceNodeProbe } from '../src/onboard/service.js';
 import {
   dispatcherCodexHome,
   dispatcherWorkspaceSkillDirs,
+  dispatcherWorkspaceSkillDir,
   dispatcherWorkspaceSkillPath,
   logsRoot,
   resetRuntimeConfig,
@@ -236,6 +237,39 @@ describe('dreamux onboard', () => {
     ).toBe('created');
     expect(result.files.map((entry) => entry.reason)).not.toContain(
       'dispatcher database',
+    );
+  });
+
+  it('reports skipped bundled skill conflicts during onboard', async () => {
+    const runner = new FakeRunner();
+    const answers = testAnswers({
+      configDir: join(root, 'config'),
+      runtimeDir: join(root, 'runtime'),
+      registerService: false,
+      startService: false,
+    });
+    writeGlobalCodexAuth(answers);
+    const conflictDir = dispatcherWorkspaceSkillDir(
+      answers.dispatcherCwd,
+      'dreamux-maintenance',
+    );
+    mkdirSync(conflictDir, { recursive: true });
+    writeFileSync(join(conflictDir, 'SKILL.md'), '# user maintenance skill\n');
+
+    const result = await runOnboard({
+      answers,
+      runner,
+      platform: 'linux',
+      homeDir: join(root, 'home'),
+      env: {},
+      nodeProbe: noSystemNodeProbe,
+    });
+
+    const ledger = new Map(result.files.map((entry) => [entry.path, entry]));
+    expect(ledger.get(conflictDir)?.status).toBe('skipped');
+    expect(ledger.get(conflictDir)?.reason).toContain('left untouched');
+    expect(readFileSync(join(conflictDir, 'SKILL.md'), 'utf8')).toBe(
+      '# user maintenance skill\n',
     );
   });
 

@@ -57,7 +57,12 @@ The runtime installer is intentionally symlink-only:
 
 - correct symlinks are left unchanged
 - stale or broken symlinks are replaced
+- a legacy copied `dispatcher` directory whose `SKILL.md` exactly matches a
+  known Dreamux-managed fingerprint is migrated to a symlink
 - real user files/directories are not overwritten; startup logs a diagnostic
+  and onboard reports the path as `skipped`
+- custom symlinks in these bundled skill slots are treated as replaceable
+  Dreamux-managed links; use a real file or directory to opt out
 - missing `.codex/skills` directories are created
 - a missing dispatcher cwd is a startup error because it likely means the
   configured dispatcher path is wrong
