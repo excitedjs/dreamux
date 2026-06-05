@@ -123,6 +123,33 @@ describe('dispatcher status hydration (issue #98: warn + rebuild)', () => {
     expect(warnings[0]).toMatch(/not valid JSON/);
   });
 
+  it('warns and rebuilds when the status file is JSON null', async () => {
+    // `null` parses as valid JSON; reading raw.version off it would otherwise
+    // throw and hard-fatal hydrate() instead of warn + rebuild.
+    const path = dispatcherStatusPath('flow');
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, 'null', { mode: 0o600 });
+    const store = new DispatcherStore(configWith());
+    const warnings: string[] = [];
+    await store.hydrate((m) => warnings.push(m));
+
+    expect(store.get('flow')?.status).toBe('declared');
+    expect(store.get('flow')?.thread_id).toBeNull();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/top-level must be an object/);
+  });
+
+  it('warns and rebuilds when the status file is a non-object JSON value', async () => {
+    writeRawStatus('flow', 123);
+    const store = new DispatcherStore(configWith());
+    const warnings: string[] = [];
+    await store.hydrate((m) => warnings.push(m));
+
+    expect(store.get('flow')?.status).toBe('declared');
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/top-level must be an object/);
+  });
+
   it('warns and rebuilds on a dispatcher id mismatch', async () => {
     writeRawStatus('flow', {
       version: 1,

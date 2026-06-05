@@ -301,9 +301,9 @@ async function readStatusFile(
     return null;
   }
 
-  let raw: Partial<DispatcherStatusFile>;
+  let parsed: unknown;
   try {
-    raw = JSON.parse(text) as Partial<DispatcherStatusFile>;
+    parsed = JSON.parse(text);
   } catch (err) {
     warn(
       `dispatcher '${id}' status file ${path} is not valid JSON ` +
@@ -312,6 +312,18 @@ async function readStatusFile(
     );
     return null;
   }
+
+  // Valid JSON that is not an object (e.g. `null`) would crash the field reads
+  // below; treat it like any other corrupt status file.
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    warn(
+      `dispatcher '${id}' status file ${path} ignored: top-level must be an ` +
+        'object; rebuilding dispatcher status from config defaults; ' +
+        'a saved thread_id will not be resumed.',
+    );
+    return null;
+  }
+  const raw = parsed as Partial<DispatcherStatusFile>;
 
   if (raw.version !== 1 || raw.dispatcher_id !== id) {
     const reason =
