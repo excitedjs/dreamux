@@ -72,6 +72,30 @@ Those remain follow-up work in the issue #110 sequence. The ledger version must
 fail loudly on incompatible metadata; it must not silently rewrite or discard
 completed task data.
 
+Issue #110 PR8 adds completion delivery, bounded retry, and result retrieval on
+top of PR7:
+
+- The task record gains additive, optional `result` and `delivery` fields — no
+  version bump, so PR7-written `accepted` tasks still load (absent → null; a
+  present-but-malformed value still fails loud). The result is persisted BEFORE
+  any delivery attempt, so it can never be lost; delivery only transitions an
+  already-saved result to `delivered` / `delivery_failed`.
+- Delivery goes through the runtime's `deliverTeamMateCompletion` seam — Codex
+  via the public `enqueueInbound` turn path (inbox + turn trigger), Claude Code
+  via its task-notification path (PR6). The delivery driver consumes only the
+  `AgentRuntime` interface, never turn-manager internals, so it survives the
+  planned per-dispatcher state-owner move.
+- Bounded retry with backoff ends in `delivery_failed` when exhausted (or when
+  the runtime is down / lacks the capability); the result stays pull-able.
+- Retrieval is exposed as read-only `teammate-mcp` tools — `list_tasks`,
+  `get_task`, `pull_result` — covering recent / specified / failed results and
+  the post-delivery-failure pull fallback. `list_tasks` skips corrupt task files
+  (reported, not fatal); `get_task` stays fail-loud for one named task.
+- Completion ingest (`mcp.teammate.complete` / `Server.reportTeamMateCompletion`)
+  is an admin/server seam, deliberately NOT a dispatcher-facing MCP tool, so a
+  dispatcher model cannot fake a completion. Autonomous worker execution and
+  cross-process redelivery-on-recovery remain follow-up work.
+
 ## Consequences
 
 - The old "Dreamux never owns teammate state" decision is superseded.

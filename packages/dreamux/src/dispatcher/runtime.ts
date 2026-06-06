@@ -57,7 +57,11 @@ import {
 import { dispatcherProcessEnv } from '../runtime/package-bin.js';
 import { installBundledWorkspaceSkills } from '../runtime/bundled-skills.js';
 import { DREAMUX_DISPATCHER_BASE_INSTRUCTIONS } from './base-prompt.js';
-import type { AgentRuntime } from '../agent-runtime/types.js';
+import type {
+  AgentRuntime,
+  TeamMateCompletionDeliveryResult,
+  TeamMateCompletionEnvelope,
+} from '../agent-runtime/types.js';
 import { BUILTIN_CODEX_PROVIDER_REF } from '../runtime/config.js';
 
 const DEFAULT_RESTART_BACKOFF_BASE_MS = 1000;
@@ -104,6 +108,8 @@ export class DispatcherRuntime implements AgentRuntime {
    */
   private threadResumed = false;
   private status: DispatcherStatus = 'declared';
+  /** Monotonic per-attempt suffix for TeamMate delivery turn dedup ids (#110 PR8). */
+  private teammateDeliverySeq = 0;
   private readonly log: NonNullable<DispatcherRuntimeDeps['log']>;
   private stopping = false;
   private restarting = false;
@@ -345,6 +351,47 @@ export class DispatcherRuntime implements AgentRuntime {
     return this.turnManager.enqueue(input, hooks);
   }
 
+  /**
+   * Codex TeamMate completion delivery (issue #110 PR8): inbox + turn trigger.
+   * The completion is delivered into the dispatcher's Codex thread as a turn via
+   * the public `enqueueInbound` seam — not turn-manager internals — so it
+   * survives the planned move of queue/state to a per-dispatcher state owner.
+   *
+   * Each attempt uses a fresh, non-routable source id. The turn manager commits
+   * its dedup id before `turn/start` and does not roll it back on failure, so a
+   * retry that reused one id would come back `duplicate` and be mis-counted as
+   * delivered when nothing was submitted. The Dispatcher Service only retries on
+   * `failed` (turn/start RPC failed → definitely not submitted), so a unique id
+   * per attempt re-submits safely without any double-injection risk.
+   * `source_chat_id` is inert in the turn path.
+   */
+  async deliverTeamMateCompletion(
+    completion: TeamMateCompletionEnvelope,
+  ): Promise<TeamMateCompletionDeliveryResult> {
+    this.teammateDeliverySeq += 1;
+    const delivery = await this.enqueueInbound({
+      source_chat_id: 'teammate',
+      source_message_id: `teammate:${completion.taskId}#${this.teammateDeliverySeq}`,
+      sender_id: null,
+      parsed_text: formatTeamMateCompletion(completion),
+    });
+    switch (delivery.status) {
+      case 'submitted':
+        return { status: 'accepted' };
+      case 'stopped':
+        return { status: 'unsupported', reason: 'dispatcher runtime stopped' };
+      case 'failed':
+        return { status: 'failed', error: delivery.error };
+      case 'duplicate':
+        // Unreachable with the per-attempt id above; if it ever happens, the
+        // turn was NOT freshly submitted, so do not report it as delivered.
+        return {
+          status: 'failed',
+          error: new Error('teammate completion turn unexpectedly deduplicated'),
+        };
+    }
+  }
+
   /** Graceful stop: stop accepting work, reap codex child. */
   async stop(): Promise<void> {
     this.stopping = true;
@@ -485,4 +532,16 @@ export class DispatcherRuntime implements AgentRuntime {
   private setStatus(s: DispatcherStatus): void {
     this.status = s;
   }
+}
+
+/** Frame a TeamMate completion as the text of a delivered Codex turn. */
+function formatTeamMateCompletion(
+  completion: TeamMateCompletionEnvelope,
+): string {
+  return [
+    `<teammate_task_completion task_id="${completion.taskId}" ` +
+      `teammate_id="${completion.teammateId}" status="${completion.status}">`,
+    completion.finalText,
+    '</teammate_task_completion>',
+  ].join('\n');
 }
