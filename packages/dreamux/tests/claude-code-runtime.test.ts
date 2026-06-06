@@ -62,6 +62,36 @@ function recordingRunner(sessionId: string | null = 'session-abc'): RecordingRun
   };
 }
 
+/** A runner whose turns always fail (e.g. missing binary / non-zero exit). */
+function failingRunner(message = 'claude turn failed'): RecordingRunner {
+  const calls: ClaudeCodeTurnRequest[] = [];
+  return {
+    calls,
+    async runTurn(request: ClaudeCodeTurnRequest): Promise<ClaudeCodeTurnResult> {
+      calls.push(request);
+      throw new Error(message);
+    },
+  };
+}
+
+/** A runner that plays a scripted sequence of outcomes, one per turn. */
+function scriptedRunner(
+  outcomes: ReadonlyArray<Error | ClaudeCodeTurnResult>,
+): RecordingRunner {
+  const calls: ClaudeCodeTurnRequest[] = [];
+  let index = 0;
+  return {
+    calls,
+    async runTurn(request: ClaudeCodeTurnRequest): Promise<ClaudeCodeTurnResult> {
+      calls.push(request);
+      const outcome = outcomes[Math.min(index, outcomes.length - 1)];
+      index += 1;
+      if (outcome instanceof Error) throw outcome;
+      return outcome as ClaudeCodeTurnResult;
+    },
+  };
+}
+
 async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -297,5 +327,68 @@ describe('ClaudeCodeRuntime lifecycle (fake turn runner)', () => {
     });
     expect(after.status).toBe('stopped');
     expect(runner.calls).toHaveLength(0);
+  });
+
+  it('drives the runtime to degraded + last_error when an inbound turn fails', async () => {
+    const { runtime, store } = makeRuntime(failingRunner('claude is missing'));
+    await runtime.start();
+    expect(runtime.getStatus()).toBe('ready');
+
+    // The message is accepted (channel can ack), but the turn failure is not
+    // swallowed: it surfaces as durable degraded state + a persisted last_error.
+    const submit = await runtime.enqueueInbound({
+      source_chat_id: 'c',
+      source_message_id: 'm1',
+      sender_id: 'u',
+      parsed_text: 'go',
+    });
+    expect(submit.status).toBe('submitted');
+
+    await waitFor(() => runtime.getStatus() === 'degraded');
+    expect(store.get('flow')?.last_error).toContain('claude is missing');
+  });
+
+  it('recovers to ready after a failed turn is followed by a successful one', async () => {
+    const runner = scriptedRunner([
+      new Error('transient'),
+      { sessionId: 'session-2', result: 'ok' },
+    ]);
+    const { runtime } = makeRuntime(runner);
+    await runtime.start();
+
+    await runtime.enqueueInbound({
+      source_chat_id: 'c',
+      source_message_id: 'm1',
+      sender_id: 'u',
+      parsed_text: 'first',
+    });
+    await waitFor(() => runtime.getStatus() === 'degraded');
+
+    await runtime.enqueueInbound({
+      source_chat_id: 'c',
+      source_message_id: 'm2',
+      sender_id: 'u',
+      parsed_text: 'second',
+    });
+    await waitFor(() => runtime.getStatus() === 'ready');
+  });
+
+  it('returns failed (not accepted) when a TeamMate completion turn fails', async () => {
+    const { runtime } = makeRuntime(failingRunner('delivery boom'));
+    await runtime.start();
+
+    const result = await runtime.deliverTeamMateCompletion!({
+      taskId: 'task-9',
+      teammateId: 'mate-1',
+      status: 'completed',
+      finalText: 'done',
+    });
+    expect(result.status).toBe('failed');
+    if (result.status === 'failed') {
+      expect(result.error.message).toContain('delivery boom');
+    }
+    // A delivery failure is reported to the caller (PR8 retry) but does not by
+    // itself degrade the whole runtime.
+    expect(runtime.getStatus()).toBe('ready');
   });
 });

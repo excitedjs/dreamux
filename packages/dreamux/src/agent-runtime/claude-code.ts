@@ -18,8 +18,14 @@
  * Process spawning goes through an injectable {@link ClaudeCodeTurnRunner} seam
  * (mirroring Codex's process-factory seam), so the lifecycle contract is fully
  * unit-testable with a fake runner. A live `claude` binary is exercised only by
- * the opt-in live test; when it is missing, a turn fails loudly rather than
- * silently degrading.
+ * the opt-in live test.
+ *
+ * Failure contract: a turn failure (missing binary, spawn error, non-zero exit)
+ * is never swallowed. For inbound/restart turns it drives the runtime to
+ * `degraded` with a persisted `last_error` (observable via status/doctor). For
+ * `deliverTeamMateCompletion` it surfaces as a `failed` result the caller can
+ * act on (PR8 delivery retry). `enqueueInbound` still returns after accept
+ * (submit != completion) so the channel can ack promptly.
  *
  * Scope note: this PR declares the task-notification delivery capability and
  * provides the runtime's delivery entry point. The executable TeamMate delivery
@@ -205,7 +211,9 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     }
     // No persistent app-server: a healthy "started" Claude Code runtime is one
     // whose MCP config is materialized and which is ready to accept per-turn
-    // invocations. A missing `claude` binary surfaces loudly on the first turn.
+    // invocations. A missing `claude` binary surfaces on the first turn as a
+    // degraded runtime status + persisted last_error (see the failure contract
+    // in the file header), not a silent no-op.
     await this.setStatus('ready');
   }
 
@@ -232,15 +240,27 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       this.log('warn', 'claude-code onAccepted hook failed', err);
     }
     const turnId = `claude-turn-${++this.turnCounter}`;
-    // Submit-then-serialize: return after accept, run the turn on the serial
-    // queue. Mirrors the Codex runtime contract (submit != await completion).
-    this.runOnQueue(input.parsed_text, turnId);
+    // Submit-then-serialize: return after accept (so the channel can ack
+    // promptly), run the turn on the serial queue. Unlike Codex there is no
+    // separate submit-ack before execution, so a turn failure cannot be
+    // returned to this caller without blocking the channel ack on full turn
+    // completion. Instead, a failed turn drives the runtime to `degraded` with a
+    // persisted `last_error` (visible via status/doctor) — the failure is never
+    // swallowed. See the PR6 review thread / the agent-runtime decision record.
+    void this.runTurnOnQueue(input.parsed_text, turnId).then(
+      () => this.markTurnSucceeded(),
+      (err) => this.markTurnFailed(turnId, err),
+    );
     return { status: 'submitted', turnId };
   }
 
   async injectRestartNotice(text: string): Promise<void> {
     if (this.stopped) return;
-    this.runOnQueue(text, `claude-restart-${++this.turnCounter}`);
+    const turnId = `claude-restart-${++this.turnCounter}`;
+    void this.runTurnOnQueue(text, turnId).then(
+      () => this.markTurnSucceeded(),
+      (err) => this.markTurnFailed(turnId, err),
+    );
   }
 
   async deliverTeamMateCompletion(
@@ -250,21 +270,49 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       return { status: 'unsupported', reason: 'runtime stopped' };
     }
     // Task-notification delivery entry: notify the Claude Code session with a
-    // task-completion turn. The executable delivery loop (ledger/retry/pull) is
-    // PR7/PR8; this is the runtime-specific entry those PRs drive.
-    this.runOnQueue(
-      formatTaskNotification(completion),
-      `claude-teammate-${completion.taskId}`,
-    );
-    return { status: 'accepted' };
+    // task-completion turn. Delivery AWAITS the turn so the result is real —
+    // `accepted` only after the notification turn actually ran, `failed`
+    // otherwise — which is the semantics the PR8 Dispatcher Service relies on
+    // for delivery retry. The executable retry/pull loop itself stays in PR8.
+    try {
+      await this.runTurnOnQueue(
+        formatTaskNotification(completion),
+        `claude-teammate-${completion.taskId}`,
+      );
+      return { status: 'accepted' };
+    } catch (err) {
+      return {
+        status: 'failed',
+        error: err instanceof Error ? err : new Error(String(err)),
+      };
+    }
   }
 
-  private runOnQueue(prompt: string, turnId: string): void {
-    this.queue = this.queue
-      .then(() => this.runTurn(prompt, turnId))
-      .catch((err) => {
-        this.log('error', `claude-code turn ${turnId} failed`, err);
-      });
+  /**
+   * Chain a turn onto the serial queue. Returns a promise that resolves when
+   * this turn completes and rejects when it fails, so awaiting callers (delivery)
+   * see the real outcome. The queue itself continues regardless of outcome so a
+   * failed turn does not wedge later turns.
+   */
+  private runTurnOnQueue(prompt: string, turnId: string): Promise<void> {
+    const run = this.queue.then(() => this.runTurn(prompt, turnId));
+    this.queue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  private async markTurnSucceeded(): Promise<void> {
+    if (this.stopped) return;
+    if (this.status !== 'ready') await this.setStatus('ready');
+  }
+
+  private async markTurnFailed(turnId: string, err: unknown): Promise<void> {
+    this.log('error', `claude-code turn ${turnId} failed`, err);
+    if (this.stopped) return;
+    // Surface the failure as durable runtime state rather than swallowing it.
+    await this.setStatus('degraded', err);
   }
 
   private async runTurn(prompt: string, turnId: string): Promise<void> {
