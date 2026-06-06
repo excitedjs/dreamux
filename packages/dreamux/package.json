@@ -35,7 +35,7 @@
   },
   "dependencies": {
     "@excitedjs/feishu-transport": "workspace:*",
-    "@excitedjs/tm": "2.2.1",
+    "@excitedjs/tm": "2.4.1",
     "smol-toml": "^1.6.1",
     "ws": "^8.18.0",
     "yargs": "^17.7.2",

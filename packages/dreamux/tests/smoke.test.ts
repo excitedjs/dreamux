@@ -403,6 +403,18 @@ describe('dreamux MVP smoke', () => {
     expect(DREAMUX_DISPATCHER_BASE_INSTRUCTIONS).toContain(
       'Respect explicit engine preferences',
     );
+    expect(DREAMUX_DISPATCHER_BASE_INSTRUCTIONS).toContain(
+      'operator-visible communication loop',
+    );
+    expect(DREAMUX_DISPATCHER_BASE_INSTRUCTIONS).toContain(
+      'authoritative sources',
+    );
+    expect(DREAMUX_DISPATCHER_BASE_INSTRUCTIONS).toContain(
+      'proposal, independent review, operator checkpoint',
+    );
+    expect(DREAMUX_DISPATCHER_BASE_INSTRUCTIONS).toContain(
+      'Do not pass dispatcher guesses as facts',
+    );
   });
 
   it('resumes Codex threads with Dreamux dispatcher base instructions', async () => {

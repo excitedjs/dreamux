@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "Add a Dreamux dispatcher base prompt and pass it to Codex app-server thread start/resume",
+      "comment": "Add a Dreamux dispatcher base prompt for Codex app-server thread start/resume and update @excitedjs/tm to 2.4.1",
       "type": "patch",
       "packageName": "@excitedjs/dreamux"
     }

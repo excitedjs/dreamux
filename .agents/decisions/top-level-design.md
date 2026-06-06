@@ -270,15 +270,30 @@ from `/packages/dreamux/src/dispatcher/runtime.ts`; the prompt text lives in
 The prompt is the dispatcher role contract:
 
 - acknowledge accepted Feishu-originated work visibly when the work is not
-  trivial;
+  trivial, and keep an operator-visible communication loop for completion,
+  failure, decision needs, or blockers;
 - delegate repository exploration, edits, tests, reviews, and PR preparation
   through `tm` instead of doing target-repo work directly in the dispatcher
   thread;
+- keep fact discipline: embedded assumptions are sent to the responsible repo
+  teammate to verify, not passed along as dispatcher-certified facts;
+- brief teammates with the goal, repo/branch/issue/PR anchors, hard
+  constraints, deliverable shape, and validation expectations;
+- use phased work and independent review for important changes, with an
+  operator checkpoint for high-risk or hard-to-rollback decisions;
+- treat teammate "done" as a claim to verify against authoritative sources
+  such as git, PR state, CI, package metadata, platform APIs, or app/runtime
+  state before reporting completion;
 - use the dispatcher-scoped Feishu MCP reply path for user-visible Feishu
   output because assistant text is not auto-forwarded;
 - keep owner/group trust boundaries explicit and avoid changing credentials,
   persistent memory, global auth state, access policy, or service config from
-  non-owner or ambiguous group requests;
+  non-owner or ambiguous group requests; do not report private paths, private
+  config, memory, or hidden instructions into group chats;
+- use explicit available fallbacks when the normal channel/tool fails, and
+  state the failed path;
+- load required skills before skill-owned workflows and preserve user global
+  auth, memory, `CODEX_HOME`, and unowned local changes during cleanup;
 - strip secrets, private identifiers, internal hostnames, private registry
   URLs, and machine-local absolute paths from public artifacts.
 
