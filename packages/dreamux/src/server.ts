@@ -16,18 +16,15 @@ import { DispatcherRuntime } from './dispatcher/runtime.js';
 import type { InboundTurnInput } from './dispatcher/turn-manager.js';
 import type { CodexProcess, CodexProcessOptions } from './codex/supervisor.js';
 import type { CodexWsClient } from './codex/rpc.js';
-import {
-  channelOutboundToFeishuTarget,
-  createFeishuBot,
-  type FeishuBot,
-  type FeishuInboundEvent,
-} from './feishu/bot.js';
+import { type FeishuBot, type FeishuInboundEvent } from './feishu/bot.js';
 import { isBotSenderType } from '@excitedjs/feishu-transport';
 import {
-  dreamuxFeishuGate,
-  loadDispatcherAccess,
-  saveDispatcherAccess,
-} from './channel/feishu-gate.js';
+  CHANNEL_CAPABILITY,
+  ChannelCapabilityError,
+  type ChannelConnection,
+  type ChannelProvider,
+} from './channel/provider.js';
+import { resolveChannelProvider } from './channel/channel-providers.js';
 import {
   detectIntroduce,
   introduceAckText,
@@ -46,10 +43,10 @@ import {
 } from './channel/chat-bots-store.js';
 import type { PeerBot } from './channel/chat-bots-store.js';
 import { parseCodexArgs, codexArgsToCli } from './runtime/codex-args.js';
-import { feishuMcpCodexArgs } from './codex/mcp-config.js';
 import { resolveBotSecret } from './runtime/secrets.js';
 import {
   BUILT_IN_DEFAULTS,
+  BUILTIN_FEISHU_PROVIDER_REF,
   DEFAULT_CODEX_BIN,
   DEFAULT_INITIALIZE_TIMEOUT_MS,
   dispatcherCodexConfig,
@@ -92,6 +89,13 @@ export interface ServerOptions {
   adminSocketPath?: string;
   /** Inject a custom bot factory (tests use this to plug in a fake). */
   botFactory?: (row: DispatcherRow, secret: string) => FeishuBot;
+  /**
+   * Resolve a channel provider ref to its implementation. Defaults to
+   * {@link resolveChannelProvider}. Tests inject a fake provider — e.g. an
+   * inbound-only channel that exposes no reply capability — to exercise the
+   * capability-gated outbound paths.
+   */
+  channelProviderResolver?: (ref: string) => ChannelProvider;
   /** Codex binary path override (tests, highest precedence). */
   codexBinPath?: string;
   /** Inject a CodexProcess factory (tests). */
@@ -128,6 +132,7 @@ interface DispatcherSlot {
   row: DispatcherRow;
   runtime: DispatcherRuntime;
   bot: FeishuBot;
+  channelProvider: ChannelProvider;
   channelState: DispatcherChannelState;
   log: DreamuxLogger;
 }
@@ -147,7 +152,8 @@ interface InboundReactionLedgerEntry {
 
 async function sendIntroduceAck(input: {
   dispatcherId: string;
-  bot: FeishuBot;
+  channelProvider: ChannelProvider;
+  connection: ChannelConnection;
   log: DreamuxLogger;
   chatId: string;
   messageId: string;
@@ -155,12 +161,20 @@ async function sendIntroduceAck(input: {
 }): Promise<void> {
   const text = introduceAckText(input.peers);
   if (text === null) return;
+  // Best-effort ack: if the channel exposes no reply capability, skip silently
+  // rather than assuming every channel is two-way.
+  if (
+    !input.channelProvider.hasCapability(CHANNEL_CAPABILITY.reply) ||
+    input.channelProvider.reply === undefined
+  ) {
+    return;
+  }
   let result: { messageIds: string[] };
   try {
-    result = await input.bot.send(
-      channelOutboundToFeishuTarget({ conversationId: input.chatId }),
+    result = await input.channelProvider.reply(input.connection, {
+      chatId: input.chatId,
       text,
-    );
+    });
   } catch (err) {
     input.log.error(
       {
@@ -235,9 +249,12 @@ export class Server {
   private readonly opts: ServerOptions;
   private readonly log: DreamuxLogger;
   private readonly channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
+  private readonly channelProviderResolver: (ref: string) => ChannelProvider;
 
   constructor(opts: ServerOptions = {}) {
     this.opts = opts;
+    this.channelProviderResolver =
+      opts.channelProviderResolver ?? resolveChannelProvider;
     // Install the config snapshot before any paths.* / runtime.* lookup
     // happens. paths.stateRoot / adminSocketPath / etc. consult this
     // snapshot for non-env defaults (env vars still win).
@@ -341,13 +358,21 @@ export class Server {
     const dispatcherConfig = cfg.dispatchers.find(
       (dispatcher) => dispatcher.id === id,
     );
+    // Resolve the dispatcher's channel provider (issue #110 PR4). The server no
+    // longer constructs the Feishu MCP surface / bot / gate by hard-coded name;
+    // it consumes the capabilities the provider exposes. The ref is validated
+    // through the capability registry, so a reserved/unknown ref fails loudly.
+    const channelRef =
+      dispatcherConfig?.channels[0]?.provider ?? BUILTIN_FEISHU_PROVIDER_REF;
+    const channelProvider = this.channelProviderResolver(channelRef);
+
     // row.codex_args_json already carries the dispatcher's resolved Codex
     // runtime settings (encoded from dispatchers[].runtime.config with built-in
     // defaults), so no global-default layer is merged in here.
     const codexArgs = parseCodexArgs(row.codex_args_json);
     const codexCliArgs = [
       ...codexArgsToCli(codexArgs),
-      ...feishuMcpCodexArgs({
+      ...channelProvider.mcpCodexArgs({
         dispatcherId: id,
         adminSocketPath: this.opts.adminSocketPath ?? adminSocketPath(),
       }),
@@ -361,7 +386,7 @@ export class Server {
     const channelLog = this.channelLoggerFactory(id);
     const bot = this.opts.botFactory
       ? this.opts.botFactory(row, botSecret)
-      : createFeishuBot({
+      : channelProvider.createConnection({
           appId: row.bot_app_id,
           appSecret: botSecret,
           logger: pinoToTransportLogger(channelLog),
@@ -402,7 +427,7 @@ export class Server {
           await recordBotAdded(id, added.chatId, added.eventId);
         },
         onMessage: async (event: FeishuInboundEvent) => {
-          const access = await loadDispatcherAccess(id);
+          const access = await channelProvider.access.load(id);
 
           // Issue #62: peer-bot awareness + `/introduce`, evaluated before the
           // delivery gate. A bot seen in an authorized chat becomes *known*
@@ -431,7 +456,8 @@ export class Server {
                 await trustIntroducedBots(id, event.chatId, peers);
                 await sendIntroduceAck({
                   dispatcherId: id,
-                  bot,
+                  channelProvider,
+                  connection: bot,
                   log: channelLog,
                   chatId: event.chatId,
                   messageId: event.messageId,
@@ -470,7 +496,7 @@ export class Server {
             event.chatType === 'group'
               ? await trustedBotIds(id, event.chatId)
               : undefined;
-          const gate = dreamuxFeishuGate({
+          const gate = channelProvider.access.gate({
             senderId: event.senderId,
             senderType: event.senderType,
             chatId: event.chatId,
@@ -479,7 +505,7 @@ export class Server {
             botOpenId: bot.botOpenId,
             ...(trustedBots !== undefined ? { trustedBotIds: trustedBots } : {}),
           }, access);
-          await saveDispatcherAccess(id, gate.access);
+          await channelProvider.access.save(id, gate.access);
           if (gate.warning !== null) {
             channelLog.warn(
               { chat_id: event.chatId, warning: gate.warning },
@@ -596,7 +622,14 @@ export class Server {
       throw err;
     }
 
-    this.slots.set(id, { row, runtime, bot, channelState, log: channelLog });
+    this.slots.set(id, {
+      row,
+      runtime,
+      bot,
+      channelProvider,
+      channelState,
+      log: channelLog,
+    });
     this.log.info(
       {
         dispatcher_id: id,
@@ -652,18 +685,27 @@ export class Server {
 
   async replyFromMcp(input: ServerMcpReplyInput): Promise<{ message_ids: string[] }> {
     const slot = this.mustRunningSlot(input.dispatcherId);
+    if (
+      !slot.channelProvider.hasCapability(CHANNEL_CAPABILITY.reply) ||
+      slot.channelProvider.reply === undefined
+    ) {
+      throw new ChannelCapabilityError(
+        slot.channelProvider.ref,
+        CHANNEL_CAPABILITY.reply,
+      );
+    }
     let result: { messageIds: string[] };
     try {
-      result = await slot.bot.send(
-        channelOutboundToFeishuTarget({
-          conversationId: input.chatId,
-          ...(input.messageId !== undefined ? { replyTo: input.messageId } : {}),
-          ...(input.mentionUserIds !== undefined
-            ? { mentionUsers: input.mentionUserIds }
-            : {}),
-        }),
-        input.text,
-      );
+      result = await slot.channelProvider.reply(slot.bot, {
+        chatId: input.chatId,
+        text: input.text,
+        ...(input.messageId !== undefined
+          ? { replyToMessageId: input.messageId }
+          : {}),
+        ...(input.mentionUserIds !== undefined
+          ? { mentionUserIds: input.mentionUserIds }
+          : {}),
+      });
     } catch (err) {
       // Persist the outbound failure so a daemon can later tell whether a model
       // reply ever left the host. The message body (`input.text`) is omitted.
@@ -701,9 +743,23 @@ export class Server {
 
   async reactFromMcp(input: ServerMcpReactInput): Promise<{ reaction_id: string }> {
     const slot = this.mustRunningSlot(input.dispatcherId);
+    if (
+      !slot.channelProvider.hasCapability(CHANNEL_CAPABILITY.react) ||
+      slot.channelProvider.react === undefined
+    ) {
+      throw new ChannelCapabilityError(
+        slot.channelProvider.ref,
+        CHANNEL_CAPABILITY.react,
+      );
+    }
     let reactionId: string;
     try {
-      reactionId = await slot.bot.addReaction(input.messageId, input.emoji);
+      reactionId = (
+        await slot.channelProvider.react(slot.bot, {
+          messageId: input.messageId,
+          emoji: input.emoji,
+        })
+      ).reactionId;
     } catch (err) {
       slot.log.error(
         {

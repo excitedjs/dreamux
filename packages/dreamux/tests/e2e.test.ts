@@ -19,6 +19,12 @@ import {
   loadDispatcherAccess,
   saveDispatcherAccess,
 } from '../src/channel/feishu-gate.js';
+import { builtinFeishuChannelProvider } from '../src/channel/feishu-provider.js';
+import {
+  CHANNEL_CAPABILITY,
+  ChannelCapabilityError,
+  type ChannelProvider,
+} from '../src/channel/provider.js';
 import { CodexWsClient } from '../src/codex/rpc.js';
 import {
   CodexProcess,
@@ -118,18 +124,42 @@ function buildServer(opts: {
   runtimeDir: string;
   fake: FakeCodex;
   bot: FakeFeishuBot;
+  channelProviderResolver?: (ref: string) => ChannelProvider;
 }): Server {
   return new Server({
     config: configWithDispatcher(),
     adminSocketPath: join(opts.runtimeDir, 'admin.sock'),
     skipBotSecret: true,
     botFactory: () => opts.bot,
+    ...(opts.channelProviderResolver !== undefined
+      ? { channelProviderResolver: opts.channelProviderResolver }
+      : {}),
     codexProcessFactory: (o) => new NoopCodexProcess(o),
     codexClientFactory: () => new CodexWsClient({ url: opts.fake.url }),
     codexHomeDoctor: () => {
       /* fake Codex tests do not require real operator Codex auth */
     },
   });
+}
+
+/**
+ * A channel provider that exposes no reply/react capability (an inbound-only
+ * channel). It wraps the real Feishu provider so the dispatcher still starts and
+ * gates inbound, but core must refuse model-driven outbound through it.
+ */
+function inboundOnlyChannelProvider(): ChannelProvider {
+  const base = builtinFeishuChannelProvider();
+  return {
+    ref: base.ref,
+    descriptor: base.descriptor,
+    hasCapability: (kind) =>
+      kind !== CHANNEL_CAPABILITY.reply &&
+      kind !== CHANNEL_CAPABILITY.react &&
+      base.hasCapability(kind),
+    mcpCodexArgs: base.mcpCodexArgs,
+    createConnection: base.createConnection,
+    access: base.access,
+  };
 }
 
 function fakeInbound(
@@ -270,6 +300,36 @@ describe('dreamux cross-module e2e', () => {
     if (previousHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = previousHome;
     rmSync(runtimeDir, { recursive: true, force: true });
+  });
+
+  it('refuses model-driven reply/react when the channel provider exposes no such capability', async () => {
+    // An inbound-only channel provider starts the dispatcher and gates inbound,
+    // but core must not assume it is two-way: reply/react fail loudly with
+    // ChannelCapabilityError rather than calling a missing capability.
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      channelProviderResolver: () => inboundOnlyChannelProvider(),
+    });
+    await server.start();
+
+    await expect(
+      server.replyFromMcp({
+        dispatcherId: 'flow',
+        chatId: 'chat-group-a',
+        text: 'should be refused',
+      }),
+    ).rejects.toThrow(ChannelCapabilityError);
+    await expect(
+      server.reactFromMcp({
+        dispatcherId: 'flow',
+        messageId: 'msg-e2e-1',
+        emoji: 'OK',
+      }),
+    ).rejects.toThrow(ChannelCapabilityError);
+    expect(bot.sentMessages).toHaveLength(0);
+    expect(bot.reactions).toHaveLength(0);
   });
 
   it('delivers fake Feishu inbound to Codex and replies through the stdio MCP shim', async () => {
