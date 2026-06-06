@@ -50,10 +50,16 @@ describe('AgentRuntimeProviderCatalog', () => {
     expect(runtime.getStatus()).toBe('declared');
   });
 
-  it('keeps known but non-wired runtimes fail-loud', () => {
-    expect(() => builtinCatalog().resolve('builtin:claude-code')).toThrow(
-      UnsupportedAgentRuntimeProviderError,
-    );
+  it('resolves builtin:claude-code with the task-notification delivery shape', () => {
+    const provider = builtinCatalog().resolve('builtin:claude-code');
+
+    expect(provider.ref).toBe('builtin:claude-code');
+    expect(provider.descriptor.kind).toBe('agentRuntime');
+    // Distinct delivery shape from Codex — proves the abstraction is not
+    // Codex-only.
+    expect(provider.delivery.teammateCompletion.map((shape) => shape.kind)).toEqual([
+      'claudeCodeTaskNotification',
+    ]);
   });
 
   it('rejects non-runtime builtins through the runtime catalog', () => {

@@ -2,6 +2,7 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import {
+  BUILTIN_CODEX_PROVIDER_REF,
   dispatcherCodexConfig,
   dispatcherFeishuConfig,
   type DispatcherConfig,
@@ -274,6 +275,12 @@ async function rowFromConfig(
 }
 
 function dispatcherCodexArgsJson(config: DispatcherConfig): string {
+  // Only the Codex runtime consumes `codex_args_json`. Other agent runtimes
+  // (e.g. builtin:claude-code) build their own args from their own config and
+  // ignore this field, so it stays empty for them.
+  if (config.runtime.provider !== BUILTIN_CODEX_PROVIDER_REF) {
+    return '{}';
+  }
   const codex = dispatcherCodexConfig(config);
   // approval_policy / sandbox_mode always carry a dispatcher-local default, so
   // they are always encoded. extra_env is applied to the child process

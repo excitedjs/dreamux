@@ -61,13 +61,21 @@ Implementation status:
   Dreamux-owned MCP server descriptors into it, and the Codex provider maps
   those descriptors to Codex `mcp_servers.*` CLI configuration before creating
   the Codex-backed dispatcher runtime.
-- `builtin:claude-code` remains a registered builtin runtime, but it is not
-  executable until the Claude Code provider lands. Selecting it must fail
-  loudly rather than falling back to Codex.
+- `builtin:claude-code` is wired through the same `AgentRuntimeProvider`
+  catalog (#110 PR6). It is a real second runtime, not a Codex rename: it owns
+  its own config shape (`DispatcherClaudeCodeConfig`), translates the
+  Dreamux-owned MCP descriptors into Claude Code's JSON MCP config
+  (`--mcp-config`) rather than Codex `mcp_servers.*` TOML flags, and runs a turn
+  per headless `claude --print` invocation (no app-server, handshake, or restart
+  loop). Process spawning is behind an injectable turn-runner seam; a missing
+  `claude` binary fails loudly on the first turn, and a live contract test is
+  opt-in via `DREAMUX_RUN_LIVE_CLAUDE_CODE` (loud skip otherwise, never silent).
 - The shared interface already includes both confirmed TeamMate completion
   delivery shapes: Codex inbox-and-turn delivery and Claude Code task
-  notification delivery. The executable completion delivery path still belongs
-  to the later server-hosted TeamMate PRs.
+  notification delivery. PR6 declares the `claudeCodeTaskNotification`
+  capability and provides the runtime's delivery entry point; the executable
+  completion delivery loop (ledger, retry, pull fallback) still belongs to the
+  later server-hosted TeamMate PRs.
 
 ## Consequences
 

@@ -51,7 +51,7 @@ export interface DispatcherChannelConfig {
 
 export interface DispatcherRuntimeConfig {
   provider: string;
-  config: DispatcherProviderConfig | DispatcherCodexConfig;
+  config: DispatcherProviderConfig | DispatcherCodexConfig | DispatcherClaudeCodeConfig;
 }
 
 export type DispatcherProviderConfig = Record<string, unknown>;
@@ -82,11 +82,42 @@ export interface DispatcherCodexConfig {
 }
 
 /**
+ * Builtin Claude Code runtime settings under `dispatchers[].runtime.config`
+ * when `runtime.provider` is `builtin:claude-code` (issue #110 PR6).
+ *
+ * Deliberately distinct from {@link DispatcherCodexConfig}: Claude Code is a
+ * headless per-turn CLI (`claude --print`), so there is no app-server handshake
+ * timeout, approval policy, or sandbox mode here. `bin` is the Claude Code
+ * binary; `model` / `permission_mode` map to `--model` / `--permission-mode`;
+ * `extra_args` / `extra_env` are passed through. `model` and `permission_mode`
+ * are `null` when the operator does not pin them (Claude Code's own defaults
+ * apply).
+ */
+export interface DispatcherClaudeCodeConfig {
+  bin: string;
+  model: string | null;
+  permission_mode: string | null;
+  extra_args: string[];
+  extra_env: Record<string, string>;
+}
+
+/**
  * Default `dispatchers[].runtime.config.bin`. The Codex binary path is
  * dispatcher-local; `CODEX_HOST_CODEX_BIN` is a host-level override above it,
  * not the source.
  */
 export const DEFAULT_CODEX_BIN = 'codex';
+
+/** Default `dispatchers[].runtime.config.bin` for `builtin:claude-code`. */
+export const DEFAULT_CLAUDE_CODE_BIN = 'claude';
+
+/** Permission modes accepted for `builtin:claude-code` (Claude Code `--permission-mode`). */
+export const ALLOWED_CLAUDE_CODE_PERMISSION_MODES = new Set([
+  'default',
+  'acceptEdits',
+  'plan',
+  'bypassPermissions',
+]);
 
 /** Default `dispatchers[].runtime.config.initialize_timeout_ms` (handshake timeout, ms). */
 export const DEFAULT_INITIALIZE_TIMEOUT_MS = 10_000;
@@ -103,6 +134,7 @@ export const BUILT_IN_DEFAULTS: DreamuxConfig = {
 
 export const BUILTIN_FEISHU_PROVIDER_REF = 'builtin:feishu';
 export const BUILTIN_CODEX_PROVIDER_REF = 'builtin:codex';
+export const BUILTIN_CLAUDE_CODE_PROVIDER_REF = 'builtin:claude-code';
 export const ALLOWED_APPROVAL_POLICIES = new Set([
   'never',
   'auto',
@@ -418,19 +450,27 @@ function readDispatcherRuntime(
     file,
     prefix,
   );
-  if (provider.ref !== BUILTIN_CODEX_PROVIDER_REF) {
-    throw new Error(
-      `dreamux config error in ${file}: ${prefix}provider='${provider.ref}' is registered but not runnable in this phase.\n` +
-        'Only provider "builtin:codex" is wired until the non-Codex AgentRuntimeProvider PRs land.',
-    );
-  }
   const config = readProviderConfigObject(rawRuntime['config'], file, `${prefix}config`, {
     allowMissing: true,
   });
-  return {
-    provider: provider.ref,
-    config: readDispatcherCodexConfig(config, file, `${prefix}config.`),
-  };
+  if (provider.ref === BUILTIN_CODEX_PROVIDER_REF) {
+    return {
+      provider: provider.ref,
+      config: readDispatcherCodexConfig(config, file, `${prefix}config.`),
+    };
+  }
+  if (provider.ref === BUILTIN_CLAUDE_CODE_PROVIDER_REF) {
+    return {
+      provider: provider.ref,
+      config: readDispatcherClaudeCodeConfig(config, file, `${prefix}config.`),
+    };
+  }
+  // A registered agentRuntime builtin with no config parser wired yet. Fail
+  // loud rather than fall back to another runtime.
+  throw new Error(
+    `dreamux config error in ${file}: ${prefix}provider='${provider.ref}' is registered but not runnable in this phase.\n` +
+      'Wired agent runtimes: "builtin:codex", "builtin:claude-code".',
+  );
 }
 
 function readDispatcherFeishuConfig(
@@ -543,6 +583,75 @@ export function dispatcherCodexConfig(
     );
   }
   return dispatcher.runtime.config as DispatcherCodexConfig;
+}
+
+export function defaultDispatcherClaudeCodeConfig(): DispatcherClaudeCodeConfig {
+  return {
+    bin: DEFAULT_CLAUDE_CODE_BIN,
+    model: null,
+    permission_mode: null,
+    extra_args: [],
+    extra_env: {},
+  };
+}
+
+function readDispatcherClaudeCodeConfig(
+  rawClaude: Record<string, unknown>,
+  file: string,
+  prefix: string,
+): DispatcherClaudeCodeConfig {
+  rejectUnknownKeys(
+    rawClaude,
+    new Set(['bin', 'model', 'permission_mode', 'extra_args', 'extra_env']),
+    file,
+    prefix,
+  );
+  const defaults = defaultDispatcherClaudeCodeConfig();
+  const bin = readOptionalString(rawClaude, 'bin', file, prefix) ?? defaults.bin;
+  if (bin.trim() === '') {
+    throw new Error(
+      `dreamux config error in ${file}: ${prefix}bin must be a non-empty string`,
+    );
+  }
+  const permissionMode = readOptionalString(rawClaude, 'permission_mode', file, prefix);
+  if (
+    permissionMode !== null &&
+    !ALLOWED_CLAUDE_CODE_PERMISSION_MODES.has(permissionMode)
+  ) {
+    throw new Error(
+      `dreamux config error in ${file}: ${prefix}permission_mode='${permissionMode}' is not one of ${Array.from(ALLOWED_CLAUDE_CODE_PERMISSION_MODES).join(' | ')}`,
+    );
+  }
+  return {
+    bin,
+    model: readOptionalString(rawClaude, 'model', file, prefix),
+    permission_mode: permissionMode,
+    extra_args: requireStringArray(
+      rawClaude,
+      'extra_args',
+      defaults.extra_args,
+      file,
+      prefix,
+    ),
+    extra_env: requireStringRecord(
+      rawClaude,
+      'extra_env',
+      defaults.extra_env,
+      file,
+      prefix,
+    ),
+  };
+}
+
+export function dispatcherClaudeCodeConfig(
+  dispatcher: Pick<DispatcherConfig, 'runtime' | 'id'>,
+): DispatcherClaudeCodeConfig {
+  if (dispatcher.runtime.provider !== BUILTIN_CLAUDE_CODE_PROVIDER_REF) {
+    throw new Error(
+      `dispatcher '${dispatcher.id}' runtime provider ${JSON.stringify(dispatcher.runtime.provider)} is not wired to Claude Code`,
+    );
+  }
+  return dispatcher.runtime.config as DispatcherClaudeCodeConfig;
 }
 
 function resolveConfigProvider(
