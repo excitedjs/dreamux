@@ -64,11 +64,12 @@ Settled choices (as implemented):
   (`chat_id`/`message_id`/`sender_id`/reason), never `parsed_text` /
   `rawContent` / reply `text`. There is no body-verbose flag in v1; absence is
   the default and is asserted by a body-substring test (Codex #5).
-- **The `feishu-mcp` shim never writes to stdout** (stdout is the JSON-RPC
-  transport); its diagnostics go to `logs/feishu-mcp/<id>.log` + stderr through
-  the existing injectable `log` seam. A regression test locks every stdout line
-  to a JSON-RPC envelope across the parse-error / unknown-method / admin-failure
-  paths.
+- **The MCP stdio shims never write diagnostics to stdout** (stdout is the
+  JSON-RPC transport). `feishu-mcp` diagnostics go to
+  `logs/feishu-mcp/<id>.log` + stderr; `teammate-mcp` diagnostics go to
+  `logs/teammate-mcp/<id>.log` + stderr. Both use the existing injectable `log`
+  seam. Regression tests lock every stdout line to a JSON-RPC envelope across
+  parse-error / unknown-method / admin-failure paths.
 
 ### Closed by #74: `feishu-transport` package logging
 

@@ -112,6 +112,7 @@ At the time of this decision, the branch already contains:
 - **Install the dispatcher skill globally under `~/.codex/skills`:** rejected.
   The skill is dispatcher-workspace behavior and should not mutate the
   operator's global Codex skill set.
-- **Make dreamux server own tm teammate state:** rejected by
-  [dispatcher-tm-boundary](dispatcher-tm-boundary.md). dreamux starts the
-  dispatcher; tm owns teammate lifecycle behind its CLI boundary.
+- **Make dreamux server own tm teammate state:** historically rejected by
+  [dispatcher-tm-boundary](dispatcher-tm-boundary.md) at this record's date.
+  Issue #110 supersedes that boundary for the new server-hosted TeamMate
+  architecture; see [server-hosted-teammate](server-hosted-teammate.md).

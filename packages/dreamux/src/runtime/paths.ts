@@ -10,6 +10,7 @@
  *         status.json
  *         access.json
  *         codex.sock          Codex app-server Unix socket
+ *         teammate/           Server-hosted TeamMate task ledger
  *     logs/
  *       dreamux-server.log
  *       codex-app-server/
@@ -206,6 +207,15 @@ export function feishuMcpLogPath(id: string): string {
   return join(feishuMcpLogDir(), `${dispatcherPathSegment(id)}.log`);
 }
 
+export function teammateMcpLogDir(): string {
+  return join(logsRoot(), 'teammate-mcp');
+}
+
+/** Per-dispatcher TeamMate scheduling MCP stdio shim diagnostics. */
+export function teammateMcpLogPath(id: string): string {
+  return join(teammateMcpLogDir(), `${dispatcherPathSegment(id)}.log`);
+}
+
 export function dispatcherCodexAppServerLogPath(id: string): string {
   return join(codexAppServerLogDir(), `${dispatcherPathSegment(id)}.log`);
 }
@@ -220,6 +230,21 @@ export function dispatcherStatusPath(id: string): string {
 
 export function dispatcherAccessPath(id: string): string {
   return join(dispatcherDir(id), 'access.json');
+}
+
+/** Per-dispatcher Server-hosted TeamMate state root (issue #110 PR7). */
+export function dispatcherTeamMateDir(id: string): string {
+  return join(dispatcherDir(id), 'teammate');
+}
+
+/** Versioned metadata file for the per-dispatcher TeamMate task ledger. */
+export function dispatcherTeamMateLedgerPath(id: string): string {
+  return join(dispatcherTeamMateDir(id), 'ledger.json');
+}
+
+/** Directory containing one versioned TeamMate task record per file. */
+export function dispatcherTeamMateTasksDir(id: string): string {
+  return join(dispatcherTeamMateDir(id), 'tasks');
 }
 
 /**

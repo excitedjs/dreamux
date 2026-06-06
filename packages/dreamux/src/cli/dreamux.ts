@@ -47,8 +47,13 @@ import { ExecaCommandRunner } from '../onboard/commands.js';
 import { readPackagedChangelog } from './changelog.js';
 import { printDoctorResult, runDreamuxDoctor } from './doctor.js';
 import { runFeishuMcp } from '../mcp/feishu-mcp.js';
+import { runTeamMateMcp } from '../mcp/teammate-mcp.js';
 import { createLogger } from '../runtime/logger.js';
-import { feishuMcpLogPath } from '../runtime/paths.js';
+import {
+  feishuMcpLogPath,
+  teammateMcpLogPath,
+} from '../runtime/paths.js';
+import type { TeamMateScheduleCallerKind } from '../teammate/ledger.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SERVER_ENTRY = join(HERE, 'server.js');
@@ -481,6 +486,35 @@ function buildFeishuMcpCommand(
     }) as Argv<{ dispatcher: string; adminSocket?: string }>;
 }
 
+function buildTeamMateMcpCommand(
+  y: Argv,
+): Argv<{
+  dispatcher: string;
+  caller: TeamMateScheduleCallerKind;
+  adminSocket?: string;
+}> {
+  return y
+    .option('dispatcher', {
+      type: 'string',
+      demandOption: true,
+      describe: 'Dispatcher id this MCP shim is scoped to',
+    })
+    .option('caller', {
+      type: 'string',
+      choices: ['dispatcher', 'teammate'] as const,
+      default: 'dispatcher' as const,
+      describe: 'Dreamux-controlled caller kind for nested-dispatch enforcement',
+    })
+    .option('admin-socket', {
+      type: 'string',
+      describe: 'dreamux serve admin socket path',
+    }) as Argv<{
+      dispatcher: string;
+      caller: TeamMateScheduleCallerKind;
+      adminSocket?: string;
+    }>;
+}
+
 async function main(): Promise<void> {
   await yargs(hideBin(process.argv))
     .scriptName('dreamux')
@@ -551,6 +585,26 @@ async function main(): Promise<void> {
         });
         await runFeishuMcp({
           dispatcherId,
+          adminSocketPath: argv.adminSocket,
+          log: (message) => log.info(message),
+        });
+      },
+    )
+    .command(
+      'teammate-mcp',
+      'Run the dispatcher-scoped TeamMate scheduling MCP stdio shim',
+      buildTeamMateMcpCommand,
+      async (argv) => {
+        const dispatcherId = validateDispatcherId(argv.dispatcher);
+        // stdout is the JSON-RPC transport — diagnostics persist to
+        // logs/teammate-mcp/<id>.log and stderr, never stdout.
+        const log = createLogger({
+          name: `teammate-mcp/${dispatcherId}`,
+          filePath: teammateMcpLogPath(dispatcherId),
+        });
+        await runTeamMateMcp({
+          dispatcherId,
+          callerKind: argv.caller,
           adminSocketPath: argv.adminSocket,
           log: (message) => log.info(message),
         });

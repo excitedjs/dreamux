@@ -15,6 +15,7 @@
 import {
   createBuiltinAgentRuntimeProviderCatalog,
   type AgentRuntime,
+  type AgentRuntimeMcpServer,
   type AgentRuntimeProviderCatalog,
 } from './agent-runtime/index.js';
 import type { InboundTurnInput } from './dispatcher/turn-manager.js';
@@ -73,6 +74,12 @@ import {
 } from './runtime/logger.js';
 import { createAdminSocketServer, type AdminSocketServer } from './admin/socket.js';
 import { RestartIntentConsumer } from './daemon/restart-intent.js';
+import {
+  NestedTeamMateDispatchError,
+  type TeamMateScheduleCallerKind,
+  TeamMateTaskLedger,
+} from './teammate/ledger.js';
+import { teammateMcpServerDescriptor } from './teammate/mcp-config.js';
 
 export const RECEIVED_REACTION_EMOJI = 'Get';
 export const IN_PROGRESS_REACTION_EMOJI = 'OnIt';
@@ -233,9 +240,26 @@ export interface ServerMcpListChatBotsResult {
   trusted: WireChatBot[];
 }
 
+export interface ServerMcpScheduleTeamMateInput {
+  dispatcherId: string;
+  callerKind: TeamMateScheduleCallerKind;
+  title: string;
+  prompt: string;
+  teammateId?: string;
+}
+
+export interface ServerMcpScheduleTeamMateResult {
+  status: 'accepted';
+  task_id: string;
+  dispatcher_id: string;
+  created_at: number;
+  teammate_id?: string;
+}
+
 export class Server {
   readonly repos: Repos;
   private readonly slots = new Map<string, DispatcherSlot>();
+  private readonly teamMateLedgers = new Map<string, TeamMateTaskLedger>();
   /**
    * PR #3 review #4: in-flight startDispatcher promises, keyed by id.
    * Two concurrent callers must await the same start, not race to spawn
@@ -405,14 +429,15 @@ export class Server {
     // The channel provider exposes runtime-neutral MCP server descriptors; the
     // runtime provider translates them into runtime-specific args (e.g. Codex
     // `mcp_servers.*`). Core no longer emits Codex CLI args for the channel.
+    const mcpContext = {
+      dispatcherId: id,
+      adminSocketPath: this.opts.adminSocketPath ?? adminSocketPath(),
+    };
     const runtime = runtimeProvider.createRuntime({
       row,
       dispatchers: this.repos.dispatchers,
       dispatcher: dispatcherConfig ?? null,
-      mcpServers: channelProvider.mcpServerDescriptors({
-        dispatcherId: id,
-        adminSocketPath: this.opts.adminSocketPath ?? adminSocketPath(),
-      }),
+      mcpServers: this.dreamuxMcpServerDescriptors(channelProvider, mcpContext),
       log: loggerToLevelFn(channelLog),
     });
     const botSecret = this.opts.skipBotSecret
@@ -810,6 +835,58 @@ export class Server {
       known: listing.known.map(toWireChatBot),
       trusted: listing.trusted.map(toWireChatBot),
     };
+  }
+
+  async scheduleTeamMateFromMcp(
+    input: ServerMcpScheduleTeamMateInput,
+  ): Promise<ServerMcpScheduleTeamMateResult> {
+    if (input.callerKind === 'teammate') {
+      throw new NestedTeamMateDispatchError();
+    }
+    const task = await this.teamMateLedger(input.dispatcherId).acceptTask({
+      title: input.title,
+      prompt: input.prompt,
+      callerKind: input.callerKind,
+      ...(input.teammateId !== undefined
+        ? { teammateId: input.teammateId }
+        : {}),
+    });
+    this.log.info(
+      {
+        dispatcher_id: input.dispatcherId,
+        task_id: task.task_id,
+        caller_kind: input.callerKind,
+      },
+      'teammate task accepted',
+    );
+    return {
+      status: 'accepted',
+      task_id: task.task_id,
+      dispatcher_id: task.dispatcher_id,
+      created_at: task.created_at,
+      ...(task.teammate_id !== null ? { teammate_id: task.teammate_id } : {}),
+    };
+  }
+
+  private dreamuxMcpServerDescriptors(
+    channelProvider: ChannelProvider,
+    context: { dispatcherId: string; adminSocketPath: string },
+  ): AgentRuntimeMcpServer[] {
+    return [
+      ...channelProvider.mcpServerDescriptors(context),
+      teammateMcpServerDescriptor({
+        ...context,
+        callerKind: 'dispatcher',
+      }),
+    ];
+  }
+
+  private teamMateLedger(dispatcherId: string): TeamMateTaskLedger {
+    const existing = this.teamMateLedgers.get(dispatcherId);
+    if (existing !== undefined) return existing;
+    const created = new TeamMateTaskLedger(dispatcherId);
+    this.teamMateLedgers.set(dispatcherId, created);
+    return created;
   }
 
   private mustRunningSlot(id: string): DispatcherSlot {

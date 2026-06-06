@@ -54,6 +54,24 @@ The public retrieval UX does not have to preserve `history` or `last` names, but
 the functionality must exist: list tasks, fetch a task result, fetch the latest
 relevant result, and recover a final result after delivery failure.
 
+## Current Implementation
+
+Issue #110 PR7 implements the first server-owned TeamMate surface:
+
+- a versioned file-backed task ledger under
+  `~/.dreamux/state/<dispatcher-id>/teammate/`;
+- a dispatcher-scoped `teammate-mcp` stdio shim contributed to the selected
+  AgentRuntimeProvider as a runtime-neutral MCP server descriptor;
+- an admin method that accepts a task, allocates a task id, persists the
+  accepted task record, and returns immediately;
+- a nested-dispatch guard that rejects callers marked as `teammate`.
+
+PR7 deliberately does not start worker runtimes, deliver completions back into a
+dispatcher runtime, retry failed delivery, or expose final-result/history UX.
+Those remain follow-up work in the issue #110 sequence. The ledger version must
+fail loudly on incompatible metadata; it must not silently rewrite or discard
+completed task data.
+
 ## Consequences
 
 - The old "Dreamux never owns teammate state" decision is superseded.

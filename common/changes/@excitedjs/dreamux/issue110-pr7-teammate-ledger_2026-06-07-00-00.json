@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Add the server-hosted TeamMate scheduling MCP and versioned per-dispatcher task ledger for issue #110.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}
