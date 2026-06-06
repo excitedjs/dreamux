@@ -103,6 +103,20 @@ export function dispatcherCodexCwd(id: string): string {
   return join(dispatcherDir(id), 'cwd');
 }
 
+/**
+ * Per-dispatcher Claude Code runtime state dir (issue #110 PR6). Holds the
+ * generated Claude Code MCP config; kept under the dispatcher's state dir, not
+ * the workspace cwd, so it never pollutes the operator's repo.
+ */
+export function dispatcherClaudeCodeDir(id: string): string {
+  return join(dispatcherDir(id), 'claude-code');
+}
+
+/** The generated Claude Code MCP config file (`--mcp-config <path>`). */
+export function dispatcherClaudeCodeMcpConfigPath(id: string): string {
+  return join(dispatcherClaudeCodeDir(id), 'mcp.json');
+}
+
 export function operatorCodexHome(): string {
   return join(homedir(), '.codex');
 }

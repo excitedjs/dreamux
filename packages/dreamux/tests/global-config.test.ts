@@ -442,18 +442,46 @@ describe('global config (~/.dreamux/config.json)', () => {
     );
   });
 
-  it('keeps registered but non-wired builtin runtimes fail-loud', async () => {
+  it('accepts a builtin:claude-code runtime with its own config shape', async () => {
     writeConfigObject({
       dispatchers: [
         testDispatcherConfig({
           id: 'flow',
-          runtimeProvider: 'builtin:claude-code',
+          runtime: {
+            provider: 'builtin:claude-code',
+            config: {
+              bin: 'claude',
+              model: 'sonnet',
+              permission_mode: 'acceptEdits',
+              extra_args: [],
+              extra_env: {},
+            },
+          },
+        }),
+      ],
+    });
+
+    const { config } = await loadConfig({ configDir });
+    expect(config.dispatchers[0]?.runtime.provider).toBe('builtin:claude-code');
+  });
+
+  it('rejects codex-only keys under a claude-code runtime config (runtime-owned validation)', async () => {
+    writeConfigObject({
+      dispatchers: [
+        testDispatcherConfig({
+          id: 'flow',
+          runtime: {
+            provider: 'builtin:claude-code',
+            // approval_policy is a Codex-only field; the Claude Code runtime
+            // owns its own schema and must reject it rather than ignore it.
+            config: { bin: 'claude', approval_policy: 'never' } as never,
+          },
         }),
       ],
     });
 
     await expect(loadConfig({ configDir })).rejects.toThrow(
-      /builtin:claude-code' is registered but not runnable in this phase/,
+      /approval_policy is not supported/,
     );
   });
 

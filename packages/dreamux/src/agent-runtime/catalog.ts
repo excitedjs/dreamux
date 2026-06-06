@@ -7,6 +7,8 @@ import {
 } from '../registry/index.js';
 import { createCodexAgentRuntimeProvider } from './codex.js';
 import type { CodexAgentRuntimeProviderOptions } from './codex.js';
+import { createClaudeCodeAgentRuntimeProvider } from './claude-code.js';
+import type { ClaudeCodeAgentRuntimeProviderOptions } from './claude-code.js';
 import type { AgentRuntimeProvider } from './types.js';
 
 export class UnsupportedAgentRuntimeProviderError extends Error {
@@ -77,13 +79,17 @@ export class AgentRuntimeProviderCatalog {
 export interface BuiltinAgentRuntimeProviderCatalogOptions {
   registry?: CapabilityRegistry;
   codex: CodexAgentRuntimeProviderOptions;
+  claudeCode?: ClaudeCodeAgentRuntimeProviderOptions;
 }
 
 export function createBuiltinAgentRuntimeProviderCatalog(
   options: BuiltinAgentRuntimeProviderCatalogOptions,
 ): AgentRuntimeProviderCatalog {
   return new AgentRuntimeProviderCatalog({
-    providers: [createCodexAgentRuntimeProvider(options.codex)],
+    providers: [
+      createCodexAgentRuntimeProvider(options.codex),
+      createClaudeCodeAgentRuntimeProvider(options.claudeCode ?? {}),
+    ],
     ...(options.registry !== undefined ? { registry: options.registry } : {}),
   });
 }

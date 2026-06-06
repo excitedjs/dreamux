@@ -14,7 +14,8 @@
  *   asserts they stay in sync.
  * - `builtin:codex` (#110 PR5) declares its agent-runtime capabilities, read by
  *   `src/agent-runtime/codex.ts`.
- * - `builtin:claude-code` stays capability-less until its adapter PR (#110 PR6).
+ * - `builtin:claude-code` (#110 PR6) declares its agent-runtime capabilities,
+ *   read by `src/agent-runtime/claude-code.ts`.
  *
  * The confirmed builtin set is recorded in
  * `.agents/decisions/provider-references-and-capability-registry.md` and
@@ -68,7 +69,31 @@ export const BUILTIN_PROVIDERS: readonly BuiltinSpec[] = [
       },
     ],
   },
-  { id: 'claude-code', kind: 'agentRuntime' },
+  {
+    id: 'claude-code',
+    kind: 'agentRuntime',
+    capabilities: [
+      {
+        id: capabilityId('claude-code', 'lifecycle'),
+        kind: 'agentRuntime.lifecycle',
+      },
+      {
+        id: capabilityId('claude-code', 'mcpInjection'),
+        kind: 'agentRuntime.mcpInjection',
+      },
+      {
+        id: capabilityId('claude-code', 'inboundTurn'),
+        kind: 'agentRuntime.inboundTurn',
+      },
+      {
+        id: capabilityId(
+          'claude-code',
+          'teammateCompletion.claudeCodeTaskNotification',
+        ),
+        kind: 'agentRuntime.teammateCompletionDelivery',
+      },
+    ],
+  },
 ];
 
 function builtinDescriptor(spec: BuiltinSpec): ProviderDescriptor {
