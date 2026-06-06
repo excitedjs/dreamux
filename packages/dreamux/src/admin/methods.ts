@@ -10,6 +10,10 @@ import type { Server } from '../server.js';
 import { AdminError } from './protocol.js';
 import type { DispatcherStatus } from '../runtime/dispatcher-store.js';
 import { validateDispatcherId } from '../runtime/dispatcher-id.js';
+import {
+  NestedTeamMateDispatchError,
+  type TeamMateScheduleCallerKind,
+} from '../teammate/ledger.js';
 
 export type AdminHandler = (
   server: Server,
@@ -123,6 +127,32 @@ export const adminMethods: Record<string, AdminHandler> = {
     const chatId = mustString(params, 'chat_id');
     return server.listChatBotsFromMcp({ dispatcherId: id, chatId });
   },
+
+  'mcp.teammate.schedule': async (server, params) => {
+    const id = mustDispatcherId(params);
+    mustExistingDispatcher(server, id);
+    const callerKind = mustCallerKind(params);
+    const title = mustString(params, 'title');
+    const prompt = mustString(params, 'prompt');
+    const teammateId = optionalString(params, 'teammate_id');
+    try {
+      return await server.scheduleTeamMateFromMcp({
+        dispatcherId: id,
+        callerKind,
+        title,
+        prompt,
+        ...(teammateId !== null ? { teammateId } : {}),
+      });
+    } catch (err) {
+      if (err instanceof NestedTeamMateDispatchError) {
+        throw new AdminError(
+          'TEAMMATE_NESTED_DISPATCH_REJECTED',
+          parseMessage(err),
+        );
+      }
+      throw new AdminError('TEAMMATE_SCHEDULE_FAILED', parseMessage(err));
+    }
+  },
 };
 
 function mustString(
@@ -145,6 +175,17 @@ function mustDispatcherId(
     const message = err instanceof Error ? err.message : String(err);
     throw new AdminError('BAD_REQUEST', message);
   }
+}
+
+function mustCallerKind(
+  params: Record<string, unknown> | undefined,
+): TeamMateScheduleCallerKind {
+  const callerKind = mustString(params, 'caller_kind');
+  if (callerKind === 'dispatcher' || callerKind === 'teammate') return callerKind;
+  throw new AdminError(
+    'BAD_REQUEST',
+    "param 'caller_kind' must be 'dispatcher' or 'teammate'",
+  );
 }
 
 function optionalString(

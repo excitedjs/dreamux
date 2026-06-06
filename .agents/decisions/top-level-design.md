@@ -219,6 +219,10 @@ State and logs are server-owned. They are not operator-editable config.
       access.json
       chat-bots.json
       codex.sock
+      teammate/
+        ledger.json           TeamMate task ledger metadata (issue #110 PR7)
+        tasks/
+          <task-id>.json       one versioned TeamMate task record per file
   logs/
     dreamux-server.log
     daemon.stdout.log          when run as a daemon (onboard service redirect)
@@ -227,6 +231,8 @@ State and logs are server-owned. They are not operator-editable config.
       dispatcher-a.log
     feishu-mcp/
       dispatcher-a.log         feishu-mcp stdio shim diagnostics (issue #70)
+    teammate-mcp/
+      dispatcher-a.log         TeamMate scheduling MCP stdio shim diagnostics
     codex-app-server/
       dispatcher-a.log         Codex app-server child stdout
       dispatcher-a.stderr.log  Codex app-server child stderr
@@ -547,6 +553,23 @@ The MVP MCP tool surface is:
 
 Reply failures return an MCP tool error and are logged. There is no persisted
 outbound retry queue.
+
+## TeamMate Scheduling MCP
+
+Issue #110 adds a Dispatcher Service-owned TeamMate scheduling MCP. The shim is
+also a per-dispatcher stdio process:
+
+```text
+<dreamux-bin> teammate-mcp --dispatcher dispatcher-a --caller dispatcher
+```
+
+The scheduling tool accepts a task and returns immediately with an accepted task
+id. It forwards to `dreamux serve` over the local admin socket; the server owns
+the versioned per-dispatcher TeamMate ledger under
+`state/<dispatcher-id>/teammate/`. The shim does not start worker runtimes, own
+completion delivery, or load external npm providers. A caller marked as
+`teammate` is rejected so TeamMates cannot recursively schedule more
+TeamMates.
 
 ## Reaction Ownership
 

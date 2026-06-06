@@ -49,6 +49,10 @@ delegation; that wrapper is not a dreamux admin CLI.
   dreamux changelog --json
   ```
 
+- Runtime support subcommands injected by Dreamux-managed MCP descriptors:
+  `dreamux feishu-mcp` and `dreamux teammate-mcp`. These are process shims, not
+  operator-facing admin command groups.
+
 - `dreamux changelog` prints the installed package's rush-generated
   `CHANGELOG.md` (`--json` prints `CHANGELOG.json`). It is an offline,
   deterministic read of the *installed* version — the upgrade-time information

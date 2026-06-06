@@ -20,6 +20,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
+import { readFile, readdir } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -52,6 +53,8 @@ import {
   bundledSkillDir,
   dispatcherWorkspaceSkillDir,
   dispatcherSocketPath,
+  dispatcherTeamMateLedgerPath,
+  dispatcherTeamMateTasksDir,
   restartIntentPath,
 } from '../src/runtime/paths.js';
 import { writeRestartIntent } from '../src/daemon/restart-intent.js';
@@ -573,7 +576,7 @@ describe('dreamux MVP smoke', () => {
     expect(JSON.stringify(capturedCodexOptions)).not.toContain('secret-server-only');
   });
 
-  it('injects dispatcher-scoped Feishu MCP config after operator Codex args', async () => {
+  it('injects dispatcher-scoped Dreamux MCP config after operator Codex args', async () => {
     const capturedCodexOptions: CodexProcessOptions[] = [];
     // Operator codex args are now a per-dispatcher runtime setting
     // (dispatchers[].runtime.config.extra_args); there is no top-level codex
@@ -598,14 +601,21 @@ describe('dreamux MVP smoke', () => {
     await server.start();
 
     const args = capturedCodexOptions[0]?.extraArgs ?? [];
-    const dreamuxCommand = `mcp_servers.feishu.command=${JSON.stringify(dreamuxBinPath())}`;
+    const feishuCommand = `mcp_servers.feishu.command=${JSON.stringify(dreamuxBinPath())}`;
+    const teammateCommand =
+      `mcp_servers.teammate.command=${JSON.stringify(dreamuxBinPath())}`;
     expect(args).toContain('mcp_servers.feishu.command="operator-feishu"');
     const operatorIdx = args.indexOf('mcp_servers.feishu.command="operator-feishu"');
-    const dreamuxIdx = args.indexOf(dreamuxCommand);
-    expect(dreamuxIdx).toBeGreaterThan(operatorIdx);
+    const feishuIdx = args.indexOf(feishuCommand);
+    const teammateIdx = args.indexOf(teammateCommand);
+    expect(feishuIdx).toBeGreaterThan(operatorIdx);
+    expect(teammateIdx).toBeGreaterThan(operatorIdx);
     expect(dreamuxBinPath()).toMatch(/\/dreamux$/);
     expect(args).toContain(
       `mcp_servers.feishu.args=["feishu-mcp", "--dispatcher", "flow", "--admin-socket", "${join(runtimeDir, 'admin.sock')}"]`,
+    );
+    expect(args).toContain(
+      `mcp_servers.teammate.args=["teammate-mcp", "--dispatcher", "flow", "--caller", "dispatcher", "--admin-socket", "${join(runtimeDir, 'admin.sock')}"]`,
     );
   });
 
@@ -1501,6 +1511,83 @@ describe('dreamux MVP smoke', () => {
         { open_id: 'known-bot-2', name: 'Ambient Bot' },
       ]),
     );
+  });
+
+  it('mcp.teammate.schedule accepts immediately and writes the server ledger', async () => {
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      config: configWithDispatcher(),
+    });
+    await server.start();
+
+    const result = (await sendAdminRequest(
+      'mcp.teammate.schedule',
+      {
+        dispatcher_id: 'flow',
+        caller_kind: 'dispatcher',
+        title: 'Review task',
+        prompt: 'Review the current change and report blockers.',
+        teammate_id: 'reviewer-1',
+      },
+      { socketPath: join(runtimeDir, 'admin.sock') },
+    )) as {
+      status: 'accepted';
+      task_id: string;
+      dispatcher_id: string;
+      created_at: number;
+      teammate_id: string;
+    };
+
+    expect(result).toMatchObject({
+      status: 'accepted',
+      dispatcher_id: 'flow',
+      teammate_id: 'reviewer-1',
+    });
+    expect(result.task_id).toMatch(/^tmtsk_/);
+
+    const rootFile = JSON.parse(
+      await readFile(dispatcherTeamMateLedgerPath('flow'), 'utf8'),
+    ) as Record<string, unknown>;
+    expect(rootFile).toMatchObject({
+      version: 1,
+      dispatcher_id: 'flow',
+    });
+    expect(await readdir(dispatcherTeamMateTasksDir('flow'))).toEqual([
+      `${result.task_id}.json`,
+    ]);
+    const taskFile = JSON.parse(
+      await readFile(
+        join(dispatcherTeamMateTasksDir('flow'), `${result.task_id}.json`),
+        'utf8',
+      ),
+    ) as Record<string, unknown>;
+    expect(taskFile).toMatchObject({
+      version: 1,
+      task_id: result.task_id,
+      dispatcher_id: 'flow',
+      status: 'accepted',
+      title: 'Review task',
+      prompt: 'Review the current change and report blockers.',
+      teammate_id: 'reviewer-1',
+      scheduled_by: { kind: 'dispatcher' },
+    });
+
+    await expect(
+      sendAdminRequest(
+        'mcp.teammate.schedule',
+        {
+          dispatcher_id: 'flow',
+          caller_kind: 'teammate',
+          title: 'Nested',
+          prompt: 'Nested scheduling attempt.',
+        },
+        { socketPath: join(runtimeDir, 'admin.sock') },
+      ),
+    ).rejects.toMatchObject({
+      code: 'TEAMMATE_NESTED_DISPATCH_REJECTED',
+    });
   });
 
   it('does NOT consume /introduce from a non-allowlisted sender (no trust, dropped by the gate)', async () => {

@@ -13,10 +13,15 @@ import {
   dispatcherCodexAppServerLogPath,
   dispatcherDir,
   dispatcherFeishuAttachmentCacheDir,
+  dispatcherTeamMateDir,
+  dispatcherTeamMateLedgerPath,
+  dispatcherTeamMateTasksDir,
   feishuChannelLogDir,
   feishuChannelLogPath,
   feishuMcpLogDir,
   feishuMcpLogPath,
+  teammateMcpLogDir,
+  teammateMcpLogPath,
   dispatcherSocketPath,
   dispatcherStatusPath,
   dispatcherWorkspaceCodexSkillsDir,
@@ -73,6 +78,15 @@ describe('runtime paths', () => {
     expect(dispatcherSocketPath('dispatcher-a')).toBe(
       join(stateRoot(), 'dispatcher-a', 'codex.sock'),
     );
+    expect(dispatcherTeamMateDir('dispatcher-a')).toBe(
+      join(stateRoot(), 'dispatcher-a', 'teammate'),
+    );
+    expect(dispatcherTeamMateLedgerPath('dispatcher-a')).toBe(
+      join(stateRoot(), 'dispatcher-a', 'teammate', 'ledger.json'),
+    );
+    expect(dispatcherTeamMateTasksDir('dispatcher-a')).toBe(
+      join(stateRoot(), 'dispatcher-a', 'teammate', 'tasks'),
+    );
     const workspace = join(root, 'workspace');
     expect(dispatcherWorkspaceCodexSkillsDir(workspace)).toBe(
       join(workspace, '.codex', 'skills'),
@@ -105,6 +119,10 @@ describe('runtime paths', () => {
     expect(feishuMcpLogDir()).toBe(join(logsRoot(), 'feishu-mcp'));
     expect(feishuMcpLogPath('dispatcher-a')).toBe(
       join(logsRoot(), 'feishu-mcp', 'dispatcher-a.log'),
+    );
+    expect(teammateMcpLogDir()).toBe(join(logsRoot(), 'teammate-mcp'));
+    expect(teammateMcpLogPath('dispatcher-a')).toBe(
+      join(logsRoot(), 'teammate-mcp', 'dispatcher-a.log'),
     );
   });
 
