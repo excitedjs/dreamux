@@ -254,10 +254,12 @@ function configWithDispatcher(
           app_secret: 'secret-server-only',
         },
         codex: overrides.codex ?? {
-          approval_policy: null,
-          sandbox_mode: null,
+          bin: 'codex',
+          approval_policy: 'never',
+          sandbox_mode: 'workspace-write',
           extra_args: [],
           extra_env: {},
+          initialize_timeout_ms: 10000,
         },
       },
     ],
@@ -516,13 +518,15 @@ describe('dreamux MVP smoke', () => {
       capturedCodexOptions,
       config: configWithDispatcher({
         codex: {
-          approval_policy: null,
-          sandbox_mode: null,
+          bin: 'codex',
+          approval_policy: 'never',
+          sandbox_mode: 'workspace-write',
           extra_args: [],
           extra_env: {
             DREAMUX_EXAMPLE_FLAG: 'enabled',
             PATH: '/custom/bin',
           },
+          initialize_timeout_ms: 10000,
         },
       }),
     });
@@ -563,26 +567,23 @@ describe('dreamux MVP smoke', () => {
 
   it('injects dispatcher-scoped Feishu MCP config after operator Codex args', async () => {
     const capturedCodexOptions: CodexProcessOptions[] = [];
+    // Operator codex args are now a per-dispatcher setting (dispatchers[].codex
+    // .extra_args); there is no top-level codex block to carry them.
     server = buildServer({
       runtimeDir,
       fake,
       bot,
       capturedCodexOptions,
-      config: {
-        ...BUILT_IN_DEFAULTS,
+      config: configWithDispatcher({
         codex: {
-          ...BUILT_IN_DEFAULTS.codex,
-          extra_args: [
-            '-c',
-            'mcp_servers.feishu.command="operator-feishu"',
-          ],
+          bin: 'codex',
+          approval_policy: 'never',
+          sandbox_mode: 'workspace-write',
+          extra_args: ['-c', 'mcp_servers.feishu.command="operator-feishu"'],
+          extra_env: {},
+          initialize_timeout_ms: 10000,
         },
-      },
-    });
-    server.repos.dispatchers.create({
-      dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      }),
     });
 
     await server.start();
@@ -597,6 +598,68 @@ describe('dreamux MVP smoke', () => {
     expect(args).toContain(
       `mcp_servers.feishu.args=["feishu-mcp", "--dispatcher", "flow", "--admin-socket", "${join(runtimeDir, 'admin.sock')}"]`,
     );
+  });
+
+  it('launches a dispatcher with its own dispatchers[].codex.bin', async () => {
+    const previousEnvBin = process.env['CODEX_HOST_CODEX_BIN'];
+    delete process.env['CODEX_HOST_CODEX_BIN'];
+    try {
+      const capturedCodexOptions: CodexProcessOptions[] = [];
+      server = buildServer({
+        runtimeDir,
+        fake,
+        bot,
+        capturedCodexOptions,
+        config: configWithDispatcher({
+          codex: {
+            bin: '/opt/custom-codex',
+            approval_policy: 'never',
+            sandbox_mode: 'workspace-write',
+            extra_args: [],
+            extra_env: {},
+            initialize_timeout_ms: 10000,
+          },
+        }),
+      });
+
+      await server.start();
+
+      expect(capturedCodexOptions[0]?.binPath).toBe('/opt/custom-codex');
+    } finally {
+      if (previousEnvBin === undefined) delete process.env['CODEX_HOST_CODEX_BIN'];
+      else process.env['CODEX_HOST_CODEX_BIN'] = previousEnvBin;
+    }
+  });
+
+  it('CODEX_HOST_CODEX_BIN overrides a dispatcher codex.bin at launch', async () => {
+    const previousEnvBin = process.env['CODEX_HOST_CODEX_BIN'];
+    process.env['CODEX_HOST_CODEX_BIN'] = '/host/override-codex';
+    try {
+      const capturedCodexOptions: CodexProcessOptions[] = [];
+      server = buildServer({
+        runtimeDir,
+        fake,
+        bot,
+        capturedCodexOptions,
+        config: configWithDispatcher({
+          codex: {
+            bin: '/opt/custom-codex',
+            approval_policy: 'never',
+            sandbox_mode: 'workspace-write',
+            extra_args: [],
+            extra_env: {},
+            initialize_timeout_ms: 10000,
+          },
+        }),
+      });
+
+      await server.start();
+
+      expect(capturedCodexOptions[0]?.binPath).toBe('/host/override-codex');
+    } finally {
+      if (previousEnvBin === undefined) delete process.env['CODEX_HOST_CODEX_BIN'];
+      else process.env['CODEX_HOST_CODEX_BIN'] = previousEnvBin;
+    }
   });
 
   it('mcp.reply sends through the serve-owned bot and clears received reaction', async () => {

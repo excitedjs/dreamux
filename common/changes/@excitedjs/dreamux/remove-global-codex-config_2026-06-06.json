@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "BREAKING: remove the top-level `codex` block from ~/.dreamux/config.json. All Codex settings are now dispatcher-local under dispatchers[].codex (bin, approval_policy, sandbox_mode, extra_args, extra_env, initialize_timeout_ms), each with a built-in default (codex / never / workspace-write / [] / {} / 10000) so the whole codex object can be omitted. The server uses each dispatcher's own codex.bin and initialize_timeout_ms. CODEX_HOST_CODEX_BIN remains an optional host-level override of the codex binary for every dispatcher; onboard no longer auto-bakes it into the managed-service unit (the unit PATH carries the codex dir instead, so dispatcher-local codex.bin is authoritative). A config that still has a top-level `codex` block fails loud on load. Rebuild: edit ~/.dreamux/config.json — delete the top-level `codex` block and move any approval_policy/sandbox_mode/extra_args/bin into the relevant dispatchers[].codex; then `dreamux daemon restart` (re-run `dreamux onboard` if you want the new dispatcher-local bin re-derived into the service PATH). Existing service units that still set CODEX_HOST_CODEX_BIN keep working — there it stays the override and nothing breaks.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

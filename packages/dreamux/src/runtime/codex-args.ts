@@ -5,16 +5,20 @@
  *
  * Canonical shape:
  *   {
- *     "approvalPolicy": "never",            // overrides global default if set
- *     "sandboxMode":    "workspace-write",  // overrides global default if set
- *     "extraArgs":      ["--model", "..."]  // appended after global extra_args
+ *     "approvalPolicy": "never",            // from dispatchers[].codex
+ *     "sandboxMode":    "workspace-write",  // from dispatchers[].codex
+ *     "extraArgs":      ["--model", "..."]  // from dispatchers[].codex.extra_args
  *   }
+ *
+ * This JSON is encoded per dispatcher from `dispatchers[].codex` (every field
+ * carries a dispatcher-local default), so it is the sole source of truth. The
+ * optional `defaults` param remains a thin seam; with the top-level `codex`
+ * block removed there is no global layer, and a caller normally passes nothing.
  *
  * Precedence for each field (highest wins):
  *   1. dispatchers.codex_args_json (this JSON)
- *   2. global defaults from ~/.dreamux/config.json (passed in as `defaults`)
+ *   2. `defaults` (optional caller seam)
  *   3. hardcoded fallbacks (`'never'`, `'workspace-write'`, `[]`)
- * Per the feat/global-config-dir work — see the global-config decision.
  *
  * `approvalPolicy` not in the trusted-local allowlist fails-fast at startup
  * (issue #2 §"实现陷阱"): dispatcher refuses to come up if the policy may
@@ -77,10 +81,10 @@ export function parseCodexArgs(
   const perDispatcherExtra = Array.isArray(obj['extraArgs'])
     ? (obj['extraArgs'] as unknown[]).map((x) => String(x))
     : [];
-  // Global extra_args go first; per-dispatcher extra_args are appended.
-  // codex's CLI is order-sensitive for `-c key=value` overrides — the
-  // last write wins — so per-dispatcher always overrides a same-key
-  // global.
+  // Any caller-provided default extraArgs go first; the dispatcher's own
+  // extraArgs are appended. codex's CLI is order-sensitive for `-c key=value`
+  // overrides — last write wins — so the dispatcher value overrides a same-key
+  // default.
   const extraArgs = [
     ...(defaults.extraArgs ?? []),
     ...perDispatcherExtra,
@@ -107,8 +111,8 @@ export function codexArgsToCli(parsed: ParsedCodexArgs): string[] {
   // codex >= 0.134 dropped --approval-policy and --sandbox at the
   // app-server level; the remaining mechanism is `-c key=value` config
   // overrides for both. Pass approval_policy first, then sandbox_mode,
-  // then per-dispatcher / global extra args — letting extra_args contain
-  // a same-key `-c` override that wins (codex parses last write wins).
+  // then the dispatcher's extra args — letting extra_args contain a same-key
+  // `-c` override that wins (codex parses last write wins).
   return [
     '-c',
     `approval_policy=${parsed.approvalPolicy}`,

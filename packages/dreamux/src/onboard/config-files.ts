@@ -1,6 +1,8 @@
 import type { DreamuxConfig } from '../runtime/config.js';
 import {
-  BUILT_IN_DEFAULTS,
+  DEFAULT_APPROVAL_POLICY,
+  DEFAULT_INITIALIZE_TIMEOUT_MS,
+  DEFAULT_SANDBOX_MODE,
   type DispatcherConfig,
   stringifyConfig,
 } from '../runtime/config.js';
@@ -16,35 +18,14 @@ export function dreamuxConfigFromAnswers(
   existing?: DreamuxConfig,
 ): DreamuxConfig {
   validateDispatcherId(answers.dispatcherId);
-  const base = existing ?? dreamuxConfigDefaultsFromAnswers(answers);
+  const base: DreamuxConfig = existing ?? { dispatchers: [] };
   const dispatchers = base.dispatchers
     .filter((dispatcher) => dispatcher.id !== answers.dispatcherId)
     .map(cloneDispatcherConfig);
   dispatchers.push(dispatcherConfigFromAnswers(answers));
-  const next: DreamuxConfig = {
-    codex: {
-      ...base.codex,
-      extra_args: [...base.codex.extra_args],
-    },
-    dispatchers,
-  };
+  const next: DreamuxConfig = { dispatchers };
   assertUniqueFeishuAppIds(next);
   return next;
-}
-
-function dreamuxConfigDefaultsFromAnswers(
-  answers: OnboardAnswers,
-): DreamuxConfig {
-  return {
-    codex: {
-      bin: answers.codexBin,
-      approval_policy: 'never',
-      sandbox_mode: 'workspace-write',
-      extra_args: [],
-      initialize_timeout_ms: BUILT_IN_DEFAULTS.codex.initialize_timeout_ms,
-    },
-    dispatchers: [],
-  };
 }
 
 export function dispatcherBotSecretRef(dispatcherId: string): string {
@@ -53,8 +34,8 @@ export function dispatcherBotSecretRef(dispatcherId: string): string {
 
 export function dispatcherCodexArgsJson(): string {
   return JSON.stringify({
-    approvalPolicy: 'never',
-    sandboxMode: 'workspace-write',
+    approvalPolicy: DEFAULT_APPROVAL_POLICY,
+    sandboxMode: DEFAULT_SANDBOX_MODE,
     extraArgs: [],
   });
 }
@@ -82,10 +63,12 @@ function dispatcherConfigFromAnswers(answers: OnboardAnswers): DispatcherConfig 
       app_secret: answers.botAppSecret,
     },
     codex: {
-      approval_policy: 'never',
-      sandbox_mode: 'workspace-write',
+      bin: answers.codexBin,
+      approval_policy: DEFAULT_APPROVAL_POLICY,
+      sandbox_mode: DEFAULT_SANDBOX_MODE,
       extra_args: [],
       extra_env: {},
+      initialize_timeout_ms: DEFAULT_INITIALIZE_TIMEOUT_MS,
     },
   };
 }
@@ -97,10 +80,12 @@ function cloneDispatcherConfig(dispatcher: DispatcherConfig): DispatcherConfig {
     enabled: dispatcher.enabled,
     feishu: { ...dispatcher.feishu },
     codex: {
+      bin: dispatcher.codex.bin,
       approval_policy: dispatcher.codex.approval_policy,
       sandbox_mode: dispatcher.codex.sandbox_mode,
       extra_args: [...dispatcher.codex.extra_args],
       extra_env: { ...dispatcher.codex.extra_env },
+      initialize_timeout_ms: dispatcher.codex.initialize_timeout_ms,
     },
   };
 }

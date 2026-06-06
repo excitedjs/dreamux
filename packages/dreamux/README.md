@@ -105,13 +105,6 @@ Dispatcher declarations live in `config.json`:
 
 ```json
 {
-  "codex": {
-    "bin": "codex",
-    "approval_policy": "never",
-    "sandbox_mode": "workspace-write",
-    "extra_args": [],
-    "initialize_timeout_ms": 10000
-  },
   "dispatchers": [
     {
       "id": "flow",
@@ -122,17 +115,35 @@ Dispatcher declarations live in `config.json`:
         "app_secret": "<APP_SECRET>"
       },
       "codex": {
-        "approval_policy": null,
-        "sandbox_mode": null,
+        "bin": "codex",
+        "approval_policy": "never",
+        "sandbox_mode": "workspace-write",
         "extra_args": [],
         "extra_env": {
           "EXAMPLE_FLAG": "1"
-        }
+        },
+        "initialize_timeout_ms": 10000
       }
     }
   ]
 }
 ```
+
+There is no top-level `codex` block: Codex settings are per-dispatcher under
+`dispatchers[].codex`. Every field defaults, so the whole `codex` object — and
+any field in it — can be omitted:
+
+- `bin` → `"codex"` (resolved on `PATH`)
+- `approval_policy` → `"never"`
+- `sandbox_mode` → `"workspace-write"`
+- `extra_args` → `[]`
+- `extra_env` → `{}`
+- `initialize_timeout_ms` → `10000`
+
+Most operators never touch `bin` or `initialize_timeout_ms`. The optional
+`CODEX_HOST_CODEX_BIN` environment variable is a host-level override of the
+codex binary across **every** dispatcher (e.g. CI or a non-PATH install); when
+unset, each dispatcher's `codex.bin` is used.
 
 Edit and restart `dreamux serve` to apply dispatcher declaration changes.
 `app_id` values must be unique across all declared dispatchers, including
@@ -174,18 +185,24 @@ observations and warnings in the same file.
 
 ## Codex configuration precedence
 
-Precedence for Codex-related values, highest first:
+The codex binary path resolves in this order, highest first:
 
-1. Environment variables, such as `CODEX_HOST_CODEX_BIN`.
-2. Per-dispatcher `dispatchers[].codex` fields.
-3. Global `codex` fields in `~/.dreamux/config.json`.
-4. Built-in defaults compiled into `src/runtime/config.ts`.
+1. `CODEX_HOST_CODEX_BIN` environment variable (optional host-level override).
+2. The dispatcher's `dispatchers[].codex.bin` (default `"codex"`).
 
-Per-dispatcher `extra_args` are appended after global `codex.extra_args`, which
-matches Codex's last-write-wins behavior for repeated `-c key=value` options.
-Per-dispatcher `extra_env` is merged over the server process environment before
-spawning that dispatcher app-server; dreamux still removes `CODEX_HOME` so
-Codex keeps using its global default home.
+All other Codex values come from that dispatcher's `dispatchers[].codex` field,
+falling back to the built-in defaults in `src/runtime/config.ts`. There is no
+global `codex` layer. A dispatcher's `extra_args` are its only source of
+`-c key=value` options; dreamux appends its own Feishu MCP `-c` args after them,
+relying on Codex's last-write-wins behavior. Per-dispatcher `extra_env` is
+merged over the server process environment before spawning that dispatcher
+app-server; dreamux still removes `CODEX_HOME` so Codex keeps using its global
+default home.
+
+The managed-service unit does **not** pin `CODEX_HOST_CODEX_BIN`; it adds the
+onboarded codex binary's directory to the unit `PATH` so each dispatcher's
+`codex.bin` resolves. Existing units installed before this change may still
+carry the env var — there it keeps acting as the override and nothing breaks.
 
 ## MCP reply flow
 

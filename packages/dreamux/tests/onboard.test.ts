@@ -189,13 +189,16 @@ describe('dreamux onboard', () => {
         app_secret: 'secret-test',
       },
       codex: {
+        bin: process.execPath,
         approval_policy: 'never',
         sandbox_mode: 'workspace-write',
         extra_args: [],
         extra_env: {},
+        initialize_timeout_ms: 10000,
       },
     }]);
     expect(dreamuxConfig).not.toHaveProperty('feishu');
+    expect(dreamuxConfig).not.toHaveProperty('codex');
     expect(dreamuxConfig).not.toHaveProperty('runtime_dir');
     expect(dreamuxConfig).not.toHaveProperty('admin_socket');
     expect(dreamuxConfig).not.toHaveProperty('outbound');
@@ -227,7 +230,9 @@ describe('dreamux onboard', () => {
       'utf8',
     );
     expect(serviceUnit).toContain(`Environment=DREAMUX_NODE_BIN=${process.execPath}`);
-    expect(serviceUnit).toContain(`Environment=CODEX_HOST_CODEX_BIN=${process.execPath}`);
+    // The unit no longer pins CODEX_HOST_CODEX_BIN; the dispatcher's codex.bin
+    // resolves off the unit PATH instead (which includes the codex dir below).
+    expect(serviceUnit).not.toContain('CODEX_HOST_CODEX_BIN');
     expect(serviceUnit).toContain(`Environment=HOME=${join(root, 'home')}`);
     expect(serviceUnit).toContain(`Environment=PATH=${dirname(process.execPath)}`);
     expect(
@@ -452,27 +457,24 @@ describe('dreamux onboard', () => {
     ) as Record<string, any>;
     expect(launchdPlist['EnvironmentVariables']).toMatchObject({
       DREAMUX_NODE_BIN: process.execPath,
-      CODEX_HOST_CODEX_BIN: process.execPath,
       HOME: join(root, 'home'),
     });
+    // The unit no longer pins CODEX_HOST_CODEX_BIN; codex.bin resolves off PATH.
+    expect(launchdPlist['EnvironmentVariables']).not.toHaveProperty(
+      'CODEX_HOST_CODEX_BIN',
+    );
     expect(launchdPlist['EnvironmentVariables']['PATH']).toContain(
       dirname(process.execPath),
     );
   });
 
-  it('preserves existing codex globals and other dispatchers on rerun', async () => {
+  it('preserves existing dispatchers and their codex settings on rerun', async () => {
     const runner = new FakeRunner();
     const configDir = join(root, 'config');
     mkdirSync(configDir, { recursive: true });
     writeFileSync(
       join(configDir, 'config.json'),
       JSON.stringify({
-        codex: {
-          approval_policy: 'on-failure',
-          sandbox_mode: 'danger-full-access',
-          extra_args: ['--model', 'local-default'],
-          initialize_timeout_ms: 12345,
-        },
         dispatchers: [
           {
             id: 'flow',
@@ -483,9 +485,12 @@ describe('dreamux onboard', () => {
               app_secret: 'secret-flow',
             },
             codex: {
-              approval_policy: null,
-              sandbox_mode: null,
-              extra_args: [],
+              bin: '/custom/codex-flow',
+              approval_policy: 'on-failure',
+              sandbox_mode: 'danger-full-access',
+              extra_args: ['--model', 'local-default'],
+              extra_env: {},
+              initialize_timeout_ms: 25000,
             },
           },
         ],
@@ -514,12 +519,8 @@ describe('dreamux onboard', () => {
     ) as Record<string, any>;
     expect(saved).not.toHaveProperty('runtime_dir');
     expect(saved).not.toHaveProperty('admin_socket');
-    expect(saved['codex']).toMatchObject({
-      approval_policy: 'on-failure',
-      sandbox_mode: 'danger-full-access',
-      extra_args: ['--model', 'local-default'],
-      initialize_timeout_ms: 12345,
-    });
+    // The top-level codex block was removed; rerun never reintroduces it.
+    expect(saved).not.toHaveProperty('codex');
     expect(saved).not.toHaveProperty('outbound');
     expect(saved).not.toHaveProperty('feishu');
     expect(saved['dispatchers']).toEqual([
@@ -532,10 +533,12 @@ describe('dreamux onboard', () => {
           app_secret: 'secret-flow',
         },
         codex: {
-          approval_policy: null,
-          sandbox_mode: null,
-          extra_args: [],
+          bin: '/custom/codex-flow',
+          approval_policy: 'on-failure',
+          sandbox_mode: 'danger-full-access',
+          extra_args: ['--model', 'local-default'],
           extra_env: {},
+          initialize_timeout_ms: 25000,
         },
       },
       {
@@ -547,10 +550,12 @@ describe('dreamux onboard', () => {
           app_secret: 'secret-docs',
         },
         codex: {
+          bin: process.execPath,
           approval_policy: 'never',
           sandbox_mode: 'workspace-write',
           extra_args: [],
           extra_env: {},
+          initialize_timeout_ms: 10000,
         },
       },
     ]);
@@ -560,13 +565,6 @@ describe('dreamux onboard', () => {
     const runner = new FakeRunner();
     const configDir = join(root, 'config');
     const existingConfig = JSON.stringify({
-      codex: {
-        bin: 'codex',
-        approval_policy: 'never',
-        sandbox_mode: 'workspace-write',
-        extra_args: [],
-        initialize_timeout_ms: 10000,
-      },
       dispatchers: [
         {
           id: 'flow',
@@ -577,9 +575,10 @@ describe('dreamux onboard', () => {
             app_secret: 'secret-flow',
           },
           codex: {
-            approval_policy: null,
-            sandbox_mode: null,
+            approval_policy: 'never',
+            sandbox_mode: 'workspace-write',
             extra_args: [],
+            extra_env: {},
           },
         },
       ],

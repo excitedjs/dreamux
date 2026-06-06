@@ -13,7 +13,9 @@ import { join } from 'node:path';
 
 import {
   BUILT_IN_DEFAULTS,
+  DEFAULT_APPROVAL_POLICY,
   DEFAULT_CONFIG_JSON,
+  DEFAULT_SANDBOX_MODE,
   expandHome,
   globalConfigDir,
   globalConfigFile,
@@ -81,22 +83,16 @@ describe('global config (~/.dreamux/config.json)', () => {
     expect(createdOnThisBoot).toBe(true);
     expect(configFile).toBe(join(configDir, 'config.json'));
     expect(readFileSync(configFile, 'utf8')).toBe(DEFAULT_CONFIG_JSON);
-    expect(config.codex.approval_policy).toBe(
-      BUILT_IN_DEFAULTS.codex.approval_policy,
+    // The default config is dispatchers-only: there is no top-level codex block.
+    expect(config).toEqual({ dispatchers: [] });
+    expect(JSON.parse(readFileSync(configFile, 'utf8'))).not.toHaveProperty(
+      'codex',
     );
-    expect(config.dispatchers).toEqual([]);
   });
 
   it('second boot reads the existing JSON file and does not overwrite it', async () => {
     const file = globalConfigFile({ configDir });
     const original = stringifyConfig({
-      codex: {
-        bin: '/opt/codex',
-        approval_policy: 'auto',
-        sandbox_mode: 'workspace-write',
-        extra_args: ['--model', 'gpt-5'],
-        initialize_timeout_ms: 7500,
-      },
       dispatchers: [
         {
           id: 'flow',
@@ -107,7 +103,7 @@ describe('global config (~/.dreamux/config.json)', () => {
             app_secret: 'secret-test',
           },
           codex: {
-            approval_policy: null,
+            approval_policy: 'auto',
             sandbox_mode: 'danger-full-access',
             extra_args: ['--profile', 'flow'],
             extra_env: {},
@@ -119,8 +115,6 @@ describe('global config (~/.dreamux/config.json)', () => {
 
     const { config, createdOnThisBoot } = await loadOrInitConfig({ configDir });
     expect(createdOnThisBoot).toBe(false);
-    expect(config.codex.bin).toBe('/opt/codex');
-    expect(config.codex.extra_args).toEqual(['--model', 'gpt-5']);
     expect(config.dispatchers[0]).toMatchObject({
       id: 'flow',
       cwd: '/workspace/flow',
@@ -128,6 +122,12 @@ describe('global config (~/.dreamux/config.json)', () => {
       feishu: {
         app_id: 'app-test',
         app_secret: 'secret-test',
+      },
+      codex: {
+        approval_policy: 'auto',
+        sandbox_mode: 'danger-full-access',
+        extra_args: ['--profile', 'flow'],
+        extra_env: {},
       },
     });
     expect(readFileSync(file, 'utf8')).toBe(original);
@@ -192,19 +192,9 @@ describe('global config (~/.dreamux/config.json)', () => {
   });
 
   it('rejects invalid config values', async () => {
-    writeConfigObject({ codex: { approval_policy: 'ask-every-time' } });
-    await expect(loadOrInitConfig({ configDir })).rejects.toThrow(
-      /approval_policy='ask-every-time'/,
-    );
-
     writeConfigObject({ state_path: '/tmp/custom-state' });
     await expect(loadOrInitConfig({ configDir })).rejects.toThrow(
       /state_path is not supported/,
-    );
-
-    writeConfigObject({ codex: { initialize_timeout_ms: 0 } });
-    await expect(loadOrInitConfig({ configDir })).rejects.toThrow(
-      /initialize_timeout_ms must be > 0/,
     );
 
     writeConfigObject({
@@ -218,6 +208,90 @@ describe('global config (~/.dreamux/config.json)', () => {
     });
     await expect(loadOrInitConfig({ configDir })).rejects.toThrow(
       /enabled must be a boolean/,
+    );
+  });
+
+  it('rejects a leftover top-level codex block with migration guidance', async () => {
+    writeConfigObject({
+      codex: { approval_policy: 'never' },
+      dispatchers: [],
+    });
+    await expect(loadOrInitConfig({ configDir })).rejects.toThrow(
+      /top-level "codex" block is no longer supported/,
+    );
+    await expect(loadOrInitConfig({ configDir })).rejects.toThrow(
+      /dispatchers\[\]\.codex/,
+    );
+  });
+
+  it('rejects an invalid dispatcher-local approval_policy', async () => {
+    writeConfigObject({
+      dispatchers: [
+        {
+          id: 'flow',
+          feishu: { app_id: 'app-flow', app_secret: 'secret-flow' },
+          codex: { approval_policy: 'ask-every-time' },
+        },
+      ],
+    });
+    await expect(loadOrInitConfig({ configDir })).rejects.toThrow(
+      /codex\.approval_policy='ask-every-time'/,
+    );
+  });
+
+  it('defaults dispatcher-local codex.bin and initialize_timeout_ms', async () => {
+    writeConfigObject({
+      dispatchers: [
+        { id: 'flow', feishu: { app_id: 'app-flow', app_secret: 'secret-flow' } },
+      ],
+    });
+    const { config } = await loadConfig({ configDir });
+    expect(config.dispatchers[0]?.codex.bin).toBe('codex');
+    expect(config.dispatchers[0]?.codex.initialize_timeout_ms).toBe(10000);
+  });
+
+  it('accepts dispatcher-local codex.bin and initialize_timeout_ms overrides', async () => {
+    writeConfigObject({
+      dispatchers: [
+        {
+          id: 'flow',
+          feishu: { app_id: 'app-flow', app_secret: 'secret-flow' },
+          codex: { bin: '/opt/custom-codex', initialize_timeout_ms: 30000 },
+        },
+      ],
+    });
+    const { config } = await loadConfig({ configDir });
+    expect(config.dispatchers[0]?.codex.bin).toBe('/opt/custom-codex');
+    expect(config.dispatchers[0]?.codex.initialize_timeout_ms).toBe(30000);
+  });
+
+  it('rejects an empty dispatcher-local codex.bin', async () => {
+    writeConfigObject({
+      dispatchers: [
+        {
+          id: 'flow',
+          feishu: { app_id: 'app-flow', app_secret: 'secret-flow' },
+          codex: { bin: '   ' },
+        },
+      ],
+    });
+    await expect(loadConfig({ configDir })).rejects.toThrow(
+      /codex\.bin must be a non-empty string/,
+    );
+  });
+
+  it('rejects a non-positive dispatcher-local initialize_timeout_ms', async () => {
+    writeConfigObject({
+      dispatchers: [
+        {
+          id: 'flow',
+          feishu: { app_id: 'app-flow', app_secret: 'secret-flow' },
+          codex: { initialize_timeout_ms: 0 },
+        },
+      ],
+    });
+    await expect(loadConfig({ configDir })).rejects.toThrow(
+      /initialize_timeout_ms must be > 0/,
     );
   });
 
@@ -258,8 +332,8 @@ describe('global config (~/.dreamux/config.json)', () => {
         app_secret: 'secret-a',
       },
       codex: {
-        approval_policy: null,
-        sandbox_mode: null,
+        approval_policy: DEFAULT_APPROVAL_POLICY,
+        sandbox_mode: DEFAULT_SANDBOX_MODE,
         extra_args: ['--model', 'gpt-5'],
         extra_env: {
           EXAMPLE_FLAG: '1',
@@ -532,23 +606,43 @@ describe('sandbox_mode precedence', () => {
     resetRuntimeConfig();
   });
 
-  it('default config has sandbox_mode = workspace-write', async () => {
-    expect(BUILT_IN_DEFAULTS.codex.sandbox_mode).toBe('workspace-write');
-    const { config } = await loadOrInitConfig({ configDir });
-    expect(config.codex.sandbox_mode).toBe('workspace-write');
-  });
-
-  it('config file value is loaded and validated', async () => {
+  it('a dispatcher omitting sandbox_mode gets the workspace-write default', async () => {
+    expect(DEFAULT_SANDBOX_MODE).toBe('workspace-write');
     writeConfigObjectAt(configDir, {
-      codex: { sandbox_mode: 'danger-full-access' },
+      dispatchers: [
+        {
+          id: 'flow',
+          feishu: { app_id: 'app-flow', app_secret: 'secret-flow' },
+        },
+      ],
     });
     const { config } = await loadOrInitConfig({ configDir });
-    expect(config.codex.sandbox_mode).toBe('danger-full-access');
+    expect(config.dispatchers[0]?.codex.sandbox_mode).toBe('workspace-write');
   });
 
-  it('config rejects an invalid sandbox_mode at load time', async () => {
+  it('a dispatcher-local sandbox_mode is loaded and validated', async () => {
     writeConfigObjectAt(configDir, {
-      codex: { sandbox_mode: 'not-a-mode' },
+      dispatchers: [
+        {
+          id: 'flow',
+          feishu: { app_id: 'app-flow', app_secret: 'secret-flow' },
+          codex: { sandbox_mode: 'danger-full-access' },
+        },
+      ],
+    });
+    const { config } = await loadOrInitConfig({ configDir });
+    expect(config.dispatchers[0]?.codex.sandbox_mode).toBe('danger-full-access');
+  });
+
+  it('config rejects an invalid dispatcher-local sandbox_mode at load time', async () => {
+    writeConfigObjectAt(configDir, {
+      dispatchers: [
+        {
+          id: 'flow',
+          feishu: { app_id: 'app-flow', app_secret: 'secret-flow' },
+          codex: { sandbox_mode: 'not-a-mode' },
+        },
+      ],
     });
     await expect(loadOrInitConfig({ configDir })).rejects.toThrow(
       /sandbox_mode='not-a-mode'/,

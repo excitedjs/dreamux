@@ -23,7 +23,12 @@ import {
 } from '../onboard/service.js';
 import { TransparentFileLedger } from '../onboard/ledger.js';
 import type { CommandRunner, OnboardFileLedgerEntry } from '../onboard/types.js';
-import { globalConfigDir, loadConfig } from '../runtime/config.js';
+import {
+  DEFAULT_CODEX_BIN,
+  type DreamuxConfig,
+  globalConfigDir,
+  loadConfig,
+} from '../runtime/config.js';
 import { dreamuxBinPath } from '../runtime/package-bin.js';
 import { setRuntimeConfig } from '../runtime/paths.js';
 
@@ -44,6 +49,34 @@ export interface DaemonInstallResult {
   files: OnboardFileLedgerEntry[];
 }
 
+/**
+ * Pick the one codex binary that seeds the managed-service unit PATH. The env
+ * override wins; otherwise the enabled dispatchers' `codex.bin` values are used.
+ * The single host unit cannot encode per-dispatcher bins, so when they differ
+ * the first is used and a warning names the rest instead of silently dropping
+ * them — the server still resolves each dispatcher's own bin at runtime.
+ */
+function selectServiceCodexBin(
+  config: DreamuxConfig,
+  env: NodeJS.ProcessEnv,
+): string {
+  const override = env['CODEX_HOST_CODEX_BIN'];
+  if (override !== undefined && override.trim() !== '') return override;
+  const bins = [
+    ...new Set(config.dispatchers.filter((d) => d.enabled).map((d) => d.codex.bin)),
+  ];
+  if (bins.length === 0) return DEFAULT_CODEX_BIN;
+  if (bins.length > 1) {
+    console.warn(
+      `dreamux daemon install: enabled dispatchers declare ${bins.length} ` +
+        `different codex.bin values (${bins.join(', ')}); the single managed ` +
+        `service unit seeds its PATH from '${bins[0]}'. Set CODEX_HOST_CODEX_BIN ` +
+        `to force one binary, or ensure every codex.bin resolves on PATH.`,
+    );
+  }
+  return bins[0] ?? DEFAULT_CODEX_BIN;
+}
+
 export async function runDaemonInstall(
   options: DaemonInstallOptions = {},
 ): Promise<DaemonInstallResult> {
@@ -57,9 +90,14 @@ export async function runDaemonInstall(
   const { config } = await loadConfig({ configDir: globalConfigDir() });
   setRuntimeConfig(config);
 
+  // The single managed-service unit needs one codex binary to seed its PATH.
+  // It comes from CODEX_HOST_CODEX_BIN (host-level override) or the enabled
+  // dispatchers' codex.bin; the server still resolves each dispatcher's own bin
+  // at runtime.
+  const codexBinSource = selectServiceCodexBin(config, env);
   const codexBin = dryRun
-    ? config.codex.bin
-    : await resolveServiceExecutable(config.codex.bin, env);
+    ? codexBinSource
+    : await resolveServiceExecutable(codexBinSource, env);
   // Pin the managed service to a stable system Node (issue #83) rather than the
   // current process Node — otherwise running `daemon install` from a
   // version-manager Node would re-pin the service to that unstable Node.

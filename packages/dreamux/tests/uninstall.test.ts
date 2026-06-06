@@ -79,9 +79,10 @@ describe('dreamux uninstall', () => {
             app_secret: 'secret-test',
           },
           codex: {
-            approval_policy: null,
-            sandbox_mode: null,
+            approval_policy: 'never',
+            sandbox_mode: 'workspace-write',
             extra_args: [],
+            extra_env: {},
           },
         },
       ],

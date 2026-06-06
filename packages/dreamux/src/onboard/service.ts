@@ -188,10 +188,14 @@ WantedBy=default.target
 export function managedServiceEnvironment(
   answers: ServiceInstallAnswers,
 ): Record<string, string> {
+  // The codex binary path is dispatcher-local (dispatchers[].codex.bin), so the
+  // unit no longer pins CODEX_HOST_CODEX_BIN — that env stays a deliberate
+  // host-level override only. The unit PATH still includes the codex binary's
+  // directory (see managedServicePath) so a bare "codex" resolves under the
+  // service's minimal environment.
   const env: Record<string, string> = {
     DREAMUX_CONFIG_DIR: answers.configDir,
     HOME: homedir(),
-    CODEX_HOST_CODEX_BIN: answers.codexBin,
     DREAMUX_NODE_BIN: answers.nodeBin,
     PATH: managedServicePath(answers),
   };

@@ -488,13 +488,6 @@ describe('dreamux doctor command', () => {
     writeFileSync(
       configPath,
       JSON.stringify({
-        codex: {
-          bin: 'codex',
-          approval_policy: 'never',
-          sandbox_mode: 'workspace-write',
-          extra_args: [],
-          initialize_timeout_ms: 10000,
-        },
         dispatchers: [
           {
             id: 'flow',
@@ -505,9 +498,10 @@ describe('dreamux doctor command', () => {
               app_secret: 'secret-test',
             },
             codex: {
-              approval_policy: null,
-              sandbox_mode: null,
+              approval_policy: 'never',
+              sandbox_mode: 'workspace-write',
               extra_args: [],
+              extra_env: {},
             },
           },
         ],

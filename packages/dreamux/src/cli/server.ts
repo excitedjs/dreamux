@@ -5,12 +5,13 @@
  *   dreamux serve                  # run in foreground; logs to stderr
  *   dreamux serve --help
  *
- * Configuration sources (highest precedence first):
- *   1. CODEX_HOST_CODEX_BIN — escape hatch for CI / one-off debug runs
- *   2. per-dispatcher fields in ~/.dreamux/config.json (dispatchers[].codex)
- *   3. ~/.dreamux/config.json — user-editable global defaults and channel secrets;
- *      created by `dreamux onboard`
- *   4. built-in defaults compiled into the binary
+ * Configuration sources:
+ *   - ~/.dreamux/config.json — dispatcher declarations and channel secrets;
+ *     each dispatcher's Codex settings (including its `bin`) live under
+ *     dispatchers[].codex
+ *   - CODEX_HOST_CODEX_BIN — optional host-level override of the codex binary
+ *     for every dispatcher; most operators never set it
+ *   - built-in defaults compiled into the binary
  *
  * Per-dispatcher Feishu secrets live in the dreamux JSON config.
  */
@@ -80,17 +81,19 @@ Usage:
 Global config:
   ~/.dreamux/config.json    Created by 'dreamux onboard'. Override with the
                             DREAMUX_CONFIG_DIR env var. Edit and restart to
-                            apply. Holds defaults for codex.bin,
-                            approval_policy, dispatcher declarations,
-                            and Feishu channel secrets.
+                            apply. Holds dispatcher declarations (including each
+                            dispatcher's Codex settings under
+                            dispatchers[].codex) and Feishu channel secrets.
 
 Runtime data:
   ~/.dreamux/state/         server state, admin socket,
                             and per-dispatcher Codex sockets.
   ~/.dreamux/logs/          server, Feishu channel, and Codex app-server logs.
 
-Environment overrides (highest precedence):
-  CODEX_HOST_CODEX_BIN      Overrides config.codex.bin
+Environment overrides:
+  CODEX_HOST_CODEX_BIN      Optional host-level override of the codex binary for
+                            every dispatcher (normally unset; each dispatcher's
+                            dispatchers[].codex.bin is used, default "codex")
   DREAMUX_CONFIG_DIR        Overrides ~/.dreamux (where config.json lives)
 
 Dispatcher declarations:

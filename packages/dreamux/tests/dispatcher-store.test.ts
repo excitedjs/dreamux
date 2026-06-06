@@ -9,13 +9,6 @@ import { dispatcherStatusPath, resetRuntimeConfig } from '../src/runtime/paths.j
 
 function configWith(id = 'flow'): DreamuxConfig {
   return {
-    codex: {
-      bin: 'codex',
-      approval_policy: 'never',
-      sandbox_mode: 'workspace-write',
-      extra_args: [],
-      initialize_timeout_ms: 10_000,
-    },
     dispatchers: [
       {
         id,
@@ -23,10 +16,12 @@ function configWith(id = 'flow'): DreamuxConfig {
         enabled: true,
         feishu: { app_id: 'app-x', app_secret: 'secret' },
         codex: {
-          approval_policy: null,
-          sandbox_mode: null,
+          bin: 'codex',
+          approval_policy: 'never',
+          sandbox_mode: 'workspace-write',
           extra_args: [],
           extra_env: {},
+          initialize_timeout_ms: 10000,
         },
       },
     ],

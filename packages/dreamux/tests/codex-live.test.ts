@@ -47,7 +47,7 @@ import {
   type FeishuInboundEvent,
 } from '../src/feishu/bot.js';
 import { saveDispatcherAccess } from '../src/channel/feishu-gate.js';
-import { BUILT_IN_DEFAULTS, type DreamuxConfig } from '../src/runtime/config.js';
+import { type DreamuxConfig } from '../src/runtime/config.js';
 import type {
   ServerNotification,
   ThreadStartResponse,
@@ -190,12 +190,6 @@ function fakeInbound(
 
 function liveConfig(dispatcherCwd: string, codexHomeEnv: string): DreamuxConfig {
   return {
-    ...BUILT_IN_DEFAULTS,
-    codex: {
-      ...BUILT_IN_DEFAULTS.codex,
-      sandbox_mode: 'danger-full-access',
-      initialize_timeout_ms: 15_000,
-    },
     dispatchers: [
       {
         id: 'live',
@@ -206,12 +200,16 @@ function liveConfig(dispatcherCwd: string, codexHomeEnv: string): DreamuxConfig 
           app_secret: 'secret-server-only',
         },
         codex: {
-          approval_policy: null,
-          sandbox_mode: null,
+          bin: 'codex',
+          approval_policy: 'never',
+          sandbox_mode: 'danger-full-access',
           extra_args: [],
           extra_env: {
             HOME: codexHomeEnv,
           },
+          // A longer handshake margin for the real codex app-server, now a
+          // dispatcher-local field rather than a global default.
+          initialize_timeout_ms: 15000,
         },
       },
     ],

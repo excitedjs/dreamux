@@ -73,7 +73,10 @@ export interface DispatcherRuntimeDeps {
   codexHomeDoctor?: DispatcherCodexHomeDoctor;
   /** Codex extraArgs (parsed from dispatcher.codex_args_json). */
   resolveExtraArgs?: (row: DispatcherRow) => string[];
-  /** Codex initialize handshake timeout (ms). From ~/.dreamux/config.json. */
+  /**
+   * Codex initialize handshake timeout (ms). From this dispatcher's
+   * `dispatchers[].codex.initialize_timeout_ms` (default 10000).
+   */
   handshakeTimeoutMs?: number;
   /** Per-dispatcher environment overrides from config. */
   extraEnv?: Record<string, string>;

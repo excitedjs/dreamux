@@ -23,18 +23,6 @@ async function pathExists(path: string): Promise<boolean> {
 }
 
 export interface DreamuxConfig {
-  codex: {
-    /** codex CLI binary path; `codex` resolves via $PATH. */
-    bin: string;
-    /** Default approval policy applied to every dispatcher. */
-    approval_policy: string;
-    /** Default sandbox mode applied to every dispatcher. */
-    sandbox_mode: string;
-    /** Default extra args appended to every codex app-server invocation. */
-    extra_args: string[];
-    /** Handshake timeout (ms). */
-    initialize_timeout_ms: number;
-  };
   /** Dispatcher declarations and local channel credentials. */
   dispatchers: DispatcherConfig[];
 }
@@ -50,23 +38,51 @@ export interface DispatcherConfig {
   codex: DispatcherCodexConfig;
 }
 
+/**
+ * Per-dispatcher Codex settings — the only Codex configuration entry point.
+ * Every field carries a built-in default, so a dispatcher that omits `codex`
+ * (or any field within it) runs with these constants. There is no top-level
+ * `codex` block anymore: Codex config is dispatcher-local.
+ *
+ * `bin` is the dispatcher's Codex binary path; the `CODEX_HOST_CODEX_BIN`
+ * environment variable is a host-level override that takes precedence over it
+ * (see `Server.resolveCodexBinPath`). `initialize_timeout_ms` is that
+ * dispatcher's handshake timeout.
+ */
 export interface DispatcherCodexConfig {
-  approval_policy: string | null;
-  sandbox_mode: string | null;
+  bin: string;
+  approval_policy: string;
+  sandbox_mode: string;
   extra_args: string[];
   extra_env: Record<string, string>;
+  initialize_timeout_ms: number;
 }
 
+/**
+ * Default `dispatchers[].codex.bin`. The codex binary path is dispatcher-local;
+ * `CODEX_HOST_CODEX_BIN` is a host-level override above it, not the source.
+ */
+export const DEFAULT_CODEX_BIN = 'codex';
+
+/** Default `dispatchers[].codex.initialize_timeout_ms` (handshake timeout, ms). */
+export const DEFAULT_INITIALIZE_TIMEOUT_MS = 10_000;
+
+/** Default `dispatchers[].codex.approval_policy` when the field is omitted. */
+export const DEFAULT_APPROVAL_POLICY = 'never';
+
+/** Default `dispatchers[].codex.sandbox_mode` when the field is omitted. */
+export const DEFAULT_SANDBOX_MODE = 'workspace-write';
+
 export const BUILT_IN_DEFAULTS: DreamuxConfig = {
-  codex: {
-    bin: 'codex',
-    approval_policy: 'never',
-    sandbox_mode: 'workspace-write',
-    extra_args: [],
-    initialize_timeout_ms: 10_000,
-  },
   dispatchers: [],
 };
+
+export const ALLOWED_APPROVAL_POLICIES = new Set([
+  'never',
+  'auto',
+  'auto-approve',
+  'on-failure',
+]);
 
 export const ALLOWED_SANDBOX_MODES = new Set([
   'read-only',
@@ -208,78 +224,29 @@ function mergeWithDefaults(raw: unknown, file: string): DreamuxConfig {
   if (!isPlainObject(raw)) {
     throw new Error(`dreamux config error in ${file}: top-level must be an object`);
   }
-  rejectUnknownKeys(raw, new Set(['codex', 'dispatchers']), file, '');
-
-  const codexIn = isPlainObject(raw['codex']) ? raw['codex'] : {};
-  rejectUnknownKeys(
-    codexIn,
-    new Set([
-      'bin',
-      'approval_policy',
-      'sandbox_mode',
-      'extra_args',
-      'initialize_timeout_ms',
-    ]),
-    file,
-    'codex.',
-  );
-
-  const approval_policy = requireString(
-    codexIn,
-    'approval_policy',
-    BUILT_IN_DEFAULTS.codex.approval_policy,
-    file,
-    'codex.',
-  );
-  const ALLOWED_POLICIES = new Set([
-    'never',
-    'auto',
-    'auto-approve',
-    'on-failure',
-  ]);
-  if (!ALLOWED_POLICIES.has(approval_policy)) {
-    throw new Error(
-      `dreamux config error in ${file}: codex.approval_policy='${approval_policy}' ` +
-        `is not one of ${Array.from(ALLOWED_POLICIES).join(' | ')}`,
-    );
-  }
-
-  const sandbox_mode = requireString(
-    codexIn,
-    'sandbox_mode',
-    BUILT_IN_DEFAULTS.codex.sandbox_mode,
-    file,
-    'codex.',
-  );
-  if (!ALLOWED_SANDBOX_MODES.has(sandbox_mode)) {
-    throw new Error(
-      `dreamux config error in ${file}: codex.sandbox_mode='${sandbox_mode}' ` +
-        `is not one of ${Array.from(ALLOWED_SANDBOX_MODES).join(' | ')}`,
-    );
-  }
+  rejectTopLevelCodex(raw, file);
+  rejectUnknownKeys(raw, new Set(['dispatchers']), file, '');
 
   return {
-    codex: {
-      bin: requireString(codexIn, 'bin', BUILT_IN_DEFAULTS.codex.bin, file, 'codex.'),
-      approval_policy,
-      sandbox_mode,
-      extra_args: requireStringArray(
-        codexIn,
-        'extra_args',
-        BUILT_IN_DEFAULTS.codex.extra_args,
-        file,
-        'codex.',
-      ),
-      initialize_timeout_ms: requirePositiveInt(
-        codexIn,
-        'initialize_timeout_ms',
-        BUILT_IN_DEFAULTS.codex.initialize_timeout_ms,
-        file,
-        'codex.',
-      ),
-    },
     dispatchers: readDispatchers(raw['dispatchers'], file),
   };
+}
+
+/**
+ * The top-level `codex` block was removed: Codex settings are per-dispatcher
+ * (`dispatchers[].codex`) and the binary path comes from `CODEX_HOST_CODEX_BIN`.
+ * A leftover top-level block is rejected loudly with migration guidance rather
+ * than silently ignored, so an operator's intent is never dropped.
+ */
+function rejectTopLevelCodex(raw: Record<string, unknown>, file: string): void {
+  if (!('codex' in raw)) return;
+  throw new Error(
+    `dreamux config error in ${file}: a top-level "codex" block is no longer ` +
+      'supported. Move Codex settings under each dispatchers[].codex ' +
+      '(bin, approval_policy, sandbox_mode, extra_args, extra_env, ' +
+      'initialize_timeout_ms). For a host-level binary override across all ' +
+      'dispatchers, set the CODEX_HOST_CODEX_BIN environment variable.',
+  );
 }
 
 function readDispatchers(rawDispatchers: unknown, file: string): DispatcherConfig[] {
@@ -365,10 +332,12 @@ function readDispatcherCodex(
   const prefix = `${dispatcherPrefix}codex.`;
   if (rawCodex === undefined) {
     return {
-      approval_policy: null,
-      sandbox_mode: null,
+      bin: DEFAULT_CODEX_BIN,
+      approval_policy: DEFAULT_APPROVAL_POLICY,
+      sandbox_mode: DEFAULT_SANDBOX_MODE,
       extra_args: [],
       extra_env: {},
+      initialize_timeout_ms: DEFAULT_INITIALIZE_TIMEOUT_MS,
     };
   }
   if (!isPlainObject(rawCodex)) {
@@ -378,27 +347,55 @@ function readDispatcherCodex(
   }
   rejectUnknownKeys(
     rawCodex,
-    new Set(['approval_policy', 'sandbox_mode', 'extra_args', 'extra_env']),
+    new Set([
+      'bin',
+      'approval_policy',
+      'sandbox_mode',
+      'extra_args',
+      'extra_env',
+      'initialize_timeout_ms',
+    ]),
     file,
     prefix,
   );
-  const approvalPolicy = readOptionalString(rawCodex, 'approval_policy', file, prefix);
-  if (approvalPolicy !== null && !new Set(['never', 'auto', 'auto-approve', 'on-failure']).has(approvalPolicy)) {
+  // An omitted (or explicitly null) field falls back to the dispatcher-local
+  // default. Before the top-level block was removed, `null` meant "inherit the
+  // global default"; with no global, it simply means "use the built-in".
+  const bin = readOptionalString(rawCodex, 'bin', file, prefix) ?? DEFAULT_CODEX_BIN;
+  if (bin.trim() === '') {
     throw new Error(
-      `dreamux config error in ${file}: ${prefix}approval_policy='${approvalPolicy}' is not one of never | auto | auto-approve | on-failure`,
+      `dreamux config error in ${file}: ${prefix}bin must be a non-empty string`,
     );
   }
-  const sandboxMode = readOptionalString(rawCodex, 'sandbox_mode', file, prefix);
-  if (sandboxMode !== null && !ALLOWED_SANDBOX_MODES.has(sandboxMode)) {
+  const approvalPolicy =
+    readOptionalString(rawCodex, 'approval_policy', file, prefix) ??
+    DEFAULT_APPROVAL_POLICY;
+  if (!ALLOWED_APPROVAL_POLICIES.has(approvalPolicy)) {
+    throw new Error(
+      `dreamux config error in ${file}: ${prefix}approval_policy='${approvalPolicy}' is not one of ${Array.from(ALLOWED_APPROVAL_POLICIES).join(' | ')}`,
+    );
+  }
+  const sandboxMode =
+    readOptionalString(rawCodex, 'sandbox_mode', file, prefix) ??
+    DEFAULT_SANDBOX_MODE;
+  if (!ALLOWED_SANDBOX_MODES.has(sandboxMode)) {
     throw new Error(
       `dreamux config error in ${file}: ${prefix}sandbox_mode='${sandboxMode}' is not one of ${Array.from(ALLOWED_SANDBOX_MODES).join(' | ')}`,
     );
   }
   return {
+    bin,
     approval_policy: approvalPolicy,
     sandbox_mode: sandboxMode,
     extra_args: requireStringArray(rawCodex, 'extra_args', [], file, prefix),
     extra_env: requireStringRecord(rawCodex, 'extra_env', {}, file, prefix),
+    initialize_timeout_ms: requirePositiveInt(
+      rawCodex,
+      'initialize_timeout_ms',
+      DEFAULT_INITIALIZE_TIMEOUT_MS,
+      file,
+      prefix,
+    ),
   };
 }
 

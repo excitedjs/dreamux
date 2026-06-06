@@ -212,6 +212,7 @@ describe('daemon install (stable service Node, issue #83)', () => {
       platform: 'linux',
       homeDir: join(root, 'home'),
       nodeProbe: stableNodeProbe,
+      env: { ...process.env, CODEX_HOST_CODEX_BIN: process.execPath },
     });
 
     expect(readUnitNodeBin()).toBe('/usr/local/bin/node');
@@ -230,6 +231,7 @@ describe('daemon install (stable service Node, issue #83)', () => {
       platform: 'linux',
       homeDir: join(root, 'home'),
       nodeProbe: noSystemNodeProbe,
+      env: { ...process.env, CODEX_HOST_CODEX_BIN: process.execPath },
     });
 
     expect(readUnitNodeBin()).toBe(process.execPath);
@@ -241,22 +243,22 @@ function writeInstallConfig(configDir: string): void {
   writeFileSync(
     join(configDir, 'config.json'),
     JSON.stringify({
-      // codex.bin must resolve to a runnable absolute path for the managed
-      // service launch check; the current Node binary is a convenient one.
-      codex: {
-        bin: process.execPath,
-        approval_policy: 'never',
-        sandbox_mode: 'workspace-write',
-        extra_args: [],
-        initialize_timeout_ms: 10000,
-      },
+      // The codex binary path normally comes from each dispatchers[].codex.bin;
+      // CODEX_HOST_CODEX_BIN is only an optional host-level override. These
+      // tests set that override to process.execPath so the managed-service
+      // launch check resolves to a runnable absolute path.
       dispatchers: [
         {
           id: 'flow',
           cwd: join(dirname(configDir), 'cwd'),
           enabled: true,
           feishu: { app_id: 'app-test', app_secret: 'secret-test' },
-          codex: { approval_policy: null, sandbox_mode: null, extra_args: [] },
+          codex: {
+            approval_policy: 'never',
+            sandbox_mode: 'workspace-write',
+            extra_args: [],
+            extra_env: {},
+          },
         },
       ],
     }),

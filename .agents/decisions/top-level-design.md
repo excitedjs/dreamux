@@ -90,15 +90,32 @@ Example shape:
         "app_secret": "APP_SECRET"
       },
       "codex": {
+        "bin": "codex",
+        "approval_policy": "never",
+        "sandbox_mode": "workspace-write",
         "extra_args": [],
         "extra_env": {
           "EXAMPLE_FLAG": "1"
-        }
+        },
+        "initialize_timeout_ms": 10000
       }
     }
   ]
 }
 ```
+
+`dispatchers[].codex` is the only Codex configuration entry point — there is no
+top-level `codex` block. Every field is optional with a built-in default, so the
+whole `codex` object can be omitted:
+
+| Field | Default | Notes |
+| --- | --- | --- |
+| `bin` | `"codex"` | Codex binary path; overridden by the `CODEX_HOST_CODEX_BIN` env var |
+| `approval_policy` | `"never"` | one of `never` / `auto` / `auto-approve` / `on-failure` |
+| `sandbox_mode` | `"workspace-write"` | one of `read-only` / `workspace-write` / `danger-full-access` |
+| `extra_args` | `[]` | appended to the `codex app-server` CLI |
+| `extra_env` | `{}` | merged over the dispatcher's process env |
+| `initialize_timeout_ms` | `10000` | handshake timeout (positive integer) |
 
 `feishu.app_id` is a unique dispatcher identity. Across all declared
 dispatchers, including disabled dispatchers, an app id must map to exactly one
@@ -119,6 +136,14 @@ Rules:
   and never passed to Codex or MCP shim processes.
 - `app_secret` must be redacted from `config show`, `status`, `doctor`, and
   logs.
+- A top-level `codex` block is **not** supported: it is rejected loudly on
+  load with migration guidance. All Codex settings are per-dispatcher.
+- `codex.bin` (default `"codex"`) is that dispatcher's Codex binary path. The
+  `CODEX_HOST_CODEX_BIN` env var is an optional host-level override that wins
+  over `codex.bin` for every dispatcher; onboard does not bake it into the
+  managed-service unit (the unit `PATH` carries the codex directory instead).
+- `codex.initialize_timeout_ms` (default `10000`) is that dispatcher's
+  Codex initialize-handshake timeout.
 - `codex.extra_env` is merged over the server process environment before
   starting that dispatcher's Codex app-server.
 - `codex.extra_args` is passed to `codex app-server`.

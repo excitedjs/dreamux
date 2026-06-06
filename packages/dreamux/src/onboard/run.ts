@@ -69,9 +69,12 @@ export async function runOnboard(
   const configPath = globalConfigFile({ configDir: answers.configDir });
   const existingConfig = await readExistingDreamuxConfig(answers.configDir);
   const dreamuxConfig = dreamuxConfigFromAnswers(answers, existingConfig);
+  // answers.codexBin (onboard prompt / --codex-bin) is persisted into the new
+  // dispatcher's dispatchers[].codex.bin and used to seed the managed-service
+  // PATH so the unit can resolve codex; it is not pinned as an env override.
   const serviceCodexBin = answers.registerService && !answers.dryRun
-    ? await resolveServiceExecutable(dreamuxConfig.codex.bin, env)
-    : dreamuxConfig.codex.bin;
+    ? await resolveServiceExecutable(answers.codexBin, env)
+    : answers.codexBin;
   const serviceNodeBin = answers.registerService && !answers.dryRun
     ? await selectServiceNodeBin({
         platform: options.platform ?? process.platform,
@@ -133,7 +136,7 @@ export async function runOnboard(
     dryRun: answers.dryRun,
   });
 
-  const doctor = await runDispatcherDoctor(effectiveAnswers, dreamuxConfig, env);
+  const doctor = await runDispatcherDoctor(effectiveAnswers, env);
   if (!effectiveAnswers.dryRun && !doctor.ok) {
     throw new Error(formatDoctorFailure(effectiveAnswers, doctor));
   }
@@ -192,14 +195,12 @@ async function pathExists(path: string): Promise<boolean> {
 
 async function runDispatcherDoctor(
   answers: EffectiveOnboardAnswers,
-  dreamuxConfig: ReturnType<typeof dreamuxConfigFromAnswers>,
   env: NodeJS.ProcessEnv,
 ): Promise<DispatcherCodexHomeDoctorResult> {
-  const codexArgs = parseCodexArgs(dispatcherCodexArgsJson(), {
-    approvalPolicy: dreamuxConfig.codex.approval_policy,
-    sandboxMode: dreamuxConfig.codex.sandbox_mode,
-    extraArgs: dreamuxConfig.codex.extra_args,
-  });
+  // The onboarded dispatcher is created with default codex settings, which
+  // dispatcherCodexArgsJson() already encodes — there is no global-default
+  // layer to merge anymore.
+  const codexArgs = parseCodexArgs(dispatcherCodexArgsJson());
   const codexCliArgs = codexArgsToCli(codexArgs);
   const context = dispatcherCodexHomeDoctorContext(answers.dispatcherId, {
     codexCliArgs,

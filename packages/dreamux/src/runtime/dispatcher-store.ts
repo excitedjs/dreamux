@@ -268,18 +268,16 @@ async function rowFromConfig(
 }
 
 function dispatcherCodexArgsJson(config: DispatcherConfig): string {
-  const raw: Record<string, unknown> = {};
-  if (config.codex.approval_policy !== null) {
-    raw['approvalPolicy'] = config.codex.approval_policy;
-  }
-  if (config.codex.sandbox_mode !== null) {
-    raw['sandboxMode'] = config.codex.sandbox_mode;
-  }
+  // approval_policy / sandbox_mode always carry a dispatcher-local default, so
+  // they are always encoded. extra_env is applied to the child process
+  // environment, not encoded into CLI args.
+  const raw: Record<string, unknown> = {
+    approvalPolicy: config.codex.approval_policy,
+    sandboxMode: config.codex.sandbox_mode,
+  };
   if (config.codex.extra_args.length > 0) {
     raw['extraArgs'] = config.codex.extra_args;
   }
-  // codex.extra_env is applied to the child process environment, not encoded
-  // into CLI args.
   return JSON.stringify(raw);
 }
 
