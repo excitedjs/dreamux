@@ -57,6 +57,7 @@ import {
 import { writeRestartIntent } from '../src/daemon/restart-intent.js';
 import { dreamuxBinPath } from '../src/runtime/package-bin.js';
 import { createLogger, type DreamuxLogger } from '../src/runtime/logger.js';
+import { DREAMUX_DISPATCHER_BASE_INSTRUCTIONS } from '../src/dispatcher/base-prompt.js';
 import { startFakeCodex, type FakeCodex } from './fake-codex.js';
 import { Writable } from 'node:stream';
 
@@ -376,6 +377,50 @@ describe('dreamux MVP smoke', () => {
     expect(lstatSync(dispatcherSkillDir).isSymbolicLink()).toBe(true);
     expect(realpathSync(dispatcherSkillDir)).toBe(
       realpathSync(bundledSkillDir('dispatcher')),
+    );
+  });
+
+  it('starts fresh Codex threads with Dreamux dispatcher base instructions', async () => {
+    server = buildServer({ runtimeDir, fake, bot });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+
+    await server.start();
+
+    expect(fake.threadStartParams).toHaveLength(1);
+    expect(fake.threadStartParams[0]?.['baseInstructions']).toBe(
+      DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
+    );
+    expect(DREAMUX_DISPATCHER_BASE_INSTRUCTIONS).toContain(
+      'Feishu MCP reply tool',
+    );
+    expect(DREAMUX_DISPATCHER_BASE_INSTRUCTIONS).toContain(
+      'Delegate repository exploration',
+    );
+    expect(DREAMUX_DISPATCHER_BASE_INSTRUCTIONS).toContain(
+      'Respect explicit engine preferences',
+    );
+  });
+
+  it('resumes Codex threads with Dreamux dispatcher base instructions', async () => {
+    server = buildServer({ runtimeDir, fake, bot });
+    server.repos.dispatchers.create({
+      dispatcher_id: 'flow',
+      bot_app_id: 'app-smoke',
+      bot_secret_ref: 'env:UNUSED',
+    });
+    await server.repos.dispatchers.setThreadId('flow', 'thread_seed');
+
+    await server.start();
+
+    expect(fake.threadStartParams).toHaveLength(0);
+    expect(fake.threadResumeParams).toHaveLength(1);
+    expect(fake.threadResumeParams[0]?.['threadId']).toBe('thread_seed');
+    expect(fake.threadResumeParams[0]?.['baseInstructions']).toBe(
+      DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
     );
   });
 

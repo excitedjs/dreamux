@@ -32,7 +32,9 @@ import {
 import { CodexWsClient } from '../codex/rpc.js';
 import { performInitializeHandshake } from '../codex/handshake.js';
 import type {
+  ThreadResumeParams,
   ThreadResumeResponse,
+  ThreadStartParams,
   ThreadStartResponse,
 } from '../codex/types.js';
 import {
@@ -54,6 +56,7 @@ import {
 } from '../runtime/dispatcher-codex-home.js';
 import { dispatcherProcessEnv } from '../runtime/package-bin.js';
 import { installBundledWorkspaceSkills } from '../runtime/bundled-skills.js';
+import { DREAMUX_DISPATCHER_BASE_INSTRUCTIONS } from './base-prompt.js';
 
 const DEFAULT_RESTART_BACKOFF_BASE_MS = 1000;
 const DEFAULT_RESTART_BACKOFF_MAX_MS = 30_000;
@@ -276,9 +279,12 @@ export class DispatcherRuntime {
     const existing = this.threadId ?? this.row.thread_id;
     if (existing === null) {
       // Fresh thread.
+      const params: ThreadStartParams = {
+        baseInstructions: DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
+      };
       const res = await this.client.request<ThreadStartResponse>(
         'thread/start',
-        {},
+        params,
       );
       this.threadId = res.thread.id;
       await this.deps.dispatchers.setThreadId(this.dispatcherId, this.threadId);
@@ -286,9 +292,11 @@ export class DispatcherRuntime {
       return;
     }
     try {
-      await this.client.request<ThreadResumeResponse>('thread/resume', {
+      const params: ThreadResumeParams = {
         threadId: existing,
-      });
+        baseInstructions: DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
+      };
+      await this.client.request<ThreadResumeResponse>('thread/resume', params);
       this.threadId = existing;
       this.threadResumed = true;
       this.log('info', `resumed thread ${this.threadId}`);
@@ -301,7 +309,7 @@ export class DispatcherRuntime {
       );
       const res = await this.client.request<ThreadStartResponse>(
         'thread/start',
-        {},
+        { baseInstructions: DREAMUX_DISPATCHER_BASE_INSTRUCTIONS },
       );
       this.threadId = res.thread.id;
       await this.deps.dispatchers.recordLostThread(

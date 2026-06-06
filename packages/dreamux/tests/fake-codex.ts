@@ -56,6 +56,10 @@ export interface FakeCodex {
   readonly initializedAt: number | null;
   /** Method names received in order — useful for asserting handshake order. */
   readonly methodLog: ReadonlyArray<string>;
+  /** thread/start params received in order. */
+  readonly threadStartParams: ReadonlyArray<Readonly<Record<string, unknown>>>;
+  /** thread/resume params received in order. */
+  readonly threadResumeParams: ReadonlyArray<Readonly<Record<string, unknown>>>;
   close(): Promise<void>;
 }
 
@@ -69,6 +73,8 @@ export async function startFakeCodex(opts: FakeCodexOptions = {}): Promise<FakeC
   let nextSrvReqId = 100;
   let initializedAt: number | null = null;
   const methodLog: string[] = [];
+  const threadStartParams: Array<Record<string, unknown>> = [];
+  const threadResumeParams: Array<Record<string, unknown>> = [];
   const enforceInit = opts.enforceInitHandshake !== false;
   const clients = new Set<WebSocket>();
   let activeTurn: {
@@ -136,11 +142,13 @@ export async function startFakeCodex(opts: FakeCodexOptions = {}): Promise<FakeC
       return;
     }
     if (method === 'thread/start') {
+      threadStartParams.push({ ...params });
       const tid = `thread_fake_${nextThreadId++}`;
       send(ws, { id, result: { thread: { id: tid } } });
       return;
     }
     if (method === 'thread/resume') {
+      threadResumeParams.push({ ...params });
       if (opts.failResume === true) {
         send(ws, {
           id,
@@ -238,6 +246,12 @@ export async function startFakeCodex(opts: FakeCodexOptions = {}): Promise<FakeC
     },
     get methodLog() {
       return methodLog;
+    },
+    get threadStartParams() {
+      return threadStartParams;
+    },
+    get threadResumeParams() {
+      return threadResumeParams;
     },
     async close(): Promise<void> {
       for (const ws of clients) ws.terminate();

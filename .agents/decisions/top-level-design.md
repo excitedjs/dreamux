@@ -259,6 +259,35 @@ restart. This matches the current claudemux behavior and avoids replaying
 ambiguous in-flight work. Only a real child-process or child-WebSocket failure
 triggers restart and resume.
 
+## Codex Prompt Contract
+
+Dreamux dispatcher threads do not rely on `AGENTS.md` alone for dispatcher
+identity. The server passes the Dreamux dispatcher base instructions as
+Codex app-server `baseInstructions` on `thread/start` and `thread/resume`
+from `/packages/dreamux/src/dispatcher/runtime.ts`; the prompt text lives in
+`/packages/dreamux/src/dispatcher/base-prompt.ts`.
+
+The prompt is the dispatcher role contract:
+
+- acknowledge accepted Feishu-originated work visibly when the work is not
+  trivial;
+- delegate repository exploration, edits, tests, reviews, and PR preparation
+  through `tm` instead of doing target-repo work directly in the dispatcher
+  thread;
+- use the dispatcher-scoped Feishu MCP reply path for user-visible Feishu
+  output because assistant text is not auto-forwarded;
+- keep owner/group trust boundaries explicit and avoid changing credentials,
+  persistent memory, global auth state, access policy, or service config from
+  non-owner or ambiguous group requests;
+- strip secrets, private identifiers, internal hostnames, private registry
+  URLs, and machine-local absolute paths from public artifacts.
+
+Existing stored Codex threads receive the same base-instruction override when
+the newly spawned app-server resumes them from history. A thread that is already
+running inside the app-server may ignore runtime prompt overrides according to
+Codex app-server semantics, so behavior that requires a prompt change should be
+validated on a fresh or resumed dispatcher thread.
+
 Inbound messages are not persisted. A server restart drops queued and in-flight
 inbound work.
 
