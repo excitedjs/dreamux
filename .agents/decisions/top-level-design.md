@@ -1,6 +1,9 @@
 # Top-level design
 
-- **Status:** Accepted
+- **Status:** Accepted for the current runtime; partially superseded for issue
+  #110 by [channel-provider](channel-provider.md),
+  [agent-runtime-provider](agent-runtime-provider.md), and
+  [server-hosted-teammate](server-hosted-teammate.md)
 - **Date:** 2026-06-03
 - **Affects:** server runtime, dispatcher lifecycle, Feishu channel, Codex MCP, admin/outbound IPC, global config, state files, logs, CLI admin surface, workspace-local bundled skill ownership
 - **PR / Issue:** Local architecture clarification on 2026-06-03; supersedes the persistence and automatic-outbound parts of issue #2, the runtime-dir parts of `global-config-dir`, and loopback HTTP MCP as the default Feishu MCP transport
@@ -21,6 +24,32 @@ loopback HTTP MCP listener. Those pieces hide the product boundary and create
 wrong security defaults.
 
 This decision locks the MVP boundary.
+
+## Issue #110 Supersession
+
+This record remains the source of truth for the current implemented runtime
+until the issue #110 PRs replace it. It is not the target architecture for the
+plugin/provider Epic.
+
+Issue #110 supersedes these MVP assumptions:
+
+- one dispatcher structurally owns exactly one Feishu channel;
+- every dispatcher runtime is Codex;
+- the injected MCP surface is always a hard-coded Feishu MCP shim;
+- Dreamux never owns server-side TeamMate task state.
+
+The replacement decisions are:
+
+- [channel-provider](channel-provider.md) for channel lifecycle, channel-owned
+  MCP, and provider-owned reply/access semantics;
+- [agent-runtime-provider](agent-runtime-provider.md) for Codex and Claude Code
+  runtime providers;
+- [provider-references-and-capability-registry](provider-references-and-capability-registry.md)
+  for provider refs and process-local capability discovery;
+- [server-hosted-teammate](server-hosted-teammate.md) for Dispatcher
+  Service-owned TeamMate scheduling and state;
+- [providerized-config-state-compatibility](providerized-config-state-compatibility.md)
+  for config v2 and issue #98 compatibility behavior.
 
 ## Architecture
 

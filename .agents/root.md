@@ -15,6 +15,9 @@ architecture is:
 
 - [Top-level design](decisions/top-level-design.md) — current source of truth
   for runtime state, Feishu MCP, access gating, and config shape.
+- [Plugin and provider architecture](proposals/plugin-provider-architecture.md)
+  — issue #110 target architecture for provider refs, Capability Registry,
+  Channel providers, Agent Runtime providers, and server-hosted TeamMate.
 
 Background and older issue context:
 
@@ -68,6 +71,10 @@ Background and older issue context:
   reconciliation, access surface, message-format, CLI/diagnostic robustness);
   groups the deferred epic follow-ups + the #58 ultracode findings into the next
   workstream.
+- [`proposals/plugin-provider-architecture.md`](proposals/plugin-provider-architecture.md)
+  — issue #110 proposal for plugin/provider architecture. Its settled boundary
+  is recorded in the provider, channel, runtime, TeamMate, and compatibility
+  decisions.
 - [`proposals/feishu-bot-trust-context.md`](proposals/feishu-bot-trust-context.md)
   — issue #69 follow-up to #62: trusted-bot next-message context, a
   `list_chat_bots` query tool, and add-then-cancel reaction ordering
@@ -103,6 +110,7 @@ Background and older issue context:
 | rename or restructure the public CLI / package | [`decisions/cli-and-package-naming.md`](decisions/cli-and-package-naming.md) |
 | implement issue #18 global bin / onboard / serve | [`proposals/global-bin-onboard-serve.md`](proposals/global-bin-onboard-serve.md) + [`decisions/global-bin-onboard-serve.md`](decisions/global-bin-onboard-serve.md) |
 | add / change a config key (`~/.dreamux/config.json`) | [`decisions/top-level-design.md`](decisions/top-level-design.md) first, then historical context in [`decisions/global-config-dir.md`](decisions/global-config-dir.md) |
+| change provider refs, Channel providers, Agent Runtime providers, or server-hosted TeamMate | [`proposals/plugin-provider-architecture.md`](proposals/plugin-provider-architecture.md) + [`decisions/provider-references-and-capability-registry.md`](decisions/provider-references-and-capability-registry.md) |
 | touch the anti-leak guardrail (`.gitleaks.toml`, `.npmrc`, CI / hook) | [`decisions/anti-leak-guardrail.md`](decisions/anti-leak-guardrail.md) |
 | touch npm publishing / the release workflows | [`decisions/npm-release-oidc.md`](decisions/npm-release-oidc.md) |
 | change dispatcher inbound delivery, turn submission, or received-reaction timing | [`domains/non-blocking-dispatcher-inbound.md`](domains/non-blocking-dispatcher-inbound.md) + [`decisions/top-level-design.md`](decisions/top-level-design.md) + read the source |
