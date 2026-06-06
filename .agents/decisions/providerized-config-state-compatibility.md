@@ -1,0 +1,86 @@
+# Providerized config and state compatibility
+
+- **Status:** Accepted
+- **Date:** 2026-06-06
+- **Affects:** `~/.dreamux/config.json`, dispatcher state files, provider config,
+  TeamMate ledger, compatibility errors
+- **PR / Issue:** [issue #110](https://github.com/excitedjs/dreamux/issues/110),
+  following [issue #98](https://github.com/excitedjs/dreamux/issues/98)
+
+## Context
+
+The current config shape is Feishu and Codex specific. It has dispatcher-local
+Feishu credentials and dispatcher-local Codex settings. Issue #110 replaces
+those special cases with providerized channels and runtime declarations.
+
+Issue #98 settled the 0.x compatibility stance: Dreamux does not silently infer
+or rewrite incompatible config/state. Sensitive state fails loudly; rebuildable
+server state may warn and rebuild/drop only when that loss is explicit and safe.
+
+## Decision
+
+Introduce a providerized config v2 shape. The durable envelope is:
+
+```json
+{
+  "dispatchers": [
+    {
+      "id": "dispatcher-a",
+      "cwd": "/path/to/workspace",
+      "enabled": true,
+      "channels": [
+        {
+          "id": "primary",
+          "provider": "builtin:feishu",
+          "config": {}
+        }
+      ],
+      "runtime": {
+        "provider": "builtin:codex",
+        "config": {}
+      }
+    }
+  ]
+}
+```
+
+Common fields are owned by Dreamux core. Provider-local `config` objects are
+owned and validated by provider descriptors.
+
+Confirmed Phase 1 provider loading rules:
+
+- `builtin:feishu`, `builtin:codex`, and `builtin:claude-code` are runnable
+  builtin providers.
+- Npm package and package export refs are reserved schema/manifest syntax.
+- Npm refs are not loaded, imported, installed, or executed in Phase 1.
+
+Incompatible old config shapes must fail loudly with rebuild guidance. Dreamux
+must not silently rewrite an operator's config into v2.
+
+State compatibility follows issue #98:
+
+- authorization or access-control state fails loudly when incompatible;
+- rebuildable runtime state may warn and rebuild/drop;
+- TeamMate ledger state is server-owned, versioned, and must not silently lose
+  completed final outputs;
+- failed push delivery does not delete a result that can be retrieved later.
+
+## Consequences
+
+- `dispatchers[].feishu` and `dispatchers[].codex` stop being the target
+  architecture, even if transitional implementation code reads them before the
+  config v2 PR lands.
+- Provider config validation needs two layers: core envelope validation and
+  provider-local validation.
+- Error messages must be explicit about rebuild/migration expectations.
+- Config display, status, doctor, and logs must continue to redact provider
+  secrets.
+
+## Alternatives considered
+
+- **Silently migrate the current config shape:** rejected by issue #98.
+- **Keep Feishu/Codex config keys and add providers beside them:** rejected
+  because it preserves the special-case architecture.
+- **Allow npm provider execution as soon as refs parse:** rejected for Phase 1.
+  External provider loading requires a separate package trust and dependency
+  resolution decision.
