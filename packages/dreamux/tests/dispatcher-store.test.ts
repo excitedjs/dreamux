@@ -6,24 +6,15 @@ import { dirname, join } from 'node:path';
 import type { DreamuxConfig } from '../src/runtime/config.js';
 import { DispatcherStore } from '../src/runtime/dispatcher-store.js';
 import { dispatcherStatusPath, resetRuntimeConfig } from '../src/runtime/paths.js';
+import { testDispatcherConfig } from './helpers/config.js';
 
 function configWith(id = 'flow'): DreamuxConfig {
   return {
     dispatchers: [
-      {
+      testDispatcherConfig({
         id,
-        cwd: null,
-        enabled: true,
         feishu: { app_id: 'app-x', app_secret: 'secret' },
-        codex: {
-          bin: 'codex',
-          approval_policy: 'never',
-          sandbox_mode: 'workspace-write',
-          extra_args: [],
-          extra_env: {},
-          initialize_timeout_ms: 10000,
-        },
-      },
+      }),
     ],
   };
 }

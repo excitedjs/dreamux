@@ -1,7 +1,12 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
-import type { DispatcherConfig, DreamuxConfig } from './config.js';
+import {
+  dispatcherCodexConfig,
+  dispatcherFeishuConfig,
+  type DispatcherConfig,
+  type DreamuxConfig,
+} from './config.js';
 import { dispatcherStatusPath } from './paths.js';
 
 /**
@@ -230,9 +235,10 @@ export class DispatcherStore {
 
 /** Config-only row (no persisted status); used before `hydrate()` runs. */
 function rowDefaults(config: DispatcherConfig, now: number): DispatcherRow {
+  const feishu = dispatcherFeishuConfig(config);
   return {
     dispatcher_id: config.id,
-    bot_app_id: config.feishu.app_id,
+    bot_app_id: feishu.app_id,
     bot_secret_ref: `config:${config.id}`,
     codex_args_json: dispatcherCodexArgsJson(config),
     codex_cwd: config.cwd,
@@ -268,15 +274,16 @@ async function rowFromConfig(
 }
 
 function dispatcherCodexArgsJson(config: DispatcherConfig): string {
+  const codex = dispatcherCodexConfig(config);
   // approval_policy / sandbox_mode always carry a dispatcher-local default, so
   // they are always encoded. extra_env is applied to the child process
   // environment, not encoded into CLI args.
   const raw: Record<string, unknown> = {
-    approvalPolicy: config.codex.approval_policy,
-    sandboxMode: config.codex.sandbox_mode,
+    approvalPolicy: codex.approval_policy,
+    sandboxMode: codex.sandbox_mode,
   };
-  if (config.codex.extra_args.length > 0) {
-    raw['extraArgs'] = config.codex.extra_args;
+  if (codex.extra_args.length > 0) {
+    raw['extraArgs'] = codex.extra_args;
   }
   return JSON.stringify(raw);
 }

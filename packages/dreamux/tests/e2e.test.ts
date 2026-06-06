@@ -36,6 +36,7 @@ import {
   dispatcherCodexHome,
 } from '../src/runtime/paths.js';
 import { startFakeCodex, type FakeCodex } from './fake-codex.js';
+import { testDispatcherConfig } from './helpers/config.js';
 
 class NoopCodexProcess extends CodexProcess {
   constructor(opts: CodexProcessOptions) {
@@ -92,7 +93,7 @@ function configWithDispatcher(): DreamuxConfig {
   return {
     ...BUILT_IN_DEFAULTS,
     dispatchers: [
-      {
+      testDispatcherConfig({
         id: 'flow',
         cwd: null,
         enabled: true,
@@ -108,7 +109,7 @@ function configWithDispatcher(): DreamuxConfig {
           extra_env: {},
           initialize_timeout_ms: 10000,
         },
-      },
+      }),
     ],
   };
 }

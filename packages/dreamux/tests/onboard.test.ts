@@ -28,6 +28,7 @@ import {
   logsRoot,
   resetRuntimeConfig,
 } from '../src/runtime/paths.js';
+import { testDispatcherConfig } from './helpers/config.js';
 
 class FakeRunner implements CommandRunner {
   launchdLoaded = false;
@@ -184,17 +185,26 @@ describe('dreamux onboard', () => {
       id: 'flow',
       cwd: join(root, 'dispatcher-cwd'),
       enabled: true,
-      feishu: {
-        app_id: 'app-test',
-        app_secret: 'secret-test',
-      },
-      codex: {
-        bin: process.execPath,
-        approval_policy: 'never',
-        sandbox_mode: 'workspace-write',
-        extra_args: [],
-        extra_env: {},
-        initialize_timeout_ms: 10000,
+      channels: [
+        {
+          id: 'primary',
+          provider: 'builtin:feishu',
+          config: {
+            app_id: 'app-test',
+            app_secret: 'secret-test',
+          },
+        },
+      ],
+      runtime: {
+        provider: 'builtin:codex',
+        config: {
+          bin: process.execPath,
+          approval_policy: 'never',
+          sandbox_mode: 'workspace-write',
+          extra_args: [],
+          extra_env: {},
+          initialize_timeout_ms: 10000,
+        },
       },
     }]);
     expect(dreamuxConfig).not.toHaveProperty('feishu');
@@ -230,8 +240,9 @@ describe('dreamux onboard', () => {
       'utf8',
     );
     expect(serviceUnit).toContain(`Environment=DREAMUX_NODE_BIN=${process.execPath}`);
-    // The unit no longer pins CODEX_HOST_CODEX_BIN; the dispatcher's codex.bin
-    // resolves off the unit PATH instead (which includes the codex dir below).
+    // The unit no longer pins CODEX_HOST_CODEX_BIN; the dispatcher's
+    // runtime.config.bin resolves off the unit PATH instead (which includes the
+    // codex dir below).
     expect(serviceUnit).not.toContain('CODEX_HOST_CODEX_BIN');
     expect(serviceUnit).toContain(`Environment=HOME=${join(root, 'home')}`);
     expect(serviceUnit).toContain(`Environment=PATH=${dirname(process.execPath)}`);
@@ -459,7 +470,8 @@ describe('dreamux onboard', () => {
       DREAMUX_NODE_BIN: process.execPath,
       HOME: join(root, 'home'),
     });
-    // The unit no longer pins CODEX_HOST_CODEX_BIN; codex.bin resolves off PATH.
+    // The unit no longer pins CODEX_HOST_CODEX_BIN; runtime.config.bin resolves
+    // off PATH.
     expect(launchdPlist['EnvironmentVariables']).not.toHaveProperty(
       'CODEX_HOST_CODEX_BIN',
     );
@@ -476,7 +488,7 @@ describe('dreamux onboard', () => {
       join(configDir, 'config.json'),
       JSON.stringify({
         dispatchers: [
-          {
+          testDispatcherConfig({
             id: 'flow',
             cwd: join(root, 'flow-cwd'),
             enabled: true,
@@ -492,7 +504,7 @@ describe('dreamux onboard', () => {
               extra_env: {},
               initialize_timeout_ms: 25000,
             },
-          },
+          }),
         ],
       }),
       { mode: 0o600 },
@@ -528,34 +540,52 @@ describe('dreamux onboard', () => {
         id: 'flow',
         cwd: join(root, 'flow-cwd'),
         enabled: true,
-        feishu: {
-          app_id: 'app-flow',
-          app_secret: 'secret-flow',
-        },
-        codex: {
-          bin: '/custom/codex-flow',
-          approval_policy: 'on-failure',
-          sandbox_mode: 'danger-full-access',
-          extra_args: ['--model', 'local-default'],
-          extra_env: {},
-          initialize_timeout_ms: 25000,
+        channels: [
+          {
+            id: 'primary',
+            provider: 'builtin:feishu',
+            config: {
+              app_id: 'app-flow',
+              app_secret: 'secret-flow',
+            },
+          },
+        ],
+        runtime: {
+          provider: 'builtin:codex',
+          config: {
+            bin: '/custom/codex-flow',
+            approval_policy: 'on-failure',
+            sandbox_mode: 'danger-full-access',
+            extra_args: ['--model', 'local-default'],
+            extra_env: {},
+            initialize_timeout_ms: 25000,
+          },
         },
       },
       {
         id: 'docs',
         cwd: join(root, 'docs-cwd'),
         enabled: true,
-        feishu: {
-          app_id: 'app-docs',
-          app_secret: 'secret-docs',
-        },
-        codex: {
-          bin: process.execPath,
-          approval_policy: 'never',
-          sandbox_mode: 'workspace-write',
-          extra_args: [],
-          extra_env: {},
-          initialize_timeout_ms: 10000,
+        channels: [
+          {
+            id: 'primary',
+            provider: 'builtin:feishu',
+            config: {
+              app_id: 'app-docs',
+              app_secret: 'secret-docs',
+            },
+          },
+        ],
+        runtime: {
+          provider: 'builtin:codex',
+          config: {
+            bin: process.execPath,
+            approval_policy: 'never',
+            sandbox_mode: 'workspace-write',
+            extra_args: [],
+            extra_env: {},
+            initialize_timeout_ms: 10000,
+          },
         },
       },
     ]);
@@ -566,7 +596,7 @@ describe('dreamux onboard', () => {
     const configDir = join(root, 'config');
     const existingConfig = JSON.stringify({
       dispatchers: [
-        {
+        testDispatcherConfig({
           id: 'flow',
           cwd: join(root, 'flow-cwd'),
           enabled: false,
@@ -580,7 +610,7 @@ describe('dreamux onboard', () => {
             extra_args: [],
             extra_env: {},
           },
-        },
+        }),
       ],
     });
     mkdirSync(configDir, { recursive: true });

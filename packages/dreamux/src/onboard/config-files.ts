@@ -1,9 +1,13 @@
 import type { DreamuxConfig } from '../runtime/config.js';
 import {
+  BUILTIN_CODEX_PROVIDER_REF,
+  BUILTIN_FEISHU_PROVIDER_REF,
   DEFAULT_APPROVAL_POLICY,
   DEFAULT_INITIALIZE_TIMEOUT_MS,
   DEFAULT_SANDBOX_MODE,
+  dispatcherFeishuConfig,
   type DispatcherConfig,
+  type DispatcherProviderConfig,
   stringifyConfig,
 } from '../runtime/config.js';
 import { validateDispatcherId } from '../runtime/dispatcher-id.js';
@@ -43,13 +47,14 @@ export function dispatcherCodexArgsJson(): string {
 function assertUniqueFeishuAppIds(config: DreamuxConfig): void {
   const seen = new Map<string, string>();
   for (const dispatcher of config.dispatchers) {
-    const existing = seen.get(dispatcher.feishu.app_id);
+    const feishu = dispatcherFeishuConfig(dispatcher);
+    const existing = seen.get(feishu.app_id);
     if (existing !== undefined && existing !== dispatcher.id) {
       throw new Error(
         `Feishu app_id for dispatcher '${dispatcher.id}' duplicates dispatcher '${existing}'`,
       );
     }
-    seen.set(dispatcher.feishu.app_id, dispatcher.id);
+    seen.set(feishu.app_id, dispatcher.id);
   }
 }
 
@@ -58,17 +63,26 @@ function dispatcherConfigFromAnswers(answers: OnboardAnswers): DispatcherConfig 
     id: answers.dispatcherId,
     cwd: answers.dispatcherCwd,
     enabled: true,
-    feishu: {
-      app_id: answers.botAppId,
-      app_secret: answers.botAppSecret,
-    },
-    codex: {
-      bin: answers.codexBin,
-      approval_policy: DEFAULT_APPROVAL_POLICY,
-      sandbox_mode: DEFAULT_SANDBOX_MODE,
-      extra_args: [],
-      extra_env: {},
-      initialize_timeout_ms: DEFAULT_INITIALIZE_TIMEOUT_MS,
+    channels: [
+      {
+        id: 'primary',
+        provider: BUILTIN_FEISHU_PROVIDER_REF,
+        config: {
+          app_id: answers.botAppId,
+          app_secret: answers.botAppSecret,
+        },
+      },
+    ],
+    runtime: {
+      provider: BUILTIN_CODEX_PROVIDER_REF,
+      config: {
+        bin: answers.codexBin,
+        approval_policy: DEFAULT_APPROVAL_POLICY,
+        sandbox_mode: DEFAULT_SANDBOX_MODE,
+        extra_args: [],
+        extra_env: {},
+        initialize_timeout_ms: DEFAULT_INITIALIZE_TIMEOUT_MS,
+      },
     },
   };
 }
@@ -78,14 +92,18 @@ function cloneDispatcherConfig(dispatcher: DispatcherConfig): DispatcherConfig {
     id: dispatcher.id,
     cwd: dispatcher.cwd,
     enabled: dispatcher.enabled,
-    feishu: { ...dispatcher.feishu },
-    codex: {
-      bin: dispatcher.codex.bin,
-      approval_policy: dispatcher.codex.approval_policy,
-      sandbox_mode: dispatcher.codex.sandbox_mode,
-      extra_args: [...dispatcher.codex.extra_args],
-      extra_env: { ...dispatcher.codex.extra_env },
-      initialize_timeout_ms: dispatcher.codex.initialize_timeout_ms,
+    channels: dispatcher.channels.map((channel) => ({
+      id: channel.id,
+      provider: channel.provider,
+      config: cloneProviderConfig(channel.config),
+    })),
+    runtime: {
+      provider: dispatcher.runtime.provider,
+      config: cloneProviderConfig(dispatcher.runtime.config),
     },
   };
+}
+
+function cloneProviderConfig(config: unknown): DispatcherProviderConfig {
+  return structuredClone(config) as DispatcherProviderConfig;
 }

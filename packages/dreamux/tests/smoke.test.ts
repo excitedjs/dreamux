@@ -59,6 +59,7 @@ import { dreamuxBinPath } from '../src/runtime/package-bin.js';
 import { createLogger, type DreamuxLogger } from '../src/runtime/logger.js';
 import { DREAMUX_DISPATCHER_BASE_INSTRUCTIONS } from '../src/dispatcher/base-prompt.js';
 import { startFakeCodex, type FakeCodex } from './fake-codex.js';
+import { testDispatcherConfig } from './helpers/config.js';
 import { Writable } from 'node:stream';
 
 /** Collect every JSON log line written to an injected logger destination. */
@@ -239,13 +240,19 @@ function writeReadyDispatcherCodexHome(dispatcherId: string, dispatcherCwd?: str
   mkdirSync(dispatcherCwd ?? dispatcherCodexCwd(dispatcherId), { recursive: true });
 }
 
-function configWithDispatcher(
-  overrides: Partial<DreamuxConfig['dispatchers'][number]> = {},
-): DreamuxConfig {
+interface ConfigDispatcherOverrides {
+  id?: string;
+  cwd?: string | null;
+  enabled?: boolean;
+  feishu?: Record<string, unknown>;
+  codex?: Record<string, unknown>;
+}
+
+function configWithDispatcher(overrides: ConfigDispatcherOverrides = {}): DreamuxConfig {
   return {
     ...BUILT_IN_DEFAULTS,
     dispatchers: [
-      {
+      testDispatcherConfig({
         id: overrides.id ?? 'flow',
         cwd: overrides.cwd ?? null,
         enabled: overrides.enabled ?? true,
@@ -261,7 +268,7 @@ function configWithDispatcher(
           extra_env: {},
           initialize_timeout_ms: 10000,
         },
-      },
+      }),
     ],
   };
 }
@@ -567,8 +574,9 @@ describe('dreamux MVP smoke', () => {
 
   it('injects dispatcher-scoped Feishu MCP config after operator Codex args', async () => {
     const capturedCodexOptions: CodexProcessOptions[] = [];
-    // Operator codex args are now a per-dispatcher setting (dispatchers[].codex
-    // .extra_args); there is no top-level codex block to carry them.
+    // Operator codex args are now a per-dispatcher runtime setting
+    // (dispatchers[].runtime.config.extra_args); there is no top-level codex
+    // block to carry them.
     server = buildServer({
       runtimeDir,
       fake,
@@ -600,7 +608,7 @@ describe('dreamux MVP smoke', () => {
     );
   });
 
-  it('launches a dispatcher with its own dispatchers[].codex.bin', async () => {
+  it('launches a dispatcher with its own runtime.config.bin', async () => {
     const previousEnvBin = process.env['CODEX_HOST_CODEX_BIN'];
     delete process.env['CODEX_HOST_CODEX_BIN'];
     try {
@@ -631,7 +639,7 @@ describe('dreamux MVP smoke', () => {
     }
   });
 
-  it('CODEX_HOST_CODEX_BIN overrides a dispatcher codex.bin at launch', async () => {
+  it('CODEX_HOST_CODEX_BIN overrides dispatcher runtime.config.bin at launch', async () => {
     const previousEnvBin = process.env['CODEX_HOST_CODEX_BIN'];
     process.env['CODEX_HOST_CODEX_BIN'] = '/host/override-codex';
     try {

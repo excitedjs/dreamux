@@ -17,6 +17,7 @@ import { codexArgsToCli, parseCodexArgs } from '../runtime/codex-args.js';
 import {
   BUILT_IN_DEFAULTS,
   DEFAULT_CODEX_BIN,
+  dispatcherCodexConfig,
   type DispatcherConfig,
   globalConfigDir,
   globalConfigFile,
@@ -110,13 +111,16 @@ export async function runDreamuxDoctor(
     detail: stateRoot(),
   });
 
-  // The codex binary is per-dispatcher (dispatchers[].codex.bin), overridable
-  // by CODEX_HOST_CODEX_BIN. Sanity-check each distinct resolved bin; with no
-  // dispatchers, fall back to the default so a bare install still reports.
+  // The Codex binary is per-dispatcher
+  // (dispatchers[].runtime.config.bin), overridable by CODEX_HOST_CODEX_BIN.
+  // Sanity-check each distinct resolved bin; with no dispatchers, fall back to
+  // the default so a bare install still reports.
   const doctorEnv = options.env ?? process.env;
   const codexBins = [
     ...new Set(
-      config.dispatchers.map((d) => resolveCodexBin(d.codex.bin, doctorEnv)),
+      config.dispatchers.map((d) =>
+        resolveCodexBin(dispatcherCodexConfig(d).bin, doctorEnv),
+      ),
     ),
   ];
   if (codexBins.length === 0) codexBins.push(resolveCodexBin(DEFAULT_CODEX_BIN, doctorEnv));
@@ -260,12 +264,13 @@ async function readDispatchers(
 }
 
 function dispatcherCodexArgsJson(dispatcher: DispatcherConfig): string {
+  const codex = dispatcherCodexConfig(dispatcher);
   // approval_policy / sandbox_mode always carry a dispatcher-local default.
   return JSON.stringify({
-    approvalPolicy: dispatcher.codex.approval_policy,
-    sandboxMode: dispatcher.codex.sandbox_mode,
-    ...(dispatcher.codex.extra_args.length > 0
-      ? { extraArgs: dispatcher.codex.extra_args }
+    approvalPolicy: codex.approval_policy,
+    sandboxMode: codex.sandbox_mode,
+    ...(codex.extra_args.length > 0
+      ? { extraArgs: codex.extra_args }
       : {}),
   });
 }
@@ -442,11 +447,16 @@ async function addManagedServiceLaunchChecks(
     ),
   );
 
-  // Each dispatcher's codex.bin (with the host-level env override applied) must
-  // launch under the unit's PATH. CODEX_HOST_CODEX_BIN in the unit env, when
-  // present, overrides every bin — preserving older units that still pin it.
+  // Each dispatcher's runtime.config.bin (with the host-level env override
+  // applied) must launch under the unit's PATH. CODEX_HOST_CODEX_BIN in the
+  // unit env, when present, overrides every bin — preserving older units that
+  // still pin it.
   const codexBins = [
-    ...new Set(dispatchers.map((d) => resolveCodexBin(d.codex.bin, serviceEnv))),
+    ...new Set(
+      dispatchers.map((d) =>
+        resolveCodexBin(dispatcherCodexConfig(d).bin, serviceEnv),
+      ),
+    ),
   ];
   if (codexBins.length === 0) codexBins.push(resolveCodexBin(DEFAULT_CODEX_BIN, serviceEnv));
   for (const bin of codexBins) {
@@ -457,7 +467,7 @@ async function addManagedServiceLaunchChecks(
         ['--help'],
         serviceEnv,
         runner,
-        'codex binary is not set; check dispatchers[].codex.bin',
+        'codex binary is not set; check dispatchers[].runtime.config.bin',
       ),
     );
   }
@@ -465,7 +475,8 @@ async function addManagedServiceLaunchChecks(
 
 /**
  * Codex binary for one dispatcher: the `CODEX_HOST_CODEX_BIN` env override (a
- * deliberate host-level setting) wins; otherwise the dispatcher's `codex.bin`.
+ * deliberate host-level setting) wins; otherwise the dispatcher's
+ * `runtime.config.bin`.
  * Mirrors `Server.resolveCodexBinPath` so doctor checks what serve will run.
  */
 function resolveCodexBin(dispatcherBin: string, env: NodeJS.ProcessEnv): string {

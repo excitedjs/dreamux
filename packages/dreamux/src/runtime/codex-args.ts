@@ -5,15 +5,16 @@
  *
  * Canonical shape:
  *   {
- *     "approvalPolicy": "never",            // from dispatchers[].codex
- *     "sandboxMode":    "workspace-write",  // from dispatchers[].codex
- *     "extraArgs":      ["--model", "..."]  // from dispatchers[].codex.extra_args
+ *     "approvalPolicy": "never",            // from dispatchers[].runtime.config
+ *     "sandboxMode":    "workspace-write",  // from dispatchers[].runtime.config
+ *     "extraArgs":      ["--model", "..."]  // from runtime.config.extra_args
  *   }
  *
- * This JSON is encoded per dispatcher from `dispatchers[].codex` (every field
- * carries a dispatcher-local default), so it is the sole source of truth. The
- * optional `defaults` param remains a thin seam; with the top-level `codex`
- * block removed there is no global layer, and a caller normally passes nothing.
+ * This JSON is encoded per dispatcher from
+ * `dispatchers[].runtime.config` (every field carries a dispatcher-local
+ * default), so it is the sole source of truth. The optional `defaults` param
+ * remains a thin seam; with the top-level `codex` block removed there is no
+ * global layer, and a caller normally passes nothing.
  *
  * Precedence for each field (highest wins):
  *   1. dispatchers.codex_args_json (this JSON)

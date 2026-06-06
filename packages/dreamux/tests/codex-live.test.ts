@@ -52,6 +52,7 @@ import type {
   ServerNotification,
   ThreadStartResponse,
 } from '../src/codex/types.js';
+import { testDispatcherConfig } from './helpers/config.js';
 
 export const SKIP_ENV = 'DREAMUX_SKIP_LIVE_CODEX';
 export const MODEL_GATE_ENV = 'DREAMUX_RUN_LIVE_MODEL_GATE';
@@ -191,7 +192,7 @@ function fakeInbound(
 function liveConfig(dispatcherCwd: string, codexHomeEnv: string): DreamuxConfig {
   return {
     dispatchers: [
-      {
+      testDispatcherConfig({
         id: 'live',
         cwd: dispatcherCwd,
         enabled: true,
@@ -211,7 +212,7 @@ function liveConfig(dispatcherCwd: string, codexHomeEnv: string): DreamuxConfig 
           // dispatcher-local field rather than a global default.
           initialize_timeout_ms: 15000,
         },
-      },
+      }),
     ],
   };
 }

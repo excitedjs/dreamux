@@ -75,7 +75,7 @@ export interface DispatcherRuntimeDeps {
   resolveExtraArgs?: (row: DispatcherRow) => string[];
   /**
    * Codex initialize handshake timeout (ms). From this dispatcher's
-   * `dispatchers[].codex.initialize_timeout_ms` (default 10000).
+   * `dispatchers[].runtime.config.initialize_timeout_ms` (default 10000).
    */
   handshakeTimeoutMs?: number;
   /** Per-dispatcher environment overrides from config. */

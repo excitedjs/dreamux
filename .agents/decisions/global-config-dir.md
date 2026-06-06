@@ -32,18 +32,20 @@ The current config shape contains:
 
 - Dispatcher declarations under `dispatchers` (the only top-level key besides
   nothing else — there is no top-level `codex` block).
-- Per-dispatcher Feishu `app_id` and `app_secret`.
-- Per-dispatcher Codex settings under `dispatchers[].codex`
+- Per-dispatcher Feishu `app_id` and `app_secret` under the
+  `builtin:feishu` channel config.
+- Per-dispatcher Codex settings under `dispatchers[].runtime.config` when the
+  runtime provider is `builtin:codex`
   (`bin`, `approval_policy`, `sandbox_mode`, `extra_args`, `extra_env`,
-  `initialize_timeout_ms`), each with a built-in default so the whole `codex`
-  object — and any field in it — can be omitted. This is the only Codex
-  configuration entry point; a leftover top-level `codex` block is rejected
-  loudly on load.
+  `initialize_timeout_ms`), each with a built-in default so the whole runtime
+  config object — and any field in it — can be omitted. This is the only Codex
+  configuration entry point while the selected runtime is `builtin:codex`; a
+  leftover top-level `codex` block is rejected loudly on load.
 
-`dispatchers[].codex.bin` (default `"codex"`) is the codex binary path; the
-`CODEX_HOST_CODEX_BIN` environment variable is an optional host-level override
-above it, not the source. `initialize_timeout_ms` (default `10000`) is that
-dispatcher's handshake timeout. Both are rarely set; the defaults work
+`dispatchers[].runtime.config.bin` (default `"codex"`) is the codex binary
+path; the `CODEX_HOST_CODEX_BIN` environment variable is an optional host-level
+override above it, not the source. `initialize_timeout_ms` (default `10000`) is
+that dispatcher's handshake timeout. Both are rarely set; the defaults work
 unconfigured.
 
 Per-dispatcher access gate allowlists do not live in `config.json`; the current
@@ -61,12 +63,13 @@ There is no CLI raw mode for printing the unredacted local config.
 The codex binary path resolves in this order, highest first:
 
 1. `CODEX_HOST_CODEX_BIN` environment variable (optional host-level override).
-2. The dispatcher's `dispatchers[].codex.bin` (default `"codex"`).
+2. The dispatcher's `dispatchers[].runtime.config.bin` (default `"codex"`).
 
 All other Codex values come straight from that dispatcher's
-`dispatchers[].codex` field, falling back to the built-in defaults (constants in
-`src/runtime/config.ts`: `DEFAULT_CODEX_BIN`, `DEFAULT_APPROVAL_POLICY`,
-`DEFAULT_SANDBOX_MODE`, `DEFAULT_INITIALIZE_TIMEOUT_MS`).
+`dispatchers[].runtime.config` field, falling back to the built-in defaults
+(constants in `src/runtime/config.ts`: `DEFAULT_CODEX_BIN`,
+`DEFAULT_APPROVAL_POLICY`, `DEFAULT_SANDBOX_MODE`,
+`DEFAULT_INITIALIZE_TIMEOUT_MS`).
 
 There is no global `codex` layer between the per-dispatcher fields and the
 built-in defaults. A dispatcher's `extra_args` are the only source of repeated
@@ -77,8 +80,8 @@ dispatcher's Codex app-server.
 
 The managed-service unit does not pin `CODEX_HOST_CODEX_BIN`; it seeds the unit
 `PATH` with the onboarded codex binary's directory so each dispatcher's
-`codex.bin` resolves. Units installed before this change may still carry the
-env var, where it keeps acting as the host-level override.
+`runtime.config.bin` resolves. Units installed before this change may still
+carry the env var, where it keeps acting as the host-level override.
 
 ## Consequences
 
