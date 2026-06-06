@@ -54,6 +54,21 @@ before the delivery implementation lands. The delivery path must not be coupled
 to transient turn-manager state that is expected to move into a dispatcher-level
 state owner.
 
+Implementation status:
+
+- `builtin:codex` is wired through an `AgentRuntimeProvider` catalog. The
+  server selects the provider from `dispatchers[].runtime.provider`, passes
+  Dreamux-owned MCP server descriptors into it, and the Codex provider maps
+  those descriptors to Codex `mcp_servers.*` CLI configuration before creating
+  the Codex-backed dispatcher runtime.
+- `builtin:claude-code` remains a registered builtin runtime, but it is not
+  executable until the Claude Code provider lands. Selecting it must fail
+  loudly rather than falling back to Codex.
+- The shared interface already includes both confirmed TeamMate completion
+  delivery shapes: Codex inbox-and-turn delivery and Claude Code task
+  notification delivery. The executable completion delivery path still belongs
+  to the later server-hosted TeamMate PRs.
+
 ## Consequences
 
 - The Codex adapter can preserve today's behavior while no longer defining the

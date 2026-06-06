@@ -441,6 +441,7 @@ describe('dreamux MVP smoke', () => {
     await server.start();
 
     expect(capturedCodexOptions).toHaveLength(1);
+    expect(server.getRuntime('flow')?.providerRef).toBe('builtin:codex');
     expect(capturedCodexOptions[0]?.env?.['CODEX_HOME']).toBeUndefined();
     expect(capturedCodexOptions[0]?.env?.['PATH']).toContain('/bin');
     expect(capturedCodexOptions[0]?.socketPath).toBe(
