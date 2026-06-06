@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Add a Dreamux dispatcher base prompt and pass it to Codex app-server thread start/resume",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}
