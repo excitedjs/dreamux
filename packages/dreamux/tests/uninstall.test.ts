@@ -18,6 +18,7 @@ import {
   resetRuntimeConfig,
   stateRoot,
 } from '../src/runtime/paths.js';
+import { testDispatcherConfig } from './helpers/config.js';
 
 class FakeRunner implements CommandRunner {
   launchdLoaded = false;
@@ -70,7 +71,7 @@ describe('dreamux uninstall', () => {
     }
     writeFileSync(join(configDir, 'config.json'), JSON.stringify({
       dispatchers: [
-        {
+        testDispatcherConfig({
           id: 'flow',
           cwd: dispatcherCwd,
           enabled: true,
@@ -84,7 +85,7 @@ describe('dreamux uninstall', () => {
             extra_args: [],
             extra_env: {},
           },
-        },
+        }),
       ],
     }), { mode: 0o600 });
     writeFileSync(join(logsRoot(), 'dreamux-server.log'), '');
@@ -223,13 +224,13 @@ describe('dreamux uninstall', () => {
         file: 'config.json',
         content: JSON.stringify({
           dispatchers: [
-            {
+            testDispatcherConfig({
               id: 'flow',
               feishu: {
                 app_id: 'app-test',
                 app_secret: 'secret-test',
               },
-            },
+            }),
           ],
         }),
         warning: /must be mode 0600/,

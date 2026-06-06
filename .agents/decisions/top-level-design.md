@@ -105,6 +105,11 @@ state that the dispatcher shares one Codex context across those chats.
 It holds dispatcher declarations, local Feishu credentials, and the dispatcher
 cwd used for the workspace-local skill install.
 
+Issue #110 supersedes the earlier Feishu/Codex-specific dispatcher keys with a
+providerized config v2 envelope. The current runtime path still wires one
+`builtin:feishu` channel and one `builtin:codex` runtime per dispatcher until
+the dedicated provider runtime PRs land.
+
 Example shape:
 
 ```json
@@ -114,28 +119,38 @@ Example shape:
       "id": "dispatcher-a",
       "cwd": "/path/to/workspace",
       "enabled": true,
-      "feishu": {
-        "app_id": "APP_ID",
-        "app_secret": "APP_SECRET"
-      },
-      "codex": {
-        "bin": "codex",
-        "approval_policy": "never",
-        "sandbox_mode": "workspace-write",
-        "extra_args": [],
-        "extra_env": {
-          "EXAMPLE_FLAG": "1"
-        },
-        "initialize_timeout_ms": 10000
+      "channels": [
+        {
+          "id": "primary",
+          "provider": "builtin:feishu",
+          "config": {
+            "app_id": "APP_ID",
+            "app_secret": "APP_SECRET"
+          }
+        }
+      ],
+      "runtime": {
+        "provider": "builtin:codex",
+        "config": {
+          "bin": "codex",
+          "approval_policy": "never",
+          "sandbox_mode": "workspace-write",
+          "extra_args": [],
+          "extra_env": {
+            "EXAMPLE_FLAG": "1"
+          },
+          "initialize_timeout_ms": 10000
+        }
       }
     }
   ]
 }
 ```
 
-`dispatchers[].codex` is the only Codex configuration entry point — there is no
-top-level `codex` block. Every field is optional with a built-in default, so the
-whole `codex` object can be omitted:
+`dispatchers[].runtime.config` is the only Codex configuration entry point
+while `builtin:codex` is the selected runtime provider — there is no top-level
+`codex` block. Every field is optional with a built-in default, so the whole
+runtime config object can be omitted:
 
 | Field | Default | Notes |
 | --- | --- | --- |
@@ -146,10 +161,11 @@ whole `codex` object can be omitted:
 | `extra_env` | `{}` | merged over the dispatcher's process env |
 | `initialize_timeout_ms` | `10000` | handshake timeout (positive integer) |
 
-`feishu.app_id` is a unique dispatcher identity. Across all declared
-dispatchers, including disabled dispatchers, an app id must map to exactly one
-dispatcher. `dreamux serve`, `doctor`, and `onboard` must fail or report a
-blocking error when two dispatchers use the same app id.
+`channels[].config.app_id` for `builtin:feishu` is a unique dispatcher
+identity. Across all declared dispatchers, including disabled dispatchers, an
+app id must map to exactly one dispatcher. `dreamux serve`, `doctor`, and
+`onboard` must fail or report a blocking error when two dispatchers use the
+same app id.
 
 Rules:
 
@@ -167,15 +183,18 @@ Rules:
   logs.
 - A top-level `codex` block is **not** supported: it is rejected loudly on
   load with migration guidance. All Codex settings are per-dispatcher.
-- `codex.bin` (default `"codex"`) is that dispatcher's Codex binary path. The
-  `CODEX_HOST_CODEX_BIN` env var is an optional host-level override that wins
-  over `codex.bin` for every dispatcher; onboard does not bake it into the
-  managed-service unit (the unit `PATH` carries the codex directory instead).
-- `codex.initialize_timeout_ms` (default `10000`) is that dispatcher's
+- Pre-providerized `dispatchers[].feishu` and `dispatchers[].codex` blocks are
+  **not** silently migrated. They fail loudly with v2 rebuild guidance.
+- `runtime.config.bin` (default `"codex"`) is that dispatcher's Codex binary
+  path. The `CODEX_HOST_CODEX_BIN` env var is an optional host-level override
+  that wins over `runtime.config.bin` for every dispatcher; onboard does not
+  bake it into the managed-service unit (the unit `PATH` carries the codex
+  directory instead).
+- `runtime.config.initialize_timeout_ms` (default `10000`) is that dispatcher's
   Codex initialize-handshake timeout.
-- `codex.extra_env` is merged over the server process environment before
-  starting that dispatcher's Codex app-server.
-- `codex.extra_args` is passed to `codex app-server`.
+- `runtime.config.extra_env` is merged over the server process environment
+  before starting that dispatcher's Codex app-server.
+- `runtime.config.extra_args` is passed to `codex app-server`.
 - dreamux-generated MCP config overrides are injected last, so the dispatcher
   always receives the Feishu MCP server for its own channel.
 - dreamux follows Codex's own `~/.codex/` home for Codex auth, config, and

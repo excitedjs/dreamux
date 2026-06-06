@@ -10,6 +10,14 @@
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { access, mkdir, open, readFile, stat } from 'node:fs/promises';
+import {
+  InvalidProviderRefError,
+  ReservedExternalProviderError,
+  UnknownBuiltinProviderError,
+  createBuiltinRegistry,
+  formatProviderRef,
+  type ProviderDescriptor,
+} from '../registry/index.js';
 import { validateDispatcherId } from './dispatcher-id.js';
 
 /** Async existence probe — the fs/promises replacement for `existsSync`. */
@@ -31,18 +39,33 @@ export interface DispatcherConfig {
   id: string;
   cwd: string | null;
   enabled: boolean;
-  feishu: {
-    app_id: string;
-    app_secret: string;
-  };
-  codex: DispatcherCodexConfig;
+  channels: DispatcherChannelConfig[];
+  runtime: DispatcherRuntimeConfig;
+}
+
+export interface DispatcherChannelConfig {
+  id: string;
+  provider: string;
+  config: DispatcherProviderConfig | DispatcherFeishuConfig;
+}
+
+export interface DispatcherRuntimeConfig {
+  provider: string;
+  config: DispatcherProviderConfig | DispatcherCodexConfig;
+}
+
+export type DispatcherProviderConfig = Record<string, unknown>;
+
+export interface DispatcherFeishuConfig {
+  app_id: string;
+  app_secret: string;
 }
 
 /**
- * Per-dispatcher Codex settings — the only Codex configuration entry point.
- * Every field carries a built-in default, so a dispatcher that omits `codex`
- * (or any field within it) runs with these constants. There is no top-level
- * `codex` block anymore: Codex config is dispatcher-local.
+ * Builtin Codex runtime settings under `dispatchers[].runtime.config`.
+ * Every field carries a built-in default, so a dispatcher that omits any
+ * runtime config field runs with these constants. There is no top-level
+ * `codex` block anymore: runtime config is dispatcher-local.
  *
  * `bin` is the dispatcher's Codex binary path; the `CODEX_HOST_CODEX_BIN`
  * environment variable is a host-level override that takes precedence over it
@@ -59,24 +82,27 @@ export interface DispatcherCodexConfig {
 }
 
 /**
- * Default `dispatchers[].codex.bin`. The codex binary path is dispatcher-local;
- * `CODEX_HOST_CODEX_BIN` is a host-level override above it, not the source.
+ * Default `dispatchers[].runtime.config.bin`. The Codex binary path is
+ * dispatcher-local; `CODEX_HOST_CODEX_BIN` is a host-level override above it,
+ * not the source.
  */
 export const DEFAULT_CODEX_BIN = 'codex';
 
-/** Default `dispatchers[].codex.initialize_timeout_ms` (handshake timeout, ms). */
+/** Default `dispatchers[].runtime.config.initialize_timeout_ms` (handshake timeout, ms). */
 export const DEFAULT_INITIALIZE_TIMEOUT_MS = 10_000;
 
-/** Default `dispatchers[].codex.approval_policy` when the field is omitted. */
+/** Default `dispatchers[].runtime.config.approval_policy` when omitted. */
 export const DEFAULT_APPROVAL_POLICY = 'never';
 
-/** Default `dispatchers[].codex.sandbox_mode` when the field is omitted. */
+/** Default `dispatchers[].runtime.config.sandbox_mode` when omitted. */
 export const DEFAULT_SANDBOX_MODE = 'workspace-write';
 
 export const BUILT_IN_DEFAULTS: DreamuxConfig = {
   dispatchers: [],
 };
 
+export const BUILTIN_FEISHU_PROVIDER_REF = 'builtin:feishu';
+export const BUILTIN_CODEX_PROVIDER_REF = 'builtin:codex';
 export const ALLOWED_APPROVAL_POLICIES = new Set([
   'never',
   'auto',
@@ -233,8 +259,9 @@ function mergeWithDefaults(raw: unknown, file: string): DreamuxConfig {
 }
 
 /**
- * The top-level `codex` block was removed: Codex settings are per-dispatcher
- * (`dispatchers[].codex`) and the binary path comes from `CODEX_HOST_CODEX_BIN`.
+ * The top-level `codex` block was removed: runtime settings are per-dispatcher
+ * (`dispatchers[].runtime.config`) and the binary path comes from
+ * `CODEX_HOST_CODEX_BIN`.
  * A leftover top-level block is rejected loudly with migration guidance rather
  * than silently ignored, so an operator's intent is never dropped.
  */
@@ -242,7 +269,7 @@ function rejectTopLevelCodex(raw: Record<string, unknown>, file: string): void {
   if (!('codex' in raw)) return;
   throw new Error(
     `dreamux config error in ${file}: a top-level "codex" block is no longer ` +
-      'supported. Move Codex settings under each dispatchers[].codex ' +
+      'supported. Move Codex settings under each dispatchers[].runtime.config ' +
       '(bin, approval_policy, sandbox_mode, extra_args, extra_env, ' +
       'initialize_timeout_ms). For a host-level binary override across all ' +
       'dispatchers, set the CODEX_HOST_CODEX_BIN environment variable.',
@@ -269,7 +296,7 @@ function readDispatchers(rawDispatchers: unknown, file: string): DispatcherConfi
     }
     rejectUnknownKeys(
       raw,
-      new Set(['id', 'cwd', 'enabled', 'feishu', 'codex']),
+      new Set(['id', 'cwd', 'enabled', 'channels', 'runtime']),
       file,
       prefix,
     );
@@ -284,12 +311,13 @@ function readDispatchers(rawDispatchers: unknown, file: string): DispatcherConfi
     }
     ids.add(id);
 
-    const feishu = readDispatcherFeishu(raw['feishu'], file, prefix);
+    const channels = readDispatcherChannels(raw['channels'], file, prefix);
+    const feishu = feishuConfigFromChannels(channels, id);
     const app_id = feishu.app_id;
     const existing = appIdToDispatcher.get(app_id);
     if (existing !== undefined) {
       throw new Error(
-        `dreamux config error in ${file}: dispatchers[${index}].feishu.app_id duplicates dispatcher '${existing}'`,
+        `dreamux config error in ${file}: dispatchers[${index}].channels[0].config.app_id duplicates dispatcher '${existing}'`,
       );
     }
     appIdToDispatcher.set(app_id, id);
@@ -299,24 +327,117 @@ function readDispatchers(rawDispatchers: unknown, file: string): DispatcherConfi
       id,
       cwd: cwd === null ? null : expandHome(cwd),
       enabled: readOptionalBoolean(raw, 'enabled', true, file, prefix),
-      feishu,
-      codex: readDispatcherCodex(raw['codex'], file, prefix),
+      channels,
+      runtime: readDispatcherRuntime(raw['runtime'], file, prefix),
     });
   }
   return out;
 }
 
-function readDispatcherFeishu(
-  rawFeishu: unknown,
+function readDispatcherChannels(
+  rawChannels: unknown,
   file: string,
   dispatcherPrefix: string,
-): DispatcherConfig['feishu'] {
-  const prefix = `${dispatcherPrefix}feishu.`;
-  if (!isPlainObject(rawFeishu)) {
+): DispatcherChannelConfig[] {
+  const prefix = `${dispatcherPrefix}channels`;
+  if (!Array.isArray(rawChannels)) {
     throw new Error(
-      `dreamux config error in ${file}: ${dispatcherPrefix}feishu must be an object (got ${describeType(rawFeishu)})`,
+      `dreamux config error in ${file}: ${prefix} must be an array (got ${describeType(rawChannels)}).\n` +
+        'Use providerized config v2: dispatchers[].channels[] with provider "builtin:feishu".',
     );
   }
+  if (rawChannels.length !== 1) {
+    throw new Error(
+      `dreamux config error in ${file}: ${prefix} must contain exactly one channel in this phase (got ${rawChannels.length}).\n` +
+        'Multi-channel routing lands after the ChannelProvider runtime PR.',
+    );
+  }
+  const raw = rawChannels[0];
+  const channelPrefix = `${dispatcherPrefix}channels[0].`;
+  if (!isPlainObject(raw)) {
+    throw new Error(
+      `dreamux config error in ${file}: ${channelPrefix.slice(0, -1)} must be an object (got ${describeType(raw)})`,
+    );
+  }
+  rejectUnknownKeys(raw, new Set(['id', 'provider', 'config']), file, channelPrefix);
+  const id = requireNonEmptyString(raw, 'id', file, channelPrefix);
+  const provider = resolveConfigProvider(
+    requireNonEmptyString(raw, 'provider', file, channelPrefix),
+    'channel',
+    file,
+    channelPrefix,
+  );
+  if (provider.ref !== BUILTIN_FEISHU_PROVIDER_REF) {
+    throw new Error(
+      `dreamux config error in ${file}: ${channelPrefix}provider='${provider.ref}' is registered but not runnable in this phase.\n` +
+        'Only provider "builtin:feishu" is wired until the ChannelProvider runtime PR lands.',
+    );
+  }
+  const config = readProviderConfigObject(raw['config'], file, `${channelPrefix}config`);
+  const feishu = readDispatcherFeishuConfig(config, file, `${channelPrefix}config.`);
+  return [
+    {
+      id,
+      provider: provider.ref,
+      config: feishu,
+    },
+  ];
+}
+
+function feishuConfigFromChannels(
+  channels: DispatcherChannelConfig[],
+  dispatcherId: string,
+): DispatcherFeishuConfig {
+  const channel = channels.find(
+    (item) => item.provider === BUILTIN_FEISHU_PROVIDER_REF,
+  );
+  if (channel === undefined) {
+    throw new Error(
+      `dispatcher '${dispatcherId}' has no ${BUILTIN_FEISHU_PROVIDER_REF} channel`,
+    );
+  }
+  return channel.config as DispatcherFeishuConfig;
+}
+
+function readDispatcherRuntime(
+  rawRuntime: unknown,
+  file: string,
+  dispatcherPrefix: string,
+): DispatcherRuntimeConfig {
+  const prefix = `${dispatcherPrefix}runtime.`;
+  if (!isPlainObject(rawRuntime)) {
+    throw new Error(
+      `dreamux config error in ${file}: ${dispatcherPrefix}runtime must be an object (got ${describeType(rawRuntime)}).\n` +
+        'Use providerized config v2: dispatchers[].runtime.provider and dispatchers[].runtime.config.',
+    );
+  }
+  rejectUnknownKeys(rawRuntime, new Set(['provider', 'config']), file, prefix);
+  const provider = resolveConfigProvider(
+    requireNonEmptyString(rawRuntime, 'provider', file, prefix),
+    'agentRuntime',
+    file,
+    prefix,
+  );
+  if (provider.ref !== BUILTIN_CODEX_PROVIDER_REF) {
+    throw new Error(
+      `dreamux config error in ${file}: ${prefix}provider='${provider.ref}' is registered but not runnable in this phase.\n` +
+        'Only provider "builtin:codex" is wired until the AgentRuntimeProvider PRs land.',
+    );
+  }
+  const config = readProviderConfigObject(rawRuntime['config'], file, `${prefix}config`, {
+    allowMissing: true,
+  });
+  return {
+    provider: provider.ref,
+    config: readDispatcherCodexConfig(config, file, `${prefix}config.`),
+  };
+}
+
+function readDispatcherFeishuConfig(
+  rawFeishu: Record<string, unknown>,
+  file: string,
+  prefix: string,
+): DispatcherFeishuConfig {
   rejectUnknownKeys(rawFeishu, new Set(['app_id', 'app_secret']), file, prefix);
   return {
     app_id: requireNonEmptyString(rawFeishu, 'app_id', file, prefix),
@@ -324,27 +445,22 @@ function readDispatcherFeishu(
   };
 }
 
-function readDispatcherCodex(
-  rawCodex: unknown,
+function defaultCodexConfig(): DispatcherCodexConfig {
+  return {
+    bin: DEFAULT_CODEX_BIN,
+    approval_policy: DEFAULT_APPROVAL_POLICY,
+    sandbox_mode: DEFAULT_SANDBOX_MODE,
+    extra_args: [],
+    extra_env: {},
+    initialize_timeout_ms: DEFAULT_INITIALIZE_TIMEOUT_MS,
+  };
+}
+
+function readDispatcherCodexConfig(
+  rawCodex: Record<string, unknown>,
   file: string,
-  dispatcherPrefix: string,
+  prefix: string,
 ): DispatcherCodexConfig {
-  const prefix = `${dispatcherPrefix}codex.`;
-  if (rawCodex === undefined) {
-    return {
-      bin: DEFAULT_CODEX_BIN,
-      approval_policy: DEFAULT_APPROVAL_POLICY,
-      sandbox_mode: DEFAULT_SANDBOX_MODE,
-      extra_args: [],
-      extra_env: {},
-      initialize_timeout_ms: DEFAULT_INITIALIZE_TIMEOUT_MS,
-    };
-  }
-  if (!isPlainObject(rawCodex)) {
-    throw new Error(
-      `dreamux config error in ${file}: ${dispatcherPrefix}codex must be an object (got ${describeType(rawCodex)})`,
-    );
-  }
   rejectUnknownKeys(
     rawCodex,
     new Set([
@@ -361,7 +477,8 @@ function readDispatcherCodex(
   // An omitted (or explicitly null) field falls back to the dispatcher-local
   // default. Before the top-level block was removed, `null` meant "inherit the
   // global default"; with no global, it simply means "use the built-in".
-  const bin = readOptionalString(rawCodex, 'bin', file, prefix) ?? DEFAULT_CODEX_BIN;
+  const defaults = defaultCodexConfig();
+  const bin = readOptionalString(rawCodex, 'bin', file, prefix) ?? defaults.bin;
   if (bin.trim() === '') {
     throw new Error(
       `dreamux config error in ${file}: ${prefix}bin must be a non-empty string`,
@@ -369,7 +486,7 @@ function readDispatcherCodex(
   }
   const approvalPolicy =
     readOptionalString(rawCodex, 'approval_policy', file, prefix) ??
-    DEFAULT_APPROVAL_POLICY;
+    defaults.approval_policy;
   if (!ALLOWED_APPROVAL_POLICIES.has(approvalPolicy)) {
     throw new Error(
       `dreamux config error in ${file}: ${prefix}approval_policy='${approvalPolicy}' is not one of ${Array.from(ALLOWED_APPROVAL_POLICIES).join(' | ')}`,
@@ -377,7 +494,7 @@ function readDispatcherCodex(
   }
   const sandboxMode =
     readOptionalString(rawCodex, 'sandbox_mode', file, prefix) ??
-    DEFAULT_SANDBOX_MODE;
+    defaults.sandbox_mode;
   if (!ALLOWED_SANDBOX_MODES.has(sandboxMode)) {
     throw new Error(
       `dreamux config error in ${file}: ${prefix}sandbox_mode='${sandboxMode}' is not one of ${Array.from(ALLOWED_SANDBOX_MODES).join(' | ')}`,
@@ -387,16 +504,96 @@ function readDispatcherCodex(
     bin,
     approval_policy: approvalPolicy,
     sandbox_mode: sandboxMode,
-    extra_args: requireStringArray(rawCodex, 'extra_args', [], file, prefix),
-    extra_env: requireStringRecord(rawCodex, 'extra_env', {}, file, prefix),
+    extra_args: requireStringArray(
+      rawCodex,
+      'extra_args',
+      defaults.extra_args,
+      file,
+      prefix,
+    ),
+    extra_env: requireStringRecord(
+      rawCodex,
+      'extra_env',
+      defaults.extra_env,
+      file,
+      prefix,
+    ),
     initialize_timeout_ms: requirePositiveInt(
       rawCodex,
       'initialize_timeout_ms',
-      DEFAULT_INITIALIZE_TIMEOUT_MS,
+      defaults.initialize_timeout_ms,
       file,
       prefix,
     ),
   };
+}
+
+export function dispatcherFeishuConfig(
+  dispatcher: Pick<DispatcherConfig, 'channels' | 'id'>,
+): DispatcherFeishuConfig {
+  return feishuConfigFromChannels(dispatcher.channels, dispatcher.id);
+}
+
+export function dispatcherCodexConfig(
+  dispatcher: Pick<DispatcherConfig, 'runtime' | 'id'>,
+): DispatcherCodexConfig {
+  if (dispatcher.runtime.provider !== BUILTIN_CODEX_PROVIDER_REF) {
+    throw new Error(
+      `dispatcher '${dispatcher.id}' runtime provider ${JSON.stringify(dispatcher.runtime.provider)} is not wired to Codex`,
+    );
+  }
+  return dispatcher.runtime.config as DispatcherCodexConfig;
+}
+
+function resolveConfigProvider(
+  rawProvider: string,
+  expectedKind: ProviderDescriptor['kind'],
+  file: string,
+  prefix: string,
+): { ref: string; descriptor: ProviderDescriptor } {
+  const registry = createBuiltinRegistry();
+  try {
+    const descriptor = registry.resolve(rawProvider);
+    if (descriptor.kind !== expectedKind) {
+      throw new Error(
+        `dreamux config error in ${file}: ${prefix}provider='${rawProvider}' is a ${descriptor.kind} provider, expected ${expectedKind}`,
+      );
+    }
+    return { ref: formatProviderRef(descriptor.ref), descriptor };
+  } catch (err) {
+    if (err instanceof InvalidProviderRefError) {
+      throw new Error(
+        `dreamux config error in ${file}: ${prefix}provider is invalid: ${err.message}`,
+      );
+    }
+    if (err instanceof ReservedExternalProviderError) {
+      throw new Error(
+        `dreamux config error in ${file}: ${prefix}provider='${rawProvider}' is reserved for future external providers and is not loadable in this phase.\n` +
+          'Use a builtin provider ref such as "builtin:feishu" or "builtin:codex".',
+      );
+    }
+    if (err instanceof UnknownBuiltinProviderError) {
+      throw new Error(
+        `dreamux config error in ${file}: ${prefix}provider references unknown builtin provider '${err.id}'`,
+      );
+    }
+    throw err;
+  }
+}
+
+function readProviderConfigObject(
+  rawConfig: unknown,
+  file: string,
+  name: string,
+  options: { allowMissing?: boolean } = {},
+): Record<string, unknown> {
+  if (rawConfig === undefined && options.allowMissing === true) return {};
+  if (!isPlainObject(rawConfig)) {
+    throw new Error(
+      `dreamux config error in ${file}: ${name} must be an object (got ${describeType(rawConfig)})`,
+    );
+  }
+  return rawConfig;
 }
 
 function rejectUnknownKeys(
@@ -408,8 +605,15 @@ function rejectUnknownKeys(
   for (const key of Object.keys(obj)) {
     if (allowed.has(key)) continue;
     const name = `${prefix}${key}`;
+    if (/^dispatchers\[\d+\]\.$/.test(prefix) && (key === 'feishu' || key === 'codex')) {
+      throw new Error(
+        `dreamux config error in ${file}: ${name} is not supported by the providerized config v2 schema.\n` +
+          'Dreamux 0.x does not silently migrate operator-owned config. Rebuild this dispatcher with ' +
+          'dispatchers[].channels[] and dispatchers[].runtime, then restart.',
+      );
+    }
     throw new Error(
-      `dreamux config error in ${file}: ${name} is not supported by the MVP config schema`,
+      `dreamux config error in ${file}: ${name} is not supported by the providerized config v2 schema`,
     );
   }
 }

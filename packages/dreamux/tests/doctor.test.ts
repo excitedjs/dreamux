@@ -20,6 +20,7 @@ import {
   resetRuntimeConfig,
   stateRoot,
 } from '../src/runtime/paths.js';
+import { testDispatcherConfig } from './helpers/config.js';
 
 class FakeRunner implements CommandRunner {
   systemdEnabled = false;
@@ -489,7 +490,7 @@ describe('dreamux doctor command', () => {
       configPath,
       JSON.stringify({
         dispatchers: [
-          {
+          testDispatcherConfig({
             id: 'flow',
             cwd: dispatcherCodexCwd('flow'),
             enabled: true,
@@ -503,7 +504,7 @@ describe('dreamux doctor command', () => {
               extra_args: [],
               extra_env: {},
             },
-          },
+          }),
         ],
       }),
       { mode: 0o600 },

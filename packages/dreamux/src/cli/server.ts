@@ -8,7 +8,7 @@
  * Configuration sources:
  *   - ~/.dreamux/config.json — dispatcher declarations and channel secrets;
  *     each dispatcher's Codex settings (including its `bin`) live under
- *     dispatchers[].codex
+ *     dispatchers[].runtime.config
  *   - CODEX_HOST_CODEX_BIN — optional host-level override of the codex binary
  *     for every dispatcher; most operators never set it
  *   - built-in defaults compiled into the binary
@@ -83,7 +83,8 @@ Global config:
                             DREAMUX_CONFIG_DIR env var. Edit and restart to
                             apply. Holds dispatcher declarations (including each
                             dispatcher's Codex settings under
-                            dispatchers[].codex) and Feishu channel secrets.
+                            dispatchers[].runtime.config) and Feishu channel
+                            secrets.
 
 Runtime data:
   ~/.dreamux/state/         server state, admin socket,
@@ -93,7 +94,7 @@ Runtime data:
 Environment overrides:
   CODEX_HOST_CODEX_BIN      Optional host-level override of the codex binary for
                             every dispatcher (normally unset; each dispatcher's
-                            dispatchers[].codex.bin is used, default "codex")
+                            dispatchers[].runtime.config.bin is used, default "codex")
   DREAMUX_CONFIG_DIR        Overrides ~/.dreamux (where config.json lives)
 
 Dispatcher declarations:

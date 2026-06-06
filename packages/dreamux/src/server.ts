@@ -52,6 +52,7 @@ import {
   BUILT_IN_DEFAULTS,
   DEFAULT_CODEX_BIN,
   DEFAULT_INITIALIZE_TIMEOUT_MS,
+  dispatcherCodexConfig,
   type DreamuxConfig,
 } from './runtime/config.js';
 import {
@@ -262,7 +263,7 @@ export class Server {
    *   1. ServerOptions.codexBinPath (test seam)
    *   2. CODEX_HOST_CODEX_BIN env (deliberate host-level override across every
    *      dispatcher; onboard no longer sets it automatically)
-   *   3. the dispatcher's dispatchers[].codex.bin (default "codex")
+   *   3. the dispatcher's dispatchers[].runtime.config.bin (default "codex")
    *
    * The codex binary is a per-dispatcher config field; the env var only exists
    * as an explicit host/service-wide override.
@@ -340,9 +341,9 @@ export class Server {
     const dispatcherConfig = cfg.dispatchers.find(
       (dispatcher) => dispatcher.id === id,
     );
-    // row.codex_args_json already carries the dispatcher's resolved codex
-    // settings (encoded from dispatchers[].codex with built-in defaults), so no
-    // global-default layer is merged in here.
+    // row.codex_args_json already carries the dispatcher's resolved Codex
+    // runtime settings (encoded from dispatchers[].runtime.config with built-in
+    // defaults), so no global-default layer is merged in here.
     const codexArgs = parseCodexArgs(row.codex_args_json);
     const codexCliArgs = [
       ...codexArgsToCli(codexArgs),
@@ -370,19 +371,23 @@ export class Server {
       pendingReceivedReactionClears: new Set(),
     };
 
+    const codexConfig =
+      dispatcherConfig === undefined
+        ? null
+        : dispatcherCodexConfig(dispatcherConfig);
     const runtime = new DispatcherRuntime(row, {
       dispatchers: this.repos.dispatchers,
       codexBinPath: this.resolveCodexBinPath(
-        dispatcherConfig?.codex.bin ?? DEFAULT_CODEX_BIN,
+        codexConfig?.bin ?? DEFAULT_CODEX_BIN,
       ),
       codexProcessFactory: this.opts.codexProcessFactory,
       codexClientFactory: this.opts.codexClientFactory,
       codexHomeDoctor: this.opts.codexHomeDoctor,
       resolveExtraArgs: () => codexCliArgs,
       handshakeTimeoutMs:
-        dispatcherConfig?.codex.initialize_timeout_ms ??
+        codexConfig?.initialize_timeout_ms ??
         DEFAULT_INITIALIZE_TIMEOUT_MS,
-      extraEnv: dispatcherConfig?.codex.extra_env ?? {},
+      extraEnv: codexConfig?.extra_env ?? {},
       restartBackoffBaseMs: this.opts.codexRestartBackoffBaseMs,
       restartBackoffMaxMs: this.opts.codexRestartBackoffMaxMs,
       log: loggerToLevelFn(channelLog),

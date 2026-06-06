@@ -1,18 +1,21 @@
-import type { DreamuxConfig } from './config.js';
+import { dispatcherFeishuConfig, type DreamuxConfig } from './config.js';
 
 export function resolveBotSecret(ref: string, config: DreamuxConfig): string {
   if (ref.startsWith('config:')) {
     const dispatcherId = ref.slice('config:'.length);
     const dispatcher = config.dispatchers.find((item) => item.id === dispatcherId);
-    if (
-      dispatcher === undefined ||
-      dispatcher.feishu.app_secret.trim() === ''
-    ) {
+    if (dispatcher === undefined) {
       throw new Error(
         `missing Feishu app_secret in dreamux config for bot_secret_ref=${ref}`,
       );
     }
-    return dispatcher.feishu.app_secret;
+    const feishu = dispatcherFeishuConfig(dispatcher);
+    if (feishu.app_secret.trim() === '') {
+      throw new Error(
+        `missing Feishu app_secret in dreamux config for bot_secret_ref=${ref}`,
+      );
+    }
+    return feishu.app_secret;
   }
 
   if (ref.startsWith('env:')) {

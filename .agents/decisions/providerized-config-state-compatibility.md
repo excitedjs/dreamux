@@ -49,10 +49,13 @@ owned and validated by provider descriptors.
 
 Confirmed Phase 1 provider loading rules:
 
-- `builtin:feishu`, `builtin:codex`, and `builtin:claude-code` are runnable
-  builtin providers.
+- `builtin:feishu`, `builtin:codex`, and `builtin:claude-code` are known
+  builtin provider refs.
 - Npm package and package export refs are reserved schema/manifest syntax.
 - Npm refs are not loaded, imported, installed, or executed in Phase 1.
+- A config value only becomes runnable after the matching provider runtime is
+  wired. Until then, validation must fail loudly for a known but non-wired
+  builtin instead of silently falling back to another provider.
 
 Incompatible old config shapes must fail loudly with rebuild guidance. Dreamux
 must not silently rewrite an operator's config into v2.

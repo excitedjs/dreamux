@@ -25,6 +25,7 @@ import { TransparentFileLedger } from '../onboard/ledger.js';
 import type { CommandRunner, OnboardFileLedgerEntry } from '../onboard/types.js';
 import {
   DEFAULT_CODEX_BIN,
+  dispatcherCodexConfig,
   type DreamuxConfig,
   globalConfigDir,
   loadConfig,
@@ -51,7 +52,7 @@ export interface DaemonInstallResult {
 
 /**
  * Pick the one codex binary that seeds the managed-service unit PATH. The env
- * override wins; otherwise the enabled dispatchers' `codex.bin` values are used.
+ * override wins; otherwise the enabled dispatchers' `runtime.config.bin` values are used.
  * The single host unit cannot encode per-dispatcher bins, so when they differ
  * the first is used and a warning names the rest instead of silently dropping
  * them — the server still resolves each dispatcher's own bin at runtime.
@@ -63,15 +64,19 @@ function selectServiceCodexBin(
   const override = env['CODEX_HOST_CODEX_BIN'];
   if (override !== undefined && override.trim() !== '') return override;
   const bins = [
-    ...new Set(config.dispatchers.filter((d) => d.enabled).map((d) => d.codex.bin)),
+    ...new Set(
+      config.dispatchers
+        .filter((d) => d.enabled)
+        .map((d) => dispatcherCodexConfig(d).bin),
+    ),
   ];
   if (bins.length === 0) return DEFAULT_CODEX_BIN;
   if (bins.length > 1) {
     console.warn(
       `dreamux daemon install: enabled dispatchers declare ${bins.length} ` +
-        `different codex.bin values (${bins.join(', ')}); the single managed ` +
+        `different runtime.config.bin values (${bins.join(', ')}); the single managed ` +
         `service unit seeds its PATH from '${bins[0]}'. Set CODEX_HOST_CODEX_BIN ` +
-        `to force one binary, or ensure every codex.bin resolves on PATH.`,
+        `to force one binary, or ensure every runtime.config.bin resolves on PATH.`,
     );
   }
   return bins[0] ?? DEFAULT_CODEX_BIN;
@@ -92,8 +97,8 @@ export async function runDaemonInstall(
 
   // The single managed-service unit needs one codex binary to seed its PATH.
   // It comes from CODEX_HOST_CODEX_BIN (host-level override) or the enabled
-  // dispatchers' codex.bin; the server still resolves each dispatcher's own bin
-  // at runtime.
+  // dispatchers' runtime.config.bin; the server still resolves each
+  // dispatcher's own bin at runtime.
   const codexBinSource = selectServiceCodexBin(config, env);
   const codexBin = dryRun
     ? codexBinSource

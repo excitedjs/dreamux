@@ -43,10 +43,11 @@ The normalized form separates source, package, export, and builtin id so config
 validation and future manifests do not depend on ad hoc string parsing after
 startup.
 
-Phase 1 registers and runs only builtin providers. Npm refs may be parsed,
-stored, and validated as reserved syntax, but they must fail clearly if selected
-for execution. Dreamux must not install, import, or execute external npm
-providers in Phase 1.
+Phase 1 registers builtin provider descriptors and runs only provider
+implementations that have been wired by their dedicated PRs. Npm refs may be
+parsed, stored, and validated as reserved syntax, but they must fail clearly if
+selected for execution. Dreamux must not install, import, or execute external
+npm providers in Phase 1.
 
 The Capability Registry is process-local and server-owned. It records:
 
