@@ -100,6 +100,21 @@ describe('createBuiltinRegistry', () => {
     }
   });
 
+  it('declares the Codex runtime capabilities wired by the provider PR', () => {
+    const registry = createBuiltinRegistry();
+    const capabilities = registry
+      .resolve('builtin:codex')
+      .capabilities.map((capability) => capability.id)
+      .sort();
+
+    expect(capabilities).toEqual([
+      'codex:inboundTurn',
+      'codex:lifecycle',
+      'codex:mcpInjection',
+      'codex:teammateCompletion.codexInboxTurn',
+    ]);
+  });
+
   it('does not execute or expose external providers', () => {
     const registry = createBuiltinRegistry();
     // Reserved external refs never become registered providers.

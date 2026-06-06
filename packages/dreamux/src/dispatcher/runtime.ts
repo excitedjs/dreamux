@@ -57,6 +57,8 @@ import {
 import { dispatcherProcessEnv } from '../runtime/package-bin.js';
 import { installBundledWorkspaceSkills } from '../runtime/bundled-skills.js';
 import { DREAMUX_DISPATCHER_BASE_INSTRUCTIONS } from './base-prompt.js';
+import type { AgentRuntime } from '../agent-runtime/types.js';
+import { BUILTIN_CODEX_PROVIDER_REF } from '../runtime/config.js';
 
 const DEFAULT_RESTART_BACKOFF_BASE_MS = 1000;
 const DEFAULT_RESTART_BACKOFF_MAX_MS = 30_000;
@@ -87,7 +89,9 @@ export interface DispatcherRuntimeDeps {
   log?: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
 }
 
-export class DispatcherRuntime {
+export class DispatcherRuntime implements AgentRuntime {
+  readonly providerRef = BUILTIN_CODEX_PROVIDER_REF;
+
   private process: CodexProcess | null = null;
   private client: CodexWsClient | null = null;
   private turnManager: TurnManager | null = null;

@@ -442,7 +442,7 @@ describe('global config (~/.dreamux/config.json)', () => {
     );
   });
 
-  it('keeps non-wired builtin runtimes fail-loud in PR3', async () => {
+  it('keeps registered but non-wired builtin runtimes fail-loud', async () => {
     writeConfigObject({
       dispatchers: [
         testDispatcherConfig({
