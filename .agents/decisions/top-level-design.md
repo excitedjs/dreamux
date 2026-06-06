@@ -272,6 +272,9 @@ The prompt is the dispatcher role contract:
 - acknowledge accepted Feishu-originated work visibly when the work is not
   trivial, and keep an operator-visible communication loop for completion,
   failure, decision needs, or blockers;
+- use `update_plan` for complex, multi-stage, or long-running coordination,
+  while treating the plan as dispatcher-internal state rather than a Feishu or
+  operator-visible reply;
 - delegate repository exploration, edits, tests, reviews, and PR preparation
   through `tm` instead of doing target-repo work directly in the dispatcher
   thread;
@@ -294,6 +297,9 @@ The prompt is the dispatcher role contract:
   state the failed path;
 - load required skills before skill-owned workflows and preserve user global
   auth, memory, `CODEX_HOME`, and unowned local changes during cleanup;
+- suppress internal inline citation markers such as `【F:...】` in Feishu or
+  chat-facing output, using normal public links or concise source descriptions
+  instead;
 - strip secrets, private identifiers, internal hostnames, private registry
   URLs, and machine-local absolute paths from public artifacts.
 

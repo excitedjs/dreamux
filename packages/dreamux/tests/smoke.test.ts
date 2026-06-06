@@ -415,6 +415,10 @@ describe('dreamux MVP smoke', () => {
     expect(DREAMUX_DISPATCHER_BASE_INSTRUCTIONS).toContain(
       'Do not pass dispatcher guesses as facts',
     );
+    expect(DREAMUX_DISPATCHER_BASE_INSTRUCTIONS).toContain(
+      'use update_plan to track phases',
+    );
+    expect(DREAMUX_DISPATCHER_BASE_INSTRUCTIONS).toContain('`【F:...】`');
   });
 
   it('resumes Codex threads with Dreamux dispatcher base instructions', async () => {
