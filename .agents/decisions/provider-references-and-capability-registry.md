@@ -49,6 +49,12 @@ parsed, stored, and validated as reserved syntax, but they must fail clearly if
 selected for execution. Dreamux must not install, import, or execute external
 npm providers in Phase 1.
 
+Wired builtin providers attach their implemented capabilities to the registry
+descriptor as the provider PRs land. The Codex runtime provider declares
+runtime lifecycle, Dreamux MCP injection, inbound turn submission, and
+Codex-style TeamMate completion delivery capability metadata. Feishu and Claude
+Code capabilities remain owned by their dedicated provider PRs.
+
 The Capability Registry is process-local and server-owned. It records:
 
 - provider descriptors;

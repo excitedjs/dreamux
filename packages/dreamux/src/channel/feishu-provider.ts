@@ -13,7 +13,7 @@
  */
 
 import { createBuiltinRegistry } from '../registry/index.js';
-import { feishuMcpCodexArgs } from '../codex/mcp-config.js';
+import { feishuMcpServerDescriptor } from '../codex/mcp-config.js';
 import {
   channelOutboundToFeishuTarget,
   createFeishuBot,
@@ -53,7 +53,12 @@ export function builtinFeishuChannelProvider(): ChannelProvider {
     descriptor,
     hasCapability: (kind: ChannelCapabilityKind): boolean =>
       capabilities.has(kind),
-    mcpCodexArgs: (opts) => feishuMcpCodexArgs(opts),
+    mcpServerDescriptors: (context) => [
+      feishuMcpServerDescriptor({
+        dispatcherId: context.dispatcherId,
+        adminSocketPath: context.adminSocketPath,
+      }),
+    ],
     createConnection: (opts) => createFeishuBot(opts),
     access,
     reply: async (

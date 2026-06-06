@@ -4,14 +4,17 @@
  * These register the bundled providers so that `builtin:feishu`,
  * `builtin:codex`, and `builtin:claude-code` resolve through the registry.
  *
- * `builtin:feishu` declares its channel capabilities here (#110 PR4): the
- * catalog is the single source of truth for what the Feishu channel provider
- * exposes, and the provider implementation
- * (`src/channel/feishu-provider.ts`) reads them back from this descriptor. The
- * capability `kind` values match `CHANNEL_CAPABILITY` in
- * `src/channel/provider.ts`; the channel-provider test asserts they stay in
- * sync. The agentRuntime builtins stay capability-less until their adapter PRs
- * (#110 PR5 for Codex, PR6 for Claude Code).
+ * Capabilities are declared as `CapabilityDescriptor[]` and are the single
+ * source of truth for what each provider exposes; the provider implementations
+ * read them back from these descriptors:
+ *
+ * - `builtin:feishu` (#110 PR4) declares its channel capabilities. The `kind`
+ *   values match `CHANNEL_CAPABILITY` in `src/channel/provider.ts`, and
+ *   `src/channel/feishu-provider.ts` reads them back; the channel-provider test
+ *   asserts they stay in sync.
+ * - `builtin:codex` (#110 PR5) declares its agent-runtime capabilities, read by
+ *   `src/agent-runtime/codex.ts`.
+ * - `builtin:claude-code` stays capability-less until its adapter PR (#110 PR6).
  *
  * The confirmed builtin set is recorded in
  * `.agents/decisions/provider-references-and-capability-registry.md` and
@@ -30,8 +33,8 @@ import {
 interface BuiltinSpec {
   id: string;
   kind: ProviderKind;
-  /** Capability `kind`s this builtin exposes; ids are namespaced by provider. */
-  capabilities?: readonly string[];
+  /** Capabilities this builtin exposes; ids are namespaced by provider id. */
+  capabilities?: readonly CapabilityDescriptor[];
 }
 
 /** The providers Dreamux ships and can run in phase 1. */
@@ -39,21 +42,41 @@ export const BUILTIN_PROVIDERS: readonly BuiltinSpec[] = [
   {
     id: 'feishu',
     kind: 'channel',
-    capabilities: ['mcpServer', 'reply', 'react', 'access'],
+    capabilities: [
+      { id: capabilityId('feishu', 'mcpServer'), kind: 'mcpServer' },
+      { id: capabilityId('feishu', 'reply'), kind: 'reply' },
+      { id: capabilityId('feishu', 'react'), kind: 'react' },
+      { id: capabilityId('feishu', 'access'), kind: 'access' },
+    ],
   },
-  { id: 'codex', kind: 'agentRuntime' },
+  {
+    id: 'codex',
+    kind: 'agentRuntime',
+    capabilities: [
+      { id: capabilityId('codex', 'lifecycle'), kind: 'agentRuntime.lifecycle' },
+      {
+        id: capabilityId('codex', 'mcpInjection'),
+        kind: 'agentRuntime.mcpInjection',
+      },
+      {
+        id: capabilityId('codex', 'inboundTurn'),
+        kind: 'agentRuntime.inboundTurn',
+      },
+      {
+        id: capabilityId('codex', 'teammateCompletion.codexInboxTurn'),
+        kind: 'agentRuntime.teammateCompletionDelivery',
+      },
+    ],
+  },
   { id: 'claude-code', kind: 'agentRuntime' },
 ];
 
 function builtinDescriptor(spec: BuiltinSpec): ProviderDescriptor {
-  const capabilities: CapabilityDescriptor[] = (spec.capabilities ?? []).map(
-    (kind) => ({ id: capabilityId(spec.id, kind), kind }),
-  );
   return {
     id: spec.id,
     kind: spec.kind,
     ref: parseProviderRef(`builtin:${spec.id}`),
-    capabilities,
+    capabilities: [...(spec.capabilities ?? [])],
   };
 }
 

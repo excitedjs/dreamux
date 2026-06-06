@@ -421,7 +421,7 @@ function readDispatcherRuntime(
   if (provider.ref !== BUILTIN_CODEX_PROVIDER_REF) {
     throw new Error(
       `dreamux config error in ${file}: ${prefix}provider='${provider.ref}' is registered but not runnable in this phase.\n` +
-        'Only provider "builtin:codex" is wired until the AgentRuntimeProvider PRs land.',
+        'Only provider "builtin:codex" is wired until the non-Codex AgentRuntimeProvider PRs land.',
     );
   }
   const config = readProviderConfigObject(rawRuntime['config'], file, `${prefix}config`, {
@@ -445,7 +445,7 @@ function readDispatcherFeishuConfig(
   };
 }
 
-function defaultCodexConfig(): DispatcherCodexConfig {
+export function defaultDispatcherCodexConfig(): DispatcherCodexConfig {
   return {
     bin: DEFAULT_CODEX_BIN,
     approval_policy: DEFAULT_APPROVAL_POLICY,
@@ -477,7 +477,7 @@ function readDispatcherCodexConfig(
   // An omitted (or explicitly null) field falls back to the dispatcher-local
   // default. Before the top-level block was removed, `null` meant "inherit the
   // global default"; with no global, it simply means "use the built-in".
-  const defaults = defaultCodexConfig();
+  const defaults = defaultDispatcherCodexConfig();
   const bin = readOptionalString(rawCodex, 'bin', file, prefix) ?? defaults.bin;
   if (bin.trim() === '') {
     throw new Error(

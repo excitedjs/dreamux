@@ -22,7 +22,7 @@
  */
 
 import type { ProviderDescriptor } from '../registry/index.js';
-import type { FeishuMcpCodexArgsOptions } from '../codex/mcp-config.js';
+import type { AgentRuntimeMcpServer } from '../agent-runtime/types.js';
 import type {
   DispatcherAccessState,
   DreamuxFeishuGateInput,
@@ -62,6 +62,15 @@ export type ChannelConnection = FeishuBot;
 
 /** Inbound route handlers a channel delivers events through. */
 export type ChannelInboundRoutes = FeishuInboundRoutes;
+
+/**
+ * Host-supplied context for building a channel's MCP server descriptors: the
+ * dispatcher id and the admin socket the channel MCP server calls back on.
+ */
+export interface ChannelMcpContext {
+  dispatcherId: string;
+  adminSocketPath: string;
+}
 
 /** Channel-neutral reply request, translated by the provider to its transport. */
 export interface ChannelReplyInput {
@@ -120,8 +129,13 @@ export interface ChannelProvider {
   readonly descriptor: ProviderDescriptor;
   /** Whether the provider declares a given capability. */
   hasCapability(kind: ChannelCapabilityKind): boolean;
-  /** Build the channel-owned MCP server args for the dispatcher runtime. */
-  mcpCodexArgs(opts: FeishuMcpCodexArgsOptions): string[];
+  /**
+   * The channel-owned MCP server descriptors contributed to the dispatcher
+   * runtime. These are runtime-neutral (`AgentRuntimeMcpServer`); the selected
+   * agent runtime provider translates them into runtime-specific args (e.g.
+   * Codex `mcp_servers.*`). The channel does not emit runtime CLI args itself.
+   */
+  mcpServerDescriptors(context: ChannelMcpContext): AgentRuntimeMcpServer[];
   /** Open a channel connection for one dispatcher. */
   createConnection(opts: CreateBotOptions): ChannelConnection;
   /** Provider-owned access/trust semantics. */

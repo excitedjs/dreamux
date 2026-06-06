@@ -156,7 +156,7 @@ function inboundOnlyChannelProvider(): ChannelProvider {
       kind !== CHANNEL_CAPABILITY.reply &&
       kind !== CHANNEL_CAPABILITY.react &&
       base.hasCapability(kind),
-    mcpCodexArgs: base.mcpCodexArgs,
+    mcpServerDescriptors: base.mcpServerDescriptors,
     createConnection: base.createConnection,
     access: base.access,
   };

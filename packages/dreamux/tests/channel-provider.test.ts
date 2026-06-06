@@ -10,7 +10,7 @@ import {
   ChannelCapabilityError,
   type ChannelProvider,
 } from '../src/channel/provider.js';
-import { feishuMcpCodexArgs } from '../src/codex/mcp-config.js';
+import { feishuMcpServerDescriptor } from '../src/codex/mcp-config.js';
 import {
   defaultDispatcherAccessState,
   dreamuxFeishuGate,
@@ -89,10 +89,12 @@ describe('builtin:feishu capability declaration', () => {
 });
 
 describe('builtin:feishu owns its MCP / access / reply / react surfaces', () => {
-  it('contributes the channel-owned MCP server args', () => {
+  it('contributes runtime-neutral MCP server descriptors (not runtime CLI args)', () => {
     const provider = builtinFeishuChannelProvider();
-    const opts = { dispatcherId: 'flow', adminSocketPath: '/tmp/admin.sock' };
-    expect(provider.mcpCodexArgs(opts)).toEqual(feishuMcpCodexArgs(opts));
+    const context = { dispatcherId: 'flow', adminSocketPath: '/tmp/admin.sock' };
+    expect(provider.mcpServerDescriptors(context)).toEqual([
+      feishuMcpServerDescriptor(context),
+    ]);
   });
 
   it('delegates access load/save/gate to the Feishu access module', () => {
@@ -157,7 +159,7 @@ describe('ChannelProvider permits inbound-only channels (reply is not core-manda
         capabilities: [{ id: 'inbound-only:mcpServer', kind: 'mcpServer' }],
       },
       hasCapability: (kind) => kind === CHANNEL_CAPABILITY.mcpServer,
-      mcpCodexArgs: () => [],
+      mcpServerDescriptors: () => [],
       createConnection: () => {
         throw new Error('not used in this test');
       },

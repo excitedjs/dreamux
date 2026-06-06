@@ -12,7 +12,11 @@
  * drops in-flight inbound submissions instead of replaying them.
  */
 
-import { DispatcherRuntime } from './dispatcher/runtime.js';
+import {
+  createBuiltinAgentRuntimeProviderCatalog,
+  type AgentRuntime,
+  type AgentRuntimeProviderCatalog,
+} from './agent-runtime/index.js';
 import type { InboundTurnInput } from './dispatcher/turn-manager.js';
 import type { CodexProcess, CodexProcessOptions } from './codex/supervisor.js';
 import type { CodexWsClient } from './codex/rpc.js';
@@ -42,14 +46,11 @@ import {
   trustedBotIds,
 } from './channel/chat-bots-store.js';
 import type { PeerBot } from './channel/chat-bots-store.js';
-import { parseCodexArgs, codexArgsToCli } from './runtime/codex-args.js';
 import { resolveBotSecret } from './runtime/secrets.js';
 import {
-  BUILT_IN_DEFAULTS,
+  BUILTIN_CODEX_PROVIDER_REF,
   BUILTIN_FEISHU_PROVIDER_REF,
-  DEFAULT_CODEX_BIN,
-  DEFAULT_INITIALIZE_TIMEOUT_MS,
-  dispatcherCodexConfig,
+  BUILT_IN_DEFAULTS,
   type DreamuxConfig,
 } from './runtime/config.js';
 import {
@@ -110,6 +111,8 @@ export interface ServerOptions {
   codexRestartBackoffBaseMs?: number;
   /** Codex child/WS restart backoff cap override (tests). */
   codexRestartBackoffMaxMs?: number;
+  /** Override runtime provider catalog (tests / future provider composition). */
+  agentRuntimeProviderCatalog?: AgentRuntimeProviderCatalog;
   /**
    * Server-level logger (admin socket, dispatcher supervision, shutdown). When
    * omitted, a stderr-only logger is used — the CLI entry point injects a
@@ -130,7 +133,7 @@ export interface Repos {
 
 interface DispatcherSlot {
   row: DispatcherRow;
-  runtime: DispatcherRuntime;
+  runtime: AgentRuntime;
   bot: FeishuBot;
   channelProvider: ChannelProvider;
   channelState: DispatcherChannelState;
@@ -250,6 +253,7 @@ export class Server {
   private readonly log: DreamuxLogger;
   private readonly channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
   private readonly channelProviderResolver: (ref: string) => ChannelProvider;
+  private readonly agentRuntimeProviders: AgentRuntimeProviderCatalog;
 
   constructor(opts: ServerOptions = {}) {
     this.opts = opts;
@@ -265,6 +269,30 @@ export class Server {
     this.channelLoggerFactory =
       opts.channelLoggerFactory ??
       ((id) => createLogger({ name: `channel/${id}` }));
+    const codexProviderOptions = {
+      resolveBinPath: (dispatcherBin: string) =>
+        this.resolveCodexBinPath(dispatcherBin),
+      ...(opts.codexProcessFactory !== undefined
+        ? { codexProcessFactory: opts.codexProcessFactory }
+        : {}),
+      ...(opts.codexClientFactory !== undefined
+        ? { codexClientFactory: opts.codexClientFactory }
+        : {}),
+      ...(opts.codexHomeDoctor !== undefined
+        ? { codexHomeDoctor: opts.codexHomeDoctor }
+        : {}),
+      ...(opts.codexRestartBackoffBaseMs !== undefined
+        ? { restartBackoffBaseMs: opts.codexRestartBackoffBaseMs }
+        : {}),
+      ...(opts.codexRestartBackoffMaxMs !== undefined
+        ? { restartBackoffMaxMs: opts.codexRestartBackoffMaxMs }
+        : {}),
+    };
+    this.agentRuntimeProviders =
+      opts.agentRuntimeProviderCatalog ??
+      createBuiltinAgentRuntimeProviderCatalog({
+        codex: codexProviderOptions,
+      });
     this.repos = {
       dispatchers: new DispatcherStore(opts.config ?? BUILT_IN_DEFAULTS),
     };
@@ -366,24 +394,30 @@ export class Server {
       dispatcherConfig?.channels[0]?.provider ?? BUILTIN_FEISHU_PROVIDER_REF;
     const channelProvider = this.channelProviderResolver(channelRef);
 
-    // row.codex_args_json already carries the dispatcher's resolved Codex
-    // runtime settings (encoded from dispatchers[].runtime.config with built-in
-    // defaults), so no global-default layer is merged in here.
-    const codexArgs = parseCodexArgs(row.codex_args_json);
-    const codexCliArgs = [
-      ...codexArgsToCli(codexArgs),
-      ...channelProvider.mcpCodexArgs({
-        dispatcherId: id,
-        adminSocketPath: this.opts.adminSocketPath ?? adminSocketPath(),
-      }),
-    ];
-    const botSecret = this.opts.skipBotSecret
-      ? ''
-      : resolveBotSecret(row.bot_secret_ref, cfg);
+    // Resolve the dispatcher's agent runtime provider (issue #110 PR5).
+    const runtimeProvider = this.agentRuntimeProviders.resolve(
+      dispatcherConfig?.runtime.provider ?? BUILTIN_CODEX_PROVIDER_REF,
+    );
     // Build the per-dispatcher channel logger first so it can be injected into
     // the bot/transport — the transport's own SDK / connection diagnostics then
     // land in this same `logs/feishu-channel/<id>.log`, not on bare stderr.
     const channelLog = this.channelLoggerFactory(id);
+    // The channel provider exposes runtime-neutral MCP server descriptors; the
+    // runtime provider translates them into runtime-specific args (e.g. Codex
+    // `mcp_servers.*`). Core no longer emits Codex CLI args for the channel.
+    const runtime = runtimeProvider.createRuntime({
+      row,
+      dispatchers: this.repos.dispatchers,
+      dispatcher: dispatcherConfig ?? null,
+      mcpServers: channelProvider.mcpServerDescriptors({
+        dispatcherId: id,
+        adminSocketPath: this.opts.adminSocketPath ?? adminSocketPath(),
+      }),
+      log: loggerToLevelFn(channelLog),
+    });
+    const botSecret = this.opts.skipBotSecret
+      ? ''
+      : resolveBotSecret(row.bot_secret_ref, cfg);
     const bot = this.opts.botFactory
       ? this.opts.botFactory(row, botSecret)
       : channelProvider.createConnection({
@@ -395,28 +429,6 @@ export class Server {
       inboundReactions: new Map(),
       pendingReceivedReactionClears: new Set(),
     };
-
-    const codexConfig =
-      dispatcherConfig === undefined
-        ? null
-        : dispatcherCodexConfig(dispatcherConfig);
-    const runtime = new DispatcherRuntime(row, {
-      dispatchers: this.repos.dispatchers,
-      codexBinPath: this.resolveCodexBinPath(
-        codexConfig?.bin ?? DEFAULT_CODEX_BIN,
-      ),
-      codexProcessFactory: this.opts.codexProcessFactory,
-      codexClientFactory: this.opts.codexClientFactory,
-      codexHomeDoctor: this.opts.codexHomeDoctor,
-      resolveExtraArgs: () => codexCliArgs,
-      handshakeTimeoutMs:
-        codexConfig?.initialize_timeout_ms ??
-        DEFAULT_INITIALIZE_TIMEOUT_MS,
-      extraEnv: codexConfig?.extra_env ?? {},
-      restartBackoffBaseMs: this.opts.codexRestartBackoffBaseMs,
-      restartBackoffMaxMs: this.opts.codexRestartBackoffMaxMs,
-      log: loggerToLevelFn(channelLog),
-    });
 
     try {
       await runtime.start();
@@ -679,7 +691,7 @@ export class Server {
     this.slots.delete(id);
   }
 
-  getRuntime(id: string): DispatcherRuntime | null {
+  getRuntime(id: string): AgentRuntime | null {
     return this.slots.get(id)?.runtime ?? null;
   }
 
