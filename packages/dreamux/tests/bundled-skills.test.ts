@@ -152,6 +152,55 @@ describe('bundled workspace skill installer', () => {
       installBundledWorkspaceSkills({ dispatcherCwd, platform: 'win32' }),
     ).rejects.toThrow('directory symlinks');
   });
+
+  // Codex parses each SKILL.md frontmatter as strict YAML. An unquoted
+  // (plain) scalar that contains a colon-space (`: `) is read as a nested
+  // mapping indicator and the whole frontmatter fails with "mapping values
+  // are not allowed here", which makes the skill silently invisible. This is
+  // exactly how `team-dev-workflow` once broke ("...dispatcher: adversarial
+  // ..."). Guard every bundled skill against reintroducing that pitfall
+  // without pulling in a YAML parser dependency just for the test.
+  it('keeps every bundled skill frontmatter free of YAML colon-space pitfalls', () => {
+    for (const skillName of BUNDLED_SKILL_NAMES) {
+      const skillFile = join(bundledSkillDir(skillName), 'SKILL.md');
+      const lines = readFileSync(skillFile, 'utf8').split('\n');
+
+      expect(lines[0], `${skillName} SKILL.md must open with frontmatter`).toBe(
+        '---',
+      );
+      const end = lines.indexOf('---', 1);
+      expect(end, `${skillName} frontmatter must be closed`).toBeGreaterThan(0);
+
+      const frontmatter: Record<string, string> = {};
+      for (const line of lines.slice(1, end)) {
+        if (line.trim() === '') continue;
+        const separator = line.indexOf(': ');
+        expect(
+          separator,
+          `${skillName} frontmatter line is not a "key: value" pair: ${line}`,
+        ).toBeGreaterThan(0);
+        const key = line.slice(0, separator);
+        const value = line.slice(separator + 2);
+        frontmatter[key] = value;
+
+        const quoted =
+          (value.startsWith('"') && value.endsWith('"')) ||
+          (value.startsWith("'") && value.endsWith("'"));
+        if (!quoted) {
+          expect(
+            value.includes(': '),
+            `${skillName} frontmatter value for "${key}" has an unquoted colon-space that breaks YAML parsing: ${value}`,
+          ).toBe(false);
+        }
+      }
+
+      expect(frontmatter.name, `${skillName} must declare a name`).toBe(skillName);
+      expect(
+        (frontmatter.description ?? '').length,
+        `${skillName} must declare a description`,
+      ).toBeGreaterThan(0);
+    }
+  });
 });
 
 const LEGACY_COPIED_DISPATCHER_SKILL = `---

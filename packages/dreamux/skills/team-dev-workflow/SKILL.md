@@ -1,6 +1,6 @@
 ---
 name: team-dev-workflow
-description: Coordinate multi-teammate software development workflows from a Dreamux dispatcher: adversarial MR/PR review, design negotiation, merge readiness checks, cleanup, and unblocking a teammate. Use for coordination cycles, not ordinary single-repo edits.
+description: Coordinate multi-teammate software development workflows from a Dreamux dispatcher, covering adversarial MR/PR review, design negotiation, merge readiness checks, cleanup, and unblocking a teammate. Use for coordination cycles, not ordinary single-repo edits.
 ---
 
 # Team Development Workflow
