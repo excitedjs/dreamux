@@ -3,12 +3,16 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { createClaudeCodeAgentRuntimeProvider } from '../src/agent-runtime/claude-code.js';
-import type {
-  ClaudeCodeSession,
-  ClaudeCodeSessionFactory,
-  ClaudeCodeSessionSpec,
-  TurnOutcome,
+import {
+  createDefaultClaudeCodeSession,
+  type ClaudeCodeSession,
+  type ClaudeCodeSessionFactory,
+  type ClaudeCodeSessionSpec,
+  type TurnOutcome,
 } from '../src/agent-runtime/claude-code-session.js';
 import {
   claudeCodeMcpConfig,
@@ -41,6 +45,7 @@ function claudeDispatcher(id = 'flow') {
         permission_mode: 'acceptEdits',
         extra_args: [],
         extra_env: {},
+        turn_timeout_ms: 600_000,
       },
     },
   });
@@ -468,6 +473,60 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       respawn.spec.args.indexOf('--resume') + 2,
     )).toEqual(['--resume', 'session-abc']);
     await waitFor(() => runtime.getStatus() === 'ready');
+  });
+
+  it('a stalled child (alive, no result) degrades the runtime and fails delivery instead of wedging', async () => {
+    // Real resident session against the stall fixture: the child stays alive but
+    // never emits a terminal `result`. The per-turn deadline must fail the turn
+    // so neither inbound nor TeamMate delivery hangs forever.
+    const fixture = join(
+      dirname(fileURLToPath(import.meta.url)),
+      'fixtures',
+      'fake-claude-stream.mjs',
+    );
+    const stallFactory: ClaudeCodeSessionFactory = (spec) =>
+      createDefaultClaudeCodeSession({
+        ...spec,
+        bin: process.execPath,
+        args: [fixture, 'stall'],
+        turnTimeoutMs: 250,
+      });
+    const dispatcher = claudeDispatcher('flow');
+    const store = new DispatcherStore(testDreamuxConfig([dispatcher]));
+    const row = store.get('flow');
+    const runtime = createClaudeCodeAgentRuntimeProvider({
+      sessionFactory: stallFactory,
+    }).createRuntime({
+      row: row!,
+      dispatcher,
+      dispatchers: store,
+      mcpServers: [],
+      log: () => {
+        /* test sink */
+      },
+    });
+    await runtime.start();
+
+    await runtime.enqueueInbound({
+      source_chat_id: 'c',
+      source_message_id: 'm1',
+      sender_id: 'u',
+      parsed_text: 'go',
+    });
+    await waitFor(() => runtime.getStatus() === 'degraded', 5000);
+    expect(store.get('flow')?.last_error).toMatch(/timed out/i);
+
+    // Delivery must return a real `failed` result (so PR8 retry can act),
+    // bounded by the same deadline — never an unresolved await.
+    const delivery = await runtime.deliverTeamMateCompletion!({
+      taskId: 'task-stall',
+      teammateId: 'mate-1',
+      status: 'completed',
+      finalText: 'done',
+    });
+    expect(delivery.status).toBe('failed');
+
+    await runtime.stop();
   });
 
   it('returns failed (not accepted) when a TeamMate completion turn fails', async () => {

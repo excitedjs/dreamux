@@ -87,6 +87,7 @@ describe('claude-code live integration (opt-in)', () => {
           permission_mode: 'acceptEdits',
           extra_args: [],
           extra_env: {},
+          turn_timeout_ms: 120_000,
         },
       },
     });

@@ -38,6 +38,14 @@
  * conversation. There is no background backoff timer — re-spawn is lazy and
  * bound to the (serialized) turn queue, so it stays deterministic.
  *
+ * Per-turn deadline: a turn whose still-alive child never emits a terminal
+ * `result` (a stall, or a wait on input the runtime cannot satisfy) would
+ * otherwise pend forever and wedge the serial queue — and, behind it, TeamMate
+ * completion delivery, which awaits this runtime. `turn_timeout_ms` bounds every
+ * turn at the session layer: on the deadline the turn fails and the child is
+ * reaped (so the next turn re-spawns), turning an infinite hang into a normal
+ * degraded + `last_error` (inbound) or `failed` delivery result.
+ *
  * Reference: the resident stream-json protocol model and process-supervision
  * shape are adapted from the Claudemux `next` implementation; the AgentRuntime /
  * Channel / DispatcherService boundaries (provider seam, runtime-owned MCP
@@ -304,6 +312,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       cwd: this.cwd,
       env: dispatcherProcessEnv(globalThis.process.env, this.config.extra_env),
       stderrLogPath: this.stderrLogPath,
+      turnTimeoutMs: this.config.turn_timeout_ms,
       log: (level, msg, err) => this.log(level, msg, err),
     });
     session.setOnExit(() => {

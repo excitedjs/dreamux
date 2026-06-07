@@ -92,7 +92,10 @@ export interface DispatcherCodexConfig {
  * Code binary; `model` / `permission_mode` map to `--model` / `--permission-mode`;
  * `extra_args` / `extra_env` are passed through. `model` and `permission_mode`
  * are `null` when the operator does not pin them (Claude Code's own defaults
- * apply).
+ * apply). `turn_timeout_ms` bounds a single resident turn (issue #120): if the
+ * still-alive child never emits a terminal `result` for a turn, the runtime
+ * fails that turn and reaps/re-spawns the child rather than wedging the serial
+ * turn queue (and, behind it, TeamMate completion delivery) forever.
  */
 export interface DispatcherClaudeCodeConfig {
   bin: string;
@@ -100,6 +103,7 @@ export interface DispatcherClaudeCodeConfig {
   permission_mode: string | null;
   extra_args: string[];
   extra_env: Record<string, string>;
+  turn_timeout_ms: number;
 }
 
 /**
@@ -111,6 +115,15 @@ export const DEFAULT_CODEX_BIN = 'codex';
 
 /** Default `dispatchers[].runtime.config.bin` for `builtin:claude-code`. */
 export const DEFAULT_CLAUDE_CODE_BIN = 'claude';
+
+/**
+ * Default per-turn deadline for the resident `builtin:claude-code` child (ms).
+ * Generous enough not to interrupt a legitimately long tool-using turn, but
+ * finite so a child that stalls without a terminal `result` cannot wedge the
+ * dispatcher (issue #120). Operators can override via
+ * `dispatchers[].runtime.config.turn_timeout_ms`.
+ */
+export const DEFAULT_CLAUDE_CODE_TURN_TIMEOUT_MS = 600_000;
 
 /** Permission modes accepted for `builtin:claude-code` (Claude Code `--permission-mode`). */
 export const ALLOWED_CLAUDE_CODE_PERMISSION_MODES = new Set([
@@ -593,6 +606,7 @@ export function defaultDispatcherClaudeCodeConfig(): DispatcherClaudeCodeConfig 
     permission_mode: null,
     extra_args: [],
     extra_env: {},
+    turn_timeout_ms: DEFAULT_CLAUDE_CODE_TURN_TIMEOUT_MS,
   };
 }
 
@@ -603,7 +617,14 @@ function readDispatcherClaudeCodeConfig(
 ): DispatcherClaudeCodeConfig {
   rejectUnknownKeys(
     rawClaude,
-    new Set(['bin', 'model', 'permission_mode', 'extra_args', 'extra_env']),
+    new Set([
+      'bin',
+      'model',
+      'permission_mode',
+      'extra_args',
+      'extra_env',
+      'turn_timeout_ms',
+    ]),
     file,
     prefix,
   );
@@ -638,6 +659,13 @@ function readDispatcherClaudeCodeConfig(
       rawClaude,
       'extra_env',
       defaults.extra_env,
+      file,
+      prefix,
+    ),
+    turn_timeout_ms: requirePositiveInt(
+      rawClaude,
+      'turn_timeout_ms',
+      defaults.turn_timeout_ms,
       file,
       prefix,
     ),

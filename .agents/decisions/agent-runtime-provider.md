@@ -80,8 +80,13 @@ Implementation status:
     binary fails loudly at `start()` (degraded + throw, Codex-aligned); an
     unexpected child exit marks the runtime degraded and the next turn re-spawns
     with `--resume <session_id>` (lazy restart bound to the serial turn queue, no
-    background backoff timer). A live contract test is opt-in via
-    `DREAMUX_RUN_LIVE_CLAUDE_CODE` (loud skip otherwise, never silent).
+    background backoff timer). A per-turn deadline
+    (`turn_timeout_ms`, default 600000) bounds every turn at the session layer:
+    if a still-alive child never emits a terminal `result`, the turn fails and
+    the child is reaped, so a stall becomes a normal degraded / `failed`-delivery
+    outcome instead of wedging the serial queue (and TeamMate delivery behind
+    it). A live contract test is opt-in via `DREAMUX_RUN_LIVE_CLAUDE_CODE` (loud
+    skip otherwise, never silent).
   - The resident protocol model and process-supervision shape are adapted from
     the Claudemux `next` implementation; the AgentRuntime provider seam,
     runtime-owned MCP injection, degraded/`last_error` status, and TeamMate

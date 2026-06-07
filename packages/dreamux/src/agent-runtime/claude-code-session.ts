@@ -57,6 +57,13 @@ export interface ClaudeCodeSessionSpec {
   env: NodeJS.ProcessEnv;
   /** Where to append the child's stderr (its stdout is the in-process data plane). */
   stderrLogPath: string;
+  /**
+   * Per-turn deadline (ms). If the still-alive child never emits a terminal
+   * `result` within this window, the turn is failed and the child is reaped so
+   * the serial turn queue (and TeamMate completion delivery behind it) cannot
+   * wedge forever. Must be > 0.
+   */
+  turnTimeoutMs: number;
   /** Diagnostic logger for protocol-level events (parse errors, control answers). */
   log?: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
 }
@@ -90,6 +97,7 @@ interface PendingTurn {
   resolve: (outcome: TurnOutcome) => void;
   reject: (err: Error) => void;
   aggregator: TurnAggregator;
+  timer: NodeJS.Timeout | null;
 }
 
 /** The live session: spawns and supervises the real `claude` child. */
@@ -178,16 +186,54 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
         resolve,
         reject,
         aggregator: new TurnAggregator(),
+        timer: null,
       };
+      // Per-turn deadline: a still-alive child that never emits a terminal
+      // `result` (e.g. it stalls waiting on input, or only streams
+      // `init`/`assistant`/control envelopes) must not pend forever. On the
+      // deadline, fail this turn and reap the child — `isAlive()` then goes
+      // false, so the runtime re-spawns (with `--resume`) on the next turn
+      // rather than reusing a child with half a turn's output buffered.
+      pending.timer = setTimeout(() => {
+        if (this.pending !== pending) return;
+        this.pending = null;
+        this.spec.log?.(
+          'error',
+          `claude turn timed out after ${this.spec.turnTimeoutMs}ms; reaping resident child`,
+        );
+        reject(
+          new Error(
+            `claude resident turn timed out after ${this.spec.turnTimeoutMs}ms without a result`,
+          ),
+        );
+        // Reap is fire-and-forget: the turn has already been rejected, and the
+        // next turn will re-spawn a fresh child.
+        void this.stop().catch(() => {
+          /* reap is best-effort */
+        });
+      }, this.spec.turnTimeoutMs);
       this.pending = pending;
       // A failed stdin write must fail the turn (and not leave it dangling).
       stdin.write(`${buildUserMessage(prompt)}\n`, (err) => {
         if (err != null && this.pending === pending) {
-          this.pending = null;
-          reject(err instanceof Error ? err : new Error(String(err)));
+          this.settlePending()?.reject(
+            err instanceof Error ? err : new Error(String(err)),
+          );
         }
       });
     });
+  }
+
+  /**
+   * Detach the in-flight turn: clear its deadline timer and null `pending`,
+   * returning it so the caller can resolve or reject it exactly once.
+   */
+  private settlePending(): PendingTurn | null {
+    const pending = this.pending;
+    if (pending === null) return null;
+    if (pending.timer !== null) clearTimeout(pending.timer);
+    this.pending = null;
+    return pending;
   }
 
   async stop(): Promise<void> {
@@ -224,11 +270,11 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
         this.pending?.aggregator.accept(line);
         break;
       case 'result': {
-        const pending = this.pending;
+        if (this.pending === null) break;
+        this.pending.aggregator.accept(line);
+        const outcome = this.pending.aggregator.outcome();
+        const pending = this.settlePending();
         if (pending === null) break;
-        pending.aggregator.accept(line);
-        const outcome = pending.aggregator.outcome();
-        this.pending = null;
         if (outcome !== null) pending.resolve(outcome);
         else pending.reject(new Error('claude turn ended without a result'));
         break;
@@ -276,10 +322,7 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
   }
 
   private failPending(err: Error): void {
-    const pending = this.pending;
-    if (pending === null) return;
-    this.pending = null;
-    pending.reject(err);
+    this.settlePending()?.reject(err);
   }
 
   private onExitHandler: (() => void) | null = null;
