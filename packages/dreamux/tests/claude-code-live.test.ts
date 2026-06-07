@@ -8,8 +8,8 @@
  * gated and how to enable it.
  *
  * When opted in, the test FAILS LOUDLY if `claude` is missing on PATH (it does
- * not skip), then exercises one real headless turn through the default turn
- * runner and asserts the runtime captures a session id.
+ * not skip), then exercises two real turns over ONE resident stream-json process
+ * and asserts the runtime captures a session id and reuses it across turns.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -74,7 +74,7 @@ describe('claude-code live integration (opt-in)', () => {
     ).toBe(true);
   });
 
-  it('runs one real headless turn and captures a session id', async () => {
+  it('runs two real turns over one resident process and reuses the session', async () => {
     const dispatcher = testDispatcherConfig({
       id: 'live',
       runtime: {
@@ -107,18 +107,39 @@ describe('claude-code live integration (opt-in)', () => {
     await runtime.start();
     expect(runtime.getStatus()).toBe('ready');
 
-    const result = await runtime.enqueueInbound({
+    const first = await runtime.enqueueInbound({
       source_chat_id: 'c',
       source_message_id: 'live-1',
       sender_id: 'u',
       parsed_text: 'Reply with the single word: pong',
     });
-    expect(result.status).toBe('submitted');
+    expect(first.status).toBe('submitted');
 
     const deadline = Date.now() + 120_000;
     while (runtime.getThreadId() === null && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
-    expect(runtime.getThreadId()).not.toBeNull();
+    const sessionId = runtime.getThreadId();
+    expect(sessionId).not.toBeNull();
+
+    // Second turn over the SAME resident process: the runtime must stay ready
+    // and keep the same session id (no re-spawn, no new session).
+    const second = await runtime.enqueueInbound({
+      source_chat_id: 'c',
+      source_message_id: 'live-2',
+      sender_id: 'u',
+      parsed_text: 'Reply with the single word: ping',
+    });
+    expect(second.status).toBe('submitted');
+
+    const deadline2 = Date.now() + 120_000;
+    while (runtime.getStatus() !== 'ready' && Date.now() < deadline2) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    expect(runtime.getStatus()).toBe('ready');
+    expect(runtime.getThreadId()).toBe(sessionId);
+
+    await runtime.stop();
+    expect(runtime.getStatus()).toBe('stopped');
   });
 });

@@ -3,16 +3,16 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import {
-  createClaudeCodeAgentRuntimeProvider,
-  parseClaudeCodeJsonResult,
-  type ClaudeCodeTurnRequest,
-  type ClaudeCodeTurnResult,
-  type ClaudeCodeTurnRunner,
-} from '../src/agent-runtime/claude-code.js';
+import { createClaudeCodeAgentRuntimeProvider } from '../src/agent-runtime/claude-code.js';
+import type {
+  ClaudeCodeSession,
+  ClaudeCodeSessionFactory,
+  ClaudeCodeSessionSpec,
+  TurnOutcome,
+} from '../src/agent-runtime/claude-code-session.js';
 import {
   claudeCodeMcpConfig,
-  claudeCodeTurnArgs,
+  claudeCodeResidentArgs,
 } from '../src/runtime/claude-code-args.js';
 import { codexMcpServerArgs } from '../src/codex/mcp-config.js';
 import { DispatcherStore } from '../src/runtime/dispatcher-store.js';
@@ -46,50 +46,74 @@ function claudeDispatcher(id = 'flow') {
   });
 }
 
-interface RecordingRunner extends ClaudeCodeTurnRunner {
-  readonly calls: ClaudeCodeTurnRequest[];
+function okOutcome(sessionId: string | null = 'session-abc'): TurnOutcome {
+  return { isError: false, text: 'done', sessionId, subtype: 'success', errors: [] };
 }
 
-function recordingRunner(sessionId: string | null = 'session-abc'): RecordingRunner {
-  const calls: ClaudeCodeTurnRequest[] = [];
-  const result: ClaudeCodeTurnResult = { sessionId, result: 'done' };
-  return {
-    calls,
-    async runTurn(request: ClaudeCodeTurnRequest): Promise<ClaudeCodeTurnResult> {
-      calls.push(request);
-      return result;
-    },
-  };
+/** A fake resident session: records turns, plays a scripted outcome sequence. */
+interface FakeSession extends ClaudeCodeSession {
+  readonly spec: ClaudeCodeSessionSpec;
+  readonly prompts: string[];
+  startCount(): number;
+  /** Simulate an unexpected child exit (fires the registered onExit). */
+  triggerExit(): void;
 }
 
-/** A runner whose turns always fail (e.g. missing binary / non-zero exit). */
-function failingRunner(message = 'claude turn failed'): RecordingRunner {
-  const calls: ClaudeCodeTurnRequest[] = [];
-  return {
-    calls,
-    async runTurn(request: ClaudeCodeTurnRequest): Promise<ClaudeCodeTurnResult> {
-      calls.push(request);
-      throw new Error(message);
-    },
-  };
+interface FakeFleet {
+  factory: ClaudeCodeSessionFactory;
+  sessions: FakeSession[];
 }
 
-/** A runner that plays a scripted sequence of outcomes, one per turn. */
-function scriptedRunner(
-  outcomes: ReadonlyArray<Error | ClaudeCodeTurnResult>,
-): RecordingRunner {
-  const calls: ClaudeCodeTurnRequest[] = [];
-  let index = 0;
-  return {
-    calls,
-    async runTurn(request: ClaudeCodeTurnRequest): Promise<ClaudeCodeTurnResult> {
-      calls.push(request);
-      const outcome = outcomes[Math.min(index, outcomes.length - 1)];
-      index += 1;
-      if (outcome instanceof Error) throw outcome;
-      return outcome as ClaudeCodeTurnResult;
-    },
+/**
+ * Build an injectable session factory. `outcomes` is a per-turn script shared
+ * across all (re)spawned sessions; an `Error` entry makes that turn throw.
+ * `startError` makes the *first* spawn fail (missing binary parity).
+ */
+function fakeFleet(
+  outcomes: ReadonlyArray<Error | TurnOutcome> = [okOutcome()],
+  opts: { startError?: Error } = {},
+): FakeFleet {
+  const sessions: FakeSession[] = [];
+  let turnIndex = 0;
+  let spawnIndex = 0;
+  const factory: ClaudeCodeSessionFactory = (spec) => {
+    const mySpawn = spawnIndex++;
+    let alive = false;
+    let starts = 0;
+    let onExit: (() => void) | null = null;
+    const prompts: string[] = [];
+    const session: FakeSession = {
+      spec,
+      prompts,
+      startCount: () => starts,
+      async start() {
+        starts += 1;
+        if (opts.startError !== undefined && mySpawn === 0) throw opts.startError;
+        alive = true;
+      },
+      isAlive: () => alive,
+      setOnExit(handler) {
+        onExit = handler;
+      },
+      async submitTurn(prompt) {
+        prompts.push(prompt);
+        const outcome = outcomes[Math.min(turnIndex, outcomes.length - 1)];
+        turnIndex += 1;
+        if (outcome instanceof Error) throw outcome;
+        return outcome as TurnOutcome;
+      },
+      async stop() {
+        alive = false;
+      },
+      triggerExit() {
+        alive = false;
+        onExit?.();
+      },
+    };
+    sessions.push(session);
+    return session;
   };
+  return { factory, sessions };
 }
 
 async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
@@ -113,26 +137,27 @@ describe('claude-code pure translation (not Codex renamed)', () => {
       },
     });
     // The Codex runtime turns the same descriptor into `-c mcp_servers.*` CLI
-    // flags — a fundamentally different shape. This is the proof the runtimes
-    // are not the same code wearing two names.
+    // flags — a fundamentally different shape.
     const codex = codexMcpServerArgs([FEISHU_MCP]);
     expect(codex[0]).toBe('-c');
     expect(codex.some((a) => a.startsWith('mcp_servers.feishu.command='))).toBe(true);
     expect(Array.isArray(cc)).toBe(false);
   });
 
-  it('builds headless turn args with print/json/mcp-config and resume', () => {
-    const args = claudeCodeTurnArgs({
+  it('builds resident stream-json launch args (no positional prompt), with resume', () => {
+    const args = claudeCodeResidentArgs({
       config: { ...defaultDispatcherClaudeCodeConfig(), model: 'sonnet', permission_mode: 'acceptEdits' },
       mcpConfigPath: '/state/flow/claude-code/mcp.json',
-      prompt: 'hello there',
       resumeSessionId: 'sess-1',
     });
     expect(args).toContain('--print');
-    expect(args.slice(args.indexOf('--output-format'), args.indexOf('--output-format') + 2)).toEqual([
-      '--output-format',
-      'json',
-    ]);
+    expect(
+      args.slice(args.indexOf('--input-format'), args.indexOf('--input-format') + 2),
+    ).toEqual(['--input-format', 'stream-json']);
+    expect(
+      args.slice(args.indexOf('--output-format'), args.indexOf('--output-format') + 2),
+    ).toEqual(['--output-format', 'stream-json']);
+    expect(args).toContain('--verbose');
     expect(args.slice(args.indexOf('--mcp-config'), args.indexOf('--mcp-config') + 2)).toEqual([
       '--mcp-config',
       '/state/flow/claude-code/mcp.json',
@@ -143,35 +168,24 @@ describe('claude-code pure translation (not Codex renamed)', () => {
       '--resume',
       'sess-1',
     ]);
-    // Prompt is the trailing positional.
-    expect(args[args.length - 1]).toBe('hello there');
+    // The prompt is NOT a CLI arg under the resident transport — it is a stdin
+    // `user` message line. Every arg is a flag or flag value.
+    expect(args).not.toContain('hello there');
   });
 
   it('omits --resume when there is no session yet', () => {
-    const args = claudeCodeTurnArgs({
+    const args = claudeCodeResidentArgs({
       config: defaultDispatcherClaudeCodeConfig(),
       mcpConfigPath: '/x.json',
-      prompt: 'p',
       resumeSessionId: null,
     });
     expect(args).not.toContain('--resume');
-  });
-
-  it('parses the claude --output-format json envelope, falling back on non-JSON', () => {
-    expect(parseClaudeCodeJsonResult('{"session_id":"s1","result":"hi"}')).toEqual({
-      sessionId: 's1',
-      result: 'hi',
-    });
-    expect(parseClaudeCodeJsonResult('not json')).toEqual({
-      sessionId: null,
-      result: 'not json',
-    });
   });
 });
 
 describe('builtin:claude-code provider', () => {
   it('exposes the claude-code ref and task-notification delivery shape', () => {
-    const provider = createClaudeCodeAgentRuntimeProvider({ turnRunner: recordingRunner() });
+    const provider = createClaudeCodeAgentRuntimeProvider({ sessionFactory: fakeFleet().factory });
     expect(provider.ref).toBe('builtin:claude-code');
     expect(provider.descriptor.kind).toBe('agentRuntime');
     expect(provider.delivery.teammateCompletion.map((s) => s.kind)).toEqual([
@@ -180,7 +194,7 @@ describe('builtin:claude-code provider', () => {
   });
 });
 
-describe('ClaudeCodeRuntime lifecycle (fake turn runner)', () => {
+describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
   let home: string;
   let previousHome: string | undefined;
 
@@ -197,18 +211,19 @@ describe('ClaudeCodeRuntime lifecycle (fake turn runner)', () => {
   });
 
   function makeRuntime(
-    runner: ClaudeCodeTurnRunner,
+    fleet: FakeFleet,
     opts: { resumeSession?: string } = {},
-  ): { runtime: AgentRuntime; store: DispatcherStore } {
+  ): { runtime: AgentRuntime; store: DispatcherStore; fleet: FakeFleet } {
     const dispatcher = claudeDispatcher('flow');
     const store = new DispatcherStore(testDreamuxConfig([dispatcher]));
     if (opts.resumeSession !== undefined) {
-      // Simulate a previously persisted session id on the row.
       void store.setThreadId('flow', opts.resumeSession);
     }
     const row = store.get('flow');
     expect(row).not.toBeNull();
-    const runtime = createClaudeCodeAgentRuntimeProvider({ turnRunner: runner }).createRuntime({
+    const runtime = createClaudeCodeAgentRuntimeProvider({
+      sessionFactory: fleet.factory,
+    }).createRuntime({
       row: row!,
       dispatcher,
       dispatchers: store,
@@ -217,15 +232,22 @@ describe('ClaudeCodeRuntime lifecycle (fake turn runner)', () => {
         /* test sink */
       },
     });
-    return { runtime, store };
+    return { runtime, store, fleet };
   }
 
-  it('start() materializes the MCP config file and reports ready', async () => {
-    const { runtime } = makeRuntime(recordingRunner());
+  it('start() materializes the MCP config, spawns one resident session, and reports ready', async () => {
+    const fleet = fakeFleet();
+    const { runtime } = makeRuntime(fleet);
     expect(runtime.getStatus()).toBe('declared');
     await runtime.start();
     expect(runtime.getStatus()).toBe('ready');
     expect(runtime.providerRef).toBe('builtin:claude-code');
+
+    // Exactly one resident child, started once, launched with stream-json args.
+    expect(fleet.sessions).toHaveLength(1);
+    expect(fleet.sessions[0]?.startCount()).toBe(1);
+    expect(fleet.sessions[0]?.spec.args).toContain('--input-format');
+    expect(fleet.sessions[0]?.spec.args).toContain('stream-json');
 
     const mcpPath = dispatcherClaudeCodeMcpConfigPath('flow');
     const written = JSON.parse(readFileSync(mcpPath, 'utf8')) as unknown;
@@ -236,37 +258,64 @@ describe('ClaudeCodeRuntime lifecycle (fake turn runner)', () => {
     });
   });
 
-  it('reports wasThreadResumed=false on a fresh dispatcher', async () => {
-    const { runtime } = makeRuntime(recordingRunner());
-    expect(runtime.wasThreadResumed()).toBe(false);
-    expect(runtime.getThreadId()).toBeNull();
+  it('start() drives the runtime to degraded and throws when the child cannot spawn', async () => {
+    const fleet = fakeFleet([okOutcome()], { startError: new Error('claude is missing') });
+    const { runtime, store } = makeRuntime(fleet);
+    await expect(runtime.start()).rejects.toThrow('claude is missing');
+    expect(runtime.getStatus()).toBe('degraded');
+    expect(store.get('flow')?.last_error).toContain('claude is missing');
   });
 
-  it('resumes a persisted session and threads --resume into the turn', async () => {
-    const runner = recordingRunner('session-new');
-    const { runtime } = makeRuntime(runner, { resumeSession: 'session-prev' });
-    expect(runtime.wasThreadResumed()).toBe(true);
-    expect(runtime.getThreadId()).toBe('session-prev');
+  it('runs MULTIPLE turns over ONE resident process', async () => {
+    const fleet = fakeFleet([okOutcome('session-abc'), okOutcome('session-abc')]);
+    const { runtime } = makeRuntime(fleet);
     await runtime.start();
+
     await runtime.enqueueInbound({
       source_chat_id: 'c',
       source_message_id: 'm1',
       sender_id: 'u',
-      parsed_text: 'hello',
+      parsed_text: 'first turn',
     });
-    await waitFor(() => runner.calls.length === 1);
-    expect(runner.calls[0]?.args).toContain('--resume');
+    await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
+
+    await runtime.enqueueInbound({
+      source_chat_id: 'c',
+      source_message_id: 'm2',
+      sender_id: 'u',
+      parsed_text: 'second turn',
+    });
+    await waitFor(() => fleet.sessions[0]?.prompts.length === 2);
+
+    // Both turns ran on the SAME session — the resident-process invariant.
+    expect(fleet.sessions).toHaveLength(1);
+    expect(fleet.sessions[0]?.startCount()).toBe(1);
+    expect(fleet.sessions[0]?.prompts).toEqual(['first turn', 'second turn']);
+  });
+
+  it('reports wasThreadResumed=false on a fresh dispatcher', async () => {
+    const { runtime } = makeRuntime(fakeFleet());
+    expect(runtime.wasThreadResumed()).toBe(false);
+    expect(runtime.getThreadId()).toBeNull();
+  });
+
+  it('resumes a persisted session and threads --resume into the launch args', async () => {
+    const fleet = fakeFleet([okOutcome('session-new')]);
+    const { runtime } = makeRuntime(fleet, { resumeSession: 'session-prev' });
+    expect(runtime.wasThreadResumed()).toBe(true);
+    expect(runtime.getThreadId()).toBe('session-prev');
+    await runtime.start();
     expect(
-      runner.calls[0]?.args.slice(
-        runner.calls[0].args.indexOf('--resume'),
-        runner.calls[0].args.indexOf('--resume') + 2,
+      fleet.sessions[0]?.spec.args.slice(
+        fleet.sessions[0].spec.args.indexOf('--resume'),
+        fleet.sessions[0].spec.args.indexOf('--resume') + 2,
       ),
     ).toEqual(['--resume', 'session-prev']);
   });
 
   it('submits an inbound turn (accept -> run), dedupes, and captures the session', async () => {
-    const runner = recordingRunner('session-abc');
-    const { runtime } = makeRuntime(runner);
+    const fleet = fakeFleet([okOutcome('session-abc')]);
+    const { runtime } = makeRuntime(fleet);
     await runtime.start();
 
     const accepted: string[] = [];
@@ -277,11 +326,10 @@ describe('ClaudeCodeRuntime lifecycle (fake turn runner)', () => {
     expect(first.status).toBe('submitted');
     expect(accepted).toEqual(['m1']);
 
-    await waitFor(() => runner.calls.length === 1);
-    expect(runner.calls[0]?.args[runner.calls[0].args.length - 1]).toBe('do it');
+    await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
+    expect(fleet.sessions[0]?.prompts[0]).toBe('do it');
     await waitFor(() => runtime.getThreadId() === 'session-abc');
 
-    // Duplicate message id is rejected without a second turn.
     const dup = await runtime.enqueueInbound({
       source_chat_id: 'c',
       source_message_id: 'm1',
@@ -289,12 +337,12 @@ describe('ClaudeCodeRuntime lifecycle (fake turn runner)', () => {
       parsed_text: 'do it again',
     });
     expect(dup.status).toBe('duplicate');
-    expect(runner.calls).toHaveLength(1);
+    expect(fleet.sessions[0]?.prompts).toHaveLength(1);
   });
 
   it('delivers a TeamMate completion via the task-notification entry', async () => {
-    const runner = recordingRunner('session-abc');
-    const { runtime } = makeRuntime(runner);
+    const fleet = fakeFleet([okOutcome('session-abc')]);
+    const { runtime } = makeRuntime(fleet);
     await runtime.start();
 
     const result = await runtime.deliverTeamMateCompletion!({
@@ -305,20 +353,22 @@ describe('ClaudeCodeRuntime lifecycle (fake turn runner)', () => {
     });
     expect(result).toEqual({ status: 'accepted' });
 
-    await waitFor(() => runner.calls.length === 1);
-    const prompt = runner.calls[0]?.args[runner.calls[0].args.length - 1] ?? '';
+    await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
+    const prompt = fleet.sessions[0]?.prompts[0] ?? '';
     expect(prompt).toContain('<teammate_task_completion');
     expect(prompt).toContain('task_id="task-7"');
     expect(prompt).toContain('status="completed"');
     expect(prompt).toContain('all done');
   });
 
-  it('stop() halts the runtime and refuses further inbound', async () => {
-    const runner = recordingRunner();
-    const { runtime } = makeRuntime(runner);
+  it('stop() reaps the resident session and refuses further inbound', async () => {
+    const fleet = fakeFleet();
+    const { runtime } = makeRuntime(fleet);
     await runtime.start();
+    expect(fleet.sessions[0]?.isAlive()).toBe(true);
     await runtime.stop();
     expect(runtime.getStatus()).toBe('stopped');
+    expect(fleet.sessions[0]?.isAlive()).toBe(false);
     const after = await runtime.enqueueInbound({
       source_chat_id: 'c',
       source_message_id: 'm9',
@@ -326,16 +376,15 @@ describe('ClaudeCodeRuntime lifecycle (fake turn runner)', () => {
       parsed_text: 'late',
     });
     expect(after.status).toBe('stopped');
-    expect(runner.calls).toHaveLength(0);
+    expect(fleet.sessions[0]?.prompts).toHaveLength(0);
   });
 
   it('drives the runtime to degraded + last_error when an inbound turn fails', async () => {
-    const { runtime, store } = makeRuntime(failingRunner('claude is missing'));
+    const fleet = fakeFleet([new Error('turn boom')]);
+    const { runtime, store } = makeRuntime(fleet);
     await runtime.start();
     expect(runtime.getStatus()).toBe('ready');
 
-    // The message is accepted (channel can ack), but the turn failure is not
-    // swallowed: it surfaces as durable degraded state + a persisted last_error.
     const submit = await runtime.enqueueInbound({
       source_chat_id: 'c',
       source_message_id: 'm1',
@@ -345,15 +394,28 @@ describe('ClaudeCodeRuntime lifecycle (fake turn runner)', () => {
     expect(submit.status).toBe('submitted');
 
     await waitFor(() => runtime.getStatus() === 'degraded');
-    expect(store.get('flow')?.last_error).toContain('claude is missing');
+    expect(store.get('flow')?.last_error).toContain('turn boom');
+  });
+
+  it('surfaces an error result envelope as a degraded turn', async () => {
+    const fleet = fakeFleet([
+      { isError: true, text: '', sessionId: 'session-abc', subtype: 'error_during_execution', errors: ['model overloaded'] },
+    ]);
+    const { runtime, store } = makeRuntime(fleet);
+    await runtime.start();
+    await runtime.enqueueInbound({
+      source_chat_id: 'c',
+      source_message_id: 'm1',
+      sender_id: 'u',
+      parsed_text: 'go',
+    });
+    await waitFor(() => runtime.getStatus() === 'degraded');
+    expect(store.get('flow')?.last_error).toContain('model overloaded');
   });
 
   it('recovers to ready after a failed turn is followed by a successful one', async () => {
-    const runner = scriptedRunner([
-      new Error('transient'),
-      { sessionId: 'session-2', result: 'ok' },
-    ]);
-    const { runtime } = makeRuntime(runner);
+    const fleet = fakeFleet([new Error('transient'), okOutcome('session-2')]);
+    const { runtime } = makeRuntime(fleet);
     await runtime.start();
 
     await runtime.enqueueInbound({
@@ -373,8 +435,44 @@ describe('ClaudeCodeRuntime lifecycle (fake turn runner)', () => {
     await waitFor(() => runtime.getStatus() === 'ready');
   });
 
+  it('degrades on an unexpected child exit and re-spawns (with --resume) on the next turn', async () => {
+    const fleet = fakeFleet([okOutcome('session-abc'), okOutcome('session-abc')]);
+    const { runtime, store } = makeRuntime(fleet);
+    await runtime.start();
+
+    // First turn establishes the session id.
+    await runtime.enqueueInbound({
+      source_chat_id: 'c',
+      source_message_id: 'm1',
+      sender_id: 'u',
+      parsed_text: 'first',
+    });
+    await waitFor(() => runtime.getThreadId() === 'session-abc');
+
+    // The resident child dies unexpectedly → degraded.
+    fleet.sessions[0]?.triggerExit();
+    await waitFor(() => runtime.getStatus() === 'degraded');
+    expect(store.get('flow')?.last_error).toContain('exited');
+
+    // Next turn re-spawns a fresh session that resumes the captured session id.
+    await runtime.enqueueInbound({
+      source_chat_id: 'c',
+      source_message_id: 'm2',
+      sender_id: 'u',
+      parsed_text: 'second',
+    });
+    await waitFor(() => fleet.sessions.length === 2);
+    const respawn = fleet.sessions[1]!;
+    expect(respawn.spec.args.slice(
+      respawn.spec.args.indexOf('--resume'),
+      respawn.spec.args.indexOf('--resume') + 2,
+    )).toEqual(['--resume', 'session-abc']);
+    await waitFor(() => runtime.getStatus() === 'ready');
+  });
+
   it('returns failed (not accepted) when a TeamMate completion turn fails', async () => {
-    const { runtime } = makeRuntime(failingRunner('delivery boom'));
+    const fleet = fakeFleet([new Error('delivery boom')]);
+    const { runtime } = makeRuntime(fleet);
     await runtime.start();
 
     const result = await runtime.deliverTeamMateCompletion!({

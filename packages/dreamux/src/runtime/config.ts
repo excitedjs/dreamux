@@ -85,10 +85,11 @@ export interface DispatcherCodexConfig {
  * Builtin Claude Code runtime settings under `dispatchers[].runtime.config`
  * when `runtime.provider` is `builtin:claude-code` (issue #110 PR6).
  *
- * Deliberately distinct from {@link DispatcherCodexConfig}: Claude Code is a
- * headless per-turn CLI (`claude --print`), so there is no app-server handshake
- * timeout, approval policy, or sandbox mode here. `bin` is the Claude Code
- * binary; `model` / `permission_mode` map to `--model` / `--permission-mode`;
+ * Deliberately distinct from {@link DispatcherCodexConfig}: Claude Code runs as
+ * a resident headless stream-json process (`claude --print --input-format
+ * stream-json …`, issue #120) with no `initialize` handshake, so there is no
+ * handshake timeout, approval policy, or sandbox mode here. `bin` is the Claude
+ * Code binary; `model` / `permission_mode` map to `--model` / `--permission-mode`;
  * `extra_args` / `extra_env` are passed through. `model` and `permission_mode`
  * are `null` when the operator does not pin them (Claude Code's own defaults
  * apply).
