@@ -31,13 +31,25 @@
 # before setting shouldPublish=true, because npm package settings only exist
 # after the package has been created.
 #
-# Manual dispatch is a retry hook for main only; npm publishes must not come
-# from feature branches.
+# Manual dispatch against main is a retry hook for stable only; stable npm
+# publishes must not come from feature branches.
 #
 # When a version bump is needed, the release job pushes the generated
 # package.json / CHANGELOG commit back to main with the workflow GITHUB_TOKEN.
 # This repository's main protection must continue to allow that bot push, or a
 # future stricter protection rule must grant github-actions[bot] a bypass.
+#
+# The `next` beta channel reuses this same file (and therefore the same npm
+# trusted-publisher entry, Workflow: release.yml). The `beta` job below runs
+# ONLY when this workflow is dispatched against the `next` branch
+# (github.ref_name == 'next'); the stable version/publish jobs are gated to
+# main and never run on next. Beta publishes a prerelease to the `beta`
+# dist-tag and never moves `latest`. It is ephemeral: it bumps an in-tree
+# prerelease version with `--prerelease-name beta.<run_number>` and publishes,
+# but commits and pushes NOTHING back to next. Crucially, prerelease apply does
+# NOT delete the pending Rush change files (a stable `rush publish --apply`
+# does), so the eventual stable release on main still consumes them. See
+# .agents/decisions/npm-release-oidc.md ("next beta prerelease channel").
 
 name: release
 
@@ -171,3 +183,118 @@ jobs:
             --publish \
             --set-access-level public \
             --registry https://registry.npmjs.org
+
+  beta:
+    name: publish next prerelease to npm beta dist-tag (OIDC)
+    # Beta runs only when release.yml is dispatched against `next`. The `on:`
+    # block fires `push` on main only, so this job never runs on a push; it is
+    # reachable solely via `workflow_dispatch` with ref=next. Dispatching
+    # against main runs the stable jobs above and skips this one. Single job by
+    # design: the prerelease version lives in an uncommitted working tree that
+    # must persist across apply -> build -> pack -> publish, so it cannot be
+    # split the way the stable version/publish jobs are.
+    if: github.ref_name == 'next'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Upgrade npm for OIDC trusted publishing
+        # Same requirement as the stable publish job: tokenless trusted
+        # publishing needs npm 11.5.1+ so the final npm process can exchange
+        # the GitHub OIDC id-token for a short-lived publish token.
+        run: npm install -g npm@11.5.1
+
+      - name: Build (rush, monorepo-aware)
+        run: |
+          node common/scripts/install-run-rush.js install
+          node common/scripts/install-run-rush.js build
+
+      - name: Apply prerelease version (ephemeral, never committed)
+        # github.run_number gives every dispatch a unique, monotonic prerelease
+        # id, so re-dispatching never collides with an already-published beta.
+        # --partial-prerelease bumps only packages that have pending change
+        # files (e.g. 0.12.0 -> 0.12.1-beta.<n>); packages without changes stay
+        # at their published version and the publish step skips them. Unlike a
+        # stable `rush publish --apply`, prerelease apply does NOT delete the
+        # change files, so the eventual stable release on main still sees them.
+        # This working tree is throwaway CI state: NOTHING is committed/pushed.
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          node common/scripts/install-run-rush.js publish \
+            --apply \
+            --partial-prerelease \
+            --prerelease-name "beta.${RUN_NUMBER}"
+          echo "Resulting package versions:"
+          git --no-pager diff -- '*/package.json' | grep -E '^\+.*"version"' || \
+            echo "  (no package had pending change files; nothing to prerelease)"
+
+      - name: Pack and verify manifest (no registry I/O)
+        # Pack the would-be tarballs locally and audit their contents before any
+        # registry upload. Two checks: (1) the public-repo red line — no
+        # internal Feishu identifiers, internal hosts, or absolute build paths
+        # may leak into a published artifact; (2) each publishable tarball
+        # carries dist/ and package.json.
+        run: |
+          set -euo pipefail
+          rm -rf common/temp/beta-tarballs
+          node common/scripts/install-run-rush.js publish \
+            --pack \
+            --include-all \
+            --release-folder common/temp/beta-tarballs
+          shopt -s nullglob
+          tarballs=(common/temp/beta-tarballs/*.tgz)
+          if [ ${#tarballs[@]} -eq 0 ]; then
+            echo "No tarballs packed (no publishable package changed); nothing to verify."
+            exit 0
+          fi
+          fail=0
+          for tgz in "${tarballs[@]}"; do
+            echo "== $tgz =="
+            tar tzf "$tgz"
+            contents="$(tar xzO -f "$tgz" 2>/dev/null || true)"
+            if printf '%s' "$contents" | grep -aoE '(ou_[A-Za-z0-9]{20}|oc_[A-Za-z0-9]{20}|cli_[A-Za-z0-9]{16}|/data00/|/home/[a-z][a-z0-9_-]+/)' ; then
+              echo "FORBIDDEN internal content found in $tgz" >&2
+              fail=1
+            fi
+            if ! tar tzf "$tgz" | grep -q 'package/package.json'; then
+              echo "Tarball $tgz is missing package.json" >&2
+              fail=1
+            fi
+          done
+          [ "$fail" -eq 0 ] || { echo "Manifest verification failed; aborting before publish." >&2; exit 1; }
+
+      - name: Publish prerelease to npm beta dist-tag (rush native, OIDC)
+        # Same proven stable invocation, plus `--tag beta`: rush invokes
+        # `pnpm publish --tag beta`, pnpm rewrites workspace:* deps to registry
+        # versions, and npm uploads to the `beta` dist-tag — `latest` is never
+        # touched. --include-all republishes only versions newer than what npm
+        # already has, so an unchanged dep (feishu-transport at its published
+        # version) is skipped. --registry suppresses git tagging (same as the
+        # stable publish job, which runs with contents: read and never pushes).
+        env:
+          NPM_CONFIG_PROVENANCE: 'true'
+        run: |
+          node common/scripts/install-run-rush.js publish \
+            --include-all \
+            --publish \
+            --tag beta \
+            --set-access-level public \
+            --registry https://registry.npmjs.org
+
+      - name: Print install-verify hint
+        run: |
+          echo "Beta prerelease published to the 'beta' dist-tag."
+          echo "Verify with: npm install @excitedjs/dreamux@beta"
+          echo "Inspect tags: npm dist-tag ls @excitedjs/dreamux"
