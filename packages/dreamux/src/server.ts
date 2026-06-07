@@ -578,9 +578,16 @@ export class Server {
 
   /**
    * Codex launch config for one dispatcher's TeamMate worker (issue #126 PR3).
-   * A worker inherits the same approval/sandbox/env/handshake settings as the
-   * dispatcher's own runtime so it is never more permissive; an unknown
-   * dispatcher falls back to the built-in defaults.
+   *
+   * The default TeamMate worker is Codex regardless of the dispatcher's OWN
+   * runtime (a Claude Code worker is a later slice), so a TeamMate task from a
+   * non-Codex dispatcher (e.g. `builtin:claude-code`) must still get a *valid*
+   * Codex launch config — the built-in defaults — rather than the dispatcher's
+   * incompatible non-Codex runtime config. Only a `builtin:codex` dispatcher
+   * inherits its own approval/sandbox/env/handshake settings (so the worker is
+   * never more permissive than that dispatcher). An unknown dispatcher also
+   * falls back to the defaults. This keeps run_task from accepting and then
+   * hard-failing for a non-Codex dispatcher.
    */
   private resolveDispatcherCodexConfig(
     dispatcherId: string,
@@ -588,9 +595,13 @@ export class Server {
     const dispatcher = this.effectiveConfig().dispatchers.find(
       (entry) => entry.id === dispatcherId,
     );
-    return dispatcher === undefined
-      ? defaultDispatcherCodexConfig()
-      : dispatcherCodexConfig(dispatcher);
+    if (
+      dispatcher === undefined ||
+      dispatcher.runtime.provider !== BUILTIN_CODEX_PROVIDER_REF
+    ) {
+      return defaultDispatcherCodexConfig();
+    }
+    return dispatcherCodexConfig(dispatcher);
   }
 
   /**

@@ -273,6 +273,14 @@ Server wiring change (supersedes the PR2 "default empty catalog" note above):
   control execution by injecting `teamMateWorkerProviders` — the fake provider,
   or an explicitly empty catalog for the deliberate no-worker (`provider_unavailable`)
   path.
+- The default worker is Codex **regardless of the dispatcher's own runtime** — a
+  `builtin:claude-code` dispatcher also gets TeamMate MCP, and its tasks run on
+  the Codex worker until the Claude Code worker slice lands. So the server's
+  worker codex-config resolver returns the dispatcher's own config only for a
+  `builtin:codex` dispatcher and the built-in **defaults** for any other (or
+  unknown) dispatcher; it must not call `dispatcherCodexConfig()` for a non-Codex
+  dispatcher, which throws. This keeps `run_task` from a non-Codex dispatcher
+  from accepting and then hard-failing.
 - `Server.shutdown()` calls `execution.reapAll()` to release live worker
   app-servers (a new `TeamMateWorkerSession.dispose()` — reap with **no** ledger
   transition); the affected task stays `running` for the deferred

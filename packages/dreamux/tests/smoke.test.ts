@@ -45,7 +45,11 @@ import {
   saveDispatcherAccess,
 } from '../src/channel/feishu-gate.js';
 import { loadChatBots } from '../src/channel/chat-bots-store.js';
-import { BUILT_IN_DEFAULTS, type DreamuxConfig } from '../src/runtime/config.js';
+import {
+  BUILT_IN_DEFAULTS,
+  BUILTIN_CLAUDE_CODE_PROVIDER_REF,
+  type DreamuxConfig,
+} from '../src/runtime/config.js';
 import {
   dispatcherAppServerControlDir,
   dispatcherCodexCwd,
@@ -1883,6 +1887,58 @@ describe('dreamux MVP smoke', () => {
     )) as { result: { outcome: string; text: string } };
     // The result is the real assistant text the fake codex returned for the turn.
     expect(pulled.result.text).toBe('echo: Run the codex worker.');
+  });
+
+  it('run_task from a non-Codex (claude-code) dispatcher still executes via the default codex worker', async () => {
+    // Regression (issue #126 PR3 review): the default worker is Codex
+    // regardless of the dispatcher's own runtime. A builtin:claude-code
+    // dispatcher also gets TeamMate MCP, so run_task must resolve a VALID Codex
+    // worker config (the defaults) and execute, not accept-then-hard-fail with
+    // "not wired to Codex".
+    const claudeCodeDispatcher = testDispatcherConfig({
+      id: 'flow',
+      cwd: runtimeDir,
+      runtime: {
+        provider: BUILTIN_CLAUDE_CODE_PROVIDER_REF,
+        config: {
+          bin: 'claude',
+          model: null,
+          permission_mode: null,
+          extra_args: [],
+          extra_env: {},
+          turn_timeout_ms: 600000,
+        },
+      },
+    });
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      config: { ...BUILT_IN_DEFAULTS, dispatchers: [claudeCodeDispatcher] },
+      teamMateDeliveryBackoffMs: () => 0,
+    });
+    // Do NOT start() — that would spawn the claude-code runtime. The worker
+    // catalog, ledger, and dispatcher rows are wired in the constructor, so the
+    // MCP entry point can be driven directly.
+    const result = await server.runTeamMateTaskFromMcp({
+      dispatcherId: 'flow',
+      callerKind: 'dispatcher',
+      title: 'CC dispatcher task',
+      prompt: 'Run from a claude-code dispatcher.',
+      targetPath: '.',
+    });
+    // The Codex worker started for real (default config), not a hard-fail.
+    expect(result.execution).toMatchObject({
+      status: 'running',
+      provider_ref: 'builtin:codex',
+    });
+
+    // Capabilities reports the default Codex worker as available regardless of
+    // the dispatcher's own (claude-code) runtime.
+    const caps = server.getTeamMateCapabilitiesFromMcp();
+    const codex = caps.providers.find((p) => p.provider_ref === 'builtin:codex');
+    expect(codex?.worker_available).toBe(true);
+    expect(caps.execution_available).toBe(true);
   });
 
   it('send_input promotes a queued input to submitted when a worker session is live', async () => {
