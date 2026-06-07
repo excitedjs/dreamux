@@ -98,6 +98,22 @@ export interface SendTeamMateWorkerInputResult {
   disposition?: TeamMateWorkerInputDisposition;
 }
 
+export interface CancelTeamMateWorkerInput {
+  dispatcherId: string;
+  taskId: string;
+  /** Optional close note carried into the `cancelled` event/close. */
+  reason: string | null;
+}
+
+export interface CancelTeamMateWorkerResult {
+  /**
+   * Whether a live worker session in THIS process was driven to cancel. When
+   * true, the provider's `onCancelled` callback owns the ledger close + notify;
+   * when false, the caller must close the ledger itself (no live worker here).
+   */
+  cancelledLiveSession: boolean;
+}
+
 export class TeamMateWorkerExecutionService {
   private readonly sessions = new Map<string, TeamMateWorkerSession>();
 
@@ -242,6 +258,25 @@ export class TeamMateWorkerExecutionService {
       mode: input.mode,
     });
     return { delivered: true, disposition };
+  }
+
+  /**
+   * Cancel a live worker session for a task, if one is owned by THIS process.
+   * Driving `session.cancel()` reaps the worker's runtime resources and drives
+   * the provider's `onCancelled` callback, which is the SOLE writer of the
+   * `cancelled` ledger close + wait-broker notify — this method never closes the
+   * ledger itself, so there is exactly one close and one notify. With no live
+   * session it is a no-op (`cancelledLiveSession: false`) and the caller closes
+   * the ledger directly; a task running with no live session here (e.g. orphaned
+   * across a restart) cannot have its process reaped and falls into that path.
+   */
+  async cancel(
+    input: CancelTeamMateWorkerInput,
+  ): Promise<CancelTeamMateWorkerResult> {
+    const session = this.sessions.get(key(input.dispatcherId, input.taskId));
+    if (session === undefined) return { cancelledLiveSession: false };
+    await session.cancel(input.reason);
+    return { cancelledLiveSession: true };
   }
 
   private buildCallbacks(

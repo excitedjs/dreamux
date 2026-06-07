@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Add TeamMate MCP control/query parity (issue #126 PR5): two additive tools so a dispatcher can stop and inspect a worker over MCP without shelling out to a tm CLI, killing a process, or tailing a log file. cancel_task stops a live worker (reaping its resources) or closes a not-yet-running/orphaned task in the ledger as cancelled, and is an idempotent no-op on an already-terminal task. get_task_logs returns a bounded tail of a worker's diagnostic logs (Codex app-server stdout protocol frames + stderr; Claude resident-child stderr) for the EFFECTIVE worker, resolving the catalog default for tasks that did not pin a provider. Read/wait parity (status/history/last/poll) was already served by list_tasks/get_task/pull_result/await_completion; resume and multi-turn stay deferred (one-turn workers). No config schema, persisted format, or runtime path change.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

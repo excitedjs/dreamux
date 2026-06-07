@@ -365,6 +365,53 @@ Shared / server wiring changes:
 Deferred (in addition to PR3's list): honest live steer/queue/interrupt for the
 Claude Code worker; multi-turn persistent claude-code worker sessions and resume.
 
+## Issue #126: TeamMate MCP parity — PR5 (control/query: cancel + logs)
+
+PR5 closes the remaining gap that forced a dispatcher to shell out (a `tm` CLI,
+a process kill, or tailing a log file) for normal orchestration. The seven `tm`
+control/query verbs are dispositioned explicitly:
+
+- **status / history / last / poll** — already served since PR1 by `list_tasks`,
+  `get_task` (its `events[]` IS the history, plus `inputs[]`), `pull_result`
+  (defaults to the latest result-bearing task), and `await_completion` (bounded
+  server-side wait; a timeout returns a `still_running` snapshot, not an error).
+  No new tool.
+- **cancel / logs** — added this slice as two additive MCP tools.
+- **resume / multi-turn** — deferred; both built-in workers are one-turn (Codex
+  one turn, Claude single-turn), so resume of a terminal/orphaned task waits on
+  the (still-deferred) orphan-reconciliation path.
+
+Two new dispatcher-facing MCP tools (admin methods `mcp.teammate.cancel` /
+`mcp.teammate.logs`):
+
+- **`cancel_task(task_id, note?)`** — stop a task without an out-of-band kill.
+  The execution service gains `cancel()`: it drives a live in-process session's
+  `cancel()`, whose provider `onCancelled` callback is the SOLE writer of the
+  `cancelled` ledger close + wait-broker notify (exactly one close, one notify).
+  With no live session here (accepted/queued, or a `running` task orphaned across
+  a restart) the server closes the ledger directly via `recordClose('cancelled')`
+  and notifies. A terminal task is an idempotent no-op (`status:
+  already_terminal`). An orphaned-running task's ledger is closed but its process
+  cannot be reaped by a server that does not own it — consistent with the
+  existing orphan deferral. The close status is fixed to `cancelled` (+ optional
+  `note`); the richer `tm kill --status` disposition enum stays out of cancel.
+- **`get_task_logs(task_id, max_bytes?, stream?)`** — a bounded tail of a
+  worker's DIAGNOSTIC logs (Codex app-server stdout protocol frames + stderr;
+  Claude resident-child stderr — the Claude stdout NDJSON data plane is consumed
+  in-process and never lands on disk), NOT the clean result (that is
+  `get_task`/`pull_result`/`await_completion`). The read side lives in
+  `teammate/worker-logs.ts`: it maps the **effective** worker ref to its log
+  file(s) via `runtime/paths.ts` and reads the last N bytes (default 16 KiB,
+  capped at 128 KiB). The effective ref is resolved through the worker catalog,
+  so a task that did not pin a provider (ran on the catalog default) still finds
+  its logs instead of reporting `logs_supported: false`. Paths are server-built
+  from the ledger-validated task id, never caller input — no traversal surface.
+  This also fulfils the `logs: true` capability both workers already advertise.
+
+No config schema, persisted-format, or runtime-path change — `get_task_logs`
+reads the PR3/PR4 worker log paths; `cancel_task` reuses the PR1 `recordClose`
+path. Read/wait parity tools are unchanged.
+
 ## Consequences
 
 - The old "Dreamux never owns teammate state" decision is superseded.

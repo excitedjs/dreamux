@@ -322,6 +322,58 @@ describe('TeamMate worker execution', () => {
     expect(outcome.provider_ref).toBe('builtin:codex');
   });
 
+  it('cancels a live session through the provider, closing it exactly once (PR5)', async () => {
+    const fake = new FakeTeamMateWorkerProvider();
+    const harness = buildHarness(
+      new TeamMateWorkerProviderCatalog({ providers: [fake] }),
+    );
+    const { ledger, execution } = harness;
+    const taskId = await acceptTask(ledger);
+    await execution.execute({ dispatcherId: DISPATCHER, taskId });
+    const notifiesBefore = harness.notifications;
+
+    const result = await execution.cancel({
+      dispatcherId: DISPATCHER,
+      taskId,
+      reason: 'operator pressed stop',
+    });
+    expect(result).toEqual({ cancelledLiveSession: true });
+
+    const task = await ledger.getTask(taskId);
+    expect(task?.lifecycle_status).toBe('cancelled');
+    expect(task?.close).toMatchObject({
+      status: 'cancelled',
+      note: 'operator pressed stop',
+    });
+    // Exactly one `closed` event and exactly one wait-broker notify from the
+    // provider's onCancelled callback — the service never double-closes.
+    expect(task?.events.filter((e) => e.type === 'closed')).toHaveLength(1);
+    expect(harness.notifications).toBe(notifiesBefore + 1);
+    expect(execution.hasLiveSession(DISPATCHER, taskId)).toBe(false);
+    expect(fake.hasLiveSession(taskId)).toBe(false);
+  });
+
+  it('cancel is a no-op when no live session is owned here (PR5)', async () => {
+    const fake = new FakeTeamMateWorkerProvider();
+    const harness = buildHarness(
+      new TeamMateWorkerProviderCatalog({ providers: [fake] }),
+    );
+    const { ledger, execution } = harness;
+    const taskId = await acceptTask(ledger);
+    // Never executed: the service owns no session, so cancel cannot reap one and
+    // the caller (server) is responsible for closing the ledger directly.
+    const result = await execution.cancel({
+      dispatcherId: DISPATCHER,
+      taskId,
+      reason: null,
+    });
+    expect(result).toEqual({ cancelledLiveSession: false });
+    const task = await ledger.getTask(taskId);
+    expect(task?.lifecycle_status).toBe('accepted');
+    expect(task?.events.map((e) => e.type)).toEqual(['accepted']);
+    expect(harness.notifications).toBe(0);
+  });
+
   it('wakes a waiter when the worker completes mid-wait', async () => {
     const fake = new FakeTeamMateWorkerProvider();
     const { ledger, broker, execution } = buildHarness(

@@ -125,6 +125,8 @@ describe('teammate-mcp stdio shim', () => {
       'execute_task',
       'send_input',
       'await_completion',
+      'cancel_task',
+      'get_task_logs',
       'get_capabilities',
       'list_tasks',
       'get_task',
@@ -483,6 +485,117 @@ describe('teammate-mcp stdio shim', () => {
           target_path: 'sub/repo',
           target_mode: 'in_place',
           operation_id: 'op-1',
+        },
+      });
+
+      input.end();
+      await run;
+    } finally {
+      await admin.close();
+    }
+  });
+
+  it('forwards cancel_task with an optional note (PR5)', async () => {
+    const admin = await startFakeAdminServer((request) => ({
+      id: request.id,
+      ok: true,
+      result: {
+        task_id: 'tmtsk_1_run',
+        status: 'cancelled',
+        lifecycle_status: 'cancelled',
+        cancelled_live_session: true,
+      },
+    }));
+    try {
+      const input = new PassThrough();
+      const output = new PassThrough();
+      const reader = new JsonLineReader(output);
+      const run = runTeamMateMcp({
+        dispatcherId: 'dispatcher-a',
+        callerKind: 'dispatcher',
+        adminSocketPath: admin.socketPath,
+        input,
+        output,
+        log: () => {},
+      });
+
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'cancel_task',
+          arguments: { task_id: 'tmtsk_1_run', note: 'stop now' },
+        },
+      });
+
+      expect(await reader.next()).toMatchObject({
+        id: 1,
+        result: { structuredContent: { status: 'cancelled' } },
+      });
+      expect(admin.requests[0]).toEqual({
+        id: expect.any(String) as string,
+        method: 'mcp.teammate.cancel',
+        params: {
+          dispatcher_id: 'dispatcher-a',
+          task_id: 'tmtsk_1_run',
+          note: 'stop now',
+        },
+      });
+
+      input.end();
+      await run;
+    } finally {
+      await admin.close();
+    }
+  });
+
+  it('forwards get_task_logs with bounded tail params (PR5)', async () => {
+    const admin = await startFakeAdminServer((request) => ({
+      id: request.id,
+      ok: true,
+      result: {
+        task_id: 'tmtsk_1_run',
+        provider_ref: 'builtin:codex',
+        logs_supported: true,
+        streams: [{ stream: 'stderr', available: true, bytes: 4, truncated: false, text: 'hi\n\n' }],
+      },
+    }));
+    try {
+      const input = new PassThrough();
+      const output = new PassThrough();
+      const reader = new JsonLineReader(output);
+      const run = runTeamMateMcp({
+        dispatcherId: 'dispatcher-a',
+        callerKind: 'dispatcher',
+        adminSocketPath: admin.socketPath,
+        input,
+        output,
+        log: () => {},
+      });
+
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'get_task_logs',
+          arguments: { task_id: 'tmtsk_1_run', max_bytes: 256, stream: 'stderr' },
+        },
+      });
+
+      expect(await reader.next()).toMatchObject({
+        id: 1,
+        result: { structuredContent: { logs_supported: true } },
+      });
+      expect(admin.requests[0]).toEqual({
+        id: expect.any(String) as string,
+        method: 'mcp.teammate.logs',
+        params: {
+          dispatcher_id: 'dispatcher-a',
+          task_id: 'tmtsk_1_run',
+          max_bytes: 256,
+          stream: 'stderr',
         },
       });
 

@@ -288,6 +288,48 @@ export const adminMethods: Record<string, AdminHandler> = {
     }
   },
 
+  'mcp.teammate.cancel': async (server, params) => {
+    const id = mustDispatcherId(params);
+    mustExistingDispatcher(server, id);
+    const taskId = mustString(params, 'task_id');
+    const note = optionalString(params, 'note');
+    try {
+      return await server.cancelTeamMateTaskFromMcp({
+        dispatcherId: id,
+        taskId,
+        ...(note !== null ? { note } : {}),
+      });
+    } catch (err) {
+      throw new AdminError('TEAMMATE_CANCEL_FAILED', parseMessage(err));
+    }
+  },
+
+  'mcp.teammate.logs': async (server, params) => {
+    const id = mustDispatcherId(params);
+    mustExistingDispatcher(server, id);
+    const taskId = mustString(params, 'task_id');
+    const maxBytes = optionalNumber(params, 'max_bytes');
+    const stream = optionalString(params, 'stream');
+    if (stream !== null && stream !== 'stdout' && stream !== 'stderr') {
+      throw new AdminError(
+        'BAD_REQUEST',
+        "param 'stream' must be 'stdout' or 'stderr'",
+      );
+    }
+    try {
+      return await server.getTeamMateTaskLogsFromMcp({
+        dispatcherId: id,
+        taskId,
+        ...(maxBytes !== null ? { maxBytes } : {}),
+        ...(stream !== null
+          ? { stream: stream as 'stdout' | 'stderr' }
+          : {}),
+      });
+    } catch (err) {
+      throw new AdminError('TEAMMATE_LOGS_FAILED', parseMessage(err));
+    }
+  },
+
   'mcp.teammate.capabilities': (server) =>
     server.getTeamMateCapabilitiesFromMcp(),
 
