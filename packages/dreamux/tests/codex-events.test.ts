@@ -1,10 +1,11 @@
 /**
  * Unit tests for the Codex turn collector (issue #126 PR8).
  *
- * The worker is the only production consumer that awaits `turn/completed`; the
- * dispatcher path is submit-then-return. These assert the two PR8 additions:
+ * Runtime-local history is the production consumer that observes
+ * `turn/completed`; the dispatcher path is submit-then-return. These assert the
+ * two PR8 additions:
  *   - onTrace observes EVERY notification (before filtering), the diagnostic
- *     stream surfaced via get_task_logs.
+ *     stream that can explain a stalled turn.
  *   - acceptAnyThread resolves on a turn/completed even when its threadId field
  *     does not match — the single-thread worker robustness fix — while the
  *     default (strict) path still filters foreign threads.

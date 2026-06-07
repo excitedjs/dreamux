@@ -5,14 +5,12 @@ ships in the npm package:
 
 - `dispatcher` teaches dispatcher app-server sessions how to delegate product
   work to TeamMates. The default interface is the server-hosted TeamMate MCP:
-  `run_task`/`execute_task` execute a worker for real, then the dispatcher turn
-  ends — the server delivers/wakes the dispatcher in a new turn, so there is no
-  dispatcher-side waiting or polling (issue #126 PR8 removed the
-  `await_completion` tool). `list_tasks`/`get_task`/`pull_result` read results
-  (also the recovery path), and `cancel_task`/`get_task_logs`/`get_capabilities`
-  control and inspect. The `tm` CLI is the explicit fallback for resume,
-  multi-turn continuation, dead-session recovery, and isolated worktrees
-  ([server-hosted TeamMate](../decisions/server-hosted-teammate.md)).
+  `spawn` creates a named semi-resident TeamMate, `send` submits follow-up
+  turns, `resume` reattaches persisted checkpoints, and `close` stops one.
+  `history`/`list`/`status`/`last`/`ctx`/`get_capabilities` read and recover
+  state without polling. The `tm` CLI is the explicit fallback for isolated
+  managed worktrees and legacy diagnostics
+  ([provider architecture realignment](../decisions/provider-architecture-realignment.md)).
 - `team-dev-workflow` covers multi-teammate review, design, merge, and unblock
   coordination.
 - `dreamux-maintenance` covers installed Dreamux diagnosis and safe operation.
@@ -40,22 +38,21 @@ See [the dispatcher tm packaging decision](../decisions/dispatcher-tm-packaging.
 
 ## Runtime Boundary
 
-[server-hosted TeamMate](../decisions/server-hosted-teammate.md) supersedes the
-older dispatcher/tm boundary for server-owned TeamMate state. Two state owners,
-kept distinct in the skill:
+[provider architecture realignment](../decisions/provider-architecture-realignment.md)
+supersedes the older dispatcher/tm boundary for server-owned TeamMate state.
+Two state owners are kept distinct in the skill:
 
-- The Dreamux server owns the TeamMate **task ledger** behind the injected
-  dispatcher-scoped `teammate` MCP — scheduled task records, statuses, retained
-  results, and delivery state under `~/.dreamux/state/<dispatcher-id>/teammate/`.
+- The Dreamux server owns TeamMate **agent state** behind the injected
+  dispatcher-scoped `teammate` MCP — identities, runtime checkpoints, statuses,
+  forward-only history, last result, and context snapshots under
+  `~/.dreamux/state/<dispatcher-id>/teammate/`.
 - `tm` owns live tm **session** state — teammate liveness, repository worktrees,
   and resumable session history — invoked through the command boundary.
 
-The dispatcher reaches server task state only through the `teammate` MCP tools
+The dispatcher reaches server TeamMate state only through the `teammate` MCP tools
 and live tm sessions only through `tm`; it does not call `teammate.*` admin
-methods directly. The MCP workers (`builtin:codex`, `builtin:claude-code`)
-execute scheduled work for real; `tm` stays the path for resume, multi-turn
-continuation, dead-session recovery, and isolated worktrees, which the MCP
-workers do not yet cover.
+methods directly. The MCP path uses the same `AgentRuntime` providers as
+dispatchers; `tm` stays the path for isolated worktrees and legacy diagnostics.
 
 ## tm Strategy
 

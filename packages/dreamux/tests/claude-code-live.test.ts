@@ -23,12 +23,8 @@ import {
   createClaudeCodeAgentRuntimeProvider,
   type ClaudeCodeAgentRuntimeProviderOptions,
 } from '../src/agent-runtime/claude-code.js';
-import { createClaudeCodeTeamMateWorkerProvider } from '../src/teammate/worker/claude-code-provider.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
 import { DispatcherStore } from '../src/runtime/dispatcher-store.js';
-import type {
-  TeamMateWorkerHandle,
-} from '../src/teammate/worker/types.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 
 const execFileAsync = promisify(execFile);
@@ -161,72 +157,4 @@ describe('claude-code live integration (opt-in)', () => {
     await runtime.stop();
     expect(runtime.getStatus()).toBe('stopped');
   });
-
-  it('runs a real claude-code teammate worker turn to completion (issue #126 PR4)', async () => {
-    // The TeamMate worker reuses the same resident stream-json primitive as the
-    // dispatcher runtime, but per-task and single-turn: one prompt → one turn →
-    // onCompleted with the real assistant text, then the child is reaped.
-    const dispatcherDir = mkdtempSync(join(home, 'cc-worker-cwd-'));
-    const provider = createClaudeCodeTeamMateWorkerProvider({
-      resolveBinPath: (bin) => bin,
-      resolveClaudeCodeConfig: () => ({
-        bin: 'claude',
-        model: null,
-        permission_mode: 'acceptEdits',
-        extra_args: [],
-        extra_env: {},
-        turn_timeout_ms: 120_000,
-      }),
-      resolveDispatcherCwd: () => dispatcherDir,
-    });
-
-    const running: TeamMateWorkerHandle[] = [];
-    const completed: string[] = [];
-    const failed: string[] = [];
-    let settle: () => void = () => {};
-    const terminal = new Promise<void>((resolve) => {
-      settle = resolve;
-    });
-
-    const outcome = await provider.startSession(
-      {
-        dispatcherId: 'live',
-        taskId: 'tmtsk_live_worker_1',
-        teammateId: null,
-        title: 'Live worker task',
-        prompt: 'Reply with the single word: pong',
-        target: null,
-        targetMode: null,
-      },
-      {
-        onRunning: async (handle) => {
-          running.push(handle);
-        },
-        onCompleted: async (text) => {
-          completed.push(text);
-          settle();
-        },
-        onFailed: async (text) => {
-          failed.push(text);
-          settle();
-        },
-        onCancelled: async () => {
-          settle();
-        },
-      },
-    );
-    expect(outcome.status).toBe('started');
-    expect(running).toHaveLength(1);
-
-    await Promise.race([
-      terminal,
-      new Promise<void>((resolve) => setTimeout(resolve, 120_000)),
-    ]);
-    expect(failed).toEqual([]);
-    expect(completed).toHaveLength(1);
-    expect(completed[0]!.length).toBeGreaterThan(0);
-    rmSync(dispatcherDir, { recursive: true, force: true });
-    // A real claude turn runs well past vitest's 5s default — give the whole
-    // case a generous per-test budget (mirrors the codex-live worker case).
-  }, 130_000);
 });

@@ -1,11 +1,10 @@
 # Dispatch A Task
 
-> This is the `tm` fallback path. Default to the `teammate` MCP — `run_task` /
-> `execute_task` to run a task, then let your turn end and collect with
-> `get_task` / `pull_result` when the server wakes you (see the dispatcher
-> skill; do not poll). Use the `tm spawn` / `tm send` flow below when you need a
-> resumable live session or an isolated managed worktree that the in-place MCP
-> workers do not provide.
+> This is the `tm` fallback path. Default to the `teammate` MCP —
+> `spawn` / `send` / `resume` / `close`, then inspect with
+> `history` / `last` / `ctx` (see the dispatcher skill; do not poll). Use the
+> `tm spawn` / `tm send` flow below only when you need an isolated managed
+> worktree or legacy tm diagnostics.
 
 ## Trigger
 

@@ -8,14 +8,10 @@ import { DREAMUX_DISPATCHER_BASE_INSTRUCTIONS } from '../src/dispatcher/base-pro
 /**
  * Guards the issue #124 alignment as updated by PR6 (issue #126): the bundled
  * dispatcher-facing skills and the injected dispatcher base prompt must present
- * the server-hosted TeamMate MCP as the DEFAULT orchestration interface that
- * executes work for real (run_task/execute_task), reads results without polling
- * (list_tasks/get_task/pull_result; completion arrives by server delivery/
- * wake-up, not a dispatcher-facing await), and controls a worker
- * (cancel_task/get_task_logs/get_capabilities) — and keep the `tm` CLI
- * only as the explicit fallback for resume, multi-turn, recovery, and isolated
- * worktrees. The stale "Phase 1 / may not run to completion" caveat must be
- * gone now that PR3-5 wired real workers.
+ * the server-hosted TeamMate MCP as the DEFAULT orchestration interface for
+ * named, semi-resident TeamMate agents: spawn/send/resume/close plus
+ * history/list/status/last/ctx/get_capabilities. The stale task/worker
+ * vocabulary must stay gone after the agent-centric cut.
  *
  * These read the SHIPPED skill files (via `bundledSkillDir`) so packaging drift
  * — a stale tm-primary skill slipping back into the npm package — is caught, not
@@ -25,16 +21,16 @@ import { DREAMUX_DISPATCHER_BASE_INSTRUCTIONS } from '../src/dispatcher/base-pro
 // The dispatcher-scoped `teammate` MCP tool names, owned by
 // `src/mcp/teammate-mcp.ts`. Kept in sync with that file's `teammateTools()`.
 const TEAMMATE_MCP_TOOLS = [
-  'schedule',
-  'run_task',
-  'execute_task',
-  'send_input',
-  'cancel_task',
-  'get_task_logs',
+  'spawn',
+  'send',
+  'resume',
+  'close',
+  'history',
+  'list',
+  'status',
+  'last',
+  'ctx',
   'get_capabilities',
-  'list_tasks',
-  'get_task',
-  'pull_result',
 ];
 
 function readBundledSkill(name: string): string {
@@ -45,21 +41,23 @@ describe('TeamMate MCP is the default teammate interface (issue #124, #126 PR6)'
   it('dispatcher skill presents the MCP as default and tm as the explicit fallback', () => {
     const skill = readBundledSkill('dispatcher');
 
-    // Default framing names every MCP tool, including the execution and control
-    // verbs wired by PR1-5.
+    // Default framing names every MCP tool in the agent-centric surface.
     for (const tool of TEAMMATE_MCP_TOOLS) {
       expect(skill).toContain(tool);
     }
     expect(skill).toContain('the primary interface');
     expect(skill).toContain('the default interface');
 
-    // The MCP executes for real now; the stale "Phase 1 / not to completion"
-    // caveat must be gone (PR6, issue #126).
-    expect(skill).toContain('executes');
+    // The task/worker surface must stay deleted.
+    expect(skill).toContain('semi-resident TeamMate agents');
     expect(skill).not.toContain('Phase 1 boundary');
     expect(skill).not.toContain('autonomous worker execution');
     expect(skill).not.toContain('may not run a scheduled task to completion');
     expect(skill).not.toContain('runs a repo-local teammate to completion today');
+    expect(skill).not.toContain('run_task');
+    expect(skill).not.toContain('execute_task');
+    expect(skill).not.toContain('schedule');
+    expect(skill).not.toContain('task id');
 
     // tm survives only as the explicit fallback.
     expect(skill).toContain('the explicit fallback');
@@ -80,7 +78,7 @@ describe('TeamMate MCP is the default teammate interface (issue #124, #126 PR6)'
     const skill = readBundledSkill('dreamux-maintenance');
 
     expect(skill).toContain('teammate-mcp/<dispatcher-id>.log');
-    expect(skill).toContain('TeamMate scheduling/retrieval fails');
+    expect(skill).toContain('TeamMate MCP fails');
     expect(skill).toContain('fallback path');
   });
 
@@ -90,7 +88,7 @@ describe('TeamMate MCP is the default teammate interface (issue #124, #126 PR6)'
     expect(prompt).toContain('# TeamMate Delegation');
     expect(prompt).toContain('server-hosted TeamMate MCP is the primary interface');
     expect(prompt).toContain('The tm CLI is the labeled fallback');
-    expect(prompt).toContain('executes work for real');
+    expect(prompt).toContain('named, semi-resident TeamMate agents');
     for (const tool of TEAMMATE_MCP_TOOLS) {
       expect(prompt).toContain(tool);
     }
@@ -98,10 +96,11 @@ describe('TeamMate MCP is the default teammate interface (issue #124, #126 PR6)'
     // The stale Phase 1 / not-to-completion caveat must be gone (PR6, #126).
     expect(prompt).not.toContain('Phase 1 boundary');
     expect(prompt).not.toContain('may not run a scheduled task to completion');
+    expect(prompt).not.toContain('run_task');
+    expect(prompt).not.toContain('execute_task');
+    expect(prompt).not.toContain('task id');
     // Anti-regression: the old tm-primary section heading must not return.
     expect(prompt).not.toContain('# tm Delegation');
-    // await_completion is no longer a dispatcher-facing tool (issue #126 PR8):
-    // normal orchestration is run_task → turn ends → delivery/wake-up.
     expect(prompt).not.toContain('await_completion');
   });
 

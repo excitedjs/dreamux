@@ -52,8 +52,8 @@ export interface AgentRuntimeCapabilities {
 }
 
 export interface TeamMateCompletionEnvelope {
-  taskId: string;
-  teammateId: string;
+  teammateName: string;
+  sessionId: string | null;
   status: 'completed' | 'failed';
   finalText: string;
 }
@@ -86,6 +86,34 @@ export interface AgentRuntimeContextSnapshot {
   windowTokens: number | null;
 }
 
+export interface AgentRuntimeStateStore {
+  setStatus(
+    id: string,
+    status: DispatcherStatus,
+    extras?: {
+      last_error?: string | null;
+      last_started_at?: number;
+      last_ready_at?: number;
+    },
+  ): Promise<void>;
+  setThreadId(id: string, threadId: string): Promise<void>;
+  recordLostThread?(
+    id: string,
+    lostThreadId: string,
+    newThreadId: string,
+    error: string,
+  ): Promise<void>;
+}
+
+export interface AgentRuntimePathContext {
+  dispatcherCodexCwd(id: string): string;
+  dispatcherSocketPath(id: string): string;
+  dispatcherStdoutLog(id: string): string;
+  dispatcherStderrLog(id: string): string;
+  dispatcherClaudeCodeMcpConfigPath(id: string): string;
+  dispatcherClaudeCodeStreamLogPath(id: string): string;
+}
+
 export interface AgentRuntime {
   readonly providerRef: string;
   start(): Promise<void>;
@@ -110,6 +138,8 @@ export interface AgentRuntimeCreateContext {
   row: DispatcherRow;
   dispatcher: DispatcherConfig | null;
   dispatchers: DispatcherStore;
+  state?: AgentRuntimeStateStore;
+  paths?: AgentRuntimePathContext;
   mcpServers: readonly AgentRuntimeMcpServer[];
   log: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
 }

@@ -8,7 +8,11 @@
  *   - Codex text output alone does not send anything to Feishu.
  */
 
-import { submitTurnStart } from '../codex/events.js';
+import {
+  subscribeTurnCollection,
+  submitTurnStart,
+  type CollectedTurn,
+} from '../codex/events.js';
 import type { CodexWsClient } from '../codex/rpc.js';
 
 export const DEFAULT_MESSAGE_ID_DEDUPE_WINDOW = 1024;
@@ -62,6 +66,8 @@ export interface TurnManagerOptions {
   messageIdDedupeWindow?: number;
   /** Optional logger; defaults to console.error. */
   log?: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
+  /** Best-effort runtime-local snapshot hook for `AgentRuntime.getLast()`. */
+  onTurnCompleted?: (turn: CollectedTurn) => void;
 }
 
 export class TurnManager {
@@ -116,11 +122,16 @@ export class TurnManager {
     }
 
     try {
+      const collector = subscribeTurnCollection(this.opts.client, threadId);
       const res = await submitTurnStart(
         this.opts.client,
         threadId,
         input.parsed_text,
         this.opts.turnCwd ?? null,
+      );
+      void collector.awaitTurn().then(
+        (turn) => this.opts.onTurnCompleted?.(turn),
+        () => undefined,
       );
       return { status: 'submitted', turnId: res.turn.id };
     } catch (err) {
@@ -156,11 +167,16 @@ export class TurnManager {
     // a second injection cannot fire.
     this.inboundSubmitted = true;
     try {
+      const collector = subscribeTurnCollection(this.opts.client, threadId);
       const res = await submitTurnStart(
         this.opts.client,
         threadId,
         text,
         this.opts.turnCwd ?? null,
+      );
+      void collector.awaitTurn().then(
+        (turn) => this.opts.onTurnCompleted?.(turn),
+        () => undefined,
       );
       this.log('info', `injected restart notice into thread ${threadId}`);
       return { status: 'submitted', turnId: res.turn.id };

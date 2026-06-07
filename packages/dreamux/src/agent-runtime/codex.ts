@@ -34,7 +34,7 @@ export const CODEX_AGENT_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = {
   resume: { supported: true, checkpoint: 'codexThread' },
   steer: { supported: true },
   events: { kind: 'push' },
-  last: { supported: false },
+  last: { supported: true },
   context: { supported: false },
   teammateCompletion: [
     {
@@ -64,6 +64,8 @@ export function createCodexAgentRuntimeProvider(
       ];
       const runtimeDeps = {
         dispatchers: context.dispatchers,
+        state: context.state,
+        paths: context.paths,
         codexBinPath: options.resolveBinPath(codexConfig.bin),
         resolveExtraArgs: () => runtimeArgs,
         handshakeTimeoutMs: codexConfig.initialize_timeout_ms,

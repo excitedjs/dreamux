@@ -1,16 +1,15 @@
 # Inspect And Resume
 
-> Default to the `teammate` MCP for inspection: `list_tasks`, `get_task`,
-> `pull_result`, and `get_task_logs` cover status, history, last, and
-> diagnostics without `tm` (completion arrives by server delivery/wake-up — do
-> not poll). This `tm` fallback owns what the MCP does not yet: resuming or
-> recovering a dead live session and its worktree and session history.
+> Default to the `teammate` MCP for inspection: `list`, `status`, `history`,
+> `last`, and `ctx` cover server-owned TeamMate state without `tm`; do not poll.
+> This `tm` fallback owns what the MCP does not: legacy tm sessions, worktrees,
+> and tm history.
 
 ## Trigger
 
-You need to see what teammates are doing, re-read a reply, or continue a task
-whose teammate is gone (dispatcher restarted, teammate killed, host rebooted).
-Skip this when you are sending fresh work (`dispatch-task.md`).
+You need to see what a tm-managed teammate is doing, re-read a tm reply, or
+continue a legacy tm session whose process is gone. Skip this when you are
+sending fresh work (`dispatch-task.md`).
 
 ## Steps
 

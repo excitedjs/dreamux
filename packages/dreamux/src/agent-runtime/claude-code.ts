@@ -84,7 +84,6 @@ import type {
 import type { DispatcherStatus } from '../runtime/dispatcher-store.js';
 import type {
   AgentRuntimeCapabilities,
-  AgentRuntimeContextSnapshot,
   AgentRuntime,
   AgentRuntimeCreateContext,
   AgentRuntimeLastResult,
@@ -108,7 +107,7 @@ export const CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = 
   resume: { supported: true, checkpoint: 'claudeCodeSession' },
   steer: { supported: false },
   events: { kind: 'synthesized' },
-  last: { supported: false },
+  last: { supported: true },
   context: { supported: false },
   teammateCompletion: [
     {
@@ -127,10 +126,10 @@ interface ClaudeCodeRuntimeDeps {
 /** Format a TeamMate completion as a Claude Code task-notification turn. */
 function formatTaskNotification(completion: TeamMateCompletionEnvelope): string {
   return [
-    `<teammate_task_completion task_id="${completion.taskId}" ` +
-      `teammate_id="${completion.teammateId}" status="${completion.status}">`,
+    `<teammate_session_completion teammate="${completion.teammateName}" ` +
+      `session_id="${completion.sessionId ?? ''}" status="${completion.status}">`,
     completion.finalText,
-    '</teammate_task_completion>',
+    '</teammate_session_completion>',
   ].join('\n');
 }
 
@@ -168,6 +167,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   private queue: Promise<void> = Promise.resolve();
   private turnCounter = 0;
   private session: ClaudeCodeSession | null = null;
+  private lastResult: AgentRuntimeLastResult | null = null;
 
   constructor(
     private readonly context: AgentRuntimeCreateContext,
@@ -179,10 +179,17 @@ export class ClaudeCodeRuntime implements AgentRuntime {
         ? defaultDispatcherClaudeCodeConfig()
         : dispatcherClaudeCodeConfig(context.dispatcher);
     this.bin = deps.resolveBinPath(this.config.bin);
-    this.cwd = context.row.codex_cwd ?? dispatcherCodexCwd(this.dispatcherId);
-    this.mcpConfigPath = dispatcherClaudeCodeMcpConfigPath(this.dispatcherId);
+    this.cwd =
+      context.row.codex_cwd ??
+      (context.paths?.dispatcherCodexCwd(this.dispatcherId) ??
+        dispatcherCodexCwd(this.dispatcherId));
+    this.mcpConfigPath =
+      context.paths?.dispatcherClaudeCodeMcpConfigPath(this.dispatcherId) ??
+      dispatcherClaudeCodeMcpConfigPath(this.dispatcherId);
     this.mcpConfigDoc = stringifyClaudeCodeMcpConfig(context.mcpServers);
-    this.stderrLogPath = dispatcherClaudeCodeStreamLogPath(this.dispatcherId);
+    this.stderrLogPath =
+      context.paths?.dispatcherClaudeCodeStreamLogPath(this.dispatcherId) ??
+      dispatcherClaudeCodeStreamLogPath(this.dispatcherId);
     this.threadId = context.row.thread_id;
     this.resumed = context.row.thread_id !== null;
   }
@@ -204,10 +211,10 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   }
 
   async getLast(): Promise<AgentRuntimeLastResult | null> {
-    return null;
+    return this.lastResult;
   }
 
-  async getContext(): Promise<AgentRuntimeContextSnapshot | null> {
+  async getContext(): Promise<null> {
     return null;
   }
 
@@ -306,7 +313,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     try {
       await this.runTurnOnQueue(
         formatTaskNotification(completion),
-        `claude-teammate-${completion.taskId}`,
+        `claude-teammate-${completion.teammateName}-${completion.sessionId}`,
       );
       return { status: 'accepted' };
     } catch (err) {
@@ -391,11 +398,12 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       outcome.sessionId !== this.threadId
     ) {
       this.threadId = outcome.sessionId;
-      await this.context.dispatchers.setThreadId(
+      await (this.context.state ?? this.context.dispatchers).setThreadId(
         this.dispatcherId,
         outcome.sessionId,
       );
     }
+    if (!outcome.isError) this.lastResult = { text: outcome.text };
     if (outcome.isError) {
       const detail =
         outcome.errors.length > 0
@@ -411,7 +419,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     err?: unknown,
   ): Promise<void> {
     this.status = status;
-    await this.context.dispatchers.setStatus(
+    await (this.context.state ?? this.context.dispatchers).setStatus(
       this.dispatcherId,
       status,
       err !== undefined ? { last_error: errMessage(err) } : {},

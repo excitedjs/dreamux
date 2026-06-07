@@ -1,6 +1,6 @@
 ---
 name: dispatcher
-description: Use from a Dreamux dispatcher thread when bounded repository work should be delegated to a TeamMate. The server-hosted TeamMate MCP is the default interface — run_task and execute_task execute a worker for real, list_tasks/get_task/pull_result read results without polling (completion arrives by server delivery/wake-up into a new turn), and cancel_task/get_task_logs/get_capabilities control and inspect it. The tm CLI is the explicit fallback for resume, multi-turn continuation, dead-session recovery, and isolated worktrees. Applies to scheduling, running, tracking, retrieving, sending, cancelling, inspecting, resuming, recovering, or summarizing teammate work.
+description: Use from a Dreamux dispatcher thread when bounded repository work should be delegated to a TeamMate. The server-hosted TeamMate MCP is the default interface; spawn creates a named semi-resident TeamMate, send submits follow-up turns, resume reattaches persisted sessions, close stops one, and history/list/status/last/ctx/get_capabilities inspect state. The tm CLI is the explicit fallback for isolated worktrees and legacy diagnostics. Applies to spawning, tracking, retrieving, sending, closing, inspecting, resuming, recovering, or summarizing teammate work.
 ---
 
 # Dispatcher
@@ -17,50 +17,41 @@ habit.
 
 ### Server-hosted TeamMate MCP — the primary interface
 
-Dreamux injects a dispatcher-scoped `teammate` MCP server. It executes
-repository work for real and lets you run, watch, collect, and control a worker
-without holding a shell session or polling a process.
+Dreamux injects a dispatcher-scoped `teammate` MCP server. It creates named
+semi-resident TeamMate agents through the same AgentRuntime contract as
+dispatchers, then lets you submit follow-up turns, resume persisted sessions,
+inspect state, and close agents without holding a shell session or polling a
+process.
 
-**Run.**
+**Lifecycle.**
 
-- `run_task` — create a task and start a worker against a confined local target
-  in one call. The default `builtin:codex` worker runs the turn to completion;
-  pin `builtin:claude-code` via `provider_ref` for a single-turn, `steer:false`
-  worker. The worker runs in place at the target path.
-- `execute_task` — start or retry execution for an already-accepted task.
-- `schedule` — record an accepted task id in the ledger *without* executing it.
-  Use it to register work you will run later, not to run a task now.
-- `send_input` — fold a follow-up into a live `builtin:codex` turn (`steer`).
-  This is steering, not multi-turn continuation: on a single-turn worker or a
-  task with no live session the input is recorded as queued, not re-executed.
+- `spawn` — create a named TeamMate and submit the first turn. Use a stable name
+  for work you may resume later.
+- `send` — submit a follow-up turn to a live or resumable TeamMate.
+- `resume` — reattach the persisted runtime checkpoint and optionally submit a
+  follow-up prompt.
+- `close` — stop the named TeamMate and mark it closed.
 
 **Watch and collect — no polling.**
 
-- `list_tasks` — this dispatcher's tasks and their statuses.
-- `get_task` — one task in full: result, history, and delivery state.
-- `pull_result` — a retained or latest result; the fallback when push delivery
-  failed.
+- `list` — this dispatcher's TeamMates and their statuses.
+- `status` — one TeamMate status, provider ref, checkpoint, and close metadata.
+- `history` — forward-only history for a named TeamMate.
+- `last` — the runtime's latest assistant-visible result when supported.
+- `ctx` — the runtime context snapshot when supported.
 
 These serve status / history / last directly, so you do not need `tm` to check
-on a running task. Do not wait or poll for completion: `run_task` hands the
-task to the server and this dispatcher turn can end; when the TeamMate finishes,
-the Dispatcher Service delivers the result and wakes you in a new turn.
+on a running TeamMate. Do not wait or poll for completion: submit the turn, let
+the dispatcher turn end, then recover through `history`, `last`, and `ctx`.
 
 **Control and inspect.**
 
-- `cancel_task` — stop a live worker, close a not-yet-running or orphaned task,
-  or no-op idempotently on an already-terminal task.
-- `get_task_logs` — a bounded tail of a worker's diagnostic logs (worker
-  stderr, plus for `builtin:codex` the app-server stdout frames and an `events`
-  trace of the Codex turn notification stream — the diagnostic when a turn
-  stalls after submission) for a slow or failed worker. This is diagnostics, not
-  the clean result — that still comes from `get_task` / `pull_result`.
-- `get_capabilities` — each worker's advertised execution modes.
+- `get_capabilities` — each provider's runtime capabilities: resume, steer,
+  events, last, and context.
 
-The persistent ledger is the source of truth. A completion delivered into the
-dispatcher is a best-effort wake-up, not the result contract — confirm and
-re-read with `get_task` / `pull_result` rather than trusting that a pushed
-notification arrived.
+The persistent identity and history files are the source of truth. A resumed
+TeamMate continues from its saved runtime checkpoint; do not create a new name
+unless you want a separate session.
 
 ### tm CLI — the explicit fallback
 
@@ -68,7 +59,7 @@ Dreamux hosts the dispatcher Codex app-server and exposes `tm` on the dispatcher
 `PATH`. `tm` owns live tm **session** state: teammate liveness, repository
 worktrees, and resumable session history. Reach for it only for what the MCP
 does not yet cover — resuming or recovering a dead session, multi-turn
-continuation, and isolated managed worktrees — and for legacy diagnostics. It is
+isolated managed worktrees — and for legacy diagnostics. It is
 not the default orchestration path. The rest of this skill and its references
 are the operational manual for that fallback.
 
@@ -106,11 +97,11 @@ These govern the tm fallback path. For the primary MCP path, call the injected
   `--engine` explicitly so the selection is intentional rather than inherited
   from a tm version default.
 - Do not call dreamux admin APIs directly to create or recover teammate state.
-  Reach server-owned TeamMate task state only through the `teammate` MCP tools;
+  Reach server-owned TeamMate agent state only through the `teammate` MCP tools;
   reach live tm sessions only through `tm`.
 - Do not infer the target repository from the dispatcher cwd unless the user or
   operator explicitly made that cwd the requested repo.
-- Do not ask a TeamMate to schedule or spawn another TeamMate.
+- Do not ask a TeamMate to spawn or close another TeamMate.
 
 ## When To Delegate
 
@@ -139,13 +130,14 @@ on a flag -- do not infer one verb's flags from another.
 ## Scenario Routing
 
 These references cover the `tm` fallback path. For ordinary delegation —
-running a task, watching it, collecting the result, cancelling it, or reading
-its logs — use the `teammate` MCP tools above and you do not need a reference.
+spawning a TeamMate, sending follow-up turns, resuming it, checking status, or
+reading history/last/context — use the `teammate` MCP tools above and you do
+not need a reference.
 Read the matching reference when you have dropped to `tm`:
 
 | Intent | Reference |
 |---|---|
-| Spawn a teammate, compose its prompt, send follow-up, collect the result | `references/dispatch-task.md` |
+| Use the tm fallback to spawn a managed-worktree teammate or send a legacy tm turn | `references/dispatch-task.md` |
 | Look up, re-read, or resume a prior or dead teammate session | `references/inspect-and-resume.md` |
 
 For multi-teammate review, design negotiation, merge, or unblock coordination,
@@ -172,12 +164,12 @@ turn's tool calls.
 
 Two state owners, kept distinct:
 
-- The Dreamux server owns the TeamMate **task ledger** behind the `teammate`
-  MCP — task records, statuses, retained results, and delivery state. Read and
-  control it with `list_tasks`, `get_task`, `pull_result`, `cancel_task`, and
-  `get_task_logs`; completion arrives by server delivery/wake-up, not polling.
+- The Dreamux server owns the TeamMate **agent state** behind the `teammate`
+  MCP — named identities, runtime checkpoints, status, history, last result,
+  and context snapshots. Read and control it with `list`, `status`, `history`,
+  `last`, `ctx`, `send`, `resume`, and `close`.
 - `tm` owns live tm **session** state — teammate liveness, worktrees, and
   resumable session history (see `references/inspect-and-resume.md`).
 
-Do not conflate the two. Recovering a tm session is not the same as reading a
-server task record, and the server does not own tm session liveness.
+Do not conflate the two. Recovering a tm session is not the same as resuming a
+server-owned TeamMate identity, and the server does not own tm session liveness.

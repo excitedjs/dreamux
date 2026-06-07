@@ -10,7 +10,7 @@
  *         status.json
  *         access.json
  *         codex.sock          Codex app-server Unix socket
- *         teammate/           Server-hosted TeamMate task ledger
+ *         teammate/           Server-hosted TeamMate identities and history
  *     logs/
  *       dreamux-server.log
  *       codex-app-server/
@@ -20,7 +20,6 @@
  * `runtime_dir` concept (and its `runtimeRoot()` alias) was retired in issue #98.
  */
 
-import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -260,141 +259,103 @@ export function dispatcherAccessPath(id: string): string {
   return join(dispatcherDir(id), 'access.json');
 }
 
-/** Per-dispatcher Server-hosted TeamMate state root (issue #110 PR7). */
+/** Per-dispatcher server-hosted TeamMate state root. */
 export function dispatcherTeamMateDir(id: string): string {
   return join(dispatcherDir(id), 'teammate');
 }
 
-/** Versioned metadata file for the per-dispatcher TeamMate task ledger. */
-export function dispatcherTeamMateLedgerPath(id: string): string {
-  return join(dispatcherTeamMateDir(id), 'ledger.json');
+/** Directory containing one stable TeamMate identity record per file. */
+export function dispatcherTeamMateIdentitiesDir(id: string): string {
+  return join(dispatcherTeamMateDir(id), 'identities');
 }
 
-/** Directory containing one versioned TeamMate task record per file. */
-export function dispatcherTeamMateTasksDir(id: string): string {
-  return join(dispatcherTeamMateDir(id), 'tasks');
-}
-
-/**
- * Root for per-task TeamMate worker session runtime files (issue #126 PR3).
- * Each real Codex worker session binds its own app-server listen socket here.
- */
-export function dispatcherTeamMateWorkerDir(id: string): string {
-  return join(dispatcherTeamMateDir(id), 'workers');
-}
-
-/**
- * Listen socket for one TeamMate worker's Codex app-server (issue #126 PR3).
- *
- * The task id is hashed into a short, fixed-width stem and placed under a
- * deliberately terse `teammate/w/` segment so the absolute path stays within
- * the Unix socket byte budget (the worker path is necessarily deeper than the
- * dispatcher's own `state/<id>/codex.sock`); the full id still names the
- * per-task log file. Guarded by {@link assertUnixSocketPathBudget} so an
- * over-long deployment root fails loudly at session start rather than as an
- * opaque bind error.
- */
-export function dispatcherTeamMateWorkerSocketPath(
+export function dispatcherTeamMateIdentityPath(
   id: string,
-  taskId: string,
+  teammateName: string,
 ): string {
-  const stem = createHash('sha256').update(taskId).digest('hex').slice(0, 12);
+  return join(
+    dispatcherTeamMateIdentitiesDir(id),
+    `${teamMateNameSegment(teammateName)}.json`,
+  );
+}
+
+/** Forward-only JSONL history for one TeamMate identity. */
+export function dispatcherTeamMateHistoryPath(
+  id: string,
+  teammateName: string,
+): string {
+  return join(
+    dispatcherTeamMateDir(id),
+    'history',
+    `${teamMateNameSegment(teammateName)}.jsonl`,
+  );
+}
+
+export function dispatcherTeamMateRuntimeDir(
+  id: string,
+  teammateName: string,
+): string {
+  return join(dispatcherTeamMateDir(id), 'runtime', teamMateNameSegment(teammateName));
+}
+
+export function dispatcherTeamMateRuntimeCodexSocketPath(
+  id: string,
+  teammateName: string,
+): string {
   return assertUnixSocketPathBudget(
-    join(dispatcherTeamMateDir(id), 'w', `${stem}.sock`),
-    `dispatcher '${id}' TeamMate worker Codex socket path`,
+    join(dispatcherTeamMateRuntimeDir(id, teammateName), 'codex.sock'),
+    `dispatcher '${id}' TeamMate ${JSON.stringify(teammateName)} Codex socket path`,
   );
 }
 
-/** Per-task TeamMate worker Codex app-server stdout log (issue #126 PR3). */
-export function dispatcherTeamMateWorkerLogPath(
+export function dispatcherTeamMateRuntimeCodexLogPath(
   id: string,
-  taskId: string,
+  teammateName: string,
 ): string {
   return join(
     codexAppServerLogDir(),
     'teammate',
     dispatcherPathSegment(id),
-    `${teamMateWorkerLogStem(taskId)}.log`,
+    `${teamMateNameSegment(teammateName)}.log`,
   );
 }
 
-/** Per-task TeamMate worker Codex app-server stderr log (issue #126 PR3). */
-export function dispatcherTeamMateWorkerErrorLogPath(
+export function dispatcherTeamMateRuntimeCodexErrorLogPath(
   id: string,
-  taskId: string,
+  teammateName: string,
 ): string {
   return join(
     codexAppServerLogDir(),
     'teammate',
     dispatcherPathSegment(id),
-    `${teamMateWorkerLogStem(taskId)}.stderr.log`,
+    `${teamMateNameSegment(teammateName)}.stderr.log`,
   );
 }
 
-/**
- * Per-task TeamMate worker Codex turn event trace (issue #126 PR8). Codex
- * protocol frames flow over the WS socket, not the app-server stdout/stderr
- * logs, so those are empty for a stalled worker; this file holds a redacted,
- * bounded trace of the WS notification stream (method + ids + item type, never
- * prompt/assistant text) so `get_task_logs` can show what Codex emitted after
- * `turn/start`. Kept under the dispatcher worker log dir, never the workspace.
- */
-export function dispatcherTeamMateWorkerEventsLogPath(
+export function dispatcherTeamMateRuntimeClaudeMcpConfigPath(
   id: string,
-  taskId: string,
+  teammateName: string,
 ): string {
   return join(
-    codexAppServerLogDir(),
-    'teammate',
-    dispatcherPathSegment(id),
-    `${teamMateWorkerLogStem(taskId)}.events.log`,
+    dispatcherTeamMateRuntimeDir(id, teammateName),
+    'mcp.json',
   );
 }
 
-/**
- * Generated MCP config doc for one Claude Code TeamMate worker (issue #126 PR4).
- *
- * The Claude Code worker is launched with `--mcp-config <file>`; a worker is
- * wired with NO MCP servers (a TeamMate must not nested-dispatch), so this file
- * holds an empty `{ mcpServers: {} }` document. Unlike the worker's Codex socket
- * it carries no byte budget, so the full task id names the file for traceability.
- * Kept under the dispatcher's worker state dir, never the workspace cwd.
- */
-export function dispatcherTeamMateWorkerClaudeMcpConfigPath(
+export function dispatcherTeamMateRuntimeClaudeStreamLogPath(
   id: string,
-  taskId: string,
-): string {
-  return join(
-    dispatcherTeamMateWorkerDir(id),
-    `${teamMateWorkerLogStem(taskId)}.mcp.json`,
-  );
-}
-
-/**
- * Per-task Claude Code TeamMate worker resident-child stderr log (issue #126
- * PR4). The child's stdout is the in-process NDJSON data plane, so only stderr
- * is logged here — mirroring `dispatcherClaudeCodeStreamLogPath` for the
- * dispatcher's own resident child, but partitioned per worker task.
- */
-export function dispatcherTeamMateWorkerClaudeStreamLogPath(
-  id: string,
-  taskId: string,
+  teammateName: string,
 ): string {
   return join(
     claudeCodeLogDir(),
     'teammate',
     dispatcherPathSegment(id),
-    `${teamMateWorkerLogStem(taskId)}.stderr.log`,
+    `${teamMateNameSegment(teammateName)}.stderr.log`,
   );
 }
 
-/**
- * Task ids are `^tmtsk_[a-z0-9]+_[a-z0-9]+$` (ledger-validated), so they are
- * already filesystem-safe. This guard keeps the log builder honest if a future
- * id shape leaks a separator or traversal segment in via an injected id.
- */
-function teamMateWorkerLogStem(taskId: string): string {
-  return taskId.replace(/[^a-z0-9_]/gi, '_');
+function teamMateNameSegment(name: string): string {
+  return name.replace(/[^A-Za-z0-9._-]/g, '_');
 }
 
 /**

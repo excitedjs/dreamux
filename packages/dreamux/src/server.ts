@@ -79,12 +79,8 @@ import {
 import { createAdminSocketServer, type AdminSocketServer } from './admin/socket.js';
 import { RestartIntentConsumer } from './daemon/restart-intent.js';
 import { teammateMcpServerDescriptor } from './teammate/mcp-config.js';
-import type { TeamMateWorkerProviderCatalog } from './teammate/worker/catalog.js';
 import type { ClaudeCodeSessionFactory } from './agent-runtime/claude-code-session.js';
 import { DispatcherService } from './dispatcher-service/service.js';
-import type { WorkerBinaryProbe } from './dispatcher-service/teammate-types.js';
-
-export type { WorkerBinaryProbe } from './dispatcher-service/teammate-types.js';
 
 export const RECEIVED_REACTION_EMOJI = 'Get';
 export const IN_PROGRESS_REACTION_EMOJI = 'OnIt';
@@ -119,12 +115,7 @@ export interface ServerOptions {
   codexClientFactory?: (socketPath: string) => CodexWsClient;
   /** Inject a Codex home doctor (tests). */
   codexHomeDoctor?: DispatcherCodexHomeDoctor;
-  /**
-   * Inject a Claude Code resident-session factory for the default
-   * `builtin:claude-code` TeamMate worker (issue #126 PR4). Tests pass a fake
-   * session so the worker's lifecycle runs without spawning a real `claude`
-   * binary; production omits it and the worker spawns the real child.
-   */
+  /** Inject a Claude Code resident-session factory for tests. */
   claudeCodeWorkerSessionFactory?: ClaudeCodeSessionFactory;
   /** Skip resolving bot secret (tests with fake bot). */
   skipBotSecret?: boolean;
@@ -134,24 +125,6 @@ export interface ServerOptions {
   codexRestartBackoffMaxMs?: number;
   /** Override runtime provider catalog (tests / future provider composition). */
   agentRuntimeProviderCatalog?: AgentRuntimeProviderCatalog;
-  /**
-   * TeamMate worker provider catalog (issue #126 PR2). Empty by default — the
-   * MVP wires no real worker, so execution tools report `provider_unavailable`
-   * exactly as PR1. Tests inject a fake worker catalog to drive the full
-   * accepted → running → completed/failed/cancelled orchestration.
-   */
-  teamMateWorkerProviders?: TeamMateWorkerProviderCatalog;
-  /**
-   * Probe a worker provider's binary resolvability for `get_capabilities`
-   * (issue #126 PR7). Defaults to resolving the built-in worker binaries on the
-   * dispatcher service PATH; tests inject a deterministic probe so the
-   * advertisement does not depend on the CI host having `codex` / `claude`.
-   */
-  workerBinaryProbe?: WorkerBinaryProbe;
-  /** Max TeamMate completion delivery attempts before delivery_failed (tests). */
-  teamMateDeliveryMaxAttempts?: number;
-  /** TeamMate delivery backoff per attempt, ms (tests pass 0). */
-  teamMateDeliveryBackoffMs?: (attempt: number) => number;
   /**
    * Server-level logger (admin socket, dispatcher supervision, shutdown). When
    * omitted, a stderr-only logger is used — the CLI entry point injects a
@@ -338,6 +311,9 @@ export class Server {
       createBuiltinAgentRuntimeProviderCatalog({
         registry: this.providerRegistry,
         codex: codexProviderOptions,
+        ...(opts.claudeCodeWorkerSessionFactory !== undefined
+          ? { claudeCode: { sessionFactory: opts.claudeCodeWorkerSessionFactory } }
+          : {}),
       });
     this.repos = {
       dispatchers: new DispatcherStore(config),
@@ -346,30 +322,7 @@ export class Server {
       config,
       dispatchers: this.repos.dispatchers,
       agentRuntimeProviders: this.agentRuntimeProviders,
-      resolveRuntime: (dispatcherId) => this.getRuntime(dispatcherId),
       log: this.log,
-      ...(opts.codexBinPath !== undefined ? { codexBinPath: opts.codexBinPath } : {}),
-      ...(opts.codexProcessFactory !== undefined
-        ? { codexProcessFactory: opts.codexProcessFactory }
-        : {}),
-      ...(opts.codexClientFactory !== undefined
-        ? { codexClientFactory: opts.codexClientFactory }
-        : {}),
-      ...(opts.claudeCodeWorkerSessionFactory !== undefined
-        ? { claudeCodeWorkerSessionFactory: opts.claudeCodeWorkerSessionFactory }
-        : {}),
-      ...(opts.teamMateWorkerProviders !== undefined
-        ? { teamMateWorkerProviders: opts.teamMateWorkerProviders }
-        : {}),
-      ...(opts.workerBinaryProbe !== undefined
-        ? { workerBinaryProbe: opts.workerBinaryProbe }
-        : {}),
-      ...(opts.teamMateDeliveryMaxAttempts !== undefined
-        ? { teamMateDeliveryMaxAttempts: opts.teamMateDeliveryMaxAttempts }
-        : {}),
-      ...(opts.teamMateDeliveryBackoffMs !== undefined
-        ? { teamMateDeliveryBackoffMs: opts.teamMateDeliveryBackoffMs }
-        : {}),
     });
   }
 
@@ -944,11 +897,7 @@ export class Server {
     if (this.shuttingDown) return;
     this.shuttingDown = true;
     this.log.info('shutting down');
-    // Reap any live TeamMate worker app-servers first so their child processes
-    // do not leak past server exit. This is a pure resource release with no
-    // ledger transition (issue #126 PR3): an in-flight task stays `running` for
-    // the deferred orphan-reconciliation path rather than being force-failed.
-    await this.dispatcherService.reapAllTeamMateWorkers();
+    await this.dispatcherService.shutdown();
     for (const id of Array.from(this.slots.keys())) {
       await this.stopDispatcher(id);
     }

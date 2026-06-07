@@ -58,9 +58,10 @@ import { DREAMUX_DISPATCHER_BASE_INSTRUCTIONS } from './base-prompt.js';
 import type {
   AgentRuntime,
   AgentRuntimeCapabilities,
-  AgentRuntimeContextSnapshot,
   AgentRuntimeLastResult,
+  AgentRuntimePathContext,
   AgentRuntimeResumeInput,
+  AgentRuntimeStateStore,
   AgentRuntimeTurnInput,
   AgentRuntimeTurnResult,
   TeamMateCompletionDeliveryResult,
@@ -74,6 +75,8 @@ const DEFAULT_RESTART_BACKOFF_MAX_MS = 30_000;
 
 export interface DispatcherRuntimeDeps {
   dispatchers: DispatcherStore;
+  state?: AgentRuntimeStateStore;
+  paths?: AgentRuntimePathContext;
   /** Optional bin path override for tests. */
   codexBinPath?: string;
   /** Override process construction for tests. */
@@ -120,6 +123,9 @@ export class DispatcherRuntime implements AgentRuntime {
   private restarting = false;
   private restartAttempts = 0;
   private restartTimer: NodeJS.Timeout | null = null;
+  private lastResult: AgentRuntimeLastResult | null = null;
+  private readonly state: AgentRuntimeStateStore;
+  private readonly paths: AgentRuntimePathContext;
 
   constructor(
     public readonly row: DispatcherRow,
@@ -131,6 +137,8 @@ export class DispatcherRuntime implements AgentRuntime {
       else console.error(prefix, msg);
     });
     this.threadId = row.thread_id;
+    this.state = deps.state ?? rowStateStore(deps.dispatchers);
+    this.paths = deps.paths ?? defaultRuntimePaths;
   }
 
   get dispatcherId(): string {
@@ -155,10 +163,10 @@ export class DispatcherRuntime implements AgentRuntime {
   }
 
   async getLast(): Promise<AgentRuntimeLastResult | null> {
-    return null;
+    return this.lastResult;
   }
 
-  async getContext(): Promise<AgentRuntimeContextSnapshot | null> {
+  async getContext(): Promise<null> {
     return null;
   }
 
@@ -199,7 +207,7 @@ export class DispatcherRuntime implements AgentRuntime {
     this.restarting = false;
     this.clearRestartTimer();
     this.setStatus('starting');
-    await this.deps.dispatchers.setStatus(this.dispatcherId, 'starting', {
+    await this.state.setStatus(this.dispatcherId, 'starting', {
       last_started_at: Date.now(),
     });
 
@@ -211,7 +219,7 @@ export class DispatcherRuntime implements AgentRuntime {
       const msg = err instanceof Error ? err.message : String(err);
       this.log('error', `start failed: ${msg}`, err);
       this.setStatus('degraded');
-      await this.deps.dispatchers.setStatus(this.dispatcherId, 'degraded', {
+      await this.state.setStatus(this.dispatcherId, 'degraded', {
         last_error: msg,
       });
       await this.cleanupOnFailure();
@@ -220,8 +228,8 @@ export class DispatcherRuntime implements AgentRuntime {
   }
 
   private async startCodexRuntime(): Promise<void> {
-    const cwd = this.row.codex_cwd ?? dispatcherCodexCwd(this.dispatcherId);
-    const socketPath = dispatcherSocketPath(this.dispatcherId);
+    const cwd = this.row.codex_cwd ?? this.paths.dispatcherCodexCwd(this.dispatcherId);
+    const socketPath = this.paths.dispatcherSocketPath(this.dispatcherId);
     const extraArgs = this.deps.resolveExtraArgs?.(this.row) ?? [];
     const skillInstallResults = await installBundledWorkspaceSkills({
       dispatcherCwd: cwd,
@@ -252,8 +260,8 @@ export class DispatcherRuntime implements AgentRuntime {
     const process = factory({
       socketPath,
       cwd,
-      stdoutLogPath: dispatcherStdoutLog(this.dispatcherId),
-      stderrLogPath: dispatcherStderrLog(this.dispatcherId),
+      stdoutLogPath: this.paths.dispatcherStdoutLog(this.dispatcherId),
+      stderrLogPath: this.paths.dispatcherStderrLog(this.dispatcherId),
       binPath: this.deps.codexBinPath,
       extraArgs,
       env: dispatcherProcessEnv(globalThis.process.env, this.deps.extraEnv ?? {}),
@@ -305,6 +313,7 @@ export class DispatcherRuntime implements AgentRuntime {
       dispatcherId: this.dispatcherId,
       getThreadId: () => this.threadId,
       client: this.client,
+      onTurnCompleted: (turn) => this.recordCollectedTurn(turn),
       log: this.log,
     });
   }
@@ -325,7 +334,7 @@ export class DispatcherRuntime implements AgentRuntime {
         params,
       );
       this.threadId = res.thread.id;
-      await this.deps.dispatchers.setThreadId(this.dispatcherId, this.threadId);
+      await this.state.setThreadId(this.dispatcherId, this.threadId);
       this.log('info', `started fresh thread ${this.threadId}`);
       return;
     }
@@ -350,12 +359,19 @@ export class DispatcherRuntime implements AgentRuntime {
         { baseInstructions: DREAMUX_DISPATCHER_BASE_INSTRUCTIONS },
       );
       this.threadId = res.thread.id;
-      await this.deps.dispatchers.recordLostThread(
-        this.dispatcherId,
-        existing,
-        this.threadId,
-        `thread/resume failed: ${msg}`,
-      );
+      if (this.state.recordLostThread !== undefined) {
+        await this.state.recordLostThread(
+          this.dispatcherId,
+          existing,
+          this.threadId,
+          `thread/resume failed: ${msg}`,
+        );
+      } else {
+        await this.state.setThreadId(this.dispatcherId, this.threadId);
+        await this.state.setStatus(this.dispatcherId, 'degraded', {
+          last_error: `thread/resume failed: ${msg}`,
+        });
+      }
       // Park a warning to be delivered with the next outbound — best-effort
       // queue note. For MVP we just log; full user-visible delivery on next
       // inbound is a follow-up (see PR review).
@@ -399,7 +415,7 @@ export class DispatcherRuntime implements AgentRuntime {
     this.teammateDeliverySeq += 1;
     const delivery = await this.submitTurn({
       source_chat_id: 'teammate',
-      source_message_id: `teammate:${completion.taskId}#${this.teammateDeliverySeq}`,
+      source_message_id: `teammate:${completion.teammateName}#${this.teammateDeliverySeq}`,
       sender_id: null,
       parsed_text: formatTeamMateCompletion(completion),
     });
@@ -430,10 +446,10 @@ export class DispatcherRuntime implements AgentRuntime {
     this.stopping = true;
     this.clearRestartTimer();
     this.setStatus('stopping');
-    await this.deps.dispatchers.setStatus(this.dispatcherId, 'stopping');
+    await this.state.setStatus(this.dispatcherId, 'stopping');
     await this.teardownCodexRuntime();
     this.setStatus('stopped');
-    await this.deps.dispatchers.setStatus(this.dispatcherId, 'stopped');
+    await this.state.setStatus(this.dispatcherId, 'stopped');
   }
 
   private async cleanupOnFailure(): Promise<void> {
@@ -491,7 +507,7 @@ export class DispatcherRuntime implements AgentRuntime {
     // blocking, logging (never throwing) on failure. The restart timer's later
     // 'starting'/'ready' writes are awaited, so they cannot be reordered behind
     // this one within the backoff delay.
-    void this.deps.dispatchers
+    void this.state
       .setStatus(this.dispatcherId, 'degraded', { last_error: reason })
       .catch((err) =>
         this.log('warn', 'failed to persist degraded status', err),
@@ -507,7 +523,7 @@ export class DispatcherRuntime implements AgentRuntime {
     this.restarting = true;
     let retryReason: string | null = null;
     this.setStatus('starting');
-    await this.deps.dispatchers.setStatus(this.dispatcherId, 'starting', {
+    await this.state.setStatus(this.dispatcherId, 'starting', {
       last_started_at: Date.now(),
     });
     try {
@@ -525,7 +541,7 @@ export class DispatcherRuntime implements AgentRuntime {
       const msg = err instanceof Error ? err.message : String(err);
       this.log('error', `restart failed: ${msg}`, err);
       this.setStatus('degraded');
-      await this.deps.dispatchers.setStatus(this.dispatcherId, 'degraded', {
+      await this.state.setStatus(this.dispatcherId, 'degraded', {
         last_error: msg,
       });
       await this.teardownCodexRuntime();
@@ -556,10 +572,20 @@ export class DispatcherRuntime implements AgentRuntime {
 
   private async markReady(): Promise<void> {
     this.setStatus('ready');
-    await this.deps.dispatchers.setStatus(this.dispatcherId, 'ready', {
+    await this.state.setStatus(this.dispatcherId, 'ready', {
       last_ready_at: Date.now(),
       last_error: null,
     });
+  }
+
+  private recordCollectedTurn(turn: {
+    items: Array<{ type: string; text?: string }>;
+  }): void {
+    const messages = turn.items.filter((item) => item.type === 'agentMessage');
+    const last = messages[messages.length - 1];
+    if (typeof last?.text === 'string' && last.text.length > 0) {
+      this.lastResult = { text: last.text };
+    }
   }
 
   private setStatus(s: DispatcherStatus): void {
@@ -572,11 +598,33 @@ function formatTeamMateCompletion(
   completion: TeamMateCompletionEnvelope,
 ): string {
   return [
-    `<teammate_task_completion task_id="${completion.taskId}" ` +
-      `teammate_id="${completion.teammateId}" status="${completion.status}">`,
+    `<teammate_session_completion teammate="${completion.teammateName}" ` +
+      `session_id="${completion.sessionId ?? ''}" status="${completion.status}">`,
     completion.finalText,
-    '</teammate_task_completion>',
+    '</teammate_session_completion>',
   ].join('\n');
+}
+
+const defaultRuntimePaths: AgentRuntimePathContext = {
+  dispatcherCodexCwd,
+  dispatcherSocketPath,
+  dispatcherStdoutLog,
+  dispatcherStderrLog,
+  dispatcherClaudeCodeMcpConfigPath: () => {
+    throw new Error('Claude Code MCP config path is not used by Codex runtime');
+  },
+  dispatcherClaudeCodeStreamLogPath: () => {
+    throw new Error('Claude Code stream log path is not used by Codex runtime');
+  },
+};
+
+function rowStateStore(dispatchers: DispatcherStore): AgentRuntimeStateStore {
+  return {
+    setStatus: (id, status, extras) => dispatchers.setStatus(id, status, extras),
+    setThreadId: (id, threadId) => dispatchers.setThreadId(id, threadId),
+    recordLostThread: (id, lostThreadId, newThreadId, error) =>
+      dispatchers.recordLostThread(id, lostThreadId, newThreadId, error),
+  };
 }
 
 function isSystemTurn(

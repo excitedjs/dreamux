@@ -1,11 +1,17 @@
 # Server-hosted TeamMate
 
-- **Status:** Accepted
+- **Status:** Superseded for current implementation by
+  [provider-architecture-realignment](provider-architecture-realignment.md)
 - **Date:** 2026-06-06
 - **Affects:** Dispatcher Service, TeamMate scheduling MCP, dispatcher state,
   task history/result retrieval, runtime completion delivery
 - **PR / Issue:** [issue #110](https://github.com/excitedjs/dreamux/issues/110);
   supersedes [dispatcher-tm-boundary](dispatcher-tm-boundary.md)
+
+> Current code no longer has the task ledger or worker-provider tree described
+> below. Issue #135 / PR D replaced them with named, semi-resident TeamMate
+> agents owned by Dispatcher Service, backed by one `AgentRuntime` interface and
+> identity/history state under `~/.dreamux/state/<dispatcher-id>/teammate/`.
 
 ## Context
 
