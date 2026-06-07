@@ -153,6 +153,57 @@ export const adminMethods: Record<string, AdminHandler> = {
       throw new AdminError('TEAMMATE_SCHEDULE_FAILED', parseMessage(err));
     }
   },
+
+  // Worker/operator completion ingest (issue #110 PR8). Intentionally NOT a
+  // dispatcher-facing teammate-mcp tool, so a dispatcher model cannot fake a
+  // completion; it is the seam a future worker / operator tool drives.
+  'mcp.teammate.complete': async (server, params) => {
+    const id = mustDispatcherId(params);
+    mustExistingDispatcher(server, id);
+    const taskId = mustString(params, 'task_id');
+    const outcome = mustString(params, 'outcome');
+    if (outcome !== 'completed' && outcome !== 'failed') {
+      throw new AdminError(
+        'BAD_REQUEST',
+        "param 'outcome' must be 'completed' or 'failed'",
+      );
+    }
+    const finalText = mustString(params, 'final_text');
+    try {
+      return await server.reportTeamMateCompletion({
+        dispatcherId: id,
+        taskId,
+        outcome,
+        finalText,
+      });
+    } catch (err) {
+      throw new AdminError('TEAMMATE_COMPLETE_FAILED', parseMessage(err));
+    }
+  },
+
+  'mcp.teammate.list': async (server, params) => {
+    const id = mustDispatcherId(params);
+    mustExistingDispatcher(server, id);
+    return { tasks: await server.listTeamMateTasksFromMcp(id) };
+  },
+
+  'mcp.teammate.get': async (server, params) => {
+    const id = mustDispatcherId(params);
+    mustExistingDispatcher(server, id);
+    const taskId = mustString(params, 'task_id');
+    return { task: await server.getTeamMateTaskFromMcp(id, taskId) };
+  },
+
+  'mcp.teammate.pull': async (server, params) => {
+    const id = mustDispatcherId(params);
+    mustExistingDispatcher(server, id);
+    const taskId = optionalString(params, 'task_id');
+    const result = await server.pullTeamMateResultFromMcp(
+      id,
+      taskId !== null ? taskId : undefined,
+    );
+    return { result };
+  },
 };
 
 function mustString(

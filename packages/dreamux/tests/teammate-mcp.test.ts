@@ -118,10 +118,73 @@ describe('teammate-mcp stdio shim', () => {
 
     writeJson(input, { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
     const tools = await reader.next() as { result: { tools: Array<{ name: string }> } };
-    expect(tools.result.tools.map((tool) => tool.name)).toEqual(['schedule']);
+    const names = tools.result.tools.map((tool) => tool.name);
+    expect(names).toEqual(['schedule', 'list_tasks', 'get_task', 'pull_result']);
+    // Completion ingest is NOT a dispatcher-facing MCP tool, so a dispatcher
+    // model cannot fake a TeamMate completion.
+    expect(names).not.toContain('complete');
 
     input.end();
     await run;
+  });
+
+  it('forwards pull_result to the dispatcher-scoped admin pull method', async () => {
+    const admin = await startFakeAdminServer((request) => ({
+      id: request.id,
+      ok: true,
+      result: {
+        result: {
+          task_id: 'tmtsk_1_task',
+          status: 'delivery_failed',
+          outcome: 'completed',
+          text: 'the retained result',
+          delivered: false,
+          delivery_attempts: 3,
+        },
+      },
+    }));
+    try {
+      const input = new PassThrough();
+      const output = new PassThrough();
+      const reader = new JsonLineReader(output);
+      const run = runTeamMateMcp({
+        dispatcherId: 'dispatcher-a',
+        callerKind: 'dispatcher',
+        adminSocketPath: admin.socketPath,
+        input,
+        output,
+        log: () => {},
+      });
+
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: { name: 'pull_result', arguments: { task_id: 'tmtsk_1_task' } },
+      });
+
+      expect(await reader.next()).toMatchObject({
+        jsonrpc: '2.0',
+        id: 1,
+        result: {
+          structuredContent: {
+            result: { status: 'delivery_failed', text: 'the retained result' },
+          },
+        },
+      });
+      expect(admin.requests).toEqual([
+        {
+          id: expect.any(String) as string,
+          method: 'mcp.teammate.pull',
+          params: { dispatcher_id: 'dispatcher-a', task_id: 'tmtsk_1_task' },
+        },
+      ]);
+
+      input.end();
+      await run;
+    } finally {
+      await admin.close();
+    }
   });
 
   it('forwards schedule tool calls to the dispatcher-scoped admin IPC method', async () => {

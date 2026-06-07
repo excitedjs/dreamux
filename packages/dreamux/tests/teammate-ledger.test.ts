@@ -8,6 +8,7 @@ import {
   NestedTeamMateDispatchError,
   TeamMateLedgerCompatibilityError,
   TeamMateTaskLedger,
+  TeamMateTaskTransitionError,
 } from '../src/teammate/ledger.js';
 import {
   dispatcherTeamMateLedgerPath,
@@ -177,5 +178,136 @@ describe('TeamMateTaskLedger', () => {
     await expect(ledger.getTask('tmtsk_1_task')).rejects.toThrow(
       TeamMateLedgerCompatibilityError,
     );
+  });
+
+  it('rejects a duplicate task id (PR7 nit: exclusive create)', async () => {
+    const ledger = new TeamMateTaskLedger('flow');
+    await ledger.acceptTask({
+      title: 'Task',
+      prompt: 'task',
+      callerKind: 'dispatcher',
+      taskId: 'tmtsk_1_dup',
+    });
+    await expect(
+      ledger.acceptTask({
+        title: 'Task again',
+        prompt: 'task',
+        callerKind: 'dispatcher',
+        taskId: 'tmtsk_1_dup',
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('loads a PR7-shaped v1 task that has no result/delivery fields', async () => {
+    const ledger = new TeamMateTaskLedger('flow');
+    await ledger.acceptTask({
+      title: 'Legacy',
+      prompt: 'legacy',
+      callerKind: 'dispatcher',
+      now: 1000,
+      taskId: 'tmtsk_1_legacy',
+    });
+    // Rewrite as a strict PR7 v1 record (no result/delivery keys at all).
+    await writeFile(
+      join(dispatcherTeamMateTasksDir('flow'), 'tmtsk_1_legacy.json'),
+      JSON.stringify({
+        version: 1,
+        task_id: 'tmtsk_1_legacy',
+        dispatcher_id: 'flow',
+        status: 'accepted',
+        title: 'Legacy',
+        prompt: 'legacy',
+        teammate_id: null,
+        scheduled_by: { kind: 'dispatcher' },
+        history: [{ status: 'accepted', at: 1000 }],
+        created_at: 1000,
+        updated_at: 1000,
+      }),
+      'utf8',
+    );
+    const task = await ledger.getTask('tmtsk_1_legacy');
+    expect(task?.result).toBeNull();
+    expect(task?.delivery).toBeNull();
+  });
+
+  it('fails loud on a present-but-malformed result field', async () => {
+    const ledger = new TeamMateTaskLedger('flow');
+    await ledger.acceptTask({
+      title: 'T',
+      prompt: 't',
+      callerKind: 'dispatcher',
+      now: 1000,
+      taskId: 'tmtsk_1_badres',
+    });
+    await writeFile(
+      join(dispatcherTeamMateTasksDir('flow'), 'tmtsk_1_badres.json'),
+      JSON.stringify({
+        version: 1,
+        task_id: 'tmtsk_1_badres',
+        dispatcher_id: 'flow',
+        status: 'completed',
+        title: 'T',
+        prompt: 't',
+        teammate_id: null,
+        scheduled_by: { kind: 'dispatcher' },
+        history: [{ status: 'accepted', at: 1000 }],
+        result: { outcome: 'nonsense', text: 5 },
+        created_at: 1000,
+        updated_at: 1000,
+      }),
+      'utf8',
+    );
+    await expect(ledger.getTask('tmtsk_1_badres')).rejects.toThrow(
+      TeamMateLedgerCompatibilityError,
+    );
+  });
+
+  it('skips corrupt task files in listTasks and reports them (resilient retrieval)', async () => {
+    const ledger = new TeamMateTaskLedger('flow');
+    await ledger.acceptTask({
+      title: 'Good',
+      prompt: 'good',
+      callerKind: 'dispatcher',
+      now: 1000,
+      taskId: 'tmtsk_1_good',
+    });
+    await writeFile(
+      join(dispatcherTeamMateTasksDir('flow'), 'tmtsk_1_corrupt.json'),
+      '{ not valid json',
+      'utf8',
+    );
+
+    const corrupt: string[] = [];
+    const tasks = await ledger.listTasks({
+      onCorrupt: (taskId) => corrupt.push(taskId),
+    });
+    expect(tasks.map((t) => t.task_id)).toEqual(['tmtsk_1_good']);
+    expect(corrupt).toEqual(['tmtsk_1_corrupt']);
+  });
+
+  it('records a result, guards transitions, and finds the latest result', async () => {
+    const ledger = new TeamMateTaskLedger('flow');
+    await ledger.acceptTask({
+      title: 'T',
+      prompt: 't',
+      callerKind: 'dispatcher',
+      now: 1000,
+      taskId: 'tmtsk_1_res',
+    });
+    const completed = await ledger.recordResult('tmtsk_1_res', {
+      outcome: 'completed',
+      text: 'final',
+      now: 2000,
+    });
+    expect(completed.status).toBe('completed');
+    expect(completed.result).toMatchObject({ outcome: 'completed', text: 'final' });
+
+    // A second recordResult on a terminal task is rejected (transition guard).
+    await expect(
+      ledger.recordResult('tmtsk_1_res', { outcome: 'completed', text: 'again' }),
+    ).rejects.toThrow(TeamMateTaskTransitionError);
+
+    const latest = await ledger.latestResultTask();
+    expect(latest?.task_id).toBe('tmtsk_1_res');
   });
 });

@@ -43,6 +43,22 @@ export interface TeamMateTaskHistoryEntry {
   message?: string;
 }
 
+/** The retained final result of a TeamMate task (issue #110 PR8). */
+export interface TeamMateTaskResult {
+  /** Whether the task itself completed or failed. */
+  outcome: 'completed' | 'failed';
+  /** The final result text retained for delivery and pull retrieval. */
+  text: string;
+  at: number;
+}
+
+/** Delivery retry bookkeeping for a completed task (issue #110 PR8). */
+export interface TeamMateDeliveryState {
+  attempts: number;
+  last_error: string | null;
+  last_attempt_at: number | null;
+}
+
 export interface TeamMateTaskRecord {
   version: typeof TEAMMATE_TASK_VERSION;
   task_id: string;
@@ -55,6 +71,14 @@ export interface TeamMateTaskRecord {
     kind: TeamMateScheduleCallerKind;
   };
   history: TeamMateTaskHistoryEntry[];
+  /**
+   * The retained final result, once the task has completed or failed. `null`
+   * for accepted/running tasks. Additive + optional so v1 task files written by
+   * PR7 (no `result`) still load — no version bump, no silent migration.
+   */
+  result: TeamMateTaskResult | null;
+  /** Delivery retry bookkeeping; `null` until the first delivery attempt. */
+  delivery: TeamMateDeliveryState | null;
   created_at: number;
   updated_at: number;
 }
@@ -71,6 +95,27 @@ export interface AcceptTeamMateTaskInput {
 export interface UpdateTeamMateTaskStatusInput {
   status: TeamMateTaskStatus;
   now?: number;
+}
+
+export interface RecordTeamMateResultInput {
+  outcome: 'completed' | 'failed';
+  text: string;
+  now?: number;
+}
+
+/** Thrown when a ledger transition is not allowed from the current status. */
+export class TeamMateTaskTransitionError extends Error {
+  constructor(
+    readonly taskId: string,
+    readonly from: TeamMateTaskStatus,
+    readonly to: string,
+  ) {
+    super(
+      `TeamMate task ${JSON.stringify(taskId)} cannot transition from ` +
+        `${from} to ${to}`,
+    );
+    this.name = 'TeamMateTaskTransitionError';
+  }
 }
 
 export class TeamMateLedgerCompatibilityError extends Error {
@@ -91,7 +136,26 @@ const TASK_ID_PATTERN = /^tmtsk_[a-z0-9]+_[a-z0-9]+$/;
 const TEAMMATE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
 const MAX_TITLE_LENGTH = 200;
 const MAX_PROMPT_LENGTH = 20_000;
+const MAX_RESULT_LENGTH = 200_000;
 let tmpCounter = 0;
+
+/** Statuses with a retained result that delivery can act on. */
+function isResultReady(status: TeamMateTaskStatus): boolean {
+  return status === 'completed' || status === 'failed';
+}
+
+/** Increment the delivery attempt counter and stamp the latest attempt/error. */
+function bumpDelivery(
+  existing: TeamMateDeliveryState | null,
+  error: string | null,
+  now: number,
+): TeamMateDeliveryState {
+  return {
+    attempts: (existing?.attempts ?? 0) + 1,
+    last_error: error,
+    last_attempt_at: now,
+  };
+}
 
 export class TeamMateTaskLedger {
   constructor(readonly dispatcherId: string) {}
@@ -124,6 +188,8 @@ export class TeamMateTaskLedger {
       teammate_id: teammateId,
       scheduled_by: { kind: input.callerKind },
       history: [{ status: 'accepted', at: now }],
+      result: null,
+      delivery: null,
       created_at: now,
       updated_at: now,
     };
@@ -156,7 +222,16 @@ export class TeamMateTaskLedger {
     }
   }
 
-  async listTasks(): Promise<TeamMateTaskRecord[]> {
+  /**
+   * List all readable task records, oldest first. Resilient for retrieval: a
+   * file with an invalid name or corrupt/incompatible content is skipped and
+   * reported via {@link onCorrupt} rather than failing the whole listing — one
+   * bad file must not make every task unreadable. Use {@link getTask} when a
+   * caller asks for one specific task (that path stays fail-loud).
+   */
+  async listTasks(
+    options: { onCorrupt?: (taskId: string, error: Error) => void } = {},
+  ): Promise<TeamMateTaskRecord[]> {
     await this.ensureRoot();
     let names: string[];
     try {
@@ -169,18 +244,168 @@ export class TeamMateTaskLedger {
     for (const name of names) {
       if (!name.endsWith('.json')) continue;
       const taskId = name.slice(0, -'.json'.length);
-      validateTaskId(taskId);
-      tasks.push(
-        readTaskFile(
-          this.dispatcherId,
+      try {
+        validateTaskId(taskId);
+        tasks.push(
+          readTaskFile(
+            this.dispatcherId,
+            taskId,
+            await readFile(
+              join(dispatcherTeamMateTasksDir(this.dispatcherId), name),
+              'utf8',
+            ),
+          ),
+        );
+      } catch (err) {
+        options.onCorrupt?.(
           taskId,
-          await readFile(join(dispatcherTeamMateTasksDir(this.dispatcherId), name), 'utf8'),
-        ),
-      );
+          err instanceof Error ? err : new Error(String(err)),
+        );
+      }
     }
     return tasks
       .sort((a, b) => a.created_at - b.created_at || a.task_id.localeCompare(b.task_id))
       .map(cloneTask);
+  }
+
+  /**
+   * The most recent task (by created_at) whose result is retained, optionally
+   * restricted to a set of statuses. Backs the "pull the latest result" path,
+   * including after push delivery failed (`delivery_failed`). Corrupt files are
+   * skipped via {@link listTasks}.
+   */
+  async latestResultTask(
+    statuses?: ReadonlySet<TeamMateTaskStatus>,
+  ): Promise<TeamMateTaskRecord | null> {
+    const tasks = await this.listTasks();
+    const candidates = tasks.filter(
+      (task) =>
+        task.result !== null &&
+        (statuses === undefined || statuses.has(task.status)),
+    );
+    if (candidates.length === 0) return null;
+    return candidates.reduce((latest, task) =>
+      task.created_at >= latest.created_at ? task : latest,
+    );
+  }
+
+  /**
+   * Record a task's final result. The result is persisted durably here, BEFORE
+   * any delivery attempt — so a crash or a downed runtime can never lose it; a
+   * later delivery only transitions an already-saved result to
+   * `delivered`/`delivery_failed`. Allowed only from `accepted`/`running`; a
+   * second report throws {@link TeamMateTaskTransitionError}, which also guards
+   * the same-task update race.
+   */
+  async recordResult(
+    taskId: string,
+    input: RecordTeamMateResultInput,
+  ): Promise<TeamMateTaskRecord> {
+    const existing = await this.mustGetTask(taskId);
+    if (existing.status !== 'accepted' && existing.status !== 'running') {
+      throw new TeamMateTaskTransitionError(
+        taskId,
+        existing.status,
+        input.outcome,
+      );
+    }
+    const text = validateBoundedString(input.text, 'result text', MAX_RESULT_LENGTH);
+    const now = input.now ?? Date.now();
+    return this.writeTask({
+      ...existing,
+      status: input.outcome,
+      result: { outcome: input.outcome, text, at: now },
+      history: [...existing.history, { status: input.outcome, at: now }],
+      updated_at: now,
+    });
+  }
+
+  /** Mark a completed task as delivered into the dispatcher context. */
+  async recordDelivered(
+    taskId: string,
+    options: { now?: number } = {},
+  ): Promise<TeamMateTaskRecord> {
+    const existing = await this.mustGetTask(taskId);
+    if (!isResultReady(existing.status) && existing.status !== 'delivery_failed') {
+      throw new TeamMateTaskTransitionError(taskId, existing.status, 'delivered');
+    }
+    const now = options.now ?? Date.now();
+    return this.writeTask({
+      ...existing,
+      status: 'delivered',
+      delivery: bumpDelivery(existing.delivery, null, now),
+      history: [...existing.history, { status: 'delivered', at: now }],
+      updated_at: now,
+    });
+  }
+
+  /** Record one failed delivery attempt; status stays put (still deliverable). */
+  async recordDeliveryAttemptFailure(
+    taskId: string,
+    options: { error: string; now?: number },
+  ): Promise<TeamMateTaskRecord> {
+    const existing = await this.mustGetTask(taskId);
+    if (!isResultReady(existing.status)) {
+      throw new TeamMateTaskTransitionError(
+        taskId,
+        existing.status,
+        'delivery-attempt',
+      );
+    }
+    const now = options.now ?? Date.now();
+    return this.writeTask({
+      ...existing,
+      delivery: bumpDelivery(existing.delivery, options.error, now),
+      updated_at: now,
+    });
+  }
+
+  /**
+   * Terminal delivery failure after bounded retries; result stays pull-able.
+   * This is the terminal marker, not a new attempt, so it preserves the attempt
+   * count already recorded by {@link recordDeliveryAttemptFailure}.
+   */
+  async recordDeliveryFailed(
+    taskId: string,
+    options: { error?: string; now?: number } = {},
+  ): Promise<TeamMateTaskRecord> {
+    const existing = await this.mustGetTask(taskId);
+    if (!isResultReady(existing.status)) {
+      throw new TeamMateTaskTransitionError(
+        taskId,
+        existing.status,
+        'delivery_failed',
+      );
+    }
+    const now = options.now ?? Date.now();
+    return this.writeTask({
+      ...existing,
+      status: 'delivery_failed',
+      delivery: {
+        attempts: existing.delivery?.attempts ?? 0,
+        last_error: options.error ?? existing.delivery?.last_error ?? null,
+        last_attempt_at: now,
+      },
+      history: [...existing.history, { status: 'delivery_failed', at: now }],
+      updated_at: now,
+    });
+  }
+
+  private async mustGetTask(taskId: string): Promise<TeamMateTaskRecord> {
+    const existing = await this.getTask(taskId);
+    if (existing === null) {
+      throw new Error(`TeamMate task ${JSON.stringify(taskId)} does not exist`);
+    }
+    return existing;
+  }
+
+  private async writeTask(task: TeamMateTaskRecord): Promise<TeamMateTaskRecord> {
+    await writeJsonAtomic(taskPath(this.dispatcherId, task.task_id), task);
+    await this.writeRoot({
+      ...(await this.readRoot()),
+      updated_at: task.updated_at,
+    });
+    return cloneTask(task);
   }
 
   async updateTaskStatus(
@@ -328,6 +553,15 @@ function readTaskFile(
         'has malformed v1 fields',
     );
   }
+  // `result` / `delivery` are additive optional fields (#110 PR8): absent in v1
+  // task files written by PR7 (→ null), and validated only when present so a
+  // present-but-malformed value still fails loud.
+  if (!isNullableResult(file.result) || !isNullableDelivery(file.delivery)) {
+    throw new TeamMateLedgerCompatibilityError(
+      `dispatcher '${dispatcherId}' TeamMate task ${JSON.stringify(taskId)} ` +
+        'has a malformed result/delivery field',
+    );
+  }
   return {
     version: TEAMMATE_TASK_VERSION,
     task_id: taskId,
@@ -338,9 +572,35 @@ function readTaskFile(
     teammate_id: file.teammate_id ?? null,
     scheduled_by: { kind: file.scheduled_by.kind },
     history: file.history.map(cloneHistoryEntry),
+    result: file.result ?? null,
+    delivery: file.delivery ?? null,
     created_at: file.created_at,
     updated_at: file.updated_at,
   };
+}
+
+function isNullableResult(value: unknown): value is TeamMateTaskResult | null | undefined {
+  if (value === undefined || value === null) return true;
+  if (typeof value !== 'object' || Array.isArray(value)) return false;
+  const r = value as Partial<TeamMateTaskResult>;
+  return (
+    (r.outcome === 'completed' || r.outcome === 'failed') &&
+    typeof r.text === 'string' &&
+    isFiniteNumber(r.at)
+  );
+}
+
+function isNullableDelivery(
+  value: unknown,
+): value is TeamMateDeliveryState | null | undefined {
+  if (value === undefined || value === null) return true;
+  if (typeof value !== 'object' || Array.isArray(value)) return false;
+  const d = value as Partial<TeamMateDeliveryState>;
+  return (
+    isFiniteNumber(d.attempts) &&
+    (d.last_error === null || typeof d.last_error === 'string') &&
+    (d.last_attempt_at === null || isFiniteNumber(d.last_attempt_at))
+  );
 }
 
 function parseJson(raw: string, label: string): unknown {
@@ -468,6 +728,8 @@ function cloneTask(task: TeamMateTaskRecord): TeamMateTaskRecord {
     ...task,
     scheduled_by: { ...task.scheduled_by },
     history: task.history.map(cloneHistoryEntry),
+    result: task.result === null ? null : { ...task.result },
+    delivery: task.delivery === null ? null : { ...task.delivery },
   };
 }
 

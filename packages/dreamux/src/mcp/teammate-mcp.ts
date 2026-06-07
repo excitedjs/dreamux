@@ -171,6 +171,41 @@ function teammateTools(): Array<Record<string, unknown>> {
         required: ['title', 'prompt'],
       },
     },
+    {
+      name: 'list_tasks',
+      description:
+        'List this dispatcher\'s TeamMate tasks and their statuses (no result bodies).',
+      inputSchema: { type: 'object', additionalProperties: false, properties: {} },
+    },
+    {
+      name: 'get_task',
+      description:
+        'Fetch one TeamMate task in full, including its result, delivery state, and history.',
+      inputSchema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          task_id: { type: 'string', description: 'The task id to fetch.' },
+        },
+        required: ['task_id'],
+      },
+    },
+    {
+      name: 'pull_result',
+      description:
+        'Pull a retained TeamMate result — the fallback when push delivery failed. ' +
+        'Omit task_id for the latest result-bearing task.',
+      inputSchema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          task_id: {
+            type: 'string',
+            description: 'Optional task id; defaults to the latest result.',
+          },
+        },
+      },
+    },
   ];
 }
 
@@ -194,6 +229,30 @@ async function callTool(
         },
         ctx.socketPath,
         'schedule',
+      );
+    }
+    if (call.name === 'list_tasks') {
+      return forwardToolCall(
+        'mcp.teammate.list',
+        { dispatcher_id: ctx.dispatcherId },
+        ctx.socketPath,
+        'list_tasks',
+      );
+    }
+    if (call.name === 'get_task') {
+      return forwardToolCall(
+        'mcp.teammate.get',
+        { dispatcher_id: ctx.dispatcherId, ...getTaskArgs(call.arguments) },
+        ctx.socketPath,
+        'get_task',
+      );
+    }
+    if (call.name === 'pull_result') {
+      return forwardToolCall(
+        'mcp.teammate.pull',
+        { dispatcher_id: ctx.dispatcherId, ...pullArgs(call.arguments) },
+        ctx.socketPath,
+        'pull_result',
       );
     }
     return toolError(`unknown TeamMate tool '${String(call.name)}'`);
@@ -254,6 +313,17 @@ function scheduleArgs(value: unknown): Record<string, unknown> {
     prompt: requireString(obj, 'prompt'),
     ...(teammateId !== null ? { teammate_id: teammateId } : {}),
   };
+}
+
+function getTaskArgs(value: unknown): Record<string, unknown> {
+  const obj = asRecord(value, 'get_task arguments');
+  return { task_id: requireString(obj, 'task_id') };
+}
+
+function pullArgs(value: unknown): Record<string, unknown> {
+  const obj = asRecord(value, 'pull_result arguments');
+  const taskId = optionalString(obj, 'task_id');
+  return taskId !== null ? { task_id: taskId } : {};
 }
 
 function asRecord(value: unknown, label: string): Record<string, unknown> {

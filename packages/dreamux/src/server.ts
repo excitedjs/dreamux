@@ -77,9 +77,15 @@ import { RestartIntentConsumer } from './daemon/restart-intent.js';
 import {
   NestedTeamMateDispatchError,
   type TeamMateScheduleCallerKind,
+  type TeamMateTaskRecord,
+  type TeamMateTaskStatus,
   TeamMateTaskLedger,
 } from './teammate/ledger.js';
 import { teammateMcpServerDescriptor } from './teammate/mcp-config.js';
+import {
+  TeamMateDeliveryService,
+  type TeamMateDeliveryReport,
+} from './teammate/delivery.js';
 
 export const RECEIVED_REACTION_EMOJI = 'Get';
 export const IN_PROGRESS_REACTION_EMOJI = 'OnIt';
@@ -120,6 +126,10 @@ export interface ServerOptions {
   codexRestartBackoffMaxMs?: number;
   /** Override runtime provider catalog (tests / future provider composition). */
   agentRuntimeProviderCatalog?: AgentRuntimeProviderCatalog;
+  /** Max TeamMate completion delivery attempts before delivery_failed (tests). */
+  teamMateDeliveryMaxAttempts?: number;
+  /** TeamMate delivery backoff per attempt, ms (tests pass 0). */
+  teamMateDeliveryBackoffMs?: (attempt: number) => number;
   /**
    * Server-level logger (admin socket, dispatcher supervision, shutdown). When
    * omitted, a stderr-only logger is used — the CLI entry point injects a
@@ -256,6 +266,33 @@ export interface ServerMcpScheduleTeamMateResult {
   teammate_id?: string;
 }
 
+export interface ServerTeamMateCompletionInput {
+  dispatcherId: string;
+  taskId: string;
+  outcome: 'completed' | 'failed';
+  finalText: string;
+}
+
+export interface ServerTeamMateTaskSummary {
+  task_id: string;
+  status: TeamMateTaskStatus;
+  title: string;
+  teammate_id: string | null;
+  created_at: number;
+  updated_at: number;
+  delivery_attempts: number;
+  has_result: boolean;
+}
+
+export interface ServerTeamMatePullResult {
+  task_id: string;
+  status: TeamMateTaskStatus;
+  outcome: 'completed' | 'failed';
+  text: string;
+  delivered: boolean;
+  delivery_attempts: number;
+}
+
 export class Server {
   readonly repos: Repos;
   private readonly slots = new Map<string, DispatcherSlot>();
@@ -278,6 +315,7 @@ export class Server {
   private readonly channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
   private readonly channelProviderResolver: (ref: string) => ChannelProvider;
   private readonly agentRuntimeProviders: AgentRuntimeProviderCatalog;
+  private readonly teamMateDelivery: TeamMateDeliveryService;
 
   constructor(opts: ServerOptions = {}) {
     this.opts = opts;
@@ -317,6 +355,17 @@ export class Server {
       createBuiltinAgentRuntimeProviderCatalog({
         codex: codexProviderOptions,
       });
+    this.teamMateDelivery = new TeamMateDeliveryService({
+      ledger: (dispatcherId) => this.teamMateLedger(dispatcherId),
+      resolveRuntime: (dispatcherId) => this.getRuntime(dispatcherId),
+      log: (level, message, fields) => this.log[level](fields ?? {}, message),
+      ...(opts.teamMateDeliveryMaxAttempts !== undefined
+        ? { maxAttempts: opts.teamMateDeliveryMaxAttempts }
+        : {}),
+      ...(opts.teamMateDeliveryBackoffMs !== undefined
+        ? { backoffMs: opts.teamMateDeliveryBackoffMs }
+        : {}),
+    });
     this.repos = {
       dispatchers: new DispatcherStore(opts.config ?? BUILT_IN_DEFAULTS),
     };
@@ -868,6 +917,71 @@ export class Server {
     };
   }
 
+  /**
+   * Record a TeamMate task's final result and deliver it into the dispatcher
+   * context with bounded retry (issue #110 PR8). The result is persisted before
+   * delivery, so a downed runtime ends in `delivery_failed` with the result
+   * still pull-able. This is the worker/operator ingest entry — deliberately not
+   * a dispatcher-facing MCP tool, so a dispatcher model cannot fake completions.
+   */
+  async reportTeamMateCompletion(
+    input: ServerTeamMateCompletionInput,
+  ): Promise<TeamMateDeliveryReport> {
+    return this.teamMateDelivery.reportCompletion({
+      dispatcherId: input.dispatcherId,
+      taskId: input.taskId,
+      outcome: input.outcome,
+      finalText: input.finalText,
+    });
+  }
+
+  /** List a dispatcher's TeamMate tasks (corrupt files skipped, not fatal). */
+  async listTeamMateTasksFromMcp(
+    dispatcherId: string,
+  ): Promise<ServerTeamMateTaskSummary[]> {
+    const tasks = await this.teamMateLedger(dispatcherId).listTasks({
+      onCorrupt: (taskId, err) =>
+        this.log.warn(
+          { dispatcher_id: dispatcherId, task_id: taskId, err: errInfo(err) },
+          'skipping corrupt TeamMate task file',
+        ),
+    });
+    return tasks.map(toTeamMateTaskSummary);
+  }
+
+  /** Fetch one TeamMate task in full (fail-loud on a corrupt specific task). */
+  async getTeamMateTaskFromMcp(
+    dispatcherId: string,
+    taskId: string,
+  ): Promise<TeamMateTaskRecord | null> {
+    return this.teamMateLedger(dispatcherId).getTask(taskId);
+  }
+
+  /**
+   * Pull a retained TeamMate result — the fallback after push delivery failed.
+   * Returns the result for the given task, or the latest result-bearing task
+   * when no id is given. Works at `delivery_failed` (the whole point of pull).
+   */
+  async pullTeamMateResultFromMcp(
+    dispatcherId: string,
+    taskId?: string,
+  ): Promise<ServerTeamMatePullResult | null> {
+    const ledger = this.teamMateLedger(dispatcherId);
+    const task =
+      taskId !== undefined
+        ? await ledger.getTask(taskId)
+        : await ledger.latestResultTask();
+    if (task === null || task.result === null) return null;
+    return {
+      task_id: task.task_id,
+      status: task.status,
+      outcome: task.result.outcome,
+      text: task.result.text,
+      delivered: task.status === 'delivered',
+      delivery_attempts: task.delivery?.attempts ?? 0,
+    };
+  }
+
   private dreamuxMcpServerDescriptors(
     channelProvider: ChannelProvider,
     context: { dispatcherId: string; adminSocketPath: string },
@@ -936,6 +1050,21 @@ function toWireChatBot(bot: PeerBot): WireChatBot {
   return {
     open_id: bot.openId,
     ...(bot.name !== undefined && bot.name !== '' ? { name: bot.name } : {}),
+  };
+}
+
+function toTeamMateTaskSummary(
+  task: TeamMateTaskRecord,
+): ServerTeamMateTaskSummary {
+  return {
+    task_id: task.task_id,
+    status: task.status,
+    title: task.title,
+    teammate_id: task.teammate_id,
+    created_at: task.created_at,
+    updated_at: task.updated_at,
+    delivery_attempts: task.delivery?.attempts ?? 0,
+    has_result: task.result !== null,
   };
 }
 

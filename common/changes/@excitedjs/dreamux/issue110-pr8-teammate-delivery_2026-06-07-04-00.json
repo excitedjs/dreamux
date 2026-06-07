@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Add TeamMate completion delivery (Codex inbox/turn + Claude Code task notification), bounded retry to an inspectable delivery_failed/pull-available state, and read-only result retrieval MCP tools for issue #110.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "288089849+claudemux[bot]@users.noreply.github.com"
+}

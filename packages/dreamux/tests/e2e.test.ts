@@ -332,6 +332,44 @@ describe('dreamux cross-module e2e', () => {
     expect(bot.reactions).toHaveLength(0);
   });
 
+  it('delivers a TeamMate completion into the Codex dispatcher thread, then is pull-able', async () => {
+    server = buildServer({ runtimeDir, fake, bot });
+    await server.start();
+
+    const scheduled = await server.scheduleTeamMateFromMcp({
+      dispatcherId: 'flow',
+      callerKind: 'dispatcher',
+      title: 'Summarize',
+      prompt: 'summarize the issue',
+      teammateId: 'reviewer-1',
+    });
+    const report = await server.reportTeamMateCompletion({
+      dispatcherId: 'flow',
+      taskId: scheduled.task_id,
+      outcome: 'completed',
+      finalText: 'TEAMMATE-RESULT-MARKER',
+    });
+    expect(report.status).toBe('delivered');
+
+    // Codex delivery = inbox + turn trigger: the completion arrives as a turn.
+    await waitFor(() =>
+      codexInputs.some((input) => input.includes('TEAMMATE-RESULT-MARKER')),
+    );
+    expect(
+      codexInputs.some((input) => input.includes('<teammate_task_completion')),
+    ).toBe(true);
+
+    // And it is retrievable via the pull path.
+    const pulled = await server.pullTeamMateResultFromMcp('flow', scheduled.task_id);
+    expect(pulled).toMatchObject({
+      task_id: scheduled.task_id,
+      status: 'delivered',
+      outcome: 'completed',
+      text: 'TEAMMATE-RESULT-MARKER',
+      delivered: true,
+    });
+  });
+
   it('delivers fake Feishu inbound to Codex and replies through the stdio MCP shim', async () => {
     server = buildServer({ runtimeDir, fake, bot });
     await server.start();
