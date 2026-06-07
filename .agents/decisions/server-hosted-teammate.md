@@ -267,7 +267,8 @@ Server wiring change (supersedes the PR2 "default empty catalog" note above):
 - The **default** `teamMateWorkers` catalog now wires the real Codex worker
   (`defaultRef: builtin:codex`), so a production `dreamux serve` executes for
   real and `get_capabilities` reports `builtin:codex` as worker-available
-  (`builtin:claude-code` stays unavailable until its own slice). The worker
+  (`builtin:claude-code` stays unavailable until its own slice — **PR4 lands that
+  slice, see below**). The worker
   reuses the server's `codexProcessFactory`/`codexClientFactory` test seams, so a
   fake-codex test drives it without spawning a real binary. Tests still fully
   control execution by injecting `teamMateWorkerProviders` — the fake provider,
@@ -295,6 +296,74 @@ worker sessions, resume/recovery, a true `interrupt`/turn-abort primitive and a
 distinct `queue` disposition; orphan reconciliation / restart re-execution of
 `running` tasks; log redaction and a `get_logs` MCP tool; the real Claude Code
 worker (the seam stays runtime-agnostic).
+
+## Issue #126: TeamMate MCP parity — PR4 (real Claude Code worker provider)
+
+PR4 lands the **second** real worker behind the PR2 seam: `builtin:claude-code`
+now performs actual execution too, with **no hidden `tm` CLI shell-out**. TeamMate
+MCP supports both workers; the seam stays runtime-agnostic.
+
+Real Claude Code worker
+(`/packages/dreamux/src/teammate/worker/claude-code-provider.ts`):
+
+- **One task = one turn**, like the Codex worker, but over the dispatcher
+  runtime's own resident stream-json primitive (`agent-runtime/claude-code-session.ts`,
+  `claude --print --input-format stream-json`) through the same injectable
+  `ClaudeCodeSessionFactory` seam. The task prompt is submitted as the single
+  `user` turn; `submitTurn` resolves only at the terminal `result` (a Claude Code
+  turn is itself a full agentic loop) → `onCompleted(text)`, then the resident
+  child is reaped. An error `result`, a mid-turn child exit, or the per-turn
+  deadline → `onFailed`. `submitTurn`'s promise is the single terminal signal, so
+  no separate `setOnExit` wiring is needed in the one-turn model.
+- It reuses the dispatcher's per-dispatcher Claude Code launch config (bin, model,
+  permission_mode, env, `turn_timeout_ms`) and wires **no MCP servers** — a worker
+  is launched with an empty `{ mcpServers: {} }` `--mcp-config` doc, structurally
+  enforcing the no-nested-dispatch boundary.
+- `startSession` returns once the turn is *submitted* (commit `running` →
+  fire-and-forget `submitTurn`); a pre-`onRunning` failure (spawn) returns a
+  retryable `unavailable` (`TEAMMATE_CLAUDE_CODE_WORKER_START_FAILED`, task stays
+  `accepted`). The session guarantees exactly one terminal callback under
+  interleaved completion / child-exit / cancel / dispose.
+- **steer:false (honest, not misleading).** Unlike the Codex worker's folded
+  `turn/start`, the resident session is strictly serial with no mid-turn fold
+  primitive (the dispatcher's own claude-code runtime queues a follow-up as a
+  *subsequent* turn, never folding). So the single-turn worker advertises
+  `modes.steer:false` and rejects `send_input` while live, which keeps the input
+  `queued` in the ledger (PR1 behaviour). `get_capabilities` therefore reports
+  `builtin:codex` (steer:true) and `builtin:claude-code` (worker_available:true,
+  steer:false) side by side. Honest live steer/queue/interrupt for Claude Code is
+  deferred.
+
+Shared / server wiring changes:
+
+- **Realpath target confinement is now a shared primitive**
+  (`worker/confine.ts`: `resolveConfinedWorkerCwd` / `canonicalizeExisting`),
+  extracted verbatim from PR3's codex-provider so both workers run the identical
+  pre-spawn containment check (a symlinked target cannot root a worker outside the
+  dispatcher tree; a violation throws loudly, no process created). PR3's
+  codex-provider now imports it — this is why a Claude Code PR touches
+  codex-provider.ts.
+- The **default** `teamMateWorkers` catalog now wires **both** real workers.
+  `defaultRef` stays `builtin:codex`; a task selects the Claude Code worker by
+  pinning `provider_ref: builtin:claude-code` (`run_task` / `execute_task` already
+  plumb `provider_ref`). Default routing is deliberately **not** dispatcher-aware
+  (kept a pure addition); routing the claude-code dispatcher's tasks to the
+  claude-code worker by default is a possible later decision.
+- The server's worker claude-config resolver mirrors the codex one: it returns the
+  dispatcher's own config only for a `builtin:claude-code` dispatcher and the
+  built-in **defaults** for any other (or unknown) dispatcher — it must not call
+  `dispatcherClaudeCodeConfig()` for a non-claude-code dispatcher, which throws.
+  This keeps a `builtin:codex` dispatcher that pins the claude-code worker from
+  accepting and then hard-failing (the mirror of PR3's non-Codex regression).
+- A `claudeCodeWorkerSessionFactory` `ServerOptions` test seam threads a fake
+  resident session into the default catalog's claude worker, so server/smoke
+  tests drive the real provider path without spawning a real `claude`.
+- New path builders in `runtime/paths.ts`: the per-task worker Claude MCP config
+  doc (`state/<id>/teammate/workers/<taskId>.mcp.json`) and per-task resident-child
+  stderr log (`logs/claude-code/teammate/<id>/<taskId>.stderr.log`).
+
+Deferred (in addition to PR3's list): honest live steer/queue/interrupt for the
+Claude Code worker; multi-turn persistent claude-code worker sessions and resume.
 
 ## Consequences
 

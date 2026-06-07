@@ -70,6 +70,11 @@ import {
   FakeTeamMateWorkerProvider,
   FAKE_TEAMMATE_WORKER_REF,
 } from '../src/teammate/worker/fake-provider.js';
+import type {
+  ClaudeCodeSession,
+  ClaudeCodeSessionFactory,
+} from '../src/agent-runtime/claude-code-session.js';
+import type { TurnOutcome } from '../src/runtime/claude-code-stream.js';
 import { startFakeCodex, type FakeCodex } from './fake-codex.js';
 import { testDispatcherConfig } from './helpers/config.js';
 import { Writable } from 'node:stream';
@@ -112,6 +117,51 @@ class NoopCodexProcess extends CodexProcess {
   }
 }
 
+/**
+ * A fake `claude` resident session for the default `builtin:claude-code` worker
+ * (issue #126 PR4). `auto` resolves the single turn asynchronously with a
+ * deterministic `echo:` result (so `execute` re-reads `running` first, then the
+ * await wakes on completion); without `auto` the turn stays pending (so a
+ * run_task assertion of `running` is stable).
+ */
+class FakeWorkerClaudeSession implements ClaudeCodeSession {
+  constructor(private readonly auto: boolean) {}
+  async start(): Promise<void> {
+    /* no real child */
+  }
+  submitTurn(prompt: string): Promise<TurnOutcome> {
+    if (!this.auto) return new Promise<TurnOutcome>(() => {});
+    return new Promise<TurnOutcome>((resolve) => {
+      setTimeout(
+        () =>
+          resolve({
+            isError: false,
+            text: `echo: ${prompt}`,
+            sessionId: 'cc-worker-sess',
+            subtype: 'success',
+            errors: [],
+          }),
+        10,
+      );
+    });
+  }
+  isAlive(): boolean {
+    return true;
+  }
+  setOnExit(): void {
+    /* the one-turn worker relies on submitTurn's promise, not onExit */
+  }
+  async stop(): Promise<void> {
+    /* no real child */
+  }
+}
+
+function fakeClaudeWorkerSessionFactory(
+  opts: { auto: boolean } = { auto: true },
+): ClaudeCodeSessionFactory {
+  return () => new FakeWorkerClaudeSession(opts.auto);
+}
+
 function buildServer(opts: {
   runtimeDir: string;
   fake: FakeCodex;
@@ -130,6 +180,7 @@ function buildServer(opts: {
   channelLoggerFactory?: (dispatcherId: string) => DreamuxLogger;
   teamMateWorkerProviders?: TeamMateWorkerProviderCatalog;
   teamMateDeliveryBackoffMs?: (attempt: number) => number;
+  claudeCodeWorkerSessionFactory?: ClaudeCodeSessionFactory;
 }): Server {
   return new Server({
     config: opts.config ?? BUILT_IN_DEFAULTS,
@@ -137,6 +188,9 @@ function buildServer(opts: {
     skipBotSecret: opts.skipBotSecret ?? true,
     ...(opts.teamMateWorkerProviders !== undefined
       ? { teamMateWorkerProviders: opts.teamMateWorkerProviders }
+      : {}),
+    ...(opts.claudeCodeWorkerSessionFactory !== undefined
+      ? { claudeCodeWorkerSessionFactory: opts.claudeCodeWorkerSessionFactory }
       : {}),
     ...(opts.teamMateDeliveryBackoffMs !== undefined
       ? { teamMateDeliveryBackoffMs: opts.teamMateDeliveryBackoffMs }
@@ -1676,10 +1730,11 @@ describe('dreamux MVP smoke', () => {
     expect(taskFile.origin).toBe('dispatcher');
   });
 
-  it('mcp.teammate.capabilities reports the default codex worker as available', async () => {
-    // PR3 wires the real Codex worker by default, so `builtin:codex` is now
-    // worker-available (steer via folded turn/start) while `builtin:claude-code`
-    // stays unavailable until its own worker slice lands.
+  it('mcp.teammate.capabilities reports both default workers (codex steer, claude-code single-turn)', async () => {
+    // PR3 wired the real Codex worker (steer via folded turn/start); PR4 wires
+    // the real Claude Code worker too. Both are now worker-available, but the
+    // single-turn claude-code worker honestly reports steer:false (no mid-turn
+    // fold primitive) so capabilities never mislead the dispatcher model.
     server = buildServer({
       runtimeDir,
       fake,
@@ -1717,7 +1772,12 @@ describe('dreamux MVP smoke', () => {
     const claudeCode = caps.providers.find(
       (p) => p.provider_ref === 'builtin:claude-code',
     );
-    expect(claudeCode?.worker_available).toBe(false);
+    expect(claudeCode?.worker_available).toBe(true);
+    expect(claudeCode?.modes).toMatchObject({
+      steer: false,
+      queue: false,
+      interrupt: false,
+    });
   });
 
   it('mcp.teammate.capabilities reflects an injected worker provider as available', async () => {
@@ -1939,6 +1999,101 @@ describe('dreamux MVP smoke', () => {
     const codex = caps.providers.find((p) => p.provider_ref === 'builtin:codex');
     expect(codex?.worker_available).toBe(true);
     expect(caps.execution_available).toBe(true);
+  });
+
+  it('run_task from a non-Claude-Code (codex) dispatcher still executes via a pinned claude-code worker', async () => {
+    // Regression (issue #126 PR4): the Claude Code worker is selectable by
+    // pinning `provider_ref: builtin:claude-code` regardless of the dispatcher's
+    // own runtime. A `builtin:codex` dispatcher pinning the claude-code worker
+    // must resolve a VALID Claude Code launch config (the defaults) and execute,
+    // not accept-then-hard-fail with "not wired to Claude Code" — the mirror of
+    // the PR3 non-Codex regression above.
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      config: configWithDispatcher({ cwd: runtimeDir }), // a builtin:codex dispatcher
+      claudeCodeWorkerSessionFactory: fakeClaudeWorkerSessionFactory({
+        auto: false,
+      }),
+      teamMateDeliveryBackoffMs: () => 0,
+    });
+    const result = await server.runTeamMateTaskFromMcp({
+      dispatcherId: 'flow',
+      callerKind: 'dispatcher',
+      title: 'CC worker from codex dispatcher',
+      prompt: 'Run on the claude-code worker.',
+      targetPath: '.',
+      providerRef: 'builtin:claude-code',
+    });
+    // The Claude Code worker started for real (default config), not a hard-fail.
+    expect(result.execution).toMatchObject({
+      status: 'running',
+      provider_ref: 'builtin:claude-code',
+    });
+  });
+
+  it('run_task executes through the default claude-code worker and collects the real turn result', async () => {
+    // The default catalog wires BOTH workers (PR4); pinning
+    // `provider_ref: builtin:claude-code` routes to the real Claude Code worker,
+    // driven against a fake resident session via the same session-factory seam
+    // the dispatcher runtime uses.
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      config: configWithDispatcher({ cwd: runtimeDir }),
+      claudeCodeWorkerSessionFactory: fakeClaudeWorkerSessionFactory({
+        auto: true,
+      }),
+      teamMateDeliveryBackoffMs: () => 0,
+    });
+    await server.start();
+    const socketPath = join(runtimeDir, 'admin.sock');
+
+    const created = (await sendAdminRequest(
+      'mcp.teammate.run',
+      {
+        dispatcher_id: 'flow',
+        caller_kind: 'dispatcher',
+        title: 'Claude Code worker task',
+        prompt: 'Run the claude-code worker.',
+        target_path: '.',
+        provider_ref: 'builtin:claude-code',
+      },
+      { socketPath },
+    )) as {
+      task: { task_id: string; lifecycle_status: string; last_event_id: number };
+      execution: { status: string; provider_ref?: string };
+    };
+
+    // The worker started a live Claude Code session: running, attributed to it.
+    expect(created.execution).toMatchObject({
+      status: 'running',
+      provider_ref: 'builtin:claude-code',
+    });
+    const taskId = created.task.task_id;
+
+    const awaited = (await sendAdminRequest(
+      'mcp.teammate.await',
+      {
+        dispatcher_id: 'flow',
+        task_id: taskId,
+        after_event_id: created.task.last_event_id,
+        timeout_ms: 3000,
+      },
+      { socketPath, timeoutMs: 9000 },
+    )) as { status: string; result: { outcome: string; text: string } | null };
+    expect(awaited.status).toBe('completed');
+    expect(awaited.result?.outcome).toBe('completed');
+
+    const pulled = (await sendAdminRequest(
+      'mcp.teammate.pull',
+      { dispatcher_id: 'flow', task_id: taskId },
+      { socketPath },
+    )) as { result: { outcome: string; text: string } };
+    // The result is the real assistant text the fake claude session returned.
+    expect(pulled.result.text).toBe('echo: Run the claude-code worker.');
   });
 
   it('send_input promotes a queued input to submitted when a worker session is live', async () => {

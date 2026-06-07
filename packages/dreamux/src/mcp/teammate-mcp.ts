@@ -212,7 +212,14 @@ function teammateTools(): Array<Record<string, unknown>> {
             type: 'string',
             enum: ['managed_worktree', 'in_place'],
           },
-          provider_ref: { type: 'string' },
+          provider_ref: {
+            type: 'string',
+            description:
+              'Worker to execute on; defaults to builtin:codex. Pin ' +
+              'builtin:claude-code to run on the Claude Code worker. Consult ' +
+              "get_capabilities for each worker's advertised modes " +
+              '(builtin:claude-code is single-turn, steer:false).',
+          },
           operation_id: {
             type: 'string',
             description: 'Idempotency key; replaying returns the prior task.',
@@ -233,7 +240,13 @@ function teammateTools(): Array<Record<string, unknown>> {
         additionalProperties: false,
         properties: {
           task_id: { type: 'string' },
-          provider_ref: { type: 'string' },
+          provider_ref: {
+            type: 'string',
+            description:
+              'Worker to execute on; defaults to builtin:codex. Pin ' +
+              'builtin:claude-code to run on the Claude Code worker (see ' +
+              'get_capabilities).',
+          },
           target_mode: {
             type: 'string',
             enum: ['managed_worktree', 'in_place'],
@@ -247,9 +260,11 @@ function teammateTools(): Array<Record<string, unknown>> {
       name: 'send_input',
       description:
         'Send a follow-up input to a steerable TeamMate task session. Default ' +
-        'mode is steer; queue and interrupt are explicit. Steer folds into a ' +
-        'live worker session and is submitted; with no live session the input ' +
-        'is recorded as queued for a future worker.',
+        'mode is steer; queue and interrupt are explicit. On a worker that ' +
+        'advertises steer (builtin:codex) it folds into the live turn and is ' +
+        'submitted; on a single-turn worker (builtin:claude-code, steer:false) ' +
+        'or with no live session the input is recorded as queued for a future ' +
+        'worker. See get_capabilities.',
       inputSchema: {
         type: 'object',
         additionalProperties: false,
@@ -292,9 +307,10 @@ function teammateTools(): Array<Record<string, unknown>> {
       name: 'get_capabilities',
       description:
         'List server and runtime TeamMate capabilities (read-only). Each ' +
-        'provider reports whether worker execution is available; the default ' +
-        'Codex worker is available, while a runtime without a worker (or an ' +
-        'explicitly empty catalog) reports it unavailable.',
+        'provider reports whether worker execution is available and its modes; ' +
+        'the builtin:codex (steer) and builtin:claude-code (single-turn, ' +
+        'steer:false) workers are available by default, while a runtime without ' +
+        'a worker (or an explicitly empty catalog) reports it unavailable.',
       inputSchema: { type: 'object', additionalProperties: false, properties: {} },
     },
     {
