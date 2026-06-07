@@ -1,42 +1,60 @@
 /**
- * `builtin:claude-code` AgentRuntimeProvider (issue #110 PR6).
+ * `builtin:claude-code` AgentRuntimeProvider (issue #110 PR6, resident
+ * stream-json transport since issue #120).
  *
  * A real second agent runtime that proves the AgentRuntimeProvider abstraction
- * is not "Codex renamed". It differs from `builtin:codex` in every
+ * is not "Codex renamed". Like Codex it now runs a **resident child process**
+ * supervised for the dispatcher's lifetime — but it differs in every
  * runtime-specific dimension:
  *
- * - **No persistent app-server / handshake / WebSocket.** Claude Code runs a
- *   turn per headless `claude --print` invocation, so there is no long-lived
- *   child to supervise, no restart/backoff loop, and no initialize timeout.
+ * - **Stream-json over stdio, not an app-server WebSocket.** The resident child
+ *   is `claude --print --input-format stream-json --output-format stream-json`
+ *   (see `runtime/claude-code-args.ts`); turns are NDJSON `user` lines on stdin
+ *   and `init`/`assistant`/`result` envelopes on stdout (see
+ *   `runtime/claude-code-stream.ts`). There is no `initialize` handshake — the
+ *   child emits `init` lazily with the first turn — so readiness is "child
+ *   spawned", not "handshake completed".
  * - **MCP injection is a JSON config document** (`--mcp-config <file>`), not
- *   Codex's `-c mcp_servers.*` TOML CLI flags. See `runtime/claude-code-args.ts`.
+ *   Codex's `-c mcp_servers.*` TOML CLI flags.
  * - **Runtime-owned config** is `DispatcherClaudeCodeConfig` (bin / model /
  *   permission_mode / extra_args / extra_env), distinct from the Codex config.
  * - **Completion delivery** is the Claude Code task-notification path, not the
  *   Codex inbox-then-trigger path.
  *
- * Process spawning goes through an injectable {@link ClaudeCodeTurnRunner} seam
- * (mirroring Codex's process-factory seam), so the lifecycle contract is fully
- * unit-testable with a fake runner. A live `claude` binary is exercised only by
- * the opt-in live test.
+ * Process spawning goes through an injectable {@link ClaudeCodeSessionFactory}
+ * seam (mirroring Codex's process-factory seam), so the lifecycle contract is
+ * fully unit-testable with a fake session. A live `claude` binary is exercised
+ * only by the opt-in live test.
  *
- * Failure contract: a turn failure (missing binary, spawn error, non-zero exit)
- * is never swallowed. For inbound/restart turns it drives the runtime to
- * `degraded` with a persisted `last_error` (observable via status/doctor). For
- * `deliverTeamMateCompletion` it surfaces as a `failed` result the caller can
- * act on (PR8 delivery retry). `enqueueInbound` still returns after accept
- * (submit != completion) so the channel can ack promptly.
+ * Failure contract (unchanged by #120): a turn failure (spawn error, child
+ * exit, error `result`) is never swallowed. For inbound/restart turns it drives
+ * the runtime to `degraded` with a persisted `last_error` (observable via
+ * status/doctor). For `deliverTeamMateCompletion` it surfaces as a `failed`
+ * result the caller can act on (PR8 delivery retry). `enqueueInbound` still
+ * returns after accept (submit != completion) so the channel can ack promptly.
  *
- * Scope note: this PR declares the task-notification delivery capability and
- * provides the runtime's delivery entry point. The executable TeamMate delivery
- * loop (ledger, retry, pull fallback) belongs to the server-hosted TeamMate PRs
- * (#110 PR7/PR8), per `.agents/decisions/agent-runtime-provider.md`.
+ * Restart: an unexpected child exit marks the runtime `degraded`; the next turn
+ * re-spawns the resident child with `--resume <session_id>`, restoring the
+ * conversation. There is no background backoff timer — re-spawn is lazy and
+ * bound to the (serialized) turn queue, so it stays deterministic.
+ *
+ * Per-turn deadline: a turn whose still-alive child never emits a terminal
+ * `result` (a stall, or a wait on input the runtime cannot satisfy) would
+ * otherwise pend forever and wedge the serial queue — and, behind it, TeamMate
+ * completion delivery, which awaits this runtime. `turn_timeout_ms` bounds every
+ * turn at the session layer: on the deadline the turn fails and the child is
+ * reaped (so the next turn re-spawns), turning an infinite hang into a normal
+ * degraded + `last_error` (inbound) or `failed` delivery result.
+ *
+ * Reference: the resident stream-json protocol model and process-supervision
+ * shape are adapted from the Claudemux `next` implementation; the AgentRuntime /
+ * Channel / DispatcherService boundaries (provider seam, runtime-owned MCP
+ * injection, degraded/last_error status, TeamMate delivery result contract) are
+ * Dreamux's own, per `.agents/decisions/agent-runtime-provider.md`.
  */
 
-import { execFile } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { promisify } from 'node:util';
 
 import { createBuiltinRegistry } from '../registry/index.js';
 import {
@@ -47,13 +65,19 @@ import {
 } from '../runtime/config.js';
 import {
   dispatcherClaudeCodeMcpConfigPath,
+  dispatcherClaudeCodeStreamLogPath,
   dispatcherCodexCwd,
 } from '../runtime/paths.js';
 import { dispatcherProcessEnv } from '../runtime/package-bin.js';
 import {
-  claudeCodeTurnArgs,
+  claudeCodeResidentArgs,
   stringifyClaudeCodeMcpConfig,
 } from '../runtime/claude-code-args.js';
+import {
+  createDefaultClaudeCodeSession,
+  type ClaudeCodeSession,
+  type ClaudeCodeSessionFactory,
+} from './claude-code-session.js';
 import type {
   InboundDeliveryHooks,
   InboundDeliveryResult,
@@ -68,69 +92,15 @@ import type {
   TeamMateCompletionEnvelope,
 } from './types.js';
 
-const execFileAsync = promisify(execFile);
-
-/** One headless Claude Code turn invocation. */
-export interface ClaudeCodeTurnRequest {
-  bin: string;
-  args: string[];
-  cwd: string;
-  env: NodeJS.ProcessEnv;
-}
-
-/** The result of one turn: the (possibly new) session id and the final text. */
-export interface ClaudeCodeTurnResult {
-  sessionId: string | null;
-  result: string;
-}
-
-/** Injectable seam for running a Claude Code turn (tests inject a fake). */
-export interface ClaudeCodeTurnRunner {
-  runTurn(request: ClaudeCodeTurnRequest): Promise<ClaudeCodeTurnResult>;
-}
-
-/** Parse the `claude --output-format json` result envelope, defensively. */
-export function parseClaudeCodeJsonResult(stdout: string): ClaudeCodeTurnResult {
-  const trimmed = stdout.trim();
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(trimmed);
-  } catch {
-    return { sessionId: null, result: trimmed };
-  }
-  if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-    const obj = parsed as Record<string, unknown>;
-    const sessionId =
-      typeof obj['session_id'] === 'string' ? obj['session_id'] : null;
-    const result = typeof obj['result'] === 'string' ? obj['result'] : trimmed;
-    return { sessionId, result };
-  }
-  return { sessionId: null, result: trimmed };
-}
-
-/** The live turn runner: spawns the real `claude` binary. */
-export function createDefaultClaudeCodeTurnRunner(): ClaudeCodeTurnRunner {
-  return {
-    async runTurn(request: ClaudeCodeTurnRequest): Promise<ClaudeCodeTurnResult> {
-      const { stdout } = await execFileAsync(request.bin, request.args, {
-        cwd: request.cwd,
-        env: request.env,
-        maxBuffer: 64 * 1024 * 1024,
-      });
-      return parseClaudeCodeJsonResult(stdout);
-    },
-  };
-}
-
 export interface ClaudeCodeAgentRuntimeProviderOptions {
   /** Optional host-level bin resolver (default: identity on the config bin). */
   resolveBinPath?: (bin: string) => string;
-  /** Override the turn runner (tests inject a fake). */
-  turnRunner?: ClaudeCodeTurnRunner;
+  /** Override the resident-session factory (tests inject a fake). */
+  sessionFactory?: ClaudeCodeSessionFactory;
 }
 
 interface ClaudeCodeRuntimeDeps {
-  turnRunner: ClaudeCodeTurnRunner;
+  sessionFactory: ClaudeCodeSessionFactory;
   resolveBinPath: (bin: string) => string;
 }
 
@@ -149,10 +119,10 @@ function errMessage(err: unknown): string {
 }
 
 /**
- * The Claude Code agent runtime for one dispatcher. Turns run serially (one at a
- * time) and `enqueueInbound` returns after the message is accepted — not after
- * the turn completes — matching the Codex runtime's submit-then-serialize
- * contract.
+ * The Claude Code agent runtime for one dispatcher. A single resident
+ * stream-json child serves every turn. Turns run serially (one at a time) and
+ * `enqueueInbound` returns after the message is accepted — not after the turn
+ * completes — matching the Codex runtime's submit-then-serialize contract.
  */
 export class ClaudeCodeRuntime implements AgentRuntime {
   readonly providerRef = BUILTIN_CLAUDE_CODE_PROVIDER_REF;
@@ -163,6 +133,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   private readonly cwd: string;
   private readonly mcpConfigPath: string;
   private readonly mcpConfigDoc: string;
+  private readonly stderrLogPath: string;
   private status: DispatcherStatus = 'declared';
   private threadId: string | null;
   private readonly resumed: boolean;
@@ -170,6 +141,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   private readonly seen = new Set<string>();
   private queue: Promise<void> = Promise.resolve();
   private turnCounter = 0;
+  private session: ClaudeCodeSession | null = null;
 
   constructor(
     private readonly context: AgentRuntimeCreateContext,
@@ -184,6 +156,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     this.cwd = context.row.codex_cwd ?? dispatcherCodexCwd(this.dispatcherId);
     this.mcpConfigPath = dispatcherClaudeCodeMcpConfigPath(this.dispatcherId);
     this.mcpConfigDoc = stringifyClaudeCodeMcpConfig(context.mcpServers);
+    this.stderrLogPath = dispatcherClaudeCodeStreamLogPath(this.dispatcherId);
     this.threadId = context.row.thread_id;
     this.resumed = context.row.thread_id !== null;
   }
@@ -205,15 +178,14 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     try {
       await mkdir(dirname(this.mcpConfigPath), { recursive: true });
       await writeFile(this.mcpConfigPath, this.mcpConfigDoc, { mode: 0o600 });
+      // Spawn the resident child up front so the runtime is truly resident
+      // (Codex-aligned). A missing/broken `claude` binary fails here and drives
+      // the runtime to degraded + throws, rather than a silent no-op.
+      await this.ensureSession();
     } catch (err) {
       await this.setStatus('degraded', err);
       throw err;
     }
-    // No persistent app-server: a healthy "started" Claude Code runtime is one
-    // whose MCP config is materialized and which is ready to accept per-turn
-    // invocations. A missing `claude` binary surfaces on the first turn as a
-    // degraded runtime status + persisted last_error (see the failure contract
-    // in the file header), not a silent no-op.
     await this.setStatus('ready');
   }
 
@@ -221,6 +193,15 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     if (this.stopped) return;
     this.stopped = true;
     await this.setStatus('stopping');
+    const session = this.session;
+    this.session = null;
+    if (session !== null) {
+      try {
+        await session.stop();
+      } catch (err) {
+        this.log('warn', 'claude-code session stop errored', err);
+      }
+    }
     await this.setStatus('stopped');
   }
 
@@ -241,12 +222,10 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     }
     const turnId = `claude-turn-${++this.turnCounter}`;
     // Submit-then-serialize: return after accept (so the channel can ack
-    // promptly), run the turn on the serial queue. Unlike Codex there is no
-    // separate submit-ack before execution, so a turn failure cannot be
+    // promptly), run the turn on the serial queue. A turn failure cannot be
     // returned to this caller without blocking the channel ack on full turn
     // completion. Instead, a failed turn drives the runtime to `degraded` with a
-    // persisted `last_error` (visible via status/doctor) — the failure is never
-    // swallowed. See the PR6 review thread / the agent-runtime decision record.
+    // persisted `last_error` (visible via status/doctor) — never swallowed.
     void this.runTurnOnQueue(input.parsed_text, turnId).then(
       () => this.markTurnSucceeded(),
       (err) => this.markTurnFailed(turnId, err),
@@ -315,29 +294,64 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     await this.setStatus('degraded', err);
   }
 
-  private async runTurn(prompt: string, turnId: string): Promise<void> {
-    const args = claudeCodeTurnArgs({
+  /**
+   * Ensure a live resident session exists, spawning (or re-spawning after an
+   * unexpected exit) as needed. Re-spawn resumes the persisted session id so the
+   * conversation survives a crash.
+   */
+  private async ensureSession(): Promise<ClaudeCodeSession> {
+    if (this.session !== null && this.session.isAlive()) return this.session;
+    const args = claudeCodeResidentArgs({
       config: this.config,
       mcpConfigPath: this.mcpConfigPath,
-      prompt,
       resumeSessionId: this.threadId,
     });
-    const result = await this.deps.turnRunner.runTurn({
+    const session = this.deps.sessionFactory({
       bin: this.bin,
       args,
       cwd: this.cwd,
       env: dispatcherProcessEnv(globalThis.process.env, this.config.extra_env),
+      stderrLogPath: this.stderrLogPath,
+      turnTimeoutMs: this.config.turn_timeout_ms,
+      log: (level, msg, err) => this.log(level, msg, err),
     });
+    session.setOnExit(() => {
+      void this.onSessionExit(session);
+    });
+    await session.start();
+    this.session = session;
+    return session;
+  }
+
+  /** React to an unexpected resident-child exit: degrade and drop the session. */
+  private async onSessionExit(session: ClaudeCodeSession): Promise<void> {
+    if (this.session !== session) return; // already replaced/stopped
+    this.session = null;
+    if (this.stopped) return;
+    this.log('error', 'claude-code resident child exited unexpectedly');
+    await this.setStatus('degraded', new Error('claude resident child exited'));
+  }
+
+  private async runTurn(prompt: string, turnId: string): Promise<void> {
+    const session = await this.ensureSession();
+    const outcome = await session.submitTurn(prompt);
     if (
-      result.sessionId !== null &&
-      result.sessionId !== '' &&
-      result.sessionId !== this.threadId
+      outcome.sessionId !== null &&
+      outcome.sessionId !== '' &&
+      outcome.sessionId !== this.threadId
     ) {
-      this.threadId = result.sessionId;
+      this.threadId = outcome.sessionId;
       await this.context.dispatchers.setThreadId(
         this.dispatcherId,
-        result.sessionId,
+        outcome.sessionId,
       );
+    }
+    if (outcome.isError) {
+      const detail =
+        outcome.errors.length > 0
+          ? outcome.errors.join('; ')
+          : (outcome.subtype ?? 'unknown error');
+      throw new Error(`claude turn ${turnId} returned an error result: ${detail}`);
     }
     this.log('info', `claude-code turn ${turnId} completed`);
   }
@@ -370,7 +384,8 @@ export function createClaudeCodeAgentRuntimeProvider(
   const descriptor = createBuiltinRegistry().resolve(
     BUILTIN_CLAUDE_CODE_PROVIDER_REF,
   );
-  const turnRunner = options.turnRunner ?? createDefaultClaudeCodeTurnRunner();
+  const sessionFactory =
+    options.sessionFactory ?? createDefaultClaudeCodeSession;
   const resolveBinPath = options.resolveBinPath ?? ((bin: string) => bin);
   return {
     ref: BUILTIN_CLAUDE_CODE_PROVIDER_REF,
@@ -385,7 +400,7 @@ export function createClaudeCodeAgentRuntimeProvider(
       ],
     },
     createRuntime(context: AgentRuntimeCreateContext): AgentRuntime {
-      return new ClaudeCodeRuntime(context, { turnRunner, resolveBinPath });
+      return new ClaudeCodeRuntime(context, { sessionFactory, resolveBinPath });
     },
   };
 }

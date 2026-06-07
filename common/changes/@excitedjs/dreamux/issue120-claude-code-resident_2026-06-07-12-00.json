@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Run builtin:claude-code as a resident stream-json process (one long-lived `claude --print --input-format stream-json` child per dispatcher) instead of a one-shot `claude --print` per turn, for issue #120. Adds an optional `dispatchers[].runtime.config.turn_timeout_ms` (default 600000) bounding a single resident turn, and the logs/claude-code/ stderr log directory; persisted state schemas are unchanged and the new config field is optional with a default.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

@@ -230,6 +230,19 @@ export function teammateMcpLogPath(id: string): string {
   return join(teammateMcpLogDir(), `${dispatcherPathSegment(id)}.log`);
 }
 
+export function claudeCodeLogDir(): string {
+  return join(logsRoot(), 'claude-code');
+}
+
+/**
+ * Per-dispatcher Claude Code resident stream-json child diagnostics (issue
+ * #120). The child's stdout is the NDJSON data plane (consumed in-process by the
+ * runtime), so only its stderr is logged here for crash diagnosis.
+ */
+export function dispatcherClaudeCodeStreamLogPath(id: string): string {
+  return join(claudeCodeLogDir(), `${dispatcherPathSegment(id)}.stderr.log`);
+}
+
 export function dispatcherCodexAppServerLogPath(id: string): string {
   return join(codexAppServerLogDir(), `${dispatcherPathSegment(id)}.log`);
 }

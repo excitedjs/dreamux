@@ -63,13 +63,34 @@ Implementation status:
   the Codex-backed dispatcher runtime.
 - `builtin:claude-code` is wired through the same `AgentRuntimeProvider`
   catalog (#110 PR6). It is a real second runtime, not a Codex rename: it owns
-  its own config shape (`DispatcherClaudeCodeConfig`), translates the
+  its own config shape (`DispatcherClaudeCodeConfig`) and translates the
   Dreamux-owned MCP descriptors into Claude Code's JSON MCP config
-  (`--mcp-config`) rather than Codex `mcp_servers.*` TOML flags, and runs a turn
-  per headless `claude --print` invocation (no app-server, handshake, or restart
-  loop). Process spawning is behind an injectable turn-runner seam; a missing
-  `claude` binary fails loudly on the first turn, and a live contract test is
-  opt-in via `DREAMUX_RUN_LIVE_CLAUDE_CODE` (loud skip otherwise, never silent).
+  (`--mcp-config`) rather than Codex `mcp_servers.*` TOML flags.
+  - **Resident stream-json transport (#120).** It runs a single long-lived
+    `claude --print --input-format stream-json --output-format stream-json
+    --verbose` child for the dispatcher's lifetime — replacing the original
+    one-shot `claude --print <prompt>` per turn. Turns are NDJSON `user` lines
+    on stdin; `init` / `assistant` / `result` envelopes are read off stdout.
+    Unlike Codex there is no `initialize` handshake: the child emits `init`
+    lazily with the first turn, so readiness is "child spawned", not "handshake
+    completed". The wire protocol is modelled by a pure, forward-tolerant parser
+    (`runtime/claude-code-stream.ts`) and the resident child is supervised by an
+    injectable session seam (`agent-runtime/claude-code-session.ts`); a fake
+    session keeps the lifecycle fully unit-testable. A missing/broken `claude`
+    binary fails loudly at `start()` (degraded + throw, Codex-aligned); an
+    unexpected child exit marks the runtime degraded and the next turn re-spawns
+    with `--resume <session_id>` (lazy restart bound to the serial turn queue, no
+    background backoff timer). A per-turn deadline
+    (`turn_timeout_ms`, default 600000) bounds every turn at the session layer:
+    if a still-alive child never emits a terminal `result`, the turn fails and
+    the child is reaped, so a stall becomes a normal degraded / `failed`-delivery
+    outcome instead of wedging the serial queue (and TeamMate delivery behind
+    it). A live contract test is opt-in via `DREAMUX_RUN_LIVE_CLAUDE_CODE` (loud
+    skip otherwise, never silent).
+  - The resident protocol model and process-supervision shape are adapted from
+    the Claudemux `next` implementation; the AgentRuntime provider seam,
+    runtime-owned MCP injection, degraded/`last_error` status, and TeamMate
+    delivery result contract are Dreamux's own.
 - The shared interface already includes both confirmed TeamMate completion
   delivery shapes: Codex inbox-and-turn delivery and Claude Code task
   notification delivery. PR6 declares the `claudeCodeTaskNotification`

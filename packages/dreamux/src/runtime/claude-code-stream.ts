@@ -1,0 +1,330 @@
+/**
+ * The Claude Code stream-json wire protocol (issue #120).
+ *
+ * A clean-room model of the NDJSON envelopes the `claude` CLI emits and accepts
+ * on stdio under `--input-format stream-json --output-format stream-json`. This
+ * is what makes the `builtin:claude-code` runtime *resident*: one long-lived
+ * `claude --print` process consumes user-message lines on stdin and streams
+ * `init` / `assistant` / `result` envelopes on stdout, instead of a fresh
+ * one-shot process per turn.
+ *
+ * Two design rules, both load-bearing:
+ *
+ *  - **Forward-tolerant by construction.** The CLI's real envelope set is much
+ *    wider than anything Dreamux consumes (extra `system` subtypes, rate-limit
+ *    events, hook lifecycle, streamlined variants, and extra `result` fields).
+ *    This parser never validates a closed schema and never throws on an unknown
+ *    `type` / `subtype`; it reads only the fields the runtime needs and ignores
+ *    the rest. A wider or newer CLI build cannot break a turn.
+ *
+ *  - **Pure, no IO.** No process, no clock, no filesystem — so the line framer,
+ *    the line parser, and the turn aggregator are unit-tested against synthetic
+ *    envelope sequences (hand-authored to the real wire shapes) with no live
+ *    `claude` binary.
+ *
+ * Public-safety note: this module is a generic protocol model. It carries no
+ * Feishu identifiers, tokens, private paths, or environment-specific details.
+ */
+
+/** A parsed JSON object, or `null` for anything that is not a JSON object. */
+export type JsonObject = Record<string, unknown>;
+
+function isObject(v: unknown): v is JsonObject {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+function str(v: unknown): string | null {
+  return typeof v === 'string' ? v : null;
+}
+
+// ─── Line framing ───────────────────────────────────────────────────────────
+
+/**
+ * Incremental newline framer. The child's stdout is NDJSON but arrives in
+ * arbitrary chunks; `push` returns the complete lines so far and buffers a
+ * trailing partial line until its newline lands. Blank lines are dropped.
+ */
+export class LineBuffer {
+  private buf = '';
+
+  push(chunk: string): string[] {
+    this.buf += chunk;
+    const out: string[] = [];
+    let nl = this.buf.indexOf('\n');
+    while (nl >= 0) {
+      const line = this.buf.slice(0, nl);
+      this.buf = this.buf.slice(nl + 1);
+      const trimmed = line.endsWith('\r') ? line.slice(0, -1) : line;
+      if (trimmed.length > 0) out.push(trimmed);
+      nl = this.buf.indexOf('\n');
+    }
+    return out;
+  }
+
+  /** Any buffered bytes with no trailing newline (e.g. at stream end). */
+  flush(): string | null {
+    const rest = this.buf.trim();
+    this.buf = '';
+    return rest.length > 0 ? rest : null;
+  }
+}
+
+// ─── Parsed envelope ────────────────────────────────────────────────────────
+
+/**
+ * One decoded stdout line. `kind` is Dreamux's coarse classification, not the
+ * CLI's `type` — it groups the wire types by how the runtime reacts:
+ *
+ *  - `init` / `assistant` / `result` — the data-plane envelopes the turn
+ *    aggregator consumes.
+ *  - `control_request` / `control_response` — the control plane (permission
+ *    callbacks the runtime answers defensively).
+ *  - `other` — a valid JSON object the runtime does not act on (rate-limit
+ *    events, hook lifecycle, streamlined text, …). Carried, never dropped.
+ *  - `parse_error` — the line was not JSON; surfaced for logging, never thrown.
+ */
+export type ParsedLine =
+  | {
+      kind: 'init';
+      sessionId: string | null;
+      model: string | null;
+      raw: JsonObject;
+    }
+  | {
+      kind: 'assistant';
+      text: string;
+      sessionId: string | null;
+      raw: JsonObject;
+    }
+  | { kind: 'result'; outcome: ResultEnvelope; raw: JsonObject }
+  | {
+      kind: 'control_request';
+      requestId: string | null;
+      subtype: string | null;
+      request: JsonObject;
+      raw: JsonObject;
+    }
+  | {
+      kind: 'control_response';
+      requestId: string | null;
+      ok: boolean;
+      raw: JsonObject;
+    }
+  | { kind: 'other'; type: string | null; subtype: string | null; raw: JsonObject }
+  | { kind: 'parse_error'; raw: string };
+
+/** The terminal `result` envelope, reduced to what the runtime records per turn. */
+export interface ResultEnvelope {
+  /** `success` or one of the `error_*` subtypes. Unknown subtypes pass through. */
+  readonly subtype: string | null;
+  readonly isError: boolean;
+  /** The success-path final text (`result`); `null` for error subtypes. */
+  readonly text: string | null;
+  readonly sessionId: string | null;
+  /** Error subtypes may carry a message list; empty otherwise. */
+  readonly errors: readonly string[];
+}
+
+/**
+ * Join the text blocks of an Anthropic assistant `message.content` array.
+ * `thinking` and `tool_use` blocks contribute no visible text and are skipped.
+ */
+export function assistantText(message: unknown): string {
+  if (!isObject(message)) return '';
+  const content = message['content'];
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  const parts: string[] = [];
+  for (const block of content) {
+    if (!isObject(block)) continue;
+    if (block['type'] === 'text') {
+      const t = str(block['text']);
+      if (t !== null) parts.push(t);
+    }
+  }
+  return parts.join('');
+}
+
+function parseResult(o: JsonObject): ResultEnvelope {
+  const subtype = str(o['subtype']);
+  const errorsRaw = o['errors'];
+  const errors = Array.isArray(errorsRaw)
+    ? errorsRaw.filter((e): e is string => typeof e === 'string')
+    : [];
+  return {
+    subtype,
+    isError: o['is_error'] === true || (subtype !== null && subtype !== 'success'),
+    text: str(o['result']),
+    sessionId: str(o['session_id']),
+    errors,
+  };
+}
+
+/**
+ * Decode one stdout line. Never throws: a non-JSON line becomes `parse_error`,
+ * and a JSON object of an unmodelled type becomes `other`.
+ */
+export function parseLine(line: string): ParsedLine {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return { kind: 'parse_error', raw: line };
+  }
+  if (!isObject(parsed)) return { kind: 'parse_error', raw: line };
+  const type = str(parsed['type']);
+  const subtype = str(parsed['subtype']);
+
+  switch (type) {
+    case 'system':
+      if (subtype === 'init') {
+        return {
+          kind: 'init',
+          sessionId: str(parsed['session_id']),
+          model: str(parsed['model']),
+          raw: parsed,
+        };
+      }
+      return { kind: 'other', type, subtype, raw: parsed };
+    case 'assistant':
+      return {
+        kind: 'assistant',
+        text: assistantText(parsed['message']),
+        sessionId: str(parsed['session_id']),
+        raw: parsed,
+      };
+    case 'result':
+      return { kind: 'result', outcome: parseResult(parsed), raw: parsed };
+    case 'control_request': {
+      const request = parsed['request'];
+      return {
+        kind: 'control_request',
+        requestId: str(parsed['request_id']),
+        subtype: isObject(request) ? str(request['subtype']) : null,
+        request: isObject(request) ? request : {},
+        raw: parsed,
+      };
+    }
+    case 'control_response': {
+      const response = parsed['response'];
+      if (isObject(response)) {
+        return {
+          kind: 'control_response',
+          requestId: str(response['request_id']),
+          ok: response['subtype'] === 'success',
+          raw: parsed,
+        };
+      }
+      return { kind: 'control_response', requestId: null, ok: false, raw: parsed };
+    }
+    default:
+      return { kind: 'other', type, subtype, raw: parsed };
+  }
+}
+
+// ─── Outbound message builders (stdin) ──────────────────────────────────────
+
+/** One user turn as a stream-json `user` message line (no trailing newline). */
+export function buildUserMessage(text: string): string {
+  return JSON.stringify({
+    type: 'user',
+    message: { role: 'user', content: [{ type: 'text', text }] },
+  });
+}
+
+/**
+ * Answer a `can_use_tool` control request with `allow`. A Dreamux dispatcher
+ * runs unattended, so the answer for a runtime that has no human to consult is
+ * "allow"; `updatedInput` echoes the tool's original input back unchanged.
+ *
+ * This is a defensive path: under a bypassing permission mode the CLI does not
+ * gate tools, so `can_use_tool` is not normally emitted. It is wired so that if
+ * a build or mode does emit one, the runtime answers it rather than leaving the
+ * turn waiting on an unanswered control request.
+ */
+export function buildCanUseToolAllow(requestId: string, input: JsonObject): string {
+  return JSON.stringify({
+    type: 'control_response',
+    response: {
+      subtype: 'success',
+      request_id: requestId,
+      response: { behavior: 'allow', updatedInput: input },
+    },
+  });
+}
+
+/** Acknowledge any other control request with a bare success so the CLI proceeds. */
+export function buildControlAck(requestId: string): string {
+  return JSON.stringify({
+    type: 'control_response',
+    response: { subtype: 'success', request_id: requestId, response: {} },
+  });
+}
+
+// ─── Turn aggregation ───────────────────────────────────────────────────────
+
+/** The reduced outcome of one assistant turn, terminated by a `result`. */
+export interface TurnOutcome {
+  readonly isError: boolean;
+  /** Final reply text: the `result.result`, falling back to the last assistant snapshot. */
+  readonly text: string;
+  readonly sessionId: string | null;
+  readonly subtype: string | null;
+  readonly errors: readonly string[];
+}
+
+/**
+ * Accumulates the envelopes of a single turn and resolves a `TurnOutcome` when
+ * the `result` lands. One aggregator per turn: feed every `ParsedLine`, then
+ * read `outcome()` once `done` is true.
+ *
+ * The final text prefers the `result.result` (the CLI's own canonical answer)
+ * and falls back to the latest `assistant` snapshot — so a turn that ends
+ * tool-only or whose result text is empty still surfaces whatever the model
+ * last said.
+ */
+export class TurnAggregator {
+  private lastAssistantText = '';
+  private result: ResultEnvelope | null = null;
+  private initSessionId: string | null = null;
+
+  /** Returns `true` once the terminal `result` has been seen. */
+  get done(): boolean {
+    return this.result !== null;
+  }
+
+  /** The session id from `init` (or the result), once known. */
+  get sessionId(): string | null {
+    return this.result?.sessionId ?? this.initSessionId;
+  }
+
+  accept(line: ParsedLine): void {
+    switch (line.kind) {
+      case 'init':
+        if (line.sessionId !== null) this.initSessionId = line.sessionId;
+        break;
+      case 'assistant':
+        if (line.text.length > 0) this.lastAssistantText = line.text;
+        break;
+      case 'result':
+        this.result = line.outcome;
+        break;
+      default:
+        break;
+    }
+  }
+
+  outcome(): TurnOutcome | null {
+    const r = this.result;
+    if (r === null) return null;
+    const text =
+      r.text !== null && r.text.length > 0 ? r.text : this.lastAssistantText;
+    return {
+      isError: r.isError,
+      text,
+      sessionId: r.sessionId ?? this.initSessionId,
+      subtype: r.subtype,
+      errors: r.errors,
+    };
+  }
+}

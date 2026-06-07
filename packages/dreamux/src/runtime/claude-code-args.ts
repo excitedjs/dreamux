@@ -41,27 +41,37 @@ export function stringifyClaudeCodeMcpConfig(
   return `${JSON.stringify(claudeCodeMcpConfig(servers), null, 2)}\n`;
 }
 
-export interface ClaudeCodeTurnArgsInput {
+export interface ClaudeCodeResidentArgsInput {
   config: DispatcherClaudeCodeConfig;
   /** Path to the generated Claude Code MCP config document. */
   mcpConfigPath: string;
-  /** The turn prompt (the inbound text or a delivery notification). */
-  prompt: string;
-  /** Resume an existing Claude Code session, when one is known. */
+  /** Resume an existing Claude Code session, when one is known (spawn-time). */
   resumeSessionId?: string | null;
 }
 
 /**
- * Build the `claude` CLI args for one headless turn. Claude Code runs a turn
- * per non-interactive `--print` invocation (no persistent app-server), reads
- * its MCP servers from the JSON config, optionally resumes a prior session, and
- * emits a single JSON result (`--output-format json`) carrying the session id.
+ * Build the `claude` CLI args for the *resident* stream-json transport (issue
+ * #120). Unlike the retired one-shot `claude --print <prompt>`, this launches a
+ * long-lived process that keeps stdin/stdout open: `--input-format stream-json`
+ * consumes NDJSON `user` messages on stdin (one per turn) until EOF, and
+ * `--output-format stream-json --verbose` streams `init` / `assistant` /
+ * `result` envelopes on stdout. The prompt is therefore NOT a CLI argument —
+ * each turn is written to stdin as a `user` message line (see
+ * `runtime/claude-code-stream.ts`).
+ *
+ * It reads its MCP servers from the JSON config (`--mcp-config`), optionally
+ * resumes a prior session at spawn time (`--resume`, used both for operator
+ * resume and for re-spawn after an unexpected exit), and threads the operator's
+ * model / permission mode / extra args through.
  */
-export function claudeCodeTurnArgs(input: ClaudeCodeTurnArgsInput): string[] {
+export function claudeCodeResidentArgs(input: ClaudeCodeResidentArgsInput): string[] {
   const args = [
     '--print',
+    '--input-format',
+    'stream-json',
     '--output-format',
-    'json',
+    'stream-json',
+    '--verbose',
     '--mcp-config',
     input.mcpConfigPath,
   ];
@@ -79,7 +89,5 @@ export function claudeCodeTurnArgs(input: ClaudeCodeTurnArgsInput): string[] {
     args.push('--resume', input.resumeSessionId);
   }
   args.push(...input.config.extra_args);
-  // The prompt is the trailing positional argument under `--print`.
-  args.push(input.prompt);
   return args;
 }
