@@ -13,14 +13,22 @@ import { DispatcherStore } from '../src/runtime/dispatcher-store.js';
 import { resetRuntimeConfig } from '../src/runtime/paths.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 import type {
-  InboundDeliveryResult,
-  InboundTurnInput,
-} from '../src/dispatcher/turn-manager.js';
-import type {
   AgentRuntime,
+  AgentRuntimeCapabilities,
+  AgentRuntimeTurnInput,
+  AgentRuntimeTurnResult,
   TeamMateCompletionDeliveryResult,
   TeamMateCompletionEnvelope,
 } from '../src/agent-runtime/types.js';
+
+const TEST_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = {
+  resume: { supported: false },
+  steer: { supported: false },
+  events: { kind: 'synthesized' },
+  last: { supported: false },
+  context: { supported: false },
+  teammateCompletion: [],
+};
 
 /** A fake runtime that only implements the delivery seam, with a scripted plan. */
 function deliveryRuntime(
@@ -32,12 +40,15 @@ function deliveryRuntime(
     calls,
     providerRef: 'builtin:codex',
     start: async () => {},
+    resume: async () => {},
     stop: async () => {},
-    enqueueInbound: async () => ({ status: 'failed', error: new Error('n/a') }),
-    injectRestartNotice: async () => {},
+    submitTurn: async () => ({ status: 'failed', error: new Error('n/a') }),
     getStatus: () => 'ready',
     getThreadId: () => null,
     wasThreadResumed: () => false,
+    getLast: async () => null,
+    getContext: async () => null,
+    getCapabilities: () => TEST_RUNTIME_CAPABILITIES,
     async deliverTeamMateCompletion(
       envelope: TeamMateCompletionEnvelope,
     ): Promise<TeamMateCompletionDeliveryResult> {
@@ -55,12 +66,15 @@ function nonDeliveringRuntime(): AgentRuntime {
   return {
     providerRef: 'builtin:codex',
     start: async () => {},
+    resume: async () => {},
     stop: async () => {},
-    enqueueInbound: async () => ({ status: 'failed', error: new Error('n/a') }),
-    injectRestartNotice: async () => {},
+    submitTurn: async () => ({ status: 'failed', error: new Error('n/a') }),
     getStatus: () => 'ready',
     getThreadId: () => null,
     wasThreadResumed: () => false,
+    getLast: async () => null,
+    getContext: async () => null,
+    getCapabilities: () => TEST_RUNTIME_CAPABILITIES,
   };
 }
 
@@ -251,9 +265,12 @@ describe('TeamMate completion delivery', () => {
     const ids: Array<string | null> = [];
     (
       runtime as unknown as {
-        enqueueInbound: (input: InboundTurnInput) => Promise<InboundDeliveryResult>;
+        submitTurn: (input: AgentRuntimeTurnInput) => Promise<AgentRuntimeTurnResult>;
       }
-    ).enqueueInbound = async (input) => {
+    ).submitTurn = async (input) => {
+      if ('kind' in input) {
+        return { status: 'failed', error: new Error('n/a') };
+      }
       ids.push(input.source_message_id);
       return { status: 'failed', error: new Error('turn/start failed') };
     };

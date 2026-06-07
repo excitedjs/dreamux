@@ -30,7 +30,7 @@
  * exit, error `result`) is never swallowed. For inbound/restart turns it drives
  * the runtime to `degraded` with a persisted `last_error` (observable via
  * status/doctor). For `deliverTeamMateCompletion` it surfaces as a `failed`
- * result the caller can act on (PR8 delivery retry). `enqueueInbound` still
+ * result the caller can act on (PR8 delivery retry). `submitTurn` still
  * returns after accept (submit != completion) so the channel can ack promptly.
  *
  * Restart: an unexpected child exit marks the runtime `degraded`; the next turn
@@ -80,14 +80,18 @@ import {
 } from './claude-code-session.js';
 import type {
   InboundDeliveryHooks,
-  InboundDeliveryResult,
-  InboundTurnInput,
 } from '../dispatcher/turn-manager.js';
 import type { DispatcherStatus } from '../runtime/dispatcher-store.js';
 import type {
+  AgentRuntimeCapabilities,
+  AgentRuntimeContextSnapshot,
   AgentRuntime,
   AgentRuntimeCreateContext,
+  AgentRuntimeLastResult,
   AgentRuntimeProvider,
+  AgentRuntimeResumeInput,
+  AgentRuntimeTurnInput,
+  AgentRuntimeTurnResult,
   TeamMateCompletionDeliveryResult,
   TeamMateCompletionEnvelope,
 } from './types.js';
@@ -99,6 +103,21 @@ export interface ClaudeCodeAgentRuntimeProviderOptions {
   /** Override the resident-session factory (tests inject a fake). */
   sessionFactory?: ClaudeCodeSessionFactory;
 }
+
+export const CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = {
+  resume: { supported: true, checkpoint: 'claudeCodeSession' },
+  steer: { supported: false },
+  events: { kind: 'synthesized' },
+  last: { supported: false },
+  context: { supported: false },
+  teammateCompletion: [
+    {
+      kind: 'claudeCodeTaskNotification',
+      description:
+        'notify the runtime through a Claude Code task notification path',
+    },
+  ],
+};
 
 interface ClaudeCodeRuntimeDeps {
   sessionFactory: ClaudeCodeSessionFactory;
@@ -119,10 +138,16 @@ function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+function isSystemTurn(
+  input: AgentRuntimeTurnInput,
+): input is Extract<AgentRuntimeTurnInput, { kind: 'system' }> {
+  return 'kind' in input && input.kind === 'system';
+}
+
 /**
  * The Claude Code agent runtime for one dispatcher. A single resident
  * stream-json child serves every turn. Turns run serially (one at a time) and
- * `enqueueInbound` returns after the message is accepted — not after the turn
+ * `submitTurn` returns after the message is accepted — not after the turn
  * completes — matching the Codex runtime's submit-then-serialize contract.
  */
 export class ClaudeCodeRuntime implements AgentRuntime {
@@ -137,7 +162,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   private readonly stderrLogPath: string;
   private status: DispatcherStatus = 'declared';
   private threadId: string | null;
-  private readonly resumed: boolean;
+  private resumed: boolean;
   private stopped = false;
   private readonly seen = new Set<string>();
   private queue: Promise<void> = Promise.resolve();
@@ -166,12 +191,37 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     return this.status;
   }
 
+  getCapabilities(): AgentRuntimeCapabilities {
+    return CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES;
+  }
+
   getThreadId(): string | null {
     return this.threadId;
   }
 
   wasThreadResumed(): boolean {
     return this.resumed;
+  }
+
+  async getLast(): Promise<AgentRuntimeLastResult | null> {
+    return null;
+  }
+
+  async getContext(): Promise<AgentRuntimeContextSnapshot | null> {
+    return null;
+  }
+
+  async resume(input: AgentRuntimeResumeInput = {}): Promise<void> {
+    if (input.checkpoint !== undefined && input.checkpoint !== null) {
+      if (input.checkpoint.kind !== 'claudeCodeSession') {
+        throw new Error(
+          `unsupported resume checkpoint for Claude Code runtime: ${input.checkpoint.kind}`,
+        );
+      }
+      this.threadId = input.checkpoint.id;
+      this.resumed = true;
+    }
+    await this.start();
   }
 
   async start(): Promise<void> {
@@ -206,11 +256,19 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     await this.setStatus('stopped');
   }
 
-  async enqueueInbound(
-    input: InboundTurnInput,
+  async submitTurn(
+    input: AgentRuntimeTurnInput,
     hooks: InboundDeliveryHooks = {},
-  ): Promise<InboundDeliveryResult> {
+  ): Promise<AgentRuntimeTurnResult> {
     if (this.stopped) return { status: 'stopped' };
+    if (isSystemTurn(input)) {
+      const turnId = `claude-system-${++this.turnCounter}`;
+      void this.runTurnOnQueue(input.text, turnId).then(
+        () => this.markTurnSucceeded(),
+        (err) => this.markTurnFailed(turnId, err),
+      );
+      return { status: 'submitted', turnId };
+    }
     const key = input.source_message_id ?? '';
     if (key !== '' && this.seen.has(key)) return { status: 'duplicate' };
     if (key !== '') this.seen.add(key);
@@ -232,15 +290,6 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       (err) => this.markTurnFailed(turnId, err),
     );
     return { status: 'submitted', turnId };
-  }
-
-  async injectRestartNotice(text: string): Promise<void> {
-    if (this.stopped) return;
-    const turnId = `claude-restart-${++this.turnCounter}`;
-    void this.runTurnOnQueue(text, turnId).then(
-      () => this.markTurnSucceeded(),
-      (err) => this.markTurnFailed(turnId, err),
-    );
   }
 
   async deliverTeamMateCompletion(
@@ -388,15 +437,7 @@ export function createClaudeCodeAgentRuntimeProvider(
   return {
     ref: BUILTIN_CLAUDE_CODE_PROVIDER_REF,
     descriptor: options.descriptor,
-    delivery: {
-      teammateCompletion: [
-        {
-          kind: 'claudeCodeTaskNotification',
-          description:
-            'notify the runtime through a Claude Code task notification path',
-        },
-      ],
-    },
+    getCapabilities: () => CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES,
     createRuntime(context: AgentRuntimeCreateContext): AgentRuntime {
       return new ClaudeCodeRuntime(context, { sessionFactory, resolveBinPath });
     },

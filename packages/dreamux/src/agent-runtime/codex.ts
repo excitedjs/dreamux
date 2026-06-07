@@ -14,6 +14,7 @@ import type { DispatcherCodexHomeDoctor } from '../runtime/dispatcher-codex-home
 import { codexArgsToCli, parseCodexArgs } from '../runtime/codex-args.js';
 import { type ProviderDescriptor } from '../registry/index.js';
 import type {
+  AgentRuntimeCapabilities,
   AgentRuntime,
   AgentRuntimeProvider,
   AgentRuntimeMcpServer,
@@ -29,21 +30,28 @@ export interface CodexAgentRuntimeProviderOptions {
   restartBackoffMaxMs?: number;
 }
 
+export const CODEX_AGENT_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = {
+  resume: { supported: true, checkpoint: 'codexThread' },
+  steer: { supported: true },
+  events: { kind: 'push' },
+  last: { supported: false },
+  context: { supported: false },
+  teammateCompletion: [
+    {
+      kind: 'codexInboxTurn',
+      description:
+        'write completion to a runtime inbox, then trigger a dispatcher turn',
+    },
+  ],
+};
+
 export function createCodexAgentRuntimeProvider(
   options: CodexAgentRuntimeProviderOptions,
 ): AgentRuntimeProvider {
   return {
     ref: BUILTIN_CODEX_PROVIDER_REF,
     descriptor: options.descriptor,
-    delivery: {
-      teammateCompletion: [
-        {
-          kind: 'codexInboxTurn',
-          description:
-            'write completion to a runtime inbox, then trigger a dispatcher turn',
-        },
-      ],
-    },
+    getCapabilities: () => CODEX_AGENT_RUNTIME_CAPABILITIES,
     createRuntime(context): AgentRuntime {
       const codexConfig =
         context.dispatcher === null

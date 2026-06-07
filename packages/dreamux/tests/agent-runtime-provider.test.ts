@@ -5,6 +5,7 @@ import {
   UnsupportedAgentRuntimeProviderError,
   WrongProviderKindError,
   createBuiltinAgentRuntimeProviderCatalog,
+  createCodexAgentRuntimeProvider,
 } from '../src/agent-runtime/index.js';
 import {
   UnknownBuiltinProviderError,
@@ -26,9 +27,9 @@ describe('AgentRuntimeProviderCatalog', () => {
 
     expect(provider.ref).toBe('builtin:codex');
     expect(provider.descriptor.kind).toBe('agentRuntime');
-    expect(provider.delivery.teammateCompletion.map((shape) => shape.kind)).toEqual([
-      'codexInboxTurn',
-    ]);
+    expect(
+      provider.getCapabilities().teammateCompletion.map((shape) => shape.kind),
+    ).toEqual(['codexInboxTurn']);
   });
 
   it('creates a Codex-backed AgentRuntime without starting it', () => {
@@ -58,9 +59,9 @@ describe('AgentRuntimeProviderCatalog', () => {
     expect(provider.descriptor.kind).toBe('agentRuntime');
     // Distinct delivery shape from Codex — proves the abstraction is not
     // Codex-only.
-    expect(provider.delivery.teammateCompletion.map((shape) => shape.kind)).toEqual([
-      'claudeCodeTaskNotification',
-    ]);
+    expect(
+      provider.getCapabilities().teammateCompletion.map((shape) => shape.kind),
+    ).toEqual(['claudeCodeTaskNotification']);
   });
 
   it('rejects non-runtime builtins through the runtime catalog', () => {
@@ -86,10 +87,15 @@ describe('AgentRuntimeProviderCatalog', () => {
 
   it('supports registry injection for future provider composition tests', () => {
     const registry = createBuiltinProviderRegistry();
-    const catalog = new AgentRuntimeProviderCatalog({
-      registry,
-      providers: [builtinCatalog().resolve('builtin:codex')],
-    });
+    const descriptor = registry.resolve('builtin:codex');
+    registry.registerImplementation(
+      descriptor.id,
+      createCodexAgentRuntimeProvider({
+        descriptor,
+        resolveBinPath: (bin) => bin,
+      }),
+    );
+    const catalog = new AgentRuntimeProviderCatalog({ registry });
 
     expect(catalog.list().map((provider) => provider.ref)).toEqual([
       'builtin:codex',

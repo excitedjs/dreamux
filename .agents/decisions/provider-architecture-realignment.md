@@ -1,6 +1,7 @@
 # Provider architecture realignment
 
-- **Status:** Accepted (remediation tracked in issue #135; not yet implemented)
+- **Status:** Accepted (remediation tracked in issue #135; implementation in
+  progress)
 - **Date:** 2026-06-08
 - **Affects:** Agent Runtime providers, TeamMate worker providers, Dispatcher
   Service, Capability Registry, Channel providers, MCP injection, `server.ts`
@@ -31,8 +32,11 @@ The target architecture is:
   with a **role-specific injected MCP tool set** plus a **role-specific system
   prompt**. The `TeamMateWorkerProvider` parallel tree
   (`/packages/dreamux/src/teammate/worker/`) is removed. The runtime interface
-  must cover inbound/turn submission, steering, resume, stop/close, and
-  upward result delivery. The "one task = one turn, reap" worker model is
+  covers single-instance operations only: start/resume/stop, inbound/turn
+  submission, steering capability, last/context reads, and upward result
+  delivery. Dispatcher orchestration verbs such as `spawn`, `close`, and
+  `list` stay on the Dispatcher Service and must not be instance methods on
+  `AgentRuntime`. The "one task = one turn, reap" worker model is
   replaced by a semi-resident, resumable session that the dispatcher controls.
 - **Dispatcher Service is a real module**, not a role smeared across
   `/packages/dreamux/src/server.ts` and `/packages/dreamux/src/teammate/`. It is
@@ -68,7 +72,10 @@ The target architecture is:
   capabilities duplicated by provider methods, kept in sync by a drift test) is
   removed; capability is a single provider-owned declaration that core actually
   reads — to compose the channel tool surface, and to know per-runtime support
-  (resume / steer / completion-delivery shape).
+  (resume / steer / completion-delivery shape). Runtime catalogs are registry
+  views: they resolve descriptors from the singleton registry and read the
+  implementation already registered there, rather than maintaining a second
+  provider map.
 - **Channel tool handlers move out of core.** A channel plugin owns its MCP
   end-to-end (tool definitions + handlers); core injects the descriptor and
   provides the connection, and no longer carries `*FromMcp` handlers in

@@ -1045,7 +1045,7 @@ export class Server {
             sender_id: event.senderId,
             parsed_text: formatted.formattedText,
           };
-          const delivery = await runtime.enqueueInbound(input, {
+          const delivery = await runtime.submitTurn(input, {
             onAccepted: async (acceptedInput) => {
               await setInboundReaction(
                 id,
@@ -1136,7 +1136,17 @@ export class Server {
       const notice = this.restartIntent?.claim(id, Date.now()) ?? null;
       if (notice !== null) {
         try {
-          await runtime.injectRestartNotice(notice);
+          const result = await runtime.submitTurn({
+            kind: 'system',
+            text: notice,
+            reason: 'restart-notice',
+          });
+          if (result.status === 'failed') {
+            channelLog.warn(
+              { dispatcher_id: id, err: errInfo(result.error) },
+              'restart notice injection failed',
+            );
+          }
         } catch (err) {
           channelLog.warn(
             { dispatcher_id: id, err: errInfo(err) },
