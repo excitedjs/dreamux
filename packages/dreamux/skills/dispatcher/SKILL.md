@@ -1,6 +1,6 @@
 ---
 name: dispatcher
-description: Use from a Dreamux dispatcher thread when bounded repository work should be scheduled to a TeamMate. The server-hosted TeamMate MCP (schedule, list_tasks, get_task, pull_result) is the primary scheduled-task interface; the tm CLI is the labeled fallback that runs a repo-local teammate to completion today. Applies to scheduling, tracking, retrieving, spawning, sending, waiting, resuming, recovering, or summarizing teammate work.
+description: Use from a Dreamux dispatcher thread when bounded repository work should be delegated to a TeamMate. The server-hosted TeamMate MCP is the default interface — run_task and execute_task execute a worker for real, list_tasks/get_task/pull_result/await_completion read and wait without polling, and cancel_task/get_task_logs/get_capabilities control and inspect it. The tm CLI is the explicit fallback for resume, multi-turn continuation, dead-session recovery, and isolated worktrees. Applies to scheduling, running, tracking, retrieving, sending, waiting, cancelling, inspecting, resuming, recovering, or summarizing teammate work.
 ---
 
 # Dispatcher
@@ -11,36 +11,64 @@ source chat.
 
 ## TeamMate Interface
 
-There are two ways to reach a TeamMate. Pick by what you need, not by habit.
+Reach a TeamMate through the server-hosted TeamMate MCP by default. Drop to the
+`tm` CLI only for what the MCP does not yet cover. Pick by what you need, not by
+habit.
 
-- **Server-hosted TeamMate MCP — the primary interface.** Dreamux injects a
-  dispatcher-scoped `teammate` MCP server with these tools:
-  - `schedule` — accept a task into the server-owned ledger; returns
-    immediately with an accepted task id.
-  - `list_tasks` — list this dispatcher's tasks and their statuses.
-  - `get_task` — fetch one task in full, including result, delivery state, and
-    history.
-  - `pull_result` — pull a retained result; the fallback when push delivery
-    failed.
+### Server-hosted TeamMate MCP — the primary interface
 
-  **Phase 1 boundary:** `schedule` records the task and returns an accepted id,
-  but autonomous worker execution and completion delivery are runtime-specific
-  follow-up and may not run a scheduled task to completion yet. Treat a
-  scheduled task as accepted ledger state, not as a guaranteed executed result.
-  When you need an executed result right now, use the tm fallback below.
+Dreamux injects a dispatcher-scoped `teammate` MCP server. It executes
+repository work for real and lets you run, watch, collect, and control a worker
+without holding a shell session or polling a process.
 
-  The persistent ledger is the source of truth. When a task does complete, any
-  completion delivery into the dispatcher is a best-effort wake-up, not the
-  reliable result contract — confirm and re-read results with `get_task` /
-  `pull_result` rather than relying on a delivered notification arriving.
+**Run.**
 
-- **tm CLI — the labeled fallback.** Dreamux hosts the dispatcher Codex
-  app-server and exposes `tm` on the dispatcher `PATH`. `tm` is the path that
-  actually spawns and runs a repo-local teammate to completion today, owns
-  repository worktrees and live session history, and is the surface for legacy
-  diagnostics. Use it for executed repository work and recovery while
-  autonomous MCP execution is still follow-up. The rest of this skill and its
-  references are the operational manual for that fallback.
+- `run_task` — create a task and start a worker against a confined local target
+  in one call. The default `builtin:codex` worker runs the turn to completion;
+  pin `builtin:claude-code` via `provider_ref` for a single-turn, `steer:false`
+  worker. The worker runs in place at the target path.
+- `execute_task` — start or retry execution for an already-accepted task.
+- `schedule` — record an accepted task id in the ledger *without* executing it.
+  Use it to register work you will run later, not to run a task now.
+- `send_input` — fold a follow-up into a live `builtin:codex` turn (`steer`).
+  This is steering, not multi-turn continuation: on a single-turn worker or a
+  task with no live session the input is recorded as queued, not re-executed.
+
+**Watch and collect — no polling.**
+
+- `list_tasks` — this dispatcher's tasks and their statuses.
+- `get_task` — one task in full: result, history, and delivery state.
+- `pull_result` — a retained or latest result; the fallback when push delivery
+  failed.
+- `await_completion` — a bounded, server-side wait for a terminal state. On
+  timeout it returns a `still_running` snapshot to resume with `after_event_id`,
+  not an error. Together these serve status / history / last / poll directly,
+  so you do not need `tm` to check on a running task.
+
+**Control and inspect.**
+
+- `cancel_task` — stop a live worker, close a not-yet-running or orphaned task,
+  or no-op idempotently on an already-terminal task.
+- `get_task_logs` — a bounded tail of a worker's diagnostic logs (worker
+  stderr, plus `builtin:codex` app-server stdout protocol frames) for a slow or
+  failed worker. This is diagnostics, not the clean result — that still comes
+  from `get_task` / `pull_result` / `await_completion`.
+- `get_capabilities` — each worker's advertised execution modes.
+
+The persistent ledger is the source of truth. A completion delivered into the
+dispatcher is a best-effort wake-up, not the result contract — confirm and
+re-read with `get_task` / `pull_result` (or `await_completion`) rather than
+trusting that a pushed notification arrived.
+
+### tm CLI — the explicit fallback
+
+Dreamux hosts the dispatcher Codex app-server and exposes `tm` on the dispatcher
+`PATH`. `tm` owns live tm **session** state: teammate liveness, repository
+worktrees, and resumable session history. Reach for it only for what the MCP
+does not yet cover — resuming or recovering a dead session, multi-turn
+continuation, and isolated managed worktrees — and for legacy diagnostics. It is
+not the default orchestration path. The rest of this skill and its references
+are the operational manual for that fallback.
 
 ## Router Posture
 
@@ -108,7 +136,10 @@ on a flag -- do not infer one verb's flags from another.
 
 ## Scenario Routing
 
-Read the matching reference before reaching for the verb:
+These references cover the `tm` fallback path. For ordinary delegation —
+running a task, watching it, collecting the result, cancelling it, or reading
+its logs — use the `teammate` MCP tools above and you do not need a reference.
+Read the matching reference when you have dropped to `tm`:
 
 | Intent | Reference |
 |---|---|
@@ -140,8 +171,9 @@ turn's tool calls.
 Two state owners, kept distinct:
 
 - The Dreamux server owns the TeamMate **task ledger** behind the `teammate`
-  MCP — scheduled task records, statuses, retained results, and delivery state.
-  Read it with `list_tasks`, `get_task`, and `pull_result`.
+  MCP — task records, statuses, retained results, and delivery state. Read,
+  wait on, and control it with `list_tasks`, `get_task`, `pull_result`,
+  `await_completion`, `cancel_task`, and `get_task_logs`.
 - `tm` owns live tm **session** state — teammate liveness, worktrees, and
   resumable session history (see `references/inspect-and-resume.md`).
 

@@ -4,10 +4,12 @@
 ships in the npm package:
 
 - `dispatcher` teaches dispatcher app-server sessions how to delegate product
-  work to TeamMates. The primary interface is the server-hosted TeamMate MCP
-  (`schedule`/`list_tasks`/`get_task`/`pull_result`); the `tm` CLI is the
-  labeled fallback that runs a repo-local teammate to completion while
-  autonomous MCP worker execution is still follow-up
+  work to TeamMates. The default interface is the server-hosted TeamMate MCP:
+  `run_task`/`execute_task` execute a worker for real,
+  `list_tasks`/`get_task`/`pull_result`/`await_completion` read and wait
+  without polling, and `cancel_task`/`get_task_logs`/`get_capabilities` control
+  and inspect it. The `tm` CLI is the explicit fallback for resume, multi-turn
+  continuation, dead-session recovery, and isolated worktrees
   ([server-hosted TeamMate](../decisions/server-hosted-teammate.md)).
 - `team-dev-workflow` covers multi-teammate review, design, merge, and unblock
   coordination.
@@ -48,8 +50,10 @@ kept distinct in the skill:
 
 The dispatcher reaches server task state only through the `teammate` MCP tools
 and live tm sessions only through `tm`; it does not call `teammate.*` admin
-methods directly. Autonomous MCP worker execution and completion delivery remain
-runtime-specific follow-up, which is why `tm` stays the executed-result path.
+methods directly. The MCP workers (`builtin:codex`, `builtin:claude-code`)
+execute scheduled work for real; `tm` stays the path for resume, multi-turn
+continuation, dead-session recovery, and isolated worktrees, which the MCP
+workers do not yet cover.
 
 ## tm Strategy
 
