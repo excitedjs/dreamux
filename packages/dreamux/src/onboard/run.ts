@@ -35,7 +35,9 @@ import {
   installUserService,
   managedServiceEnvironment,
   resolveServiceExecutable,
+  selectServiceClaudeBin,
   selectServiceNodeBin,
+  tryResolveServiceExecutable,
   type ServiceNodeProbe,
   validateManagedServiceLaunch,
 } from './service.js';
@@ -84,10 +86,18 @@ export async function runOnboard(
         probe: options.nodeProbe,
       })
     : process.execPath;
+  // Best-effort: locate Claude Code so the unit PATH resolves `claude` for
+  // server-hosted builtin:claude-code workers (issue #126 PR8). Absent install
+  // → omit; onboard still completes for codex-only setups.
+  const serviceClaudeBin =
+    answers.registerService && !answers.dryRun
+      ? await tryResolveServiceExecutable(selectServiceClaudeBin(env), env)
+      : null;
   const effectiveAnswers = {
     ...answers,
     codexBin: serviceCodexBin,
     nodeBin: serviceNodeBin,
+    ...(serviceClaudeBin !== null ? { claudeBin: serviceClaudeBin } : {}),
   };
   setRuntimeConfig(dreamuxConfig);
 

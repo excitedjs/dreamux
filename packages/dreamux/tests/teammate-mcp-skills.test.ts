@@ -9,9 +9,10 @@ import { DREAMUX_DISPATCHER_BASE_INSTRUCTIONS } from '../src/dispatcher/base-pro
  * Guards the issue #124 alignment as updated by PR6 (issue #126): the bundled
  * dispatcher-facing skills and the injected dispatcher base prompt must present
  * the server-hosted TeamMate MCP as the DEFAULT orchestration interface that
- * executes work for real (run_task/execute_task), reads and waits without
- * polling (list_tasks/get_task/pull_result/await_completion), and controls a
- * worker (cancel_task/get_task_logs/get_capabilities) — and keep the `tm` CLI
+ * executes work for real (run_task/execute_task), reads results without polling
+ * (list_tasks/get_task/pull_result; completion arrives by server delivery/
+ * wake-up, not a dispatcher-facing await), and controls a worker
+ * (cancel_task/get_task_logs/get_capabilities) — and keep the `tm` CLI
  * only as the explicit fallback for resume, multi-turn, recovery, and isolated
  * worktrees. The stale "Phase 1 / may not run to completion" caveat must be
  * gone now that PR3-5 wired real workers.
@@ -28,7 +29,6 @@ const TEAMMATE_MCP_TOOLS = [
   'run_task',
   'execute_task',
   'send_input',
-  'await_completion',
   'cancel_task',
   'get_task_logs',
   'get_capabilities',
@@ -100,5 +100,13 @@ describe('TeamMate MCP is the default teammate interface (issue #124, #126 PR6)'
     expect(prompt).not.toContain('may not run a scheduled task to completion');
     // Anti-regression: the old tm-primary section heading must not return.
     expect(prompt).not.toContain('# tm Delegation');
+    // await_completion is no longer a dispatcher-facing tool (issue #126 PR8):
+    // normal orchestration is run_task → turn ends → delivery/wake-up.
+    expect(prompt).not.toContain('await_completion');
+  });
+
+  it('does not present a dispatcher-facing await/poll tool (issue #126 PR8)', () => {
+    expect(readBundledSkill('dispatcher')).not.toContain('await_completion');
+    expect(DREAMUX_DISPATCHER_BASE_INSTRUCTIONS).not.toContain('await_completion');
   });
 });

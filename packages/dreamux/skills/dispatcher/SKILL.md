@@ -1,6 +1,6 @@
 ---
 name: dispatcher
-description: Use from a Dreamux dispatcher thread when bounded repository work should be delegated to a TeamMate. The server-hosted TeamMate MCP is the default interface — run_task and execute_task execute a worker for real, list_tasks/get_task/pull_result/await_completion read and wait without polling, and cancel_task/get_task_logs/get_capabilities control and inspect it. The tm CLI is the explicit fallback for resume, multi-turn continuation, dead-session recovery, and isolated worktrees. Applies to scheduling, running, tracking, retrieving, sending, waiting, cancelling, inspecting, resuming, recovering, or summarizing teammate work.
+description: Use from a Dreamux dispatcher thread when bounded repository work should be delegated to a TeamMate. The server-hosted TeamMate MCP is the default interface — run_task and execute_task execute a worker for real, list_tasks/get_task/pull_result read results without polling (completion arrives by server delivery/wake-up into a new turn), and cancel_task/get_task_logs/get_capabilities control and inspect it. The tm CLI is the explicit fallback for resume, multi-turn continuation, dead-session recovery, and isolated worktrees. Applies to scheduling, running, tracking, retrieving, sending, cancelling, inspecting, resuming, recovering, or summarizing teammate work.
 ---
 
 # Dispatcher
@@ -40,25 +40,27 @@ without holding a shell session or polling a process.
 - `get_task` — one task in full: result, history, and delivery state.
 - `pull_result` — a retained or latest result; the fallback when push delivery
   failed.
-- `await_completion` — a bounded, server-side wait for a terminal state. On
-  timeout it returns a `still_running` snapshot to resume with `after_event_id`,
-  not an error. Together these serve status / history / last / poll directly,
-  so you do not need `tm` to check on a running task.
+
+These serve status / history / last directly, so you do not need `tm` to check
+on a running task. Do not wait or poll for completion: `run_task` hands the
+task to the server and this dispatcher turn can end; when the TeamMate finishes,
+the Dispatcher Service delivers the result and wakes you in a new turn.
 
 **Control and inspect.**
 
 - `cancel_task` — stop a live worker, close a not-yet-running or orphaned task,
   or no-op idempotently on an already-terminal task.
 - `get_task_logs` — a bounded tail of a worker's diagnostic logs (worker
-  stderr, plus `builtin:codex` app-server stdout protocol frames) for a slow or
-  failed worker. This is diagnostics, not the clean result — that still comes
-  from `get_task` / `pull_result` / `await_completion`.
+  stderr, plus for `builtin:codex` the app-server stdout frames and an `events`
+  trace of the Codex turn notification stream — the diagnostic when a turn
+  stalls after submission) for a slow or failed worker. This is diagnostics, not
+  the clean result — that still comes from `get_task` / `pull_result`.
 - `get_capabilities` — each worker's advertised execution modes.
 
 The persistent ledger is the source of truth. A completion delivered into the
 dispatcher is a best-effort wake-up, not the result contract — confirm and
-re-read with `get_task` / `pull_result` (or `await_completion`) rather than
-trusting that a pushed notification arrived.
+re-read with `get_task` / `pull_result` rather than trusting that a pushed
+notification arrived.
 
 ### tm CLI — the explicit fallback
 
@@ -171,9 +173,9 @@ turn's tool calls.
 Two state owners, kept distinct:
 
 - The Dreamux server owns the TeamMate **task ledger** behind the `teammate`
-  MCP — task records, statuses, retained results, and delivery state. Read,
-  wait on, and control it with `list_tasks`, `get_task`, `pull_result`,
-  `await_completion`, `cancel_task`, and `get_task_logs`.
+  MCP — task records, statuses, retained results, and delivery state. Read and
+  control it with `list_tasks`, `get_task`, `pull_result`, `cancel_task`, and
+  `get_task_logs`; completion arrives by server delivery/wake-up, not polling.
 - `tm` owns live tm **session** state — teammate liveness, worktrees, and
   resumable session history (see `references/inspect-and-resume.md`).
 

@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "TeamMate MCP parity PR8 (issue #126): make the push-delivery model real. (1) Codex worker turn completion is robust to a single-thread threadId field-shape drift (acceptAnyThread), and a redacted Codex WS event trace is captured to a new get_task_logs 'events' stream and summarized in the task failure text — a stalled turn now names the likely cause (e.g. no model output => worker auth/network/quota/proxy) instead of an opaque timeout. PR7's bounded turn timeout is preserved. (2) await_completion is removed as a dispatcher-facing MCP tool; normal orchestration is run_task -> the dispatcher turn ends -> the server delivers/wakes a new turn, with get_task/pull_result as the recovery/read path. The base prompt and bundled dispatcher skills are updated accordingly; an internal wait primitive remains for tests/admin diagnostics only. (3) The managed-service unit PATH now also includes the Claude Code install directory so server-hosted builtin:claude-code workers can resolve `claude` (DREAMUX_CLAUDE_BIN overrides; best-effort, codex-only installs are unaffected). BREAKING: the dispatcher-facing await_completion MCP tool is gone — a caller that invokes it now gets an unknown-tool error; re-read results with get_task/pull_result instead. Rebuild: run `dreamux daemon install` (or `dreamux onboard`) to regenerate the service unit PATH so `claude` resolves for builtin:claude-code workers, then `dreamux daemon restart` to pick up the updated base prompt and bundled skills.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

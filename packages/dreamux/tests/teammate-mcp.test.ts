@@ -124,7 +124,6 @@ describe('teammate-mcp stdio shim', () => {
       'run_task',
       'execute_task',
       'send_input',
-      'await_completion',
       'cancel_task',
       'get_task_logs',
       'get_capabilities',
@@ -132,6 +131,10 @@ describe('teammate-mcp stdio shim', () => {
       'get_task',
       'pull_result',
     ]);
+    // await_completion is intentionally NOT a dispatcher-facing tool (issue #126
+    // PR8): normal orchestration is run_task → turn ends → delivery/wakeup, not
+    // dispatcher-side waiting/polling.
+    expect(names).not.toContain('await_completion');
     // Completion ingest is NOT a dispatcher-facing MCP tool, so a dispatcher
     // model cannot fake a TeamMate completion.
     expect(names).not.toContain('complete');
@@ -606,62 +609,42 @@ describe('teammate-mcp stdio shim', () => {
     }
   });
 
-  it('forwards await_completion and surfaces a still_running timeout result', async () => {
-    const admin = await startFakeAdminServer((request) => ({
-      id: request.id,
-      ok: true,
-      result: {
-        status: 'still_running',
-        task_id: 'tmtsk_1_run',
-        after_event_id: 3,
-        task: { lifecycle_status: 'running' },
+  it('rejects await_completion as an unknown tool (removed from the dispatcher surface)', async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const reader = new JsonLineReader(output);
+    const run = runTeamMateMcp({
+      dispatcherId: 'dispatcher-a',
+      callerKind: 'dispatcher',
+      adminSocketPath: '/tmp/not-used.sock',
+      input,
+      output,
+      log: () => {},
+    });
+
+    writeJson(input, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: {
+        name: 'await_completion',
+        arguments: { task_id: 'tmtsk_1_run' },
       },
-    }));
-    try {
-      const input = new PassThrough();
-      const output = new PassThrough();
-      const reader = new JsonLineReader(output);
-      const run = runTeamMateMcp({
-        dispatcherId: 'dispatcher-a',
-        callerKind: 'dispatcher',
-        adminSocketPath: admin.socketPath,
-        input,
-        output,
-        log: () => {},
-      });
+    });
 
-      writeJson(input, {
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'tools/call',
-        params: {
-          name: 'await_completion',
-          arguments: { task_id: 'tmtsk_1_run', after_event_id: 1, timeout_ms: 50 },
-        },
-      });
+    expect(await reader.next()).toMatchObject({
+      jsonrpc: '2.0',
+      id: 1,
+      result: {
+        isError: true,
+        content: [
+          { type: 'text', text: "unknown TeamMate tool 'await_completion'" },
+        ],
+      },
+    });
 
-      expect(await reader.next()).toMatchObject({
-        id: 1,
-        result: {
-          structuredContent: { status: 'still_running', after_event_id: 3 },
-        },
-      });
-      expect(admin.requests[0]).toEqual({
-        id: expect.any(String) as string,
-        method: 'mcp.teammate.await',
-        params: {
-          dispatcher_id: 'dispatcher-a',
-          task_id: 'tmtsk_1_run',
-          after_event_id: 1,
-          timeout_ms: 50,
-        },
-      });
-
-      input.end();
-      await run;
-    } finally {
-      await admin.close();
-    }
+    input.end();
+    await run;
   });
 
   it('defaults send_input to no explicit mode and forwards it as given', async () => {

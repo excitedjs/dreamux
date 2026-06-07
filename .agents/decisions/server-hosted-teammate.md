@@ -449,6 +449,52 @@ Config note: `turn_timeout_ms` is an additive, defaulted field — old configs l
 unchanged (the parser defaults it), and `dreamux onboard` now writes it so a fresh
 config matches the parser's view. No persisted-format or runtime-path change.
 
+## Issue #126: TeamMate MCP parity — PR8 (push-delivery model: worker turn fix, diagnostics, Claude Code PATH)
+
+PR7 made a stalled Codex worker turn *bounded*; PR8 makes the push-delivery model
+actually work and removes the dispatcher-side polling anti-pattern.
+
+- **Codex turn completion robustness.** The dispatcher never awaits
+  `turn/completed` (it is submit-then-return; output comes via the reply MCP
+  tool), so the worker is the only production consumer of turn-completion
+  detection — and the live worker test deliberately stops at the `turn/start`
+  ack, leaving the real-Codex completion-field shape unverified. The worker's
+  app-server hosts exactly one thread, so `subscribeTurnCollection` now takes
+  `acceptAnyThread` (in `/packages/dreamux/src/codex/events.ts`): the worker
+  accepts a `turn/completed` even if its `threadId` field does not match,
+  defending against a protocol field-shape drift the strict dispatcher path
+  never exercises. The strict, thread-scoped default is unchanged.
+- **Event-trace diagnostics.** Codex protocol frames flow over the WS socket,
+  not stdout/stderr, so a stalled worker's logs are empty. The worker now records
+  a redacted trace (method + ids + item type — never prompt/assistant text) of
+  the WS notification stream to a new per-task `events` log
+  (`dispatcherTeamMateWorkerEventsLogPath`), exposed as a third `get_task_logs`
+  stream for `builtin:codex`, and summarizes it into the task failure text: zero
+  events after `turn/start` ⇒ "no model output, a worker-environment problem
+  (auth/network/proxy/quota)"; events but no completion ⇒ the observed methods.
+  PR7's bounded `turn_timeout_ms` is preserved.
+- **`await_completion` is no longer a dispatcher-facing tool.** Normal
+  orchestration is `run_task` → the dispatcher turn ends → the server
+  delivers/wakes the dispatcher into a new turn; `get_task`/`pull_result` are the
+  recovery/read path. The dispatcher must not poll or hold a turn open waiting.
+  The base prompt (`src/dispatcher/base-prompt.ts`) and bundled dispatcher skills
+  drop it; the wait broker + `mcp.teammate.await` admin method remain as an
+  internal/test/admin-diagnostic primitive only. **Migration:** a beta caller
+  that invokes the `await_completion` MCP tool now gets an unknown-tool error.
+- **Claude Code worker PATH.** The managed-service unit PATH (built by both
+  `dreamux onboard` and `dreamux daemon install`) now also includes the Claude
+  Code install directory, so server-hosted `builtin:claude-code` workers can
+  resolve `claude` (the prior gap behind a PR7-honest `worker_available: false`).
+  `DREAMUX_CLAUDE_BIN` overrides; resolution is best-effort so a codex-only
+  install is unaffected (a warning names the missing bin). **Rebuild:** rerun
+  `dreamux daemon install` / `onboard` to regenerate the unit PATH, then
+  `daemon restart` to pick up the updated prompt/skills.
+
+`tm` remains the explicit, documented fallback (resume/recovery, multi-turn
+continuation, dead-session recovery, isolated worktrees, transition diagnostics);
+it is never hidden behind or shelled out to from the MCP. Team Mode stays a
+reservation only.
+
 ## Consequences
 
 - The old "Dreamux never owns teammate state" decision is superseded.
