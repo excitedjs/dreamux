@@ -23,6 +23,11 @@ the issue #110 providerized surfaces:
   Channel providers, Agent Runtime providers, and server-hosted TeamMate.
 - [Issue #110 Epic closure check](decisions/issue-110-epic-closure.md) —
   closure checklist for what Phase 1 implemented and what remains deferred.
+- [Provider architecture realignment](decisions/provider-architecture-realignment.md)
+  — issue #135 target that refines #110/#126: one `AgentRuntime` for all roles,
+  Dispatcher Service as a real module, two plugin seams only (`agentRuntime` +
+  `channel`), registry demoted to a provider loader, Feishu pulled out of the
+  plugin seam.
 
 Background and older issue context:
 
