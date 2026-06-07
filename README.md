@@ -1,8 +1,9 @@
 # dreamux
 
-Rush + pnpm monorepo for `@excitedjs/dreamux` — a Codex-host server that
-runs N **Dispatchers** in one Node process, each binding 1 Feishu bot to
-1 Codex thread.
+Rush + pnpm monorepo for `@excitedjs/dreamux` — a local dispatcher host that
+runs N **Dispatchers** in one Node process. Each dispatcher binds a Channel
+provider, an Agent Runtime provider, and Dreamux-owned MCP surfaces for channel
+reply and TeamMate work.
 
 Replaces the "Claude Code as dispatcher" pattern from
 [claudemux](https://github.com/excitedjs/claudemux).
@@ -16,8 +17,9 @@ Design background:
 
 | Looking for | Read |
 |---|---|
-| The package itself (install, run, configure, MVP verification, config reference, testing) | [`packages/dreamux/README.md`](packages/dreamux/README.md) |
+| The package itself (install, run, configure, Phase 1 verification, config reference, testing) | [`packages/dreamux/README.md`](packages/dreamux/README.md) |
 | Dispatcher skill and tm packaging | [`.agents/decisions/dispatcher-tm-packaging.md`](.agents/decisions/dispatcher-tm-packaging.md) |
+| Plugin/provider architecture and #110 closure boundary | [`.agents/proposals/plugin-provider-architecture.md`](.agents/proposals/plugin-provider-architecture.md), [`.agents/decisions/issue-110-epic-closure.md`](.agents/decisions/issue-110-epic-closure.md) |
 | Architecture, decisions, knowledge-delta protocol | [`.agents/root.md`](.agents/root.md) |
 | Always-loaded agent operating rules | [`CLAUDE.md`](CLAUDE.md) (`AGENTS.md` is a symlink) |
 | Monorepo layout reference | [`.agents/components/repo-structure.md`](.agents/components/repo-structure.md) |
@@ -58,7 +60,7 @@ node common/scripts/install-run-rush.js test
 ./packages/dreamux/bin/dreamux serve
 ```
 
-Full quick start, config reference, and MVP verification path are in the
+Full quick start, config reference, and Phase 1 verification path are in the
 package README:
 [`packages/dreamux/README.md`](packages/dreamux/README.md).
 

@@ -149,6 +149,37 @@ describe('dreamux doctor command', () => {
     expect(JSON.stringify(result)).not.toContain('secret-test');
   });
 
+  it('checks a Claude Code runtime without requiring Codex home state', async () => {
+    const runner = new FakeRunner();
+    writeClaudeCodeConfig();
+    mkdirSync(stateRoot(), { recursive: true });
+
+    const result = await runDreamuxDoctor({
+      runner,
+      platform: 'linux',
+      homeDir: join(root, 'home'),
+      env: {},
+    });
+
+    expect(result.ok, JSON.stringify(result, null, 2)).toBe(true);
+    expect(result.checks.find((check) => check.name === 'claude-code binary')).toMatchObject({
+      ok: true,
+      detail: 'claude',
+    });
+    expect(result.checks.find((check) => check.name === 'codex binary')).toBeUndefined();
+    expect(result.dispatchers[0]).toMatchObject({
+      id: 'flow',
+      runtimeProvider: 'builtin:claude-code',
+      foreground: {
+        ok: true,
+        detail: expect.stringContaining('does not use Codex home state'),
+      },
+      managedService: null,
+    });
+    expect(runner.calls).toContainEqual({ command: 'claude', args: ['--help'] });
+    expect(runner.calls).not.toContainEqual({ command: 'codex', args: ['--help'] });
+  });
+
   it('checks managed-service dispatcher auth when a service is installed', async () => {
     const runner = new FakeRunner();
     writeConfig();
@@ -216,6 +247,42 @@ describe('dreamux doctor command', () => {
     expect(result.service.environment?.['CODEX_HOST_CODEX_BIN']).toBe(
       '/service/codex\\x20literal',
     );
+  });
+
+  it('checks the managed-service Claude Code runtime binary when configured', async () => {
+    const runner = new FakeRunner();
+    runner.lingerEnabled = true;
+    writeClaudeCodeConfig();
+    mkdirSync(stateRoot(), { recursive: true });
+    const servicePath = join(root, 'home', '.config', 'systemd', 'user', 'dreamux.service');
+    mkdirSync(dirname(servicePath), { recursive: true });
+    writeFileSync(
+      servicePath,
+      [
+        '[Service]',
+        'ExecStart=/service/dreamux serve',
+        'Environment=DREAMUX_NODE_BIN=/service/node',
+        'Environment=PATH=/service/bin:/usr/bin:/bin',
+        '',
+      ].join('\n'),
+    );
+    runner.nodeVersions.set('/service/node', 'v22.7.0');
+
+    const result = await runDreamuxDoctor({
+      runner,
+      platform: 'linux',
+      homeDir: join(root, 'home'),
+      env: {},
+    });
+
+    expect(result.ok, JSON.stringify(result, null, 2)).toBe(true);
+    expect(
+      result.checks.find(
+        (check) => check.name === 'managed service Claude Code binary',
+      ),
+    ).toMatchObject({ ok: true, detail: 'claude' });
+    expect(runner.calls).toContainEqual({ command: 'claude', args: ['--help'] });
+    expect(runner.calls).not.toContainEqual({ command: 'codex', args: ['--help'] });
   });
 
   it('warns (without failing) when the service Node is bound to a version manager', async () => {
@@ -503,6 +570,38 @@ describe('dreamux doctor command', () => {
               sandbox_mode: 'workspace-write',
               extra_args: [],
               extra_env: {},
+            },
+          }),
+        ],
+      }),
+      { mode: 0o600 },
+    );
+  }
+
+  function writeClaudeCodeConfig(): void {
+    const configPath = join(root, 'config', 'config.json');
+    mkdirSync(dirname(configPath), { recursive: true });
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        dispatchers: [
+          testDispatcherConfig({
+            id: 'flow',
+            cwd: dispatcherCodexCwd('flow'),
+            enabled: true,
+            feishu: {
+              app_id: 'app-test',
+              app_secret: 'secret-test',
+            },
+            runtime: {
+              provider: 'builtin:claude-code',
+              config: {
+                bin: 'claude',
+                model: null,
+                permission_mode: null,
+                extra_args: [],
+                extra_env: {},
+              },
             },
           }),
         ],

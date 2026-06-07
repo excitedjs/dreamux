@@ -1,7 +1,8 @@
 # @excitedjs/dreamux
 
-The Codex-host server package. One long-running Node process hosts N
-**Dispatchers**; each Dispatcher binds **1 Feishu bot + 1 Codex thread**.
+The dreamux host server package. One long-running Node process hosts N
+**Dispatchers**; each Dispatcher binds a Channel provider, an Agent Runtime
+provider, and Dreamux-owned MCP surfaces for channel replies and TeamMate work.
 
 This file is the **package-level** quick start. For the monorepo layout and
 knowledge base, see the top-level [`README.md`](../../README.md) and
@@ -12,7 +13,10 @@ Design background:
 [#2 Engineering plan](https://github.com/excitedjs/dreamux/issues/2) ·
 [#4 Monorepo + harness](https://github.com/excitedjs/dreamux/issues/4) ·
 [#18 Global bin onboarding](https://github.com/excitedjs/dreamux/issues/18) ·
-[#36 MVP tracking](https://github.com/excitedjs/dreamux/issues/36).
+[#36 MVP tracking](https://github.com/excitedjs/dreamux/issues/36) ·
+[#71 Capability Registry](https://github.com/excitedjs/dreamux/issues/71) ·
+[#98 compatibility stance](https://github.com/excitedjs/dreamux/issues/98) ·
+[#110 plugin/provider Epic](https://github.com/excitedjs/dreamux/issues/110).
 
 ## What this package ships
 
@@ -21,37 +25,49 @@ Design background:
   around the package-local `@excitedjs/tm` dependency for dispatcher skills.
 - A bundled dispatcher Codex skill, copied by `dreamux onboard` into
   `<dispatcher cwd>/.codex/skills/dispatcher/SKILL.md`.
-- Config-backed dispatcher declarations, server-owned state/log paths, a
-  Feishu long-connection inbound channel, Codex app-server lifecycle
-  management, and a dispatcher-scoped Feishu MCP shim for model replies.
+- Providerized dispatcher declarations, a process-local Capability Registry,
+  server-owned state/log paths, the `builtin:feishu` Channel provider, the
+  `builtin:codex` and `builtin:claude-code` Agent Runtime providers, and
+  dispatcher-scoped MCP shims for channel replies and TeamMate scheduling.
+- A server-hosted TeamMate ledger with asynchronous scheduling, completion
+  delivery, bounded retry, and read-only result retrieval.
 
-## MVP contract
+## Phase 1 contract
 
-- **One Node process, many Dispatchers.** Each Dispatcher = 1 Feishu Bot
-  (`app_id`/`app_secret`) + 1 long-lived Codex `app-server` child + 1 Codex
-  thread.
+- **One Node process, many Dispatchers.** Each Dispatcher has one configured
+  channel in Phase 1. The config shape is already `channels[]`, but runtime
+  routing still accepts exactly one channel per dispatcher.
+- **Provider refs are explicit.** Wired builtin refs are `builtin:feishu`,
+  `builtin:codex`, and `builtin:claude-code`. Npm package refs and package
+  export refs are reserved syntax only in Phase 1; dreamux parses and rejects
+  them clearly instead of loading or executing external code.
 - **One dispatcher is one trust domain.** A bot may receive multiple chats, but
-  all accepted messages share one Codex thread. Do not bind unrelated private
-  chats to the same dispatcher.
-- **Dispatcher cwd is explicit, Codex state stays global.** Dispatcher
-  app-server processes use Codex's global default home (`~/.codex`) for auth,
-  memory, and config. The dispatcher skill is workspace-local under the
-  dispatcher cwd.
+  all accepted messages share one dispatcher runtime context. Do not bind
+  unrelated private chats to the same dispatcher.
+- **Dispatcher cwd is explicit.** Codex-backed dispatchers use Codex's global
+  default home (`~/.codex`) for auth, memory, and config. Claude Code-backed
+  dispatchers use Claude Code's own CLI/auth behavior. The dispatcher skill is
+  workspace-local under the dispatcher cwd.
 - **Inbound state is in memory.** The server keeps only process-local turn
   queues, message dedupe, coalescing state, and received-reaction ownership.
   Restarting the server drops unprocessed inbound messages and may leave
   received reactions behind.
 - **Outbound is MCP reply-only.** Assistant text emitted by Codex is never
   forwarded to Feishu automatically. The model must call the dispatcher-scoped
-  Feishu MCP tools such as `reply` or `react`.
-- **No webhook surface in MVP.** Feishu inbound uses the SDK long-connection
+  channel MCP tools such as `reply` or `react`, and those tools exist only when
+  the Channel provider exposes the capability.
+- **TeamMate is server-hosted.** Scheduling accepts a task and returns a task id
+  immediately. Completion is delivered later through the selected Agent Runtime
+  provider; if push delivery fails repeatedly, the final result remains
+  pull-able from the dispatcher-scoped TeamMate MCP tools.
+- **No webhook surface in Phase 1.** Feishu inbound uses the SDK long-connection
   WebSocket path. Webhook-only verification/encryption fields are not part of
   the config schema.
 
-Explicitly **not** in MVP: per-chat threads, durable inbound buffers,
+Explicitly **not** in Phase 1: per-chat threads, durable inbound buffers,
 automatic assistant-text outbound, HTTP MCP listeners by default, reaction
-ledgers, streaming outbound, tm registry isolation, cross-machine
-coordination, and a web UI.
+ledgers, streaming outbound, external npm provider loading, multi-channel
+routing, cross-machine coordination, and a web UI.
 
 ## Install / build / test
 
@@ -84,11 +100,14 @@ logs:
 | `~/.dreamux/config.json` | User-editable config and Feishu bot secrets, created by `dreamux onboard`; edit and restart to apply | the operator |
 | `~/.dreamux/state/server.json` | Server status snapshot | the server |
 | `~/.dreamux/state/admin.sock` | Admin Unix socket | the server |
-| `~/.dreamux/state/<id>/status.json` | Dispatcher runtime status and Codex thread id | the server |
+| `~/.dreamux/state/<id>/status.json` | Dispatcher runtime status and runtime thread/session id | the server |
 | `~/.dreamux/state/<id>/access.json` | Dispatcher-local access-gate state | the server |
 | `~/.dreamux/state/<id>/codex.sock` | Codex app-server Unix socket | the server |
+| `~/.dreamux/state/<id>/claude-code-mcp.json` | Claude Code MCP config generated from Dreamux-owned descriptors | the server |
+| `~/.dreamux/state/<id>/teammate/` | TeamMate task ledger, results, and delivery retry state | the server |
 | `~/.dreamux/logs/codex-app-server/<id>.log` | Codex app-server stdout/stderr | the server |
 | `~/.dreamux/logs/feishu-channel/<id>.log` | Feishu channel logs | the server |
+| `~/.dreamux/logs/teammate-mcp/<id>.log` | TeamMate MCP shim diagnostics | the server |
 | `~/.codex/` | Codex global default home: auth, memory, and config | the operator / Codex |
 | `<dispatcher cwd>/.codex/skills/dispatcher/SKILL.md` | Dispatcher skill copied by `dreamux onboard`; reported but not deleted by `dreamux uninstall` | dreamux installer |
 
@@ -110,28 +129,42 @@ Dispatcher declarations live in `config.json`:
       "id": "flow",
       "cwd": "<WORKSPACE>",
       "enabled": true,
-      "feishu": {
-        "app_id": "<APP_ID>",
-        "app_secret": "<APP_SECRET>"
-      },
-      "codex": {
-        "bin": "codex",
-        "approval_policy": "never",
-        "sandbox_mode": "workspace-write",
-        "extra_args": [],
-        "extra_env": {
-          "EXAMPLE_FLAG": "1"
-        },
-        "initialize_timeout_ms": 10000
+      "channels": [
+        {
+          "id": "primary",
+          "provider": "builtin:feishu",
+          "config": {
+            "app_id": "<APP_ID>",
+            "app_secret": "<APP_SECRET>"
+          }
+        }
+      ],
+      "runtime": {
+        "provider": "builtin:codex",
+        "config": {
+          "bin": "codex",
+          "approval_policy": "never",
+          "sandbox_mode": "workspace-write",
+          "extra_args": [],
+          "extra_env": {
+            "EXAMPLE_FLAG": "1"
+          },
+          "initialize_timeout_ms": 10000
+        }
       }
     }
   ]
 }
 ```
 
-There is no top-level `codex` block: Codex settings are per-dispatcher under
-`dispatchers[].codex`. Every field defaults, so the whole `codex` object — and
-any field in it — can be omitted:
+`dreamux onboard` currently writes the default `builtin:feishu` +
+`builtin:codex` shape. Operator-owned config is never silently rewritten: old
+`dispatchers[].feishu` / `dispatchers[].codex` shapes fail loudly with rebuild
+guidance, following issue #98.
+
+There is no top-level `codex` block. Codex settings are per-dispatcher under
+`dispatchers[].runtime.config` when `runtime.provider` is `builtin:codex`.
+Every field defaults, so any field in it can be omitted:
 
 - `bin` → `"codex"` (resolved on `PATH`)
 - `approval_policy` → `"never"`
@@ -143,7 +176,33 @@ any field in it — can be omitted:
 Most operators never touch `bin` or `initialize_timeout_ms`. The optional
 `CODEX_HOST_CODEX_BIN` environment variable is a host-level override of the
 codex binary across **every** dispatcher (e.g. CI or a non-PATH install); when
-unset, each dispatcher's `codex.bin` is used.
+unset, each dispatcher's `runtime.config.bin` is used.
+
+Claude Code dispatchers use a different runtime-owned config shape:
+
+```json
+{
+  "runtime": {
+    "provider": "builtin:claude-code",
+    "config": {
+      "bin": "claude",
+      "model": null,
+      "permission_mode": null,
+      "extra_args": [],
+      "extra_env": {}
+    }
+  }
+}
+```
+
+Claude Code is headless-per-turn (`claude --print`) and receives Dreamux MCP
+servers through a generated MCP config file. It does not use Codex app-server,
+Codex handshake, or Codex home diagnostics.
+
+Provider refs reserved for future external providers look like npm package refs
+or package export refs, for example `npm:@example/dreamux-provider` and
+`npm:@example/dreamux-provider#channel`. They are not runnable in Phase 1:
+dreamux does not install, import, or execute them.
 
 Edit and restart `dreamux serve` to apply dispatcher declaration changes.
 `app_id` values must be unique across all declared dispatchers, including
@@ -188,26 +247,31 @@ observations and warnings in the same file.
 The codex binary path resolves in this order, highest first:
 
 1. `CODEX_HOST_CODEX_BIN` environment variable (optional host-level override).
-2. The dispatcher's `dispatchers[].codex.bin` (default `"codex"`).
+2. The dispatcher's `dispatchers[].runtime.config.bin` (default `"codex"`).
 
-All other Codex values come from that dispatcher's `dispatchers[].codex` field,
-falling back to the built-in defaults in `src/runtime/config.ts`. There is no
-global `codex` layer. A dispatcher's `extra_args` are its only source of
-`-c key=value` options; dreamux appends its own Feishu MCP `-c` args after them,
-relying on Codex's last-write-wins behavior. Per-dispatcher `extra_env` is
-merged over the server process environment before spawning that dispatcher
-app-server; dreamux still removes `CODEX_HOME` so Codex keeps using its global
-default home.
+All other Codex values come from that dispatcher's `runtime.config` field when
+`runtime.provider` is `builtin:codex`, falling back to the built-in defaults in
+`src/runtime/config.ts`. There is no global `codex` layer. A dispatcher's
+`extra_args` are its only source of `-c key=value` options; dreamux appends its
+own Channel provider MCP and TeamMate MCP `-c` args after them, relying on
+Codex's last-write-wins behavior. Per-dispatcher `extra_env` is merged over the
+server process environment before spawning that dispatcher app-server; dreamux
+still removes `CODEX_HOME` so Codex keeps using its global default home.
 
 The managed-service unit does **not** pin `CODEX_HOST_CODEX_BIN`; it adds the
 onboarded codex binary's directory to the unit `PATH` so each dispatcher's
-`codex.bin` resolves. Existing units installed before this change may still
-carry the env var — there it keeps acting as the override and nothing breaks.
+`runtime.config.bin` resolves. Existing units installed before this change may
+still carry the env var — there it keeps acting as the override and nothing
+breaks.
 
-## MCP reply flow
+## MCP surfaces
 
-Each dispatcher injects a Feishu MCP stdio server into its Codex app-server.
-The stdio shim does not read Feishu secrets. It forwards outbound tool calls to
+Each dispatcher injects Dreamux-owned MCP stdio servers into its selected Agent
+Runtime provider. Codex receives runtime-specific `mcp_servers.*` arguments;
+Claude Code receives a runtime-owned MCP config file.
+
+The Channel provider contributes its channel MCP server. For `builtin:feishu`,
+the stdio shim does not read Feishu secrets. It forwards outbound tool calls to
 the serve process over the admin socket, and the serve process owns the Feishu
 client plus process-local received-reaction cleanup state.
 
@@ -218,18 +282,36 @@ The model-facing tools include:
 
 If the model only emits assistant text, nothing is sent to Feishu.
 
-## MVP verification path
+The Dispatcher Service also contributes a TeamMate MCP server. Its
+dispatcher-facing tools are:
+
+- `schedule`: accept a TeamMate task and return immediately with a task id.
+- `list_tasks`: list recent tasks without result bodies.
+- `get_task`: fetch one task including status, result, delivery state, and
+  history.
+- `pull_result`: fetch a retained final result, including after push delivery
+  failed.
+
+There is no dispatcher-facing `complete` tool. Completion ingest is a
+server/admin seam for future worker/operator paths, so a dispatcher model cannot
+fake a TeamMate completion. TeamMate callers marked as `teammate` cannot
+schedule more TeamMates.
+
+## Phase 1 verification path
 
 1. `dreamux onboard --dispatcher-id flow --dispatcher-cwd <WORKSPACE> --bot-app-id <APP_ID> --bot-app-secret <APP_SECRET>`
 2. `dreamux serve` starts dispatcher `flow`.
 3. Invite the bot to a Feishu group, send a mention that passes the access gate.
-4. Server injects a `<feishu_message>` block into the Codex thread.
-5. Codex calls the Feishu MCP `reply` tool; the reply is delivered to Feishu.
+4. Server injects a `<feishu_message>` block into the selected runtime.
+5. The runtime calls the Feishu MCP `reply` tool; the reply is delivered to Feishu.
 6. Send another accepted message from a different chat in the same trust
-   domain; it enters the same Codex thread.
-7. Ask the bot to run teammate work through the bundled `tm` wrapper.
+   domain; it enters the same dispatcher runtime context.
+7. Ask the dispatcher to schedule TeamMate work through the `teammate` MCP
+   tools; completion delivery later arrives through the runtime-specific
+   TeamMate completion path.
 8. Restart the server and continue chatting; Codex `thread/resume` restores the
-   thread when possible, but in-flight inbound messages are not durable.
+   thread when possible, but in-flight inbound messages are not durable. TeamMate
+   final results already recorded in the ledger remain pull-able.
 
 ## Testing
 
@@ -244,12 +326,22 @@ node common/scripts/install-run-rush.js test
 - `tests/bin-launcher.test.ts` — real launcher and repo-root shim behavior from
   arbitrary cwd and through symlinks.
 - `tests/doctor.test.ts` — standalone doctor checks for config, Codex home,
-  services, and dispatcher workspace skill state.
+  services, provider-owned runtime binaries, and dispatcher workspace skill
+  state.
+- `tests/agent-runtime-provider.test.ts`, `tests/channel-provider.test.ts`,
+  `tests/registry.test.ts`, and `tests/provider-ref.test.ts` — provider ref,
+  registry, Channel provider, and Agent Runtime provider coverage.
+- `tests/teammate-ledger.test.ts`, `tests/teammate-delivery.test.ts`, and
+  `tests/teammate-mcp.test.ts` — server-hosted TeamMate state, delivery, retry,
+  and retrieval coverage.
 - `tests/codex-live.test.ts` — real Codex app-server compatibility checks,
   plus the issue #63 mid-turn model gate. Set `DREAMUX_SKIP_LIVE_CODEX=1` only
   when no Codex binary is available locally. Public CI loud-skips the model
   gate unless `DREAMUX_RUN_LIVE_MODEL_GATE=1` is set in an environment with
   usable Codex model auth.
+- `tests/claude-code-live.test.ts` — opt-in Claude Code live contract. Set
+  `DREAMUX_RUN_LIVE_CLAUDE_CODE=1` only in an environment with a usable
+  `claude` binary and auth.
 
 ## License
 

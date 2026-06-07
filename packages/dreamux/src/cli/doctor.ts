@@ -16,7 +16,11 @@ async function pathExists(path: string): Promise<boolean> {
 import { codexArgsToCli, parseCodexArgs } from '../runtime/codex-args.js';
 import {
   BUILT_IN_DEFAULTS,
+  BUILTIN_CLAUDE_CODE_PROVIDER_REF,
+  BUILTIN_CODEX_PROVIDER_REF,
   DEFAULT_CODEX_BIN,
+  DEFAULT_CLAUDE_CODE_BIN,
+  dispatcherClaudeCodeConfig,
   dispatcherCodexConfig,
   type DispatcherConfig,
   globalConfigDir,
@@ -83,8 +87,9 @@ export interface DoctorCheck {
 
 export interface DispatcherDoctorReport {
   id: string;
-  foreground: DispatcherCodexHomeDoctorResult;
-  managedService: DispatcherCodexHomeDoctorResult | null;
+  runtimeProvider: string;
+  foreground: DispatcherRuntimeDoctorResult;
+  managedService: DispatcherRuntimeDoctorResult | null;
 }
 
 export interface DreamuxDoctorResult {
@@ -94,6 +99,22 @@ export interface DreamuxDoctorResult {
   service: ServiceStatus;
   checks: DoctorCheck[];
   dispatchers: DispatcherDoctorReport[];
+}
+
+export interface GenericRuntimeDoctorResult {
+  ok: boolean;
+  detail: string;
+  errors: string[];
+}
+
+export type DispatcherRuntimeDoctorResult =
+  | DispatcherCodexHomeDoctorResult
+  | GenericRuntimeDoctorResult;
+
+interface RuntimeBinaryCheck {
+  name: string;
+  bin: string;
+  args: string[];
 }
 
 export async function runDreamuxDoctor(
@@ -111,24 +132,14 @@ export async function runDreamuxDoctor(
     detail: stateRoot(),
   });
 
-  // The Codex binary is per-dispatcher
-  // (dispatchers[].runtime.config.bin), overridable by CODEX_HOST_CODEX_BIN.
-  // Sanity-check each distinct resolved bin; with no dispatchers, fall back to
-  // the default so a bare install still reports.
+  // Runtime binaries are provider-owned. Codex keeps its host-level override;
+  // Claude Code uses its own dispatcher-local `runtime.config.bin`.
   const doctorEnv = options.env ?? process.env;
-  const codexBins = [
-    ...new Set(
-      config.dispatchers.map((d) =>
-        resolveCodexBin(dispatcherCodexConfig(d).bin, doctorEnv),
-      ),
-    ),
-  ];
-  if (codexBins.length === 0) codexBins.push(resolveCodexBin(DEFAULT_CODEX_BIN, doctorEnv));
-  for (const bin of codexBins) {
+  for (const check of runtimeBinaryChecks(config.dispatchers, doctorEnv)) {
     checks.push({
-      name: 'codex binary',
-      ok: await runner.check(bin, ['--help']),
-      detail: bin,
+      name: check.name,
+      ok: await runner.check(check.bin, check.args),
+      detail: check.bin,
     });
   }
 
@@ -237,6 +248,16 @@ async function readDispatchers(
 ): Promise<DispatcherDoctorReport[]> {
   return Promise.all(
     config.dispatchers.map(async (dispatcher) => {
+      if (dispatcher.runtime.provider !== BUILTIN_CODEX_PROVIDER_REF) {
+        return {
+          id: dispatcher.id,
+          runtimeProvider: dispatcher.runtime.provider,
+          foreground: nonCodexRuntimeDoctor(dispatcher.runtime.provider),
+          managedService: service.installed
+            ? nonCodexRuntimeDoctor(dispatcher.runtime.provider)
+            : null,
+        };
+      }
       const codexArgs = parseCodexArgs(dispatcherCodexArgsJson(dispatcher));
       const codexCliArgs = codexArgsToCli(codexArgs);
       const context = dispatcherCodexHomeDoctorContext(dispatcher.id, {
@@ -256,11 +277,23 @@ async function readDispatchers(
         : null;
       return {
         id: dispatcher.id,
+        runtimeProvider: dispatcher.runtime.provider,
         foreground,
         managedService,
       };
     }),
   );
+}
+
+function nonCodexRuntimeDoctor(provider: string): GenericRuntimeDoctorResult {
+  return {
+    ok: true,
+    detail:
+      provider === BUILTIN_CLAUDE_CODE_PROVIDER_REF
+        ? 'Claude Code runtime does not use Codex home state'
+        : `runtime provider ${provider} does not use Codex home state`,
+    errors: [],
+  };
 }
 
 function dispatcherCodexArgsJson(dispatcher: DispatcherConfig): string {
@@ -447,30 +480,62 @@ async function addManagedServiceLaunchChecks(
     ),
   );
 
-  // Each dispatcher's runtime.config.bin (with the host-level env override
-  // applied) must launch under the unit's PATH. CODEX_HOST_CODEX_BIN in the
-  // unit env, when present, overrides every bin — preserving older units that
-  // still pin it.
-  const codexBins = [
-    ...new Set(
-      dispatchers.map((d) =>
-        resolveCodexBin(dispatcherCodexConfig(d).bin, serviceEnv),
-      ),
-    ),
-  ];
-  if (codexBins.length === 0) codexBins.push(resolveCodexBin(DEFAULT_CODEX_BIN, serviceEnv));
-  for (const bin of codexBins) {
+  // Each dispatcher's provider-owned runtime binary must launch under the
+  // unit's PATH. CODEX_HOST_CODEX_BIN, when present, still overrides every
+  // Codex bin to preserve older units that pinned it.
+  for (const check of runtimeBinaryChecks(dispatchers, serviceEnv, true)) {
     checks.push(
       await checkHelpLaunch(
-        'managed service Codex binary',
-        bin,
-        ['--help'],
+        check.name,
+        check.bin,
+        check.args,
         serviceEnv,
         runner,
-        'codex binary is not set; check dispatchers[].runtime.config.bin',
+        'runtime binary is not set; check dispatchers[].runtime.config.bin',
       ),
     );
   }
+}
+
+function runtimeBinaryChecks(
+  dispatchers: DispatcherConfig[],
+  env: NodeJS.ProcessEnv,
+  managedService = false,
+): RuntimeBinaryCheck[] {
+  const checks = new Map<string, RuntimeBinaryCheck>();
+  const add = (check: RuntimeBinaryCheck): void => {
+    checks.set(`${check.name}\0${check.bin}\0${check.args.join('\0')}`, check);
+  };
+
+  if (dispatchers.length === 0) {
+    add({
+      name: managedService ? 'managed service Codex binary' : 'codex binary',
+      bin: resolveCodexBin(DEFAULT_CODEX_BIN, env),
+      args: ['--help'],
+    });
+    return [...checks.values()];
+  }
+
+  for (const dispatcher of dispatchers) {
+    if (dispatcher.runtime.provider === BUILTIN_CODEX_PROVIDER_REF) {
+      add({
+        name: managedService ? 'managed service Codex binary' : 'codex binary',
+        bin: resolveCodexBin(dispatcherCodexConfig(dispatcher).bin, env),
+        args: ['--help'],
+      });
+      continue;
+    }
+    if (dispatcher.runtime.provider === BUILTIN_CLAUDE_CODE_PROVIDER_REF) {
+      add({
+        name: managedService
+          ? 'managed service Claude Code binary'
+          : 'claude-code binary',
+        bin: dispatcherClaudeCodeConfig(dispatcher).bin || DEFAULT_CLAUDE_CODE_BIN,
+        args: ['--help'],
+      });
+    }
+  }
+  return [...checks.values()];
 }
 
 /**
@@ -712,13 +777,33 @@ function parsePositiveInt(value: string | undefined): number | null {
 }
 
 function printDispatcherDoctor(dispatcher: DispatcherDoctorReport): void {
-  printCodexHomeDoctor(`dispatcher ${dispatcher.id} foreground`, dispatcher.foreground);
+  printRuntimeDoctor(`dispatcher ${dispatcher.id} foreground`, dispatcher.foreground);
   if (dispatcher.managedService !== null) {
-    printCodexHomeDoctor(
+    printRuntimeDoctor(
       `dispatcher ${dispatcher.id} managed-service`,
       dispatcher.managedService,
     );
   }
+}
+
+function printRuntimeDoctor(
+  name: string,
+  result: DispatcherRuntimeDoctorResult,
+): void {
+  if (isCodexHomeDoctorResult(result)) {
+    printCodexHomeDoctor(name, result);
+    return;
+  }
+  console.log(`${result.ok ? 'ok' : 'fail'}\t${name}\t${result.detail}`);
+  for (const error of result.errors) {
+    console.log(`fail\t${name}\t${error}`);
+  }
+}
+
+function isCodexHomeDoctorResult(
+  result: DispatcherRuntimeDoctorResult,
+): result is DispatcherCodexHomeDoctorResult {
+  return 'context' in result;
 }
 
 function printCodexHomeDoctor(

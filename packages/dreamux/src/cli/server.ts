@@ -7,8 +7,8 @@
  *
  * Configuration sources:
  *   - ~/.dreamux/config.json — dispatcher declarations and channel secrets;
- *     each dispatcher's Codex settings (including its `bin`) live under
- *     dispatchers[].runtime.config
+ *     each dispatcher's providerized channel/runtime settings live under
+ *     dispatchers[].channels[] and dispatchers[].runtime
  *   - CODEX_HOST_CODEX_BIN — optional host-level override of the codex binary
  *     for every dispatcher; most operators never set it
  *   - built-in defaults compiled into the binary
@@ -81,15 +81,16 @@ Usage:
 Global config:
   ~/.dreamux/config.json    Created by 'dreamux onboard'. Override with the
                             DREAMUX_CONFIG_DIR env var. Edit and restart to
-                            apply. Holds dispatcher declarations (including each
-                            dispatcher's Codex settings under
-                            dispatchers[].runtime.config) and Feishu channel
+                            apply. Holds dispatcher declarations, providerized
+                            channels[] / runtime settings, and Feishu channel
                             secrets.
 
 Runtime data:
   ~/.dreamux/state/         server state, admin socket,
-                            and per-dispatcher Codex sockets.
-  ~/.dreamux/logs/          server, Feishu channel, and Codex app-server logs.
+                            per-dispatcher runtime sockets/config, and
+                            TeamMate ledgers.
+  ~/.dreamux/logs/          server, Feishu channel, Codex app-server, and MCP
+                            shim logs.
 
 Environment overrides:
   CODEX_HOST_CODEX_BIN      Optional host-level override of the codex binary for
@@ -99,6 +100,9 @@ Environment overrides:
 
 Dispatcher declarations:
   Edit ~/.dreamux/config.json dispatchers[] and restart dreamux serve.
+  Phase 1 channel provider: builtin:feishu.
+  Phase 1 runtime providers: builtin:codex, builtin:claude-code.
+  Npm provider refs are reserved syntax only and are not loaded in this phase.
 `);
 }
 

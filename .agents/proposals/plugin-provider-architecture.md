@@ -1,6 +1,6 @@
 # Plugin and provider architecture
 
-- **Status:** Proposed
+- **Status:** Implemented for Phase 1; external provider loading deferred
 - **Date:** 2026-06-06
 - **Affects:** plugin mechanism, Capability Registry, dispatcher config,
   Channel providers, Agent Runtime providers, MCP injection, server-hosted
