@@ -623,6 +623,37 @@ export class TeamMateTaskLedger {
   }
 
   /**
+   * Mark a previously-queued follow-up input as `submitted` once a live worker
+   * session has accepted it (issue #126 PR2). Idempotent: a no-op if the input
+   * is already submitted. Without a live worker the input stays `queued`. This
+   * is an input-status change only; it adds no new event to the stream.
+   */
+  async markInputSubmitted(
+    taskId: string,
+    inputId: string,
+    options: { now?: number } = {},
+  ): Promise<TeamMateTaskRecord> {
+    const existing = await this.mustGetTask(taskId);
+    const index = existing.inputs.findIndex(
+      (input) => input.input_id === inputId,
+    );
+    if (index === -1) {
+      throw new Error(
+        `TeamMate task ${JSON.stringify(taskId)} has no input ` +
+          JSON.stringify(inputId),
+      );
+    }
+    if (existing.inputs[index]!.status === 'submitted') {
+      return cloneTask(existing);
+    }
+    const now = options.now ?? Date.now();
+    const inputs = existing.inputs.map((input, i) =>
+      i === index ? { ...input, status: 'submitted' as const } : input,
+    );
+    return this.writeTask({ ...existing, inputs, updated_at: now });
+  }
+
+  /**
    * Record a task's final result. The result is persisted durably here, BEFORE
    * any delivery attempt — so a crash or a downed runtime can never lose it; a
    * later delivery only transitions an already-saved result to
