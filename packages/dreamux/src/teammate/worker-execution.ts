@@ -108,6 +108,30 @@ export class TeamMateWorkerExecutionService {
   }
 
   /**
+   * Release every live worker session's runtime resources WITHOUT a ledger
+   * transition. Called on server shutdown to prevent app-server/connection
+   * leaks; the affected tasks stay in their current ledger state for the
+   * (deferred) orphan-reconciliation path. Each `dispose()` is best-effort so a
+   * single failing session never blocks shutdown of the rest.
+   */
+  async reapAll(): Promise<void> {
+    const live = [...this.sessions.values()];
+    this.sessions.clear();
+    await Promise.all(
+      live.map(async (session) => {
+        try {
+          await session.dispose();
+        } catch (err) {
+          this.deps.log?.('warn', 'teammate worker session dispose failed', {
+            provider_ref: session.handle.providerRef,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }),
+    );
+  }
+
+  /**
    * Start (or no-op retry) worker execution for an accepted task. Returns the
    * execution outcome; the lifecycle transition itself flows through the
    * provider's `onRunning` callback. A missing/unavailable provider leaves the

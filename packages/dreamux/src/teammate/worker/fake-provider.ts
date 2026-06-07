@@ -117,6 +117,7 @@ export class FakeTeamMateWorkerProvider implements TeamMateWorkerProvider {
       handle,
       sendInput: (input) => this.handleInput(context.taskId, input),
       cancel: (reason) => this.handleCancel(context.taskId, reason),
+      dispose: () => this.handleDispose(context.taskId),
     };
     if (this.autoRunning) {
       await callbacks.onRunning(handle);
@@ -184,6 +185,13 @@ export class FakeTeamMateWorkerProvider implements TeamMateWorkerProvider {
     if (state === undefined || state.closed) return;
     state.closed = true;
     await state.callbacks.onCancelled(reason);
+  }
+
+  /** Mirror a real worker's `dispose`: close the session, fire no callback. */
+  private async handleDispose(taskId: string): Promise<void> {
+    const state = this.sessions.get(taskId);
+    if (state === undefined) return;
+    state.closed = true;
   }
 
   private mustLive(taskId: string): FakeSessionState {

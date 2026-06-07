@@ -1615,12 +1615,16 @@ describe('dreamux MVP smoke', () => {
     });
   });
 
-  it('mcp.teammate.run creates a task and reports execution unavailable (no worker yet)', async () => {
+  it('mcp.teammate.run reports execution unavailable when no worker is wired', async () => {
+    // Production now wires the real Codex worker by default (issue #126 PR3);
+    // an explicitly empty catalog is the deliberate no-worker state, and it must
+    // still create the task durably and surface a retryable provider_unavailable.
     server = buildServer({
       runtimeDir,
       fake,
       bot,
       config: configWithDispatcher({ cwd: runtimeDir }),
+      teamMateWorkerProviders: new TeamMateWorkerProviderCatalog(),
     });
     await server.start();
 
@@ -1668,7 +1672,10 @@ describe('dreamux MVP smoke', () => {
     expect(taskFile.origin).toBe('dispatcher');
   });
 
-  it('mcp.teammate.capabilities lists both built-in runtimes as worker-unavailable', async () => {
+  it('mcp.teammate.capabilities reports the default codex worker as available', async () => {
+    // PR3 wires the real Codex worker by default, so `builtin:codex` is now
+    // worker-available (steer via folded turn/start) while `builtin:claude-code`
+    // stays unavailable until its own worker slice lands.
     server = buildServer({
       runtimeDir,
       fake,
@@ -1684,15 +1691,29 @@ describe('dreamux MVP smoke', () => {
     )) as {
       execution_available: boolean;
       default_input_mode: string;
-      providers: Array<{ provider_ref: string; worker_available: boolean }>;
+      providers: Array<{
+        provider_ref: string;
+        worker_available: boolean;
+        modes: { steer: boolean; queue: boolean; interrupt: boolean };
+      }>;
     };
 
-    expect(caps.execution_available).toBe(false);
+    expect(caps.execution_available).toBe(true);
     expect(caps.default_input_mode).toBe('steer');
     const refs = caps.providers.map((p) => p.provider_ref).sort();
     expect(refs).toContain('builtin:codex');
     expect(refs).toContain('builtin:claude-code');
-    expect(caps.providers.every((p) => p.worker_available === false)).toBe(true);
+    const codex = caps.providers.find((p) => p.provider_ref === 'builtin:codex');
+    expect(codex?.worker_available).toBe(true);
+    expect(codex?.modes).toMatchObject({
+      steer: true,
+      queue: false,
+      interrupt: false,
+    });
+    const claudeCode = caps.providers.find(
+      (p) => p.provider_ref === 'builtin:claude-code',
+    );
+    expect(claudeCode?.worker_available).toBe(false);
   });
 
   it('mcp.teammate.capabilities reflects an injected worker provider as available', async () => {
@@ -1804,6 +1825,66 @@ describe('dreamux MVP smoke', () => {
     expect(pulled.result.text).toBe('the worker finished the job');
   });
 
+  it('run_task executes through the default codex worker and collects the real turn result', async () => {
+    // No injected catalog: this exercises the real `builtin:codex` worker wired
+    // by default (PR3), driven against the in-process fake codex app-server via
+    // the same codex process/client test seams the dispatcher runtime uses.
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      config: configWithDispatcher({ cwd: runtimeDir }),
+      teamMateDeliveryBackoffMs: () => 0,
+    });
+    await server.start();
+    const socketPath = join(runtimeDir, 'admin.sock');
+
+    const created = (await sendAdminRequest(
+      'mcp.teammate.run',
+      {
+        dispatcher_id: 'flow',
+        caller_kind: 'dispatcher',
+        title: 'Codex worker task',
+        prompt: 'Run the codex worker.',
+        target_path: '.',
+      },
+      { socketPath },
+    )) as {
+      task: { task_id: string; lifecycle_status: string; last_event_id: number };
+      execution: { status: string; provider_ref?: string };
+    };
+
+    // The worker started a live Codex session: running, attributed to builtin:codex.
+    expect(created.execution).toMatchObject({
+      status: 'running',
+      provider_ref: 'builtin:codex',
+    });
+    const taskId = created.task.task_id;
+
+    // Wait for the real turn/completed to land (the fake codex completes the turn
+    // asynchronously); the waiter wakes from the recorded completion event.
+    const awaited = (await sendAdminRequest(
+      'mcp.teammate.await',
+      {
+        dispatcher_id: 'flow',
+        task_id: taskId,
+        after_event_id: created.task.last_event_id,
+        timeout_ms: 3000,
+      },
+      { socketPath, timeoutMs: 9000 },
+    )) as { status: string; result: { outcome: string; text: string } | null };
+    expect(awaited.status).toBe('completed');
+    expect(awaited.result?.outcome).toBe('completed');
+
+    const pulled = (await sendAdminRequest(
+      'mcp.teammate.pull',
+      { dispatcher_id: 'flow', task_id: taskId },
+      { socketPath },
+    )) as { result: { outcome: string; text: string } };
+    // The result is the real assistant text the fake codex returned for the turn.
+    expect(pulled.result.text).toBe('echo: Run the codex worker.');
+  });
+
   it('send_input promotes a queued input to submitted when a worker session is live', async () => {
     const fakeWorker = new FakeTeamMateWorkerProvider();
     server = buildServer({
@@ -1902,11 +1983,15 @@ describe('dreamux MVP smoke', () => {
   });
 
   it('await_completion wakes promptly when a completion is recorded mid-wait', async () => {
+    // Empty worker catalog: this test drives completion through the operator
+    // ingest seam (`mcp.teammate.complete`) to isolate the wait-broker wake, so
+    // the default codex worker must not auto-complete the task first.
     server = buildServer({
       runtimeDir,
       fake,
       bot,
       config: configWithDispatcher({ cwd: runtimeDir }),
+      teamMateWorkerProviders: new TeamMateWorkerProviderCatalog(),
     });
     await server.start();
     const socketPath = join(runtimeDir, 'admin.sock');

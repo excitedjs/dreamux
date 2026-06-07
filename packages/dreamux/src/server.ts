@@ -52,6 +52,9 @@ import {
   BUILTIN_CODEX_PROVIDER_REF,
   BUILTIN_FEISHU_PROVIDER_REF,
   BUILT_IN_DEFAULTS,
+  defaultDispatcherCodexConfig,
+  dispatcherCodexConfig,
+  type DispatcherCodexConfig,
   type DreamuxConfig,
 } from './runtime/config.js';
 import {
@@ -99,6 +102,7 @@ import {
 } from './teammate/worker-execution.js';
 import { TeamMateWorkerProviderCatalog } from './teammate/worker/catalog.js';
 import type { TeamMateWorkerProvider } from './teammate/worker/types.js';
+import { createCodexTeamMateWorkerProvider } from './teammate/worker/codex-provider.js';
 import {
   awaitTeamMateCompletion,
   clampWaitTimeout,
@@ -506,8 +510,36 @@ export class Server {
         ? { backoffMs: opts.teamMateDeliveryBackoffMs }
         : {}),
     });
+    // Default worker catalog wires the real Codex worker (issue #126 PR3), so a
+    // production `dreamux serve` executes TeamMate tasks for real and
+    // `get_capabilities` reports `builtin:codex` as worker-available. Tests
+    // still fully control execution by injecting `teamMateWorkerProviders`
+    // (the fake provider, or an empty catalog for the no-worker path). The
+    // worker reuses the same codex process/client test seams as the dispatcher
+    // runtime, so a fake-codex test drives it without spawning a real binary.
     this.teamMateWorkers =
-      opts.teamMateWorkerProviders ?? new TeamMateWorkerProviderCatalog();
+      opts.teamMateWorkerProviders ??
+      new TeamMateWorkerProviderCatalog({
+        providers: [
+          createCodexTeamMateWorkerProvider({
+            resolveBinPath: (dispatcherBin) =>
+              this.resolveCodexBinPath(dispatcherBin),
+            resolveCodexConfig: (dispatcherId) =>
+              this.resolveDispatcherCodexConfig(dispatcherId),
+            resolveDispatcherCwd: (dispatcherId) =>
+              this.resolveDispatcherCwd(dispatcherId),
+            ...(opts.codexProcessFactory !== undefined
+              ? { codexProcessFactory: opts.codexProcessFactory }
+              : {}),
+            ...(opts.codexClientFactory !== undefined
+              ? { codexClientFactory: opts.codexClientFactory }
+              : {}),
+            log: (level, message, fields) =>
+              this.log[level](fields ?? {}, message),
+          }),
+        ],
+        defaultRef: BUILTIN_CODEX_PROVIDER_REF,
+      });
     this.teamMateWorkerExecution = new TeamMateWorkerExecutionService({
       ledger: (dispatcherId) => this.teamMateLedger(dispatcherId),
       workers: () => this.teamMateWorkers,
@@ -542,6 +574,35 @@ export class Server {
     const fromEnv = process.env['CODEX_HOST_CODEX_BIN'];
     if (fromEnv !== undefined && fromEnv !== '') return fromEnv;
     return dispatcherBin;
+  }
+
+  /**
+   * Codex launch config for one dispatcher's TeamMate worker (issue #126 PR3).
+   * A worker inherits the same approval/sandbox/env/handshake settings as the
+   * dispatcher's own runtime so it is never more permissive; an unknown
+   * dispatcher falls back to the built-in defaults.
+   */
+  private resolveDispatcherCodexConfig(
+    dispatcherId: string,
+  ): DispatcherCodexConfig {
+    const dispatcher = this.effectiveConfig().dispatchers.find(
+      (entry) => entry.id === dispatcherId,
+    );
+    return dispatcher === undefined
+      ? defaultDispatcherCodexConfig()
+      : dispatcherCodexConfig(dispatcher);
+  }
+
+  /**
+   * Fallback working directory for a TeamMate worker whose task carries no
+   * resolved target (e.g. a `schedule`d task later executed). Mirrors the
+   * dispatcher runtime's own cwd resolution.
+   */
+  private resolveDispatcherCwd(dispatcherId: string): string {
+    return (
+      this.repos.dispatchers.get(dispatcherId)?.codex_cwd ??
+      dispatcherCodexCwd(dispatcherId)
+    );
   }
 
   /** Bring up admin socket + all enabled dispatchers. */
@@ -1429,6 +1490,11 @@ export class Server {
     if (this.shuttingDown) return;
     this.shuttingDown = true;
     this.log.info('shutting down');
+    // Reap any live TeamMate worker app-servers first so their child processes
+    // do not leak past server exit. This is a pure resource release with no
+    // ledger transition (issue #126 PR3): an in-flight task stays `running` for
+    // the deferred orphan-reconciliation path rather than being force-failed.
+    await this.teamMateWorkerExecution.reapAll();
     for (const id of Array.from(this.slots.keys())) {
       await this.stopDispatcher(id);
     }
