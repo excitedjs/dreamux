@@ -40,8 +40,6 @@ import type {
 import {
   TurnManager,
   type InboundDeliveryHooks,
-  type InboundDeliveryResult,
-  type InboundTurnInput,
 } from './turn-manager.js';
 import { createFailFastApprovalHandler } from './approval.js';
 import {
@@ -59,10 +57,17 @@ import { installBundledWorkspaceSkills } from '../runtime/bundled-skills.js';
 import { DREAMUX_DISPATCHER_BASE_INSTRUCTIONS } from './base-prompt.js';
 import type {
   AgentRuntime,
+  AgentRuntimeCapabilities,
+  AgentRuntimeContextSnapshot,
+  AgentRuntimeLastResult,
+  AgentRuntimeResumeInput,
+  AgentRuntimeTurnInput,
+  AgentRuntimeTurnResult,
   TeamMateCompletionDeliveryResult,
   TeamMateCompletionEnvelope,
 } from '../agent-runtime/types.js';
 import { BUILTIN_CODEX_PROVIDER_REF } from '../runtime/config.js';
+import { CODEX_AGENT_RUNTIME_CAPABILITIES } from '../agent-runtime/codex.js';
 
 const DEFAULT_RESTART_BACKOFF_BASE_MS = 1000;
 const DEFAULT_RESTART_BACKOFF_MAX_MS = 30_000;
@@ -136,6 +141,10 @@ export class DispatcherRuntime implements AgentRuntime {
     return this.status;
   }
 
+  getCapabilities(): AgentRuntimeCapabilities {
+    return CODEX_AGENT_RUNTIME_CAPABILITIES;
+  }
+
   getThreadId(): string | null {
     return this.threadId;
   }
@@ -145,19 +154,35 @@ export class DispatcherRuntime implements AgentRuntime {
     return this.threadResumed;
   }
 
-  /**
-   * Inject a best-effort one-shot restart notice into the resumed thread. The
-   * server calls this only after the dispatcher slot is ready (so the resumed
-   * turn can reply through Feishu). Never throws — failures are logged.
-   */
-  async injectRestartNotice(text: string): Promise<void> {
-    if (this.turnManager === null) return;
+  async getLast(): Promise<AgentRuntimeLastResult | null> {
+    return null;
+  }
+
+  async getContext(): Promise<AgentRuntimeContextSnapshot | null> {
+    return null;
+  }
+
+  async resume(input: AgentRuntimeResumeInput = {}): Promise<void> {
+    if (input.checkpoint !== undefined && input.checkpoint !== null) {
+      if (input.checkpoint.kind !== 'codexThread') {
+        throw new Error(
+          `unsupported resume checkpoint for Codex runtime: ${input.checkpoint.kind}`,
+        );
+      }
+      this.threadId = input.checkpoint.id;
+    }
+    await this.start();
+  }
+
+  private async submitRestartNotice(text: string): Promise<AgentRuntimeTurnResult> {
+    if (this.turnManager === null) return { status: 'stopped' };
     const result = await this.turnManager.injectNotice(text);
     if (result.status === 'submitted') {
       this.log('info', 'restart notice injected into resumed thread');
     } else if (result.status === 'skipped') {
       this.log('info', 'restart notice skipped; a live inbound already arrived');
     }
+    return result;
   }
 
   /**
@@ -341,10 +366,13 @@ export class DispatcherRuntime implements AgentRuntime {
    * Submit any accepted inbound message arriving for this dispatcher. Called by
    * the Feishu inbound layer.
    */
-  async enqueueInbound(
-    input: InboundTurnInput,
+  async submitTurn(
+    input: AgentRuntimeTurnInput,
     hooks: InboundDeliveryHooks = {},
-  ): Promise<InboundDeliveryResult> {
+  ): Promise<AgentRuntimeTurnResult> {
+    if (isSystemTurn(input)) {
+      return this.submitRestartNotice(input.text);
+    }
     if (this.turnManager === null) {
       return { status: 'failed', error: new Error('turn manager not initialized') };
     }
@@ -354,7 +382,7 @@ export class DispatcherRuntime implements AgentRuntime {
   /**
    * Codex TeamMate completion delivery (issue #110 PR8): inbox + turn trigger.
    * The completion is delivered into the dispatcher's Codex thread as a turn via
-   * the public `enqueueInbound` seam — not turn-manager internals — so it
+   * the public `submitTurn` seam — not turn-manager internals — so it
    * survives the planned move of queue/state to a per-dispatcher state owner.
    *
    * Each attempt uses a fresh, non-routable source id. The turn manager commits
@@ -369,7 +397,7 @@ export class DispatcherRuntime implements AgentRuntime {
     completion: TeamMateCompletionEnvelope,
   ): Promise<TeamMateCompletionDeliveryResult> {
     this.teammateDeliverySeq += 1;
-    const delivery = await this.enqueueInbound({
+    const delivery = await this.submitTurn({
       source_chat_id: 'teammate',
       source_message_id: `teammate:${completion.taskId}#${this.teammateDeliverySeq}`,
       sender_id: null,
@@ -388,6 +416,11 @@ export class DispatcherRuntime implements AgentRuntime {
         return {
           status: 'failed',
           error: new Error('teammate completion turn unexpectedly deduplicated'),
+        };
+      case 'skipped':
+        return {
+          status: 'failed',
+          error: new Error('teammate completion turn unexpectedly skipped'),
         };
     }
   }
@@ -544,4 +577,10 @@ function formatTeamMateCompletion(
     completion.finalText,
     '</teammate_task_completion>',
   ].join('\n');
+}
+
+function isSystemTurn(
+  input: AgentRuntimeTurnInput,
+): input is Extract<AgentRuntimeTurnInput, { kind: 'system' }> {
+  return 'kind' in input && input.kind === 'system';
 }

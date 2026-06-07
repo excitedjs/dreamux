@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Realign the AgentRuntime contract around submitTurn and provider-owned capabilities, and make the agent runtime catalog read implementations from the provider registry instead of carrying its own provider map.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

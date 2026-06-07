@@ -126,7 +126,7 @@ describe('claude-code live integration (opt-in)', () => {
     await runtime.start();
     expect(runtime.getStatus()).toBe('ready');
 
-    const first = await runtime.enqueueInbound({
+    const first = await runtime.submitTurn({
       source_chat_id: 'c',
       source_message_id: 'live-1',
       sender_id: 'u',
@@ -143,7 +143,7 @@ describe('claude-code live integration (opt-in)', () => {
 
     // Second turn over the SAME resident process: the runtime must stay ready
     // and keep the same session id (no re-spawn, no new session).
-    const second = await runtime.enqueueInbound({
+    const second = await runtime.submitTurn({
       source_chat_id: 'c',
       source_message_id: 'live-2',
       sender_id: 'u',

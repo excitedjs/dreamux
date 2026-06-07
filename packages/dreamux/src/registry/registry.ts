@@ -32,6 +32,14 @@ export class DuplicateProviderError extends Error {
   }
 }
 
+/** Thrown when registering a runnable implementation for the same provider twice. */
+export class DuplicateProviderImplementationError extends Error {
+  constructor(readonly id: string) {
+    super(`provider ${JSON.stringify(id)} already has a runnable implementation`);
+    this.name = 'DuplicateProviderImplementationError';
+  }
+}
+
 /** Thrown when resolving a `builtin:` ref whose id is not registered. */
 export class UnknownBuiltinProviderError extends Error {
   constructor(readonly id: string) {
@@ -60,6 +68,7 @@ export class ReservedExternalProviderError extends Error {
  */
 export class ProviderRegistry {
   private readonly providers = new Map<string, ProviderDescriptor>();
+  private readonly implementations = new Map<string, unknown>();
 
   /**
    * Register a provider. Throws {@link DuplicateProviderError} on a repeated id.
@@ -77,6 +86,20 @@ export class ProviderRegistry {
 
   get(id: string): ProviderDescriptor | undefined {
     return this.providers.get(id);
+  }
+
+  registerImplementation(providerId: string, implementation: unknown): void {
+    if (!this.providers.has(providerId)) {
+      throw new UnknownBuiltinProviderError(providerId);
+    }
+    if (this.implementations.has(providerId)) {
+      throw new DuplicateProviderImplementationError(providerId);
+    }
+    this.implementations.set(providerId, implementation);
+  }
+
+  getImplementation(providerId: string): unknown | undefined {
+    return this.implementations.get(providerId);
   }
 
   list(): ProviderDescriptor[] {

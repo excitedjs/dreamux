@@ -2,6 +2,7 @@ import type {
   InboundDeliveryHooks,
   InboundDeliveryResult,
   InboundTurnInput,
+  NoticeInjectionResult,
 } from '../dispatcher/turn-manager.js';
 import type { DispatcherConfig } from '../runtime/config.js';
 import type {
@@ -27,7 +28,26 @@ export type TeamMateCompletionDeliveryShape =
       description: 'notify the runtime through a Claude Code task notification path';
     };
 
-export interface AgentRuntimeDeliveryCapabilities {
+export type AgentRuntimeResumeCheckpoint =
+  | { kind: 'codexThread'; id: string }
+  | { kind: 'claudeCodeSession'; id: string };
+
+export type AgentRuntimeResumeCapability =
+  | { supported: true; checkpoint: AgentRuntimeResumeCheckpoint['kind'] }
+  | { supported: false };
+
+export interface AgentRuntimeCapabilities {
+  /** Whether this runtime can resume a prior checkpoint, and which checkpoint id it expects. */
+  resume: AgentRuntimeResumeCapability;
+  /** Whether a follow-up turn can steer/fold into an active turn. */
+  steer: { supported: boolean };
+  /** How runtime events are surfaced to Dreamux. */
+  events: { kind: 'push' | 'synthesized' };
+  /** Whether the runtime can report the last assistant/user-visible result. */
+  last: { supported: boolean };
+  /** Whether the runtime can report context-window usage. */
+  context: { supported: boolean };
+  /** Upward delivery shapes this runtime supports for teammate completion. */
   teammateCompletion: readonly TeamMateCompletionDeliveryShape[];
 }
 
@@ -43,18 +63,44 @@ export type TeamMateCompletionDeliveryResult =
   | { status: 'unsupported'; reason: string }
   | { status: 'failed'; error: Error };
 
+export type AgentRuntimeTurnInput =
+  | InboundTurnInput
+  | {
+      kind: 'system';
+      text: string;
+      reason: 'restart-notice' | 'teammate-completion' | 'runtime-control';
+    };
+
+export type AgentRuntimeTurnResult = InboundDeliveryResult | NoticeInjectionResult;
+
+export interface AgentRuntimeResumeInput {
+  checkpoint?: AgentRuntimeResumeCheckpoint | null;
+}
+
+export interface AgentRuntimeLastResult {
+  text: string | null;
+}
+
+export interface AgentRuntimeContextSnapshot {
+  usedTokens: number | null;
+  windowTokens: number | null;
+}
+
 export interface AgentRuntime {
   readonly providerRef: string;
   start(): Promise<void>;
+  resume(input?: AgentRuntimeResumeInput): Promise<void>;
   stop(): Promise<void>;
-  enqueueInbound(
-    input: InboundTurnInput,
+  submitTurn(
+    input: AgentRuntimeTurnInput,
     hooks?: InboundDeliveryHooks,
-  ): Promise<InboundDeliveryResult>;
-  injectRestartNotice(text: string): Promise<void>;
+  ): Promise<AgentRuntimeTurnResult>;
   getStatus(): DispatcherStatus;
   getThreadId(): string | null;
   wasThreadResumed(): boolean;
+  getLast(): Promise<AgentRuntimeLastResult | null>;
+  getContext(): Promise<AgentRuntimeContextSnapshot | null>;
+  getCapabilities(): AgentRuntimeCapabilities;
   deliverTeamMateCompletion?(
     completion: TeamMateCompletionEnvelope,
   ): Promise<TeamMateCompletionDeliveryResult>;
@@ -71,6 +117,6 @@ export interface AgentRuntimeCreateContext {
 export interface AgentRuntimeProvider {
   readonly ref: string;
   readonly descriptor: ProviderDescriptor;
-  readonly delivery: AgentRuntimeDeliveryCapabilities;
+  getCapabilities(): AgentRuntimeCapabilities;
   createRuntime(context: AgentRuntimeCreateContext): AgentRuntime;
 }

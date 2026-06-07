@@ -32,22 +32,20 @@ export class WrongProviderKindError extends Error {
 
 export interface AgentRuntimeProviderCatalogOptions {
   registry: ProviderRegistry;
-  providers: readonly AgentRuntimeProvider[];
 }
 
 export class AgentRuntimeProviderCatalog {
   private readonly registry: ProviderRegistry;
-  private readonly providers = new Map<string, AgentRuntimeProvider>();
 
   constructor(options: AgentRuntimeProviderCatalogOptions) {
     this.registry = options.registry;
-    for (const provider of options.providers) {
-      this.providers.set(provider.ref, provider);
-    }
   }
 
   list(): AgentRuntimeProvider[] {
-    return [...this.providers.values()];
+    return this.registry
+      .listByKind('agentRuntime')
+      .map((descriptor) => this.runtimeProviderForDescriptor(descriptor))
+      .filter((provider): provider is AgentRuntimeProvider => provider !== null);
   }
 
   resolve(ref: string): AgentRuntimeProvider {
@@ -64,14 +62,21 @@ export class AgentRuntimeProviderCatalog {
       throw new WrongProviderKindError(descriptor);
     }
     const canonicalRef = formatProviderRef(descriptor.ref);
-    const provider = this.providers.get(canonicalRef);
-    if (provider === undefined) {
+    const provider = this.runtimeProviderForDescriptor(descriptor);
+    if (provider === null) {
       throw new UnsupportedAgentRuntimeProviderError(
         canonicalRef,
         'the provider is registered but has no runtime implementation wired in this phase',
       );
     }
     return provider;
+  }
+
+  private runtimeProviderForDescriptor(
+    descriptor: ProviderDescriptor,
+  ): AgentRuntimeProvider | null {
+    const implementation = this.registry.getImplementation(descriptor.id);
+    return asAgentRuntimeProvider(implementation);
   }
 }
 
@@ -86,17 +91,33 @@ export function createBuiltinAgentRuntimeProviderCatalog(
 ): AgentRuntimeProviderCatalog {
   const codexDescriptor = options.registry.resolve('builtin:codex');
   const claudeCodeDescriptor = options.registry.resolve('builtin:claude-code');
-  return new AgentRuntimeProviderCatalog({
-    providers: [
-      createCodexAgentRuntimeProvider({
-        ...options.codex,
-        descriptor: codexDescriptor,
-      }),
-      createClaudeCodeAgentRuntimeProvider({
-        ...(options.claudeCode ?? {}),
-        descriptor: claudeCodeDescriptor,
-      }),
-    ],
-    registry: options.registry,
-  });
+  options.registry.registerImplementation(
+    codexDescriptor.id,
+    createCodexAgentRuntimeProvider({
+      ...options.codex,
+      descriptor: codexDescriptor,
+    }),
+  );
+  options.registry.registerImplementation(
+    claudeCodeDescriptor.id,
+    createClaudeCodeAgentRuntimeProvider({
+      ...(options.claudeCode ?? {}),
+      descriptor: claudeCodeDescriptor,
+    }),
+  );
+  return new AgentRuntimeProviderCatalog({ registry: options.registry });
+}
+
+function asAgentRuntimeProvider(value: unknown): AgentRuntimeProvider | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const candidate = value as Partial<AgentRuntimeProvider>;
+  if (
+    typeof candidate.ref !== 'string' ||
+    candidate.descriptor === undefined ||
+    typeof candidate.getCapabilities !== 'function' ||
+    typeof candidate.createRuntime !== 'function'
+  ) {
+    return null;
+  }
+  return value as AgentRuntimeProvider;
 }
