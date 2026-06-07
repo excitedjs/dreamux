@@ -1,13 +1,46 @@
 ---
 name: dispatcher
-description: Use from a Dreamux dispatcher thread when bounded repository work should be delegated to a tm-managed teammate. Applies to spawning, sending, waiting, checking status, resuming, recovering, or summarizing teammate work through the tm CLI exposed by the Dreamux package.
+description: Use from a Dreamux dispatcher thread when bounded repository work should be scheduled to a TeamMate. The server-hosted TeamMate MCP (schedule, list_tasks, get_task, pull_result) is the primary scheduled-task interface; the tm CLI is the labeled fallback that runs a repo-local teammate to completion today. Applies to scheduling, tracking, retrieving, spawning, sending, waiting, resuming, recovering, or summarizing teammate work.
 ---
 
 # Dispatcher
 
-Use this skill only from a Dreamux dispatcher session. Dreamux hosts the
-dispatcher Codex app-server and exposes `tm` on the dispatcher `PATH`. `tm`
-owns teammate lifecycle, history, and repository worktrees; Dreamux does not.
+Use this skill only from a Dreamux dispatcher session. The dispatcher delegates
+bounded repository work to TeamMates and reports verified results back to the
+source chat.
+
+## TeamMate Interface
+
+There are two ways to reach a TeamMate. Pick by what you need, not by habit.
+
+- **Server-hosted TeamMate MCP — the primary interface.** Dreamux injects a
+  dispatcher-scoped `teammate` MCP server with these tools:
+  - `schedule` — accept a task into the server-owned ledger; returns
+    immediately with an accepted task id.
+  - `list_tasks` — list this dispatcher's tasks and their statuses.
+  - `get_task` — fetch one task in full, including result, delivery state, and
+    history.
+  - `pull_result` — pull a retained result; the fallback when push delivery
+    failed.
+
+  **Phase 1 boundary:** `schedule` records the task and returns an accepted id,
+  but autonomous worker execution and completion delivery are runtime-specific
+  follow-up and may not run a scheduled task to completion yet. Treat a
+  scheduled task as accepted ledger state, not as a guaranteed executed result.
+  When you need an executed result right now, use the tm fallback below.
+
+  The persistent ledger is the source of truth. When a task does complete, any
+  completion delivery into the dispatcher is a best-effort wake-up, not the
+  reliable result contract — confirm and re-read results with `get_task` /
+  `pull_result` rather than relying on a delivered notification arriving.
+
+- **tm CLI — the labeled fallback.** Dreamux hosts the dispatcher Codex
+  app-server and exposes `tm` on the dispatcher `PATH`. `tm` is the path that
+  actually spawns and runs a repo-local teammate to completion today, owns
+  repository worktrees and live session history, and is the surface for legacy
+  diagnostics. Use it for executed repository work and recovery while
+  autonomous MCP execution is still follow-up. The rest of this skill and its
+  references are the operational manual for that fallback.
 
 ## Router Posture
 
@@ -28,6 +61,9 @@ repo. It does not investigate that repo itself.
 
 ## Boundaries
 
+These govern the tm fallback path. For the primary MCP path, call the injected
+`teammate` MCP tools directly.
+
 - Invoke bare `tm` from the dispatcher environment `PATH`. Dreamux injects its
   package `bin/` directory into the dispatcher app-server PATH.
 - Do not use `npx`, `npm exec --package @excitedjs/tm`, or a version-qualified
@@ -39,11 +75,12 @@ repo. It does not investigate that repo itself.
   installed or authenticated in this environment is not a usable choice. State
   `--engine` explicitly so the selection is intentional rather than inherited
   from a tm version default.
-- Do not call dreamux admin APIs to create or recover teammate state. The
-  server hosts the dispatcher; tm owns teammates.
+- Do not call dreamux admin APIs directly to create or recover teammate state.
+  Reach server-owned TeamMate task state only through the `teammate` MCP tools;
+  reach live tm sessions only through `tm`.
 - Do not infer the target repository from the dispatcher cwd unless the user or
   operator explicitly made that cwd the requested repo.
-- Do not ask a tm-managed teammate to spawn another tm teammate.
+- Do not ask a TeamMate to schedule or spawn another TeamMate.
 
 ## When To Delegate
 
@@ -86,8 +123,9 @@ use the `team-dev-workflow` skill, which layers methodology on top of this one.
 A reply to the source chat that asserts an outcome must be verifiable from this
 turn's tool calls.
 
-- Report only what `tm` returned. Do not invent a teammate result that was not
-  printed by a `tm` verb.
+- Report only what the TeamMate interface returned, whether a `teammate` MCP
+  tool result or a `tm` verb. Do not invent a teammate result that was not
+  produced by one of them.
 - Verify any command, flag, or path before naming it; if you cannot verify it
   this turn, say so rather than guessing a name.
 - Translate dispatcher-internal identifiers into plain language before the
@@ -99,6 +137,13 @@ turn's tool calls.
 
 ## State Boundary
 
-Do not say the Dreamux server lost or recovered teammate state. The server does
-not own that state. Teammate liveness, history, and recovery flow through `tm`
-(see `references/inspect-and-resume.md`).
+Two state owners, kept distinct:
+
+- The Dreamux server owns the TeamMate **task ledger** behind the `teammate`
+  MCP — scheduled task records, statuses, retained results, and delivery state.
+  Read it with `list_tasks`, `get_task`, and `pull_result`.
+- `tm` owns live tm **session** state — teammate liveness, worktrees, and
+  resumable session history (see `references/inspect-and-resume.md`).
+
+Do not conflate the two. Recovering a tm session is not the same as reading a
+server task record, and the server does not own tm session liveness.

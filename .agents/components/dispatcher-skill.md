@@ -4,7 +4,11 @@
 ships in the npm package:
 
 - `dispatcher` teaches dispatcher app-server sessions how to delegate product
-  work through `tm`.
+  work to TeamMates. The primary interface is the server-hosted TeamMate MCP
+  (`schedule`/`list_tasks`/`get_task`/`pull_result`); the `tm` CLI is the
+  labeled fallback that runs a repo-local teammate to completion while
+  autonomous MCP worker execution is still follow-up
+  ([server-hosted TeamMate](../decisions/server-hosted-teammate.md)).
 - `team-dev-workflow` covers multi-teammate review, design, merge, and unblock
   coordination.
 - `dreamux-maintenance` covers installed Dreamux diagnosis and safe operation.
@@ -32,13 +36,20 @@ See [the dispatcher tm packaging decision](../decisions/dispatcher-tm-packaging.
 
 ## Runtime Boundary
 
-The skill keeps the boundary from
-[the dispatcher tm decision](../decisions/dispatcher-tm-boundary.md):
+[server-hosted TeamMate](../decisions/server-hosted-teammate.md) supersedes the
+older dispatcher/tm boundary for server-owned TeamMate state. Two state owners,
+kept distinct in the skill:
 
-- dreamux server hosts dispatcher Codex app-server processes only
-- the dispatcher invokes `tm` through the command boundary
-- dreamux does not own teammate daemons, teammate DB state, or `teammate.*`
-  admin methods
+- The Dreamux server owns the TeamMate **task ledger** behind the injected
+  dispatcher-scoped `teammate` MCP — scheduled task records, statuses, retained
+  results, and delivery state under `~/.dreamux/state/<dispatcher-id>/teammate/`.
+- `tm` owns live tm **session** state — teammate liveness, repository worktrees,
+  and resumable session history — invoked through the command boundary.
+
+The dispatcher reaches server task state only through the `teammate` MCP tools
+and live tm sessions only through `tm`; it does not call `teammate.*` admin
+methods directly. Autonomous MCP worker execution and completion delivery remain
+runtime-specific follow-up, which is why `tm` stays the executed-result path.
 
 ## tm Strategy
 

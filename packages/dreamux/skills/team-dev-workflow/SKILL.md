@@ -7,7 +7,8 @@ description: Coordinate multi-teammate software development workflows from a Dre
 
 Use this skill when the dispatcher is coordinating people or teammates around a
 software change. It is methodology layered on top of the `dispatcher` skill:
-`dispatcher` owns `tm` mechanics, while this skill owns review, design, merge,
+`dispatcher` owns the TeamMate interface — the primary server-hosted TeamMate
+MCP and the labeled tm fallback — while this skill owns review, design, merge,
 and unblock workflow.
 
 ## Confirm Scope

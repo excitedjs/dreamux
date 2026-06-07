@@ -499,6 +499,17 @@ describe('dreamux MVP smoke', () => {
       'use update_plan to track phases',
     );
     expect(DREAMUX_DISPATCHER_BASE_INSTRUCTIONS).toContain('`【F:...】`');
+    // TeamMate MCP is the primary scheduled-task interface (issue #124).
+    expect(DREAMUX_DISPATCHER_BASE_INSTRUCTIONS).toContain('# TeamMate Delegation');
+    expect(DREAMUX_DISPATCHER_BASE_INSTRUCTIONS).toContain(
+      'server-hosted TeamMate MCP is the primary interface',
+    );
+    expect(DREAMUX_DISPATCHER_BASE_INSTRUCTIONS).toContain('Phase 1 boundary');
+    // tm survives only as the labeled fallback, not the primary contract.
+    expect(DREAMUX_DISPATCHER_BASE_INSTRUCTIONS).toContain(
+      'The tm CLI is the labeled fallback',
+    );
+    expect(DREAMUX_DISPATCHER_BASE_INSTRUCTIONS).not.toContain('# tm Delegation');
   });
 
   it('resumes Codex threads with Dreamux dispatcher base instructions', async () => {

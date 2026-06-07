@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Align bundled dispatcher skills and the injected dispatcher base prompt with the server-hosted TeamMate MCP (schedule/list_tasks/get_task/pull_result) as the primary scheduled-task interface, keeping the tm CLI as a labeled fallback and stating the #110 Phase 1 boundary.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}
