@@ -179,8 +179,12 @@ function teammateTools(): Array<Record<string, unknown>> {
       name: 'run_task',
       description:
         'Create and execute a server-hosted TeamMate task in a local target. ' +
-        'Returns once the task is created; worker execution is not available ' +
-        'yet, so the execution sub-result reports provider_unavailable.',
+        'Returns once the task is created and a worker session is started; the ' +
+        'execution sub-result reports running (then completed/failed via the ' +
+        'ledger). The default Codex worker executes for real. If no worker is ' +
+        'wired or the chosen provider is unavailable, the execution sub-result ' +
+        'reports provider_unavailable (retryable) while the task is still ' +
+        'created durably.',
       inputSchema: {
         type: 'object',
         additionalProperties: false,
@@ -220,8 +224,10 @@ function teammateTools(): Array<Record<string, unknown>> {
     {
       name: 'execute_task',
       description:
-        'Start or retry execution for an accepted TeamMate task. Worker ' +
-        'execution is not available yet (provider_unavailable).',
+        'Start or retry execution for an accepted TeamMate task. Reports ' +
+        'running once a worker session is live (the default Codex worker runs ' +
+        'for real); a task with no worker wired or an unavailable provider ' +
+        'reports provider_unavailable (retryable).',
       inputSchema: {
         type: 'object',
         additionalProperties: false,
@@ -241,8 +247,9 @@ function teammateTools(): Array<Record<string, unknown>> {
       name: 'send_input',
       description:
         'Send a follow-up input to a steerable TeamMate task session. Default ' +
-        'mode is steer; queue and interrupt are explicit. Without a worker the ' +
-        'input is queued for later.',
+        'mode is steer; queue and interrupt are explicit. Steer folds into a ' +
+        'live worker session and is submitted; with no live session the input ' +
+        'is recorded as queued for a future worker.',
       inputSchema: {
         type: 'object',
         additionalProperties: false,
@@ -284,8 +291,10 @@ function teammateTools(): Array<Record<string, unknown>> {
     {
       name: 'get_capabilities',
       description:
-        'List server and runtime TeamMate capabilities (read-only). Worker ' +
-        'execution is not implemented yet, so providers report it unavailable.',
+        'List server and runtime TeamMate capabilities (read-only). Each ' +
+        'provider reports whether worker execution is available; the default ' +
+        'Codex worker is available, while a runtime without a worker (or an ' +
+        'explicitly empty catalog) reports it unavailable.',
       inputSchema: { type: 'object', additionalProperties: false, properties: {} },
     },
     {

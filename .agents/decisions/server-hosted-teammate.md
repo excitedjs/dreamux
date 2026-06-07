@@ -210,16 +210,91 @@ Server wiring (`/packages/dreamux/src/server.ts`):
   records the input (`queued`) then routes it to a live session, promoting it to
   `submitted` on an accepted disposition (new `ledger.markInputSubmitted`).
 - `get_capabilities` makes the worker catalog the source of truth:
-  `execution_available` and each provider's `worker_available` come from it.
-  **Production behaviour is unchanged from PR1** — with the default empty
-  catalog every provider is worker-unavailable and `execution_available` is
-  false; only an injected catalog (the fake in tests) flips them.
+  `execution_available` and each provider's `worker_available` come from it. In
+  PR2 the default catalog is empty, so every provider is worker-unavailable and
+  `execution_available` is false; only an injected catalog (the fake in tests)
+  flips them. **PR3 supersedes this default** — see below.
 
 Deferred to later #126 slices (unchanged from PR1, plus): real Codex/Claude
 worker execution; worker runtime-handle persistence on the task record; process
 death / orphan reconciliation (PR2 proves "source of truth after failure" via a
 provider-reported failure, not a real crash); `cancel_task`/`resume_task`/
 `get_logs` MCP tools.
+
+## Issue #126: TeamMate MCP parity — PR3 (real Codex worker provider)
+
+PR3 lands the first **real** worker behind the PR2 seam: `builtin:codex` now
+performs actual execution, with **no hidden `tm` CLI shell-out**. A dispatcher
+can `run_task` → real Codex executes → `await_completion` wakes on the real
+completion → `pull_result` returns the real assistant text, MCP-only.
+
+Real Codex worker (`/packages/dreamux/src/teammate/worker/codex-provider.ts`):
+
+- **One task = one Codex turn.** A Codex turn is itself a full agentic loop, so
+  the task prompt drives a single `turn/start`; `turn/completed` →
+  `onCompleted(lastAssistantText)`, then the per-task app-server is reaped.
+- It reuses the dispatcher's own Codex primitives (`CodexProcess`,
+  `CodexWsClient`, `performInitializeHandshake`, the turn collector, the
+  fail-fast approval handler) and the **same** per-dispatcher launch config
+  (bin, `approval_policy=never`, sandbox, env, handshake timeout), so a worker is
+  never more permissive than its dispatcher. It wires **no MCP servers** into the
+  worker, which structurally enforces the no-nested-dispatch boundary.
+- `startSession` returns once the turn is *submitted* (commit `running` →
+  subscribe → `turn/start`); completion arrives asynchronously via the
+  notification stream. It never blocks for the whole task, so `await_completion`
+  stays meaningful. A pre-`onRunning` failure (spawn/handshake/thread-start)
+  returns a retryable `unavailable` (task stays `accepted`); a failure after
+  `running` (turn/start RPC failure, connection drop) fires `onFailed` and lands
+  a durable, pull-able `failed` result. The session guarantees exactly one
+  terminal callback.
+- **Realpath target confinement (the PR1-deferred step).** PR1 confined the
+  target lexically and deferred symlink/realpath confinement to this slice,
+  "to be done when the path actually exists." Before spawning, the worker
+  canonicalizes both the dispatcher dir and the target through their longest
+  existing prefix and re-asserts containment, so a symlinked target cannot root
+  a `sandbox=workspace-write` codex outside the dispatcher tree. A violation
+  throws loudly (no process is created) — it is not a retryable `unavailable`.
+- **Steer = a folded `turn/start` onto the active turn**, the exact mechanism the
+  dispatcher runtime already relies on in production (`turn-manager.ts`:
+  "inbound submission folds onto Codex's active turn"), so the worker advertises
+  `modes.steer: true`. `queue`/`interrupt` are not distinct capabilities yet and
+  their dispositions are rejected (the input then stays `queued` in the ledger).
+- The provider never writes the ledger; the execution service remains the sole
+  ledger writer.
+
+Server wiring change (supersedes the PR2 "default empty catalog" note above):
+
+- The **default** `teamMateWorkers` catalog now wires the real Codex worker
+  (`defaultRef: builtin:codex`), so a production `dreamux serve` executes for
+  real and `get_capabilities` reports `builtin:codex` as worker-available
+  (`builtin:claude-code` stays unavailable until its own slice). The worker
+  reuses the server's `codexProcessFactory`/`codexClientFactory` test seams, so a
+  fake-codex test drives it without spawning a real binary. Tests still fully
+  control execution by injecting `teamMateWorkerProviders` — the fake provider,
+  or an explicitly empty catalog for the deliberate no-worker (`provider_unavailable`)
+  path.
+- The default worker is Codex **regardless of the dispatcher's own runtime** — a
+  `builtin:claude-code` dispatcher also gets TeamMate MCP, and its tasks run on
+  the Codex worker until the Claude Code worker slice lands. So the server's
+  worker codex-config resolver returns the dispatcher's own config only for a
+  `builtin:codex` dispatcher and the built-in **defaults** for any other (or
+  unknown) dispatcher; it must not call `dispatcherCodexConfig()` for a non-Codex
+  dispatcher, which throws. This keeps `run_task` from a non-Codex dispatcher
+  from accepting and then hard-failing.
+- `Server.shutdown()` calls `execution.reapAll()` to release live worker
+  app-servers (a new `TeamMateWorkerSession.dispose()` — reap with **no** ledger
+  transition); the affected task stays `running` for the deferred
+  orphan-reconciliation path rather than being force-failed.
+- New path builders in `runtime/paths.ts`: the per-task worker Codex socket
+  (`state/<id>/teammate/w/<hash>.sock`, hashed + budget-guarded so it fits the
+  Unix socket byte limit) and per-task app-server logs
+  (`logs/codex-app-server/teammate/<id>/<taskId>.log`).
+
+Deferred to later #126 slices (in addition to PR2's list): multi-turn persistent
+worker sessions, resume/recovery, a true `interrupt`/turn-abort primitive and a
+distinct `queue` disposition; orphan reconciliation / restart re-execution of
+`running` tasks; log redaction and a `get_logs` MCP tool; the real Claude Code
+worker (the seam stays runtime-agnostic).
 
 ## Consequences
 

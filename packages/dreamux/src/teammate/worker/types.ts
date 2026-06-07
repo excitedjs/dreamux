@@ -87,6 +87,14 @@ export interface TeamMateWorkerSession {
   }): Promise<TeamMateWorkerInputDisposition>;
   /** Request cancellation; the provider drives `onCancelled` when it lands. */
   cancel(reason: string | null): Promise<void>;
+  /**
+   * Release the session's runtime resources WITHOUT a ledger transition or any
+   * lifecycle callback. The execution service calls this on server shutdown to
+   * prevent worker process/connection leaks; the task is intentionally left in
+   * its current ledger state for the (deferred) orphan-reconciliation path.
+   * Must be idempotent and must suppress any in-flight terminal callback.
+   */
+  dispose(): Promise<void>;
 }
 
 /** Outcome of attempting to start a worker session. */

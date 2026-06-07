@@ -20,6 +20,7 @@
  * `runtime_dir` concept (and its `runtimeRoot()` alias) was retired in issue #98.
  */
 
+import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -272,6 +273,71 @@ export function dispatcherTeamMateLedgerPath(id: string): string {
 /** Directory containing one versioned TeamMate task record per file. */
 export function dispatcherTeamMateTasksDir(id: string): string {
   return join(dispatcherTeamMateDir(id), 'tasks');
+}
+
+/**
+ * Root for per-task TeamMate worker session runtime files (issue #126 PR3).
+ * Each real Codex worker session binds its own app-server listen socket here.
+ */
+export function dispatcherTeamMateWorkerDir(id: string): string {
+  return join(dispatcherTeamMateDir(id), 'workers');
+}
+
+/**
+ * Listen socket for one TeamMate worker's Codex app-server (issue #126 PR3).
+ *
+ * The task id is hashed into a short, fixed-width stem and placed under a
+ * deliberately terse `teammate/w/` segment so the absolute path stays within
+ * the Unix socket byte budget (the worker path is necessarily deeper than the
+ * dispatcher's own `state/<id>/codex.sock`); the full id still names the
+ * per-task log file. Guarded by {@link assertUnixSocketPathBudget} so an
+ * over-long deployment root fails loudly at session start rather than as an
+ * opaque bind error.
+ */
+export function dispatcherTeamMateWorkerSocketPath(
+  id: string,
+  taskId: string,
+): string {
+  const stem = createHash('sha256').update(taskId).digest('hex').slice(0, 12);
+  return assertUnixSocketPathBudget(
+    join(dispatcherTeamMateDir(id), 'w', `${stem}.sock`),
+    `dispatcher '${id}' TeamMate worker Codex socket path`,
+  );
+}
+
+/** Per-task TeamMate worker Codex app-server stdout log (issue #126 PR3). */
+export function dispatcherTeamMateWorkerLogPath(
+  id: string,
+  taskId: string,
+): string {
+  return join(
+    codexAppServerLogDir(),
+    'teammate',
+    dispatcherPathSegment(id),
+    `${teamMateWorkerLogStem(taskId)}.log`,
+  );
+}
+
+/** Per-task TeamMate worker Codex app-server stderr log (issue #126 PR3). */
+export function dispatcherTeamMateWorkerErrorLogPath(
+  id: string,
+  taskId: string,
+): string {
+  return join(
+    codexAppServerLogDir(),
+    'teammate',
+    dispatcherPathSegment(id),
+    `${teamMateWorkerLogStem(taskId)}.stderr.log`,
+  );
+}
+
+/**
+ * Task ids are `^tmtsk_[a-z0-9]+_[a-z0-9]+$` (ledger-validated), so they are
+ * already filesystem-safe. This guard keeps the log builder honest if a future
+ * id shape leaks a separator or traversal segment in via an injected id.
+ */
+function teamMateWorkerLogStem(taskId: string): string {
+  return taskId.replace(/[^a-z0-9_]/gi, '_');
 }
 
 /**
