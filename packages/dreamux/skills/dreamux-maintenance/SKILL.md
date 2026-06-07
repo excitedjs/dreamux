@@ -56,6 +56,7 @@ dreamux config show
    - `codex-app-server/<dispatcher-id>.stderr.log`
    - `feishu-channel/<dispatcher-id>.log`
    - `feishu-mcp/<dispatcher-id>.log`
+   - `teammate-mcp/<dispatcher-id>.log`
 
 ## Common Symptoms
 
@@ -64,7 +65,8 @@ dreamux config show
 | Dispatcher does not start | `dreamux doctor`, dispatcher cwd exists, Codex auth exists, bundled skill symlinks are readable. |
 | Inbound accepted but no reply | Dispatcher status, Codex app-server log, whether the turn is still active. |
 | Restart did not announce recovery | `dreamux daemon restart --notify-resumed --dispatcher <id>` was used, and the dispatcher resumed an existing thread. |
-| `tm` not found inside dispatcher | Dreamux package `bin/` directory is on dispatcher process `PATH`; rerun `dreamux doctor`. |
+| TeamMate scheduling/retrieval fails | The `teammate` MCP server is injected into the dispatcher runtime; check `teammate-mcp/<dispatcher-id>.log` and that `~/.dreamux/state/<dispatcher-id>/teammate/` is readable. |
+| `tm` not found inside dispatcher (fallback path) | The tm CLI is the labeled local-execution fallback. Confirm the Dreamux package `bin/` directory is on dispatcher process `PATH`; rerun `dreamux doctor`. |
 | Skill changes did not appear | Verify `<dispatcher cwd>/.codex/skills/<name>` is a symlink to the installed Dreamux package skill directory. |
 | Skill path is a real file or directory | Dreamux leaves it untouched. If this is an intentional override, keep it; otherwise rename or remove it and restart the dispatcher. |
 | Skill symlink is broken after an upgrade | Restart the dispatcher or rerun `dreamux onboard`; startup recreates stale or broken bundled skill symlinks. |
