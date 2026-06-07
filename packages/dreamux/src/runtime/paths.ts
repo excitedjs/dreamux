@@ -332,6 +332,43 @@ export function dispatcherTeamMateWorkerErrorLogPath(
 }
 
 /**
+ * Generated MCP config doc for one Claude Code TeamMate worker (issue #126 PR4).
+ *
+ * The Claude Code worker is launched with `--mcp-config <file>`; a worker is
+ * wired with NO MCP servers (a TeamMate must not nested-dispatch), so this file
+ * holds an empty `{ mcpServers: {} }` document. Unlike the worker's Codex socket
+ * it carries no byte budget, so the full task id names the file for traceability.
+ * Kept under the dispatcher's worker state dir, never the workspace cwd.
+ */
+export function dispatcherTeamMateWorkerClaudeMcpConfigPath(
+  id: string,
+  taskId: string,
+): string {
+  return join(
+    dispatcherTeamMateWorkerDir(id),
+    `${teamMateWorkerLogStem(taskId)}.mcp.json`,
+  );
+}
+
+/**
+ * Per-task Claude Code TeamMate worker resident-child stderr log (issue #126
+ * PR4). The child's stdout is the in-process NDJSON data plane, so only stderr
+ * is logged here — mirroring `dispatcherClaudeCodeStreamLogPath` for the
+ * dispatcher's own resident child, but partitioned per worker task.
+ */
+export function dispatcherTeamMateWorkerClaudeStreamLogPath(
+  id: string,
+  taskId: string,
+): string {
+  return join(
+    claudeCodeLogDir(),
+    'teammate',
+    dispatcherPathSegment(id),
+    `${teamMateWorkerLogStem(taskId)}.stderr.log`,
+  );
+}
+
+/**
  * Task ids are `^tmtsk_[a-z0-9]+_[a-z0-9]+$` (ledger-validated), so they are
  * already filesystem-safe. This guard keeps the log builder honest if a future
  * id shape leaks a separator or traversal segment in via an injected id.

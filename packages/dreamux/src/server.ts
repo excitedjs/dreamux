@@ -49,11 +49,15 @@ import {
 import type { PeerBot } from './channel/chat-bots-store.js';
 import { resolveBotSecret } from './runtime/secrets.js';
 import {
+  BUILTIN_CLAUDE_CODE_PROVIDER_REF,
   BUILTIN_CODEX_PROVIDER_REF,
   BUILTIN_FEISHU_PROVIDER_REF,
   BUILT_IN_DEFAULTS,
+  defaultDispatcherClaudeCodeConfig,
   defaultDispatcherCodexConfig,
+  dispatcherClaudeCodeConfig,
   dispatcherCodexConfig,
+  type DispatcherClaudeCodeConfig,
   type DispatcherCodexConfig,
   type DreamuxConfig,
 } from './runtime/config.js';
@@ -103,6 +107,8 @@ import {
 import { TeamMateWorkerProviderCatalog } from './teammate/worker/catalog.js';
 import type { TeamMateWorkerProvider } from './teammate/worker/types.js';
 import { createCodexTeamMateWorkerProvider } from './teammate/worker/codex-provider.js';
+import { createClaudeCodeTeamMateWorkerProvider } from './teammate/worker/claude-code-provider.js';
+import type { ClaudeCodeSessionFactory } from './agent-runtime/claude-code-session.js';
 import {
   awaitTeamMateCompletion,
   clampWaitTimeout,
@@ -146,6 +152,13 @@ export interface ServerOptions {
   codexClientFactory?: (socketPath: string) => CodexWsClient;
   /** Inject a Codex home doctor (tests). */
   codexHomeDoctor?: DispatcherCodexHomeDoctor;
+  /**
+   * Inject a Claude Code resident-session factory for the default
+   * `builtin:claude-code` TeamMate worker (issue #126 PR4). Tests pass a fake
+   * session so the worker's lifecycle runs without spawning a real `claude`
+   * binary; production omits it and the worker spawns the real child.
+   */
+  claudeCodeWorkerSessionFactory?: ClaudeCodeSessionFactory;
   /** Skip resolving bot secret (tests with fake bot). */
   skipBotSecret?: boolean;
   /** Codex child/WS restart backoff base override (tests). */
@@ -510,13 +523,17 @@ export class Server {
         ? { backoffMs: opts.teamMateDeliveryBackoffMs }
         : {}),
     });
-    // Default worker catalog wires the real Codex worker (issue #126 PR3), so a
-    // production `dreamux serve` executes TeamMate tasks for real and
-    // `get_capabilities` reports `builtin:codex` as worker-available. Tests
-    // still fully control execution by injecting `teamMateWorkerProviders`
-    // (the fake provider, or an empty catalog for the no-worker path). The
-    // worker reuses the same codex process/client test seams as the dispatcher
-    // runtime, so a fake-codex test drives it without spawning a real binary.
+    // Default worker catalog wires BOTH real workers (issue #126 PR3 Codex, PR4
+    // Claude Code), so a production `dreamux serve` executes TeamMate tasks for
+    // real and `get_capabilities` reports both `builtin:codex` and
+    // `builtin:claude-code` as worker-available. The default route stays Codex
+    // (`defaultRef`); a task selects the Claude Code worker by pinning
+    // `provider_ref: builtin:claude-code` (default routing remains Codex, not
+    // dispatcher-aware, to keep this a pure addition). Tests still fully control
+    // execution by injecting `teamMateWorkerProviders` (the fake provider, or an
+    // empty catalog for the no-worker path). Each worker reuses the same
+    // process/session test seams as the dispatcher runtime, so a fake test drives
+    // it without spawning a real binary.
     this.teamMateWorkers =
       opts.teamMateWorkerProviders ??
       new TeamMateWorkerProviderCatalog({
@@ -533,6 +550,18 @@ export class Server {
               : {}),
             ...(opts.codexClientFactory !== undefined
               ? { codexClientFactory: opts.codexClientFactory }
+              : {}),
+            log: (level, message, fields) =>
+              this.log[level](fields ?? {}, message),
+          }),
+          createClaudeCodeTeamMateWorkerProvider({
+            resolveBinPath: (dispatcherBin) => dispatcherBin,
+            resolveClaudeCodeConfig: (dispatcherId) =>
+              this.resolveDispatcherClaudeCodeConfig(dispatcherId),
+            resolveDispatcherCwd: (dispatcherId) =>
+              this.resolveDispatcherCwd(dispatcherId),
+            ...(opts.claudeCodeWorkerSessionFactory !== undefined
+              ? { sessionFactory: opts.claudeCodeWorkerSessionFactory }
               : {}),
             log: (level, message, fields) =>
               this.log[level](fields ?? {}, message),
@@ -602,6 +631,34 @@ export class Server {
       return defaultDispatcherCodexConfig();
     }
     return dispatcherCodexConfig(dispatcher);
+  }
+
+  /**
+   * Claude Code launch config for one dispatcher's TeamMate worker (issue #126
+   * PR4). Mirrors {@link resolveDispatcherCodexConfig}: a TeamMate task can pin
+   * the Claude Code worker (`provider_ref: builtin:claude-code`) regardless of
+   * the dispatcher's OWN runtime, so a task from a non-Claude-Code dispatcher
+   * (e.g. `builtin:codex`) must still get a *valid* Claude Code launch config —
+   * the built-in defaults — rather than the dispatcher's incompatible non-Claude
+   * runtime config (`dispatcherClaudeCodeConfig` throws for a non-claude-code
+   * provider). Only a `builtin:claude-code` dispatcher inherits its own
+   * model/permission/env/timeout settings; an unknown dispatcher also falls back
+   * to the defaults. This keeps run_task from accepting and then hard-failing for
+   * a non-Claude-Code dispatcher.
+   */
+  private resolveDispatcherClaudeCodeConfig(
+    dispatcherId: string,
+  ): DispatcherClaudeCodeConfig {
+    const dispatcher = this.effectiveConfig().dispatchers.find(
+      (entry) => entry.id === dispatcherId,
+    );
+    if (
+      dispatcher === undefined ||
+      dispatcher.runtime.provider !== BUILTIN_CLAUDE_CODE_PROVIDER_REF
+    ) {
+      return defaultDispatcherClaudeCodeConfig();
+    }
+    return dispatcherClaudeCodeConfig(dispatcher);
   }
 
   /**

@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Add the real builtin:claude-code TeamMate worker provider (issue #126 PR4): TeamMate MCP now executes Claude Code tasks too, selectable by pinning provider_ref=builtin:claude-code (default routing stays builtin:codex). get_capabilities reports both workers (claude-code is single-turn, steer:false). Adds server-owned per-task worker paths state/<id>/teammate/workers/<taskId>.mcp.json and logs/claude-code/teammate/<id>/<taskId>.stderr.log (auto-created, no operator action). No config schema or persisted-format change.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}
