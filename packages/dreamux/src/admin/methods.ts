@@ -138,7 +138,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     const prompt = mustString(params, 'prompt');
     const teammateId = optionalString(params, 'teammate_id');
     try {
-      return await server.scheduleTeamMateFromMcp({
+      return await server.dispatcherService.scheduleTeamMate({
         dispatcherId: id,
         callerKind,
         title,
@@ -172,7 +172,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     }
     const finalText = mustString(params, 'final_text');
     try {
-      return await server.reportTeamMateCompletion({
+      return await server.dispatcherService.reportTeamMateCompletion({
         dispatcherId: id,
         taskId,
         outcome,
@@ -183,9 +183,8 @@ export const adminMethods: Record<string, AdminHandler> = {
     }
   },
 
-  // Executable normal-path create-and-execute tool (issue #126). No worker is
-  // wired yet, so the task is created and the execution sub-result reports
-  // provider_unavailable.
+  // Executable normal-path create-and-execute tool (issue #126). The admin
+  // layer only validates params and delegates orchestration to DispatcherService.
   'mcp.teammate.run': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
@@ -199,7 +198,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     const providerRef = optionalString(params, 'provider_ref');
     const operationId = optionalString(params, 'operation_id');
     try {
-      return await server.runTeamMateTaskFromMcp({
+      return await server.dispatcherService.runTeamMateTask({
         dispatcherId: id,
         callerKind,
         title,
@@ -232,7 +231,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     const targetMode = optionalString(params, 'target_mode');
     const operationId = optionalString(params, 'operation_id');
     try {
-      return await server.executeTeamMateTaskFromMcp({
+      return await server.dispatcherService.executeTeamMateTask({
         dispatcherId: id,
         taskId,
         ...(providerRef !== null ? { providerRef } : {}),
@@ -254,7 +253,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     const mode = optionalString(params, 'mode');
     const operationId = optionalString(params, 'operation_id');
     try {
-      return await server.sendTeamMateInputFromMcp({
+      return await server.dispatcherService.sendTeamMateInput({
         dispatcherId: id,
         taskId,
         prompt,
@@ -279,7 +278,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     const until = optionalStringArray(params, 'until');
     const timeoutMs = optionalNumber(params, 'timeout_ms');
     try {
-      return await server.awaitTeamMateCompletionFromMcp({
+      return await server.dispatcherService.awaitTeamMateCompletion({
         dispatcherId: id,
         taskId,
         ...(afterEventId !== null ? { afterEventId } : {}),
@@ -297,7 +296,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     const taskId = mustString(params, 'task_id');
     const note = optionalString(params, 'note');
     try {
-      return await server.cancelTeamMateTaskFromMcp({
+      return await server.dispatcherService.cancelTeamMateTask({
         dispatcherId: id,
         taskId,
         ...(note !== null ? { note } : {}),
@@ -325,7 +324,7 @@ export const adminMethods: Record<string, AdminHandler> = {
       );
     }
     try {
-      return await server.getTeamMateTaskLogsFromMcp({
+      return await server.dispatcherService.getTeamMateTaskLogs({
         dispatcherId: id,
         taskId,
         ...(maxBytes !== null ? { maxBytes } : {}),
@@ -339,26 +338,26 @@ export const adminMethods: Record<string, AdminHandler> = {
   },
 
   'mcp.teammate.capabilities': (server) =>
-    server.getTeamMateCapabilitiesFromMcp(),
+    server.dispatcherService.getTeamMateCapabilities(),
 
   'mcp.teammate.list': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    return { tasks: await server.listTeamMateTasksFromMcp(id) };
+    return { tasks: await server.dispatcherService.listTeamMateTasks(id) };
   },
 
   'mcp.teammate.get': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     const taskId = mustString(params, 'task_id');
-    return { task: await server.getTeamMateTaskFromMcp(id, taskId) };
+    return { task: await server.dispatcherService.getTeamMateTask(id, taskId) };
   },
 
   'mcp.teammate.pull': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     const taskId = optionalString(params, 'task_id');
-    const result = await server.pullTeamMateResultFromMcp(
+    const result = await server.dispatcherService.pullTeamMateResult(
       id,
       taskId !== null ? taskId : undefined,
     );

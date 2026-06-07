@@ -130,6 +130,17 @@ see its `verbs/` (spawn/resume/history), `persistence/history-index.ts` and
 - `server.ts` loses the ~12 `*TeamMate*FromMcp` methods, channel `*FromMcp`
   handlers, and hard-spliced MCP injection — they move into the Dispatcher
   Service and the channel/runtime plugins.
+- The Dispatcher Service extraction starts with teammate orchestration:
+  `server.ts` wires a `DispatcherService`, admin/MCP handlers validate params
+  and delegate to it, and the service owns scheduling authority, ledgers,
+  wait-broker notifications, worker execution, completion delivery, logs,
+  capability probing, and worker reaping. Worker runtime construction stays in
+  a separate dispatcher-service factory module so the service does not absorb
+  runtime-specific details.
+- This extraction intentionally keeps the existing TeamMate worker provider
+  tree until the agent-centric TeamMate replacement lands. The old
+  `server.ts` orchestration path is removed in this step; deleting
+  `/packages/dreamux/src/teammate/worker/` remains a separate migration step.
 - Hard-coded `BUILTIN_*_REF` branching across core (`server.ts`,
   `/packages/dreamux/src/runtime/config.ts`,
   `/packages/dreamux/src/cli/doctor.ts`) is expected to shrink as core consumes
