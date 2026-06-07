@@ -76,9 +76,16 @@ import { createAdminSocketServer, type AdminSocketServer } from './admin/socket.
 import { RestartIntentConsumer } from './daemon/restart-intent.js';
 import {
   NestedTeamMateDispatchError,
+  legacyTaskStatus,
+  resolveTeammateTarget,
+  TEAMMATE_INPUT_MODES,
+  TEAMMATE_TARGET_MODES,
+  type TeamMateDeliveryStatus,
+  type TeamMateInputMode,
+  type TeamMateLifecycleStatus,
   type TeamMateScheduleCallerKind,
+  type TeamMateTargetMode,
   type TeamMateTaskRecord,
-  type TeamMateTaskStatus,
   TeamMateTaskLedger,
 } from './teammate/ledger.js';
 import { teammateMcpServerDescriptor } from './teammate/mcp-config.js';
@@ -86,6 +93,17 @@ import {
   TeamMateDeliveryService,
   type TeamMateDeliveryReport,
 } from './teammate/delivery.js';
+import {
+  awaitTeamMateCompletion,
+  clampWaitTimeout,
+  isWaitToken,
+  lastEventId,
+  TEAMMATE_WAIT_DEFAULT_MS,
+  TEAMMATE_WAIT_DEFAULT_UNTIL,
+  TEAMMATE_WAIT_MAX_MS,
+  TeamMateWaitBroker,
+  type TeamMateWaitToken,
+} from './teammate/wait-broker.js';
 
 export const RECEIVED_REACTION_EMOJI = 'Get';
 export const IN_PROGRESS_REACTION_EMOJI = 'OnIt';
@@ -275,28 +293,121 @@ export interface ServerTeamMateCompletionInput {
 
 export interface ServerTeamMateTaskSummary {
   task_id: string;
-  status: TeamMateTaskStatus;
+  /** Back-compat projection of lifecycle + delivery into the v1 status enum. */
+  status: string;
+  lifecycle_status: TeamMateLifecycleStatus;
+  delivery_status: TeamMateDeliveryStatus;
   title: string;
   teammate_id: string | null;
+  provider_ref: string | null;
   created_at: number;
   updated_at: number;
+  last_event_id: number;
   delivery_attempts: number;
   has_result: boolean;
 }
 
 export interface ServerTeamMatePullResult {
   task_id: string;
-  status: TeamMateTaskStatus;
+  status: string;
+  lifecycle_status: TeamMateLifecycleStatus;
+  delivery_status: TeamMateDeliveryStatus;
   outcome: 'completed' | 'failed';
   text: string;
   delivered: boolean;
   delivery_attempts: number;
 }
 
+export interface ServerMcpRunTeamMateTaskInput {
+  dispatcherId: string;
+  callerKind: TeamMateScheduleCallerKind;
+  title: string;
+  prompt: string;
+  targetPath: string;
+  teammateId?: string;
+  intent?: string;
+  targetMode?: TeamMateTargetMode;
+  providerRef?: string;
+  operationId?: string;
+}
+
+export interface ServerMcpExecuteTeamMateTaskInput {
+  dispatcherId: string;
+  taskId: string;
+  providerRef?: string;
+  targetMode?: TeamMateTargetMode;
+  operationId?: string;
+}
+
+export interface ServerMcpSendTeamMateInputInput {
+  dispatcherId: string;
+  taskId: string;
+  prompt: string;
+  mode?: TeamMateInputMode;
+  operationId?: string;
+}
+
+export interface ServerMcpAwaitTeamMateCompletionInput {
+  dispatcherId: string;
+  taskId: string;
+  afterEventId?: number;
+  until?: string[];
+  timeoutMs?: number;
+}
+
+/** Execution attempt outcome — no worker is wired in PR1, so always unavailable. */
+export interface ServerTeamMateExecutionResult {
+  status: 'provider_unavailable';
+  reason: string;
+  code: string;
+  retryable: boolean;
+}
+
+export interface ServerMcpRunTeamMateTaskResult {
+  task: ServerTeamMateTaskSummary;
+  execution: ServerTeamMateExecutionResult;
+}
+
+export interface ServerMcpSendTeamMateInputResult {
+  input_id: string;
+  mode: TeamMateInputMode;
+  status: 'queued';
+  after_event_id: number;
+  task: ServerTeamMateTaskSummary;
+}
+
+export interface ServerMcpAwaitTeamMateCompletionResult {
+  status: 'completed' | 'failed' | 'cancelled' | 'reached' | 'still_running';
+  task_id: string;
+  after_event_id: number;
+  task: ServerTeamMateTaskSummary | null;
+  result?: ServerTeamMatePullResult | null;
+}
+
+/** Worker capability advertisement for a built-in runtime (placeholder in PR1). */
+export interface ServerTeamMateProviderCapability {
+  provider_ref: string;
+  worker_available: boolean;
+  unsupported_reason: string;
+  modes: { steer: boolean; queue: boolean; interrupt: boolean };
+  resume: boolean;
+  logs: boolean;
+}
+
+export interface ServerTeamMateCapabilities {
+  execution_available: boolean;
+  wait: { default_ms: number; max_ms: number };
+  target_modes: TeamMateTargetMode[];
+  input_modes: TeamMateInputMode[];
+  default_input_mode: TeamMateInputMode;
+  providers: ServerTeamMateProviderCapability[];
+}
+
 export class Server {
   readonly repos: Repos;
   private readonly slots = new Map<string, DispatcherSlot>();
   private readonly teamMateLedgers = new Map<string, TeamMateTaskLedger>();
+  private readonly teamMateWaitBroker = new TeamMateWaitBroker();
   /**
    * PR #3 review #4: in-flight startDispatcher promises, keyed by id.
    * Two concurrent callers must await the same start, not race to spawn
@@ -358,6 +469,8 @@ export class Server {
     this.teamMateDelivery = new TeamMateDeliveryService({
       ledger: (dispatcherId) => this.teamMateLedger(dispatcherId),
       resolveRuntime: (dispatcherId) => this.getRuntime(dispatcherId),
+      notifyEvent: (dispatcherId, taskId) =>
+        this.teamMateWaitBroker.notify(dispatcherId, taskId),
       log: (level, message, fields) => this.log[level](fields ?? {}, message),
       ...(opts.teamMateDeliveryMaxAttempts !== undefined
         ? { maxAttempts: opts.teamMateDeliveryMaxAttempts }
@@ -886,12 +999,15 @@ export class Server {
     };
   }
 
+  /**
+   * Compatibility create-only tool (`schedule`): accepts a task into the ledger
+   * and returns immediately. It never starts a worker — the executable normal
+   * path is {@link runTeamMateTaskFromMcp}. (issue #126.)
+   */
   async scheduleTeamMateFromMcp(
     input: ServerMcpScheduleTeamMateInput,
   ): Promise<ServerMcpScheduleTeamMateResult> {
-    if (input.callerKind === 'teammate') {
-      throw new NestedTeamMateDispatchError();
-    }
+    this.assertTeamMateSchedulingAuthority(input.callerKind);
     const task = await this.teamMateLedger(input.dispatcherId).acceptTask({
       title: input.title,
       prompt: input.prompt,
@@ -900,6 +1016,7 @@ export class Server {
         ? { teammateId: input.teammateId }
         : {}),
     });
+    this.teamMateWaitBroker.notify(input.dispatcherId, task.task_id);
     this.log.info(
       {
         dispatcher_id: input.dispatcherId,
@@ -918,6 +1035,174 @@ export class Server {
   }
 
   /**
+   * Primary create-and-execute tool (`run_task`, issue #126). Creates a v2 task
+   * with a resolved local target, then attempts execution. No worker is wired in
+   * PR1, so the task is created durably and the execution sub-result reports
+   * `provider_unavailable`; the worker provider seam lands in a later slice.
+   */
+  async runTeamMateTaskFromMcp(
+    input: ServerMcpRunTeamMateTaskInput,
+  ): Promise<ServerMcpRunTeamMateTaskResult> {
+    this.assertTeamMateSchedulingAuthority(input.callerKind);
+    const target = resolveTeammateTarget(
+      input.targetPath,
+      this.mustDispatcherDir(input.dispatcherId),
+    );
+    const task = await this.teamMateLedger(input.dispatcherId).acceptTask({
+      title: input.title,
+      prompt: input.prompt,
+      callerKind: input.callerKind,
+      target,
+      origin: 'dispatcher',
+      ...(input.teammateId !== undefined ? { teammateId: input.teammateId } : {}),
+      ...(input.intent !== undefined ? { intent: input.intent } : {}),
+      ...(input.targetMode !== undefined ? { targetMode: input.targetMode } : {}),
+      ...(input.providerRef !== undefined
+        ? { providerRef: input.providerRef }
+        : {}),
+      ...(input.operationId !== undefined
+        ? { operationId: input.operationId }
+        : {}),
+    });
+    this.teamMateWaitBroker.notify(input.dispatcherId, task.task_id);
+    this.log.info(
+      {
+        dispatcher_id: input.dispatcherId,
+        task_id: task.task_id,
+        caller_kind: input.callerKind,
+      },
+      'teammate task run requested',
+    );
+    return {
+      task: toTeamMateTaskSummary(task),
+      execution: teamMateProviderUnavailable(),
+    };
+  }
+
+  /**
+   * Start or retry execution for an already-accepted task (`execute_task`,
+   * issue #126). No worker is wired in PR1, so this is a read-only stub that
+   * returns `provider_unavailable` with the current snapshot — it does not fake
+   * a running worker.
+   */
+  async executeTeamMateTaskFromMcp(
+    input: ServerMcpExecuteTeamMateTaskInput,
+  ): Promise<ServerMcpRunTeamMateTaskResult> {
+    const task = await this.teamMateLedger(input.dispatcherId).getTask(
+      input.taskId,
+    );
+    if (task === null) {
+      throw new Error(`TeamMate task ${JSON.stringify(input.taskId)} does not exist`);
+    }
+    return {
+      task: toTeamMateTaskSummary(task),
+      execution: teamMateProviderUnavailable(),
+    };
+  }
+
+  /**
+   * Record a follow-up input to a steerable task session (`send_input`, issue
+   * #126). The default mode is `steer`; without a worker the input is queued in
+   * the ledger and waits for a future worker. Returns the new input id and the
+   * `after_event_id` cursor for waiting.
+   */
+  async sendTeamMateInputFromMcp(
+    input: ServerMcpSendTeamMateInputInput,
+  ): Promise<ServerMcpSendTeamMateInputResult> {
+    const ledger = this.teamMateLedger(input.dispatcherId);
+    const { task, input: recorded } = await ledger.appendInput(input.taskId, {
+      text: input.prompt,
+      mode: input.mode ?? 'steer',
+    });
+    this.teamMateWaitBroker.notify(input.dispatcherId, task.task_id);
+    return {
+      input_id: recorded.input_id,
+      mode: recorded.mode,
+      status: 'queued',
+      after_event_id: lastEventId(task),
+      task: toTeamMateTaskSummary(task),
+    };
+  }
+
+  /**
+   * Server-owned bounded wait for a task to reach a terminal state without shell
+   * polling (`await_completion`, issue #126). Timeout is a successful
+   * `still_running` result with the latest snapshot, never a tool failure. The
+   * ledger is the source of truth; the caller resumes with `after_event_id`.
+   */
+  async awaitTeamMateCompletionFromMcp(
+    input: ServerMcpAwaitTeamMateCompletionInput,
+  ): Promise<ServerMcpAwaitTeamMateCompletionResult> {
+    const ledger = this.teamMateLedger(input.dispatcherId);
+    const until = parseWaitUntil(input.until);
+    const afterEventId =
+      input.afterEventId !== undefined && Number.isFinite(input.afterEventId)
+        ? Math.max(0, Math.floor(input.afterEventId))
+        : 0;
+    const outcome = await awaitTeamMateCompletion(this.teamMateWaitBroker, {
+      dispatcherId: input.dispatcherId,
+      taskId: input.taskId,
+      afterEventId,
+      until,
+      timeoutMs: clampWaitTimeout(input.timeoutMs),
+      loadTask: () => ledger.getTask(input.taskId),
+    });
+    if (outcome.status === 'not_found') {
+      throw new Error(
+        `TeamMate task ${JSON.stringify(input.taskId)} does not exist`,
+      );
+    }
+    if (outcome.status === 'still_running') {
+      return {
+        status: 'still_running',
+        task_id: input.taskId,
+        after_event_id: outcome.last_event_id,
+        task: toTeamMateTaskSummary(outcome.task),
+      };
+    }
+    const task = outcome.task;
+    const status: ServerMcpAwaitTeamMateCompletionResult['status'] =
+      task.lifecycle_status === 'completed' ||
+      task.lifecycle_status === 'failed' ||
+      task.lifecycle_status === 'cancelled'
+        ? task.lifecycle_status
+        : 'reached';
+    return {
+      status,
+      task_id: input.taskId,
+      after_event_id: outcome.last_event_id,
+      task: toTeamMateTaskSummary(task),
+      result: task.result === null ? null : toTeamMatePullResult(task),
+    };
+  }
+
+  /**
+   * Read-only capability advertisement (`get_capabilities`, issue #126). Lists
+   * both built-in runtimes truthfully — worker execution is not implemented yet,
+   * so every provider reports `worker_available: false`.
+   */
+  getTeamMateCapabilitiesFromMcp(): ServerTeamMateCapabilities {
+    const providers: ServerTeamMateProviderCapability[] =
+      this.agentRuntimeProviders.list().map((provider) => ({
+        provider_ref: provider.ref,
+        worker_available: false,
+        unsupported_reason:
+          'TeamMate worker execution is not implemented yet (issue #126)',
+        modes: { steer: false, queue: false, interrupt: false },
+        resume: false,
+        logs: false,
+      }));
+    return {
+      execution_available: false,
+      wait: { default_ms: TEAMMATE_WAIT_DEFAULT_MS, max_ms: TEAMMATE_WAIT_MAX_MS },
+      target_modes: [...TEAMMATE_TARGET_MODES],
+      input_modes: [...TEAMMATE_INPUT_MODES],
+      default_input_mode: 'steer',
+      providers,
+    };
+  }
+
+  /**
    * Record a TeamMate task's final result and deliver it into the dispatcher
    * context with bounded retry (issue #110 PR8). The result is persisted before
    * delivery, so a downed runtime ends in `delivery_failed` with the result
@@ -927,12 +1212,38 @@ export class Server {
   async reportTeamMateCompletion(
     input: ServerTeamMateCompletionInput,
   ): Promise<TeamMateDeliveryReport> {
+    // The delivery service wakes await_completion waiters via notifyEvent the
+    // instant the result is recorded and on each terminal delivery transition.
     return this.teamMateDelivery.reportCompletion({
       dispatcherId: input.dispatcherId,
       taskId: input.taskId,
       outcome: input.outcome,
       finalText: input.finalText,
     });
+  }
+
+  /**
+   * The scheduling-authority boundary (issue #126). Ordinary TeamMates cannot
+   * nested-dispatch; a future Team leader's scheduling authority will be granted
+   * here as an explicit role/capability, not by relaxing the ledger backstop.
+   */
+  private assertTeamMateSchedulingAuthority(
+    callerKind: TeamMateScheduleCallerKind,
+  ): void {
+    if (callerKind === 'teammate') {
+      throw new NestedTeamMateDispatchError();
+    }
+  }
+
+  private mustDispatcherDir(dispatcherId: string): string {
+    const dir = this.repos.dispatchers.get(dispatcherId)?.codex_cwd ?? null;
+    if (dir === null || dir === '') {
+      throw new Error(
+        `dispatcher '${dispatcherId}' has no configured working directory; ` +
+          'a path target cannot be resolved',
+      );
+    }
+    return dir;
   }
 
   /** List a dispatcher's TeamMate tasks (corrupt files skipped, not fatal). */
@@ -972,14 +1283,7 @@ export class Server {
         ? await ledger.getTask(taskId)
         : await ledger.latestResultTask();
     if (task === null || task.result === null) return null;
-    return {
-      task_id: task.task_id,
-      status: task.status,
-      outcome: task.result.outcome,
-      text: task.result.text,
-      delivered: task.status === 'delivered',
-      delivery_attempts: task.delivery?.attempts ?? 0,
-    };
+    return toTeamMatePullResult(task);
   }
 
   private dreamuxMcpServerDescriptors(
@@ -1058,14 +1362,64 @@ function toTeamMateTaskSummary(
 ): ServerTeamMateTaskSummary {
   return {
     task_id: task.task_id,
-    status: task.status,
+    status: legacyTaskStatus(task),
+    lifecycle_status: task.lifecycle_status,
+    delivery_status: task.delivery_status,
     title: task.title,
     teammate_id: task.teammate_id,
+    provider_ref: task.provider_ref,
     created_at: task.created_at,
     updated_at: task.updated_at,
+    last_event_id: lastEventId(task),
     delivery_attempts: task.delivery?.attempts ?? 0,
     has_result: task.result !== null,
   };
+}
+
+function toTeamMatePullResult(
+  task: TeamMateTaskRecord,
+): ServerTeamMatePullResult {
+  if (task.result === null) {
+    throw new Error(
+      `TeamMate task ${JSON.stringify(task.task_id)} has no retained result`,
+    );
+  }
+  return {
+    task_id: task.task_id,
+    status: legacyTaskStatus(task),
+    lifecycle_status: task.lifecycle_status,
+    delivery_status: task.delivery_status,
+    outcome: task.result.outcome,
+    text: task.result.text,
+    delivered: task.delivery_status === 'delivered',
+    delivery_attempts: task.delivery?.attempts ?? 0,
+  };
+}
+
+/** The execution sub-result while no worker provider is wired (issue #126). */
+function teamMateProviderUnavailable(): ServerTeamMateExecutionResult {
+  return {
+    status: 'provider_unavailable',
+    reason: 'TeamMate worker execution is not implemented yet (issue #126)',
+    code: 'TEAMMATE_PROVIDER_UNAVAILABLE',
+    retryable: true,
+  };
+}
+
+/** Validate and default the `await_completion.until` token set (issue #126). */
+function parseWaitUntil(until: string[] | undefined): Set<TeamMateWaitToken> {
+  if (until === undefined) return new Set(TEAMMATE_WAIT_DEFAULT_UNTIL);
+  if (!Array.isArray(until) || until.length === 0) {
+    throw new Error('until must be a non-empty array of states');
+  }
+  const tokens = new Set<TeamMateWaitToken>();
+  for (const token of until) {
+    if (!isWaitToken(token)) {
+      throw new Error(`unsupported await_completion state: ${String(token)}`);
+    }
+    tokens.add(token);
+  }
+  return tokens;
 }
 
 async function setInboundReaction(

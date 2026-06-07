@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "TeamMate MCP parity PR1 (issue #126): API/ledger foundation and event/wait contract, no worker execution yet and no tm wrapping. Bump the TeamMate task ledger to v2 with separated lifecycle_status/delivery_status, a monotonic per-task event stream, a steerable inputs[] session, and close/runtime/target/provider_ref/intent/operation_id plus reserved Team Mode fields; v1 task files still load via lossless in-memory migration and only an unknown future version fails loud (no rebuild required). Add dispatcher-facing MCP tools run_task, execute_task, send_input, await_completion, and get_capabilities (existing schedule/list_tasks/get_task/pull_result stay compatible); without a worker the execution tools report provider_unavailable and send_input queues input. Add a server-owned bounded event/wait broker so await_completion returns a structured still_running on timeout instead of failing.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

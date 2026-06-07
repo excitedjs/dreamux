@@ -1575,10 +1575,11 @@ describe('dreamux MVP smoke', () => {
       ),
     ) as Record<string, unknown>;
     expect(taskFile).toMatchObject({
-      version: 1,
+      version: 2,
       task_id: result.task_id,
       dispatcher_id: 'flow',
-      status: 'accepted',
+      lifecycle_status: 'accepted',
+      delivery_status: 'none',
       title: 'Review task',
       prompt: 'Review the current change and report blockers.',
       teammate_id: 'reviewer-1',
@@ -1599,6 +1600,139 @@ describe('dreamux MVP smoke', () => {
     ).rejects.toMatchObject({
       code: 'TEAMMATE_NESTED_DISPATCH_REJECTED',
     });
+  });
+
+  it('mcp.teammate.run creates a task and reports execution unavailable (no worker yet)', async () => {
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      config: configWithDispatcher({ cwd: runtimeDir }),
+    });
+    await server.start();
+
+    const result = (await sendAdminRequest(
+      'mcp.teammate.run',
+      {
+        dispatcher_id: 'flow',
+        caller_kind: 'dispatcher',
+        title: 'Run task',
+        prompt: 'Investigate the failing test.',
+        target_path: '.',
+        target_mode: 'in_place',
+      },
+      { socketPath: join(runtimeDir, 'admin.sock') },
+    )) as {
+      task: Record<string, unknown>;
+      execution: { status: string; code: string; retryable: boolean };
+    };
+
+    expect(result.task).toMatchObject({
+      lifecycle_status: 'accepted',
+      delivery_status: 'none',
+      title: 'Run task',
+      last_event_id: 1,
+    });
+    // Public-safe response shaping: the task summary must not surface the local
+    // target path; it stays in the server-owned ledger only.
+    expect(result.task).not.toHaveProperty('target');
+    expect(JSON.stringify(result.task)).not.toContain(runtimeDir);
+    expect(result.execution).toMatchObject({
+      status: 'provider_unavailable',
+      code: 'TEAMMATE_PROVIDER_UNAVAILABLE',
+      retryable: true,
+    });
+
+    // The resolved target path is retained in the local ledger (local state).
+    const taskId = result.task['task_id'] as string;
+    const taskFile = JSON.parse(
+      await readFile(
+        join(dispatcherTeamMateTasksDir('flow'), `${taskId}.json`),
+        'utf8',
+      ),
+    ) as { target: { kind: string; path: string }; origin: string };
+    expect(taskFile.target.kind).toBe('path');
+    expect(taskFile.origin).toBe('dispatcher');
+  });
+
+  it('mcp.teammate.capabilities lists both built-in runtimes as worker-unavailable', async () => {
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      config: configWithDispatcher({ cwd: runtimeDir }),
+    });
+    await server.start();
+
+    const caps = (await sendAdminRequest(
+      'mcp.teammate.capabilities',
+      { dispatcher_id: 'flow' },
+      { socketPath: join(runtimeDir, 'admin.sock') },
+    )) as {
+      execution_available: boolean;
+      default_input_mode: string;
+      providers: Array<{ provider_ref: string; worker_available: boolean }>;
+    };
+
+    expect(caps.execution_available).toBe(false);
+    expect(caps.default_input_mode).toBe('steer');
+    const refs = caps.providers.map((p) => p.provider_ref).sort();
+    expect(refs).toContain('builtin:codex');
+    expect(refs).toContain('builtin:claude-code');
+    expect(caps.providers.every((p) => p.worker_available === false)).toBe(true);
+  });
+
+  it('await_completion wakes promptly when a completion is recorded mid-wait', async () => {
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      config: configWithDispatcher({ cwd: runtimeDir }),
+    });
+    await server.start();
+    const socketPath = join(runtimeDir, 'admin.sock');
+
+    const created = (await sendAdminRequest(
+      'mcp.teammate.run',
+      {
+        dispatcher_id: 'flow',
+        caller_kind: 'dispatcher',
+        title: 'Wait task',
+        prompt: 'Do work then report.',
+        target_path: '.',
+      },
+      { socketPath },
+    )) as { task: { task_id: string; last_event_id: number } };
+    const taskId = created.task.task_id;
+
+    // Register the wait first, then record a completion through the worker/
+    // operator ingest seam; the waiter must wake from the event, not its timeout.
+    const awaiting = sendAdminRequest(
+      'mcp.teammate.await',
+      {
+        dispatcher_id: 'flow',
+        task_id: taskId,
+        after_event_id: created.task.last_event_id,
+        timeout_ms: 3000,
+      },
+      { socketPath, timeoutMs: 9000 },
+    ) as Promise<{ status: string; result: { outcome: string } | null }>;
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await sendAdminRequest(
+      'mcp.teammate.complete',
+      {
+        dispatcher_id: 'flow',
+        task_id: taskId,
+        outcome: 'completed',
+        final_text: 'the work is done',
+      },
+      { socketPath },
+    );
+
+    const awaited = await awaiting;
+    expect(awaited.status).toBe('completed');
+    expect(awaited.result?.outcome).toBe('completed');
   });
 
   it('does NOT consume /introduce from a non-allowlisted sender (no trust, dropped by the gate)', async () => {

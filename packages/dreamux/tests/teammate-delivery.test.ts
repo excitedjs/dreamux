@@ -131,9 +131,9 @@ describe('TeamMate completion delivery', () => {
       finalText: 'the answer is 42',
     });
     const task = await ledger.getTask('tmtsk_1_a');
-    expect(task?.status).toBe('delivered');
+    expect(task?.delivery_status).toBe('delivered');
     expect(task?.result).toMatchObject({ outcome: 'completed', text: 'the answer is 42' });
-    expect(task?.history.map((h) => h.status)).toEqual([
+    expect(task?.events.map((e) => e.type)).toEqual([
       'accepted',
       'completed',
       'delivered',
@@ -158,7 +158,7 @@ describe('TeamMate completion delivery', () => {
     expect(report.status).toBe('delivered');
     expect(runtime.calls).toHaveLength(2);
     const task = await ledger.getTask('tmtsk_1_a');
-    expect(task?.status).toBe('delivered');
+    expect(task?.delivery_status).toBe('delivered');
     expect(task?.delivery?.attempts).toBe(2);
   });
 
@@ -177,7 +177,7 @@ describe('TeamMate completion delivery', () => {
     expect(report.status).toBe('delivery_failed');
     expect(runtime.calls).toHaveLength(2);
     const task = await ledger.getTask('tmtsk_1_a');
-    expect(task?.status).toBe('delivery_failed');
+    expect(task?.delivery_status).toBe('delivery_failed');
     expect(task?.delivery?.attempts).toBe(2);
     expect(task?.delivery?.last_error).toContain('down');
     // The whole point of the pull path: the result survives delivery failure.
@@ -197,7 +197,7 @@ describe('TeamMate completion delivery', () => {
 
     expect(report.status).toBe('delivery_failed');
     const task = await ledger.getTask('tmtsk_1_a');
-    expect(task?.status).toBe('delivery_failed');
+    expect(task?.delivery_status).toBe('delivery_failed');
     expect(task?.result?.text).toBe('kept safe');
     expect(task?.delivery?.last_error).toContain('not running');
   });
@@ -232,7 +232,7 @@ describe('TeamMate completion delivery', () => {
     expect(report.status).toBe('delivered');
     expect(runtime.calls[0]?.status).toBe('failed');
     const task = await ledger.getTask('tmtsk_1_a');
-    expect(task?.status).toBe('delivered');
+    expect(task?.delivery_status).toBe('delivered');
     expect(task?.result?.outcome).toBe('failed');
   });
 

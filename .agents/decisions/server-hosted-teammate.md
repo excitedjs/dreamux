@@ -96,6 +96,76 @@ top of PR7:
   dispatcher model cannot fake a completion. Autonomous worker execution and
   cross-process redelivery-on-recovery remain follow-up work.
 
+## Issue #126: TeamMate MCP parity — PR1 (API/ledger foundation + event/wait)
+
+Issue #126 makes the TeamMate MCP the executable normal path (beyond accept +
+deliver). PR1 lands the contract foundation only — **no worker execution yet,
+and the MCP never wraps or shells out to `tm`**.
+
+Ledger task record bumped to **v2** (`/packages/dreamux/src/teammate/ledger.ts`):
+
+- Lifecycle and delivery are separated into canonical `lifecycle_status`
+  (`accepted|queued|running|completed|failed|cancelled`) and `delivery_status`
+  (`none|pending|delivered|delivery_failed`). The old single `status` field is
+  no longer persisted; it survives only as a back-compat projection
+  (`legacyTaskStatus`) at the server/MCP read boundary.
+- New fields: a monotonic per-task event stream `events[]` (`event_id` from 1 —
+  the source of truth for the wait broker), a steerable session `inputs[]`,
+  `close` metadata, and `runtime`/`target`/`target_mode`/`provider_ref`/
+  `intent`/`operation_id` placeholders.
+- The four delivery `record*` method signatures are unchanged, so
+  `/packages/dreamux/src/teammate/delivery.ts` is untouched (it branches on
+  `result.outcome`, never on `status`).
+- **v1 read compatibility:** the reader migrates v1 (issue #110 PR7/PR8) records
+  in memory losslessly (lifecycle/delivery/events derived from the old
+  `status`/`result`/`history`) and fails loud only on an unknown future version
+  (`> 2`).
+- `operation_id` gives best-effort create idempotency (ledger scan; a
+  cross-process index is deferred).
+
+MCP / admin surface (`/packages/dreamux/src/mcp/teammate-mcp.ts`,
+`/packages/dreamux/src/admin/methods.ts`, `/packages/dreamux/src/server.ts`):
+
+- Existing `schedule`, `list_tasks`, `get_task`, `pull_result` stay compatible.
+- New tools: `run_task` (create-and-execute normal path), `execute_task`,
+  `send_input` (default mode `steer`; `queue`/`interrupt` explicit),
+  `await_completion`, and read-only `get_capabilities`. With no worker wired,
+  `run_task`/`execute_task` create/return but report `provider_unavailable`;
+  `send_input` queues into `inputs[]`; `get_capabilities` lists both built-in
+  runtimes (`builtin:codex`, `builtin:claude-code`) as worker-unavailable — PR1
+  is not Codex-only.
+
+Event/wait broker (`/packages/dreamux/src/teammate/wait-broker.ts`):
+
+- Server-owned waiters keyed by dispatcher+task, woken after every ledger
+  mutation. Race-safe: the ticket is armed before each ledger read, so a notify
+  between read and wait is never lost.
+- The wait is **bounded** (default 5s, hard max 30s); a timeout returns a
+  structured `still_running` result with `after_event_id` to resume, never a
+  tool error. The admin **server** has no idle timeout, but the admin **client**
+  default is 10s, so the shim raises its client timeout to
+  `waitMs + buffer` for `await_completion` only.
+
+Target policy (owner decision): `target.path` is first-class and required for
+`run_task`; absolute and relative paths are both accepted, relative resolves
+against the dispatcher directory (`codex_cwd`), and the result is lexically
+canonicalized and confined under that directory. Paths are local state and must
+stay out of public artifacts; task summaries omit the path (realpath/symlink
+hardening is deferred to the worker slice).
+
+Team Mode reservation (owner decision — **reserved, not implemented in PR1**):
+the record carries nullable `team` (`team_id`/`epic_id`/`role`/
+`leader_task_id`), `origin`, and `branch` fields so a future Team (leader +
+authors + reviewer over an Epic) can be added additively. The scheduling
+authority boundary is `Server.assertTeamMateSchedulingAuthority`: ordinary
+TeamMates still cannot nested-dispatch; a future leader's authority will be an
+explicit role/capability there, never a relaxed ledger backstop.
+
+Deferred to later #126 slices: real Codex/Claude worker execution and the
+worker provider seam; `cancel_task`/`resume_task`/`get_logs`; standalone
+`history`/`get_status` and `list_tasks` filters; startup redelivery/orphan
+reconciliation; log redaction layer.
+
 ## Consequences
 
 - The old "Dreamux never owns teammate state" decision is superseded.

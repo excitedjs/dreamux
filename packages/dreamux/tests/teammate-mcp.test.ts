@@ -119,7 +119,17 @@ describe('teammate-mcp stdio shim', () => {
     writeJson(input, { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
     const tools = await reader.next() as { result: { tools: Array<{ name: string }> } };
     const names = tools.result.tools.map((tool) => tool.name);
-    expect(names).toEqual(['schedule', 'list_tasks', 'get_task', 'pull_result']);
+    expect(names).toEqual([
+      'schedule',
+      'run_task',
+      'execute_task',
+      'send_input',
+      'await_completion',
+      'get_capabilities',
+      'list_tasks',
+      'get_task',
+      'pull_result',
+    ]);
     // Completion ingest is NOT a dispatcher-facing MCP tool, so a dispatcher
     // model cannot fake a TeamMate completion.
     expect(names).not.toContain('complete');
@@ -413,6 +423,179 @@ describe('teammate-mcp stdio shim', () => {
     const stdout = rawLines.join('\n');
     for (const message of logMessages) {
       expect(stdout).not.toContain(message);
+    }
+  });
+
+  it('forwards run_task with caller kind and a flattened target path', async () => {
+    const admin = await startFakeAdminServer((request) => ({
+      id: request.id,
+      ok: true,
+      result: {
+        task: { task_id: 'tmtsk_1_run', lifecycle_status: 'accepted' },
+        execution: { status: 'provider_unavailable' },
+      },
+    }));
+    try {
+      const input = new PassThrough();
+      const output = new PassThrough();
+      const reader = new JsonLineReader(output);
+      const run = runTeamMateMcp({
+        dispatcherId: 'dispatcher-a',
+        callerKind: 'dispatcher',
+        adminSocketPath: admin.socketPath,
+        input,
+        output,
+        log: () => {},
+      });
+
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'run_task',
+          arguments: {
+            title: 'Run it',
+            prompt: 'do the work',
+            target: { kind: 'path', path: 'sub/repo' },
+            target_mode: 'in_place',
+            operation_id: 'op-1',
+          },
+        },
+      });
+
+      expect(await reader.next()).toMatchObject({
+        id: 1,
+        result: {
+          structuredContent: {
+            execution: { status: 'provider_unavailable' },
+          },
+        },
+      });
+      expect(admin.requests[0]).toEqual({
+        id: expect.any(String) as string,
+        method: 'mcp.teammate.run',
+        params: {
+          dispatcher_id: 'dispatcher-a',
+          caller_kind: 'dispatcher',
+          title: 'Run it',
+          prompt: 'do the work',
+          target_path: 'sub/repo',
+          target_mode: 'in_place',
+          operation_id: 'op-1',
+        },
+      });
+
+      input.end();
+      await run;
+    } finally {
+      await admin.close();
+    }
+  });
+
+  it('forwards await_completion and surfaces a still_running timeout result', async () => {
+    const admin = await startFakeAdminServer((request) => ({
+      id: request.id,
+      ok: true,
+      result: {
+        status: 'still_running',
+        task_id: 'tmtsk_1_run',
+        after_event_id: 3,
+        task: { lifecycle_status: 'running' },
+      },
+    }));
+    try {
+      const input = new PassThrough();
+      const output = new PassThrough();
+      const reader = new JsonLineReader(output);
+      const run = runTeamMateMcp({
+        dispatcherId: 'dispatcher-a',
+        callerKind: 'dispatcher',
+        adminSocketPath: admin.socketPath,
+        input,
+        output,
+        log: () => {},
+      });
+
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'await_completion',
+          arguments: { task_id: 'tmtsk_1_run', after_event_id: 1, timeout_ms: 50 },
+        },
+      });
+
+      expect(await reader.next()).toMatchObject({
+        id: 1,
+        result: {
+          structuredContent: { status: 'still_running', after_event_id: 3 },
+        },
+      });
+      expect(admin.requests[0]).toEqual({
+        id: expect.any(String) as string,
+        method: 'mcp.teammate.await',
+        params: {
+          dispatcher_id: 'dispatcher-a',
+          task_id: 'tmtsk_1_run',
+          after_event_id: 1,
+          timeout_ms: 50,
+        },
+      });
+
+      input.end();
+      await run;
+    } finally {
+      await admin.close();
+    }
+  });
+
+  it('defaults send_input to no explicit mode and forwards it as given', async () => {
+    const admin = await startFakeAdminServer((request) => ({
+      id: request.id,
+      ok: true,
+      result: { input_id: 'input_1', mode: 'queue', status: 'queued' },
+    }));
+    try {
+      const input = new PassThrough();
+      const output = new PassThrough();
+      const reader = new JsonLineReader(output);
+      const run = runTeamMateMcp({
+        dispatcherId: 'dispatcher-a',
+        callerKind: 'dispatcher',
+        adminSocketPath: admin.socketPath,
+        input,
+        output,
+        log: () => {},
+      });
+
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'send_input',
+          arguments: { task_id: 'tmtsk_1_run', prompt: 'also lint', mode: 'queue' },
+        },
+      });
+
+      await reader.next();
+      expect(admin.requests[0]).toEqual({
+        id: expect.any(String) as string,
+        method: 'mcp.teammate.send_input',
+        params: {
+          dispatcher_id: 'dispatcher-a',
+          task_id: 'tmtsk_1_run',
+          prompt: 'also lint',
+          mode: 'queue',
+        },
+      });
+
+      input.end();
+      await run;
+    } finally {
+      await admin.close();
     }
   });
 });

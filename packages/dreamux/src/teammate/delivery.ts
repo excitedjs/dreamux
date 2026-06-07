@@ -41,6 +41,13 @@ export interface TeamMateDeliveryServiceDeps {
   backoffMs?: (attempt: number) => number;
   /** Sleep seam (default real timer). */
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * Wake the event/wait broker (issue #126) the instant a ledger event lands —
+   * after the result is recorded and after each terminal delivery transition —
+   * so an `await_completion` waiter does not have to wait out the delivery retry
+   * loop before it sees `completed`/`failed`.
+   */
+  notifyEvent?: (dispatcherId: string, taskId: string) => void;
   log?: (
     level: 'info' | 'warn' | 'error',
     message: string,
@@ -88,6 +95,8 @@ export class TeamMateDeliveryService {
       text: input.finalText,
       ...(input.now !== undefined ? { now: input.now } : {}),
     });
+    // The terminal lifecycle event is durable now; wake waiters before delivery.
+    this.deps.notifyEvent?.(input.dispatcherId, input.taskId);
     return this.deliver(input.dispatcherId, input.taskId);
   }
 
@@ -117,6 +126,7 @@ export class TeamMateDeliveryService {
       const failure = await this.attemptOnce(dispatcherId, envelope);
       if (failure === null) {
         const delivered = await ledger.recordDelivered(taskId);
+        this.deps.notifyEvent?.(dispatcherId, taskId);
         this.deps.log?.('info', 'teammate completion delivered', {
           dispatcher_id: dispatcherId,
           task_id: taskId,
@@ -138,6 +148,7 @@ export class TeamMateDeliveryService {
     }
 
     const failed = await ledger.recordDeliveryFailed(taskId, { error: lastError });
+    this.deps.notifyEvent?.(dispatcherId, taskId);
     this.deps.log?.('error', 'teammate completion delivery failed; result is pull-able', {
       dispatcher_id: dispatcherId,
       task_id: taskId,
