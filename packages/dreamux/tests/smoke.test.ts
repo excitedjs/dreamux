@@ -28,6 +28,7 @@ import {
   IN_PROGRESS_REACTION_EMOJI,
   RECEIVED_REACTION_EMOJI,
   Server,
+  type WorkerBinaryProbe,
 } from '../src/server.js';
 import {
   CodexProcess,
@@ -179,6 +180,8 @@ function buildServer(opts: {
   codexRestartBackoffMaxMs?: number;
   channelLoggerFactory?: (dispatcherId: string) => DreamuxLogger;
   teamMateWorkerProviders?: TeamMateWorkerProviderCatalog;
+  workerBinaryProbe?: WorkerBinaryProbe;
+  codexBinPath?: string;
   teamMateDeliveryBackoffMs?: (attempt: number) => number;
   claudeCodeWorkerSessionFactory?: ClaudeCodeSessionFactory;
 }): Server {
@@ -188,6 +191,12 @@ function buildServer(opts: {
     skipBotSecret: opts.skipBotSecret ?? true,
     ...(opts.teamMateWorkerProviders !== undefined
       ? { teamMateWorkerProviders: opts.teamMateWorkerProviders }
+      : {}),
+    ...(opts.workerBinaryProbe !== undefined
+      ? { workerBinaryProbe: opts.workerBinaryProbe }
+      : {}),
+    ...(opts.codexBinPath !== undefined
+      ? { codexBinPath: opts.codexBinPath }
       : {}),
     ...(opts.claudeCodeWorkerSessionFactory !== undefined
       ? { claudeCodeWorkerSessionFactory: opts.claudeCodeWorkerSessionFactory }
@@ -1743,6 +1752,11 @@ describe('dreamux MVP smoke', () => {
       fake,
       bot,
       config: configWithDispatcher({ cwd: runtimeDir }),
+      // The default catalog wires the real workers; pin the binary probe to
+      // available so this advertisement test asserts the wired modes/refs
+      // deterministically rather than depending on the CI host's PATH (the
+      // probe itself is exercised by the unavailable-binary test below).
+      workerBinaryProbe: async () => ({ available: true, reason: '' }),
     });
     await server.start();
 
@@ -1781,6 +1795,118 @@ describe('dreamux MVP smoke', () => {
       queue: false,
       interrupt: false,
     });
+  });
+
+  it('mcp.teammate.capabilities reports a wired worker as unavailable when its binary is missing (issue #126 PR7)', async () => {
+    // Installed-state blocker: a worker is wired (default catalog) but its
+    // binary cannot be started in the service environment (here `claude` is
+    // missing while `codex` is present). The advertisement must not claim the
+    // unstartable worker is available — it must report worker_available:false
+    // with a reason, so the dispatcher does not route to a worker that will
+    // immediately provider_unavailable on spawn.
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      config: configWithDispatcher({ cwd: runtimeDir }),
+      workerBinaryProbe: async (ref) =>
+        ref === 'builtin:claude-code'
+          ? { available: false, reason: "worker binary 'claude' was not found on the dispatcher service PATH" }
+          : { available: true, reason: '' },
+    });
+    await server.start();
+
+    const caps = (await sendAdminRequest(
+      'mcp.teammate.capabilities',
+      { dispatcher_id: 'flow' },
+      { socketPath: join(runtimeDir, 'admin.sock') },
+    )) as {
+      execution_available: boolean;
+      providers: Array<{
+        provider_ref: string;
+        worker_available: boolean;
+        unsupported_reason: string;
+      }>;
+    };
+
+    const codex = caps.providers.find((p) => p.provider_ref === 'builtin:codex');
+    const claudeCode = caps.providers.find(
+      (p) => p.provider_ref === 'builtin:claude-code',
+    );
+    // Codex resolves -> available; claude-code missing -> unavailable with a reason.
+    expect(codex?.worker_available).toBe(true);
+    expect(claudeCode?.worker_available).toBe(false);
+    expect(claudeCode?.unsupported_reason).toContain('was not found');
+    // One worker still resolves, so execution is available overall.
+    expect(caps.execution_available).toBe(true);
+  });
+
+  it('default binary probe resolves codex and reports claude-code unavailable end-to-end (issue #126 PR7)', async () => {
+    // Exercises the REAL defaultWorkerBinaryProbe wiring (NO injected probe):
+    // codex resolves via an absolute codexBinPath; `claude` is absent from a
+    // stripped service PATH, so claude-code advertises unavailable. This is the
+    // installed-state composition the stubbed-probe tests above cannot cover.
+    // The advertisement reads the catalog + probe directly, so no dispatcher
+    // process (and no real codex spawn) is needed — call the server method.
+    const savedPath = process.env['PATH'];
+    const emptyBinDir = mkdtempSync(join(tmpdir(), 'dreamux-emptybin-'));
+    process.env['PATH'] = emptyBinDir;
+    try {
+      server = buildServer({
+        runtimeDir,
+        fake,
+        bot,
+        config: configWithDispatcher({ cwd: runtimeDir }),
+        // Absolute path → resolves regardless of PATH; the running node binary
+        // is guaranteed present and executable.
+        codexBinPath: process.execPath,
+      });
+
+      const caps = await server.getTeamMateCapabilitiesFromMcp();
+      const codex = caps.providers.find(
+        (p) => p.provider_ref === 'builtin:codex',
+      );
+      const claudeCode = caps.providers.find(
+        (p) => p.provider_ref === 'builtin:claude-code',
+      );
+      expect(codex?.worker_available).toBe(true);
+      expect(claudeCode?.worker_available).toBe(false);
+      expect(claudeCode?.unsupported_reason).toContain('was not found');
+      expect(caps.execution_available).toBe(true);
+    } finally {
+      if (savedPath === undefined) delete process.env['PATH'];
+      else process.env['PATH'] = savedPath;
+      rmSync(emptyBinDir, { recursive: true, force: true });
+    }
+  });
+
+  it('mcp.teammate.capabilities reports execution unavailable when no worker binary resolves (issue #126 PR7)', async () => {
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      config: configWithDispatcher({ cwd: runtimeDir }),
+      // Neither built-in binary resolves in this environment.
+      workerBinaryProbe: async () => ({
+        available: false,
+        reason: 'worker binary was not found on the dispatcher service PATH',
+      }),
+    });
+    await server.start();
+
+    const caps = (await sendAdminRequest(
+      'mcp.teammate.capabilities',
+      { dispatcher_id: 'flow' },
+      { socketPath: join(runtimeDir, 'admin.sock') },
+    )) as {
+      execution_available: boolean;
+      providers: Array<{ provider_ref: string; worker_available: boolean }>;
+    };
+
+    expect(caps.execution_available).toBe(false);
+    for (const p of caps.providers) {
+      expect(p.worker_available).toBe(false);
+    }
   });
 
   it('mcp.teammate.capabilities reflects an injected worker provider as available', async () => {
@@ -2201,6 +2327,10 @@ describe('dreamux MVP smoke', () => {
       bot,
       config: { ...BUILT_IN_DEFAULTS, dispatchers: [claudeCodeDispatcher] },
       teamMateDeliveryBackoffMs: () => 0,
+      // Assert the Codex worker is advertised available regardless of the
+      // dispatcher's own runtime; pin the probe so it does not depend on the
+      // CI host having `codex` on PATH.
+      workerBinaryProbe: async () => ({ available: true, reason: '' }),
     });
     // Do NOT start() — that would spawn the claude-code runtime. The worker
     // catalog, ledger, and dispatcher rows are wired in the constructor, so the
@@ -2220,7 +2350,7 @@ describe('dreamux MVP smoke', () => {
 
     // Capabilities reports the default Codex worker as available regardless of
     // the dispatcher's own (claude-code) runtime.
-    const caps = server.getTeamMateCapabilitiesFromMcp();
+    const caps = await server.getTeamMateCapabilitiesFromMcp();
     const codex = caps.providers.find((p) => p.provider_ref === 'builtin:codex');
     expect(codex?.worker_available).toBe(true);
     expect(caps.execution_available).toBe(true);

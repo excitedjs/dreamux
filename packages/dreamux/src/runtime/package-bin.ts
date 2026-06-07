@@ -1,4 +1,5 @@
-import { dirname, join, resolve } from 'node:path';
+import { access, constants } from 'node:fs/promises';
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -29,6 +30,39 @@ export function dispatcherProcessEnv(
   };
   delete env['CODEX_HOME'];
   return env;
+}
+
+/**
+ * Resolve an executable to an absolute path the same way a shell would, using
+ * the supplied `PATH` — async (the `n/no-sync` gate bans the sync `fs` calls a
+ * `which` shim would use). A `bin` that already contains a path separator is
+ * checked directly; a bare name is searched across `env.PATH` entries. Returns
+ * the first executable match, or `null` when nothing resolves.
+ *
+ * This proves *resolvability* (an executable file exists on PATH), the exact
+ * signal behind a `spawn <bin> ENOENT` and an empty `command -v <bin>`. It does
+ * NOT prove a successful start (auth, arch, or a broken binary can still fail),
+ * so callers keep the spawn-time failure as the backstop.
+ */
+export async function resolveExecutableOnPath(
+  bin: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string | null> {
+  if (bin === '') return null;
+  const candidates =
+    bin.includes(sep) || bin.includes('/')
+      ? [isAbsolute(bin) ? bin : resolve(bin)]
+      : (env['PATH'] ?? '').split(':').flatMap((dir) => (dir === '' ? [] : [join(dir, bin)]));
+  for (const candidate of candidates) {
+    try {
+      await access(candidate, constants.X_OK);
+      return candidate;
+    } catch {
+      // Not executable / not present here — keep searching the remaining PATH
+      // entries; a fully unresolved bin returns null below.
+    }
+  }
+  return null;
 }
 
 function packageBinDirs(env: NodeJS.ProcessEnv): string[] {

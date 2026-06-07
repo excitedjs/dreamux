@@ -212,6 +212,7 @@ class CodexTeamMateWorkerProvider implements TeamMateWorkerProvider {
         threadId,
         handle,
         callbacks,
+        turnTimeoutMs: codexConfig.turn_timeout_ms,
         log: this.options.log,
       });
       // Hand ownership of the process/client to the session; the catch below
@@ -251,7 +252,25 @@ interface CodexWorkerSessionDeps {
   threadId: string;
   handle: TeamMateWorkerHandle;
   callbacks: TeamMateWorkerCallbacks;
+  /** Per-turn deadline (ms): a turn that never completes fails the task. */
+  turnTimeoutMs: number;
   log?: CodexWorkerLogger;
+}
+
+/**
+ * Self-contained failure message for a stalled worker turn (issue #126 PR7).
+ * The task is already `running`, so initialize + thread start + turn submission
+ * succeeded; the stall is in turn *execution*. Codex frames flow over the WS
+ * socket, not the stdout log, so an empty diagnostic log here is expected — the
+ * message itself, readable via get_task, is the diagnostic.
+ */
+function codexTurnTimeoutMessage(turnTimeoutMs: number): string {
+  return (
+    `codex worker turn did not complete within ${turnTimeoutMs}ms. The worker ` +
+    'reached running (initialize, thread start, and turn submission all ' +
+    'succeeded), so the stall is in turn execution — commonly Codex auth, ' +
+    'network, or model quota. Re-run after verifying the worker environment.'
+  );
 }
 
 /**
@@ -280,11 +299,24 @@ class CodexWorkerSession implements TeamMateWorkerSession {
     await this.deps.callbacks.onRunning(this.handle);
 
     const collector = subscribeTurnCollection(this.deps.client, this.deps.threadId);
-    void collector
-      .awaitTurn()
+    // Bound the turn: a worker that reaches running but whose turn never emits
+    // turn/completed (a post-start stall — auth/network/quota) must fail the
+    // task with a visible reason, not sit `running` forever (issue #126 PR7).
+    let deadline: ReturnType<typeof setTimeout> | null = null;
+    const timeout = new Promise<never>((_resolve, reject) => {
+      deadline = setTimeout(() => {
+        reject(new Error(codexTurnTimeoutMessage(this.deps.turnTimeoutMs)));
+      }, this.deps.turnTimeoutMs);
+      // Do not keep the event loop alive solely for this timer.
+      deadline.unref();
+    });
+    void Promise.race([collector.awaitTurn(), timeout])
       .then((turn) => this.complete(extractAssistantText(turn) ?? ''))
       .catch((err) => {
         void this.fail(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (deadline !== null) clearTimeout(deadline);
       });
     // A connection that drops before turn/completed is a real failure of a
     // now-running task (not a retryable start failure).

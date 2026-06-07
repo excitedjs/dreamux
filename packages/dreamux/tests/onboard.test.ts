@@ -204,6 +204,7 @@ describe('dreamux onboard', () => {
           extra_args: [],
           extra_env: {},
           initialize_timeout_ms: 10000,
+          turn_timeout_ms: 600000,
         },
       },
     }]);
@@ -559,6 +560,7 @@ describe('dreamux onboard', () => {
             extra_args: ['--model', 'local-default'],
             extra_env: {},
             initialize_timeout_ms: 25000,
+            turn_timeout_ms: 600000,
           },
         },
       },
@@ -585,6 +587,7 @@ describe('dreamux onboard', () => {
             extra_args: [],
             extra_env: {},
             initialize_timeout_ms: 10000,
+            turn_timeout_ms: 600000,
           },
         },
       },

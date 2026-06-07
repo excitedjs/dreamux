@@ -412,6 +412,43 @@ No config schema, persisted-format, or runtime-path change — `get_task_logs`
 reads the PR3/PR4 worker log paths; `cancel_task` reuses the PR1 `recordClose`
 path. Read/wait parity tools are unchanged.
 
+## Issue #126: TeamMate MCP parity — PR7 (installed-state fixes: honest capabilities + bounded Codex turn)
+
+Beta install-state validation surfaced two blockers that only appear in a real
+service environment, not in the fake-worker tests:
+
+- **`get_capabilities` lied about a worker whose binary cannot start.** A provider's
+  `capabilities()` returned a *static* `worker_available: true`; the missing-binary
+  case (`spawn claude ENOENT` when `claude` is absent) only surfaced at execute
+  time as `provider_unavailable`. PR7 adds a server-side binary probe to the
+  advertisement path only: `get_capabilities` resolves each built-in worker's
+  binary on the dispatcher service PATH (`resolveExecutableOnPath`, async — the
+  `n/no-sync` gate bans a sync `which`), and a wired-but-unresolvable worker
+  reports `worker_available: false` with a reason. `execution_available` is derived
+  from the probed rows (one source of truth, no skew). The probe is an injectable
+  `ServerOptions.workerBinaryProbe` seam so tests stay deterministic regardless of
+  the CI host PATH; an unknown/injected ref is reported available (its static caps
+  stand). `capabilities()` stays synchronous and the execute path is untouched —
+  it already turns ENOENT into a structured `provider_unavailable`. The probe
+  proves *resolvability* (the ENOENT signal), not a successful start; the
+  spawn-time failure remains the backstop for a binary that resolves but cannot run.
+
+- **A Codex worker turn could sit `running` forever.** The worker reached `running`
+  (initialize + thread start + turn submission all succeeded) but `awaitTurn` had
+  no deadline, so a turn that stalled in *execution* (auth, network, or model quota)
+  never terminated, and its diagnostic log was legitimately empty (Codex frames flow
+  over the WS socket, not the stdout log). PR7 adds `turn_timeout_ms` to
+  `DispatcherCodexConfig` (mirroring the `builtin:claude-code` `turn_timeout_ms`
+  from issue #120; default 600s), and the Codex worker session races the turn
+  against it. On expiry the task fails with a **self-contained** message — it states
+  what succeeded and that the stall is in turn execution — so `get_task` alone
+  diagnoses it without the empty log. This makes the stall *visible and bounded*; it
+  is not a fix for an underlying auth/network root cause (documented residual risk).
+
+Config note: `turn_timeout_ms` is an additive, defaulted field — old configs load
+unchanged (the parser defaults it), and `dreamux onboard` now writes it so a fresh
+config matches the parser's view. No persisted-format or runtime-path change.
+
 ## Consequences
 
 - The old "Dreamux never owns teammate state" decision is superseded.

@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Fix two TeamMate installed-state validation blockers (issue #126 PR7). (1) get_capabilities no longer claims a worker is available when its binary cannot be started in the dispatcher service environment: it now probes each built-in worker's binary on the service PATH and reports worker_available:false with a reason for a wired-but-unresolvable worker (the builtin:claude-code ENOENT case where `claude` is absent), with execution_available derived from the probed rows. The probe runs only on the advertisement path; the execute path already returned structured provider_unavailable on spawn. (2) A builtin:codex worker turn that reaches running but never completes (a stall in turn execution — auth, network, or model quota) is now bounded by a new turn_timeout_ms: on expiry the task fails with a self-contained message instead of sitting running forever with an empty diagnostic log. Config: turn_timeout_ms is added to the codex runtime config (dispatchers[].runtime.config.turn_timeout_ms), additive and defaulted to 600000ms, so existing configs load unchanged; `dreamux onboard` now writes it. No persisted-format or runtime-path change, and the tm fallback path is unchanged.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

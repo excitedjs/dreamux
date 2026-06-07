@@ -53,6 +53,8 @@ import {
   BUILTIN_CODEX_PROVIDER_REF,
   BUILTIN_FEISHU_PROVIDER_REF,
   BUILT_IN_DEFAULTS,
+  DEFAULT_CLAUDE_CODE_BIN,
+  DEFAULT_CODEX_BIN,
   defaultDispatcherClaudeCodeConfig,
   defaultDispatcherCodexConfig,
   dispatcherClaudeCodeConfig,
@@ -61,6 +63,10 @@ import {
   type DispatcherCodexConfig,
   type DreamuxConfig,
 } from './runtime/config.js';
+import {
+  dispatcherProcessEnv,
+  resolveExecutableOnPath,
+} from './runtime/package-bin.js';
 import {
   DispatcherStore,
   type DispatcherRow,
@@ -179,6 +185,13 @@ export interface ServerOptions {
    * accepted → running → completed/failed/cancelled orchestration.
    */
   teamMateWorkerProviders?: TeamMateWorkerProviderCatalog;
+  /**
+   * Probe a worker provider's binary resolvability for `get_capabilities`
+   * (issue #126 PR7). Defaults to resolving the built-in worker binaries on the
+   * dispatcher service PATH; tests inject a deterministic probe so the
+   * advertisement does not depend on the CI host having `codex` / `claude`.
+   */
+  workerBinaryProbe?: WorkerBinaryProbe;
   /** Max TeamMate completion delivery attempts before delivery_failed (tests). */
   teamMateDeliveryMaxAttempts?: number;
   /** TeamMate delivery backoff per attempt, ms (tests pass 0). */
@@ -487,6 +500,26 @@ export interface ServerTeamMateCapabilities {
   providers: ServerTeamMateProviderCapability[];
 }
 
+/** Whether a worker's configured binary can be resolved in the service env. */
+export interface TeamMateWorkerAvailability {
+  available: boolean;
+  /** Human-readable reason when `available` is false; empty otherwise. */
+  reason: string;
+}
+
+/**
+ * Probe whether the binary a worker provider would launch is resolvable in the
+ * dispatcher service environment (issue #126 PR7). `get_capabilities` consults
+ * it so the advertisement never claims a provider is available when its binary
+ * cannot be started — the installed-state bug where `builtin:claude-code`
+ * reported available while `claude` was absent. Injectable so tests stay
+ * deterministic regardless of the CI host's PATH. An unknown ref (an injected
+ * fake) is reported available so its static capabilities stand unprobed.
+ */
+export type WorkerBinaryProbe = (
+  providerRef: string,
+) => Promise<TeamMateWorkerAvailability>;
+
 export class Server {
   readonly repos: Repos;
   private readonly slots = new Map<string, DispatcherSlot>();
@@ -512,6 +545,7 @@ export class Server {
   private readonly agentRuntimeProviders: AgentRuntimeProviderCatalog;
   private readonly teamMateDelivery: TeamMateDeliveryService;
   private readonly teamMateWorkers: TeamMateWorkerProviderCatalog;
+  private readonly workerBinaryProbe: WorkerBinaryProbe;
   private readonly teamMateWorkerExecution: TeamMateWorkerExecutionService;
 
   constructor(opts: ServerOptions = {}) {
@@ -611,6 +645,8 @@ export class Server {
         ],
         defaultRef: BUILTIN_CODEX_PROVIDER_REF,
       });
+    this.workerBinaryProbe =
+      opts.workerBinaryProbe ?? ((ref) => this.defaultWorkerBinaryProbe(ref));
     this.teamMateWorkerExecution = new TeamMateWorkerExecutionService({
       ledger: (dispatcherId) => this.teamMateLedger(dispatcherId),
       workers: () => this.teamMateWorkers,
@@ -645,6 +681,39 @@ export class Server {
     const fromEnv = process.env['CODEX_HOST_CODEX_BIN'];
     if (fromEnv !== undefined && fromEnv !== '') return fromEnv;
     return dispatcherBin;
+  }
+
+  /**
+   * Default `get_capabilities` binary probe (issue #126 PR7): resolve a built-in
+   * worker's binary on the dispatcher service PATH the same way the worker would
+   * launch it (Codex honours the `CODEX_HOST_CODEX_BIN` override via
+   * `resolveCodexBinPath`). An unknown ref is reported available — an injected
+   * test/fake worker has no real binary to probe, so its static capabilities
+   * stand. This advertises *resolvability*; the worker's own spawn-time failure
+   * stays the backstop for a binary that resolves but cannot start.
+   */
+  private async defaultWorkerBinaryProbe(
+    providerRef: string,
+  ): Promise<TeamMateWorkerAvailability> {
+    let bin: string;
+    if (providerRef === BUILTIN_CODEX_PROVIDER_REF) {
+      bin = this.resolveCodexBinPath(DEFAULT_CODEX_BIN);
+    } else if (providerRef === BUILTIN_CLAUDE_CODE_PROVIDER_REF) {
+      bin = DEFAULT_CLAUDE_CODE_BIN;
+    } else {
+      return { available: true, reason: '' };
+    }
+    const resolved = await resolveExecutableOnPath(
+      bin,
+      dispatcherProcessEnv(process.env),
+    );
+    if (resolved !== null) return { available: true, reason: '' };
+    return {
+      available: false,
+      reason:
+        `worker binary '${bin}' was not found on the dispatcher service PATH; ` +
+        'install it (or set the binary/PATH for this runtime) before routing tasks here',
+    };
   }
 
   /**
@@ -1550,12 +1619,16 @@ export class Server {
    * Read-only capability advertisement (`get_capabilities`, issue #126). The
    * worker catalog is the source of truth: each built-in runtime is reported
    * with its worker capability looked up from the catalog (unavailable when the
-   * catalog has no worker for it — the production MVP), and any worker provider
-   * not also an agent runtime (e.g. an injected fake) is appended. With the
-   * default empty catalog, every provider is `worker_available: false` and
-   * `execution_available` is false, exactly as PR1.
+   * catalog has no worker for it), and any worker provider not also an agent
+   * runtime (e.g. an injected fake) is appended.
+   *
+   * PR7: a provider with a wired worker is also probed for binary resolvability
+   * in the dispatcher service environment, so a worker whose binary cannot be
+   * started (the installed-state `builtin:claude-code` ENOENT) reports
+   * `worker_available: false` with a reason rather than lying. `execution_available`
+   * is derived from the probed rows — one source of truth, no skew.
    */
-  getTeamMateCapabilitiesFromMcp(): ServerTeamMateCapabilities {
+  async getTeamMateCapabilitiesFromMcp(): Promise<ServerTeamMateCapabilities> {
     const workers = this.teamMateWorkers;
     const workerByRef = new Map(
       workers.list().map((worker) => [worker.ref, worker] as const),
@@ -1563,22 +1636,41 @@ export class Server {
     const providers: ServerTeamMateProviderCapability[] = [];
     const seen = new Set<string>();
     for (const runtime of this.agentRuntimeProviders.list()) {
-      providers.push(toProviderCapability(runtime.ref, workerByRef.get(runtime.ref)));
+      providers.push(
+        await this.toProviderCapabilityProbed(
+          runtime.ref,
+          workerByRef.get(runtime.ref),
+        ),
+      );
       seen.add(runtime.ref);
     }
     for (const worker of workers.list()) {
       if (seen.has(worker.ref)) continue;
-      providers.push(toProviderCapability(worker.ref, worker));
+      providers.push(await this.toProviderCapabilityProbed(worker.ref, worker));
       seen.add(worker.ref);
     }
     return {
-      execution_available: workers.hasAvailableProvider(),
+      execution_available: providers.some((p) => p.worker_available),
       wait: { default_ms: TEAMMATE_WAIT_DEFAULT_MS, max_ms: TEAMMATE_WAIT_MAX_MS },
       target_modes: [...TEAMMATE_TARGET_MODES],
       input_modes: [...TEAMMATE_INPUT_MODES],
       default_input_mode: 'steer',
       providers,
     };
+  }
+
+  /**
+   * Build one `get_capabilities` row, probing a wired worker's binary
+   * resolvability (issue #126 PR7). A ref with no wired worker keeps the
+   * worker-unavailable placeholder and is not probed (there is nothing to run).
+   */
+  private async toProviderCapabilityProbed(
+    ref: string,
+    worker: TeamMateWorkerProvider | undefined,
+  ): Promise<ServerTeamMateProviderCapability> {
+    if (worker === undefined) return toProviderCapability(ref, undefined, null);
+    const availability = await this.workerBinaryProbe(ref);
+    return toProviderCapability(ref, worker, availability);
   }
 
   /**
@@ -1808,12 +1900,17 @@ function toExecutionResult(
 
 /**
  * Build a provider capability row for `get_capabilities`. When the catalog has a
- * worker for the ref, its capabilities are reported; otherwise the ref is listed
- * as worker-unavailable (the production MVP for both built-in runtimes).
+ * worker for the ref, its static capabilities are reported, downgraded to
+ * unavailable when the binary probe (issue #126 PR7) could not resolve the
+ * worker's binary — so a wired-but-unstartable worker advertises
+ * `worker_available: false` with the probe's reason instead of lying. A ref with
+ * no wired worker is listed as worker-unavailable and is not probed (`availability`
+ * is null).
  */
 function toProviderCapability(
   ref: string,
   worker: TeamMateWorkerProvider | undefined,
+  availability: TeamMateWorkerAvailability | null,
 ): ServerTeamMateProviderCapability {
   if (worker === undefined) {
     return {
@@ -1827,10 +1924,14 @@ function toProviderCapability(
     };
   }
   const caps = worker.capabilities();
+  const binaryUnavailable = availability !== null && !availability.available;
+  const workerAvailable = caps.worker_available && !binaryUnavailable;
   return {
     provider_ref: ref,
-    worker_available: caps.worker_available,
-    unsupported_reason: caps.unsupported_reason,
+    worker_available: workerAvailable,
+    unsupported_reason: binaryUnavailable
+      ? availability.reason
+      : caps.unsupported_reason,
     modes: { ...caps.modes },
     resume: caps.resume,
     logs: caps.logs,

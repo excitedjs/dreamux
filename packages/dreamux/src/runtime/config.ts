@@ -70,7 +70,12 @@ export interface DispatcherFeishuConfig {
  * `bin` is the dispatcher's Codex binary path; the `CODEX_HOST_CODEX_BIN`
  * environment variable is a host-level override that takes precedence over it
  * (see `Server.resolveCodexBinPath`). `initialize_timeout_ms` is that
- * dispatcher's handshake timeout.
+ * dispatcher's handshake timeout. `turn_timeout_ms` bounds a single TeamMate
+ * worker turn (issue #126): if a per-task Codex app-server reaches `running`
+ * but its turn never emits `turn/completed` (a stall in turn execution —
+ * commonly auth, network, or model quota), the worker fails that task instead
+ * of leaving it `running` forever. It does not affect the dispatcher's own
+ * long-lived runtime, only per-task workers.
  */
 export interface DispatcherCodexConfig {
   bin: string;
@@ -79,6 +84,7 @@ export interface DispatcherCodexConfig {
   extra_args: string[];
   extra_env: Record<string, string>;
   initialize_timeout_ms: number;
+  turn_timeout_ms: number;
 }
 
 /**
@@ -135,6 +141,15 @@ export const ALLOWED_CLAUDE_CODE_PERMISSION_MODES = new Set([
 
 /** Default `dispatchers[].runtime.config.initialize_timeout_ms` (handshake timeout, ms). */
 export const DEFAULT_INITIALIZE_TIMEOUT_MS = 10_000;
+
+/**
+ * Default per-turn deadline for a `builtin:codex` TeamMate worker (ms). Mirrors
+ * {@link DEFAULT_CLAUDE_CODE_TURN_TIMEOUT_MS}: generous enough not to interrupt
+ * a legitimately long tool-using turn, but finite so a worker whose turn stalls
+ * after start cannot sit `running` with no visible outcome (issue #126).
+ * Operators override via `dispatchers[].runtime.config.turn_timeout_ms`.
+ */
+export const DEFAULT_CODEX_TURN_TIMEOUT_MS = 600_000;
 
 /** Default `dispatchers[].runtime.config.approval_policy` when omitted. */
 export const DEFAULT_APPROVAL_POLICY = 'never';
@@ -507,6 +522,7 @@ export function defaultDispatcherCodexConfig(): DispatcherCodexConfig {
     extra_args: [],
     extra_env: {},
     initialize_timeout_ms: DEFAULT_INITIALIZE_TIMEOUT_MS,
+    turn_timeout_ms: DEFAULT_CODEX_TURN_TIMEOUT_MS,
   };
 }
 
@@ -524,6 +540,7 @@ function readDispatcherCodexConfig(
       'extra_args',
       'extra_env',
       'initialize_timeout_ms',
+      'turn_timeout_ms',
     ]),
     file,
     prefix,
@@ -576,6 +593,13 @@ function readDispatcherCodexConfig(
       rawCodex,
       'initialize_timeout_ms',
       defaults.initialize_timeout_ms,
+      file,
+      prefix,
+    ),
+    turn_timeout_ms: requirePositiveInt(
+      rawCodex,
+      'turn_timeout_ms',
+      defaults.turn_timeout_ms,
       file,
       prefix,
     ),
