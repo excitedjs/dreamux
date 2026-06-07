@@ -12,7 +12,9 @@ import type { DispatcherStatus } from '../runtime/dispatcher-store.js';
 import { validateDispatcherId } from '../runtime/dispatcher-id.js';
 import {
   NestedTeamMateDispatchError,
+  type TeamMateInputMode,
   type TeamMateScheduleCallerKind,
+  type TeamMateTargetMode,
 } from '../teammate/ledger.js';
 
 export type AdminHandler = (
@@ -181,6 +183,114 @@ export const adminMethods: Record<string, AdminHandler> = {
     }
   },
 
+  // Executable normal-path create-and-execute tool (issue #126). No worker is
+  // wired yet, so the task is created and the execution sub-result reports
+  // provider_unavailable.
+  'mcp.teammate.run': async (server, params) => {
+    const id = mustDispatcherId(params);
+    mustExistingDispatcher(server, id);
+    const callerKind = mustCallerKind(params);
+    const title = mustString(params, 'title');
+    const prompt = mustString(params, 'prompt');
+    const targetPath = mustString(params, 'target_path');
+    const teammateId = optionalString(params, 'teammate_id');
+    const intent = optionalString(params, 'intent');
+    const targetMode = optionalString(params, 'target_mode');
+    const providerRef = optionalString(params, 'provider_ref');
+    const operationId = optionalString(params, 'operation_id');
+    try {
+      return await server.runTeamMateTaskFromMcp({
+        dispatcherId: id,
+        callerKind,
+        title,
+        prompt,
+        targetPath,
+        ...(teammateId !== null ? { teammateId } : {}),
+        ...(intent !== null ? { intent } : {}),
+        ...(targetMode !== null
+          ? { targetMode: targetMode as TeamMateTargetMode }
+          : {}),
+        ...(providerRef !== null ? { providerRef } : {}),
+        ...(operationId !== null ? { operationId } : {}),
+      });
+    } catch (err) {
+      if (err instanceof NestedTeamMateDispatchError) {
+        throw new AdminError(
+          'TEAMMATE_NESTED_DISPATCH_REJECTED',
+          parseMessage(err),
+        );
+      }
+      throw new AdminError('TEAMMATE_RUN_FAILED', parseMessage(err));
+    }
+  },
+
+  'mcp.teammate.execute': async (server, params) => {
+    const id = mustDispatcherId(params);
+    mustExistingDispatcher(server, id);
+    const taskId = mustString(params, 'task_id');
+    const providerRef = optionalString(params, 'provider_ref');
+    const targetMode = optionalString(params, 'target_mode');
+    const operationId = optionalString(params, 'operation_id');
+    try {
+      return await server.executeTeamMateTaskFromMcp({
+        dispatcherId: id,
+        taskId,
+        ...(providerRef !== null ? { providerRef } : {}),
+        ...(targetMode !== null
+          ? { targetMode: targetMode as TeamMateTargetMode }
+          : {}),
+        ...(operationId !== null ? { operationId } : {}),
+      });
+    } catch (err) {
+      throw new AdminError('TEAMMATE_EXECUTE_FAILED', parseMessage(err));
+    }
+  },
+
+  'mcp.teammate.send_input': async (server, params) => {
+    const id = mustDispatcherId(params);
+    mustExistingDispatcher(server, id);
+    const taskId = mustString(params, 'task_id');
+    const prompt = mustString(params, 'prompt');
+    const mode = optionalString(params, 'mode');
+    const operationId = optionalString(params, 'operation_id');
+    try {
+      return await server.sendTeamMateInputFromMcp({
+        dispatcherId: id,
+        taskId,
+        prompt,
+        ...(mode !== null ? { mode: mode as TeamMateInputMode } : {}),
+        ...(operationId !== null ? { operationId } : {}),
+      });
+    } catch (err) {
+      throw new AdminError('TEAMMATE_SEND_INPUT_FAILED', parseMessage(err));
+    }
+  },
+
+  // Bounded server-side wait; a timeout returns a structured still_running
+  // result, not an error (issue #126).
+  'mcp.teammate.await': async (server, params) => {
+    const id = mustDispatcherId(params);
+    mustExistingDispatcher(server, id);
+    const taskId = mustString(params, 'task_id');
+    const afterEventId = optionalNumber(params, 'after_event_id');
+    const until = optionalStringArray(params, 'until');
+    const timeoutMs = optionalNumber(params, 'timeout_ms');
+    try {
+      return await server.awaitTeamMateCompletionFromMcp({
+        dispatcherId: id,
+        taskId,
+        ...(afterEventId !== null ? { afterEventId } : {}),
+        ...(until !== null ? { until } : {}),
+        ...(timeoutMs !== null ? { timeoutMs } : {}),
+      });
+    } catch (err) {
+      throw new AdminError('TEAMMATE_AWAIT_FAILED', parseMessage(err));
+    }
+  },
+
+  'mcp.teammate.capabilities': (server) =>
+    server.getTeamMateCapabilitiesFromMcp(),
+
   'mcp.teammate.list': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
@@ -248,6 +358,19 @@ function optionalString(
   if (v === undefined || v === null) return null;
   if (typeof v !== 'string') {
     throw new AdminError('BAD_REQUEST', `param '${key}' must be a string`);
+  }
+  return v;
+}
+
+function optionalNumber(
+  params: Record<string, unknown> | undefined,
+  key: string,
+): number | null {
+  if (params === undefined) return null;
+  const v = params[key];
+  if (v === undefined || v === null) return null;
+  if (typeof v !== 'number' || !Number.isFinite(v)) {
+    throw new AdminError('BAD_REQUEST', `param '${key}' must be a finite number`);
   }
   return v;
 }
