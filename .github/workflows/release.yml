@@ -271,8 +271,14 @@ jobs:
           fail=0
           for tgz in "${tarballs[@]}"; do
             echo "== $tgz =="
-            tar tzf "$tgz"
-            if ! tar tzf "$tgz" | grep -q 'package/package\.json'; then
+            listing="$(tar tzf "$tgz")"
+            printf '%s\n' "$listing"
+            # Existence check via a here-string, NOT `tar tzf | grep -q`: under
+            # `set -o pipefail`, grep -q exits on the first match, the upstream
+            # tar takes SIGPIPE and exits 141, and pipefail propagates 141 —
+            # false-failing this check as "missing package.json" purely on pipe
+            # timing. A here-string has no upstream process to signal.
+            if ! grep -qxF 'package/package.json' <<<"$listing"; then
               echo "Tarball $tgz is missing package.json" >&2
               fail=1
             fi
