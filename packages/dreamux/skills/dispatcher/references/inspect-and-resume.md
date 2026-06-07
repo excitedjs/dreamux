@@ -1,5 +1,11 @@
 # Inspect And Resume
 
+> Default to the `teammate` MCP for inspection: `list_tasks`, `get_task`,
+> `pull_result`, `await_completion`, and `get_task_logs` cover status, history,
+> last, poll, and diagnostics without `tm`. This `tm` fallback owns what the MCP
+> does not yet: resuming or recovering a dead live session and its worktree and
+> session history.
+
 ## Trigger
 
 You need to see what teammates are doing, re-read a reply, or continue a task

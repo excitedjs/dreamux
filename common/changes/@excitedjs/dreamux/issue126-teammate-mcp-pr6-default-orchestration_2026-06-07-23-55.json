@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Align bundled dispatcher skills and the injected dispatcher base prompt with the real TeamMate MCP surface (issue #126 PR6). After PR3-5 wired real workers, the docs still carried the stale #124 'Phase 1 boundary' caveat claiming the MCP could not run a scheduled task to completion and that the tm CLI was the only executed-result path. They now present the server-hosted TeamMate MCP as the default orchestration interface: run_task/execute_task execute the default builtin:codex worker for real (builtin:claude-code via provider_ref, single-turn), list_tasks/get_task/pull_result/await_completion read and wait without polling, and cancel_task/get_task_logs/get_capabilities control and inspect a worker. The tm CLI is the explicit fallback for resume, multi-turn continuation, dead-session recovery, and isolated managed worktrees, which the in-place MCP workers do not yet cover. Documentation/template realignment only: no config schema, persisted format, runtime path, or MCP tool behavior change, and the symlinked skills pick up the new text on the next serve with no rebuild required.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

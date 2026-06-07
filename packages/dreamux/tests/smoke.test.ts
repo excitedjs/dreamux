@@ -570,16 +570,19 @@ describe('dreamux MVP smoke', () => {
       'use update_plan to track phases',
     );
     expect(DREAMUX_DISPATCHER_BASE_INSTRUCTIONS).toContain('`【F:...】`');
-    // TeamMate MCP is the primary scheduled-task interface (issue #124).
+    // TeamMate MCP is the default orchestration interface that executes for
+    // real (issue #124, updated by #126 PR6).
     expect(DREAMUX_DISPATCHER_BASE_INSTRUCTIONS).toContain('# TeamMate Delegation');
     expect(DREAMUX_DISPATCHER_BASE_INSTRUCTIONS).toContain(
       'server-hosted TeamMate MCP is the primary interface',
     );
-    expect(DREAMUX_DISPATCHER_BASE_INSTRUCTIONS).toContain('Phase 1 boundary');
+    expect(DREAMUX_DISPATCHER_BASE_INSTRUCTIONS).toContain('executes work for real');
     // tm survives only as the labeled fallback, not the primary contract.
     expect(DREAMUX_DISPATCHER_BASE_INSTRUCTIONS).toContain(
       'The tm CLI is the labeled fallback',
     );
+    // The stale Phase 1 / not-to-completion caveat must be gone (#126 PR6).
+    expect(DREAMUX_DISPATCHER_BASE_INSTRUCTIONS).not.toContain('Phase 1 boundary');
     expect(DREAMUX_DISPATCHER_BASE_INSTRUCTIONS).not.toContain('# tm Delegation');
   });
 
