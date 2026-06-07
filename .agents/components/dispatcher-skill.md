@@ -5,11 +5,13 @@ ships in the npm package:
 
 - `dispatcher` teaches dispatcher app-server sessions how to delegate product
   work to TeamMates. The default interface is the server-hosted TeamMate MCP:
-  `run_task`/`execute_task` execute a worker for real,
-  `list_tasks`/`get_task`/`pull_result`/`await_completion` read and wait
-  without polling, and `cancel_task`/`get_task_logs`/`get_capabilities` control
-  and inspect it. The `tm` CLI is the explicit fallback for resume, multi-turn
-  continuation, dead-session recovery, and isolated worktrees
+  `run_task`/`execute_task` execute a worker for real, then the dispatcher turn
+  ends — the server delivers/wakes the dispatcher in a new turn, so there is no
+  dispatcher-side waiting or polling (issue #126 PR8 removed the
+  `await_completion` tool). `list_tasks`/`get_task`/`pull_result` read results
+  (also the recovery path), and `cancel_task`/`get_task_logs`/`get_capabilities`
+  control and inspect. The `tm` CLI is the explicit fallback for resume,
+  multi-turn continuation, dead-session recovery, and isolated worktrees
   ([server-hosted TeamMate](../decisions/server-hosted-teammate.md)).
 - `team-dev-workflow` covers multi-teammate review, design, merge, and unblock
   coordination.

@@ -333,11 +333,14 @@ function teammateTools(): Array<Record<string, unknown>> {
     {
       name: 'get_capabilities',
       description:
-        'List server and runtime TeamMate capabilities (read-only). Each ' +
-        'provider reports whether worker execution is available and its modes; ' +
-        'the builtin:codex (steer) and builtin:claude-code (single-turn, ' +
-        'steer:false) workers are available by default, while a runtime without ' +
-        'a worker (or an explicitly empty catalog) reports it unavailable.',
+        'List server and runtime TeamMate capabilities (read-only). The ' +
+        'builtin:codex (steer) and builtin:claude-code (single-turn, ' +
+        'steer:false) workers are wired by default, but availability is PROBED ' +
+        'in the dispatcher service environment and may be false — e.g. ' +
+        'builtin:claude-code is unavailable when `claude` is not on the service ' +
+        'PATH. Do not assume a worker is available: read each returned ' +
+        'provider row\'s worker_available flag (and unsupported_reason) before ' +
+        'routing a task to it.',
       inputSchema: { type: 'object', additionalProperties: false, properties: {} },
     },
     {
