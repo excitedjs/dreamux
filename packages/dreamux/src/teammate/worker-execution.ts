@@ -295,5 +295,5 @@ function isTerminalLifecycle(
 }
 
 function key(dispatcherId: string, taskId: string): string {
-  return `${dispatcherId} ${taskId}`;
+  return `${dispatcherId}\u0000${taskId}`;
 }
