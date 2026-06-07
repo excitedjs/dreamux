@@ -74,6 +74,47 @@ The target architecture is:
   provides the connection, and no longer carries `*FromMcp` handlers in
   `server.ts`.
 
+### TeamMate layer (agent-centric)
+
+The teammate layer follows the agent-centric dispatcher model proven in the
+sibling open-source repo claudemux
+(https://github.com/excitedjs/claudemux/tree/main/plugins/claudemux/src) —
+see its `verbs/` (spawn/resume/history), `persistence/history-index.ts` and
+`identity-store.ts`, `engines/types.ts`, and `engines/teammate-record.ts`.
+
+- **No `task` abstraction.** A teammate is a persistent, resumable agent
+  identified by a stable name — not a one-shot task runner. The current
+  `/packages/dreamux/src/teammate/ledger.ts` task state machine (`task_id`,
+  `schedule`, `run_task`, `execute_task`) is removed. Task decomposition and
+  assignment stay in the dispatcher agent (its own todolist-style tools); the
+  teammate layer only knows teammate identities.
+- **Dispatcher-facing verbs, no unified suffix:** `spawn`, `send`, `resume`,
+  `close` for lifecycle; `history`, `list`, `status`, `last`, `ctx`,
+  `get_capabilities` for read/recovery. Push-delivery is kept: `spawn`/`send`
+  return immediately and the server delivers the result by waking the dispatcher
+  in a new turn — no polling, no held-open turn (continues issue #134 / PR8).
+- **resume** brings back a prior teammate session with its history; the
+  dispatcher may resume on its own (e.g. continue work from days ago).
+- **History ledger stitches the resume chain.** A forward-only JSONL index of
+  `session` and `close` events (engine, name, repo, cwd, worktree, branch,
+  baseRef, createdAt, intent, closeStatus, closeNotePreview); a history-metadata
+  write must never fail a lifecycle verb. The query layer merges the index with
+  live identity, archived identity, and runtime-native transcript (claude) /
+  rollout (codex) sources. A teammate's sessions link via reused session-id
+  (claude) / thread-id rollout (codex); `history` → `resume <id>` recovers old
+  work. Per-runtime resume mechanics are absorbed by the runtime implementation
+  behind one `resume` surface.
+- **Identity and state location.** A teammate is a flat name plus a base record
+  (engine / repo / cwd / worktreeSlug / createdAt / displayName); runtime-private
+  state lives under each runtime's persistence module. State is server-owned
+  under `~/.dreamux/state/<dispatcher>/teammate/` (server-hosted, not a
+  CLI + tmpfile + tmux model); paths go through
+  `/packages/dreamux/src/runtime/paths.ts`.
+- **Ownership.** The Dispatcher Service owns the history ledger. Whether a
+  dedicated small history module / sub-service is split out depends on the final
+  dispatcher code size (the reference model's history index is a focused
+  ~290-line module).
+
 ## Consequences
 
 - Several `#110` / `#126` decisions are refined: the registry stops being a
