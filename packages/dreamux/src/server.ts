@@ -53,24 +53,11 @@ import {
 import type { PeerBot } from './channel/chat-bots-store.js';
 import { resolveBotSecret } from './runtime/secrets.js';
 import {
-  BUILTIN_CLAUDE_CODE_PROVIDER_REF,
   BUILTIN_CODEX_PROVIDER_REF,
   BUILTIN_FEISHU_PROVIDER_REF,
   BUILT_IN_DEFAULTS,
-  DEFAULT_CLAUDE_CODE_BIN,
-  DEFAULT_CODEX_BIN,
-  defaultDispatcherClaudeCodeConfig,
-  defaultDispatcherCodexConfig,
-  dispatcherClaudeCodeConfig,
-  dispatcherCodexConfig,
-  type DispatcherClaudeCodeConfig,
-  type DispatcherCodexConfig,
   type DreamuxConfig,
 } from './runtime/config.js';
-import {
-  dispatcherProcessEnv,
-  resolveExecutableOnPath,
-} from './runtime/package-bin.js';
 import {
   DispatcherStore,
   type DispatcherRow,
@@ -91,50 +78,13 @@ import {
 } from './runtime/logger.js';
 import { createAdminSocketServer, type AdminSocketServer } from './admin/socket.js';
 import { RestartIntentConsumer } from './daemon/restart-intent.js';
-import {
-  NestedTeamMateDispatchError,
-  legacyTaskStatus,
-  resolveTeammateTarget,
-  TEAMMATE_INPUT_MODES,
-  TEAMMATE_TARGET_MODES,
-  type TeamMateDeliveryStatus,
-  type TeamMateInputMode,
-  type TeamMateLifecycleStatus,
-  type TeamMateScheduleCallerKind,
-  type TeamMateTargetMode,
-  type TeamMateTaskRecord,
-  TeamMateTaskLedger,
-} from './teammate/ledger.js';
 import { teammateMcpServerDescriptor } from './teammate/mcp-config.js';
-import {
-  TeamMateDeliveryService,
-  type TeamMateDeliveryReport,
-} from './teammate/delivery.js';
-import {
-  TeamMateWorkerExecutionService,
-  type TeamMateExecutionOutcome,
-} from './teammate/worker-execution.js';
-import {
-  readTeamMateWorkerLogs,
-  type TeamMateWorkerLogStream,
-  type TeamMateWorkerLogStreamKind,
-} from './teammate/worker-logs.js';
-import { TeamMateWorkerProviderCatalog } from './teammate/worker/catalog.js';
-import type { TeamMateWorkerProvider } from './teammate/worker/types.js';
-import { createCodexTeamMateWorkerProvider } from './teammate/worker/codex-provider.js';
-import { createClaudeCodeTeamMateWorkerProvider } from './teammate/worker/claude-code-provider.js';
+import type { TeamMateWorkerProviderCatalog } from './teammate/worker/catalog.js';
 import type { ClaudeCodeSessionFactory } from './agent-runtime/claude-code-session.js';
-import {
-  awaitTeamMateCompletion,
-  clampWaitTimeout,
-  isWaitToken,
-  lastEventId,
-  TEAMMATE_WAIT_DEFAULT_MS,
-  TEAMMATE_WAIT_DEFAULT_UNTIL,
-  TEAMMATE_WAIT_MAX_MS,
-  TeamMateWaitBroker,
-  type TeamMateWaitToken,
-} from './teammate/wait-broker.js';
+import { DispatcherService } from './dispatcher-service/service.js';
+import type { WorkerBinaryProbe } from './dispatcher-service/teammate-types.js';
+
+export type { WorkerBinaryProbe } from './dispatcher-service/teammate-types.js';
 
 export const RECEIVED_REACTION_EMOJI = 'Get';
 export const IN_PROGRESS_REACTION_EMOJI = 'OnIt';
@@ -322,215 +272,10 @@ export interface ServerMcpListChatBotsResult {
   trusted: WireChatBot[];
 }
 
-export interface ServerMcpScheduleTeamMateInput {
-  dispatcherId: string;
-  callerKind: TeamMateScheduleCallerKind;
-  title: string;
-  prompt: string;
-  teammateId?: string;
-}
-
-export interface ServerMcpScheduleTeamMateResult {
-  status: 'accepted';
-  task_id: string;
-  dispatcher_id: string;
-  created_at: number;
-  teammate_id?: string;
-}
-
-export interface ServerTeamMateCompletionInput {
-  dispatcherId: string;
-  taskId: string;
-  outcome: 'completed' | 'failed';
-  finalText: string;
-}
-
-export interface ServerTeamMateTaskSummary {
-  task_id: string;
-  /** Back-compat projection of lifecycle + delivery into the v1 status enum. */
-  status: string;
-  lifecycle_status: TeamMateLifecycleStatus;
-  delivery_status: TeamMateDeliveryStatus;
-  title: string;
-  teammate_id: string | null;
-  provider_ref: string | null;
-  created_at: number;
-  updated_at: number;
-  last_event_id: number;
-  delivery_attempts: number;
-  has_result: boolean;
-}
-
-export interface ServerTeamMatePullResult {
-  task_id: string;
-  status: string;
-  lifecycle_status: TeamMateLifecycleStatus;
-  delivery_status: TeamMateDeliveryStatus;
-  outcome: 'completed' | 'failed';
-  text: string;
-  delivered: boolean;
-  delivery_attempts: number;
-}
-
-export interface ServerMcpRunTeamMateTaskInput {
-  dispatcherId: string;
-  callerKind: TeamMateScheduleCallerKind;
-  title: string;
-  prompt: string;
-  targetPath: string;
-  teammateId?: string;
-  intent?: string;
-  targetMode?: TeamMateTargetMode;
-  providerRef?: string;
-  operationId?: string;
-}
-
-export interface ServerMcpExecuteTeamMateTaskInput {
-  dispatcherId: string;
-  taskId: string;
-  providerRef?: string;
-  targetMode?: TeamMateTargetMode;
-  operationId?: string;
-}
-
-export interface ServerMcpSendTeamMateInputInput {
-  dispatcherId: string;
-  taskId: string;
-  prompt: string;
-  mode?: TeamMateInputMode;
-  operationId?: string;
-}
-
-export interface ServerMcpAwaitTeamMateCompletionInput {
-  dispatcherId: string;
-  taskId: string;
-  afterEventId?: number;
-  until?: string[];
-  timeoutMs?: number;
-}
-
-/**
- * Execution attempt outcome (issue #126). With no worker wired (production MVP)
- * this is always `provider_unavailable`, exactly as PR1; an injected worker
- * catalog produces `running`/`completed`/`failed`/`cancelled` with the resolved
- * `provider_ref`. The `reason`/`code`/`retryable` fields are present only for
- * `provider_unavailable`.
- */
-export interface ServerTeamMateExecutionResult {
-  status: 'running' | 'completed' | 'failed' | 'cancelled' | 'provider_unavailable';
-  provider_ref?: string;
-  reason?: string;
-  code?: string;
-  retryable?: boolean;
-}
-
-export interface ServerMcpRunTeamMateTaskResult {
-  task: ServerTeamMateTaskSummary;
-  execution: ServerTeamMateExecutionResult;
-}
-
-export interface ServerMcpSendTeamMateInputResult {
-  input_id: string;
-  mode: TeamMateInputMode;
-  /**
-   * `submitted` when a live worker session accepted the input, `queued`
-   * otherwise (no worker, or the worker rejected it) — the input is still
-   * durably recorded either way (issue #126 PR2).
-   */
-  status: 'queued' | 'submitted';
-  after_event_id: number;
-  task: ServerTeamMateTaskSummary;
-}
-
-export interface ServerMcpAwaitTeamMateCompletionResult {
-  status: 'completed' | 'failed' | 'cancelled' | 'reached' | 'still_running';
-  task_id: string;
-  after_event_id: number;
-  task: ServerTeamMateTaskSummary | null;
-  result?: ServerTeamMatePullResult | null;
-}
-
-export interface ServerMcpCancelTeamMateTaskInput {
-  dispatcherId: string;
-  taskId: string;
-  /** Optional close note recorded with the cancellation. */
-  note?: string;
-}
-
-export interface ServerMcpCancelTeamMateTaskResult {
-  task_id: string;
-  /**
-   * `cancelled` when this call closed a live/open task, `already_terminal` when
-   * the task had already finished (idempotent no-op).
-   */
-  status: 'cancelled' | 'already_terminal';
-  lifecycle_status: TeamMateLifecycleStatus;
-  /** Whether a live worker session in this process was reaped by the cancel. */
-  cancelled_live_session: boolean;
-  after_event_id: number;
-  task: ServerTeamMateTaskSummary;
-}
-
-export interface ServerMcpTeamMateTaskLogsInput {
-  dispatcherId: string;
-  taskId: string;
-  maxBytes?: number;
-  stream?: TeamMateWorkerLogStreamKind;
-}
-
-export interface ServerMcpTeamMateTaskLogsResult {
-  task_id: string;
-  provider_ref: string | null;
-  lifecycle_status: TeamMateLifecycleStatus;
-  /** Whether this task's worker has a known on-disk log layout. */
-  logs_supported: boolean;
-  streams: TeamMateWorkerLogStream[];
-}
-
-/** Worker capability advertisement for a built-in runtime (placeholder in PR1). */
-export interface ServerTeamMateProviderCapability {
-  provider_ref: string;
-  worker_available: boolean;
-  unsupported_reason: string;
-  modes: { steer: boolean; queue: boolean; interrupt: boolean };
-  resume: boolean;
-  logs: boolean;
-}
-
-export interface ServerTeamMateCapabilities {
-  execution_available: boolean;
-  wait: { default_ms: number; max_ms: number };
-  target_modes: TeamMateTargetMode[];
-  input_modes: TeamMateInputMode[];
-  default_input_mode: TeamMateInputMode;
-  providers: ServerTeamMateProviderCapability[];
-}
-
-/** Whether a worker's configured binary can be resolved in the service env. */
-export interface TeamMateWorkerAvailability {
-  available: boolean;
-  /** Human-readable reason when `available` is false; empty otherwise. */
-  reason: string;
-}
-
-/**
- * Probe whether the binary a worker provider would launch is resolvable in the
- * dispatcher service environment (issue #126 PR7). `get_capabilities` consults
- * it so the advertisement never claims a provider is available when its binary
- * cannot be started — the installed-state bug where `builtin:claude-code`
- * reported available while `claude` was absent. Injectable so tests stay
- * deterministic regardless of the CI host's PATH. An unknown ref (an injected
- * fake) is reported available so its static capabilities stand unprobed.
- */
-export type WorkerBinaryProbe = (
-  providerRef: string,
-) => Promise<TeamMateWorkerAvailability>;
-
 export class Server {
   readonly repos: Repos;
+  readonly dispatcherService: DispatcherService;
   private readonly slots = new Map<string, DispatcherSlot>();
-  private readonly teamMateLedgers = new Map<string, TeamMateTaskLedger>();
-  private readonly teamMateWaitBroker = new TeamMateWaitBroker();
   /**
    * PR #3 review #4: in-flight startDispatcher promises, keyed by id.
    * Two concurrent callers must await the same start, not race to spawn
@@ -550,10 +295,6 @@ export class Server {
   private readonly channelProviderResolver: (ref: string) => ChannelProvider;
   private readonly providerRegistry: ProviderRegistry;
   private readonly agentRuntimeProviders: AgentRuntimeProviderCatalog;
-  private readonly teamMateDelivery: TeamMateDeliveryService;
-  private readonly teamMateWorkers: TeamMateWorkerProviderCatalog;
-  private readonly workerBinaryProbe: WorkerBinaryProbe;
-  private readonly teamMateWorkerExecution: TeamMateWorkerExecutionService;
 
   constructor(opts: ServerOptions = {}) {
     this.opts = opts;
@@ -562,10 +303,11 @@ export class Server {
     this.channelProviderResolver =
       opts.channelProviderResolver ??
       ((ref) => resolveChannelProvider(ref, { registry: this.providerRegistry }));
+    const config = opts.config ?? BUILT_IN_DEFAULTS;
     // Install the config snapshot before any paths.* / runtime.* lookup
     // happens. paths.stateRoot / adminSocketPath / etc. consult this
     // snapshot for non-env defaults (env vars still win).
-    setRuntimeConfig(opts.config ?? BUILT_IN_DEFAULTS);
+    setRuntimeConfig(config);
     // Default loggers are stderr-only (zero files opened) so tests that
     // construct a Server without injecting a logger never touch ~/.dreamux.
     this.log = opts.logger ?? createLogger({ name: 'server' });
@@ -597,79 +339,38 @@ export class Server {
         registry: this.providerRegistry,
         codex: codexProviderOptions,
       });
-    this.teamMateDelivery = new TeamMateDeliveryService({
-      ledger: (dispatcherId) => this.teamMateLedger(dispatcherId),
+    this.repos = {
+      dispatchers: new DispatcherStore(config),
+    };
+    this.dispatcherService = new DispatcherService({
+      config,
+      dispatchers: this.repos.dispatchers,
+      agentRuntimeProviders: this.agentRuntimeProviders,
       resolveRuntime: (dispatcherId) => this.getRuntime(dispatcherId),
-      notifyEvent: (dispatcherId, taskId) =>
-        this.teamMateWaitBroker.notify(dispatcherId, taskId),
-      log: (level, message, fields) => this.log[level](fields ?? {}, message),
+      log: this.log,
+      ...(opts.codexBinPath !== undefined ? { codexBinPath: opts.codexBinPath } : {}),
+      ...(opts.codexProcessFactory !== undefined
+        ? { codexProcessFactory: opts.codexProcessFactory }
+        : {}),
+      ...(opts.codexClientFactory !== undefined
+        ? { codexClientFactory: opts.codexClientFactory }
+        : {}),
+      ...(opts.claudeCodeWorkerSessionFactory !== undefined
+        ? { claudeCodeWorkerSessionFactory: opts.claudeCodeWorkerSessionFactory }
+        : {}),
+      ...(opts.teamMateWorkerProviders !== undefined
+        ? { teamMateWorkerProviders: opts.teamMateWorkerProviders }
+        : {}),
+      ...(opts.workerBinaryProbe !== undefined
+        ? { workerBinaryProbe: opts.workerBinaryProbe }
+        : {}),
       ...(opts.teamMateDeliveryMaxAttempts !== undefined
-        ? { maxAttempts: opts.teamMateDeliveryMaxAttempts }
+        ? { teamMateDeliveryMaxAttempts: opts.teamMateDeliveryMaxAttempts }
         : {}),
       ...(opts.teamMateDeliveryBackoffMs !== undefined
-        ? { backoffMs: opts.teamMateDeliveryBackoffMs }
+        ? { teamMateDeliveryBackoffMs: opts.teamMateDeliveryBackoffMs }
         : {}),
     });
-    // Default worker catalog wires BOTH real workers (issue #126 PR3 Codex, PR4
-    // Claude Code), so a production `dreamux serve` executes TeamMate tasks for
-    // real and `get_capabilities` reports both `builtin:codex` and
-    // `builtin:claude-code` as worker-available. The default route stays Codex
-    // (`defaultRef`); a task selects the Claude Code worker by pinning
-    // `provider_ref: builtin:claude-code` (default routing remains Codex, not
-    // dispatcher-aware, to keep this a pure addition). Tests still fully control
-    // execution by injecting `teamMateWorkerProviders` (the fake provider, or an
-    // empty catalog for the no-worker path). Each worker reuses the same
-    // process/session test seams as the dispatcher runtime, so a fake test drives
-    // it without spawning a real binary.
-    this.teamMateWorkers =
-      opts.teamMateWorkerProviders ??
-      new TeamMateWorkerProviderCatalog({
-        providers: [
-          createCodexTeamMateWorkerProvider({
-            resolveBinPath: (dispatcherBin) =>
-              this.resolveCodexBinPath(dispatcherBin),
-            resolveCodexConfig: (dispatcherId) =>
-              this.resolveDispatcherCodexConfig(dispatcherId),
-            resolveDispatcherCwd: (dispatcherId) =>
-              this.resolveDispatcherCwd(dispatcherId),
-            ...(opts.codexProcessFactory !== undefined
-              ? { codexProcessFactory: opts.codexProcessFactory }
-              : {}),
-            ...(opts.codexClientFactory !== undefined
-              ? { codexClientFactory: opts.codexClientFactory }
-              : {}),
-            log: (level, message, fields) =>
-              this.log[level](fields ?? {}, message),
-          }),
-          createClaudeCodeTeamMateWorkerProvider({
-            resolveBinPath: (dispatcherBin) => dispatcherBin,
-            resolveClaudeCodeConfig: (dispatcherId) =>
-              this.resolveDispatcherClaudeCodeConfig(dispatcherId),
-            resolveDispatcherCwd: (dispatcherId) =>
-              this.resolveDispatcherCwd(dispatcherId),
-            ...(opts.claudeCodeWorkerSessionFactory !== undefined
-              ? { sessionFactory: opts.claudeCodeWorkerSessionFactory }
-              : {}),
-            log: (level, message, fields) =>
-              this.log[level](fields ?? {}, message),
-          }),
-        ],
-        defaultRef: BUILTIN_CODEX_PROVIDER_REF,
-      });
-    this.workerBinaryProbe =
-      opts.workerBinaryProbe ?? ((ref) => this.defaultWorkerBinaryProbe(ref));
-    this.teamMateWorkerExecution = new TeamMateWorkerExecutionService({
-      ledger: (dispatcherId) => this.teamMateLedger(dispatcherId),
-      workers: () => this.teamMateWorkers,
-      reportCompletion: (report) =>
-        this.teamMateDelivery.reportCompletion(report),
-      notifyEvent: (dispatcherId, taskId) =>
-        this.teamMateWaitBroker.notify(dispatcherId, taskId),
-      log: (level, message, fields) => this.log[level](fields ?? {}, message),
-    });
-    this.repos = {
-      dispatchers: new DispatcherStore(opts.config ?? BUILT_IN_DEFAULTS),
-    };
   }
 
   /** Effective config (caller-supplied or built-in defaults). */
@@ -692,107 +393,6 @@ export class Server {
     const fromEnv = process.env['CODEX_HOST_CODEX_BIN'];
     if (fromEnv !== undefined && fromEnv !== '') return fromEnv;
     return dispatcherBin;
-  }
-
-  /**
-   * Default `get_capabilities` binary probe (issue #126 PR7): resolve a built-in
-   * worker's binary on the dispatcher service PATH the same way the worker would
-   * launch it (Codex honours the `CODEX_HOST_CODEX_BIN` override via
-   * `resolveCodexBinPath`). An unknown ref is reported available — an injected
-   * test/fake worker has no real binary to probe, so its static capabilities
-   * stand. This advertises *resolvability*; the worker's own spawn-time failure
-   * stays the backstop for a binary that resolves but cannot start.
-   */
-  private async defaultWorkerBinaryProbe(
-    providerRef: string,
-  ): Promise<TeamMateWorkerAvailability> {
-    let bin: string;
-    if (providerRef === BUILTIN_CODEX_PROVIDER_REF) {
-      bin = this.resolveCodexBinPath(DEFAULT_CODEX_BIN);
-    } else if (providerRef === BUILTIN_CLAUDE_CODE_PROVIDER_REF) {
-      bin = DEFAULT_CLAUDE_CODE_BIN;
-    } else {
-      return { available: true, reason: '' };
-    }
-    const resolved = await resolveExecutableOnPath(
-      bin,
-      dispatcherProcessEnv(process.env),
-    );
-    if (resolved !== null) return { available: true, reason: '' };
-    return {
-      available: false,
-      reason:
-        `worker binary '${bin}' was not found on the dispatcher service PATH; ` +
-        'install it (or set the binary/PATH for this runtime) before routing tasks here',
-    };
-  }
-
-  /**
-   * Codex launch config for one dispatcher's TeamMate worker (issue #126 PR3).
-   *
-   * The default TeamMate worker is Codex regardless of the dispatcher's OWN
-   * runtime (a Claude Code worker is a later slice), so a TeamMate task from a
-   * non-Codex dispatcher (e.g. `builtin:claude-code`) must still get a *valid*
-   * Codex launch config — the built-in defaults — rather than the dispatcher's
-   * incompatible non-Codex runtime config. Only a `builtin:codex` dispatcher
-   * inherits its own approval/sandbox/env/handshake settings (so the worker is
-   * never more permissive than that dispatcher). An unknown dispatcher also
-   * falls back to the defaults. This keeps run_task from accepting and then
-   * hard-failing for a non-Codex dispatcher.
-   */
-  private resolveDispatcherCodexConfig(
-    dispatcherId: string,
-  ): DispatcherCodexConfig {
-    const dispatcher = this.effectiveConfig().dispatchers.find(
-      (entry) => entry.id === dispatcherId,
-    );
-    if (
-      dispatcher === undefined ||
-      dispatcher.runtime.provider !== BUILTIN_CODEX_PROVIDER_REF
-    ) {
-      return defaultDispatcherCodexConfig();
-    }
-    return dispatcherCodexConfig(dispatcher);
-  }
-
-  /**
-   * Claude Code launch config for one dispatcher's TeamMate worker (issue #126
-   * PR4). Mirrors {@link resolveDispatcherCodexConfig}: a TeamMate task can pin
-   * the Claude Code worker (`provider_ref: builtin:claude-code`) regardless of
-   * the dispatcher's OWN runtime, so a task from a non-Claude-Code dispatcher
-   * (e.g. `builtin:codex`) must still get a *valid* Claude Code launch config —
-   * the built-in defaults — rather than the dispatcher's incompatible non-Claude
-   * runtime config (`dispatcherClaudeCodeConfig` throws for a non-claude-code
-   * provider). Only a `builtin:claude-code` dispatcher inherits its own
-   * model/permission/env/timeout settings; an unknown dispatcher also falls back
-   * to the defaults. This keeps run_task from accepting and then hard-failing for
-   * a non-Claude-Code dispatcher.
-   */
-  private resolveDispatcherClaudeCodeConfig(
-    dispatcherId: string,
-  ): DispatcherClaudeCodeConfig {
-    const dispatcher = this.effectiveConfig().dispatchers.find(
-      (entry) => entry.id === dispatcherId,
-    );
-    if (
-      dispatcher === undefined ||
-      dispatcher.runtime.provider !== BUILTIN_CLAUDE_CODE_PROVIDER_REF
-    ) {
-      return defaultDispatcherClaudeCodeConfig();
-    }
-    return dispatcherClaudeCodeConfig(dispatcher);
-  }
-
-  /**
-   * Fallback working directory for a TeamMate worker whose task carries no
-   * resolved target (e.g. a `schedule`d task later executed). Mirrors the
-   * dispatcher runtime's own cwd resolution.
-   */
-  private resolveDispatcherCwd(dispatcherId: string): string {
-    return (
-      this.repos.dispatchers.get(dispatcherId)?.codex_cwd ??
-      dispatcherCodexCwd(dispatcherId)
-    );
   }
 
   /** Bring up admin socket + all enabled dispatchers. */
@@ -1298,486 +898,6 @@ export class Server {
     };
   }
 
-  /**
-   * Compatibility create-only tool (`schedule`): accepts a task into the ledger
-   * and returns immediately. It never starts a worker — the executable normal
-   * path is {@link runTeamMateTaskFromMcp}. (issue #126.)
-   */
-  async scheduleTeamMateFromMcp(
-    input: ServerMcpScheduleTeamMateInput,
-  ): Promise<ServerMcpScheduleTeamMateResult> {
-    this.assertTeamMateSchedulingAuthority(input.callerKind);
-    const task = await this.teamMateLedger(input.dispatcherId).acceptTask({
-      title: input.title,
-      prompt: input.prompt,
-      callerKind: input.callerKind,
-      ...(input.teammateId !== undefined
-        ? { teammateId: input.teammateId }
-        : {}),
-    });
-    this.teamMateWaitBroker.notify(input.dispatcherId, task.task_id);
-    this.log.info(
-      {
-        dispatcher_id: input.dispatcherId,
-        task_id: task.task_id,
-        caller_kind: input.callerKind,
-      },
-      'teammate task accepted',
-    );
-    return {
-      status: 'accepted',
-      task_id: task.task_id,
-      dispatcher_id: task.dispatcher_id,
-      created_at: task.created_at,
-      ...(task.teammate_id !== null ? { teammate_id: task.teammate_id } : {}),
-    };
-  }
-
-  /**
-   * Primary create-and-execute tool (`run_task`, issue #126). Creates a v2 task
-   * with a resolved local target, then attempts execution through the worker
-   * provider seam. With no worker wired (production MVP) the task is created
-   * durably and the execution sub-result reports `provider_unavailable`; an
-   * injected worker catalog starts a live session and drives the lifecycle.
-   */
-  async runTeamMateTaskFromMcp(
-    input: ServerMcpRunTeamMateTaskInput,
-  ): Promise<ServerMcpRunTeamMateTaskResult> {
-    this.assertTeamMateSchedulingAuthority(input.callerKind);
-    const target = resolveTeammateTarget(
-      input.targetPath,
-      this.mustDispatcherDir(input.dispatcherId),
-    );
-    const accepted = await this.teamMateLedger(input.dispatcherId).acceptTask({
-      title: input.title,
-      prompt: input.prompt,
-      callerKind: input.callerKind,
-      target,
-      origin: 'dispatcher',
-      ...(input.teammateId !== undefined ? { teammateId: input.teammateId } : {}),
-      ...(input.intent !== undefined ? { intent: input.intent } : {}),
-      ...(input.targetMode !== undefined ? { targetMode: input.targetMode } : {}),
-      ...(input.providerRef !== undefined
-        ? { providerRef: input.providerRef }
-        : {}),
-      ...(input.operationId !== undefined
-        ? { operationId: input.operationId }
-        : {}),
-    });
-    this.teamMateWaitBroker.notify(input.dispatcherId, accepted.task_id);
-    this.log.info(
-      {
-        dispatcher_id: input.dispatcherId,
-        task_id: accepted.task_id,
-        caller_kind: input.callerKind,
-      },
-      'teammate task run requested',
-    );
-    const execution = await this.teamMateWorkerExecution.execute({
-      dispatcherId: input.dispatcherId,
-      taskId: accepted.task_id,
-      ...(input.providerRef !== undefined ? { providerRef: input.providerRef } : {}),
-    });
-    return this.teamMateExecutionResult(input.dispatcherId, accepted, execution);
-  }
-
-  /**
-   * Start or retry execution for an already-accepted task (`execute_task`,
-   * issue #126). With no worker wired this returns `provider_unavailable` with
-   * the current snapshot (it never fakes a running worker); an injected worker
-   * catalog starts/retries a live session.
-   */
-  async executeTeamMateTaskFromMcp(
-    input: ServerMcpExecuteTeamMateTaskInput,
-  ): Promise<ServerMcpRunTeamMateTaskResult> {
-    const task = await this.teamMateLedger(input.dispatcherId).getTask(
-      input.taskId,
-    );
-    if (task === null) {
-      throw new Error(`TeamMate task ${JSON.stringify(input.taskId)} does not exist`);
-    }
-    const execution = await this.teamMateWorkerExecution.execute({
-      dispatcherId: input.dispatcherId,
-      taskId: input.taskId,
-      ...(input.providerRef !== undefined ? { providerRef: input.providerRef } : {}),
-    });
-    return this.teamMateExecutionResult(input.dispatcherId, task, execution);
-  }
-
-  /**
-   * Build the `{ task, execution }` wire result. The task summary is re-read so
-   * it reflects any lifecycle transition the worker's `onRunning`/terminal
-   * callbacks landed during execution; the local target path stays out of it.
-   */
-  private async teamMateExecutionResult(
-    dispatcherId: string,
-    fallback: TeamMateTaskRecord,
-    execution: TeamMateExecutionOutcome,
-  ): Promise<ServerMcpRunTeamMateTaskResult> {
-    const latest =
-      (await this.teamMateLedger(dispatcherId).getTask(fallback.task_id)) ??
-      fallback;
-    return {
-      task: toTeamMateTaskSummary(latest),
-      execution: toExecutionResult(execution),
-    };
-  }
-
-  /**
-   * Record a follow-up input to a steerable task session (`send_input`, issue
-   * #126). The default mode is `steer`; without a worker the input is queued in
-   * the ledger and waits for a future worker. Returns the new input id and the
-   * `after_event_id` cursor for waiting.
-   */
-  async sendTeamMateInputFromMcp(
-    input: ServerMcpSendTeamMateInputInput,
-  ): Promise<ServerMcpSendTeamMateInputResult> {
-    const ledger = this.teamMateLedger(input.dispatcherId);
-    // Record the input durably first (`queued` + an `input_queued` event), so it
-    // survives even if no worker is live.
-    const { task, input: recorded } = await ledger.appendInput(input.taskId, {
-      text: input.prompt,
-      mode: input.mode ?? 'steer',
-    });
-    this.teamMateWaitBroker.notify(input.dispatcherId, task.task_id);
-    // Route to a live worker session, if any. An accepted disposition promotes
-    // the input to `submitted`; with no live worker it stays `queued`.
-    const routed = await this.teamMateWorkerExecution.sendInput({
-      dispatcherId: input.dispatcherId,
-      taskId: input.taskId,
-      inputId: recorded.input_id,
-      text: recorded.text,
-      mode: recorded.mode,
-    });
-    let status: 'queued' | 'submitted' = 'queued';
-    let latest = task;
-    if (routed.delivered && routed.disposition?.status === 'accepted') {
-      latest = await ledger.markInputSubmitted(input.taskId, recorded.input_id);
-      this.teamMateWaitBroker.notify(input.dispatcherId, input.taskId);
-      status = 'submitted';
-    }
-    return {
-      input_id: recorded.input_id,
-      mode: recorded.mode,
-      status,
-      after_event_id: lastEventId(latest),
-      task: toTeamMateTaskSummary(latest),
-    };
-  }
-
-  /**
-   * Cancel a TeamMate task without shelling out to kill a worker process
-   * (`cancel_task`, issue #126 PR5). A live worker session in this process is
-   * driven through its provider `cancel()`, whose `onCancelled` callback is the
-   * sole writer of the `cancelled` close + wait-broker notify; a task with no
-   * live session (accepted/queued, or running but orphaned across a restart) is
-   * closed directly here. A terminal task is an idempotent no-op. An
-   * orphaned-running task's ledger is closed but its process cannot be reaped by
-   * this server — the (deferred) orphan-reconciliation path owns that.
-   */
-  async cancelTeamMateTaskFromMcp(
-    input: ServerMcpCancelTeamMateTaskInput,
-  ): Promise<ServerMcpCancelTeamMateTaskResult> {
-    const ledger = this.teamMateLedger(input.dispatcherId);
-    const task = await ledger.getTask(input.taskId);
-    if (task === null) {
-      throw new Error(
-        `TeamMate task ${JSON.stringify(input.taskId)} does not exist`,
-      );
-    }
-    if (isTerminalLifecycle(task.lifecycle_status)) {
-      return {
-        task_id: task.task_id,
-        status: 'already_terminal',
-        lifecycle_status: task.lifecycle_status,
-        cancelled_live_session: false,
-        after_event_id: lastEventId(task),
-        task: toTeamMateTaskSummary(task),
-      };
-    }
-    const reason = input.note ?? null;
-    const cancelled = await this.teamMateWorkerExecution.cancel({
-      dispatcherId: input.dispatcherId,
-      taskId: input.taskId,
-      reason,
-    });
-    if (!cancelled.cancelledLiveSession) {
-      // No live worker here owns the task; close the ledger directly and wake
-      // any waiters. The live-session path already closed + notified via the
-      // provider's onCancelled callback, so we must not double it.
-      //
-      // Re-read first: between the terminal check above and here the worker can
-      // have completed concurrently (it deleted its session, so cancel() found
-      // none). recordClose would otherwise stamp a spurious `cancelled` close +
-      // `closed` event + a second notify on an already-completed task — so bail
-      // to an idempotent no-op instead.
-      const fresh = await ledger.getTask(input.taskId);
-      if (fresh !== null && isTerminalLifecycle(fresh.lifecycle_status)) {
-        return {
-          task_id: fresh.task_id,
-          status: 'already_terminal',
-          lifecycle_status: fresh.lifecycle_status,
-          cancelled_live_session: false,
-          after_event_id: lastEventId(fresh),
-          task: toTeamMateTaskSummary(fresh),
-        };
-      }
-      await ledger.recordClose(input.taskId, {
-        status: 'cancelled',
-        ...(reason !== null && reason !== '' ? { note: reason } : {}),
-      });
-      this.teamMateWaitBroker.notify(input.dispatcherId, input.taskId);
-    }
-    const latest = (await ledger.getTask(input.taskId)) ?? task;
-    // Derive the reported status from the post-state, never hardcode: a live
-    // cancel that raced a completion lands `completed`, and the response must
-    // not claim `cancelled` while the lifecycle says otherwise.
-    return {
-      task_id: latest.task_id,
-      status:
-        latest.lifecycle_status === 'cancelled' ? 'cancelled' : 'already_terminal',
-      lifecycle_status: latest.lifecycle_status,
-      cancelled_live_session: cancelled.cancelledLiveSession,
-      after_event_id: lastEventId(latest),
-      task: toTeamMateTaskSummary(latest),
-    };
-  }
-
-  /**
-   * Read a bounded tail of a TeamMate worker's diagnostic logs (`get_task_logs`,
-   * issue #126 PR5), so a dispatcher can inspect a slow or failed worker over MCP
-   * instead of tailing a file in a shell. Returns the worker's stderr (and, for
-   * Codex, app-server stdout protocol frames) — NOT the clean result, which is
-   * read with get_task / pull_result / await_completion. Log paths are
-   * server-built from the ledger-validated id, so no caller input reaches the
-   * filesystem.
-   */
-  async getTeamMateTaskLogsFromMcp(
-    input: ServerMcpTeamMateTaskLogsInput,
-  ): Promise<ServerMcpTeamMateTaskLogsResult> {
-    const task = await this.teamMateLedger(input.dispatcherId).getTask(
-      input.taskId,
-    );
-    if (task === null) {
-      throw new Error(
-        `TeamMate task ${JSON.stringify(input.taskId)} does not exist`,
-      );
-    }
-    // A task that did not pin a provider ran on the catalog default, so resolve
-    // the EFFECTIVE worker ref (not the null pin) to find its log layout — else
-    // default-routed tasks would always report logs unsupported.
-    const effectiveRef =
-      this.teamMateWorkers.resolve(task.provider_ref)?.ref ?? task.provider_ref;
-    const logs = await readTeamMateWorkerLogs({
-      dispatcherId: input.dispatcherId,
-      taskId: input.taskId,
-      providerRef: effectiveRef,
-      ...(input.maxBytes !== undefined ? { maxBytes: input.maxBytes } : {}),
-      ...(input.stream !== undefined ? { stream: input.stream } : {}),
-    });
-    return {
-      task_id: task.task_id,
-      provider_ref: effectiveRef,
-      lifecycle_status: task.lifecycle_status,
-      logs_supported: logs.logs_supported,
-      streams: logs.streams,
-    };
-  }
-
-  /**
-   * Server-owned bounded wait for a task to reach a terminal state without shell
-   * polling (`await_completion`, issue #126). Timeout is a successful
-   * `still_running` result with the latest snapshot, never a tool failure. The
-   * ledger is the source of truth; the caller resumes with `after_event_id`.
-   */
-  async awaitTeamMateCompletionFromMcp(
-    input: ServerMcpAwaitTeamMateCompletionInput,
-  ): Promise<ServerMcpAwaitTeamMateCompletionResult> {
-    const ledger = this.teamMateLedger(input.dispatcherId);
-    const until = parseWaitUntil(input.until);
-    const afterEventId =
-      input.afterEventId !== undefined && Number.isFinite(input.afterEventId)
-        ? Math.max(0, Math.floor(input.afterEventId))
-        : 0;
-    const outcome = await awaitTeamMateCompletion(this.teamMateWaitBroker, {
-      dispatcherId: input.dispatcherId,
-      taskId: input.taskId,
-      afterEventId,
-      until,
-      timeoutMs: clampWaitTimeout(input.timeoutMs),
-      loadTask: () => ledger.getTask(input.taskId),
-    });
-    if (outcome.status === 'not_found') {
-      throw new Error(
-        `TeamMate task ${JSON.stringify(input.taskId)} does not exist`,
-      );
-    }
-    if (outcome.status === 'still_running') {
-      return {
-        status: 'still_running',
-        task_id: input.taskId,
-        after_event_id: outcome.last_event_id,
-        task: toTeamMateTaskSummary(outcome.task),
-      };
-    }
-    const task = outcome.task;
-    const status: ServerMcpAwaitTeamMateCompletionResult['status'] =
-      task.lifecycle_status === 'completed' ||
-      task.lifecycle_status === 'failed' ||
-      task.lifecycle_status === 'cancelled'
-        ? task.lifecycle_status
-        : 'reached';
-    return {
-      status,
-      task_id: input.taskId,
-      after_event_id: outcome.last_event_id,
-      task: toTeamMateTaskSummary(task),
-      result: task.result === null ? null : toTeamMatePullResult(task),
-    };
-  }
-
-  /**
-   * Read-only capability advertisement (`get_capabilities`, issue #126). The
-   * worker catalog is the source of truth: each built-in runtime is reported
-   * with its worker capability looked up from the catalog (unavailable when the
-   * catalog has no worker for it), and any worker provider not also an agent
-   * runtime (e.g. an injected fake) is appended.
-   *
-   * PR7: a provider with a wired worker is also probed for binary resolvability
-   * in the dispatcher service environment, so a worker whose binary cannot be
-   * started (the installed-state `builtin:claude-code` ENOENT) reports
-   * `worker_available: false` with a reason rather than lying. `execution_available`
-   * is derived from the probed rows — one source of truth, no skew.
-   */
-  async getTeamMateCapabilitiesFromMcp(): Promise<ServerTeamMateCapabilities> {
-    const workers = this.teamMateWorkers;
-    const workerByRef = new Map(
-      workers.list().map((worker) => [worker.ref, worker] as const),
-    );
-    const providers: ServerTeamMateProviderCapability[] = [];
-    const seen = new Set<string>();
-    for (const runtime of this.agentRuntimeProviders.list()) {
-      providers.push(
-        await this.toProviderCapabilityProbed(
-          runtime.ref,
-          workerByRef.get(runtime.ref),
-        ),
-      );
-      seen.add(runtime.ref);
-    }
-    for (const worker of workers.list()) {
-      if (seen.has(worker.ref)) continue;
-      providers.push(await this.toProviderCapabilityProbed(worker.ref, worker));
-      seen.add(worker.ref);
-    }
-    return {
-      execution_available: providers.some((p) => p.worker_available),
-      wait: { default_ms: TEAMMATE_WAIT_DEFAULT_MS, max_ms: TEAMMATE_WAIT_MAX_MS },
-      target_modes: [...TEAMMATE_TARGET_MODES],
-      input_modes: [...TEAMMATE_INPUT_MODES],
-      default_input_mode: 'steer',
-      providers,
-    };
-  }
-
-  /**
-   * Build one `get_capabilities` row, probing a wired worker's binary
-   * resolvability (issue #126 PR7). A ref with no wired worker keeps the
-   * worker-unavailable placeholder and is not probed (there is nothing to run).
-   */
-  private async toProviderCapabilityProbed(
-    ref: string,
-    worker: TeamMateWorkerProvider | undefined,
-  ): Promise<ServerTeamMateProviderCapability> {
-    if (worker === undefined) return toProviderCapability(ref, undefined, null);
-    const availability = await this.workerBinaryProbe(ref);
-    return toProviderCapability(ref, worker, availability);
-  }
-
-  /**
-   * Record a TeamMate task's final result and deliver it into the dispatcher
-   * context with bounded retry (issue #110 PR8). The result is persisted before
-   * delivery, so a downed runtime ends in `delivery_failed` with the result
-   * still pull-able. This is the worker/operator ingest entry — deliberately not
-   * a dispatcher-facing MCP tool, so a dispatcher model cannot fake completions.
-   */
-  async reportTeamMateCompletion(
-    input: ServerTeamMateCompletionInput,
-  ): Promise<TeamMateDeliveryReport> {
-    // The delivery service wakes await_completion waiters via notifyEvent the
-    // instant the result is recorded and on each terminal delivery transition.
-    return this.teamMateDelivery.reportCompletion({
-      dispatcherId: input.dispatcherId,
-      taskId: input.taskId,
-      outcome: input.outcome,
-      finalText: input.finalText,
-    });
-  }
-
-  /**
-   * The scheduling-authority boundary (issue #126). Ordinary TeamMates cannot
-   * nested-dispatch; a future Team leader's scheduling authority will be granted
-   * here as an explicit role/capability, not by relaxing the ledger backstop.
-   */
-  private assertTeamMateSchedulingAuthority(
-    callerKind: TeamMateScheduleCallerKind,
-  ): void {
-    if (callerKind === 'teammate') {
-      throw new NestedTeamMateDispatchError();
-    }
-  }
-
-  private mustDispatcherDir(dispatcherId: string): string {
-    const dir = this.repos.dispatchers.get(dispatcherId)?.codex_cwd ?? null;
-    if (dir === null || dir === '') {
-      throw new Error(
-        `dispatcher '${dispatcherId}' has no configured working directory; ` +
-          'a path target cannot be resolved',
-      );
-    }
-    return dir;
-  }
-
-  /** List a dispatcher's TeamMate tasks (corrupt files skipped, not fatal). */
-  async listTeamMateTasksFromMcp(
-    dispatcherId: string,
-  ): Promise<ServerTeamMateTaskSummary[]> {
-    const tasks = await this.teamMateLedger(dispatcherId).listTasks({
-      onCorrupt: (taskId, err) =>
-        this.log.warn(
-          { dispatcher_id: dispatcherId, task_id: taskId, err: errInfo(err) },
-          'skipping corrupt TeamMate task file',
-        ),
-    });
-    return tasks.map(toTeamMateTaskSummary);
-  }
-
-  /** Fetch one TeamMate task in full (fail-loud on a corrupt specific task). */
-  async getTeamMateTaskFromMcp(
-    dispatcherId: string,
-    taskId: string,
-  ): Promise<TeamMateTaskRecord | null> {
-    return this.teamMateLedger(dispatcherId).getTask(taskId);
-  }
-
-  /**
-   * Pull a retained TeamMate result — the fallback after push delivery failed.
-   * Returns the result for the given task, or the latest result-bearing task
-   * when no id is given. Works at `delivery_failed` (the whole point of pull).
-   */
-  async pullTeamMateResultFromMcp(
-    dispatcherId: string,
-    taskId?: string,
-  ): Promise<ServerTeamMatePullResult | null> {
-    const ledger = this.teamMateLedger(dispatcherId);
-    const task =
-      taskId !== undefined
-        ? await ledger.getTask(taskId)
-        : await ledger.latestResultTask();
-    if (task === null || task.result === null) return null;
-    return toTeamMatePullResult(task);
-  }
-
   private dreamuxMcpServerDescriptors(
     channelProvider: ChannelProvider,
     context: { dispatcherId: string; adminSocketPath: string },
@@ -1789,14 +909,6 @@ export class Server {
         callerKind: 'dispatcher',
       }),
     ];
-  }
-
-  private teamMateLedger(dispatcherId: string): TeamMateTaskLedger {
-    const existing = this.teamMateLedgers.get(dispatcherId);
-    if (existing !== undefined) return existing;
-    const created = new TeamMateTaskLedger(dispatcherId);
-    this.teamMateLedgers.set(dispatcherId, created);
-    return created;
   }
 
   private mustRunningSlot(id: string): DispatcherSlot {
@@ -1836,7 +948,7 @@ export class Server {
     // do not leak past server exit. This is a pure resource release with no
     // ledger transition (issue #126 PR3): an in-flight task stays `running` for
     // the deferred orphan-reconciliation path rather than being force-failed.
-    await this.teamMateWorkerExecution.reapAll();
+    await this.dispatcherService.reapAllTeamMateWorkers();
     for (const id of Array.from(this.slots.keys())) {
       await this.stopDispatcher(id);
     }
@@ -1852,127 +964,6 @@ function toWireChatBot(bot: PeerBot): WireChatBot {
     open_id: bot.openId,
     ...(bot.name !== undefined && bot.name !== '' ? { name: bot.name } : {}),
   };
-}
-
-function isTerminalLifecycle(
-  status: TeamMateLifecycleStatus,
-): status is 'completed' | 'failed' | 'cancelled' {
-  return (
-    status === 'completed' || status === 'failed' || status === 'cancelled'
-  );
-}
-
-function toTeamMateTaskSummary(
-  task: TeamMateTaskRecord,
-): ServerTeamMateTaskSummary {
-  return {
-    task_id: task.task_id,
-    status: legacyTaskStatus(task),
-    lifecycle_status: task.lifecycle_status,
-    delivery_status: task.delivery_status,
-    title: task.title,
-    teammate_id: task.teammate_id,
-    provider_ref: task.provider_ref,
-    created_at: task.created_at,
-    updated_at: task.updated_at,
-    last_event_id: lastEventId(task),
-    delivery_attempts: task.delivery?.attempts ?? 0,
-    has_result: task.result !== null,
-  };
-}
-
-function toTeamMatePullResult(
-  task: TeamMateTaskRecord,
-): ServerTeamMatePullResult {
-  if (task.result === null) {
-    throw new Error(
-      `TeamMate task ${JSON.stringify(task.task_id)} has no retained result`,
-    );
-  }
-  return {
-    task_id: task.task_id,
-    status: legacyTaskStatus(task),
-    lifecycle_status: task.lifecycle_status,
-    delivery_status: task.delivery_status,
-    outcome: task.result.outcome,
-    text: task.result.text,
-    delivered: task.delivery_status === 'delivered',
-    delivery_attempts: task.delivery?.attempts ?? 0,
-  };
-}
-
-/** Map the execution service outcome onto the public `execution` sub-result. */
-function toExecutionResult(
-  outcome: TeamMateExecutionOutcome,
-): ServerTeamMateExecutionResult {
-  if (outcome.status === 'provider_unavailable') {
-    return {
-      status: 'provider_unavailable',
-      reason: outcome.reason,
-      code: outcome.code,
-      retryable: outcome.retryable,
-    };
-  }
-  return {
-    status: outcome.status,
-    ...(outcome.provider_ref !== '' ? { provider_ref: outcome.provider_ref } : {}),
-  };
-}
-
-/**
- * Build a provider capability row for `get_capabilities`. When the catalog has a
- * worker for the ref, its static capabilities are reported, downgraded to
- * unavailable when the binary probe (issue #126 PR7) could not resolve the
- * worker's binary — so a wired-but-unstartable worker advertises
- * `worker_available: false` with the probe's reason instead of lying. A ref with
- * no wired worker is listed as worker-unavailable and is not probed (`availability`
- * is null).
- */
-function toProviderCapability(
-  ref: string,
-  worker: TeamMateWorkerProvider | undefined,
-  availability: TeamMateWorkerAvailability | null,
-): ServerTeamMateProviderCapability {
-  if (worker === undefined) {
-    return {
-      provider_ref: ref,
-      worker_available: false,
-      unsupported_reason:
-        'TeamMate worker execution is not implemented yet (issue #126)',
-      modes: { steer: false, queue: false, interrupt: false },
-      resume: false,
-      logs: false,
-    };
-  }
-  const caps = worker.capabilities();
-  const binaryUnavailable = availability !== null && !availability.available;
-  const workerAvailable = caps.worker_available && !binaryUnavailable;
-  return {
-    provider_ref: ref,
-    worker_available: workerAvailable,
-    unsupported_reason: binaryUnavailable
-      ? availability.reason
-      : caps.unsupported_reason,
-    modes: { ...caps.modes },
-    resume: caps.resume,
-    logs: caps.logs,
-  };
-}
-
-/** Validate and default the `await_completion.until` token set (issue #126). */
-function parseWaitUntil(until: string[] | undefined): Set<TeamMateWaitToken> {
-  if (until === undefined) return new Set(TEAMMATE_WAIT_DEFAULT_UNTIL);
-  if (!Array.isArray(until) || until.length === 0) {
-    throw new Error('until must be a non-empty array of states');
-  }
-  const tokens = new Set<TeamMateWaitToken>();
-  for (const token of until) {
-    if (!isWaitToken(token)) {
-      throw new Error(`unsupported await_completion state: ${String(token)}`);
-    }
-    tokens.add(token);
-  }
-  return tokens;
 }
 
 async function setInboundReaction(

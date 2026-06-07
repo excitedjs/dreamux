@@ -338,14 +338,14 @@ describe('dreamux cross-module e2e', () => {
     server = buildServer({ runtimeDir, fake, bot });
     await server.start();
 
-    const scheduled = await server.scheduleTeamMateFromMcp({
+    const scheduled = await server.dispatcherService.scheduleTeamMate({
       dispatcherId: 'flow',
       callerKind: 'dispatcher',
       title: 'Summarize',
       prompt: 'summarize the issue',
       teammateId: 'reviewer-1',
     });
-    const report = await server.reportTeamMateCompletion({
+    const report = await server.dispatcherService.reportTeamMateCompletion({
       dispatcherId: 'flow',
       taskId: scheduled.task_id,
       outcome: 'completed',
@@ -362,7 +362,7 @@ describe('dreamux cross-module e2e', () => {
     ).toBe(true);
 
     // And it is retrievable via the pull path.
-    const pulled = await server.pullTeamMateResultFromMcp('flow', scheduled.task_id);
+    const pulled = await server.dispatcherService.pullTeamMateResult('flow', scheduled.task_id);
     expect(pulled).toMatchObject({
       task_id: scheduled.task_id,
       status: 'delivered',

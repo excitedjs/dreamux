@@ -1862,7 +1862,7 @@ describe('dreamux MVP smoke', () => {
         codexBinPath: process.execPath,
       });
 
-      const caps = await server.getTeamMateCapabilitiesFromMcp();
+      const caps = await server.dispatcherService.getTeamMateCapabilities();
       const codex = caps.providers.find(
         (p) => p.provider_ref === 'builtin:codex',
       );
@@ -2335,7 +2335,7 @@ describe('dreamux MVP smoke', () => {
     // Do NOT start() — that would spawn the claude-code runtime. The worker
     // catalog, ledger, and dispatcher rows are wired in the constructor, so the
     // MCP entry point can be driven directly.
-    const result = await server.runTeamMateTaskFromMcp({
+    const result = await server.dispatcherService.runTeamMateTask({
       dispatcherId: 'flow',
       callerKind: 'dispatcher',
       title: 'CC dispatcher task',
@@ -2350,7 +2350,7 @@ describe('dreamux MVP smoke', () => {
 
     // Capabilities reports the default Codex worker as available regardless of
     // the dispatcher's own (claude-code) runtime.
-    const caps = await server.getTeamMateCapabilitiesFromMcp();
+    const caps = await server.dispatcherService.getTeamMateCapabilities();
     const codex = caps.providers.find((p) => p.provider_ref === 'builtin:codex');
     expect(codex?.worker_available).toBe(true);
     expect(caps.execution_available).toBe(true);
@@ -2373,7 +2373,7 @@ describe('dreamux MVP smoke', () => {
       }),
       teamMateDeliveryBackoffMs: () => 0,
     });
-    const result = await server.runTeamMateTaskFromMcp({
+    const result = await server.dispatcherService.runTeamMateTask({
       dispatcherId: 'flow',
       callerKind: 'dispatcher',
       title: 'CC worker from codex dispatcher',

@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Move TeamMate orchestration into Dispatcher Service and slim server wiring.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}
