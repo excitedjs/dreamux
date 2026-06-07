@@ -3,6 +3,7 @@ import {
   BUILTIN_CODEX_PROVIDER_REF,
   BUILTIN_FEISHU_PROVIDER_REF,
   DEFAULT_APPROVAL_POLICY,
+  DEFAULT_CODEX_TURN_TIMEOUT_MS,
   DEFAULT_INITIALIZE_TIMEOUT_MS,
   DEFAULT_SANDBOX_MODE,
   dispatcherFeishuConfig,
@@ -82,6 +83,7 @@ function dispatcherConfigFromAnswers(answers: OnboardAnswers): DispatcherConfig 
         extra_args: [],
         extra_env: {},
         initialize_timeout_ms: DEFAULT_INITIALIZE_TIMEOUT_MS,
+        turn_timeout_ms: DEFAULT_CODEX_TURN_TIMEOUT_MS,
       },
     },
   };

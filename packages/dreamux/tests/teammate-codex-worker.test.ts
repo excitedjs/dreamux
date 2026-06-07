@@ -54,7 +54,11 @@ interface ProviderHarness {
 
 function buildProvider(
   fake: FakeCodex,
-  opts: { initializeTimeoutMs?: number; dispatcherCwd?: string } = {},
+  opts: {
+    initializeTimeoutMs?: number;
+    turnTimeoutMs?: number;
+    dispatcherCwd?: string;
+  } = {},
 ): ProviderHarness {
   const processes: NoopCodexProcess[] = [];
   const dispatcherCwd = opts.dispatcherCwd ?? '/tmp/teammate-codex-worker';
@@ -64,6 +68,9 @@ function buildProvider(
       ...defaultDispatcherCodexConfig(),
       ...(opts.initializeTimeoutMs !== undefined
         ? { initialize_timeout_ms: opts.initializeTimeoutMs }
+        : {}),
+      ...(opts.turnTimeoutMs !== undefined
+        ? { turn_timeout_ms: opts.turnTimeoutMs }
         : {}),
     }),
     resolveDispatcherCwd: () => dispatcherCwd,
@@ -85,7 +92,7 @@ interface ExecHarness extends ProviderHarness {
 
 function buildExecHarness(
   fake: FakeCodex,
-  opts: { initializeTimeoutMs?: number } = {},
+  opts: { initializeTimeoutMs?: number; turnTimeoutMs?: number } = {},
 ): ExecHarness {
   const { provider, processes } = buildProvider(fake, opts);
   const ledger = new TeamMateTaskLedger(DISPATCHER);
@@ -249,6 +256,33 @@ describe('codex teammate worker provider', () => {
     expect(task?.lifecycle_status).toBe('failed');
     expect(task?.result?.outcome).toBe('failed');
     expect(task?.result?.text).toContain('turn/start failed');
+  });
+
+  it('fails a running task whose turn never completes within the deadline (issue #126 PR7)', async () => {
+    // The worker reaches running, but the turn never completes in time (here the
+    // fake holds turn/completed far past the deadline — the installed-state
+    // symptom of a turn stalled on auth/network/quota). The per-turn deadline
+    // must turn this into a visible `failed`, not leave the task `running` with
+    // an empty diagnostic log forever.
+    fake = await startFakeCodex({ turnDelayMs: 60_000 });
+    const { ledger, execution } = buildExecHarness(fake, { turnTimeoutMs: 50 });
+    const taskId = await acceptTask(ledger, 'do the work');
+
+    const outcome = await execution.execute({ dispatcherId: DISPATCHER, taskId });
+    // Execution returns running first (onRunning landed before the turn stalled).
+    expect(outcome.status).toBe('running');
+
+    const terminal = await waitForTerminal(ledger, taskId);
+    expect(terminal).toBe('failed');
+    const task = await ledger.getTask(taskId);
+    expect(task?.result?.outcome).toBe('failed');
+    // The failure message is self-contained: it states what succeeded and that
+    // the stall is in turn execution, so get_task alone diagnoses it (the
+    // diagnostic log is legitimately empty for a socket-frame stall).
+    expect(task?.result?.text).toContain('did not complete within 50ms');
+    expect(task?.result?.text).toContain('turn execution');
+    // The stalled session is dropped, not retained as live.
+    expect(execution.hasLiveSession(DISPATCHER, taskId)).toBe(false);
   });
 
   it('folds a steer input onto the active turn and joins it into the result', async () => {
