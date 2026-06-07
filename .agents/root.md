@@ -6,18 +6,23 @@ when you need the *why* behind a piece of code or a decision history.
 
 ## What dreamux is
 
-A long-running Node process that hosts N **Dispatchers**. Each Dispatcher
-binds **1 Feishu channel + 1 Codex app-server child + 1 Codex thread + 1
-Feishu MCP endpoint**. All inbound chats for a dispatcher enter that
-dispatcher's single Codex thread; Feishu outbound is sent only when Codex
-calls the dispatcher-bound `feishu` MCP server. The current top-level
-architecture is:
+A long-running Node process that hosts N **Dispatchers**. Each Dispatcher binds
+one Phase 1 Channel provider (`builtin:feishu` today), one Agent Runtime
+provider (`builtin:codex` or `builtin:claude-code`), and Dreamux-owned MCP
+surfaces for channel reply and TeamMate scheduling/retrieval. All inbound chats
+for a dispatcher enter that dispatcher's runtime context; channel outbound is
+sent only when the runtime calls the dispatcher-bound channel MCP server. The
+current architecture is split between the original local-runtime baseline and
+the issue #110 providerized surfaces:
 
-- [Top-level design](decisions/top-level-design.md) — current source of truth
-  for runtime state, Feishu MCP, access gating, and config shape.
+- [Top-level design](decisions/top-level-design.md) — original MVP baseline;
+  still authoritative for unchanged local state/log ownership, Feishu access,
+  admin IPC, and process-local inbound limitations.
 - [Plugin and provider architecture](proposals/plugin-provider-architecture.md)
-  — issue #110 target architecture for provider refs, Capability Registry,
+  — issue #110 Phase 1 architecture for provider refs, Capability Registry,
   Channel providers, Agent Runtime providers, and server-hosted TeamMate.
+- [Issue #110 Epic closure check](decisions/issue-110-epic-closure.md) —
+  closure checklist for what Phase 1 implemented and what remains deferred.
 
 Background and older issue context:
 
@@ -103,6 +108,7 @@ Background and older issue context:
 | change dispatcher `tm` packaging, PATH injection, or skill install location | [`decisions/dispatcher-tm-packaging.md`](decisions/dispatcher-tm-packaging.md) |
 | add/change a package, move source between packages | [`components/repo-structure.md`](components/repo-structure.md) |
 | modify runtime state, dispatcher lifecycle, Feishu MCP, access gating, or config shape | [`decisions/top-level-design.md`](decisions/top-level-design.md) |
+| verify issue #110 closure or provider Epic boundaries | [`decisions/issue-110-epic-closure.md`](decisions/issue-110-epic-closure.md) |
 | change Feishu inbound attachment downloads, cache, or Codex-facing message body | [`decisions/feishu-inbound-attachments.md`](decisions/feishu-inbound-attachments.md) |
 | browse decisions by topic | [`decisions/README.md`](decisions/README.md) |
 | understand why rush + pnpm | [`decisions/rush-pnpm-monorepo.md`](decisions/rush-pnpm-monorepo.md) |

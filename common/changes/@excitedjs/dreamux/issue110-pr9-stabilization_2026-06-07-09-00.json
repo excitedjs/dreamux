@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Stabilize issue #110 closure with providerized README/help updates, doctor coverage for Claude Code runtime diagnostics, and a durable Epic closure checklist.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "288089849+codexmux[bot]@users.noreply.github.com"
+}

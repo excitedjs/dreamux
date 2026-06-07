@@ -1,9 +1,11 @@
 # Top-level design
 
-- **Status:** Accepted for the current runtime; partially superseded for issue
-  #110 by [channel-provider](channel-provider.md),
-  [agent-runtime-provider](agent-runtime-provider.md), and
-  [server-hosted-teammate](server-hosted-teammate.md)
+- **Status:** Accepted for the original MVP; superseded for issue #110
+  providerized surfaces by [issue-110-epic-closure](issue-110-epic-closure.md),
+  [channel-provider](channel-provider.md), [agent-runtime-provider](agent-runtime-provider.md),
+  and [server-hosted-teammate](server-hosted-teammate.md). Still applies to
+  unchanged Feishu access, local state/log ownership, admin IPC, and
+  process-local inbound limitations unless a newer decision says otherwise.
 - **Date:** 2026-06-03
 - **Affects:** server runtime, dispatcher lifecycle, Feishu channel, Codex MCP, admin/outbound IPC, global config, state files, logs, CLI admin surface, workspace-local bundled skill ownership
 - **PR / Issue:** Local architecture clarification on 2026-06-03; supersedes the persistence and automatic-outbound parts of issue #2, the runtime-dir parts of `global-config-dir`, and loopback HTTP MCP as the default Feishu MCP transport
@@ -27,9 +29,10 @@ This decision locks the MVP boundary.
 
 ## Issue #110 Supersession
 
-This record remains the source of truth for the current implemented runtime
-until the issue #110 PRs replace it. It is not the target architecture for the
-plugin/provider Epic.
+This record remains historical context plus source of truth for the MVP pieces
+that issue #110 did not replace. It is not the full current architecture for the
+plugin/provider Epic; use [issue-110-epic-closure](issue-110-epic-closure.md)
+and the provider decisions for current providerized surfaces.
 
 Issue #110 supersedes these MVP assumptions:
 

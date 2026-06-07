@@ -381,7 +381,7 @@ function readDispatcherChannels(
   if (rawChannels.length !== 1) {
     throw new Error(
       `dreamux config error in ${file}: ${prefix} must contain exactly one channel in this phase (got ${rawChannels.length}).\n` +
-        'Multi-channel routing lands after the ChannelProvider runtime PR.',
+        'The config envelope is channels[] for the provider architecture, but Phase 1 still wires one channel per dispatcher. Multi-channel routing is a follow-up.',
     );
   }
   const raw = rawChannels[0];
@@ -402,7 +402,7 @@ function readDispatcherChannels(
   if (provider.ref !== BUILTIN_FEISHU_PROVIDER_REF) {
     throw new Error(
       `dreamux config error in ${file}: ${channelPrefix}provider='${provider.ref}' is registered but not runnable in this phase.\n` +
-        'Only provider "builtin:feishu" is wired until the ChannelProvider runtime PR lands.',
+        'Only channel provider "builtin:feishu" is wired in Phase 1.',
     );
   }
   const config = readProviderConfigObject(raw['config'], file, `${channelPrefix}config`);

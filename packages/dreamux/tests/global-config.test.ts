@@ -485,7 +485,7 @@ describe('global config (~/.dreamux/config.json)', () => {
     );
   });
 
-  it('rejects multiple channels until ChannelProvider runtime lands', async () => {
+  it('rejects multiple channels while Phase 1 wires one channel per dispatcher', async () => {
     const first = testDispatcherConfig({ id: 'flow' });
     writeConfigObject({
       dispatchers: [
