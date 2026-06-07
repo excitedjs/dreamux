@@ -1,99 +1,27 @@
 /**
- * Phase-1 builtin provider descriptors for issue #110.
+ * Builtin provider descriptors for the provider registry.
  *
- * These register the bundled providers so that `builtin:feishu`,
- * `builtin:codex`, and `builtin:claude-code` resolve through the registry.
- *
- * Capabilities are declared as `CapabilityDescriptor[]` and are the single
- * source of truth for what each provider exposes; the provider implementations
- * read them back from these descriptors:
- *
- * - `builtin:feishu` (#110 PR4) declares its channel capabilities. The `kind`
- *   values match `CHANNEL_CAPABILITY` in `src/channel/provider.ts`, and
- *   `src/channel/feishu-provider.ts` reads them back; the channel-provider test
- *   asserts they stay in sync.
- * - `builtin:codex` (#110 PR5) declares its agent-runtime capabilities, read by
- *   `src/agent-runtime/codex.ts`.
- * - `builtin:claude-code` (#110 PR6) declares its agent-runtime capabilities,
- *   read by `src/agent-runtime/claude-code.ts`.
- *
- * The confirmed builtin set is recorded in
- * `.agents/decisions/provider-references-and-capability-registry.md` and
- * `.agents/decisions/agent-runtime-provider.md`.
+ * The registry validates refs and kind only. Capabilities are declared by the
+ * provider implementations that core actually invokes.
  */
 
 import { parseProviderRef } from './provider-ref.js';
 import {
-  CapabilityRegistry,
-  capabilityId,
-  type CapabilityDescriptor,
   type ProviderDescriptor,
   type ProviderKind,
+  ProviderRegistry,
 } from './registry.js';
 
 interface BuiltinSpec {
   id: string;
   kind: ProviderKind;
-  /** Capabilities this builtin exposes; ids are namespaced by provider id. */
-  capabilities?: readonly CapabilityDescriptor[];
 }
 
-/** The providers Dreamux ships and can run in phase 1. */
+/** The provider refs Dreamux ships and recognizes. */
 export const BUILTIN_PROVIDERS: readonly BuiltinSpec[] = [
-  {
-    id: 'feishu',
-    kind: 'channel',
-    capabilities: [
-      { id: capabilityId('feishu', 'mcpServer'), kind: 'mcpServer' },
-      { id: capabilityId('feishu', 'reply'), kind: 'reply' },
-      { id: capabilityId('feishu', 'react'), kind: 'react' },
-      { id: capabilityId('feishu', 'access'), kind: 'access' },
-    ],
-  },
-  {
-    id: 'codex',
-    kind: 'agentRuntime',
-    capabilities: [
-      { id: capabilityId('codex', 'lifecycle'), kind: 'agentRuntime.lifecycle' },
-      {
-        id: capabilityId('codex', 'mcpInjection'),
-        kind: 'agentRuntime.mcpInjection',
-      },
-      {
-        id: capabilityId('codex', 'inboundTurn'),
-        kind: 'agentRuntime.inboundTurn',
-      },
-      {
-        id: capabilityId('codex', 'teammateCompletion.codexInboxTurn'),
-        kind: 'agentRuntime.teammateCompletionDelivery',
-      },
-    ],
-  },
-  {
-    id: 'claude-code',
-    kind: 'agentRuntime',
-    capabilities: [
-      {
-        id: capabilityId('claude-code', 'lifecycle'),
-        kind: 'agentRuntime.lifecycle',
-      },
-      {
-        id: capabilityId('claude-code', 'mcpInjection'),
-        kind: 'agentRuntime.mcpInjection',
-      },
-      {
-        id: capabilityId('claude-code', 'inboundTurn'),
-        kind: 'agentRuntime.inboundTurn',
-      },
-      {
-        id: capabilityId(
-          'claude-code',
-          'teammateCompletion.claudeCodeTaskNotification',
-        ),
-        kind: 'agentRuntime.teammateCompletionDelivery',
-      },
-    ],
-  },
+  { id: 'feishu', kind: 'channel' },
+  { id: 'codex', kind: 'agentRuntime' },
+  { id: 'claude-code', kind: 'agentRuntime' },
 ];
 
 function builtinDescriptor(spec: BuiltinSpec): ProviderDescriptor {
@@ -101,18 +29,33 @@ function builtinDescriptor(spec: BuiltinSpec): ProviderDescriptor {
     id: spec.id,
     kind: spec.kind,
     ref: parseProviderRef(`builtin:${spec.id}`),
-    capabilities: [...(spec.capabilities ?? [])],
   };
 }
 
-/**
- * Build a registry pre-populated with the phase-1 builtin providers. This does
- * not wire into the server startup path; callers opt in explicitly.
- */
-export function createBuiltinRegistry(): CapabilityRegistry {
-  const registry = new CapabilityRegistry();
+function buildBuiltinProviderRegistry(): ProviderRegistry {
+  const registry = new ProviderRegistry();
   for (const spec of BUILTIN_PROVIDERS) {
     registry.register(builtinDescriptor(spec));
   }
   return registry;
+}
+
+/**
+ * Build a registry pre-populated with the builtin provider descriptors.
+ */
+export function createBuiltinProviderRegistry(): ProviderRegistry {
+  return buildBuiltinProviderRegistry();
+}
+
+let defaultProviderRegistry: ProviderRegistry | null = null;
+
+/**
+ * Shared builtin registry for config parsing paths that do not yet have a
+ * server-owned registry to inject.
+ */
+export function defaultBuiltinProviderRegistry(): ProviderRegistry {
+  if (defaultProviderRegistry === null) {
+    defaultProviderRegistry = buildBuiltinProviderRegistry();
+  }
+  return defaultProviderRegistry;
 }

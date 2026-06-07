@@ -9,7 +9,7 @@ export interface TeamMateWorkerProviderCatalogOptions {
 /**
  * Lightweight registry of TeamMate worker providers, keyed by ref (issue #126
  * PR2). Deliberately NOT the agent-runtime catalog: that one validates refs
- * against the builtin capability registry and rejects unknown/reserved refs,
+ * against the builtin provider registry and rejects unknown/reserved refs,
  * which would fight an injected test/fake worker. Worker providers are wired by
  * the server (empty in production for the MVP — no real worker yet) or injected
  * by tests. Resolution never throws; an unknown ref maps to `null`, which the

@@ -6,7 +6,10 @@ import { join } from 'node:path';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { createClaudeCodeAgentRuntimeProvider } from '../src/agent-runtime/claude-code.js';
+import {
+  createClaudeCodeAgentRuntimeProvider,
+  type ClaudeCodeAgentRuntimeProviderOptions,
+} from '../src/agent-runtime/claude-code.js';
 import {
   createDefaultClaudeCodeSession,
   type ClaudeCodeSession,
@@ -22,6 +25,7 @@ import { codexMcpServerArgs } from '../src/codex/mcp-config.js';
 import { DispatcherStore } from '../src/runtime/dispatcher-store.js';
 import { dispatcherClaudeCodeMcpConfigPath } from '../src/runtime/paths.js';
 import { defaultDispatcherClaudeCodeConfig } from '../src/runtime/config.js';
+import { createBuiltinProviderRegistry } from '../src/registry/index.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 import type {
   AgentRuntime,
@@ -33,6 +37,16 @@ const FEISHU_MCP: AgentRuntimeMcpServer = {
   command: '/pkg/bin/dreamux',
   args: ['feishu-mcp', '--dispatcher', 'flow', '--admin-socket', '/tmp/a.sock'],
 };
+
+function claudeCodeProvider(
+  options: Omit<ClaudeCodeAgentRuntimeProviderOptions, 'descriptor'> = {},
+) {
+  const registry = createBuiltinProviderRegistry();
+  return createClaudeCodeAgentRuntimeProvider({
+    ...options,
+    descriptor: registry.resolve('builtin:claude-code'),
+  });
+}
 
 function claudeDispatcher(id = 'flow') {
   return testDispatcherConfig({
@@ -190,7 +204,7 @@ describe('claude-code pure translation (not Codex renamed)', () => {
 
 describe('builtin:claude-code provider', () => {
   it('exposes the claude-code ref and task-notification delivery shape', () => {
-    const provider = createClaudeCodeAgentRuntimeProvider({ sessionFactory: fakeFleet().factory });
+    const provider = claudeCodeProvider({ sessionFactory: fakeFleet().factory });
     expect(provider.ref).toBe('builtin:claude-code');
     expect(provider.descriptor.kind).toBe('agentRuntime');
     expect(provider.delivery.teammateCompletion.map((s) => s.kind)).toEqual([
@@ -226,7 +240,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     }
     const row = store.get('flow');
     expect(row).not.toBeNull();
-    const runtime = createClaudeCodeAgentRuntimeProvider({
+    const runtime = claudeCodeProvider({
       sessionFactory: fleet.factory,
     }).createRuntime({
       row: row!,
@@ -494,7 +508,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     const dispatcher = claudeDispatcher('flow');
     const store = new DispatcherStore(testDreamuxConfig([dispatcher]));
     const row = store.get('flow');
-    const runtime = createClaudeCodeAgentRuntimeProvider({
+    const runtime = claudeCodeProvider({
       sessionFactory: stallFactory,
     }).createRuntime({
       row: row!,

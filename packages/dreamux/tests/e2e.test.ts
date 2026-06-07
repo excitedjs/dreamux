@@ -37,6 +37,7 @@ import {
 } from '../src/feishu/bot.js';
 import { runFeishuMcp } from '../src/mcp/feishu-mcp.js';
 import { BUILT_IN_DEFAULTS, type DreamuxConfig } from '../src/runtime/config.js';
+import { createBuiltinProviderRegistry } from '../src/registry/index.js';
 import {
   dispatcherCodexCwd,
   dispatcherCodexHome,
@@ -148,7 +149,8 @@ function buildServer(opts: {
  * gates inbound, but core must refuse model-driven outbound through it.
  */
 function inboundOnlyChannelProvider(): ChannelProvider {
-  const base = builtinFeishuChannelProvider();
+  const registry = createBuiltinProviderRegistry();
+  const base = builtinFeishuChannelProvider(registry.resolve('builtin:feishu'));
   return {
     ref: base.ref,
     descriptor: base.descriptor,

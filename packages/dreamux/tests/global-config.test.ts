@@ -34,6 +34,10 @@ import {
   stateRoot,
 } from '../src/runtime/paths.js';
 import { codexArgsToCli, parseCodexArgs } from '../src/runtime/codex-args.js';
+import {
+  createBuiltinProviderRegistry,
+  parseProviderRef,
+} from '../src/registry/index.js';
 import { testDispatcherConfig } from './helpers/config.js';
 
 function writeConfigObjectAt(configDir: string, value: unknown): void {
@@ -439,6 +443,30 @@ describe('global config (~/.dreamux/config.json)', () => {
 
     await expect(loadConfig({ configDir })).rejects.toThrow(
       /is a agentRuntime provider, expected channel/,
+    );
+  });
+
+  it('validates config provider refs through the injected provider registry', async () => {
+    const registry = createBuiltinProviderRegistry();
+    registry.register({
+      id: 'custom-runtime',
+      kind: 'agentRuntime',
+      ref: parseProviderRef('builtin:custom-runtime'),
+    });
+    writeConfigObject({
+      dispatchers: [
+        testDispatcherConfig({
+          id: 'flow',
+          runtime: { provider: 'builtin:custom-runtime', config: {} },
+        }),
+      ],
+    });
+
+    await expect(loadConfig({ configDir, providerRegistry: registry })).rejects.toThrow(
+      /registered but not runnable in this phase/,
+    );
+    await expect(loadConfig({ configDir })).rejects.toThrow(
+      /unknown builtin provider 'custom-runtime'/,
     );
   });
 

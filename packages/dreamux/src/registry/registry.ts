@@ -1,17 +1,10 @@
 /**
- * Capability Registry skeleton for the issue #110 plugin/provider architecture.
+ * Provider registry for the issue #135 architecture realignment.
  *
- * The registry is process-local and server-owned. It records provider
- * descriptors and the capabilities they expose, and resolves provider refs to
- * descriptors, so core consumers read capabilities from one place instead of
- * constructing channel / runtime / MCP surfaces by hard-coded provider-specific
- * names. See
- * `.agents/decisions/provider-references-and-capability-registry.md`.
- *
- * Scope for this PR (issue #110 phase 1): typed registration + lookup only. It
- * does not take over the server startup path, does not build MCP surfaces, and
- * does not load, install, or execute external npm providers — external refs are
- * reserved syntax that resolve to a clear, typed error.
+ * The registry is process-local and server-owned. It validates provider refs and
+ * resolves them to provider descriptors; executable providers own their runtime
+ * capabilities directly. External `npm:` refs remain reserved until the
+ * agentRuntime loader is implemented.
  */
 
 import {
@@ -21,35 +14,14 @@ import {
 } from './provider-ref.js';
 
 /** Kinds of provider the registry can hold. */
-export type ProviderKind = 'channel' | 'agentRuntime' | 'service';
+export type ProviderKind = 'channel' | 'agentRuntime';
 
-/**
- * A capability a provider exposes. The skeleton records the descriptor metadata;
- * the executable surfaces (MCP servers, reply, runtime delivery hooks) are
- * attached by the per-provider PRs (#110 PR4/PR5/PR6+).
- */
-export interface CapabilityDescriptor {
-  /**
-   * Capability id, namespaced by provider id to avoid collisions, e.g.
-   * `feishu:reply`. Build with {@link capabilityId}.
-   */
-  id: string;
-  /** Provider-defined capability kind, e.g. `mcpServer`, `reply`, `runtimeDelivery`. */
-  kind: string;
-}
-
-/** A registered provider and the capabilities it declares. */
+/** A registered provider descriptor. Capabilities live on provider instances. */
 export interface ProviderDescriptor {
   /** Resolved provider id (the builtin id for builtin refs). */
   id: string;
   kind: ProviderKind;
   ref: ProviderRef;
-  capabilities: CapabilityDescriptor[];
-}
-
-/** Namespace a capability name under its provider id. */
-export function capabilityId(providerId: string, name: string): string {
-  return `${providerId}:${name}`;
 }
 
 /** Thrown when registering a provider id that is already registered. */
@@ -57,20 +29,6 @@ export class DuplicateProviderError extends Error {
   constructor(readonly id: string) {
     super(`provider ${JSON.stringify(id)} is already registered`);
     this.name = 'DuplicateProviderError';
-  }
-}
-
-/** Thrown when two capabilities within one provider share an id. */
-export class DuplicateCapabilityError extends Error {
-  constructor(
-    readonly providerId: string,
-    readonly capabilityId: string,
-  ) {
-    super(
-      `provider ${JSON.stringify(providerId)} declares capability ` +
-        `${JSON.stringify(capabilityId)} more than once`,
-    );
-    this.name = 'DuplicateCapabilityError';
   }
 }
 
@@ -98,27 +56,17 @@ export class ReservedExternalProviderError extends Error {
 
 /**
  * In-process registry of provider descriptors. Construct an empty one and
- * register providers, or use {@link createBuiltinRegistry} for the phase-1
- * builtins.
+ * register providers, or use `createBuiltinProviderRegistry` for the builtins.
  */
-export class CapabilityRegistry {
+export class ProviderRegistry {
   private readonly providers = new Map<string, ProviderDescriptor>();
 
   /**
-   * Register a provider. Throws {@link DuplicateProviderError} on a repeated id
-   * and {@link DuplicateCapabilityError} on a repeated capability id within the
-   * provider.
+   * Register a provider. Throws {@link DuplicateProviderError} on a repeated id.
    */
   register(descriptor: ProviderDescriptor): void {
     if (this.providers.has(descriptor.id)) {
       throw new DuplicateProviderError(descriptor.id);
-    }
-    const seen = new Set<string>();
-    for (const capability of descriptor.capabilities) {
-      if (seen.has(capability.id)) {
-        throw new DuplicateCapabilityError(descriptor.id, capability.id);
-      }
-      seen.add(capability.id);
     }
     this.providers.set(descriptor.id, descriptor);
   }

@@ -8,13 +8,14 @@ import {
 } from '../src/agent-runtime/index.js';
 import {
   UnknownBuiltinProviderError,
-  createBuiltinRegistry,
+  createBuiltinProviderRegistry,
 } from '../src/registry/index.js';
 import { DispatcherStore } from '../src/runtime/dispatcher-store.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 
 function builtinCatalog(): AgentRuntimeProviderCatalog {
   return createBuiltinAgentRuntimeProviderCatalog({
+    registry: createBuiltinProviderRegistry(),
     codex: { resolveBinPath: (bin) => bin },
   });
 }
@@ -84,8 +85,9 @@ describe('AgentRuntimeProviderCatalog', () => {
   });
 
   it('supports registry injection for future provider composition tests', () => {
+    const registry = createBuiltinProviderRegistry();
     const catalog = new AgentRuntimeProviderCatalog({
-      registry: createBuiltinRegistry(),
+      registry,
       providers: [builtinCatalog().resolve('builtin:codex')],
     });
 
