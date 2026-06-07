@@ -19,8 +19,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
-import { createClaudeCodeAgentRuntimeProvider } from '../src/agent-runtime/claude-code.js';
+import {
+  createClaudeCodeAgentRuntimeProvider,
+  type ClaudeCodeAgentRuntimeProviderOptions,
+} from '../src/agent-runtime/claude-code.js';
 import { createClaudeCodeTeamMateWorkerProvider } from '../src/teammate/worker/claude-code-provider.js';
+import { createBuiltinProviderRegistry } from '../src/registry/index.js';
 import { DispatcherStore } from '../src/runtime/dispatcher-store.js';
 import type {
   TeamMateWorkerHandle,
@@ -30,6 +34,16 @@ import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 const execFileAsync = promisify(execFile);
 
 export const RUN_ENV = 'DREAMUX_RUN_LIVE_CLAUDE_CODE';
+
+function claudeCodeProvider(
+  options: Omit<ClaudeCodeAgentRuntimeProviderOptions, 'descriptor'> = {},
+) {
+  const registry = createBuiltinProviderRegistry();
+  return createClaudeCodeAgentRuntimeProvider({
+    ...options,
+    descriptor: registry.resolve('builtin:claude-code'),
+  });
+}
 
 async function claudeOnPath(): Promise<boolean> {
   try {
@@ -99,7 +113,7 @@ describe('claude-code live integration (opt-in)', () => {
     const row = store.get('live');
     expect(row).not.toBeNull();
 
-    const runtime = createClaudeCodeAgentRuntimeProvider().createRuntime({
+    const runtime = claudeCodeProvider().createRuntime({
       row: row!,
       dispatcher,
       dispatchers: store,

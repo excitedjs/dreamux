@@ -56,7 +56,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
-import { createBuiltinRegistry } from '../registry/index.js';
+import { type ProviderDescriptor } from '../registry/index.js';
 import {
   BUILTIN_CLAUDE_CODE_PROVIDER_REF,
   defaultDispatcherClaudeCodeConfig,
@@ -93,6 +93,7 @@ import type {
 } from './types.js';
 
 export interface ClaudeCodeAgentRuntimeProviderOptions {
+  descriptor: ProviderDescriptor;
   /** Optional host-level bin resolver (default: identity on the config bin). */
   resolveBinPath?: (bin: string) => string;
   /** Override the resident-session factory (tests inject a fake). */
@@ -379,17 +380,14 @@ export class ClaudeCodeRuntime implements AgentRuntime {
 
 /** Build the Phase 1 `builtin:claude-code` agent runtime provider. */
 export function createClaudeCodeAgentRuntimeProvider(
-  options: ClaudeCodeAgentRuntimeProviderOptions = {},
+  options: ClaudeCodeAgentRuntimeProviderOptions,
 ): AgentRuntimeProvider {
-  const descriptor = createBuiltinRegistry().resolve(
-    BUILTIN_CLAUDE_CODE_PROVIDER_REF,
-  );
   const sessionFactory =
     options.sessionFactory ?? createDefaultClaudeCodeSession;
   const resolveBinPath = options.resolveBinPath ?? ((bin: string) => bin);
   return {
     ref: BUILTIN_CLAUDE_CODE_PROVIDER_REF,
-    descriptor,
+    descriptor: options.descriptor,
     delivery: {
       teammateCompletion: [
         {

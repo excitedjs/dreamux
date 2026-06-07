@@ -5,8 +5,9 @@
  * lifecycle, the channel-owned MCP surface contributed to the dispatcher
  * runtime, provider-specific access/trust semantics, and outbound capabilities
  * (reply, react) when it chooses to expose them. Dreamux core consumes the
- * capabilities a provider declares; it does not classify channels as one-way or
- * two-way, and it does not own channel access policy. See
+ * capabilities from the provider instance; the registry only validates refs.
+ * It does not classify channels as one-way or two-way, and it does not own
+ * channel access policy. See
  * `.agents/decisions/channel-provider.md`.
  *
  * Reply and react are deliberately optional: a dispatcher can reply only when
@@ -34,12 +35,7 @@ import type {
   FeishuInboundRoutes,
 } from '../feishu/bot.js';
 
-/**
- * Capability kinds a Channel provider can expose. These match the `kind` of the
- * capability descriptors declared on the registry's builtin channel providers
- * (`src/registry/builtins.ts`); the channel-provider test asserts they stay in
- * sync so the two declarations cannot drift.
- */
+/** Capability kinds a Channel provider can expose. */
 export const CHANNEL_CAPABILITY = {
   /** Contributes a channel-owned MCP server to the dispatcher runtime. */
   mcpServer: 'mcpServer',
@@ -125,7 +121,7 @@ export class ChannelCapabilityError extends Error {
 export interface ChannelProvider {
   /** Normalized provider ref, e.g. `builtin:feishu`. */
   readonly ref: string;
-  /** The capability registry descriptor for this provider. */
+  /** Registry descriptor for this provider ref. */
   readonly descriptor: ProviderDescriptor;
   /** Whether the provider declares a given capability. */
   hasCapability(kind: ChannelCapabilityKind): boolean;

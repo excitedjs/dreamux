@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Provider architecture PR A (issue #135): replace the old capability registry with a provider-ref registry that validates builtin refs and provider kind only. Runtime and channel provider factories now receive descriptors resolved from the server-owned registry, and config provider validation uses the injected registry before Phase 1 wired-provider checks. BREAKING: the exported CapabilityRegistry/capability descriptor API is removed; use ProviderRegistry for ref/kind lookup and read capabilities from provider instances.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

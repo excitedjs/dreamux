@@ -1,9 +1,8 @@
 import {
-  createBuiltinRegistry,
   formatProviderRef,
   ReservedExternalProviderError,
-  type CapabilityRegistry,
   type ProviderDescriptor,
+  type ProviderRegistry,
 } from '../registry/index.js';
 import { createCodexAgentRuntimeProvider } from './codex.js';
 import type { CodexAgentRuntimeProviderOptions } from './codex.js';
@@ -32,16 +31,16 @@ export class WrongProviderKindError extends Error {
 }
 
 export interface AgentRuntimeProviderCatalogOptions {
-  registry?: CapabilityRegistry;
+  registry: ProviderRegistry;
   providers: readonly AgentRuntimeProvider[];
 }
 
 export class AgentRuntimeProviderCatalog {
-  private readonly registry: CapabilityRegistry;
+  private readonly registry: ProviderRegistry;
   private readonly providers = new Map<string, AgentRuntimeProvider>();
 
   constructor(options: AgentRuntimeProviderCatalogOptions) {
-    this.registry = options.registry ?? createBuiltinRegistry();
+    this.registry = options.registry;
     for (const provider of options.providers) {
       this.providers.set(provider.ref, provider);
     }
@@ -77,19 +76,27 @@ export class AgentRuntimeProviderCatalog {
 }
 
 export interface BuiltinAgentRuntimeProviderCatalogOptions {
-  registry?: CapabilityRegistry;
-  codex: CodexAgentRuntimeProviderOptions;
-  claudeCode?: ClaudeCodeAgentRuntimeProviderOptions;
+  registry: ProviderRegistry;
+  codex: Omit<CodexAgentRuntimeProviderOptions, 'descriptor'>;
+  claudeCode?: Omit<ClaudeCodeAgentRuntimeProviderOptions, 'descriptor'>;
 }
 
 export function createBuiltinAgentRuntimeProviderCatalog(
   options: BuiltinAgentRuntimeProviderCatalogOptions,
 ): AgentRuntimeProviderCatalog {
+  const codexDescriptor = options.registry.resolve('builtin:codex');
+  const claudeCodeDescriptor = options.registry.resolve('builtin:claude-code');
   return new AgentRuntimeProviderCatalog({
     providers: [
-      createCodexAgentRuntimeProvider(options.codex),
-      createClaudeCodeAgentRuntimeProvider(options.claudeCode ?? {}),
+      createCodexAgentRuntimeProvider({
+        ...options.codex,
+        descriptor: codexDescriptor,
+      }),
+      createClaudeCodeAgentRuntimeProvider({
+        ...(options.claudeCode ?? {}),
+        descriptor: claudeCodeDescriptor,
+      }),
     ],
-    ...(options.registry !== undefined ? { registry: options.registry } : {}),
+    registry: options.registry,
   });
 }

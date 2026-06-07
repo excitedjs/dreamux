@@ -7,12 +7,10 @@
  * modules. Behavior is unchanged; the difference is that the server now reaches
  * these through the provider instead of constructing them by hard-coded name.
  *
- * Capabilities are read from the registry descriptor for `builtin:feishu`
- * (`src/registry/builtins.ts`), so the catalog stays the single source of truth
- * for what this provider exposes.
+ * Capabilities are declared by this provider; the registry only validates the
+ * provider ref and kind.
  */
 
-import { createBuiltinRegistry } from '../registry/index.js';
 import { feishuMcpServerDescriptor } from '../codex/mcp-config.js';
 import {
   channelOutboundToFeishuTarget,
@@ -24,6 +22,7 @@ import {
   saveDispatcherAccess,
 } from './feishu-gate.js';
 import { BUILTIN_FEISHU_PROVIDER_REF } from '../runtime/config.js';
+import { type ProviderDescriptor } from '../registry/index.js';
 import type {
   ChannelAccessOps,
   ChannelCapabilityKind,
@@ -35,12 +34,18 @@ import type {
   ChannelConnection,
 } from './provider.js';
 
+export const FEISHU_CHANNEL_CAPABILITIES: readonly ChannelCapabilityKind[] = [
+  'mcpServer',
+  'reply',
+  'react',
+  'access',
+];
+
 /** Build the Phase 1 `builtin:feishu` channel provider. */
-export function builtinFeishuChannelProvider(): ChannelProvider {
-  const descriptor = createBuiltinRegistry().resolve(BUILTIN_FEISHU_PROVIDER_REF);
-  const capabilities = new Set<string>(
-    descriptor.capabilities.map((capability) => capability.kind),
-  );
+export function builtinFeishuChannelProvider(
+  descriptor: ProviderDescriptor,
+): ChannelProvider {
+  const capabilities = new Set<ChannelCapabilityKind>(FEISHU_CHANNEL_CAPABILITIES);
 
   const access: ChannelAccessOps = {
     load: loadDispatcherAccess,

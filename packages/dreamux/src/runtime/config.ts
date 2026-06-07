@@ -14,9 +14,10 @@ import {
   InvalidProviderRefError,
   ReservedExternalProviderError,
   UnknownBuiltinProviderError,
-  createBuiltinRegistry,
+  defaultBuiltinProviderRegistry,
   formatProviderRef,
   type ProviderDescriptor,
+  type ProviderRegistry,
 } from '../registry/index.js';
 import { validateDispatcherId } from './dispatcher-id.js';
 
@@ -179,9 +180,32 @@ export const ALLOWED_SANDBOX_MODES = new Set([
 
 export const DEFAULT_CONFIG_JSON = `${JSON.stringify(BUILT_IN_DEFAULTS, null, 2)}\n`;
 
+type ChannelConfigReader = (
+  rawConfig: Record<string, unknown>,
+  file: string,
+  prefix: string,
+) => DispatcherProviderConfig | DispatcherFeishuConfig;
+
+type RuntimeConfigReader = (
+  rawConfig: Record<string, unknown>,
+  file: string,
+  prefix: string,
+) => DispatcherProviderConfig | DispatcherCodexConfig | DispatcherClaudeCodeConfig;
+
+const WIRED_CHANNEL_CONFIG_READERS = new Map<string, ChannelConfigReader>([
+  [BUILTIN_FEISHU_PROVIDER_REF, readDispatcherFeishuConfig],
+]);
+
+const WIRED_RUNTIME_CONFIG_READERS = new Map<string, RuntimeConfigReader>([
+  [BUILTIN_CODEX_PROVIDER_REF, readDispatcherCodexConfig],
+  [BUILTIN_CLAUDE_CODE_PROVIDER_REF, readDispatcherClaudeCodeConfig],
+]);
+
 export interface ConfigPathOverrides {
   /** Override the global config dir. Default: ~/.dreamux. */
   configDir?: string;
+  /** Provider registry used to validate config provider refs. */
+  providerRegistry?: ProviderRegistry;
 }
 
 export function globalConfigDir(overrides: ConfigPathOverrides = {}): string {
@@ -211,7 +235,7 @@ export async function loadOrInitConfig(
   await mkdir(dirname(file), { recursive: true });
 
   const createdOnThisBoot = await atomicWriteIfAbsent(file, DEFAULT_CONFIG_JSON);
-  const config = await readConfigFile(file);
+  const config = await readConfigFile(file, providerRegistryFor(overrides));
   return { config, configFile: file, createdOnThisBoot };
 }
 
@@ -220,7 +244,10 @@ export async function loadConfig(
 ): Promise<{ config: DreamuxConfig; configFile: string }> {
   const file = globalConfigFile(overrides);
   await assertNoLegacyTomlOnly(overrides);
-  return { config: await readConfigFile(file), configFile: file };
+  return {
+    config: await readConfigFile(file, providerRegistryFor(overrides)),
+    configFile: file,
+  };
 }
 
 export function stringifyConfig(config: DreamuxConfig): string {
@@ -242,7 +269,10 @@ export function redactConfigForDisplay(raw: string, file: string): string {
   return `${JSON.stringify(parsed, null, 2)}\n`;
 }
 
-async function readConfigFile(file: string): Promise<DreamuxConfig> {
+async function readConfigFile(
+  file: string,
+  providerRegistry: ProviderRegistry,
+): Promise<DreamuxConfig> {
   if (!(await pathExists(file))) {
     throw new Error(
       `dreamux config is missing at ${file}.\n` +
@@ -261,7 +291,7 @@ async function readConfigFile(file: string): Promise<DreamuxConfig> {
         `Fix the JSON syntax in ${file}, then restart. Run \`dreamux onboard\` if you need to recreate the config.`,
     );
   }
-  return mergeWithDefaults(parsed, file);
+  return mergeWithDefaults(parsed, file, providerRegistry);
 }
 
 export async function assertNoLegacyTomlOnly(
@@ -307,7 +337,15 @@ export async function assertConfigFileMode(file: string): Promise<void> {
   );
 }
 
-function mergeWithDefaults(raw: unknown, file: string): DreamuxConfig {
+function providerRegistryFor(overrides: ConfigPathOverrides): ProviderRegistry {
+  return overrides.providerRegistry ?? defaultBuiltinProviderRegistry();
+}
+
+function mergeWithDefaults(
+  raw: unknown,
+  file: string,
+  providerRegistry: ProviderRegistry,
+): DreamuxConfig {
   if (!isPlainObject(raw)) {
     throw new Error(`dreamux config error in ${file}: top-level must be an object`);
   }
@@ -315,7 +353,7 @@ function mergeWithDefaults(raw: unknown, file: string): DreamuxConfig {
   rejectUnknownKeys(raw, new Set(['dispatchers']), file, '');
 
   return {
-    dispatchers: readDispatchers(raw['dispatchers'], file),
+    dispatchers: readDispatchers(raw['dispatchers'], file, providerRegistry),
   };
 }
 
@@ -337,7 +375,11 @@ function rejectTopLevelCodex(raw: Record<string, unknown>, file: string): void {
   );
 }
 
-function readDispatchers(rawDispatchers: unknown, file: string): DispatcherConfig[] {
+function readDispatchers(
+  rawDispatchers: unknown,
+  file: string,
+  providerRegistry: ProviderRegistry,
+): DispatcherConfig[] {
   if (rawDispatchers === undefined) return [];
   if (!Array.isArray(rawDispatchers)) {
     throw new Error(
@@ -372,7 +414,12 @@ function readDispatchers(rawDispatchers: unknown, file: string): DispatcherConfi
     }
     ids.add(id);
 
-    const channels = readDispatcherChannels(raw['channels'], file, prefix);
+    const channels = readDispatcherChannels(
+      raw['channels'],
+      file,
+      prefix,
+      providerRegistry,
+    );
     const feishu = feishuConfigFromChannels(channels, id);
     const app_id = feishu.app_id;
     const existing = appIdToDispatcher.get(app_id);
@@ -389,7 +436,7 @@ function readDispatchers(rawDispatchers: unknown, file: string): DispatcherConfi
       cwd: cwd === null ? null : expandHome(cwd),
       enabled: readOptionalBoolean(raw, 'enabled', true, file, prefix),
       channels,
-      runtime: readDispatcherRuntime(raw['runtime'], file, prefix),
+      runtime: readDispatcherRuntime(raw['runtime'], file, prefix, providerRegistry),
     });
   }
   return out;
@@ -399,6 +446,7 @@ function readDispatcherChannels(
   rawChannels: unknown,
   file: string,
   dispatcherPrefix: string,
+  providerRegistry: ProviderRegistry,
 ): DispatcherChannelConfig[] {
   const prefix = `${dispatcherPrefix}channels`;
   if (!Array.isArray(rawChannels)) {
@@ -427,20 +475,21 @@ function readDispatcherChannels(
     'channel',
     file,
     channelPrefix,
+    providerRegistry,
   );
-  if (provider.ref !== BUILTIN_FEISHU_PROVIDER_REF) {
+  const readChannelConfig = WIRED_CHANNEL_CONFIG_READERS.get(provider.ref);
+  if (readChannelConfig === undefined) {
     throw new Error(
       `dreamux config error in ${file}: ${channelPrefix}provider='${provider.ref}' is registered but not runnable in this phase.\n` +
         'Only channel provider "builtin:feishu" is wired in Phase 1.',
     );
   }
   const config = readProviderConfigObject(raw['config'], file, `${channelPrefix}config`);
-  const feishu = readDispatcherFeishuConfig(config, file, `${channelPrefix}config.`);
   return [
     {
       id,
       provider: provider.ref,
-      config: feishu,
+      config: readChannelConfig(config, file, `${channelPrefix}config.`),
     },
   ];
 }
@@ -464,6 +513,7 @@ function readDispatcherRuntime(
   rawRuntime: unknown,
   file: string,
   dispatcherPrefix: string,
+  providerRegistry: ProviderRegistry,
 ): DispatcherRuntimeConfig {
   const prefix = `${dispatcherPrefix}runtime.`;
   if (!isPlainObject(rawRuntime)) {
@@ -478,20 +528,16 @@ function readDispatcherRuntime(
     'agentRuntime',
     file,
     prefix,
+    providerRegistry,
   );
   const config = readProviderConfigObject(rawRuntime['config'], file, `${prefix}config`, {
     allowMissing: true,
   });
-  if (provider.ref === BUILTIN_CODEX_PROVIDER_REF) {
+  const readRuntimeConfig = WIRED_RUNTIME_CONFIG_READERS.get(provider.ref);
+  if (readRuntimeConfig !== undefined) {
     return {
       provider: provider.ref,
-      config: readDispatcherCodexConfig(config, file, `${prefix}config.`),
-    };
-  }
-  if (provider.ref === BUILTIN_CLAUDE_CODE_PROVIDER_REF) {
-    return {
-      provider: provider.ref,
-      config: readDispatcherClaudeCodeConfig(config, file, `${prefix}config.`),
+      config: readRuntimeConfig(config, file, `${prefix}config.`),
     };
   }
   // A registered agentRuntime builtin with no config parser wired yet. Fail
@@ -712,10 +758,10 @@ function resolveConfigProvider(
   expectedKind: ProviderDescriptor['kind'],
   file: string,
   prefix: string,
+  providerRegistry: ProviderRegistry,
 ): { ref: string; descriptor: ProviderDescriptor } {
-  const registry = createBuiltinRegistry();
   try {
-    const descriptor = registry.resolve(rawProvider);
+    const descriptor = providerRegistry.resolve(rawProvider);
     if (descriptor.kind !== expectedKind) {
       throw new Error(
         `dreamux config error in ${file}: ${prefix}provider='${rawProvider}' is a ${descriptor.kind} provider, expected ${expectedKind}`,

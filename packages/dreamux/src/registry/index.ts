@@ -1,5 +1,5 @@
 /**
- * Capability Registry + provider references (issue #110 phase 1 skeleton).
+ * Provider registry + provider references.
  *
  * Process-local provider registration/lookup and the public provider-ref
  * grammar. Builtin providers run; external `npm:` refs are reserved syntax that

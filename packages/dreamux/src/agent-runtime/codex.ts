@@ -12,7 +12,7 @@ import {
 } from '../runtime/config.js';
 import type { DispatcherCodexHomeDoctor } from '../runtime/dispatcher-codex-home.js';
 import { codexArgsToCli, parseCodexArgs } from '../runtime/codex-args.js';
-import { createBuiltinRegistry } from '../registry/index.js';
+import { type ProviderDescriptor } from '../registry/index.js';
 import type {
   AgentRuntime,
   AgentRuntimeProvider,
@@ -20,6 +20,7 @@ import type {
 } from './types.js';
 
 export interface CodexAgentRuntimeProviderOptions {
+  descriptor: ProviderDescriptor;
   resolveBinPath: (bin: string) => string;
   codexProcessFactory?: (opts: CodexProcessOptions) => CodexProcess;
   codexClientFactory?: (socketPath: string) => CodexWsClient;
@@ -31,10 +32,9 @@ export interface CodexAgentRuntimeProviderOptions {
 export function createCodexAgentRuntimeProvider(
   options: CodexAgentRuntimeProviderOptions,
 ): AgentRuntimeProvider {
-  const descriptor = createBuiltinRegistry().resolve(BUILTIN_CODEX_PROVIDER_REF);
   return {
     ref: BUILTIN_CODEX_PROVIDER_REF,
-    descriptor,
+    descriptor: options.descriptor,
     delivery: {
       teammateCompletion: [
         {

@@ -31,6 +31,10 @@ import {
 } from './channel/provider.js';
 import { resolveChannelProvider } from './channel/channel-providers.js';
 import {
+  createBuiltinProviderRegistry,
+  type ProviderRegistry,
+} from './registry/index.js';
+import {
   detectIntroduce,
   introduceAckText,
   introduceDenyReason,
@@ -155,6 +159,8 @@ export interface ServerOptions {
    * capability-gated outbound paths.
    */
   channelProviderResolver?: (ref: string) => ChannelProvider;
+  /** Provider registry used by runtime/channel composition. */
+  providerRegistry?: ProviderRegistry;
   /** Codex binary path override (tests, highest precedence). */
   codexBinPath?: string;
   /** Inject a CodexProcess factory (tests). */
@@ -542,6 +548,7 @@ export class Server {
   private readonly log: DreamuxLogger;
   private readonly channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
   private readonly channelProviderResolver: (ref: string) => ChannelProvider;
+  private readonly providerRegistry: ProviderRegistry;
   private readonly agentRuntimeProviders: AgentRuntimeProviderCatalog;
   private readonly teamMateDelivery: TeamMateDeliveryService;
   private readonly teamMateWorkers: TeamMateWorkerProviderCatalog;
@@ -550,8 +557,11 @@ export class Server {
 
   constructor(opts: ServerOptions = {}) {
     this.opts = opts;
+    this.providerRegistry =
+      opts.providerRegistry ?? createBuiltinProviderRegistry();
     this.channelProviderResolver =
-      opts.channelProviderResolver ?? resolveChannelProvider;
+      opts.channelProviderResolver ??
+      ((ref) => resolveChannelProvider(ref, { registry: this.providerRegistry }));
     // Install the config snapshot before any paths.* / runtime.* lookup
     // happens. paths.stateRoot / adminSocketPath / etc. consult this
     // snapshot for non-env defaults (env vars still win).
@@ -584,6 +594,7 @@ export class Server {
     this.agentRuntimeProviders =
       opts.agentRuntimeProviderCatalog ??
       createBuiltinAgentRuntimeProviderCatalog({
+        registry: this.providerRegistry,
         codex: codexProviderOptions,
       });
     this.teamMateDelivery = new TeamMateDeliveryService({
@@ -853,7 +864,7 @@ export class Server {
     // Resolve the dispatcher's channel provider (issue #110 PR4). The server no
     // longer constructs the Feishu MCP surface / bot / gate by hard-coded name;
     // it consumes the capabilities the provider exposes. The ref is validated
-    // through the capability registry, so a reserved/unknown ref fails loudly.
+    // through the provider registry, so a reserved/unknown ref fails loudly.
     const channelRef =
       dispatcherConfig?.channels[0]?.provider ?? BUILTIN_FEISHU_PROVIDER_REF;
     const channelProvider = this.channelProviderResolver(channelRef);

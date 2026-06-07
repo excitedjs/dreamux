@@ -18,79 +18,75 @@ import {
   saveDispatcherAccess,
 } from '../src/channel/feishu-gate.js';
 import {
+  createBuiltinProviderRegistry,
   InvalidProviderRefError,
   ReservedExternalProviderError,
   UnknownBuiltinProviderError,
 } from '../src/registry/index.js';
 import { createFakeFeishuBot } from '../src/feishu/bot.js';
 
+function resolveBuiltinChannelProvider(ref: string) {
+  return resolveChannelProvider(ref, {
+    registry: createBuiltinProviderRegistry(),
+  });
+}
+
+function feishuProvider(): ChannelProvider {
+  const registry = createBuiltinProviderRegistry();
+  return builtinFeishuChannelProvider(registry.resolve('builtin:feishu'));
+}
+
 describe('resolveChannelProvider', () => {
   it('resolves the builtin:feishu channel provider', () => {
-    const provider = resolveChannelProvider('builtin:feishu');
+    const provider = resolveBuiltinChannelProvider('builtin:feishu');
     expect(provider.ref).toBe('builtin:feishu');
     expect(provider.descriptor.kind).toBe('channel');
     expect(provider.descriptor.id).toBe('feishu');
   });
 
   it('rejects an agentRuntime ref as a non-channel provider', () => {
-    expect(() => resolveChannelProvider('builtin:codex')).toThrow(
+    expect(() => resolveBuiltinChannelProvider('builtin:codex')).toThrow(
       UnsupportedChannelProviderError,
     );
-    expect(() => resolveChannelProvider('builtin:claude-code')).toThrow(
+    expect(() => resolveBuiltinChannelProvider('builtin:claude-code')).toThrow(
       UnsupportedChannelProviderError,
     );
   });
 
   it('refuses to load a reserved external npm ref', () => {
-    expect(() => resolveChannelProvider('npm:@example/dreamux-channel')).toThrow(
-      ReservedExternalProviderError,
-    );
     expect(() =>
-      resolveChannelProvider('npm:@example/dreamux-channel#provider'),
+      resolveBuiltinChannelProvider('npm:@example/dreamux-channel'),
+    ).toThrow(ReservedExternalProviderError);
+    expect(() =>
+      resolveBuiltinChannelProvider('npm:@example/dreamux-channel#provider'),
     ).toThrow(ReservedExternalProviderError);
   });
 
   it('rejects an unknown builtin ref', () => {
-    expect(() => resolveChannelProvider('builtin:matrix')).toThrow(
+    expect(() => resolveBuiltinChannelProvider('builtin:matrix')).toThrow(
       UnknownBuiltinProviderError,
     );
   });
 
   it('surfaces a malformed ref through the parser', () => {
-    expect(() => resolveChannelProvider('not-a-ref')).toThrow(
+    expect(() => resolveBuiltinChannelProvider('not-a-ref')).toThrow(
       InvalidProviderRefError,
     );
   });
 });
 
 describe('builtin:feishu capability declaration', () => {
-  it('declares exactly the phase-1 channel capabilities, and they stay in sync', () => {
-    const provider = builtinFeishuChannelProvider();
-    const declared = provider.descriptor.capabilities.map((c) => c.kind).sort();
-    const expected = Object.values(CHANNEL_CAPABILITY).sort();
-    // Drift guard: the registry catalog and the CHANNEL_CAPABILITY enum core
-    // queries against must declare the same capability kinds for builtin:feishu.
-    expect(declared).toEqual(expected);
-  });
-
   it('reports each declared capability through hasCapability', () => {
-    const provider = builtinFeishuChannelProvider();
+    const provider = feishuProvider();
     for (const kind of Object.values(CHANNEL_CAPABILITY)) {
       expect(provider.hasCapability(kind)).toBe(true);
     }
-  });
-
-  it('namespaces capability ids under the provider id', () => {
-    const provider = builtinFeishuChannelProvider();
-    const ids = provider.descriptor.capabilities.map((c) => c.id);
-    expect(ids).toContain('feishu:reply');
-    expect(ids).toContain('feishu:mcpServer');
   });
 });
 
 describe('builtin:feishu owns its MCP / access / reply / react surfaces', () => {
   it('contributes runtime-neutral MCP server descriptors (not runtime CLI args)', () => {
-    const provider = builtinFeishuChannelProvider();
+    const provider = feishuProvider();
     const context = { dispatcherId: 'flow', adminSocketPath: '/tmp/admin.sock' };
     expect(provider.mcpServerDescriptors(context)).toEqual([
       feishuMcpServerDescriptor(context),
@@ -98,7 +94,7 @@ describe('builtin:feishu owns its MCP / access / reply / react surfaces', () => 
   });
 
   it('delegates access load/save/gate to the Feishu access module', () => {
-    const provider = builtinFeishuChannelProvider();
+    const provider = feishuProvider();
     // The provider owns access semantics by delegating to the Feishu gate; core
     // no longer imports these directly.
     expect(provider.access.load).toBe(loadDispatcherAccess);
@@ -107,7 +103,7 @@ describe('builtin:feishu owns its MCP / access / reply / react surfaces', () => 
   });
 
   it('gates a direct message from an un-allowed sender as drop', () => {
-    const provider = builtinFeishuChannelProvider();
+    const provider = feishuProvider();
     const result = provider.access.gate(
       { senderId: 'stranger', chatId: 'chat-dm', chatType: 'p2p' },
       defaultDispatcherAccessState(),
@@ -116,7 +112,7 @@ describe('builtin:feishu owns its MCP / access / reply / react surfaces', () => 
   });
 
   it('translates a channel-neutral reply into the transport target', async () => {
-    const provider = builtinFeishuChannelProvider();
+    const provider = feishuProvider();
     const bot = createFakeFeishuBot('app-test');
     const result = await provider.reply?.(bot, {
       chatId: 'chat-1',
@@ -135,7 +131,7 @@ describe('builtin:feishu owns its MCP / access / reply / react surfaces', () => 
   });
 
   it('adds a reaction through the connection', async () => {
-    const provider = builtinFeishuChannelProvider();
+    const provider = feishuProvider();
     const bot = createFakeFeishuBot('app-test');
     const result = await provider.react?.(bot, {
       messageId: 'msg-1',
@@ -156,7 +152,6 @@ describe('ChannelProvider permits inbound-only channels (reply is not core-manda
         id: 'inbound-only',
         kind: 'channel',
         ref: { source: 'builtin', id: 'inbound-only', raw: 'builtin:inbound-only' },
-        capabilities: [{ id: 'inbound-only:mcpServer', kind: 'mcpServer' }],
       },
       hasCapability: (kind) => kind === CHANNEL_CAPABILITY.mcpServer,
       mcpServerDescriptors: () => [],
