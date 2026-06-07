@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "TeamMate MCP parity PR2 (issue #126): add the worker provider seam and an in-memory fake provider, with no real Codex/Claude Code worker yet and no tm wrapping. Introduce a runtime-agnostic TeamMateWorkerProvider (per-task steerable session, distinct from the dispatcher's long-lived AgentRuntimeProvider) plus a permissive worker catalog; a provider drives lifecycle through callbacks and never writes the ledger. Add a TeamMateWorkerExecutionService that maps onRunning/onCompleted/onFailed/onCancelled onto ledger transitions (markRunning, the PR1 record-before-deliver completion path, and a cancelled close) with wait-broker notifications, idempotent execution, and no re-execution of terminal tasks. Wire run_task/execute_task through the service, route send_input to a live worker session (promoting a queued input to submitted via the new ledger.markInputSubmitted), and make the worker catalog the source of truth for get_capabilities. Production behaviour is unchanged from PR1: with the default empty worker catalog every provider is worker-unavailable and execution tools still report provider_unavailable; only an injected fake catalog (tests) runs a session.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

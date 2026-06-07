@@ -61,6 +61,11 @@ import { writeRestartIntent } from '../src/daemon/restart-intent.js';
 import { dreamuxBinPath } from '../src/runtime/package-bin.js';
 import { createLogger, type DreamuxLogger } from '../src/runtime/logger.js';
 import { DREAMUX_DISPATCHER_BASE_INSTRUCTIONS } from '../src/dispatcher/base-prompt.js';
+import { TeamMateWorkerProviderCatalog } from '../src/teammate/worker/catalog.js';
+import {
+  FakeTeamMateWorkerProvider,
+  FAKE_TEAMMATE_WORKER_REF,
+} from '../src/teammate/worker/fake-provider.js';
 import { startFakeCodex, type FakeCodex } from './fake-codex.js';
 import { testDispatcherConfig } from './helpers/config.js';
 import { Writable } from 'node:stream';
@@ -119,11 +124,19 @@ function buildServer(opts: {
   codexRestartBackoffBaseMs?: number;
   codexRestartBackoffMaxMs?: number;
   channelLoggerFactory?: (dispatcherId: string) => DreamuxLogger;
+  teamMateWorkerProviders?: TeamMateWorkerProviderCatalog;
+  teamMateDeliveryBackoffMs?: (attempt: number) => number;
 }): Server {
   return new Server({
     config: opts.config ?? BUILT_IN_DEFAULTS,
     adminSocketPath: join(opts.runtimeDir, 'admin.sock'),
     skipBotSecret: opts.skipBotSecret ?? true,
+    ...(opts.teamMateWorkerProviders !== undefined
+      ? { teamMateWorkerProviders: opts.teamMateWorkerProviders }
+      : {}),
+    ...(opts.teamMateDeliveryBackoffMs !== undefined
+      ? { teamMateDeliveryBackoffMs: opts.teamMateDeliveryBackoffMs }
+      : {}),
     ...(opts.channelLoggerFactory !== undefined
       ? { channelLoggerFactory: opts.channelLoggerFactory }
       : {}),
@@ -1680,6 +1693,212 @@ describe('dreamux MVP smoke', () => {
     expect(refs).toContain('builtin:codex');
     expect(refs).toContain('builtin:claude-code');
     expect(caps.providers.every((p) => p.worker_available === false)).toBe(true);
+  });
+
+  it('mcp.teammate.capabilities reflects an injected worker provider as available', async () => {
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      config: configWithDispatcher({ cwd: runtimeDir }),
+      teamMateWorkerProviders: new TeamMateWorkerProviderCatalog({
+        providers: [new FakeTeamMateWorkerProvider()],
+      }),
+    });
+    await server.start();
+
+    const caps = (await sendAdminRequest(
+      'mcp.teammate.capabilities',
+      { dispatcher_id: 'flow' },
+      { socketPath: join(runtimeDir, 'admin.sock') },
+    )) as {
+      execution_available: boolean;
+      providers: Array<{
+        provider_ref: string;
+        worker_available: boolean;
+        modes: { steer: boolean };
+      }>;
+    };
+
+    // Injecting an available worker flips execution_available and appends the
+    // worker ref alongside the (still worker-unavailable) built-in runtimes.
+    expect(caps.execution_available).toBe(true);
+    const fakeRow = caps.providers.find(
+      (p) => p.provider_ref === FAKE_TEAMMATE_WORKER_REF,
+    );
+    expect(fakeRow?.worker_available).toBe(true);
+    expect(fakeRow?.modes.steer).toBe(true);
+    const builtinCodex = caps.providers.find(
+      (p) => p.provider_ref === 'builtin:codex',
+    );
+    expect(builtinCodex?.worker_available).toBe(false);
+  });
+
+  it('run_task executes through an injected worker and await/pull collect the result', async () => {
+    const fakeWorker = new FakeTeamMateWorkerProvider();
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      config: configWithDispatcher({ cwd: runtimeDir }),
+      teamMateWorkerProviders: new TeamMateWorkerProviderCatalog({
+        providers: [fakeWorker],
+      }),
+      teamMateDeliveryBackoffMs: () => 0,
+    });
+    await server.start();
+    const socketPath = join(runtimeDir, 'admin.sock');
+
+    const created = (await sendAdminRequest(
+      'mcp.teammate.run',
+      {
+        dispatcher_id: 'flow',
+        caller_kind: 'dispatcher',
+        title: 'Run task',
+        prompt: 'Investigate the failing test.',
+        target_path: '.',
+      },
+      { socketPath },
+    )) as {
+      task: { task_id: string; lifecycle_status: string; last_event_id: number };
+      execution: { status: string; provider_ref?: string };
+    };
+
+    // With a worker wired, run_task starts a live session: the task is running
+    // (not provider_unavailable) and the execution names the resolved provider.
+    expect(created.execution).toMatchObject({
+      status: 'running',
+      provider_ref: FAKE_TEAMMATE_WORKER_REF,
+    });
+    expect(created.task.lifecycle_status).toBe('running');
+    // The local target path is still kept out of the public summary.
+    expect(JSON.stringify(created.task)).not.toContain(runtimeDir);
+    const taskId = created.task.task_id;
+
+    // Register the wait, then drive the fake worker to completion; the waiter
+    // must wake from the recorded completion event, not its timeout.
+    const awaiting = sendAdminRequest(
+      'mcp.teammate.await',
+      {
+        dispatcher_id: 'flow',
+        task_id: taskId,
+        after_event_id: created.task.last_event_id,
+        timeout_ms: 3000,
+      },
+      { socketPath, timeoutMs: 9000 },
+    ) as Promise<{ status: string; result: { outcome: string; text: string } | null }>;
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await fakeWorker.emitCompleted(taskId, 'the worker finished the job');
+
+    const awaited = await awaiting;
+    expect(awaited.status).toBe('completed');
+    expect(awaited.result?.outcome).toBe('completed');
+
+    // Pull returns the retained result regardless of delivery (no runtime up).
+    const pulled = (await sendAdminRequest(
+      'mcp.teammate.pull',
+      { dispatcher_id: 'flow', task_id: taskId },
+      { socketPath },
+    )) as { result: { outcome: string; text: string } };
+    expect(pulled.result.text).toBe('the worker finished the job');
+  });
+
+  it('send_input promotes a queued input to submitted when a worker session is live', async () => {
+    const fakeWorker = new FakeTeamMateWorkerProvider();
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      config: configWithDispatcher({ cwd: runtimeDir }),
+      teamMateWorkerProviders: new TeamMateWorkerProviderCatalog({
+        providers: [fakeWorker],
+      }),
+      teamMateDeliveryBackoffMs: () => 0,
+    });
+    await server.start();
+    const socketPath = join(runtimeDir, 'admin.sock');
+
+    const created = (await sendAdminRequest(
+      'mcp.teammate.run',
+      {
+        dispatcher_id: 'flow',
+        caller_kind: 'dispatcher',
+        title: 'Steerable task',
+        prompt: 'Start working and await steering.',
+        target_path: '.',
+      },
+      { socketPath },
+    )) as { task: { task_id: string } };
+    const taskId = created.task.task_id;
+
+    const sent = (await sendAdminRequest(
+      'mcp.teammate.send_input',
+      {
+        dispatcher_id: 'flow',
+        task_id: taskId,
+        prompt: 'also check the integration tests',
+      },
+      { socketPath },
+    )) as { status: string; mode: string; input_id: string };
+    // Default mode is steer, and the live worker accepted it -> submitted.
+    expect(sent.mode).toBe('steer');
+    expect(sent.status).toBe('submitted');
+    expect(fakeWorker.inputsFor(taskId)).toHaveLength(1);
+
+    const task = (await sendAdminRequest(
+      'mcp.teammate.get',
+      { dispatcher_id: 'flow', task_id: taskId },
+      { socketPath },
+    )) as { task: { inputs: Array<{ input_id: string; status: string }> } };
+    expect(task.task.inputs[0]).toMatchObject({
+      input_id: sent.input_id,
+      status: 'submitted',
+    });
+  });
+
+  it('run_task drives the task to cancelled when the worker cancels', async () => {
+    const fakeWorker = new FakeTeamMateWorkerProvider();
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      config: configWithDispatcher({ cwd: runtimeDir }),
+      teamMateWorkerProviders: new TeamMateWorkerProviderCatalog({
+        providers: [fakeWorker],
+      }),
+      teamMateDeliveryBackoffMs: () => 0,
+    });
+    await server.start();
+    const socketPath = join(runtimeDir, 'admin.sock');
+
+    const created = (await sendAdminRequest(
+      'mcp.teammate.run',
+      {
+        dispatcher_id: 'flow',
+        caller_kind: 'dispatcher',
+        title: 'Cancellable task',
+        prompt: 'Begin work.',
+        target_path: '.',
+      },
+      { socketPath },
+    )) as { task: { task_id: string } };
+    const taskId = created.task.task_id;
+
+    await fakeWorker.emitCancelled(taskId, 'superseded by a newer task');
+
+    const task = (await sendAdminRequest(
+      'mcp.teammate.get',
+      { dispatcher_id: 'flow', task_id: taskId },
+      { socketPath },
+    )) as {
+      task: { lifecycle_status: string; close: { status: string; note: string } };
+    };
+    expect(task.task.lifecycle_status).toBe('cancelled');
+    expect(task.task.close).toMatchObject({
+      status: 'cancelled',
+      note: 'superseded by a newer task',
+    });
   });
 
   it('await_completion wakes promptly when a completion is recorded mid-wait', async () => {

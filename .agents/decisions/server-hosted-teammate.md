@@ -166,6 +166,61 @@ worker provider seam; `cancel_task`/`resume_task`/`get_logs`; standalone
 `history`/`get_status` and `list_tasks` filters; startup redelivery/orphan
 reconciliation; log redaction layer.
 
+## Issue #126: TeamMate MCP parity — PR2 (worker provider seam + fake provider)
+
+PR2 lands the **worker provider seam** PR1 deferred, plus an in-memory fake
+provider that proves the Dispatcher Service execution orchestration end-to-end.
+It still does **not** implement a real Codex/Claude Code worker and does **not**
+wrap or shell out to `tm`.
+
+Worker seam (`/packages/dreamux/src/teammate/worker/`):
+
+- `TeamMateWorkerProvider` runs ONE task as a steerable, multi-input session
+  against a local target. It is a different abstraction from the dispatcher's
+  long-lived `AgentRuntimeProvider` (`/packages/dreamux/src/agent-runtime/`):
+  that one models the dispatcher's own persistent runtime; a worker session is
+  per-task. The seam carries no Codex-only assumptions — a Claude Code worker
+  (still in epic scope) implements the same interface.
+- A provider **never writes the ledger**. It drives lifecycle through callbacks
+  (`onRunning`/`onCompleted`/`onFailed`/`onCancelled`); the execution service is
+  the sole ledger writer, so the server-owned ledger stays the single source of
+  truth.
+- `TeamMateWorkerProviderCatalog` is a deliberately separate, permissive
+  registry — NOT the agent-runtime catalog, which validates refs against the
+  builtin capability registry and would reject an injected fake ref. Resolution
+  never throws; an unknown ref maps to a retryable `provider_unavailable`.
+- The fake provider (`FakeTeamMateWorkerProvider`, ref `fake`) is deterministic
+  and timer-free: a test injects it and drives the lifecycle with explicit
+  controls (`emitCompleted`/`emitFailed`/`emitCancelled`).
+
+Execution service (`/packages/dreamux/src/teammate/worker-execution.ts`):
+
+- Maps worker callbacks onto ledger transitions plus wait-broker notifies:
+  `onRunning → markRunning`, `onCompleted/onFailed → reportCompletion` (the PR1
+  delivery path — record-before-deliver, retain, pull fallback), `onCancelled →
+  recordClose('cancelled')`. A provider-reported failure still lands a durable,
+  pull-able `failed` result.
+- Idempotent: a live session short-circuits a second `execute` (no double
+  start); a terminal task is never re-executed.
+
+Server wiring (`/packages/dreamux/src/server.ts`):
+
+- A new injectable `teamMateWorkerProviders` catalog (empty by default).
+  `run_task`/`execute_task` now go through the execution service; `send_input`
+  records the input (`queued`) then routes it to a live session, promoting it to
+  `submitted` on an accepted disposition (new `ledger.markInputSubmitted`).
+- `get_capabilities` makes the worker catalog the source of truth:
+  `execution_available` and each provider's `worker_available` come from it.
+  **Production behaviour is unchanged from PR1** — with the default empty
+  catalog every provider is worker-unavailable and `execution_available` is
+  false; only an injected catalog (the fake in tests) flips them.
+
+Deferred to later #126 slices (unchanged from PR1, plus): real Codex/Claude
+worker execution; worker runtime-handle persistence on the task record; process
+death / orphan reconciliation (PR2 proves "source of truth after failure" via a
+provider-reported failure, not a real crash); `cancel_task`/`resume_task`/
+`get_logs` MCP tools.
+
 ## Consequences
 
 - The old "Dreamux never owns teammate state" decision is superseded.

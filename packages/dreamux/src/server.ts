@@ -94,6 +94,12 @@ import {
   type TeamMateDeliveryReport,
 } from './teammate/delivery.js';
 import {
+  TeamMateWorkerExecutionService,
+  type TeamMateExecutionOutcome,
+} from './teammate/worker-execution.js';
+import { TeamMateWorkerProviderCatalog } from './teammate/worker/catalog.js';
+import type { TeamMateWorkerProvider } from './teammate/worker/types.js';
+import {
   awaitTeamMateCompletion,
   clampWaitTimeout,
   isWaitToken,
@@ -144,6 +150,13 @@ export interface ServerOptions {
   codexRestartBackoffMaxMs?: number;
   /** Override runtime provider catalog (tests / future provider composition). */
   agentRuntimeProviderCatalog?: AgentRuntimeProviderCatalog;
+  /**
+   * TeamMate worker provider catalog (issue #126 PR2). Empty by default — the
+   * MVP wires no real worker, so execution tools report `provider_unavailable`
+   * exactly as PR1. Tests inject a fake worker catalog to drive the full
+   * accepted → running → completed/failed/cancelled orchestration.
+   */
+  teamMateWorkerProviders?: TeamMateWorkerProviderCatalog;
   /** Max TeamMate completion delivery attempts before delivery_failed (tests). */
   teamMateDeliveryMaxAttempts?: number;
   /** TeamMate delivery backoff per attempt, ms (tests pass 0). */
@@ -355,12 +368,19 @@ export interface ServerMcpAwaitTeamMateCompletionInput {
   timeoutMs?: number;
 }
 
-/** Execution attempt outcome — no worker is wired in PR1, so always unavailable. */
+/**
+ * Execution attempt outcome (issue #126). With no worker wired (production MVP)
+ * this is always `provider_unavailable`, exactly as PR1; an injected worker
+ * catalog produces `running`/`completed`/`failed`/`cancelled` with the resolved
+ * `provider_ref`. The `reason`/`code`/`retryable` fields are present only for
+ * `provider_unavailable`.
+ */
 export interface ServerTeamMateExecutionResult {
-  status: 'provider_unavailable';
-  reason: string;
-  code: string;
-  retryable: boolean;
+  status: 'running' | 'completed' | 'failed' | 'cancelled' | 'provider_unavailable';
+  provider_ref?: string;
+  reason?: string;
+  code?: string;
+  retryable?: boolean;
 }
 
 export interface ServerMcpRunTeamMateTaskResult {
@@ -371,7 +391,12 @@ export interface ServerMcpRunTeamMateTaskResult {
 export interface ServerMcpSendTeamMateInputResult {
   input_id: string;
   mode: TeamMateInputMode;
-  status: 'queued';
+  /**
+   * `submitted` when a live worker session accepted the input, `queued`
+   * otherwise (no worker, or the worker rejected it) — the input is still
+   * durably recorded either way (issue #126 PR2).
+   */
+  status: 'queued' | 'submitted';
   after_event_id: number;
   task: ServerTeamMateTaskSummary;
 }
@@ -427,6 +452,8 @@ export class Server {
   private readonly channelProviderResolver: (ref: string) => ChannelProvider;
   private readonly agentRuntimeProviders: AgentRuntimeProviderCatalog;
   private readonly teamMateDelivery: TeamMateDeliveryService;
+  private readonly teamMateWorkers: TeamMateWorkerProviderCatalog;
+  private readonly teamMateWorkerExecution: TeamMateWorkerExecutionService;
 
   constructor(opts: ServerOptions = {}) {
     this.opts = opts;
@@ -478,6 +505,17 @@ export class Server {
       ...(opts.teamMateDeliveryBackoffMs !== undefined
         ? { backoffMs: opts.teamMateDeliveryBackoffMs }
         : {}),
+    });
+    this.teamMateWorkers =
+      opts.teamMateWorkerProviders ?? new TeamMateWorkerProviderCatalog();
+    this.teamMateWorkerExecution = new TeamMateWorkerExecutionService({
+      ledger: (dispatcherId) => this.teamMateLedger(dispatcherId),
+      workers: () => this.teamMateWorkers,
+      reportCompletion: (report) =>
+        this.teamMateDelivery.reportCompletion(report),
+      notifyEvent: (dispatcherId, taskId) =>
+        this.teamMateWaitBroker.notify(dispatcherId, taskId),
+      log: (level, message, fields) => this.log[level](fields ?? {}, message),
     });
     this.repos = {
       dispatchers: new DispatcherStore(opts.config ?? BUILT_IN_DEFAULTS),
@@ -1036,9 +1074,10 @@ export class Server {
 
   /**
    * Primary create-and-execute tool (`run_task`, issue #126). Creates a v2 task
-   * with a resolved local target, then attempts execution. No worker is wired in
-   * PR1, so the task is created durably and the execution sub-result reports
-   * `provider_unavailable`; the worker provider seam lands in a later slice.
+   * with a resolved local target, then attempts execution through the worker
+   * provider seam. With no worker wired (production MVP) the task is created
+   * durably and the execution sub-result reports `provider_unavailable`; an
+   * injected worker catalog starts a live session and drives the lifecycle.
    */
   async runTeamMateTaskFromMcp(
     input: ServerMcpRunTeamMateTaskInput,
@@ -1048,7 +1087,7 @@ export class Server {
       input.targetPath,
       this.mustDispatcherDir(input.dispatcherId),
     );
-    const task = await this.teamMateLedger(input.dispatcherId).acceptTask({
+    const accepted = await this.teamMateLedger(input.dispatcherId).acceptTask({
       title: input.title,
       prompt: input.prompt,
       callerKind: input.callerKind,
@@ -1064,26 +1103,28 @@ export class Server {
         ? { operationId: input.operationId }
         : {}),
     });
-    this.teamMateWaitBroker.notify(input.dispatcherId, task.task_id);
+    this.teamMateWaitBroker.notify(input.dispatcherId, accepted.task_id);
     this.log.info(
       {
         dispatcher_id: input.dispatcherId,
-        task_id: task.task_id,
+        task_id: accepted.task_id,
         caller_kind: input.callerKind,
       },
       'teammate task run requested',
     );
-    return {
-      task: toTeamMateTaskSummary(task),
-      execution: teamMateProviderUnavailable(),
-    };
+    const execution = await this.teamMateWorkerExecution.execute({
+      dispatcherId: input.dispatcherId,
+      taskId: accepted.task_id,
+      ...(input.providerRef !== undefined ? { providerRef: input.providerRef } : {}),
+    });
+    return this.teamMateExecutionResult(input.dispatcherId, accepted, execution);
   }
 
   /**
    * Start or retry execution for an already-accepted task (`execute_task`,
-   * issue #126). No worker is wired in PR1, so this is a read-only stub that
-   * returns `provider_unavailable` with the current snapshot — it does not fake
-   * a running worker.
+   * issue #126). With no worker wired this returns `provider_unavailable` with
+   * the current snapshot (it never fakes a running worker); an injected worker
+   * catalog starts/retries a live session.
    */
   async executeTeamMateTaskFromMcp(
     input: ServerMcpExecuteTeamMateTaskInput,
@@ -1094,9 +1135,30 @@ export class Server {
     if (task === null) {
       throw new Error(`TeamMate task ${JSON.stringify(input.taskId)} does not exist`);
     }
+    const execution = await this.teamMateWorkerExecution.execute({
+      dispatcherId: input.dispatcherId,
+      taskId: input.taskId,
+      ...(input.providerRef !== undefined ? { providerRef: input.providerRef } : {}),
+    });
+    return this.teamMateExecutionResult(input.dispatcherId, task, execution);
+  }
+
+  /**
+   * Build the `{ task, execution }` wire result. The task summary is re-read so
+   * it reflects any lifecycle transition the worker's `onRunning`/terminal
+   * callbacks landed during execution; the local target path stays out of it.
+   */
+  private async teamMateExecutionResult(
+    dispatcherId: string,
+    fallback: TeamMateTaskRecord,
+    execution: TeamMateExecutionOutcome,
+  ): Promise<ServerMcpRunTeamMateTaskResult> {
+    const latest =
+      (await this.teamMateLedger(dispatcherId).getTask(fallback.task_id)) ??
+      fallback;
     return {
-      task: toTeamMateTaskSummary(task),
-      execution: teamMateProviderUnavailable(),
+      task: toTeamMateTaskSummary(latest),
+      execution: toExecutionResult(execution),
     };
   }
 
@@ -1110,17 +1172,35 @@ export class Server {
     input: ServerMcpSendTeamMateInputInput,
   ): Promise<ServerMcpSendTeamMateInputResult> {
     const ledger = this.teamMateLedger(input.dispatcherId);
+    // Record the input durably first (`queued` + an `input_queued` event), so it
+    // survives even if no worker is live.
     const { task, input: recorded } = await ledger.appendInput(input.taskId, {
       text: input.prompt,
       mode: input.mode ?? 'steer',
     });
     this.teamMateWaitBroker.notify(input.dispatcherId, task.task_id);
+    // Route to a live worker session, if any. An accepted disposition promotes
+    // the input to `submitted`; with no live worker it stays `queued`.
+    const routed = await this.teamMateWorkerExecution.sendInput({
+      dispatcherId: input.dispatcherId,
+      taskId: input.taskId,
+      inputId: recorded.input_id,
+      text: recorded.text,
+      mode: recorded.mode,
+    });
+    let status: 'queued' | 'submitted' = 'queued';
+    let latest = task;
+    if (routed.delivered && routed.disposition?.status === 'accepted') {
+      latest = await ledger.markInputSubmitted(input.taskId, recorded.input_id);
+      this.teamMateWaitBroker.notify(input.dispatcherId, input.taskId);
+      status = 'submitted';
+    }
     return {
       input_id: recorded.input_id,
       mode: recorded.mode,
-      status: 'queued',
-      after_event_id: lastEventId(task),
-      task: toTeamMateTaskSummary(task),
+      status,
+      after_event_id: lastEventId(latest),
+      task: toTeamMateTaskSummary(latest),
     };
   }
 
@@ -1177,23 +1257,32 @@ export class Server {
   }
 
   /**
-   * Read-only capability advertisement (`get_capabilities`, issue #126). Lists
-   * both built-in runtimes truthfully — worker execution is not implemented yet,
-   * so every provider reports `worker_available: false`.
+   * Read-only capability advertisement (`get_capabilities`, issue #126). The
+   * worker catalog is the source of truth: each built-in runtime is reported
+   * with its worker capability looked up from the catalog (unavailable when the
+   * catalog has no worker for it — the production MVP), and any worker provider
+   * not also an agent runtime (e.g. an injected fake) is appended. With the
+   * default empty catalog, every provider is `worker_available: false` and
+   * `execution_available` is false, exactly as PR1.
    */
   getTeamMateCapabilitiesFromMcp(): ServerTeamMateCapabilities {
-    const providers: ServerTeamMateProviderCapability[] =
-      this.agentRuntimeProviders.list().map((provider) => ({
-        provider_ref: provider.ref,
-        worker_available: false,
-        unsupported_reason:
-          'TeamMate worker execution is not implemented yet (issue #126)',
-        modes: { steer: false, queue: false, interrupt: false },
-        resume: false,
-        logs: false,
-      }));
+    const workers = this.teamMateWorkers;
+    const workerByRef = new Map(
+      workers.list().map((worker) => [worker.ref, worker] as const),
+    );
+    const providers: ServerTeamMateProviderCapability[] = [];
+    const seen = new Set<string>();
+    for (const runtime of this.agentRuntimeProviders.list()) {
+      providers.push(toProviderCapability(runtime.ref, workerByRef.get(runtime.ref)));
+      seen.add(runtime.ref);
+    }
+    for (const worker of workers.list()) {
+      if (seen.has(worker.ref)) continue;
+      providers.push(toProviderCapability(worker.ref, worker));
+      seen.add(worker.ref);
+    }
     return {
-      execution_available: false,
+      execution_available: workers.hasAvailableProvider(),
       wait: { default_ms: TEAMMATE_WAIT_DEFAULT_MS, max_ms: TEAMMATE_WAIT_MAX_MS },
       target_modes: [...TEAMMATE_TARGET_MODES],
       input_modes: [...TEAMMATE_INPUT_MODES],
@@ -1396,13 +1485,52 @@ function toTeamMatePullResult(
   };
 }
 
-/** The execution sub-result while no worker provider is wired (issue #126). */
-function teamMateProviderUnavailable(): ServerTeamMateExecutionResult {
+/** Map the execution service outcome onto the public `execution` sub-result. */
+function toExecutionResult(
+  outcome: TeamMateExecutionOutcome,
+): ServerTeamMateExecutionResult {
+  if (outcome.status === 'provider_unavailable') {
+    return {
+      status: 'provider_unavailable',
+      reason: outcome.reason,
+      code: outcome.code,
+      retryable: outcome.retryable,
+    };
+  }
   return {
-    status: 'provider_unavailable',
-    reason: 'TeamMate worker execution is not implemented yet (issue #126)',
-    code: 'TEAMMATE_PROVIDER_UNAVAILABLE',
-    retryable: true,
+    status: outcome.status,
+    ...(outcome.provider_ref !== '' ? { provider_ref: outcome.provider_ref } : {}),
+  };
+}
+
+/**
+ * Build a provider capability row for `get_capabilities`. When the catalog has a
+ * worker for the ref, its capabilities are reported; otherwise the ref is listed
+ * as worker-unavailable (the production MVP for both built-in runtimes).
+ */
+function toProviderCapability(
+  ref: string,
+  worker: TeamMateWorkerProvider | undefined,
+): ServerTeamMateProviderCapability {
+  if (worker === undefined) {
+    return {
+      provider_ref: ref,
+      worker_available: false,
+      unsupported_reason:
+        'TeamMate worker execution is not implemented yet (issue #126)',
+      modes: { steer: false, queue: false, interrupt: false },
+      resume: false,
+      logs: false,
+    };
+  }
+  const caps = worker.capabilities();
+  return {
+    provider_ref: ref,
+    worker_available: caps.worker_available,
+    unsupported_reason: caps.unsupported_reason,
+    modes: { ...caps.modes },
+    resume: caps.resume,
+    logs: caps.logs,
   };
 }
 
