@@ -108,11 +108,22 @@ default-branch dispatch dance:
   them. Combined with never committing, this guarantees the eventual stable
   release on main still consumes the same change files — beta cannot strip the
   stable release's input.
-- **Manifest hygiene gate before upload.** The job packs with `rush publish
-  --pack --include-all` and scans each tarball for the public-repo red line
-  (internal Feishu identifiers, internal hosts, absolute build paths) and a
-  minimal sanity check (`package/package.json` present), aborting before any
-  registry I/O if a tarball is dirty.
+- **Manifest hygiene gate before upload.** The job packs **real** tarballs with
+  `rush publish --include-all --publish --pack --release-folder …` and scans
+  each one before the upload step runs. The `--publish` flag is load-bearing:
+  `rush publish --pack` under Rush's default read-only mode only prints
+  `DRYRUN: pnpm pack` and writes no tarball, so a pack step without `--publish`
+  is a silent no-op gate. `--pack` still suppresses the registry upload (and,
+  without `--apply-git-tags-on-pack`, applies no git tags), so this remains a
+  no-I/O pre-check. Zero tarballs is treated as a hard failure (a gate that
+  scans nothing is not a gate). Each tarball is scanned for the public-repo red
+  line (internal Feishu identifiers, the internal `/data00` mount, an absolute
+  `/home/<user>/` builder/developer path) plus a `package/package.json` sanity
+  check. The known **public** example `/home/volta/` (documented in
+  `onboard/service.ts` and compiled into dist) is allow-listed so it cannot
+  false-fail the gate; any other home path still fails. The audited tarball is
+  representative of the upload because both come from the same deterministic
+  `dist` and `files` allow-list.
 
 ## Consequences
 

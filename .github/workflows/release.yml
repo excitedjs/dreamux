@@ -193,7 +193,10 @@ jobs:
     # design: the prerelease version lives in an uncommitted working tree that
     # must persist across apply -> build -> pack -> publish, so it cannot be
     # split the way the stable version/publish jobs are.
-    if: github.ref_name == 'next'
+    #
+    # Gate on the fully-qualified ref (refs/heads/next), not github.ref_name, so
+    # a future tag named `next` can never satisfy it — only the next branch can.
+    if: github.ref == 'refs/heads/next'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -240,36 +243,56 @@ jobs:
           git --no-pager diff -- '*/package.json' | grep -E '^\+.*"version"' || \
             echo "  (no package had pending change files; nothing to prerelease)"
 
-      - name: Pack and verify manifest (no registry I/O)
-        # Pack the would-be tarballs locally and audit their contents before any
-        # registry upload. Two checks: (1) the public-repo red line — no
-        # internal Feishu identifiers, internal hosts, or absolute build paths
-        # may leak into a published artifact; (2) each publishable tarball
-        # carries dist/ and package.json.
+      - name: Pack and verify manifest (no registry upload)
+        # IMPORTANT: `rush publish --pack` is a no-op under Rush's default
+        # read-only mode — it only prints `DRYRUN: pnpm pack` and writes nothing.
+        # Real tarballs are produced only with `--publish`, where `--pack` still
+        # suppresses the registry upload (and, without --apply-git-tags-on-pack,
+        # applies no git tags). So we pack with --include-all --publish --pack
+        # into a release folder, then audit every tarball BEFORE the real
+        # publish step uploads anything. --include-all packs every
+        # shouldPublish=true package (dreamux + feishu-transport), so the audit
+        # always has artifacts; zero tarballs means pack failed -> fail hard.
         run: |
           set -euo pipefail
           rm -rf common/temp/beta-tarballs
           node common/scripts/install-run-rush.js publish \
-            --pack \
             --include-all \
+            --publish \
+            --pack \
             --release-folder common/temp/beta-tarballs
           shopt -s nullglob
           tarballs=(common/temp/beta-tarballs/*.tgz)
           if [ ${#tarballs[@]} -eq 0 ]; then
-            echo "No tarballs packed (no publishable package changed); nothing to verify."
-            exit 0
+            echo "Expected packed tarballs under common/temp/beta-tarballs but found none." >&2
+            echo "A manifest gate that scans nothing is not a gate; aborting before publish." >&2
+            exit 1
           fi
           fail=0
           for tgz in "${tarballs[@]}"; do
             echo "== $tgz =="
             tar tzf "$tgz"
-            contents="$(tar xzO -f "$tgz" 2>/dev/null || true)"
-            if printf '%s' "$contents" | grep -aoE '(ou_[A-Za-z0-9]{20}|oc_[A-Za-z0-9]{20}|cli_[A-Za-z0-9]{16}|/data00/|/home/[a-z][a-z0-9_-]+/)' ; then
-              echo "FORBIDDEN internal content found in $tgz" >&2
+            if ! tar tzf "$tgz" | grep -q 'package/package\.json'; then
+              echo "Tarball $tgz is missing package.json" >&2
               fail=1
             fi
-            if ! tar tzf "$tgz" | grep -q 'package/package.json'; then
-              echo "Tarball $tgz is missing package.json" >&2
+            # Public-repo red line: a published artifact must not carry internal
+            # Feishu identifiers, the internal /data00 mount, or an absolute
+            # builder/developer home path. `/home/volta/` is an intentional
+            # PUBLIC example in onboard/service.ts (it documents Volta's home
+            # layout and is compiled into dist), so that exact token is
+            # allow-listed; any other /home/<user>/ is treated as a leaked path.
+            # Extend the allow-list (grep -vxE alternation) only with reviewed,
+            # provably-public example paths.
+            leaks="$(
+              tar xzO -f "$tgz" 2>/dev/null \
+                | grep -aoE '(ou_[A-Za-z0-9]{20}|oc_[A-Za-z0-9]{20}|cli_[A-Za-z0-9]{16}|/data00/|/home/[a-z][a-z0-9_-]+/)' \
+                | grep -vxE '/home/volta/' \
+                | sort -u || true
+            )"
+            if [ -n "$leaks" ]; then
+              echo "FORBIDDEN internal content in $tgz:" >&2
+              printf '  %s\n' "$leaks" >&2
               fail=1
             fi
           done
