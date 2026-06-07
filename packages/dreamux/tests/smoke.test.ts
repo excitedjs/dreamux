@@ -1889,6 +1889,228 @@ describe('dreamux MVP smoke', () => {
     expect(pulled.result.text).toBe('the worker finished the job');
   });
 
+  it('cancel_task stops a live worker and is an idempotent no-op afterward (PR5)', async () => {
+    const fakeWorker = new FakeTeamMateWorkerProvider();
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      config: configWithDispatcher({ cwd: runtimeDir }),
+      teamMateWorkerProviders: new TeamMateWorkerProviderCatalog({
+        providers: [fakeWorker],
+      }),
+      teamMateDeliveryBackoffMs: () => 0,
+    });
+    await server.start();
+    const socketPath = join(runtimeDir, 'admin.sock');
+
+    const created = (await sendAdminRequest(
+      'mcp.teammate.run',
+      {
+        dispatcher_id: 'flow',
+        caller_kind: 'dispatcher',
+        title: 'Run task',
+        prompt: 'Investigate the failing test.',
+        target_path: '.',
+      },
+      { socketPath },
+    )) as { task: { task_id: string; lifecycle_status: string } };
+    const taskId = created.task.task_id;
+    expect(created.task.lifecycle_status).toBe('running');
+    expect(fakeWorker.hasLiveSession(taskId)).toBe(true);
+
+    const cancelled = (await sendAdminRequest(
+      'mcp.teammate.cancel',
+      { dispatcher_id: 'flow', task_id: taskId, note: 'stop now' },
+      { socketPath },
+    )) as {
+      status: string;
+      lifecycle_status: string;
+      cancelled_live_session: boolean;
+      task: { task_id: string };
+    };
+    expect(cancelled).toMatchObject({
+      status: 'cancelled',
+      lifecycle_status: 'cancelled',
+      cancelled_live_session: true,
+    });
+    // The live worker session was actually reaped, not just ledger-closed.
+    expect(fakeWorker.hasLiveSession(taskId)).toBe(false);
+
+    const fetched = (await sendAdminRequest(
+      'mcp.teammate.get',
+      { dispatcher_id: 'flow', task_id: taskId },
+      { socketPath },
+    )) as { task: { close: { status: string; note: string } } };
+    expect(fetched.task.close).toMatchObject({ status: 'cancelled', note: 'stop now' });
+
+    // Second cancel is a no-op: the task is already terminal.
+    const again = (await sendAdminRequest(
+      'mcp.teammate.cancel',
+      { dispatcher_id: 'flow', task_id: taskId },
+      { socketPath },
+    )) as { status: string; cancelled_live_session: boolean };
+    expect(again).toMatchObject({
+      status: 'already_terminal',
+      cancelled_live_session: false,
+    });
+  });
+
+  it('cancel_task racing a completion is an idempotent no-op, not a spurious close (PR5)', async () => {
+    const fakeWorker = new FakeTeamMateWorkerProvider();
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      config: configWithDispatcher({ cwd: runtimeDir }),
+      teamMateWorkerProviders: new TeamMateWorkerProviderCatalog({
+        providers: [fakeWorker],
+      }),
+      teamMateDeliveryBackoffMs: () => 0,
+    });
+    await server.start();
+    const socketPath = join(runtimeDir, 'admin.sock');
+
+    const created = (await sendAdminRequest(
+      'mcp.teammate.run',
+      {
+        dispatcher_id: 'flow',
+        caller_kind: 'dispatcher',
+        title: 'Run task',
+        prompt: 'Investigate the failing test.',
+        target_path: '.',
+      },
+      { socketPath },
+    )) as { task: { task_id: string } };
+    const taskId = created.task.task_id;
+
+    // The worker completes first; its session is gone before cancel arrives —
+    // the exact TOCTOU window between cancel's terminal check and its no-live
+    // ledger close.
+    await fakeWorker.emitCompleted(taskId, 'finished before the cancel');
+
+    const cancelled = (await sendAdminRequest(
+      'mcp.teammate.cancel',
+      { dispatcher_id: 'flow', task_id: taskId, note: 'too late' },
+      { socketPath },
+    )) as { status: string; lifecycle_status: string; cancelled_live_session: boolean };
+    expect(cancelled).toMatchObject({
+      status: 'already_terminal',
+      lifecycle_status: 'completed',
+      cancelled_live_session: false,
+    });
+
+    const fetched = (await sendAdminRequest(
+      'mcp.teammate.get',
+      { dispatcher_id: 'flow', task_id: taskId },
+      { socketPath },
+    )) as {
+      task: {
+        close: unknown;
+        events: Array<{ type: string }>;
+        result: { text: string } | null;
+      };
+    };
+    // No spurious cancelled close or closed event stamped on the completed task,
+    // and its result is still retained/pullable.
+    expect(fetched.task.close).toBeNull();
+    expect(fetched.task.events.some((e) => e.type === 'closed')).toBe(false);
+    expect(fetched.task.result?.text).toBe('finished before the cancel');
+  });
+
+  it('cancel_task closes an accepted task with no live worker (PR5)', async () => {
+    // No worker catalog: schedule lands an accepted task that never runs, so
+    // cancel must close the ledger directly (cancelled_live_session: false).
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      config: configWithDispatcher({ cwd: runtimeDir }),
+      teamMateWorkerProviders: new TeamMateWorkerProviderCatalog(),
+    });
+    await server.start();
+    const socketPath = join(runtimeDir, 'admin.sock');
+
+    const accepted = (await sendAdminRequest(
+      'mcp.teammate.schedule',
+      {
+        dispatcher_id: 'flow',
+        caller_kind: 'dispatcher',
+        title: 'Accept only',
+        prompt: 'Stand by.',
+      },
+      { socketPath },
+    )) as { task_id: string };
+
+    const cancelled = (await sendAdminRequest(
+      'mcp.teammate.cancel',
+      { dispatcher_id: 'flow', task_id: accepted.task_id, note: 'never mind' },
+      { socketPath },
+    )) as { status: string; lifecycle_status: string; cancelled_live_session: boolean };
+    expect(cancelled).toMatchObject({
+      status: 'cancelled',
+      lifecycle_status: 'cancelled',
+      cancelled_live_session: false,
+    });
+  });
+
+  it('get_task_logs forwards and reports unsupported logs for a layout-less worker (PR5)', async () => {
+    const fakeWorker = new FakeTeamMateWorkerProvider();
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      config: configWithDispatcher({ cwd: runtimeDir }),
+      teamMateWorkerProviders: new TeamMateWorkerProviderCatalog({
+        providers: [fakeWorker],
+      }),
+      teamMateDeliveryBackoffMs: () => 0,
+    });
+    await server.start();
+    const socketPath = join(runtimeDir, 'admin.sock');
+
+    const created = (await sendAdminRequest(
+      'mcp.teammate.run',
+      {
+        dispatcher_id: 'flow',
+        caller_kind: 'dispatcher',
+        title: 'Run task',
+        prompt: 'Investigate the failing test.',
+        target_path: '.',
+      },
+      { socketPath },
+    )) as { task: { task_id: string } };
+    const taskId = created.task.task_id;
+
+    const logs = (await sendAdminRequest(
+      'mcp.teammate.logs',
+      { dispatcher_id: 'flow', task_id: taskId },
+      { socketPath },
+    )) as {
+      task_id: string;
+      provider_ref: string;
+      logs_supported: boolean;
+      streams: unknown[];
+    };
+    // The fake worker has no on-disk log layout, so logs are unsupported — but
+    // the admin → server → worker-logs wiring resolved the task and provider.
+    expect(logs).toMatchObject({
+      task_id: taskId,
+      provider_ref: FAKE_TEAMMATE_WORKER_REF,
+      logs_supported: false,
+      streams: [],
+    });
+
+    // An unknown task is a structured error, not a crash.
+    await expect(
+      sendAdminRequest(
+        'mcp.teammate.logs',
+        { dispatcher_id: 'flow', task_id: 'tmtsk_missing_one' },
+        { socketPath },
+      ),
+    ).rejects.toThrow();
+  });
+
   it('run_task executes through the default codex worker and collects the real turn result', async () => {
     // No injected catalog: this exercises the real `builtin:codex` worker wired
     // by default (PR3), driven against the in-process fake codex app-server via

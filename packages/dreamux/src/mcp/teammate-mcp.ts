@@ -304,6 +304,57 @@ function teammateTools(): Array<Record<string, unknown>> {
       },
     },
     {
+      name: 'cancel_task',
+      description:
+        'Cancel a TeamMate task without shelling out to kill a worker process. ' +
+        'A live worker is stopped and its resources reaped; a not-yet-running or ' +
+        'orphaned task is closed in the ledger. An already-finished task is an ' +
+        'idempotent no-op (status already_terminal). The task closes as ' +
+        'cancelled; pass note for a short reason.',
+      inputSchema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          task_id: { type: 'string' },
+          note: {
+            type: 'string',
+            maxLength: 2000,
+            description: 'Optional short reason recorded with the cancellation.',
+          },
+        },
+        required: ['task_id'],
+      },
+    },
+    {
+      name: 'get_task_logs',
+      description:
+        'Read a bounded tail of a TeamMate worker\'s diagnostic logs to inspect ' +
+        'a slow or failed worker without tailing a file in a shell. Returns ' +
+        'worker stderr (and, for builtin:codex, app-server stdout protocol ' +
+        'frames) — NOT the clean result, which comes from get_task / ' +
+        'pull_result / await_completion. Streams are empty until the worker has ' +
+        'run.',
+      inputSchema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          task_id: { type: 'string' },
+          max_bytes: {
+            type: 'number',
+            description:
+              'Bytes to return per stream (tail). Defaults to 16384; capped at ' +
+              '131072.',
+          },
+          stream: {
+            type: 'string',
+            enum: ['stdout', 'stderr'],
+            description: 'Restrict to one stream; default returns all available.',
+          },
+        },
+        required: ['task_id'],
+      },
+    },
+    {
       name: 'get_capabilities',
       description:
         'List server and runtime TeamMate capabilities (read-only). Each ' +
@@ -416,6 +467,22 @@ async function callTool(
         ctx.socketPath,
         'await_completion',
         clientTimeoutMs,
+      );
+    }
+    if (call.name === 'cancel_task') {
+      return forwardToolCall(
+        'mcp.teammate.cancel',
+        { dispatcher_id: ctx.dispatcherId, ...cancelArgs(call.arguments) },
+        ctx.socketPath,
+        'cancel_task',
+      );
+    }
+    if (call.name === 'get_task_logs') {
+      return forwardToolCall(
+        'mcp.teammate.logs',
+        { dispatcher_id: ctx.dispatcherId, ...logsArgs(call.arguments) },
+        ctx.socketPath,
+        'get_task_logs',
       );
     }
     if (call.name === 'get_capabilities') {
@@ -567,6 +634,26 @@ function sendInputArgs(value: unknown): Record<string, unknown> {
     prompt: requireString(obj, 'prompt'),
     ...(mode !== null ? { mode } : {}),
     ...(operationId !== null ? { operation_id: operationId } : {}),
+  };
+}
+
+function cancelArgs(value: unknown): Record<string, unknown> {
+  const obj = asRecord(value, 'cancel_task arguments');
+  const note = optionalString(obj, 'note');
+  return {
+    task_id: requireString(obj, 'task_id'),
+    ...(note !== null ? { note } : {}),
+  };
+}
+
+function logsArgs(value: unknown): Record<string, unknown> {
+  const obj = asRecord(value, 'get_task_logs arguments');
+  const maxBytes = optionalNumber(obj, 'max_bytes');
+  const stream = optionalString(obj, 'stream');
+  return {
+    task_id: requireString(obj, 'task_id'),
+    ...(maxBytes !== null ? { max_bytes: maxBytes } : {}),
+    ...(stream !== null ? { stream } : {}),
   };
 }
 

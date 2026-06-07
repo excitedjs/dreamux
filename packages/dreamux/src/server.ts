@@ -104,6 +104,11 @@ import {
   TeamMateWorkerExecutionService,
   type TeamMateExecutionOutcome,
 } from './teammate/worker-execution.js';
+import {
+  readTeamMateWorkerLogs,
+  type TeamMateWorkerLogStream,
+  type TeamMateWorkerLogStreamKind,
+} from './teammate/worker-logs.js';
 import { TeamMateWorkerProviderCatalog } from './teammate/worker/catalog.js';
 import type { TeamMateWorkerProvider } from './teammate/worker/types.js';
 import { createCodexTeamMateWorkerProvider } from './teammate/worker/codex-provider.js';
@@ -424,6 +429,43 @@ export interface ServerMcpAwaitTeamMateCompletionResult {
   after_event_id: number;
   task: ServerTeamMateTaskSummary | null;
   result?: ServerTeamMatePullResult | null;
+}
+
+export interface ServerMcpCancelTeamMateTaskInput {
+  dispatcherId: string;
+  taskId: string;
+  /** Optional close note recorded with the cancellation. */
+  note?: string;
+}
+
+export interface ServerMcpCancelTeamMateTaskResult {
+  task_id: string;
+  /**
+   * `cancelled` when this call closed a live/open task, `already_terminal` when
+   * the task had already finished (idempotent no-op).
+   */
+  status: 'cancelled' | 'already_terminal';
+  lifecycle_status: TeamMateLifecycleStatus;
+  /** Whether a live worker session in this process was reaped by the cancel. */
+  cancelled_live_session: boolean;
+  after_event_id: number;
+  task: ServerTeamMateTaskSummary;
+}
+
+export interface ServerMcpTeamMateTaskLogsInput {
+  dispatcherId: string;
+  taskId: string;
+  maxBytes?: number;
+  stream?: TeamMateWorkerLogStreamKind;
+}
+
+export interface ServerMcpTeamMateTaskLogsResult {
+  task_id: string;
+  provider_ref: string | null;
+  lifecycle_status: TeamMateLifecycleStatus;
+  /** Whether this task's worker has a known on-disk log layout. */
+  logs_supported: boolean;
+  streams: TeamMateWorkerLogStream[];
 }
 
 /** Worker capability advertisement for a built-in runtime (placeholder in PR1). */
@@ -1334,6 +1376,125 @@ export class Server {
   }
 
   /**
+   * Cancel a TeamMate task without shelling out to kill a worker process
+   * (`cancel_task`, issue #126 PR5). A live worker session in this process is
+   * driven through its provider `cancel()`, whose `onCancelled` callback is the
+   * sole writer of the `cancelled` close + wait-broker notify; a task with no
+   * live session (accepted/queued, or running but orphaned across a restart) is
+   * closed directly here. A terminal task is an idempotent no-op. An
+   * orphaned-running task's ledger is closed but its process cannot be reaped by
+   * this server — the (deferred) orphan-reconciliation path owns that.
+   */
+  async cancelTeamMateTaskFromMcp(
+    input: ServerMcpCancelTeamMateTaskInput,
+  ): Promise<ServerMcpCancelTeamMateTaskResult> {
+    const ledger = this.teamMateLedger(input.dispatcherId);
+    const task = await ledger.getTask(input.taskId);
+    if (task === null) {
+      throw new Error(
+        `TeamMate task ${JSON.stringify(input.taskId)} does not exist`,
+      );
+    }
+    if (isTerminalLifecycle(task.lifecycle_status)) {
+      return {
+        task_id: task.task_id,
+        status: 'already_terminal',
+        lifecycle_status: task.lifecycle_status,
+        cancelled_live_session: false,
+        after_event_id: lastEventId(task),
+        task: toTeamMateTaskSummary(task),
+      };
+    }
+    const reason = input.note ?? null;
+    const cancelled = await this.teamMateWorkerExecution.cancel({
+      dispatcherId: input.dispatcherId,
+      taskId: input.taskId,
+      reason,
+    });
+    if (!cancelled.cancelledLiveSession) {
+      // No live worker here owns the task; close the ledger directly and wake
+      // any waiters. The live-session path already closed + notified via the
+      // provider's onCancelled callback, so we must not double it.
+      //
+      // Re-read first: between the terminal check above and here the worker can
+      // have completed concurrently (it deleted its session, so cancel() found
+      // none). recordClose would otherwise stamp a spurious `cancelled` close +
+      // `closed` event + a second notify on an already-completed task — so bail
+      // to an idempotent no-op instead.
+      const fresh = await ledger.getTask(input.taskId);
+      if (fresh !== null && isTerminalLifecycle(fresh.lifecycle_status)) {
+        return {
+          task_id: fresh.task_id,
+          status: 'already_terminal',
+          lifecycle_status: fresh.lifecycle_status,
+          cancelled_live_session: false,
+          after_event_id: lastEventId(fresh),
+          task: toTeamMateTaskSummary(fresh),
+        };
+      }
+      await ledger.recordClose(input.taskId, {
+        status: 'cancelled',
+        ...(reason !== null && reason !== '' ? { note: reason } : {}),
+      });
+      this.teamMateWaitBroker.notify(input.dispatcherId, input.taskId);
+    }
+    const latest = (await ledger.getTask(input.taskId)) ?? task;
+    // Derive the reported status from the post-state, never hardcode: a live
+    // cancel that raced a completion lands `completed`, and the response must
+    // not claim `cancelled` while the lifecycle says otherwise.
+    return {
+      task_id: latest.task_id,
+      status:
+        latest.lifecycle_status === 'cancelled' ? 'cancelled' : 'already_terminal',
+      lifecycle_status: latest.lifecycle_status,
+      cancelled_live_session: cancelled.cancelledLiveSession,
+      after_event_id: lastEventId(latest),
+      task: toTeamMateTaskSummary(latest),
+    };
+  }
+
+  /**
+   * Read a bounded tail of a TeamMate worker's diagnostic logs (`get_task_logs`,
+   * issue #126 PR5), so a dispatcher can inspect a slow or failed worker over MCP
+   * instead of tailing a file in a shell. Returns the worker's stderr (and, for
+   * Codex, app-server stdout protocol frames) — NOT the clean result, which is
+   * read with get_task / pull_result / await_completion. Log paths are
+   * server-built from the ledger-validated id, so no caller input reaches the
+   * filesystem.
+   */
+  async getTeamMateTaskLogsFromMcp(
+    input: ServerMcpTeamMateTaskLogsInput,
+  ): Promise<ServerMcpTeamMateTaskLogsResult> {
+    const task = await this.teamMateLedger(input.dispatcherId).getTask(
+      input.taskId,
+    );
+    if (task === null) {
+      throw new Error(
+        `TeamMate task ${JSON.stringify(input.taskId)} does not exist`,
+      );
+    }
+    // A task that did not pin a provider ran on the catalog default, so resolve
+    // the EFFECTIVE worker ref (not the null pin) to find its log layout — else
+    // default-routed tasks would always report logs unsupported.
+    const effectiveRef =
+      this.teamMateWorkers.resolve(task.provider_ref)?.ref ?? task.provider_ref;
+    const logs = await readTeamMateWorkerLogs({
+      dispatcherId: input.dispatcherId,
+      taskId: input.taskId,
+      providerRef: effectiveRef,
+      ...(input.maxBytes !== undefined ? { maxBytes: input.maxBytes } : {}),
+      ...(input.stream !== undefined ? { stream: input.stream } : {}),
+    });
+    return {
+      task_id: task.task_id,
+      provider_ref: effectiveRef,
+      lifecycle_status: task.lifecycle_status,
+      logs_supported: logs.logs_supported,
+      streams: logs.streams,
+    };
+  }
+
+  /**
    * Server-owned bounded wait for a task to reach a terminal state without shell
    * polling (`await_completion`, issue #126). Timeout is a successful
    * `still_running` result with the latest snapshot, never a tool failure. The
@@ -1578,6 +1739,14 @@ function toWireChatBot(bot: PeerBot): WireChatBot {
     open_id: bot.openId,
     ...(bot.name !== undefined && bot.name !== '' ? { name: bot.name } : {}),
   };
+}
+
+function isTerminalLifecycle(
+  status: TeamMateLifecycleStatus,
+): status is 'completed' | 'failed' | 'cancelled' {
+  return (
+    status === 'completed' || status === 'failed' || status === 'cancelled'
+  );
 }
 
 function toTeamMateTaskSummary(
