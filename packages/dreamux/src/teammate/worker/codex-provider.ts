@@ -31,11 +31,15 @@
  * transition, keeping the server-owned ledger the single source of truth.
  */
 
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
+
 import { performInitializeHandshake } from '../../codex/handshake.js';
 import {
   extractAssistantText,
   subscribeTurnCollection,
   submitTurnStart,
+  type TurnTraceEvent,
 } from '../../codex/events.js';
 import { CodexWsClient } from '../../codex/rpc.js';
 import {
@@ -55,6 +59,7 @@ import { codexArgsToCli } from '../../runtime/codex-args.js';
 import { dispatcherProcessEnv } from '../../runtime/package-bin.js';
 import {
   dispatcherTeamMateWorkerErrorLogPath,
+  dispatcherTeamMateWorkerEventsLogPath,
   dispatcherTeamMateWorkerLogPath,
   dispatcherTeamMateWorkerSocketPath,
 } from '../../runtime/paths.js';
@@ -279,12 +284,98 @@ function codexTurnTimeoutMessage(turnTimeoutMs: number): string {
  * (`onCompleted`/`onFailed`/`onCancelled`) fires, even under interleaved
  * completion / connection-close / cancel races.
  */
+/** Bounded ring of recent trace events kept for the diagnostic log/summary. */
+const TEAMMATE_CODEX_TRACE_CAP = 200;
+
 class CodexWorkerSession implements TeamMateWorkerSession {
   readonly handle: TeamMateWorkerHandle;
   private settled = false;
+  /** Redacted ring of recent WS notifications (issue #126 PR8 diagnostics). */
+  private readonly trace: TurnTraceEvent[] = [];
+  private readonly traceCounts = new Map<string, number>();
+  private traceTotal = 0;
+  private lastTraceAt: number | null = null;
+  /** A turn/completed was seen at all (even if its threadId did not match). */
+  private turnCompletedSeen = false;
 
   constructor(private readonly deps: CodexWorkerSessionDeps) {
     this.handle = deps.handle;
+  }
+
+  private recordTrace(event: TurnTraceEvent): void {
+    this.traceTotal += 1;
+    this.lastTraceAt = Date.now();
+    this.traceCounts.set(event.method, (this.traceCounts.get(event.method) ?? 0) + 1);
+    if (event.method === 'turn/completed') this.turnCompletedSeen = true;
+    this.trace.push(event);
+    if (this.trace.length > TEAMMATE_CODEX_TRACE_CAP) this.trace.shift();
+  }
+
+  /** Comma-joined method×count of the observed notifications, or `none`. */
+  private traceMethods(): string {
+    if (this.traceCounts.size === 0) return 'none';
+    return [...this.traceCounts.entries()]
+      .map(([method, count]) => `${method}×${count}`)
+      .join(', ');
+  }
+
+  /**
+   * One-line, public-safe summary of what Codex emitted after `turn/start`,
+   * keyed by the terminal outcome. Only `failed` renders a diagnostic verdict
+   * (the stall cause); `completed`/`cancelled` get a neutral line so a
+   * successful task's events log never reads like a failure. No prompt/assistant
+   * text — only methods, counts, timing.
+   */
+  private traceSummary(outcome: 'completed' | 'failed' | 'cancelled'): string {
+    if (outcome !== 'failed') {
+      return `Turn ${outcome}; ${this.traceTotal} Codex event(s) observed (${this.traceMethods()}).`;
+    }
+    if (this.traceTotal === 0) {
+      return (
+        'No Codex events were observed after turn/start — the model request ' +
+        'produced no output. This is typically a worker-environment problem ' +
+        '(auth, network, proxy, or model quota), not the task itself.'
+      );
+    }
+    if (this.turnCompletedSeen) {
+      return (
+        `Codex emitted turn/completed but it was not matched to this worker ` +
+        `thread (a threadId field-shape mismatch). Observed: ${this.traceMethods()}.`
+      );
+    }
+    const sinceLast =
+      this.lastTraceAt === null ? 'unknown' : `${Date.now() - this.lastTraceAt}ms ago`;
+    return (
+      `Codex emitted ${this.traceTotal} event(s) but no turn/completed. ` +
+      `Observed: ${this.traceMethods()}; last event ${sinceLast}.`
+    );
+  }
+
+  /**
+   * Persist the redacted trace ring so `get_task_logs` (events stream) can show
+   * what Codex emitted for a slow/failed worker. Best-effort: a log write must
+   * never mask the real terminal outcome.
+   */
+  private async writeEventsLog(header: string): Promise<void> {
+    const path = dispatcherTeamMateWorkerEventsLogPath(
+      this.deps.dispatcherId,
+      this.deps.taskId,
+    );
+    const lines = [
+      `# ${header}`,
+      ...this.trace.map((e) => JSON.stringify(e)),
+      '',
+    ];
+    try {
+      await mkdir(dirname(path), { recursive: true });
+      await writeFile(path, lines.join('\n'), { mode: 0o600 });
+    } catch (err) {
+      this.deps.log?.('warn', 'teammate codex worker events log write failed', {
+        dispatcher_id: this.deps.dispatcherId,
+        task_id: this.deps.taskId,
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   /**
@@ -298,7 +389,15 @@ class CodexWorkerSession implements TeamMateWorkerSession {
     // before `onRunning` (no turn/completed can precede turn/start).
     await this.deps.callbacks.onRunning(this.handle);
 
-    const collector = subscribeTurnCollection(this.deps.client, this.deps.threadId);
+    // acceptAnyThread: a per-task worker app-server hosts exactly one thread, so
+    // any turn/completed on its socket is THIS task's — robust to a threadId
+    // field-shape drift the strict dispatcher path never exercises (issue #126
+    // PR8). onTrace records a redacted diagnostic of what Codex emits after
+    // turn/start, so a post-submission stall is no longer invisible.
+    const collector = subscribeTurnCollection(this.deps.client, this.deps.threadId, {
+      acceptAnyThread: true,
+      onTrace: (event) => this.recordTrace(event),
+    });
     // Bound the turn: a worker that reaches running but whose turn never emits
     // turn/completed (a post-start stall — auth/network/quota) must fail the
     // task with a visible reason, not sit `running` forever (issue #126 PR7).
@@ -391,6 +490,9 @@ class CodexWorkerSession implements TeamMateWorkerSession {
     if (this.settled) return;
     this.settled = true;
     await this.reap();
+    // Persist the diagnostic trace for get_task_logs with a neutral header, but
+    // never alter the clean result text on success.
+    await this.writeEventsLog(this.traceSummary('completed'));
     await this.deps.callbacks.onCompleted(finalText);
   }
 
@@ -398,7 +500,11 @@ class CodexWorkerSession implements TeamMateWorkerSession {
     if (this.settled) return;
     this.settled = true;
     await this.reap();
-    await this.deps.callbacks.onFailed(errorText);
+    // Append the event-trace verdict so the failure (especially a bounded-timeout
+    // stall) names the likely cause instead of being opaque.
+    const verdict = this.traceSummary('failed');
+    await this.writeEventsLog(verdict);
+    await this.deps.callbacks.onFailed(`${errorText} ${verdict}`);
   }
 
   /** Close the WS client and reap the app-server child. Idempotent. */

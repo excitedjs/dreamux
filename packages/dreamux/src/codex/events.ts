@@ -27,6 +27,40 @@ export interface TurnCollector {
 }
 
 /**
+ * One observed Codex notification, redacted to method + ids + item type — never
+ * prompt/assistant text. Emitted to {@link TurnSubscriptionOptions.onTrace} for
+ * every notification so a caller can see what Codex emitted after `turn/start`
+ * (issue #126 PR8): the dispatcher never awaits completion, so the worker is the
+ * only consumer of this stream, and an empty/abnormal trace is the diagnostic
+ * that distinguishes an environment stall (auth/network/quota) from a missed
+ * terminal event.
+ */
+export interface TurnTraceEvent {
+  method: string;
+  /** `params.threadId` if present, else null (reveals a field-shape mismatch). */
+  threadId: string | null;
+  turnId: string | null;
+  /** `item.type` for `item/completed`; never the item text. */
+  itemType: string | null;
+  /** Whether this notification counted toward THIS subscription's thread. */
+  matched: boolean;
+}
+
+export interface TurnSubscriptionOptions {
+  /**
+   * Accept `turn/completed` / `item/completed` even when the notification's
+   * `threadId` field does not match. A per-task worker app-server hosts exactly
+   * one thread, so any completion on its socket IS this task's completion;
+   * leniency makes the worker robust to a `threadId` field-shape drift in the
+   * Codex protocol that the strict dispatcher path never exercises. Default
+   * false preserves the strict, thread-scoped dispatcher behaviour.
+   */
+  acceptAnyThread?: boolean;
+  /** Diagnostic hook fired for EVERY notification, before any filtering. */
+  onTrace?: (event: TurnTraceEvent) => void;
+}
+
+/**
  * Subscribe to turn notifications for one thread. Returns a collector
  * whose `awaitTurn()` resolves on `turn/completed`. Items arriving on the
  * parallel `item/completed` stream are buffered and merged in.
@@ -34,7 +68,9 @@ export interface TurnCollector {
 export function subscribeTurnCollection(
   client: CodexWsClient,
   threadId: string,
+  options: TurnSubscriptionOptions = {},
 ): TurnCollector {
+  const acceptAnyThread = options.acceptAnyThread === true;
   const itemsByTurn = new Map<string, ThreadItem[]>();
   let cached: CollectedTurn | null = null;
   let awaiting: Promise<CollectedTurn> | null = null;
@@ -42,16 +78,26 @@ export function subscribeTurnCollection(
   let done = false;
 
   client.onNotification((notif) => {
-    if (done) return;
+    const p = (notif.params ?? {}) as Record<string, unknown>;
+    const nThreadId = typeof p['threadId'] === 'string' ? (p['threadId'] as string) : null;
+    const matches = acceptAnyThread || nThreadId === threadId;
+    if (options.onTrace !== undefined) {
+      options.onTrace({
+        method: notif.method,
+        threadId: nThreadId,
+        turnId: traceTurnId(p),
+        itemType: traceItemType(p),
+        matched: matches,
+      });
+    }
+    if (done || !matches) return;
     if (notif.method === 'item/completed') {
       const params = notif.params as ItemCompletedNotification;
-      if (params.threadId !== threadId) return;
       const bucket = itemsByTurn.get(params.turnId) ?? [];
       bucket.push(params.item);
       itemsByTurn.set(params.turnId, bucket);
     } else if (notif.method === 'turn/completed') {
       const params = notif.params as TurnCompletedNotification;
-      if (params.threadId !== threadId) return;
       done = true;
       const items = itemsByTurn.get(params.turn.id) ?? params.turn.items ?? [];
       cached = { threadId, turnId: params.turn.id, items };
@@ -72,6 +118,17 @@ export function subscribeTurnCollection(
       return awaiting;
     },
   };
+}
+
+function traceTurnId(params: Record<string, unknown>): string | null {
+  if (typeof params['turnId'] === 'string') return params['turnId'] as string;
+  const turn = params['turn'] as { id?: unknown } | undefined;
+  return turn !== undefined && typeof turn.id === 'string' ? turn.id : null;
+}
+
+function traceItemType(params: Record<string, unknown>): string | null {
+  const item = params['item'] as { type?: unknown } | undefined;
+  return item !== undefined && typeof item.type === 'string' ? item.type : null;
 }
 
 /**

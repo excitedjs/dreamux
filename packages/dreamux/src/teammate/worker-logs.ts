@@ -29,6 +29,7 @@ import {
 import {
   dispatcherTeamMateWorkerClaudeStreamLogPath,
   dispatcherTeamMateWorkerErrorLogPath,
+  dispatcherTeamMateWorkerEventsLogPath,
   dispatcherTeamMateWorkerLogPath,
 } from '../runtime/paths.js';
 
@@ -37,7 +38,7 @@ export const TEAMMATE_WORKER_LOG_DEFAULT_MAX_BYTES = 16_384;
 /** Hard cap on bytes returned per stream, so a tool call can never dump a huge file. */
 export const TEAMMATE_WORKER_LOG_MAX_BYTES_CAP = 131_072;
 
-export type TeamMateWorkerLogStreamKind = 'stdout' | 'stderr';
+export type TeamMateWorkerLogStreamKind = 'stdout' | 'stderr' | 'events';
 
 /** One worker log stream's bounded tail. The local file path is never exposed. */
 export interface TeamMateWorkerLogStream {
@@ -107,6 +108,9 @@ function streamPathsFor(
     return [
       { stream: 'stdout', path: dispatcherTeamMateWorkerLogPath(dispatcherId, taskId) },
       { stream: 'stderr', path: dispatcherTeamMateWorkerErrorLogPath(dispatcherId, taskId) },
+      // Redacted WS notification trace — the actionable diagnostic when the
+      // stdout/stderr frames are empty (issue #126 PR8).
+      { stream: 'events', path: dispatcherTeamMateWorkerEventsLogPath(dispatcherId, taskId) },
     ];
   }
   if (providerRef === BUILTIN_CLAUDE_CODE_PROVIDER_REF) {

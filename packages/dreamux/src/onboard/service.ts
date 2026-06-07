@@ -38,6 +38,13 @@ export interface ServiceInstallAnswers {
   codexBin: string;
   dreamuxBin: string;
   nodeBin: string;
+  /**
+   * Optional Claude Code binary, so the managed-service unit PATH also resolves
+   * `claude` for server-hosted `builtin:claude-code` TeamMate workers (issue
+   * #126 PR8). Absent when Claude Code is not installed — codex-only setups
+   * install unchanged; the claude-code worker simply stays unavailable.
+   */
+  claudeBin?: string;
   startService: boolean;
   dryRun: boolean;
 }
@@ -271,6 +278,39 @@ export async function resolveServiceExecutable(
   );
 }
 
+/**
+ * Best-effort variant of {@link resolveServiceExecutable}: returns the resolved
+ * absolute path, or `null` instead of throwing when the command is not found.
+ * Used for optional binaries (e.g. Claude Code) that must not fail a codex-only
+ * daemon install when absent (issue #126 PR8).
+ */
+export async function tryResolveServiceExecutable(
+  command: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string | null> {
+  try {
+    return await resolveServiceExecutable(command, env);
+  } catch {
+    return null;
+  }
+}
+
+/** Default Claude Code binary name seeded into the managed-service unit PATH. */
+const DEFAULT_SERVICE_CLAUDE_BIN = 'claude';
+
+/**
+ * Pick the Claude Code binary whose directory seeds the managed-service unit
+ * PATH so server-hosted `builtin:claude-code` workers can resolve `claude`
+ * (issue #126 PR8). The `DREAMUX_CLAUDE_BIN` env override wins; otherwise the
+ * default `claude` is located on the operator's PATH at install time. Shared by
+ * both `dreamux onboard` and `dreamux daemon install`.
+ */
+export function selectServiceClaudeBin(env: NodeJS.ProcessEnv): string {
+  const override = env['DREAMUX_CLAUDE_BIN'];
+  if (override !== undefined && override.trim() !== '') return override.trim();
+  return DEFAULT_SERVICE_CLAUDE_BIN;
+}
+
 export function nodeVersionSatisfies(raw: string): boolean {
   const match = raw.trim().match(/^v?(\d+)\.(\d+)\.(\d+)/);
   if (match === null) return false;
@@ -474,6 +514,9 @@ function managedServicePath(answers: ServiceInstallAnswers): string {
   const dirs = [
     dirname(answers.nodeBin),
     ...absoluteDir(answers.codexBin),
+    // The Claude Code install dir, when present, so server-hosted
+    // builtin:claude-code workers can resolve `claude` (issue #126 PR8).
+    ...(answers.claudeBin !== undefined ? absoluteDir(answers.claudeBin) : []),
     ...absoluteDir(answers.dreamuxBin),
     ...SERVICE_PATH_DEFAULTS,
   ];

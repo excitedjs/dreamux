@@ -332,6 +332,26 @@ export function dispatcherTeamMateWorkerErrorLogPath(
 }
 
 /**
+ * Per-task TeamMate worker Codex turn event trace (issue #126 PR8). Codex
+ * protocol frames flow over the WS socket, not the app-server stdout/stderr
+ * logs, so those are empty for a stalled worker; this file holds a redacted,
+ * bounded trace of the WS notification stream (method + ids + item type, never
+ * prompt/assistant text) so `get_task_logs` can show what Codex emitted after
+ * `turn/start`. Kept under the dispatcher worker log dir, never the workspace.
+ */
+export function dispatcherTeamMateWorkerEventsLogPath(
+  id: string,
+  taskId: string,
+): string {
+  return join(
+    codexAppServerLogDir(),
+    'teammate',
+    dispatcherPathSegment(id),
+    `${teamMateWorkerLogStem(taskId)}.events.log`,
+  );
+}
+
+/**
  * Generated MCP config doc for one Claude Code TeamMate worker (issue #126 PR4).
  *
  * The Claude Code worker is launched with `--mcp-config <file>`; a worker is

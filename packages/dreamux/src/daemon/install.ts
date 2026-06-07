@@ -14,7 +14,9 @@ import {
   installUserService,
   removeUserService,
   resolveServiceExecutable,
+  selectServiceClaudeBin,
   selectServiceNodeBin,
+  tryResolveServiceExecutable,
   validateManagedServiceLaunch,
   type ServiceInstallAnswers,
   type ServiceInstallResult,
@@ -103,6 +105,21 @@ export async function runDaemonInstall(
   const codexBin = dryRun
     ? codexBinSource
     : await resolveServiceExecutable(codexBinSource, env);
+  // Best-effort: locate Claude Code so the unit PATH resolves `claude` for
+  // server-hosted builtin:claude-code workers. Absent install → omit, warn,
+  // and keep the codex-only daemon install working (issue #126 PR8).
+  const claudeBinSource = selectServiceClaudeBin(env);
+  const claudeBin = dryRun
+    ? null
+    : await tryResolveServiceExecutable(claudeBinSource, env);
+  if (!dryRun && claudeBin === null) {
+    console.warn(
+      `dreamux daemon install: Claude Code binary '${claudeBinSource}' was not ` +
+        'found on PATH; server-hosted builtin:claude-code TeamMate workers will ' +
+        'be unavailable. Install Claude Code (or set DREAMUX_CLAUDE_BIN) and ' +
+        'rerun dreamux daemon install to enable them.',
+    );
+  }
   // Pin the managed service to a stable system Node (issue #83) rather than the
   // current process Node — otherwise running `daemon install` from a
   // version-manager Node would re-pin the service to that unstable Node.
@@ -119,6 +136,7 @@ export async function runDaemonInstall(
     codexBin,
     dreamuxBin: dreamuxBinPath(env),
     nodeBin,
+    ...(claudeBin !== null ? { claudeBin } : {}),
     startService,
     dryRun,
   };

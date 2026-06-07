@@ -8,10 +8,6 @@ import {
 import { adminSocketPath as defaultAdminSocketPath } from '../runtime/paths.js';
 import { validateDispatcherId } from '../runtime/dispatcher-id.js';
 import type { TeamMateScheduleCallerKind } from '../teammate/ledger.js';
-import {
-  clampWaitTimeout,
-  TEAMMATE_WAIT_CLIENT_BUFFER_MS,
-} from '../teammate/wait-broker.js';
 
 export interface TeamMateMcpOptions {
   dispatcherId: string;
@@ -277,32 +273,11 @@ function teammateTools(): Array<Record<string, unknown>> {
         required: ['task_id', 'prompt'],
       },
     },
-    {
-      name: 'await_completion',
-      description:
-        'Wait (bounded, server-side) for a TeamMate task to reach a terminal ' +
-        'state without shell polling. A timeout returns status still_running ' +
-        'with the latest snapshot — not an error; resume with after_event_id.',
-      inputSchema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          task_id: { type: 'string' },
-          after_event_id: {
-            type: 'number',
-            description: 'Only resolve on an event newer than this id.',
-          },
-          until: {
-            type: 'array',
-            items: { type: 'string' },
-            description:
-              'States to wait for; defaults to completed/failed/cancelled.',
-          },
-          timeout_ms: { type: 'number' },
-        },
-        required: ['task_id'],
-      },
-    },
+    // No await_completion tool: normal orchestration is run_task → the dispatcher
+    // turn ends → the server delivers/wakes the dispatcher into a new turn. The
+    // dispatcher must not poll or hold a turn open waiting (issue #126 PR8). The
+    // ledger read tools (get_task / pull_result) are the recovery path; the
+    // server keeps an internal wait primitive for its own use and tests only.
     {
       name: 'cancel_task',
       description:
@@ -330,10 +305,11 @@ function teammateTools(): Array<Record<string, unknown>> {
       description:
         'Read a bounded tail of a TeamMate worker\'s diagnostic logs to inspect ' +
         'a slow or failed worker without tailing a file in a shell. Returns ' +
-        'worker stderr (and, for builtin:codex, app-server stdout protocol ' +
-        'frames) — NOT the clean result, which comes from get_task / ' +
-        'pull_result / await_completion. Streams are empty until the worker has ' +
-        'run.',
+        'worker stderr and, for builtin:codex, app-server stdout protocol frames ' +
+        'plus an "events" trace of the Codex turn notification stream (the ' +
+        'actionable diagnostic when a turn stalls after submission) — NOT the ' +
+        'clean result, which comes from get_task / pull_result. Streams are ' +
+        'empty until the worker has run.',
       inputSchema: {
         type: 'object',
         additionalProperties: false,
@@ -347,7 +323,7 @@ function teammateTools(): Array<Record<string, unknown>> {
           },
           stream: {
             type: 'string',
-            enum: ['stdout', 'stderr'],
+            enum: ['stdout', 'stderr', 'events'],
             description: 'Restrict to one stream; default returns all available.',
           },
         },
@@ -450,23 +426,6 @@ async function callTool(
         { dispatcher_id: ctx.dispatcherId, ...sendInputArgs(call.arguments) },
         ctx.socketPath,
         'send_input',
-      );
-    }
-    if (call.name === 'await_completion') {
-      const args = awaitArgs(call.arguments);
-      // Hold the admin connection open longer than the bounded server wait so a
-      // timeout returns a structured still_running result rather than dying as a
-      // client transport timeout (issue #126).
-      const clientTimeoutMs =
-        clampWaitTimeout(
-          typeof args['timeout_ms'] === 'number' ? args['timeout_ms'] : undefined,
-        ) + TEAMMATE_WAIT_CLIENT_BUFFER_MS;
-      return forwardToolCall(
-        'mcp.teammate.await',
-        { dispatcher_id: ctx.dispatcherId, ...args },
-        ctx.socketPath,
-        'await_completion',
-        clientTimeoutMs,
       );
     }
     if (call.name === 'cancel_task') {
@@ -657,18 +616,6 @@ function logsArgs(value: unknown): Record<string, unknown> {
   };
 }
 
-function awaitArgs(value: unknown): Record<string, unknown> {
-  const obj = asRecord(value, 'await_completion arguments');
-  const afterEventId = optionalNumber(obj, 'after_event_id');
-  const until = optionalStringArray(obj, 'until');
-  const timeoutMs = optionalNumber(obj, 'timeout_ms');
-  return {
-    task_id: requireString(obj, 'task_id'),
-    ...(afterEventId !== null ? { after_event_id: afterEventId } : {}),
-    ...(until !== null ? { until } : {}),
-    ...(timeoutMs !== null ? { timeout_ms: timeoutMs } : {}),
-  };
-}
 
 function optionalNumber(
   obj: Record<string, unknown>,
@@ -680,18 +627,6 @@ function optionalNumber(
     throw new Error(`${key} must be a finite number`);
   }
   return value;
-}
-
-function optionalStringArray(
-  obj: Record<string, unknown>,
-  key: string,
-): string[] | null {
-  const value = obj[key];
-  if (value === undefined || value === null) return null;
-  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
-    throw new Error(`${key} must be an array of strings`);
-  }
-  return value as string[];
 }
 
 function asRecord(value: unknown, label: string): Record<string, unknown> {

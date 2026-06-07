@@ -266,8 +266,11 @@ export const adminMethods: Record<string, AdminHandler> = {
     }
   },
 
-  // Bounded server-side wait; a timeout returns a structured still_running
-  // result, not an error (issue #126).
+  // Internal/admin-diagnostic only — NOT exposed as a dispatcher-facing MCP tool
+  // (issue #126 PR8). Normal orchestration is run_task → the dispatcher turn ends
+  // → delivery/wakeup starts a new turn; dispatchers never poll. This bounded
+  // wait primitive is retained for tests and admin diagnostics; a timeout returns
+  // a structured still_running result, not an error.
   'mcp.teammate.await': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
@@ -310,10 +313,15 @@ export const adminMethods: Record<string, AdminHandler> = {
     const taskId = mustString(params, 'task_id');
     const maxBytes = optionalNumber(params, 'max_bytes');
     const stream = optionalString(params, 'stream');
-    if (stream !== null && stream !== 'stdout' && stream !== 'stderr') {
+    if (
+      stream !== null &&
+      stream !== 'stdout' &&
+      stream !== 'stderr' &&
+      stream !== 'events'
+    ) {
       throw new AdminError(
         'BAD_REQUEST',
-        "param 'stream' must be 'stdout' or 'stderr'",
+        "param 'stream' must be 'stdout', 'stderr', or 'events'",
       );
     }
     try {
@@ -322,7 +330,7 @@ export const adminMethods: Record<string, AdminHandler> = {
         taskId,
         ...(maxBytes !== null ? { maxBytes } : {}),
         ...(stream !== null
-          ? { stream: stream as 'stdout' | 'stderr' }
+          ? { stream: stream as 'stdout' | 'stderr' | 'events' }
           : {}),
       });
     } catch (err) {

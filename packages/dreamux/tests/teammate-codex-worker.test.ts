@@ -32,6 +32,7 @@ import type {
   TeamMateWorkerHandle,
 } from '../src/teammate/worker/types.js';
 import { TeamMateWaitBroker } from '../src/teammate/wait-broker.js';
+import { readTeamMateWorkerLogs } from '../src/teammate/worker-logs.js';
 import { startFakeCodex, type FakeCodex } from './fake-codex.js';
 
 const DISPATCHER = 'flow';
@@ -223,6 +224,39 @@ describe('codex teammate worker provider', () => {
     expect(execution.hasLiveSession(DISPATCHER, taskId)).toBe(false);
   });
 
+  it('writes a neutral (non-alarming) events log on a successful completion', async () => {
+    // Regression: writeEventsLog runs on success too; its header must NOT read
+    // like a failure (no false "threadId field-shape mismatch"). Isolate HOME so
+    // the events log lands in a temp dir we can read back via get_task_logs.
+    const home = mkdtempSync(join(tmpdir(), 'dreamux-codex-events-'));
+    const prevHome = process.env['HOME'];
+    process.env['HOME'] = home;
+    resetRuntimeConfig();
+    try {
+      fake = await startFakeCodex({ replyFor: () => 'ok' });
+      const { ledger, execution } = buildExecHarness(fake);
+      const taskId = await acceptTask(ledger, 'do the work');
+      await execution.execute({ dispatcherId: DISPATCHER, taskId });
+      expect(await waitForTerminal(ledger, taskId)).toBe('completed');
+
+      const logs = await readTeamMateWorkerLogs({
+        dispatcherId: DISPATCHER,
+        taskId,
+        providerRef: 'builtin:codex',
+      });
+      const events = logs.streams.find((s) => s.stream === 'events');
+      expect(events?.available).toBe(true);
+      expect(events?.text).toContain('Turn completed');
+      expect(events?.text).not.toContain('mismatch');
+      expect(events?.text).not.toContain('worker-environment problem');
+    } finally {
+      if (prevHome === undefined) delete process.env['HOME'];
+      else process.env['HOME'] = prevHome;
+      resetRuntimeConfig();
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it('leaves the task accepted and retryable when the worker cannot start', async () => {
     // swallowInitialize makes the handshake hang; a short timeout fails the
     // start before onRunning, so the task stays accepted (retryable).
@@ -281,6 +315,12 @@ describe('codex teammate worker provider', () => {
     // diagnostic log is legitimately empty for a socket-frame stall).
     expect(task?.result?.text).toContain('did not complete within 50ms');
     expect(task?.result?.text).toContain('turn execution');
+    // Issue #126 PR8: the failure now carries an event-trace verdict. The fake
+    // emits nothing before the 50ms deadline, so the verdict names the actionable
+    // cause — no model output, i.e. a worker-environment problem — instead of
+    // leaving the operator to guess.
+    expect(task?.result?.text).toContain('No Codex events were observed');
+    expect(task?.result?.text).toContain('worker-environment problem');
     // The stalled session is dropped, not retained as live.
     expect(execution.hasLiveSession(DISPATCHER, taskId)).toBe(false);
   });

@@ -22,6 +22,7 @@ import {
 import {
   dispatcherTeamMateWorkerClaudeStreamLogPath,
   dispatcherTeamMateWorkerErrorLogPath,
+  dispatcherTeamMateWorkerEventsLogPath,
   dispatcherTeamMateWorkerLogPath,
   resetRuntimeConfig,
 } from '../src/runtime/paths.js';
@@ -65,6 +66,10 @@ describe('TeamMate worker logs', () => {
       dispatcherTeamMateWorkerErrorLogPath(DISPATCHER, TASK),
       'worker stderr line\n',
     );
+    await writeLog(
+      dispatcherTeamMateWorkerEventsLogPath(DISPATCHER, TASK),
+      '# Codex emitted 0 event(s)\n',
+    );
 
     const logs = await readTeamMateWorkerLogs({
       dispatcherId: DISPATCHER,
@@ -73,7 +78,11 @@ describe('TeamMate worker logs', () => {
     });
 
     expect(logs.logs_supported).toBe(true);
-    expect(logs.streams.map((s) => s.stream)).toEqual(['stdout', 'stderr']);
+    expect(logs.streams.map((s) => s.stream)).toEqual([
+      'stdout',
+      'stderr',
+      'events',
+    ]);
     const stdout = logs.streams.find((s) => s.stream === 'stdout');
     expect(stdout).toMatchObject({
       available: true,
@@ -82,6 +91,9 @@ describe('TeamMate worker logs', () => {
     });
     const stderr = logs.streams.find((s) => s.stream === 'stderr');
     expect(stderr).toMatchObject({ available: true, text: 'worker stderr line\n' });
+    // The events trace is the actionable diagnostic when stdout/stderr are empty.
+    const events = logs.streams.find((s) => s.stream === 'events');
+    expect(events).toMatchObject({ available: true, text: '# Codex emitted 0 event(s)\n' });
   });
 
   it('returns only the claude-code stderr stream', async () => {
