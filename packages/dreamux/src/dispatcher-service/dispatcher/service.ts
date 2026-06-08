@@ -2,6 +2,7 @@ import type {
   AgentRuntime,
   AgentRuntimeMcpServer,
   AgentRuntimeProviderCatalog,
+  CompletionEnvelope,
 } from '../../agent-runtime/index.js';
 import type { FeishuBot } from '../../channel/feishu/bot.js';
 import {
@@ -118,6 +119,73 @@ export class DispatcherAgentService {
 
   getRuntime(id: string): AgentRuntime | null {
     return this.slots.get(id)?.runtime ?? null;
+  }
+
+  /**
+   * Seam ③ of the reverse-delivery path (issue #147): deliver a teammate
+   * completion into the live dispatcher runtime, waking it for a fresh turn. The
+   * retry policy lives here — `completionInput` mints a unique sourceId per call,
+   * so re-delivering on a `failed` result (definitely not submitted) is safe.
+   *
+   * Never throws into the teammate settle path: an absent slot/runtime,
+   * a runtime without completion delivery, an `unsupported` result (runtime
+   * stopped), a thrown call, or exhausted retries all log and return.
+   */
+  async deliverCompletion(
+    dispatcherId: string,
+    completion: CompletionEnvelope,
+  ): Promise<void> {
+    const slot = this.slots.get(dispatcherId);
+    if (slot === undefined) {
+      this.opts.log.warn(
+        { dispatcher_id: dispatcherId, source: completion.source },
+        'dropping teammate completion: dispatcher not running',
+      );
+      return;
+    }
+    const deliver = slot.runtime.completionInput;
+    if (deliver === undefined) {
+      slot.log.warn(
+        { dispatcher_id: dispatcherId, source: completion.source },
+        'dropping teammate completion: runtime has no completion delivery',
+      );
+      return;
+    }
+    const maxAttempts = 3;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      let outcome;
+      try {
+        outcome = await deliver.call(slot.runtime, completion);
+      } catch (err) {
+        slot.log.warn(
+          { dispatcher_id: dispatcherId, source: completion.source, err: errInfo(err) },
+          'teammate completion delivery threw',
+        );
+        return;
+      }
+      if (outcome.status === 'accepted') return;
+      if (outcome.status === 'unsupported') {
+        slot.log.warn(
+          { dispatcher_id: dispatcherId, source: completion.source, reason: outcome.reason },
+          'dropping teammate completion: runtime delivery unsupported',
+        );
+        return;
+      }
+      slot.log.warn(
+        {
+          dispatcher_id: dispatcherId,
+          source: completion.source,
+          attempt,
+          max_attempts: maxAttempts,
+          err: errInfo(outcome.error),
+        },
+        'teammate completion delivery failed',
+      );
+    }
+    slot.log.warn(
+      { dispatcher_id: dispatcherId, source: completion.source, max_attempts: maxAttempts },
+      'teammate completion delivery exhausted retries; dropping',
+    );
   }
 
   summarize(): DispatcherSummary[] {

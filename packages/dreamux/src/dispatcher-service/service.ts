@@ -60,6 +60,11 @@ export class DispatcherService {
       config: opts.config,
       dispatchers: opts.dispatchers,
       agentRuntimeProviders: opts.agentRuntimeProviders,
+      // Reverse delivery (issue #147): a settled teammate turn bridges here to
+      // the dispatcher runtime's completionInput, becoming a fresh dispatcher
+      // turn. The facade is where both services meet.
+      onTeamMateCompletion: (id, completion) =>
+        this.dispatchers.deliverCompletion(id, completion),
       log: opts.log,
     });
   }

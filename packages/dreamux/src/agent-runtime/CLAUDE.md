@@ -50,3 +50,16 @@ channel payload is now neutral too (D): `channelInput` takes
 `InboundTurnInput { text; sourceId }` — turn text plus a dedupe/correlation id —
 and channel routing attributes (chat id, sender id, message id) stay in the
 channel layer and never cross into the runtime.
+
+The reverse-delivery loop is now wired end-to-end (#147), so `completionInput`
+is a live caller rather than zero-caller. A runtime fires the neutral
+`TurnSettledSignal { turnId; status }` through the optional
+`AgentRuntimeCreateContext.onTurnSettled` hook when a delivered turn reaches a
+terminal state (completed / failed / stopped) — seam ①. The teammate service
+launches teammate runtimes with that hook (and only then), maps each settle to a
+`CompletionEnvelope`, and hands it to its `onTeamMateCompletion` sink — seam ②;
+the dispatcher's own runtime gets no hook, so it never self-delivers. The facade
+bridges that sink to `DispatcherAgentService.deliverCompletion`, which calls the
+live dispatcher runtime's `completionInput` with bounded retry-on-`failed` — seam
+③. This makes the dispatcher base-prompt promise ("a finished TeamMate is
+delivered back to you as a new turn") real.
