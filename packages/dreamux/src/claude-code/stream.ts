@@ -26,8 +26,19 @@
  * Feishu identifiers, tokens, private paths, or environment-specific details.
  */
 
-/** A parsed JSON object, or `null` for anything that is not a JSON object. */
-export type JsonObject = Record<string, unknown>;
+import type {
+  JsonObject,
+  ParsedLine,
+  ResultEnvelope,
+  TurnOutcome,
+} from './types.js';
+
+export type {
+  JsonObject,
+  ParsedLine,
+  ResultEnvelope,
+  TurnOutcome,
+} from './types.js';
 
 function isObject(v: unknown): v is JsonObject {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -67,62 +78,6 @@ export class LineBuffer {
     this.buf = '';
     return rest.length > 0 ? rest : null;
   }
-}
-
-// ─── Parsed envelope ────────────────────────────────────────────────────────
-
-/**
- * One decoded stdout line. `kind` is Dreamux's coarse classification, not the
- * CLI's `type` — it groups the wire types by how the runtime reacts:
- *
- *  - `init` / `assistant` / `result` — the data-plane envelopes the turn
- *    aggregator consumes.
- *  - `control_request` / `control_response` — the control plane (permission
- *    callbacks the runtime answers defensively).
- *  - `other` — a valid JSON object the runtime does not act on (rate-limit
- *    events, hook lifecycle, streamlined text, …). Carried, never dropped.
- *  - `parse_error` — the line was not JSON; surfaced for logging, never thrown.
- */
-export type ParsedLine =
-  | {
-      kind: 'init';
-      sessionId: string | null;
-      model: string | null;
-      raw: JsonObject;
-    }
-  | {
-      kind: 'assistant';
-      text: string;
-      sessionId: string | null;
-      raw: JsonObject;
-    }
-  | { kind: 'result'; outcome: ResultEnvelope; raw: JsonObject }
-  | {
-      kind: 'control_request';
-      requestId: string | null;
-      subtype: string | null;
-      request: JsonObject;
-      raw: JsonObject;
-    }
-  | {
-      kind: 'control_response';
-      requestId: string | null;
-      ok: boolean;
-      raw: JsonObject;
-    }
-  | { kind: 'other'; type: string | null; subtype: string | null; raw: JsonObject }
-  | { kind: 'parse_error'; raw: string };
-
-/** The terminal `result` envelope, reduced to what the runtime records per turn. */
-export interface ResultEnvelope {
-  /** `success` or one of the `error_*` subtypes. Unknown subtypes pass through. */
-  readonly subtype: string | null;
-  readonly isError: boolean;
-  /** The success-path final text (`result`); `null` for error subtypes. */
-  readonly text: string | null;
-  readonly sessionId: string | null;
-  /** Error subtypes may carry a message list; empty otherwise. */
-  readonly errors: readonly string[];
 }
 
 /**
@@ -262,16 +217,6 @@ export function buildControlAck(requestId: string): string {
 }
 
 // ─── Turn aggregation ───────────────────────────────────────────────────────
-
-/** The reduced outcome of one assistant turn, terminated by a `result`. */
-export interface TurnOutcome {
-  readonly isError: boolean;
-  /** Final reply text: the `result.result`, falling back to the last assistant snapshot. */
-  readonly text: string;
-  readonly sessionId: string | null;
-  readonly subtype: string | null;
-  readonly errors: readonly string[];
-}
 
 /**
  * Accumulates the envelopes of a single turn and resolves a `TurnOutcome` when

@@ -2,7 +2,7 @@
 
 - **Status:** Implemented runtime contract for issue #63
 - **Source:** https://github.com/excitedjs/dreamux/issues/63
-- **Affects:** `/packages/dreamux/src/dispatcher/turn-manager.ts`, `/packages/dreamux/src/dispatcher/runtime.ts`, `/packages/dreamux/src/codex/events.ts`, `/packages/dreamux/src/server.ts`, `/packages/dreamux/tests/fake-codex.ts`, `/packages/dreamux/tests/codex-live.test.ts`
+- **Affects:** `/packages/dreamux/src/dispatcher/turn-manager.ts`, `/packages/dreamux/src/agent-runtime/codex-runtime.ts`, `/packages/dreamux/src/codex/events.ts`, `/packages/dreamux/src/server.ts`, `/packages/dreamux/tests/fake-codex.ts`, `/packages/dreamux/tests/codex-live.test.ts`
 
 ## Locked Scope
 
@@ -60,8 +60,8 @@ flowchart LR
 `turn/completed`. A long Codex turn therefore blocks later accepted Feishu
 messages from reaching Codex.
 
-The channel added one `RECEIVED_REACTION_EMOJI` after
-`DispatcherRuntime.enqueueInbound()` returned true. Issue #63 replaced this
+The channel added one `RECEIVED_REACTION_EMOJI` after the old Codex runtime
+`enqueueInbound()` path returned true. Issue #63 replaced this
 with a three-state channel-owned reaction flow.
 
 ## Runtime Model
@@ -95,7 +95,7 @@ inbound.
   reaction to in-progress at the `turn/start` acceptance point.
 - Do not track active turn ids. Do not call `turn/steer`.
 
-`packages/dreamux/src/dispatcher/runtime.ts`
+`packages/dreamux/src/agent-runtime/codex-runtime.ts`
 
 - Keep owning the Codex client and thread id.
 - Replace the synchronous boolean `enqueueInbound()` result with an async

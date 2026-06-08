@@ -103,10 +103,11 @@ Implementation status:
     Unlike Codex there is no `initialize` handshake: the child emits `init`
     lazily with the first turn, so readiness is "child spawned", not "handshake
     completed". The wire protocol is modelled by a pure, forward-tolerant parser
-    (`runtime/claude-code-stream.ts`) and the resident child is supervised by an
-    injectable session seam (`agent-runtime/claude-code-session.ts`); a fake
-    session keeps the lifecycle fully unit-testable. A missing/broken `claude`
-    binary fails loudly at `start()` (degraded + throw, Codex-aligned); an
+    (`claude-code/stream.ts` + `claude-code/types.ts`); the resident child is
+    supervised by `claude-code/supervisor.ts` and turn RPC is owned by
+    `claude-code/rpc.ts`. The injectable `ClaudeCodeSessionFactory` seam remains
+    available for fake-session tests. A missing/broken `claude` binary fails
+    loudly at `start()` (degraded + throw, Codex-aligned); an
     unexpected child exit marks the runtime degraded and the next turn re-spawns
     with `--resume <session_id>` (lazy restart bound to the serial turn queue, no
     background backoff timer). A per-turn deadline

@@ -313,8 +313,8 @@ Real Claude Code worker
 (`/packages/dreamux/src/teammate/worker/claude-code-provider.ts`):
 
 - **One task = one turn**, like the Codex worker, but over the dispatcher
-  runtime's own resident stream-json primitive (`agent-runtime/claude-code-session.ts`,
-  `claude --print --input-format stream-json`) through the same injectable
+  runtime's own resident stream-json primitive (`claude-code/supervisor.ts`,
+  `claude-code/rpc.ts`, and `claude-code/stream.ts`) through the same injectable
   `ClaudeCodeSessionFactory` seam. The task prompt is submitted as the single
   `user` turn; `submitTurn` resolves only at the terminal `result` (a Claude Code
   turn is itself a full agentic loop) → `onCompleted(text)`, then the resident

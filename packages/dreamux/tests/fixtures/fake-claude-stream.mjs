@@ -2,7 +2,7 @@
  * A minimal fake `claude --print --input-format stream-json` child for tests.
  *
  * It speaks just enough of the stream-json wire protocol to exercise the
- * resident-session supervisor (`agent-runtime/claude-code-session.ts`) over real
+ * resident-session supervisor (`claude-code/supervisor.ts`) over real
  * OS pipes, with no real `claude` binary:
  *
  *  - reads NDJSON `user` messages on stdin and keeps stdin open (resident);

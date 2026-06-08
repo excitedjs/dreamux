@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Refactor builtin Agent Runtime module layout without behavior changes: move the Codex AgentRuntime implementation under agent-runtime, split the Claude Code resident transport into claude-code supervisor/rpc/stream/types/mcp-config modules, and share process-group helpers from runtime/process.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

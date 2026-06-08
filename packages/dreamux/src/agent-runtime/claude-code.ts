@@ -11,7 +11,7 @@
  *   is `claude --print --input-format stream-json --output-format stream-json`
  *   (see `runtime/claude-code-args.ts`); turns are NDJSON `user` lines on stdin
  *   and `init`/`assistant`/`result` envelopes on stdout (see
- *   `runtime/claude-code-stream.ts`). There is no `initialize` handshake — the
+ *   `claude-code/stream.ts`). There is no `initialize` handshake — the
  *   child emits `init` lazily with the first turn — so readiness is "child
  *   spawned", not "handshake completed".
  * - **MCP injection is a JSON config document** (`--mcp-config <file>`), not
@@ -69,15 +69,13 @@ import {
   dispatcherCodexCwd,
 } from '../runtime/paths.js';
 import { dispatcherProcessEnv } from '../runtime/package-bin.js';
-import {
-  claudeCodeResidentArgs,
-  stringifyClaudeCodeMcpConfig,
-} from '../runtime/claude-code-args.js';
+import { claudeCodeResidentArgs } from '../runtime/claude-code-args.js';
+import { stringifyClaudeCodeMcpConfig } from '../claude-code/mcp-config.js';
 import {
   createDefaultClaudeCodeSession,
   type ClaudeCodeSession,
   type ClaudeCodeSessionFactory,
-} from './claude-code-session.js';
+} from '../claude-code/supervisor.js';
 import type {
   InboundDeliveryHooks,
 } from '../dispatcher/turn-manager.js';
