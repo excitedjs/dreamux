@@ -2,7 +2,7 @@
   "changes": [
     {
       "comment": "BREAKING: Feishu is now a built-in bidirectional channel rather than a provider-registry channel implementation. Channel plugin loading remains interface-only; the provider registry now only backs Agent Runtime providers. DispatcherService owns dispatcher agent lifecycle, live runtime slots, restart-notice injection, and Feishu channel MCP dispatch; server.ts is wiring only.\nRebuild: restart dreamux serve after upgrading so dispatcher agents and the built-in Feishu channel are recreated under DispatcherService ownership.",
-      "type": "major",
+      "type": "minor",
       "packageName": "@excitedjs/dreamux"
     }
   ],

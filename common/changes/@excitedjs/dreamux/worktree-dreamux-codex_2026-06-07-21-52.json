@@ -2,7 +2,7 @@
   "changes": [
     {
       "comment": "BREAKING: Replace the TeamMate task/worker MCP model with named, resumable TeamMate agents. The dispatcher-scoped teammate MCP now exposes spawn/send/resume/close/history/list/status/last/ctx/get_capabilities; schedule/run_task/execute_task/send_input/cancel_task/get_task_logs/list_tasks/get_task/pull_result and task_id records are removed.\n\nRebuild: remove old ~/.dreamux/state/<dispatcher-id>/teammate/ledger.json and ~/.dreamux/state/<dispatcher-id>/teammate/tasks/ state, then recreate TeamMate sessions with the new spawn/resume flow. TeamMates now reuse AgentRuntime providers with async identity/history persistence.",
-      "type": "major",
+      "type": "minor",
       "packageName": "@excitedjs/dreamux"
     }
   ],
