@@ -29,6 +29,7 @@ const FAKE_CAPABILITIES: AgentRuntimeCapabilities = {
   events: { kind: 'push' },
   last: { supported: true },
   context: { supported: true },
+  systemPrompt: { mode: 'replace' },
   teammateCompletion: [],
 };
 

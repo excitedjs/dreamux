@@ -48,7 +48,6 @@ import {
 } from './codex-home.js';
 import { codexSocketPathIn } from './paths.js';
 import { installBundledWorkspaceSkills } from '../../../onboard/bundled-skills.js';
-import { DREAMUX_DISPATCHER_BASE_INSTRUCTIONS } from '../../../dispatcher-service/dispatcher/base-prompt.js';
 import type {
   AgentRuntime,
   AgentRuntimeCapabilities,
@@ -77,6 +76,12 @@ export interface CodexRuntimeDeps {
   dispatchers: DispatcherStore;
   /** Working directory the codex app-server runs in (required launch param). */
   cwd: string;
+  /**
+   * Launcher-supplied system-prompt content used as codex `baseInstructions`
+   * (codex applies it as a REPLACE per its `systemPrompt` capability). Omitted
+   * for launches that supply none (e.g. teammates).
+   */
+  systemPromptContent?: string;
   state?: AgentRuntimeStateStore;
   paths?: AgentRuntimePathContext;
   /** Optional bin path override for tests. */
@@ -332,7 +337,7 @@ export class CodexRuntime implements AgentRuntime {
     if (existing === null) {
       // Fresh thread.
       const params: ThreadStartParams = {
-        baseInstructions: DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
+        baseInstructions: this.deps.systemPromptContent,
       };
       const res = await this.client.request<ThreadStartResponse>(
         'thread/start',
@@ -346,7 +351,7 @@ export class CodexRuntime implements AgentRuntime {
     try {
       const params: ThreadResumeParams = {
         threadId: existing,
-        baseInstructions: DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
+        baseInstructions: this.deps.systemPromptContent,
       };
       await this.client.request<ThreadResumeResponse>('thread/resume', params);
       this.threadId = existing;
@@ -361,7 +366,7 @@ export class CodexRuntime implements AgentRuntime {
       );
       const res = await this.client.request<ThreadStartResponse>(
         'thread/start',
-        { baseInstructions: DREAMUX_DISPATCHER_BASE_INSTRUCTIONS },
+        { baseInstructions: this.deps.systemPromptContent },
       );
       this.threadId = res.thread.id;
       if (this.state.recordLostThread !== undefined) {

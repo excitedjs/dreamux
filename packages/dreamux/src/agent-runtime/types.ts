@@ -50,6 +50,12 @@ export interface AgentRuntimeCapabilities {
   last: { supported: boolean };
   /** Whether the runtime can report context-window usage. */
   context: { supported: boolean };
+  /**
+   * How the launcher-supplied role/system prompt content
+   * (`AgentRuntimeCreateContext.systemPromptContent`) is applied: `replace`
+   * swaps the engine's base instructions, `append` adds to them.
+   */
+  systemPrompt: { mode: 'replace' | 'append' };
   /** Upward delivery shapes this runtime supports for teammate completion. */
   teammateCompletion: readonly CompletionDeliveryShape[];
 }
@@ -170,6 +176,12 @@ export interface AgentRuntimeCreateContext {
    * teammate agents); never derived inside the runtime.
    */
   cwd: string;
+  /**
+   * Launcher-supplied dispatcher/role system-prompt content, applied per the
+   * runtime's `systemPrompt.mode` capability (replace or append). Optional:
+   * teammate launches may omit it.
+   */
+  systemPromptContent?: string;
   state?: AgentRuntimeStateStore;
   paths?: AgentRuntimePathContext;
   mcpServers: readonly AgentRuntimeMcpServer[];

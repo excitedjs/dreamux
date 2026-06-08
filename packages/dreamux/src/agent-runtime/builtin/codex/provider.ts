@@ -52,6 +52,7 @@ export const CODEX_AGENT_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = {
   events: { kind: 'push' },
   last: { supported: true },
   context: { supported: false },
+  systemPrompt: { mode: 'replace' },
   teammateCompletion: [
     {
       kind: 'codexInboxTurn',
@@ -81,6 +82,7 @@ export function createCodexAgentRuntimeProvider(
       const runtimeDeps = {
         dispatchers: context.dispatchers,
         cwd: context.cwd,
+        systemPromptContent: context.systemPromptContent,
         state: context.state,
         paths: context.paths,
         codexBinPath: resolveCodexBinPath(codexConfig.bin),

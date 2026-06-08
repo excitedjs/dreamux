@@ -107,6 +107,7 @@ export const CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = 
   events: { kind: 'synthesized' },
   last: { supported: true },
   context: { supported: false },
+  systemPrompt: { mode: 'append' },
   teammateCompletion: [
     {
       kind: 'claudeCodeTaskNotification',
