@@ -1,6 +1,7 @@
 # Provider references and Capability Registry
 
-- **Status:** Accepted
+- **Status:** Accepted, refined by
+  [provider-architecture-realignment](provider-architecture-realignment.md)
 - **Date:** 2026-06-06
 - **Affects:** provider references, plugin manifests, Capability Registry,
   dispatcher startup validation, MCP descriptor discovery
@@ -32,11 +33,10 @@ npm:<package-spec>#<export-name>
 Examples:
 
 ```text
-builtin:feishu
 builtin:codex
 builtin:claude-code
 npm:@example/dreamux-provider
-npm:@example/dreamux-provider#feishuLikeChannel
+npm:@example/dreamux-provider#thirdPartyRuntime
 ```
 
 The normalized form separates source, package, export, and builtin id so config
@@ -49,34 +49,36 @@ parsed, stored, and validated as reserved syntax, but they must fail clearly if
 selected for execution. Dreamux must not install, import, or execute external
 npm providers in Phase 1.
 
-Wired builtin providers attach their implemented capabilities to the registry
-descriptor as the provider PRs land. The Codex runtime provider declares
-runtime lifecycle, Dreamux MCP injection, inbound turn submission, and
-Codex-style TeamMate completion delivery capability metadata. Feishu and Claude
-Code capabilities remain owned by their dedicated provider PRs.
+Issue #135 demotes the Capability Registry into a provider registry for the
+`agentRuntime` seam. Wired builtin runtime providers attach their implemented
+capabilities to the runtime implementation as the provider PRs land. The Codex
+runtime provider declares runtime lifecycle, Dreamux MCP injection, inbound turn
+submission, and Codex-style TeamMate completion delivery capability metadata.
+Claude Code owns the same AgentRuntime interface with its own delivery shape.
+Feishu is no longer a provider-registry entry; it is a built-in bidirectional
+channel.
 
-The Capability Registry is process-local and server-owned. It records:
+The provider registry is process-local and server-owned. It records:
 
 - provider descriptors;
-- provider kind (`channel`, `agentRuntime`, or Dreamux service capability);
-- capability descriptors such as MCP servers, reply capability, runtime delivery
-  hooks, and provider-local config schemas;
+- provider kind (`agentRuntime` in the current implementation);
+- provider-local implementation handles and runtime capability declarations;
 - validation status.
 
-Capability ids are namespaced by provider id to avoid collisions. Core consumers
-must consume descriptors from the registry instead of constructing channel,
-runtime, or MCP surfaces by hard-coded provider-specific names.
+Core consumers must consume runtime providers from the registry view instead of
+maintaining parallel provider maps. Channel MCP surfaces are owned by the
+channel module and injected by the Dispatcher Service.
 
 ## Consequences
 
-- Builtin providers become explicit extension points rather than special server
-  branches.
+- Builtin Agent Runtime providers become explicit extension points rather than
+  special server branches.
 - External provider syntax can be documented early without creating package
   loading or supply-chain risk in Phase 1.
 - Startup validation must distinguish "unknown builtin", "reserved external
-  provider", and "valid but unsupported in this phase".
-- Registry descriptors become part of the review surface for future provider
-  PRs.
+  runtime provider", and "valid but unsupported in this phase".
+- Feishu channel behavior is reviewed at the channel module boundary, not as a
+  registry provider descriptor.
 
 ## Alternatives considered
 

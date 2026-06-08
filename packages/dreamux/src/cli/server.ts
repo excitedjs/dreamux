@@ -100,9 +100,10 @@ Environment overrides:
 
 Dispatcher declarations:
   Edit ~/.dreamux/config.json dispatchers[] and restart dreamux serve.
-  Phase 1 channel provider: builtin:feishu.
+  Built-in Feishu channel: builtin:feishu.
   Phase 1 runtime providers: builtin:codex, builtin:claude-code.
-  Npm provider refs are reserved syntax only and are not loaded in this phase.
+  Npm runtime provider refs are reserved syntax only and are not loaded in this phase.
+  Subscription channel plugins are an interface-only reservation.
 `);
 }
 

@@ -21,10 +21,10 @@
 /** Where a provider's implementation comes from. */
 export type ProviderRefSource = 'builtin' | 'npm';
 
-/** A bundled, first-party provider selected by id, e.g. `builtin:feishu`. */
+/** A bundled, first-party provider selected by id, e.g. `builtin:codex`. */
 export interface BuiltinProviderRef {
   source: 'builtin';
-  /** Bundled provider id, e.g. `feishu`, `codex`, `claude-code`. */
+  /** Bundled provider id, e.g. `codex` or `claude-code`. */
   id: string;
   /** The original, canonical string form. */
   raw: string;
@@ -95,7 +95,7 @@ export function parseProviderRef(ref: string): ProviderRef {
   if (schemeEnd <= 0) {
     throw new InvalidProviderRefError(
       ref,
-      'ref must be in `<source>:<spec>` form (e.g. `builtin:feishu`)',
+      'ref must be in `<source>:<spec>` form (e.g. `builtin:codex`)',
     );
   }
 

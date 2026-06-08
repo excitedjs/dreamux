@@ -79,12 +79,12 @@ adds the new one (`setInboundReaction`, `Get` → `OnIt`). The agreed order is:
 6. **then cancel** the previous reaction.
 
 Race / failure constraints: a reply arriving while the previous reaction is
-being canceled must still let `replyFromMcp` remove the newly stored reaction
-(the reply-wins guarantee); if the new add fails or returns no reaction id, keep
-the previous reaction/ledger entry rather than deleting it. New tests beyond the
-existing "reply wins the initial add" race: a replacement-race test around the
-`[received] → [in progress]` transition, and a test proving add happens before
-cancel.
+being canceled must still let the channel-owned `reply` MCP handler remove the
+newly stored reaction (the reply-wins guarantee); if the new add fails or
+returns no reaction id, keep the previous reaction/ledger entry rather than
+deleting it. New tests beyond the existing "reply wins the initial add" race: a
+replacement-race test around the `[received] → [in progress]` transition, and a
+test proving add happens before cancel.
 
 ### Feishu API assumption (to confirm in review)
 

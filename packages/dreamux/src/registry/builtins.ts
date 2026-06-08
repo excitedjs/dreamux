@@ -19,7 +19,6 @@ interface BuiltinSpec {
 
 /** The provider refs Dreamux ships and recognizes. */
 export const BUILTIN_PROVIDERS: readonly BuiltinSpec[] = [
-  { id: 'feishu', kind: 'channel' },
   { id: 'codex', kind: 'agentRuntime' },
   { id: 'claude-code', kind: 'agentRuntime' },
 ];

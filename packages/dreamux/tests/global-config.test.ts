@@ -401,7 +401,7 @@ describe('global config (~/.dreamux/config.json)', () => {
     });
   });
 
-  it('rejects reserved npm provider refs without loading them', async () => {
+  it('rejects reserved npm channel refs without loading them', async () => {
     writeConfigObject({
       dispatchers: [
         testDispatcherConfig({
@@ -412,11 +412,11 @@ describe('global config (~/.dreamux/config.json)', () => {
     });
 
     await expect(loadConfig({ configDir })).rejects.toThrow(
-      /reserved for future external providers and is not loadable/,
+      /not a built-in Dreamux channel/,
     );
   });
 
-  it('rejects unknown builtin provider refs', async () => {
+  it('rejects unknown builtin channel refs', async () => {
     writeConfigObject({
       dispatchers: [
         testDispatcherConfig({
@@ -427,11 +427,11 @@ describe('global config (~/.dreamux/config.json)', () => {
     });
 
     await expect(loadConfig({ configDir })).rejects.toThrow(
-      /unknown builtin provider 'matrix'/,
+      /not a built-in Dreamux channel/,
     );
   });
 
-  it('rejects provider refs with the wrong provider kind', async () => {
+  it('rejects runtime provider refs in channel config', async () => {
     writeConfigObject({
       dispatchers: [
         testDispatcherConfig({
@@ -442,7 +442,7 @@ describe('global config (~/.dreamux/config.json)', () => {
     });
 
     await expect(loadConfig({ configDir })).rejects.toThrow(
-      /is a agentRuntime provider, expected channel/,
+      /not a built-in Dreamux channel/,
     );
   });
 

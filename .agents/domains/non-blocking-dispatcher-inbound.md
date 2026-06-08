@@ -113,16 +113,15 @@ inbound.
   helper if still useful.
 - Do not add a `turn/steer` helper for normal Feishu inbound.
 
-`packages/dreamux/src/server.ts`
+`packages/dreamux/src/channel/feishu-channel.ts`
 
-- In `Server.startDispatcher()`'s `bot.start(async event)` handler, add the
-  received emoji immediately after the access gate passes and `message_id`
-  dedupe reports a miss. Do not react to dropped messages or duplicate
-  redeliveries.
+- In `FeishuChannelSession`'s inbound message handler, add the received emoji
+  immediately after the access gate passes and `message_id` dedupe reports a
+  miss. Do not react to dropped messages or duplicate redeliveries.
 - After `runtime.enqueueInbound()` reports `turn/start` acceptance, replace the
   received reaction with the in-progress emoji.
-- In `replyFromMcp()`, keep clearing the channel-owned reaction for
-  `input.messageId` after the model reply is sent.
+- In the channel-owned `reply` MCP handler, keep clearing the channel-owned
+  reaction for `input.messageId` after the model reply is sent.
 - Replace the single `receivedReactions` map with a channel-owned inbound
   reaction ledger that stores the current reaction id and state per message id.
   A reaction is replaced **add-then-cancel** (issue #69): add the new emoji

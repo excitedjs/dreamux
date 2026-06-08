@@ -180,21 +180,11 @@ export const ALLOWED_SANDBOX_MODES = new Set([
 
 export const DEFAULT_CONFIG_JSON = `${JSON.stringify(BUILT_IN_DEFAULTS, null, 2)}\n`;
 
-type ChannelConfigReader = (
-  rawConfig: Record<string, unknown>,
-  file: string,
-  prefix: string,
-) => DispatcherProviderConfig | DispatcherFeishuConfig;
-
 type RuntimeConfigReader = (
   rawConfig: Record<string, unknown>,
   file: string,
   prefix: string,
 ) => DispatcherProviderConfig | DispatcherCodexConfig | DispatcherClaudeCodeConfig;
-
-const WIRED_CHANNEL_CONFIG_READERS = new Map<string, ChannelConfigReader>([
-  [BUILTIN_FEISHU_PROVIDER_REF, readDispatcherFeishuConfig],
-]);
 
 const WIRED_RUNTIME_CONFIG_READERS = new Map<string, RuntimeConfigReader>([
   [BUILTIN_CODEX_PROVIDER_REF, readDispatcherCodexConfig],
@@ -418,7 +408,6 @@ function readDispatchers(
       raw['channels'],
       file,
       prefix,
-      providerRegistry,
     );
     const feishu = feishuConfigFromChannels(channels, id);
     const app_id = feishu.app_id;
@@ -446,7 +435,6 @@ function readDispatcherChannels(
   rawChannels: unknown,
   file: string,
   dispatcherPrefix: string,
-  providerRegistry: ProviderRegistry,
 ): DispatcherChannelConfig[] {
   const prefix = `${dispatcherPrefix}channels`;
   if (!Array.isArray(rawChannels)) {
@@ -470,26 +458,19 @@ function readDispatcherChannels(
   }
   rejectUnknownKeys(raw, new Set(['id', 'provider', 'config']), file, channelPrefix);
   const id = requireNonEmptyString(raw, 'id', file, channelPrefix);
-  const provider = resolveConfigProvider(
-    requireNonEmptyString(raw, 'provider', file, channelPrefix),
-    'channel',
-    file,
-    channelPrefix,
-    providerRegistry,
-  );
-  const readChannelConfig = WIRED_CHANNEL_CONFIG_READERS.get(provider.ref);
-  if (readChannelConfig === undefined) {
+  const provider = requireNonEmptyString(raw, 'provider', file, channelPrefix);
+  if (provider !== BUILTIN_FEISHU_PROVIDER_REF) {
     throw new Error(
-      `dreamux config error in ${file}: ${channelPrefix}provider='${provider.ref}' is registered but not runnable in this phase.\n` +
-        'Only channel provider "builtin:feishu" is wired in Phase 1.',
+      `dreamux config error in ${file}: ${channelPrefix}provider='${provider}' is not a built-in Dreamux channel.\n` +
+        'Only built-in channel "builtin:feishu" is wired in this phase; subscription channel plugins are interface-only.',
     );
   }
   const config = readProviderConfigObject(raw['config'], file, `${channelPrefix}config`);
   return [
     {
       id,
-      provider: provider.ref,
-      config: readChannelConfig(config, file, `${channelPrefix}config.`),
+      provider,
+      config: readDispatcherFeishuConfig(config, file, `${channelPrefix}config.`),
     },
   ];
 }
@@ -777,7 +758,7 @@ function resolveConfigProvider(
     if (err instanceof ReservedExternalProviderError) {
       throw new Error(
         `dreamux config error in ${file}: ${prefix}provider='${rawProvider}' is reserved for future external providers and is not loadable in this phase.\n` +
-          'Use a builtin provider ref such as "builtin:feishu" or "builtin:codex".',
+          'Use a builtin runtime provider ref such as "builtin:codex" or "builtin:claude-code".',
       );
     }
     if (err instanceof UnknownBuiltinProviderError) {

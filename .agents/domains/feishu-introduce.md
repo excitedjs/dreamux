@@ -171,10 +171,11 @@ mid-enqueue. `duplicate` / `stopped` / `failed` leave the context pending.
 
 ## `list_chat_bots` query tool
 
-A model-facing Feishu MCP tool (`mcp/feishu-mcp.ts`) returns a chat's `known` and
-`trusted` peer bots as two separated arrays of `{ open_id, name? }`, for context
-recovery after compaction. It forwards an `mcp.list_chat_bots` request over the
-0600 admin socket to the read-only `Server.listChatBotsFromMcp`, which reads the
+A model-facing Feishu MCP tool returns a chat's `known` and `trusted` peer bots
+as two separated arrays of `{ open_id, name? }`, for context recovery after
+compaction. The Feishu channel module owns the tool definition and handler. The
+stdio MCP shim forwards `mcp.list_chat_bots` over the 0600 admin socket, and
+the Dispatcher Service routes it to the channel handler, which reads the
 `chat-bots-store` directly (no running slot required). Same transport shape as
 `reply` / `react`; no operator CLI surface.
 

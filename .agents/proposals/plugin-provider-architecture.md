@@ -1,6 +1,8 @@
 # Plugin and provider architecture
 
-- **Status:** Implemented for Phase 1; external provider loading deferred
+- **Status:** Historical issue #110 proposal; implemented Phase 1 boundaries
+  are refined by
+  [provider-architecture-realignment](../decisions/provider-architecture-realignment.md)
 - **Date:** 2026-06-06
 - **Affects:** plugin mechanism, Capability Registry, dispatcher config,
   Channel providers, Agent Runtime providers, MCP injection, server-hosted
@@ -26,6 +28,12 @@ surface that covers:
 - Agent Runtime providers;
 - server-hosted TeamMate scheduling, task state, delivery, and result
   retrieval.
+
+Issue #135 later narrows the current provider seam: Feishu is a built-in
+bidirectional channel rather than a runnable ChannelProvider, and the registry
+is an Agent Runtime provider view. Read
+[provider-architecture-realignment](../decisions/provider-architecture-realignment.md)
+before treating this proposal as current implementation guidance.
 
 The architecture must preserve public safety and the issue #98 compatibility
 policy: incompatible 0.x config or state changes fail loudly, require explicit

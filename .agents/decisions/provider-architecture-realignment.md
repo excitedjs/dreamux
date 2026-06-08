@@ -1,7 +1,7 @@
 # Provider architecture realignment
 
 - **Status:** Accepted (remediation tracked in issue #135; implementation in
-  progress)
+  progress through the PR E channel/lifecycle cut)
 - **Date:** 2026-06-08
 - **Affects:** Agent Runtime providers, TeamMate agent state, Dispatcher
   Service, Capability Registry, Channel providers, MCP injection, `server.ts`
@@ -133,6 +133,20 @@ see its `verbs/` (spawn/resume/history), `persistence/history-index.ts` and
   `/packages/dreamux/src/teammate/worker-logs.ts`, and
   `/packages/dreamux/src/teammate/worker/`. There is no parallel
   `TeamMateWorkerProvider` tree or `task_id` API after this cut.
+- PR E removes the runnable ChannelProvider path. Feishu is wired as the
+  built-in bidirectional channel through
+  `/packages/dreamux/src/channel/feishu-channel.ts` and
+  `/packages/dreamux/src/channel/feishu-mcp-surface.ts`; the deleted
+  `/packages/dreamux/src/channel/channel-providers.ts` and
+  `/packages/dreamux/src/channel/feishu-provider.ts` paths are not replaced by
+  another provider map. The remaining `/packages/dreamux/src/channel/provider.ts`
+  file is a TypeScript reservation for future subscription channel plugins only.
+- PR E also closes the dispatcher-agent ownership debt: `DispatcherService`
+  delegates dispatcher runtime/channel lifecycle to
+  `/packages/dreamux/src/dispatcher-service/dispatcher/service.ts`, which owns
+  live dispatcher slots, start coalescing, stop, runtime lookup, restart-notice
+  injection, and Feishu channel MCP dispatch. `/packages/dreamux/src/server.ts`
+  is wiring only.
 - Hard-coded `BUILTIN_*_REF` branching across core (`server.ts`,
   `/packages/dreamux/src/runtime/config.ts`,
   `/packages/dreamux/src/cli/doctor.ts`) is expected to shrink as core consumes

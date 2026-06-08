@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import {
   AgentRuntimeProviderCatalog,
   UnsupportedAgentRuntimeProviderError,
-  WrongProviderKindError,
   createBuiltinAgentRuntimeProviderCatalog,
   createCodexAgentRuntimeProvider,
 } from '../src/agent-runtime/index.js';
@@ -68,9 +67,9 @@ describe('AgentRuntimeProviderCatalog', () => {
     ).toEqual(['claudeCodeTaskNotification']);
   });
 
-  it('rejects non-runtime builtins through the runtime catalog', () => {
+  it('does not expose the built-in Feishu channel through the runtime catalog', () => {
     expect(() => builtinCatalog().resolve('builtin:feishu')).toThrow(
-      WrongProviderKindError,
+      UnknownBuiltinProviderError,
     );
   });
 

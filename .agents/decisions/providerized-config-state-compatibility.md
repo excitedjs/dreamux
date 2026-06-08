@@ -1,6 +1,7 @@
 # Providerized config and state compatibility
 
-- **Status:** Accepted
+- **Status:** Accepted, refined by
+  [provider-architecture-realignment](provider-architecture-realignment.md)
 - **Date:** 2026-06-06
 - **Affects:** `~/.dreamux/config.json`, dispatcher state files, provider config,
   TeamMate ledger, compatibility errors
@@ -44,15 +45,22 @@ Introduce a providerized config v2 shape. The durable envelope is:
 }
 ```
 
-Common fields are owned by Dreamux core. Provider-local `config` objects are
-owned and validated by provider descriptors.
+Common fields are owned by Dreamux core. Agent-runtime provider `config`
+objects are owned and validated by provider descriptors. The Feishu
+`channels[]` entry keeps the `builtin:feishu` ref string for config stability,
+but it is validated as a built-in bidirectional channel, not through the
+provider registry.
 
-Confirmed Phase 1 provider loading rules:
+Confirmed Phase 1 loading rules after issue #135:
 
-- `builtin:feishu`, `builtin:codex`, and `builtin:claude-code` are known
-  builtin provider refs.
+- `builtin:codex` and `builtin:claude-code` are known builtin Agent Runtime
+  provider refs.
+- `builtin:feishu` is a known built-in channel ref, not a provider-registry
+  implementation.
 - Npm package and package export refs are reserved schema/manifest syntax.
-- Npm refs are not loaded, imported, installed, or executed in Phase 1.
+- Npm runtime refs are not loaded, imported, installed, or executed in Phase 1.
+- Subscription channel plugin refs are interface-only reservations in this
+  phase.
 - A config value only becomes runnable after the matching provider runtime is
   wired. Until then, validation must fail loudly for a known but non-wired
   builtin instead of silently falling back to another provider.

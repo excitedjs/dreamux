@@ -1,10 +1,12 @@
-# Channel providers
+# Channel plugin seam and built-in Feishu channel
 
-- **Status:** Accepted
+- **Status:** Superseded/refined by
+  [provider-architecture-realignment](provider-architecture-realignment.md)
 - **Date:** 2026-06-06
 - **Affects:** channel lifecycle, Feishu channel integration, channel-owned MCP,
   reply capability, dispatcher config
-- **PR / Issue:** [issue #110](https://github.com/excitedjs/dreamux/issues/110)
+- **PR / Issue:** [issue #110](https://github.com/excitedjs/dreamux/issues/110),
+  [issue #135](https://github.com/excitedjs/dreamux/issues/135)
 
 ## Context
 
@@ -18,46 +20,37 @@ as issue or repository subscription channels, may not share those semantics.
 
 ## Decision
 
-Introduce `ChannelProvider` as the owner of channel execution behavior.
+Issue #135 refines the decision: `builtin:feishu` is not a provider-registry
+channel implementation. It is a built-in bidirectional conversational channel
+owned by Dreamux core. Its lifecycle, inbound normalization, access/trust rules,
+MCP descriptor, and MCP tool handlers live in the channel module, not in
+`server.ts` and not in the provider registry.
 
-A Channel provider owns:
+The external `channel` seam remains interface-only for future
+subscription-style channels. It reserves the TypeScript contract for channels
+that can inject MCP descriptors and push subscribed events, but this phase does
+not load, resolve, import, or run channel plugins.
 
-- channel startup, shutdown, and health;
-- provider-local config validation;
-- inbound event normalization into dispatcher context envelopes;
-- provider-specific access and trust semantics;
-- channel-owned MCP descriptors;
-- reply, reaction, or other channel capabilities when the provider exposes them.
-
-Dreamux core must not classify channels as one-way or two-way. It consumes
-capabilities exposed by the provider. A dispatcher can reply only when the
-provider exposes a reply capability and the runtime receives the corresponding
-MCP surface.
-
-The target config shape uses `channels[]`. The current `1 dispatcher : 1 Feishu
-channel` runtime assumption is no longer a target architecture invariant,
-although Phase 1 may still support only one enabled Feishu channel while the
-provider boundary lands.
-
-`builtin:feishu` is the Phase 1 Channel provider. It keeps current Feishu-style
-behavior while moving Feishu lifecycle, MCP, reply, reaction, and access logic
-behind the provider boundary.
+The target config shape still uses `dispatchers[].channels[]`; the selected
+Feishu channel is recognized directly by config validation as the built-in
+`builtin:feishu` channel. The provider registry is reserved for
+`agentRuntime` providers in the current implementation.
 
 ## Consequences
 
-- The server stops constructing a hard-coded Feishu MCP surface as the generic
-  dispatcher shape.
+- The server stops constructing or handling Feishu MCP tools. The Feishu channel
+  module owns the tool definitions and handlers end to end.
 - Feishu access rules stay Feishu-owned; core channel code must not copy them
   into a generic access model.
-- Future channels can expose inbound-only, reply-capable, or custom capability
-  sets without changing core classification enums.
+- Future subscription channels can expose their own MCP and event model through
+  the reserved interface once loading is designed.
 - Channel-owned MCP descriptors become the stable interface consumed by Agent
   Runtime providers.
 
 ## Alternatives considered
 
-- **Keep Feishu as a server special case:** rejected because it would make the
-  registry superficial and preserve the old 1-channel assumption.
+- **Keep Feishu handlers in `server.ts`:** rejected because it preserves the
+  old god-object boundary and makes channel MCP a core concern.
 - **Add a core one-way/two-way channel enum:** rejected because reply is a
   provider capability, not a universal channel class.
 - **Put access policy in core:** rejected because Feishu access semantics do not

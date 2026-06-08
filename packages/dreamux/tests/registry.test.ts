@@ -48,7 +48,6 @@ describe('ProviderRegistry — registration', () => {
 describe('ProviderRegistry — resolve', () => {
   it('resolves a registered builtin ref (string or object)', () => {
     const registry = createBuiltinProviderRegistry();
-    expect(registry.resolve('builtin:feishu').id).toBe('feishu');
     expect(registry.resolve(parseProviderRef('builtin:codex')).kind).toBe(
       'agentRuntime',
     );
@@ -81,7 +80,7 @@ describe('createBuiltinProviderRegistry', () => {
   it('registers exactly the confirmed builtins', () => {
     const registry = createBuiltinProviderRegistry();
     const ids = registry.list().map((d) => d.id).sort();
-    expect(ids).toEqual(['claude-code', 'codex', 'feishu']);
+    expect(ids).toEqual(['claude-code', 'codex']);
     for (const spec of BUILTIN_PROVIDERS) {
       expect(registry.resolve(`builtin:${spec.id}`).kind).toBe(spec.kind);
     }
@@ -90,9 +89,6 @@ describe('createBuiltinProviderRegistry', () => {
   it('does not duplicate provider capabilities', () => {
     const registry = createBuiltinProviderRegistry();
     expect(registry.resolve('builtin:codex')).not.toHaveProperty(
-      'capabilities',
-    );
-    expect(registry.resolve('builtin:feishu')).not.toHaveProperty(
       'capabilities',
     );
   });

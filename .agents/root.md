@@ -7,20 +7,21 @@ when you need the *why* behind a piece of code or a decision history.
 ## What dreamux is
 
 A long-running Node process that hosts N **Dispatchers**. Each Dispatcher binds
-one Phase 1 Channel provider (`builtin:feishu` today), one Agent Runtime
+one built-in Feishu bidirectional channel (`builtin:feishu`), one Agent Runtime
 provider (`builtin:codex` or `builtin:claude-code`), and Dreamux-owned MCP
 surfaces for channel reply and TeamMate scheduling/retrieval. All inbound chats
 for a dispatcher enter that dispatcher's runtime context; channel outbound is
-sent only when the runtime calls the dispatcher-bound channel MCP server. The
-current architecture is split between the original local-runtime baseline and
-the issue #110 providerized surfaces:
+sent only when the runtime calls the dispatcher-bound channel MCP server owned
+by the Feishu channel module. The current architecture is split between the
+original local-runtime baseline and the issue #135 realigned provider surfaces:
 
 - [Top-level design](decisions/top-level-design.md) — original MVP baseline;
   still authoritative for unchanged local state/log ownership, Feishu access,
   admin IPC, and process-local inbound limitations.
 - [Plugin and provider architecture](proposals/plugin-provider-architecture.md)
-  — issue #110 Phase 1 architecture for provider refs, Capability Registry,
-  Channel providers, Agent Runtime providers, and server-hosted TeamMate.
+  — issue #110 historical proposal for provider refs, Capability Registry,
+  Channel providers, Agent Runtime providers, and server-hosted TeamMate; the
+  current target is refined by the provider architecture realignment.
 - [Issue #110 Epic closure check](decisions/issue-110-epic-closure.md) —
   closure checklist for what Phase 1 implemented and what remains deferred.
 - [Provider architecture realignment](decisions/provider-architecture-realignment.md)
@@ -121,7 +122,7 @@ Background and older issue context:
 | rename or restructure the public CLI / package | [`decisions/cli-and-package-naming.md`](decisions/cli-and-package-naming.md) |
 | implement issue #18 global bin / onboard / serve | [`proposals/global-bin-onboard-serve.md`](proposals/global-bin-onboard-serve.md) + [`decisions/global-bin-onboard-serve.md`](decisions/global-bin-onboard-serve.md) |
 | add / change a config key (`~/.dreamux/config.json`) | [`decisions/top-level-design.md`](decisions/top-level-design.md) first, then historical context in [`decisions/global-config-dir.md`](decisions/global-config-dir.md) |
-| change provider refs, Channel providers, Agent Runtime providers, or server-hosted TeamMate | [`proposals/plugin-provider-architecture.md`](proposals/plugin-provider-architecture.md) + [`decisions/provider-references-and-capability-registry.md`](decisions/provider-references-and-capability-registry.md) |
+| change provider refs, Agent Runtime providers, channel plugin reservations, or server-hosted TeamMate | [`decisions/provider-architecture-realignment.md`](decisions/provider-architecture-realignment.md) + [`decisions/provider-references-and-capability-registry.md`](decisions/provider-references-and-capability-registry.md) |
 | touch the anti-leak guardrail (`.gitleaks.toml`, `.npmrc`, CI / hook) | [`decisions/anti-leak-guardrail.md`](decisions/anti-leak-guardrail.md) |
 | touch npm publishing / the release workflows | [`decisions/npm-release-oidc.md`](decisions/npm-release-oidc.md) |
 | change dispatcher inbound delivery, turn submission, or received-reaction timing | [`domains/non-blocking-dispatcher-inbound.md`](domains/non-blocking-dispatcher-inbound.md) + [`decisions/top-level-design.md`](decisions/top-level-design.md) + read the source |

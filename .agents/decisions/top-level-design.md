@@ -112,9 +112,11 @@ It holds dispatcher declarations, local Feishu credentials, and the dispatcher
 cwd used for the workspace-local skill install.
 
 Issue #110 supersedes the earlier Feishu/Codex-specific dispatcher keys with a
-providerized config v2 envelope. The current runtime path still wires one
-`builtin:feishu` channel and one `builtin:codex` runtime per dispatcher until
-the dedicated provider runtime PRs land.
+providerized config v2 envelope. Issue #135 refines the runtime boundary: this
+phase wires one built-in `builtin:feishu` bidirectional channel and one
+Agent Runtime provider (`builtin:codex` or `builtin:claude-code`) per
+dispatcher. Feishu is not resolved through the provider registry; it is the
+core built-in conversational channel.
 
 Example shape:
 
