@@ -14,6 +14,7 @@ import {
   codexAppServerLogDir,
   dispatcherDir,
   dispatcherPathSegment,
+  teamMateNameSegment,
 } from '../../../platform/paths.js';
 
 /** Codex app-server control directory — the per-dispatcher state root. */
@@ -43,6 +44,32 @@ export function dispatcherCodexAppServerLogPath(id: string): string {
 
 export function dispatcherCodexAppServerErrorLogPath(id: string): string {
   return join(codexAppServerLogDir(), `${dispatcherPathSegment(id)}.stderr.log`);
+}
+
+/** Per-teammate Codex app-server stdout log, under the central codex log tree. */
+export function teammateCodexAppServerLogPath(
+  id: string,
+  teammateName: string,
+): string {
+  return join(
+    codexAppServerLogDir(),
+    'teammate',
+    dispatcherPathSegment(id),
+    `${teamMateNameSegment(teammateName)}.log`,
+  );
+}
+
+/** Per-teammate Codex app-server stderr log, under the central codex log tree. */
+export function teammateCodexAppServerErrorLogPath(
+  id: string,
+  teammateName: string,
+): string {
+  return join(
+    codexAppServerLogDir(),
+    'teammate',
+    dispatcherPathSegment(id),
+    `${teamMateNameSegment(teammateName)}.stderr.log`,
+  );
 }
 
 export function operatorCodexHome(): string {

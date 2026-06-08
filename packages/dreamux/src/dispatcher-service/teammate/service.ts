@@ -16,12 +16,12 @@ import {
 } from '../../config/config.js';
 import type { DispatcherStore, DispatcherRow } from '../../state/dispatcher-store.js';
 import type { DreamuxLogger } from '../../platform/logger.js';
+import { teammateClaudeCodeStreamLogPath } from '../../agent-runtime/builtin/claude-code/paths.js';
 import {
-  dispatcherTeamMateRuntimeClaudeStreamLogPath,
-  dispatcherTeamMateRuntimeCodexErrorLogPath,
-  dispatcherTeamMateRuntimeCodexLogPath,
-  dispatcherTeamMateRuntimeDir,
-} from '../../platform/paths.js';
+  teammateCodexAppServerErrorLogPath,
+  teammateCodexAppServerLogPath,
+} from '../../agent-runtime/builtin/codex/paths.js';
+import { dispatcherTeamMateRuntimeDir } from '../../platform/paths.js';
 import { validateDispatcherId } from '../../state/dispatcher-id.js';
 import { TeamMateIdentityStore } from './identity-store.js';
 import { TeamMateRuntimeStateStore } from './runtime-state.js';
@@ -361,7 +361,7 @@ export class TeamMateAgentService {
       dispatcherTeamMateRuntimeDir(identity.dispatcher_id, identity.name);
     if (providerRef === BUILTIN_CLAUDE_CODE_PROVIDER_REF) {
       const streamLog = (): string =>
-        dispatcherTeamMateRuntimeClaudeStreamLogPath(
+        teammateClaudeCodeStreamLogPath(
           identity.dispatcher_id,
           identity.name,
         );
@@ -374,12 +374,12 @@ export class TeamMateAgentService {
     return {
       dispatcherDir,
       stdoutLogPath: () =>
-        dispatcherTeamMateRuntimeCodexLogPath(
+        teammateCodexAppServerLogPath(
           identity.dispatcher_id,
           identity.name,
         ),
       stderrLogPath: () =>
-        dispatcherTeamMateRuntimeCodexErrorLogPath(
+        teammateCodexAppServerErrorLogPath(
           identity.dispatcher_id,
           identity.name,
         ),

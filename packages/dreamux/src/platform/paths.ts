@@ -235,63 +235,11 @@ export function dispatcherTeamMateRuntimeDir(
   return join(dispatcherTeamMateDir(id), 'runtime', teamMateNameSegment(teammateName));
 }
 
-export function dispatcherTeamMateRuntimeCodexSocketPath(
-  id: string,
-  teammateName: string,
-): string {
-  return assertUnixSocketPathBudget(
-    join(dispatcherTeamMateRuntimeDir(id, teammateName), 'codex.sock'),
-    `dispatcher '${id}' TeamMate ${JSON.stringify(teammateName)} Codex socket path`,
-  );
-}
-
-export function dispatcherTeamMateRuntimeCodexLogPath(
-  id: string,
-  teammateName: string,
-): string {
-  return join(
-    codexAppServerLogDir(),
-    'teammate',
-    dispatcherPathSegment(id),
-    `${teamMateNameSegment(teammateName)}.log`,
-  );
-}
-
-export function dispatcherTeamMateRuntimeCodexErrorLogPath(
-  id: string,
-  teammateName: string,
-): string {
-  return join(
-    codexAppServerLogDir(),
-    'teammate',
-    dispatcherPathSegment(id),
-    `${teamMateNameSegment(teammateName)}.stderr.log`,
-  );
-}
-
-export function dispatcherTeamMateRuntimeClaudeMcpConfigPath(
-  id: string,
-  teammateName: string,
-): string {
-  return join(
-    dispatcherTeamMateRuntimeDir(id, teammateName),
-    'mcp.json',
-  );
-}
-
-export function dispatcherTeamMateRuntimeClaudeStreamLogPath(
-  id: string,
-  teammateName: string,
-): string {
-  return join(
-    claudeCodeLogDir(),
-    'teammate',
-    dispatcherPathSegment(id),
-    `${teamMateNameSegment(teammateName)}.stderr.log`,
-  );
-}
-
-function teamMateNameSegment(name: string): string {
+/**
+ * Neutral teammate-name path segment sanitizer. Shared by the neutral
+ * teammate-state builders here and by each builtin's teammate log-path builders.
+ */
+export function teamMateNameSegment(name: string): string {
   return name.replace(/[^A-Za-z0-9._-]/g, '_');
 }
 

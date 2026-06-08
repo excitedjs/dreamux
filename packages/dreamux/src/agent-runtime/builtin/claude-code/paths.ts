@@ -13,6 +13,7 @@ import {
   claudeCodeLogDir,
   dispatcherDir,
   dispatcherPathSegment,
+  teamMateNameSegment,
 } from '../../../platform/paths.js';
 
 /**
@@ -36,4 +37,20 @@ export function dispatcherClaudeCodeMcpConfigPath(id: string): string {
  */
 export function dispatcherClaudeCodeStreamLogPath(id: string): string {
   return join(claudeCodeLogDir(), `${dispatcherPathSegment(id)}.stderr.log`);
+}
+
+/**
+ * Per-teammate Claude Code resident stream-json child stderr log, under the
+ * central claude-code log tree.
+ */
+export function teammateClaudeCodeStreamLogPath(
+  id: string,
+  teammateName: string,
+): string {
+  return join(
+    claudeCodeLogDir(),
+    'teammate',
+    dispatcherPathSegment(id),
+    `${teamMateNameSegment(teammateName)}.stderr.log`,
+  );
 }
