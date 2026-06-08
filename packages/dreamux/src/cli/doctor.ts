@@ -503,8 +503,10 @@ function runtimeBinaryChecks(
   };
 
   if (dispatchers.length === 0) {
-    // Residual: no dispatcher means no agents[] entry to drive a provider, so the
-    // default codex bin check is constructed directly. Acceptance is "趋近 0".
+    // Residual: with no dispatcher there is no agents[] entry to drive a provider
+    // diagnostic, so the default codex bin check is constructed directly here.
+    // This is the one codex-specific edge in core doctor (near-zero, not zero):
+    // de-leaking it would require a "default provider for empty config" concept.
     add({
       name: managedService ? 'managed service Codex binary' : 'codex binary',
       bin: resolveCodexBinPath(DEFAULT_CODEX_BIN, env),

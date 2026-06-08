@@ -100,9 +100,9 @@ stops branching on `BUILTIN_CODEX_PROVIDER_REF`:
   `foreground`/`managedService` are the neutral result. The diagnostic runner is
   a minimal `{ check, capture }` interface declared in `agent-runtime/types.ts`,
   so the provider never imports `cli/doctor`.
-- Residual (acceptance is "趋近 0", not 0): `rejectTopLevelCodex` at the config
-  parse layer, and the empty-dispatchers default-codex bin check in doctor (no
-  dispatcher means no agents[] entry to drive a provider).
+- Residual (acceptance is near-zero, not zero): `rejectTopLevelCodex` at the
+  config parse layer, and the empty-dispatchers default-codex bin check in doctor
+  (no dispatcher means no agents[] entry to drive a provider).
 
 #### Codex version floor (issue #147 fold)
 
