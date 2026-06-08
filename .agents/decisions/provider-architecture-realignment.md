@@ -42,7 +42,8 @@ The target architecture is:
   `/packages/dreamux/src/server.ts` and `/packages/dreamux/src/teammate/`. It is
   launched by the server, holds the dispatcher agent (lifecycle tied to the
   server: started at boot, resumed on restart), and owns TeamMate spawn, send,
-  resume, close, read/recovery verbs, and teammate runtime instances. The
+  close, read/recovery verbs, and teammate runtime instances (issue #155 removed
+  the standalone `resume` verb; `send` now reopens a closed teammate). The
   dispatcher agent commands it over MCP.
 - **Nested dispatch is prevented by MCP injection, not a runtime check.** A
   teammate / team-leader agent is simply not injected the "spawn TeamMate" tool;
@@ -97,17 +98,22 @@ see its `verbs/` (spawn/resume/history), `persistence/history-index.ts` and
   `schedule`, `run_task`, `execute_task`) is removed. Task decomposition and
   assignment stay in the dispatcher agent (its own todolist-style tools); the
   teammate layer only knows teammate identities.
-- **Dispatcher-facing verbs, no unified suffix:** `spawn`, `send`, `resume`,
-  `close` for lifecycle; `history`, `list`, `status`, `last`, `ctx`,
-  `get_capabilities` for read/recovery. `spawn`/`send` return after submitting
-  the runtime turn; the dispatcher recovers through history/last/ctx and the
-  runtime's native event surface instead of a task result ledger.
-- **resume** brings back a prior teammate session with its history; the
-  dispatcher may resume on its own (e.g. continue work from days ago).
+- **Dispatcher-facing verbs, no unified suffix:** `spawn`, `send`, `close` for
+  lifecycle; `history`, `list`, `status`, `last`, `ctx`, `get_capabilities` for
+  read/recovery. `spawn`/`send` return after submitting the runtime turn; the
+  dispatcher recovers through history/last/ctx and the runtime's native event
+  surface instead of a task result ledger. (Issue #155 dropped the original
+  standalone `resume` verb — see below.)
+- **send subsumes resume (issue #155).** The original design carried a separate
+  `resume` verb to bring back a prior teammate session with its history; that is
+  gone. `send` now reopens a teammate that is not live — including a `close`d one
+  — from its persisted checkpoint, then submits, so `close` is a reversible
+  soft-stop. Read-only verbs never reopen a closed teammate.
 - **History stitches the resume chain.** A forward-only JSONL index records
-  `spawn`, `send`, `resume`, `close`, and runtime state events. History writes
-  must never fail a lifecycle verb. Per-runtime checkpoint mechanics are
-  absorbed by the runtime implementation behind one `resume` surface.
+  `spawn`, `send`, `close`, and runtime state events (`resume` events remain a
+  readable legacy type from pre-#155 history). History writes must never fail a
+  lifecycle verb. Per-runtime checkpoint mechanics are absorbed by the runtime
+  implementation behind one `resume()` runtime surface.
 - **Identity and state location.** A teammate is a flat name plus a base record
   (provider ref, cwd, checkpoint, status, close metadata). State is server-owned
   under `~/.dreamux/state/<dispatcher>/teammate/` with `identities/`,

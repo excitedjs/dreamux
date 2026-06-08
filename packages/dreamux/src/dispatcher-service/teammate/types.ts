@@ -38,6 +38,8 @@ export interface TeamMateIdentity {
 export type TeamMateHistoryEventType =
   | 'spawn'
   | 'send'
+  // Legacy event, no longer written (the `resume` verb was removed in #155;
+  // send now subsumes it). Retained so pre-#155 history files still parse.
   | 'resume'
   | 'close'
   | 'state';
@@ -91,12 +93,6 @@ export interface SendTeamMateInput {
   prompt: string;
 }
 
-export interface ResumeTeamMateInput {
-  dispatcherId: string;
-  name: string;
-  prompt?: string;
-}
-
 export interface CloseTeamMateInput {
   dispatcherId: string;
   name: string;
@@ -117,11 +113,6 @@ export interface TeamMateSpawnResult {
 export interface TeamMateSendResult {
   teammate: TeamMateRuntimeStatus;
   turn: TeamMateTurnResult;
-}
-
-export interface TeamMateResumeResult {
-  teammate: TeamMateRuntimeStatus;
-  turn?: TeamMateTurnResult;
 }
 
 export interface TeamMateCloseResult {

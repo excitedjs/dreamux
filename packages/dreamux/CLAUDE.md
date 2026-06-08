@@ -25,7 +25,7 @@ Two settled shape rules govern where code lives:
 | `agent-runtime/builtin/claude-code/` | the whole `builtin:claude-code` stack: supervisor/rpc/stream/types, runtime, args, paths, mcp-config | claude specifics close over here |
 | `dispatcher-service/` | the Dispatcher Service entity — see [`dispatcher-service/CLAUDE.md`](src/dispatcher-service/CLAUDE.md) | holds the dispatcher agent + orchestrates teammates |
 | `dispatcher-service/dispatcher/` | `DispatcherAgentService` (slots / start / resume / stop / restart-notice / channel session / role MCP injection) + dispatcher base prompt | dispatcher agent lifecycle is tied to the server |
-| `dispatcher-service/teammate/` | `TeamMateAgentService` + identity-store + runtime-state + types + teammate MCP descriptor | agent-centric teammates (no `task`): spawn/send/resume/close + forward-only history |
+| `dispatcher-service/teammate/` | `TeamMateAgentService` + identity-store + runtime-state + types + teammate MCP descriptor | agent-centric teammates (no `task`): spawn/send/close + forward-only history (send reopens a closed teammate; no separate `resume` verb, #155) |
 | `channel/feishu/` | the built-in Feishu bidirectional channel: bot, session, gate, message, mcp-surface, chat-bots, introduce | Feishu owns its MCP end-to-end; it is **not** a registry provider |
 | `channel/plugin.ts` | TS interface reservation for future subscription-style channel plugins (github/jira) | interface-only this phase; not loaded or run |
 | `registry/` | provider registry/loader + provider-ref grammar | resolves `builtin:` / `npm:` refs; exactly two kinds: `channel`, `agentRuntime` |

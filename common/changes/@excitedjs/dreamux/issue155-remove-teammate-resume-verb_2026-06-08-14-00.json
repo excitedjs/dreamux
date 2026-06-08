@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "BREAKING: Remove the teammate `resume` verb for issue #155. The `resume` MCP tool (dispatcher-scoped `teammate` server) and the `mcp.teammate.resume` admin method are gone; callers must use `send`. `send` now subsumes resume semantics: when the named teammate is not live — including one previously `close`d — send reopens it from its persisted checkpoint (clearing the closed markers) and then submits, instead of failing with \"TeamMate ... is closed\". `close` is now a reversible soft-stop (it still records closedAt/note, but a later `send` revives the teammate). Read-only verbs (last/ctx/status) still fail-loud on a closed teammate and never silently reopen it. No on-disk migration is required: existing closed teammate identities and pre-#155 history files (which may contain `\"type\":\"resume\"` events) remain readable; the reopen path is purely runtime behavior.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

@@ -150,15 +150,11 @@ function teammateTools(callerKind: 'dispatcher' | 'teammate'): Array<Record<stri
       agent_runtime: { type: 'string' },
       cwd: { type: 'string', minLength: 1, maxLength: 4096 },
     }, ['name', 'prompt']),
-    tool('send', 'Send a follow-up turn to a running or resumable TeamMate agent.', {
+    tool('send', 'Send a turn to a TeamMate agent; reopens a closed one from its checkpoint first.', {
       name: { type: 'string', minLength: 1, maxLength: 64 },
       prompt: { type: 'string', minLength: 1, maxLength: 20000 },
     }, ['name', 'prompt']),
-    tool('resume', 'Resume a named TeamMate session, optionally with a follow-up prompt.', {
-      name: { type: 'string', minLength: 1, maxLength: 64 },
-      prompt: { type: 'string', minLength: 1, maxLength: 20000 },
-    }, ['name']),
-    tool('close', 'Close a named TeamMate agent and retain its history for resume/audit.', {
+    tool('close', 'Close a named TeamMate agent and retain its history; send reopens it later.', {
       name: { type: 'string', minLength: 1, maxLength: 64 },
       note: { type: 'string', maxLength: 2000 },
     }, ['name']),
@@ -218,8 +214,6 @@ function mapToolCall(call: ToolCall): {
       return { method: 'mcp.teammate.spawn', params: spawnArgs(call.arguments) };
     case 'send':
       return { method: 'mcp.teammate.send', params: sendArgs(call.arguments) };
-    case 'resume':
-      return { method: 'mcp.teammate.resume', params: resumeArgs(call.arguments) };
     case 'close':
       return { method: 'mcp.teammate.close', params: closeArgs(call.arguments) };
     case 'history':
@@ -240,7 +234,7 @@ function mapToolCall(call: ToolCall): {
 }
 
 function isLifecycleTool(name: string): boolean {
-  return name === 'spawn' || name === 'send' || name === 'resume' || name === 'close';
+  return name === 'spawn' || name === 'send' || name === 'close';
 }
 
 function negotiateProtocolVersion(params: unknown): string {
@@ -301,15 +295,6 @@ function sendArgs(value: unknown): Record<string, unknown> {
   return {
     name: requireString(obj, 'name'),
     prompt: requireString(obj, 'prompt'),
-  };
-}
-
-function resumeArgs(value: unknown): Record<string, unknown> {
-  const obj = asRecord(value, 'resume arguments');
-  const prompt = optionalString(obj, 'prompt');
-  return {
-    name: requireString(obj, 'name'),
-    ...(prompt !== null ? { prompt } : {}),
   };
 }
 

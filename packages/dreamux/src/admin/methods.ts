@@ -157,22 +157,6 @@ export const adminMethods: Record<string, AdminHandler> = {
     }
   },
 
-  'mcp.teammate.resume': async (server, params) => {
-    const id = mustDispatcherId(params);
-    mustExistingDispatcher(server, id);
-    const name = mustString(params, 'name');
-    const prompt = optionalString(params, 'prompt');
-    try {
-      return await server.dispatcherService.resumeTeamMate({
-        dispatcherId: id,
-        name,
-        ...(prompt !== null ? { prompt } : {}),
-      });
-    } catch (err) {
-      throw new AdminError('TEAMMATE_RESUME_FAILED', parseMessage(err));
-    }
-  },
-
   'mcp.teammate.close': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
