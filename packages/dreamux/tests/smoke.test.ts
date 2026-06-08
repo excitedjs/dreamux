@@ -35,15 +35,15 @@ import {
   type CodexProcessOptions,
 } from '../src/agent-runtime/builtin/codex/supervisor.js';
 import { CodexWsClient } from '../src/agent-runtime/builtin/codex/rpc.js';
-import { createFakeFeishuBot, type FakeFeishuBot, type FeishuInboundEvent } from '../src/feishu/bot.js';
+import { createFakeFeishuBot, type FakeFeishuBot, type FeishuInboundEvent } from '../src/channel/feishu/bot.js';
 import { createAdminSocketServer } from '../src/admin/socket.js';
 import { sendAdminRequest } from '../src/admin/client.js';
 import {
   TRUST_DOMAIN_WARNING,
   loadDispatcherAccess,
   saveDispatcherAccess,
-} from '../src/channel/feishu-gate.js';
-import { loadChatBots } from '../src/channel/chat-bots-store.js';
+} from '../src/channel/feishu/feishu-gate.js';
+import { loadChatBots } from '../src/channel/feishu/chat-bots-store.js';
 import {
   BUILT_IN_DEFAULTS,
   type DreamuxConfig,

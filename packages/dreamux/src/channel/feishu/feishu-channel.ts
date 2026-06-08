@@ -1,17 +1,17 @@
 import { isBotSenderType } from '@excitedjs/feishu-transport';
 
-import type { InboundDeliveryHooks } from '../agent-runtime/turn.js';
-import type { InboundTurnInput } from '../agent-runtime/turn.js';
-import type { AgentRuntimeTurnResult } from '../agent-runtime/types.js';
+import type { InboundDeliveryHooks } from '../../agent-runtime/turn.js';
+import type { InboundTurnInput } from '../../agent-runtime/turn.js';
+import type { AgentRuntimeTurnResult } from '../../agent-runtime/types.js';
 import type {
   CreateBotOptions,
   FeishuBot,
   FeishuInboundEvent,
-} from '../feishu/bot.js';
+} from './bot.js';
 import {
   channelOutboundToFeishuTarget,
   createFeishuBot,
-} from '../feishu/bot.js';
+} from './bot.js';
 import {
   detectIntroduce,
   introduceAckText,
@@ -34,15 +34,15 @@ import {
   loadDispatcherAccess,
   saveDispatcherAccess,
 } from './feishu-gate.js';
-import type { AgentRuntimeMcpServer } from '../agent-runtime/types.js';
+import type { AgentRuntimeMcpServer } from '../../agent-runtime/types.js';
 import {
   BUILTIN_FEISHU_PROVIDER_REF,
   type DreamuxConfig,
-} from '../runtime/config.js';
-import type { DispatcherRow } from '../runtime/dispatcher-store.js';
+} from '../../runtime/config.js';
+import type { DispatcherRow } from '../../runtime/dispatcher-store.js';
 import {
   dispatcherFeishuAttachmentCacheDir,
-} from '../runtime/paths.js';
+} from '../../runtime/paths.js';
 import {
   feishuMcpServerDescriptor,
   parseFeishuMcpToolInput,
@@ -51,9 +51,9 @@ import {
   type FeishuMcpReplyInput,
   type FeishuMcpToolName,
 } from './feishu-mcp-surface.js';
-import type { DreamuxLogger } from '../runtime/logger.js';
-import { pinoToTransportLogger } from '../runtime/logger.js';
-import { resolveBotSecret } from '../runtime/secrets.js';
+import type { DreamuxLogger } from '../../runtime/logger.js';
+import { pinoToTransportLogger } from '../../runtime/logger.js';
+import { resolveBotSecret } from '../../runtime/secrets.js';
 
 export const RECEIVED_REACTION_EMOJI = 'Get';
 export const IN_PROGRESS_REACTION_EMOJI = 'OnIt';

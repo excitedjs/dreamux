@@ -2,12 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import {
   FeishuChannelSession,
-} from '../src/channel/feishu-channel.js';
-import { feishuMcpServerDescriptor } from '../src/channel/feishu-mcp-surface.js';
+} from '../src/channel/feishu/feishu-channel.js';
+import { feishuMcpServerDescriptor } from '../src/channel/feishu/feishu-mcp-surface.js';
 import type {
   SubscriptionChannelPlugin,
-} from '../src/channel/provider.js';
-import { createFakeFeishuBot } from '../src/feishu/bot.js';
+} from '../src/channel/plugin.js';
+import { createFakeFeishuBot } from '../src/channel/feishu/bot.js';
 import { DispatcherStore } from '../src/runtime/dispatcher-store.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
 import { testDreamuxConfig } from './helpers/config.js';

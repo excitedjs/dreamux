@@ -18,7 +18,7 @@ import {
   loadDispatcherAccess,
   saveDispatcherAccess,
   type DispatcherAccessState,
-} from '../src/channel/feishu-gate.js';
+} from '../src/channel/feishu/feishu-gate.js';
 import { dispatcherAccessPath, resetRuntimeConfig } from '../src/runtime/paths.js';
 
 describe('dreamuxFeishuGate', () => {

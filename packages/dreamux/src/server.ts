@@ -13,7 +13,7 @@ import {
 } from './agent-runtime/index.js';
 import type { CodexProcess, CodexProcessOptions } from './agent-runtime/builtin/codex/supervisor.js';
 import type { CodexWsClient } from './agent-runtime/builtin/codex/rpc.js';
-import type { FeishuBot } from './feishu/bot.js';
+import type { FeishuBot } from './channel/feishu/bot.js';
 import {
   createBuiltinProviderRegistry,
   parseProviderRef,
@@ -43,7 +43,7 @@ import { DispatcherService } from './dispatcher-service/service.js';
 export {
   IN_PROGRESS_REACTION_EMOJI,
   RECEIVED_REACTION_EMOJI,
-} from './channel/feishu-channel.js';
+} from './channel/feishu/feishu-channel.js';
 
 export interface ServerOptions {
   /**

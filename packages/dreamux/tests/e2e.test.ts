@@ -18,7 +18,7 @@ import { sendAdminRequest } from '../src/admin/client.js';
 import {
   loadDispatcherAccess,
   saveDispatcherAccess,
-} from '../src/channel/feishu-gate.js';
+} from '../src/channel/feishu/feishu-gate.js';
 import { CodexWsClient } from '../src/agent-runtime/builtin/codex/rpc.js';
 import {
   CodexProcess,
@@ -28,7 +28,7 @@ import {
   createFakeFeishuBot,
   type FakeFeishuBot,
   type FeishuInboundEvent,
-} from '../src/feishu/bot.js';
+} from '../src/channel/feishu/bot.js';
 import { runFeishuMcp } from '../src/mcp/feishu-mcp.js';
 import { BUILT_IN_DEFAULTS, type DreamuxConfig } from '../src/runtime/config.js';
 import {

@@ -15,14 +15,14 @@ import {
   defaultDispatcherAccessState,
   dreamuxFeishuGate,
   type DispatcherAccessState,
-} from '../src/channel/feishu-gate.js';
+} from '../src/channel/feishu/feishu-gate.js';
 import {
   canRunIntroduce,
   detectIntroduce,
   introduceAckText,
   introduceDenyReason,
   introducedPeers,
-} from '../src/channel/introduce.js';
+} from '../src/channel/feishu/introduce.js';
 import {
   clearBaselineIfCurrent,
   listChatBots,
@@ -32,7 +32,7 @@ import {
   recordBotAdded,
   trustIntroducedBots,
   trustedBotIds,
-} from '../src/channel/chat-bots-store.js';
+} from '../src/channel/feishu/chat-bots-store.js';
 import { resetRuntimeConfig } from '../src/runtime/paths.js';
 import type { Mention } from '@excitedjs/feishu-transport';
 

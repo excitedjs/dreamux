@@ -1,5 +1,5 @@
-import { dreamuxBinPath } from '../runtime/package-bin.js';
-import type { AgentRuntimeMcpServer } from '../agent-runtime/types.js';
+import { dreamuxBinPath } from '../../runtime/package-bin.js';
+import type { AgentRuntimeMcpServer } from '../../agent-runtime/types.js';
 
 export const FEISHU_MCP_SERVER_NAME = 'feishu';
 

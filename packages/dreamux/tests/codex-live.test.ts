@@ -45,8 +45,8 @@ import {
   createFakeFeishuBot,
   type FakeFeishuBot,
   type FeishuInboundEvent,
-} from '../src/feishu/bot.js';
-import { saveDispatcherAccess } from '../src/channel/feishu-gate.js';
+} from '../src/channel/feishu/bot.js';
+import { saveDispatcherAccess } from '../src/channel/feishu/feishu-gate.js';
 import type { DreamuxConfig } from '../src/runtime/config.js';
 import type {
   ServerNotification,

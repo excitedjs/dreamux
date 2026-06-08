@@ -16,7 +16,7 @@ import type {
   Mention,
 } from '@excitedjs/feishu-transport';
 
-import type { FeishuInboundEvent } from '../feishu/bot.js';
+import type { FeishuInboundEvent } from './bot.js';
 import type { PeerBot } from './chat-bots-store.js';
 
 export const FEISHU_SKILL_FALLBACK_NOTE =

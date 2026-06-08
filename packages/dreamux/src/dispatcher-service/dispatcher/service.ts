@@ -3,13 +3,13 @@ import type {
   AgentRuntimeMcpServer,
   AgentRuntimeProviderCatalog,
 } from '../../agent-runtime/index.js';
-import type { FeishuBot } from '../../feishu/bot.js';
+import type { FeishuBot } from '../../channel/feishu/bot.js';
 import {
   FeishuChannelSession,
   handleFeishuListChatBots,
   type FeishuMcpListChatBotsResult,
-} from '../../channel/feishu-channel.js';
-import type { FeishuMcpToolName } from '../../channel/feishu-mcp-surface.js';
+} from '../../channel/feishu/feishu-channel.js';
+import type { FeishuMcpToolName } from '../../channel/feishu/feishu-mcp-surface.js';
 import {
   BUILTIN_CODEX_PROVIDER_REF,
   BUILTIN_FEISHU_PROVIDER_REF,
@@ -28,7 +28,7 @@ import {
   loggerToLevelFn,
   type DreamuxLogger,
 } from '../../runtime/logger.js';
-import { teammateMcpServerDescriptor } from '../../teammate/mcp-config.js';
+import { teammateMcpServerDescriptor } from '../teammate/mcp-config.js';
 import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
 
 export interface DispatcherAgentServiceOptions {
