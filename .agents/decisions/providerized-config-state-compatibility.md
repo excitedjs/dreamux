@@ -1,7 +1,9 @@
 # Providerized config and state compatibility
 
 - **Status:** Accepted, refined by
-  [provider-architecture-realignment](provider-architecture-realignment.md)
+  [provider-architecture-realignment](provider-architecture-realignment.md);
+  the inline `dispatchers[].runtime` envelope is superseded by named top-level
+  `agents[]` in [agents-config-normalization](agents-config-normalization.md)
 - **Date:** 2026-06-06
 - **Affects:** `~/.dreamux/config.json`, dispatcher state files, provider config,
   TeamMate ledger, compatibility errors

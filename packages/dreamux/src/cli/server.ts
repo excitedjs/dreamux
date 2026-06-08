@@ -6,9 +6,10 @@
  *   dreamux serve --help
  *
  * Configuration sources:
- *   - ~/.dreamux/config.json — dispatcher declarations and channel secrets;
- *     each dispatcher's providerized channel/runtime settings live under
- *     dispatchers[].channels[] and dispatchers[].runtime
+ *   - ~/.dreamux/config.json — named agents[], dispatcher declarations, and
+ *     channel secrets; each dispatcher's channel lives under
+ *     dispatchers[].channels[] and its runtime is a named agents[] entry
+ *     referenced via dispatchers[].agentRuntime
  *   - CODEX_HOST_CODEX_BIN — optional host-level override of the codex binary
  *     for every dispatcher; most operators never set it
  *   - built-in defaults compiled into the binary
@@ -20,6 +21,8 @@ import { mkdir } from 'node:fs/promises';
 
 import { Server } from '../server.js';
 import { loadConfig } from '../config/config.js';
+import { createBuiltinProviderRegistry } from '../registry/index.js';
+import { createBuiltinAgentRuntimeProviderCatalog } from '../agent-runtime/index.js';
 import { createLogger } from '../platform/logger.js';
 import {
   adminSocketPath,
@@ -37,9 +40,20 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Compose the provider registry + builtin runtime catalog (with the real
+  // process factories) first, so the builtins carry runnable implementations
+  // before config parses agents[] (each agent's config is parsed through its
+  // provider's readConfig). loadConfig's own idempotent registration then
+  // no-ops on these already-registered builtins.
+  const providerRegistry = createBuiltinProviderRegistry();
+  const agentRuntimeProviderCatalog = createBuiltinAgentRuntimeProviderCatalog({
+    registry: providerRegistry,
+    codex: {},
+  });
+
   // Load ~/.dreamux/config.json before anything else starts. Missing or invalid
   // config is a setup error; `dreamux serve` must not silently create defaults.
-  const { config, configFile, providerRegistry } = await loadConfig();
+  const { config, configFile } = await loadConfig({ providerRegistry });
 
   await mkdir(stateRoot(), { recursive: true });
   await mkdir(logsRoot(), { recursive: true });
@@ -55,6 +69,7 @@ async function main(): Promise<void> {
   const server = new Server({
     config,
     providerRegistry,
+    agentRuntimeProviderCatalog,
     logger,
     channelLoggerFactory: (id) =>
       createLogger({ name: `channel/${id}`, filePath: feishuChannelLogPath(id) }),
@@ -80,9 +95,9 @@ Usage:
 Global config:
   ~/.dreamux/config.json    Created by 'dreamux onboard'. Override with the
                             DREAMUX_CONFIG_DIR env var. Edit and restart to
-                            apply. Holds dispatcher declarations, providerized
-                            channels[] / runtime settings, and Feishu channel
-                            secrets.
+                            apply. Holds named agents[], dispatcher
+                            declarations (channels[] + agentRuntime), and
+                            Feishu channel secrets.
 
 Runtime data:
   ~/.dreamux/state/         server state, admin socket,
@@ -93,8 +108,8 @@ Runtime data:
 
 Environment overrides:
   CODEX_HOST_CODEX_BIN      Optional host-level override of the codex binary for
-                            every dispatcher (normally unset; each dispatcher's
-                            dispatchers[].runtime.config.bin is used, default "codex")
+                            every dispatcher (normally unset; each agent's
+                            agents[].config.bin is used, default "codex")
   DREAMUX_CONFIG_DIR        Overrides ~/.dreamux (where config.json lives)
 
 Dispatcher declarations:

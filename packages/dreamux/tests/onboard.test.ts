@@ -30,7 +30,7 @@ import {
   dispatcherWorkspaceSkillDirs,
   dispatcherWorkspaceSkillPath,
 } from '../src/agent-runtime/builtin/codex/paths.js';
-import { testDispatcherConfig } from './helpers/config.js';
+import { testSingleDispatcherFileObject } from './helpers/config.js';
 
 class FakeRunner implements CommandRunner {
   launchdLoaded = false;
@@ -183,6 +183,21 @@ describe('dreamux onboard', () => {
     const dreamuxConfig = JSON.parse(
       readFileSync(join(root, 'config', 'config.json'), 'utf8'),
     ) as Record<string, any>;
+    expect(dreamuxConfig['agents']).toEqual([
+      {
+        id: 'flow',
+        provider: 'builtin:codex',
+        config: {
+          bin: process.execPath,
+          approval_policy: 'never',
+          sandbox_mode: 'workspace-write',
+          extra_args: [],
+          extra_env: {},
+          initialize_timeout_ms: 10000,
+          turn_timeout_ms: 600000,
+        },
+      },
+    ]);
     expect(dreamuxConfig['dispatchers']).toEqual([{
       id: 'flow',
       cwd: join(root, 'dispatcher-cwd'),
@@ -197,18 +212,7 @@ describe('dreamux onboard', () => {
           },
         },
       ],
-      runtime: {
-        provider: 'builtin:codex',
-        config: {
-          bin: process.execPath,
-          approval_policy: 'never',
-          sandbox_mode: 'workspace-write',
-          extra_args: [],
-          extra_env: {},
-          initialize_timeout_ms: 10000,
-          turn_timeout_ms: 600000,
-        },
-      },
+      agentRuntime: 'flow',
     }]);
     expect(dreamuxConfig).not.toHaveProperty('feishu');
     expect(dreamuxConfig).not.toHaveProperty('codex');
@@ -489,27 +493,25 @@ describe('dreamux onboard', () => {
     mkdirSync(configDir, { recursive: true });
     writeFileSync(
       join(configDir, 'config.json'),
-      JSON.stringify({
-        dispatchers: [
-          testDispatcherConfig({
-            id: 'flow',
-            cwd: join(root, 'flow-cwd'),
-            enabled: true,
-            feishu: {
-              app_id: 'app-flow',
-              app_secret: 'secret-flow',
-            },
-            codex: {
-              bin: '/custom/codex-flow',
-              approval_policy: 'on-failure',
-              sandbox_mode: 'danger-full-access',
-              extra_args: ['--model', 'local-default'],
-              extra_env: {},
-              initialize_timeout_ms: 25000,
-            },
-          }),
-        ],
-      }),
+      JSON.stringify(
+        testSingleDispatcherFileObject({
+          id: 'flow',
+          cwd: join(root, 'flow-cwd'),
+          enabled: true,
+          feishu: {
+            app_id: 'app-flow',
+            app_secret: 'secret-flow',
+          },
+          codex: {
+            bin: '/custom/codex-flow',
+            approval_policy: 'on-failure',
+            sandbox_mode: 'danger-full-access',
+            extra_args: ['--model', 'local-default'],
+            extra_env: {},
+            initialize_timeout_ms: 25000,
+          },
+        }),
+      ),
       { mode: 0o600 },
     );
     const answers = testAnswers({
@@ -538,6 +540,34 @@ describe('dreamux onboard', () => {
     expect(saved).not.toHaveProperty('codex');
     expect(saved).not.toHaveProperty('outbound');
     expect(saved).not.toHaveProperty('feishu');
+    expect(saved['agents']).toEqual([
+      {
+        id: 'flow',
+        provider: 'builtin:codex',
+        config: {
+          bin: '/custom/codex-flow',
+          approval_policy: 'on-failure',
+          sandbox_mode: 'danger-full-access',
+          extra_args: ['--model', 'local-default'],
+          extra_env: {},
+          initialize_timeout_ms: 25000,
+          turn_timeout_ms: 600000,
+        },
+      },
+      {
+        id: 'docs',
+        provider: 'builtin:codex',
+        config: {
+          bin: process.execPath,
+          approval_policy: 'never',
+          sandbox_mode: 'workspace-write',
+          extra_args: [],
+          extra_env: {},
+          initialize_timeout_ms: 10000,
+          turn_timeout_ms: 600000,
+        },
+      },
+    ]);
     expect(saved['dispatchers']).toEqual([
       {
         id: 'flow',
@@ -553,18 +583,7 @@ describe('dreamux onboard', () => {
             },
           },
         ],
-        runtime: {
-          provider: 'builtin:codex',
-          config: {
-            bin: '/custom/codex-flow',
-            approval_policy: 'on-failure',
-            sandbox_mode: 'danger-full-access',
-            extra_args: ['--model', 'local-default'],
-            extra_env: {},
-            initialize_timeout_ms: 25000,
-            turn_timeout_ms: 600000,
-          },
-        },
+        agentRuntime: 'flow',
       },
       {
         id: 'docs',
@@ -580,18 +599,7 @@ describe('dreamux onboard', () => {
             },
           },
         ],
-        runtime: {
-          provider: 'builtin:codex',
-          config: {
-            bin: process.execPath,
-            approval_policy: 'never',
-            sandbox_mode: 'workspace-write',
-            extra_args: [],
-            extra_env: {},
-            initialize_timeout_ms: 10000,
-            turn_timeout_ms: 600000,
-          },
-        },
+        agentRuntime: 'docs',
       },
     ]);
   });
@@ -599,25 +607,23 @@ describe('dreamux onboard', () => {
   it('rejects a new dispatcher that reuses an existing Feishu app_id', async () => {
     const runner = new FakeRunner();
     const configDir = join(root, 'config');
-    const existingConfig = JSON.stringify({
-      dispatchers: [
-        testDispatcherConfig({
-          id: 'flow',
-          cwd: join(root, 'flow-cwd'),
-          enabled: false,
-          feishu: {
-            app_id: 'app-shared',
-            app_secret: 'secret-flow',
-          },
-          codex: {
-            approval_policy: 'never',
-            sandbox_mode: 'workspace-write',
-            extra_args: [],
-            extra_env: {},
-          },
-        }),
-      ],
-    });
+    const existingConfig = JSON.stringify(
+      testSingleDispatcherFileObject({
+        id: 'flow',
+        cwd: join(root, 'flow-cwd'),
+        enabled: false,
+        feishu: {
+          app_id: 'app-shared',
+          app_secret: 'secret-flow',
+        },
+        codex: {
+          approval_policy: 'never',
+          sandbox_mode: 'workspace-write',
+          extra_args: [],
+          extra_env: {},
+        },
+      }),
+    );
     mkdirSync(configDir, { recursive: true });
     writeFileSync(join(configDir, 'config.json'), existingConfig, {
       mode: 0o600,

@@ -16,8 +16,6 @@ import {
 } from '../agent-runtime/external-provider.js';
 import type { AgentRuntimeProvider } from '../agent-runtime/types.js';
 import {
-  BUILTIN_CLAUDE_CODE_PROVIDER_REF,
-  BUILTIN_CODEX_PROVIDER_REF,
   BUILTIN_FEISHU_PROVIDER_REF,
   InvalidProviderRefError,
   ReservedExternalProviderError,
@@ -36,14 +34,9 @@ import {
   rejectUnknownKeys,
   requireNonEmptyString,
 } from './validate.js';
-import {
-  readDispatcherCodexConfig,
-  type DispatcherCodexConfig,
-} from '../agent-runtime/builtin/codex/config.js';
-import {
-  readDispatcherClaudeCodeConfig,
-  type DispatcherClaudeCodeConfig,
-} from '../agent-runtime/builtin/claude-code/config.js';
+import type { DispatcherCodexConfig } from '../agent-runtime/builtin/codex/config.js';
+import type { DispatcherClaudeCodeConfig } from '../agent-runtime/builtin/claude-code/config.js';
+import { registerBuiltinAgentRuntimeProviders } from '../agent-runtime/catalog.js';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
 
 // Re-export the relocated builtin runtime config + provider-ref symbols so the
@@ -88,8 +81,26 @@ async function pathExists(path: string): Promise<boolean> {
 }
 
 export interface DreamuxConfig {
+  /**
+   * Named agent runtime declarations. The sole config landing place for runtime
+   * settings: a dispatcher (and a teammate) references one of these by id rather
+   * than carrying its own inline `runtime` block. Keyed by `agents[].id`, the
+   * config-internal alias (unique, not a path/IPC key). Each entry carries the
+   * canonical provider ref plus the config already parsed by that provider's
+   * `readConfig`. Empty when no agents are declared.
+   */
+  agents: Record<string, ResolvedAgentConfig>;
   /** Dispatcher declarations and local channel credentials. */
   dispatchers: DispatcherConfig[];
+}
+
+/**
+ * An `agents[]` entry resolved at load: the canonical provider ref and the typed
+ * config that provider's `readConfig` produced from the raw `config` block.
+ */
+export interface ResolvedAgentConfig {
+  provider: string;
+  config: DispatcherProviderConfig | DispatcherCodexConfig | DispatcherClaudeCodeConfig;
 }
 
 export interface DispatcherConfig {
@@ -97,6 +108,18 @@ export interface DispatcherConfig {
   cwd: string | null;
   enabled: boolean;
   channels: DispatcherChannelConfig[];
+  /**
+   * The `agents[].id` this dispatcher references on disk. Kept so the in-memory
+   * config round-trips back to the `dispatchers[].agentRuntime` file shape
+   * (`stringifyConfig`). The resolved provider + config live in `runtime`.
+   */
+  agentRuntime: string;
+  /**
+   * The resolved runtime provider + config for this dispatcher, populated at load
+   * by resolving `agentRuntime` against `DreamuxConfig.agents`. In-memory only —
+   * the file no longer carries `dispatchers[].runtime`; downstream readers
+   * (services, doctor) keep using this shape unchanged.
+   */
   runtime: DispatcherRuntimeConfig;
 }
 
@@ -119,21 +142,14 @@ export interface DispatcherFeishuConfig {
 }
 
 export const BUILT_IN_DEFAULTS: DreamuxConfig = {
+  agents: {},
   dispatchers: [],
 };
 
-export const DEFAULT_CONFIG_JSON = `${JSON.stringify(BUILT_IN_DEFAULTS, null, 2)}\n`;
-
-type RuntimeConfigReader = (
-  rawConfig: Record<string, unknown>,
-  file: string,
-  prefix: string,
-) => DispatcherProviderConfig | DispatcherCodexConfig | DispatcherClaudeCodeConfig;
-
-const WIRED_RUNTIME_CONFIG_READERS = new Map<string, RuntimeConfigReader>([
-  [BUILTIN_CODEX_PROVIDER_REF, readDispatcherCodexConfig],
-  [BUILTIN_CLAUDE_CODE_PROVIDER_REF, readDispatcherClaudeCodeConfig],
-]);
+// Route the default through the in-memory -> file translator so first boot
+// writes the on-disk shape (agents[] + dispatchers[].agentRuntime) that the
+// parser accepts on the next boot — never the in-memory map shape.
+export const DEFAULT_CONFIG_JSON = stringifyConfig(BUILT_IN_DEFAULTS);
 
 export interface ConfigPathOverrides {
   /** Override the global config dir. Default: ~/.dreamux. */
@@ -196,8 +212,29 @@ export async function loadConfig(
   };
 }
 
+/**
+ * Serialize the in-memory {@link DreamuxConfig} to the on-disk file shape:
+ * the `agents` map becomes a top-level `agents[]` array, and each dispatcher's
+ * resolved `runtime` block is dropped in favor of the `agentRuntime` id
+ * reference it was resolved from. The result round-trips through
+ * {@link readConfigFile}.
+ */
 export function stringifyConfig(config: DreamuxConfig): string {
-  return `${JSON.stringify(config, null, 2)}\n`;
+  const fileShape = {
+    agents: Object.entries(config.agents).map(([id, agent]) => ({
+      id,
+      provider: agent.provider,
+      config: agent.config,
+    })),
+    dispatchers: config.dispatchers.map((dispatcher) => ({
+      id: dispatcher.id,
+      cwd: dispatcher.cwd,
+      enabled: dispatcher.enabled,
+      channels: dispatcher.channels,
+      agentRuntime: dispatcher.agentRuntime,
+    })),
+  };
+  return `${JSON.stringify(fileShape, null, 2)}\n`;
 }
 
 export function redactConfigForDisplay(raw: string, file: string): string {
@@ -238,9 +275,14 @@ async function readConfigFile(
         `Fix the JSON syntax in ${file}, then restart. Run \`dreamux onboard\` if you need to recreate the config.`,
     );
   }
+  // Make the builtin provider implementations available for parsing — each
+  // agent's config is parsed through its provider's `readConfig`. Idempotent:
+  // when the server pre-registered the builtins with its process factories, this
+  // no-ops and the factory-bearing registration wins.
+  registerBuiltinAgentRuntimeProviders({ registry: providerRegistry });
   await loadExternalAgentRuntimeProviders({
     registry: providerRegistry,
-    refs: runtimeProviderRefs(parsed),
+    refs: agentProviderRefs(parsed),
     importModule: overrides.externalAgentRuntimeModuleImporter,
   });
   return mergeWithDefaults(parsed, file, providerRegistry);
@@ -302,16 +344,19 @@ function mergeWithDefaults(
     throw new Error(`dreamux config error in ${file}: top-level must be an object`);
   }
   rejectTopLevelCodex(raw, file);
-  rejectUnknownKeys(raw, new Set(['dispatchers']), file, '');
+  rejectUnknownKeys(raw, new Set(['agents', 'dispatchers']), file, '');
 
+  const agents = readAgents(raw['agents'], file, providerRegistry);
   return {
-    dispatchers: readDispatchers(raw['dispatchers'], file, providerRegistry),
+    agents,
+    dispatchers: readDispatchers(raw['dispatchers'], file, agents),
   };
 }
 
 /**
- * The top-level `codex` block was removed: runtime settings are per-dispatcher
- * (`dispatchers[].runtime.config`) and the binary path comes from
+ * The top-level `codex` block was removed: runtime settings live in a named
+ * `agents[]` entry (`agents[].config`), referenced by each dispatcher via
+ * `dispatchers[].agentRuntime`. The binary path comes from
  * `CODEX_HOST_CODEX_BIN`.
  * A leftover top-level block is rejected loudly with migration guidance rather
  * than silently ignored, so an operator's intent is never dropped.
@@ -320,17 +365,88 @@ function rejectTopLevelCodex(raw: Record<string, unknown>, file: string): void {
   if (!('codex' in raw)) return;
   throw new Error(
     `dreamux config error in ${file}: a top-level "codex" block is no longer ` +
-      'supported. Move Codex settings under each dispatchers[].runtime.config ' +
-      '(bin, approval_policy, sandbox_mode, extra_args, extra_env, ' +
-      'initialize_timeout_ms). For a host-level binary override across all ' +
-      'dispatchers, set the CODEX_HOST_CODEX_BIN environment variable.',
+      'supported. Declare a named agent under agents[] with provider ' +
+      '"builtin:codex" and a config block (bin, approval_policy, sandbox_mode, ' +
+      'extra_args, extra_env, initialize_timeout_ms), then reference it from each ' +
+      'dispatcher via dispatchers[].agentRuntime. For a host-level binary ' +
+      'override across all dispatchers, set the CODEX_HOST_CODEX_BIN ' +
+      'environment variable.',
   );
+}
+
+/**
+ * Parse the top-level `agents[]` array into a `id -> resolved agent` map. Each
+ * entry's `config` block is parsed through its provider's `readConfig` (the
+ * core no longer branches on runtime identity). #98 fail-loud: a non-array
+ * `agents`, a non-object entry, a missing/empty `id`, a duplicate `id`, or a
+ * provider that is registered but not runnable each throws with the file named.
+ */
+function readAgents(
+  rawAgents: unknown,
+  file: string,
+  providerRegistry: ProviderRegistry,
+): Record<string, ResolvedAgentConfig> {
+  if (rawAgents === undefined) return {};
+  if (!Array.isArray(rawAgents)) {
+    throw new Error(
+      `dreamux config error in ${file}: agents must be an array (got ${describeType(rawAgents)}).\n` +
+        'Declare named runtimes as agents[] entries, each with an id, a provider ' +
+        '(e.g. "builtin:codex"), and a config block.',
+    );
+  }
+  const out: Record<string, ResolvedAgentConfig> = {};
+  for (let index = 0; index < rawAgents.length; index++) {
+    const raw = rawAgents[index];
+    const prefix = `agents[${index}].`;
+    if (!isPlainObject(raw)) {
+      throw new Error(
+        `dreamux config error in ${file}: agents[${index}] must be an object (got ${describeType(raw)})`,
+      );
+    }
+    rejectUnknownKeys(raw, new Set(['id', 'provider', 'config']), file, prefix);
+    const id = requireNonEmptyString(raw, 'id', file, prefix);
+    if (Object.prototype.hasOwnProperty.call(out, id)) {
+      throw new Error(
+        `dreamux config error in ${file}: agents[${index}].id duplicates agent '${id}'`,
+      );
+    }
+    const provider = resolveConfigProvider(
+      requireNonEmptyString(raw, 'provider', file, prefix),
+      'agentRuntime',
+      file,
+      prefix,
+      providerRegistry,
+    );
+    const rawConfig = readProviderConfigObject(raw['config'], file, `${prefix}config`, {
+      allowMissing: true,
+    });
+    const runtimeProvider = asAgentRuntimeProvider(
+      providerRegistry.getImplementation(provider.descriptor.id),
+    );
+    if (runtimeProvider === null) {
+      throw new Error(
+        `dreamux config error in ${file}: ${prefix}provider='${provider.ref}' is registered but not runnable.\n` +
+          'Builtin runtimes are wired by dreamux; external runtimes must load and register an agentRuntime provider before config validation.',
+      );
+    }
+    out[id] = {
+      provider: provider.ref,
+      config:
+        runtimeProvider.readConfig?.(rawConfig, {
+          providerRef: provider.ref,
+          agentId: id,
+          file,
+          prefix: `${prefix}config.`,
+        }) ?? rawConfig,
+    };
+  }
+  return out;
 }
 
 function readDispatchers(
   rawDispatchers: unknown,
   file: string,
-  providerRegistry: ProviderRegistry,
+  agents: Record<string, ResolvedAgentConfig>,
 ): DispatcherConfig[] {
   if (rawDispatchers === undefined) return [];
   if (!Array.isArray(rawDispatchers)) {
@@ -349,9 +465,20 @@ function readDispatchers(
         `dreamux config error in ${file}: dispatchers[${index}] must be an object (got ${describeType(raw)})`,
       );
     }
+    // #98 fail-loud: an inline runtime block is the old schema. Reject it
+    // before rejectUnknownKeys so the operator gets migration guidance naming
+    // the new agents[] + agentRuntime shape, not a bare unknown-key error.
+    if ('runtime' in raw) {
+      throw new Error(
+        `dreamux config error in ${file}: ${prefix}runtime is no longer supported.\n` +
+          'Runtime config moved to a named agents[] entry. Declare the runtime ' +
+          'under top-level agents[] (id, provider, config) and reference it here ' +
+          `with ${prefix}agentRuntime = "<agent id>", then rebuild ${file}.`,
+      );
+    }
     rejectUnknownKeys(
       raw,
-      new Set(['id', 'cwd', 'enabled', 'channels', 'runtime']),
+      new Set(['id', 'cwd', 'enabled', 'channels', 'agentRuntime']),
       file,
       prefix,
     );
@@ -378,21 +505,54 @@ function readDispatchers(
     appIdToDispatcher.set(app_id, id);
 
     const cwd = readOptionalString(raw, 'cwd', file, prefix);
+    const agentRuntimeId = resolveAgentRuntime(raw, prefix, file, agents);
     out.push({
       id,
       cwd: cwd === null ? null : expandHome(cwd),
       enabled: readOptionalBoolean(raw, 'enabled', true, file, prefix),
       channels,
-      runtime: readDispatcherRuntime(
-        raw['runtime'],
-        file,
-        prefix,
-        id,
-        providerRegistry,
-      ),
+      agentRuntime: agentRuntimeId,
+      runtime: {
+        provider: agents[agentRuntimeId]!.provider,
+        config: agents[agentRuntimeId]!.config,
+      },
     });
   }
   return out;
+}
+
+/**
+ * Resolve a dispatcher's `agentRuntime` id against the parsed agents map. #98
+ * fail-loud: a missing `agentRuntime` and a dangling reference (no matching
+ * `agents[].id`) each throw with the file named and the required shape.
+ */
+function resolveAgentRuntime(
+  raw: Record<string, unknown>,
+  prefix: string,
+  file: string,
+  agents: Record<string, ResolvedAgentConfig>,
+): string {
+  if (!('agentRuntime' in raw)) {
+    throw new Error(
+      `dreamux config error in ${file}: ${prefix}agentRuntime is required.\n` +
+        'Declare a named runtime under top-level agents[] (id, provider, config) ' +
+        `and set ${prefix}agentRuntime to that agent's id, then rebuild ${file}.`,
+    );
+  }
+  const agentRuntimeId = requireNonEmptyString(raw, 'agentRuntime', file, prefix);
+  if (!Object.prototype.hasOwnProperty.call(agents, agentRuntimeId)) {
+    const known = Object.keys(agents);
+    const knownHint =
+      known.length > 0
+        ? `Known agents: ${known.map((id) => `'${id}'`).join(', ')}.`
+        : 'No agents[] are declared.';
+    throw new Error(
+      `dreamux config error in ${file}: ${prefix}agentRuntime='${agentRuntimeId}' ` +
+        `does not match any agents[].id. ${knownHint}\n` +
+        `Add an agents[] entry with id '${agentRuntimeId}' (or fix the reference), then rebuild ${file}.`,
+    );
+  }
+  return agentRuntimeId;
 }
 
 function readDispatcherChannels(
@@ -454,59 +614,6 @@ function feishuConfigFromChannels(
   return channel.config as DispatcherFeishuConfig;
 }
 
-function readDispatcherRuntime(
-  rawRuntime: unknown,
-  file: string,
-  dispatcherPrefix: string,
-  dispatcherId: string,
-  providerRegistry: ProviderRegistry,
-): DispatcherRuntimeConfig {
-  const prefix = `${dispatcherPrefix}runtime.`;
-  if (!isPlainObject(rawRuntime)) {
-    throw new Error(
-      `dreamux config error in ${file}: ${dispatcherPrefix}runtime must be an object (got ${describeType(rawRuntime)}).\n` +
-        'Use providerized config v2: dispatchers[].runtime.provider and dispatchers[].runtime.config.',
-    );
-  }
-  rejectUnknownKeys(rawRuntime, new Set(['provider', 'config']), file, prefix);
-  const provider = resolveConfigProvider(
-    requireNonEmptyString(rawRuntime, 'provider', file, prefix),
-    'agentRuntime',
-    file,
-    prefix,
-    providerRegistry,
-  );
-  const config = readProviderConfigObject(rawRuntime['config'], file, `${prefix}config`, {
-    allowMissing: true,
-  });
-  const readRuntimeConfig = WIRED_RUNTIME_CONFIG_READERS.get(provider.ref);
-  if (readRuntimeConfig !== undefined) {
-    return {
-      provider: provider.ref,
-      config: readRuntimeConfig(config, file, `${prefix}config.`),
-    };
-  }
-  const runtimeProvider = asAgentRuntimeProvider(
-    providerRegistry.getImplementation(provider.descriptor.id),
-  );
-  if (runtimeProvider !== null) {
-    return {
-      provider: provider.ref,
-      config:
-        runtimeProvider.readConfig?.(config, {
-          providerRef: provider.ref,
-          dispatcherId,
-          file,
-          prefix: `${prefix}config.`,
-        }) ?? config,
-    };
-  }
-  throw new Error(
-    `dreamux config error in ${file}: ${prefix}provider='${provider.ref}' is registered but not runnable.\n` +
-      'Builtin runtimes are wired by dreamux; external runtimes must load and register an agentRuntime provider before config validation.',
-  );
-}
-
 function readDispatcherFeishuConfig(
   rawFeishu: Record<string, unknown>,
   file: string,
@@ -561,16 +668,14 @@ function resolveConfigProvider(
   }
 }
 
-function runtimeProviderRefs(raw: unknown): string[] {
+function agentProviderRefs(raw: unknown): string[] {
   if (!isPlainObject(raw)) return [];
-  const dispatchers = raw['dispatchers'];
-  if (!Array.isArray(dispatchers)) return [];
+  const agents = raw['agents'];
+  if (!Array.isArray(agents)) return [];
   const out: string[] = [];
-  for (const dispatcher of dispatchers) {
-    if (!isPlainObject(dispatcher)) continue;
-    const runtime = dispatcher['runtime'];
-    if (!isPlainObject(runtime)) continue;
-    const provider = runtime['provider'];
+  for (const agent of agents) {
+    if (!isPlainObject(agent)) continue;
+    const provider = agent['provider'];
     if (typeof provider !== 'string') continue;
     try {
       const parsed = parseProviderRef(provider);

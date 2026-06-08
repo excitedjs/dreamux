@@ -20,8 +20,9 @@ import {
 } from '../../../config/validate.js';
 
 /**
- * Builtin Claude Code runtime settings under `dispatchers[].runtime.config`
- * when `runtime.provider` is `builtin:claude-code` (issue #110 PR6).
+ * Builtin Claude Code runtime settings under a named `agents[].config` entry
+ * whose `provider` is `builtin:claude-code` (issue #110 PR6), referenced by a
+ * dispatcher via `dispatchers[].agentRuntime`.
  *
  * Deliberately distinct from `DispatcherCodexConfig`: Claude Code runs as a
  * resident headless stream-json process (`claude --print --input-format

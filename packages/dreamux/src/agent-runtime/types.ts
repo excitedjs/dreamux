@@ -199,7 +199,12 @@ export interface AgentRuntimeCreateContext {
 
 export interface AgentRuntimeProviderConfigReadContext {
   providerRef: string;
-  dispatcherId: string;
+  /**
+   * The `agents[].id` whose config block is being parsed — a config-internal
+   * alias, not a dispatcher identity. Provider `readConfig` implementations may
+   * use it for diagnostics; both builtins ignore it.
+   */
+  agentId: string;
   file: string;
   prefix: string;
 }

@@ -32,7 +32,8 @@ export function rejectUnknownKeys(
       throw new Error(
         `dreamux config error in ${file}: ${name} is not supported by the providerized config v2 schema.\n` +
           'Dreamux 0.x does not silently migrate operator-owned config. Rebuild this dispatcher with ' +
-          'dispatchers[].channels[] and dispatchers[].runtime, then restart.',
+          'dispatchers[].channels[] for the channel and a named agents[] entry referenced via ' +
+          'dispatchers[].agentRuntime for the runtime, then restart.',
       );
     }
     throw new Error(

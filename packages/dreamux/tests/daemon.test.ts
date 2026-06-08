@@ -15,7 +15,7 @@ import { runDaemonInstall, runDaemonUninstall } from '../src/daemon/install.js';
 import type { ServiceNodeProbe } from '../src/onboard/service.js';
 import type { CommandRunner } from '../src/onboard/types.js';
 import { resetRuntimeConfig } from '../src/platform/paths.js';
-import { testDispatcherConfig } from './helpers/config.js';
+import { testSingleDispatcherFileObject } from './helpers/config.js';
 
 interface Call {
   command: string;
@@ -243,26 +243,24 @@ function writeInstallConfig(configDir: string): void {
   mkdirSync(configDir, { recursive: true });
   writeFileSync(
     join(configDir, 'config.json'),
-    JSON.stringify({
-      // The codex binary path normally comes from each dispatcher's
-      // runtime.config.bin; CODEX_HOST_CODEX_BIN is only an optional host-level
-      // override. These tests set that override to process.execPath so the
-      // managed-service launch check resolves to a runnable absolute path.
-      dispatchers: [
-        testDispatcherConfig({
-          id: 'flow',
-          cwd: join(dirname(configDir), 'cwd'),
-          enabled: true,
-          feishu: { app_id: 'app-test', app_secret: 'secret-test' },
-          codex: {
-            approval_policy: 'never',
-            sandbox_mode: 'workspace-write',
-            extra_args: [],
-            extra_env: {},
-          },
-        }),
-      ],
-    }),
+    // The codex binary path normally comes from each agent's config.bin;
+    // CODEX_HOST_CODEX_BIN is only an optional host-level override. These tests
+    // set that override to process.execPath so the managed-service launch check
+    // resolves to a runnable absolute path.
+    JSON.stringify(
+      testSingleDispatcherFileObject({
+        id: 'flow',
+        cwd: join(dirname(configDir), 'cwd'),
+        enabled: true,
+        feishu: { app_id: 'app-test', app_secret: 'secret-test' },
+        codex: {
+          approval_policy: 'never',
+          sandbox_mode: 'workspace-write',
+          extra_args: [],
+          extra_env: {},
+        },
+      }),
+    ),
     { mode: 0o600 },
   );
 }

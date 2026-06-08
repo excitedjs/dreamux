@@ -20,10 +20,11 @@ import {
 } from '../../../config/validate.js';
 
 /**
- * Builtin Codex runtime settings under `dispatchers[].runtime.config`.
- * Every field carries a built-in default, so a dispatcher that omits any
- * runtime config field runs with these constants. There is no top-level
- * `codex` block anymore: runtime config is dispatcher-local.
+ * Builtin Codex runtime settings under a named `agents[].config` entry (provider
+ * `builtin:codex`), referenced by a dispatcher via `dispatchers[].agentRuntime`.
+ * Every field carries a built-in default, so an agent that omits any config
+ * field runs with these constants. There is no top-level `codex` block anymore;
+ * runtime config lives in `agents[]`.
  *
  * `bin` is the dispatcher's Codex binary path; the `CODEX_HOST_CODEX_BIN`
  * environment variable is a host-level override that takes precedence over it

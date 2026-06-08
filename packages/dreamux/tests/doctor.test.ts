@@ -22,7 +22,10 @@ import {
   dispatcherCodexHome,
   dispatcherWorkspaceSkillPath,
 } from '../src/agent-runtime/builtin/codex/paths.js';
-import { testDispatcherConfig } from './helpers/config.js';
+import {
+  testConfigFileObject,
+  testSingleDispatcherFileObject,
+} from './helpers/config.js';
 
 class FakeRunner implements CommandRunner {
   systemdEnabled = false;
@@ -557,25 +560,23 @@ describe('dreamux doctor command', () => {
     mkdirSync(dirname(configPath), { recursive: true });
     writeFileSync(
       configPath,
-      JSON.stringify({
-        dispatchers: [
-          testDispatcherConfig({
-            id: 'flow',
-            cwd: defaultDispatcherCwd('flow'),
-            enabled: true,
-            feishu: {
-              app_id: 'app-test',
-              app_secret: 'secret-test',
-            },
-            codex: {
-              approval_policy: 'never',
-              sandbox_mode: 'workspace-write',
-              extra_args: [],
-              extra_env: {},
-            },
-          }),
-        ],
-      }),
+      JSON.stringify(
+        testSingleDispatcherFileObject({
+          id: 'flow',
+          cwd: defaultDispatcherCwd('flow'),
+          enabled: true,
+          feishu: {
+            app_id: 'app-test',
+            app_secret: 'secret-test',
+          },
+          codex: {
+            approval_policy: 'never',
+            sandbox_mode: 'workspace-write',
+            extra_args: [],
+            extra_env: {},
+          },
+        }),
+      ),
       { mode: 0o600 },
     );
   }
@@ -585,17 +586,11 @@ describe('dreamux doctor command', () => {
     mkdirSync(dirname(configPath), { recursive: true });
     writeFileSync(
       configPath,
-      JSON.stringify({
-        dispatchers: [
-          testDispatcherConfig({
-            id: 'flow',
-            cwd: defaultDispatcherCwd('flow'),
-            enabled: true,
-            feishu: {
-              app_id: 'app-test',
-              app_secret: 'secret-test',
-            },
-            runtime: {
+      JSON.stringify(
+        testConfigFileObject({
+          agents: [
+            {
+              id: 'flow',
               provider: 'builtin:claude-code',
               config: {
                 bin: 'claude',
@@ -605,9 +600,18 @@ describe('dreamux doctor command', () => {
                 extra_env: {},
               },
             },
-          }),
-        ],
-      }),
+          ],
+          dispatchers: [
+            {
+              id: 'flow',
+              cwd: defaultDispatcherCwd('flow'),
+              enabled: true,
+              agentRuntime: 'flow',
+              feishu: { app_id: 'app-test', app_secret: 'secret-test' },
+            },
+          ],
+        }),
+      ),
       { mode: 0o600 },
     );
   }
