@@ -394,10 +394,14 @@ describe('dreamux MVP smoke', () => {
     );
 
     // list_chat_bots exposes trusted as { open_id, name? }; missing name omitted.
-    const listing = await server.listChatBotsFromMcp({
+    const listing = await server.dispatcherService.callFeishuMcpTool({
       dispatcherId: 'flow',
-      chatId: 'chat-group-a',
-    });
+      toolName: 'list_chat_bots',
+      arguments: { chat_id: 'chat-group-a' },
+    }) as {
+      chat_id: string;
+      trusted: Array<{ open_id: string; name?: string }>;
+    };
     expect(listing.chat_id).toBe('chat-group-a');
     expect(listing.trusted).toEqual([
       { open_id: 'peer-bee', name: 'Bee' },
@@ -448,7 +452,9 @@ describe('dreamux MVP smoke', () => {
     await server.start();
 
     expect(capturedCodexOptions).toHaveLength(1);
-    expect(server.getRuntime('flow')?.providerRef).toBe('builtin:codex');
+    expect(server.dispatcherService.getRuntime('flow')?.providerRef).toBe(
+      'builtin:codex',
+    );
     expect(capturedCodexOptions[0]?.env?.['CODEX_HOME']).toBeUndefined();
     expect(capturedCodexOptions[0]?.env?.['PATH']).toContain('/bin');
     expect(capturedCodexOptions[0]?.socketPath).toBe(
@@ -1913,12 +1919,15 @@ describe('dreamux MVP smoke', () => {
     });
     await server.start();
 
-    const result = await server.replyFromMcp({
+    const result = await server.dispatcherService.callFeishuMcpTool({
       dispatcherId: 'flow',
-      chatId: 'chat-group-a',
-      messageId: 'msg-reply',
-      text: REPLY_BODY,
-    });
+      toolName: 'reply',
+      arguments: {
+        chat_id: 'chat-group-a',
+        message_id: 'msg-reply',
+        text: REPLY_BODY,
+      },
+    }) as { message_ids: string[] };
     expect(result.message_ids).toEqual(['message-fake-1']);
 
     const sent = capture
@@ -1951,11 +1960,14 @@ describe('dreamux MVP smoke', () => {
     await server.start();
 
     await expect(
-      server.replyFromMcp({
+      server.dispatcherService.callFeishuMcpTool({
         dispatcherId: 'flow',
-        chatId: 'chat-group-a',
-        messageId: 'msg-reply-fail',
-        text: REPLY_BODY,
+        toolName: 'reply',
+        arguments: {
+          chat_id: 'chat-group-a',
+          message_id: 'msg-reply-fail',
+          text: REPLY_BODY,
+        },
       }),
     ).rejects.toThrow('feishu send boom');
 
@@ -1988,11 +2000,14 @@ describe('dreamux MVP smoke', () => {
     });
     await server.start();
 
-    const ok = await server.reactFromMcp({
+    const ok = await server.dispatcherService.callFeishuMcpTool({
       dispatcherId: 'flow',
-      messageId: 'msg-react',
-      emoji: 'THUMBSUP',
-    });
+      toolName: 'react',
+      arguments: {
+        message_id: 'msg-react',
+        emoji: 'THUMBSUP',
+      },
+    }) as { reaction_id: string };
     expect(ok.reaction_id).toBe('reaction-fake-1');
     const sent = capture
       .lines()
@@ -2006,10 +2021,13 @@ describe('dreamux MVP smoke', () => {
 
     bot.setReactionError(new Error('feishu react boom'));
     await expect(
-      server.reactFromMcp({
+      server.dispatcherService.callFeishuMcpTool({
         dispatcherId: 'flow',
-        messageId: 'msg-react-fail',
-        emoji: 'EYES',
+        toolName: 'react',
+        arguments: {
+          message_id: 'msg-react-fail',
+          emoji: 'EYES',
+        },
       }),
     ).rejects.toThrow('feishu react boom');
     const failed = capture
@@ -2267,11 +2285,13 @@ describe('dreamux MVP smoke', () => {
     });
     // Don't call server.start() (which would auto-start); race two explicit
     // startDispatcher calls instead.
-    const a = server.startDispatcher('flow');
-    const b = server.startDispatcher('flow');
+    const a = server.dispatcherService.startDispatcher('flow');
+    const b = server.dispatcherService.startDispatcher('flow');
     await Promise.all([a, b]);
     expect(counter.count).toBe(1);
-    expect(server.getRuntime('flow')?.getStatus()).toBe('ready');
+    expect(server.dispatcherService.getRuntime('flow')?.getStatus()).toBe(
+      'ready',
+    );
   });
 
   it('restarts the Codex child with backoff and resumes the saved thread after child exit', async () => {
@@ -2301,7 +2321,9 @@ describe('dreamux MVP smoke', () => {
     processes[0]!.emitExit({ code: 9, signal: null });
 
     await waitFor(() => processes.length >= 2);
-    await waitFor(() => server.getRuntime('flow')?.getStatus() === 'ready');
+    await waitFor(
+      () => server.dispatcherService.getRuntime('flow')?.getStatus() === 'ready',
+    );
     expect(server.repos.dispatchers.get('flow')?.thread_id).toBe(firstThreadId);
     expect(fake.methodLog.filter((method) => method === 'thread/resume'))
       .toHaveLength(1);
@@ -2332,14 +2354,19 @@ describe('dreamux MVP smoke', () => {
     expect(firstThreadId).toMatch(/^thread_fake_/);
 
     processes[0]!.emitExit({ code: 9, signal: null });
-    await waitFor(() => server.getRuntime('flow')?.getStatus() === 'degraded');
+    await waitFor(
+      () =>
+        server.dispatcherService.getRuntime('flow')?.getStatus() === 'degraded',
+    );
 
-    await server.stopDispatcher('flow');
+    await server.dispatcherService.stopDispatcher('flow');
     await sleep(150);
     expect(processes).toHaveLength(1);
 
-    await server.startDispatcher('flow');
-    await waitFor(() => server.getRuntime('flow')?.getStatus() === 'ready');
+    await server.dispatcherService.startDispatcher('flow');
+    await waitFor(
+      () => server.dispatcherService.getRuntime('flow')?.getStatus() === 'ready',
+    );
     expect(processes).toHaveLength(2);
     expect(server.repos.dispatchers.get('flow')?.thread_id).toBe(firstThreadId);
     expect(fake.methodLog.filter((method) => method === 'thread/resume'))
@@ -2372,7 +2399,9 @@ describe('dreamux MVP smoke', () => {
     await oldFake.close();
 
     await waitFor(() => fake.methodLog.includes('thread/resume'), 3000);
-    await waitFor(() => server.getRuntime('flow')?.getStatus() === 'ready');
+    await waitFor(
+      () => server.dispatcherService.getRuntime('flow')?.getStatus() === 'ready',
+    );
     expect(server.repos.dispatchers.get('flow')?.thread_id).toBe(firstThreadId);
     expect(fake.methodLog).not.toContain('thread/start');
   });
@@ -2406,7 +2435,9 @@ describe('dreamux MVP smoke', () => {
 
     await bot.inject(fakeInbound('chat-group-a', 'slow turn', 'msg-slow'));
     await sleep(80);
-    expect(server.getRuntime('flow')?.getStatus()).toBe('ready');
+    expect(server.dispatcherService.getRuntime('flow')?.getStatus()).toBe(
+      'ready',
+    );
     expect(processes).toHaveLength(1);
     expect(bot.sentMessages).toEqual([]);
 

@@ -1,33 +1,15 @@
-import { dreamuxBinPath } from '../runtime/package-bin.js';
 import type { AgentRuntimeMcpServer } from '../agent-runtime/types.js';
+import {
+  feishuMcpServerDescriptor,
+  type FeishuMcpCodexArgsOptions,
+} from '../channel/feishu-mcp-surface.js';
 
-export const FEISHU_MCP_SERVER_NAME = 'feishu';
-
-export interface FeishuMcpServerDescriptorOptions {
-  dispatcherId: string;
-  adminSocketPath: string;
-  command?: string;
-  env?: NodeJS.ProcessEnv;
-}
-
-export type FeishuMcpCodexArgsOptions = FeishuMcpServerDescriptorOptions;
-
-export function feishuMcpServerDescriptor(
-  opts: FeishuMcpServerDescriptorOptions,
-): AgentRuntimeMcpServer {
-  const command = opts.command ?? dreamuxBinPath(opts.env);
-  return {
-    name: FEISHU_MCP_SERVER_NAME,
-    command,
-    args: [
-      'feishu-mcp',
-      '--dispatcher',
-      opts.dispatcherId,
-      '--admin-socket',
-      opts.adminSocketPath,
-    ],
-  };
-}
+export {
+  FEISHU_MCP_SERVER_NAME,
+  feishuMcpServerDescriptor,
+  type FeishuMcpCodexArgsOptions,
+  type FeishuMcpServerDescriptorOptions,
+} from '../channel/feishu-mcp-surface.js';
 
 export function feishuMcpCodexArgs(
   opts: FeishuMcpCodexArgsOptions,

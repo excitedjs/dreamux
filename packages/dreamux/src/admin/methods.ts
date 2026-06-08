@@ -8,7 +8,6 @@
 
 import type { Server } from '../server.js';
 import { AdminError } from './protocol.js';
-import type { DispatcherStatus } from '../runtime/dispatcher-store.js';
 import { validateDispatcherId } from '../runtime/dispatcher-id.js';
 
 export type AdminHandler = (
@@ -49,7 +48,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     if (row === null) {
       throw new AdminError('DISPATCHER_NOT_FOUND', `no dispatcher with id '${id}'`);
     }
-    const runtime = server.getRuntime(id);
+    const runtime = server.dispatcherService.getRuntime(id);
     return {
       dispatcher_id: row.dispatcher_id,
       bot_app_id: row.bot_app_id,
@@ -66,13 +65,16 @@ export const adminMethods: Record<string, AdminHandler> = {
     if (row === null) {
       throw new AdminError('DISPATCHER_NOT_FOUND', `no dispatcher with id '${id}'`);
     }
-    await server.startDispatcher(id);
-    return { dispatcher_id: id, status: server.getRuntime(id)?.getStatus() as DispatcherStatus };
+    await server.dispatcherService.startDispatcher(id);
+    return {
+      dispatcher_id: id,
+      status: server.dispatcherService.getRuntime(id)?.getStatus(),
+    };
   },
 
   'dispatcher.stop': async (server, params) => {
     const id = mustDispatcherId(params);
-    await server.stopDispatcher(id);
+    await server.dispatcherService.stopDispatcher(id);
     return { dispatcher_id: id, status: 'stopped' };
   },
 
@@ -80,17 +82,11 @@ export const adminMethods: Record<string, AdminHandler> = {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     mustRunningDispatcher(server, id);
-    const chatId = mustString(params, 'chat_id');
-    const text = mustString(params, 'text');
-    const messageId = optionalString(params, 'message_id');
-    const mentionUserIds = optionalStringArray(params, 'mention_user_ids');
     try {
-      return await server.replyFromMcp({
+      return await server.dispatcherService.callFeishuMcpTool({
         dispatcherId: id,
-        chatId,
-        text,
-        ...(messageId !== null ? { messageId } : {}),
-        ...(mentionUserIds !== null ? { mentionUserIds } : {}),
+        toolName: 'reply',
+        arguments: params ?? {},
       });
     } catch (err) {
       throw new AdminError('OUTBOUND_FAILED', parseMessage(err));
@@ -101,13 +97,11 @@ export const adminMethods: Record<string, AdminHandler> = {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     mustRunningDispatcher(server, id);
-    const messageId = mustString(params, 'message_id');
-    const emoji = mustString(params, 'emoji');
     try {
-      return await server.reactFromMcp({
+      return await server.dispatcherService.callFeishuMcpTool({
         dispatcherId: id,
-        messageId,
-        emoji,
+        toolName: 'react',
+        arguments: params ?? {},
       });
     } catch (err) {
       throw new AdminError('REACTION_FAILED', parseMessage(err));
@@ -120,8 +114,11 @@ export const adminMethods: Record<string, AdminHandler> = {
   'mcp.list_chat_bots': (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    const chatId = mustString(params, 'chat_id');
-    return server.listChatBotsFromMcp({ dispatcherId: id, chatId });
+    return server.dispatcherService.callFeishuMcpTool({
+      dispatcherId: id,
+      toolName: 'list_chat_bots',
+      arguments: params ?? {},
+    });
   },
 
   'mcp.teammate.spawn': async (server, params) => {
@@ -267,19 +264,6 @@ function optionalString(
   return v;
 }
 
-function optionalStringArray(
-  params: Record<string, unknown> | undefined,
-  key: string,
-): string[] | null {
-  if (params === undefined) return null;
-  const v = params[key];
-  if (v === undefined || v === null) return null;
-  if (!Array.isArray(v) || v.some((item) => typeof item !== 'string')) {
-    throw new AdminError('BAD_REQUEST', `param '${key}' must be an array of strings`);
-  }
-  return v as string[];
-}
-
 function mustExistingDispatcher(server: Server, id: string): void {
   const row = server.repos.dispatchers.get(id);
   if (row === null) {
@@ -288,7 +272,7 @@ function mustExistingDispatcher(server: Server, id: string): void {
 }
 
 function mustRunningDispatcher(server: Server, id: string): void {
-  if (server.getRuntime(id) === null) {
+  if (server.dispatcherService.getRuntime(id) === null) {
     throw new AdminError(
       'DISPATCHER_NOT_RUNNING',
       `dispatcher '${id}' is not running`,
