@@ -291,9 +291,19 @@ export class TeamMateAgentService {
     // after stop() fires its terminal `stopped` settles, which would otherwise
     // race the lookup.
     let liveRuntime: AgentRuntime | null = null;
+    // Only inherit the dispatcher's runtime config when the teammate runs the
+    // SAME provider. A teammate on a different provider (e.g. a claude-code
+    // teammate under a codex dispatcher) must fall back to its provider's
+    // defaults: the dispatcher's config block is the wrong shape, and the
+    // provider's createRuntime would reject it ("... is not wired to ...").
+    const dispatcherCfg = this.dispatcherConfig(dispatcherId);
+    const inheritedConfig =
+      dispatcherCfg !== null && dispatcherCfg.runtime.provider === provider.ref
+        ? dispatcherCfg
+        : null;
     const runtime = provider.createRuntime({
       row,
-      dispatcher: this.dispatcherConfig(dispatcherId),
+      dispatcher: inheritedConfig,
       dispatchers: this.opts.dispatchers,
       cwd: identity.cwd,
       state,

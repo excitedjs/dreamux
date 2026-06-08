@@ -113,16 +113,24 @@ class FakeRuntime implements AgentRuntime {
 }
 
 class FakeProvider implements AgentRuntimeProvider {
-  readonly ref = 'builtin:codex';
+  readonly ref: string;
   readonly runtimes: FakeRuntime[] = [];
+  /** Every create context this provider was asked to build, for assertions. */
+  readonly contexts: AgentRuntimeCreateContext[] = [];
 
-  constructor(readonly descriptor: AgentRuntimeProvider['descriptor']) {}
+  constructor(
+    readonly descriptor: AgentRuntimeProvider['descriptor'],
+    ref: string = 'builtin:codex',
+  ) {
+    this.ref = ref;
+  }
 
   getCapabilities(): AgentRuntimeCapabilities {
     return FAKE_CAPABILITIES;
   }
 
   createRuntime(context: AgentRuntimeCreateContext): AgentRuntime {
+    this.contexts.push(context);
     const runtime = new FakeRuntime(context);
     this.runtimes.push(runtime);
     return runtime;
@@ -177,6 +185,55 @@ describe('TeamMateAgentService', () => {
     else process.env['HOME'] = previousHome;
     resetRuntimeConfig();
     rmSync(root, { recursive: true, force: true });
+  });
+
+  it('does not inherit the dispatcher config for a cross-provider teammate', async () => {
+    // Dispatcher 'flow' runs builtin:codex. A builtin:claude-code teammate must
+    // NOT receive the codex dispatcher's config block (wrong shape — the real
+    // claude provider would throw "is not wired to Claude Code"); it falls back
+    // to its own provider defaults (context.dispatcher === null). A same-provider
+    // teammate still inherits the dispatcher config.
+    const config = testDreamuxConfig();
+    const registry = createBuiltinProviderRegistry();
+    const codexDesc = registry.resolve('builtin:codex');
+    const claudeDesc = registry.resolve('builtin:claude-code');
+    const codexProvider = new FakeProvider(codexDesc, 'builtin:codex');
+    const claudeProvider = new FakeProvider(claudeDesc, 'builtin:claude-code');
+    registry.registerImplementation(codexDesc.id, codexProvider);
+    registry.registerImplementation(claudeDesc.id, claudeProvider);
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: new AgentRuntimeProviderCatalog({ registry }),
+      log: {
+        info: () => undefined,
+        warn: () => undefined,
+        error: () => undefined,
+      },
+    });
+
+    await service.spawn({
+      dispatcherId: 'flow',
+      name: 'claude-mate',
+      providerRef: 'builtin:claude-code',
+      prompt: 'go',
+      cwd: root,
+    });
+    expect(claudeProvider.contexts).toHaveLength(1);
+    expect(claudeProvider.contexts[0]?.dispatcher).toBeNull();
+
+    await service.spawn({
+      dispatcherId: 'flow',
+      name: 'codex-mate',
+      providerRef: 'builtin:codex',
+      prompt: 'go',
+      cwd: root,
+    });
+    expect(codexProvider.contexts).toHaveLength(1);
+    expect(codexProvider.contexts[0]?.dispatcher).not.toBeNull();
+    expect(codexProvider.contexts[0]?.dispatcher?.runtime.provider).toBe(
+      'builtin:codex',
+    );
   });
 
   it('spawns a named resumable teammate and records forward-only history', async () => {
