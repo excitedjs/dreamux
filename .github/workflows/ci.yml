@@ -173,6 +173,8 @@ jobs:
       # built first or dependents fail to find its types on a clean runner.
       - name: rush build
         run: node common/scripts/install-run-rush.js build
+      - name: rush built CLI smoke
+        run: node common/scripts/install-run-rush.js smoke-built-cli
       - name: rush typecheck
         run: node common/scripts/install-run-rush.js typecheck
       # Enforce the issue #85 synchronous-blocking-IO ban (n/no-sync + import /

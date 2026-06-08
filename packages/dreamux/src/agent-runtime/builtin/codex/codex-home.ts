@@ -14,7 +14,7 @@ async function pathExists(path: string): Promise<boolean> {
 import { parse as parseToml, TomlError } from 'smol-toml';
 
 import {
-  DREAMUX_UNIX_SOCKET_PATH_MAX_BYTES,
+  DREAMUX_UNIX_SOCKET_PATH_MAX_BYTES as DISPATCHER_APP_SERVER_SOCKET_PATH_MAX_BYTES,
   defaultDispatcherCwd,
   unixSocketPathFitsBudget,
 } from '../../../platform/paths.js';
@@ -27,8 +27,7 @@ import {
   dispatcherWorkspaceSkillPath,
 } from './paths.js';
 
-export const DISPATCHER_APP_SERVER_SOCKET_PATH_MAX_BYTES =
-  DREAMUX_UNIX_SOCKET_PATH_MAX_BYTES;
+export { DISPATCHER_APP_SERVER_SOCKET_PATH_MAX_BYTES };
 
 export interface DispatcherCodexHomeDoctorContext {
   dispatcherId: string;

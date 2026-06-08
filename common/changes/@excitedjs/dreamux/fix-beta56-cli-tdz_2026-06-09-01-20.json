@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Fix a built CLI startup crash caused by ESM initialization cycles reading imported bindings too early, and add a built dreamux --version smoke gate before CI and release publish steps.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

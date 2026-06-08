@@ -42,7 +42,7 @@ export const BUNDLED_SKILL_NAMES = [
 
 export type BundledSkillName = typeof BUNDLED_SKILL_NAMES[number];
 
-let currentConfig: DreamuxConfig = BUILT_IN_DEFAULTS;
+let currentConfig: DreamuxConfig | null = null;
 
 /**
  * Set the active configuration snapshot. Called once by Server.start() with
@@ -55,11 +55,11 @@ export function setRuntimeConfig(config: DreamuxConfig): void {
 
 /** Test hook: revert to the built-in defaults. */
 export function resetRuntimeConfig(): void {
-  currentConfig = BUILT_IN_DEFAULTS;
+  currentConfig = null;
 }
 
 export function getRuntimeConfig(): DreamuxConfig {
-  return currentConfig;
+  return currentConfig ?? BUILT_IN_DEFAULTS;
 }
 
 export function dreamuxRoot(): string {
