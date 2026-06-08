@@ -16,7 +16,7 @@ import { parse as parseToml, TomlError } from 'smol-toml';
 import {
   DREAMUX_UNIX_SOCKET_PATH_MAX_BYTES,
   dispatcherAppServerControlDir,
-  dispatcherCodexCwd,
+  defaultDispatcherCwd,
   dispatcherCodexConfigPath,
   dispatcherCodexHome,
   dispatcherWorkspaceCodexSkillsDir,
@@ -64,7 +64,7 @@ export function dispatcherCodexHomeDoctorContext(
   dispatcherId: string,
   options: DoctorContextOptions = {},
 ): DispatcherCodexHomeDoctorContext {
-  const dispatcherCwd = options.dispatcherCwd ?? dispatcherCodexCwd(dispatcherId);
+  const dispatcherCwd = options.dispatcherCwd ?? defaultDispatcherCwd(dispatcherId);
   return {
     dispatcherId,
     codexHome: dispatcherCodexHome(dispatcherId),

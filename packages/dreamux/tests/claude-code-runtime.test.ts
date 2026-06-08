@@ -21,7 +21,10 @@ import { claudeCodeMcpConfig } from '../src/agent-runtime/builtin/claude-code/mc
 import { claudeCodeResidentArgs } from '../src/agent-runtime/builtin/claude-code/args.js';
 import { codexMcpServerArgs } from '../src/agent-runtime/builtin/codex/mcp-config.js';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
-import { dispatcherClaudeCodeMcpConfigPath } from '../src/platform/paths.js';
+import {
+  defaultDispatcherCwd,
+  dispatcherClaudeCodeMcpConfigPath,
+} from '../src/platform/paths.js';
 import { defaultDispatcherClaudeCodeConfig } from '../src/config/config.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
@@ -244,6 +247,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       row: row!,
       dispatcher,
       dispatchers: store,
+      cwd: defaultDispatcherCwd('flow'),
       mcpServers: [FEISHU_MCP],
       log: () => {
         /* test sink */
@@ -513,6 +517,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       row: row!,
       dispatcher,
       dispatchers: store,
+      cwd: defaultDispatcherCwd('flow'),
       mcpServers: [],
       log: () => {
         /* test sink */

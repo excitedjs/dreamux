@@ -276,6 +276,7 @@ export class TeamMateAgentService {
       row,
       dispatcher: this.dispatcherConfig(dispatcherId),
       dispatchers: this.opts.dispatchers,
+      cwd: identity.cwd,
       state,
       paths: this.runtimePaths(identity),
       mcpServers: [
@@ -336,7 +337,6 @@ export class TeamMateAgentService {
       bot_app_id: `teammate-${identity.name}`,
       bot_secret_ref: '',
       codex_args_json: '{}',
-      codex_cwd: identity.cwd,
       thread_id: identity.checkpoint?.id ?? null,
       status: 'declared',
       enabled: 1,
@@ -397,8 +397,10 @@ export class TeamMateAgentService {
 
   private resolveCwd(dispatcherId: string, input: string | undefined): string {
     if (input !== undefined && input !== '') return input;
-    const row = this.opts.dispatchers.get(dispatcherId);
-    return row?.codex_cwd ?? dispatcherTeamMateRuntimeDir(dispatcherId, 'default');
+    return (
+      this.dispatcherConfig(dispatcherId)?.cwd ??
+      dispatcherTeamMateRuntimeDir(dispatcherId, 'default')
+    );
   }
 
   private toStatus(

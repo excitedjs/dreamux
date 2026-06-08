@@ -12,7 +12,7 @@ import {
 import { BUILT_IN_DEFAULTS } from '../src/config/config.js';
 import {
   dispatcherAppServerControlDir,
-  dispatcherCodexCwd,
+  defaultDispatcherCwd,
   dispatcherCodexHome,
   dispatcherWorkspaceSkillPath,
   dispatcherSocketPath,
@@ -165,7 +165,7 @@ function writeDispatcherHome(
   }
 
   if (options.installDispatcherSkill === false) return;
-  const skillPath = dispatcherWorkspaceSkillPath(dispatcherCodexCwd(dispatcherId));
+  const skillPath = dispatcherWorkspaceSkillPath(defaultDispatcherCwd(dispatcherId));
   mkdirSync(dirname(skillPath), {
     recursive: true,
   });

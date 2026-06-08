@@ -64,6 +64,7 @@ export function createCodexAgentRuntimeProvider(
       ];
       const runtimeDeps = {
         dispatchers: context.dispatchers,
+        cwd: context.cwd,
         state: context.state,
         paths: context.paths,
         codexBinPath: options.resolveBinPath(codexConfig.bin),

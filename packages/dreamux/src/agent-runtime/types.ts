@@ -141,6 +141,12 @@ export interface AgentRuntimeCreateContext {
   row: DispatcherRow;
   dispatcher: DispatcherConfig | null;
   dispatchers: DispatcherStore;
+  /**
+   * The directory the runtime runs in. Always supplied by whoever launches the
+   * runtime (the Dispatcher Service for dispatcher agents, the dispatcher for
+   * teammate agents); never derived inside the runtime.
+   */
+  cwd: string;
   state?: AgentRuntimeStateStore;
   paths?: AgentRuntimePathContext;
   mcpServers: readonly AgentRuntimeMcpServer[];

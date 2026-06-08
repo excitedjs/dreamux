@@ -75,6 +75,8 @@ const DEFAULT_RESTART_BACKOFF_MAX_MS = 30_000;
 
 export interface CodexRuntimeDeps {
   dispatchers: DispatcherStore;
+  /** Working directory the codex app-server runs in (required launch param). */
+  cwd: string;
   state?: AgentRuntimeStateStore;
   paths?: AgentRuntimePathContext;
   /** Optional bin path override for tests. */
@@ -228,7 +230,7 @@ export class CodexRuntime implements AgentRuntime {
   }
 
   private async startCodexRuntime(): Promise<void> {
-    const cwd = this.row.codex_cwd ?? this.paths.dispatcherCodexCwd(this.dispatcherId);
+    const cwd = this.deps.cwd;
     const socketPath = this.paths.dispatcherSocketPath(this.dispatcherId);
     const extraArgs = this.deps.resolveExtraArgs?.(this.row) ?? [];
     const skillInstallResults = await installBundledWorkspaceSkills({

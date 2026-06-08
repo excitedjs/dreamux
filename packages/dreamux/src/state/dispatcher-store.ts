@@ -33,7 +33,6 @@ export interface DispatcherRow {
   bot_app_id: string;
   bot_secret_ref: string;
   codex_args_json: string;
-  codex_cwd: string | null;
   thread_id: string | null;
   status: DispatcherStatus;
   enabled: 0 | 1;
@@ -50,7 +49,6 @@ export interface DispatcherCreateInput {
   bot_app_id: string;
   bot_secret_ref?: string;
   codex_args_json?: string;
-  codex_cwd?: string | null;
   enabled?: 0 | 1 | boolean;
 }
 
@@ -111,7 +109,6 @@ export class DispatcherStore {
       bot_app_id: input.bot_app_id,
       bot_secret_ref: input.bot_secret_ref ?? `config:${input.dispatcher_id}`,
       codex_args_json: input.codex_args_json ?? '{}',
-      codex_cwd: input.codex_cwd ?? null,
       thread_id: null,
       status: 'declared',
       enabled: normalizeEnabled(input.enabled ?? 1),
@@ -134,7 +131,6 @@ export class DispatcherStore {
       bot_app_id: input.bot_app_id,
       bot_secret_ref: input.bot_secret_ref ?? existing.bot_secret_ref,
       codex_args_json: input.codex_args_json ?? existing.codex_args_json,
-      codex_cwd: input.codex_cwd ?? existing.codex_cwd,
       enabled: normalizeEnabled(input.enabled ?? existing.enabled),
       updated_at: Date.now(),
     };
@@ -242,7 +238,6 @@ function rowDefaults(config: DispatcherConfig, now: number): DispatcherRow {
     bot_app_id: feishu.app_id,
     bot_secret_ref: `config:${config.id}`,
     codex_args_json: dispatcherCodexArgsJson(config),
-    codex_cwd: config.cwd,
     thread_id: null,
     status: 'declared',
     enabled: config.enabled ? 1 : 0,

@@ -34,7 +34,7 @@ import {
   type DispatcherCodexHomeDoctorResult,
 } from '../agent-runtime/builtin/codex/codex-home.js';
 import {
-  dispatcherCodexCwd,
+  defaultDispatcherCwd,
   setRuntimeConfig,
   stateRoot,
 } from '../platform/paths.js';
@@ -262,7 +262,7 @@ async function readDispatchers(
       const codexCliArgs = codexArgsToCli(codexArgs);
       const context = dispatcherCodexHomeDoctorContext(dispatcher.id, {
         codexCliArgs,
-        dispatcherCwd: dispatcher.cwd ?? dispatcherCodexCwd(dispatcher.id),
+        dispatcherCwd: dispatcher.cwd ?? defaultDispatcherCwd(dispatcher.id),
       });
       const foreground = await validateDispatcherCodexHome(context, {
         env,

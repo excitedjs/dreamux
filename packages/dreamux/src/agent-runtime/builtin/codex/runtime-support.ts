@@ -1,6 +1,6 @@
 import type { DispatcherStore } from '../../../state/dispatcher-store.js';
 import {
-  dispatcherCodexCwd,
+  defaultDispatcherCwd,
   dispatcherSocketPath,
   dispatcherStderrLog,
   dispatcherStdoutLog,
@@ -25,7 +25,7 @@ export function formatCodexTeamMateCompletion(
 }
 
 export const defaultCodexRuntimePaths: AgentRuntimePathContext = {
-  dispatcherCodexCwd,
+  dispatcherCodexCwd: defaultDispatcherCwd,
   dispatcherSocketPath,
   dispatcherStdoutLog,
   dispatcherStderrLog,

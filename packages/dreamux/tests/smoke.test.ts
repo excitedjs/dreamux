@@ -50,7 +50,7 @@ import {
 } from '../src/config/config.js';
 import {
   dispatcherAppServerControlDir,
-  dispatcherCodexCwd,
+  defaultDispatcherCwd,
   dispatcherCodexHome,
   bundledSkillDir,
   dispatcherWorkspaceSkillDir,
@@ -342,7 +342,7 @@ function writeReadyDispatcherCodexHome(dispatcherId: string, dispatcherCwd?: str
   writeFileSync(join(dispatcherCodexHome(dispatcherId), 'auth.json'), '{}', {
     mode: 0o600,
   });
-  mkdirSync(dispatcherCwd ?? dispatcherCodexCwd(dispatcherId), { recursive: true });
+  mkdirSync(dispatcherCwd ?? defaultDispatcherCwd(dispatcherId), { recursive: true });
 }
 
 interface ConfigDispatcherOverrides {
@@ -390,7 +390,7 @@ describe('dreamux MVP smoke', () => {
     runtimeDir = mkdtempSync(join(tmpdir(), 'dreamux-'));
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(runtimeDir, 'home');
-    mkdirSync(dispatcherCodexCwd('flow'), { recursive: true });
+    mkdirSync(defaultDispatcherCwd('flow'), { recursive: true });
     codexInputs = [];
     fake = await startFakeCodex({
       replyFor: captureAndEchoCodexInput(codexInputs),
@@ -559,7 +559,7 @@ describe('dreamux MVP smoke', () => {
       dispatcherSocketPath('flow'),
     );
     const dispatcherSkillDir = dispatcherWorkspaceSkillDir(
-      dispatcherCodexCwd('flow'),
+      defaultDispatcherCwd('flow'),
       'dispatcher',
     );
     expect(lstatSync(dispatcherSkillDir).isSymbolicLink()).toBe(true);
@@ -1139,13 +1139,7 @@ describe('dreamux MVP smoke', () => {
       bot,
       capturedCodexOptions,
       useDefaultCodexHomeDoctor: true,
-    });
-    server.repos.dispatchers.create({
-      dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
-      codex_args_json: JSON.stringify({ sandboxMode: 'danger-full-access' }),
-      codex_cwd: join(runtimeDir, 'workspace'),
+      config: configWithDispatcher({ cwd: join(runtimeDir, 'workspace') }),
     });
     writeReadyDispatcherCodexHome('flow', join(runtimeDir, 'workspace'));
 

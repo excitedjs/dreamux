@@ -22,7 +22,7 @@ import {
 } from '../../state/dispatcher-store.js';
 import {
   adminSocketPath as defaultAdminSocketPath,
-  dispatcherCodexCwd,
+  defaultDispatcherCwd,
 } from '../../platform/paths.js';
 import {
   loggerToLevelFn,
@@ -164,6 +164,7 @@ export class DispatcherAgentService {
     const runtimeProvider = this.opts.agentRuntimeProviders.resolve(
       dispatcherConfig?.runtime.provider ?? BUILTIN_CODEX_PROVIDER_REF,
     );
+    const cwd = dispatcherConfig?.cwd ?? defaultDispatcherCwd(id);
     const channelLog = this.opts.channelLoggerFactory(id);
     const channel = new FeishuChannelSession({
       dispatcherId: id,
@@ -182,6 +183,7 @@ export class DispatcherAgentService {
       row,
       dispatchers: this.opts.dispatchers,
       dispatcher: dispatcherConfig ?? null,
+      cwd,
       mcpServers: this.dreamuxMcpServerDescriptors(channel, id),
       log: loggerToLevelFn(channelLog),
     });
@@ -215,7 +217,7 @@ export class DispatcherAgentService {
       {
         dispatcher_id: id,
         bot_app_id: row.bot_app_id,
-        cwd: row.codex_cwd ?? dispatcherCodexCwd(id),
+        cwd,
       },
       'dispatcher ready',
     );

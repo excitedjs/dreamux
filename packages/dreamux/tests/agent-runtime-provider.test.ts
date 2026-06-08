@@ -137,6 +137,7 @@ describe('AgentRuntimeProviderCatalog', () => {
       row: row!,
       dispatcher,
       dispatchers: store,
+      cwd: '/tmp/dreamux-test-cwd',
       mcpServers: [],
       log: () => {
         /* test sink */
@@ -220,6 +221,7 @@ describe('AgentRuntimeProviderCatalog', () => {
       row: store.get('flow')!,
       dispatcher,
       dispatchers: store,
+      cwd: '/tmp/dreamux-test-cwd',
       mcpServers: [],
       log: () => undefined,
     });

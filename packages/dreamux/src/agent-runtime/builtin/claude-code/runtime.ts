@@ -66,7 +66,6 @@ import {
 import {
   dispatcherClaudeCodeMcpConfigPath,
   dispatcherClaudeCodeStreamLogPath,
-  dispatcherCodexCwd,
 } from '../../../platform/paths.js';
 import { dispatcherProcessEnv } from '../../../platform/package-bin.js';
 import { claudeCodeResidentArgs } from './args.js';
@@ -177,10 +176,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
         ? defaultDispatcherClaudeCodeConfig()
         : dispatcherClaudeCodeConfig(context.dispatcher);
     this.bin = deps.resolveBinPath(this.config.bin);
-    this.cwd =
-      context.row.codex_cwd ??
-      (context.paths?.dispatcherCodexCwd(this.dispatcherId) ??
-        dispatcherCodexCwd(this.dispatcherId));
+    this.cwd = context.cwd;
     this.mcpConfigPath =
       context.paths?.dispatcherClaudeCodeMcpConfigPath(this.dispatcherId) ??
       dispatcherClaudeCodeMcpConfigPath(this.dispatcherId);

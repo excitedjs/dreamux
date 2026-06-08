@@ -32,7 +32,7 @@ import {
 import { runFeishuMcp } from '../src/mcp/feishu-mcp.js';
 import { BUILT_IN_DEFAULTS, type DreamuxConfig } from '../src/config/config.js';
 import {
-  dispatcherCodexCwd,
+  defaultDispatcherCwd,
   dispatcherCodexHome,
 } from '../src/platform/paths.js';
 import { startFakeCodex, type FakeCodex } from './fake-codex.js';
@@ -225,7 +225,7 @@ function writeReadyDispatcherWorkspace(dispatcherId: string): void {
   writeFileSync(join(dispatcherCodexHome(dispatcherId), 'auth.json'), '{}', {
     mode: 0o600,
   });
-  mkdirSync(dispatcherCodexCwd(dispatcherId), { recursive: true });
+  mkdirSync(defaultDispatcherCwd(dispatcherId), { recursive: true });
 }
 
 describe('dreamux cross-module e2e', () => {

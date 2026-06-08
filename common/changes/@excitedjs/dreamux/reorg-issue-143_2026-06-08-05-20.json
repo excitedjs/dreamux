@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "BREAKING: remove status.json field codex_cwd; the dispatcher runtime cwd is now a required launch parameter supplied by the Dispatcher Service. Rebuild: none required — status.json is rebuildable recovery state and repopulates on next start.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

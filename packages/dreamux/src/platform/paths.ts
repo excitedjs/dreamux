@@ -99,7 +99,7 @@ export function dispatcherDir(id: string): string {
   return join(stateRoot(), dispatcherPathSegment(id));
 }
 
-export function dispatcherCodexCwd(id: string): string {
+export function defaultDispatcherCwd(id: string): string {
   return join(dispatcherDir(id), 'cwd');
 }
 

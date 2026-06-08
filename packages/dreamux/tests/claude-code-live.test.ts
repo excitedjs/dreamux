@@ -113,6 +113,7 @@ describe('claude-code live integration (opt-in)', () => {
       row: row!,
       dispatcher,
       dispatchers: store,
+      cwd: home,
       mcpServers: [],
       log: () => {
         /* live test sink */
