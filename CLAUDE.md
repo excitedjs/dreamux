@@ -152,6 +152,12 @@ explicitly supersedes the top-level design.
   first.** Any
   RPC before `initialize` is rejected with `Not initialized` on codex
   0.134+ — confirmed end-to-end in `tests/codex-0135-live.test.ts`.
+- **Teammate reverse-delivery requires codex 0.137+.** `completionInput`
+  delivers a finished teammate's result to the dispatcher via
+  `thread/inject_items` (codex 0.137+; see issue #147), then triggers a turn.
+  Older codex versions lack that RPC, so completion delivery fails loudly with a
+  0.137 hint rather than silently dropping. The proactive doctor/version gate for
+  this lives with the per-runtime `diagnostic` capability (issue #148).
 - **Tests that depend on a real codex install fail loudly when codex is
   missing**, not silent skip. Opt-in skip via `DREAMUX_SKIP_LIVE_CODEX=1`
   (see `tests/codex-0135-live.test.ts`'s docstring).

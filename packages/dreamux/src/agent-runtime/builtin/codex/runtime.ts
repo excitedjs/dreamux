@@ -469,9 +469,15 @@ export class CodexRuntime implements AgentRuntime {
           buildCodexCompletionItem(completion),
         ]);
       } catch (err) {
+        const cause = err instanceof Error ? err.message : String(err);
+        // `thread/inject_items` exists only on codex 0.137+. On an older codex
+        // it RPC-fails here, so surface the version requirement loudly rather
+        // than letting the dispatcher silently never see the completion.
         return {
           status: 'failed',
-          error: err instanceof Error ? err : new Error(String(err)),
+          error: new Error(
+            `teammate completion thread/inject_items failed (requires codex 0.137+): ${cause}`,
+          ),
         };
       }
       this.rememberInjectedCompletion(completion.id);
