@@ -24,12 +24,10 @@ export function dispatcherProcessEnv(
     ...baseEnv,
     ...extraEnv,
   };
-  const env: NodeJS.ProcessEnv = {
+  return {
     ...mergedEnv,
     PATH: prependPath(packageBinDirs(mergedEnv), mergedEnv['PATH']),
   };
-  delete env['CODEX_HOME'];
-  return env;
 }
 
 /**

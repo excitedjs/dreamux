@@ -23,7 +23,6 @@ import { loadConfig } from '../config/config.js';
 import { createLogger } from '../platform/logger.js';
 import {
   adminSocketPath,
-  codexAppServerLogDir,
   feishuChannelLogDir,
   feishuChannelLogPath,
   feishuMcpLogDir,
@@ -31,6 +30,7 @@ import {
   serverLogPath,
   stateRoot,
 } from '../platform/paths.js';
+import { codexAppServerLogDir } from '../agent-runtime/builtin/codex/paths.js';
 
 async function main(): Promise<void> {
   if (process.argv.includes('--help') || process.argv.includes('-h')) {

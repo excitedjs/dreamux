@@ -47,7 +47,6 @@ import {
   type DispatcherCodexHomeDoctor,
 } from './codex-home.js';
 import { codexSocketPathIn } from './paths.js';
-import { dispatcherProcessEnv } from '../../../platform/package-bin.js';
 import { installBundledWorkspaceSkills } from '../../../onboard/bundled-skills.js';
 import { DREAMUX_DISPATCHER_BASE_INSTRUCTIONS } from '../../../dispatcher-service/dispatcher/base-prompt.js';
 import type {
@@ -65,6 +64,7 @@ import type {
 import { BUILTIN_CODEX_PROVIDER_REF } from '../../../config/config.js';
 import { CODEX_AGENT_RUNTIME_CAPABILITIES } from './provider.js';
 import {
+  codexProcessEnv,
   codexRowStateStore,
   defaultCodexRuntimePaths,
   formatCodexTeamMateCompletion,
@@ -269,7 +269,7 @@ export class CodexRuntime implements AgentRuntime {
       stderrLogPath: this.paths.stderrLogPath(this.dispatcherId),
       binPath: this.deps.codexBinPath,
       extraArgs,
-      env: dispatcherProcessEnv(globalThis.process.env, this.deps.extraEnv ?? {}),
+      env: codexProcessEnv(this.deps.extraEnv ?? {}),
     });
     this.process = process;
     process.onExit((exit) => {

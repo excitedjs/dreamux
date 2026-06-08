@@ -51,13 +51,13 @@ import {
 import {
   defaultDispatcherCwd,
   bundledSkillDir,
-  dispatcherWorkspaceSkillDir,
   restartIntentPath,
 } from '../src/platform/paths.js';
 import {
   dispatcherAppServerControlDir,
   dispatcherCodexHome,
   dispatcherSocketPath,
+  dispatcherWorkspaceSkillDir,
 } from '../src/agent-runtime/builtin/codex/paths.js';
 import { writeRestartIntent } from '../src/daemon/restart-intent.js';
 import { dreamuxBinPath } from '../src/platform/package-bin.js';

@@ -15,11 +15,13 @@ import type { CommandRunner } from '../src/onboard/types.js';
 import type { ServiceNodeProbe } from '../src/onboard/service.js';
 import {
   defaultDispatcherCwd,
-  dispatcherWorkspaceSkillPath,
   resetRuntimeConfig,
   stateRoot,
 } from '../src/platform/paths.js';
-import { dispatcherCodexHome } from '../src/agent-runtime/builtin/codex/paths.js';
+import {
+  dispatcherCodexHome,
+  dispatcherWorkspaceSkillPath,
+} from '../src/agent-runtime/builtin/codex/paths.js';
 import { testDispatcherConfig } from './helpers/config.js';
 
 class FakeRunner implements CommandRunner {

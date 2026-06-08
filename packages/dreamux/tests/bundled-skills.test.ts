@@ -19,8 +19,8 @@ import {
 import {
   BUNDLED_SKILL_NAMES,
   bundledSkillDir,
-  dispatcherWorkspaceSkillDir,
 } from '../src/platform/paths.js';
+import { dispatcherWorkspaceSkillDir } from '../src/agent-runtime/builtin/codex/paths.js';
 
 describe('bundled workspace skill installer', () => {
   let root: string;

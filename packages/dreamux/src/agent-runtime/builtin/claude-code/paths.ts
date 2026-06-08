@@ -10,11 +10,20 @@
 import { join } from 'node:path';
 
 import {
-  claudeCodeLogDir,
   dispatcherDir,
   dispatcherPathSegment,
+  logsRoot,
   teamMateNameSegment,
 } from '../../../platform/paths.js';
+
+/**
+ * Central Claude Code log directory. Relocated out of `platform/paths`
+ * (issue #143 de-leak) so the shared layer never names `claude-code`; the
+ * string is byte-identical to its former `platform/paths.ts` output.
+ */
+export function claudeCodeLogDir(): string {
+  return join(logsRoot(), 'claude-code');
+}
 
 /**
  * Per-dispatcher Claude Code runtime state dir (issue #110 PR6). Holds the

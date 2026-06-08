@@ -16,8 +16,6 @@ import { parse as parseToml, TomlError } from 'smol-toml';
 import {
   DREAMUX_UNIX_SOCKET_PATH_MAX_BYTES,
   defaultDispatcherCwd,
-  dispatcherWorkspaceCodexSkillsDir,
-  dispatcherWorkspaceSkillPath,
   unixSocketPathFitsBudget,
 } from '../../../platform/paths.js';
 import {
@@ -25,6 +23,8 @@ import {
   dispatcherCodexConfigPath,
   dispatcherCodexHome,
   dispatcherSocketPath,
+  dispatcherWorkspaceCodexSkillsDir,
+  dispatcherWorkspaceSkillPath,
 } from './paths.js';
 
 export const DISPATCHER_APP_SERVER_SOCKET_PATH_MAX_BYTES =

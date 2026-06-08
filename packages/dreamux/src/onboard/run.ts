@@ -8,7 +8,6 @@ import {
   stringifyConfig,
 } from '../config/config.js';
 import {
-  dispatcherWorkspaceCodexSkillsDir,
   logsRoot,
   setRuntimeConfig,
   stateRoot,
@@ -16,6 +15,7 @@ import {
 import {
   dispatcherAppServerControlDir,
   dispatcherCodexHome,
+  dispatcherWorkspaceCodexSkillsDir,
 } from '../agent-runtime/builtin/codex/paths.js';
 import {
   dispatcherCodexHomeDoctorContext,

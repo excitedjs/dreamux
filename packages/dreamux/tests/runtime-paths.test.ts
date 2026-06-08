@@ -7,7 +7,6 @@ import {
   DREAMUX_UNIX_SOCKET_PATH_MAX_BYTES,
   BUNDLED_SKILL_NAMES,
   adminSocketPath,
-  codexAppServerLogDir,
   dispatcherAccessPath,
   dispatcherDir,
   dispatcherFeishuAttachmentCacheDir,
@@ -23,9 +22,6 @@ import {
   teammateMcpLogDir,
   teammateMcpLogPath,
   dispatcherStatusPath,
-  dispatcherWorkspaceCodexSkillsDir,
-  dispatcherWorkspaceSkillDirs,
-  dispatcherWorkspaceSkillPath,
   dreamuxRoot,
   logsRoot,
   resetRuntimeConfig,
@@ -35,9 +31,13 @@ import {
   unixSocketPathFitsBudget,
 } from '../src/platform/paths.js';
 import {
+  codexAppServerLogDir,
   dispatcherCodexAppServerErrorLogPath,
   dispatcherCodexAppServerLogPath,
   dispatcherSocketPath,
+  dispatcherWorkspaceCodexSkillsDir,
+  dispatcherWorkspaceSkillDirs,
+  dispatcherWorkspaceSkillPath,
   teammateCodexAppServerErrorLogPath,
   teammateCodexAppServerLogPath,
 } from '../src/agent-runtime/builtin/codex/paths.js';

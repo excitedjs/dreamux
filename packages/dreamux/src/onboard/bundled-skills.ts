@@ -14,10 +14,12 @@ import { dirname, resolve } from 'node:path';
 import {
   BUNDLED_SKILL_NAMES,
   bundledSkillDir,
-  dispatcherWorkspaceCodexSkillsDir,
-  dispatcherWorkspaceSkillDir,
   type BundledSkillName,
 } from '../platform/paths.js';
+import {
+  dispatcherWorkspaceCodexSkillsDir,
+  dispatcherWorkspaceSkillDir,
+} from '../agent-runtime/builtin/codex/paths.js';
 
 /** Async existence probe - the fs/promises replacement for existsSync. */
 async function pathExists(path: string): Promise<boolean> {

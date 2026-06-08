@@ -103,27 +103,6 @@ export function defaultDispatcherCwd(id: string): string {
   return join(dispatcherDir(id), 'cwd');
 }
 
-export function dispatcherWorkspaceCodexSkillsDir(cwd: string): string {
-  return join(cwd, '.codex', 'skills');
-}
-
-export function dispatcherWorkspaceSkillDir(
-  cwd: string,
-  skillName: BundledSkillName,
-): string {
-  return join(dispatcherWorkspaceCodexSkillsDir(cwd), skillName);
-}
-
-export function dispatcherWorkspaceSkillDirs(cwd: string): string[] {
-  return BUNDLED_SKILL_NAMES.map((skillName) =>
-    dispatcherWorkspaceSkillDir(cwd, skillName),
-  );
-}
-
-export function dispatcherWorkspaceSkillPath(cwd: string): string {
-  return join(dispatcherWorkspaceSkillDir(cwd, 'dispatcher'), 'SKILL.md');
-}
-
 export function bundledSkillsDir(): string {
   return join(PACKAGE_ROOT, 'skills');
 }
@@ -148,10 +127,6 @@ export function packagedChangelogJsonPath(): string {
 
 export function serverLogPath(): string {
   return join(logsRoot(), 'dreamux-server.log');
-}
-
-export function codexAppServerLogDir(): string {
-  return join(logsRoot(), 'codex-app-server');
 }
 
 export function feishuChannelLogDir(): string {
@@ -182,10 +157,6 @@ export function teammateMcpLogDir(): string {
 /** Per-dispatcher TeamMate scheduling MCP stdio shim diagnostics. */
 export function teammateMcpLogPath(id: string): string {
   return join(teammateMcpLogDir(), `${dispatcherPathSegment(id)}.log`);
-}
-
-export function claudeCodeLogDir(): string {
-  return join(logsRoot(), 'claude-code');
 }
 
 export function dispatcherStatusPath(id: string): string {

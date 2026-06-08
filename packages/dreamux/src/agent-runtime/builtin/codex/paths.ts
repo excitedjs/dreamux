@@ -10,12 +10,50 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  BUNDLED_SKILL_NAMES,
   assertUnixSocketPathBudget,
-  codexAppServerLogDir,
   dispatcherDir,
   dispatcherPathSegment,
+  logsRoot,
   teamMateNameSegment,
+  type BundledSkillName,
 } from '../../../platform/paths.js';
+
+/**
+ * Central Codex app-server log directory. Relocated out of `platform/paths`
+ * (issue #143 de-leak) so the shared layer never names `codex-app-server`; the
+ * string is byte-identical to its former `platform/paths.ts` output.
+ */
+export function codexAppServerLogDir(): string {
+  return join(logsRoot(), 'codex-app-server');
+}
+
+/**
+ * Workspace-local Codex skills dir (`<cwd>/.codex/skills`). Codex reads skills
+ * from here; relocated out of `platform/paths` (issue #143 de-leak) so the
+ * shared layer never names `.codex`. The bundled-skill wrappers below build on
+ * it. Strings are byte-identical to their former `platform/paths.ts` output.
+ */
+export function dispatcherWorkspaceCodexSkillsDir(cwd: string): string {
+  return join(cwd, '.codex', 'skills');
+}
+
+export function dispatcherWorkspaceSkillDir(
+  cwd: string,
+  skillName: BundledSkillName,
+): string {
+  return join(dispatcherWorkspaceCodexSkillsDir(cwd), skillName);
+}
+
+export function dispatcherWorkspaceSkillDirs(cwd: string): string[] {
+  return BUNDLED_SKILL_NAMES.map((skillName) =>
+    dispatcherWorkspaceSkillDir(cwd, skillName),
+  );
+}
+
+export function dispatcherWorkspaceSkillPath(cwd: string): string {
+  return join(dispatcherWorkspaceSkillDir(cwd, 'dispatcher'), 'SKILL.md');
+}
 
 /** Codex app-server control directory — the per-dispatcher state root. */
 export function dispatcherAppServerControlDir(id: string): string {
