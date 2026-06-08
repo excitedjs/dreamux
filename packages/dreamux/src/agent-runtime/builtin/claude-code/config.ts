@@ -37,10 +37,13 @@ import {
  * Code binary; `model` / `permission_mode` map to `--model` / `--permission-mode`;
  * `extra_args` / `extra_env` are passed through. `model` and `permission_mode`
  * are `null` when the operator does not pin them (Claude Code's own defaults
- * apply). `turn_timeout_ms` bounds a single resident turn (issue #120): if the
- * still-alive child never emits a terminal `result` for a turn, the runtime
- * fails that turn and reaps/re-spawns the child rather than wedging the serial
- * turn queue (and, behind it, TeamMate completion delivery) forever.
+ * apply). `turn_timeout_ms` is a per-turn *idle / inactivity* window (issue #120
+ * anti-hang, made idle-based in issue #156): it is reset on every inbound stream
+ * line, so it bounds the max time the still-alive child may emit *no* stream
+ * activity — not the total turn duration. A child silent for the whole window is
+ * failed and reaped/re-spawned (rather than wedging the serial turn queue and,
+ * behind it, TeamMate completion delivery), while a long but actively-streaming
+ * turn never trips it.
  */
 export interface DispatcherClaudeCodeConfig {
   bin: string;
@@ -55,10 +58,11 @@ export interface DispatcherClaudeCodeConfig {
 export const DEFAULT_CLAUDE_CODE_BIN = 'claude';
 
 /**
- * Default per-turn deadline for the resident `builtin:claude-code` child (ms).
- * Generous enough not to interrupt a legitimately long tool-using turn, but
- * finite so a child that stalls without a terminal `result` cannot wedge the
- * dispatcher (issue #120). Operators can override via
+ * Default per-turn *idle* window for the resident `builtin:claude-code` child
+ * (ms). This is the max time the child may emit no stream activity before the
+ * turn is failed and the child reaped (issue #120 anti-hang, idle-based since
+ * issue #156) — it is reset on every stream line, so it does not cap a long but
+ * actively-streaming turn. Operators can override via
  * `dispatchers[].runtime.config.turn_timeout_ms`.
  */
 export const DEFAULT_CLAUDE_CODE_TURN_TIMEOUT_MS = 600_000;

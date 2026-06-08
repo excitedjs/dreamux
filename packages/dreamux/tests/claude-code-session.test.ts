@@ -81,7 +81,9 @@ describe('resident claude session (real child, fake stream-json protocol)', () =
     await session.start();
     expect(session.isAlive()).toBe(true);
 
-    await expect(session.submitTurn('hangs forever')).rejects.toThrow(/timed out/i);
+    await expect(session.submitTurn('hangs forever')).rejects.toThrow(
+      /stalled|no stream activity/i,
+    );
 
     // The deadline reaped the child, so the runtime re-spawns on the next turn
     // instead of reusing a child with half a turn's output buffered.
@@ -94,7 +96,9 @@ describe('resident claude session (real child, fake stream-json protocol)', () =
   it('does not wedge follow-up work: a submit after a timeout fails fast, not forever', async () => {
     const session = makeSession('stall', 200);
     await session.start();
-    await expect(session.submitTurn('first')).rejects.toThrow(/timed out/i);
+    await expect(session.submitTurn('first')).rejects.toThrow(
+      /stalled|no stream activity/i,
+    );
 
     // A follow-up submit returns promptly (rejected) rather than hanging — the
     // property that keeps the serial queue and TeamMate delivery retry moving.

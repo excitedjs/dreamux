@@ -110,13 +110,16 @@ Implementation status:
     loudly at `start()` (degraded + throw, Codex-aligned); an
     unexpected child exit marks the runtime degraded and the next turn re-spawns
     with `--resume <session_id>` (lazy restart bound to the serial turn queue, no
-    background backoff timer). A per-turn deadline
+    background backoff timer). A per-turn *idle* deadline
     (`turn_timeout_ms`, default 600000) bounds every turn at the session layer:
-    if a still-alive child never emits a terminal `result`, the turn fails and
-    the child is reaped, so a stall becomes a normal degraded / `failed`-delivery
-    outcome instead of wedging the serial queue (and TeamMate delivery behind
-    it). A live contract test is opt-in via `DREAMUX_RUN_LIVE_CLAUDE_CODE` (loud
-    skip otherwise, never silent).
+    it is reset on every inbound stream line, so it caps the max idle time the
+    still-alive child may emit no stream activity — not the total turn duration
+    (issue #156). A long but continuously-streaming turn never trips it; a child
+    that goes silent for the whole window has its turn failed and is reaped, so a
+    stall becomes a normal degraded / `failed`-delivery outcome instead of
+    wedging the serial queue (and TeamMate delivery behind it). A live contract
+    test is opt-in via `DREAMUX_RUN_LIVE_CLAUDE_CODE` (loud skip otherwise, never
+    silent).
   - The resident protocol model and process-supervision shape are adapted from
     the Claudemux `next` implementation; the AgentRuntime provider seam,
     runtime-owned MCP injection, degraded/`last_error` status, and TeamMate
