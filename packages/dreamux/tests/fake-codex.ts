@@ -60,6 +60,8 @@ export interface FakeCodex {
   readonly threadStartParams: ReadonlyArray<Readonly<Record<string, unknown>>>;
   /** thread/resume params received in order. */
   readonly threadResumeParams: ReadonlyArray<Readonly<Record<string, unknown>>>;
+  /** thread/inject_items params received in order. */
+  readonly injectItemsParams: ReadonlyArray<Readonly<Record<string, unknown>>>;
   close(): Promise<void>;
 }
 
@@ -75,6 +77,7 @@ export async function startFakeCodex(opts: FakeCodexOptions = {}): Promise<FakeC
   const methodLog: string[] = [];
   const threadStartParams: Array<Record<string, unknown>> = [];
   const threadResumeParams: Array<Record<string, unknown>> = [];
+  const injectItemsParams: Array<Record<string, unknown>> = [];
   const enforceInit = opts.enforceInitHandshake !== false;
   const clients = new Set<WebSocket>();
   let activeTurn: {
@@ -158,6 +161,11 @@ export async function startFakeCodex(opts: FakeCodexOptions = {}): Promise<FakeC
       }
       const tid = String(params['threadId'] ?? `thread_fake_${nextThreadId++}`);
       send(ws, { id, result: { thread: { id: tid } } });
+      return;
+    }
+    if (method === 'thread/inject_items') {
+      injectItemsParams.push({ ...params });
+      send(ws, { id, result: {} });
       return;
     }
     if (method === 'turn/start') {
@@ -252,6 +260,9 @@ export async function startFakeCodex(opts: FakeCodexOptions = {}): Promise<FakeC
     },
     get threadResumeParams() {
       return threadResumeParams;
+    },
+    get injectItemsParams() {
+      return injectItemsParams;
     },
     async close(): Promise<void> {
       for (const ws of clients) ws.terminate();

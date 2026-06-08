@@ -20,6 +20,7 @@ import type {
   ClaudeCodeSession,
   ClaudeCodeSessionSpec,
   TurnOutcome,
+  TurnSubmitOptions,
 } from './types.js';
 
 /** The live session: spawns and supervises the real `claude` child. */
@@ -103,14 +104,17 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
     child.once('exit', () => this.onChildExit());
   }
 
-  async submitTurn(prompt: string): Promise<TurnOutcome> {
+  async submitTurn(
+    prompt: string,
+    options: TurnSubmitOptions = {},
+  ): Promise<TurnOutcome> {
     if (this.stopped) {
       return Promise.reject(new Error('claude resident session is stopped'));
     }
     if (this.child === null || this.exited || this.rpc === null) {
       return Promise.reject(new Error('claude resident child is not running'));
     }
-    return this.rpc.submitTurn(prompt);
+    return this.rpc.submitTurn(prompt, options);
   }
 
   async stop(): Promise<void> {
@@ -171,4 +175,5 @@ export type {
   ClaudeCodeSessionFactory,
   ClaudeCodeSessionSpec,
   TurnOutcome,
+  TurnSubmitOptions,
 } from './types.js';

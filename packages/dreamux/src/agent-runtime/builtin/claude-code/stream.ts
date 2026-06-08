@@ -31,6 +31,7 @@ import type {
   ParsedLine,
   ResultEnvelope,
   TurnOutcome,
+  TurnSubmitOptions,
 } from './types.js';
 
 export type {
@@ -179,12 +180,25 @@ export function parseLine(line: string): ParsedLine {
 
 // ─── Outbound message builders (stdin) ──────────────────────────────────────
 
-/** One user turn as a stream-json `user` message line (no trailing newline). */
-export function buildUserMessage(text: string): string {
-  return JSON.stringify({
+/**
+ * One user turn as a stream-json `user` message line (no trailing newline).
+ *
+ * `isSynthetic` / `priority` are siblings of `message` on the stdin envelope
+ * (claude-code SDKUserMessage schema), not part of the message body. They are
+ * only set for the native completion-notification idiom; a plain channel turn
+ * omits them entirely and reads as a normal human user turn.
+ */
+export function buildUserMessage(
+  text: string,
+  options: TurnSubmitOptions = {},
+): string {
+  const envelope: Record<string, unknown> = {
     type: 'user',
     message: { role: 'user', content: [{ type: 'text', text }] },
-  });
+  };
+  if (options.isSynthetic === true) envelope['isSynthetic'] = true;
+  if (options.priority !== undefined) envelope['priority'] = options.priority;
+  return JSON.stringify(envelope);
 }
 
 /**

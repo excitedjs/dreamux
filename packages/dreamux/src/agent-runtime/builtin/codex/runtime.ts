@@ -40,7 +40,7 @@ import type {
 import {
   TurnManager,
 } from './turn-manager.js';
-import type { CollectedTurn } from './events.js';
+import { injectThreadItems, type CollectedTurn } from './events.js';
 import type {
   InboundDeliveryHooks,
   InboundTurnInput,
@@ -68,10 +68,11 @@ import type {
 import { BUILTIN_CODEX_PROVIDER_REF } from '../../../config/config.js';
 import { CODEX_AGENT_RUNTIME_CAPABILITIES } from './provider.js';
 import {
+  buildCodexCompletionItem,
+  CODEX_COMPLETION_TRIGGER_TEXT,
   codexProcessEnv,
   codexRowStateStore,
   defaultCodexRuntimePaths,
-  formatCodexTeamMateCompletion,
 } from './runtime-support.js';
 
 const DEFAULT_RESTART_BACKOFF_BASE_MS = 1000;
@@ -419,25 +420,50 @@ export class CodexRuntime implements AgentRuntime {
   }
 
   /**
-   * Codex TeamMate completion delivery (issue #110 PR8): inbox + turn trigger.
-   * The completion is delivered into the dispatcher's Codex thread as a turn via
-   * the public `channelInput` seam — not turn-manager internals — so it
-   * survives the planned move of queue/state to a per-dispatcher state owner.
+   * Codex TeamMate completion delivery — the native inbox-then-trigger idiom.
    *
-   * Each attempt uses a fresh, non-routable source id. The turn manager commits
-   * its dedup id before `turn/start` and does not roll it back on failure, so a
-   * retry that reused one id would come back `duplicate` and be mis-counted as
-   * delivered when nothing was submitted. The Dispatcher Service only retries on
-   * `failed` (turn/start RPC failed → definitely not submitted), so a unique id
-   * per attempt re-submits safely without any double-injection risk.
+   * Two steps, in order:
+   *  1. `thread/inject_items` appends the completion to the dispatcher thread's
+   *     model-visible history as a developer-role message (no fake user turn).
+   *     codex folds the item onto the active turn when one is running and never
+   *     rejects on a busy thread, so a failure here is a genuine RPC error.
+   *  2. a minimal trigger turn through the public `channelInput` seam wakes the
+   *     idle dispatcher so it reads the just-injected notification and acts.
+   *
+   * The trigger turn uses a fresh, non-routable source id per attempt. The turn
+   * manager commits its dedup id before `turn/start` and does not roll it back
+   * on failure, so a retry that reused one id would come back `duplicate` and be
+   * mis-counted as delivered when nothing was submitted. The Dispatcher Service
+   * only retries on `failed` (definitely not submitted), so a unique id per
+   * attempt re-submits the trigger safely.
    */
   async completionInput(
     completion: CompletionEnvelope,
   ): Promise<TeamMateCompletionDeliveryResult> {
+    if (this.client === null || this.turnManager === null || this.stopping) {
+      return { status: 'unsupported', reason: 'dispatcher runtime stopped' };
+    }
+    const threadId = this.threadId;
+    if (threadId === null) {
+      return {
+        status: 'failed',
+        error: new Error('teammate completion delivery has no thread id'),
+      };
+    }
     this.teammateDeliverySeq += 1;
+    try {
+      await injectThreadItems(this.client, threadId, [
+        buildCodexCompletionItem(completion),
+      ]);
+    } catch (err) {
+      return {
+        status: 'failed',
+        error: err instanceof Error ? err : new Error(String(err)),
+      };
+    }
     const delivery = await this.channelInput({
       sourceId: `teammate:${completion.id}#${this.teammateDeliverySeq}`,
-      text: formatCodexTeamMateCompletion(completion),
+      text: CODEX_COMPLETION_TRIGGER_TEXT,
     });
     switch (delivery.status) {
       case 'submitted':
@@ -451,12 +477,12 @@ export class CodexRuntime implements AgentRuntime {
         // turn was NOT freshly submitted, so do not report it as delivered.
         return {
           status: 'failed',
-          error: new Error('teammate completion turn unexpectedly deduplicated'),
+          error: new Error('teammate completion trigger unexpectedly deduplicated'),
         };
       case 'skipped':
         return {
           status: 'failed',
-          error: new Error('teammate completion turn unexpectedly skipped'),
+          error: new Error('teammate completion trigger unexpectedly skipped'),
         };
     }
   }

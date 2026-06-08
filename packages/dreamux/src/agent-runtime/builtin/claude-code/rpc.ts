@@ -15,7 +15,7 @@ import {
   parseLine,
   TurnAggregator,
 } from './stream.js';
-import type { ParsedLine, TurnOutcome } from './types.js';
+import type { ParsedLine, TurnOutcome, TurnSubmitOptions } from './types.js';
 
 interface PendingTurn {
   resolve: (outcome: TurnOutcome) => void;
@@ -39,7 +39,10 @@ export class ClaudeCodeStreamRpc {
     private readonly options: ClaudeCodeStreamRpcOptions,
   ) {}
 
-  async submitTurn(prompt: string): Promise<TurnOutcome> {
+  async submitTurn(
+    prompt: string,
+    options: TurnSubmitOptions = {},
+  ): Promise<TurnOutcome> {
     if (!this.stdin.writable) {
       return Promise.reject(new Error('claude resident child is not running'));
     }
@@ -73,7 +76,7 @@ export class ClaudeCodeStreamRpc {
         this.options.reapOnTimeout();
       }, this.options.turnTimeoutMs);
       this.pending = pending;
-      this.stdin.write(`${buildUserMessage(prompt)}\n`, (err) => {
+      this.stdin.write(`${buildUserMessage(prompt, options)}\n`, (err) => {
         if (err != null && this.pending === pending) {
           this.settlePending()?.reject(
             err instanceof Error ? err : new Error(String(err)),

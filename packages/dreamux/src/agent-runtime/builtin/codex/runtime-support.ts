@@ -26,10 +26,12 @@ export function codexProcessEnv(
   return env;
 }
 
-/** Frame a TeamMate completion as the text of a delivered Codex turn. */
-export function formatCodexTeamMateCompletion(
-  completion: CompletionEnvelope,
-): string {
+/**
+ * Frame a TeamMate completion as recognizable notification text. Delivered as
+ * the body of a developer-role history item (not a fake user turn), so codex
+ * treats it as injected context rather than user intent.
+ */
+function frameCodexCompletion(completion: CompletionEnvelope): string {
   return [
     `<teammate_session_completion source="${completion.source}" ` +
       `id="${completion.id}" status="${completion.status}">`,
@@ -37,6 +39,40 @@ export function formatCodexTeamMateCompletion(
     '</teammate_session_completion>',
   ].join('\n');
 }
+
+/**
+ * Build the raw Responses API item injected into the dispatcher thread's
+ * model-visible history via `thread/inject_items`. A `message` item with role
+ * `developer` carries the completion as system-injected context — codex appends
+ * it to history without starting a user turn (codex_thread.rs
+ * `inject_response_items`). The shape matches codex's `ResponseItem::Message`
+ * (`type: "message"`, `role`, `content`) with a `ContentItem::InputText`
+ * (`type: "input_text"`); `id` / `phase` are omitted (codex `skip_serializing`).
+ *
+ * Role `developer` (not codex's own user-role `<subagent_notification>`) is
+ * deliberate: that tag is wired to codex's real subagent system, whereas a
+ * neutral developer message is model-visible text codex will not try to
+ * interpret as engine-internal state.
+ */
+export function buildCodexCompletionItem(
+  completion: CompletionEnvelope,
+): Record<string, unknown> {
+  return {
+    type: 'message',
+    role: 'developer',
+    content: [{ type: 'input_text', text: frameCodexCompletion(completion) }],
+  };
+}
+
+/**
+ * Minimal user-turn text that wakes the idle dispatcher after a completion is
+ * injected. The injected developer item carries the actual result; this turn
+ * only triggers the model to read the just-injected notification and act.
+ */
+export const CODEX_COMPLETION_TRIGGER_TEXT =
+  'A TeamMate session you dispatched has settled. Its outcome was just delivered ' +
+  'into your context as a <teammate_session_completion> item. Review it and take ' +
+  'any needed follow-up; if nothing is needed, you may end this turn.';
 
 export const defaultCodexRuntimePaths: AgentRuntimePathContext = {
   dispatcherDir,

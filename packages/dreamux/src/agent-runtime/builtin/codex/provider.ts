@@ -57,7 +57,8 @@ export const CODEX_AGENT_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = {
     {
       kind: 'codexInboxTurn',
       description:
-        'write completion to a runtime inbox, then trigger a dispatcher turn',
+        'inject the completion into thread history (thread/inject_items), then ' +
+        'trigger a dispatcher turn',
     },
   ],
 };

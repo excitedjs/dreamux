@@ -16,6 +16,7 @@ import {
   type ClaudeCodeSessionFactory,
   type ClaudeCodeSessionSpec,
   type TurnOutcome,
+  type TurnSubmitOptions,
 } from '../src/agent-runtime/builtin/claude-code/supervisor.js';
 import { claudeCodeMcpConfig } from '../src/agent-runtime/builtin/claude-code/mcp-config.js';
 import { claudeCodeResidentArgs } from '../src/agent-runtime/builtin/claude-code/args.js';
@@ -73,6 +74,8 @@ function okOutcome(sessionId: string | null = 'session-abc'): TurnOutcome {
 interface FakeSession extends ClaudeCodeSession {
   readonly spec: ClaudeCodeSessionSpec;
   readonly prompts: string[];
+  /** Per-turn submit options captured alongside each prompt. */
+  readonly submitOptions: Array<TurnSubmitOptions | undefined>;
   startCount(): number;
   /** Simulate an unexpected child exit (fires the registered onExit). */
   triggerExit(): void;
@@ -101,9 +104,11 @@ function fakeFleet(
     let starts = 0;
     let onExit: (() => void) | null = null;
     const prompts: string[] = [];
+    const submitOptions: Array<TurnSubmitOptions | undefined> = [];
     const session: FakeSession = {
       spec,
       prompts,
+      submitOptions,
       startCount: () => starts,
       async start() {
         starts += 1;
@@ -114,8 +119,9 @@ function fakeFleet(
       setOnExit(handler) {
         onExit = handler;
       },
-      async submitTurn(prompt) {
+      async submitTurn(prompt, options) {
         prompts.push(prompt);
+        submitOptions.push(options);
         const outcome = outcomes[Math.min(turnIndex, outcomes.length - 1)];
         turnIndex += 1;
         if (outcome instanceof Error) throw outcome;
@@ -408,11 +414,26 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
 
     await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
     const prompt = fleet.sessions[0]?.prompts[0] ?? '';
-    expect(prompt).toContain('<teammate_session_completion');
-    expect(prompt).toContain('source="teammate"');
-    expect(prompt).toContain('id="mate-1"');
-    expect(prompt).toContain('status="completed"');
+    // Native claude-code <task-notification> shape, not a self-authored tag.
+    expect(prompt).toContain('<task-notification>');
+    expect(prompt).toContain('<task-id>mate-1</task-id>');
+    expect(prompt).toContain('<status>completed</status>');
+    expect(prompt).toContain('teammate');
+    expect(prompt).toContain('<result>');
     expect(prompt).toContain('all done');
+    expect(prompt).not.toContain('<teammate_session_completion');
+    // Delivered with isSynthetic so claude-code treats it as a notification.
+    expect(fleet.sessions[0]?.submitOptions[0]).toEqual({ isSynthetic: true });
+  });
+
+  it('does not mark a normal channel turn as synthetic', async () => {
+    const fleet = fakeFleet([okOutcome('session-abc')]);
+    const { runtime } = makeRuntime(fleet);
+    await runtime.start();
+
+    await runtime.channelInput({ sourceId: 'm1', text: 'hello' });
+    await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
+    expect(fleet.sessions[0]?.submitOptions[0]).toBeUndefined();
   });
 
   it('stop() reaps the resident session and refuses further inbound', async () => {
