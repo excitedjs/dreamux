@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Load installed npm Agent Runtime providers from dispatchers[].runtime.provider before config validation. External runtime providers now enter through the same provider registry, AgentRuntimeProvider catalog, DispatcherService creation path, and provider-owned capability declaration contract as builtin runtimes. Missing packages, missing exports, invalid provider contracts, incomplete capability declarations, and non-runnable descriptors fail loudly with the selected provider ref.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

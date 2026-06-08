@@ -3,11 +3,12 @@
  *
  * The registry is process-local and server-owned. It validates provider refs and
  * resolves them to provider descriptors; executable providers own their runtime
- * capabilities directly. External `npm:` refs remain reserved until the
- * agentRuntime loader is implemented.
+ * capabilities directly. External `npm:` agentRuntime refs are registered by
+ * the async loader before config validation resolves them.
  */
 
 import {
+  formatProviderRef,
   type ProviderRef,
   isBuiltinRef,
   parseProviderRef,
@@ -18,7 +19,7 @@ export type ProviderKind = 'channel' | 'agentRuntime';
 
 /** A registered provider descriptor. Capabilities live on provider instances. */
 export interface ProviderDescriptor {
-  /** Resolved provider id (the builtin id for builtin refs). */
+  /** Stable registry id; builtin providers use their builtin id. */
   id: string;
   kind: ProviderKind;
   ref: ProviderRef;
@@ -29,6 +30,14 @@ export class DuplicateProviderError extends Error {
   constructor(readonly id: string) {
     super(`provider ${JSON.stringify(id)} is already registered`);
     this.name = 'DuplicateProviderError';
+  }
+}
+
+/** Thrown when registering the same canonical provider ref twice. */
+export class DuplicateProviderRefError extends Error {
+  constructor(readonly ref: string) {
+    super(`provider ref ${JSON.stringify(ref)} is already registered`);
+    this.name = 'DuplicateProviderRefError';
   }
 }
 
@@ -49,14 +58,14 @@ export class UnknownBuiltinProviderError extends Error {
 }
 
 /**
- * Thrown when an external (`npm:`) ref is selected for resolution. Phase 1
- * reserves external refs as syntax but never loads or executes them.
+ * Thrown when an external (`npm:`) ref is selected before the async
+ * agentRuntime loader has registered it.
  */
 export class ReservedExternalProviderError extends Error {
   constructor(readonly ref: string) {
     super(
-      `external provider ref ${JSON.stringify(ref)} is reserved but not ` +
-        `loadable in this phase; only \`builtin:\` providers run today`,
+      `external provider ref ${JSON.stringify(ref)} is not loaded; load the ` +
+        'agentRuntime provider before resolving config',
     );
     this.name = 'ReservedExternalProviderError';
   }
@@ -68,6 +77,7 @@ export class ReservedExternalProviderError extends Error {
  */
 export class ProviderRegistry {
   private readonly providers = new Map<string, ProviderDescriptor>();
+  private readonly providersByRef = new Map<string, ProviderDescriptor>();
   private readonly implementations = new Map<string, unknown>();
 
   /**
@@ -77,7 +87,12 @@ export class ProviderRegistry {
     if (this.providers.has(descriptor.id)) {
       throw new DuplicateProviderError(descriptor.id);
     }
+    const canonicalRef = formatProviderRef(descriptor.ref);
+    if (this.providersByRef.has(canonicalRef)) {
+      throw new DuplicateProviderRefError(canonicalRef);
+    }
     this.providers.set(descriptor.id, descriptor);
+    this.providersByRef.set(canonicalRef, descriptor);
   }
 
   has(id: string): boolean {
@@ -86,6 +101,11 @@ export class ProviderRegistry {
 
   get(id: string): ProviderDescriptor | undefined {
     return this.providers.get(id);
+  }
+
+  hasRef(ref: string | ProviderRef): boolean {
+    const parsed = typeof ref === 'string' ? parseProviderRef(ref) : ref;
+    return this.providersByRef.has(formatProviderRef(parsed));
   }
 
   registerImplementation(providerId: string, implementation: unknown): void {
@@ -115,19 +135,22 @@ export class ProviderRegistry {
    *
    * - `builtin:<id>` resolves to the registered descriptor, or throws
    *   {@link UnknownBuiltinProviderError} if absent.
-   * - `npm:` refs throw {@link ReservedExternalProviderError}: reserved syntax
-   *   is parsed/validated but never loaded or executed in this phase.
+   * - `npm:` refs resolve only after the async agentRuntime loader registers
+   *   their descriptor; otherwise they throw
+   *   {@link ReservedExternalProviderError}.
    *
    * A malformed string ref throws `InvalidProviderRefError` from
    * {@link parseProviderRef}.
    */
   resolve(ref: string | ProviderRef): ProviderDescriptor {
     const parsed = typeof ref === 'string' ? parseProviderRef(ref) : ref;
-    if (!isBuiltinRef(parsed)) {
-      throw new ReservedExternalProviderError(parsed.raw);
-    }
-    const descriptor = this.providers.get(parsed.id);
+    const descriptor = isBuiltinRef(parsed)
+      ? this.providers.get(parsed.id)
+      : this.providersByRef.get(formatProviderRef(parsed));
     if (descriptor === undefined) {
+      if (!isBuiltinRef(parsed)) {
+        throw new ReservedExternalProviderError(parsed.raw);
+      }
       throw new UnknownBuiltinProviderError(parsed.id);
     }
     return descriptor;

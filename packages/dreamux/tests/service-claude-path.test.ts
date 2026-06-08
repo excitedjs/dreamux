@@ -13,8 +13,25 @@ import { delimiter, dirname } from 'node:path';
 import {
   managedServiceEnvironment,
   selectServiceClaudeBin,
+  validateManagedServiceLaunch,
   type ServiceInstallAnswers,
 } from '../src/onboard/service.js';
+import type { CommandRunner } from '../src/onboard/types.js';
+
+class ServiceRunner implements CommandRunner {
+  readonly checks: string[] = [];
+
+  async run(): Promise<void> {}
+
+  async check(command: string): Promise<boolean> {
+    this.checks.push(command);
+    return true;
+  }
+
+  async capture(): Promise<string> {
+    return 'v22.7.0';
+  }
+}
 
 function answers(
   overrides: Partial<ServiceInstallAnswers> = {},
@@ -46,6 +63,18 @@ describe('managed service Claude Code PATH (issue #126 PR8)', () => {
     expect(dirs).not.toContain('/home/op/.local/bin');
     // Codex still seeds the PATH so the codex worker keeps resolving.
     expect(dirs).toContain('/opt/codex/bin');
+  });
+
+  it('does not require Codex for external-runtime-only service installs', async () => {
+    const runner = new ServiceRunner();
+    const env = managedServiceEnvironment(answers({ codexBin: undefined }));
+    const dirs = env['PATH'].split(delimiter);
+
+    expect(dirs).not.toContain('/opt/codex/bin');
+    await expect(
+      validateManagedServiceLaunch(answers({ codexBin: undefined }), runner),
+    ).resolves.toMatchObject({ ok: true });
+    expect(runner.checks).toEqual(['/opt/dreamux/bin/dreamux']);
   });
 
   it('honours the DREAMUX_CLAUDE_BIN override and defaults to claude', () => {

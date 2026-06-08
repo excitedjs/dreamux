@@ -2,9 +2,21 @@ import { describe, expect, it } from 'vitest';
 
 import {
   AgentRuntimeProviderCatalog,
+  ExternalAgentRuntimeProviderContractError,
+  ExternalAgentRuntimeProviderLoadError,
   UnsupportedAgentRuntimeProviderError,
   createBuiltinAgentRuntimeProviderCatalog,
   createCodexAgentRuntimeProvider,
+  loadExternalAgentRuntimeProviders,
+  type AgentRuntime,
+  type AgentRuntimeCapabilities,
+  type AgentRuntimeCreateContext,
+  type AgentRuntimeLastResult,
+  type AgentRuntimeProvider,
+  type AgentRuntimeProviderConfigReadContext,
+  type AgentRuntimeTurnInput,
+  type AgentRuntimeTurnResult,
+  type ExternalAgentRuntimeProviderFactory,
 } from '../src/agent-runtime/index.js';
 import {
   UnknownBuiltinProviderError,
@@ -13,11 +25,93 @@ import {
 import { DispatcherStore } from '../src/runtime/dispatcher-store.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 
+const EXTERNAL_CAPABILITIES: AgentRuntimeCapabilities = {
+  resume: { supported: true, checkpoint: 'thirdPartySession' },
+  steer: { supported: false },
+  events: { kind: 'synthesized' },
+  last: { supported: true },
+  context: { supported: true },
+  teammateCompletion: [],
+};
+
 function builtinCatalog(): AgentRuntimeProviderCatalog {
   return createBuiltinAgentRuntimeProviderCatalog({
     registry: createBuiltinProviderRegistry(),
     codex: { resolveBinPath: (bin) => bin },
   });
+}
+
+class FakeExternalRuntime implements AgentRuntime {
+  private status: ReturnType<AgentRuntime['getStatus']> = 'declared';
+  readonly submitted: AgentRuntimeTurnInput[] = [];
+
+  constructor(readonly providerRef: string) {}
+
+  async start(): Promise<void> {
+    this.status = 'ready';
+  }
+
+  async resume(): Promise<void> {
+    this.status = 'ready';
+  }
+
+  async stop(): Promise<void> {
+    this.status = 'stopped';
+  }
+
+  async submitTurn(input: AgentRuntimeTurnInput): Promise<AgentRuntimeTurnResult> {
+    this.submitted.push(input);
+    return { status: 'submitted', turnId: 'turn-external' };
+  }
+
+  getStatus(): ReturnType<AgentRuntime['getStatus']> {
+    return this.status;
+  }
+
+  getThreadId(): string | null {
+    return 'external-session';
+  }
+
+  wasThreadResumed(): boolean {
+    return false;
+  }
+
+  async getLast(): Promise<AgentRuntimeLastResult> {
+    return { text: 'external last' };
+  }
+
+  async getContext(): Promise<{ usedTokens: number; windowTokens: number }> {
+    return { usedTokens: 7, windowTokens: 100 };
+  }
+
+  getCapabilities(): AgentRuntimeCapabilities {
+    return EXTERNAL_CAPABILITIES;
+  }
+}
+
+function externalFactory(options: {
+  created?: AgentRuntimeCreateContext[];
+  configs?: AgentRuntimeProviderConfigReadContext[];
+} = {}): ExternalAgentRuntimeProviderFactory {
+  return ({ ref, descriptor }) => {
+    const provider: AgentRuntimeProvider = {
+      ref,
+      descriptor,
+      getCapabilities: () => EXTERNAL_CAPABILITIES,
+      readConfig(rawConfig, context) {
+        options.configs?.push(context);
+        return {
+          ...rawConfig,
+          read_by_provider: true,
+        };
+      },
+      createRuntime(context) {
+        options.created?.push(context);
+        return new FakeExternalRuntime(ref);
+      },
+    };
+    return provider;
+  };
 }
 
 describe('AgentRuntimeProviderCatalog', () => {
@@ -79,13 +173,109 @@ describe('AgentRuntimeProviderCatalog', () => {
     );
   });
 
-  it('reserves external refs without loading or executing them', () => {
+  it('fails loud on unloaded external refs', () => {
     expect(() => builtinCatalog().resolve('npm:@example/dreamux-runtime')).toThrow(
       UnsupportedAgentRuntimeProviderError,
     );
     expect(() =>
       builtinCatalog().resolve('npm:@example/dreamux-runtime#provider'),
     ).toThrow(UnsupportedAgentRuntimeProviderError);
+  });
+
+  it('loads external npm providers into the same runtime catalog', async () => {
+    const registry = createBuiltinProviderRegistry();
+    const created: AgentRuntimeCreateContext[] = [];
+    const factory = externalFactory({ created });
+    await loadExternalAgentRuntimeProviders({
+      registry,
+      refs: [
+        'npm:@example/dreamux-runtime',
+        'npm:@example/dreamux-runtime#named',
+      ],
+      importModule: async (packageName) => {
+        expect(packageName).toBe('@example/dreamux-runtime');
+        return { default: factory, named: factory };
+      },
+    });
+
+    const catalog = createBuiltinAgentRuntimeProviderCatalog({
+      registry,
+      codex: { resolveBinPath: (bin) => bin },
+    });
+    expect(catalog.list().map((provider) => provider.ref).sort()).toEqual([
+      'builtin:claude-code',
+      'builtin:codex',
+      'npm:@example/dreamux-runtime',
+      'npm:@example/dreamux-runtime#named',
+    ]);
+
+    const provider = catalog.resolve('npm:@example/dreamux-runtime#named');
+    expect(provider.getCapabilities().resume).toEqual({
+      supported: true,
+      checkpoint: 'thirdPartySession',
+    });
+    const dispatcher = testDispatcherConfig({ id: 'flow' });
+    const store = new DispatcherStore(testDreamuxConfig([dispatcher]));
+    const runtime = provider.createRuntime({
+      row: store.get('flow')!,
+      dispatcher,
+      dispatchers: store,
+      mcpServers: [],
+      log: () => undefined,
+    });
+
+    expect(runtime.providerRef).toBe('npm:@example/dreamux-runtime#named');
+    expect(created).toHaveLength(1);
+  });
+
+  it('reports external package import failures with the provider ref', async () => {
+    await expect(
+      loadExternalAgentRuntimeProviders({
+        registry: createBuiltinProviderRegistry(),
+        refs: ['npm:@example/missing-runtime'],
+        importModule: async () => {
+          throw new Error('package not found');
+        },
+      }),
+    ).rejects.toThrow(ExternalAgentRuntimeProviderLoadError);
+    await expect(
+      loadExternalAgentRuntimeProviders({
+        registry: createBuiltinProviderRegistry(),
+        refs: ['npm:@example/missing-runtime'],
+        importModule: async () => {
+          throw new Error('package not found');
+        },
+      }),
+    ).rejects.toThrow(/npm:@example\/missing-runtime/);
+  });
+
+  it('rejects external modules that do not export a provider factory', async () => {
+    await expect(
+      loadExternalAgentRuntimeProviders({
+        registry: createBuiltinProviderRegistry(),
+        refs: ['npm:@example/dreamux-runtime#missing'],
+        importModule: async () => ({ default: externalFactory() }),
+      }),
+    ).rejects.toThrow(ExternalAgentRuntimeProviderContractError);
+  });
+
+  it('rejects external providers with incomplete capabilities', async () => {
+    await expect(
+      loadExternalAgentRuntimeProviders({
+        registry: createBuiltinProviderRegistry(),
+        refs: ['npm:@example/dreamux-runtime'],
+        importModule: async () => ({
+          default: ({ ref, descriptor }) => ({
+            ref,
+            descriptor,
+            getCapabilities: () => ({
+              resume: { supported: false },
+            }),
+            createRuntime: () => new FakeExternalRuntime(ref),
+          }),
+        }),
+      }),
+    ).rejects.toThrow(/capabilities\.steer\.supported/);
   });
 
   it('supports registry injection for future provider composition tests', () => {

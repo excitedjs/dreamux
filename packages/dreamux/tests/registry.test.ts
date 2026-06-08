@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   BUILTIN_PROVIDERS,
   DuplicateProviderError,
+  DuplicateProviderRefError,
   ProviderRegistry,
   ReservedExternalProviderError,
   UnknownBuiltinProviderError,
@@ -16,6 +17,10 @@ function descriptor(
   kind: ProviderDescriptor['kind'] = 'channel',
 ): ProviderDescriptor {
   return { id, kind, ref: parseProviderRef(`builtin:${id}`) };
+}
+
+function npmDescriptor(ref: string): ProviderDescriptor {
+  return { id: ref, kind: 'agentRuntime', ref: parseProviderRef(ref) };
 }
 
 describe('ProviderRegistry — registration', () => {
@@ -60,7 +65,7 @@ describe('ProviderRegistry — resolve', () => {
     );
   });
 
-  it('refuses to resolve a reserved external npm ref', () => {
+  it('fails loud on an unloaded external npm ref', () => {
     const registry = createBuiltinProviderRegistry();
     expect(() => registry.resolve('npm:@example/dreamux-provider')).toThrow(
       ReservedExternalProviderError,
@@ -68,6 +73,19 @@ describe('ProviderRegistry — resolve', () => {
     expect(() =>
       registry.resolve('npm:@example/dreamux-provider#named'),
     ).toThrow(ReservedExternalProviderError);
+  });
+
+  it('resolves an external npm ref after the loader registers it', () => {
+    const registry = createBuiltinProviderRegistry();
+    const descriptor = npmDescriptor('npm:@example/dreamux-provider#runtime');
+    registry.register(descriptor);
+
+    expect(registry.resolve('npm:@example/dreamux-provider#runtime')).toBe(
+      descriptor,
+    );
+    expect(registry.resolve(parseProviderRef(descriptor.ref.raw))).toBe(
+      descriptor,
+    );
   });
 
   it('surfaces malformed refs through the parser', () => {
@@ -93,9 +111,21 @@ describe('createBuiltinProviderRegistry', () => {
     );
   });
 
-  it('does not execute or expose external providers', () => {
+  it('does not expose unloaded external providers', () => {
     const registry = createBuiltinProviderRegistry();
-    // Reserved external refs never become registered providers.
     expect(registry.has('@example/dreamux-provider')).toBe(false);
+    expect(registry.hasRef('npm:@example/dreamux-provider')).toBe(false);
+  });
+
+  it('rejects duplicate canonical refs even when ids differ', () => {
+    const registry = createBuiltinProviderRegistry();
+    registry.register(npmDescriptor('npm:@example/dreamux-provider#runtime'));
+
+    expect(() =>
+      registry.register({
+        ...npmDescriptor('npm:@example/dreamux-provider#runtime'),
+        id: 'different-id',
+      }),
+    ).toThrow(DuplicateProviderRefError);
   });
 });

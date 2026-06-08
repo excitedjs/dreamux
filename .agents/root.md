@@ -8,12 +8,13 @@ when you need the *why* behind a piece of code or a decision history.
 
 A long-running Node process that hosts N **Dispatchers**. Each Dispatcher binds
 one built-in Feishu bidirectional channel (`builtin:feishu`), one Agent Runtime
-provider (`builtin:codex` or `builtin:claude-code`), and Dreamux-owned MCP
-surfaces for channel reply and TeamMate scheduling/retrieval. All inbound chats
-for a dispatcher enter that dispatcher's runtime context; channel outbound is
-sent only when the runtime calls the dispatcher-bound channel MCP server owned
-by the Feishu channel module. The current architecture is split between the
-original local-runtime baseline and the issue #135 realigned provider surfaces:
+provider (`builtin:codex`, `builtin:claude-code`, or an installed `npm:`
+Agent Runtime provider), and Dreamux-owned MCP surfaces for channel reply and
+TeamMate scheduling/retrieval. All inbound chats for a dispatcher enter that
+dispatcher's runtime context; channel outbound is sent only when the runtime
+calls the dispatcher-bound channel MCP server owned by the Feishu channel
+module. The current architecture is split between the original local-runtime
+baseline and the issue #135 realigned provider surfaces:
 
 - [Top-level design](decisions/top-level-design.md) — original MVP baseline;
   still authoritative for unchanged local state/log ownership, Feishu access,

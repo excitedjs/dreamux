@@ -31,6 +31,35 @@ The provider contract must cover:
 - inbound dispatcher turn submission;
 - runtime-specific TeamMate completion delivery.
 
+External `npm:` Agent Runtime providers use the same contract. The selected
+provider ref controls how Dreamux reads the package:
+
+```ts
+// npm:some-runtime
+export default createProvider;
+
+// npm:some-runtime#namedProvider
+export const namedProvider = createProvider;
+
+function createProvider(context: {
+  ref: string;
+  descriptor: ProviderDescriptor;
+}): AgentRuntimeProvider | Promise<AgentRuntimeProvider>;
+```
+
+The factory must return an `AgentRuntimeProvider` whose `ref` and
+`descriptor.ref` match the canonical config ref and whose `descriptor.kind` is
+`agentRuntime`. The provider must implement `getCapabilities()` and
+`createRuntime(context)`. It may implement `readConfig(rawConfig, context)` when
+it owns provider-specific config validation and normalization. Capability
+declarations are provider-owned: the registry stores the implementation handle
+only and never mirrors or assumes support for `resume`, `steer`, `events`,
+`last`, `context`, or TeamMate completion delivery.
+
+`AgentRuntime` is a single-instance runtime interface. Dispatcher orchestration
+verbs such as spawn, list, and close stay on Dispatcher Service and must not be
+added to the runtime instance contract.
+
 Dreamux injects only these MCP surfaces:
 
 - Channel provider MCP descriptors;
@@ -97,6 +126,13 @@ Implementation status:
   capability and provides the runtime's delivery entry point; the executable
   completion delivery loop (ledger, retry, pull fallback) still belongs to the
   later server-hosted TeamMate PRs.
+- External `npm:` Agent Runtime loading is implemented through the provider
+  registry. Config loading scans `dispatchers[].runtime.provider`, dynamically
+  imports npm runtime providers before validation, calls their provider factory,
+  and registers the result into the same registry instance that the
+  `AgentRuntimeProviderCatalog` views at server startup. Missing packages,
+  missing exports, invalid descriptors, invalid capability declarations, and
+  non-runnable descriptors fail loudly with the selected provider ref.
 
 ## Consequences
 
@@ -106,6 +142,9 @@ Implementation status:
   ledger contracts.
 - Runtime-specific delivery failures can be reported back to Dispatcher Service,
   which owns retry and result retrieval.
+- Third-party Agent Runtime packages do not require a parallel registry or a
+  parallel Dispatcher Service path; they enter through the same provider
+  implementation handle used by builtin providers.
 - Codex auth, config, and memory remain under Codex's normal ownership. Dreamux
   must not create dispatcher-private Codex homes unless a later decision
   supersedes this one.

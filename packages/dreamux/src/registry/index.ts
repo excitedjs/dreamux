@@ -2,8 +2,8 @@
  * Provider registry + provider references.
  *
  * Process-local provider registration/lookup and the public provider-ref
- * grammar. Builtin providers run; external `npm:` refs are reserved syntax that
- * is parsed and validated but never loaded or executed in this phase.
+ * grammar. Builtin providers are registered eagerly; external `npm:` runtime
+ * refs are dynamically loaded before config validation resolves them.
  */
 
 export * from './provider-ref.js';

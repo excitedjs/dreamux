@@ -12,10 +12,8 @@
  *
  * This module owns the string shorthand <-> normalized object mapping so that
  * config validation and future manifests never re-parse refs with ad hoc string
- * handling after startup. It is pure: no IO, no dynamic import. Phase 1 parses
- * and validates `npm:` refs as reserved syntax only — resolution/execution is
- * the registry's concern (see `registry.ts`) and is not implemented for
- * external packages in this phase.
+ * handling after startup. It is pure: no IO, no dynamic import. Resolution and
+ * dynamic loading stay in the registry / runtime loader layer.
  */
 
 /** Where a provider's implementation comes from. */
@@ -32,7 +30,7 @@ export interface BuiltinProviderRef {
 
 /**
  * An external provider selected by npm package, optionally narrowed to a named
- * export. Reserved syntax in Phase 1: parsed and validated, never loaded.
+ * export.
  */
 export interface NpmProviderRef {
   source: 'npm';
@@ -55,7 +53,7 @@ export const BUILTIN_PROVIDER_ID_RULE =
 /**
  * npm package name: optional `@scope/` prefix then a name segment. Mirrors the
  * common npm naming surface (lowercase, digits, `-`, `.`, `_`) without trying to
- * re-implement the full npm spec — Phase 1 never resolves these.
+ * re-implement the full npm spec.
  */
 const NPM_NAME_SEGMENT = '[a-z0-9][a-z0-9._-]*';
 export const NPM_PACKAGE_PATTERN = new RegExp(
@@ -150,9 +148,7 @@ export function formatProviderRef(ref: ProviderRef): string {
 }
 
 /**
- * True when a ref selects a bundled provider that this phase can resolve and
- * run. External (`npm:`) refs are reserved syntax in Phase 1, so they are valid
- * to write but not runnable.
+ * True when a ref selects a bundled provider.
  */
 export function isBuiltinRef(ref: ProviderRef): ref is BuiltinProviderRef {
   return ref.source === 'builtin';

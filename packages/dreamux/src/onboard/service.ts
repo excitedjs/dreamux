@@ -35,7 +35,12 @@ export const SERVICE_PATH_DEFAULTS = ['/usr/local/bin', '/usr/bin', '/bin'];
 
 export interface ServiceInstallAnswers {
   configDir: string;
-  codexBin: string;
+  /**
+   * Optional Codex binary. Present when enabled builtin:codex dispatchers need
+   * the managed-service PATH to resolve `codex`; omitted for
+   * external-runtime-only installs.
+   */
+  codexBin?: string;
   dreamuxBin: string;
   nodeBin: string;
   /**
@@ -241,10 +246,12 @@ export async function validateManagedServiceLaunch(
     );
   }
 
-  if (!(await runner.check(answers.codexBin, ['--help'], { env }))) {
-    errors.push(
-      `managed service cannot execute Codex CLI at ${answers.codexBin}`,
-    );
+  if (answers.codexBin !== undefined) {
+    if (!(await runner.check(answers.codexBin, ['--help'], { env }))) {
+      errors.push(
+        `managed service cannot execute Codex CLI at ${answers.codexBin}`,
+      );
+    }
   }
 
   return {
@@ -513,7 +520,7 @@ export async function stabilizeHomebrewCellarNode(
 function managedServicePath(answers: ServiceInstallAnswers): string {
   const dirs = [
     dirname(answers.nodeBin),
-    ...absoluteDir(answers.codexBin),
+    ...(answers.codexBin !== undefined ? absoluteDir(answers.codexBin) : []),
     // The Claude Code install dir, when present, so server-hosted
     // builtin:claude-code workers can resolve `claude` (issue #126 PR8).
     ...(answers.claudeBin !== undefined ? absoluteDir(answers.claudeBin) : []),

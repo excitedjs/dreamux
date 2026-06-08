@@ -64,6 +64,21 @@ import { DREAMUX_DISPATCHER_BASE_INSTRUCTIONS } from '../src/dispatcher/base-pro
 import { startFakeCodex, type FakeCodex } from './fake-codex.js';
 import { testDispatcherConfig } from './helpers/config.js';
 import { Writable } from 'node:stream';
+import {
+  loadExternalAgentRuntimeProviders,
+  type AgentRuntime,
+  type AgentRuntimeCapabilities,
+  type AgentRuntimeCreateContext,
+  type AgentRuntimeLastResult,
+  type AgentRuntimeProvider,
+  type AgentRuntimeTurnInput,
+  type AgentRuntimeTurnResult,
+  type ExternalAgentRuntimeProviderFactory,
+} from '../src/agent-runtime/index.js';
+import {
+  createBuiltinProviderRegistry,
+  type ProviderRegistry,
+} from '../src/registry/index.js';
 
 /** Collect every JSON log line written to an injected logger destination. */
 function captureLogger(name: string): {
@@ -120,9 +135,11 @@ function buildServer(opts: {
   codexRestartBackoffMaxMs?: number;
   channelLoggerFactory?: (dispatcherId: string) => DreamuxLogger;
   codexBinPath?: string;
+  providerRegistry?: ProviderRegistry;
 }): Server {
   return new Server({
     config: opts.config ?? BUILT_IN_DEFAULTS,
+    providerRegistry: opts.providerRegistry,
     adminSocketPath: join(opts.runtimeDir, 'admin.sock'),
     skipBotSecret: opts.skipBotSecret ?? true,
     ...(opts.codexBinPath !== undefined
@@ -152,6 +169,87 @@ function buildServer(opts: {
           },
         }),
   });
+}
+
+const EXTERNAL_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = {
+  resume: { supported: true, checkpoint: 'externalSession' },
+  steer: { supported: false },
+  events: { kind: 'synthesized' },
+  last: { supported: true },
+  context: { supported: false },
+  teammateCompletion: [],
+};
+
+class SmokeExternalRuntime implements AgentRuntime {
+  private status: ReturnType<AgentRuntime['getStatus']> = 'declared';
+
+  constructor(
+    readonly providerRef: string,
+    private readonly context: AgentRuntimeCreateContext,
+  ) {}
+
+  async start(): Promise<void> {
+    this.status = 'ready';
+    await this.context.dispatchers.setStatus(
+      this.context.row.dispatcher_id,
+      'ready',
+    );
+  }
+
+  async resume(): Promise<void> {
+    await this.start();
+  }
+
+  async stop(): Promise<void> {
+    this.status = 'stopped';
+  }
+
+  async submitTurn(
+    _input: AgentRuntimeTurnInput,
+  ): Promise<AgentRuntimeTurnResult> {
+    return { status: 'submitted', turnId: 'external-turn' };
+  }
+
+  getStatus(): ReturnType<AgentRuntime['getStatus']> {
+    return this.status;
+  }
+
+  getThreadId(): string | null {
+    return 'external-session';
+  }
+
+  wasThreadResumed(): boolean {
+    return false;
+  }
+
+  async getLast(): Promise<AgentRuntimeLastResult> {
+    return { text: 'external last' };
+  }
+
+  async getContext(): Promise<null> {
+    return null;
+  }
+
+  getCapabilities(): AgentRuntimeCapabilities {
+    return EXTERNAL_RUNTIME_CAPABILITIES;
+  }
+}
+
+function smokeExternalFactory(
+  contexts: AgentRuntimeCreateContext[],
+): ExternalAgentRuntimeProviderFactory {
+  return ({ ref, descriptor }) => {
+    const provider: AgentRuntimeProvider = {
+      ref,
+      descriptor,
+      getCapabilities: () => EXTERNAL_RUNTIME_CAPABILITIES,
+      createRuntime(context) {
+        contexts.push(context);
+        return new SmokeExternalRuntime(ref, context);
+      },
+    };
+    return provider;
+  };
 }
 
 class ControllableCodexProcess extends CodexProcess {
@@ -468,6 +566,73 @@ describe('dreamux MVP smoke', () => {
     expect(realpathSync(dispatcherSkillDir)).toBe(
       realpathSync(bundledSkillDir('dispatcher')),
     );
+  });
+
+  it('starts an external npm AgentRuntime through DispatcherService', async () => {
+    const providerRef = 'npm:@example/dreamux-runtime#provider';
+    const registry = createBuiltinProviderRegistry();
+    const contexts: AgentRuntimeCreateContext[] = [];
+    await loadExternalAgentRuntimeProviders({
+      registry,
+      refs: [providerRef],
+      importModule: async (packageName) => {
+        expect(packageName).toBe('@example/dreamux-runtime');
+        return { provider: smokeExternalFactory(contexts) };
+      },
+    });
+    const spawnCounter = { count: 0 };
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      providerRegistry: registry,
+      spawnCounter,
+      config: {
+        dispatchers: [
+          testDispatcherConfig({
+            id: 'flow',
+            runtime: {
+              provider: providerRef,
+              config: {
+                external_option: true,
+              },
+            },
+          }),
+        ],
+      },
+    });
+
+    await server.start();
+
+    expect(contexts).toHaveLength(1);
+    expect(contexts[0]?.dispatcher?.runtime.provider).toBe(providerRef);
+    expect(server.dispatcherService.getRuntime('flow')?.providerRef).toBe(
+      providerRef,
+    );
+    expect(spawnCounter.count).toBe(0);
+  });
+
+  it('fails loud when external runtime config is not paired with its loaded registry', () => {
+    const providerRef = 'npm:@example/dreamux-runtime#provider';
+
+    expect(() =>
+      buildServer({
+        runtimeDir,
+        fake,
+        bot,
+        config: {
+          dispatchers: [
+            testDispatcherConfig({
+              id: 'flow',
+              runtime: {
+                provider: providerRef,
+                config: {},
+              },
+            }),
+          ],
+        },
+      }),
+    ).toThrow(/providerRegistry returned by loadConfig/);
   });
 
   it('starts fresh Codex threads with Dreamux dispatcher base instructions', async () => {

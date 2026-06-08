@@ -11,11 +11,17 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { access, mkdir, open, readFile, stat } from 'node:fs/promises';
 import {
+  loadExternalAgentRuntimeProviders,
+  type ExternalAgentRuntimeModuleImporter,
+} from '../agent-runtime/external-provider.js';
+import type { AgentRuntimeProvider } from '../agent-runtime/types.js';
+import {
   InvalidProviderRefError,
   ReservedExternalProviderError,
   UnknownBuiltinProviderError,
-  defaultBuiltinProviderRegistry,
+  createBuiltinProviderRegistry,
   formatProviderRef,
+  parseProviderRef,
   type ProviderDescriptor,
   type ProviderRegistry,
 } from '../registry/index.js';
@@ -196,6 +202,14 @@ export interface ConfigPathOverrides {
   configDir?: string;
   /** Provider registry used to validate config provider refs. */
   providerRegistry?: ProviderRegistry;
+  /** Test seam for external `npm:` agentRuntime provider loading. */
+  externalAgentRuntimeModuleImporter?: ExternalAgentRuntimeModuleImporter;
+}
+
+export interface LoadConfigResult {
+  config: DreamuxConfig;
+  configFile: string;
+  providerRegistry: ProviderRegistry;
 }
 
 export function globalConfigDir(overrides: ConfigPathOverrides = {}): string {
@@ -219,24 +233,28 @@ export async function loadOrInitConfig(
   config: DreamuxConfig;
   configFile: string;
   createdOnThisBoot: boolean;
+  providerRegistry: ProviderRegistry;
 }> {
   const file = globalConfigFile(overrides);
+  const providerRegistry = providerRegistryFor(overrides);
   await assertNoLegacyTomlOnly(overrides);
   await mkdir(dirname(file), { recursive: true });
 
   const createdOnThisBoot = await atomicWriteIfAbsent(file, DEFAULT_CONFIG_JSON);
-  const config = await readConfigFile(file, providerRegistryFor(overrides));
-  return { config, configFile: file, createdOnThisBoot };
+  const config = await readConfigFile(file, providerRegistry, overrides);
+  return { config, configFile: file, createdOnThisBoot, providerRegistry };
 }
 
 export async function loadConfig(
   overrides: ConfigPathOverrides = {},
-): Promise<{ config: DreamuxConfig; configFile: string }> {
+): Promise<LoadConfigResult> {
   const file = globalConfigFile(overrides);
+  const providerRegistry = providerRegistryFor(overrides);
   await assertNoLegacyTomlOnly(overrides);
   return {
-    config: await readConfigFile(file, providerRegistryFor(overrides)),
+    config: await readConfigFile(file, providerRegistry, overrides),
     configFile: file,
+    providerRegistry,
   };
 }
 
@@ -262,6 +280,7 @@ export function redactConfigForDisplay(raw: string, file: string): string {
 async function readConfigFile(
   file: string,
   providerRegistry: ProviderRegistry,
+  overrides: ConfigPathOverrides,
 ): Promise<DreamuxConfig> {
   if (!(await pathExists(file))) {
     throw new Error(
@@ -281,6 +300,11 @@ async function readConfigFile(
         `Fix the JSON syntax in ${file}, then restart. Run \`dreamux onboard\` if you need to recreate the config.`,
     );
   }
+  await loadExternalAgentRuntimeProviders({
+    registry: providerRegistry,
+    refs: runtimeProviderRefs(parsed),
+    importModule: overrides.externalAgentRuntimeModuleImporter,
+  });
   return mergeWithDefaults(parsed, file, providerRegistry);
 }
 
@@ -328,7 +352,7 @@ export async function assertConfigFileMode(file: string): Promise<void> {
 }
 
 function providerRegistryFor(overrides: ConfigPathOverrides): ProviderRegistry {
-  return overrides.providerRegistry ?? defaultBuiltinProviderRegistry();
+  return overrides.providerRegistry ?? createBuiltinProviderRegistry();
 }
 
 function mergeWithDefaults(
@@ -404,11 +428,7 @@ function readDispatchers(
     }
     ids.add(id);
 
-    const channels = readDispatcherChannels(
-      raw['channels'],
-      file,
-      prefix,
-    );
+    const channels = readDispatcherChannels(raw['channels'], file, prefix);
     const feishu = feishuConfigFromChannels(channels, id);
     const app_id = feishu.app_id;
     const existing = appIdToDispatcher.get(app_id);
@@ -425,7 +445,13 @@ function readDispatchers(
       cwd: cwd === null ? null : expandHome(cwd),
       enabled: readOptionalBoolean(raw, 'enabled', true, file, prefix),
       channels,
-      runtime: readDispatcherRuntime(raw['runtime'], file, prefix, providerRegistry),
+      runtime: readDispatcherRuntime(
+        raw['runtime'],
+        file,
+        prefix,
+        id,
+        providerRegistry,
+      ),
     });
   }
   return out;
@@ -494,6 +520,7 @@ function readDispatcherRuntime(
   rawRuntime: unknown,
   file: string,
   dispatcherPrefix: string,
+  dispatcherId: string,
   providerRegistry: ProviderRegistry,
 ): DispatcherRuntimeConfig {
   const prefix = `${dispatcherPrefix}runtime.`;
@@ -521,11 +548,24 @@ function readDispatcherRuntime(
       config: readRuntimeConfig(config, file, `${prefix}config.`),
     };
   }
-  // A registered agentRuntime builtin with no config parser wired yet. Fail
-  // loud rather than fall back to another runtime.
+  const runtimeProvider = asAgentRuntimeProvider(
+    providerRegistry.getImplementation(provider.descriptor.id),
+  );
+  if (runtimeProvider !== null) {
+    return {
+      provider: provider.ref,
+      config:
+        runtimeProvider.readConfig?.(config, {
+          providerRef: provider.ref,
+          dispatcherId,
+          file,
+          prefix: `${prefix}config.`,
+        }) ?? config,
+    };
+  }
   throw new Error(
-    `dreamux config error in ${file}: ${prefix}provider='${provider.ref}' is registered but not runnable in this phase.\n` +
-      'Wired agent runtimes: "builtin:codex", "builtin:claude-code".',
+    `dreamux config error in ${file}: ${prefix}provider='${provider.ref}' is registered but not runnable.\n` +
+      'Builtin runtimes are wired by dreamux; external runtimes must load and register an agentRuntime provider before config validation.',
   );
 }
 
@@ -757,8 +797,8 @@ function resolveConfigProvider(
     }
     if (err instanceof ReservedExternalProviderError) {
       throw new Error(
-        `dreamux config error in ${file}: ${prefix}provider='${rawProvider}' is reserved for future external providers and is not loadable in this phase.\n` +
-          'Use a builtin runtime provider ref such as "builtin:codex" or "builtin:claude-code".',
+        `dreamux config error in ${file}: ${prefix}provider='${rawProvider}' was not loaded as an external agentRuntime provider.\n` +
+          err.message,
       );
     }
     if (err instanceof UnknownBuiltinProviderError) {
@@ -768,6 +808,41 @@ function resolveConfigProvider(
     }
     throw err;
   }
+}
+
+function runtimeProviderRefs(raw: unknown): string[] {
+  if (!isPlainObject(raw)) return [];
+  const dispatchers = raw['dispatchers'];
+  if (!Array.isArray(dispatchers)) return [];
+  const out: string[] = [];
+  for (const dispatcher of dispatchers) {
+    if (!isPlainObject(dispatcher)) continue;
+    const runtime = dispatcher['runtime'];
+    if (!isPlainObject(runtime)) continue;
+    const provider = runtime['provider'];
+    if (typeof provider !== 'string') continue;
+    try {
+      const parsed = parseProviderRef(provider);
+      if (parsed.source === 'npm') out.push(parsed.raw);
+    } catch {
+      // The normal config validation path reports malformed refs with context.
+    }
+  }
+  return out;
+}
+
+function asAgentRuntimeProvider(value: unknown): AgentRuntimeProvider | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const candidate = value as Partial<AgentRuntimeProvider>;
+  if (
+    typeof candidate.ref !== 'string' ||
+    candidate.descriptor === undefined ||
+    typeof candidate.getCapabilities !== 'function' ||
+    typeof candidate.createRuntime !== 'function'
+  ) {
+    return null;
+  }
+  return value as AgentRuntimeProvider;
 }
 
 function readProviderConfigObject(

@@ -45,16 +45,3 @@ function buildBuiltinProviderRegistry(): ProviderRegistry {
 export function createBuiltinProviderRegistry(): ProviderRegistry {
   return buildBuiltinProviderRegistry();
 }
-
-let defaultProviderRegistry: ProviderRegistry | null = null;
-
-/**
- * Shared builtin registry for config parsing paths that do not yet have a
- * server-owned registry to inject.
- */
-export function defaultBuiltinProviderRegistry(): ProviderRegistry {
-  if (defaultProviderRegistry === null) {
-    defaultProviderRegistry = buildBuiltinProviderRegistry();
-  }
-  return defaultProviderRegistry;
-}

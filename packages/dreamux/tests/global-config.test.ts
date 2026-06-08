@@ -38,6 +38,10 @@ import {
   createBuiltinProviderRegistry,
   parseProviderRef,
 } from '../src/registry/index.js';
+import type {
+  AgentRuntimeCapabilities,
+  ExternalAgentRuntimeProviderFactory,
+} from '../src/agent-runtime/index.js';
 import { testDispatcherConfig } from './helpers/config.js';
 
 function writeConfigObjectAt(configDir: string, value: unknown): void {
@@ -45,6 +49,33 @@ function writeConfigObjectAt(configDir: string, value: unknown): void {
     mode: 0o600,
   });
 }
+
+const EXTERNAL_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = {
+  resume: { supported: true, checkpoint: 'externalSession' },
+  steer: { supported: false },
+  events: { kind: 'synthesized' },
+  last: { supported: true },
+  context: { supported: false },
+  teammateCompletion: [],
+};
+
+const externalRuntimeFactory: ExternalAgentRuntimeProviderFactory = ({
+  ref,
+  descriptor,
+}) => ({
+  ref,
+  descriptor,
+  getCapabilities: () => EXTERNAL_RUNTIME_CAPABILITIES,
+  readConfig(rawConfig) {
+    return {
+      ...rawConfig,
+      parsed_by_provider: true,
+    };
+  },
+  createRuntime() {
+    throw new Error('external runtime config test does not create a runtime');
+  },
+});
 
 describe('global config (~/.dreamux/config.json)', () => {
   let configDir: string;
@@ -463,11 +494,77 @@ describe('global config (~/.dreamux/config.json)', () => {
     });
 
     await expect(loadConfig({ configDir, providerRegistry: registry })).rejects.toThrow(
-      /registered but not runnable in this phase/,
+      /registered but not runnable/,
     );
     await expect(loadConfig({ configDir })).rejects.toThrow(
       /unknown builtin provider 'custom-runtime'/,
     );
+  });
+
+  it('loads external npm runtime providers before validating runtime config', async () => {
+    const providerRef = 'npm:@example/dreamux-runtime#provider';
+    writeConfigObject({
+      dispatchers: [
+        testDispatcherConfig({
+          id: 'flow',
+          runtime: {
+            provider: providerRef,
+            config: {
+              provider_option: 'kept',
+            },
+          },
+        }),
+      ],
+    });
+
+    const { config, providerRegistry } = await loadConfig({
+      configDir,
+      externalAgentRuntimeModuleImporter: async (packageName) => {
+        expect(packageName).toBe('@example/dreamux-runtime');
+        return { provider: externalRuntimeFactory };
+      },
+    });
+
+    expect(config.dispatchers[0]?.runtime).toEqual({
+      provider: providerRef,
+      config: {
+        provider_option: 'kept',
+        parsed_by_provider: true,
+      },
+    });
+    expect(providerRegistry.resolve(providerRef).kind).toBe('agentRuntime');
+    expect(providerRegistry.getImplementation(providerRef)).not.toBeUndefined();
+  });
+
+  it('fails loudly when an external npm runtime package cannot be imported', async () => {
+    writeConfigObject({
+      dispatchers: [
+        testDispatcherConfig({
+          id: 'flow',
+          runtime: {
+            provider: 'npm:@example/missing-runtime',
+            config: {},
+          },
+        }),
+      ],
+    });
+
+    await expect(
+      loadConfig({
+        configDir,
+        externalAgentRuntimeModuleImporter: async () => {
+          throw new Error('package not found');
+        },
+      }),
+    ).rejects.toThrow(/npm:@example\/missing-runtime/);
+    await expect(
+      loadConfig({
+        configDir,
+        externalAgentRuntimeModuleImporter: async () => {
+          throw new Error('package not found');
+        },
+      }),
+    ).rejects.toThrow(/could not import package/);
   });
 
   it('accepts a builtin:claude-code runtime with its own config shape', async () => {
