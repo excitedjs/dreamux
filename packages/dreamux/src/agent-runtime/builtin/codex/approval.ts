@@ -11,7 +11,7 @@
  * output is MCP reply-only, so this handler must not send channel messages.
  */
 
-import type { ServerRequest } from '../codex/types.js';
+import type { ServerRequest } from './types.js';
 
 export interface ApprovalHandlerOptions {
   /**

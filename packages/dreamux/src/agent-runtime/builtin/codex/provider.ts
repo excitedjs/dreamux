@@ -1,24 +1,24 @@
-import { codexMcpServerArgs } from '../codex/mcp-config.js';
-import { CodexWsClient } from '../codex/rpc.js';
+import { codexMcpServerArgs } from './mcp-config.js';
+import { CodexWsClient } from './rpc.js';
 import {
   CodexProcess,
   type CodexProcessOptions,
-} from '../codex/supervisor.js';
-import { CodexRuntime } from './codex-runtime.js';
+} from './supervisor.js';
+import { CodexRuntime } from './runtime.js';
 import {
   BUILTIN_CODEX_PROVIDER_REF,
   defaultDispatcherCodexConfig,
   dispatcherCodexConfig,
-} from '../runtime/config.js';
-import type { DispatcherCodexHomeDoctor } from '../runtime/dispatcher-codex-home.js';
-import { codexArgsToCli, parseCodexArgs } from '../runtime/codex-args.js';
-import { type ProviderDescriptor } from '../registry/index.js';
+} from '../../../runtime/config.js';
+import type { DispatcherCodexHomeDoctor } from './codex-home.js';
+import { codexArgsToCli, parseCodexArgs } from './args.js';
+import { type ProviderDescriptor } from '../../../registry/index.js';
 import type {
   AgentRuntimeCapabilities,
   AgentRuntime,
   AgentRuntimeProvider,
   AgentRuntimeMcpServer,
-} from './types.js';
+} from '../../types.js';
 
 export interface CodexAgentRuntimeProviderOptions {
   descriptor: ProviderDescriptor;

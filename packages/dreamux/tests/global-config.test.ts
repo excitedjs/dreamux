@@ -33,7 +33,7 @@ import {
   setRuntimeConfig,
   stateRoot,
 } from '../src/runtime/paths.js';
-import { codexArgsToCli, parseCodexArgs } from '../src/runtime/codex-args.js';
+import { codexArgsToCli, parseCodexArgs } from '../src/agent-runtime/builtin/codex/args.js';
 import {
   createBuiltinProviderRegistry,
   parseProviderRef,

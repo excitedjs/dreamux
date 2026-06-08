@@ -33,8 +33,8 @@ import {
   type CodexProcessExit,
   type CodexProcessExitHandler,
   type CodexProcessOptions,
-} from '../src/codex/supervisor.js';
-import { CodexWsClient } from '../src/codex/rpc.js';
+} from '../src/agent-runtime/builtin/codex/supervisor.js';
+import { CodexWsClient } from '../src/agent-runtime/builtin/codex/rpc.js';
 import { createFakeFeishuBot, type FakeFeishuBot, type FeishuInboundEvent } from '../src/feishu/bot.js';
 import { createAdminSocketServer } from '../src/admin/socket.js';
 import { sendAdminRequest } from '../src/admin/client.js';
@@ -2410,7 +2410,7 @@ describe('dreamux MVP smoke', () => {
   // refuse — confirms our handshake-enforcement assertion above isn't vacuous.
   it('fake codex refuses non-initialize RPC pre-handshake', async () => {
     // Use a raw client (no handshake) against the same fake.
-    const { CodexWsClient } = await import('../src/codex/rpc.js');
+    const { CodexWsClient } = await import('../src/agent-runtime/builtin/codex/rpc.js');
     const raw = new CodexWsClient({ url: fake.url });
     await raw.ready();
     await expect(
@@ -2424,9 +2424,9 @@ describe('dreamux MVP smoke', () => {
   it('handshake times out if codex accepts the WS but never replies', async () => {
     await fake.close();
     fake = await startFakeCodex({ swallowInitialize: true });
-    const { CodexWsClient } = await import('../src/codex/rpc.js');
+    const { CodexWsClient } = await import('../src/agent-runtime/builtin/codex/rpc.js');
     const { performInitializeHandshake } = await import(
-      '../src/codex/handshake.js'
+      '../src/agent-runtime/builtin/codex/handshake.js'
     );
     const raw = new CodexWsClient({ url: fake.url });
     try {

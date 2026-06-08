@@ -19,11 +19,11 @@ import {
   loadDispatcherAccess,
   saveDispatcherAccess,
 } from '../src/channel/feishu-gate.js';
-import { CodexWsClient } from '../src/codex/rpc.js';
+import { CodexWsClient } from '../src/agent-runtime/builtin/codex/rpc.js';
 import {
   CodexProcess,
   type CodexProcessOptions,
-} from '../src/codex/supervisor.js';
+} from '../src/agent-runtime/builtin/codex/supervisor.js';
 import {
   createFakeFeishuBot,
   type FakeFeishuBot,

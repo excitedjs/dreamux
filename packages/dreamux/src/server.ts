@@ -11,8 +11,8 @@ import {
   createBuiltinAgentRuntimeProviderCatalog,
   type AgentRuntimeProviderCatalog,
 } from './agent-runtime/index.js';
-import type { CodexProcess, CodexProcessOptions } from './codex/supervisor.js';
-import type { CodexWsClient } from './codex/rpc.js';
+import type { CodexProcess, CodexProcessOptions } from './agent-runtime/builtin/codex/supervisor.js';
+import type { CodexWsClient } from './agent-runtime/builtin/codex/rpc.js';
 import type { FeishuBot } from './feishu/bot.js';
 import {
   createBuiltinProviderRegistry,
@@ -27,7 +27,7 @@ import {
   DispatcherStore,
   type DispatcherRow,
 } from './runtime/dispatcher-store.js';
-import type { DispatcherCodexHomeDoctor } from './runtime/dispatcher-codex-home.js';
+import type { DispatcherCodexHomeDoctor } from './agent-runtime/builtin/codex/codex-home.js';
 import {
   adminSocketPath,
   setRuntimeConfig,

@@ -3,7 +3,7 @@ import type {
   InboundDeliveryResult,
   InboundTurnInput,
   NoticeInjectionResult,
-} from '../dispatcher/turn-manager.js';
+} from './turn.js';
 import type { DispatcherConfig } from '../runtime/config.js';
 import type { DispatcherProviderConfig } from '../runtime/config.js';
 import type {

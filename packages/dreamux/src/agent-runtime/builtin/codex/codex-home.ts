@@ -23,7 +23,7 @@ import {
   dispatcherWorkspaceSkillPath,
   dispatcherSocketPath,
   unixSocketPathFitsBudget,
-} from './paths.js';
+} from '../../../runtime/paths.js';
 
 export const DISPATCHER_APP_SERVER_SOCKET_PATH_MAX_BYTES =
   DREAMUX_UNIX_SOCKET_PATH_MAX_BYTES;

@@ -1,16 +1,16 @@
-import type { DispatcherStore } from '../runtime/dispatcher-store.js';
+import type { DispatcherStore } from '../../../runtime/dispatcher-store.js';
 import {
   dispatcherCodexCwd,
   dispatcherSocketPath,
   dispatcherStderrLog,
   dispatcherStdoutLog,
-} from '../runtime/paths.js';
+} from '../../../runtime/paths.js';
 import type {
   AgentRuntimePathContext,
   AgentRuntimeStateStore,
   AgentRuntimeTurnInput,
   TeamMateCompletionEnvelope,
-} from './types.js';
+} from '../../types.js';
 
 /** Frame a TeamMate completion as the text of a delivered Codex turn. */
 export function formatCodexTeamMateCompletion(

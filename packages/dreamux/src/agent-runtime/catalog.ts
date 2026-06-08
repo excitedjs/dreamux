@@ -4,8 +4,8 @@ import {
   type ProviderDescriptor,
   type ProviderRegistry,
 } from '../registry/index.js';
-import { createCodexAgentRuntimeProvider } from './codex.js';
-import type { CodexAgentRuntimeProviderOptions } from './codex.js';
+import { createCodexAgentRuntimeProvider } from './builtin/codex/provider.js';
+import type { CodexAgentRuntimeProviderOptions } from './builtin/codex/provider.js';
 import { createClaudeCodeAgentRuntimeProvider } from './claude-code.js';
 import type { ClaudeCodeAgentRuntimeProviderOptions } from './claude-code.js';
 import type { AgentRuntimeProvider } from './types.js';

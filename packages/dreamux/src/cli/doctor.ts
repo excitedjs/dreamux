@@ -13,7 +13,7 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-import { codexArgsToCli, parseCodexArgs } from '../runtime/codex-args.js';
+import { codexArgsToCli, parseCodexArgs } from '../agent-runtime/builtin/codex/args.js';
 import {
   BUILT_IN_DEFAULTS,
   BUILTIN_CLAUDE_CODE_PROVIDER_REF,
@@ -32,7 +32,7 @@ import {
   dispatcherCodexHomeDoctorContext,
   validateDispatcherCodexHome,
   type DispatcherCodexHomeDoctorResult,
-} from '../runtime/dispatcher-codex-home.js';
+} from '../agent-runtime/builtin/codex/codex-home.js';
 import {
   dispatcherCodexCwd,
   setRuntimeConfig,

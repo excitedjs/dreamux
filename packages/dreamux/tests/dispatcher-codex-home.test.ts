@@ -8,7 +8,7 @@ import {
   formatDispatcherCodexHomeErrors,
   dispatcherCodexHomeDoctorContext,
   validateDispatcherCodexHome,
-} from '../src/runtime/dispatcher-codex-home.js';
+} from '../src/agent-runtime/builtin/codex/codex-home.js';
 import { BUILT_IN_DEFAULTS } from '../src/runtime/config.js';
 import {
   dispatcherAppServerControlDir,

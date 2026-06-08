@@ -19,7 +19,7 @@ import {
 } from '../src/claude-code/supervisor.js';
 import { claudeCodeMcpConfig } from '../src/claude-code/mcp-config.js';
 import { claudeCodeResidentArgs } from '../src/runtime/claude-code-args.js';
-import { codexMcpServerArgs } from '../src/codex/mcp-config.js';
+import { codexMcpServerArgs } from '../src/agent-runtime/builtin/codex/mcp-config.js';
 import { DispatcherStore } from '../src/runtime/dispatcher-store.js';
 import { dispatcherClaudeCodeMcpConfigPath } from '../src/runtime/paths.js';
 import { defaultDispatcherClaudeCodeConfig } from '../src/runtime/config.js';

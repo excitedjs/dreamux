@@ -78,7 +78,7 @@ import {
 } from '../claude-code/supervisor.js';
 import type {
   InboundDeliveryHooks,
-} from '../dispatcher/turn-manager.js';
+} from './turn.js';
 import type { DispatcherStatus } from '../runtime/dispatcher-store.js';
 import type {
   AgentRuntimeCapabilities,

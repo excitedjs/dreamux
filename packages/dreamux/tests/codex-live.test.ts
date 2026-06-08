@@ -30,11 +30,11 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 
-import { CodexProcess } from '../src/codex/supervisor.js';
-import { CodexWsClient, type CodexWsClientOptions } from '../src/codex/rpc.js';
-import { performInitializeHandshake } from '../src/codex/handshake.js';
-import { feishuMcpCodexArgs } from '../src/codex/mcp-config.js';
-import { codexArgsToCli, parseCodexArgs } from '../src/runtime/codex-args.js';
+import { CodexProcess } from '../src/agent-runtime/builtin/codex/supervisor.js';
+import { CodexWsClient, type CodexWsClientOptions } from '../src/agent-runtime/builtin/codex/rpc.js';
+import { performInitializeHandshake } from '../src/agent-runtime/builtin/codex/handshake.js';
+import { feishuMcpCodexArgs } from '../src/agent-runtime/builtin/codex/mcp-config.js';
+import { codexArgsToCli, parseCodexArgs } from '../src/agent-runtime/builtin/codex/args.js';
 import { dreamuxBinPath } from '../src/runtime/package-bin.js';
 import {
   IN_PROGRESS_REACTION_EMOJI,
@@ -51,7 +51,7 @@ import type { DreamuxConfig } from '../src/runtime/config.js';
 import type {
   ServerNotification,
   ThreadStartResponse,
-} from '../src/codex/types.js';
+} from '../src/agent-runtime/builtin/codex/types.js';
 import { testDispatcherConfig } from './helpers/config.js';
 
 export const SKIP_ENV = 'DREAMUX_SKIP_LIVE_CODEX';

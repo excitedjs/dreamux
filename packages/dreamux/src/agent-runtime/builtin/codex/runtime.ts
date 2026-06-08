@@ -23,32 +23,32 @@ import type {
   DispatcherRow,
   DispatcherStatus,
   DispatcherStore,
-} from '../runtime/dispatcher-store.js';
+} from '../../../runtime/dispatcher-store.js';
 import {
   CodexProcess,
   type CodexProcessExit,
   type CodexProcessOptions,
-} from '../codex/supervisor.js';
-import { CodexWsClient } from '../codex/rpc.js';
-import { performInitializeHandshake } from '../codex/handshake.js';
+} from './supervisor.js';
+import { CodexWsClient } from './rpc.js';
+import { performInitializeHandshake } from './handshake.js';
 import type {
   ThreadResumeParams,
   ThreadResumeResponse,
   ThreadStartParams,
   ThreadStartResponse,
-} from '../codex/types.js';
+} from './types.js';
 import {
   TurnManager,
-  type InboundDeliveryHooks,
-} from '../dispatcher/turn-manager.js';
-import { createFailFastApprovalHandler } from '../dispatcher/approval.js';
+} from './turn-manager.js';
+import type { InboundDeliveryHooks } from '../../turn.js';
+import { createFailFastApprovalHandler } from './approval.js';
 import {
   dispatcherCodexHomeDoctorContext,
   type DispatcherCodexHomeDoctor,
-} from '../runtime/dispatcher-codex-home.js';
-import { dispatcherProcessEnv } from '../runtime/package-bin.js';
-import { installBundledWorkspaceSkills } from '../runtime/bundled-skills.js';
-import { DREAMUX_DISPATCHER_BASE_INSTRUCTIONS } from '../dispatcher/base-prompt.js';
+} from './codex-home.js';
+import { dispatcherProcessEnv } from '../../../runtime/package-bin.js';
+import { installBundledWorkspaceSkills } from '../../../runtime/bundled-skills.js';
+import { DREAMUX_DISPATCHER_BASE_INSTRUCTIONS } from '../../../dispatcher/base-prompt.js';
 import type {
   AgentRuntime,
   AgentRuntimeCapabilities,
@@ -60,15 +60,15 @@ import type {
   AgentRuntimeTurnResult,
   TeamMateCompletionDeliveryResult,
   TeamMateCompletionEnvelope,
-} from './types.js';
-import { BUILTIN_CODEX_PROVIDER_REF } from '../runtime/config.js';
-import { CODEX_AGENT_RUNTIME_CAPABILITIES } from './codex.js';
+} from '../../types.js';
+import { BUILTIN_CODEX_PROVIDER_REF } from '../../../runtime/config.js';
+import { CODEX_AGENT_RUNTIME_CAPABILITIES } from './provider.js';
 import {
   codexRowStateStore,
   defaultCodexRuntimePaths,
   formatCodexTeamMateCompletion,
   isSystemTurn,
-} from './codex-runtime-support.js';
+} from './runtime-support.js';
 
 const DEFAULT_RESTART_BACKOFF_BASE_MS = 1000;
 const DEFAULT_RESTART_BACKOFF_MAX_MS = 30_000;

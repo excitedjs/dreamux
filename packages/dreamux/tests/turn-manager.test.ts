@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { TurnManager } from '../src/dispatcher/turn-manager.js';
-import type { NotificationHandler } from '../src/codex/rpc.js';
-import type { ServerNotification, TurnStartResponse } from '../src/codex/types.js';
+import { TurnManager } from '../src/agent-runtime/builtin/codex/turn-manager.js';
+import type { NotificationHandler } from '../src/agent-runtime/builtin/codex/rpc.js';
+import type { ServerNotification, TurnStartResponse } from '../src/agent-runtime/builtin/codex/types.js';
 
 describe('TurnManager inbound submission', () => {
   it('submits every accepted message through turn/start without coalescing', async () => {

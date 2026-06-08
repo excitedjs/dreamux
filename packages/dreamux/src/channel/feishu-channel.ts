@@ -1,7 +1,7 @@
 import { isBotSenderType } from '@excitedjs/feishu-transport';
 
-import type { InboundDeliveryHooks } from '../dispatcher/turn-manager.js';
-import type { InboundTurnInput } from '../dispatcher/turn-manager.js';
+import type { InboundDeliveryHooks } from '../agent-runtime/turn.js';
+import type { InboundTurnInput } from '../agent-runtime/turn.js';
 import type { AgentRuntimeTurnResult } from '../agent-runtime/types.js';
 import type {
   CreateBotOptions,
