@@ -42,7 +42,7 @@ export function resolveCodexBinPath(
   env: NodeJS.ProcessEnv = process.env,
 ): string {
   const fromEnv = env['CODEX_HOST_CODEX_BIN'];
-  if (fromEnv !== undefined && fromEnv !== '') return fromEnv;
+  if (fromEnv !== undefined && fromEnv.trim() !== '') return fromEnv;
   return configBin;
 }
 
