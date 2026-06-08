@@ -5,10 +5,13 @@
 - **Date:** 2026-06-08
 - **Affects:** `~/.dreamux/config.json` schema, `config/config.ts` parse/validate,
   `onboard/config-files.ts`, the agent-runtime catalog registration, the two
-  builtin runtime config readers, dispatcher/teammate runtime resolution
+  builtin runtime config readers, dispatcher/teammate runtime resolution,
+  `cli/doctor.ts` + the provider `diagnostic` capability (codex version floor)
 - **PR / Issue:** [issue #148](https://github.com/excitedjs/dreamux/issues/148),
-  absorbing [issue #146](https://github.com/excitedjs/dreamux/issues/146),
-  following [issue #98](https://github.com/excitedjs/dreamux/issues/98)
+  absorbing [issue #146](https://github.com/excitedjs/dreamux/issues/146) and the
+  doctor half of [issue #147](https://github.com/excitedjs/dreamux/issues/147)'s
+  codex 0.137 requirement, following
+  [issue #98](https://github.com/excitedjs/dreamux/issues/98)
 
 ## Context
 
@@ -74,6 +77,42 @@ deferred and carry per-dispatcher credentials).
 - The builtin runtime providers are registered into the registry idempotently
   (guarded by `getImplementation(id) === undefined`) so config can register them
   for parsing while the server's factory-bearing registration still wins.
+
+### Provider-self-reported doctor diagnostics (issue #146 doctor half)
+
+`AgentRuntimeProvider` gains an optional `diagnostic` capability so `cli/doctor.ts`
+stops branching on `BUILTIN_CODEX_PROVIDER_REF`:
+
+- The provider **declares** `binChecks(context)` — pure `{ name, bin, args }`
+  descriptors. Doctor dedups them across dispatchers via its existing Map and
+  executes them (foreground via `runner.check`; managed-service via a launch
+  under the unit env). The descriptor name is scope-aware
+  (`'codex binary'` vs `'managed service Codex binary'`), so the provider owns
+  its own labels.
+- The provider **runs** `runDiagnostic(context, runner)` for its own non-bin
+  internal checks, returning a neutral `AgentRuntimeDoctorResult { ok, detail,
+  errors }`. codex validates its codex-home (the prior
+  `validateDispatcherCodexHome`) and gates the codex version; claude has no
+  host-managed state and returns a neutral pass.
+- Doctor keeps the per-dispatcher `DispatcherDoctorReport[]` shape and runs the
+  diagnostic twice per dispatcher (foreground env + installed managed-service
+  env). The old codex-specific `DispatcherRuntimeDoctorResult` union is gone;
+  `foreground`/`managedService` are the neutral result. The diagnostic runner is
+  a minimal `{ check, capture }` interface declared in `agent-runtime/types.ts`,
+  so the provider never imports `cli/doctor`.
+- Residual (acceptance is "趋近 0", not 0): `rejectTopLevelCodex` at the config
+  parse layer, and the empty-dispatchers default-codex bin check in doctor (no
+  dispatcher means no agents[] entry to drive a provider).
+
+#### Codex version floor (issue #147 fold)
+
+The codex diagnostic enforces `MIN_CODEX_VERSION = '0.137.0'`: it runs
+`codex --version`, parses the `major.minor.patch` triple, and compares
+component-wise (numeric, not string). Below 0.137 it fails loud. Reason: the
+teammate-completion reverse leg appends the completion to the dispatcher thread
+via `thread/inject_items`, an RPC that exists only on codex >= 0.137 — doctor
+surfaces the requirement up front rather than letting a teammate completion
+silently RPC-fail at runtime.
 
 ### #98 fail-loud (no migration shim)
 

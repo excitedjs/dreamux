@@ -20,6 +20,13 @@ agent session; how it talks to its engine is the engine's business.
   completion-delivery shape) — never via forked interfaces or `if (ref === …)`
   branches in callers. codex and claude are completely different mechanisms
   behind the same surface.
+- **Config parse and doctor are provider-self-reported, not core-branched.**
+  Each provider's optional `readConfig` parses its own `agents[].config` block;
+  its optional `diagnostic` declares `binChecks` (doctor dedups + executes) and
+  runs `runDiagnostic` for its own non-bin checks (codex: home + version >=
+  0.137; claude: none). `config/config.ts` and `cli/doctor.ts` iterate providers
+  and never branch on `BUILTIN_CODEX_PROVIDER_REF`. See
+  [`decisions/agents-config-normalization.md`](../../../../.agents/decisions/agents-config-normalization.md).
 - **No cross-builtin imports.** `builtin/codex/` and `builtin/claude-code/` must
   not import each other. Anything genuinely shared moves up (e.g. the inbound
   turn types live in `turn.ts`, the neutral process helpers in

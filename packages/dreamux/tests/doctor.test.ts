@@ -118,6 +118,7 @@ describe('dreamux doctor command', () => {
 
   it('reports global Codex home health', async () => {
     const runner = new FakeRunner();
+    runner.nodeVersions.set('codex', 'codex-cli 0.137.0');
     writeConfig();
     writeDispatcherHome({ auth: true });
 
@@ -137,6 +138,26 @@ describe('dreamux doctor command', () => {
       JSON.stringify(result, null, 2),
     ).toBe(true);
     expect(result.dispatchers[0]?.managedService).toBeNull();
+  });
+
+  it('fails loud when the Codex binary is below the 0.137 floor', async () => {
+    const runner = new FakeRunner();
+    runner.nodeVersions.set('codex', 'codex-cli 0.136.0');
+    writeConfig();
+    writeDispatcherHome({ auth: true });
+
+    const result = await runDreamuxDoctor({
+      runner,
+      platform: 'linux',
+      homeDir: join(root, 'home'),
+      env: {},
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.dispatchers[0]?.foreground.ok).toBe(false);
+    expect(result.dispatchers[0]?.foreground.errors.join('\n')).toContain(
+      'requires codex >= 0.137.0',
+    );
   });
 
   it('does not expose Feishu app secrets in doctor results', async () => {
@@ -177,7 +198,7 @@ describe('dreamux doctor command', () => {
       runtimeProvider: 'builtin:claude-code',
       foreground: {
         ok: true,
-        detail: expect.stringContaining('does not use Codex home state'),
+        detail: expect.stringContaining('no host-managed home state'),
       },
       managedService: null,
     });

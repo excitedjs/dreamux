@@ -11,6 +11,7 @@ import {
   readDispatcherCodexConfig,
 } from './config.js';
 import type { DispatcherCodexHomeDoctor } from './codex-home.js';
+import { codexAgentRuntimeDiagnostic } from './diagnostic.js';
 import { codexArgsFromConfig, codexArgsToCli } from './args.js';
 import {
   BUILTIN_CODEX_PROVIDER_REF,
@@ -73,6 +74,7 @@ export function createCodexAgentRuntimeProvider(
     ref: BUILTIN_CODEX_PROVIDER_REF,
     descriptor: options.descriptor,
     getCapabilities: () => CODEX_AGENT_RUNTIME_CAPABILITIES,
+    diagnostic: codexAgentRuntimeDiagnostic,
     readConfig(rawConfig, context) {
       return readDispatcherCodexConfig(
         rawConfig,

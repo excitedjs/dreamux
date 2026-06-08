@@ -66,6 +66,7 @@ import {
   readDispatcherClaudeCodeConfig,
   type DispatcherClaudeCodeConfig,
 } from './config.js';
+import { claudeCodeAgentRuntimeDiagnostic } from './diagnostic.js';
 import {
   dispatcherClaudeCodeMcpConfigPath,
   dispatcherClaudeCodeStreamLogPath,
@@ -478,6 +479,7 @@ export function createClaudeCodeAgentRuntimeProvider(
     ref: BUILTIN_CLAUDE_CODE_PROVIDER_REF,
     descriptor: options.descriptor,
     getCapabilities: () => CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES,
+    diagnostic: claudeCodeAgentRuntimeDiagnostic,
     readConfig(rawConfig, context) {
       return readDispatcherClaudeCodeConfig(
         rawConfig,
