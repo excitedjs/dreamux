@@ -414,17 +414,14 @@ export class CodexRuntime implements AgentRuntime {
    * delivered when nothing was submitted. The Dispatcher Service only retries on
    * `failed` (turn/start RPC failed → definitely not submitted), so a unique id
    * per attempt re-submits safely without any double-injection risk.
-   * `source_chat_id` is inert in the turn path.
    */
   async completionInput(
     completion: CompletionEnvelope,
   ): Promise<TeamMateCompletionDeliveryResult> {
     this.teammateDeliverySeq += 1;
     const delivery = await this.channelInput({
-      source_chat_id: 'teammate',
-      source_message_id: `teammate:${completion.id}#${this.teammateDeliverySeq}`,
-      sender_id: null,
-      parsed_text: formatCodexTeamMateCompletion(completion),
+      sourceId: `teammate:${completion.id}#${this.teammateDeliverySeq}`,
+      text: formatCodexTeamMateCompletion(completion),
     });
     switch (delivery.status) {
       case 'submitted':

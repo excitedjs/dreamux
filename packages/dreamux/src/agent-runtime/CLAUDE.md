@@ -45,5 +45,8 @@ takes a neutral `CompletionEnvelope { source; id; status; result }` (C2), the
 `teammateCompletion` capability is an open `CompletionDeliveryShape
 { kind; description }` (each builtin self-declares its own kind —
 `codexInboxTurn` / `claudeCodeTaskNotification`), and the runtime-state
-checkpoint kind is capability-driven with no `codexThread` fallback. Still
-pending: neutralizing the channel payload (D).
+checkpoint kind is capability-driven with no `codexThread` fallback. The
+channel payload is now neutral too (D): `channelInput` takes
+`InboundTurnInput { text; sourceId }` — turn text plus a dedupe/correlation id —
+and channel routing attributes (chat id, sender id, message id) stay in the
+channel layer and never cross into the runtime.

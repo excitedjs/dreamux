@@ -291,18 +291,14 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     await runtime.start();
 
     await runtime.channelInput({
-      source_chat_id: 'c',
-      source_message_id: 'm1',
-      sender_id: 'u',
-      parsed_text: 'first turn',
+      sourceId: 'm1',
+      text: 'first turn',
     });
     await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
 
     await runtime.channelInput({
-      source_chat_id: 'c',
-      source_message_id: 'm2',
-      sender_id: 'u',
-      parsed_text: 'second turn',
+      sourceId: 'm2',
+      text: 'second turn',
     });
     await waitFor(() => fleet.sessions[0]?.prompts.length === 2);
 
@@ -339,8 +335,8 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
 
     const accepted: string[] = [];
     const first = await runtime.channelInput(
-      { source_chat_id: 'c', source_message_id: 'm1', sender_id: 'u', parsed_text: 'do it' },
-      { onAccepted: (input) => void accepted.push(input.source_message_id ?? '') },
+      { sourceId: 'm1', text: 'do it' },
+      { onAccepted: (input) => void accepted.push(input.sourceId) },
     );
     expect(first.status).toBe('submitted');
     expect(accepted).toEqual(['m1']);
@@ -350,10 +346,8 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     await waitFor(() => runtime.getThreadId() === 'session-abc');
 
     const dup = await runtime.channelInput({
-      source_chat_id: 'c',
-      source_message_id: 'm1',
-      sender_id: 'u',
-      parsed_text: 'do it again',
+      sourceId: 'm1',
+      text: 'do it again',
     });
     expect(dup.status).toBe('duplicate');
     expect(fleet.sessions[0]?.prompts).toHaveLength(1);
@@ -390,10 +384,8 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     expect(runtime.getStatus()).toBe('stopped');
     expect(fleet.sessions[0]?.isAlive()).toBe(false);
     const after = await runtime.channelInput({
-      source_chat_id: 'c',
-      source_message_id: 'm9',
-      sender_id: 'u',
-      parsed_text: 'late',
+      sourceId: 'm9',
+      text: 'late',
     });
     expect(after.status).toBe('stopped');
     expect(fleet.sessions[0]?.prompts).toHaveLength(0);
@@ -406,10 +398,8 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     expect(runtime.getStatus()).toBe('ready');
 
     const submit = await runtime.channelInput({
-      source_chat_id: 'c',
-      source_message_id: 'm1',
-      sender_id: 'u',
-      parsed_text: 'go',
+      sourceId: 'm1',
+      text: 'go',
     });
     expect(submit.status).toBe('submitted');
 
@@ -424,10 +414,8 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     const { runtime, store } = makeRuntime(fleet);
     await runtime.start();
     await runtime.channelInput({
-      source_chat_id: 'c',
-      source_message_id: 'm1',
-      sender_id: 'u',
-      parsed_text: 'go',
+      sourceId: 'm1',
+      text: 'go',
     });
     await waitFor(() => runtime.getStatus() === 'degraded');
     expect(store.get('flow')?.last_error).toContain('model overloaded');
@@ -439,18 +427,14 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     await runtime.start();
 
     await runtime.channelInput({
-      source_chat_id: 'c',
-      source_message_id: 'm1',
-      sender_id: 'u',
-      parsed_text: 'first',
+      sourceId: 'm1',
+      text: 'first',
     });
     await waitFor(() => runtime.getStatus() === 'degraded');
 
     await runtime.channelInput({
-      source_chat_id: 'c',
-      source_message_id: 'm2',
-      sender_id: 'u',
-      parsed_text: 'second',
+      sourceId: 'm2',
+      text: 'second',
     });
     await waitFor(() => runtime.getStatus() === 'ready');
   });
@@ -462,10 +446,8 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
 
     // First turn establishes the session id.
     await runtime.channelInput({
-      source_chat_id: 'c',
-      source_message_id: 'm1',
-      sender_id: 'u',
-      parsed_text: 'first',
+      sourceId: 'm1',
+      text: 'first',
     });
     await waitFor(() => runtime.getThreadId() === 'session-abc');
 
@@ -476,10 +458,8 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
 
     // Next turn re-spawns a fresh session that resumes the captured session id.
     await runtime.channelInput({
-      source_chat_id: 'c',
-      source_message_id: 'm2',
-      sender_id: 'u',
-      parsed_text: 'second',
+      sourceId: 'm2',
+      text: 'second',
     });
     await waitFor(() => fleet.sessions.length === 2);
     const respawn = fleet.sessions[1]!;
@@ -524,10 +504,8 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     await runtime.start();
 
     await runtime.channelInput({
-      source_chat_id: 'c',
-      source_message_id: 'm1',
-      sender_id: 'u',
-      parsed_text: 'go',
+      sourceId: 'm1',
+      text: 'go',
     });
     await waitFor(() => runtime.getStatus() === 'degraded', 5000);
     expect(store.get('flow')?.last_error).toMatch(/timed out/i);

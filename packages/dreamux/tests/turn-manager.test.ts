@@ -17,14 +17,14 @@ describe('TurnManager inbound submission', () => {
     await expect(
       manager.enqueue(input('msg-1', 'first'), {
         onAccepted: (acceptedInput) => {
-          accepted.push(acceptedInput.source_message_id);
+          accepted.push(acceptedInput.sourceId);
         },
       }),
     ).resolves.toEqual({ status: 'submitted', turnId: 'turn-1' });
     await expect(
       manager.enqueue(input('msg-2', 'second'), {
         onAccepted: (acceptedInput) => {
-          accepted.push(acceptedInput.source_message_id);
+          accepted.push(acceptedInput.sourceId);
         },
       }),
     ).resolves.toEqual({ status: 'submitted', turnId: 'turn-2' });
@@ -130,10 +130,8 @@ describe('TurnManager restart-notice injection', () => {
 
 function input(messageId: string, text: string) {
   return {
-    source_chat_id: 'chat-a',
-    source_message_id: messageId,
-    sender_id: 'sender-a',
-    parsed_text: text,
+    sourceId: messageId,
+    text,
   };
 }
 

@@ -311,10 +311,8 @@ export class TeamMateAgentService {
   ): Promise<TeamMateTurnResult> {
     const live = await this.ensureRuntime(dispatcherId, name);
     const result = await live.runtime.channelInput({
-      source_chat_id: `teammate:${name}`,
-      source_message_id: `teammate:${name}:${Date.now()}`,
-      sender_id: 'dispatcher',
-      parsed_text: prompt,
+      sourceId: `teammate:${name}:${Date.now()}`,
+      text: prompt,
     });
     return toTurnResult(result);
   }

@@ -9,14 +9,16 @@
 
 export const DEFAULT_MESSAGE_ID_DEDUPE_WINDOW = 1024;
 
-export interface InboundTurnSource {
-  source_chat_id: string;
-  source_message_id: string | null;
-  sender_id: string | null;
-}
-
-export interface InboundTurnInput extends InboundTurnSource {
-  parsed_text: string;
+export interface InboundTurnInput {
+  /** The turn text to deliver to the agent. */
+  text: string;
+  /**
+   * Stable dedupe / correlation id for this inbound (formerly
+   * `source_message_id`). Channel routing attributes (chat id, sender id,
+   * message id) stay in the channel layer and never cross into the runtime.
+   * An empty string disables dedupe.
+   */
+  sourceId: string;
 }
 
 export type InboundDeliveryResult =

@@ -30,7 +30,7 @@
  *     of `config.json` / state files.
  *   - Credentials are removed declaratively via pino `redact`. Message *bodies*
  *     are NOT redacted — they are simply never passed to the logger (callers
- *     log ids, never `parsed_text` / `rawContent` / reply text).
+ *     log ids, never turn `text` / `rawContent` / reply text).
  *   - The factory takes an explicit destination. `paths.ts` `dreamuxRoot()`
  *     hardcodes `homedir()` and does not honor `DREAMUX_CONFIG_DIR`, so tests
  *     inject a tmp `filePath`; they must not expect an env var to move logs.

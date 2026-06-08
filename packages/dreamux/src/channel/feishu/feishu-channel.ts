@@ -357,15 +357,14 @@ export class FeishuChannelSession {
       },
     );
     const input: InboundTurnInput = {
-      source_chat_id: event.chatId,
-      source_message_id: event.messageId,
-      sender_id: event.senderId,
-      parsed_text: formatted.formattedText,
+      sourceId: event.messageId,
+      text: formatted.formattedText,
     };
     const delivery = await submitter.submitTurn(input, {
-      onAccepted: async (acceptedInput) => {
+      onAccepted: async () => {
         await this.setInboundReaction(
-          acceptedInput,
+          event.messageId,
+          event.chatId,
           RECEIVED_REACTION_EMOJI,
           'received',
         );
@@ -388,7 +387,8 @@ export class FeishuChannelSession {
         );
       }
       await this.setInboundReaction(
-        input,
+        event.messageId,
+        event.chatId,
         IN_PROGRESS_REACTION_EMOJI,
         'in_progress',
       );
@@ -442,12 +442,12 @@ export class FeishuChannelSession {
   }
 
   private async setInboundReaction(
-    input: InboundTurnInput,
+    messageId: string,
+    chatId: string,
     emoji: string,
     state: InboundReactionState,
   ): Promise<void> {
-    const messageId = input.source_message_id;
-    if (messageId === null || messageId === '') return;
+    if (messageId === '') return;
     if (this.state.pendingReceivedReactionClears.has(messageId)) return;
 
     const previous = this.state.inboundReactions.get(messageId);
@@ -490,7 +490,7 @@ export class FeishuChannelSession {
     }
 
     this.state.inboundReactions.set(messageId, {
-      chatId: input.source_chat_id,
+      chatId,
       reactionId,
       state,
     });

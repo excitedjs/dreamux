@@ -268,7 +268,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     hooks: InboundDeliveryHooks = {},
   ): Promise<AgentRuntimeTurnResult> {
     if (this.stopped) return { status: 'stopped' };
-    const key = input.source_message_id ?? '';
+    const key = input.sourceId;
     if (key !== '' && this.seen.has(key)) return { status: 'duplicate' };
     if (key !== '') this.seen.add(key);
     try {
@@ -284,7 +284,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     // returned to this caller without blocking the channel ack on full turn
     // completion. Instead, a failed turn drives the runtime to `degraded` with a
     // persisted `last_error` (visible via status/doctor) — never swallowed.
-    void this.runTurnOnQueue(input.parsed_text, turnId).then(
+    void this.runTurnOnQueue(input.text, turnId).then(
       () => this.markTurnSucceeded(),
       (err) => this.markTurnFailed(turnId, err),
     );

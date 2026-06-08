@@ -75,7 +75,7 @@ export class TurnManager {
     hooks: InboundDeliveryHooks = {},
   ): Promise<InboundDeliveryResult> {
     if (this.stopped) return { status: 'stopped' };
-    if (!this.rememberMessageId(input.source_message_id)) {
+    if (!this.rememberMessageId(input.sourceId)) {
       return { status: 'duplicate' };
     }
     // Mark before any await so a concurrent restart-notice injection observes
@@ -96,7 +96,7 @@ export class TurnManager {
       const res = await submitTurnStart(
         this.opts.client,
         threadId,
-        input.parsed_text,
+        input.text,
         this.opts.turnCwd ?? null,
       );
       void collector.awaitTurn().then(
@@ -108,7 +108,7 @@ export class TurnManager {
       const error = err instanceof Error ? err : new Error(String(err));
       this.log(
         'error',
-        `turn/start submission failed for message ${input.source_message_id ?? '<none>'}: ${error.message}`,
+        `turn/start submission failed for message ${input.sourceId === '' ? '<none>' : input.sourceId}: ${error.message}`,
         error,
       );
       return { status: 'failed', error };
@@ -171,14 +171,14 @@ export class TurnManager {
     } catch (err) {
       this.log(
         'warn',
-        `accepted-inbound hook failed for message ${input.source_message_id ?? '<none>'}`,
+        `accepted-inbound hook failed for message ${input.sourceId === '' ? '<none>' : input.sourceId}`,
         err,
       );
     }
   }
 
-  private rememberMessageId(messageId: string | null): boolean {
-    if (messageId === null || messageId === '') return true;
+  private rememberMessageId(messageId: string): boolean {
+    if (messageId === '') return true;
     if (this.seenMessageIds.has(messageId)) return false;
     this.seenMessageIds.add(messageId);
     this.seenMessageIdOrder.push(messageId);
