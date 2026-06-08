@@ -11,7 +11,7 @@ import {
   dispatcherCodexConfig,
 } from '../../../config/config.js';
 import type { DispatcherCodexHomeDoctor } from './codex-home.js';
-import { codexArgsToCli, parseCodexArgs } from './args.js';
+import { codexArgsFromConfig, codexArgsToCli } from './args.js';
 import { type ProviderDescriptor } from '../../../registry/index.js';
 import type {
   AgentRuntimeCapabilities,
@@ -73,7 +73,7 @@ export function createCodexAgentRuntimeProvider(
         context.dispatcher === null
           ? defaultDispatcherCodexConfig()
           : dispatcherCodexConfig(context.dispatcher);
-      const codexArgs = parseCodexArgs(context.row.codex_args_json);
+      const codexArgs = codexArgsFromConfig(codexConfig);
       const runtimeArgs = [
         ...codexArgsToCli(codexArgs),
         ...codexMcpServerArgs(context.mcpServers),

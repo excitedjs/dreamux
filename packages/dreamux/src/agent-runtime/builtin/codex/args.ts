@@ -91,21 +91,42 @@ export function parseCodexArgs(
     ...perDispatcherExtra,
   ];
 
-  if (!TRUSTED_LOCAL_APPROVAL_POLICIES.has(approvalPolicy)) {
+  return validateCodexArgs({ approvalPolicy, sandboxMode, extraArgs });
+}
+
+/**
+ * Build the codex CLI-arg model directly from the structured codex config
+ * block (`dispatchers[].runtime.config`), without round-tripping through JSON.
+ * Behavior-equivalent to encoding that block and calling {@link parseCodexArgs}:
+ * the same trusted-local invariants are enforced.
+ */
+export function codexArgsFromConfig(config: {
+  approval_policy: string;
+  sandbox_mode: string;
+  extra_args: string[];
+}): ParsedCodexArgs {
+  return validateCodexArgs({
+    approvalPolicy: config.approval_policy,
+    sandboxMode: config.sandbox_mode,
+    extraArgs: [...config.extra_args],
+  });
+}
+
+function validateCodexArgs(parsed: ParsedCodexArgs): ParsedCodexArgs {
+  if (!TRUSTED_LOCAL_APPROVAL_POLICIES.has(parsed.approvalPolicy)) {
     throw new Error(
-      `dispatcher startup refused: approvalPolicy='${approvalPolicy}' may request approval, ` +
+      `dispatcher startup refused: approvalPolicy='${parsed.approvalPolicy}' may request approval, ` +
         `but the dreamux MVP only ships with a fail-fast approval handler ` +
         `(issue #2 §"信任模型"). Configure approvalPolicy='never' or extend the trust model first.`,
     );
   }
-  if (!ALLOWED_SANDBOX_MODES.has(sandboxMode)) {
+  if (!ALLOWED_SANDBOX_MODES.has(parsed.sandboxMode)) {
     throw new Error(
-      `dispatcher startup refused: sandboxMode='${sandboxMode}' is not one of ` +
+      `dispatcher startup refused: sandboxMode='${parsed.sandboxMode}' is not one of ` +
         `${Array.from(ALLOWED_SANDBOX_MODES).join(' | ')} (codex 0.134 enum).`,
     );
   }
-
-  return { approvalPolicy, sandboxMode, extraArgs };
+  return parsed;
 }
 
 export function codexArgsToCli(parsed: ParsedCodexArgs): string[] {

@@ -335,7 +335,6 @@ export class TeamMateAgentService {
       dispatcher_id: runtimeId(identity.dispatcher_id, identity.name),
       bot_app_id: `teammate-${identity.name}`,
       bot_secret_ref: '',
-      codex_args_json: '{}',
       thread_id: identity.checkpoint?.id ?? null,
       status: 'declared',
       enabled: 1,

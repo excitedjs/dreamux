@@ -2,8 +2,6 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import {
-  BUILTIN_CODEX_PROVIDER_REF,
-  dispatcherCodexConfig,
   dispatcherFeishuConfig,
   type DispatcherConfig,
   type DreamuxConfig,
@@ -32,7 +30,6 @@ export interface DispatcherRow {
   dispatcher_id: string;
   bot_app_id: string;
   bot_secret_ref: string;
-  codex_args_json: string;
   thread_id: string | null;
   status: DispatcherStatus;
   enabled: 0 | 1;
@@ -48,7 +45,6 @@ export interface DispatcherCreateInput {
   dispatcher_id: string;
   bot_app_id: string;
   bot_secret_ref?: string;
-  codex_args_json?: string;
   enabled?: 0 | 1 | boolean;
 }
 
@@ -108,7 +104,6 @@ export class DispatcherStore {
       dispatcher_id: input.dispatcher_id,
       bot_app_id: input.bot_app_id,
       bot_secret_ref: input.bot_secret_ref ?? `config:${input.dispatcher_id}`,
-      codex_args_json: input.codex_args_json ?? '{}',
       thread_id: null,
       status: 'declared',
       enabled: normalizeEnabled(input.enabled ?? 1),
@@ -130,7 +125,6 @@ export class DispatcherStore {
       ...existing,
       bot_app_id: input.bot_app_id,
       bot_secret_ref: input.bot_secret_ref ?? existing.bot_secret_ref,
-      codex_args_json: input.codex_args_json ?? existing.codex_args_json,
       enabled: normalizeEnabled(input.enabled ?? existing.enabled),
       updated_at: Date.now(),
     };
@@ -237,7 +231,6 @@ function rowDefaults(config: DispatcherConfig, now: number): DispatcherRow {
     dispatcher_id: config.id,
     bot_app_id: feishu.app_id,
     bot_secret_ref: `config:${config.id}`,
-    codex_args_json: dispatcherCodexArgsJson(config),
     thread_id: null,
     status: 'declared',
     enabled: config.enabled ? 1 : 0,
@@ -267,27 +260,6 @@ async function rowFromConfig(
     last_error: status?.last_error ?? null,
     last_lost_thread_id: status?.last_lost_thread_id ?? null,
   };
-}
-
-function dispatcherCodexArgsJson(config: DispatcherConfig): string {
-  // Only the Codex runtime consumes `codex_args_json`. Other agent runtimes
-  // (e.g. builtin:claude-code) build their own args from their own config and
-  // ignore this field, so it stays empty for them.
-  if (config.runtime.provider !== BUILTIN_CODEX_PROVIDER_REF) {
-    return '{}';
-  }
-  const codex = dispatcherCodexConfig(config);
-  // approval_policy / sandbox_mode always carry a dispatcher-local default, so
-  // they are always encoded. extra_env is applied to the child process
-  // environment, not encoded into CLI args.
-  const raw: Record<string, unknown> = {
-    approvalPolicy: codex.approval_policy,
-    sandboxMode: codex.sandbox_mode,
-  };
-  if (codex.extra_args.length > 0) {
-    raw['extraArgs'] = codex.extra_args;
-  }
-  return JSON.stringify(raw);
 }
 
 async function readStatusFile(
