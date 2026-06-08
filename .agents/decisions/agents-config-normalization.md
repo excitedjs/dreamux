@@ -58,12 +58,16 @@ deferred and carry per-dispatcher credentials).
   the existing in-memory `DispatcherConfig.runtime = { provider, config }`. The
   in-memory shape is unchanged, so downstream readers (services, doctor,
   npm-detection) keep working; only the file schema and the parse layer change.
-- The intended end state is that a teammate resolves its own `agentRuntime` id
-  against `config.agents` into its own `{ provider, config }`, which structurally
-  removes the cross-provider bug (no dispatcher-config inheritance to mismatch).
-  The schema and `config.agents` map land here; rewiring the teammate service off
-  its same-provider inheritance hack onto agent-id resolution is a follow-up
-  phase.
+- A teammate resolves its own `agentRuntime` id against `config.agents` into its
+  own `{ provider, config }` and hands the provider a create-context dispatcher
+  whose `runtime` is that resolved runtime (other dispatcher fields copied from
+  the real dispatcher config). This structurally removes the cross-provider bug —
+  there is no dispatcher-config inheritance left to mismatch. `spawn` takes
+  `agentRuntime` (an `agents[].id`, was `provider_ref`); omitting it falls back to
+  the dispatcher's own `agentRuntime` id (no provider-ref fallback). The teammate
+  identity record persists `agent_runtime` (was `provider_ref`) so resume
+  re-resolves the config; a pre-#148 identity or an `agent_runtime` that no longer
+  matches any agent fails loud rather than silently defaulting a runtime.
 - `DispatcherConfig` also keeps the referenced `agentRuntime` id in memory so the
   config round-trips back to the file shape (`stringifyConfig` is the in-memory →
   file translator; `DEFAULT_CONFIG_JSON` is routed through it).
@@ -92,8 +96,9 @@ id). The breaking change ships a rush change file with `BREAKING:` + `Rebuild:`.
 - Runtime config is reusable: multiple dispatchers can share one agent, and a
   teammate can select a different agent than its dispatcher.
 - The teammate "inherit dispatcher config only when the provider matches" hack is
-  slated for replacement by agent-id resolution against `config.agents` (a
-  follow-up phase; this record lands the schema and the resolved map it needs).
+  gone, replaced by agent-id resolution against `config.agents`. A teammate runs
+  with its own named agent's config, so a claude teammate under a codex dispatcher
+  starts cleanly instead of throwing "is not wired to Claude Code".
 
 ## Alternatives considered
 

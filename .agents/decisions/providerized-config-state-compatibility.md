@@ -75,7 +75,10 @@ State compatibility follows issue #98:
 - authorization or access-control state fails loudly when incompatible;
 - rebuildable runtime state may warn and rebuild/drop;
 - TeamMate ledger state is server-owned, versioned, and must not silently lose
-  completed final outputs;
+  completed final outputs. The persisted identity record references its runtime
+  by `agent_runtime` (an `agents[].id`), aligned with the named-agents schema; a
+  legacy `provider_ref` identity (pre-#148) fails loud on the next lifecycle verb
+  with rebuild guidance rather than silently defaulting a runtime;
 - failed push delivery does not delete a result that can be retrieved later.
 
 ## Consequences

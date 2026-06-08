@@ -181,7 +181,7 @@ describe('teammate-mcp stdio shim', () => {
           arguments: {
             name: 'reviewer',
             prompt: 'Review the change.',
-            provider_ref: 'builtin:codex',
+            agent_runtime: 'codex',
             cwd: '/workspace',
           },
         },
@@ -205,7 +205,7 @@ describe('teammate-mcp stdio shim', () => {
             dispatcher_id: 'dispatcher-a',
             name: 'reviewer',
             prompt: 'Review the change.',
-            provider_ref: 'builtin:codex',
+            agent_runtime: 'codex',
             cwd: '/workspace',
           },
         },

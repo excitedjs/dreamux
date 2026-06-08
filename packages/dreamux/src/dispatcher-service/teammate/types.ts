@@ -19,7 +19,12 @@ export interface TeamMateIdentity {
   version: 1;
   dispatcher_id: string;
   name: string;
-  provider_ref: string;
+  /**
+   * The `agents[].id` this teammate runs (persisted so resume re-resolves the
+   * runtime config from `DreamuxConfig.agents`). Replaces the former
+   * `provider_ref`: a teammate references an agent, not a provider directly.
+   */
+  agent_runtime: string;
   cwd: string;
   created_at: number;
   updated_at: number;
@@ -44,7 +49,7 @@ export interface TeamMateHistoryEvent {
   dispatcher_id: string;
   name: string;
   type: TeamMateHistoryEventType;
-  provider_ref: string;
+  agent_runtime: string;
   cwd: string;
   checkpoint: AgentRuntimeResumeCheckpoint | null;
   prompt_preview: string | null;
@@ -55,7 +60,7 @@ export interface TeamMateHistoryEvent {
 
 export interface TeamMateRuntimeStatus {
   name: string;
-  provider_ref: string;
+  agent_runtime: string;
   cwd: string;
   status: TeamMateIdentityStatus;
   runtime_status: DispatcherStatus | null;
@@ -69,7 +74,14 @@ export interface SpawnTeamMateInput {
   dispatcherId: string;
   name: string;
   prompt: string;
-  providerRef?: string;
+  /**
+   * The `agents[].id` this teammate runs. Resolved against the global agents
+   * map (`DreamuxConfig.agents`) into a `{ provider, config }` runtime. Omitted
+   * falls back to the dispatcher's own `agentRuntime` id. A teammate may name a
+   * different agent than its dispatcher (e.g. a claude teammate under a codex
+   * dispatcher) — its config comes from that agent, never inherited.
+   */
+  agentRuntime?: string;
   cwd?: string;
 }
 

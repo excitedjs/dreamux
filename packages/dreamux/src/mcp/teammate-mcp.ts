@@ -147,7 +147,7 @@ function teammateTools(callerKind: 'dispatcher' | 'teammate'): Array<Record<stri
     tool('spawn', 'Start a named, resumable TeamMate agent and submit its first turn.', {
       name: { type: 'string', minLength: 1, maxLength: 64 },
       prompt: { type: 'string', minLength: 1, maxLength: 20000 },
-      provider_ref: { type: 'string' },
+      agent_runtime: { type: 'string' },
       cwd: { type: 'string', minLength: 1, maxLength: 4096 },
     }, ['name', 'prompt']),
     tool('send', 'Send a follow-up turn to a running or resumable TeamMate agent.', {
@@ -286,12 +286,12 @@ function asToolCallParams(params: unknown): ToolCall {
 
 function spawnArgs(value: unknown): Record<string, unknown> {
   const obj = asRecord(value, 'spawn arguments');
-  const providerRef = optionalString(obj, 'provider_ref');
+  const agentRuntime = optionalString(obj, 'agent_runtime');
   const cwd = optionalString(obj, 'cwd');
   return {
     name: requireString(obj, 'name'),
     prompt: requireString(obj, 'prompt'),
-    ...(providerRef !== null ? { provider_ref: providerRef } : {}),
+    ...(agentRuntime !== null ? { agent_runtime: agentRuntime } : {}),
     ...(cwd !== null ? { cwd } : {}),
   };
 }

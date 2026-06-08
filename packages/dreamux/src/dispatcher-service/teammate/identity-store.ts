@@ -22,14 +22,14 @@ export interface TeamMateIdentityStoreLog {
 export interface TeamMateIdentityCreateInput {
   dispatcherId: string;
   name: string;
-  providerRef: string;
+  agentRuntime: string;
   cwd: string;
   checkpoint?: AgentRuntimeResumeCheckpoint | null;
   status?: TeamMateIdentityStatus;
 }
 
 export interface TeamMateIdentityUpdateInput {
-  providerRef?: string;
+  agentRuntime?: string;
   cwd?: string;
   checkpoint?: AgentRuntimeResumeCheckpoint | null;
   status?: TeamMateIdentityStatus;
@@ -98,7 +98,7 @@ export class TeamMateIdentityStore {
       version: 1,
       dispatcher_id: input.dispatcherId,
       name: input.name,
-      provider_ref: input.providerRef,
+      agent_runtime: input.agentRuntime,
       cwd: input.cwd,
       created_at: now,
       updated_at: now,
@@ -118,7 +118,7 @@ export class TeamMateIdentityStore {
   ): Promise<TeamMateIdentity> {
     const updated: TeamMateIdentity = {
       ...identity,
-      ...(input.providerRef !== undefined ? { provider_ref: input.providerRef } : {}),
+      ...(input.agentRuntime !== undefined ? { agent_runtime: input.agentRuntime } : {}),
       ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
       ...(input.checkpoint !== undefined ? { checkpoint: input.checkpoint } : {}),
       ...(input.status !== undefined ? { status: input.status } : {}),
@@ -143,7 +143,7 @@ export class TeamMateIdentityStore {
         dispatcher_id: identity.dispatcher_id,
         name: identity.name,
         type: input.type,
-        provider_ref: identity.provider_ref,
+        agent_runtime: identity.agent_runtime,
         cwd: identity.cwd,
         checkpoint: identity.checkpoint,
         prompt_preview:
@@ -207,11 +207,26 @@ function readIdentity(
   raw: string,
 ): TeamMateIdentity {
   const value = JSON.parse(raw) as Record<string, unknown>;
+  // #98 fail-loud: a pre-#148 identity carried `provider_ref` (a provider ref)
+  // instead of `agent_runtime` (an agents[].id). It cannot be resolved against
+  // the named agents map, so reject it with rebuild guidance rather than
+  // silently defaulting a runtime.
+  if (
+    typeof value['agent_runtime'] !== 'string' &&
+    typeof value['provider_ref'] === 'string'
+  ) {
+    throw new Error(
+      `TeamMate identity ${JSON.stringify(name)} uses the legacy provider_ref ` +
+        'format (pre-#148). Teammate identities now reference an agents[].id via ' +
+        'agent_runtime. Close and respawn this teammate, or delete its identity ' +
+        'file to rebuild it.',
+    );
+  }
   if (
     value['version'] !== 1 ||
     value['dispatcher_id'] !== dispatcherId ||
     value['name'] !== name ||
-    typeof value['provider_ref'] !== 'string' ||
+    typeof value['agent_runtime'] !== 'string' ||
     typeof value['cwd'] !== 'string'
   ) {
     throw new Error(`invalid TeamMate identity ${JSON.stringify(name)}`);
