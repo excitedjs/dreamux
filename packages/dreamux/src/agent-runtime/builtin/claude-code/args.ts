@@ -20,6 +20,13 @@ export interface ClaudeCodeResidentArgsInput {
   mcpConfigPath: string;
   /** Resume an existing Claude Code session, when one is known (spawn-time). */
   resumeSessionId?: string | null;
+  /**
+   * Launcher-supplied dispatcher/role system-prompt content. Claude Code applies
+   * it as an APPEND (per its `systemPrompt` capability) via
+   * `--append-system-prompt`, layered on top of the engine's own system prompt.
+   * Omitted/empty for launches that supply none (e.g. teammates).
+   */
+  systemPromptContent?: string;
 }
 
 /**
@@ -53,6 +60,12 @@ export function claudeCodeResidentArgs(input: ClaudeCodeResidentArgsInput): stri
   }
   if (input.config.model !== null) {
     args.push('--model', input.config.model);
+  }
+  if (
+    input.systemPromptContent !== undefined &&
+    input.systemPromptContent !== ''
+  ) {
+    args.push('--append-system-prompt', input.systemPromptContent);
   }
   if (
     input.resumeSessionId !== undefined &&

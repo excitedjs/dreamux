@@ -355,6 +355,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       config: this.config,
       mcpConfigPath: this.mcpConfigPath,
       resumeSessionId: this.threadId,
+      systemPromptContent: this.context.systemPromptContent,
     });
     const session = this.deps.sessionFactory({
       bin: this.bin,

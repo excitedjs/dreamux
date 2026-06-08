@@ -29,7 +29,10 @@ import {
   type DreamuxLogger,
 } from '../../platform/logger.js';
 import { teammateMcpServerDescriptor } from '../teammate/mcp-config.js';
-import { DREAMUX_DISPATCHER_BASE_INSTRUCTIONS } from './base-prompt.js';
+import {
+  DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS,
+  DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
+} from './base-prompt.js';
 import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
 
 export interface DispatcherAgentServiceOptions {
@@ -182,12 +185,12 @@ export class DispatcherAgentService {
     });
     // The dispatcher prompt is runtime-injected via the runtime's systemPrompt
     // capability. 'replace' runtimes (codex) consume the full prompt as their
-    // base instructions; the 'append' variant is authored in G2b, so for now an
-    // append-mode runtime receives an empty placeholder.
+    // base instructions; 'append' runtimes (claude-code) receive a focused
+    // dispatcher-role delta layered on top of their own system prompt.
     const systemPromptContent =
       runtimeProvider.getCapabilities().systemPrompt.mode === 'replace'
         ? DREAMUX_DISPATCHER_BASE_INSTRUCTIONS
-        : '';
+        : DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS;
     const runtime = runtimeProvider.createRuntime({
       row,
       dispatchers: this.opts.dispatchers,

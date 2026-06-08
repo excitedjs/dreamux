@@ -199,6 +199,39 @@ describe('claude-code pure translation (not Codex renamed)', () => {
     });
     expect(args).not.toContain('--resume');
   });
+
+  it('injects the dispatcher role prompt via --append-system-prompt (append mode)', () => {
+    const args = claudeCodeResidentArgs({
+      config: defaultDispatcherClaudeCodeConfig(),
+      mcpConfigPath: '/x.json',
+      resumeSessionId: null,
+      systemPromptContent: 'You are a Dreamux dispatcher.',
+    });
+    // claude APPENDS the role prompt on top of its own system prompt — distinct
+    // from codex, which REPLACES its base instructions.
+    expect(
+      args.slice(
+        args.indexOf('--append-system-prompt'),
+        args.indexOf('--append-system-prompt') + 2,
+      ),
+    ).toEqual(['--append-system-prompt', 'You are a Dreamux dispatcher.']);
+  });
+
+  it('omits --append-system-prompt when no role prompt is supplied (e.g. teammate)', () => {
+    const undefinedArgs = claudeCodeResidentArgs({
+      config: defaultDispatcherClaudeCodeConfig(),
+      mcpConfigPath: '/x.json',
+      resumeSessionId: null,
+    });
+    expect(undefinedArgs).not.toContain('--append-system-prompt');
+    const emptyArgs = claudeCodeResidentArgs({
+      config: defaultDispatcherClaudeCodeConfig(),
+      mcpConfigPath: '/x.json',
+      resumeSessionId: null,
+      systemPromptContent: '',
+    });
+    expect(emptyArgs).not.toContain('--append-system-prompt');
+  });
 });
 
 describe('builtin:claude-code provider', () => {
