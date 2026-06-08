@@ -128,7 +128,29 @@ describe('codex teammate completion delivery (native inject + trigger)', () => {
       result: 'it broke',
     });
     expect(result.status).toBe('failed');
-    // The inject already happened; only the trigger failed. A retry re-injects.
+    // The inject already happened; only the trigger failed. A retry re-triggers
+    // WITHOUT re-injecting (see the idempotency test below).
+    expect(fake.injectItemsParams).toHaveLength(1);
+  });
+
+  it('does not re-inject the same completion on a retry (idempotent)', async () => {
+    const fake = await startFakeCodex({ failTurnStart: true });
+    fakes.push(fake);
+    const runtime = await makeRuntime(fake);
+
+    const completion = {
+      source: 'teammate',
+      id: 'mate-retry',
+      status: 'failed' as const,
+      result: 'broke',
+    };
+    // The Dispatcher Service retries completionInput on `failed` with the same
+    // envelope. The item must be injected only once across attempts so no
+    // duplicate <teammate_session_completion> is persisted to the thread.
+    const first = await runtime.completionInput!(completion);
+    expect(first.status).toBe('failed');
+    const second = await runtime.completionInput!(completion);
+    expect(second.status).toBe('failed');
     expect(fake.injectItemsParams).toHaveLength(1);
   });
 

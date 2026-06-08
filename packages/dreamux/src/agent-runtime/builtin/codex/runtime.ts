@@ -136,6 +136,15 @@ export class CodexRuntime implements AgentRuntime {
   private status: DispatcherStatus = 'declared';
   /** Monotonic per-attempt suffix for TeamMate delivery turn dedup ids (#110 PR8). */
   private teammateDeliverySeq = 0;
+  /**
+   * Completion ids whose item has already been injected into the thread. The
+   * Dispatcher Service retries `completionInput` on `failed`; if the inject
+   * succeeded but the trigger turn failed, the retry must NOT re-inject the same
+   * item (that would persist a duplicate completion to the rollout). Bounded so
+   * a long-lived dispatcher does not grow this set without limit.
+   */
+  private readonly injectedCompletionIds = new Set<string>();
+  private readonly injectedCompletionOrder: string[] = [];
   private readonly log: NonNullable<CodexRuntimeDeps['log']>;
   private stopping = false;
   private restarting = false;
@@ -451,15 +460,21 @@ export class CodexRuntime implements AgentRuntime {
       };
     }
     this.teammateDeliverySeq += 1;
-    try {
-      await injectThreadItems(this.client, threadId, [
-        buildCodexCompletionItem(completion),
-      ]);
-    } catch (err) {
-      return {
-        status: 'failed',
-        error: err instanceof Error ? err : new Error(String(err)),
-      };
+    // Inject the completion item at most once per completion id. On a retry
+    // (trigger turn failed last time) the item is already in the thread, so we
+    // skip straight to re-triggering instead of persisting a duplicate.
+    if (!this.injectedCompletionIds.has(completion.id)) {
+      try {
+        await injectThreadItems(this.client, threadId, [
+          buildCodexCompletionItem(completion),
+        ]);
+      } catch (err) {
+        return {
+          status: 'failed',
+          error: err instanceof Error ? err : new Error(String(err)),
+        };
+      }
+      this.rememberInjectedCompletion(completion.id);
     }
     const delivery = await this.channelInput({
       sourceId: `teammate:${completion.id}#${this.teammateDeliverySeq}`,
@@ -634,6 +649,17 @@ export class CodexRuntime implements AgentRuntime {
     // `stopped` settlement for interrupted turns is emitted by the turn manager
     // on `stop()`.
     this.deps.onTurnSettled?.({ turnId: turn.turnId, status: 'completed' });
+  }
+
+  /** Record a completion id as injected, evicting the oldest past a small cap. */
+  private rememberInjectedCompletion(id: string): void {
+    if (this.injectedCompletionIds.has(id)) return;
+    this.injectedCompletionIds.add(id);
+    this.injectedCompletionOrder.push(id);
+    while (this.injectedCompletionOrder.length > 256) {
+      const evicted = this.injectedCompletionOrder.shift();
+      if (evicted !== undefined) this.injectedCompletionIds.delete(evicted);
+    }
   }
 
   private setStatus(s: DispatcherStatus): void {
