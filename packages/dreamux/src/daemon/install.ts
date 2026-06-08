@@ -31,8 +31,8 @@ import {
   dispatcherCodexConfig,
   type DreamuxConfig,
   globalConfigDir,
-  loadConfig,
 } from '../config/config.js';
+import { loadConfigWithBuiltins } from '../agent-runtime/load-config.js';
 import { dreamuxBinPath } from '../platform/package-bin.js';
 import { setRuntimeConfig } from '../platform/paths.js';
 
@@ -98,7 +98,7 @@ export async function runDaemonInstall(
 
   // Fail loudly when the operator has not run onboard yet — daemon install
   // re-registers an existing setup, it does not create one.
-  const { config } = await loadConfig({ configDir: globalConfigDir() });
+  const { config } = await loadConfigWithBuiltins({ configDir: globalConfigDir() });
   setRuntimeConfig(config);
 
   // Seed the service PATH with Codex only when a host override or an enabled

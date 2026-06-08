@@ -36,7 +36,6 @@ import {
 } from './validate.js';
 import type { DispatcherCodexConfig } from '../agent-runtime/builtin/codex/config.js';
 import type { DispatcherClaudeCodeConfig } from '../agent-runtime/builtin/claude-code/config.js';
-import { registerBuiltinAgentRuntimeProviders } from '../agent-runtime/catalog.js';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
 
 // Re-export the relocated builtin runtime config + provider-ref symbols so the
@@ -275,11 +274,16 @@ async function readConfigFile(
         `Fix the JSON syntax in ${file}, then restart. Run \`dreamux onboard\` if you need to recreate the config.`,
     );
   }
-  // Make the builtin provider implementations available for parsing — each
-  // agent's config is parsed through its provider's `readConfig`. Idempotent:
-  // when the server pre-registered the builtins with its process factories, this
-  // no-ops and the factory-bearing registration wins.
-  registerBuiltinAgentRuntimeProviders({ registry: providerRegistry });
+  // Each agent's config is parsed through its provider's `readConfig`, so the
+  // provider implementations must already be registered in `providerRegistry`.
+  // config does not register the builtins itself — that would invert the layering
+  // (a schema/parse leaf reaching up into the runtime catalog and dragging the
+  // whole builtin stack into its module-init, which is the cycle that crashed
+  // #148). The caller composes: `cli/server.ts` hands in a factory-bearing
+  // registry, and the leaf entry points (doctor/daemon/onboard) go through
+  // `loadConfigWithBuiltins`. A builtin agent parsed against a registry with no
+  // implementation fails loud in `readAgents`. External `npm:` providers still
+  // load here because that is a config-file-driven, dynamic-import concern.
   await loadExternalAgentRuntimeProviders({
     registry: providerRegistry,
     refs: agentProviderRefs(parsed),
@@ -426,7 +430,10 @@ function readAgents(
     if (runtimeProvider === null) {
       throw new Error(
         `dreamux config error in ${file}: ${prefix}provider='${provider.ref}' is registered but not runnable.\n` +
-          'Builtin runtimes are wired by dreamux; external runtimes must load and register an agentRuntime provider before config validation.',
+          'Builtin runtimes are wired by the caller: load config through ' +
+          '`loadConfigWithBuiltins` (or pass a providerRegistry that already has the ' +
+          'builtin implementations). External runtimes must load and register an ' +
+          'agentRuntime provider before config validation.',
       );
     }
     out[id] = {

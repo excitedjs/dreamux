@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Fix the built CLI cold-start crash (Cannot access 'BUILT_IN_DEFAULTS' before initialization) introduced by the #148 agents[] refactor. config/config.ts no longer registers the builtin runtime catalog itself; builtin runtimes are now composed by the caller through loadConfigWithBuiltins, which removes the static import cycle (config -> catalog -> builtin -> platform/paths -> config) at its root rather than deferring the temporal-dead-zone read. Adds a built dreamux --version smoke gate before CI and release publish steps.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}
