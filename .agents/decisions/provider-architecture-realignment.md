@@ -1,7 +1,7 @@
 # Provider architecture realignment
 
-- **Status:** Accepted (remediation tracked in issue #135; implementation in
-  progress through the PR E channel/lifecycle cut)
+- **Status:** Accepted (remediation tracked in issue #135; implemented through
+  the PR F external Agent Runtime loading cut)
 - **Date:** 2026-06-08
 - **Affects:** Agent Runtime providers, TeamMate agent state, Dispatcher
   Service, Capability Registry, Channel providers, MCP injection, `server.ts`
@@ -53,8 +53,8 @@ The target architecture is:
   must not be modifiable by external plugins.
 - **External provider loading is made real for the `agentRuntime` seam.** The
   `npm:` ref grammar must actually load external/closed-source or third-party
-  runtimes (e.g. opencode, gemini cli, and runtimes that cannot be vendored into
-  this open repo), not just reserve syntax.
+  runtimes that cannot be vendored into this open repo, not just reserve
+  syntax.
 - **The `channel` plugin seam is interface-only this cycle.** Define the TS
   interface with proper reservations for subscription-style channels (github /
   jira) that inject arbitrary channel MCP and push subscribed events to agents;
@@ -66,15 +66,18 @@ The target architecture is:
   to the dispatcher). The current `ChannelConnection = FeishuBot` and 1:1
   dispatcher binding are temporary.
 - **The Capability Registry is demoted to a provider registry / loader.** It
-  resolves `builtin:` and `npm:` refs to provider implementations and is a
-  server-owned singleton. The capability *mirror* (registry-declared
-  capabilities duplicated by provider methods, kept in sync by a drift test) is
-  removed; capability is a single provider-owned declaration that core actually
-  reads — to compose the channel tool surface, and to know per-runtime support
-  (resume / steer / completion-delivery shape). Runtime catalogs are registry
-  views: they resolve descriptors from the singleton registry and read the
-  implementation already registered there, rather than maintaining a second
-  provider map.
+  resolves `builtin:` and `npm:` refs to provider implementations. The config
+  loader creates or receives one registry instance, loads external runtime
+  providers into that instance, validates config through it, and passes the same
+  instance into server startup. No default builtin singleton may become a
+  separate fallback that rejects already-loaded `npm:` refs. The capability
+  *mirror* (registry-declared capabilities duplicated by provider methods, kept
+  in sync by a drift test) is removed; capability is a single provider-owned
+  declaration that core actually reads — to compose the channel tool surface,
+  and to know per-runtime support (resume / steer / completion-delivery shape).
+  Runtime catalogs are registry views: they resolve descriptors from the
+  registry and read the implementation already registered there, rather than
+  maintaining a second provider map.
 - **Channel tool handlers move out of core.** A channel plugin owns its MCP
   end-to-end (tool definitions + handlers); core injects the descriptor and
   provides the connection, and no longer carries `*FromMcp` handlers in
@@ -147,6 +150,9 @@ see its `verbs/` (spawn/resume/history), `persistence/history-index.ts` and
   live dispatcher slots, start coalescing, stop, runtime lookup, restart-notice
   injection, and Feishu channel MCP dispatch. `/packages/dreamux/src/server.ts`
   is wiring only.
+- PR F implements `npm:` Agent Runtime loading: dynamic import, provider factory
+  validation, same-registry registration, provider-owned capability
+  declarations, and fail-loud startup errors.
 - Hard-coded `BUILTIN_*_REF` branching across core (`server.ts`,
   `/packages/dreamux/src/runtime/config.ts`,
   `/packages/dreamux/src/cli/doctor.ts`) is expected to shrink as core consumes

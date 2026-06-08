@@ -26,6 +26,7 @@ import {
 import { TransparentFileLedger } from '../onboard/ledger.js';
 import type { CommandRunner, OnboardFileLedgerEntry } from '../onboard/types.js';
 import {
+  BUILTIN_CODEX_PROVIDER_REF,
   DEFAULT_CODEX_BIN,
   dispatcherCodexConfig,
   type DreamuxConfig,
@@ -54,7 +55,8 @@ export interface DaemonInstallResult {
 
 /**
  * Pick the one codex binary that seeds the managed-service unit PATH. The env
- * override wins; otherwise the enabled dispatchers' `runtime.config.bin` values are used.
+ * override wins; otherwise enabled builtin:codex dispatchers' `runtime.config.bin`
+ * values are used. External-runtime-only configs do not need a Codex PATH seed.
  * The single host unit cannot encode per-dispatcher bins, so when they differ
  * the first is used and a warning names the rest instead of silently dropping
  * them — the server still resolves each dispatcher's own bin at runtime.
@@ -62,17 +64,19 @@ export interface DaemonInstallResult {
 function selectServiceCodexBin(
   config: DreamuxConfig,
   env: NodeJS.ProcessEnv,
-): string {
+): string | null {
   const override = env['CODEX_HOST_CODEX_BIN'];
   if (override !== undefined && override.trim() !== '') return override;
   const bins = [
     ...new Set(
       config.dispatchers
-        .filter((d) => d.enabled)
+        .filter(
+          (d) => d.enabled && d.runtime.provider === BUILTIN_CODEX_PROVIDER_REF,
+        )
         .map((d) => dispatcherCodexConfig(d).bin),
     ),
   ];
-  if (bins.length === 0) return DEFAULT_CODEX_BIN;
+  if (bins.length === 0) return null;
   if (bins.length > 1) {
     console.warn(
       `dreamux daemon install: enabled dispatchers declare ${bins.length} ` +
@@ -97,14 +101,16 @@ export async function runDaemonInstall(
   const { config } = await loadConfig({ configDir: globalConfigDir() });
   setRuntimeConfig(config);
 
-  // The single managed-service unit needs one codex binary to seed its PATH.
-  // It comes from CODEX_HOST_CODEX_BIN (host-level override) or the enabled
-  // dispatchers' runtime.config.bin; the server still resolves each
-  // dispatcher's own bin at runtime.
+  // Seed the service PATH with Codex only when a host override or an enabled
+  // builtin:codex dispatcher needs it. External runtime-only configs do not
+  // get blocked by the old Codex CLI launch check.
   const codexBinSource = selectServiceCodexBin(config, env);
-  const codexBin = dryRun
-    ? codexBinSource
-    : await resolveServiceExecutable(codexBinSource, env);
+  const codexBin =
+    codexBinSource === null
+      ? null
+      : dryRun
+        ? codexBinSource
+        : await resolveServiceExecutable(codexBinSource, env);
   // Best-effort: locate Claude Code so the unit PATH resolves `claude` for
   // server-hosted builtin:claude-code workers. Absent install → omit, warn,
   // and keep the codex-only daemon install working (issue #126 PR8).
@@ -133,9 +139,9 @@ export async function runDaemonInstall(
       });
   const answers: ServiceInstallAnswers = {
     configDir: globalConfigDir(),
-    codexBin,
     dreamuxBin: dreamuxBinPath(env),
     nodeBin,
+    ...(codexBin !== null ? { codexBin } : {}),
     ...(claudeBin !== null ? { claudeBin } : {}),
     startService,
     dryRun,

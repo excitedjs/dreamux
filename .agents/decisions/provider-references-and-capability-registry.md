@@ -14,9 +14,9 @@ into a provider architecture for Channel providers, Agent Runtime providers, and
 Dispatcher Service capabilities.
 
 The architecture needs a public ref syntax that can describe builtin providers
-now and external package/export providers later. It also needs a registry that
-lets Dreamux core discover capabilities without hard-coding every channel,
-runtime, or MCP surface in the server.
+and externally installed package/export providers. It also needs a registry that
+lets Dreamux core discover runtime implementations without hard-coding every
+runtime or MCP surface in the server.
 
 ## Decision
 
@@ -43,26 +43,34 @@ The normalized form separates source, package, export, and builtin id so config
 validation and future manifests do not depend on ad hoc string parsing after
 startup.
 
-Phase 1 registers builtin provider descriptors and runs only provider
-implementations that have been wired by their dedicated PRs. Npm refs may be
-parsed, stored, and validated as reserved syntax, but they must fail clearly if
-selected for execution. Dreamux must not install, import, or execute external
-npm providers in Phase 1.
+Builtin Agent Runtime provider descriptors are registered eagerly. External
+`agentRuntime` refs in `dispatchers[].runtime.provider` are loaded before config
+validation by dynamic-importing the installed npm package, selecting its default
+export or `#named` export, calling the provider factory, and registering the
+returned provider implementation into the same registry instance used by config
+validation and server startup. Dreamux does not install provider packages; a
+missing package, missing export, invalid provider contract, or incomplete
+capability declaration fails startup loudly with the selected provider ref.
 
-Issue #135 demotes the Capability Registry into a provider registry for the
-`agentRuntime` seam. Wired builtin runtime providers attach their implemented
-capabilities to the runtime implementation as the provider PRs land. The Codex
-runtime provider declares runtime lifecycle, Dreamux MCP injection, inbound turn
-submission, and Codex-style TeamMate completion delivery capability metadata.
-Claude Code owns the same AgentRuntime interface with its own delivery shape.
-Feishu is no longer a provider-registry entry; it is a built-in bidirectional
-channel.
+External `channel` refs remain an interface-only reservation in this cycle.
+They are parsed by the same provider-ref grammar, but config validation rejects
+them because no external channel loader exists yet.
+
+Issue #135 demotes the Capability Registry into a provider registry / loader for
+the `agentRuntime` seam. Wired runtime providers attach their implemented
+capabilities to the provider implementation. The Codex runtime provider declares
+runtime lifecycle, Dreamux MCP injection, inbound turn submission, and
+Codex-style TeamMate completion delivery capability metadata. Claude Code owns
+the same AgentRuntime interface with its own delivery shape. External runtime
+providers self-declare capabilities through the same `AgentRuntimeProvider`
+contract; the registry does not mirror or synthesize them. Feishu is no longer a
+provider-registry entry; it is a built-in bidirectional channel.
 
 The provider registry is process-local and server-owned. It records:
 
 - provider descriptors;
 - provider kind (`agentRuntime` in the current implementation);
-- provider-local implementation handles and runtime capability declarations;
+- provider-local implementation handles;
 - validation status.
 
 Core consumers must consume runtime providers from the registry view instead of
@@ -73,10 +81,11 @@ channel module and injected by the Dispatcher Service.
 
 - Builtin Agent Runtime providers become explicit extension points rather than
   special server branches.
-- External provider syntax can be documented early without creating package
-  loading or supply-chain risk in Phase 1.
-- Startup validation must distinguish "unknown builtin", "reserved external
-  runtime provider", and "valid but unsupported in this phase".
+- External Agent Runtime packages use the same registry, lifecycle, and
+  Dispatcher Service creation path as builtin providers.
+- Startup validation must distinguish "unknown builtin", "external package or
+  export failed to load", "invalid provider contract", and "registered
+  descriptor without runnable implementation".
 - Feishu channel behavior is reviewed at the channel module boundary, not as a
   registry provider descriptor.
 
@@ -85,9 +94,9 @@ channel module and injected by the Dispatcher Service.
 - **Hard-code builtin providers until external plugins exist:** rejected because
   Channel and Agent Runtime abstractions would still be shaped by Feishu and
   Codex implementation details.
-- **Load npm providers immediately:** rejected for Phase 1. The Epic needs the
-  schema and manifest model first; package installation and execution policy
-  can be decided later.
+- **Load external channel providers with external runtimes:** rejected for this
+  cycle. Runtime provider loading is now implemented, while subscription-style
+  channel plugins still need their own routing and push-delivery contract.
 - **Use only object refs in config:** rejected for operator ergonomics. String
   refs are concise, while the normalized object form keeps implementation
   unambiguous.

@@ -40,7 +40,7 @@ async function main(): Promise<void> {
 
   // Load ~/.dreamux/config.json before anything else starts. Missing or invalid
   // config is a setup error; `dreamux serve` must not silently create defaults.
-  const { config, configFile } = await loadConfig();
+  const { config, configFile, providerRegistry } = await loadConfig();
 
   await mkdir(stateRoot(), { recursive: true });
   await mkdir(logsRoot(), { recursive: true });
@@ -56,6 +56,7 @@ async function main(): Promise<void> {
 
   const server = new Server({
     config,
+    providerRegistry,
     logger,
     channelLoggerFactory: (id) =>
       createLogger({ name: `channel/${id}`, filePath: feishuChannelLogPath(id) }),
@@ -101,8 +102,8 @@ Environment overrides:
 Dispatcher declarations:
   Edit ~/.dreamux/config.json dispatchers[] and restart dreamux serve.
   Built-in Feishu channel: builtin:feishu.
-  Phase 1 runtime providers: builtin:codex, builtin:claude-code.
-  Npm runtime provider refs are reserved syntax only and are not loaded in this phase.
+  AgentRuntime providers: builtin:codex, builtin:claude-code, or installed npm:<package>[#export].
+  Npm agentRuntime refs load through the same provider registry before config validation.
   Subscription channel plugins are an interface-only reservation.
 `);
 }

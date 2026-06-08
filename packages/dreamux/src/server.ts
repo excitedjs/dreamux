@@ -16,6 +16,7 @@ import type { CodexWsClient } from './codex/rpc.js';
 import type { FeishuBot } from './feishu/bot.js';
 import {
   createBuiltinProviderRegistry,
+  parseProviderRef,
   type ProviderRegistry,
 } from './registry/index.js';
 import {
@@ -56,7 +57,11 @@ export interface ServerOptions {
   adminSocketPath?: string;
   /** Inject a custom bot factory (tests use this to plug in a fake). */
   botFactory?: (row: DispatcherRow, secret: string) => FeishuBot;
-  /** Provider registry used by runtime composition. */
+  /**
+   * Provider registry used by runtime composition. When config contains
+   * external npm Agent Runtime refs, this must be the registry returned by
+   * loadConfig() after external provider loading.
+   */
   providerRegistry?: ProviderRegistry;
   /** Codex binary path override (tests, highest precedence). */
   codexBinPath?: string;
@@ -109,6 +114,12 @@ export class Server {
     this.providerRegistry =
       opts.providerRegistry ?? createBuiltinProviderRegistry();
     const config = opts.config ?? BUILT_IN_DEFAULTS;
+    if (
+      opts.providerRegistry === undefined &&
+      opts.agentRuntimeProviderCatalog === undefined
+    ) {
+      assertNoExternalRuntimeConfigWithoutRegistry(config);
+    }
     setRuntimeConfig(config);
     this.log = opts.logger ?? createLogger({ name: 'server' });
     const channelLoggerFactory =
@@ -219,6 +230,18 @@ export class Server {
       this.admin = null;
     }
   }
+}
+
+function assertNoExternalRuntimeConfigWithoutRegistry(config: DreamuxConfig): void {
+  const dispatcher = config.dispatchers.find(
+    (item) => parseProviderRef(item.runtime.provider).source === 'npm',
+  );
+  if (dispatcher === undefined) return;
+  throw new Error(
+    `dispatcher '${dispatcher.id}' uses external AgentRuntime provider ` +
+      `${JSON.stringify(dispatcher.runtime.provider)}, but Server was not ` +
+      'constructed with the providerRegistry returned by loadConfig()',
+  );
 }
 
 function errInfo(err: unknown): { message: string; stack?: string } {

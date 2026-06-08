@@ -5,6 +5,7 @@ import type {
   NoticeInjectionResult,
 } from '../dispatcher/turn-manager.js';
 import type { DispatcherConfig } from '../runtime/config.js';
+import type { DispatcherProviderConfig } from '../runtime/config.js';
 import type {
   DispatcherRow,
   DispatcherStatus,
@@ -28,9 +29,11 @@ export type TeamMateCompletionDeliveryShape =
       description: 'notify the runtime through a Claude Code task notification path';
     };
 
-export type AgentRuntimeResumeCheckpoint =
-  | { kind: 'codexThread'; id: string }
-  | { kind: 'claudeCodeSession'; id: string };
+export interface AgentRuntimeResumeCheckpoint {
+  /** Runtime-owned checkpoint kind; builtins use `codexThread` and `claudeCodeSession`. */
+  kind: string;
+  id: string;
+}
 
 export type AgentRuntimeResumeCapability =
   | { supported: true; checkpoint: AgentRuntimeResumeCheckpoint['kind'] }
@@ -144,9 +147,20 @@ export interface AgentRuntimeCreateContext {
   log: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
 }
 
+export interface AgentRuntimeProviderConfigReadContext {
+  providerRef: string;
+  dispatcherId: string;
+  file: string;
+  prefix: string;
+}
+
 export interface AgentRuntimeProvider {
   readonly ref: string;
   readonly descriptor: ProviderDescriptor;
   getCapabilities(): AgentRuntimeCapabilities;
+  readConfig?(
+    rawConfig: Record<string, unknown>,
+    context: AgentRuntimeProviderConfigReadContext,
+  ): DispatcherProviderConfig;
   createRuntime(context: AgentRuntimeCreateContext): AgentRuntime;
 }
