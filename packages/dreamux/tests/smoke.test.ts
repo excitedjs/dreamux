@@ -49,14 +49,16 @@ import {
   type DreamuxConfig,
 } from '../src/config/config.js';
 import {
-  dispatcherAppServerControlDir,
   defaultDispatcherCwd,
-  dispatcherCodexHome,
   bundledSkillDir,
   dispatcherWorkspaceSkillDir,
-  dispatcherSocketPath,
   restartIntentPath,
 } from '../src/platform/paths.js';
+import {
+  dispatcherAppServerControlDir,
+  dispatcherCodexHome,
+  dispatcherSocketPath,
+} from '../src/agent-runtime/builtin/codex/paths.js';
 import { writeRestartIntent } from '../src/daemon/restart-intent.js';
 import { dreamuxBinPath } from '../src/platform/package-bin.js';
 import { createLogger, type DreamuxLogger } from '../src/platform/logger.js';

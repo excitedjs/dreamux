@@ -54,7 +54,7 @@
  */
 
 import { mkdir, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { type ProviderDescriptor } from '../../../registry/index.js';
 import {
@@ -66,7 +66,7 @@ import {
 import {
   dispatcherClaudeCodeMcpConfigPath,
   dispatcherClaudeCodeStreamLogPath,
-} from '../../../platform/paths.js';
+} from './paths.js';
 import { dispatcherProcessEnv } from '../../../platform/package-bin.js';
 import { claudeCodeResidentArgs } from './args.js';
 import { stringifyClaudeCodeMcpConfig } from './mcp-config.js';
@@ -178,11 +178,12 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     this.bin = deps.resolveBinPath(this.config.bin);
     this.cwd = context.cwd;
     this.mcpConfigPath =
-      context.paths?.dispatcherClaudeCodeMcpConfigPath(this.dispatcherId) ??
-      dispatcherClaudeCodeMcpConfigPath(this.dispatcherId);
+      context.paths === undefined
+        ? dispatcherClaudeCodeMcpConfigPath(this.dispatcherId)
+        : join(context.paths.dispatcherDir(this.dispatcherId), 'mcp.json');
     this.mcpConfigDoc = stringifyClaudeCodeMcpConfig(context.mcpServers);
     this.stderrLogPath =
-      context.paths?.dispatcherClaudeCodeStreamLogPath(this.dispatcherId) ??
+      context.paths?.stderrLogPath(this.dispatcherId) ??
       dispatcherClaudeCodeStreamLogPath(this.dispatcherId);
     this.threadId = context.row.thread_id;
     this.resumed = context.row.thread_id !== null;

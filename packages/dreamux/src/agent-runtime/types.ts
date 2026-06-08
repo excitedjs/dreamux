@@ -109,12 +109,20 @@ export interface AgentRuntimeStateStore {
 }
 
 export interface AgentRuntimePathContext {
-  dispatcherCodexCwd(id: string): string;
-  dispatcherSocketPath(id: string): string;
-  dispatcherStdoutLog(id: string): string;
-  dispatcherStderrLog(id: string): string;
-  dispatcherClaudeCodeMcpConfigPath(id: string): string;
-  dispatcherClaudeCodeStreamLogPath(id: string): string;
+  /**
+   * The per-dispatcher root the runtime drops its own state files into (control
+   * socket, generated MCP config, …). Neutral: the runtime derives its own
+   * subpaths from here, so the shared layer never enumerates per-runtime
+   * artifact paths.
+   */
+  dispatcherDir(id: string): string;
+  /**
+   * The runtime's primary-process stdout log file in the central logs tree.
+   * Runtimes without a separate stdout stream may ignore it.
+   */
+  stdoutLogPath(id: string): string;
+  /** The runtime's primary-process stderr/diagnostic log file in the central logs tree. */
+  stderrLogPath(id: string): string;
 }
 
 export interface AgentRuntime {

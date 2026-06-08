@@ -11,14 +11,16 @@ import {
 } from '../src/agent-runtime/builtin/codex/codex-home.js';
 import { BUILT_IN_DEFAULTS } from '../src/config/config.js';
 import {
-  dispatcherAppServerControlDir,
   defaultDispatcherCwd,
-  dispatcherCodexHome,
   dispatcherWorkspaceSkillPath,
-  dispatcherSocketPath,
   resetRuntimeConfig,
   setRuntimeConfig,
 } from '../src/platform/paths.js';
+import {
+  dispatcherAppServerControlDir,
+  dispatcherCodexHome,
+  dispatcherSocketPath,
+} from '../src/agent-runtime/builtin/codex/paths.js';
 
 describe('global Codex home doctor', () => {
   let runtimeDir: string;

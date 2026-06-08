@@ -31,10 +31,8 @@ import {
 } from '../src/channel/feishu/bot.js';
 import { runFeishuMcp } from '../src/mcp/feishu-mcp.js';
 import { BUILT_IN_DEFAULTS, type DreamuxConfig } from '../src/config/config.js';
-import {
-  defaultDispatcherCwd,
-  dispatcherCodexHome,
-} from '../src/platform/paths.js';
+import { defaultDispatcherCwd } from '../src/platform/paths.js';
+import { dispatcherCodexHome } from '../src/agent-runtime/builtin/codex/paths.js';
 import { startFakeCodex, type FakeCodex } from './fake-codex.js';
 import { testDispatcherConfig } from './helpers/config.js';
 

@@ -9,8 +9,6 @@ import {
   adminSocketPath,
   codexAppServerLogDir,
   dispatcherAccessPath,
-  dispatcherCodexAppServerErrorLogPath,
-  dispatcherCodexAppServerLogPath,
   dispatcherDir,
   dispatcherFeishuAttachmentCacheDir,
   dispatcherTeamMateDir,
@@ -27,7 +25,6 @@ import {
   feishuMcpLogPath,
   teammateMcpLogDir,
   teammateMcpLogPath,
-  dispatcherSocketPath,
   dispatcherStatusPath,
   dispatcherWorkspaceCodexSkillsDir,
   dispatcherWorkspaceSkillDirs,
@@ -40,6 +37,11 @@ import {
   stateRoot,
   unixSocketPathFitsBudget,
 } from '../src/platform/paths.js';
+import {
+  dispatcherCodexAppServerErrorLogPath,
+  dispatcherCodexAppServerLogPath,
+  dispatcherSocketPath,
+} from '../src/agent-runtime/builtin/codex/paths.js';
 
 describe('runtime paths', () => {
   let root: string;

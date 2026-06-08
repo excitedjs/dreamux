@@ -1,10 +1,9 @@
 import type { DispatcherStore } from '../../../state/dispatcher-store.js';
+import { dispatcherDir } from '../../../platform/paths.js';
 import {
-  defaultDispatcherCwd,
-  dispatcherSocketPath,
-  dispatcherStderrLog,
-  dispatcherStdoutLog,
-} from '../../../platform/paths.js';
+  dispatcherCodexAppServerErrorLogPath,
+  dispatcherCodexAppServerLogPath,
+} from './paths.js';
 import type {
   AgentRuntimePathContext,
   AgentRuntimeStateStore,
@@ -25,16 +24,9 @@ export function formatCodexTeamMateCompletion(
 }
 
 export const defaultCodexRuntimePaths: AgentRuntimePathContext = {
-  dispatcherCodexCwd: defaultDispatcherCwd,
-  dispatcherSocketPath,
-  dispatcherStdoutLog,
-  dispatcherStderrLog,
-  dispatcherClaudeCodeMcpConfigPath: () => {
-    throw new Error('Claude Code MCP config path is not used by Codex runtime');
-  },
-  dispatcherClaudeCodeStreamLogPath: () => {
-    throw new Error('Claude Code stream log path is not used by Codex runtime');
-  },
+  dispatcherDir,
+  stdoutLogPath: dispatcherCodexAppServerLogPath,
+  stderrLogPath: dispatcherCodexAppServerErrorLogPath,
 };
 
 export function codexRowStateStore(

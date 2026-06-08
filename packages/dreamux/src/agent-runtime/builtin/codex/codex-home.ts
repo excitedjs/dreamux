@@ -15,15 +15,17 @@ import { parse as parseToml, TomlError } from 'smol-toml';
 
 import {
   DREAMUX_UNIX_SOCKET_PATH_MAX_BYTES,
-  dispatcherAppServerControlDir,
   defaultDispatcherCwd,
-  dispatcherCodexConfigPath,
-  dispatcherCodexHome,
   dispatcherWorkspaceCodexSkillsDir,
   dispatcherWorkspaceSkillPath,
-  dispatcherSocketPath,
   unixSocketPathFitsBudget,
 } from '../../../platform/paths.js';
+import {
+  dispatcherAppServerControlDir,
+  dispatcherCodexConfigPath,
+  dispatcherCodexHome,
+  dispatcherSocketPath,
+} from './paths.js';
 
 export const DISPATCHER_APP_SERVER_SOCKET_PATH_MAX_BYTES =
   DREAMUX_UNIX_SOCKET_PATH_MAX_BYTES;

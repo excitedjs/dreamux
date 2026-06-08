@@ -103,33 +103,6 @@ export function defaultDispatcherCwd(id: string): string {
   return join(dispatcherDir(id), 'cwd');
 }
 
-/**
- * Per-dispatcher Claude Code runtime state dir (issue #110 PR6). Holds the
- * generated Claude Code MCP config; kept under the dispatcher's state dir, not
- * the workspace cwd, so it never pollutes the operator's repo.
- */
-export function dispatcherClaudeCodeDir(id: string): string {
-  return join(dispatcherDir(id), 'claude-code');
-}
-
-/** The generated Claude Code MCP config file (`--mcp-config <path>`). */
-export function dispatcherClaudeCodeMcpConfigPath(id: string): string {
-  return join(dispatcherClaudeCodeDir(id), 'mcp.json');
-}
-
-export function operatorCodexHome(): string {
-  return join(homedir(), '.codex');
-}
-
-export function dispatcherCodexHome(id: string): string {
-  void id;
-  return operatorCodexHome();
-}
-
-export function dispatcherCodexConfigPath(id: string): string {
-  return join(dispatcherCodexHome(id), 'config.toml');
-}
-
 export function dispatcherWorkspaceCodexSkillsDir(cwd: string): string {
   return join(cwd, '.codex', 'skills');
 }
@@ -173,25 +146,6 @@ export function packagedChangelogJsonPath(): string {
   return join(PACKAGE_ROOT, 'CHANGELOG.json');
 }
 
-export function dispatcherAppServerControlDir(id: string): string {
-  return dispatcherDir(id);
-}
-
-export function dispatcherSocketPath(id: string): string {
-  return assertUnixSocketPathBudget(
-    join(dispatcherDir(id), 'codex.sock'),
-    `dispatcher '${id}' Codex socket path`,
-  );
-}
-
-export function dispatcherStdoutLog(id: string): string {
-  return dispatcherCodexAppServerLogPath(id);
-}
-
-export function dispatcherStderrLog(id: string): string {
-  return dispatcherCodexAppServerErrorLogPath(id);
-}
-
 export function serverLogPath(): string {
   return join(logsRoot(), 'dreamux-server.log');
 }
@@ -232,23 +186,6 @@ export function teammateMcpLogPath(id: string): string {
 
 export function claudeCodeLogDir(): string {
   return join(logsRoot(), 'claude-code');
-}
-
-/**
- * Per-dispatcher Claude Code resident stream-json child diagnostics (issue
- * #120). The child's stdout is the NDJSON data plane (consumed in-process by the
- * runtime), so only its stderr is logged here for crash diagnosis.
- */
-export function dispatcherClaudeCodeStreamLogPath(id: string): string {
-  return join(claudeCodeLogDir(), `${dispatcherPathSegment(id)}.stderr.log`);
-}
-
-export function dispatcherCodexAppServerLogPath(id: string): string {
-  return join(codexAppServerLogDir(), `${dispatcherPathSegment(id)}.log`);
-}
-
-export function dispatcherCodexAppServerErrorLogPath(id: string): string {
-  return join(codexAppServerLogDir(), `${dispatcherPathSegment(id)}.stderr.log`);
 }
 
 export function dispatcherStatusPath(id: string): string {

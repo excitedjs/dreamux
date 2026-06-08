@@ -46,6 +46,7 @@ import {
   dispatcherCodexHomeDoctorContext,
   type DispatcherCodexHomeDoctor,
 } from './codex-home.js';
+import { codexSocketPathIn } from './paths.js';
 import { dispatcherProcessEnv } from '../../../platform/package-bin.js';
 import { installBundledWorkspaceSkills } from '../../../onboard/bundled-skills.js';
 import { DREAMUX_DISPATCHER_BASE_INSTRUCTIONS } from '../../../dispatcher-service/dispatcher/base-prompt.js';
@@ -231,7 +232,10 @@ export class CodexRuntime implements AgentRuntime {
 
   private async startCodexRuntime(): Promise<void> {
     const cwd = this.deps.cwd;
-    const socketPath = this.paths.dispatcherSocketPath(this.dispatcherId);
+    const socketPath = codexSocketPathIn(
+      this.paths.dispatcherDir(this.dispatcherId),
+      this.dispatcherId,
+    );
     const extraArgs = this.deps.resolveExtraArgs?.(this.row) ?? [];
     const skillInstallResults = await installBundledWorkspaceSkills({
       dispatcherCwd: cwd,
@@ -262,8 +266,8 @@ export class CodexRuntime implements AgentRuntime {
     const process = factory({
       socketPath,
       cwd,
-      stdoutLogPath: this.paths.dispatcherStdoutLog(this.dispatcherId),
-      stderrLogPath: this.paths.dispatcherStderrLog(this.dispatcherId),
+      stdoutLogPath: this.paths.stdoutLogPath(this.dispatcherId),
+      stderrLogPath: this.paths.stderrLogPath(this.dispatcherId),
       binPath: this.deps.codexBinPath,
       extraArgs,
       env: dispatcherProcessEnv(globalThis.process.env, this.deps.extraEnv ?? {}),

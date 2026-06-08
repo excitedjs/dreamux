@@ -8,13 +8,15 @@ import {
   stringifyConfig,
 } from '../config/config.js';
 import {
-  dispatcherAppServerControlDir,
-  dispatcherCodexHome,
   dispatcherWorkspaceCodexSkillsDir,
   logsRoot,
   setRuntimeConfig,
   stateRoot,
 } from '../platform/paths.js';
+import {
+  dispatcherAppServerControlDir,
+  dispatcherCodexHome,
+} from '../agent-runtime/builtin/codex/paths.js';
 import {
   dispatcherCodexHomeDoctorContext,
   validateDispatcherCodexHome,

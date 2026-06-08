@@ -21,10 +21,8 @@ import { claudeCodeMcpConfig } from '../src/agent-runtime/builtin/claude-code/mc
 import { claudeCodeResidentArgs } from '../src/agent-runtime/builtin/claude-code/args.js';
 import { codexMcpServerArgs } from '../src/agent-runtime/builtin/codex/mcp-config.js';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
-import {
-  defaultDispatcherCwd,
-  dispatcherClaudeCodeMcpConfigPath,
-} from '../src/platform/paths.js';
+import { defaultDispatcherCwd } from '../src/platform/paths.js';
+import { dispatcherClaudeCodeMcpConfigPath } from '../src/agent-runtime/builtin/claude-code/paths.js';
 import { defaultDispatcherClaudeCodeConfig } from '../src/config/config.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';

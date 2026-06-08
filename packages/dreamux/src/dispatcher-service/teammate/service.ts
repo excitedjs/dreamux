@@ -9,6 +9,7 @@ import type {
   AgentRuntimeTurnResult,
 } from '../../agent-runtime/index.js';
 import {
+  BUILTIN_CLAUDE_CODE_PROVIDER_REF,
   BUILTIN_CODEX_PROVIDER_REF,
   type DispatcherConfig,
   type DreamuxConfig,
@@ -16,11 +17,9 @@ import {
 import type { DispatcherStore, DispatcherRow } from '../../state/dispatcher-store.js';
 import type { DreamuxLogger } from '../../platform/logger.js';
 import {
-  dispatcherTeamMateRuntimeClaudeMcpConfigPath,
   dispatcherTeamMateRuntimeClaudeStreamLogPath,
   dispatcherTeamMateRuntimeCodexErrorLogPath,
   dispatcherTeamMateRuntimeCodexLogPath,
-  dispatcherTeamMateRuntimeCodexSocketPath,
   dispatcherTeamMateRuntimeDir,
 } from '../../platform/paths.js';
 import { validateDispatcherId } from '../../state/dispatcher-id.js';
@@ -278,7 +277,7 @@ export class TeamMateAgentService {
       dispatchers: this.opts.dispatchers,
       cwd: identity.cwd,
       state,
-      paths: this.runtimePaths(identity),
+      paths: this.runtimePaths(identity, provider.ref),
       mcpServers: [
         ...(this.opts.mcpServersForTeamMate?.({
           dispatcherId,
@@ -349,32 +348,39 @@ export class TeamMateAgentService {
     };
   }
 
-  private runtimePaths(identity: TeamMateIdentity): AgentRuntimePathContext {
-    return {
-      dispatcherCodexCwd: () =>
-        dispatcherTeamMateRuntimeDir(identity.dispatcher_id, identity.name),
-      dispatcherSocketPath: () =>
-        dispatcherTeamMateRuntimeCodexSocketPath(
+  /**
+   * Per-teammate path context. The teammate runtime dir is the neutral root both
+   * built-in runtimes derive their state files from (Codex `codex.sock`, Claude
+   * Code `mcp.json`); only the central-tree log files vary by runtime, so the
+   * launcher selects them from the resolved provider ref.
+   */
+  private runtimePaths(
+    identity: TeamMateIdentity,
+    providerRef: string,
+  ): AgentRuntimePathContext {
+    const dispatcherDir = (): string =>
+      dispatcherTeamMateRuntimeDir(identity.dispatcher_id, identity.name);
+    if (providerRef === BUILTIN_CLAUDE_CODE_PROVIDER_REF) {
+      const streamLog = (): string =>
+        dispatcherTeamMateRuntimeClaudeStreamLogPath(
           identity.dispatcher_id,
           identity.name,
-        ),
-      dispatcherStdoutLog: () =>
+        );
+      return {
+        dispatcherDir,
+        stdoutLogPath: streamLog,
+        stderrLogPath: streamLog,
+      };
+    }
+    return {
+      dispatcherDir,
+      stdoutLogPath: () =>
         dispatcherTeamMateRuntimeCodexLogPath(
           identity.dispatcher_id,
           identity.name,
         ),
-      dispatcherStderrLog: () =>
+      stderrLogPath: () =>
         dispatcherTeamMateRuntimeCodexErrorLogPath(
-          identity.dispatcher_id,
-          identity.name,
-        ),
-      dispatcherClaudeCodeMcpConfigPath: () =>
-        dispatcherTeamMateRuntimeClaudeMcpConfigPath(
-          identity.dispatcher_id,
-          identity.name,
-        ),
-      dispatcherClaudeCodeStreamLogPath: () =>
-        dispatcherTeamMateRuntimeClaudeStreamLogPath(
           identity.dispatcher_id,
           identity.name,
         ),
