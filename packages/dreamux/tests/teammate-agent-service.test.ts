@@ -411,8 +411,12 @@ describe('TeamMateAgentService', () => {
       close_note: 'done',
     });
     // Read-only verbs never silently reopen a closed teammate (issue #155):
-    // only send carries the reopen flag, so last/ctx/status stay fail-loud.
+    // only send carries the reopen flag. last/ctx need a live runtime, so they
+    // reject on a closed teammate; status reads the identity and returns the
+    // closed state without reopening (it does not throw).
     await expect(service.last('flow', 'closer')).rejects.toThrow(/closed/);
+    await expect(service.context('flow', 'closer')).rejects.toThrow(/closed/);
+    expect((await service.status('flow', 'closer')).status).toBe('closed');
 
     const historyFile = await readFile(
       join(root, 'home', '.dreamux', 'state', 'flow', 'teammate', 'history', 'closer.jsonl'),
