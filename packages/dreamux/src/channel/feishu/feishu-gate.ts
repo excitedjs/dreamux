@@ -9,7 +9,7 @@ import { dirname } from 'node:path';
 import { dispatcherAccessPath } from '../../platform/paths.js';
 
 export const TRUST_DOMAIN_WARNING =
-  'dispatcher shares one Codex context across multiple Feishu chats';
+  'dispatcher shares one runtime context across multiple Feishu chats';
 
 /**
  * Group-access mode — which trust model gates group messages.
