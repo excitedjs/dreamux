@@ -605,6 +605,80 @@ describe('dreamux onboard', () => {
     ]);
   });
 
+  it('preserves a teammate-only agent (unreferenced by any dispatcher) on rerun', async () => {
+    // Regression for #148 P1: agents[] is the global runtime-config map and a
+    // TeamMate can resolve an agent that no dispatcher names (e.g. a `claude`
+    // agent used only via teammate.spawn under a Codex dispatcher). Re-running
+    // onboard must NOT silently delete that entry.
+    const runner = new FakeRunner();
+    const configDir = join(root, 'config');
+    mkdirSync(configDir, { recursive: true });
+    const existing = {
+      agents: [
+        {
+          id: 'flow',
+          provider: 'builtin:codex',
+          config: {
+            bin: 'codex',
+            approval_policy: 'never',
+            sandbox_mode: 'workspace-write',
+            extra_args: [],
+            extra_env: {},
+            initialize_timeout_ms: 10000,
+          },
+        },
+        {
+          id: 'claude-helper',
+          provider: 'builtin:claude-code',
+          config: { permission_mode: 'default' },
+        },
+      ],
+      dispatchers: [
+        {
+          id: 'flow',
+          cwd: join(root, 'flow-cwd'),
+          enabled: true,
+          channels: [
+            {
+              id: 'primary',
+              provider: 'builtin:feishu',
+              config: { app_id: 'app-flow', app_secret: 'secret-flow' },
+            },
+          ],
+          agentRuntime: 'flow',
+        },
+      ],
+    };
+    writeFileSync(join(configDir, 'config.json'), JSON.stringify(existing), {
+      mode: 0o600,
+    });
+
+    await runOnboard({
+      answers: testAnswers({
+        configDir,
+        dispatcherId: 'docs',
+        dispatcherCwd: join(root, 'docs-cwd'),
+        registerService: false,
+        botAppId: 'app-docs',
+        botAppSecret: 'secret-docs',
+      }),
+      runner,
+      platform: 'linux',
+      homeDir: join(root, 'home'),
+      env: { CODEX_ACCESS_TOKEN: 'interactive-token-test' },
+    });
+
+    const saved = JSON.parse(
+      readFileSync(join(configDir, 'config.json'), 'utf8'),
+    ) as Record<string, any>;
+    const agentIds = (saved['agents'] as Array<{ id: string }>).map((a) => a.id);
+    expect(agentIds).toEqual(expect.arrayContaining(['flow', 'docs', 'claude-helper']));
+    const claudeHelper = (saved['agents'] as Array<any>).find(
+      (a) => a.id === 'claude-helper',
+    );
+    expect(claudeHelper?.provider).toBe('builtin:claude-code');
+  });
+
   it('rejects a new dispatcher that reuses an existing Feishu app_id', async () => {
     const runner = new FakeRunner();
     const configDir = join(root, 'config');

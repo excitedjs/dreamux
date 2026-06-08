@@ -24,6 +24,7 @@ import {
   loadConfig,
   loadOrInitConfig,
   redactConfigForDisplay,
+  stringifyConfig,
 } from '../src/config/config.js';
 import {
   adminSocketPath,
@@ -113,6 +114,23 @@ describe('global config (~/.dreamux/config.json)', () => {
   function writeConfigText(file: string, content: string, mode = 0o600): void {
     writeFileSync(file, content, { mode });
   }
+
+  it('config round-trips through stringifyConfig idempotently (#148)', async () => {
+    writeConfigObject(
+      testSingleDispatcherFileObject({
+        id: 'flow',
+        cwd: join(configDir, 'flow-cwd'),
+        enabled: true,
+        feishu: { app_id: 'app-flow', app_secret: 'secret-flow' },
+      }),
+    );
+    const c1 = (await loadConfig({ configDir })).config;
+    // load -> stringify -> load must be a fixed point: the in-memory config
+    // serialised back to the file shape and reloaded yields the same config.
+    writeConfigText(globalConfigFile({ configDir }), stringifyConfig(c1));
+    const c2 = (await loadConfig({ configDir })).config;
+    expect(c2).toEqual(c1);
+  });
 
   it('first boot creates the config dir and JSON file', async () => {
     expect(existsSync(join(configDir, 'config.json'))).toBe(false);

@@ -32,7 +32,19 @@ export function dreamuxConfigFromAnswers(
   // agent id == dispatcher id (dispatcher ids are unique and an agent id has no
   // path-safety constraint), so a per-dispatcher codex bin is preserved and the
   // shape round-trips with no dedup logic.
+  //
+  // Seed from the existing agents map FIRST, then overwrite/add the
+  // dispatcher-owned entries. agents[] is the global runtime-config map, so an
+  // entry referenced only by a TeamMate (e.g. a `claude` agent used via
+  // teammate.spawn under a Codex dispatcher) is valid even though no dispatcher
+  // names it; re-running onboard must not silently delete it.
   const agents: DreamuxConfig['agents'] = {};
+  for (const [id, agent] of Object.entries(base.agents)) {
+    agents[id] = {
+      provider: agent.provider,
+      config: cloneProviderConfig(agent.config),
+    };
+  }
   for (const dispatcher of dispatchers) {
     agents[dispatcher.agentRuntime] = {
       provider: dispatcher.runtime.provider,
