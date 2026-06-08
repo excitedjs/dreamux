@@ -89,8 +89,8 @@ import type {
   AgentRuntimeResumeInput,
   AgentRuntimeSystemInput,
   AgentRuntimeTurnResult,
+  CompletionEnvelope,
   TeamMateCompletionDeliveryResult,
-  TeamMateCompletionEnvelope,
 } from '../../types.js';
 
 export interface ClaudeCodeAgentRuntimeProviderOptions {
@@ -122,11 +122,11 @@ interface ClaudeCodeRuntimeDeps {
 }
 
 /** Format a TeamMate completion as a Claude Code task-notification turn. */
-function formatTaskNotification(completion: TeamMateCompletionEnvelope): string {
+function formatTaskNotification(completion: CompletionEnvelope): string {
   return [
-    `<teammate_session_completion teammate="${completion.teammateName}" ` +
-      `session_id="${completion.sessionId ?? ''}" status="${completion.status}">`,
-    completion.finalText,
+    `<teammate_session_completion source="${completion.source}" ` +
+      `id="${completion.id}" status="${completion.status}">`,
+    completion.result,
     '</teammate_session_completion>',
   ].join('\n');
 }
@@ -292,7 +292,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   }
 
   async completionInput(
-    completion: TeamMateCompletionEnvelope,
+    completion: CompletionEnvelope,
   ): Promise<TeamMateCompletionDeliveryResult> {
     if (this.stopped) {
       return { status: 'unsupported', reason: 'runtime stopped' };
@@ -305,7 +305,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     try {
       await this.runTurnOnQueue(
         formatTaskNotification(completion),
-        `claude-teammate-${completion.teammateName}-${completion.sessionId}`,
+        `claude-teammate-${completion.id}`,
       );
       return { status: 'accepted' };
     } catch (err) {

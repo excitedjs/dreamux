@@ -268,7 +268,7 @@ export class TeamMateAgentService {
     const state = new TeamMateRuntimeStateStore(
       this.identities,
       identity,
-      resumeCapability.supported ? resumeCapability.checkpoint : 'codexThread',
+      resumeCapability.supported ? resumeCapability.checkpoint : null,
     );
     const row = this.runtimeRow(identity);
     const runtime = provider.createRuntime({

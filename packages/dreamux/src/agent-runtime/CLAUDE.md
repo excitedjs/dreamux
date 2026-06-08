@@ -40,7 +40,10 @@ agent session; how it talks to its engine is the engine's business.
 The runtime input surface is now three source/nature-named entries —
 `channelInput` (channel-inbound turn), `systemInput` (system notice, e.g. a
 restart notice), and the optional `completionInput` (teammate-completion
-delivery). Still pending: generalizing the completion envelope to a neutral
-`CompletionEnvelope` (C2), neutralizing the channel payload (D), and lifting the
-completion delivery-kind names and the `codexThread` default out of the shared
-contract.
+delivery). The completion contract is now source-agnostic: `completionInput`
+takes a neutral `CompletionEnvelope { source; id; status; result }` (C2), the
+`teammateCompletion` capability is an open `CompletionDeliveryShape
+{ kind; description }` (each builtin self-declares its own kind —
+`codexInboxTurn` / `claudeCodeTaskNotification`), and the runtime-state
+checkpoint kind is capability-driven with no `codexThread` fallback. Still
+pending: neutralizing the channel payload (D).

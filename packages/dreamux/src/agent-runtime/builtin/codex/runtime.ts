@@ -59,8 +59,8 @@ import type {
   AgentRuntimeStateStore,
   AgentRuntimeSystemInput,
   AgentRuntimeTurnResult,
+  CompletionEnvelope,
   TeamMateCompletionDeliveryResult,
-  TeamMateCompletionEnvelope,
 } from '../../types.js';
 import { BUILTIN_CODEX_PROVIDER_REF } from '../../../config/config.js';
 import { CODEX_AGENT_RUNTIME_CAPABILITIES } from './provider.js';
@@ -417,12 +417,12 @@ export class CodexRuntime implements AgentRuntime {
    * `source_chat_id` is inert in the turn path.
    */
   async completionInput(
-    completion: TeamMateCompletionEnvelope,
+    completion: CompletionEnvelope,
   ): Promise<TeamMateCompletionDeliveryResult> {
     this.teammateDeliverySeq += 1;
     const delivery = await this.channelInput({
       source_chat_id: 'teammate',
-      source_message_id: `teammate:${completion.teammateName}#${this.teammateDeliverySeq}`,
+      source_message_id: `teammate:${completion.id}#${this.teammateDeliverySeq}`,
       sender_id: null,
       parsed_text: formatCodexTeamMateCompletion(completion),
     });

@@ -7,17 +7,17 @@ import {
 import type {
   AgentRuntimePathContext,
   AgentRuntimeStateStore,
-  TeamMateCompletionEnvelope,
+  CompletionEnvelope,
 } from '../../types.js';
 
 /** Frame a TeamMate completion as the text of a delivered Codex turn. */
 export function formatCodexTeamMateCompletion(
-  completion: TeamMateCompletionEnvelope,
+  completion: CompletionEnvelope,
 ): string {
   return [
-    `<teammate_session_completion teammate="${completion.teammateName}" ` +
-      `session_id="${completion.sessionId ?? ''}" status="${completion.status}">`,
-    completion.finalText,
+    `<teammate_session_completion source="${completion.source}" ` +
+      `id="${completion.id}" status="${completion.status}">`,
+    completion.result,
     '</teammate_session_completion>',
   ].join('\n');
 }

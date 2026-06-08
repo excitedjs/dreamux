@@ -19,18 +19,18 @@ export interface AgentRuntimeMcpServer {
   args: string[];
 }
 
-export type TeamMateCompletionDeliveryShape =
-  | {
-      kind: 'codexInboxTurn';
-      description: 'write completion to a runtime inbox, then trigger a dispatcher turn';
-    }
-  | {
-      kind: 'claudeCodeTaskNotification';
-      description: 'notify the runtime through a Claude Code task notification path';
-    };
+/**
+ * An open, source-agnostic completion delivery shape. Each runtime self-declares
+ * its own `kind` string inside its own capabilities; the shared contract never
+ * enumerates them.
+ */
+export interface CompletionDeliveryShape {
+  kind: string;
+  description: string;
+}
 
 export interface AgentRuntimeResumeCheckpoint {
-  /** Runtime-owned checkpoint kind; builtins use `codexThread` and `claudeCodeSession`. */
+  /** Runtime-owned checkpoint kind; each runtime self-declares its own. */
   kind: string;
   id: string;
 }
@@ -51,14 +51,19 @@ export interface AgentRuntimeCapabilities {
   /** Whether the runtime can report context-window usage. */
   context: { supported: boolean };
   /** Upward delivery shapes this runtime supports for teammate completion. */
-  teammateCompletion: readonly TeamMateCompletionDeliveryShape[];
+  teammateCompletion: readonly CompletionDeliveryShape[];
 }
 
-export interface TeamMateCompletionEnvelope {
-  teammateName: string;
-  sessionId: string | null;
+/**
+ * A source-agnostic completion delivered upward to a runtime. `teammate` is one
+ * source; `id` identifies the completing entity within that source (e.g. the
+ * teammate name).
+ */
+export interface CompletionEnvelope {
+  source: string;
+  id: string;
   status: 'completed' | 'failed';
-  finalText: string;
+  result: string;
 }
 
 export type TeamMateCompletionDeliveryResult =
@@ -151,7 +156,7 @@ export interface AgentRuntime {
    * no `teammateCompletion` shapes may not support it.
    */
   completionInput?(
-    completion: TeamMateCompletionEnvelope,
+    completion: CompletionEnvelope,
   ): Promise<TeamMateCompletionDeliveryResult>;
 }
 

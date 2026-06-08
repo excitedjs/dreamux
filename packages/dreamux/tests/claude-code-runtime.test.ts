@@ -365,18 +365,18 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     await runtime.start();
 
     const result = await runtime.completionInput!({
-      teammateName: 'mate-1',
-      sessionId: 'session-7',
+      source: 'teammate',
+      id: 'mate-1',
       status: 'completed',
-      finalText: 'all done',
+      result: 'all done',
     });
     expect(result).toEqual({ status: 'accepted' });
 
     await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
     const prompt = fleet.sessions[0]?.prompts[0] ?? '';
     expect(prompt).toContain('<teammate_session_completion');
-    expect(prompt).toContain('teammate="mate-1"');
-    expect(prompt).toContain('session_id="session-7"');
+    expect(prompt).toContain('source="teammate"');
+    expect(prompt).toContain('id="mate-1"');
     expect(prompt).toContain('status="completed"');
     expect(prompt).toContain('all done');
   });
@@ -535,10 +535,10 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     // Delivery must return a real `failed` result (so PR8 retry can act),
     // bounded by the same deadline — never an unresolved await.
     const delivery = await runtime.completionInput!({
-      taskId: 'task-stall',
-      teammateId: 'mate-1',
+      source: 'teammate',
+      id: 'mate-1',
       status: 'completed',
-      finalText: 'done',
+      result: 'done',
     });
     expect(delivery.status).toBe('failed');
 
@@ -551,10 +551,10 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     await runtime.start();
 
     const result = await runtime.completionInput!({
-      taskId: 'task-9',
-      teammateId: 'mate-1',
+      source: 'teammate',
+      id: 'mate-1',
       status: 'completed',
-      finalText: 'done',
+      result: 'done',
     });
     expect(result.status).toBe('failed');
     if (result.status === 'failed') {
