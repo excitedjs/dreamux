@@ -22,12 +22,28 @@ import type {
 
 export interface CodexAgentRuntimeProviderOptions {
   descriptor: ProviderDescriptor;
-  resolveBinPath: (bin: string) => string;
   codexProcessFactory?: (opts: CodexProcessOptions) => CodexProcess;
   codexClientFactory?: (socketPath: string) => CodexWsClient;
   codexHomeDoctor?: DispatcherCodexHomeDoctor;
   restartBackoffBaseMs?: number;
   restartBackoffMaxMs?: number;
+}
+
+/**
+ * Final codex binary path for one dispatcher. The `CODEX_HOST_CODEX_BIN`
+ * environment variable is a deliberate host-level override that takes
+ * precedence over the dispatcher's `runtime.config.bin`; otherwise the
+ * dispatcher-local bin (default `"codex"`) is used. `env` defaults to the live
+ * process environment for the runtime spawn path; doctor passes the installed
+ * service unit's environment so it checks what the service will run.
+ */
+export function resolveCodexBinPath(
+  configBin: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const fromEnv = env['CODEX_HOST_CODEX_BIN'];
+  if (fromEnv !== undefined && fromEnv !== '') return fromEnv;
+  return configBin;
 }
 
 export const CODEX_AGENT_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = {
@@ -67,7 +83,7 @@ export function createCodexAgentRuntimeProvider(
         cwd: context.cwd,
         state: context.state,
         paths: context.paths,
-        codexBinPath: options.resolveBinPath(codexConfig.bin),
+        codexBinPath: resolveCodexBinPath(codexConfig.bin),
         resolveExtraArgs: () => runtimeArgs,
         handshakeTimeoutMs: codexConfig.initialize_timeout_ms,
         extraEnv: codexConfig.extra_env,

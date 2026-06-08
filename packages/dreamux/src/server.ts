@@ -63,8 +63,6 @@ export interface ServerOptions {
    * loadConfig() after external provider loading.
    */
   providerRegistry?: ProviderRegistry;
-  /** Codex binary path override (tests, highest precedence). */
-  codexBinPath?: string;
   /** Inject a CodexProcess factory (tests). */
   codexProcessFactory?: (opts: CodexProcessOptions) => CodexProcess;
   /** Inject a CodexWsClient factory (tests). */
@@ -126,8 +124,6 @@ export class Server {
       opts.channelLoggerFactory ??
       ((id: string) => createLogger({ name: `channel/${id}` }));
     const codexProviderOptions = {
-      resolveBinPath: (dispatcherBin: string) =>
-        this.resolveCodexBinPath(dispatcherBin),
       ...(opts.codexProcessFactory !== undefined
         ? { codexProcessFactory: opts.codexProcessFactory }
         : {}),
@@ -166,20 +162,6 @@ export class Server {
       channelLoggerFactory,
       log: this.log,
     });
-  }
-
-  /**
-   * Final codex binary path for one dispatcher. Precedence (highest first):
-   *   1. ServerOptions.codexBinPath (test seam)
-   *   2. CODEX_HOST_CODEX_BIN env (deliberate host-level override across every
-   *      dispatcher; onboard no longer sets it automatically)
-   *   3. the dispatcher's dispatchers[].runtime.config.bin (default "codex")
-   */
-  private resolveCodexBinPath(dispatcherBin: string): string {
-    if (this.opts.codexBinPath !== undefined) return this.opts.codexBinPath;
-    const fromEnv = process.env['CODEX_HOST_CODEX_BIN'];
-    if (fromEnv !== undefined && fromEnv !== '') return fromEnv;
-    return dispatcherBin;
   }
 
   /** Bring up admin socket + all enabled dispatchers. */

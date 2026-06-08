@@ -136,7 +136,6 @@ function buildServer(opts: {
   codexRestartBackoffBaseMs?: number;
   codexRestartBackoffMaxMs?: number;
   channelLoggerFactory?: (dispatcherId: string) => DreamuxLogger;
-  codexBinPath?: string;
   providerRegistry?: ProviderRegistry;
 }): Server {
   return new Server({
@@ -144,9 +143,6 @@ function buildServer(opts: {
     providerRegistry: opts.providerRegistry,
     adminSocketPath: join(opts.runtimeDir, 'admin.sock'),
     skipBotSecret: opts.skipBotSecret ?? true,
-    ...(opts.codexBinPath !== undefined
-      ? { codexBinPath: opts.codexBinPath }
-      : {}),
     ...(opts.channelLoggerFactory !== undefined
       ? { channelLoggerFactory: opts.channelLoggerFactory }
       : {}),

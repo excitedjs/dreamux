@@ -14,6 +14,7 @@ async function pathExists(path: string): Promise<boolean> {
 }
 
 import { codexArgsToCli, parseCodexArgs } from '../agent-runtime/builtin/codex/args.js';
+import { resolveCodexBinPath } from '../agent-runtime/builtin/codex/provider.js';
 import {
   BUILT_IN_DEFAULTS,
   BUILTIN_CLAUDE_CODE_PROVIDER_REF,
@@ -510,7 +511,7 @@ function runtimeBinaryChecks(
   if (dispatchers.length === 0) {
     add({
       name: managedService ? 'managed service Codex binary' : 'codex binary',
-      bin: resolveCodexBin(DEFAULT_CODEX_BIN, env),
+      bin: resolveCodexBinPath(DEFAULT_CODEX_BIN, env),
       args: ['--help'],
     });
     return [...checks.values()];
@@ -520,7 +521,7 @@ function runtimeBinaryChecks(
     if (dispatcher.runtime.provider === BUILTIN_CODEX_PROVIDER_REF) {
       add({
         name: managedService ? 'managed service Codex binary' : 'codex binary',
-        bin: resolveCodexBin(dispatcherCodexConfig(dispatcher).bin, env),
+        bin: resolveCodexBinPath(dispatcherCodexConfig(dispatcher).bin, env),
         args: ['--help'],
       });
       continue;
@@ -536,17 +537,6 @@ function runtimeBinaryChecks(
     }
   }
   return [...checks.values()];
-}
-
-/**
- * Codex binary for one dispatcher: the `CODEX_HOST_CODEX_BIN` env override (a
- * deliberate host-level setting) wins; otherwise the dispatcher's
- * `runtime.config.bin`.
- * Mirrors `Server.resolveCodexBinPath` so doctor checks what serve will run.
- */
-function resolveCodexBin(dispatcherBin: string, env: NodeJS.ProcessEnv): string {
-  const override = env['CODEX_HOST_CODEX_BIN'];
-  return override !== undefined && override.trim() !== '' ? override : dispatcherBin;
 }
 
 async function checkNodeLaunch(

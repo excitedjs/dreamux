@@ -37,7 +37,7 @@ const EXTERNAL_CAPABILITIES: AgentRuntimeCapabilities = {
 function builtinCatalog(): AgentRuntimeProviderCatalog {
   return createBuiltinAgentRuntimeProviderCatalog({
     registry: createBuiltinProviderRegistry(),
-    codex: { resolveBinPath: (bin) => bin },
+    codex: {},
   });
 }
 
@@ -201,7 +201,7 @@ describe('AgentRuntimeProviderCatalog', () => {
 
     const catalog = createBuiltinAgentRuntimeProviderCatalog({
       registry,
-      codex: { resolveBinPath: (bin) => bin },
+      codex: {},
     });
     expect(catalog.list().map((provider) => provider.ref).sort()).toEqual([
       'builtin:claude-code',
@@ -287,7 +287,6 @@ describe('AgentRuntimeProviderCatalog', () => {
       descriptor.id,
       createCodexAgentRuntimeProvider({
         descriptor,
-        resolveBinPath: (bin) => bin,
       }),
     );
     const catalog = new AgentRuntimeProviderCatalog({ registry });

@@ -76,7 +76,8 @@ export interface DispatcherFeishuConfig {
  *
  * `bin` is the dispatcher's Codex binary path; the `CODEX_HOST_CODEX_BIN`
  * environment variable is a host-level override that takes precedence over it
- * (see `Server.resolveCodexBinPath`). `initialize_timeout_ms` is that
+ * (resolved by the codex builtin's `resolveCodexBinPath`).
+ * `initialize_timeout_ms` is that
  * dispatcher's handshake timeout. `turn_timeout_ms` bounds a single TeamMate
  * worker turn (issue #126): if a per-task Codex app-server reaches `running`
  * but its turn never emits `turn/completed` (a stall in turn execution —
