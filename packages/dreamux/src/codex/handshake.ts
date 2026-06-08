@@ -73,7 +73,7 @@ const DEFAULT_HANDSHAKE_TIMEOUT_MS = 10_000;
  * Times out (rejects) if the daemon does not reply within
  * `options.timeoutMs`. The pending request stays in the client's `pending`
  * map after timeout — callers that recover by tearing down the client
- * (e.g. DispatcherRuntime's cleanupOnFailure) will then drop those
+ * (e.g. CodexRuntime's cleanupOnFailure) will then drop those
  * pending entries when the WS connection closes.
  */
 export async function performInitializeHandshake(

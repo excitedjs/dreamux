@@ -371,7 +371,7 @@ triggers restart and resume.
 Dreamux dispatcher threads do not rely on `AGENTS.md` alone for dispatcher
 identity. The server passes the Dreamux dispatcher base instructions as
 Codex app-server `baseInstructions` on `thread/start` and `thread/resume`
-from `/packages/dreamux/src/dispatcher/runtime.ts`; the prompt text lives in
+from `/packages/dreamux/src/agent-runtime/codex-runtime.ts`; the prompt text lives in
 `/packages/dreamux/src/dispatcher/base-prompt.ts`.
 
 The prompt is the dispatcher role contract:

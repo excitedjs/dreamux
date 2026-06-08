@@ -84,13 +84,13 @@ resets dedupe so a redelivery straddling a restart double-processes
   reply clears *all* batched message_ids, not only the latest.
 - **P2 (architectural):** hoist queue + dedupe + received-reaction state out of
   `TurnManager` into a per-dispatcher process-scoped owner in
-  `/packages/dreamux/src/dispatcher/runtime.ts` (or a new
+  `/packages/dreamux/src/agent-runtime/codex-runtime.ts` (or a new
   `/packages/dreamux/src/dispatcher/inbound-state.ts`); `TurnManager` becomes a
   pure executor that reattaches to the persistent owner across a child restart.
   In-memory only (not on disk) — honours D4=B (no persisted reaction ledger)
   while fixing the child-restart window; add a transient busy/degraded reaction
   during the window so inbound is not silently ghosted.
-- **Adjacent one-liners in `/packages/dreamux/src/dispatcher/runtime.ts`:**
+- **Adjacent one-liners in `/packages/dreamux/src/agent-runtime/codex-runtime.ts`:**
   `if (this.stopping) return` at the top of the restart `catch` (#49.3); a
   give-up threshold / log throttle for permanent restart failure (#49.4).
 
@@ -191,7 +191,7 @@ removes the dispatcher's own new socket.
   and reports the over-budget one as an error.
 - In the same startup hook, clean stale old-layout sockets and terminate orphan
   old-layout dispatcher processes (reuse `isProcessAlive` in
-  `/packages/dreamux/src/codex/supervisor.ts`, with a guard so only identifiable
+  `/packages/dreamux/src/runtime/process.ts`, with a guard so only identifiable
   dispatcher processes are killed).
 
 **Value.** bug_007 = high (silent re-auth); bug_006 = medium-high (the

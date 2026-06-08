@@ -15,7 +15,7 @@ import {
   LineBuffer,
   parseLine,
   TurnAggregator,
-} from '../src/runtime/claude-code-stream.js';
+} from '../src/claude-code/stream.js';
 
 describe('LineBuffer', () => {
   it('frames NDJSON across arbitrary chunk boundaries', () => {

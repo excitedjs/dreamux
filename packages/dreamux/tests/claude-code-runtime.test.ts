@@ -16,11 +16,9 @@ import {
   type ClaudeCodeSessionFactory,
   type ClaudeCodeSessionSpec,
   type TurnOutcome,
-} from '../src/agent-runtime/claude-code-session.js';
-import {
-  claudeCodeMcpConfig,
-  claudeCodeResidentArgs,
-} from '../src/runtime/claude-code-args.js';
+} from '../src/claude-code/supervisor.js';
+import { claudeCodeMcpConfig } from '../src/claude-code/mcp-config.js';
+import { claudeCodeResidentArgs } from '../src/runtime/claude-code-args.js';
 import { codexMcpServerArgs } from '../src/codex/mcp-config.js';
 import { DispatcherStore } from '../src/runtime/dispatcher-store.js';
 import { dispatcherClaudeCodeMcpConfigPath } from '../src/runtime/paths.js';

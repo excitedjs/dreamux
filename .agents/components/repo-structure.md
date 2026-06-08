@@ -39,9 +39,11 @@ verbatim through the move):
 | `src/admin/` | Unix socket admin protocol + method handlers |
 | `src/channel/` | Host-side Feishu gate, access state, outbound target mapping, and received-reaction ownership |
 | `src/cli/` | Entry-point CLIs: `dreamux.ts` (single public command tree), `server.ts` and `server-ctl.ts` as internal delegated modules |
-| `src/codex/` | Codex WS+Unix JSON-RPC client, supervisor, turn collector, init handshake |
+| `src/agent-runtime/` | AgentRuntime providers and builtin runtime implementations (`CodexRuntime`, `ClaudeCodeRuntime`) |
+| `src/claude-code/` | Claude Code resident transport: supervisor, stream-json RPC, protocol model, MCP config |
+| `src/codex/` | Codex transport: app-server supervisor, WS+Unix JSON-RPC client, init handshake, MCP CLI config |
 | `src/db/` | Legacy SQLite schema + repository; targeted for removal by [top-level-design](../decisions/top-level-design.md) |
-| `src/dispatcher/` | DispatcherRuntime, TurnManager, fail-fast approval handler |
+| `src/dispatcher/` | Dispatcher base prompt, TurnManager, fail-fast approval handler |
 | `src/feishu/` | Thin bot adapter over `@excitedjs/feishu-transport` (`createFeishuTransport` + `parseInbound`); the drifted in-tree `content`/`render`/`types` copies were deleted by #4 |
 | `src/runtime/` | Path builders, env-only secrets, codex-args parser |
 | `src/server.ts` | Top-level `Server` class wiring everything together |

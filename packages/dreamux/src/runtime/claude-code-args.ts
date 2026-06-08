@@ -6,40 +6,13 @@
  * the Codex runtime turns into `-c mcp_servers.*` TOML CLI flags are here turned
  * into Claude Code's native MCP config — a JSON document loaded via
  * `claude --mcp-config <file>`. Two runtimes, one descriptor contract, two
- * completely different on-the-wire shapes.
+ * completely different process argument shapes.
  *
  * Pure functions only — no IO, no process spawning — so they are fully unit
  * testable without a live `claude` binary.
  */
 
-import type { AgentRuntimeMcpServer } from '../agent-runtime/types.js';
 import type { DispatcherClaudeCodeConfig } from './config.js';
-
-/** Claude Code MCP config document shape (`--mcp-config <file>`). */
-export interface ClaudeCodeMcpConfig {
-  mcpServers: Record<string, { command: string; args: string[] }>;
-}
-
-/** Translate Dreamux MCP descriptors into Claude Code's MCP config document. */
-export function claudeCodeMcpConfig(
-  servers: readonly AgentRuntimeMcpServer[],
-): ClaudeCodeMcpConfig {
-  const mcpServers: ClaudeCodeMcpConfig['mcpServers'] = {};
-  for (const server of servers) {
-    mcpServers[server.name] = {
-      command: server.command,
-      args: [...server.args],
-    };
-  }
-  return { mcpServers };
-}
-
-/** Serialize the Claude Code MCP config for writing to disk. */
-export function stringifyClaudeCodeMcpConfig(
-  servers: readonly AgentRuntimeMcpServer[],
-): string {
-  return `${JSON.stringify(claudeCodeMcpConfig(servers), null, 2)}\n`;
-}
 
 export interface ClaudeCodeResidentArgsInput {
   config: DispatcherClaudeCodeConfig;
@@ -57,7 +30,7 @@ export interface ClaudeCodeResidentArgsInput {
  * `--output-format stream-json --verbose` streams `init` / `assistant` /
  * `result` envelopes on stdout. The prompt is therefore NOT a CLI argument —
  * each turn is written to stdin as a `user` message line (see
- * `runtime/claude-code-stream.ts`).
+ * `claude-code/stream.ts`).
  *
  * It reads its MCP servers from the JSON config (`--mcp-config`), optionally
  * resumes a prior session at spawn time (`--resume`, used both for operator

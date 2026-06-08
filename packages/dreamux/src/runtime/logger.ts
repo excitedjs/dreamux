@@ -151,7 +151,7 @@ export function createLogger(opts: CreateLoggerOptions = {}): DreamuxLogger {
 
 /**
  * Adapt a `DreamuxLogger` to the `(level, msg, err?)` seam that
- * `DispatcherRuntime` and `TurnManager` already accept, so dispatcher lifecycle
+ * `CodexRuntime` and `TurnManager` already accept, so dispatcher lifecycle
  * lands in the per-dispatcher channel log without changing their call sites.
  */
 export function loggerToLevelFn(

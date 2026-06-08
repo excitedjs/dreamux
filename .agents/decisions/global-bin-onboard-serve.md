@@ -29,7 +29,7 @@ and serving work. The current package still publishes `dreamux`,
 hand-written router.
 
 The existing runtime is still the right base: `/packages/dreamux/src/server.ts`
-starts all enabled dispatchers, and `/packages/dreamux/src/dispatcher/runtime.ts`
+starts all enabled dispatchers, and `/packages/dreamux/src/agent-runtime/codex-runtime.ts`
 owns one long-lived Codex `app-server` child per dispatcher.
 
 A recent Codex 0.135.0 root-cause check found that dispatcher app-servers

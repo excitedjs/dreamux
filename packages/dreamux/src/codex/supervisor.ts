@@ -6,7 +6,7 @@
  *   - one process per Dispatcher, owned in-memory (no /tmp registry)
  *   - no IPC bridge subprocess (the server holds the WS itself)
  *   - no spawn lock / borrow lock (Dispatcher is the single owner)
- *   - lifecycle bound to DispatcherRuntime, not a CLI invocation
+ *   - lifecycle bound to CodexRuntime, not a CLI invocation
  *
  * Issue #2 §"实现陷阱": codex CLI is a node wrapper that spawns the rust
  * binary as a child; both land in the same process group. Reap must
@@ -20,6 +20,7 @@ import {
 } from 'node:child_process';
 import { mkdir, open, rm, stat } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { isProcessAlive, killProcessGroup } from '../runtime/process.js';
 
 export interface CodexProcessOptions {
   /** Unix socket path the daemon should listen on. */
@@ -212,29 +213,4 @@ async function waitForSocket(
   throw new Error(
     `codex daemon (pid ${pid}) did not bind ${path} within ${timeoutMs}ms`,
   );
-}
-
-export function isProcessAlive(pid: number): boolean {
-  if (!Number.isFinite(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    const errno = (e as NodeJS.ErrnoException).code;
-    return errno === 'EPERM';
-  }
-}
-
-export function killProcessGroup(
-  pgid: number,
-  signal: NodeJS.Signals | number,
-): void {
-  if (!Number.isFinite(pgid) || pgid <= 0) return;
-  try {
-    process.kill(-pgid, signal);
-  } catch (e) {
-    const errno = (e as NodeJS.ErrnoException).code;
-    if (errno === 'ESRCH' || errno === 'EPERM') return;
-    throw e;
-  }
 }

@@ -1,5 +1,5 @@
 /**
- * DispatcherRuntime — one running dispatcher's in-memory state.
+ * CodexRuntime — one running Codex-backed AgentRuntime instance.
  *
  * Owns:
  *   - CodexProcess (child app-server)
@@ -40,21 +40,15 @@ import type {
 import {
   TurnManager,
   type InboundDeliveryHooks,
-} from './turn-manager.js';
-import { createFailFastApprovalHandler } from './approval.js';
-import {
-  dispatcherCodexCwd,
-  dispatcherSocketPath,
-  dispatcherStderrLog,
-  dispatcherStdoutLog,
-} from '../runtime/paths.js';
+} from '../dispatcher/turn-manager.js';
+import { createFailFastApprovalHandler } from '../dispatcher/approval.js';
 import {
   dispatcherCodexHomeDoctorContext,
   type DispatcherCodexHomeDoctor,
 } from '../runtime/dispatcher-codex-home.js';
 import { dispatcherProcessEnv } from '../runtime/package-bin.js';
 import { installBundledWorkspaceSkills } from '../runtime/bundled-skills.js';
-import { DREAMUX_DISPATCHER_BASE_INSTRUCTIONS } from './base-prompt.js';
+import { DREAMUX_DISPATCHER_BASE_INSTRUCTIONS } from '../dispatcher/base-prompt.js';
 import type {
   AgentRuntime,
   AgentRuntimeCapabilities,
@@ -66,14 +60,20 @@ import type {
   AgentRuntimeTurnResult,
   TeamMateCompletionDeliveryResult,
   TeamMateCompletionEnvelope,
-} from '../agent-runtime/types.js';
+} from './types.js';
 import { BUILTIN_CODEX_PROVIDER_REF } from '../runtime/config.js';
-import { CODEX_AGENT_RUNTIME_CAPABILITIES } from '../agent-runtime/codex.js';
+import { CODEX_AGENT_RUNTIME_CAPABILITIES } from './codex.js';
+import {
+  codexRowStateStore,
+  defaultCodexRuntimePaths,
+  formatCodexTeamMateCompletion,
+  isSystemTurn,
+} from './codex-runtime-support.js';
 
 const DEFAULT_RESTART_BACKOFF_BASE_MS = 1000;
 const DEFAULT_RESTART_BACKOFF_MAX_MS = 30_000;
 
-export interface DispatcherRuntimeDeps {
+export interface CodexRuntimeDeps {
   dispatchers: DispatcherStore;
   state?: AgentRuntimeStateStore;
   paths?: AgentRuntimePathContext;
@@ -101,7 +101,7 @@ export interface DispatcherRuntimeDeps {
   log?: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
 }
 
-export class DispatcherRuntime implements AgentRuntime {
+export class CodexRuntime implements AgentRuntime {
   readonly providerRef = BUILTIN_CODEX_PROVIDER_REF;
 
   private process: CodexProcess | null = null;
@@ -118,7 +118,7 @@ export class DispatcherRuntime implements AgentRuntime {
   private status: DispatcherStatus = 'declared';
   /** Monotonic per-attempt suffix for TeamMate delivery turn dedup ids (#110 PR8). */
   private teammateDeliverySeq = 0;
-  private readonly log: NonNullable<DispatcherRuntimeDeps['log']>;
+  private readonly log: NonNullable<CodexRuntimeDeps['log']>;
   private stopping = false;
   private restarting = false;
   private restartAttempts = 0;
@@ -129,7 +129,7 @@ export class DispatcherRuntime implements AgentRuntime {
 
   constructor(
     public readonly row: DispatcherRow,
-    private readonly deps: DispatcherRuntimeDeps,
+    private readonly deps: CodexRuntimeDeps,
   ) {
     this.log = deps.log ?? ((lvl, msg, err) => {
       const prefix = `[dispatcher ${row.dispatcher_id}] ${lvl}`;
@@ -137,8 +137,8 @@ export class DispatcherRuntime implements AgentRuntime {
       else console.error(prefix, msg);
     });
     this.threadId = row.thread_id;
-    this.state = deps.state ?? rowStateStore(deps.dispatchers);
-    this.paths = deps.paths ?? defaultRuntimePaths;
+    this.state = deps.state ?? codexRowStateStore(deps.dispatchers);
+    this.paths = deps.paths ?? defaultCodexRuntimePaths;
   }
 
   get dispatcherId(): string {
@@ -417,7 +417,7 @@ export class DispatcherRuntime implements AgentRuntime {
       source_chat_id: 'teammate',
       source_message_id: `teammate:${completion.teammateName}#${this.teammateDeliverySeq}`,
       sender_id: null,
-      parsed_text: formatTeamMateCompletion(completion),
+      parsed_text: formatCodexTeamMateCompletion(completion),
     });
     switch (delivery.status) {
       case 'submitted':
@@ -591,44 +591,4 @@ export class DispatcherRuntime implements AgentRuntime {
   private setStatus(s: DispatcherStatus): void {
     this.status = s;
   }
-}
-
-/** Frame a TeamMate completion as the text of a delivered Codex turn. */
-function formatTeamMateCompletion(
-  completion: TeamMateCompletionEnvelope,
-): string {
-  return [
-    `<teammate_session_completion teammate="${completion.teammateName}" ` +
-      `session_id="${completion.sessionId ?? ''}" status="${completion.status}">`,
-    completion.finalText,
-    '</teammate_session_completion>',
-  ].join('\n');
-}
-
-const defaultRuntimePaths: AgentRuntimePathContext = {
-  dispatcherCodexCwd,
-  dispatcherSocketPath,
-  dispatcherStdoutLog,
-  dispatcherStderrLog,
-  dispatcherClaudeCodeMcpConfigPath: () => {
-    throw new Error('Claude Code MCP config path is not used by Codex runtime');
-  },
-  dispatcherClaudeCodeStreamLogPath: () => {
-    throw new Error('Claude Code stream log path is not used by Codex runtime');
-  },
-};
-
-function rowStateStore(dispatchers: DispatcherStore): AgentRuntimeStateStore {
-  return {
-    setStatus: (id, status, extras) => dispatchers.setStatus(id, status, extras),
-    setThreadId: (id, threadId) => dispatchers.setThreadId(id, threadId),
-    recordLostThread: (id, lostThreadId, newThreadId, error) =>
-      dispatchers.recordLostThread(id, lostThreadId, newThreadId, error),
-  };
-}
-
-function isSystemTurn(
-  input: AgentRuntimeTurnInput,
-): input is Extract<AgentRuntimeTurnInput, { kind: 'system' }> {
-  return 'kind' in input && input.kind === 'system';
 }

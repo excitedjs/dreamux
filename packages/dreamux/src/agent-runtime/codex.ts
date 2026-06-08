@@ -4,7 +4,7 @@ import {
   CodexProcess,
   type CodexProcessOptions,
 } from '../codex/supervisor.js';
-import { DispatcherRuntime } from '../dispatcher/runtime.js';
+import { CodexRuntime } from './codex-runtime.js';
 import {
   BUILTIN_CODEX_PROVIDER_REF,
   defaultDispatcherCodexConfig,
@@ -87,7 +87,7 @@ export function createCodexAgentRuntimeProvider(
           ? { restartBackoffMaxMs: options.restartBackoffMaxMs }
           : {}),
       };
-      return new DispatcherRuntime(context.row, {
+      return new CodexRuntime(context.row, {
         ...runtimeDeps,
       });
     },
