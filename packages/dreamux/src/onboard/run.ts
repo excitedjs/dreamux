@@ -6,7 +6,7 @@ import {
   globalConfigFile,
   loadConfig,
   stringifyConfig,
-} from '../runtime/config.js';
+} from '../config/config.js';
 import {
   dispatcherAppServerControlDir,
   dispatcherCodexHome,
@@ -14,7 +14,7 @@ import {
   logsRoot,
   setRuntimeConfig,
   stateRoot,
-} from '../runtime/paths.js';
+} from '../platform/paths.js';
 import {
   dispatcherCodexHomeDoctorContext,
   validateDispatcherCodexHome,

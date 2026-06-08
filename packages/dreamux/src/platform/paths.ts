@@ -27,8 +27,8 @@ import { fileURLToPath } from 'node:url';
 import {
   BUILT_IN_DEFAULTS,
   type DreamuxConfig,
-} from './config.js';
-import { validateDispatcherId } from './dispatcher-id.js';
+} from '../config/config.js';
+import { validateDispatcherId } from '../state/dispatcher-id.js';
 
 export const DREAMUX_UNIX_SOCKET_PATH_MAX_BYTES = 103;
 const HERE = dirname(fileURLToPath(import.meta.url));

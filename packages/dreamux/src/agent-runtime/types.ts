@@ -4,13 +4,13 @@ import type {
   InboundTurnInput,
   NoticeInjectionResult,
 } from './turn.js';
-import type { DispatcherConfig } from '../runtime/config.js';
-import type { DispatcherProviderConfig } from '../runtime/config.js';
+import type { DispatcherConfig } from '../config/config.js';
+import type { DispatcherProviderConfig } from '../config/config.js';
 import type {
   DispatcherRow,
   DispatcherStatus,
   DispatcherStore,
-} from '../runtime/dispatcher-store.js';
+} from '../state/dispatcher-store.js';
 import type { ProviderDescriptor } from '../registry/index.js';
 
 export interface AgentRuntimeMcpServer {

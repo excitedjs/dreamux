@@ -27,7 +27,7 @@ import {
   dispatcherWorkspaceSkillPath,
   logsRoot,
   resetRuntimeConfig,
-} from '../src/runtime/paths.js';
+} from '../src/platform/paths.js';
 import { testDispatcherConfig } from './helpers/config.js';
 
 class FakeRunner implements CommandRunner {

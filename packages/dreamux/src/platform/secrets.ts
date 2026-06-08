@@ -1,4 +1,4 @@
-import { dispatcherFeishuConfig, type DreamuxConfig } from './config.js';
+import { dispatcherFeishuConfig, type DreamuxConfig } from '../config/config.js';
 
 export function resolveBotSecret(ref: string, config: DreamuxConfig): string {
   if (ref.startsWith('config:')) {

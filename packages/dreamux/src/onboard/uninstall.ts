@@ -22,12 +22,12 @@ import {
   globalConfigFile,
   loadConfig,
   type DispatcherConfig,
-} from '../runtime/config.js';
+} from '../config/config.js';
 import {
   dispatcherWorkspaceSkillDirs,
   logsRoot,
   stateRoot,
-} from '../runtime/paths.js';
+} from '../platform/paths.js';
 
 export type UninstallStatus = 'removed' | 'missing' | 'skipped';
 

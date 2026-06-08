@@ -9,7 +9,7 @@ import {
   BUILTIN_CODEX_PROVIDER_REF,
   defaultDispatcherCodexConfig,
   dispatcherCodexConfig,
-} from '../../../runtime/config.js';
+} from '../../../config/config.js';
 import type { DispatcherCodexHomeDoctor } from './codex-home.js';
 import { codexArgsToCli, parseCodexArgs } from './args.js';
 import { type ProviderDescriptor } from '../../../registry/index.js';

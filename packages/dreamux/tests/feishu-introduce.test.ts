@@ -33,7 +33,7 @@ import {
   trustIntroducedBots,
   trustedBotIds,
 } from '../src/channel/feishu/chat-bots-store.js';
-import { resetRuntimeConfig } from '../src/runtime/paths.js';
+import { resetRuntimeConfig } from '../src/platform/paths.js';
 import type { Mention } from '@excitedjs/feishu-transport';
 
 function state(overrides: Partial<DispatcherAccessState> = {}): DispatcherAccessState {

@@ -47,7 +47,7 @@ import { loadChatBots } from '../src/channel/feishu/chat-bots-store.js';
 import {
   BUILT_IN_DEFAULTS,
   type DreamuxConfig,
-} from '../src/runtime/config.js';
+} from '../src/config/config.js';
 import {
   dispatcherAppServerControlDir,
   dispatcherCodexCwd,
@@ -56,10 +56,10 @@ import {
   dispatcherWorkspaceSkillDir,
   dispatcherSocketPath,
   restartIntentPath,
-} from '../src/runtime/paths.js';
+} from '../src/platform/paths.js';
 import { writeRestartIntent } from '../src/daemon/restart-intent.js';
-import { dreamuxBinPath } from '../src/runtime/package-bin.js';
-import { createLogger, type DreamuxLogger } from '../src/runtime/logger.js';
+import { dreamuxBinPath } from '../src/platform/package-bin.js';
+import { createLogger, type DreamuxLogger } from '../src/platform/logger.js';
 import { DREAMUX_DISPATCHER_BASE_INSTRUCTIONS } from '../src/dispatcher-service/dispatcher/base-prompt.js';
 import { startFakeCodex, type FakeCodex } from './fake-codex.js';
 import { testDispatcherConfig } from './helpers/config.js';

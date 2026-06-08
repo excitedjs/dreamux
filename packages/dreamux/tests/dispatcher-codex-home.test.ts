@@ -9,7 +9,7 @@ import {
   dispatcherCodexHomeDoctorContext,
   validateDispatcherCodexHome,
 } from '../src/agent-runtime/builtin/codex/codex-home.js';
-import { BUILT_IN_DEFAULTS } from '../src/runtime/config.js';
+import { BUILT_IN_DEFAULTS } from '../src/config/config.js';
 import {
   dispatcherAppServerControlDir,
   dispatcherCodexCwd,
@@ -18,7 +18,7 @@ import {
   dispatcherSocketPath,
   resetRuntimeConfig,
   setRuntimeConfig,
-} from '../src/runtime/paths.js';
+} from '../src/platform/paths.js';
 
 describe('global Codex home doctor', () => {
   let runtimeDir: string;

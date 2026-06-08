@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { bundledSkillDir } from '../src/runtime/paths.js';
+import { bundledSkillDir } from '../src/platform/paths.js';
 import { DREAMUX_DISPATCHER_BASE_INSTRUCTIONS } from '../src/dispatcher-service/dispatcher/base-prompt.js';
 
 /**

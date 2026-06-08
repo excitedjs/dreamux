@@ -20,7 +20,7 @@ import {
 } from 'node:child_process';
 import { mkdir, open, rm, stat } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { isProcessAlive, killProcessGroup } from '../../../runtime/process.js';
+import { isProcessAlive, killProcessGroup } from '../../../platform/process.js';
 
 export interface CodexProcessOptions {
   /** Unix socket path the daemon should listen on. */

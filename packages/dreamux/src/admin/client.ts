@@ -1,6 +1,6 @@
 import { connect, type Socket } from 'node:net';
 
-import { adminSocketPath as defaultAdminSocketPath } from '../runtime/paths.js';
+import { adminSocketPath as defaultAdminSocketPath } from '../platform/paths.js';
 import type { AdminRequest, AdminResponse } from './protocol.js';
 
 export interface SendAdminRequestOptions {

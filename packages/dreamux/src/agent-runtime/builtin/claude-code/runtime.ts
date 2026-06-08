@@ -62,13 +62,13 @@ import {
   defaultDispatcherClaudeCodeConfig,
   dispatcherClaudeCodeConfig,
   type DispatcherClaudeCodeConfig,
-} from '../../../runtime/config.js';
+} from '../../../config/config.js';
 import {
   dispatcherClaudeCodeMcpConfigPath,
   dispatcherClaudeCodeStreamLogPath,
   dispatcherCodexCwd,
-} from '../../../runtime/paths.js';
-import { dispatcherProcessEnv } from '../../../runtime/package-bin.js';
+} from '../../../platform/paths.js';
+import { dispatcherProcessEnv } from '../../../platform/package-bin.js';
 import { claudeCodeResidentArgs } from './args.js';
 import { stringifyClaudeCodeMcpConfig } from './mcp-config.js';
 import {
@@ -79,7 +79,7 @@ import {
 import type {
   InboundDeliveryHooks,
 } from '../../turn.js';
-import type { DispatcherStatus } from '../../../runtime/dispatcher-store.js';
+import type { DispatcherStatus } from '../../../state/dispatcher-store.js';
 import type {
   AgentRuntimeCapabilities,
   AgentRuntime,

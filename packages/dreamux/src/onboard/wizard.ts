@@ -10,8 +10,8 @@ import {
   text,
 } from '@clack/prompts';
 
-import { expandHome } from '../runtime/config.js';
-import { validateDispatcherId } from '../runtime/dispatcher-id.js';
+import { expandHome } from '../config/config.js';
+import { validateDispatcherId } from '../state/dispatcher-id.js';
 import type { OnboardAnswers } from './types.js';
 
 export interface OnboardCliOptions {

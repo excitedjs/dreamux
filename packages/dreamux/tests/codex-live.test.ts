@@ -35,7 +35,7 @@ import { CodexWsClient, type CodexWsClientOptions } from '../src/agent-runtime/b
 import { performInitializeHandshake } from '../src/agent-runtime/builtin/codex/handshake.js';
 import { feishuMcpCodexArgs } from '../src/agent-runtime/builtin/codex/mcp-config.js';
 import { codexArgsToCli, parseCodexArgs } from '../src/agent-runtime/builtin/codex/args.js';
-import { dreamuxBinPath } from '../src/runtime/package-bin.js';
+import { dreamuxBinPath } from '../src/platform/package-bin.js';
 import {
   IN_PROGRESS_REACTION_EMOJI,
   RECEIVED_REACTION_EMOJI,
@@ -47,7 +47,7 @@ import {
   type FeishuInboundEvent,
 } from '../src/channel/feishu/bot.js';
 import { saveDispatcherAccess } from '../src/channel/feishu/feishu-gate.js';
-import type { DreamuxConfig } from '../src/runtime/config.js';
+import type { DreamuxConfig } from '../src/config/config.js';
 import type {
   ServerNotification,
   ThreadStartResponse,

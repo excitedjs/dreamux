@@ -2,7 +2,7 @@ import type {
   AgentRuntimeResumeCheckpoint,
   AgentRuntimeStateStore,
 } from '../../agent-runtime/index.js';
-import type { DispatcherStatus } from '../../runtime/dispatcher-store.js';
+import type { DispatcherStatus } from '../../state/dispatcher-store.js';
 import type { TeamMateIdentityStore } from './identity-store.js';
 import {
   runtimeStatusToIdentityStatus,

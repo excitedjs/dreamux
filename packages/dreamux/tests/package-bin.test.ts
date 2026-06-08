@@ -18,7 +18,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { resolveExecutableOnPath } from '../src/runtime/package-bin.js';
+import { resolveExecutableOnPath } from '../src/platform/package-bin.js';
 
 function writeExecutable(dir: string, name: string): string {
   mkdirSync(dir, { recursive: true });

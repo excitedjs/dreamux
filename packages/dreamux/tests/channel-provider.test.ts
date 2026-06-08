@@ -8,7 +8,7 @@ import type {
   SubscriptionChannelPlugin,
 } from '../src/channel/plugin.js';
 import { createFakeFeishuBot } from '../src/channel/feishu/bot.js';
-import { DispatcherStore } from '../src/runtime/dispatcher-store.js';
+import { DispatcherStore } from '../src/state/dispatcher-store.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
 import { testDreamuxConfig } from './helpers/config.js';
 

@@ -39,7 +39,7 @@ import {
   serverLogPath,
   stateRoot,
   unixSocketPathFitsBudget,
-} from '../src/runtime/paths.js';
+} from '../src/platform/paths.js';
 
 describe('runtime paths', () => {
   let root: string;

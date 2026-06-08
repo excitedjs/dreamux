@@ -22,20 +22,20 @@ import {
 import {
   BUILT_IN_DEFAULTS,
   type DreamuxConfig,
-} from './runtime/config.js';
+} from './config/config.js';
 import {
   DispatcherStore,
   type DispatcherRow,
-} from './runtime/dispatcher-store.js';
+} from './state/dispatcher-store.js';
 import type { DispatcherCodexHomeDoctor } from './agent-runtime/builtin/codex/codex-home.js';
 import {
   adminSocketPath,
   setRuntimeConfig,
-} from './runtime/paths.js';
+} from './platform/paths.js';
 import {
   createLogger,
   type DreamuxLogger,
-} from './runtime/logger.js';
+} from './platform/logger.js';
 import { createAdminSocketServer, type AdminSocketServer } from './admin/socket.js';
 import { RestartIntentConsumer } from './daemon/restart-intent.js';
 import type { ClaudeCodeSessionFactory } from './agent-runtime/builtin/claude-code/supervisor.js';

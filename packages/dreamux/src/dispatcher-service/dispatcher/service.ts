@@ -14,20 +14,20 @@ import {
   BUILTIN_CODEX_PROVIDER_REF,
   BUILTIN_FEISHU_PROVIDER_REF,
   type DreamuxConfig,
-} from '../../runtime/config.js';
+} from '../../config/config.js';
 import {
   DispatcherStore,
   type DispatcherRow,
   type DispatcherStatus,
-} from '../../runtime/dispatcher-store.js';
+} from '../../state/dispatcher-store.js';
 import {
   adminSocketPath as defaultAdminSocketPath,
   dispatcherCodexCwd,
-} from '../../runtime/paths.js';
+} from '../../platform/paths.js';
 import {
   loggerToLevelFn,
   type DreamuxLogger,
-} from '../../runtime/logger.js';
+} from '../../platform/logger.js';
 import { teammateMcpServerDescriptor } from '../teammate/mcp-config.js';
 import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
 

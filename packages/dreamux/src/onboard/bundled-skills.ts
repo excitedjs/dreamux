@@ -17,7 +17,7 @@ import {
   dispatcherWorkspaceCodexSkillsDir,
   dispatcherWorkspaceSkillDir,
   type BundledSkillName,
-} from './paths.js';
+} from '../platform/paths.js';
 
 /** Async existence probe - the fs/promises replacement for existsSync. */
 async function pathExists(path: string): Promise<boolean> {

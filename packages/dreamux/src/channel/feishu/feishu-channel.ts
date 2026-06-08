@@ -38,11 +38,11 @@ import type { AgentRuntimeMcpServer } from '../../agent-runtime/types.js';
 import {
   BUILTIN_FEISHU_PROVIDER_REF,
   type DreamuxConfig,
-} from '../../runtime/config.js';
-import type { DispatcherRow } from '../../runtime/dispatcher-store.js';
+} from '../../config/config.js';
+import type { DispatcherRow } from '../../state/dispatcher-store.js';
 import {
   dispatcherFeishuAttachmentCacheDir,
-} from '../../runtime/paths.js';
+} from '../../platform/paths.js';
 import {
   feishuMcpServerDescriptor,
   parseFeishuMcpToolInput,
@@ -51,9 +51,9 @@ import {
   type FeishuMcpReplyInput,
   type FeishuMcpToolName,
 } from './feishu-mcp-surface.js';
-import type { DreamuxLogger } from '../../runtime/logger.js';
-import { pinoToTransportLogger } from '../../runtime/logger.js';
-import { resolveBotSecret } from '../../runtime/secrets.js';
+import type { DreamuxLogger } from '../../platform/logger.js';
+import { pinoToTransportLogger } from '../../platform/logger.js';
+import { resolveBotSecret } from '../../platform/secrets.js';
 
 export const RECEIVED_REACTION_EMOJI = 'Get';
 export const IN_PROGRESS_REACTION_EMOJI = 'OnIt';

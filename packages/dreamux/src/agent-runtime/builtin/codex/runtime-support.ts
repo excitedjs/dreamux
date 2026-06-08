@@ -1,10 +1,10 @@
-import type { DispatcherStore } from '../../../runtime/dispatcher-store.js';
+import type { DispatcherStore } from '../../../state/dispatcher-store.js';
 import {
   dispatcherCodexCwd,
   dispatcherSocketPath,
   dispatcherStderrLog,
   dispatcherStdoutLog,
-} from '../../../runtime/paths.js';
+} from '../../../platform/paths.js';
 import type {
   AgentRuntimePathContext,
   AgentRuntimeStateStore,

@@ -19,7 +19,7 @@ import { readFile } from 'node:fs/promises';
 import {
   packagedChangelogJsonPath,
   packagedChangelogMarkdownPath,
-} from '../runtime/paths.js';
+} from '../platform/paths.js';
 
 export interface ReadChangelogOptions {
   json?: boolean;

@@ -6,7 +6,7 @@ import {
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
-import { dispatcherAccessPath } from '../../runtime/paths.js';
+import { dispatcherAccessPath } from '../../platform/paths.js';
 
 export const TRUST_DOMAIN_WARNING =
   'dispatcher shares one Codex context across multiple Feishu chats';

@@ -23,7 +23,7 @@ import type {
   DispatcherRow,
   DispatcherStatus,
   DispatcherStore,
-} from '../../../runtime/dispatcher-store.js';
+} from '../../../state/dispatcher-store.js';
 import {
   CodexProcess,
   type CodexProcessExit,
@@ -46,8 +46,8 @@ import {
   dispatcherCodexHomeDoctorContext,
   type DispatcherCodexHomeDoctor,
 } from './codex-home.js';
-import { dispatcherProcessEnv } from '../../../runtime/package-bin.js';
-import { installBundledWorkspaceSkills } from '../../../runtime/bundled-skills.js';
+import { dispatcherProcessEnv } from '../../../platform/package-bin.js';
+import { installBundledWorkspaceSkills } from '../../../onboard/bundled-skills.js';
 import { DREAMUX_DISPATCHER_BASE_INSTRUCTIONS } from '../../../dispatcher-service/dispatcher/base-prompt.js';
 import type {
   AgentRuntime,
@@ -61,7 +61,7 @@ import type {
   TeamMateCompletionDeliveryResult,
   TeamMateCompletionEnvelope,
 } from '../../types.js';
-import { BUILTIN_CODEX_PROVIDER_REF } from '../../../runtime/config.js';
+import { BUILTIN_CODEX_PROVIDER_REF } from '../../../config/config.js';
 import { CODEX_AGENT_RUNTIME_CAPABILITIES } from './provider.js';
 import {
   codexRowStateStore,

@@ -24,7 +24,7 @@ import {
   type ClaudeCodeAgentRuntimeProviderOptions,
 } from '../src/agent-runtime/builtin/claude-code/runtime.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
-import { DispatcherStore } from '../src/runtime/dispatcher-store.js';
+import { DispatcherStore } from '../src/state/dispatcher-store.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 
 const execFileAsync = promisify(execFile);

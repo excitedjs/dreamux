@@ -17,8 +17,8 @@ import {
   type AgentRuntimeTurnResult,
 } from '../src/agent-runtime/index.js';
 import { TeamMateAgentService } from '../src/dispatcher-service/teammate/service.js';
-import { DispatcherStore } from '../src/runtime/dispatcher-store.js';
-import { resetRuntimeConfig } from '../src/runtime/paths.js';
+import { DispatcherStore } from '../src/state/dispatcher-store.js';
+import { resetRuntimeConfig } from '../src/platform/paths.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
 import { testDreamuxConfig } from './helpers/config.js';
 

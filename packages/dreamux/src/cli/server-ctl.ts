@@ -13,7 +13,7 @@
  */
 
 import { connect, type Socket } from 'node:net';
-import { adminSocketPath } from '../runtime/paths.js';
+import { adminSocketPath } from '../platform/paths.js';
 import type { AdminRequest, AdminResponse } from '../admin/protocol.js';
 
 interface ParsedArgs {

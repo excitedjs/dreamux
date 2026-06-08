@@ -12,7 +12,7 @@
  * testable without a live `claude` binary.
  */
 
-import type { DispatcherClaudeCodeConfig } from '../../../runtime/config.js';
+import type { DispatcherClaudeCodeConfig } from '../../../config/config.js';
 
 export interface ClaudeCodeResidentArgsInput {
   config: DispatcherClaudeCodeConfig;

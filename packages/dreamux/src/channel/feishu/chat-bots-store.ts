@@ -22,7 +22,7 @@
 import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
-import { dispatcherChatBotsPath } from '../../runtime/paths.js';
+import { dispatcherChatBotsPath } from '../../platform/paths.js';
 
 /** Retain at most this many recent bot-added event ids per chat for dedupe. */
 const MAX_SEEN_EVENT_IDS = 200;

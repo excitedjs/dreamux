@@ -1,4 +1,4 @@
-import { dreamuxBinPath } from '../../runtime/package-bin.js';
+import { dreamuxBinPath } from '../../platform/package-bin.js';
 import type { AgentRuntimeMcpServer } from '../../agent-runtime/types.js';
 
 export const TEAMMATE_MCP_SERVER_NAME = 'teammate';

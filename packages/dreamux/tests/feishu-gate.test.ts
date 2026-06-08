@@ -19,7 +19,7 @@ import {
   saveDispatcherAccess,
   type DispatcherAccessState,
 } from '../src/channel/feishu/feishu-gate.js';
-import { dispatcherAccessPath, resetRuntimeConfig } from '../src/runtime/paths.js';
+import { dispatcherAccessPath, resetRuntimeConfig } from '../src/platform/paths.js';
 
 describe('dreamuxFeishuGate', () => {
   it('delivers direct messages only from senders on the global allow-user list', () => {

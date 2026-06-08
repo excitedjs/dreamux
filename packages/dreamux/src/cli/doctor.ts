@@ -27,7 +27,7 @@ import {
   globalConfigFile,
   loadConfig,
   type DreamuxConfig,
-} from '../runtime/config.js';
+} from '../config/config.js';
 import {
   dispatcherCodexHomeDoctorContext,
   validateDispatcherCodexHome,
@@ -37,7 +37,7 @@ import {
   dispatcherCodexCwd,
   setRuntimeConfig,
   stateRoot,
-} from '../runtime/paths.js';
+} from '../platform/paths.js';
 import { ExecaCommandRunner } from '../onboard/commands.js';
 import {
   defaultServiceNodeProbe,

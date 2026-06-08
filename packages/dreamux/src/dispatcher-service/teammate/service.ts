@@ -12,9 +12,9 @@ import {
   BUILTIN_CODEX_PROVIDER_REF,
   type DispatcherConfig,
   type DreamuxConfig,
-} from '../../runtime/config.js';
-import type { DispatcherStore, DispatcherRow } from '../../runtime/dispatcher-store.js';
-import type { DreamuxLogger } from '../../runtime/logger.js';
+} from '../../config/config.js';
+import type { DispatcherStore, DispatcherRow } from '../../state/dispatcher-store.js';
+import type { DreamuxLogger } from '../../platform/logger.js';
 import {
   dispatcherTeamMateRuntimeClaudeMcpConfigPath,
   dispatcherTeamMateRuntimeClaudeStreamLogPath,
@@ -22,8 +22,8 @@ import {
   dispatcherTeamMateRuntimeCodexLogPath,
   dispatcherTeamMateRuntimeCodexSocketPath,
   dispatcherTeamMateRuntimeDir,
-} from '../../runtime/paths.js';
-import { validateDispatcherId } from '../../runtime/dispatcher-id.js';
+} from '../../platform/paths.js';
+import { validateDispatcherId } from '../../state/dispatcher-id.js';
 import { TeamMateIdentityStore } from './identity-store.js';
 import { TeamMateRuntimeStateStore } from './runtime-state.js';
 import {

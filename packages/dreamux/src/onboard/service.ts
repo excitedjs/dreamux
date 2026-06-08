@@ -14,8 +14,8 @@ async function pathExists(path: string): Promise<boolean> {
 }
 
 import { build as buildPlist } from 'plist';
-import { expandHome } from '../runtime/config.js';
-import { logsRoot, stateRoot } from '../runtime/paths.js';
+import { expandHome } from '../config/config.js';
+import { logsRoot, stateRoot } from '../platform/paths.js';
 
 import {
   ensureDirectory,

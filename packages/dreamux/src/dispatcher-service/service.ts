@@ -1,10 +1,10 @@
 import type { AgentRuntimeProviderCatalog } from '../agent-runtime/index.js';
 import type { AgentRuntime } from '../agent-runtime/index.js';
-import type { DreamuxConfig } from '../runtime/config.js';
-import type { DispatcherStore } from '../runtime/dispatcher-store.js';
-import type { DreamuxLogger } from '../runtime/logger.js';
+import type { DreamuxConfig } from '../config/config.js';
+import type { DispatcherStore } from '../state/dispatcher-store.js';
+import type { DreamuxLogger } from '../platform/logger.js';
 import type { FeishuBot } from '../channel/feishu/bot.js';
-import type { DispatcherRow } from '../runtime/dispatcher-store.js';
+import type { DispatcherRow } from '../state/dispatcher-store.js';
 import type { RestartIntentConsumer } from '../daemon/restart-intent.js';
 import {
   DispatcherAgentService,

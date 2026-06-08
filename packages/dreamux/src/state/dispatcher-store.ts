@@ -7,8 +7,8 @@ import {
   dispatcherFeishuConfig,
   type DispatcherConfig,
   type DreamuxConfig,
-} from './config.js';
-import { dispatcherStatusPath } from './paths.js';
+} from '../config/config.js';
+import { dispatcherStatusPath } from '../platform/paths.js';
 
 /**
  * Warn sink for non-fatal recovery problems. `status.json` is server-owned,

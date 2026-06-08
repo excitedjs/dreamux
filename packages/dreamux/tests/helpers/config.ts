@@ -8,7 +8,7 @@ import {
   DEFAULT_SANDBOX_MODE,
   type DispatcherConfig,
   type DreamuxConfig,
-} from '../../src/runtime/config.js';
+} from '../../src/config/config.js';
 
 interface TestDispatcherOptions {
   id?: string;

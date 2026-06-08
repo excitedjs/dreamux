@@ -25,7 +25,7 @@ import {
   type ProviderDescriptor,
   type ProviderRegistry,
 } from '../registry/index.js';
-import { validateDispatcherId } from './dispatcher-id.js';
+import { validateDispatcherId } from '../state/dispatcher-id.js';
 
 /** Async existence probe — the fs/promises replacement for `existsSync`. */
 async function pathExists(path: string): Promise<boolean> {
