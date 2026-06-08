@@ -18,7 +18,7 @@ import {
   introduceDenyReason,
   introducedPeers,
 } from './introduce.js';
-import { formatFeishuMessageForCodex } from './feishu-message.js';
+import { formatFeishuMessageForRuntime } from './feishu-message.js';
 import {
   clearBaselineIfCurrent,
   listChatBots,
@@ -348,7 +348,7 @@ export class FeishuChannelSession {
         : null;
     const injectBots =
       baseline !== null && baseline.needsBaseline && baseline.trusted.length > 0;
-    const formatted = await formatFeishuMessageForCodex(
+    const formatted = await formatFeishuMessageForRuntime(
       event,
       {
         cacheDir: dispatcherFeishuAttachmentCacheDir(this.opts.dispatcherId),

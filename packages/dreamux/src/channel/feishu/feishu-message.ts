@@ -68,7 +68,7 @@ export interface FormatFeishuMessageResult {
 const DEFAULT_MAX_RESOURCE_BYTES = 25 * 1024 * 1024;
 const DEFAULT_RESOURCE_TIMEOUT_MS = 20_000;
 
-export async function formatFeishuMessageForCodex(
+export async function formatFeishuMessageForRuntime(
   event: FeishuInboundEvent,
   options: FormatFeishuMessageOptions = {},
 ): Promise<FormatFeishuMessageResult> {

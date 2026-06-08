@@ -1,18 +1,17 @@
 import type { AgentRuntimeMcpServer } from '../../types.js';
 import {
   feishuMcpServerDescriptor,
-  type FeishuMcpCodexArgsOptions,
+  type FeishuMcpServerDescriptorOptions,
 } from '../../../channel/feishu/feishu-mcp-surface.js';
 
 export {
   FEISHU_MCP_SERVER_NAME,
   feishuMcpServerDescriptor,
-  type FeishuMcpCodexArgsOptions,
   type FeishuMcpServerDescriptorOptions,
 } from '../../../channel/feishu/feishu-mcp-surface.js';
 
 export function feishuMcpCodexArgs(
-  opts: FeishuMcpCodexArgsOptions,
+  opts: FeishuMcpServerDescriptorOptions,
 ): string[] {
   return codexMcpServerArgs([feishuMcpServerDescriptor(opts)]);
 }

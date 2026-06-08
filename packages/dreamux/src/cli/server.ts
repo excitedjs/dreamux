@@ -30,7 +30,6 @@ import {
   serverLogPath,
   stateRoot,
 } from '../platform/paths.js';
-import { codexAppServerLogDir } from '../agent-runtime/builtin/codex/paths.js';
 
 async function main(): Promise<void> {
   if (process.argv.includes('--help') || process.argv.includes('-h')) {
@@ -44,7 +43,6 @@ async function main(): Promise<void> {
 
   await mkdir(stateRoot(), { recursive: true });
   await mkdir(logsRoot(), { recursive: true });
-  await mkdir(codexAppServerLogDir(), { recursive: true });
   await mkdir(feishuChannelLogDir(), { recursive: true });
   await mkdir(feishuMcpLogDir(), { recursive: true });
 

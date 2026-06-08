@@ -10,8 +10,6 @@ export interface FeishuMcpServerDescriptorOptions {
   env?: NodeJS.ProcessEnv;
 }
 
-export type FeishuMcpCodexArgsOptions = FeishuMcpServerDescriptorOptions;
-
 export type FeishuMcpToolName = 'reply' | 'react' | 'list_chat_bots';
 
 export interface FeishuMcpReplyInput {
