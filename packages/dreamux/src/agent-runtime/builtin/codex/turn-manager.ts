@@ -181,7 +181,11 @@ export class TurnManager {
   /**
    * Record a submitted turn as pending and wire its completion. On
    * `turn/completed` the turn is removed from the pending set and the snapshot
-   * hook fires (which is where the runtime emits the `completed` settlement).
+   * hook fires (which is where the runtime emits the `completed` settlement). On
+   * a terminal turn failure (collector rejects: codex `error` with
+   * `willRetry: false`, or a `turn/completed` carrying `turn.error`) the turn is
+   * settled as `failed` here, so a teammate turn that errors at the model level
+   * is delivered with a status instead of hanging until teardown.
    */
   private trackTurn(turnId: string, collector: TurnCollector): void {
     this.pendingTurnIds.add(turnId);
@@ -192,8 +196,16 @@ export class TurnManager {
         // the late completion so a turn is never settled twice.
         if (this.pendingTurnIds.delete(turnId)) this.opts.onTurnCompleted?.(turn);
       },
-      () => {
-        this.pendingTurnIds.delete(turnId);
+      (err) => {
+        // Same mutual-exclusion guard as the completed path: only settle as
+        // `failed` if `stop()` did not already settle it as `stopped`.
+        if (this.pendingTurnIds.delete(turnId)) {
+          this.opts.onTurnSettled?.({
+            turnId,
+            status: 'failed',
+            error: err instanceof Error ? err : new Error(String(err)),
+          });
+        }
       },
     );
   }
