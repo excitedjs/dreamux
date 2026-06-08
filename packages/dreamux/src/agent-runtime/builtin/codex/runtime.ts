@@ -65,7 +65,7 @@ import type {
   CompletionEnvelope,
   TeamMateCompletionDeliveryResult,
 } from '../../types.js';
-import { BUILTIN_CODEX_PROVIDER_REF } from '../../../config/config.js';
+import { BUILTIN_CODEX_PROVIDER_REF } from '../../../registry/index.js';
 import { CODEX_AGENT_RUNTIME_CAPABILITIES } from './provider.js';
 import {
   buildCodexCompletionItem,

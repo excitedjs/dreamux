@@ -56,13 +56,16 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
-import { type ProviderDescriptor } from '../../../registry/index.js';
 import {
   BUILTIN_CLAUDE_CODE_PROVIDER_REF,
+  type ProviderDescriptor,
+} from '../../../registry/index.js';
+import {
   defaultDispatcherClaudeCodeConfig,
   dispatcherClaudeCodeConfig,
+  readDispatcherClaudeCodeConfig,
   type DispatcherClaudeCodeConfig,
-} from '../../../config/config.js';
+} from './config.js';
 import {
   dispatcherClaudeCodeMcpConfigPath,
   dispatcherClaudeCodeStreamLogPath,
@@ -475,6 +478,13 @@ export function createClaudeCodeAgentRuntimeProvider(
     ref: BUILTIN_CLAUDE_CODE_PROVIDER_REF,
     descriptor: options.descriptor,
     getCapabilities: () => CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES,
+    readConfig(rawConfig, context) {
+      return readDispatcherClaudeCodeConfig(
+        rawConfig,
+        context.file,
+        context.prefix,
+      ) as unknown as Record<string, unknown>;
+    },
     createRuntime(context: AgentRuntimeCreateContext): AgentRuntime {
       return new ClaudeCodeRuntime(context, { sessionFactory, resolveBinPath });
     },

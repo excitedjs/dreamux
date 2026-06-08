@@ -16,6 +16,9 @@ import {
 } from '../agent-runtime/external-provider.js';
 import type { AgentRuntimeProvider } from '../agent-runtime/types.js';
 import {
+  BUILTIN_CLAUDE_CODE_PROVIDER_REF,
+  BUILTIN_CODEX_PROVIDER_REF,
+  BUILTIN_FEISHU_PROVIDER_REF,
   InvalidProviderRefError,
   ReservedExternalProviderError,
   UnknownBuiltinProviderError,
@@ -25,7 +28,54 @@ import {
   type ProviderDescriptor,
   type ProviderRegistry,
 } from '../registry/index.js';
+import {
+  describeType,
+  isPlainObject,
+  readOptionalString,
+  readProviderConfigObject,
+  rejectUnknownKeys,
+  requireNonEmptyString,
+} from './validate.js';
+import {
+  readDispatcherCodexConfig,
+  type DispatcherCodexConfig,
+} from '../agent-runtime/builtin/codex/config.js';
+import {
+  readDispatcherClaudeCodeConfig,
+  type DispatcherClaudeCodeConfig,
+} from '../agent-runtime/builtin/claude-code/config.js';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
+
+// Re-export the relocated builtin runtime config + provider-ref symbols so the
+// non-builtin callers (doctor, daemon, dispatcher-service, onboard,
+// feishu-channel, tests) keep their existing `config/config.js` import paths.
+// The builtins themselves import these from `registry/` / their own
+// `config.ts` directly, never via this re-export, so the cycle stays severed.
+export {
+  BUILTIN_CLAUDE_CODE_PROVIDER_REF,
+  BUILTIN_CODEX_PROVIDER_REF,
+  BUILTIN_FEISHU_PROVIDER_REF,
+} from '../registry/index.js';
+export {
+  ALLOWED_APPROVAL_POLICIES,
+  ALLOWED_SANDBOX_MODES,
+  DEFAULT_APPROVAL_POLICY,
+  DEFAULT_CODEX_BIN,
+  DEFAULT_CODEX_TURN_TIMEOUT_MS,
+  DEFAULT_INITIALIZE_TIMEOUT_MS,
+  DEFAULT_SANDBOX_MODE,
+  defaultDispatcherCodexConfig,
+  dispatcherCodexConfig,
+} from '../agent-runtime/builtin/codex/config.js';
+export type { DispatcherCodexConfig } from '../agent-runtime/builtin/codex/config.js';
+export {
+  ALLOWED_CLAUDE_CODE_PERMISSION_MODES,
+  DEFAULT_CLAUDE_CODE_BIN,
+  DEFAULT_CLAUDE_CODE_TURN_TIMEOUT_MS,
+  defaultDispatcherClaudeCodeConfig,
+  dispatcherClaudeCodeConfig,
+} from '../agent-runtime/builtin/claude-code/config.js';
+export type { DispatcherClaudeCodeConfig } from '../agent-runtime/builtin/claude-code/config.js';
 
 /** Async existence probe — the fs/promises replacement for `existsSync`. */
 async function pathExists(path: string): Promise<boolean> {
@@ -68,122 +118,9 @@ export interface DispatcherFeishuConfig {
   app_secret: string;
 }
 
-/**
- * Builtin Codex runtime settings under `dispatchers[].runtime.config`.
- * Every field carries a built-in default, so a dispatcher that omits any
- * runtime config field runs with these constants. There is no top-level
- * `codex` block anymore: runtime config is dispatcher-local.
- *
- * `bin` is the dispatcher's Codex binary path; the `CODEX_HOST_CODEX_BIN`
- * environment variable is a host-level override that takes precedence over it
- * (resolved by the codex builtin's `resolveCodexBinPath`).
- * `initialize_timeout_ms` is that
- * dispatcher's handshake timeout. `turn_timeout_ms` bounds a single TeamMate
- * worker turn (issue #126): if a per-task Codex app-server reaches `running`
- * but its turn never emits `turn/completed` (a stall in turn execution —
- * commonly auth, network, or model quota), the worker fails that task instead
- * of leaving it `running` forever. It does not affect the dispatcher's own
- * long-lived runtime, only per-task workers.
- */
-export interface DispatcherCodexConfig {
-  bin: string;
-  approval_policy: string;
-  sandbox_mode: string;
-  extra_args: string[];
-  extra_env: Record<string, string>;
-  initialize_timeout_ms: number;
-  turn_timeout_ms: number;
-}
-
-/**
- * Builtin Claude Code runtime settings under `dispatchers[].runtime.config`
- * when `runtime.provider` is `builtin:claude-code` (issue #110 PR6).
- *
- * Deliberately distinct from {@link DispatcherCodexConfig}: Claude Code runs as
- * a resident headless stream-json process (`claude --print --input-format
- * stream-json …`, issue #120) with no `initialize` handshake, so there is no
- * handshake timeout, approval policy, or sandbox mode here. `bin` is the Claude
- * Code binary; `model` / `permission_mode` map to `--model` / `--permission-mode`;
- * `extra_args` / `extra_env` are passed through. `model` and `permission_mode`
- * are `null` when the operator does not pin them (Claude Code's own defaults
- * apply). `turn_timeout_ms` bounds a single resident turn (issue #120): if the
- * still-alive child never emits a terminal `result` for a turn, the runtime
- * fails that turn and reaps/re-spawns the child rather than wedging the serial
- * turn queue (and, behind it, TeamMate completion delivery) forever.
- */
-export interface DispatcherClaudeCodeConfig {
-  bin: string;
-  model: string | null;
-  permission_mode: string | null;
-  extra_args: string[];
-  extra_env: Record<string, string>;
-  turn_timeout_ms: number;
-}
-
-/**
- * Default `dispatchers[].runtime.config.bin`. The Codex binary path is
- * dispatcher-local; `CODEX_HOST_CODEX_BIN` is a host-level override above it,
- * not the source.
- */
-export const DEFAULT_CODEX_BIN = 'codex';
-
-/** Default `dispatchers[].runtime.config.bin` for `builtin:claude-code`. */
-export const DEFAULT_CLAUDE_CODE_BIN = 'claude';
-
-/**
- * Default per-turn deadline for the resident `builtin:claude-code` child (ms).
- * Generous enough not to interrupt a legitimately long tool-using turn, but
- * finite so a child that stalls without a terminal `result` cannot wedge the
- * dispatcher (issue #120). Operators can override via
- * `dispatchers[].runtime.config.turn_timeout_ms`.
- */
-export const DEFAULT_CLAUDE_CODE_TURN_TIMEOUT_MS = 600_000;
-
-/** Permission modes accepted for `builtin:claude-code` (Claude Code `--permission-mode`). */
-export const ALLOWED_CLAUDE_CODE_PERMISSION_MODES = new Set([
-  'default',
-  'acceptEdits',
-  'plan',
-  'bypassPermissions',
-]);
-
-/** Default `dispatchers[].runtime.config.initialize_timeout_ms` (handshake timeout, ms). */
-export const DEFAULT_INITIALIZE_TIMEOUT_MS = 10_000;
-
-/**
- * Default per-turn deadline for a `builtin:codex` TeamMate worker (ms). Mirrors
- * {@link DEFAULT_CLAUDE_CODE_TURN_TIMEOUT_MS}: generous enough not to interrupt
- * a legitimately long tool-using turn, but finite so a worker whose turn stalls
- * after start cannot sit `running` with no visible outcome (issue #126).
- * Operators override via `dispatchers[].runtime.config.turn_timeout_ms`.
- */
-export const DEFAULT_CODEX_TURN_TIMEOUT_MS = 600_000;
-
-/** Default `dispatchers[].runtime.config.approval_policy` when omitted. */
-export const DEFAULT_APPROVAL_POLICY = 'never';
-
-/** Default `dispatchers[].runtime.config.sandbox_mode` when omitted. */
-export const DEFAULT_SANDBOX_MODE = 'workspace-write';
-
 export const BUILT_IN_DEFAULTS: DreamuxConfig = {
   dispatchers: [],
 };
-
-export const BUILTIN_FEISHU_PROVIDER_REF = 'builtin:feishu';
-export const BUILTIN_CODEX_PROVIDER_REF = 'builtin:codex';
-export const BUILTIN_CLAUDE_CODE_PROVIDER_REF = 'builtin:claude-code';
-export const ALLOWED_APPROVAL_POLICIES = new Set([
-  'never',
-  'auto',
-  'auto-approve',
-  'on-failure',
-]);
-
-export const ALLOWED_SANDBOX_MODES = new Set([
-  'read-only',
-  'workspace-write',
-  'danger-full-access',
-]);
 
 export const DEFAULT_CONFIG_JSON = `${JSON.stringify(BUILT_IN_DEFAULTS, null, 2)}\n`;
 
@@ -582,197 +519,10 @@ function readDispatcherFeishuConfig(
   };
 }
 
-export function defaultDispatcherCodexConfig(): DispatcherCodexConfig {
-  return {
-    bin: DEFAULT_CODEX_BIN,
-    approval_policy: DEFAULT_APPROVAL_POLICY,
-    sandbox_mode: DEFAULT_SANDBOX_MODE,
-    extra_args: [],
-    extra_env: {},
-    initialize_timeout_ms: DEFAULT_INITIALIZE_TIMEOUT_MS,
-    turn_timeout_ms: DEFAULT_CODEX_TURN_TIMEOUT_MS,
-  };
-}
-
-function readDispatcherCodexConfig(
-  rawCodex: Record<string, unknown>,
-  file: string,
-  prefix: string,
-): DispatcherCodexConfig {
-  rejectUnknownKeys(
-    rawCodex,
-    new Set([
-      'bin',
-      'approval_policy',
-      'sandbox_mode',
-      'extra_args',
-      'extra_env',
-      'initialize_timeout_ms',
-      'turn_timeout_ms',
-    ]),
-    file,
-    prefix,
-  );
-  // An omitted (or explicitly null) field falls back to the dispatcher-local
-  // default. Before the top-level block was removed, `null` meant "inherit the
-  // global default"; with no global, it simply means "use the built-in".
-  const defaults = defaultDispatcherCodexConfig();
-  const bin = readOptionalString(rawCodex, 'bin', file, prefix) ?? defaults.bin;
-  if (bin.trim() === '') {
-    throw new Error(
-      `dreamux config error in ${file}: ${prefix}bin must be a non-empty string`,
-    );
-  }
-  const approvalPolicy =
-    readOptionalString(rawCodex, 'approval_policy', file, prefix) ??
-    defaults.approval_policy;
-  if (!ALLOWED_APPROVAL_POLICIES.has(approvalPolicy)) {
-    throw new Error(
-      `dreamux config error in ${file}: ${prefix}approval_policy='${approvalPolicy}' is not one of ${Array.from(ALLOWED_APPROVAL_POLICIES).join(' | ')}`,
-    );
-  }
-  const sandboxMode =
-    readOptionalString(rawCodex, 'sandbox_mode', file, prefix) ??
-    defaults.sandbox_mode;
-  if (!ALLOWED_SANDBOX_MODES.has(sandboxMode)) {
-    throw new Error(
-      `dreamux config error in ${file}: ${prefix}sandbox_mode='${sandboxMode}' is not one of ${Array.from(ALLOWED_SANDBOX_MODES).join(' | ')}`,
-    );
-  }
-  return {
-    bin,
-    approval_policy: approvalPolicy,
-    sandbox_mode: sandboxMode,
-    extra_args: requireStringArray(
-      rawCodex,
-      'extra_args',
-      defaults.extra_args,
-      file,
-      prefix,
-    ),
-    extra_env: requireStringRecord(
-      rawCodex,
-      'extra_env',
-      defaults.extra_env,
-      file,
-      prefix,
-    ),
-    initialize_timeout_ms: requirePositiveInt(
-      rawCodex,
-      'initialize_timeout_ms',
-      defaults.initialize_timeout_ms,
-      file,
-      prefix,
-    ),
-    turn_timeout_ms: requirePositiveInt(
-      rawCodex,
-      'turn_timeout_ms',
-      defaults.turn_timeout_ms,
-      file,
-      prefix,
-    ),
-  };
-}
-
 export function dispatcherFeishuConfig(
   dispatcher: Pick<DispatcherConfig, 'channels' | 'id'>,
 ): DispatcherFeishuConfig {
   return feishuConfigFromChannels(dispatcher.channels, dispatcher.id);
-}
-
-export function dispatcherCodexConfig(
-  dispatcher: Pick<DispatcherConfig, 'runtime' | 'id'>,
-): DispatcherCodexConfig {
-  if (dispatcher.runtime.provider !== BUILTIN_CODEX_PROVIDER_REF) {
-    throw new Error(
-      `dispatcher '${dispatcher.id}' runtime provider ${JSON.stringify(dispatcher.runtime.provider)} is not wired to Codex`,
-    );
-  }
-  return dispatcher.runtime.config as DispatcherCodexConfig;
-}
-
-export function defaultDispatcherClaudeCodeConfig(): DispatcherClaudeCodeConfig {
-  return {
-    bin: DEFAULT_CLAUDE_CODE_BIN,
-    model: null,
-    permission_mode: null,
-    extra_args: [],
-    extra_env: {},
-    turn_timeout_ms: DEFAULT_CLAUDE_CODE_TURN_TIMEOUT_MS,
-  };
-}
-
-function readDispatcherClaudeCodeConfig(
-  rawClaude: Record<string, unknown>,
-  file: string,
-  prefix: string,
-): DispatcherClaudeCodeConfig {
-  rejectUnknownKeys(
-    rawClaude,
-    new Set([
-      'bin',
-      'model',
-      'permission_mode',
-      'extra_args',
-      'extra_env',
-      'turn_timeout_ms',
-    ]),
-    file,
-    prefix,
-  );
-  const defaults = defaultDispatcherClaudeCodeConfig();
-  const bin = readOptionalString(rawClaude, 'bin', file, prefix) ?? defaults.bin;
-  if (bin.trim() === '') {
-    throw new Error(
-      `dreamux config error in ${file}: ${prefix}bin must be a non-empty string`,
-    );
-  }
-  const permissionMode = readOptionalString(rawClaude, 'permission_mode', file, prefix);
-  if (
-    permissionMode !== null &&
-    !ALLOWED_CLAUDE_CODE_PERMISSION_MODES.has(permissionMode)
-  ) {
-    throw new Error(
-      `dreamux config error in ${file}: ${prefix}permission_mode='${permissionMode}' is not one of ${Array.from(ALLOWED_CLAUDE_CODE_PERMISSION_MODES).join(' | ')}`,
-    );
-  }
-  return {
-    bin,
-    model: readOptionalString(rawClaude, 'model', file, prefix),
-    permission_mode: permissionMode,
-    extra_args: requireStringArray(
-      rawClaude,
-      'extra_args',
-      defaults.extra_args,
-      file,
-      prefix,
-    ),
-    extra_env: requireStringRecord(
-      rawClaude,
-      'extra_env',
-      defaults.extra_env,
-      file,
-      prefix,
-    ),
-    turn_timeout_ms: requirePositiveInt(
-      rawClaude,
-      'turn_timeout_ms',
-      defaults.turn_timeout_ms,
-      file,
-      prefix,
-    ),
-  };
-}
-
-export function dispatcherClaudeCodeConfig(
-  dispatcher: Pick<DispatcherConfig, 'runtime' | 'id'>,
-): DispatcherClaudeCodeConfig {
-  if (dispatcher.runtime.provider !== BUILTIN_CLAUDE_CODE_PROVIDER_REF) {
-    throw new Error(
-      `dispatcher '${dispatcher.id}' runtime provider ${JSON.stringify(dispatcher.runtime.provider)} is not wired to Claude Code`,
-    );
-  }
-  return dispatcher.runtime.config as DispatcherClaudeCodeConfig;
 }
 
 function resolveConfigProvider(
@@ -846,83 +596,6 @@ function asAgentRuntimeProvider(value: unknown): AgentRuntimeProvider | null {
   return value as AgentRuntimeProvider;
 }
 
-function readProviderConfigObject(
-  rawConfig: unknown,
-  file: string,
-  name: string,
-  options: { allowMissing?: boolean } = {},
-): Record<string, unknown> {
-  if (rawConfig === undefined && options.allowMissing === true) return {};
-  if (!isPlainObject(rawConfig)) {
-    throw new Error(
-      `dreamux config error in ${file}: ${name} must be an object (got ${describeType(rawConfig)})`,
-    );
-  }
-  return rawConfig;
-}
-
-function rejectUnknownKeys(
-  obj: Record<string, unknown>,
-  allowed: Set<string>,
-  file: string,
-  prefix: string,
-): void {
-  for (const key of Object.keys(obj)) {
-    if (allowed.has(key)) continue;
-    const name = `${prefix}${key}`;
-    if (/^dispatchers\[\d+\]\.$/.test(prefix) && (key === 'feishu' || key === 'codex')) {
-      throw new Error(
-        `dreamux config error in ${file}: ${name} is not supported by the providerized config v2 schema.\n` +
-          'Dreamux 0.x does not silently migrate operator-owned config. Rebuild this dispatcher with ' +
-          'dispatchers[].channels[] and dispatchers[].runtime, then restart.',
-      );
-    }
-    throw new Error(
-      `dreamux config error in ${file}: ${name} is not supported by the providerized config v2 schema`,
-    );
-  }
-}
-
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return v !== null && typeof v === 'object' && !Array.isArray(v);
-}
-
-function requireString(
-  obj: Record<string, unknown>,
-  key: string,
-  fallback: string,
-  file: string,
-  prefix = '',
-): string {
-  const v = obj[key];
-  if (v === undefined) return fallback;
-  return ensureString(v, `${prefix}${key}`, file);
-}
-
-function requireNonEmptyString(
-  obj: Record<string, unknown>,
-  key: string,
-  file: string,
-  prefix = '',
-): string {
-  const value = requireString(obj, key, '', file, prefix);
-  if (value.trim() !== '') return value;
-  throw new Error(
-    `dreamux config error in ${file}: ${prefix}${key} must be a non-empty string`,
-  );
-}
-
-function readOptionalString(
-  obj: Record<string, unknown>,
-  key: string,
-  file: string,
-  prefix = '',
-): string | null {
-  const v = obj[key];
-  if (v === undefined || v === null) return null;
-  return ensureString(v, `${prefix}${key}`, file);
-}
-
 function readOptionalBoolean(
   obj: Record<string, unknown>,
   key: string,
@@ -936,102 +609,6 @@ function readOptionalBoolean(
   throw new Error(
     `dreamux config error in ${file}: ${prefix}${key} must be a boolean (got ${describeType(v)})`,
   );
-}
-
-function ensureString(v: unknown, key: string, file: string): string {
-  if (typeof v !== 'string') {
-    throw new Error(
-      `dreamux config error in ${file}: ${key} must be a string (got ${describeType(v)})`,
-    );
-  }
-  return v;
-}
-
-function requireStringArray(
-  obj: Record<string, unknown>,
-  key: string,
-  fallback: string[],
-  file: string,
-  prefix = '',
-): string[] {
-  const v = obj[key];
-  if (v === undefined) return fallback;
-  if (!Array.isArray(v)) {
-    throw new Error(
-      `dreamux config error in ${file}: ${prefix}${key} must be an array of strings (got ${describeType(v)})`,
-    );
-  }
-  return v.map((item, i) => {
-    if (typeof item !== 'string') {
-      throw new Error(
-        `dreamux config error in ${file}: ${prefix}${key}[${i}] must be a string (got ${describeType(item)})`,
-      );
-    }
-    return item;
-  });
-}
-
-function requireStringRecord(
-  obj: Record<string, unknown>,
-  key: string,
-  fallback: Record<string, string>,
-  file: string,
-  prefix = '',
-): Record<string, string> {
-  const v = obj[key];
-  if (v === undefined) return { ...fallback };
-  if (!isPlainObject(v)) {
-    throw new Error(
-      `dreamux config error in ${file}: ${prefix}${key} must be an object of strings (got ${describeType(v)})`,
-    );
-  }
-  const out: Record<string, string> = {};
-  for (const [entryKey, entryValue] of Object.entries(v)) {
-    if (typeof entryValue !== 'string') {
-      throw new Error(
-        `dreamux config error in ${file}: ${prefix}${key}.${entryKey} must be a string (got ${describeType(entryValue)})`,
-      );
-    }
-    out[entryKey] = entryValue;
-  }
-  return out;
-}
-
-function requirePositiveInt(
-  obj: Record<string, unknown>,
-  key: string,
-  fallback: number,
-  file: string,
-  prefix = '',
-): number {
-  const n = readInt(obj, key, file, prefix);
-  if (n === null) return fallback;
-  if (n <= 0) {
-    throw new Error(
-      `dreamux config error in ${file}: ${prefix}${key} must be > 0 (got ${n})`,
-    );
-  }
-  return n;
-}
-
-function readInt(
-  obj: Record<string, unknown>,
-  key: string,
-  file: string,
-  prefix: string,
-): number | null {
-  const v = obj[key];
-  if (v === undefined) return null;
-  if (typeof v === 'number' && Number.isInteger(v)) return v;
-  throw new Error(
-    `dreamux config error in ${file}: ${prefix}${key} must be an integer (got ${describeType(v)})`,
-  );
-}
-
-function describeType(v: unknown): string {
-  if (v === null) return 'null';
-  if (Array.isArray(v)) return 'array';
-  return typeof v;
 }
 
 function redactFeishuSecrets(value: unknown): void {

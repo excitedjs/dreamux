@@ -6,13 +6,16 @@ import {
 } from './supervisor.js';
 import { CodexRuntime } from './runtime.js';
 import {
-  BUILTIN_CODEX_PROVIDER_REF,
   defaultDispatcherCodexConfig,
   dispatcherCodexConfig,
-} from '../../../config/config.js';
+  readDispatcherCodexConfig,
+} from './config.js';
 import type { DispatcherCodexHomeDoctor } from './codex-home.js';
 import { codexArgsFromConfig, codexArgsToCli } from './args.js';
-import { type ProviderDescriptor } from '../../../registry/index.js';
+import {
+  BUILTIN_CODEX_PROVIDER_REF,
+  type ProviderDescriptor,
+} from '../../../registry/index.js';
 import type {
   AgentRuntimeCapabilities,
   AgentRuntime,
@@ -70,6 +73,13 @@ export function createCodexAgentRuntimeProvider(
     ref: BUILTIN_CODEX_PROVIDER_REF,
     descriptor: options.descriptor,
     getCapabilities: () => CODEX_AGENT_RUNTIME_CAPABILITIES,
+    readConfig(rawConfig, context) {
+      return readDispatcherCodexConfig(
+        rawConfig,
+        context.file,
+        context.prefix,
+      ) as unknown as Record<string, unknown>;
+    },
     createRuntime(context): AgentRuntime {
       const codexConfig =
         context.dispatcher === null
