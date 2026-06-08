@@ -1,60 +1,76 @@
 # @excitedjs/dreamux
 
-This package is the Dreamux host: CLI, server, dispatcher runtime, Codex
-app-server orchestration, Feishu MCP shim, state, and logs.
+The Dreamux host: the long-running server that hosts N dispatchers, plus the
+CLI, onboarding, and daemon tooling. After the issue #135 realignment and the
+issue #143 directory reorg, `src/` maps 1:1 onto the architecture's seams — keep
+this map true.
+
+## Directory layout (`src/`)
+
+Two settled shape rules govern where code lives:
+
+1. **Each builtin Agent Runtime owns its whole stack** under
+   `agent-runtime/builtin/<name>/` (transport + runtime + provider + args +
+   paths). The two builtins must not import each other.
+2. **Runtime- and channel-specific concepts never leak into shared/core layers.**
+   The services layer drives any runtime through one neutral interface; per-runtime
+   specifics (codex thread/home/bin, claude stream, feishu chat_id/sender_id)
+   stay behind the providing module.
+
+| Path | What lives here | Why |
+|---|---|---|
+| `server.ts` | process entry + wiring only | builds registry/catalog/store/services, opens the admin socket, starts dispatchers; owns no teammate/channel/runtime orchestration |
+| `agent-runtime/` | the AgentRuntime seam: contract (`types.ts`, `turn.ts`), `catalog.ts`, `external-provider.ts` loader, `index.ts` barrel | one runtime abstraction for every agent role — see [`agent-runtime/CLAUDE.md`](src/agent-runtime/CLAUDE.md) |
+| `agent-runtime/builtin/codex/` | the whole `builtin:codex` stack: supervisor/rpc/events/handshake/types (transport), runtime, provider, args, codex-home, paths, turn-manager, approval | codex specifics close over here; nothing codex-named leaks out |
+| `agent-runtime/builtin/claude-code/` | the whole `builtin:claude-code` stack: supervisor/rpc/stream/types, runtime, args, paths, mcp-config | claude specifics close over here |
+| `dispatcher-service/` | the Dispatcher Service entity — see [`dispatcher-service/CLAUDE.md`](src/dispatcher-service/CLAUDE.md) | holds the dispatcher agent + orchestrates teammates |
+| `dispatcher-service/dispatcher/` | `DispatcherAgentService` (slots / start / resume / stop / restart-notice / channel session / role MCP injection) + dispatcher base prompt | dispatcher agent lifecycle is tied to the server |
+| `dispatcher-service/teammate/` | `TeamMateAgentService` + identity-store + runtime-state + types + teammate MCP descriptor | agent-centric teammates (no `task`): spawn/send/resume/close + forward-only history |
+| `channel/feishu/` | the built-in Feishu bidirectional channel: bot, session, gate, message, mcp-surface, chat-bots, introduce | Feishu owns its MCP end-to-end; it is **not** a registry provider |
+| `channel/plugin.ts` | TS interface reservation for future subscription-style channel plugins (github/jira) | interface-only this phase; not loaded or run |
+| `registry/` | provider registry/loader + provider-ref grammar | resolves `builtin:` / `npm:` refs; exactly two kinds: `channel`, `agentRuntime` |
+| `mcp/` | stdio MCP shim processes (`feishu-mcp`, `teammate-mcp`) | thin JSON-RPC bridges that forward to the admin socket |
+| `admin/` | admin Unix-socket server + protocol + methods | cross-process control; methods are thin and delegate to the Dispatcher Service |
+| `config/` | operator config schema / parse / validate (`config.ts`) | the only operator-editable config source |
+| `platform/` | runtime-neutral infrastructure: `paths.ts` (sole neutral path builder), `logger`, `secrets`, `package-bin`, `process` | shared and runtime-agnostic; per-runtime paths live in each builtin's `paths.ts` |
+| `state/` | server-owned dispatcher state: `dispatcher-store`, `dispatcher-id` | `status.json` etc. — rebuildable recovery state (#98) |
+| `cli/` `onboard/` `daemon/` | operator-facing surfaces | CLI command tree, onboarding, native user-level service manager |
 
 ## Responsibilities
 
 - Own the `dreamux` and `tm` package bins.
 - Ship `CHANGELOG.md` / `CHANGELOG.json` inside the package (`files`) so
-  `dreamux changelog` can read the installed version's notes offline. Any
-  user-visible upgrade blocker in this package must carry a rush change file —
-  see the root `CLAUDE.md` "Changelog responsibility" rule. Never hand-edit the
-  generated changelog files.
-- Load operator config and server-owned state.
-- Start, stop, and supervise dispatcher Codex app-server processes.
-- Manage Codex threads, turn submission, restart notices, and fail-fast approval
-  handling.
-- Own access-gate decisions, dispatcher trust-domain policy, reaction state, and
-  outbound Feishu MCP request routing.
-- For issue #97, keep Feishu inbound formatter consumption host-local until
-  `@excitedjs/feishu-channel` is intentionally reintroduced as a runtime
-  dependency and publish-chain participant.
+  `dreamux changelog` reads the installed version offline. Any user-visible
+  upgrade blocker carries a rush change file (root `CLAUDE.md` "Changelog
+  responsibility"). Never hand-edit the generated changelog files.
+- Load operator config (`config/`) and own server state (`state/`) and logs.
+- Launch, resume, stop, and supervise dispatcher agent runtimes through the
+  Agent Runtime provider seam — not by hard-coding any one runtime.
+- Own teammate orchestration (scheduling, lifecycle, history, completion
+  delivery) inside the Dispatcher Service.
 
 ## Boundaries
 
-- Do not spread Lark SDK or raw Feishu JSAPI details into Dreamux core. Direct
-  platform calls belong in `@excitedjs/feishu-transport`; channel semantics
-  are intended to move to `@excitedjs/feishu-channel` once the runtime package
-  dependency is deliberately restored.
-- Do not reimplement Feishu attachment download/cache/serialization logic in
-  this package beyond the host-local issue #97 bridge.
-- Do not assemble channel-specific `<attachment>` bodies in server/runtime code;
-  call the channel layer and submit its output to Codex.
+- **Do not leak runtime specifics into shared/core layers.** codex/claude
+  thread/home/bin/socket/stream concepts stay inside
+  `agent-runtime/builtin/<name>/`. The shared contract, `state/`, `platform/`,
+  `server.ts`, and the Dispatcher Service stay runtime-neutral.
+- **Do not leak channel specifics into the runtime contract.** `sender_id` /
+  `chat_id` / message ids belong to the channel layer; a runtime turn carries
+  neutral text + a dedupe id.
+- Direct Lark SDK / Feishu JSAPI calls belong in `@excitedjs/feishu-transport`;
+  the built-in Feishu channel under `channel/feishu/` owns its MCP surface and
+  handlers end-to-end (the server does not carry `*FromMcp` handlers).
+- Do not reintroduce a `task` abstraction in the teammate layer; teammates are
+  named, resumable agents.
 - Do not create dispatcher-private `CODEX_HOME` directories for the MVP.
-  Dispatchers use the operator's normal Codex home.
-- Do not automatically send Codex assistant text to Feishu. Outbound remains
-  MCP tool driven.
 - Do not commit internal Feishu identifiers, secrets, private paths, internal
   domains, or real resource keys.
 
-## Upstream / Downstream Contract
+## Testing focus
 
-- Upstream: `@excitedjs/feishu-transport` for low-level platform primitives
-  currently consumed by Dreamux; `@excitedjs/feishu-channel` becomes an
-  upstream runtime dependency only when Dreamux imports it again deliberately.
-- Downstream: Codex app-server, dispatcher workspace skills, and operator CLI
-  workflows.
-- If a new feature needs both Feishu semantics and Codex-facing formatting,
-  design the channel package API first, then keep Dreamux as the orchestrator.
-
-## Testing Focus
-
-- Server and dispatcher orchestration tests should assert that Dreamux consumes
-  channel outputs and submits them to Codex.
-- While the issue #97 bridge is host-local, formatter behavior may be covered
-  in Dreamux host tests. Once the channel package is the runtime dependency
-  again, channel formatting details should live in `@excitedjs/feishu-channel`
-  tests.
-- Keep fixtures public-safe: use placeholder chat, message, user, app, and
-  resource identifiers.
+- Assert that the Dispatcher Service drives any runtime through the neutral
+  AgentRuntime interface; runtime-specific behavior is tested inside each
+  builtin.
+- Keep fixtures public-safe: placeholder chat, message, user, app, and resource
+  identifiers.
