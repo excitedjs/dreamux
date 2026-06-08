@@ -255,6 +255,47 @@ describe('TeamMateAgentService', () => {
     );
   });
 
+  it('dispatcher and teammate referencing the same agent id get the same resolved runtime (#148)', async () => {
+    // Both the dispatcher config (resolved at loadConfig) and the teammate
+    // create-context (resolved at spawn time by service.ts) walk the same
+    // agents[] id -> {provider, config} map. They must produce structurally
+    // equal results — this guards both resolution paths against drift.
+    const dispatcher = testDispatcherConfig({ id: 'flow', agentRuntime: 'shared' });
+    // Manually inject a shared agent entry so the dispatcher's resolved
+    // runtime comes from agents['shared'] (same as what the teammate will get).
+    const sharedRuntime = dispatcher.runtime;
+    const config = {
+      agents: { shared: { provider: sharedRuntime.provider, config: sharedRuntime.config } },
+      dispatchers: [{ ...dispatcher, agentRuntime: 'shared', runtime: sharedRuntime }],
+    };
+    const registry = createBuiltinProviderRegistry();
+    const codexDesc = registry.resolve('builtin:codex');
+    const provider = new FakeProvider(codexDesc, 'builtin:codex');
+    registry.registerImplementation(codexDesc.id, provider);
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: new AgentRuntimeProviderCatalog({ registry }),
+      log: noopLog(),
+    });
+
+    // Spawn a teammate that explicitly names the same 'shared' agent.
+    await service.spawn({
+      dispatcherId: 'flow',
+      name: 'same-mate',
+      agentRuntime: 'shared',
+      prompt: 'go',
+      cwd: root,
+    });
+    expect(provider.contexts).toHaveLength(1);
+    const teammateDispatcher = provider.contexts[0]?.dispatcher;
+    expect(teammateDispatcher).not.toBeNull();
+    // The teammate's dispatcher.runtime must deep-equal the dispatcher's own
+    // resolved runtime — both came from agents['shared'].
+    expect(teammateDispatcher?.runtime).toEqual(sharedRuntime);
+    expect(teammateDispatcher?.runtime.provider).toBe('builtin:codex');
+  });
+
   it('spawns a named resumable teammate and records forward-only history', async () => {
     const { catalog, provider } = providerCatalog();
     const config = testDreamuxConfig();

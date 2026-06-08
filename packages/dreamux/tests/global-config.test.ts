@@ -475,6 +475,64 @@ describe('global config (~/.dreamux/config.json)', () => {
     expect(config.dispatchers[0]?.runtime.provider).toBe('builtin:codex');
   });
 
+  it('one provider, two named agent configs resolve to different configs (#148)', async () => {
+    // A single provider (builtin:codex) may have TWO named entries in agents[]
+    // with different config blocks. Two dispatchers referencing each one must
+    // land on independent resolved configs — not the same object.
+    writeConfigObject(
+      testConfigFileObject({
+        agents: [
+          {
+            id: 'codex-safe',
+            provider: 'builtin:codex',
+            config: { approval_policy: 'on-failure', sandbox_mode: 'read-only' },
+          },
+          {
+            id: 'codex-yolo',
+            provider: 'builtin:codex',
+            config: { approval_policy: 'never', sandbox_mode: 'danger-full-access' },
+          },
+        ],
+        dispatchers: [
+          {
+            id: 'safe',
+            agentRuntime: 'codex-safe',
+            feishu: { app_id: 'app-safe', app_secret: 'secret-safe' },
+          },
+          {
+            id: 'yolo',
+            agentRuntime: 'codex-yolo',
+            feishu: { app_id: 'app-yolo', app_secret: 'secret-yolo' },
+          },
+        ],
+      }),
+    );
+
+    const { config } = await loadConfig({ configDir });
+    // Both agents map to the same provider …
+    expect(config.agents['codex-safe']?.provider).toBe('builtin:codex');
+    expect(config.agents['codex-yolo']?.provider).toBe('builtin:codex');
+    // … but their resolved configs are different instances with distinct values.
+    expect(config.agents['codex-safe']?.config).not.toEqual(
+      config.agents['codex-yolo']?.config,
+    );
+    expect(dispatcherCodexConfig(config.dispatchers[0]!).approval_policy).toBe(
+      'on-failure',
+    );
+    expect(dispatcherCodexConfig(config.dispatchers[0]!).sandbox_mode).toBe(
+      'read-only',
+    );
+    expect(dispatcherCodexConfig(config.dispatchers[1]!).approval_policy).toBe(
+      'never',
+    );
+    expect(dispatcherCodexConfig(config.dispatchers[1]!).sandbox_mode).toBe(
+      'danger-full-access',
+    );
+    // Each dispatcher's runtime matches only its own named agent.
+    expect(config.dispatchers[0]?.runtime).toEqual(config.agents['codex-safe']);
+    expect(config.dispatchers[1]?.runtime).toEqual(config.agents['codex-yolo']);
+  });
+
   it('rejects an invalid agent approval_policy', async () => {
     writeConfigObject(
       testSingleDispatcherFileObject({

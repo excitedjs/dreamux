@@ -20,6 +20,7 @@ import {
 } from '../src/onboard/wizard.js';
 import type { CommandRunner, OnboardAnswers } from '../src/onboard/types.js';
 import type { ServiceNodeProbe } from '../src/onboard/service.js';
+import { loadConfig } from '../src/config/config.js';
 import {
   logsRoot,
   resetRuntimeConfig,
@@ -648,6 +649,53 @@ describe('dreamux onboard', () => {
     expect(readFileSync(join(configDir, 'config.json'), 'utf8')).toBe(
       existingConfig,
     );
+  });
+
+  it('onboard output round-trips through loadConfig (#148)', async () => {
+    // Existing tests verify the *written JSON shape*. This test verifies that
+    // loadConfig accepts that shape and produces a fully-resolved in-memory
+    // DreamuxConfig (agents map populated, each dispatcher gets a `.runtime`
+    // with the expected provider + config). This is the canonical round-trip
+    // gate for the agents[] normalization.
+    const runner = new FakeRunner();
+    const configDir = join(root, 'config');
+    const answers = testAnswers({
+      configDir,
+      dispatcherId: 'flow',
+      registerService: false,
+      botAppId: 'app-roundtrip',
+      botAppSecret: 'secret-roundtrip',
+    });
+    writeGlobalCodexAuth(answers);
+
+    await runOnboard({
+      answers,
+      runner,
+      platform: 'linux',
+      homeDir: join(root, 'home'),
+      env: {},
+    });
+
+    // Now load the written config through the same parser.
+    const { config } = await loadConfig({ configDir });
+
+    // agents map must be populated with the 'flow' agent.
+    expect(Object.keys(config.agents)).toEqual(['flow']);
+    expect(config.agents['flow']?.provider).toBe('builtin:codex');
+    expect(config.agents['flow']?.config).toBeDefined();
+
+    // Dispatcher must have its agentRuntime resolved into .runtime.
+    expect(config.dispatchers).toHaveLength(1);
+    expect(config.dispatchers[0]).toMatchObject({
+      id: 'flow',
+      agentRuntime: 'flow',
+      runtime: {
+        provider: 'builtin:codex',
+        config: expect.objectContaining({ approval_policy: 'never' }),
+      },
+    });
+    // In-memory runtime deep-equals the resolved agent config.
+    expect(config.dispatchers[0]?.runtime).toEqual(config.agents['flow']);
   });
 
   it('fails non-interactive setup when required channel inputs are missing', () => {
