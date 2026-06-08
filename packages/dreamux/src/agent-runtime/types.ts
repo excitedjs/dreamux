@@ -199,9 +199,78 @@ export interface AgentRuntimeCreateContext {
 
 export interface AgentRuntimeProviderConfigReadContext {
   providerRef: string;
-  dispatcherId: string;
+  /**
+   * The `agents[].id` whose config block is being parsed — a config-internal
+   * alias, not a dispatcher identity. Provider `readConfig` implementations may
+   * use it for diagnostics; both builtins ignore it.
+   */
+  agentId: string;
   file: string;
   prefix: string;
+}
+
+/**
+ * A neutral runtime-binary launch descriptor a provider DECLARES for doctor.
+ * Doctor dedups these across dispatchers via its own Map and executes them
+ * (foreground: a plain `check`; managed service: a launch under the unit env).
+ * Pure data — the provider never runs it itself, so codex/claude bin execution
+ * never leaks into the provider's own diagnostic pass.
+ */
+export interface AgentRuntimeBinCheck {
+  name: string;
+  bin: string;
+  args: string[];
+}
+
+/**
+ * The neutral result of a provider's own (non-bin) diagnostic pass — e.g. codex
+ * home validation and the codex version gate. Replaces doctor's old
+ * codex-specific result union so `cli/doctor.ts` never branches on runtime
+ * identity. `detail` is a one-line summary; `errors` are per-problem lines.
+ */
+export interface AgentRuntimeDoctorResult {
+  ok: boolean;
+  detail: string;
+  errors: string[];
+}
+
+/**
+ * The minimal command runner a provider's diagnostic needs. A structural subset
+ * of the CLI's `CommandRunner` so the provider never imports `cli/doctor` or
+ * `onboard/types` (that would invert layering and re-leak runtime specifics into
+ * the doctor surface).
+ */
+export interface AgentRuntimeDiagnosticRunner {
+  check(command: string, args: string[], options?: { env?: NodeJS.ProcessEnv }): Promise<boolean>;
+  capture(command: string, args: string[], options?: { env?: NodeJS.ProcessEnv }): Promise<string>;
+}
+
+/**
+ * Per-dispatcher diagnostic context. The provider resolves its own bin/home/
+ * version checks off the dispatcher's resolved runtime config (M2). `scope`
+ * distinguishes the two passes doctor runs per dispatcher (foreground vs the
+ * installed managed-service env) so the provider can self-name its bin checks
+ * for each scope ('codex binary' vs 'managed service Codex binary').
+ */
+export interface AgentRuntimeDiagnosticContext {
+  dispatcher: DispatcherConfig;
+  env: NodeJS.ProcessEnv;
+  scope: 'foreground' | 'managedService';
+}
+
+/**
+ * A provider's self-reported diagnostics (issue #146 fold): it DECLARES the bin
+ * checks doctor should dedup + execute, and RUNS its own non-bin internal checks
+ * (codex: home validation + version >= 0.137 for thread/inject_items, #147;
+ * claude: none). Doctor iterates providers and calls these instead of branching
+ * on `BUILTIN_CODEX_PROVIDER_REF`.
+ */
+export interface AgentRuntimeDiagnostic {
+  binChecks(context: AgentRuntimeDiagnosticContext): AgentRuntimeBinCheck[];
+  runDiagnostic(
+    context: AgentRuntimeDiagnosticContext,
+    runner: AgentRuntimeDiagnosticRunner,
+  ): Promise<AgentRuntimeDoctorResult>;
 }
 
 export interface AgentRuntimeProvider {
@@ -212,5 +281,11 @@ export interface AgentRuntimeProvider {
     rawConfig: Record<string, unknown>,
     context: AgentRuntimeProviderConfigReadContext,
   ): DispatcherProviderConfig;
+  /**
+   * Self-reported doctor diagnostics. Optional: a provider with no diagnostic
+   * surface (no bin, no internal state) may omit it; doctor then reports a
+   * neutral "no diagnostics" result for that dispatcher.
+   */
+  diagnostic?: AgentRuntimeDiagnostic;
   createRuntime(context: AgentRuntimeCreateContext): AgentRuntime;
 }

@@ -73,10 +73,10 @@ export async function runOnboard(
   const configPath = globalConfigFile({ configDir: answers.configDir });
   const existingConfig = await readExistingDreamuxConfig(answers.configDir);
   const dreamuxConfig = dreamuxConfigFromAnswers(answers, existingConfig);
-  // answers.codexBin (onboard prompt / --codex-bin) is persisted into the new
-  // dispatcher's dispatchers[].runtime.config.bin and used to seed the
-  // managed-service PATH so the unit can resolve codex; it is not pinned as an
-  // env override.
+  // answers.codexBin (onboard prompt / --codex-bin) is persisted into the
+  // dispatcher's referenced agents[] entry (agents[].config.bin) and used to
+  // seed the managed-service PATH so the unit can resolve codex; it is not
+  // pinned as an env override.
   const serviceCodexBin = answers.registerService && !answers.dryRun
     ? await resolveServiceExecutable(answers.codexBin, env)
     : answers.codexBin;

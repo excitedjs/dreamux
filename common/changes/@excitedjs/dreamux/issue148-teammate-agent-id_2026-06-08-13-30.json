@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "BREAKING: a teammate now references a named agent (an agents[].id) instead of a provider. spawn takes agent_runtime (was provider_ref); the teammate resolves that id against the global agents[] map into its own { provider, config }, so a teammate on a different agent than its dispatcher (e.g. a claude teammate under a codex dispatcher) runs with its OWN config and the cross-provider 'is not wired to ...' mismatch is gone. Persisted teammate identity records change their field provider_ref -> agent_runtime; a pre-#148 identity fails loud on the next lifecycle verb with rebuild guidance (no migration shim). A teammate whose agent_runtime no longer matches any agents[].id also fails loud on resume rather than silently defaulting a runtime.\nRebuild: close and respawn affected teammates, or delete the stale identity files under ~/.dreamux/state/<dispatcher>/teammate/identities/<name>.json, then respawn. Ensure each teammate's agent_runtime names an existing agents[].id in ~/.dreamux/config.json.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

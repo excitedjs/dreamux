@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "BREAKING: ~/.dreamux/config.json runtime config is hoisted into named top-level agents[]. Each dispatcher now references a runtime by id via dispatchers[].agentRuntime instead of carrying an inline dispatchers[].runtime block; config lives only in agents[] ({ id, provider, config }). The old inline-runtime shape, a dispatcher missing agentRuntime, a dangling agentRuntime id, and a duplicate agents[].id all fail loud at load with rebuild guidance (no migration shim). Each agent's config is parsed through its provider's readConfig.\nRebuild: rewrite ~/.dreamux/config.json to the new schema (declare runtimes under agents[] and reference them with dispatchers[].agentRuntime), then restart dreamux serve. To regenerate from scratch instead, first MOVE ASIDE or DELETE the old config.json -- onboard loads the existing config and would otherwise fail loud on the old inline-runtime shape before it could rewrite -- then run dreamux onboard.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

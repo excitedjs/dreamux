@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "BREAKING: doctor now resolves each dispatcher's runtime through its agent-runtime provider's self-reported diagnostic (issue #146 fold) instead of branching on the codex/claude provider ref. The codex diagnostic adds a hard version floor: doctor fails loud when the resolved Codex binary is below 0.137.0, because teammate-completion delivery appends to the dispatcher thread via thread/inject_items, an RPC that exists only on codex >= 0.137 (issue #147). The claude per-dispatcher detail line changed from 'does not use Codex home state' to a neutral 'no host-managed home state'.\nRebuild: if `dreamux doctor` reports a Codex version below 0.137.0, upgrade Codex (the codex-cli binary referenced by the agent's config.bin / CODEX_HOST_CODEX_BIN) to >= 0.137.0; no config file change is required.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

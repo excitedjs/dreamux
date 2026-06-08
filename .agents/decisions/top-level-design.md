@@ -118,10 +118,26 @@ Agent Runtime provider (`builtin:codex` or `builtin:claude-code`) per
 dispatcher. Feishu is not resolved through the provider registry; it is the
 core built-in conversational channel.
 
-Example shape:
+Example shape (issue #148 normalizes runtime config into a top-level named
+`agents[]` array; a dispatcher references a runtime by id via `agentRuntime` and
+carries no runtime config block — channels stay inline):
 
 ```json
 {
+  "agents": [
+    {
+      "id": "codex",
+      "provider": "builtin:codex",
+      "config": {
+        "bin": "codex",
+        "approval_policy": "never",
+        "sandbox_mode": "workspace-write",
+        "extra_args": [],
+        "extra_env": { "EXAMPLE_FLAG": "1" },
+        "initialize_timeout_ms": 10000
+      }
+    }
+  ],
   "dispatchers": [
     {
       "id": "dispatcher-a",
@@ -137,28 +153,19 @@ Example shape:
           }
         }
       ],
-      "runtime": {
-        "provider": "builtin:codex",
-        "config": {
-          "bin": "codex",
-          "approval_policy": "never",
-          "sandbox_mode": "workspace-write",
-          "extra_args": [],
-          "extra_env": {
-            "EXAMPLE_FLAG": "1"
-          },
-          "initialize_timeout_ms": 10000
-        }
-      }
+      "agentRuntime": "codex"
     }
   ]
 }
 ```
 
-`dispatchers[].runtime.config` is the only Codex configuration entry point
-while `builtin:codex` is the selected runtime provider — there is no top-level
-`codex` block. Every field is optional with a built-in default, so the whole
-runtime config object can be omitted:
+`agents[].config` is the only Codex configuration entry point while a
+`builtin:codex` agent is referenced — there is no top-level `codex` block, and an
+inline `dispatchers[].runtime` block is rejected loudly with rebuild guidance
+(issue #148). A dispatcher (and a TeamMate) selects a runtime by `agentRuntime`
+id; multiple dispatchers can share one agent, and one provider can have several
+named agent configs. Every Codex field is optional with a built-in default, so
+an agent's `config` object can be omitted entirely:
 
 | Field | Default | Notes |
 | --- | --- | --- |

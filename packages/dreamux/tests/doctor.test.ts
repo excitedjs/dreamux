@@ -22,7 +22,10 @@ import {
   dispatcherCodexHome,
   dispatcherWorkspaceSkillPath,
 } from '../src/agent-runtime/builtin/codex/paths.js';
-import { testDispatcherConfig } from './helpers/config.js';
+import {
+  testConfigFileObject,
+  testSingleDispatcherFileObject,
+} from './helpers/config.js';
 
 class FakeRunner implements CommandRunner {
   systemdEnabled = false;
@@ -115,6 +118,7 @@ describe('dreamux doctor command', () => {
 
   it('reports global Codex home health', async () => {
     const runner = new FakeRunner();
+    runner.nodeVersions.set('codex', 'codex-cli 0.137.0');
     writeConfig();
     writeDispatcherHome({ auth: true });
 
@@ -134,6 +138,26 @@ describe('dreamux doctor command', () => {
       JSON.stringify(result, null, 2),
     ).toBe(true);
     expect(result.dispatchers[0]?.managedService).toBeNull();
+  });
+
+  it('fails loud when the Codex binary is below the 0.137 floor', async () => {
+    const runner = new FakeRunner();
+    runner.nodeVersions.set('codex', 'codex-cli 0.136.0');
+    writeConfig();
+    writeDispatcherHome({ auth: true });
+
+    const result = await runDreamuxDoctor({
+      runner,
+      platform: 'linux',
+      homeDir: join(root, 'home'),
+      env: {},
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.dispatchers[0]?.foreground.ok).toBe(false);
+    expect(result.dispatchers[0]?.foreground.errors.join('\n')).toContain(
+      'requires codex >= 0.137.0',
+    );
   });
 
   it('does not expose Feishu app secrets in doctor results', async () => {
@@ -174,7 +198,7 @@ describe('dreamux doctor command', () => {
       runtimeProvider: 'builtin:claude-code',
       foreground: {
         ok: true,
-        detail: expect.stringContaining('does not use Codex home state'),
+        detail: expect.stringContaining('no host-managed home state'),
       },
       managedService: null,
     });
@@ -536,6 +560,96 @@ describe('dreamux doctor command', () => {
     expect(result.checks.find((check) => check.name === 'systemd linger')).toBeUndefined();
   });
 
+  it('runs per-agent diagnostics for both codex and claude dispatchers (#148)', async () => {
+    // A config with one codex dispatcher and one claude dispatcher: each agent's
+    // provider-self-reported diagnostic must run independently. The codex check
+    // includes version + home validation; the claude check is bin-only.
+    const runner = new FakeRunner();
+    runner.nodeVersions.set('codex', 'codex-cli 0.137.0');
+
+    // Write a config with two dispatchers, each backed by a different provider.
+    const configPath = join(root, 'config', 'config.json');
+    mkdirSync(dirname(configPath), { recursive: true });
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        testConfigFileObject({
+          agents: [
+            {
+              id: 'codex-agent',
+              provider: 'builtin:codex',
+              config: {
+                approval_policy: 'never',
+                sandbox_mode: 'workspace-write',
+                extra_args: [],
+                extra_env: {},
+              },
+            },
+            {
+              id: 'claude-agent',
+              provider: 'builtin:claude-code',
+              config: {
+                bin: 'claude',
+                model: null,
+                permission_mode: null,
+                extra_args: [],
+                extra_env: {},
+              },
+            },
+          ],
+          dispatchers: [
+            {
+              id: 'flow',
+              cwd: defaultDispatcherCwd('flow'),
+              enabled: true,
+              agentRuntime: 'codex-agent',
+              feishu: { app_id: 'app-flow', app_secret: 'secret-flow' },
+            },
+            {
+              id: 'docs',
+              cwd: defaultDispatcherCwd('docs'),
+              enabled: true,
+              agentRuntime: 'claude-agent',
+              feishu: { app_id: 'app-docs', app_secret: 'secret-docs' },
+            },
+          ],
+        }),
+      ),
+      { mode: 0o600 },
+    );
+
+    // Provide codex-home state for the 'flow' dispatcher only.
+    writeDispatcherHome({ auth: true });
+    // Provide a minimal state dir so the docs dispatcher check doesn't fail for
+    // missing state root (claude has no home requirement).
+    mkdirSync(stateRoot(), { recursive: true });
+
+    const result = await runDreamuxDoctor({
+      runner,
+      platform: 'linux',
+      homeDir: join(root, 'home'),
+      env: {},
+    });
+
+    // The codex dispatcher must have a per-dispatcher report with the codex provider.
+    const codexReport = result.dispatchers.find((d) => d.id === 'flow');
+    expect(codexReport).toBeDefined();
+    expect(codexReport?.runtimeProvider).toBe('builtin:codex');
+    expect(codexReport?.foreground.ok).toBe(true);
+
+    // The claude dispatcher must have a per-dispatcher report with the claude provider.
+    const claudeReport = result.dispatchers.find((d) => d.id === 'docs');
+    expect(claudeReport).toBeDefined();
+    expect(claudeReport?.runtimeProvider).toBe('builtin:claude-code');
+    // claude-code diagnostic: no home state requirement, just bin check.
+    expect(claudeReport?.foreground.ok).toBe(true);
+    expect(claudeReport?.foreground.detail).toContain('no host-managed');
+
+    // Global binary checks must include BOTH codex and claude bins (deduplicated).
+    expect(runner.calls).toContainEqual({ command: 'codex', args: ['--help'] });
+    expect(runner.calls).toContainEqual({ command: 'claude', args: ['--help'] });
+  });
+
   function writeValidSystemdUnit(): void {
     const servicePath = join(root, 'home', '.config', 'systemd', 'user', 'dreamux.service');
     mkdirSync(dirname(servicePath), { recursive: true });
@@ -557,25 +671,23 @@ describe('dreamux doctor command', () => {
     mkdirSync(dirname(configPath), { recursive: true });
     writeFileSync(
       configPath,
-      JSON.stringify({
-        dispatchers: [
-          testDispatcherConfig({
-            id: 'flow',
-            cwd: defaultDispatcherCwd('flow'),
-            enabled: true,
-            feishu: {
-              app_id: 'app-test',
-              app_secret: 'secret-test',
-            },
-            codex: {
-              approval_policy: 'never',
-              sandbox_mode: 'workspace-write',
-              extra_args: [],
-              extra_env: {},
-            },
-          }),
-        ],
-      }),
+      JSON.stringify(
+        testSingleDispatcherFileObject({
+          id: 'flow',
+          cwd: defaultDispatcherCwd('flow'),
+          enabled: true,
+          feishu: {
+            app_id: 'app-test',
+            app_secret: 'secret-test',
+          },
+          codex: {
+            approval_policy: 'never',
+            sandbox_mode: 'workspace-write',
+            extra_args: [],
+            extra_env: {},
+          },
+        }),
+      ),
       { mode: 0o600 },
     );
   }
@@ -585,17 +697,11 @@ describe('dreamux doctor command', () => {
     mkdirSync(dirname(configPath), { recursive: true });
     writeFileSync(
       configPath,
-      JSON.stringify({
-        dispatchers: [
-          testDispatcherConfig({
-            id: 'flow',
-            cwd: defaultDispatcherCwd('flow'),
-            enabled: true,
-            feishu: {
-              app_id: 'app-test',
-              app_secret: 'secret-test',
-            },
-            runtime: {
+      JSON.stringify(
+        testConfigFileObject({
+          agents: [
+            {
+              id: 'flow',
               provider: 'builtin:claude-code',
               config: {
                 bin: 'claude',
@@ -605,9 +711,18 @@ describe('dreamux doctor command', () => {
                 extra_env: {},
               },
             },
-          }),
-        ],
-      }),
+          ],
+          dispatchers: [
+            {
+              id: 'flow',
+              cwd: defaultDispatcherCwd('flow'),
+              enabled: true,
+              agentRuntime: 'flow',
+              feishu: { app_id: 'app-test', app_secret: 'secret-test' },
+            },
+          ],
+        }),
+      ),
       { mode: 0o600 },
     );
   }

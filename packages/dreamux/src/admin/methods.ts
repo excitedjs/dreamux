@@ -126,14 +126,14 @@ export const adminMethods: Record<string, AdminHandler> = {
     mustExistingDispatcher(server, id);
     const name = mustString(params, 'name');
     const prompt = mustString(params, 'prompt');
-    const providerRef = optionalString(params, 'provider_ref');
+    const agentRuntime = optionalString(params, 'agent_runtime');
     const cwd = optionalString(params, 'cwd');
     try {
       return await server.dispatcherService.spawnTeamMate({
         dispatcherId: id,
         name,
         prompt,
-        ...(providerRef !== null ? { providerRef } : {}),
+        ...(agentRuntime !== null ? { agentRuntime } : {}),
         ...(cwd !== null ? { cwd } : {}),
       });
     } catch (err) {

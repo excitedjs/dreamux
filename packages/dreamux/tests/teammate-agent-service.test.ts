@@ -1,5 +1,5 @@
 import { mkdtempSync, rmSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -23,7 +23,7 @@ import { TeamMateAgentService } from '../src/dispatcher-service/teammate/service
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
 import { resetRuntimeConfig } from '../src/platform/paths.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
-import { testDreamuxConfig } from './helpers/config.js';
+import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 
 const FAKE_CAPABILITIES: AgentRuntimeCapabilities = {
   resume: { supported: true, checkpoint: 'codexThread' },
@@ -187,13 +187,27 @@ describe('TeamMateAgentService', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it('does not inherit the dispatcher config for a cross-provider teammate', async () => {
-    // Dispatcher 'flow' runs builtin:codex. A builtin:claude-code teammate must
-    // NOT receive the codex dispatcher's config block (wrong shape — the real
-    // claude provider would throw "is not wired to Claude Code"); it falls back
-    // to its own provider defaults (context.dispatcher === null). A same-provider
-    // teammate still inherits the dispatcher config.
-    const config = testDreamuxConfig();
+  it('runs a cross-provider teammate from its own named agent config', async () => {
+    // Dispatcher 'flow' runs the 'codex' agent (builtin:codex). A teammate that
+    // names the 'claude' agent (builtin:claude-code) must run with the claude
+    // agent's resolved config — NOT inherit the codex dispatcher's runtime
+    // (which is the wrong shape and used to throw "is not wired to Claude
+    // Code"). The create-context dispatcher carries the teammate's OWN resolved
+    // runtime, so cross-provider correctness falls out structurally.
+    const dispatcher = testDispatcherConfig({ id: 'flow', agentRuntime: 'codex' });
+    const config = {
+      agents: {
+        codex: {
+          provider: 'builtin:codex',
+          config: dispatcher.runtime.config,
+        },
+        claude: {
+          provider: 'builtin:claude-code',
+          config: { permission_mode: 'default' },
+        },
+      },
+      dispatchers: [dispatcher],
+    };
     const registry = createBuiltinProviderRegistry();
     const codexDesc = registry.resolve('builtin:codex');
     const claudeDesc = registry.resolve('builtin:claude-code');
@@ -215,17 +229,22 @@ describe('TeamMateAgentService', () => {
     await service.spawn({
       dispatcherId: 'flow',
       name: 'claude-mate',
-      providerRef: 'builtin:claude-code',
+      agentRuntime: 'claude',
       prompt: 'go',
       cwd: root,
     });
     expect(claudeProvider.contexts).toHaveLength(1);
-    expect(claudeProvider.contexts[0]?.dispatcher).toBeNull();
+    // The teammate's create-context carries the claude agent's resolved runtime,
+    // taken from agents['claude'] — never the dispatcher's codex runtime.
+    expect(claudeProvider.contexts[0]?.dispatcher).not.toBeNull();
+    expect(claudeProvider.contexts[0]?.dispatcher?.runtime.provider).toBe(
+      'builtin:claude-code',
+    );
 
+    // A teammate omitting agentRuntime falls back to the dispatcher's own agent.
     await service.spawn({
       dispatcherId: 'flow',
       name: 'codex-mate',
-      providerRef: 'builtin:codex',
       prompt: 'go',
       cwd: root,
     });
@@ -234,6 +253,47 @@ describe('TeamMateAgentService', () => {
     expect(codexProvider.contexts[0]?.dispatcher?.runtime.provider).toBe(
       'builtin:codex',
     );
+  });
+
+  it('dispatcher and teammate referencing the same agent id get the same resolved runtime (#148)', async () => {
+    // Both the dispatcher config (resolved at loadConfig) and the teammate
+    // create-context (resolved at spawn time by service.ts) walk the same
+    // agents[] id -> {provider, config} map. They must produce structurally
+    // equal results — this guards both resolution paths against drift.
+    const dispatcher = testDispatcherConfig({ id: 'flow', agentRuntime: 'shared' });
+    // Manually inject a shared agent entry so the dispatcher's resolved
+    // runtime comes from agents['shared'] (same as what the teammate will get).
+    const sharedRuntime = dispatcher.runtime;
+    const config = {
+      agents: { shared: { provider: sharedRuntime.provider, config: sharedRuntime.config } },
+      dispatchers: [{ ...dispatcher, agentRuntime: 'shared', runtime: sharedRuntime }],
+    };
+    const registry = createBuiltinProviderRegistry();
+    const codexDesc = registry.resolve('builtin:codex');
+    const provider = new FakeProvider(codexDesc, 'builtin:codex');
+    registry.registerImplementation(codexDesc.id, provider);
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: new AgentRuntimeProviderCatalog({ registry }),
+      log: noopLog(),
+    });
+
+    // Spawn a teammate that explicitly names the same 'shared' agent.
+    await service.spawn({
+      dispatcherId: 'flow',
+      name: 'same-mate',
+      agentRuntime: 'shared',
+      prompt: 'go',
+      cwd: root,
+    });
+    expect(provider.contexts).toHaveLength(1);
+    const teammateDispatcher = provider.contexts[0]?.dispatcher;
+    expect(teammateDispatcher).not.toBeNull();
+    // The teammate's dispatcher.runtime must deep-equal the dispatcher's own
+    // resolved runtime — both came from agents['shared'].
+    expect(teammateDispatcher?.runtime).toEqual(sharedRuntime);
+    expect(teammateDispatcher?.runtime.provider).toBe('builtin:codex');
   });
 
   it('spawns a named resumable teammate and records forward-only history', async () => {
@@ -259,7 +319,7 @@ describe('TeamMateAgentService', () => {
     expect(spawned.turn).toEqual({ status: 'submitted', turn_id: 'turn-1' });
     expect(spawned.teammate).toMatchObject({
       name: 'reviewer',
-      provider_ref: 'builtin:codex',
+      agent_runtime: 'flow',
       status: 'running',
       checkpoint: { kind: 'codexThread', id: expect.stringContaining('thread') },
     });
@@ -366,6 +426,71 @@ describe('TeamMateAgentService', () => {
     );
     expect(historyFile).toContain('"type":"spawn"');
     expect(historyFile).toContain('"type":"close"');
+  });
+
+  it('fails loud when spawned with an agentRuntime that matches no agent', async () => {
+    const { catalog } = providerCatalog();
+    const config = testDreamuxConfig();
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: catalog,
+      log: noopLog(),
+    });
+    await expect(
+      service.spawn({
+        dispatcherId: 'flow',
+        name: 'ghost',
+        agentRuntime: 'no-such-agent',
+        prompt: 'go',
+        cwd: root,
+      }),
+    ).rejects.toThrow(/'no-such-agent', which matches no agents\[\]\.id/);
+  });
+
+  it('fails loud on a legacy provider_ref teammate identity (pre-#148)', async () => {
+    const { catalog } = providerCatalog();
+    const config = testDreamuxConfig();
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: catalog,
+      log: noopLog(),
+    });
+    // Seed a pre-#148 identity record carrying the removed provider_ref field
+    // instead of agent_runtime. Any lifecycle verb that reads it must fail loud
+    // with rebuild guidance rather than silently defaulting a runtime.
+    const dir = join(
+      root,
+      'home',
+      '.dreamux',
+      'state',
+      'flow',
+      'teammate',
+      'identities',
+    );
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      join(dir, 'legacy.json'),
+      JSON.stringify({
+        version: 1,
+        dispatcher_id: 'flow',
+        name: 'legacy',
+        provider_ref: 'builtin:codex',
+        cwd: root,
+        created_at: 1,
+        updated_at: 1,
+        status: 'running',
+        checkpoint: null,
+        last_error: null,
+        closed_at: null,
+        close_note: null,
+      }),
+      { mode: 0o600 },
+    );
+    await expect(
+      service.send({ dispatcherId: 'flow', name: 'legacy', prompt: 'go' }),
+    ).rejects.toThrow(/legacy provider_ref format/);
   });
 
   it('does not wire the settle hook when no completion sink is configured', async () => {

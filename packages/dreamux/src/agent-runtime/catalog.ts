@@ -80,6 +80,50 @@ export class AgentRuntimeProviderCatalog {
   }
 }
 
+export interface RegisterBuiltinAgentRuntimeProvidersOptions {
+  registry: ProviderRegistry;
+  codex?: Omit<CodexAgentRuntimeProviderOptions, 'descriptor'>;
+  claudeCode?: Omit<ClaudeCodeAgentRuntimeProviderOptions, 'descriptor'>;
+}
+
+/**
+ * Register the builtin agentRuntime provider implementations into `registry`.
+ *
+ * Idempotent per builtin id: a provider already carrying a runnable
+ * implementation is left untouched (the registry throws on a duplicate
+ * implementation). This lets two callers register the builtins safely — the
+ * server registers them eagerly with its process factories, and config then
+ * calls this again (with no factories) only to make `readConfig` /
+ * `getCapabilities` available at load; the second call no-ops on the
+ * already-registered builtins, so the server's factory-bearing registration
+ * always wins.
+ */
+export function registerBuiltinAgentRuntimeProviders(
+  options: RegisterBuiltinAgentRuntimeProvidersOptions,
+): void {
+  const { registry } = options;
+  const codexDescriptor = registry.resolve('builtin:codex');
+  if (registry.getImplementation(codexDescriptor.id) === undefined) {
+    registry.registerImplementation(
+      codexDescriptor.id,
+      createCodexAgentRuntimeProvider({
+        ...(options.codex ?? {}),
+        descriptor: codexDescriptor,
+      }),
+    );
+  }
+  const claudeCodeDescriptor = registry.resolve('builtin:claude-code');
+  if (registry.getImplementation(claudeCodeDescriptor.id) === undefined) {
+    registry.registerImplementation(
+      claudeCodeDescriptor.id,
+      createClaudeCodeAgentRuntimeProvider({
+        ...(options.claudeCode ?? {}),
+        descriptor: claudeCodeDescriptor,
+      }),
+    );
+  }
+}
+
 export interface BuiltinAgentRuntimeProviderCatalogOptions {
   registry: ProviderRegistry;
   codex: Omit<CodexAgentRuntimeProviderOptions, 'descriptor'>;
@@ -89,22 +133,11 @@ export interface BuiltinAgentRuntimeProviderCatalogOptions {
 export function createBuiltinAgentRuntimeProviderCatalog(
   options: BuiltinAgentRuntimeProviderCatalogOptions,
 ): AgentRuntimeProviderCatalog {
-  const codexDescriptor = options.registry.resolve('builtin:codex');
-  const claudeCodeDescriptor = options.registry.resolve('builtin:claude-code');
-  options.registry.registerImplementation(
-    codexDescriptor.id,
-    createCodexAgentRuntimeProvider({
-      ...options.codex,
-      descriptor: codexDescriptor,
-    }),
-  );
-  options.registry.registerImplementation(
-    claudeCodeDescriptor.id,
-    createClaudeCodeAgentRuntimeProvider({
-      ...(options.claudeCode ?? {}),
-      descriptor: claudeCodeDescriptor,
-    }),
-  );
+  registerBuiltinAgentRuntimeProviders({
+    registry: options.registry,
+    codex: options.codex,
+    ...(options.claudeCode !== undefined ? { claudeCode: options.claudeCode } : {}),
+  });
   return new AgentRuntimeProviderCatalog({ registry: options.registry });
 }
 

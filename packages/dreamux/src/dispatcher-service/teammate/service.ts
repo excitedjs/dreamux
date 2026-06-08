@@ -12,9 +12,9 @@ import type {
 import type { TurnSettledSignal } from '../../agent-runtime/turn.js';
 import {
   BUILTIN_CLAUDE_CODE_PROVIDER_REF,
-  BUILTIN_CODEX_PROVIDER_REF,
   type DispatcherConfig,
   type DreamuxConfig,
+  type ResolvedAgentConfig,
 } from '../../config/config.js';
 import type { DispatcherStore, DispatcherRow } from '../../state/dispatcher-store.js';
 import type { DreamuxLogger } from '../../platform/logger.js';
@@ -91,19 +91,21 @@ export class TeamMateAgentService {
     if (existing !== null && existing.status !== 'closed') {
       throw new Error(`TeamMate ${JSON.stringify(name)} already exists; use send or resume`);
     }
-    const providerRef = input.providerRef ?? this.defaultProviderRef(input.dispatcherId);
-    const provider = this.opts.agentRuntimeProviders.resolve(providerRef);
+    const agentRuntimeId =
+      input.agentRuntime ?? this.defaultAgentRuntime(input.dispatcherId);
+    const agent = this.resolveAgent(input.dispatcherId, agentRuntimeId);
+    const provider = this.opts.agentRuntimeProviders.resolve(agent.provider);
     const cwd = this.resolveCwd(input.dispatcherId, input.cwd);
     let identity =
       existing ??
       (await this.identities.create({
         dispatcherId: input.dispatcherId,
         name,
-        providerRef: provider.ref,
+        agentRuntime: agentRuntimeId,
         cwd,
       }));
     identity = await this.identities.update(identity, {
-      providerRef: provider.ref,
+      agentRuntime: agentRuntimeId,
       cwd,
       status: 'starting',
       closedAt: null,
@@ -111,7 +113,7 @@ export class TeamMateAgentService {
       lastError: null,
       checkpoint: null,
     });
-    const live = await this.startRuntime(input.dispatcherId, identity, provider);
+    const live = await this.startRuntime(input.dispatcherId, identity, provider, agent);
     identity = live.state.current();
     const turn = await this.submitPrompt(input.dispatcherId, name, input.prompt);
     await this.identities.appendHistory(live.state.current(), {
@@ -269,14 +271,19 @@ export class TeamMateAgentService {
     if (identity.status === 'closed') {
       throw new Error(`TeamMate ${JSON.stringify(teammateName)} is closed`);
     }
-    const provider = this.opts.agentRuntimeProviders.resolve(identity.provider_ref);
-    return this.startRuntime(dispatcherId, identity, provider);
+    // Re-resolve the persisted agent id against the live agents map: an agent
+    // removed from config since spawn fails loud here rather than silently
+    // defaulting to some other runtime.
+    const agent = this.resolveAgent(dispatcherId, identity.agent_runtime);
+    const provider = this.opts.agentRuntimeProviders.resolve(agent.provider);
+    return this.startRuntime(dispatcherId, identity, provider, agent);
   }
 
   private async startRuntime(
     dispatcherId: string,
     identity: TeamMateIdentity,
     provider: AgentRuntimeProvider,
+    agent: ResolvedAgentConfig,
   ): Promise<LiveTeamMate> {
     const resumeCapability = provider.getCapabilities().resume;
     const state = new TeamMateRuntimeStateStore(
@@ -291,19 +298,23 @@ export class TeamMateAgentService {
     // after stop() fires its terminal `stopped` settles, which would otherwise
     // race the lookup.
     let liveRuntime: AgentRuntime | null = null;
-    // Only inherit the dispatcher's runtime config when the teammate runs the
-    // SAME provider. A teammate on a different provider (e.g. a claude-code
-    // teammate under a codex dispatcher) must fall back to its provider's
-    // defaults: the dispatcher's config block is the wrong shape, and the
-    // provider's createRuntime would reject it ("... is not wired to ...").
+    // The teammate's runtime config comes from its own resolved agent (the
+    // agents[].id it was spawned with), never inherited from the dispatcher.
+    // Hand the provider a create-context dispatcher whose `runtime` is the
+    // resolved agent's { provider, config }: a teammate on a different provider
+    // than its dispatcher (e.g. a claude teammate under a codex dispatcher) gets
+    // its OWN typed config, which structurally removes the cross-provider
+    // "is not wired to ..." mismatch. Other dispatcher fields (id, cwd, channels)
+    // come from the real dispatcher config when present.
     const dispatcherCfg = this.dispatcherConfig(dispatcherId);
-    const inheritedConfig =
-      dispatcherCfg !== null && dispatcherCfg.runtime.provider === provider.ref
-        ? dispatcherCfg
-        : null;
+    const createContextDispatcher: DispatcherConfig = {
+      ...(dispatcherCfg ?? syntheticDispatcherConfig(dispatcherId)),
+      agentRuntime: identity.agent_runtime,
+      runtime: { provider: agent.provider, config: agent.config },
+    };
     const runtime = provider.createRuntime({
       row,
-      dispatcher: inheritedConfig,
+      dispatcher: createContextDispatcher,
       dispatchers: this.opts.dispatchers,
       cwd: identity.cwd,
       state,
@@ -476,11 +487,48 @@ export class TeamMateAgentService {
     };
   }
 
-  private defaultProviderRef(dispatcherId: string): string {
-    return (
-      this.dispatcherConfig(dispatcherId)?.runtime.provider ??
-      BUILTIN_CODEX_PROVIDER_REF
-    );
+  /**
+   * The agents[].id a teammate inherits when `spawn` names none: the
+   * dispatcher's own `agentRuntime`. There is no provider-ref fallback — a
+   * teammate always resolves to a named agent, never a bare provider.
+   */
+  private defaultAgentRuntime(dispatcherId: string): string {
+    const dispatcherCfg = this.dispatcherConfig(dispatcherId);
+    if (dispatcherCfg === null) {
+      throw new Error(
+        `cannot spawn a teammate for unknown dispatcher '${dispatcherId}': ` +
+          'no dispatcher config to resolve a default agentRuntime from. Pass an ' +
+          'explicit agentRuntime (an agents[].id).',
+      );
+    }
+    return dispatcherCfg.agentRuntime;
+  }
+
+  /**
+   * Resolve an agents[].id against the live agents map into its
+   * { provider, config }. #98 fail-loud: an id with no matching agents[] entry
+   * (e.g. removed from config since the teammate was spawned) throws with
+   * rebuild guidance rather than silently defaulting a runtime.
+   */
+  private resolveAgent(
+    dispatcherId: string,
+    agentRuntimeId: string,
+  ): ResolvedAgentConfig {
+    const agent = this.opts.config.agents[agentRuntimeId];
+    if (agent === undefined) {
+      const known = Object.keys(this.opts.config.agents);
+      const knownHint =
+        known.length > 0
+          ? `Known agents: ${known.map((id) => `'${id}'`).join(', ')}.`
+          : 'No agents are declared.';
+      throw new Error(
+        `teammate for dispatcher '${dispatcherId}' references agentRuntime ` +
+          `'${agentRuntimeId}', which matches no agents[].id. ${knownHint} ` +
+          'Add the agent to config and rebuild, or respawn the teammate with a ' +
+          'known agent id.',
+      );
+    }
+    return agent;
   }
 
   private dispatcherConfig(dispatcherId: string): DispatcherConfig | null {
@@ -504,7 +552,7 @@ export class TeamMateAgentService {
   ): TeamMateRuntimeStatus {
     return {
       name: identity.name,
-      provider_ref: identity.provider_ref,
+      agent_runtime: identity.agent_runtime,
       cwd: identity.cwd,
       status: identity.status,
       runtime_status: runtime?.getStatus() ?? null,
@@ -530,6 +578,23 @@ export class TeamMateAgentService {
       unsupported_reason: null,
     };
   }
+}
+
+/**
+ * A minimal {@link DispatcherConfig} skeleton for the create-context when no
+ * matching dispatcher config exists (the teammate was spawned for an id with no
+ * declared dispatcher). The runtime block is overwritten by the caller with the
+ * teammate's resolved agent; only the neutral fields matter here.
+ */
+function syntheticDispatcherConfig(dispatcherId: string): DispatcherConfig {
+  return {
+    id: dispatcherId,
+    cwd: null,
+    enabled: true,
+    channels: [],
+    agentRuntime: '',
+    runtime: { provider: '', config: {} },
+  };
 }
 
 function toTurnResult(result: AgentRuntimeTurnResult): TeamMateTurnResult {

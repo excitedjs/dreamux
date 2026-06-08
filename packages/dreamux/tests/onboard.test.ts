@@ -20,6 +20,7 @@ import {
 } from '../src/onboard/wizard.js';
 import type { CommandRunner, OnboardAnswers } from '../src/onboard/types.js';
 import type { ServiceNodeProbe } from '../src/onboard/service.js';
+import { loadConfig } from '../src/config/config.js';
 import {
   logsRoot,
   resetRuntimeConfig,
@@ -30,7 +31,7 @@ import {
   dispatcherWorkspaceSkillDirs,
   dispatcherWorkspaceSkillPath,
 } from '../src/agent-runtime/builtin/codex/paths.js';
-import { testDispatcherConfig } from './helpers/config.js';
+import { testSingleDispatcherFileObject } from './helpers/config.js';
 
 class FakeRunner implements CommandRunner {
   launchdLoaded = false;
@@ -183,6 +184,21 @@ describe('dreamux onboard', () => {
     const dreamuxConfig = JSON.parse(
       readFileSync(join(root, 'config', 'config.json'), 'utf8'),
     ) as Record<string, any>;
+    expect(dreamuxConfig['agents']).toEqual([
+      {
+        id: 'flow',
+        provider: 'builtin:codex',
+        config: {
+          bin: process.execPath,
+          approval_policy: 'never',
+          sandbox_mode: 'workspace-write',
+          extra_args: [],
+          extra_env: {},
+          initialize_timeout_ms: 10000,
+          turn_timeout_ms: 600000,
+        },
+      },
+    ]);
     expect(dreamuxConfig['dispatchers']).toEqual([{
       id: 'flow',
       cwd: join(root, 'dispatcher-cwd'),
@@ -197,18 +213,7 @@ describe('dreamux onboard', () => {
           },
         },
       ],
-      runtime: {
-        provider: 'builtin:codex',
-        config: {
-          bin: process.execPath,
-          approval_policy: 'never',
-          sandbox_mode: 'workspace-write',
-          extra_args: [],
-          extra_env: {},
-          initialize_timeout_ms: 10000,
-          turn_timeout_ms: 600000,
-        },
-      },
+      agentRuntime: 'flow',
     }]);
     expect(dreamuxConfig).not.toHaveProperty('feishu');
     expect(dreamuxConfig).not.toHaveProperty('codex');
@@ -489,27 +494,25 @@ describe('dreamux onboard', () => {
     mkdirSync(configDir, { recursive: true });
     writeFileSync(
       join(configDir, 'config.json'),
-      JSON.stringify({
-        dispatchers: [
-          testDispatcherConfig({
-            id: 'flow',
-            cwd: join(root, 'flow-cwd'),
-            enabled: true,
-            feishu: {
-              app_id: 'app-flow',
-              app_secret: 'secret-flow',
-            },
-            codex: {
-              bin: '/custom/codex-flow',
-              approval_policy: 'on-failure',
-              sandbox_mode: 'danger-full-access',
-              extra_args: ['--model', 'local-default'],
-              extra_env: {},
-              initialize_timeout_ms: 25000,
-            },
-          }),
-        ],
-      }),
+      JSON.stringify(
+        testSingleDispatcherFileObject({
+          id: 'flow',
+          cwd: join(root, 'flow-cwd'),
+          enabled: true,
+          feishu: {
+            app_id: 'app-flow',
+            app_secret: 'secret-flow',
+          },
+          codex: {
+            bin: '/custom/codex-flow',
+            approval_policy: 'on-failure',
+            sandbox_mode: 'danger-full-access',
+            extra_args: ['--model', 'local-default'],
+            extra_env: {},
+            initialize_timeout_ms: 25000,
+          },
+        }),
+      ),
       { mode: 0o600 },
     );
     const answers = testAnswers({
@@ -538,6 +541,34 @@ describe('dreamux onboard', () => {
     expect(saved).not.toHaveProperty('codex');
     expect(saved).not.toHaveProperty('outbound');
     expect(saved).not.toHaveProperty('feishu');
+    expect(saved['agents']).toEqual([
+      {
+        id: 'flow',
+        provider: 'builtin:codex',
+        config: {
+          bin: '/custom/codex-flow',
+          approval_policy: 'on-failure',
+          sandbox_mode: 'danger-full-access',
+          extra_args: ['--model', 'local-default'],
+          extra_env: {},
+          initialize_timeout_ms: 25000,
+          turn_timeout_ms: 600000,
+        },
+      },
+      {
+        id: 'docs',
+        provider: 'builtin:codex',
+        config: {
+          bin: process.execPath,
+          approval_policy: 'never',
+          sandbox_mode: 'workspace-write',
+          extra_args: [],
+          extra_env: {},
+          initialize_timeout_ms: 10000,
+          turn_timeout_ms: 600000,
+        },
+      },
+    ]);
     expect(saved['dispatchers']).toEqual([
       {
         id: 'flow',
@@ -553,18 +584,7 @@ describe('dreamux onboard', () => {
             },
           },
         ],
-        runtime: {
-          provider: 'builtin:codex',
-          config: {
-            bin: '/custom/codex-flow',
-            approval_policy: 'on-failure',
-            sandbox_mode: 'danger-full-access',
-            extra_args: ['--model', 'local-default'],
-            extra_env: {},
-            initialize_timeout_ms: 25000,
-            turn_timeout_ms: 600000,
-          },
-        },
+        agentRuntime: 'flow',
       },
       {
         id: 'docs',
@@ -580,44 +600,105 @@ describe('dreamux onboard', () => {
             },
           },
         ],
-        runtime: {
+        agentRuntime: 'docs',
+      },
+    ]);
+  });
+
+  it('preserves a teammate-only agent (unreferenced by any dispatcher) on rerun', async () => {
+    // Regression for #148 P1: agents[] is the global runtime-config map and a
+    // TeamMate can resolve an agent that no dispatcher names (e.g. a `claude`
+    // agent used only via teammate.spawn under a Codex dispatcher). Re-running
+    // onboard must NOT silently delete that entry.
+    const runner = new FakeRunner();
+    const configDir = join(root, 'config');
+    mkdirSync(configDir, { recursive: true });
+    const existing = {
+      agents: [
+        {
+          id: 'flow',
           provider: 'builtin:codex',
           config: {
-            bin: process.execPath,
+            bin: 'codex',
             approval_policy: 'never',
             sandbox_mode: 'workspace-write',
             extra_args: [],
             extra_env: {},
             initialize_timeout_ms: 10000,
-            turn_timeout_ms: 600000,
           },
         },
-      },
-    ]);
+        {
+          id: 'claude-helper',
+          provider: 'builtin:claude-code',
+          config: { permission_mode: 'default' },
+        },
+      ],
+      dispatchers: [
+        {
+          id: 'flow',
+          cwd: join(root, 'flow-cwd'),
+          enabled: true,
+          channels: [
+            {
+              id: 'primary',
+              provider: 'builtin:feishu',
+              config: { app_id: 'app-flow', app_secret: 'secret-flow' },
+            },
+          ],
+          agentRuntime: 'flow',
+        },
+      ],
+    };
+    writeFileSync(join(configDir, 'config.json'), JSON.stringify(existing), {
+      mode: 0o600,
+    });
+
+    await runOnboard({
+      answers: testAnswers({
+        configDir,
+        dispatcherId: 'docs',
+        dispatcherCwd: join(root, 'docs-cwd'),
+        registerService: false,
+        botAppId: 'app-docs',
+        botAppSecret: 'secret-docs',
+      }),
+      runner,
+      platform: 'linux',
+      homeDir: join(root, 'home'),
+      env: { CODEX_ACCESS_TOKEN: 'interactive-token-test' },
+    });
+
+    const saved = JSON.parse(
+      readFileSync(join(configDir, 'config.json'), 'utf8'),
+    ) as Record<string, any>;
+    const agentIds = (saved['agents'] as Array<{ id: string }>).map((a) => a.id);
+    expect(agentIds).toEqual(expect.arrayContaining(['flow', 'docs', 'claude-helper']));
+    const claudeHelper = (saved['agents'] as Array<any>).find(
+      (a) => a.id === 'claude-helper',
+    );
+    expect(claudeHelper?.provider).toBe('builtin:claude-code');
   });
 
   it('rejects a new dispatcher that reuses an existing Feishu app_id', async () => {
     const runner = new FakeRunner();
     const configDir = join(root, 'config');
-    const existingConfig = JSON.stringify({
-      dispatchers: [
-        testDispatcherConfig({
-          id: 'flow',
-          cwd: join(root, 'flow-cwd'),
-          enabled: false,
-          feishu: {
-            app_id: 'app-shared',
-            app_secret: 'secret-flow',
-          },
-          codex: {
-            approval_policy: 'never',
-            sandbox_mode: 'workspace-write',
-            extra_args: [],
-            extra_env: {},
-          },
-        }),
-      ],
-    });
+    const existingConfig = JSON.stringify(
+      testSingleDispatcherFileObject({
+        id: 'flow',
+        cwd: join(root, 'flow-cwd'),
+        enabled: false,
+        feishu: {
+          app_id: 'app-shared',
+          app_secret: 'secret-flow',
+        },
+        codex: {
+          approval_policy: 'never',
+          sandbox_mode: 'workspace-write',
+          extra_args: [],
+          extra_env: {},
+        },
+      }),
+    );
     mkdirSync(configDir, { recursive: true });
     writeFileSync(join(configDir, 'config.json'), existingConfig, {
       mode: 0o600,
@@ -642,6 +723,53 @@ describe('dreamux onboard', () => {
     expect(readFileSync(join(configDir, 'config.json'), 'utf8')).toBe(
       existingConfig,
     );
+  });
+
+  it('onboard output round-trips through loadConfig (#148)', async () => {
+    // Existing tests verify the *written JSON shape*. This test verifies that
+    // loadConfig accepts that shape and produces a fully-resolved in-memory
+    // DreamuxConfig (agents map populated, each dispatcher gets a `.runtime`
+    // with the expected provider + config). This is the canonical round-trip
+    // gate for the agents[] normalization.
+    const runner = new FakeRunner();
+    const configDir = join(root, 'config');
+    const answers = testAnswers({
+      configDir,
+      dispatcherId: 'flow',
+      registerService: false,
+      botAppId: 'app-roundtrip',
+      botAppSecret: 'secret-roundtrip',
+    });
+    writeGlobalCodexAuth(answers);
+
+    await runOnboard({
+      answers,
+      runner,
+      platform: 'linux',
+      homeDir: join(root, 'home'),
+      env: {},
+    });
+
+    // Now load the written config through the same parser.
+    const { config } = await loadConfig({ configDir });
+
+    // agents map must be populated with the 'flow' agent.
+    expect(Object.keys(config.agents)).toEqual(['flow']);
+    expect(config.agents['flow']?.provider).toBe('builtin:codex');
+    expect(config.agents['flow']?.config).toBeDefined();
+
+    // Dispatcher must have its agentRuntime resolved into .runtime.
+    expect(config.dispatchers).toHaveLength(1);
+    expect(config.dispatchers[0]).toMatchObject({
+      id: 'flow',
+      agentRuntime: 'flow',
+      runtime: {
+        provider: 'builtin:codex',
+        config: expect.objectContaining({ approval_policy: 'never' }),
+      },
+    });
+    // In-memory runtime deep-equals the resolved agent config.
+    expect(config.dispatchers[0]?.runtime).toEqual(config.agents['flow']);
   });
 
   it('fails non-interactive setup when required channel inputs are missing', () => {
