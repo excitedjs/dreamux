@@ -191,7 +191,7 @@ export class DispatcherAgentService {
     try {
       await runtime.start();
       await channel.start({
-        submitTurn: (turn, hooks) => runtime.submitTurn(turn, hooks),
+        submitTurn: (turn, hooks) => runtime.channelInput(turn, hooks),
       });
     } catch (err) {
       try {
@@ -250,7 +250,7 @@ export class DispatcherAgentService {
     const notice = this.restartIntent?.claim(dispatcherId, Date.now()) ?? null;
     if (notice === null) return;
     try {
-      const result = await runtime.submitTurn({
+      const result = await runtime.systemInput({
         kind: 'system',
         text: notice,
         reason: 'restart-notice',

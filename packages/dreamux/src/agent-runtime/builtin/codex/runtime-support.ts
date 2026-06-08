@@ -7,7 +7,6 @@ import {
 import type {
   AgentRuntimePathContext,
   AgentRuntimeStateStore,
-  AgentRuntimeTurnInput,
   TeamMateCompletionEnvelope,
 } from '../../types.js';
 
@@ -38,10 +37,4 @@ export function codexRowStateStore(
     recordLostThread: (id, lostThreadId, newThreadId, error) =>
       dispatchers.recordLostThread(id, lostThreadId, newThreadId, error),
   };
-}
-
-export function isSystemTurn(
-  input: AgentRuntimeTurnInput,
-): input is Extract<AgentRuntimeTurnInput, { kind: 'system' }> {
-  return 'kind' in input && input.kind === 'system';
 }

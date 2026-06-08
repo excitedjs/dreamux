@@ -40,7 +40,7 @@ import type {
 import {
   TurnManager,
 } from './turn-manager.js';
-import type { InboundDeliveryHooks } from '../../turn.js';
+import type { InboundDeliveryHooks, InboundTurnInput } from '../../turn.js';
 import { createFailFastApprovalHandler } from './approval.js';
 import {
   dispatcherCodexHomeDoctorContext,
@@ -57,7 +57,7 @@ import type {
   AgentRuntimePathContext,
   AgentRuntimeResumeInput,
   AgentRuntimeStateStore,
-  AgentRuntimeTurnInput,
+  AgentRuntimeSystemInput,
   AgentRuntimeTurnResult,
   TeamMateCompletionDeliveryResult,
   TeamMateCompletionEnvelope,
@@ -68,7 +68,6 @@ import {
   codexRowStateStore,
   defaultCodexRuntimePaths,
   formatCodexTeamMateCompletion,
-  isSystemTurn,
 } from './runtime-support.js';
 
 const DEFAULT_RESTART_BACKOFF_BASE_MS = 1000;
@@ -388,23 +387,25 @@ export class CodexRuntime implements AgentRuntime {
    * Submit any accepted inbound message arriving for this dispatcher. Called by
    * the Feishu inbound layer.
    */
-  async submitTurn(
-    input: AgentRuntimeTurnInput,
+  async channelInput(
+    input: InboundTurnInput,
     hooks: InboundDeliveryHooks = {},
   ): Promise<AgentRuntimeTurnResult> {
-    if (isSystemTurn(input)) {
-      return this.submitRestartNotice(input.text);
-    }
     if (this.turnManager === null) {
       return { status: 'failed', error: new Error('turn manager not initialized') };
     }
     return this.turnManager.enqueue(input, hooks);
   }
 
+  /** Inject a system-originated notice (e.g. a restart notice). */
+  async systemInput(notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult> {
+    return this.submitRestartNotice(notice.text);
+  }
+
   /**
    * Codex TeamMate completion delivery (issue #110 PR8): inbox + turn trigger.
    * The completion is delivered into the dispatcher's Codex thread as a turn via
-   * the public `submitTurn` seam — not turn-manager internals — so it
+   * the public `channelInput` seam — not turn-manager internals — so it
    * survives the planned move of queue/state to a per-dispatcher state owner.
    *
    * Each attempt uses a fresh, non-routable source id. The turn manager commits
@@ -415,11 +416,11 @@ export class CodexRuntime implements AgentRuntime {
    * per attempt re-submits safely without any double-injection risk.
    * `source_chat_id` is inert in the turn path.
    */
-  async deliverTeamMateCompletion(
+  async completionInput(
     completion: TeamMateCompletionEnvelope,
   ): Promise<TeamMateCompletionDeliveryResult> {
     this.teammateDeliverySeq += 1;
-    const delivery = await this.submitTurn({
+    const delivery = await this.channelInput({
       source_chat_id: 'teammate',
       source_message_id: `teammate:${completion.teammateName}#${this.teammateDeliverySeq}`,
       sender_id: null,

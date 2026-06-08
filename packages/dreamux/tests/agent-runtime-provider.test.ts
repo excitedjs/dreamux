@@ -14,10 +14,11 @@ import {
   type AgentRuntimeLastResult,
   type AgentRuntimeProvider,
   type AgentRuntimeProviderConfigReadContext,
-  type AgentRuntimeTurnInput,
+  type AgentRuntimeSystemInput,
   type AgentRuntimeTurnResult,
   type ExternalAgentRuntimeProviderFactory,
 } from '../src/agent-runtime/index.js';
+import type { InboundTurnInput } from '../src/agent-runtime/turn.js';
 import {
   UnknownBuiltinProviderError,
   createBuiltinProviderRegistry,
@@ -43,7 +44,7 @@ function builtinCatalog(): AgentRuntimeProviderCatalog {
 
 class FakeExternalRuntime implements AgentRuntime {
   private status: ReturnType<AgentRuntime['getStatus']> = 'declared';
-  readonly submitted: AgentRuntimeTurnInput[] = [];
+  readonly submitted: InboundTurnInput[] = [];
 
   constructor(readonly providerRef: string) {}
 
@@ -59,9 +60,13 @@ class FakeExternalRuntime implements AgentRuntime {
     this.status = 'stopped';
   }
 
-  async submitTurn(input: AgentRuntimeTurnInput): Promise<AgentRuntimeTurnResult> {
+  async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
     this.submitted.push(input);
     return { status: 'submitted', turnId: 'turn-external' };
+  }
+
+  async systemInput(_notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult> {
+    return { status: 'skipped' };
   }
 
   getStatus(): ReturnType<AgentRuntime['getStatus']> {

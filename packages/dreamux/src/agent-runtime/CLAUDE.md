@@ -37,9 +37,10 @@ agent session; how it talks to its engine is the engine's business.
 
 ## In flight (issue #143)
 
-The runtime input surface is being unified into source/nature-named entries
-(`channelInput` / `completionInput` / `systemInput`) with a generic
-`CompletionEnvelope`; the completion delivery-kind names and the `codexThread`
-default are being lifted out of the shared contract. Until that lands, the
-current entries are `submitTurn` (channel + system) and
-`deliverTeamMateCompletion`.
+The runtime input surface is now three source/nature-named entries —
+`channelInput` (channel-inbound turn), `systemInput` (system notice, e.g. a
+restart notice), and the optional `completionInput` (teammate-completion
+delivery). Still pending: generalizing the completion envelope to a neutral
+`CompletionEnvelope` (C2), neutralizing the channel payload (D), and lifting the
+completion delivery-kind names and the `codexThread` default out of the shared
+contract.

@@ -29,8 +29,8 @@
  * Failure contract (unchanged by #120): a turn failure (spawn error, child
  * exit, error `result`) is never swallowed. For inbound/restart turns it drives
  * the runtime to `degraded` with a persisted `last_error` (observable via
- * status/doctor). For `deliverTeamMateCompletion` it surfaces as a `failed`
- * result the caller can act on (PR8 delivery retry). `submitTurn` still
+ * status/doctor). For `completionInput` it surfaces as a `failed`
+ * result the caller can act on (PR8 delivery retry). `channelInput` still
  * returns after accept (submit != completion) so the channel can ack promptly.
  *
  * Restart: an unexpected child exit marks the runtime `degraded`; the next turn
@@ -77,6 +77,7 @@ import {
 } from './supervisor.js';
 import type {
   InboundDeliveryHooks,
+  InboundTurnInput,
 } from '../../turn.js';
 import type { DispatcherStatus } from '../../../state/dispatcher-store.js';
 import type {
@@ -86,7 +87,7 @@ import type {
   AgentRuntimeLastResult,
   AgentRuntimeProvider,
   AgentRuntimeResumeInput,
-  AgentRuntimeTurnInput,
+  AgentRuntimeSystemInput,
   AgentRuntimeTurnResult,
   TeamMateCompletionDeliveryResult,
   TeamMateCompletionEnvelope,
@@ -134,16 +135,10 @@ function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function isSystemTurn(
-  input: AgentRuntimeTurnInput,
-): input is Extract<AgentRuntimeTurnInput, { kind: 'system' }> {
-  return 'kind' in input && input.kind === 'system';
-}
-
 /**
  * The Claude Code agent runtime for one dispatcher. A single resident
  * stream-json child serves every turn. Turns run serially (one at a time) and
- * `submitTurn` returns after the message is accepted — not after the turn
+ * `channelInput` returns after the message is accepted — not after the turn
  * completes — matching the Codex runtime's submit-then-serialize contract.
  */
 export class ClaudeCodeRuntime implements AgentRuntime {
@@ -258,19 +253,21 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     await this.setStatus('stopped');
   }
 
-  async submitTurn(
-    input: AgentRuntimeTurnInput,
+  async systemInput(notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult> {
+    if (this.stopped) return { status: 'stopped' };
+    const turnId = `claude-system-${++this.turnCounter}`;
+    void this.runTurnOnQueue(notice.text, turnId).then(
+      () => this.markTurnSucceeded(),
+      (err) => this.markTurnFailed(turnId, err),
+    );
+    return { status: 'submitted', turnId };
+  }
+
+  async channelInput(
+    input: InboundTurnInput,
     hooks: InboundDeliveryHooks = {},
   ): Promise<AgentRuntimeTurnResult> {
     if (this.stopped) return { status: 'stopped' };
-    if (isSystemTurn(input)) {
-      const turnId = `claude-system-${++this.turnCounter}`;
-      void this.runTurnOnQueue(input.text, turnId).then(
-        () => this.markTurnSucceeded(),
-        (err) => this.markTurnFailed(turnId, err),
-      );
-      return { status: 'submitted', turnId };
-    }
     const key = input.source_message_id ?? '';
     if (key !== '' && this.seen.has(key)) return { status: 'duplicate' };
     if (key !== '') this.seen.add(key);
@@ -294,7 +291,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     return { status: 'submitted', turnId };
   }
 
-  async deliverTeamMateCompletion(
+  async completionInput(
     completion: TeamMateCompletionEnvelope,
   ): Promise<TeamMateCompletionDeliveryResult> {
     if (this.stopped) {

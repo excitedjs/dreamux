@@ -290,7 +290,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     const { runtime } = makeRuntime(fleet);
     await runtime.start();
 
-    await runtime.submitTurn({
+    await runtime.channelInput({
       source_chat_id: 'c',
       source_message_id: 'm1',
       sender_id: 'u',
@@ -298,7 +298,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     });
     await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
 
-    await runtime.submitTurn({
+    await runtime.channelInput({
       source_chat_id: 'c',
       source_message_id: 'm2',
       sender_id: 'u',
@@ -338,7 +338,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     await runtime.start();
 
     const accepted: string[] = [];
-    const first = await runtime.submitTurn(
+    const first = await runtime.channelInput(
       { source_chat_id: 'c', source_message_id: 'm1', sender_id: 'u', parsed_text: 'do it' },
       { onAccepted: (input) => void accepted.push(input.source_message_id ?? '') },
     );
@@ -349,7 +349,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     expect(fleet.sessions[0]?.prompts[0]).toBe('do it');
     await waitFor(() => runtime.getThreadId() === 'session-abc');
 
-    const dup = await runtime.submitTurn({
+    const dup = await runtime.channelInput({
       source_chat_id: 'c',
       source_message_id: 'm1',
       sender_id: 'u',
@@ -364,7 +364,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     const { runtime } = makeRuntime(fleet);
     await runtime.start();
 
-    const result = await runtime.deliverTeamMateCompletion!({
+    const result = await runtime.completionInput!({
       teammateName: 'mate-1',
       sessionId: 'session-7',
       status: 'completed',
@@ -389,7 +389,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     await runtime.stop();
     expect(runtime.getStatus()).toBe('stopped');
     expect(fleet.sessions[0]?.isAlive()).toBe(false);
-    const after = await runtime.submitTurn({
+    const after = await runtime.channelInput({
       source_chat_id: 'c',
       source_message_id: 'm9',
       sender_id: 'u',
@@ -405,7 +405,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     await runtime.start();
     expect(runtime.getStatus()).toBe('ready');
 
-    const submit = await runtime.submitTurn({
+    const submit = await runtime.channelInput({
       source_chat_id: 'c',
       source_message_id: 'm1',
       sender_id: 'u',
@@ -423,7 +423,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     ]);
     const { runtime, store } = makeRuntime(fleet);
     await runtime.start();
-    await runtime.submitTurn({
+    await runtime.channelInput({
       source_chat_id: 'c',
       source_message_id: 'm1',
       sender_id: 'u',
@@ -438,7 +438,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     const { runtime } = makeRuntime(fleet);
     await runtime.start();
 
-    await runtime.submitTurn({
+    await runtime.channelInput({
       source_chat_id: 'c',
       source_message_id: 'm1',
       sender_id: 'u',
@@ -446,7 +446,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     });
     await waitFor(() => runtime.getStatus() === 'degraded');
 
-    await runtime.submitTurn({
+    await runtime.channelInput({
       source_chat_id: 'c',
       source_message_id: 'm2',
       sender_id: 'u',
@@ -461,7 +461,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     await runtime.start();
 
     // First turn establishes the session id.
-    await runtime.submitTurn({
+    await runtime.channelInput({
       source_chat_id: 'c',
       source_message_id: 'm1',
       sender_id: 'u',
@@ -475,7 +475,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     expect(store.get('flow')?.last_error).toContain('exited');
 
     // Next turn re-spawns a fresh session that resumes the captured session id.
-    await runtime.submitTurn({
+    await runtime.channelInput({
       source_chat_id: 'c',
       source_message_id: 'm2',
       sender_id: 'u',
@@ -523,7 +523,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     });
     await runtime.start();
 
-    await runtime.submitTurn({
+    await runtime.channelInput({
       source_chat_id: 'c',
       source_message_id: 'm1',
       sender_id: 'u',
@@ -534,7 +534,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
 
     // Delivery must return a real `failed` result (so PR8 retry can act),
     // bounded by the same deadline — never an unresolved await.
-    const delivery = await runtime.deliverTeamMateCompletion!({
+    const delivery = await runtime.completionInput!({
       taskId: 'task-stall',
       teammateId: 'mate-1',
       status: 'completed',
@@ -550,7 +550,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     const { runtime } = makeRuntime(fleet);
     await runtime.start();
 
-    const result = await runtime.deliverTeamMateCompletion!({
+    const result = await runtime.completionInput!({
       taskId: 'task-9',
       teammateId: 'mate-1',
       status: 'completed',

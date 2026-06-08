@@ -13,9 +13,10 @@ import {
   type AgentRuntimeLastResult,
   type AgentRuntimeProvider,
   type AgentRuntimeResumeInput,
-  type AgentRuntimeTurnInput,
+  type AgentRuntimeSystemInput,
   type AgentRuntimeTurnResult,
 } from '../src/agent-runtime/index.js';
+import type { InboundTurnInput } from '../src/agent-runtime/turn.js';
 import { TeamMateAgentService } from '../src/dispatcher-service/teammate/service.js';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
 import { resetRuntimeConfig } from '../src/platform/paths.js';
@@ -37,7 +38,7 @@ class FakeRuntime implements AgentRuntime {
   private threadId: string | null = null;
   private resumed = false;
   private turns = 0;
-  readonly submitted: AgentRuntimeTurnInput[] = [];
+  readonly submitted: InboundTurnInput[] = [];
 
   constructor(private readonly context: AgentRuntimeCreateContext) {}
 
@@ -63,10 +64,14 @@ class FakeRuntime implements AgentRuntime {
     await this.context.state?.setStatus(this.context.row.dispatcher_id, 'stopped');
   }
 
-  async submitTurn(input: AgentRuntimeTurnInput): Promise<AgentRuntimeTurnResult> {
+  async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
     this.submitted.push(input);
     this.turns += 1;
     return { status: 'submitted', turnId: `turn-${this.turns}` };
+  }
+
+  async systemInput(_notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult> {
+    return { status: 'skipped' };
   }
 
   getStatus(): ReturnType<AgentRuntime['getStatus']> {

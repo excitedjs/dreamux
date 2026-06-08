@@ -66,13 +66,11 @@ export type TeamMateCompletionDeliveryResult =
   | { status: 'unsupported'; reason: string }
   | { status: 'failed'; error: Error };
 
-export type AgentRuntimeTurnInput =
-  | InboundTurnInput
-  | {
-      kind: 'system';
-      text: string;
-      reason: 'restart-notice' | 'teammate-completion' | 'runtime-control';
-    };
+export interface AgentRuntimeSystemInput {
+  kind: 'system';
+  text: string;
+  reason: 'restart-notice' | 'teammate-completion' | 'runtime-control';
+}
 
 export type AgentRuntimeTurnResult = InboundDeliveryResult | NoticeInjectionResult;
 
@@ -130,17 +128,29 @@ export interface AgentRuntime {
   start(): Promise<void>;
   resume(input?: AgentRuntimeResumeInput): Promise<void>;
   stop(): Promise<void>;
-  submitTurn(
-    input: AgentRuntimeTurnInput,
+  /** Deliver a channel-inbound turn (today's `submitTurn` channel case). */
+  channelInput(
+    input: InboundTurnInput,
     hooks?: InboundDeliveryHooks,
   ): Promise<AgentRuntimeTurnResult>;
+  /**
+   * Inject a system-originated notice (today's `submitTurn` `{kind:'system'}`
+   * case; e.g. a restart notice). Keeps the "skip if a live inbound already
+   * arrived" semantics.
+   */
+  systemInput(notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult>;
   getStatus(): DispatcherStatus;
   getThreadId(): string | null;
   wasThreadResumed(): boolean;
   getLast(): Promise<AgentRuntimeLastResult | null>;
   getContext(): Promise<AgentRuntimeContextSnapshot | null>;
   getCapabilities(): AgentRuntimeCapabilities;
-  deliverTeamMateCompletion?(
+  /**
+   * Deliver a teammate-completion envelope upward (rename of
+   * `deliverTeamMateCompletion`). Optional: a runtime whose capabilities declare
+   * no `teammateCompletion` shapes may not support it.
+   */
+  completionInput?(
     completion: TeamMateCompletionEnvelope,
   ): Promise<TeamMateCompletionDeliveryResult>;
 }

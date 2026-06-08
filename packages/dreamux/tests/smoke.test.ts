@@ -73,10 +73,11 @@ import {
   type AgentRuntimeCreateContext,
   type AgentRuntimeLastResult,
   type AgentRuntimeProvider,
-  type AgentRuntimeTurnInput,
+  type AgentRuntimeSystemInput,
   type AgentRuntimeTurnResult,
   type ExternalAgentRuntimeProviderFactory,
 } from '../src/agent-runtime/index.js';
+import type { InboundTurnInput } from '../src/agent-runtime/turn.js';
 import {
   createBuiltinProviderRegistry,
   type ProviderRegistry,
@@ -202,10 +203,16 @@ class SmokeExternalRuntime implements AgentRuntime {
     this.status = 'stopped';
   }
 
-  async submitTurn(
-    _input: AgentRuntimeTurnInput,
+  async channelInput(
+    _input: InboundTurnInput,
   ): Promise<AgentRuntimeTurnResult> {
     return { status: 'submitted', turnId: 'external-turn' };
+  }
+
+  async systemInput(
+    _notice: AgentRuntimeSystemInput,
+  ): Promise<AgentRuntimeTurnResult> {
+    return { status: 'skipped' };
   }
 
   getStatus(): ReturnType<AgentRuntime['getStatus']> {
