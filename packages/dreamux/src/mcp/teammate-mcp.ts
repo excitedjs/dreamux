@@ -5,8 +5,8 @@ import {
   AdminClientError,
   sendAdminRequest,
 } from '../admin/client.js';
-import { adminSocketPath as defaultAdminSocketPath } from '../runtime/paths.js';
-import { validateDispatcherId } from '../runtime/dispatcher-id.js';
+import { adminSocketPath as defaultAdminSocketPath } from '../platform/paths.js';
+import { validateDispatcherId } from '../state/dispatcher-id.js';
 
 export interface TeamMateMcpOptions {
   dispatcherId: string;

@@ -8,17 +8,19 @@ import {
   formatDispatcherCodexHomeErrors,
   dispatcherCodexHomeDoctorContext,
   validateDispatcherCodexHome,
-} from '../src/runtime/dispatcher-codex-home.js';
-import { BUILT_IN_DEFAULTS } from '../src/runtime/config.js';
+} from '../src/agent-runtime/builtin/codex/codex-home.js';
+import { BUILT_IN_DEFAULTS } from '../src/config/config.js';
 import {
-  dispatcherAppServerControlDir,
-  dispatcherCodexCwd,
-  dispatcherCodexHome,
-  dispatcherWorkspaceSkillPath,
-  dispatcherSocketPath,
+  defaultDispatcherCwd,
   resetRuntimeConfig,
   setRuntimeConfig,
-} from '../src/runtime/paths.js';
+} from '../src/platform/paths.js';
+import {
+  dispatcherAppServerControlDir,
+  dispatcherCodexHome,
+  dispatcherSocketPath,
+  dispatcherWorkspaceSkillPath,
+} from '../src/agent-runtime/builtin/codex/paths.js';
 
 describe('global Codex home doctor', () => {
   let runtimeDir: string;
@@ -165,7 +167,7 @@ function writeDispatcherHome(
   }
 
   if (options.installDispatcherSkill === false) return;
-  const skillPath = dispatcherWorkspaceSkillPath(dispatcherCodexCwd(dispatcherId));
+  const skillPath = dispatcherWorkspaceSkillPath(defaultDispatcherCwd(dispatcherId));
   mkdirSync(dirname(skillPath), {
     recursive: true,
   });

@@ -15,12 +15,12 @@ import { dirname, join } from 'node:path';
 
 import {
   installBundledWorkspaceSkills,
-} from '../src/runtime/bundled-skills.js';
+} from '../src/onboard/bundled-skills.js';
 import {
   BUNDLED_SKILL_NAMES,
   bundledSkillDir,
-  dispatcherWorkspaceSkillDir,
-} from '../src/runtime/paths.js';
+} from '../src/platform/paths.js';
+import { dispatcherWorkspaceSkillDir } from '../src/agent-runtime/builtin/codex/paths.js';
 
 describe('bundled workspace skill installer', () => {
   let root: string;

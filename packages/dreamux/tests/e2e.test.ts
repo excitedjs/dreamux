@@ -18,23 +18,21 @@ import { sendAdminRequest } from '../src/admin/client.js';
 import {
   loadDispatcherAccess,
   saveDispatcherAccess,
-} from '../src/channel/feishu-gate.js';
-import { CodexWsClient } from '../src/codex/rpc.js';
+} from '../src/channel/feishu/feishu-gate.js';
+import { CodexWsClient } from '../src/agent-runtime/builtin/codex/rpc.js';
 import {
   CodexProcess,
   type CodexProcessOptions,
-} from '../src/codex/supervisor.js';
+} from '../src/agent-runtime/builtin/codex/supervisor.js';
 import {
   createFakeFeishuBot,
   type FakeFeishuBot,
   type FeishuInboundEvent,
-} from '../src/feishu/bot.js';
+} from '../src/channel/feishu/bot.js';
 import { runFeishuMcp } from '../src/mcp/feishu-mcp.js';
-import { BUILT_IN_DEFAULTS, type DreamuxConfig } from '../src/runtime/config.js';
-import {
-  dispatcherCodexCwd,
-  dispatcherCodexHome,
-} from '../src/runtime/paths.js';
+import { BUILT_IN_DEFAULTS, type DreamuxConfig } from '../src/config/config.js';
+import { defaultDispatcherCwd } from '../src/platform/paths.js';
+import { dispatcherCodexHome } from '../src/agent-runtime/builtin/codex/paths.js';
 import { startFakeCodex, type FakeCodex } from './fake-codex.js';
 import { testDispatcherConfig } from './helpers/config.js';
 
@@ -225,7 +223,7 @@ function writeReadyDispatcherWorkspace(dispatcherId: string): void {
   writeFileSync(join(dispatcherCodexHome(dispatcherId), 'auth.json'), '{}', {
     mode: 0o600,
   });
-  mkdirSync(dispatcherCodexCwd(dispatcherId), { recursive: true });
+  mkdirSync(defaultDispatcherCwd(dispatcherId), { recursive: true });
 }
 
 describe('dreamux cross-module e2e', () => {

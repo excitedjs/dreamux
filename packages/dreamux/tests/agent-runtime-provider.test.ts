@@ -14,15 +14,16 @@ import {
   type AgentRuntimeLastResult,
   type AgentRuntimeProvider,
   type AgentRuntimeProviderConfigReadContext,
-  type AgentRuntimeTurnInput,
+  type AgentRuntimeSystemInput,
   type AgentRuntimeTurnResult,
   type ExternalAgentRuntimeProviderFactory,
 } from '../src/agent-runtime/index.js';
+import type { InboundTurnInput } from '../src/agent-runtime/turn.js';
 import {
   UnknownBuiltinProviderError,
   createBuiltinProviderRegistry,
 } from '../src/registry/index.js';
-import { DispatcherStore } from '../src/runtime/dispatcher-store.js';
+import { DispatcherStore } from '../src/state/dispatcher-store.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 
 const EXTERNAL_CAPABILITIES: AgentRuntimeCapabilities = {
@@ -31,19 +32,20 @@ const EXTERNAL_CAPABILITIES: AgentRuntimeCapabilities = {
   events: { kind: 'synthesized' },
   last: { supported: true },
   context: { supported: true },
+  systemPrompt: { mode: 'append' },
   teammateCompletion: [],
 };
 
 function builtinCatalog(): AgentRuntimeProviderCatalog {
   return createBuiltinAgentRuntimeProviderCatalog({
     registry: createBuiltinProviderRegistry(),
-    codex: { resolveBinPath: (bin) => bin },
+    codex: {},
   });
 }
 
 class FakeExternalRuntime implements AgentRuntime {
   private status: ReturnType<AgentRuntime['getStatus']> = 'declared';
-  readonly submitted: AgentRuntimeTurnInput[] = [];
+  readonly submitted: InboundTurnInput[] = [];
 
   constructor(readonly providerRef: string) {}
 
@@ -59,9 +61,13 @@ class FakeExternalRuntime implements AgentRuntime {
     this.status = 'stopped';
   }
 
-  async submitTurn(input: AgentRuntimeTurnInput): Promise<AgentRuntimeTurnResult> {
+  async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
     this.submitted.push(input);
     return { status: 'submitted', turnId: 'turn-external' };
+  }
+
+  async systemInput(_notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult> {
+    return { status: 'skipped' };
   }
 
   getStatus(): ReturnType<AgentRuntime['getStatus']> {
@@ -137,6 +143,7 @@ describe('AgentRuntimeProviderCatalog', () => {
       row: row!,
       dispatcher,
       dispatchers: store,
+      cwd: '/tmp/dreamux-test-cwd',
       mcpServers: [],
       log: () => {
         /* test sink */
@@ -200,7 +207,7 @@ describe('AgentRuntimeProviderCatalog', () => {
 
     const catalog = createBuiltinAgentRuntimeProviderCatalog({
       registry,
-      codex: { resolveBinPath: (bin) => bin },
+      codex: {},
     });
     expect(catalog.list().map((provider) => provider.ref).sort()).toEqual([
       'builtin:claude-code',
@@ -220,6 +227,7 @@ describe('AgentRuntimeProviderCatalog', () => {
       row: store.get('flow')!,
       dispatcher,
       dispatchers: store,
+      cwd: '/tmp/dreamux-test-cwd',
       mcpServers: [],
       log: () => undefined,
     });
@@ -285,7 +293,6 @@ describe('AgentRuntimeProviderCatalog', () => {
       descriptor.id,
       createCodexAgentRuntimeProvider({
         descriptor,
-        resolveBinPath: (bin) => bin,
       }),
     );
     const catalog = new AgentRuntimeProviderCatalog({ registry });

@@ -1,25 +1,27 @@
 import { access } from 'node:fs/promises';
 
-import { codexArgsToCli, parseCodexArgs } from '../runtime/codex-args.js';
+import { codexArgsToCli, parseCodexArgs } from '../agent-runtime/builtin/codex/args.js';
 import {
   assertNoLegacyTomlOnly,
   globalConfigFile,
   loadConfig,
   stringifyConfig,
-} from '../runtime/config.js';
+} from '../config/config.js';
+import {
+  logsRoot,
+  setRuntimeConfig,
+  stateRoot,
+} from '../platform/paths.js';
 import {
   dispatcherAppServerControlDir,
   dispatcherCodexHome,
   dispatcherWorkspaceCodexSkillsDir,
-  logsRoot,
-  setRuntimeConfig,
-  stateRoot,
-} from '../runtime/paths.js';
+} from '../agent-runtime/builtin/codex/paths.js';
 import {
   dispatcherCodexHomeDoctorContext,
   validateDispatcherCodexHome,
   type DispatcherCodexHomeDoctorResult,
-} from '../runtime/dispatcher-codex-home.js';
+} from '../agent-runtime/builtin/codex/codex-home.js';
 import { ExecaCommandRunner } from './commands.js';
 import {
   dispatcherCodexArgsJson,

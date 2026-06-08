@@ -17,7 +17,7 @@ import {
   type TransportLogger,
 } from '@excitedjs/feishu-transport';
 
-import { createFeishuBot } from '../src/feishu/bot.js';
+import { createFeishuBot } from '../src/channel/feishu/bot.js';
 
 vi.mock('@excitedjs/feishu-transport', async (importActual) => {
   const actual =

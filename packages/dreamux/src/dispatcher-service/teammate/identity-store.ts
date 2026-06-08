@@ -5,7 +5,7 @@ import {
   dispatcherTeamMateHistoryPath,
   dispatcherTeamMateIdentitiesDir,
   dispatcherTeamMateIdentityPath,
-} from '../../runtime/paths.js';
+} from '../../platform/paths.js';
 import {
   validateTeamMateName,
   type TeamMateHistoryEvent,

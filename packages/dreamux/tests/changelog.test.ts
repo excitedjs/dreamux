@@ -7,7 +7,7 @@ import { readPackagedChangelog } from '../src/cli/changelog.js';
 import {
   packagedChangelogJsonPath,
   packagedChangelogMarkdownPath,
-} from '../src/runtime/paths.js';
+} from '../src/platform/paths.js';
 
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 

@@ -22,9 +22,9 @@ import { promisify } from 'node:util';
 import {
   createClaudeCodeAgentRuntimeProvider,
   type ClaudeCodeAgentRuntimeProviderOptions,
-} from '../src/agent-runtime/claude-code.js';
+} from '../src/agent-runtime/builtin/claude-code/runtime.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
-import { DispatcherStore } from '../src/runtime/dispatcher-store.js';
+import { DispatcherStore } from '../src/state/dispatcher-store.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 
 const execFileAsync = promisify(execFile);
@@ -113,6 +113,7 @@ describe('claude-code live integration (opt-in)', () => {
       row: row!,
       dispatcher,
       dispatchers: store,
+      cwd: home,
       mcpServers: [],
       log: () => {
         /* live test sink */
@@ -122,11 +123,9 @@ describe('claude-code live integration (opt-in)', () => {
     await runtime.start();
     expect(runtime.getStatus()).toBe('ready');
 
-    const first = await runtime.submitTurn({
-      source_chat_id: 'c',
-      source_message_id: 'live-1',
-      sender_id: 'u',
-      parsed_text: 'Reply with the single word: pong',
+    const first = await runtime.channelInput({
+      sourceId: 'live-1',
+      text: 'Reply with the single word: pong',
     });
     expect(first.status).toBe('submitted');
 
@@ -139,11 +138,9 @@ describe('claude-code live integration (opt-in)', () => {
 
     // Second turn over the SAME resident process: the runtime must stay ready
     // and keep the same session id (no re-spawn, no new session).
-    const second = await runtime.submitTurn({
-      source_chat_id: 'c',
-      source_message_id: 'live-2',
-      sender_id: 'u',
-      parsed_text: 'Reply with the single word: ping',
+    const second = await runtime.channelInput({
+      sourceId: 'live-2',
+      text: 'Reply with the single word: ping',
     });
     expect(second.status).toBe('submitted');
 

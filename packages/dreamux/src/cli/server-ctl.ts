@@ -13,7 +13,7 @@
  */
 
 import { connect, type Socket } from 'node:net';
-import { adminSocketPath } from '../runtime/paths.js';
+import { adminSocketPath } from '../platform/paths.js';
 import type { AdminRequest, AdminResponse } from '../admin/protocol.js';
 
 interface ParsedArgs {
@@ -94,8 +94,6 @@ const FLAG_TO_PARAM: Record<string, string> = {
   id: 'dispatcher_id',
   'bot-app-id': 'bot_app_id',
   'bot-secret-ref': 'bot_secret_ref',
-  'codex-args-json': 'codex_args_json',
-  'codex-cwd': 'codex_cwd',
 };
 
 function flagsToParams(

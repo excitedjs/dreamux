@@ -143,11 +143,13 @@ explicitly supersedes the top-level design.
   work from any cwd and via `~/bin/<x>` shortcuts. The POSIX symlink-walk
   loop in `/packages/dreamux/bin/dreamux` is the reference shape; reuse it
   verbatim for any new launcher.
-- **Path builders go in `src/runtime/paths.ts` only.** Cross-process file
-  contracts (the admin socket path, dispatcher state files, logs, and Codex
-  socket path) drift silently if any other file constructs them by raw string
+- **Neutral path builders go in `src/platform/paths.ts` only; per-runtime path
+  derivation lives in each builtin's `src/agent-runtime/builtin/<name>/paths.ts`.**
+  Cross-process file contracts (the admin socket path, dispatcher state files,
+  logs) drift silently if any other file constructs them by raw string
   concatenation.
-- **Codex protocol bumps run through `src/codex/handshake.ts` first.** Any
+- **Codex protocol bumps run through `src/agent-runtime/builtin/codex/handshake.ts`
+  first.** Any
   RPC before `initialize` is rejected with `Not initialized` on codex
   0.134+ — confirmed end-to-end in `tests/codex-0135-live.test.ts`.
 - **Tests that depend on a real codex install fail loudly when codex is

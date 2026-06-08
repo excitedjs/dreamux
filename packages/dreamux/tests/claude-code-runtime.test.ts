@@ -9,20 +9,21 @@ import { fileURLToPath } from 'node:url';
 import {
   createClaudeCodeAgentRuntimeProvider,
   type ClaudeCodeAgentRuntimeProviderOptions,
-} from '../src/agent-runtime/claude-code.js';
+} from '../src/agent-runtime/builtin/claude-code/runtime.js';
 import {
   createDefaultClaudeCodeSession,
   type ClaudeCodeSession,
   type ClaudeCodeSessionFactory,
   type ClaudeCodeSessionSpec,
   type TurnOutcome,
-} from '../src/claude-code/supervisor.js';
-import { claudeCodeMcpConfig } from '../src/claude-code/mcp-config.js';
-import { claudeCodeResidentArgs } from '../src/runtime/claude-code-args.js';
-import { codexMcpServerArgs } from '../src/codex/mcp-config.js';
-import { DispatcherStore } from '../src/runtime/dispatcher-store.js';
-import { dispatcherClaudeCodeMcpConfigPath } from '../src/runtime/paths.js';
-import { defaultDispatcherClaudeCodeConfig } from '../src/runtime/config.js';
+} from '../src/agent-runtime/builtin/claude-code/supervisor.js';
+import { claudeCodeMcpConfig } from '../src/agent-runtime/builtin/claude-code/mcp-config.js';
+import { claudeCodeResidentArgs } from '../src/agent-runtime/builtin/claude-code/args.js';
+import { codexMcpServerArgs } from '../src/agent-runtime/builtin/codex/mcp-config.js';
+import { DispatcherStore } from '../src/state/dispatcher-store.js';
+import { defaultDispatcherCwd } from '../src/platform/paths.js';
+import { dispatcherClaudeCodeMcpConfigPath } from '../src/agent-runtime/builtin/claude-code/paths.js';
+import { defaultDispatcherClaudeCodeConfig } from '../src/config/config.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 import type {
@@ -198,6 +199,39 @@ describe('claude-code pure translation (not Codex renamed)', () => {
     });
     expect(args).not.toContain('--resume');
   });
+
+  it('injects the dispatcher role prompt via --append-system-prompt (append mode)', () => {
+    const args = claudeCodeResidentArgs({
+      config: defaultDispatcherClaudeCodeConfig(),
+      mcpConfigPath: '/x.json',
+      resumeSessionId: null,
+      systemPromptContent: 'You are a Dreamux dispatcher.',
+    });
+    // claude APPENDS the role prompt on top of its own system prompt — distinct
+    // from codex, which REPLACES its base instructions.
+    expect(
+      args.slice(
+        args.indexOf('--append-system-prompt'),
+        args.indexOf('--append-system-prompt') + 2,
+      ),
+    ).toEqual(['--append-system-prompt', 'You are a Dreamux dispatcher.']);
+  });
+
+  it('omits --append-system-prompt when no role prompt is supplied (e.g. teammate)', () => {
+    const undefinedArgs = claudeCodeResidentArgs({
+      config: defaultDispatcherClaudeCodeConfig(),
+      mcpConfigPath: '/x.json',
+      resumeSessionId: null,
+    });
+    expect(undefinedArgs).not.toContain('--append-system-prompt');
+    const emptyArgs = claudeCodeResidentArgs({
+      config: defaultDispatcherClaudeCodeConfig(),
+      mcpConfigPath: '/x.json',
+      resumeSessionId: null,
+      systemPromptContent: '',
+    });
+    expect(emptyArgs).not.toContain('--append-system-prompt');
+  });
 });
 
 describe('builtin:claude-code provider', () => {
@@ -244,6 +278,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       row: row!,
       dispatcher,
       dispatchers: store,
+      cwd: defaultDispatcherCwd('flow'),
       mcpServers: [FEISHU_MCP],
       log: () => {
         /* test sink */
@@ -288,19 +323,15 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     const { runtime } = makeRuntime(fleet);
     await runtime.start();
 
-    await runtime.submitTurn({
-      source_chat_id: 'c',
-      source_message_id: 'm1',
-      sender_id: 'u',
-      parsed_text: 'first turn',
+    await runtime.channelInput({
+      sourceId: 'm1',
+      text: 'first turn',
     });
     await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
 
-    await runtime.submitTurn({
-      source_chat_id: 'c',
-      source_message_id: 'm2',
-      sender_id: 'u',
-      parsed_text: 'second turn',
+    await runtime.channelInput({
+      sourceId: 'm2',
+      text: 'second turn',
     });
     await waitFor(() => fleet.sessions[0]?.prompts.length === 2);
 
@@ -336,9 +367,9 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     await runtime.start();
 
     const accepted: string[] = [];
-    const first = await runtime.submitTurn(
-      { source_chat_id: 'c', source_message_id: 'm1', sender_id: 'u', parsed_text: 'do it' },
-      { onAccepted: (input) => void accepted.push(input.source_message_id ?? '') },
+    const first = await runtime.channelInput(
+      { sourceId: 'm1', text: 'do it' },
+      { onAccepted: (input) => void accepted.push(input.sourceId) },
     );
     expect(first.status).toBe('submitted');
     expect(accepted).toEqual(['m1']);
@@ -347,11 +378,9 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     expect(fleet.sessions[0]?.prompts[0]).toBe('do it');
     await waitFor(() => runtime.getThreadId() === 'session-abc');
 
-    const dup = await runtime.submitTurn({
-      source_chat_id: 'c',
-      source_message_id: 'm1',
-      sender_id: 'u',
-      parsed_text: 'do it again',
+    const dup = await runtime.channelInput({
+      sourceId: 'm1',
+      text: 'do it again',
     });
     expect(dup.status).toBe('duplicate');
     expect(fleet.sessions[0]?.prompts).toHaveLength(1);
@@ -362,19 +391,19 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     const { runtime } = makeRuntime(fleet);
     await runtime.start();
 
-    const result = await runtime.deliverTeamMateCompletion!({
-      teammateName: 'mate-1',
-      sessionId: 'session-7',
+    const result = await runtime.completionInput!({
+      source: 'teammate',
+      id: 'mate-1',
       status: 'completed',
-      finalText: 'all done',
+      result: 'all done',
     });
     expect(result).toEqual({ status: 'accepted' });
 
     await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
     const prompt = fleet.sessions[0]?.prompts[0] ?? '';
     expect(prompt).toContain('<teammate_session_completion');
-    expect(prompt).toContain('teammate="mate-1"');
-    expect(prompt).toContain('session_id="session-7"');
+    expect(prompt).toContain('source="teammate"');
+    expect(prompt).toContain('id="mate-1"');
     expect(prompt).toContain('status="completed"');
     expect(prompt).toContain('all done');
   });
@@ -387,11 +416,9 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     await runtime.stop();
     expect(runtime.getStatus()).toBe('stopped');
     expect(fleet.sessions[0]?.isAlive()).toBe(false);
-    const after = await runtime.submitTurn({
-      source_chat_id: 'c',
-      source_message_id: 'm9',
-      sender_id: 'u',
-      parsed_text: 'late',
+    const after = await runtime.channelInput({
+      sourceId: 'm9',
+      text: 'late',
     });
     expect(after.status).toBe('stopped');
     expect(fleet.sessions[0]?.prompts).toHaveLength(0);
@@ -403,11 +430,9 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     await runtime.start();
     expect(runtime.getStatus()).toBe('ready');
 
-    const submit = await runtime.submitTurn({
-      source_chat_id: 'c',
-      source_message_id: 'm1',
-      sender_id: 'u',
-      parsed_text: 'go',
+    const submit = await runtime.channelInput({
+      sourceId: 'm1',
+      text: 'go',
     });
     expect(submit.status).toBe('submitted');
 
@@ -421,11 +446,9 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     ]);
     const { runtime, store } = makeRuntime(fleet);
     await runtime.start();
-    await runtime.submitTurn({
-      source_chat_id: 'c',
-      source_message_id: 'm1',
-      sender_id: 'u',
-      parsed_text: 'go',
+    await runtime.channelInput({
+      sourceId: 'm1',
+      text: 'go',
     });
     await waitFor(() => runtime.getStatus() === 'degraded');
     expect(store.get('flow')?.last_error).toContain('model overloaded');
@@ -436,19 +459,15 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     const { runtime } = makeRuntime(fleet);
     await runtime.start();
 
-    await runtime.submitTurn({
-      source_chat_id: 'c',
-      source_message_id: 'm1',
-      sender_id: 'u',
-      parsed_text: 'first',
+    await runtime.channelInput({
+      sourceId: 'm1',
+      text: 'first',
     });
     await waitFor(() => runtime.getStatus() === 'degraded');
 
-    await runtime.submitTurn({
-      source_chat_id: 'c',
-      source_message_id: 'm2',
-      sender_id: 'u',
-      parsed_text: 'second',
+    await runtime.channelInput({
+      sourceId: 'm2',
+      text: 'second',
     });
     await waitFor(() => runtime.getStatus() === 'ready');
   });
@@ -459,11 +478,9 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     await runtime.start();
 
     // First turn establishes the session id.
-    await runtime.submitTurn({
-      source_chat_id: 'c',
-      source_message_id: 'm1',
-      sender_id: 'u',
-      parsed_text: 'first',
+    await runtime.channelInput({
+      sourceId: 'm1',
+      text: 'first',
     });
     await waitFor(() => runtime.getThreadId() === 'session-abc');
 
@@ -473,11 +490,9 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     expect(store.get('flow')?.last_error).toContain('exited');
 
     // Next turn re-spawns a fresh session that resumes the captured session id.
-    await runtime.submitTurn({
-      source_chat_id: 'c',
-      source_message_id: 'm2',
-      sender_id: 'u',
-      parsed_text: 'second',
+    await runtime.channelInput({
+      sourceId: 'm2',
+      text: 'second',
     });
     await waitFor(() => fleet.sessions.length === 2);
     const respawn = fleet.sessions[1]!;
@@ -513,6 +528,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       row: row!,
       dispatcher,
       dispatchers: store,
+      cwd: defaultDispatcherCwd('flow'),
       mcpServers: [],
       log: () => {
         /* test sink */
@@ -520,22 +536,20 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     });
     await runtime.start();
 
-    await runtime.submitTurn({
-      source_chat_id: 'c',
-      source_message_id: 'm1',
-      sender_id: 'u',
-      parsed_text: 'go',
+    await runtime.channelInput({
+      sourceId: 'm1',
+      text: 'go',
     });
     await waitFor(() => runtime.getStatus() === 'degraded', 5000);
     expect(store.get('flow')?.last_error).toMatch(/timed out/i);
 
     // Delivery must return a real `failed` result (so PR8 retry can act),
     // bounded by the same deadline — never an unresolved await.
-    const delivery = await runtime.deliverTeamMateCompletion!({
-      taskId: 'task-stall',
-      teammateId: 'mate-1',
+    const delivery = await runtime.completionInput!({
+      source: 'teammate',
+      id: 'mate-1',
       status: 'completed',
-      finalText: 'done',
+      result: 'done',
     });
     expect(delivery.status).toBe('failed');
 
@@ -547,11 +561,11 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     const { runtime } = makeRuntime(fleet);
     await runtime.start();
 
-    const result = await runtime.deliverTeamMateCompletion!({
-      taskId: 'task-9',
-      teammateId: 'mate-1',
+    const result = await runtime.completionInput!({
+      source: 'teammate',
+      id: 'mate-1',
       status: 'completed',
-      finalText: 'done',
+      result: 'done',
     });
     expect(result.status).toBe('failed');
     if (result.status === 'failed') {

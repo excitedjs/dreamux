@@ -13,11 +13,11 @@ import { dirname, join } from 'node:path';
 import { runUninstall } from '../src/onboard/uninstall.js';
 import type { CommandRunner } from '../src/onboard/types.js';
 import {
-  dispatcherWorkspaceSkillDirs,
   logsRoot,
   resetRuntimeConfig,
   stateRoot,
-} from '../src/runtime/paths.js';
+} from '../src/platform/paths.js';
+import { dispatcherWorkspaceSkillDirs } from '../src/agent-runtime/builtin/codex/paths.js';
 import { testDispatcherConfig } from './helpers/config.js';
 
 class FakeRunner implements CommandRunner {

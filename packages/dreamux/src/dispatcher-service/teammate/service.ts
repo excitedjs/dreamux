@@ -9,21 +9,20 @@ import type {
   AgentRuntimeTurnResult,
 } from '../../agent-runtime/index.js';
 import {
+  BUILTIN_CLAUDE_CODE_PROVIDER_REF,
   BUILTIN_CODEX_PROVIDER_REF,
   type DispatcherConfig,
   type DreamuxConfig,
-} from '../../runtime/config.js';
-import type { DispatcherStore, DispatcherRow } from '../../runtime/dispatcher-store.js';
-import type { DreamuxLogger } from '../../runtime/logger.js';
+} from '../../config/config.js';
+import type { DispatcherStore, DispatcherRow } from '../../state/dispatcher-store.js';
+import type { DreamuxLogger } from '../../platform/logger.js';
+import { teammateClaudeCodeStreamLogPath } from '../../agent-runtime/builtin/claude-code/paths.js';
 import {
-  dispatcherTeamMateRuntimeClaudeMcpConfigPath,
-  dispatcherTeamMateRuntimeClaudeStreamLogPath,
-  dispatcherTeamMateRuntimeCodexErrorLogPath,
-  dispatcherTeamMateRuntimeCodexLogPath,
-  dispatcherTeamMateRuntimeCodexSocketPath,
-  dispatcherTeamMateRuntimeDir,
-} from '../../runtime/paths.js';
-import { validateDispatcherId } from '../../runtime/dispatcher-id.js';
+  teammateCodexAppServerErrorLogPath,
+  teammateCodexAppServerLogPath,
+} from '../../agent-runtime/builtin/codex/paths.js';
+import { dispatcherTeamMateRuntimeDir } from '../../platform/paths.js';
+import { validateDispatcherId } from '../../state/dispatcher-id.js';
 import { TeamMateIdentityStore } from './identity-store.js';
 import { TeamMateRuntimeStateStore } from './runtime-state.js';
 import {
@@ -269,15 +268,16 @@ export class TeamMateAgentService {
     const state = new TeamMateRuntimeStateStore(
       this.identities,
       identity,
-      resumeCapability.supported ? resumeCapability.checkpoint : 'codexThread',
+      resumeCapability.supported ? resumeCapability.checkpoint : null,
     );
     const row = this.runtimeRow(identity);
     const runtime = provider.createRuntime({
       row,
       dispatcher: this.dispatcherConfig(dispatcherId),
       dispatchers: this.opts.dispatchers,
+      cwd: identity.cwd,
       state,
-      paths: this.runtimePaths(identity),
+      paths: this.runtimePaths(identity, provider.ref),
       mcpServers: [
         ...(this.opts.mcpServersForTeamMate?.({
           dispatcherId,
@@ -310,11 +310,9 @@ export class TeamMateAgentService {
     prompt: string,
   ): Promise<TeamMateTurnResult> {
     const live = await this.ensureRuntime(dispatcherId, name);
-    const result = await live.runtime.submitTurn({
-      source_chat_id: `teammate:${name}`,
-      source_message_id: `teammate:${name}:${Date.now()}`,
-      sender_id: 'dispatcher',
-      parsed_text: prompt,
+    const result = await live.runtime.channelInput({
+      sourceId: `teammate:${name}:${Date.now()}`,
+      text: prompt,
     });
     return toTurnResult(result);
   }
@@ -335,8 +333,6 @@ export class TeamMateAgentService {
       dispatcher_id: runtimeId(identity.dispatcher_id, identity.name),
       bot_app_id: `teammate-${identity.name}`,
       bot_secret_ref: '',
-      codex_args_json: '{}',
-      codex_cwd: identity.cwd,
       thread_id: identity.checkpoint?.id ?? null,
       status: 'declared',
       enabled: 1,
@@ -349,32 +345,39 @@ export class TeamMateAgentService {
     };
   }
 
-  private runtimePaths(identity: TeamMateIdentity): AgentRuntimePathContext {
+  /**
+   * Per-teammate path context. The teammate runtime dir is the neutral root both
+   * built-in runtimes derive their state files from (Codex `codex.sock`, Claude
+   * Code `mcp.json`); only the central-tree log files vary by runtime, so the
+   * launcher selects them from the resolved provider ref.
+   */
+  private runtimePaths(
+    identity: TeamMateIdentity,
+    providerRef: string,
+  ): AgentRuntimePathContext {
+    const dispatcherDir = (): string =>
+      dispatcherTeamMateRuntimeDir(identity.dispatcher_id, identity.name);
+    if (providerRef === BUILTIN_CLAUDE_CODE_PROVIDER_REF) {
+      const streamLog = (): string =>
+        teammateClaudeCodeStreamLogPath(
+          identity.dispatcher_id,
+          identity.name,
+        );
+      return {
+        dispatcherDir,
+        stdoutLogPath: streamLog,
+        stderrLogPath: streamLog,
+      };
+    }
     return {
-      dispatcherCodexCwd: () =>
-        dispatcherTeamMateRuntimeDir(identity.dispatcher_id, identity.name),
-      dispatcherSocketPath: () =>
-        dispatcherTeamMateRuntimeCodexSocketPath(
+      dispatcherDir,
+      stdoutLogPath: () =>
+        teammateCodexAppServerLogPath(
           identity.dispatcher_id,
           identity.name,
         ),
-      dispatcherStdoutLog: () =>
-        dispatcherTeamMateRuntimeCodexLogPath(
-          identity.dispatcher_id,
-          identity.name,
-        ),
-      dispatcherStderrLog: () =>
-        dispatcherTeamMateRuntimeCodexErrorLogPath(
-          identity.dispatcher_id,
-          identity.name,
-        ),
-      dispatcherClaudeCodeMcpConfigPath: () =>
-        dispatcherTeamMateRuntimeClaudeMcpConfigPath(
-          identity.dispatcher_id,
-          identity.name,
-        ),
-      dispatcherClaudeCodeStreamLogPath: () =>
-        dispatcherTeamMateRuntimeClaudeStreamLogPath(
+      stderrLogPath: () =>
+        teammateCodexAppServerErrorLogPath(
           identity.dispatcher_id,
           identity.name,
         ),
@@ -397,8 +400,10 @@ export class TeamMateAgentService {
 
   private resolveCwd(dispatcherId: string, input: string | undefined): string {
     if (input !== undefined && input !== '') return input;
-    const row = this.opts.dispatchers.get(dispatcherId);
-    return row?.codex_cwd ?? dispatcherTeamMateRuntimeDir(dispatcherId, 'default');
+    return (
+      this.dispatcherConfig(dispatcherId)?.cwd ??
+      dispatcherTeamMateRuntimeDir(dispatcherId, 'default')
+    );
   }
 
   private toStatus(

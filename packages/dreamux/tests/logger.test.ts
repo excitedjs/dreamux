@@ -17,7 +17,7 @@ import {
   createLogger,
   loggerToLevelFn,
   pinoToTransportLogger,
-} from '../src/runtime/logger.js';
+} from '../src/platform/logger.js';
 
 function captureSink(): { sink: Writable; text: () => string } {
   const chunks: string[] = [];

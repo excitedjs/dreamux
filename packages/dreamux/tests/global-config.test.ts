@@ -25,15 +25,15 @@ import {
   loadOrInitConfig,
   redactConfigForDisplay,
   stringifyConfig,
-} from '../src/runtime/config.js';
+} from '../src/config/config.js';
 import {
   adminSocketPath,
   resetRuntimeConfig,
   serverJsonPath,
   setRuntimeConfig,
   stateRoot,
-} from '../src/runtime/paths.js';
-import { codexArgsToCli, parseCodexArgs } from '../src/runtime/codex-args.js';
+} from '../src/platform/paths.js';
+import { codexArgsToCli, parseCodexArgs } from '../src/agent-runtime/builtin/codex/args.js';
 import {
   createBuiltinProviderRegistry,
   parseProviderRef,

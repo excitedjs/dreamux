@@ -3,9 +3,9 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import type { DreamuxConfig } from '../src/runtime/config.js';
-import { DispatcherStore } from '../src/runtime/dispatcher-store.js';
-import { dispatcherStatusPath, resetRuntimeConfig } from '../src/runtime/paths.js';
+import type { DreamuxConfig } from '../src/config/config.js';
+import { DispatcherStore } from '../src/state/dispatcher-store.js';
+import { dispatcherStatusPath, resetRuntimeConfig } from '../src/platform/paths.js';
 import { testDispatcherConfig } from './helpers/config.js';
 
 function configWith(id = 'flow'): DreamuxConfig {

@@ -8,7 +8,7 @@
 
 import type { Server } from '../server.js';
 import { AdminError } from './protocol.js';
-import { validateDispatcherId } from '../runtime/dispatcher-id.js';
+import { validateDispatcherId } from '../state/dispatcher-id.js';
 
 export type AdminHandler = (
   server: Server,

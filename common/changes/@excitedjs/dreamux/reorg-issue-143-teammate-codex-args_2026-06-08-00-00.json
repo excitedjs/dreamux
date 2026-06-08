@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "TeamMate codex runtimes now inherit the parent dispatcher's codex config (approval_policy / sandbox_mode / extra_args) instead of always-defaults — consistent with the already-inherited bin/env/timeout. A codex teammate under a codex dispatcher now runs with that dispatcher's sandbox/approval/args.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

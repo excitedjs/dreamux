@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "A builtin:claude-code dispatcher now receives a dreamux-adapted dispatcher role prompt, injected via the resident `claude --append-system-prompt` flag (layered on top of claude's own system prompt). Previously claude dispatchers got no dispatcher prompt at all; they now carry the coordinator-not-worker boundaries, TeamMate MCP + push-delivery model, Feishu visible-reply contract, and public-artifact safety rules. No config or state change; the prompt is applied at dispatcher (re)start, so restart claude dispatchers to pick it up.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

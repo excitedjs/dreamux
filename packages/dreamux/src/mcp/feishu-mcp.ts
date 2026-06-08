@@ -11,9 +11,9 @@ import {
   feishuMcpAdminParams,
   feishuMcpTools,
   parseFeishuMcpToolInput,
-} from '../channel/feishu-mcp-surface.js';
-import { adminSocketPath as defaultAdminSocketPath } from '../runtime/paths.js';
-import { validateDispatcherId } from '../runtime/dispatcher-id.js';
+} from '../channel/feishu/feishu-mcp-surface.js';
+import { adminSocketPath as defaultAdminSocketPath } from '../platform/paths.js';
+import { validateDispatcherId } from '../state/dispatcher-id.js';
 
 export interface FeishuMcpOptions {
   dispatcherId: string;

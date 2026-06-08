@@ -14,7 +14,7 @@ import { controlUserService } from '../src/daemon/service-control.js';
 import { runDaemonInstall, runDaemonUninstall } from '../src/daemon/install.js';
 import type { ServiceNodeProbe } from '../src/onboard/service.js';
 import type { CommandRunner } from '../src/onboard/types.js';
-import { resetRuntimeConfig } from '../src/runtime/paths.js';
+import { resetRuntimeConfig } from '../src/platform/paths.js';
 import { testDispatcherConfig } from './helpers/config.js';
 
 interface Call {

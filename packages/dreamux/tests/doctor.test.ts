@@ -14,12 +14,14 @@ import { runDreamuxDoctor } from '../src/cli/doctor.js';
 import type { CommandRunner } from '../src/onboard/types.js';
 import type { ServiceNodeProbe } from '../src/onboard/service.js';
 import {
-  dispatcherCodexCwd,
-  dispatcherCodexHome,
-  dispatcherWorkspaceSkillPath,
+  defaultDispatcherCwd,
   resetRuntimeConfig,
   stateRoot,
-} from '../src/runtime/paths.js';
+} from '../src/platform/paths.js';
+import {
+  dispatcherCodexHome,
+  dispatcherWorkspaceSkillPath,
+} from '../src/agent-runtime/builtin/codex/paths.js';
 import { testDispatcherConfig } from './helpers/config.js';
 
 class FakeRunner implements CommandRunner {
@@ -559,7 +561,7 @@ describe('dreamux doctor command', () => {
         dispatchers: [
           testDispatcherConfig({
             id: 'flow',
-            cwd: dispatcherCodexCwd('flow'),
+            cwd: defaultDispatcherCwd('flow'),
             enabled: true,
             feishu: {
               app_id: 'app-test',
@@ -587,7 +589,7 @@ describe('dreamux doctor command', () => {
         dispatchers: [
           testDispatcherConfig({
             id: 'flow',
-            cwd: dispatcherCodexCwd('flow'),
+            cwd: defaultDispatcherCwd('flow'),
             enabled: true,
             feishu: {
               app_id: 'app-test',
@@ -611,7 +613,7 @@ describe('dreamux doctor command', () => {
   }
 
   function writeDispatcherHome(options: { auth: boolean }): void {
-    const skillPath = dispatcherWorkspaceSkillPath(dispatcherCodexCwd('flow'));
+    const skillPath = dispatcherWorkspaceSkillPath(defaultDispatcherCwd('flow'));
     mkdirSync(dirname(skillPath), { recursive: true });
     writeFileSync(skillPath, '# test skill\n');
     mkdirSync(dispatcherCodexHome('flow'), { recursive: true });

@@ -21,7 +21,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { dreamuxBinPath } from '../src/runtime/package-bin.js';
+import { dreamuxBinPath } from '../src/platform/package-bin.js';
 
 const PACKAGE_ROOT = resolve(
   dirname(fileURLToPath(import.meta.url)),

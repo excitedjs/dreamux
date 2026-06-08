@@ -32,9 +32,9 @@ import {
   type DreamuxConfig,
   globalConfigDir,
   loadConfig,
-} from '../runtime/config.js';
-import { dreamuxBinPath } from '../runtime/package-bin.js';
-import { setRuntimeConfig } from '../runtime/paths.js';
+} from '../config/config.js';
+import { dreamuxBinPath } from '../platform/package-bin.js';
+import { setRuntimeConfig } from '../platform/paths.js';
 
 export interface DaemonInstallOptions {
   startService?: boolean;

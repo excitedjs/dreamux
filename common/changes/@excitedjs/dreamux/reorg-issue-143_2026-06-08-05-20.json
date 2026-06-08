@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Remove the in-memory DispatcherRow field codex_cwd and the server-ctl `codex-cwd` status flag (the field was never persisted to status.json). The dispatcher runtime cwd is now a required launch parameter supplied by the Dispatcher Service; codex bin resolution and per-runtime artifact paths moved behind the Agent Runtime providers. No persisted format change; no rebuild required.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

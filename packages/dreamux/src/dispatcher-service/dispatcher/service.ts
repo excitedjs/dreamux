@@ -3,32 +3,36 @@ import type {
   AgentRuntimeMcpServer,
   AgentRuntimeProviderCatalog,
 } from '../../agent-runtime/index.js';
-import type { FeishuBot } from '../../feishu/bot.js';
+import type { FeishuBot } from '../../channel/feishu/bot.js';
 import {
   FeishuChannelSession,
   handleFeishuListChatBots,
   type FeishuMcpListChatBotsResult,
-} from '../../channel/feishu-channel.js';
-import type { FeishuMcpToolName } from '../../channel/feishu-mcp-surface.js';
+} from '../../channel/feishu/feishu-channel.js';
+import type { FeishuMcpToolName } from '../../channel/feishu/feishu-mcp-surface.js';
 import {
   BUILTIN_CODEX_PROVIDER_REF,
   BUILTIN_FEISHU_PROVIDER_REF,
   type DreamuxConfig,
-} from '../../runtime/config.js';
+} from '../../config/config.js';
 import {
   DispatcherStore,
   type DispatcherRow,
   type DispatcherStatus,
-} from '../../runtime/dispatcher-store.js';
+} from '../../state/dispatcher-store.js';
 import {
   adminSocketPath as defaultAdminSocketPath,
-  dispatcherCodexCwd,
-} from '../../runtime/paths.js';
+  defaultDispatcherCwd,
+} from '../../platform/paths.js';
 import {
   loggerToLevelFn,
   type DreamuxLogger,
-} from '../../runtime/logger.js';
-import { teammateMcpServerDescriptor } from '../../teammate/mcp-config.js';
+} from '../../platform/logger.js';
+import { teammateMcpServerDescriptor } from '../teammate/mcp-config.js';
+import {
+  DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS,
+  DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
+} from './base-prompt.js';
 import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
 
 export interface DispatcherAgentServiceOptions {
@@ -164,6 +168,7 @@ export class DispatcherAgentService {
     const runtimeProvider = this.opts.agentRuntimeProviders.resolve(
       dispatcherConfig?.runtime.provider ?? BUILTIN_CODEX_PROVIDER_REF,
     );
+    const cwd = dispatcherConfig?.cwd ?? defaultDispatcherCwd(id);
     const channelLog = this.opts.channelLoggerFactory(id);
     const channel = new FeishuChannelSession({
       dispatcherId: id,
@@ -178,10 +183,20 @@ export class DispatcherAgentService {
         ? { skipBotSecret: this.opts.skipBotSecret }
         : {}),
     });
+    // The dispatcher prompt is runtime-injected via the runtime's systemPrompt
+    // capability. 'replace' runtimes (codex) consume the full prompt as their
+    // base instructions; 'append' runtimes (claude-code) receive a focused
+    // dispatcher-role delta layered on top of their own system prompt.
+    const systemPromptContent =
+      runtimeProvider.getCapabilities().systemPrompt.mode === 'replace'
+        ? DREAMUX_DISPATCHER_BASE_INSTRUCTIONS
+        : DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS;
     const runtime = runtimeProvider.createRuntime({
       row,
       dispatchers: this.opts.dispatchers,
       dispatcher: dispatcherConfig ?? null,
+      cwd,
+      systemPromptContent,
       mcpServers: this.dreamuxMcpServerDescriptors(channel, id),
       log: loggerToLevelFn(channelLog),
     });
@@ -189,7 +204,7 @@ export class DispatcherAgentService {
     try {
       await runtime.start();
       await channel.start({
-        submitTurn: (turn, hooks) => runtime.submitTurn(turn, hooks),
+        submitTurn: (turn, hooks) => runtime.channelInput(turn, hooks),
       });
     } catch (err) {
       try {
@@ -215,7 +230,7 @@ export class DispatcherAgentService {
       {
         dispatcher_id: id,
         bot_app_id: row.bot_app_id,
-        cwd: row.codex_cwd ?? dispatcherCodexCwd(id),
+        cwd,
       },
       'dispatcher ready',
     );
@@ -248,7 +263,7 @@ export class DispatcherAgentService {
     const notice = this.restartIntent?.claim(dispatcherId, Date.now()) ?? null;
     if (notice === null) return;
     try {
-      const result = await runtime.submitTurn({
+      const result = await runtime.systemInput({
         kind: 'system',
         text: notice,
         reason: 'restart-notice',

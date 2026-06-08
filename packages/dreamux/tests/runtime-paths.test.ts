@@ -7,19 +7,13 @@ import {
   DREAMUX_UNIX_SOCKET_PATH_MAX_BYTES,
   BUNDLED_SKILL_NAMES,
   adminSocketPath,
-  codexAppServerLogDir,
   dispatcherAccessPath,
-  dispatcherCodexAppServerErrorLogPath,
-  dispatcherCodexAppServerLogPath,
   dispatcherDir,
   dispatcherFeishuAttachmentCacheDir,
   dispatcherTeamMateDir,
   dispatcherTeamMateHistoryPath,
   dispatcherTeamMateIdentitiesDir,
   dispatcherTeamMateIdentityPath,
-  dispatcherTeamMateRuntimeCodexErrorLogPath,
-  dispatcherTeamMateRuntimeCodexLogPath,
-  dispatcherTeamMateRuntimeCodexSocketPath,
   dispatcherTeamMateRuntimeDir,
   feishuChannelLogDir,
   feishuChannelLogPath,
@@ -27,11 +21,7 @@ import {
   feishuMcpLogPath,
   teammateMcpLogDir,
   teammateMcpLogPath,
-  dispatcherSocketPath,
   dispatcherStatusPath,
-  dispatcherWorkspaceCodexSkillsDir,
-  dispatcherWorkspaceSkillDirs,
-  dispatcherWorkspaceSkillPath,
   dreamuxRoot,
   logsRoot,
   resetRuntimeConfig,
@@ -39,7 +29,18 @@ import {
   serverLogPath,
   stateRoot,
   unixSocketPathFitsBudget,
-} from '../src/runtime/paths.js';
+} from '../src/platform/paths.js';
+import {
+  codexAppServerLogDir,
+  dispatcherCodexAppServerErrorLogPath,
+  dispatcherCodexAppServerLogPath,
+  dispatcherSocketPath,
+  dispatcherWorkspaceCodexSkillsDir,
+  dispatcherWorkspaceSkillDirs,
+  dispatcherWorkspaceSkillPath,
+  teammateCodexAppServerErrorLogPath,
+  teammateCodexAppServerLogPath,
+} from '../src/agent-runtime/builtin/codex/paths.js';
 
 describe('runtime paths', () => {
   let root: string;
@@ -110,17 +111,7 @@ describe('runtime paths', () => {
     expect(dispatcherTeamMateRuntimeDir('dispatcher-a', 'reviewer-1')).toBe(
       join(stateRoot(), 'dispatcher-a', 'teammate', 'runtime', 'reviewer-1'),
     );
-    expect(dispatcherTeamMateRuntimeCodexSocketPath('dispatcher-a', 'reviewer-1')).toBe(
-      join(
-        stateRoot(),
-        'dispatcher-a',
-        'teammate',
-        'runtime',
-        'reviewer-1',
-        'codex.sock',
-      ),
-    );
-    expect(dispatcherTeamMateRuntimeCodexLogPath('dispatcher-a', 'reviewer-1')).toBe(
+    expect(teammateCodexAppServerLogPath('dispatcher-a', 'reviewer-1')).toBe(
       join(
         logsRoot(),
         'codex-app-server',
@@ -129,7 +120,7 @@ describe('runtime paths', () => {
         'reviewer-1.log',
       ),
     );
-    expect(dispatcherTeamMateRuntimeCodexErrorLogPath('dispatcher-a', 'reviewer-1')).toBe(
+    expect(teammateCodexAppServerErrorLogPath('dispatcher-a', 'reviewer-1')).toBe(
       join(
         logsRoot(),
         'codex-app-server',

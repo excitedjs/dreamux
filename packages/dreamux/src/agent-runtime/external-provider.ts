@@ -8,7 +8,7 @@ import {
 import type {
   AgentRuntimeCapabilities,
   AgentRuntimeProvider,
-  TeamMateCompletionDeliveryShape,
+  CompletionDeliveryShape,
 } from './types.js';
 
 export interface ExternalAgentRuntimeProviderFactoryContext {
@@ -235,7 +235,7 @@ function assertCapabilities(
     );
   }
   for (const shape of capabilities.teammateCompletion) {
-    assertTeamMateCompletionShape(expectedRef, shape);
+    assertCompletionDeliveryShape(expectedRef, shape);
   }
 }
 
@@ -269,21 +269,20 @@ function assertSupportedBoolean(
   }
 }
 
-function assertTeamMateCompletionShape(
+function assertCompletionDeliveryShape(
   expectedRef: string,
   value: unknown,
-): asserts value is TeamMateCompletionDeliveryShape {
+): asserts value is CompletionDeliveryShape {
   if (!isRecord(value)) {
     throw new ExternalAgentRuntimeProviderContractError(
       expectedRef,
       'capabilities.teammateCompletion entries must be objects',
     );
   }
-  const kind = value['kind'];
-  if (kind !== 'codexInboxTurn' && kind !== 'claudeCodeTaskNotification') {
+  if (typeof value['kind'] !== 'string' || value['kind'] === '') {
     throw new ExternalAgentRuntimeProviderContractError(
       expectedRef,
-      'capabilities.teammateCompletion entries must use a known delivery kind',
+      'capabilities.teammateCompletion entries must include a kind',
     );
   }
   if (typeof value['description'] !== 'string' || value['description'] === '') {

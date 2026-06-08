@@ -22,12 +22,9 @@ import {
   globalConfigFile,
   loadConfig,
   type DispatcherConfig,
-} from '../runtime/config.js';
-import {
-  dispatcherWorkspaceSkillDirs,
-  logsRoot,
-  stateRoot,
-} from '../runtime/paths.js';
+} from '../config/config.js';
+import { logsRoot, stateRoot } from '../platform/paths.js';
+import { dispatcherWorkspaceSkillDirs } from '../agent-runtime/builtin/codex/paths.js';
 
 export type UninstallStatus = 'removed' | 'missing' | 'skipped';
 

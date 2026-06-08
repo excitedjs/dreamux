@@ -1,4 +1,4 @@
-import type { DreamuxConfig } from '../runtime/config.js';
+import type { DreamuxConfig } from '../config/config.js';
 import {
   BUILTIN_CODEX_PROVIDER_REF,
   BUILTIN_FEISHU_PROVIDER_REF,
@@ -10,8 +10,8 @@ import {
   type DispatcherConfig,
   type DispatcherProviderConfig,
   stringifyConfig,
-} from '../runtime/config.js';
-import { validateDispatcherId } from '../runtime/dispatcher-id.js';
+} from '../config/config.js';
+import { validateDispatcherId } from '../state/dispatcher-id.js';
 import type { OnboardAnswers } from './types.js';
 
 export function buildDreamuxConfigJson(answers: OnboardAnswers): string {

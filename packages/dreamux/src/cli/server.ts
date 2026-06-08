@@ -19,18 +19,17 @@
 import { mkdir } from 'node:fs/promises';
 
 import { Server } from '../server.js';
-import { loadConfig } from '../runtime/config.js';
-import { createLogger } from '../runtime/logger.js';
+import { loadConfig } from '../config/config.js';
+import { createLogger } from '../platform/logger.js';
 import {
   adminSocketPath,
-  codexAppServerLogDir,
   feishuChannelLogDir,
   feishuChannelLogPath,
   feishuMcpLogDir,
   logsRoot,
   serverLogPath,
   stateRoot,
-} from '../runtime/paths.js';
+} from '../platform/paths.js';
 
 async function main(): Promise<void> {
   if (process.argv.includes('--help') || process.argv.includes('-h')) {
@@ -44,7 +43,6 @@ async function main(): Promise<void> {
 
   await mkdir(stateRoot(), { recursive: true });
   await mkdir(logsRoot(), { recursive: true });
-  await mkdir(codexAppServerLogDir(), { recursive: true });
   await mkdir(feishuChannelLogDir(), { recursive: true });
   await mkdir(feishuMcpLogDir(), { recursive: true });
 

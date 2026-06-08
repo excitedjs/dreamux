@@ -33,34 +33,36 @@ import {
   type CodexProcessExit,
   type CodexProcessExitHandler,
   type CodexProcessOptions,
-} from '../src/codex/supervisor.js';
-import { CodexWsClient } from '../src/codex/rpc.js';
-import { createFakeFeishuBot, type FakeFeishuBot, type FeishuInboundEvent } from '../src/feishu/bot.js';
+} from '../src/agent-runtime/builtin/codex/supervisor.js';
+import { CodexWsClient } from '../src/agent-runtime/builtin/codex/rpc.js';
+import { createFakeFeishuBot, type FakeFeishuBot, type FeishuInboundEvent } from '../src/channel/feishu/bot.js';
 import { createAdminSocketServer } from '../src/admin/socket.js';
 import { sendAdminRequest } from '../src/admin/client.js';
 import {
   TRUST_DOMAIN_WARNING,
   loadDispatcherAccess,
   saveDispatcherAccess,
-} from '../src/channel/feishu-gate.js';
-import { loadChatBots } from '../src/channel/chat-bots-store.js';
+} from '../src/channel/feishu/feishu-gate.js';
+import { loadChatBots } from '../src/channel/feishu/chat-bots-store.js';
 import {
   BUILT_IN_DEFAULTS,
   type DreamuxConfig,
-} from '../src/runtime/config.js';
+} from '../src/config/config.js';
+import {
+  defaultDispatcherCwd,
+  bundledSkillDir,
+  restartIntentPath,
+} from '../src/platform/paths.js';
 import {
   dispatcherAppServerControlDir,
-  dispatcherCodexCwd,
   dispatcherCodexHome,
-  bundledSkillDir,
-  dispatcherWorkspaceSkillDir,
   dispatcherSocketPath,
-  restartIntentPath,
-} from '../src/runtime/paths.js';
+  dispatcherWorkspaceSkillDir,
+} from '../src/agent-runtime/builtin/codex/paths.js';
 import { writeRestartIntent } from '../src/daemon/restart-intent.js';
-import { dreamuxBinPath } from '../src/runtime/package-bin.js';
-import { createLogger, type DreamuxLogger } from '../src/runtime/logger.js';
-import { DREAMUX_DISPATCHER_BASE_INSTRUCTIONS } from '../src/dispatcher/base-prompt.js';
+import { dreamuxBinPath } from '../src/platform/package-bin.js';
+import { createLogger, type DreamuxLogger } from '../src/platform/logger.js';
+import { DREAMUX_DISPATCHER_BASE_INSTRUCTIONS } from '../src/dispatcher-service/dispatcher/base-prompt.js';
 import { startFakeCodex, type FakeCodex } from './fake-codex.js';
 import { testDispatcherConfig } from './helpers/config.js';
 import { Writable } from 'node:stream';
@@ -71,10 +73,11 @@ import {
   type AgentRuntimeCreateContext,
   type AgentRuntimeLastResult,
   type AgentRuntimeProvider,
-  type AgentRuntimeTurnInput,
+  type AgentRuntimeSystemInput,
   type AgentRuntimeTurnResult,
   type ExternalAgentRuntimeProviderFactory,
 } from '../src/agent-runtime/index.js';
+import type { InboundTurnInput } from '../src/agent-runtime/turn.js';
 import {
   createBuiltinProviderRegistry,
   type ProviderRegistry,
@@ -134,7 +137,6 @@ function buildServer(opts: {
   codexRestartBackoffBaseMs?: number;
   codexRestartBackoffMaxMs?: number;
   channelLoggerFactory?: (dispatcherId: string) => DreamuxLogger;
-  codexBinPath?: string;
   providerRegistry?: ProviderRegistry;
 }): Server {
   return new Server({
@@ -142,9 +144,6 @@ function buildServer(opts: {
     providerRegistry: opts.providerRegistry,
     adminSocketPath: join(opts.runtimeDir, 'admin.sock'),
     skipBotSecret: opts.skipBotSecret ?? true,
-    ...(opts.codexBinPath !== undefined
-      ? { codexBinPath: opts.codexBinPath }
-      : {}),
     ...(opts.channelLoggerFactory !== undefined
       ? { channelLoggerFactory: opts.channelLoggerFactory }
       : {}),
@@ -177,6 +176,7 @@ const EXTERNAL_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = {
   events: { kind: 'synthesized' },
   last: { supported: true },
   context: { supported: false },
+  systemPrompt: { mode: 'replace' },
   teammateCompletion: [],
 };
 
@@ -204,10 +204,16 @@ class SmokeExternalRuntime implements AgentRuntime {
     this.status = 'stopped';
   }
 
-  async submitTurn(
-    _input: AgentRuntimeTurnInput,
+  async channelInput(
+    _input: InboundTurnInput,
   ): Promise<AgentRuntimeTurnResult> {
     return { status: 'submitted', turnId: 'external-turn' };
+  }
+
+  async systemInput(
+    _notice: AgentRuntimeSystemInput,
+  ): Promise<AgentRuntimeTurnResult> {
+    return { status: 'skipped' };
   }
 
   getStatus(): ReturnType<AgentRuntime['getStatus']> {
@@ -342,7 +348,7 @@ function writeReadyDispatcherCodexHome(dispatcherId: string, dispatcherCwd?: str
   writeFileSync(join(dispatcherCodexHome(dispatcherId), 'auth.json'), '{}', {
     mode: 0o600,
   });
-  mkdirSync(dispatcherCwd ?? dispatcherCodexCwd(dispatcherId), { recursive: true });
+  mkdirSync(dispatcherCwd ?? defaultDispatcherCwd(dispatcherId), { recursive: true });
 }
 
 interface ConfigDispatcherOverrides {
@@ -390,7 +396,7 @@ describe('dreamux MVP smoke', () => {
     runtimeDir = mkdtempSync(join(tmpdir(), 'dreamux-'));
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(runtimeDir, 'home');
-    mkdirSync(dispatcherCodexCwd('flow'), { recursive: true });
+    mkdirSync(defaultDispatcherCwd('flow'), { recursive: true });
     codexInputs = [];
     fake = await startFakeCodex({
       replyFor: captureAndEchoCodexInput(codexInputs),
@@ -559,7 +565,7 @@ describe('dreamux MVP smoke', () => {
       dispatcherSocketPath('flow'),
     );
     const dispatcherSkillDir = dispatcherWorkspaceSkillDir(
-      dispatcherCodexCwd('flow'),
+      defaultDispatcherCwd('flow'),
       'dispatcher',
     );
     expect(lstatSync(dispatcherSkillDir).isSymbolicLink()).toBe(true);
@@ -1139,13 +1145,7 @@ describe('dreamux MVP smoke', () => {
       bot,
       capturedCodexOptions,
       useDefaultCodexHomeDoctor: true,
-    });
-    server.repos.dispatchers.create({
-      dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
-      codex_args_json: JSON.stringify({ sandboxMode: 'danger-full-access' }),
-      codex_cwd: join(runtimeDir, 'workspace'),
+      config: configWithDispatcher({ cwd: join(runtimeDir, 'workspace') }),
     });
     writeReadyDispatcherCodexHome('flow', join(runtimeDir, 'workspace'));
 
@@ -2410,7 +2410,7 @@ describe('dreamux MVP smoke', () => {
   // refuse — confirms our handshake-enforcement assertion above isn't vacuous.
   it('fake codex refuses non-initialize RPC pre-handshake', async () => {
     // Use a raw client (no handshake) against the same fake.
-    const { CodexWsClient } = await import('../src/codex/rpc.js');
+    const { CodexWsClient } = await import('../src/agent-runtime/builtin/codex/rpc.js');
     const raw = new CodexWsClient({ url: fake.url });
     await raw.ready();
     await expect(
@@ -2424,9 +2424,9 @@ describe('dreamux MVP smoke', () => {
   it('handshake times out if codex accepts the WS but never replies', async () => {
     await fake.close();
     fake = await startFakeCodex({ swallowInitialize: true });
-    const { CodexWsClient } = await import('../src/codex/rpc.js');
+    const { CodexWsClient } = await import('../src/agent-runtime/builtin/codex/rpc.js');
     const { performInitializeHandshake } = await import(
-      '../src/codex/handshake.js'
+      '../src/agent-runtime/builtin/codex/handshake.js'
     );
     const raw = new CodexWsClient({ url: fake.url });
     try {

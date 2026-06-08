@@ -1,4 +1,4 @@
-import { installBundledWorkspaceSkills } from '../runtime/bundled-skills.js';
+import { installBundledWorkspaceSkills } from './bundled-skills.js';
 import type { OnboardFileLedger } from './types.js';
 
 export async function installDispatcherSkill(options: {

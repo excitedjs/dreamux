@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "TeamMate codex workers no longer receive the dispatcher base system prompt. Previously the shared codex runtime hard-coded the dispatcher instructions on every thread start, so teammate workers were wrongly told they were the dispatcher; the dispatcher prompt is now supplied only to the dispatcher agent via the runtime's systemPrompt capability. A teammate's role/task continues to arrive through its first turn. Restart dispatchers to apply.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

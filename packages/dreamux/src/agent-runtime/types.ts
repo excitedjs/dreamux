@@ -3,14 +3,14 @@ import type {
   InboundDeliveryResult,
   InboundTurnInput,
   NoticeInjectionResult,
-} from '../dispatcher/turn-manager.js';
-import type { DispatcherConfig } from '../runtime/config.js';
-import type { DispatcherProviderConfig } from '../runtime/config.js';
+} from './turn.js';
+import type { DispatcherConfig } from '../config/config.js';
+import type { DispatcherProviderConfig } from '../config/config.js';
 import type {
   DispatcherRow,
   DispatcherStatus,
   DispatcherStore,
-} from '../runtime/dispatcher-store.js';
+} from '../state/dispatcher-store.js';
 import type { ProviderDescriptor } from '../registry/index.js';
 
 export interface AgentRuntimeMcpServer {
@@ -19,18 +19,18 @@ export interface AgentRuntimeMcpServer {
   args: string[];
 }
 
-export type TeamMateCompletionDeliveryShape =
-  | {
-      kind: 'codexInboxTurn';
-      description: 'write completion to a runtime inbox, then trigger a dispatcher turn';
-    }
-  | {
-      kind: 'claudeCodeTaskNotification';
-      description: 'notify the runtime through a Claude Code task notification path';
-    };
+/**
+ * An open, source-agnostic completion delivery shape. Each runtime self-declares
+ * its own `kind` string inside its own capabilities; the shared contract never
+ * enumerates them.
+ */
+export interface CompletionDeliveryShape {
+  kind: string;
+  description: string;
+}
 
 export interface AgentRuntimeResumeCheckpoint {
-  /** Runtime-owned checkpoint kind; builtins use `codexThread` and `claudeCodeSession`. */
+  /** Runtime-owned checkpoint kind; each runtime self-declares its own. */
   kind: string;
   id: string;
 }
@@ -50,15 +50,26 @@ export interface AgentRuntimeCapabilities {
   last: { supported: boolean };
   /** Whether the runtime can report context-window usage. */
   context: { supported: boolean };
+  /**
+   * How the launcher-supplied role/system prompt content
+   * (`AgentRuntimeCreateContext.systemPromptContent`) is applied: `replace`
+   * swaps the engine's base instructions, `append` adds to them.
+   */
+  systemPrompt: { mode: 'replace' | 'append' };
   /** Upward delivery shapes this runtime supports for teammate completion. */
-  teammateCompletion: readonly TeamMateCompletionDeliveryShape[];
+  teammateCompletion: readonly CompletionDeliveryShape[];
 }
 
-export interface TeamMateCompletionEnvelope {
-  teammateName: string;
-  sessionId: string | null;
+/**
+ * A source-agnostic completion delivered upward to a runtime. `teammate` is one
+ * source; `id` identifies the completing entity within that source (e.g. the
+ * teammate name).
+ */
+export interface CompletionEnvelope {
+  source: string;
+  id: string;
   status: 'completed' | 'failed';
-  finalText: string;
+  result: string;
 }
 
 export type TeamMateCompletionDeliveryResult =
@@ -66,13 +77,11 @@ export type TeamMateCompletionDeliveryResult =
   | { status: 'unsupported'; reason: string }
   | { status: 'failed'; error: Error };
 
-export type AgentRuntimeTurnInput =
-  | InboundTurnInput
-  | {
-      kind: 'system';
-      text: string;
-      reason: 'restart-notice' | 'teammate-completion' | 'runtime-control';
-    };
+export interface AgentRuntimeSystemInput {
+  kind: 'system';
+  text: string;
+  reason: 'restart-notice' | 'teammate-completion' | 'runtime-control';
+}
 
 export type AgentRuntimeTurnResult = InboundDeliveryResult | NoticeInjectionResult;
 
@@ -109,12 +118,20 @@ export interface AgentRuntimeStateStore {
 }
 
 export interface AgentRuntimePathContext {
-  dispatcherCodexCwd(id: string): string;
-  dispatcherSocketPath(id: string): string;
-  dispatcherStdoutLog(id: string): string;
-  dispatcherStderrLog(id: string): string;
-  dispatcherClaudeCodeMcpConfigPath(id: string): string;
-  dispatcherClaudeCodeStreamLogPath(id: string): string;
+  /**
+   * The per-dispatcher root the runtime drops its own state files into (control
+   * socket, generated MCP config, …). Neutral: the runtime derives its own
+   * subpaths from here, so the shared layer never enumerates per-runtime
+   * artifact paths.
+   */
+  dispatcherDir(id: string): string;
+  /**
+   * The runtime's primary-process stdout log file in the central logs tree.
+   * Runtimes without a separate stdout stream may ignore it.
+   */
+  stdoutLogPath(id: string): string;
+  /** The runtime's primary-process stderr/diagnostic log file in the central logs tree. */
+  stderrLogPath(id: string): string;
 }
 
 export interface AgentRuntime {
@@ -122,18 +139,30 @@ export interface AgentRuntime {
   start(): Promise<void>;
   resume(input?: AgentRuntimeResumeInput): Promise<void>;
   stop(): Promise<void>;
-  submitTurn(
-    input: AgentRuntimeTurnInput,
+  /** Deliver a channel-inbound turn (today's `submitTurn` channel case). */
+  channelInput(
+    input: InboundTurnInput,
     hooks?: InboundDeliveryHooks,
   ): Promise<AgentRuntimeTurnResult>;
+  /**
+   * Inject a system-originated notice (today's `submitTurn` `{kind:'system'}`
+   * case; e.g. a restart notice). Keeps the "skip if a live inbound already
+   * arrived" semantics.
+   */
+  systemInput(notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult>;
   getStatus(): DispatcherStatus;
   getThreadId(): string | null;
   wasThreadResumed(): boolean;
   getLast(): Promise<AgentRuntimeLastResult | null>;
   getContext(): Promise<AgentRuntimeContextSnapshot | null>;
   getCapabilities(): AgentRuntimeCapabilities;
-  deliverTeamMateCompletion?(
-    completion: TeamMateCompletionEnvelope,
+  /**
+   * Deliver a teammate-completion envelope upward (rename of
+   * `deliverTeamMateCompletion`). Optional: a runtime whose capabilities declare
+   * no `teammateCompletion` shapes may not support it.
+   */
+  completionInput?(
+    completion: CompletionEnvelope,
   ): Promise<TeamMateCompletionDeliveryResult>;
 }
 
@@ -141,6 +170,18 @@ export interface AgentRuntimeCreateContext {
   row: DispatcherRow;
   dispatcher: DispatcherConfig | null;
   dispatchers: DispatcherStore;
+  /**
+   * The directory the runtime runs in. Always supplied by whoever launches the
+   * runtime (the Dispatcher Service for dispatcher agents, the dispatcher for
+   * teammate agents); never derived inside the runtime.
+   */
+  cwd: string;
+  /**
+   * Launcher-supplied dispatcher/role system-prompt content, applied per the
+   * runtime's `systemPrompt.mode` capability (replace or append). Optional:
+   * teammate launches may omit it.
+   */
+  systemPromptContent?: string;
   state?: AgentRuntimeStateStore;
   paths?: AgentRuntimePathContext;
   mcpServers: readonly AgentRuntimeMcpServer[];

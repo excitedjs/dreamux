@@ -18,8 +18,8 @@ import {
   assertConfigFileMode,
   globalConfigFile,
   redactConfigForDisplay,
-} from '../runtime/config.js';
-import { validateDispatcherId } from '../runtime/dispatcher-id.js';
+} from '../config/config.js';
+import { validateDispatcherId } from '../state/dispatcher-id.js';
 import { runOnboard } from '../onboard/run.js';
 import {
   runUninstall,
@@ -48,11 +48,11 @@ import { readPackagedChangelog } from './changelog.js';
 import { printDoctorResult, runDreamuxDoctor } from './doctor.js';
 import { runFeishuMcp } from '../mcp/feishu-mcp.js';
 import { runTeamMateMcp } from '../mcp/teammate-mcp.js';
-import { createLogger } from '../runtime/logger.js';
+import { createLogger } from '../platform/logger.js';
 import {
   feishuMcpLogPath,
   teammateMcpLogPath,
-} from '../runtime/paths.js';
+} from '../platform/paths.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SERVER_ENTRY = join(HERE, 'server.js');

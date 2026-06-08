@@ -2,7 +2,7 @@ import type {
   AgentRuntimeResumeCheckpoint,
   AgentRuntimeStateStore,
 } from '../../agent-runtime/index.js';
-import type { DispatcherStatus } from '../../runtime/dispatcher-store.js';
+import type { DispatcherStatus } from '../../state/dispatcher-store.js';
 import type { TeamMateIdentityStore } from './identity-store.js';
 import {
   runtimeStatusToIdentityStatus,
@@ -13,7 +13,7 @@ export class TeamMateRuntimeStateStore implements AgentRuntimeStateStore {
   constructor(
     private readonly store: TeamMateIdentityStore,
     private identity: TeamMateIdentity,
-    private readonly checkpointKind: AgentRuntimeResumeCheckpoint['kind'],
+    private readonly checkpointKind: AgentRuntimeResumeCheckpoint['kind'] | null,
   ) {}
 
   current(): TeamMateIdentity {
@@ -42,6 +42,9 @@ export class TeamMateRuntimeStateStore implements AgentRuntimeStateStore {
   }
 
   async setThreadId(_id: string, threadId: string): Promise<void> {
+    // A runtime that declares no resume support has no checkpoint kind, so there
+    // is nothing to persist a resumable checkpoint under.
+    if (this.checkpointKind === null) return;
     this.identity = await this.store.update(this.identity, {
       checkpoint: { kind: this.checkpointKind, id: threadId },
     });

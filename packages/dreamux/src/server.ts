@@ -11,9 +11,9 @@ import {
   createBuiltinAgentRuntimeProviderCatalog,
   type AgentRuntimeProviderCatalog,
 } from './agent-runtime/index.js';
-import type { CodexProcess, CodexProcessOptions } from './codex/supervisor.js';
-import type { CodexWsClient } from './codex/rpc.js';
-import type { FeishuBot } from './feishu/bot.js';
+import type { CodexProcess, CodexProcessOptions } from './agent-runtime/builtin/codex/supervisor.js';
+import type { CodexWsClient } from './agent-runtime/builtin/codex/rpc.js';
+import type { FeishuBot } from './channel/feishu/bot.js';
 import {
   createBuiltinProviderRegistry,
   parseProviderRef,
@@ -22,28 +22,28 @@ import {
 import {
   BUILT_IN_DEFAULTS,
   type DreamuxConfig,
-} from './runtime/config.js';
+} from './config/config.js';
 import {
   DispatcherStore,
   type DispatcherRow,
-} from './runtime/dispatcher-store.js';
-import type { DispatcherCodexHomeDoctor } from './runtime/dispatcher-codex-home.js';
+} from './state/dispatcher-store.js';
+import type { DispatcherCodexHomeDoctor } from './agent-runtime/builtin/codex/codex-home.js';
 import {
   adminSocketPath,
   setRuntimeConfig,
-} from './runtime/paths.js';
+} from './platform/paths.js';
 import {
   createLogger,
   type DreamuxLogger,
-} from './runtime/logger.js';
+} from './platform/logger.js';
 import { createAdminSocketServer, type AdminSocketServer } from './admin/socket.js';
 import { RestartIntentConsumer } from './daemon/restart-intent.js';
-import type { ClaudeCodeSessionFactory } from './claude-code/supervisor.js';
+import type { ClaudeCodeSessionFactory } from './agent-runtime/builtin/claude-code/supervisor.js';
 import { DispatcherService } from './dispatcher-service/service.js';
 export {
   IN_PROGRESS_REACTION_EMOJI,
   RECEIVED_REACTION_EMOJI,
-} from './channel/feishu-channel.js';
+} from './channel/feishu/feishu-channel.js';
 
 export interface ServerOptions {
   /**
@@ -63,8 +63,6 @@ export interface ServerOptions {
    * loadConfig() after external provider loading.
    */
   providerRegistry?: ProviderRegistry;
-  /** Codex binary path override (tests, highest precedence). */
-  codexBinPath?: string;
   /** Inject a CodexProcess factory (tests). */
   codexProcessFactory?: (opts: CodexProcessOptions) => CodexProcess;
   /** Inject a CodexWsClient factory (tests). */
@@ -126,8 +124,6 @@ export class Server {
       opts.channelLoggerFactory ??
       ((id: string) => createLogger({ name: `channel/${id}` }));
     const codexProviderOptions = {
-      resolveBinPath: (dispatcherBin: string) =>
-        this.resolveCodexBinPath(dispatcherBin),
       ...(opts.codexProcessFactory !== undefined
         ? { codexProcessFactory: opts.codexProcessFactory }
         : {}),
@@ -166,20 +162,6 @@ export class Server {
       channelLoggerFactory,
       log: this.log,
     });
-  }
-
-  /**
-   * Final codex binary path for one dispatcher. Precedence (highest first):
-   *   1. ServerOptions.codexBinPath (test seam)
-   *   2. CODEX_HOST_CODEX_BIN env (deliberate host-level override across every
-   *      dispatcher; onboard no longer sets it automatically)
-   *   3. the dispatcher's dispatchers[].runtime.config.bin (default "codex")
-   */
-  private resolveCodexBinPath(dispatcherBin: string): string {
-    if (this.opts.codexBinPath !== undefined) return this.opts.codexBinPath;
-    const fromEnv = process.env['CODEX_HOST_CODEX_BIN'];
-    if (fromEnv !== undefined && fromEnv !== '') return fromEnv;
-    return dispatcherBin;
   }
 
   /** Bring up admin socket + all enabled dispatchers. */
