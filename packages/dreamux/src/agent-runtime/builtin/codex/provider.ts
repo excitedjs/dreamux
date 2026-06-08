@@ -89,6 +89,7 @@ export function createCodexAgentRuntimeProvider(
         resolveExtraArgs: () => runtimeArgs,
         handshakeTimeoutMs: codexConfig.initialize_timeout_ms,
         extraEnv: codexConfig.extra_env,
+        onTurnSettled: context.onTurnSettled,
         log: context.log,
         ...(options.codexProcessFactory !== undefined
           ? { codexProcessFactory: options.codexProcessFactory }

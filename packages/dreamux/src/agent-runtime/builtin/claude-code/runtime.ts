@@ -258,7 +258,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     if (this.stopped) return { status: 'stopped' };
     const turnId = `claude-system-${++this.turnCounter}`;
     void this.runTurnOnQueue(notice.text, turnId).then(
-      () => this.markTurnSucceeded(),
+      () => this.markTurnSucceeded(turnId),
       (err) => this.markTurnFailed(turnId, err),
     );
     return { status: 'submitted', turnId };
@@ -286,7 +286,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     // completion. Instead, a failed turn drives the runtime to `degraded` with a
     // persisted `last_error` (visible via status/doctor) — never swallowed.
     void this.runTurnOnQueue(input.text, turnId).then(
-      () => this.markTurnSucceeded(),
+      () => this.markTurnSucceeded(turnId),
       (err) => this.markTurnFailed(turnId, err),
     );
     return { status: 'submitted', turnId };
@@ -332,13 +332,23 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     return run;
   }
 
-  private async markTurnSucceeded(): Promise<void> {
+  private async markTurnSucceeded(turnId: string): Promise<void> {
+    this.context.onTurnSettled?.({ turnId, status: 'completed' });
     if (this.stopped) return;
     if (this.status !== 'ready') await this.setStatus('ready');
   }
 
   private async markTurnFailed(turnId: string, err: unknown): Promise<void> {
     this.log('error', `claude-code turn ${turnId} failed`, err);
+    // A turn that fails after stop() was requested (the resident child is being
+    // torn down) is a `stopped` settlement; otherwise it is a genuine `failed`.
+    // Fire before the stopped early-return so an interrupted teammate turn is
+    // never lost.
+    this.context.onTurnSettled?.({
+      turnId,
+      status: this.stopped ? 'stopped' : 'failed',
+      error: err instanceof Error ? err : new Error(String(err)),
+    });
     if (this.stopped) return;
     // Surface the failure as durable runtime state rather than swallowing it.
     await this.setStatus('degraded', err);

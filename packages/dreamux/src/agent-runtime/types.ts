@@ -3,6 +3,7 @@ import type {
   InboundDeliveryResult,
   InboundTurnInput,
   NoticeInjectionResult,
+  TurnSettledSignal,
 } from './turn.js';
 import type { DispatcherConfig } from '../config/config.js';
 import type { DispatcherProviderConfig } from '../config/config.js';
@@ -185,6 +186,14 @@ export interface AgentRuntimeCreateContext {
   state?: AgentRuntimeStateStore;
   paths?: AgentRuntimePathContext;
   mcpServers: readonly AgentRuntimeMcpServer[];
+  /**
+   * Fired by the runtime each time a delivered turn reaches a terminal state
+   * (success, failure, or stop). Capability-neutral; the launcher opts in. The
+   * teammate service passes it to bridge a finished teammate turn back to its
+   * dispatcher; the dispatcher launcher does NOT pass it, so a dispatcher never
+   * self-delivers its own turn settlements.
+   */
+  onTurnSettled?: (settled: TurnSettledSignal) => void;
   log: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
 }
 

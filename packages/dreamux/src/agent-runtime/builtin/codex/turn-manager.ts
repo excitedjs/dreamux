@@ -12,6 +12,7 @@ import {
   subscribeTurnCollection,
   submitTurnStart,
   type CollectedTurn,
+  type TurnCollector,
 } from './events.js';
 import type { CodexWsClient } from './rpc.js';
 import {
@@ -20,6 +21,7 @@ import {
   type InboundDeliveryResult,
   type NoticeInjectionResult,
   type InboundDeliveryHooks,
+  type TurnSettledSignal,
 } from '../../turn.js';
 
 export interface TurnManagerOptions {
@@ -38,6 +40,14 @@ export interface TurnManagerOptions {
   log?: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
   /** Best-effort runtime-local snapshot hook for `AgentRuntime.getLast()`. */
   onTurnCompleted?: (turn: CollectedTurn) => void;
+  /**
+   * Fired when a submitted turn is cut short by `stop()` before it reached
+   * `turn/completed` (a crashed or torn-down runtime). The successful
+   * `completed` settlement is fired by the runtime from its `onTurnCompleted`
+   * handler; this hook only covers the `stopped` case so an in-flight teammate
+   * turn never vanishes silently.
+   */
+  onTurnSettled?: (settled: TurnSettledSignal) => void;
 }
 
 export class TurnManager {
@@ -51,6 +61,12 @@ export class TurnManager {
    * in-flight inbound and skip rather than wake the thread twice (issue #78).
    */
   private inboundSubmitted = false;
+  /**
+   * Turn ids submitted to Codex that have not yet reached `turn/completed`. On
+   * `stop()` each still-pending turn is settled as `stopped` so a teammate turn
+   * interrupted by teardown is not lost.
+   */
+  private readonly pendingTurnIds = new Set<string>();
   private readonly log: NonNullable<TurnManagerOptions['log']>;
   private readonly messageIdDedupeWindow: number;
 
@@ -99,10 +115,7 @@ export class TurnManager {
         input.text,
         this.opts.turnCwd ?? null,
       );
-      void collector.awaitTurn().then(
-        (turn) => this.opts.onTurnCompleted?.(turn),
-        () => undefined,
-      );
+      this.trackTurn(res.turn.id, collector);
       return { status: 'submitted', turnId: res.turn.id };
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
@@ -144,10 +157,7 @@ export class TurnManager {
         text,
         this.opts.turnCwd ?? null,
       );
-      void collector.awaitTurn().then(
-        (turn) => this.opts.onTurnCompleted?.(turn),
-        () => undefined,
-      );
+      this.trackTurn(res.turn.id, collector);
       this.log('info', `injected restart notice into thread ${threadId}`);
       return { status: 'submitted', turnId: res.turn.id };
     } catch (err) {
@@ -159,6 +169,33 @@ export class TurnManager {
 
   async stop(): Promise<void> {
     this.stopped = true;
+    // Any turn still in flight at teardown will never reach `turn/completed`
+    // (the WS is closing). Settle each as `stopped` so an interrupted teammate
+    // turn is delivered with a status rather than vanishing.
+    for (const turnId of this.pendingTurnIds) {
+      this.opts.onTurnSettled?.({ turnId, status: 'stopped' });
+    }
+    this.pendingTurnIds.clear();
+  }
+
+  /**
+   * Record a submitted turn as pending and wire its completion. On
+   * `turn/completed` the turn is removed from the pending set and the snapshot
+   * hook fires (which is where the runtime emits the `completed` settlement).
+   */
+  private trackTurn(turnId: string, collector: TurnCollector): void {
+    this.pendingTurnIds.add(turnId);
+    void collector.awaitTurn().then(
+      (turn) => {
+        // Only forward completion if this turn was still pending. If `stop()`
+        // already settled it as `stopped`, the delete returns false and we drop
+        // the late completion so a turn is never settled twice.
+        if (this.pendingTurnIds.delete(turnId)) this.opts.onTurnCompleted?.(turn);
+      },
+      () => {
+        this.pendingTurnIds.delete(turnId);
+      },
+    );
   }
 
   private async notifyAccepted(

@@ -40,7 +40,12 @@ import type {
 import {
   TurnManager,
 } from './turn-manager.js';
-import type { InboundDeliveryHooks, InboundTurnInput } from '../../turn.js';
+import type { CollectedTurn } from './events.js';
+import type {
+  InboundDeliveryHooks,
+  InboundTurnInput,
+  TurnSettledSignal,
+} from '../../turn.js';
 import { createFailFastApprovalHandler } from './approval.js';
 import {
   dispatcherCodexHomeDoctorContext,
@@ -105,6 +110,11 @@ export interface CodexRuntimeDeps {
   restartBackoffBaseMs?: number;
   /** Codex child/WS restart backoff cap (tests may override). */
   restartBackoffMaxMs?: number;
+  /**
+   * Fired each time a delivered turn reaches a terminal state. Supplied by the
+   * launcher (teammate service) and omitted for dispatcher launches.
+   */
+  onTurnSettled?: (settled: TurnSettledSignal) => void;
   log?: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
 }
 
@@ -324,6 +334,7 @@ export class CodexRuntime implements AgentRuntime {
       getThreadId: () => this.threadId,
       client: this.client,
       onTurnCompleted: (turn) => this.recordCollectedTurn(turn),
+      onTurnSettled: this.deps.onTurnSettled,
       log: this.log,
     });
   }
@@ -587,14 +598,16 @@ export class CodexRuntime implements AgentRuntime {
     });
   }
 
-  private recordCollectedTurn(turn: {
-    items: Array<{ type: string; text?: string }>;
-  }): void {
+  private recordCollectedTurn(turn: CollectedTurn): void {
     const messages = turn.items.filter((item) => item.type === 'agentMessage');
     const last = messages[messages.length - 1];
     if (typeof last?.text === 'string' && last.text.length > 0) {
       this.lastResult = { text: last.text };
     }
+    // A turn reaching `turn/completed` is the `completed` terminal state. The
+    // `stopped` settlement for interrupted turns is emitted by the turn manager
+    // on `stop()`.
+    this.deps.onTurnSettled?.({ turnId: turn.turnId, status: 'completed' });
   }
 
   private setStatus(s: DispatcherStatus): void {
