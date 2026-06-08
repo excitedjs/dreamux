@@ -45,3 +45,18 @@ export interface InboundDeliveryHooks {
    */
   onAccepted?: (input: InboundTurnInput) => void | Promise<void>;
 }
+
+/**
+ * A neutral "turn settled" signal: a delivered turn reached a terminal state.
+ * `completed` is a successful turn, `failed` a turn that errored, `stopped` a
+ * turn cut short by runtime teardown/stop. `turnId` is the runtime's turn id
+ * when known (null when the turn never got one). Capability-neutral — carries no
+ * channel or runtime specifics. This is the opposite lifetime of
+ * {@link InboundDeliveryResult}: that one returns on submit, this one fires
+ * later when the turn actually settles.
+ */
+export interface TurnSettledSignal {
+  turnId: string | null;
+  status: 'completed' | 'failed' | 'stopped';
+  error?: Error;
+}

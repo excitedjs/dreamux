@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Wire teammate -> dispatcher reverse completion delivery (issue #147): a finished teammate's result is now delivered back to the dispatcher as a new turn via the runtime's completionInput, using each engine's native mechanism (codex thread/inject_items + a trigger turn; claude-code native <task-notification> with isSynthetic). A teammate turn that errors at the model level (codex fatal 'error' notification) is delivered as 'failed' instead of hanging. NOTE: codex reverse-delivery requires codex 0.137+ (thread/inject_items); on older codex it fails loudly with a 0.137 hint rather than dropping the completion silently. Also fixes spawning a cross-provider teammate (e.g. a builtin:claude-code teammate under a builtin:codex dispatcher), which previously threw 'is not wired to Claude Code'.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

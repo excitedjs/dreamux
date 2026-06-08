@@ -12,6 +12,7 @@ import type {
   ItemCompletedNotification,
   ThreadItem,
   TurnCompletedNotification,
+  TurnErrorNotification,
   TurnStartResponse,
   UserInput,
 } from './types.js';
@@ -61,9 +62,13 @@ export interface TurnSubscriptionOptions {
 }
 
 /**
- * Subscribe to turn notifications for one thread. Returns a collector
- * whose `awaitTurn()` resolves on `turn/completed`. Items arriving on the
- * parallel `item/completed` stream are buffered and merged in.
+ * Subscribe to turn notifications for one thread. Returns a collector whose
+ * `awaitTurn()` resolves on `turn/completed` and REJECTS on a terminal turn
+ * failure — either an `error` notification with `willRetry === false` (a fatal
+ * error that interrupts the turn; codex emits no `turn/completed` after it, so a
+ * resolve-only collector would hang forever) or a `turn/completed` carrying a
+ * `turn.error`. Items arriving on the parallel `item/completed` stream are
+ * buffered and merged into the resolved turn.
  */
 export function subscribeTurnCollection(
   client: CodexWsClient,
@@ -73,9 +78,22 @@ export function subscribeTurnCollection(
   const acceptAnyThread = options.acceptAnyThread === true;
   const itemsByTurn = new Map<string, ThreadItem[]>();
   let cached: CollectedTurn | null = null;
+  let failure: Error | null = null;
   let awaiting: Promise<CollectedTurn> | null = null;
   let resolveTurn: ((turn: CollectedTurn) => void) | null = null;
+  let rejectTurn: ((err: Error) => void) | null = null;
   let done = false;
+
+  const settleFailure = (err: Error): void => {
+    if (done) return;
+    done = true;
+    failure = err;
+    if (rejectTurn !== null) {
+      rejectTurn(err);
+      rejectTurn = null;
+      resolveTurn = null;
+    }
+  };
 
   client.onNotification((notif) => {
     const p = (notif.params ?? {}) as Record<string, unknown>;
@@ -98,12 +116,25 @@ export function subscribeTurnCollection(
       itemsByTurn.set(params.turnId, bucket);
     } else if (notif.method === 'turn/completed') {
       const params = notif.params as TurnCompletedNotification;
+      if (params.turn.error != null) {
+        settleFailure(new Error(params.turn.error.message || 'codex turn failed'));
+        return;
+      }
       done = true;
       const items = itemsByTurn.get(params.turn.id) ?? params.turn.items ?? [];
       cached = { threadId, turnId: params.turn.id, items };
       if (resolveTurn !== null) {
         resolveTurn(cached);
         resolveTurn = null;
+        rejectTurn = null;
+      }
+    } else if (notif.method === 'error') {
+      const params = notif.params as TurnErrorNotification;
+      // Only a fatal (non-retried) error terminates the turn. A transient
+      // `willRetry: true` error is followed by codex's own retry and an
+      // eventual `turn/completed`, so we ignore it here.
+      if (params.willRetry === false) {
+        settleFailure(new Error(params.error?.message ?? 'codex turn error'));
       }
     }
   });
@@ -111,9 +142,11 @@ export function subscribeTurnCollection(
   return {
     awaitTurn(): Promise<CollectedTurn> {
       if (cached !== null) return Promise.resolve(cached);
+      if (failure !== null) return Promise.reject(failure);
       if (awaiting !== null) return awaiting;
-      awaiting = new Promise<CollectedTurn>((res) => {
+      awaiting = new Promise<CollectedTurn>((res, rej) => {
         resolveTurn = res;
+        rejectTurn = rej;
       });
       return awaiting;
     },
@@ -129,6 +162,23 @@ function traceTurnId(params: Record<string, unknown>): string | null {
 function traceItemType(params: Record<string, unknown>): string | null {
   const item = params['item'] as { type?: unknown } | undefined;
   return item !== undefined && typeof item.type === 'string' ? item.type : null;
+}
+
+/**
+ * Append raw Responses API items to a thread's model-visible history without
+ * starting a turn (`thread/inject_items`, codex 0.137+). codex folds the items
+ * onto the active turn when one is running and otherwise records them against a
+ * default turn context (codex_thread.rs `inject_response_items` →
+ * `inject_no_new_turn`); either way it never rejects on a busy thread, so a
+ * rejection here is a genuine RPC error. Persisted to the rollout, so injected
+ * items survive resume.
+ */
+export async function injectThreadItems(
+  client: CodexWsClient,
+  threadId: string,
+  items: ReadonlyArray<Record<string, unknown>>,
+): Promise<void> {
+  await client.request('thread/inject_items', { threadId, items });
 }
 
 /**

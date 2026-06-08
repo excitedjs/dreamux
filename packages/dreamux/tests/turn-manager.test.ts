@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { TurnManager } from '../src/agent-runtime/builtin/codex/turn-manager.js';
 import type { NotificationHandler } from '../src/agent-runtime/builtin/codex/rpc.js';
 import type { ServerNotification, TurnStartResponse } from '../src/agent-runtime/builtin/codex/types.js';
+import type { CollectedTurn } from '../src/agent-runtime/builtin/codex/events.js';
+import type { TurnSettledSignal } from '../src/agent-runtime/turn.js';
 
 describe('TurnManager inbound submission', () => {
   it('submits every accepted message through turn/start without coalescing', async () => {
@@ -128,11 +130,136 @@ describe('TurnManager restart-notice injection', () => {
   });
 });
 
+describe('TurnManager turn settlement', () => {
+  it('forwards the completed turn (with its turn id) on turn/completed', async () => {
+    const client = new FakeCodexClient();
+    const completed: CollectedTurn[] = [];
+    const manager = new TurnManager({
+      dispatcherId: 'flow',
+      getThreadId: () => 'thread-1',
+      client: client as never,
+      onTurnCompleted: (turn) => completed.push(turn),
+    });
+
+    const res = await manager.enqueue(input('msg-1', 'work'));
+    expect(res).toEqual({ status: 'submitted', turnId: 'turn-1' });
+
+    await waitFor(() => completed.length === 1);
+    expect(completed[0]?.turnId).toBe('turn-1');
+  });
+
+  it('settles each still-pending turn as stopped on stop()', async () => {
+    // A manual client never emits turn/completed, so the submitted turn stays
+    // in flight until stop() tears it down.
+    const client = new ManualFakeCodexClient();
+    const settled: TurnSettledSignal[] = [];
+    const manager = new TurnManager({
+      dispatcherId: 'flow',
+      getThreadId: () => 'thread-1',
+      client: client as never,
+      onTurnSettled: (s) => settled.push(s),
+    });
+
+    const res = await manager.enqueue(input('msg-1', 'work'));
+    expect(res).toEqual({ status: 'submitted', turnId: 'turn-1' });
+    expect(settled).toEqual([]);
+
+    await manager.stop();
+    expect(settled).toEqual([{ turnId: 'turn-1', status: 'stopped' }]);
+  });
+
+  it('does not re-settle a completed turn as stopped', async () => {
+    const client = new FakeCodexClient();
+    const settled: TurnSettledSignal[] = [];
+    const manager = new TurnManager({
+      dispatcherId: 'flow',
+      getThreadId: () => 'thread-1',
+      client: client as never,
+      // The auto-completing client clears the pending turn before stop().
+      onTurnCompleted: () => undefined,
+      onTurnSettled: (s) => settled.push(s),
+    });
+
+    await manager.enqueue(input('msg-1', 'work'));
+    await waitFor(() => client.inputs.length === 1);
+    // Let the queued turn/completed microtask clear the pending set.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    await manager.stop();
+    expect(settled).toEqual([]);
+  });
+
+  it('settles a turn as failed on a fatal codex error notification (willRetry:false)', async () => {
+    const client = new ErroringFakeCodexClient(false);
+    const settled: TurnSettledSignal[] = [];
+    const manager = new TurnManager({
+      dispatcherId: 'flow',
+      getThreadId: () => 'thread-1',
+      client: client as never,
+      onTurnCompleted: () => undefined,
+      onTurnSettled: (s) => settled.push(s),
+    });
+
+    const res = await manager.enqueue(input('msg-1', 'work'));
+    expect(res).toEqual({ status: 'submitted', turnId: 'turn-1' });
+
+    await waitFor(() => settled.length === 1);
+    expect(settled[0]?.turnId).toBe('turn-1');
+    expect(settled[0]?.status).toBe('failed');
+    expect(settled[0]?.error?.message).toContain('boom');
+  });
+
+  it('ignores a transient codex error (willRetry:true) and completes normally', async () => {
+    const client = new ErroringFakeCodexClient(true);
+    const completed: CollectedTurn[] = [];
+    const settled: TurnSettledSignal[] = [];
+    const manager = new TurnManager({
+      dispatcherId: 'flow',
+      getThreadId: () => 'thread-1',
+      client: client as never,
+      onTurnCompleted: (turn) => completed.push(turn),
+      onTurnSettled: (s) => settled.push(s),
+    });
+
+    await manager.enqueue(input('msg-1', 'work'));
+    await waitFor(() => completed.length === 1);
+    expect(completed[0]?.turnId).toBe('turn-1');
+    // A transient error must not produce a `failed` settlement.
+    expect(settled.filter((s) => s.status === 'failed')).toEqual([]);
+  });
+});
+
+async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('waitFor timed out');
+}
+
 function input(messageId: string, text: string) {
   return {
     sourceId: messageId,
     text,
   };
+}
+
+/** A fake client that acks turn/start but never emits turn/completed. */
+class ManualFakeCodexClient {
+  readonly inputs: string[] = [];
+  private nextTurnId = 1;
+
+  onNotification(_handler: NotificationHandler): void {
+    /* no notifications are ever emitted */
+  }
+
+  async request<R>(method: string, params: unknown): Promise<R> {
+    if (method !== 'turn/start') throw new Error(`unexpected method ${method}`);
+    const p = params as { input: Array<{ text: string }> };
+    this.inputs.push(p.input[0]?.text ?? '');
+    return { turn: { id: `turn-${this.nextTurnId++}` } } as TurnStartResponse as R;
+  }
 }
 
 class FakeCodexClient {
@@ -172,6 +299,50 @@ class FakeCodexClient {
           turn: { id: turnId, items: [] },
         },
       });
+    });
+    return { turn: { id: turnId } } as TurnStartResponse as R;
+  }
+
+  private emit(notification: ServerNotification): void {
+    for (const handler of this.handlers) handler(notification);
+  }
+}
+
+/**
+ * Acks turn/start then emits a codex `error` notification. With willRetry=false
+ * (fatal) it emits no turn/completed — the turn must still settle as `failed`.
+ * With willRetry=true (transient) a normal turn/completed follows.
+ */
+class ErroringFakeCodexClient {
+  private readonly handlers: NotificationHandler[] = [];
+  private nextTurnId = 1;
+
+  constructor(private readonly willRetry: boolean) {}
+
+  onNotification(handler: NotificationHandler): void {
+    this.handlers.push(handler);
+  }
+
+  async request<R>(method: string, params: unknown): Promise<R> {
+    if (method !== 'turn/start') throw new Error(`unexpected method ${method}`);
+    const p = params as { threadId: string; input: Array<{ text: string }> };
+    const turnId = `turn-${this.nextTurnId++}`;
+    queueMicrotask(() => {
+      this.emit({
+        method: 'error',
+        params: {
+          threadId: p.threadId,
+          turnId,
+          willRetry: this.willRetry,
+          error: { message: 'boom' },
+        },
+      });
+      if (this.willRetry) {
+        this.emit({
+          method: 'turn/completed',
+          params: { threadId: p.threadId, turn: { id: turnId, items: [] } },
+        });
+      }
     });
     return { turn: { id: turnId } } as TurnStartResponse as R;
   }

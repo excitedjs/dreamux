@@ -90,7 +90,22 @@ export interface ThreadItem {
 
 export interface TurnCompletedNotification {
   threadId: string;
-  turn: { id: string; items?: ThreadItem[] };
+  turn: { id: string; items?: ThreadItem[]; error?: { message: string } };
+}
+
+/**
+ * codex `error` server notification (method `"error"`). `willRetry: true` is a
+ * transient error that does NOT interrupt the turn (codex retries internally);
+ * `willRetry: false` is a fatal error that interrupts the turn — and codex does
+ * NOT emit a subsequent `turn/completed` for it, so a turn collector that only
+ * waits for `turn/completed` would hang forever. We treat `willRetry === false`
+ * as the turn's terminal failure.
+ */
+export interface TurnErrorNotification {
+  threadId?: string;
+  turnId?: string;
+  willRetry?: boolean;
+  error: { message: string; [k: string]: unknown };
 }
 
 export interface ItemCompletedNotification {

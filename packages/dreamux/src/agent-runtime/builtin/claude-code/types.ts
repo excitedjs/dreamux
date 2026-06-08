@@ -53,6 +53,23 @@ export interface ResultEnvelope {
   readonly errors: readonly string[];
 }
 
+/**
+ * Per-turn stdin delivery options. The default (an absent object) produces a
+ * plain human-equivalent user turn; completion delivery opts into the native
+ * notification idiom.
+ */
+export interface TurnSubmitOptions {
+  /**
+   * Mark the stdin user message synthetic. claude-code maps this to its
+   * internal `isMeta`: hidden in the TUI transcript but model-visible and sent
+   * to the API like a normal user turn — the native channel for a background /
+   * sub-agent completion notification. Never set on human channel turns.
+   */
+  isSynthetic?: boolean;
+  /** Optional stdin delivery priority (claude-code `priority`). */
+  priority?: 'now' | 'next' | 'later';
+}
+
 /** The reduced outcome of one assistant turn, terminated by a `result`. */
 export interface TurnOutcome {
   readonly isError: boolean;
@@ -90,7 +107,7 @@ export interface ClaudeCodeSession {
   /** Spawn the child and resolve once it is up (reject on spawn error). */
   start(): Promise<void>;
   /** Submit one user turn; resolve with the outcome when `result` lands. */
-  submitTurn(prompt: string): Promise<TurnOutcome>;
+  submitTurn(prompt: string, options?: TurnSubmitOptions): Promise<TurnOutcome>;
   /** Whether the child is currently alive. */
   isAlive(): boolean;
   /**

@@ -15,7 +15,9 @@ import {
   type AgentRuntimeResumeInput,
   type AgentRuntimeSystemInput,
   type AgentRuntimeTurnResult,
+  type CompletionEnvelope,
 } from '../src/agent-runtime/index.js';
+import type { TurnSettledSignal } from '../src/agent-runtime/turn.js';
 import type { InboundTurnInput } from '../src/agent-runtime/turn.js';
 import { TeamMateAgentService } from '../src/dispatcher-service/teammate/service.js';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
@@ -98,19 +100,37 @@ class FakeRuntime implements AgentRuntime {
   getCapabilities(): AgentRuntimeCapabilities {
     return FAKE_CAPABILITIES;
   }
+
+  /** True when the launcher wired the reverse-delivery settle hook. */
+  hasSettleHook(): boolean {
+    return this.context.onTurnSettled !== undefined;
+  }
+
+  /** Simulate the runtime firing a terminal turn-settled signal. */
+  settle(status: TurnSettledSignal['status'], turnId: string | null): void {
+    this.context.onTurnSettled?.({ turnId, status });
+  }
 }
 
 class FakeProvider implements AgentRuntimeProvider {
-  readonly ref = 'builtin:codex';
+  readonly ref: string;
   readonly runtimes: FakeRuntime[] = [];
+  /** Every create context this provider was asked to build, for assertions. */
+  readonly contexts: AgentRuntimeCreateContext[] = [];
 
-  constructor(readonly descriptor: AgentRuntimeProvider['descriptor']) {}
+  constructor(
+    readonly descriptor: AgentRuntimeProvider['descriptor'],
+    ref: string = 'builtin:codex',
+  ) {
+    this.ref = ref;
+  }
 
   getCapabilities(): AgentRuntimeCapabilities {
     return FAKE_CAPABILITIES;
   }
 
   createRuntime(context: AgentRuntimeCreateContext): AgentRuntime {
+    this.contexts.push(context);
     const runtime = new FakeRuntime(context);
     this.runtimes.push(runtime);
     return runtime;
@@ -165,6 +185,55 @@ describe('TeamMateAgentService', () => {
     else process.env['HOME'] = previousHome;
     resetRuntimeConfig();
     rmSync(root, { recursive: true, force: true });
+  });
+
+  it('does not inherit the dispatcher config for a cross-provider teammate', async () => {
+    // Dispatcher 'flow' runs builtin:codex. A builtin:claude-code teammate must
+    // NOT receive the codex dispatcher's config block (wrong shape — the real
+    // claude provider would throw "is not wired to Claude Code"); it falls back
+    // to its own provider defaults (context.dispatcher === null). A same-provider
+    // teammate still inherits the dispatcher config.
+    const config = testDreamuxConfig();
+    const registry = createBuiltinProviderRegistry();
+    const codexDesc = registry.resolve('builtin:codex');
+    const claudeDesc = registry.resolve('builtin:claude-code');
+    const codexProvider = new FakeProvider(codexDesc, 'builtin:codex');
+    const claudeProvider = new FakeProvider(claudeDesc, 'builtin:claude-code');
+    registry.registerImplementation(codexDesc.id, codexProvider);
+    registry.registerImplementation(claudeDesc.id, claudeProvider);
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: new AgentRuntimeProviderCatalog({ registry }),
+      log: {
+        info: () => undefined,
+        warn: () => undefined,
+        error: () => undefined,
+      },
+    });
+
+    await service.spawn({
+      dispatcherId: 'flow',
+      name: 'claude-mate',
+      providerRef: 'builtin:claude-code',
+      prompt: 'go',
+      cwd: root,
+    });
+    expect(claudeProvider.contexts).toHaveLength(1);
+    expect(claudeProvider.contexts[0]?.dispatcher).toBeNull();
+
+    await service.spawn({
+      dispatcherId: 'flow',
+      name: 'codex-mate',
+      providerRef: 'builtin:codex',
+      prompt: 'go',
+      cwd: root,
+    });
+    expect(codexProvider.contexts).toHaveLength(1);
+    expect(codexProvider.contexts[0]?.dispatcher).not.toBeNull();
+    expect(codexProvider.contexts[0]?.dispatcher?.runtime.provider).toBe(
+      'builtin:codex',
+    );
   });
 
   it('spawns a named resumable teammate and records forward-only history', async () => {
@@ -298,4 +367,153 @@ describe('TeamMateAgentService', () => {
     expect(historyFile).toContain('"type":"spawn"');
     expect(historyFile).toContain('"type":"close"');
   });
+
+  it('does not wire the settle hook when no completion sink is configured', async () => {
+    const { catalog, provider } = providerCatalog();
+    const config = testDreamuxConfig();
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: catalog,
+      log: noopLog(),
+    });
+    await service.spawn({
+      dispatcherId: 'flow',
+      name: 'solo',
+      prompt: 'Start.',
+      cwd: root,
+    });
+    expect(provider.runtimes[0]?.hasSettleHook()).toBe(false);
+  });
+
+  it('delivers a settled teammate turn upward as a completion envelope', async () => {
+    const { catalog, provider } = providerCatalog();
+    const config = testDreamuxConfig();
+    const received: Array<{ id: string; env: CompletionEnvelope }> = [];
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: catalog,
+      onTeamMateCompletion: (id, env) => {
+        received.push({ id, env });
+      },
+      log: noopLog(),
+    });
+
+    await service.spawn({
+      dispatcherId: 'flow',
+      name: 'reviewer',
+      prompt: 'Review.',
+      cwd: root,
+    });
+    expect(provider.runtimes[0]?.hasSettleHook()).toBe(true);
+
+    provider.runtimes[0]?.settle('completed', 'turn-1');
+    await flush();
+
+    expect(received).toEqual([
+      {
+        id: 'flow',
+        env: {
+          source: 'reviewer',
+          id: 'reviewer:turn-1',
+          status: 'completed',
+          result: 'last fake result',
+        },
+      },
+    ]);
+  });
+
+  it('delivers terminal failure/stop settlements with status failed', async () => {
+    const { catalog, provider } = providerCatalog();
+    const config = testDreamuxConfig();
+    const received: CompletionEnvelope[] = [];
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: catalog,
+      onTeamMateCompletion: (_id, env) => {
+        received.push(env);
+      },
+      log: noopLog(),
+    });
+
+    await service.spawn({
+      dispatcherId: 'flow',
+      name: 'breaker',
+      prompt: 'Run.',
+      cwd: root,
+    });
+
+    provider.runtimes[0]?.settle('failed', 'turn-7');
+    provider.runtimes[0]?.settle('stopped', null);
+    await flush();
+
+    expect(received).toEqual([
+      {
+        source: 'breaker',
+        id: 'breaker:turn-7',
+        status: 'failed',
+        result: 'last fake result',
+      },
+      {
+        source: 'breaker',
+        id: 'breaker',
+        status: 'failed',
+        result: 'last fake result',
+      },
+    ]);
+  });
+
+  it('delivers concurrent teammate completions without dropping any', async () => {
+    const { catalog, provider } = providerCatalog();
+    const config = testDreamuxConfig();
+    const received: CompletionEnvelope[] = [];
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: catalog,
+      onTeamMateCompletion: (_id, env) => {
+        received.push(env);
+      },
+      log: noopLog(),
+    });
+
+    await service.spawn({
+      dispatcherId: 'flow',
+      name: 'one',
+      prompt: 'A.',
+      cwd: root,
+    });
+    await service.spawn({
+      dispatcherId: 'flow',
+      name: 'two',
+      prompt: 'B.',
+      cwd: root,
+    });
+
+    provider.runtimes[0]?.settle('completed', 'turn-1');
+    provider.runtimes[1]?.settle('completed', 'turn-1');
+    await flush();
+
+    expect(received.map((env) => env.source).sort()).toEqual(['one', 'two']);
+    expect(received).toHaveLength(2);
+  });
 });
+
+function noopLog(): {
+  info: () => undefined;
+  warn: () => undefined;
+  error: () => undefined;
+} {
+  return {
+    info: () => undefined,
+    warn: () => undefined,
+    error: () => undefined,
+  };
+}
+
+/** Drain the microtask/macrotask the void-ed settle handler runs on. */
+async function flush(): Promise<void> {
+  await new Promise((resolve) => setImmediate(resolve));
+}

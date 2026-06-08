@@ -74,6 +74,7 @@ import {
   createDefaultClaudeCodeSession,
   type ClaudeCodeSession,
   type ClaudeCodeSessionFactory,
+  type TurnSubmitOptions,
 } from './supervisor.js';
 import type {
   InboundDeliveryHooks,
@@ -122,13 +123,26 @@ interface ClaudeCodeRuntimeDeps {
   resolveBinPath: (bin: string) => string;
 }
 
-/** Format a TeamMate completion as a Claude Code task-notification turn. */
+/**
+ * Format a TeamMate completion as a Claude Code `<task-notification>` — the
+ * native shape claude-code emits for background / sub-agent task completions
+ * (constants/xml.ts: `task-notification` / `task-id` / `status` / `summary`).
+ * The result is delivered inline in a `<result>` tag because dreamux has no
+ * output file, so claude-code's optional `<output-file>` / `<tool-use-id>` tags
+ * are intentionally omitted. Delivered with `isSynthetic: true` (see
+ * {@link ClaudeCodeRuntime.completionInput}) so claude-code treats it as a
+ * notification, not human input.
+ */
 function formatTaskNotification(completion: CompletionEnvelope): string {
   return [
-    `<teammate_session_completion source="${completion.source}" ` +
-      `id="${completion.id}" status="${completion.status}">`,
+    '<task-notification>',
+    `<task-id>${completion.id}</task-id>`,
+    `<status>${completion.status}</status>`,
+    `<summary>TeamMate "${completion.source}" session ${completion.status}</summary>`,
+    '<result>',
     completion.result,
-    '</teammate_session_completion>',
+    '</result>',
+    '</task-notification>',
   ].join('\n');
 }
 
@@ -258,7 +272,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     if (this.stopped) return { status: 'stopped' };
     const turnId = `claude-system-${++this.turnCounter}`;
     void this.runTurnOnQueue(notice.text, turnId).then(
-      () => this.markTurnSucceeded(),
+      () => this.markTurnSucceeded(turnId),
       (err) => this.markTurnFailed(turnId, err),
     );
     return { status: 'submitted', turnId };
@@ -286,7 +300,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     // completion. Instead, a failed turn drives the runtime to `degraded` with a
     // persisted `last_error` (visible via status/doctor) — never swallowed.
     void this.runTurnOnQueue(input.text, turnId).then(
-      () => this.markTurnSucceeded(),
+      () => this.markTurnSucceeded(turnId),
       (err) => this.markTurnFailed(turnId, err),
     );
     return { status: 'submitted', turnId };
@@ -298,15 +312,18 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     if (this.stopped) {
       return { status: 'unsupported', reason: 'runtime stopped' };
     }
-    // Task-notification delivery entry: notify the Claude Code session with a
-    // task-completion turn. Delivery AWAITS the turn so the result is real —
-    // `accepted` only after the notification turn actually ran, `failed`
-    // otherwise — which is the semantics the PR8 Dispatcher Service relies on
-    // for delivery retry. The executable retry/pull loop itself stays in PR8.
+    // Native task-notification delivery: a stream-json user message whose body
+    // is the `<task-notification>` tag, marked `isSynthetic: true` so claude-code
+    // routes it as a background-completion notification (internal `isMeta`:
+    // hidden in the TUI, model-visible) rather than human input. Delivery AWAITS
+    // the serial-queue turn so `accepted` means it actually ran and `failed`
+    // otherwise — the semantics the Dispatcher Service relies on for delivery
+    // retry.
     try {
       await this.runTurnOnQueue(
         formatTaskNotification(completion),
         `claude-teammate-${completion.id}`,
+        { isSynthetic: true },
       );
       return { status: 'accepted' };
     } catch (err) {
@@ -323,8 +340,12 @@ export class ClaudeCodeRuntime implements AgentRuntime {
    * see the real outcome. The queue itself continues regardless of outcome so a
    * failed turn does not wedge later turns.
    */
-  private runTurnOnQueue(prompt: string, turnId: string): Promise<void> {
-    const run = this.queue.then(() => this.runTurn(prompt, turnId));
+  private runTurnOnQueue(
+    prompt: string,
+    turnId: string,
+    options?: TurnSubmitOptions,
+  ): Promise<void> {
+    const run = this.queue.then(() => this.runTurn(prompt, turnId, options));
     this.queue = run.then(
       () => undefined,
       () => undefined,
@@ -332,13 +353,23 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     return run;
   }
 
-  private async markTurnSucceeded(): Promise<void> {
+  private async markTurnSucceeded(turnId: string): Promise<void> {
+    this.context.onTurnSettled?.({ turnId, status: 'completed' });
     if (this.stopped) return;
     if (this.status !== 'ready') await this.setStatus('ready');
   }
 
   private async markTurnFailed(turnId: string, err: unknown): Promise<void> {
     this.log('error', `claude-code turn ${turnId} failed`, err);
+    // A turn that fails after stop() was requested (the resident child is being
+    // torn down) is a `stopped` settlement; otherwise it is a genuine `failed`.
+    // Fire before the stopped early-return so an interrupted teammate turn is
+    // never lost.
+    this.context.onTurnSettled?.({
+      turnId,
+      status: this.stopped ? 'stopped' : 'failed',
+      error: err instanceof Error ? err : new Error(String(err)),
+    });
     if (this.stopped) return;
     // Surface the failure as durable runtime state rather than swallowing it.
     await this.setStatus('degraded', err);
@@ -383,9 +414,13 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     await this.setStatus('degraded', new Error('claude resident child exited'));
   }
 
-  private async runTurn(prompt: string, turnId: string): Promise<void> {
+  private async runTurn(
+    prompt: string,
+    turnId: string,
+    options?: TurnSubmitOptions,
+  ): Promise<void> {
     const session = await this.ensureSession();
-    const outcome = await session.submitTurn(prompt);
+    const outcome = await session.submitTurn(prompt, options);
     if (
       outcome.sessionId !== null &&
       outcome.sessionId !== '' &&

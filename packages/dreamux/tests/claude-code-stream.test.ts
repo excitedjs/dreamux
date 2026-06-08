@@ -195,6 +195,24 @@ describe('outbound builders', () => {
     });
   });
 
+  it('buildUserMessage omits isSynthetic / priority by default', () => {
+    const parsed = JSON.parse(buildUserMessage('hi'));
+    expect('isSynthetic' in parsed).toBe(false);
+    expect('priority' in parsed).toBe(false);
+  });
+
+  it('buildUserMessage sets isSynthetic / priority as siblings of message', () => {
+    const parsed = JSON.parse(
+      buildUserMessage('done', { isSynthetic: true, priority: 'now' }),
+    );
+    expect(parsed).toEqual({
+      type: 'user',
+      message: { role: 'user', content: [{ type: 'text', text: 'done' }] },
+      isSynthetic: true,
+      priority: 'now',
+    });
+  });
+
   it('buildCanUseToolAllow echoes the tool input back as updatedInput', () => {
     const parsed = JSON.parse(buildCanUseToolAllow('r1', { command: 'ls' }));
     expect(parsed).toEqual({

@@ -7,7 +7,9 @@ import type {
   AgentRuntimeProvider,
   AgentRuntimeProviderCatalog,
   AgentRuntimeTurnResult,
+  CompletionEnvelope,
 } from '../../agent-runtime/index.js';
+import type { TurnSettledSignal } from '../../agent-runtime/turn.js';
 import {
   BUILTIN_CLAUDE_CODE_PROVIDER_REF,
   BUILTIN_CODEX_PROVIDER_REF,
@@ -58,6 +60,18 @@ export interface TeamMateAgentServiceOptions {
     dispatcherId: string;
     name: string;
   }) => readonly AgentRuntimeMcpServer[];
+  /**
+   * Reverse-delivery sink: invoked when a teammate turn reaches a terminal state
+   * (success, failure, or stop). The facade bridges it to the dispatcher
+   * runtime's `completionInput`, turning a finished teammate into a fresh
+   * dispatcher turn (issue #147). A teammate runtime is launched with
+   * `onTurnSettled` only when this sink is present, so settlement never delivers
+   * into a void.
+   */
+  onTeamMateCompletion?: (
+    dispatcherId: string,
+    completion: CompletionEnvelope,
+  ) => void | Promise<void>;
   log: DreamuxLogger;
 }
 
@@ -271,9 +285,25 @@ export class TeamMateAgentService {
       resumeCapability.supported ? resumeCapability.checkpoint : null,
     );
     const row = this.runtimeRow(identity);
+    const onTeamMateCompletion = this.opts.onTeamMateCompletion;
+    // Bound late so the settle handler closes over the runtime instance directly
+    // rather than re-reading the live map: close() deletes the live entry right
+    // after stop() fires its terminal `stopped` settles, which would otherwise
+    // race the lookup.
+    let liveRuntime: AgentRuntime | null = null;
+    // Only inherit the dispatcher's runtime config when the teammate runs the
+    // SAME provider. A teammate on a different provider (e.g. a claude-code
+    // teammate under a codex dispatcher) must fall back to its provider's
+    // defaults: the dispatcher's config block is the wrong shape, and the
+    // provider's createRuntime would reject it ("... is not wired to ...").
+    const dispatcherCfg = this.dispatcherConfig(dispatcherId);
+    const inheritedConfig =
+      dispatcherCfg !== null && dispatcherCfg.runtime.provider === provider.ref
+        ? dispatcherCfg
+        : null;
     const runtime = provider.createRuntime({
       row,
-      dispatcher: this.dispatcherConfig(dispatcherId),
+      dispatcher: inheritedConfig,
       dispatchers: this.opts.dispatchers,
       cwd: identity.cwd,
       state,
@@ -284,6 +314,25 @@ export class TeamMateAgentService {
           name: identity.name,
         }) ?? []),
       ],
+      // Attach the settle hook only when a sink is wired (the dispatcher's own
+      // runtime never gets one, so it cannot self-deliver). The handler runs off
+      // the synchronous callback and isolates every error so a delivery failure
+      // can never crash the teammate runtime or the settle path.
+      ...(onTeamMateCompletion !== undefined
+        ? {
+            onTurnSettled: (settled: TurnSettledSignal): void => {
+              const settledRuntime = liveRuntime;
+              if (settledRuntime === null) return;
+              void this.deliverTurnSettled(
+                dispatcherId,
+                identity.name,
+                settledRuntime,
+                settled,
+                onTeamMateCompletion,
+              );
+            },
+          }
+        : {}),
       log: (level, message, err) =>
         this.opts.log[level](
           {
@@ -294,6 +343,7 @@ export class TeamMateAgentService {
           message,
         ),
     });
+    liveRuntime = runtime;
     if (identity.checkpoint !== null) {
       await runtime.resume({ checkpoint: identity.checkpoint });
     } else {
@@ -315,6 +365,48 @@ export class TeamMateAgentService {
       text: prompt,
     });
     return toTurnResult(result);
+  }
+
+  /**
+   * Seam ② of the reverse-delivery path (issue #147): turn a settled teammate
+   * turn into a {@link CompletionEnvelope} and hand it to the sink. Reads the
+   * teammate's final assistant-visible result via `getLast`. A `stopped` turn
+   * maps to envelope status `failed` (the envelope carries only completed/failed)
+   * so a torn-down teammate still surfaces, never silently vanishing. Every step
+   * is error-isolated: this runs `void`-ed off the synchronous settle callback,
+   * so any escape would become an unhandled rejection.
+   */
+  private async deliverTurnSettled(
+    dispatcherId: string,
+    name: string,
+    runtime: AgentRuntime,
+    settled: TurnSettledSignal,
+    sink: NonNullable<TeamMateAgentServiceOptions['onTeamMateCompletion']>,
+  ): Promise<void> {
+    try {
+      let result = '';
+      try {
+        const last = await runtime.getLast();
+        result = last?.text ?? '';
+      } catch (err) {
+        this.opts.log.warn(
+          { dispatcher_id: dispatcherId, teammate: name, err: errInfo(err) },
+          'teammate completion getLast failed',
+        );
+      }
+      const envelope: CompletionEnvelope = {
+        source: name,
+        id: settled.turnId !== null ? `${name}:${settled.turnId}` : name,
+        status: settled.status === 'completed' ? 'completed' : 'failed',
+        result,
+      };
+      await sink(dispatcherId, envelope);
+    } catch (err) {
+      this.opts.log.warn(
+        { dispatcher_id: dispatcherId, teammate: name, err: errInfo(err) },
+        'teammate completion delivery failed',
+      );
+    }
   }
 
   private async mustIdentity(

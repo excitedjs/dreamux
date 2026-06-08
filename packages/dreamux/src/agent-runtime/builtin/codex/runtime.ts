@@ -40,7 +40,12 @@ import type {
 import {
   TurnManager,
 } from './turn-manager.js';
-import type { InboundDeliveryHooks, InboundTurnInput } from '../../turn.js';
+import { injectThreadItems, type CollectedTurn } from './events.js';
+import type {
+  InboundDeliveryHooks,
+  InboundTurnInput,
+  TurnSettledSignal,
+} from '../../turn.js';
 import { createFailFastApprovalHandler } from './approval.js';
 import {
   dispatcherCodexHomeDoctorContext,
@@ -63,10 +68,11 @@ import type {
 import { BUILTIN_CODEX_PROVIDER_REF } from '../../../config/config.js';
 import { CODEX_AGENT_RUNTIME_CAPABILITIES } from './provider.js';
 import {
+  buildCodexCompletionItem,
+  CODEX_COMPLETION_TRIGGER_TEXT,
   codexProcessEnv,
   codexRowStateStore,
   defaultCodexRuntimePaths,
-  formatCodexTeamMateCompletion,
 } from './runtime-support.js';
 
 const DEFAULT_RESTART_BACKOFF_BASE_MS = 1000;
@@ -105,6 +111,11 @@ export interface CodexRuntimeDeps {
   restartBackoffBaseMs?: number;
   /** Codex child/WS restart backoff cap (tests may override). */
   restartBackoffMaxMs?: number;
+  /**
+   * Fired each time a delivered turn reaches a terminal state. Supplied by the
+   * launcher (teammate service) and omitted for dispatcher launches.
+   */
+  onTurnSettled?: (settled: TurnSettledSignal) => void;
   log?: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
 }
 
@@ -125,6 +136,15 @@ export class CodexRuntime implements AgentRuntime {
   private status: DispatcherStatus = 'declared';
   /** Monotonic per-attempt suffix for TeamMate delivery turn dedup ids (#110 PR8). */
   private teammateDeliverySeq = 0;
+  /**
+   * Completion ids whose item has already been injected into the thread. The
+   * Dispatcher Service retries `completionInput` on `failed`; if the inject
+   * succeeded but the trigger turn failed, the retry must NOT re-inject the same
+   * item (that would persist a duplicate completion to the rollout). Bounded so
+   * a long-lived dispatcher does not grow this set without limit.
+   */
+  private readonly injectedCompletionIds = new Set<string>();
+  private readonly injectedCompletionOrder: string[] = [];
   private readonly log: NonNullable<CodexRuntimeDeps['log']>;
   private stopping = false;
   private restarting = false;
@@ -324,6 +344,7 @@ export class CodexRuntime implements AgentRuntime {
       getThreadId: () => this.threadId,
       client: this.client,
       onTurnCompleted: (turn) => this.recordCollectedTurn(turn),
+      onTurnSettled: this.deps.onTurnSettled,
       log: this.log,
     });
   }
@@ -408,25 +429,62 @@ export class CodexRuntime implements AgentRuntime {
   }
 
   /**
-   * Codex TeamMate completion delivery (issue #110 PR8): inbox + turn trigger.
-   * The completion is delivered into the dispatcher's Codex thread as a turn via
-   * the public `channelInput` seam — not turn-manager internals — so it
-   * survives the planned move of queue/state to a per-dispatcher state owner.
+   * Codex TeamMate completion delivery — the native inbox-then-trigger idiom.
    *
-   * Each attempt uses a fresh, non-routable source id. The turn manager commits
-   * its dedup id before `turn/start` and does not roll it back on failure, so a
-   * retry that reused one id would come back `duplicate` and be mis-counted as
-   * delivered when nothing was submitted. The Dispatcher Service only retries on
-   * `failed` (turn/start RPC failed → definitely not submitted), so a unique id
-   * per attempt re-submits safely without any double-injection risk.
+   * Two steps, in order:
+   *  1. `thread/inject_items` appends the completion to the dispatcher thread's
+   *     model-visible history as a developer-role message (no fake user turn).
+   *     codex folds the item onto the active turn when one is running and never
+   *     rejects on a busy thread, so a failure here is a genuine RPC error.
+   *  2. a minimal trigger turn through the public `channelInput` seam wakes the
+   *     idle dispatcher so it reads the just-injected notification and acts.
+   *
+   * The trigger turn uses a fresh, non-routable source id per attempt. The turn
+   * manager commits its dedup id before `turn/start` and does not roll it back
+   * on failure, so a retry that reused one id would come back `duplicate` and be
+   * mis-counted as delivered when nothing was submitted. The Dispatcher Service
+   * only retries on `failed` (definitely not submitted), so a unique id per
+   * attempt re-submits the trigger safely.
    */
   async completionInput(
     completion: CompletionEnvelope,
   ): Promise<TeamMateCompletionDeliveryResult> {
+    if (this.client === null || this.turnManager === null || this.stopping) {
+      return { status: 'unsupported', reason: 'dispatcher runtime stopped' };
+    }
+    const threadId = this.threadId;
+    if (threadId === null) {
+      return {
+        status: 'failed',
+        error: new Error('teammate completion delivery has no thread id'),
+      };
+    }
     this.teammateDeliverySeq += 1;
+    // Inject the completion item at most once per completion id. On a retry
+    // (trigger turn failed last time) the item is already in the thread, so we
+    // skip straight to re-triggering instead of persisting a duplicate.
+    if (!this.injectedCompletionIds.has(completion.id)) {
+      try {
+        await injectThreadItems(this.client, threadId, [
+          buildCodexCompletionItem(completion),
+        ]);
+      } catch (err) {
+        const cause = err instanceof Error ? err.message : String(err);
+        // `thread/inject_items` exists only on codex 0.137+. On an older codex
+        // it RPC-fails here, so surface the version requirement loudly rather
+        // than letting the dispatcher silently never see the completion.
+        return {
+          status: 'failed',
+          error: new Error(
+            `teammate completion thread/inject_items failed (requires codex 0.137+): ${cause}`,
+          ),
+        };
+      }
+      this.rememberInjectedCompletion(completion.id);
+    }
     const delivery = await this.channelInput({
       sourceId: `teammate:${completion.id}#${this.teammateDeliverySeq}`,
-      text: formatCodexTeamMateCompletion(completion),
+      text: CODEX_COMPLETION_TRIGGER_TEXT,
     });
     switch (delivery.status) {
       case 'submitted':
@@ -440,12 +498,12 @@ export class CodexRuntime implements AgentRuntime {
         // turn was NOT freshly submitted, so do not report it as delivered.
         return {
           status: 'failed',
-          error: new Error('teammate completion turn unexpectedly deduplicated'),
+          error: new Error('teammate completion trigger unexpectedly deduplicated'),
         };
       case 'skipped':
         return {
           status: 'failed',
-          error: new Error('teammate completion turn unexpectedly skipped'),
+          error: new Error('teammate completion trigger unexpectedly skipped'),
         };
     }
   }
@@ -587,13 +645,26 @@ export class CodexRuntime implements AgentRuntime {
     });
   }
 
-  private recordCollectedTurn(turn: {
-    items: Array<{ type: string; text?: string }>;
-  }): void {
+  private recordCollectedTurn(turn: CollectedTurn): void {
     const messages = turn.items.filter((item) => item.type === 'agentMessage');
     const last = messages[messages.length - 1];
     if (typeof last?.text === 'string' && last.text.length > 0) {
       this.lastResult = { text: last.text };
+    }
+    // A turn reaching `turn/completed` is the `completed` terminal state. The
+    // `stopped` settlement for interrupted turns is emitted by the turn manager
+    // on `stop()`.
+    this.deps.onTurnSettled?.({ turnId: turn.turnId, status: 'completed' });
+  }
+
+  /** Record a completion id as injected, evicting the oldest past a small cap. */
+  private rememberInjectedCompletion(id: string): void {
+    if (this.injectedCompletionIds.has(id)) return;
+    this.injectedCompletionIds.add(id);
+    this.injectedCompletionOrder.push(id);
+    while (this.injectedCompletionOrder.length > 256) {
+      const evicted = this.injectedCompletionOrder.shift();
+      if (evicted !== undefined) this.injectedCompletionIds.delete(evicted);
     }
   }
 
