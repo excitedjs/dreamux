@@ -27,6 +27,8 @@ describe('AgentRuntimeProviderCatalog', () => {
 
     expect(provider.ref).toBe('builtin:codex');
     expect(provider.descriptor.kind).toBe('agentRuntime');
+    expect(provider.getCapabilities().last.supported).toBe(true);
+    expect(provider.getCapabilities().context.supported).toBe(false);
     expect(
       provider.getCapabilities().teammateCompletion.map((shape) => shape.kind),
     ).toEqual(['codexInboxTurn']);
@@ -57,6 +59,8 @@ describe('AgentRuntimeProviderCatalog', () => {
 
     expect(provider.ref).toBe('builtin:claude-code');
     expect(provider.descriptor.kind).toBe('agentRuntime');
+    expect(provider.getCapabilities().last.supported).toBe(true);
+    expect(provider.getCapabilities().context.supported).toBe(false);
     // Distinct delivery shape from Codex — proves the abstraction is not
     // Codex-only.
     expect(

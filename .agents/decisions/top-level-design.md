@@ -49,8 +49,11 @@ The replacement decisions are:
   runtime providers;
 - [provider-references-and-capability-registry](provider-references-and-capability-registry.md)
   for provider refs and process-local capability discovery;
-- [server-hosted-teammate](server-hosted-teammate.md) for Dispatcher
-  Service-owned TeamMate scheduling and state;
+- [server-hosted-teammate](server-hosted-teammate.md) for the historical
+  Dispatcher Service-owned TeamMate scheduling phase;
+- [provider-architecture-realignment](provider-architecture-realignment.md)
+  for the current Dispatcher Service-owned, agent-centric TeamMate runtime and
+  state model;
 - [providerized-config-state-compatibility](providerized-config-state-compatibility.md)
   for config v2 and issue #98 compatibility behavior.
 
@@ -223,9 +226,12 @@ State and logs are server-owned. They are not operator-editable config.
       chat-bots.json
       codex.sock
       teammate/
-        ledger.json           TeamMate task ledger metadata (issue #110 PR7)
-        tasks/
-          <task-id>.json       one versioned TeamMate task record per file
+        identities/
+          <name>.json          one TeamMate identity/checkpoint per file
+        history/
+          <name>.jsonl         forward-only TeamMate lifecycle history
+        runtime/
+          <name>/              runtime-private socket/config state
   logs/
     dreamux-server.log
     daemon.stdout.log          when run as a daemon (onboard service redirect)
@@ -235,10 +241,14 @@ State and logs are server-owned. They are not operator-editable config.
     feishu-mcp/
       dispatcher-a.log         feishu-mcp stdio shim diagnostics (issue #70)
     teammate-mcp/
-      dispatcher-a.log         TeamMate scheduling MCP stdio shim diagnostics
+      dispatcher-a.log         TeamMate MCP stdio shim diagnostics
     codex-app-server/
       dispatcher-a.log         Codex app-server child stdout
       dispatcher-a.stderr.log  Codex app-server child stderr
+      teammate/
+        dispatcher-a/
+          <name>.log           TeamMate Codex runtime stdout
+          <name>.stderr.log    TeamMate Codex runtime stderr
 ```
 
 Host logging (issue #70): `dreamux serve`, the Feishu channel (gate
@@ -557,21 +567,21 @@ The MVP MCP tool surface is:
 Reply failures return an MCP tool error and are logged. There is no persisted
 outbound retry queue.
 
-## TeamMate Scheduling MCP
+## TeamMate MCP
 
-Issue #110 adds a Dispatcher Service-owned TeamMate scheduling MCP. The shim is
-also a per-dispatcher stdio process:
+Issue #135 realigns the Dispatcher Service-owned TeamMate MCP around named
+agents. The shim is also a per-dispatcher stdio process:
 
 ```text
 <dreamux-bin> teammate-mcp --dispatcher dispatcher-a --caller dispatcher
 ```
 
-The scheduling tool accepts a task and returns immediately with an accepted task
-id. It forwards to `dreamux serve` over the local admin socket; the server owns
-the versioned per-dispatcher TeamMate ledger under
-`state/<dispatcher-id>/teammate/`. The shim does not start worker runtimes, own
-completion delivery, or load external npm providers. A caller marked as
-`teammate` is rejected so TeamMates cannot recursively schedule more
+The dispatcher-facing tools are `spawn`, `send`, `resume`, `close`, `history`,
+`list`, `status`, `last`, `ctx`, and `get_capabilities`. Lifecycle tools forward
+to `dreamux serve` over the local admin socket; the server owns the
+per-dispatcher TeamMate identities, runtime checkpoints, and forward-only
+history under `state/<dispatcher-id>/teammate/`. A caller marked as `teammate`
+does not receive lifecycle tools, so TeamMates cannot recursively spawn or close
 TeamMates.
 
 ## Reaction Ownership

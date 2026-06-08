@@ -47,15 +47,7 @@ import {
   type FeishuInboundEvent,
 } from '../src/feishu/bot.js';
 import { saveDispatcherAccess } from '../src/channel/feishu-gate.js';
-import {
-  defaultDispatcherCodexConfig,
-  type DreamuxConfig,
-} from '../src/runtime/config.js';
-import { createCodexTeamMateWorkerProvider } from '../src/teammate/worker/codex-provider.js';
-import type {
-  TeamMateWorkerCallbacks,
-  TeamMateWorkerHandle,
-} from '../src/teammate/worker/types.js';
+import type { DreamuxConfig } from '../src/runtime/config.js';
 import type {
   ServerNotification,
   ThreadStartResponse,
@@ -356,79 +348,6 @@ describe('codex live integration', () => {
       }
     },
     30_000,
-  );
-
-  it(
-    `runs the real codex teammate worker: spawns codex ${detection.version}, marks running, submits a turn`,
-    async () => {
-      // Validates the PR3 worker provider against a real codex binary without
-      // needing model auth: it asserts up to the turn/start ack (onRunning +
-      // thread id), which proves the per-task spawn → handshake → thread/start →
-      // turn/start path. The model-driven completion is covered by the
-      // model-gated cases above.
-      const operatorHome = homedir();
-      const previousHome = process.env['HOME'];
-      // Keep the prefix terse: the worker's Codex socket path nests under
-      // $HOME/.dreamux/state/<id>/teammate/w/ and must fit the Unix socket budget.
-      const dir = mkdtempSync(join(operatorHome, '.dmx-tm-worker-live-'));
-      const cwd = join(dir, 'cwd');
-      mkdirSync(cwd, { recursive: true });
-      // The worker socket path is derived from $HOME via paths.ts; point it at
-      // the temp dir so the live run does not touch the operator's ~/.dreamux.
-      process.env['HOME'] = join(dir, 'home');
-
-      const provider = createCodexTeamMateWorkerProvider({
-        resolveBinPath: (bin) => bin,
-        resolveCodexConfig: () => ({
-          ...defaultDispatcherCodexConfig(),
-          // danger-full-access mirrors the other live cases so a sandbox-less
-          // temp cwd does not trip workspace-write probes.
-          sandbox_mode: 'danger-full-access',
-          initialize_timeout_ms: 15_000,
-        }),
-        resolveDispatcherCwd: () => cwd,
-      });
-
-      const running: TeamMateWorkerHandle[] = [];
-      const callbacks: TeamMateWorkerCallbacks = {
-        onRunning: async (handle) => {
-          running.push(handle);
-        },
-        onCompleted: async () => {},
-        onFailed: async () => {},
-        onCancelled: async () => {},
-      };
-
-      try {
-        const outcome = await provider.startSession(
-          {
-            dispatcherId: 'live',
-            taskId: 'tmtsk_live_worker',
-            teammateId: null,
-            title: 'Live worker probe',
-            prompt: 'Print the single token TEAMMATE_WORKER_OK and stop.',
-            target: { kind: 'path', path: cwd },
-            targetMode: null,
-          },
-          callbacks,
-        );
-        expect(outcome.status).toBe('started');
-        // Running was committed (thread/start + turn/start ack succeeded).
-        expect(running).toHaveLength(1);
-        expect(running[0]?.providerRef).toBe('builtin:codex');
-        expect(typeof running[0]?.threadId).toBe('string');
-        expect((running[0]?.threadId ?? '').length).toBeGreaterThan(0);
-        if (outcome.status === 'started') {
-          // Reap the per-task codex app-server before exiting the test.
-          await outcome.session.cancel('live probe complete');
-        }
-      } finally {
-        if (previousHome === undefined) delete process.env['HOME'];
-        else process.env['HOME'] = previousHome;
-        rmSync(dir, { recursive: true, force: true });
-      }
-    },
-    40_000,
   );
 
   it(

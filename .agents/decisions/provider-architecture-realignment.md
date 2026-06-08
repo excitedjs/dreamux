@@ -3,7 +3,7 @@
 - **Status:** Accepted (remediation tracked in issue #135; implementation in
   progress)
 - **Date:** 2026-06-08
-- **Affects:** Agent Runtime providers, TeamMate worker providers, Dispatcher
+- **Affects:** Agent Runtime providers, TeamMate agent state, Dispatcher
   Service, Capability Registry, Channel providers, MCP injection, `server.ts`
 - **PR / Issue:** [issue #135](https://github.com/excitedjs/dreamux/issues/135);
   refines/supersedes the architectural claims in
@@ -41,10 +41,9 @@ The target architecture is:
 - **Dispatcher Service is a real module**, not a role smeared across
   `/packages/dreamux/src/server.ts` and `/packages/dreamux/src/teammate/`. It is
   launched by the server, holds the dispatcher agent (lifecycle tied to the
-  server: started at boot, resumed on restart), and owns TeamMate scheduling,
-  spawn, dispatch, lifecycle (the dispatcher agent commands it over MCP; the
-  service holds the teammate runtime instances), and delivery of results back
-  into the dispatcher agent.
+  server: started at boot, resumed on restart), and owns TeamMate spawn, send,
+  resume, close, read/recovery verbs, and teammate runtime instances. The
+  dispatcher agent commands it over MCP.
 - **Nested dispatch is prevented by MCP injection, not a runtime check.** A
   teammate / team-leader agent is simply not injected the "spawn TeamMate" tool;
   it is injected inter-agent communication tools instead (agent↔dispatcher,
@@ -97,30 +96,23 @@ see its `verbs/` (spawn/resume/history), `persistence/history-index.ts` and
   teammate layer only knows teammate identities.
 - **Dispatcher-facing verbs, no unified suffix:** `spawn`, `send`, `resume`,
   `close` for lifecycle; `history`, `list`, `status`, `last`, `ctx`,
-  `get_capabilities` for read/recovery. Push-delivery is kept: `spawn`/`send`
-  return immediately and the server delivers the result by waking the dispatcher
-  in a new turn — no polling, no held-open turn (continues issue #134 / PR8).
+  `get_capabilities` for read/recovery. `spawn`/`send` return after submitting
+  the runtime turn; the dispatcher recovers through history/last/ctx and the
+  runtime's native event surface instead of a task result ledger.
 - **resume** brings back a prior teammate session with its history; the
   dispatcher may resume on its own (e.g. continue work from days ago).
-- **History ledger stitches the resume chain.** A forward-only JSONL index of
-  `session` and `close` events (engine, name, repo, cwd, worktree, branch,
-  baseRef, createdAt, intent, closeStatus, closeNotePreview); a history-metadata
-  write must never fail a lifecycle verb. The query layer merges the index with
-  live identity, archived identity, and runtime-native transcript (claude) /
-  rollout (codex) sources. A teammate's sessions link via reused session-id
-  (claude) / thread-id rollout (codex); `history` → `resume <id>` recovers old
-  work. Per-runtime resume mechanics are absorbed by the runtime implementation
-  behind one `resume` surface.
+- **History stitches the resume chain.** A forward-only JSONL index records
+  `spawn`, `send`, `resume`, `close`, and runtime state events. History writes
+  must never fail a lifecycle verb. Per-runtime checkpoint mechanics are
+  absorbed by the runtime implementation behind one `resume` surface.
 - **Identity and state location.** A teammate is a flat name plus a base record
-  (engine / repo / cwd / worktreeSlug / createdAt / displayName); runtime-private
-  state lives under each runtime's persistence module. State is server-owned
-  under `~/.dreamux/state/<dispatcher>/teammate/` (server-hosted, not a
-  CLI + tmpfile + tmux model); paths go through
+  (provider ref, cwd, checkpoint, status, close metadata). State is server-owned
+  under `~/.dreamux/state/<dispatcher>/teammate/` with `identities/`,
+  `history/`, and `runtime/` subtrees; paths go through
   `/packages/dreamux/src/runtime/paths.ts`.
-- **Ownership.** The Dispatcher Service owns the history ledger. Whether a
-  dedicated small history module / sub-service is split out depends on the final
-  dispatcher code size (the reference model's history index is a focused
-  ~290-line module).
+- **Ownership.** The Dispatcher Service owns TeamMate identity and history
+  through focused modules under
+  `/packages/dreamux/src/dispatcher-service/teammate/`.
 
 ## Consequences
 
@@ -130,17 +122,17 @@ see its `verbs/` (spawn/resume/history), `persistence/history-index.ts` and
 - `server.ts` loses the ~12 `*TeamMate*FromMcp` methods, channel `*FromMcp`
   handlers, and hard-spliced MCP injection — they move into the Dispatcher
   Service and the channel/runtime plugins.
-- The Dispatcher Service extraction starts with teammate orchestration:
-  `server.ts` wires a `DispatcherService`, admin/MCP handlers validate params
-  and delegate to it, and the service owns scheduling authority, ledgers,
-  wait-broker notifications, worker execution, completion delivery, logs,
-  capability probing, and worker reaping. Worker runtime construction stays in
-  a separate dispatcher-service factory module so the service does not absorb
-  runtime-specific details.
-- This extraction intentionally keeps the existing TeamMate worker provider
-  tree until the agent-centric TeamMate replacement lands. The old
-  `server.ts` orchestration path is removed in this step; deleting
-  `/packages/dreamux/src/teammate/worker/` remains a separate migration step.
+- PR C extracted a thin `DispatcherService`; PR D replaces the old task/worker
+  implementation with agent-centric TeamMate verbs. `server.ts` wires the
+  service, admin/MCP handlers validate params and delegate to it, and the
+  service owns TeamMate identity, history, lifecycle, and live runtime map.
+- PR D deletes `/packages/dreamux/src/teammate/ledger.ts`,
+  `/packages/dreamux/src/teammate/delivery.ts`,
+  `/packages/dreamux/src/teammate/wait-broker.ts`,
+  `/packages/dreamux/src/teammate/worker-execution.ts`,
+  `/packages/dreamux/src/teammate/worker-logs.ts`, and
+  `/packages/dreamux/src/teammate/worker/`. There is no parallel
+  `TeamMateWorkerProvider` tree or `task_id` API after this cut.
 - Hard-coded `BUILTIN_*_REF` branching across core (`server.ts`,
   `/packages/dreamux/src/runtime/config.ts`,
   `/packages/dreamux/src/cli/doctor.ts`) is expected to shrink as core consumes

@@ -7,11 +7,10 @@ import {
 } from '../admin/client.js';
 import { adminSocketPath as defaultAdminSocketPath } from '../runtime/paths.js';
 import { validateDispatcherId } from '../runtime/dispatcher-id.js';
-import type { TeamMateScheduleCallerKind } from '../teammate/ledger.js';
 
 export interface TeamMateMcpOptions {
   dispatcherId: string;
-  callerKind: TeamMateScheduleCallerKind;
+  callerKind: 'dispatcher' | 'teammate';
   adminSocketPath?: string;
   input?: Readable;
   output?: Writable;
@@ -25,9 +24,9 @@ interface JsonRpcRequest {
   params?: unknown;
 }
 
-interface ToolCallParams {
-  name?: unknown;
-  arguments?: unknown;
+interface ToolCall {
+  name: string;
+  arguments: unknown;
 }
 
 const JSONRPC_VERSION = '2.0';
@@ -77,7 +76,7 @@ async function handleRequest(
   request: JsonRpcRequest,
   ctx: {
     dispatcherId: string;
-    callerKind: TeamMateScheduleCallerKind;
+    callerKind: 'dispatcher' | 'teammate';
     socketPath: string;
     output: Writable;
   },
@@ -92,10 +91,7 @@ async function handleRequest(
   switch (request.method) {
     case 'initialize':
       if (request.id !== undefined) {
-        write(
-          ctx.output,
-          okResponse(request.id, initializeResult(request.params)),
-        );
+        write(ctx.output, okResponse(request.id, initializeResult(request.params)));
       }
       return;
     case 'initialized':
@@ -103,26 +99,19 @@ async function handleRequest(
       return;
     case 'tools/list':
       if (request.id !== undefined) {
-        write(ctx.output, okResponse(request.id, { tools: teammateTools() }));
+        write(ctx.output, okResponse(request.id, { tools: teammateTools(ctx.callerKind) }));
       }
       return;
     case 'tools/call':
       if (request.id !== undefined) {
-        write(
-          ctx.output,
-          okResponse(request.id, await callTool(request.params, ctx)),
-        );
+        write(ctx.output, okResponse(request.id, await callTool(request.params, ctx)));
       }
       return;
     default:
       if (request.id !== undefined) {
         write(
           ctx.output,
-          errorResponse(
-            request.id,
-            -32601,
-            `unknown MCP method '${request.method}'`,
-          ),
+          errorResponse(request.id, -32601, `unknown MCP method '${request.method}'`),
         );
       }
   }
@@ -131,358 +120,127 @@ async function handleRequest(
 function initializeResult(params: unknown): Record<string, unknown> {
   return {
     protocolVersion: negotiateProtocolVersion(params),
-    capabilities: {
-      tools: {},
-    },
-    serverInfo: {
-      name: 'dreamux-teammate',
-      version: '0.2.0',
-    },
+    capabilities: { tools: {} },
+    serverInfo: { name: 'dreamux-teammate', version: '0.3.0' },
   };
 }
 
-function teammateTools(): Array<Record<string, unknown>> {
-  return [
-    {
-      name: 'schedule',
-      description:
-        'Accept a server-hosted TeamMate task for this dispatcher and return immediately with a task id.',
-      inputSchema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          title: {
-            type: 'string',
-            minLength: 1,
-            maxLength: 200,
-            description: 'Short task title for the server ledger.',
-          },
-          prompt: {
-            type: 'string',
-            minLength: 1,
-            maxLength: 20000,
-            description: 'Task brief for the TeamMate.',
-          },
-          teammate_id: {
-            type: 'string',
-            description: 'Optional stable TeamMate id requested by the dispatcher.',
-          },
-        },
-        required: ['title', 'prompt'],
-      },
-    },
-    {
-      name: 'run_task',
-      description:
-        'Create and execute a server-hosted TeamMate task in a local target. ' +
-        'Returns once the task is created and a worker session is started; the ' +
-        'execution sub-result reports running (then completed/failed via the ' +
-        'ledger). The default Codex worker executes for real. If no worker is ' +
-        'wired or the chosen provider is unavailable, the execution sub-result ' +
-        'reports provider_unavailable (retryable) while the task is still ' +
-        'created durably.',
-      inputSchema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          title: { type: 'string', minLength: 1, maxLength: 200 },
-          prompt: { type: 'string', minLength: 1, maxLength: 20000 },
-          target: {
-            type: 'object',
-            additionalProperties: false,
-            description:
-              'Local execution target. path may be absolute or relative to ' +
-              'the dispatcher directory; it is resolved and confined there.',
-            properties: {
-              kind: { type: 'string', enum: ['path'] },
-              path: { type: 'string', minLength: 1, maxLength: 4096 },
-            },
-            required: ['path'],
-          },
-          teammate_id: {
-            type: 'string',
-            description: 'Optional stable TeamMate id for cross-task identity.',
-          },
-          intent: { type: 'string', maxLength: 200 },
-          target_mode: {
-            type: 'string',
-            enum: ['managed_worktree', 'in_place'],
-          },
-          provider_ref: {
-            type: 'string',
-            description:
-              'Worker to execute on; defaults to builtin:codex. Pin ' +
-              'builtin:claude-code to run on the Claude Code worker. Consult ' +
-              "get_capabilities for each worker's advertised modes " +
-              '(builtin:claude-code is single-turn, steer:false).',
-          },
-          operation_id: {
-            type: 'string',
-            description: 'Idempotency key; replaying returns the prior task.',
-          },
-        },
-        required: ['title', 'prompt', 'target'],
-      },
-    },
-    {
-      name: 'execute_task',
-      description:
-        'Start or retry execution for an accepted TeamMate task. Reports ' +
-        'running once a worker session is live (the default Codex worker runs ' +
-        'for real); a task with no worker wired or an unavailable provider ' +
-        'reports provider_unavailable (retryable).',
-      inputSchema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          task_id: { type: 'string' },
-          provider_ref: {
-            type: 'string',
-            description:
-              'Worker to execute on; defaults to builtin:codex. Pin ' +
-              'builtin:claude-code to run on the Claude Code worker (see ' +
-              'get_capabilities).',
-          },
-          target_mode: {
-            type: 'string',
-            enum: ['managed_worktree', 'in_place'],
-          },
-          operation_id: { type: 'string' },
-        },
-        required: ['task_id'],
-      },
-    },
-    {
-      name: 'send_input',
-      description:
-        'Send a follow-up input to a steerable TeamMate task session. Default ' +
-        'mode is steer; queue and interrupt are explicit. On a worker that ' +
-        'advertises steer (builtin:codex) it folds into the live turn and is ' +
-        'submitted; on a single-turn worker (builtin:claude-code, steer:false) ' +
-        'or with no live session the input is recorded as queued for a future ' +
-        'worker. See get_capabilities.',
-      inputSchema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          task_id: { type: 'string' },
-          prompt: { type: 'string', minLength: 1, maxLength: 20000 },
-          mode: { type: 'string', enum: ['steer', 'queue', 'interrupt'] },
-          operation_id: { type: 'string' },
-        },
-        required: ['task_id', 'prompt'],
-      },
-    },
-    // No await_completion tool: normal orchestration is run_task → the dispatcher
-    // turn ends → the server delivers/wakes the dispatcher into a new turn. The
-    // dispatcher must not poll or hold a turn open waiting (issue #126 PR8). The
-    // ledger read tools (get_task / pull_result) are the recovery path; the
-    // server keeps an internal wait primitive for its own use and tests only.
-    {
-      name: 'cancel_task',
-      description:
-        'Cancel a TeamMate task without shelling out to kill a worker process. ' +
-        'A live worker is stopped and its resources reaped; a not-yet-running or ' +
-        'orphaned task is closed in the ledger. An already-finished task is an ' +
-        'idempotent no-op (status already_terminal). The task closes as ' +
-        'cancelled; pass note for a short reason.',
-      inputSchema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          task_id: { type: 'string' },
-          note: {
-            type: 'string',
-            maxLength: 2000,
-            description: 'Optional short reason recorded with the cancellation.',
-          },
-        },
-        required: ['task_id'],
-      },
-    },
-    {
-      name: 'get_task_logs',
-      description:
-        'Read a bounded tail of a TeamMate worker\'s diagnostic logs to inspect ' +
-        'a slow or failed worker without tailing a file in a shell. Returns ' +
-        'worker stderr and, for builtin:codex, app-server stdout protocol frames ' +
-        'plus an "events" trace of the Codex turn notification stream (the ' +
-        'actionable diagnostic when a turn stalls after submission) — NOT the ' +
-        'clean result, which comes from get_task / pull_result. Streams are ' +
-        'empty until the worker has run.',
-      inputSchema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          task_id: { type: 'string' },
-          max_bytes: {
-            type: 'number',
-            description:
-              'Bytes to return per stream (tail). Defaults to 16384; capped at ' +
-              '131072.',
-          },
-          stream: {
-            type: 'string',
-            enum: ['stdout', 'stderr', 'events'],
-            description: 'Restrict to one stream; default returns all available.',
-          },
-        },
-        required: ['task_id'],
-      },
-    },
-    {
-      name: 'get_capabilities',
-      description:
-        'List server and runtime TeamMate capabilities (read-only). The ' +
-        'builtin:codex (steer) and builtin:claude-code (single-turn, ' +
-        'steer:false) workers are wired by default, but availability is PROBED ' +
-        'in the dispatcher service environment and may be false — e.g. ' +
-        'builtin:claude-code is unavailable when `claude` is not on the service ' +
-        'PATH. Do not assume a worker is available: read each returned ' +
-        'provider row\'s worker_available flag (and unsupported_reason) before ' +
-        'routing a task to it.',
-      inputSchema: { type: 'object', additionalProperties: false, properties: {} },
-    },
-    {
-      name: 'list_tasks',
-      description:
-        'List this dispatcher\'s TeamMate tasks and their statuses (no result bodies).',
-      inputSchema: { type: 'object', additionalProperties: false, properties: {} },
-    },
-    {
-      name: 'get_task',
-      description:
-        'Fetch one TeamMate task in full, including its result, delivery state, and history.',
-      inputSchema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          task_id: { type: 'string', description: 'The task id to fetch.' },
-        },
-        required: ['task_id'],
-      },
-    },
-    {
-      name: 'pull_result',
-      description:
-        'Pull a retained TeamMate result — the fallback when push delivery failed. ' +
-        'Omit task_id for the latest result-bearing task.',
-      inputSchema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          task_id: {
-            type: 'string',
-            description: 'Optional task id; defaults to the latest result.',
-          },
-        },
-      },
-    },
+function teammateTools(callerKind: 'dispatcher' | 'teammate'): Array<Record<string, unknown>> {
+  const readTools = [
+    tool('history', 'Read the forward-only history for one TeamMate.', {
+      name: { type: 'string', minLength: 1, maxLength: 64 },
+    }, ['name']),
+    tool('list', 'List this dispatcher\'s TeamMate identities.', {}, []),
+    tool('status', 'Read one TeamMate identity and live runtime status.', {
+      name: { type: 'string', minLength: 1, maxLength: 64 },
+    }, ['name']),
+    tool('last', 'Read the last visible result reported by one TeamMate runtime.', {
+      name: { type: 'string', minLength: 1, maxLength: 64 },
+    }, ['name']),
+    tool('ctx', 'Read one TeamMate runtime context-window snapshot.', {
+      name: { type: 'string', minLength: 1, maxLength: 64 },
+    }, ['name']),
+    tool('get_capabilities', 'List TeamMate runtime capabilities and verbs.', {}, []),
   ];
+  if (callerKind !== 'dispatcher') return readTools;
+  return [
+    tool('spawn', 'Start a named, resumable TeamMate agent and submit its first turn.', {
+      name: { type: 'string', minLength: 1, maxLength: 64 },
+      prompt: { type: 'string', minLength: 1, maxLength: 20000 },
+      provider_ref: { type: 'string' },
+      cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+    }, ['name', 'prompt']),
+    tool('send', 'Send a follow-up turn to a running or resumable TeamMate agent.', {
+      name: { type: 'string', minLength: 1, maxLength: 64 },
+      prompt: { type: 'string', minLength: 1, maxLength: 20000 },
+    }, ['name', 'prompt']),
+    tool('resume', 'Resume a named TeamMate session, optionally with a follow-up prompt.', {
+      name: { type: 'string', minLength: 1, maxLength: 64 },
+      prompt: { type: 'string', minLength: 1, maxLength: 20000 },
+    }, ['name']),
+    tool('close', 'Close a named TeamMate agent and retain its history for resume/audit.', {
+      name: { type: 'string', minLength: 1, maxLength: 64 },
+      note: { type: 'string', maxLength: 2000 },
+    }, ['name']),
+    ...readTools,
+  ];
+}
+
+function tool(
+  name: string,
+  description: string,
+  properties: Record<string, unknown>,
+  required: string[],
+): Record<string, unknown> {
+  return {
+    name,
+    description,
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties,
+      required,
+    },
+  };
 }
 
 async function callTool(
   params: unknown,
   ctx: {
     dispatcherId: string;
-    callerKind: TeamMateScheduleCallerKind;
+    callerKind: 'dispatcher' | 'teammate';
     socketPath: string;
   },
 ): Promise<Record<string, unknown>> {
   try {
     const call = asToolCallParams(params);
-    if (call.name === 'schedule') {
-      return forwardToolCall(
-        'mcp.teammate.schedule',
-        {
-          dispatcher_id: ctx.dispatcherId,
-          caller_kind: ctx.callerKind,
-          ...scheduleArgs(call.arguments),
-        },
-        ctx.socketPath,
-        'schedule',
-      );
+    if (ctx.callerKind !== 'dispatcher' && isLifecycleTool(call.name)) {
+      return toolError(`TeamMate tool '${call.name}' is not available to teammates`);
     }
-    if (call.name === 'run_task') {
-      return forwardToolCall(
-        'mcp.teammate.run',
-        {
-          dispatcher_id: ctx.dispatcherId,
-          caller_kind: ctx.callerKind,
-          ...runArgs(call.arguments),
-        },
-        ctx.socketPath,
-        'run_task',
-      );
-    }
-    if (call.name === 'execute_task') {
-      return forwardToolCall(
-        'mcp.teammate.execute',
-        { dispatcher_id: ctx.dispatcherId, ...executeArgs(call.arguments) },
-        ctx.socketPath,
-        'execute_task',
-      );
-    }
-    if (call.name === 'send_input') {
-      return forwardToolCall(
-        'mcp.teammate.send_input',
-        { dispatcher_id: ctx.dispatcherId, ...sendInputArgs(call.arguments) },
-        ctx.socketPath,
-        'send_input',
-      );
-    }
-    if (call.name === 'cancel_task') {
-      return forwardToolCall(
-        'mcp.teammate.cancel',
-        { dispatcher_id: ctx.dispatcherId, ...cancelArgs(call.arguments) },
-        ctx.socketPath,
-        'cancel_task',
-      );
-    }
-    if (call.name === 'get_task_logs') {
-      return forwardToolCall(
-        'mcp.teammate.logs',
-        { dispatcher_id: ctx.dispatcherId, ...logsArgs(call.arguments) },
-        ctx.socketPath,
-        'get_task_logs',
-      );
-    }
-    if (call.name === 'get_capabilities') {
-      return forwardToolCall(
-        'mcp.teammate.capabilities',
-        { dispatcher_id: ctx.dispatcherId },
-        ctx.socketPath,
-        'get_capabilities',
-      );
-    }
-    if (call.name === 'list_tasks') {
-      return forwardToolCall(
-        'mcp.teammate.list',
-        { dispatcher_id: ctx.dispatcherId },
-        ctx.socketPath,
-        'list_tasks',
-      );
-    }
-    if (call.name === 'get_task') {
-      return forwardToolCall(
-        'mcp.teammate.get',
-        { dispatcher_id: ctx.dispatcherId, ...getTaskArgs(call.arguments) },
-        ctx.socketPath,
-        'get_task',
-      );
-    }
-    if (call.name === 'pull_result') {
-      return forwardToolCall(
-        'mcp.teammate.pull',
-        { dispatcher_id: ctx.dispatcherId, ...pullArgs(call.arguments) },
-        ctx.socketPath,
-        'pull_result',
-      );
-    }
-    return toolError(`unknown TeamMate tool '${String(call.name)}'`);
+    const mapped = mapToolCall(call);
+    return forwardToolCall(
+      mapped.method,
+      { dispatcher_id: ctx.dispatcherId, ...mapped.params },
+      ctx.socketPath,
+      call.name,
+    );
   } catch (err) {
     return toolError(parseMessage(err));
   }
+}
+
+function mapToolCall(call: ToolCall): {
+  method: string;
+  params: Record<string, unknown>;
+} {
+  switch (call.name) {
+    case 'spawn':
+      return { method: 'mcp.teammate.spawn', params: spawnArgs(call.arguments) };
+    case 'send':
+      return { method: 'mcp.teammate.send', params: sendArgs(call.arguments) };
+    case 'resume':
+      return { method: 'mcp.teammate.resume', params: resumeArgs(call.arguments) };
+    case 'close':
+      return { method: 'mcp.teammate.close', params: closeArgs(call.arguments) };
+    case 'history':
+      return { method: 'mcp.teammate.history', params: nameArgs(call.arguments) };
+    case 'list':
+      return { method: 'mcp.teammate.list', params: {} };
+    case 'status':
+      return { method: 'mcp.teammate.status', params: nameArgs(call.arguments) };
+    case 'last':
+      return { method: 'mcp.teammate.last', params: nameArgs(call.arguments) };
+    case 'ctx':
+      return { method: 'mcp.teammate.ctx', params: nameArgs(call.arguments) };
+    case 'get_capabilities':
+      return { method: 'mcp.teammate.capabilities', params: {} };
+    default:
+      throw new Error(`unknown TeamMate tool '${String(call.name)}'`);
+  }
+}
+
+function isLifecycleTool(name: string): boolean {
+  return name === 'spawn' || name === 'send' || name === 'resume' || name === 'close';
 }
 
 function negotiateProtocolVersion(params: unknown): string {
@@ -504,13 +262,9 @@ async function forwardToolCall(
   params: Record<string, unknown>,
   socketPath: string,
   label: string,
-  timeoutMs?: number,
 ): Promise<Record<string, unknown>> {
   try {
-    const result = await sendAdminRequest(method, params, {
-      socketPath,
-      ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-    });
+    const result = await sendAdminRequest(method, params, { socketPath });
     return {
       content: [{ type: 'text', text: `${label} forwarded to dreamux serve` }],
       structuredContent: result,
@@ -521,115 +275,56 @@ async function forwardToolCall(
   }
 }
 
-function asToolCallParams(params: unknown): Required<ToolCallParams> {
+function asToolCallParams(params: unknown): ToolCall {
   const obj = asRecord(params, 'tools/call params');
   const name = obj['name'];
   if (typeof name !== 'string' || name === '') {
     throw new Error('tools/call params.name must be a non-empty string');
   }
-  return {
-    name,
-    arguments: obj['arguments'] ?? {},
-  };
+  return { name, arguments: obj['arguments'] ?? {} };
 }
 
-function scheduleArgs(value: unknown): Record<string, unknown> {
-  const obj = asRecord(value, 'schedule arguments');
-  const teammateId = optionalString(obj, 'teammate_id');
-  return {
-    title: requireString(obj, 'title'),
-    prompt: requireString(obj, 'prompt'),
-    ...(teammateId !== null ? { teammate_id: teammateId } : {}),
-  };
-}
-
-function getTaskArgs(value: unknown): Record<string, unknown> {
-  const obj = asRecord(value, 'get_task arguments');
-  return { task_id: requireString(obj, 'task_id') };
-}
-
-function pullArgs(value: unknown): Record<string, unknown> {
-  const obj = asRecord(value, 'pull_result arguments');
-  const taskId = optionalString(obj, 'task_id');
-  return taskId !== null ? { task_id: taskId } : {};
-}
-
-function runArgs(value: unknown): Record<string, unknown> {
-  const obj = asRecord(value, 'run_task arguments');
-  const target = asRecord(obj['target'], 'run_task target');
-  const teammateId = optionalString(obj, 'teammate_id');
-  const intent = optionalString(obj, 'intent');
-  const targetMode = optionalString(obj, 'target_mode');
+function spawnArgs(value: unknown): Record<string, unknown> {
+  const obj = asRecord(value, 'spawn arguments');
   const providerRef = optionalString(obj, 'provider_ref');
-  const operationId = optionalString(obj, 'operation_id');
+  const cwd = optionalString(obj, 'cwd');
   return {
-    title: requireString(obj, 'title'),
+    name: requireString(obj, 'name'),
     prompt: requireString(obj, 'prompt'),
-    target_path: requireString(target, 'path'),
-    ...(teammateId !== null ? { teammate_id: teammateId } : {}),
-    ...(intent !== null ? { intent } : {}),
-    ...(targetMode !== null ? { target_mode: targetMode } : {}),
     ...(providerRef !== null ? { provider_ref: providerRef } : {}),
-    ...(operationId !== null ? { operation_id: operationId } : {}),
+    ...(cwd !== null ? { cwd } : {}),
   };
 }
 
-function executeArgs(value: unknown): Record<string, unknown> {
-  const obj = asRecord(value, 'execute_task arguments');
-  const providerRef = optionalString(obj, 'provider_ref');
-  const targetMode = optionalString(obj, 'target_mode');
-  const operationId = optionalString(obj, 'operation_id');
+function sendArgs(value: unknown): Record<string, unknown> {
+  const obj = asRecord(value, 'send arguments');
   return {
-    task_id: requireString(obj, 'task_id'),
-    ...(providerRef !== null ? { provider_ref: providerRef } : {}),
-    ...(targetMode !== null ? { target_mode: targetMode } : {}),
-    ...(operationId !== null ? { operation_id: operationId } : {}),
-  };
-}
-
-function sendInputArgs(value: unknown): Record<string, unknown> {
-  const obj = asRecord(value, 'send_input arguments');
-  const mode = optionalString(obj, 'mode');
-  const operationId = optionalString(obj, 'operation_id');
-  return {
-    task_id: requireString(obj, 'task_id'),
+    name: requireString(obj, 'name'),
     prompt: requireString(obj, 'prompt'),
-    ...(mode !== null ? { mode } : {}),
-    ...(operationId !== null ? { operation_id: operationId } : {}),
   };
 }
 
-function cancelArgs(value: unknown): Record<string, unknown> {
-  const obj = asRecord(value, 'cancel_task arguments');
+function resumeArgs(value: unknown): Record<string, unknown> {
+  const obj = asRecord(value, 'resume arguments');
+  const prompt = optionalString(obj, 'prompt');
+  return {
+    name: requireString(obj, 'name'),
+    ...(prompt !== null ? { prompt } : {}),
+  };
+}
+
+function closeArgs(value: unknown): Record<string, unknown> {
+  const obj = asRecord(value, 'close arguments');
   const note = optionalString(obj, 'note');
   return {
-    task_id: requireString(obj, 'task_id'),
+    name: requireString(obj, 'name'),
     ...(note !== null ? { note } : {}),
   };
 }
 
-function logsArgs(value: unknown): Record<string, unknown> {
-  const obj = asRecord(value, 'get_task_logs arguments');
-  const maxBytes = optionalNumber(obj, 'max_bytes');
-  const stream = optionalString(obj, 'stream');
-  return {
-    task_id: requireString(obj, 'task_id'),
-    ...(maxBytes !== null ? { max_bytes: maxBytes } : {}),
-    ...(stream !== null ? { stream } : {}),
-  };
-}
-
-
-function optionalNumber(
-  obj: Record<string, unknown>,
-  key: string,
-): number | null {
-  const value = obj[key];
-  if (value === undefined || value === null) return null;
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
-    throw new Error(`${key} must be a finite number`);
-  }
-  return value;
+function nameArgs(value: unknown): Record<string, unknown> {
+  const obj = asRecord(value, 'arguments');
+  return { name: requireString(obj, 'name') };
 }
 
 function asRecord(value: unknown, label: string): Record<string, unknown> {
@@ -641,55 +336,46 @@ function asRecord(value: unknown, label: string): Record<string, unknown> {
 
 function requireString(obj: Record<string, unknown>, key: string): string {
   const value = obj[key];
-  if (typeof value !== 'string' || value === '') {
+  if (typeof value !== 'string' || value.length === 0) {
     throw new Error(`${key} must be a non-empty string`);
   }
   return value;
 }
 
-function optionalString(
-  obj: Record<string, unknown>,
-  key: string,
-): string | null {
+function optionalString(obj: Record<string, unknown>, key: string): string | null {
   const value = obj[key];
   if (value === undefined || value === null) return null;
-  if (typeof value !== 'string') {
-    throw new Error(`${key} must be a string`);
-  }
+  if (typeof value !== 'string') throw new Error(`${key} must be a string`);
   return value;
 }
 
-function validateCallerKind(
-  value: TeamMateScheduleCallerKind,
-): TeamMateScheduleCallerKind {
-  if (value === 'dispatcher' || value === 'teammate') return value;
-  throw new Error(`unsupported TeamMate MCP caller kind: ${String(value)}`);
-}
-
-function okResponse(
-  id: string | number | null,
-  result: unknown,
-): Record<string, unknown> {
-  return { jsonrpc: JSONRPC_VERSION, id, result };
+function okResponse(id: JsonRpcRequest['id'], result: unknown): string {
+  return `${JSON.stringify({ jsonrpc: JSONRPC_VERSION, id, result })}\n`;
 }
 
 function errorResponse(
-  id: string | number | null,
+  id: JsonRpcRequest['id'],
   code: number,
   message: string,
-): Record<string, unknown> {
-  return { jsonrpc: JSONRPC_VERSION, id, error: { code, message } };
+): string {
+  return `${JSON.stringify({
+    jsonrpc: JSONRPC_VERSION,
+    id,
+    error: { code, message },
+  })}\n`;
 }
 
 function toolError(message: string): Record<string, unknown> {
-  return {
-    isError: true,
-    content: [{ type: 'text', text: message }],
-  };
+  return { content: [{ type: 'text', text: message }], isError: true };
 }
 
-function write(output: Writable, message: unknown): void {
-  output.write(`${JSON.stringify(message)}\n`);
+function write(output: Writable, line: string): void {
+  output.write(line);
+}
+
+function validateCallerKind(value: string): 'dispatcher' | 'teammate' {
+  if (value === 'dispatcher' || value === 'teammate') return value;
+  throw new Error("caller kind must be 'dispatcher' or 'teammate'");
 }
 
 function parseMessage(err: unknown): string {

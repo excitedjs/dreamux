@@ -10,12 +10,6 @@ import type { Server } from '../server.js';
 import { AdminError } from './protocol.js';
 import type { DispatcherStatus } from '../runtime/dispatcher-store.js';
 import { validateDispatcherId } from '../runtime/dispatcher-id.js';
-import {
-  NestedTeamMateDispatchError,
-  type TeamMateInputMode,
-  type TeamMateScheduleCallerKind,
-  type TeamMateTargetMode,
-} from '../teammate/ledger.js';
 
 export type AdminHandler = (
   server: Server,
@@ -130,239 +124,112 @@ export const adminMethods: Record<string, AdminHandler> = {
     return server.listChatBotsFromMcp({ dispatcherId: id, chatId });
   },
 
-  'mcp.teammate.schedule': async (server, params) => {
+  'mcp.teammate.spawn': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    const callerKind = mustCallerKind(params);
-    const title = mustString(params, 'title');
+    const name = mustString(params, 'name');
     const prompt = mustString(params, 'prompt');
-    const teammateId = optionalString(params, 'teammate_id');
-    try {
-      return await server.dispatcherService.scheduleTeamMate({
-        dispatcherId: id,
-        callerKind,
-        title,
-        prompt,
-        ...(teammateId !== null ? { teammateId } : {}),
-      });
-    } catch (err) {
-      if (err instanceof NestedTeamMateDispatchError) {
-        throw new AdminError(
-          'TEAMMATE_NESTED_DISPATCH_REJECTED',
-          parseMessage(err),
-        );
-      }
-      throw new AdminError('TEAMMATE_SCHEDULE_FAILED', parseMessage(err));
-    }
-  },
-
-  // Worker/operator completion ingest (issue #110 PR8). Intentionally NOT a
-  // dispatcher-facing teammate-mcp tool, so a dispatcher model cannot fake a
-  // completion; it is the seam a future worker / operator tool drives.
-  'mcp.teammate.complete': async (server, params) => {
-    const id = mustDispatcherId(params);
-    mustExistingDispatcher(server, id);
-    const taskId = mustString(params, 'task_id');
-    const outcome = mustString(params, 'outcome');
-    if (outcome !== 'completed' && outcome !== 'failed') {
-      throw new AdminError(
-        'BAD_REQUEST',
-        "param 'outcome' must be 'completed' or 'failed'",
-      );
-    }
-    const finalText = mustString(params, 'final_text');
-    try {
-      return await server.dispatcherService.reportTeamMateCompletion({
-        dispatcherId: id,
-        taskId,
-        outcome,
-        finalText,
-      });
-    } catch (err) {
-      throw new AdminError('TEAMMATE_COMPLETE_FAILED', parseMessage(err));
-    }
-  },
-
-  // Executable normal-path create-and-execute tool (issue #126). The admin
-  // layer only validates params and delegates orchestration to DispatcherService.
-  'mcp.teammate.run': async (server, params) => {
-    const id = mustDispatcherId(params);
-    mustExistingDispatcher(server, id);
-    const callerKind = mustCallerKind(params);
-    const title = mustString(params, 'title');
-    const prompt = mustString(params, 'prompt');
-    const targetPath = mustString(params, 'target_path');
-    const teammateId = optionalString(params, 'teammate_id');
-    const intent = optionalString(params, 'intent');
-    const targetMode = optionalString(params, 'target_mode');
     const providerRef = optionalString(params, 'provider_ref');
-    const operationId = optionalString(params, 'operation_id');
+    const cwd = optionalString(params, 'cwd');
     try {
-      return await server.dispatcherService.runTeamMateTask({
+      return await server.dispatcherService.spawnTeamMate({
         dispatcherId: id,
-        callerKind,
-        title,
+        name,
         prompt,
-        targetPath,
-        ...(teammateId !== null ? { teammateId } : {}),
-        ...(intent !== null ? { intent } : {}),
-        ...(targetMode !== null
-          ? { targetMode: targetMode as TeamMateTargetMode }
-          : {}),
         ...(providerRef !== null ? { providerRef } : {}),
-        ...(operationId !== null ? { operationId } : {}),
+        ...(cwd !== null ? { cwd } : {}),
       });
     } catch (err) {
-      if (err instanceof NestedTeamMateDispatchError) {
-        throw new AdminError(
-          'TEAMMATE_NESTED_DISPATCH_REJECTED',
-          parseMessage(err),
-        );
-      }
-      throw new AdminError('TEAMMATE_RUN_FAILED', parseMessage(err));
+      throw new AdminError('TEAMMATE_SPAWN_FAILED', parseMessage(err));
     }
   },
 
-  'mcp.teammate.execute': async (server, params) => {
+  'mcp.teammate.send': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    const taskId = mustString(params, 'task_id');
-    const providerRef = optionalString(params, 'provider_ref');
-    const targetMode = optionalString(params, 'target_mode');
-    const operationId = optionalString(params, 'operation_id');
-    try {
-      return await server.dispatcherService.executeTeamMateTask({
-        dispatcherId: id,
-        taskId,
-        ...(providerRef !== null ? { providerRef } : {}),
-        ...(targetMode !== null
-          ? { targetMode: targetMode as TeamMateTargetMode }
-          : {}),
-        ...(operationId !== null ? { operationId } : {}),
-      });
-    } catch (err) {
-      throw new AdminError('TEAMMATE_EXECUTE_FAILED', parseMessage(err));
-    }
-  },
-
-  'mcp.teammate.send_input': async (server, params) => {
-    const id = mustDispatcherId(params);
-    mustExistingDispatcher(server, id);
-    const taskId = mustString(params, 'task_id');
+    const name = mustString(params, 'name');
     const prompt = mustString(params, 'prompt');
-    const mode = optionalString(params, 'mode');
-    const operationId = optionalString(params, 'operation_id');
     try {
-      return await server.dispatcherService.sendTeamMateInput({
+      return await server.dispatcherService.sendTeamMate({
         dispatcherId: id,
-        taskId,
+        name,
         prompt,
-        ...(mode !== null ? { mode: mode as TeamMateInputMode } : {}),
-        ...(operationId !== null ? { operationId } : {}),
       });
     } catch (err) {
-      throw new AdminError('TEAMMATE_SEND_INPUT_FAILED', parseMessage(err));
+      throw new AdminError('TEAMMATE_SEND_FAILED', parseMessage(err));
     }
   },
 
-  // Internal/admin-diagnostic only — NOT exposed as a dispatcher-facing MCP tool
-  // (issue #126 PR8). Normal orchestration is run_task → the dispatcher turn ends
-  // → delivery/wakeup starts a new turn; dispatchers never poll. This bounded
-  // wait primitive is retained for tests and admin diagnostics; a timeout returns
-  // a structured still_running result, not an error.
-  'mcp.teammate.await': async (server, params) => {
+  'mcp.teammate.resume': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    const taskId = mustString(params, 'task_id');
-    const afterEventId = optionalNumber(params, 'after_event_id');
-    const until = optionalStringArray(params, 'until');
-    const timeoutMs = optionalNumber(params, 'timeout_ms');
+    const name = mustString(params, 'name');
+    const prompt = optionalString(params, 'prompt');
     try {
-      return await server.dispatcherService.awaitTeamMateCompletion({
+      return await server.dispatcherService.resumeTeamMate({
         dispatcherId: id,
-        taskId,
-        ...(afterEventId !== null ? { afterEventId } : {}),
-        ...(until !== null ? { until } : {}),
-        ...(timeoutMs !== null ? { timeoutMs } : {}),
+        name,
+        ...(prompt !== null ? { prompt } : {}),
       });
     } catch (err) {
-      throw new AdminError('TEAMMATE_AWAIT_FAILED', parseMessage(err));
+      throw new AdminError('TEAMMATE_RESUME_FAILED', parseMessage(err));
     }
   },
 
-  'mcp.teammate.cancel': async (server, params) => {
+  'mcp.teammate.close': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    const taskId = mustString(params, 'task_id');
+    const name = mustString(params, 'name');
     const note = optionalString(params, 'note');
     try {
-      return await server.dispatcherService.cancelTeamMateTask({
+      return await server.dispatcherService.closeTeamMate({
         dispatcherId: id,
-        taskId,
+        name,
         ...(note !== null ? { note } : {}),
       });
     } catch (err) {
-      throw new AdminError('TEAMMATE_CANCEL_FAILED', parseMessage(err));
+      throw new AdminError('TEAMMATE_CLOSE_FAILED', parseMessage(err));
     }
   },
 
-  'mcp.teammate.logs': async (server, params) => {
+  'mcp.teammate.history': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    const taskId = mustString(params, 'task_id');
-    const maxBytes = optionalNumber(params, 'max_bytes');
-    const stream = optionalString(params, 'stream');
-    if (
-      stream !== null &&
-      stream !== 'stdout' &&
-      stream !== 'stderr' &&
-      stream !== 'events'
-    ) {
-      throw new AdminError(
-        'BAD_REQUEST',
-        "param 'stream' must be 'stdout', 'stderr', or 'events'",
-      );
-    }
-    try {
-      return await server.dispatcherService.getTeamMateTaskLogs({
-        dispatcherId: id,
-        taskId,
-        ...(maxBytes !== null ? { maxBytes } : {}),
-        ...(stream !== null
-          ? { stream: stream as 'stdout' | 'stderr' | 'events' }
-          : {}),
-      });
-    } catch (err) {
-      throw new AdminError('TEAMMATE_LOGS_FAILED', parseMessage(err));
-    }
+    const name = mustString(params, 'name');
+    return server.dispatcherService.getTeamMateHistory(id, name);
   },
-
-  'mcp.teammate.capabilities': (server) =>
-    server.dispatcherService.getTeamMateCapabilities(),
 
   'mcp.teammate.list': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    return { tasks: await server.dispatcherService.listTeamMateTasks(id) };
+    return { teammates: await server.dispatcherService.listTeamMates(id) };
   },
 
-  'mcp.teammate.get': async (server, params) => {
+  'mcp.teammate.status': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    const taskId = mustString(params, 'task_id');
-    return { task: await server.dispatcherService.getTeamMateTask(id, taskId) };
+    const name = mustString(params, 'name');
+    return {
+      teammate: await server.dispatcherService.getTeamMateStatus(id, name),
+    };
   },
 
-  'mcp.teammate.pull': async (server, params) => {
+  'mcp.teammate.last': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    const taskId = optionalString(params, 'task_id');
-    const result = await server.dispatcherService.pullTeamMateResult(
-      id,
-      taskId !== null ? taskId : undefined,
-    );
-    return { result };
+    const name = mustString(params, 'name');
+    return server.dispatcherService.getTeamMateLast(id, name);
   },
+
+  'mcp.teammate.ctx': async (server, params) => {
+    const id = mustDispatcherId(params);
+    mustExistingDispatcher(server, id);
+    const name = mustString(params, 'name');
+    return server.dispatcherService.getTeamMateContext(id, name);
+  },
+
+  'mcp.teammate.capabilities': (server) =>
+    server.dispatcherService.getTeamMateCapabilities(),
 };
 
 function mustString(
@@ -387,17 +254,6 @@ function mustDispatcherId(
   }
 }
 
-function mustCallerKind(
-  params: Record<string, unknown> | undefined,
-): TeamMateScheduleCallerKind {
-  const callerKind = mustString(params, 'caller_kind');
-  if (callerKind === 'dispatcher' || callerKind === 'teammate') return callerKind;
-  throw new AdminError(
-    'BAD_REQUEST',
-    "param 'caller_kind' must be 'dispatcher' or 'teammate'",
-  );
-}
-
 function optionalString(
   params: Record<string, unknown> | undefined,
   key: string,
@@ -407,19 +263,6 @@ function optionalString(
   if (v === undefined || v === null) return null;
   if (typeof v !== 'string') {
     throw new AdminError('BAD_REQUEST', `param '${key}' must be a string`);
-  }
-  return v;
-}
-
-function optionalNumber(
-  params: Record<string, unknown> | undefined,
-  key: string,
-): number | null {
-  if (params === undefined) return null;
-  const v = params[key];
-  if (v === undefined || v === null) return null;
-  if (typeof v !== 'number' || !Number.isFinite(v)) {
-    throw new AdminError('BAD_REQUEST', `param '${key}' must be a finite number`);
   }
   return v;
 }

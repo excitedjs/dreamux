@@ -53,13 +53,13 @@ import {
   feishuMcpLogPath,
   teammateMcpLogPath,
 } from '../runtime/paths.js';
-import type { TeamMateScheduleCallerKind } from '../teammate/ledger.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SERVER_ENTRY = join(HERE, 'server.js');
 const SERVER_CTL_ENTRY = join(HERE, 'server-ctl.js');
 
 type DispatcherVerb = 'remove' | 'status' | 'start' | 'stop';
+type TeamMateMcpCallerKind = 'dispatcher' | 'teammate';
 
 async function execEntry(
   entry: string,
@@ -490,7 +490,7 @@ function buildTeamMateMcpCommand(
   y: Argv,
 ): Argv<{
   dispatcher: string;
-  caller: TeamMateScheduleCallerKind;
+  caller: TeamMateMcpCallerKind;
   adminSocket?: string;
 }> {
   return y
@@ -510,7 +510,7 @@ function buildTeamMateMcpCommand(
       describe: 'dreamux serve admin socket path',
     }) as Argv<{
       dispatcher: string;
-      caller: TeamMateScheduleCallerKind;
+      caller: TeamMateMcpCallerKind;
       adminSocket?: string;
     }>;
 }

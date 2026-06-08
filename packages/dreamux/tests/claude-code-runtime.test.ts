@@ -365,8 +365,8 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     await runtime.start();
 
     const result = await runtime.deliverTeamMateCompletion!({
-      taskId: 'task-7',
-      teammateId: 'mate-1',
+      teammateName: 'mate-1',
+      sessionId: 'session-7',
       status: 'completed',
       finalText: 'all done',
     });
@@ -374,8 +374,9 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
 
     await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
     const prompt = fleet.sessions[0]?.prompts[0] ?? '';
-    expect(prompt).toContain('<teammate_task_completion');
-    expect(prompt).toContain('task_id="task-7"');
+    expect(prompt).toContain('<teammate_session_completion');
+    expect(prompt).toContain('teammate="mate-1"');
+    expect(prompt).toContain('session_id="session-7"');
     expect(prompt).toContain('status="completed"');
     expect(prompt).toContain('all done');
   });

@@ -1,13 +1,12 @@
 import { dreamuxBinPath } from '../runtime/package-bin.js';
 import type { AgentRuntimeMcpServer } from '../agent-runtime/types.js';
-import type { TeamMateScheduleCallerKind } from './ledger.js';
 
 export const TEAMMATE_MCP_SERVER_NAME = 'teammate';
 
 export interface TeamMateMcpServerDescriptorOptions {
   dispatcherId: string;
   adminSocketPath: string;
-  callerKind: TeamMateScheduleCallerKind;
+  callerKind: 'dispatcher' | 'teammate';
   command?: string;
   env?: NodeJS.ProcessEnv;
 }

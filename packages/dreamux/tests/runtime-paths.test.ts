@@ -14,8 +14,13 @@ import {
   dispatcherDir,
   dispatcherFeishuAttachmentCacheDir,
   dispatcherTeamMateDir,
-  dispatcherTeamMateLedgerPath,
-  dispatcherTeamMateTasksDir,
+  dispatcherTeamMateHistoryPath,
+  dispatcherTeamMateIdentitiesDir,
+  dispatcherTeamMateIdentityPath,
+  dispatcherTeamMateRuntimeCodexErrorLogPath,
+  dispatcherTeamMateRuntimeCodexLogPath,
+  dispatcherTeamMateRuntimeCodexSocketPath,
+  dispatcherTeamMateRuntimeDir,
   feishuChannelLogDir,
   feishuChannelLogPath,
   feishuMcpLogDir,
@@ -81,11 +86,57 @@ describe('runtime paths', () => {
     expect(dispatcherTeamMateDir('dispatcher-a')).toBe(
       join(stateRoot(), 'dispatcher-a', 'teammate'),
     );
-    expect(dispatcherTeamMateLedgerPath('dispatcher-a')).toBe(
-      join(stateRoot(), 'dispatcher-a', 'teammate', 'ledger.json'),
+    expect(dispatcherTeamMateIdentitiesDir('dispatcher-a')).toBe(
+      join(stateRoot(), 'dispatcher-a', 'teammate', 'identities'),
     );
-    expect(dispatcherTeamMateTasksDir('dispatcher-a')).toBe(
-      join(stateRoot(), 'dispatcher-a', 'teammate', 'tasks'),
+    expect(dispatcherTeamMateIdentityPath('dispatcher-a', 'reviewer-1')).toBe(
+      join(
+        stateRoot(),
+        'dispatcher-a',
+        'teammate',
+        'identities',
+        'reviewer-1.json',
+      ),
+    );
+    expect(dispatcherTeamMateHistoryPath('dispatcher-a', 'reviewer-1')).toBe(
+      join(
+        stateRoot(),
+        'dispatcher-a',
+        'teammate',
+        'history',
+        'reviewer-1.jsonl',
+      ),
+    );
+    expect(dispatcherTeamMateRuntimeDir('dispatcher-a', 'reviewer-1')).toBe(
+      join(stateRoot(), 'dispatcher-a', 'teammate', 'runtime', 'reviewer-1'),
+    );
+    expect(dispatcherTeamMateRuntimeCodexSocketPath('dispatcher-a', 'reviewer-1')).toBe(
+      join(
+        stateRoot(),
+        'dispatcher-a',
+        'teammate',
+        'runtime',
+        'reviewer-1',
+        'codex.sock',
+      ),
+    );
+    expect(dispatcherTeamMateRuntimeCodexLogPath('dispatcher-a', 'reviewer-1')).toBe(
+      join(
+        logsRoot(),
+        'codex-app-server',
+        'teammate',
+        'dispatcher-a',
+        'reviewer-1.log',
+      ),
+    );
+    expect(dispatcherTeamMateRuntimeCodexErrorLogPath('dispatcher-a', 'reviewer-1')).toBe(
+      join(
+        logsRoot(),
+        'codex-app-server',
+        'teammate',
+        'dispatcher-a',
+        'reviewer-1.stderr.log',
+      ),
     );
     const workspace = join(root, 'workspace');
     expect(dispatcherWorkspaceCodexSkillsDir(workspace)).toBe(
