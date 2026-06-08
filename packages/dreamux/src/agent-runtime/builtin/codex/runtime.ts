@@ -48,7 +48,7 @@ import {
 } from './codex-home.js';
 import { dispatcherProcessEnv } from '../../../runtime/package-bin.js';
 import { installBundledWorkspaceSkills } from '../../../runtime/bundled-skills.js';
-import { DREAMUX_DISPATCHER_BASE_INSTRUCTIONS } from '../../../dispatcher/base-prompt.js';
+import { DREAMUX_DISPATCHER_BASE_INSTRUCTIONS } from '../../../dispatcher-service/dispatcher/base-prompt.js';
 import type {
   AgentRuntime,
   AgentRuntimeCapabilities,

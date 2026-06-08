@@ -56,30 +56,30 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
-import { type ProviderDescriptor } from '../registry/index.js';
+import { type ProviderDescriptor } from '../../../registry/index.js';
 import {
   BUILTIN_CLAUDE_CODE_PROVIDER_REF,
   defaultDispatcherClaudeCodeConfig,
   dispatcherClaudeCodeConfig,
   type DispatcherClaudeCodeConfig,
-} from '../runtime/config.js';
+} from '../../../runtime/config.js';
 import {
   dispatcherClaudeCodeMcpConfigPath,
   dispatcherClaudeCodeStreamLogPath,
   dispatcherCodexCwd,
-} from '../runtime/paths.js';
-import { dispatcherProcessEnv } from '../runtime/package-bin.js';
-import { claudeCodeResidentArgs } from '../runtime/claude-code-args.js';
-import { stringifyClaudeCodeMcpConfig } from '../claude-code/mcp-config.js';
+} from '../../../runtime/paths.js';
+import { dispatcherProcessEnv } from '../../../runtime/package-bin.js';
+import { claudeCodeResidentArgs } from './args.js';
+import { stringifyClaudeCodeMcpConfig } from './mcp-config.js';
 import {
   createDefaultClaudeCodeSession,
   type ClaudeCodeSession,
   type ClaudeCodeSessionFactory,
-} from '../claude-code/supervisor.js';
+} from './supervisor.js';
 import type {
   InboundDeliveryHooks,
-} from './turn.js';
-import type { DispatcherStatus } from '../runtime/dispatcher-store.js';
+} from '../../turn.js';
+import type { DispatcherStatus } from '../../../runtime/dispatcher-store.js';
 import type {
   AgentRuntimeCapabilities,
   AgentRuntime,
@@ -91,7 +91,7 @@ import type {
   AgentRuntimeTurnResult,
   TeamMateCompletionDeliveryResult,
   TeamMateCompletionEnvelope,
-} from './types.js';
+} from '../../types.js';
 
 export interface ClaudeCodeAgentRuntimeProviderOptions {
   descriptor: ProviderDescriptor;

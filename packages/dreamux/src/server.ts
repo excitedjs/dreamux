@@ -38,7 +38,7 @@ import {
 } from './runtime/logger.js';
 import { createAdminSocketServer, type AdminSocketServer } from './admin/socket.js';
 import { RestartIntentConsumer } from './daemon/restart-intent.js';
-import type { ClaudeCodeSessionFactory } from './claude-code/supervisor.js';
+import type { ClaudeCodeSessionFactory } from './agent-runtime/builtin/claude-code/supervisor.js';
 import { DispatcherService } from './dispatcher-service/service.js';
 export {
   IN_PROGRESS_REACTION_EMOJI,

@@ -14,7 +14,7 @@ import { dirname } from 'node:path';
 import {
   isProcessAlive,
   killProcessGroup,
-} from '../runtime/process.js';
+} from '../../../runtime/process.js';
 import { ClaudeCodeStreamRpc } from './rpc.js';
 import type {
   ClaudeCodeSession,

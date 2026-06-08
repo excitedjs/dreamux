@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { bundledSkillDir } from '../src/runtime/paths.js';
-import { DREAMUX_DISPATCHER_BASE_INSTRUCTIONS } from '../src/dispatcher/base-prompt.js';
+import { DREAMUX_DISPATCHER_BASE_INSTRUCTIONS } from '../src/dispatcher-service/dispatcher/base-prompt.js';
 
 /**
  * Guards the issue #124 alignment as updated by PR6 (issue #126): the bundled

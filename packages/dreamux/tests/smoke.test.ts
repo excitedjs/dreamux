@@ -60,7 +60,7 @@ import {
 import { writeRestartIntent } from '../src/daemon/restart-intent.js';
 import { dreamuxBinPath } from '../src/runtime/package-bin.js';
 import { createLogger, type DreamuxLogger } from '../src/runtime/logger.js';
-import { DREAMUX_DISPATCHER_BASE_INSTRUCTIONS } from '../src/dispatcher/base-prompt.js';
+import { DREAMUX_DISPATCHER_BASE_INSTRUCTIONS } from '../src/dispatcher-service/dispatcher/base-prompt.js';
 import { startFakeCodex, type FakeCodex } from './fake-codex.js';
 import { testDispatcherConfig } from './helpers/config.js';
 import { Writable } from 'node:stream';

@@ -5,7 +5,7 @@
  * Claude Code's native JSON document loaded via `--mcp-config <file>`.
  */
 
-import type { AgentRuntimeMcpServer } from '../agent-runtime/types.js';
+import type { AgentRuntimeMcpServer } from '../../types.js';
 
 /** Claude Code MCP config document shape (`--mcp-config <file>`). */
 export interface ClaudeCodeMcpConfig {

@@ -9,16 +9,16 @@ import { fileURLToPath } from 'node:url';
 import {
   createClaudeCodeAgentRuntimeProvider,
   type ClaudeCodeAgentRuntimeProviderOptions,
-} from '../src/agent-runtime/claude-code.js';
+} from '../src/agent-runtime/builtin/claude-code/runtime.js';
 import {
   createDefaultClaudeCodeSession,
   type ClaudeCodeSession,
   type ClaudeCodeSessionFactory,
   type ClaudeCodeSessionSpec,
   type TurnOutcome,
-} from '../src/claude-code/supervisor.js';
-import { claudeCodeMcpConfig } from '../src/claude-code/mcp-config.js';
-import { claudeCodeResidentArgs } from '../src/runtime/claude-code-args.js';
+} from '../src/agent-runtime/builtin/claude-code/supervisor.js';
+import { claudeCodeMcpConfig } from '../src/agent-runtime/builtin/claude-code/mcp-config.js';
+import { claudeCodeResidentArgs } from '../src/agent-runtime/builtin/claude-code/args.js';
 import { codexMcpServerArgs } from '../src/agent-runtime/builtin/codex/mcp-config.js';
 import { DispatcherStore } from '../src/runtime/dispatcher-store.js';
 import { dispatcherClaudeCodeMcpConfigPath } from '../src/runtime/paths.js';
