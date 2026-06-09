@@ -107,9 +107,15 @@ function parseResult(o: JsonObject): ResultEnvelope {
   const errors = Array.isArray(errorsRaw)
     ? errorsRaw.filter((e): e is string => typeof e === 'string')
     : [];
+  let isError: boolean;
+  if (subtype !== null) {
+    isError = subtype !== 'success';
+  } else {
+    isError = o['is_error'] === true || errors.length > 0;
+  }
   return {
     subtype,
-    isError: o['is_error'] === true || (subtype !== null && subtype !== 'success'),
+    isError,
     text: str(o['result']),
     sessionId: str(o['session_id']),
     errors,

@@ -102,6 +102,54 @@ describe('parseLine', () => {
     }
   });
 
+  it('trusts a success subtype even if is_error is true', () => {
+    const line = parseLine(
+      JSON.stringify({
+        type: 'result',
+        subtype: 'success',
+        is_error: true,
+        session_id: 's1',
+        result: 'hello',
+      }),
+    );
+    if (line.kind === 'result') {
+      expect(line.outcome.isError).toBe(false);
+      expect(line.outcome.text).toBe('hello');
+    } else {
+      throw new Error('expected result');
+    }
+  });
+
+  it('falls back to is_error when subtype is null', () => {
+    const line = parseLine(
+      JSON.stringify({
+        type: 'result',
+        is_error: true,
+        session_id: 's1',
+      }),
+    );
+    if (line.kind === 'result') {
+      expect(line.outcome.isError).toBe(true);
+    } else {
+      throw new Error('expected result');
+    }
+  });
+
+  it('falls back to errors.length > 0 when subtype is null', () => {
+    const line = parseLine(
+      JSON.stringify({
+        type: 'result',
+        session_id: 's1',
+        errors: ['something went wrong'],
+      }),
+    );
+    if (line.kind === 'result') {
+      expect(line.outcome.isError).toBe(true);
+    } else {
+      throw new Error('expected result');
+    }
+  });
+
   it('parses a can_use_tool control_request', () => {
     const line = parseLine(
       JSON.stringify({

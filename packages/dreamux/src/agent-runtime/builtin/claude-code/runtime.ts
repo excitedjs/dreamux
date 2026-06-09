@@ -369,22 +369,23 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     // Plain user-turn delivery: a stream-json user message marked
     // `isSynthetic: false`, so claude-code treats it as ordinary human input
     // rather than routing it through its native task-notification harness path.
-    // Delivery AWAITS the serial-queue turn so `accepted` means it actually ran
-    // and `failed` otherwise — the semantics the Dispatcher Service relies on
-    // for delivery retry.
+    // Submit-then-serialize: return accepted at enqueue so delivery acceptance
+    // is decoupled from model thinking time.
+    let text: string;
     try {
-      await this.runTurnOnQueue(
-        await buildCompletionTurnText(completion),
-        `claude-teammate-${completion.id}`,
-        { isSynthetic: false },
-      );
-      return { status: 'accepted' };
+      text = await buildCompletionTurnText(completion);
     } catch (err) {
       return {
         status: 'failed',
         error: err instanceof Error ? err : new Error(String(err)),
       };
     }
+    const turnId = `claude-teammate-${completion.id}`;
+    void this.runTurnOnQueue(text, turnId, { isSynthetic: false }).then(
+      () => this.markTurnSucceeded(turnId),
+      (err) => this.markTurnFailed(turnId, err),
+    );
+    return { status: 'accepted' };
   }
 
   /**
