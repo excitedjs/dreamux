@@ -117,6 +117,40 @@ describe('ClaudeCodeStreamRpc idle deadline (issue #156)', () => {
     await rejection;
     expect(reap).toHaveBeenCalledTimes(1);
   });
+
+  it('enables Remote Control with a startup control request and captures the URL', () => {
+    const stdin = new FakeStdin();
+    const urls: string[] = [];
+    const rpc = new ClaudeCodeStreamRpc(stdin as unknown as Writable, {
+      turnTimeoutMs: 1_000,
+      reapOnTimeout: () => {
+        /* not used */
+      },
+      onRemoteControlUrl: (url) => urls.push(url),
+    });
+
+    rpc.enableRemoteControl();
+    expect(stdin.writes).toHaveLength(1);
+    const request = JSON.parse(stdin.writes[0]!) as {
+      type: string;
+      request_id: string;
+      request: { subtype: string; enabled: boolean };
+    };
+    expect(request).toMatchObject({
+      type: 'control_request',
+      request: { subtype: 'remote_control', enabled: true },
+    });
+
+    rpc.onStdoutChunk(`${JSON.stringify({
+      type: 'control_response',
+      response: {
+        subtype: 'success',
+        request_id: request.request_id,
+        response: { session_url: 'https://example.invalid/session/fake' },
+      },
+    })}\n`);
+    expect(urls).toEqual(['https://example.invalid/session/fake']);
+  });
 });
 
 describe('ClaudeCodeStreamRpc active steering', () => {

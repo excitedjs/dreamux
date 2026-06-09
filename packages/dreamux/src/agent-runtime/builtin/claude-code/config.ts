@@ -18,6 +18,7 @@
 
 import { BUILTIN_CLAUDE_CODE_PROVIDER_REF } from '../../../registry/index.js';
 import {
+  readOptionalBoolean,
   readOptionalString,
   rejectUnknownKeys,
   requirePositiveInt,
@@ -35,20 +36,22 @@ import {
  * stream-json …`, issue #120) with no `initialize` handshake, so there is no
  * handshake timeout, approval policy, or sandbox mode here. `bin` is the Claude
  * Code binary; `model` / `permission_mode` map to `--model` / `--permission-mode`;
- * `extra_args` / `extra_env` are passed through. `model` and `permission_mode`
- * are `null` when the operator does not pin them (Claude Code's own defaults
- * apply). `turn_timeout_ms` is a per-turn *idle / inactivity* window (issue #120
- * anti-hang, made idle-based in issue #156): it is reset on every inbound stream
- * line, so it bounds the max time the still-alive child may emit *no* stream
- * activity — not the total turn duration. A child silent for the whole window is
- * failed and reaped/re-spawned (rather than wedging the serial turn queue and,
- * behind it, TeamMate completion delivery), while a long but actively-streaming
- * turn never trips it.
+ * `remote_control` enables Claude Code Remote Control at resident-session
+ * startup; `extra_args` / `extra_env` are passed through. `model` and
+ * `permission_mode` are `null` when the operator does not pin them (Claude
+ * Code's own defaults apply). `turn_timeout_ms` is a per-turn *idle /
+ * inactivity* window (issue #120 anti-hang, made idle-based in issue #156): it
+ * is reset on every inbound stream line, so it bounds the max time the
+ * still-alive child may emit *no* stream activity — not the total turn duration.
+ * A child silent for the whole window is failed and reaped/re-spawned (rather
+ * than wedging the serial turn queue and, behind it, TeamMate completion
+ * delivery), while a long but actively-streaming turn never trips it.
  */
 export interface DispatcherClaudeCodeConfig {
   bin: string;
   model: string | null;
   permission_mode: string | null;
+  remote_control: boolean;
   extra_args: string[];
   extra_env: Record<string, string>;
   turn_timeout_ms: number;
@@ -80,6 +83,7 @@ export function defaultDispatcherClaudeCodeConfig(): DispatcherClaudeCodeConfig 
     bin: DEFAULT_CLAUDE_CODE_BIN,
     model: null,
     permission_mode: null,
+    remote_control: false,
     extra_args: [],
     extra_env: {},
     turn_timeout_ms: DEFAULT_CLAUDE_CODE_TURN_TIMEOUT_MS,
@@ -97,6 +101,7 @@ export function readDispatcherClaudeCodeConfig(
       'bin',
       'model',
       'permission_mode',
+      'remote_control',
       'extra_args',
       'extra_env',
       'turn_timeout_ms',
@@ -124,6 +129,13 @@ export function readDispatcherClaudeCodeConfig(
     bin,
     model: readOptionalString(rawClaude, 'model', file, prefix),
     permission_mode: permissionMode,
+    remote_control: readOptionalBoolean(
+      rawClaude,
+      'remote_control',
+      defaults.remote_control,
+      file,
+      prefix,
+    ),
     extra_args: requireStringArray(
       rawClaude,
       'extra_args',

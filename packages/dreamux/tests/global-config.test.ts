@@ -821,6 +821,7 @@ describe('global config (~/.dreamux/config.json)', () => {
               bin: 'claude',
               model: 'sonnet',
               permission_mode: 'acceptEdits',
+              remote_control: true,
               extra_args: [],
               extra_env: {},
             },
@@ -833,6 +834,28 @@ describe('global config (~/.dreamux/config.json)', () => {
     const { config } = await loadConfigWithBuiltins({ configDir });
     expect(config.agents['flow']?.provider).toBe('builtin:claude-code');
     expect(config.dispatchers[0]?.runtime.provider).toBe('builtin:claude-code');
+    expect(config.dispatchers[0]?.runtime.config).toMatchObject({
+      remote_control: true,
+    });
+  });
+
+  it('rejects non-boolean remote_control under a claude-code agent config', async () => {
+    writeConfigObject(
+      testConfigFileObject({
+        agents: [
+          {
+            id: 'flow',
+            provider: 'builtin:claude-code',
+            config: { bin: 'claude', remote_control: 'yes' },
+          },
+        ],
+        dispatchers: [{ id: 'flow', agentRuntime: 'flow' }],
+      }),
+    );
+
+    await expect(loadConfigWithBuiltins({ configDir })).rejects.toThrow(
+      /remote_control must be a boolean/,
+    );
   });
 
   it('rejects codex-only keys under a claude-code agent config (runtime-owned validation)', async () => {

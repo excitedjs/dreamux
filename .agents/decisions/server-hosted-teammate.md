@@ -501,6 +501,20 @@ continuation, dead-session recovery, isolated worktrees, transition diagnostics)
 it is never hidden behind or shelled out to from the MCP. Team Mode stays a
 reservation only.
 
+## Current TeamMate MCP capability output
+
+After the agent-centric normalization, `spawn.agent_runtime` is an `agents[].id`,
+not a provider ref. Dispatcher-facing `get_capabilities` therefore returns
+`agent_runtimes[]`; each entry has an `id` that can be passed directly as
+`spawn({ agent_runtime: id, ... })` plus the runtime capability fields
+(`resume`, `steer`, `events`, `last`, `context`). Provider refs such as
+`builtin:codex` and `builtin:claude-code` remain internal implementation
+details and must not be exposed as dispatcher-facing callable selectors.
+
+Two configured agents that use the same provider appear as distinct
+`agent_runtimes[]` entries because the selector is the agent id and each entry
+may carry different provider-owned config.
+
 ## Consequences
 
 - The old "Dreamux never owns teammate state" decision is superseded.

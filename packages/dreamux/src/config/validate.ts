@@ -87,6 +87,21 @@ export function readOptionalString(
   return ensureString(v, `${prefix}${key}`, file);
 }
 
+export function readOptionalBoolean(
+  obj: Record<string, unknown>,
+  key: string,
+  fallback: boolean,
+  file: string,
+  prefix = '',
+): boolean {
+  const v = obj[key];
+  if (v === undefined) return fallback;
+  if (typeof v === 'boolean') return v;
+  throw new Error(
+    `dreamux config error in ${file}: ${prefix}${key} must be a boolean (got ${describeType(v)})`,
+  );
+}
+
 export function requireStringArray(
   obj: Record<string, unknown>,
   key: string,

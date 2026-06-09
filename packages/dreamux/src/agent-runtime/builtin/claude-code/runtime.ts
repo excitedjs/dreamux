@@ -17,7 +17,8 @@
  * - **MCP injection is a JSON config document** (`--mcp-config <file>`), not
  *   Codex's `-c mcp_servers.*` TOML CLI flags.
  * - **Runtime-owned config** is `DispatcherClaudeCodeConfig` (bin / model /
- *   permission_mode / extra_args / extra_env), distinct from the Codex config.
+ *   permission_mode / remote_control / extra_args / extra_env), distinct from
+ *   the Codex config.
  * - **Completion delivery** is the Claude Code task-notification path, not the
  *   Codex inbox-then-trigger path.
  *
@@ -482,6 +483,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       env: dispatcherProcessEnv(globalThis.process.env, this.config.extra_env),
       stderrLogPath: this.stderrLogPath,
       turnTimeoutMs: this.config.turn_timeout_ms,
+      remoteControl: this.config.remote_control,
       log: (level, msg, err) => this.log(level, msg, err),
     });
     session.setOnExit(() => {

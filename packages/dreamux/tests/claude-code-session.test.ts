@@ -10,7 +10,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -36,7 +36,20 @@ describe('resident claude session (real child, fake stream-json protocol)', () =
     rmSync(dir, { recursive: true, force: true });
   });
 
-  function makeSession(mode: 'echo' | 'stall', turnTimeoutMs: number): ClaudeCodeSession {
+  async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (predicate()) return;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    throw new Error('waitFor timed out');
+  }
+
+  function makeSession(
+    mode: 'echo' | 'stall',
+    turnTimeoutMs: number,
+    remoteControl = false,
+  ): ClaudeCodeSession {
     return createDefaultClaudeCodeSession({
       bin: process.execPath,
       args: [FIXTURE, mode],
@@ -44,6 +57,7 @@ describe('resident claude session (real child, fake stream-json protocol)', () =
       env: process.env,
       stderrLogPath: stderrLog,
       turnTimeoutMs,
+      remoteControl,
     });
   }
 
@@ -63,6 +77,22 @@ describe('resident claude session (real child, fake stream-json protocol)', () =
 
     await session.stop();
     expect(session.isAlive()).toBe(false);
+  });
+
+  it('enables Remote Control at resident child startup when configured', async () => {
+    const session = makeSession('echo', 5_000, true);
+    await session.start();
+
+    await waitFor(
+      () =>
+        existsSync(stderrLog) &&
+        readFileSync(stderrLog, 'utf8').includes('remote-control-requested'),
+    );
+
+    const turn = await session.submitTurn('after rc');
+    expect(turn.text).toBe('echo:after rc');
+
+    await session.stop();
   });
 
   it('rejects a concurrent submit rather than interleaving two turns', async () => {

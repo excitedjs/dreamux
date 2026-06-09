@@ -101,6 +101,7 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
     child.stdout?.on('data', (chunk: string) => {
       rpc.onStdoutChunk(chunk);
     });
+    if (this.spec.remoteControl) rpc.enableRemoteControl();
     child.once('exit', () => this.onChildExit());
   }
 

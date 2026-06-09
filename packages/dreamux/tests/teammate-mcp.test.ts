@@ -262,6 +262,69 @@ describe('teammate-mcp stdio shim', () => {
     }
   });
 
+  it('forwards get_capabilities with spawnable agent runtime ids only', async () => {
+    const admin = await startFakeAdminServer((request) => ({
+      id: request.id,
+      ok: true,
+      result: {
+        verbs: ['spawn', 'send', 'get_capabilities'],
+        agent_runtimes: [
+          {
+            id: 'codex',
+            spawn: { agent_runtime: 'codex' },
+            runtime_available: true,
+            resume: { supported: true, checkpoint: 'codexThread' },
+            steer: { supported: true },
+            events: { kind: 'push' },
+            last: { supported: true },
+            context: { supported: true },
+            unsupported_reason: null,
+          },
+        ],
+      },
+    }));
+    try {
+      const input = new PassThrough();
+      const output = new PassThrough();
+      const reader = new JsonLineReader(output);
+      const run = runTeamMateMcp({
+        dispatcherId: 'dispatcher-a',
+        callerKind: 'dispatcher',
+        adminSocketPath: admin.socketPath,
+        input,
+        output,
+        log: () => {},
+      });
+
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: { name: 'get_capabilities', arguments: {} },
+      });
+
+      const response = (await reader.next()) as {
+        result: { structuredContent: unknown };
+      };
+      expect(response.result.structuredContent).toMatchObject({
+        agent_runtimes: [
+          { id: 'codex', spawn: { agent_runtime: 'codex' } },
+        ],
+      });
+      expect(JSON.stringify(response.result.structuredContent)).not.toContain(
+        'provider_ref',
+      );
+      expect(JSON.stringify(response.result.structuredContent)).not.toContain(
+        'builtin:codex',
+      );
+
+      input.end();
+      await run;
+    } finally {
+      await admin.close();
+    }
+  });
+
   it('forwards history, last, and ctx reads with a teammate name', async () => {
     const admin = await startFakeAdminServer((request) => ({
       id: request.id,

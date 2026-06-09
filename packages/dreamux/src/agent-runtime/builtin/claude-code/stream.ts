@@ -164,14 +164,24 @@ export function parseLine(line: string): ParsedLine {
     case 'control_response': {
       const response = parsed['response'];
       if (isObject(response)) {
+        const inner = response['response'];
         return {
           kind: 'control_response',
           requestId: str(response['request_id']),
           ok: response['subtype'] === 'success',
+          response: isObject(inner) ? inner : null,
+          error: str(response['error']),
           raw: parsed,
         };
       }
-      return { kind: 'control_response', requestId: null, ok: false, raw: parsed };
+      return {
+        kind: 'control_response',
+        requestId: null,
+        ok: false,
+        response: null,
+        error: null,
+        raw: parsed,
+      };
     }
     default:
       return { kind: 'other', type, subtype, raw: parsed };
@@ -199,6 +209,15 @@ export function buildUserMessage(
   if (options.isSynthetic === true) envelope['isSynthetic'] = true;
   if (options.priority !== undefined) envelope['priority'] = options.priority;
   return JSON.stringify(envelope);
+}
+
+/** Enable Claude Code Remote Control via a stream-json control request. */
+export function buildRemoteControlEnable(requestId: string): string {
+  return JSON.stringify({
+    type: 'control_request',
+    request_id: requestId,
+    request: { subtype: 'remote_control', enabled: true },
+  });
 }
 
 /**

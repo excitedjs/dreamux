@@ -188,16 +188,21 @@ Claude Code dispatchers use a different runtime-owned config shape:
       "bin": "claude",
       "model": null,
       "permission_mode": null,
+      "remote_control": false,
       "extra_args": [],
-      "extra_env": {}
+      "extra_env": {},
+      "turn_timeout_ms": 600000
     }
   }
 }
 ```
 
-Claude Code is headless-per-turn (`claude --print`) and receives Dreamux MCP
-servers through a generated MCP config file. It does not use Codex app-server,
-Codex handshake, or Codex home diagnostics.
+Claude Code runs as a resident stream-json process (`claude --print` with
+stream-json input/output) and receives Dreamux MCP servers through a generated
+MCP config file. Set `remote_control` to `true` on a named Claude Code agent to
+enable Claude Code Remote Control for every dispatcher or TeamMate launched
+through that agent runtime. It does not use Codex app-server, Codex handshake,
+or Codex home diagnostics.
 
 Provider refs reserved for future external providers look like npm package refs
 or package export refs, for example `npm:@example/dreamux-provider` and

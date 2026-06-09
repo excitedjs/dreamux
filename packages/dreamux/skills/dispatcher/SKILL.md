@@ -26,7 +26,9 @@ session or polling a process.
 **Lifecycle.**
 
 - `spawn` — create a named TeamMate and submit the first turn. Use a stable name
-  for work you may resume later.
+  for work you may resume later. When selecting a runtime, pass one of
+  `get_capabilities.agent_runtimes[].id` as `agent_runtime`; do not pass
+  provider refs such as `builtin:*`.
 - `send` — submit a turn to a TeamMate. If the named TeamMate is not live —
   including one previously `close`d — send first reopens it from its persisted
   checkpoint, then submits. There is no separate `resume` verb; send covers
@@ -37,7 +39,7 @@ session or polling a process.
 **Watch and collect — no polling.**
 
 - `list` — this dispatcher's TeamMates and their statuses.
-- `status` — one TeamMate status, provider ref, checkpoint, and close metadata.
+- `status` — one TeamMate status, agent runtime id, checkpoint, and close metadata.
 - `history` — forward-only history for a named TeamMate.
 - `last` — the runtime's latest assistant-visible result when supported.
 - `ctx` — the runtime context snapshot when supported.
@@ -48,8 +50,9 @@ the dispatcher turn end, then recover through `history`, `last`, and `ctx`.
 
 **Control and inspect.**
 
-- `get_capabilities` — each provider's runtime capabilities: resume, steer,
-  events, last, and context.
+- `get_capabilities` — spawnable `agents[].id` values under `agent_runtimes[]`,
+  each with runtime capabilities: resume, steer, events, last, and context. Use
+  `spawn({ agent_runtime: id, ... })` with one of those ids.
 
 The persistent identity and history files are the source of truth. A TeamMate
 reopened by send continues from its saved runtime checkpoint; do not create a

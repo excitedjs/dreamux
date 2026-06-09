@@ -49,18 +49,18 @@ function claudeCodeProvider(
   });
 }
 
-function claudeDispatcher(id = 'flow') {
+function claudeDispatcher(
+  id = 'flow',
+  config: Partial<ReturnType<typeof defaultDispatcherClaudeCodeConfig>> = {},
+) {
   return testDispatcherConfig({
     id,
     runtime: {
       provider: 'builtin:claude-code',
       config: {
-        bin: 'claude',
-        model: null,
+        ...defaultDispatcherClaudeCodeConfig(),
         permission_mode: 'acceptEdits',
-        extra_args: [],
-        extra_env: {},
-        turn_timeout_ms: 600_000,
+        ...config,
       },
     },
   });
@@ -382,6 +382,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     expect(fleet.sessions[0]?.startCount()).toBe(1);
     expect(fleet.sessions[0]?.spec.args).toContain('--input-format');
     expect(fleet.sessions[0]?.spec.args).toContain('stream-json');
+    expect(fleet.sessions[0]?.spec.remoteControl).toBe(false);
 
     const mcpPath = dispatcherClaudeCodeMcpConfigPath('flow');
     const written = JSON.parse(readFileSync(mcpPath, 'utf8')) as unknown;
@@ -390,6 +391,29 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
         feishu: { command: FEISHU_MCP.command, args: FEISHU_MCP.args },
       },
     });
+  });
+
+  it('threads agents[].config.remote_control into the resident session spec', async () => {
+    const fleet = fakeFleet();
+    const dispatcher = claudeDispatcher('flow', { remote_control: true });
+    const store = new DispatcherStore(testDreamuxConfig([dispatcher]));
+    const row = store.get('flow');
+    const runtime = claudeCodeProvider({
+      sessionFactory: fleet.factory,
+    }).createRuntime({
+      row: row!,
+      dispatcher,
+      dispatchers: store,
+      cwd: defaultDispatcherCwd('flow'),
+      mcpServers: [],
+      log: () => {
+        /* test sink */
+      },
+    });
+    await runtime.start();
+
+    expect(fleet.sessions[0]?.spec.remoteControl).toBe(true);
+    expect(fleet.sessions[0]?.spec.args).not.toContain('--remote-control');
   });
 
   it('start() drives the runtime to degraded and throws when the child cannot spawn', async () => {
@@ -705,6 +729,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
         bin: process.execPath,
         args: [fixture, 'stall'],
         turnTimeoutMs: 250,
+        remoteControl: spec.remoteControl,
       });
     const dispatcher = claudeDispatcher('flow');
     const store = new DispatcherStore(testDreamuxConfig([dispatcher]));

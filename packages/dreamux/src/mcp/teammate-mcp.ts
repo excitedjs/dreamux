@@ -140,16 +140,25 @@ function teammateTools(callerKind: 'dispatcher' | 'teammate'): Array<Record<stri
     tool('ctx', 'Read one TeamMate runtime context-window snapshot.', {
       name: { type: 'string', minLength: 1, maxLength: 64 },
     }, ['name']),
-    tool('get_capabilities', 'List TeamMate runtime capabilities and verbs.', {}, []),
+    tool('get_capabilities', 'List TeamMate verbs and spawnable agent runtime ids.', {}, []),
   ];
   if (callerKind !== 'dispatcher') return readTools;
   return [
-    tool('spawn', 'Start a named, resumable TeamMate agent and submit its first turn.', {
-      name: { type: 'string', minLength: 1, maxLength: 64 },
-      prompt: { type: 'string', minLength: 1, maxLength: 20000 },
-      agent_runtime: { type: 'string' },
-      cwd: { type: 'string', minLength: 1, maxLength: 4096 },
-    }, ['name', 'prompt']),
+    tool(
+      'spawn',
+      'Start a named, resumable TeamMate agent and submit its first turn. Use get_capabilities.agent_runtimes[].id as agent_runtime.',
+      {
+        name: { type: 'string', minLength: 1, maxLength: 64 },
+        prompt: { type: 'string', minLength: 1, maxLength: 20000 },
+        agent_runtime: {
+          type: 'string',
+          description:
+            'Spawnable agents[].id returned by get_capabilities.agent_runtimes[].id.',
+        },
+        cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+      },
+      ['name', 'prompt'],
+    ),
     tool('send', 'Send a turn to a TeamMate agent; reopens a closed one from its checkpoint first.', {
       name: { type: 'string', minLength: 1, maxLength: 64 },
       prompt: { type: 'string', minLength: 1, maxLength: 20000 },

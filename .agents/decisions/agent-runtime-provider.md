@@ -120,6 +120,12 @@ Implementation status:
     wedging the serial queue (and TeamMate delivery behind it). A live contract
     test is opt-in via `DREAMUX_RUN_LIVE_CLAUDE_CODE` (loud skip otherwise, never
     silent).
+  - **Runtime-scoped Remote Control.** `DispatcherClaudeCodeConfig.remote_control`
+    (default `false`) enables Claude Code Remote Control for the resident child
+    at startup by sending a stream-json `control_request` with
+    `request.subtype = "remote_control"` and `enabled = true`. The switch lives
+    on the named `agents[]` runtime config, so every dispatcher or TeamMate
+    launched through that agent gets the same Remote Control posture.
   - The resident protocol model and process-supervision shape are adapted from
     the Claudemux `next` implementation; the AgentRuntime provider seam,
     runtime-owned MCP injection, degraded/`last_error` status, and TeamMate
