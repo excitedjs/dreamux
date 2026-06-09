@@ -115,10 +115,11 @@ see its `verbs/` (spawn/resume/history), `persistence/history-index.ts` and
   lifecycle verb. Per-runtime checkpoint mechanics are absorbed by the runtime
   implementation behind one `resume()` runtime surface.
 - **Identity and state location.** A teammate is a flat name plus a base record
-  (provider ref, cwd, checkpoint, status, close metadata). State is server-owned
+  (agent runtime id, dispatcher owner, source/runtime cwd, optional managed
+  worktree metadata, checkpoint, status, close metadata). State is server-owned
   under `~/.dreamux/state/<dispatcher>/teammate/` with `identities/`,
-  `history/`, and `runtime/` subtrees; paths go through
-  `/packages/dreamux/src/runtime/paths.ts`.
+  `history/`, `runtime/`, and managed `worktrees/` subtrees; paths go through
+  `/packages/dreamux/src/platform/paths.ts`.
 - **Ownership.** The Dispatcher Service owns TeamMate identity and history
   through focused modules under
   `/packages/dreamux/src/dispatcher-service/teammate/`.

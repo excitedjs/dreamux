@@ -1,4 +1,5 @@
 import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -175,8 +176,9 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
   let adminSocketPath: string;
   let previousHome: string | undefined;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     root = mkdtempSync(join(tmpdir(), 'dx-reverse-e2e-'));
+    await mkdir(join(root, 'workspace'));
     adminSocketPath = join(root, 'a.sock');
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(root, 'home');
@@ -200,7 +202,7 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
       dispatcherId: 'flow',
       name: 'reviewer',
       prompt: 'Review the change.',
-      cwd: root,
+      cwd: workspace(root),
     });
 
     const dispatcherRuntime = provider.runtimes[0]!;
@@ -238,7 +240,7 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
       dispatcherId: 'flow',
       name: 'reviewer',
       prompt: 'Review the change.',
-      cwd: root,
+      cwd: workspace(root),
     });
 
     const dispatcherRuntime = provider.runtimes[0]!;
@@ -274,7 +276,7 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
       dispatcherId: 'flow',
       name: 'reviewer',
       prompt: 'Review the change.',
-      cwd: root,
+      cwd: workspace(root),
     });
     const firstSend = await facade.sendTeamMate({
       dispatcherId: 'flow',
@@ -322,7 +324,7 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
       dispatcherId: 'flow',
       name: 'reviewer',
       prompt: 'Review the change.',
-      cwd: root,
+      cwd: workspace(root),
     });
 
     const dispatcherRuntime = provider.runtimes[0]!;
@@ -386,7 +388,7 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
       dispatcherId: 'flow',
       name: 'breaker',
       prompt: 'Run.',
-      cwd: root,
+      cwd: workspace(root),
     });
 
     const dispatcherRuntime = provider.runtimes[0]!;
@@ -424,13 +426,13 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
       dispatcherId: 'flow',
       name: 'one',
       prompt: 'A.',
-      cwd: root,
+      cwd: workspace(root),
     });
     await facade.spawnTeamMate({
       dispatcherId: 'flow',
       name: 'two',
       prompt: 'B.',
-      cwd: root,
+      cwd: workspace(root),
     });
 
     const dispatcherRuntime = provider.runtimes[0]!;
@@ -467,4 +469,8 @@ function noopLog(): {
 /** Drain the macrotask the void-ed settle handler runs on. */
 async function flush(): Promise<void> {
   await new Promise((resolve) => setImmediate(resolve));
+}
+
+function workspace(root: string): string {
+  return join(root, 'workspace');
 }

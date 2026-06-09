@@ -591,9 +591,16 @@ The dispatcher-facing tools are `spawn`, `send`, `close`, `history`,
 tools forward
 to `dreamux serve` over the local admin socket; the server owns the
 per-dispatcher TeamMate identities, runtime checkpoints, and forward-only
-history under `state/<dispatcher-id>/teammate/`. A caller marked as `teammate`
-does not receive lifecycle tools, so TeamMates cannot recursively spawn or close
-TeamMates.
+history under `state/<dispatcher-id>/teammate/`. Issue #169 made `spawn.cwd`
+required and added optional managed worktree isolation:
+`spawn({ name, prompt, cwd, worktree?, agent_runtime? })`. A reuse-cwd teammate
+runs in the caller-supplied `cwd`; a managed teammate runs only in its prepared
+worktree and persists source cwd/repo, runtime cwd, worktree branch/base ref,
+cleanup policy/state, and a default dispatcher `owner` field on the identity.
+Old identities without owner/worktree metadata read as dispatcher-owned
+reuse-cwd records until the next lifecycle mutation rewrites them. A caller
+marked as `teammate` does not receive lifecycle tools, so TeamMates cannot
+recursively spawn or close TeamMates.
 
 ## Reaction Ownership
 

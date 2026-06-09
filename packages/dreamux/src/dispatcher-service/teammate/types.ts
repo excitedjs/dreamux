@@ -19,13 +19,23 @@ export interface TeamMateIdentity {
   version: 1;
   dispatcher_id: string;
   name: string;
+  owner: TeamMateOwner;
   /**
    * The `agents[].id` this teammate runs (persisted so resume re-resolves the
    * runtime config from `DreamuxConfig.agents`). Replaces the former
    * `provider_ref`: a teammate references an agent, not a provider directly.
    */
   agent_runtime: string;
+  /**
+   * The caller-supplied workspace cwd. `cwd` remains the runtime cwd for
+   * compatibility with pre-#169 clients and equals either this value
+   * (`reuse-cwd`) or the prepared managed worktree path.
+   */
+  source_cwd: string;
+  source_repo: string | null;
   cwd: string;
+  runtime_cwd: string;
+  worktree: TeamMateWorktreeIdentity;
   created_at: number;
   updated_at: number;
   status: TeamMateIdentityStatus;
@@ -50,9 +60,14 @@ export interface TeamMateHistoryEvent {
   timestamp: number;
   dispatcher_id: string;
   name: string;
+  owner: TeamMateOwner;
   type: TeamMateHistoryEventType;
   agent_runtime: string;
+  source_cwd: string;
+  source_repo: string | null;
   cwd: string;
+  runtime_cwd: string;
+  worktree: TeamMateWorktreeIdentity;
   checkpoint: AgentRuntimeResumeCheckpoint | null;
   prompt_preview: string | null;
   turn_id: string | null;
@@ -62,14 +77,24 @@ export interface TeamMateHistoryEvent {
 
 export interface TeamMateRuntimeStatus {
   name: string;
+  owner: TeamMateOwner;
   agent_runtime: string;
+  source_cwd: string;
+  source_repo: string | null;
   cwd: string;
+  runtime_cwd: string;
+  worktree: TeamMateWorktreeIdentity;
   status: TeamMateIdentityStatus;
   runtime_status: DispatcherStatus | null;
   checkpoint: AgentRuntimeResumeCheckpoint | null;
   last_error: string | null;
   closed_at: number | null;
   close_note: string | null;
+}
+
+export interface TeamMateOwner {
+  kind: 'dispatcher';
+  dispatcher_id: string;
 }
 
 export interface SpawnTeamMateInput {
@@ -84,7 +109,40 @@ export interface SpawnTeamMateInput {
    * dispatcher) — its config comes from that agent, never inherited.
    */
   agentRuntime?: string;
-  cwd?: string;
+  cwd: string;
+  worktree?: TeamMateWorktreeRequest;
+  intent?: string;
+}
+
+export interface TeamMateWorktreeRequest {
+  mode: 'reuse-cwd' | 'managed';
+  slug?: string;
+  base_ref?: string;
+  branch?: string;
+  cleanup?: 'keep' | 'delete-on-close';
+}
+
+export type TeamMateWorktreeCleanupPolicy = 'keep' | 'delete-on-close';
+
+export type TeamMateWorktreeCleanupState =
+  | 'not-managed'
+  | 'managed-active'
+  | 'kept'
+  | 'deleted'
+  | 'retained-dirty'
+  | 'retained-unmerged'
+  | 'retained-unique-commits'
+  | 'retained-error';
+
+export interface TeamMateWorktreeIdentity {
+  mode: 'reuse-cwd' | 'managed';
+  slug: string | null;
+  path: string;
+  branch: string | null;
+  base_ref: string | null;
+  cleanup: TeamMateWorktreeCleanupPolicy;
+  cleanup_state: TeamMateWorktreeCleanupState;
+  cleanup_error: string | null;
 }
 
 export interface SendTeamMateInput {
