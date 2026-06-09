@@ -164,6 +164,71 @@ describe('DispatcherAgentService.deliverCompletion (Seam ③)', () => {
     await service.shutdown();
   });
 
+  it('coalesces duplicate completion delivery calls while one is in flight', async () => {
+    const behavior: DeliveryBehavior = {
+      results: [{ status: 'accepted' }],
+      calls: 0,
+      omitCompletionInput: false,
+    };
+    const service = buildService(behavior, adminSocketPath);
+    await service.startDispatcher('flow');
+    const completion = envelope();
+
+    await expect(
+      Promise.all([
+        service.deliverCompletion('flow', completion),
+        service.deliverCompletion('flow', completion),
+      ]),
+    ).resolves.toEqual([undefined, undefined]);
+    expect(behavior.calls).toBe(1);
+
+    await service.shutdown();
+  });
+
+  it('does not redeliver a completion id after acceptance', async () => {
+    const behavior: DeliveryBehavior = {
+      results: [{ status: 'accepted' }, { status: 'accepted' }],
+      calls: 0,
+      omitCompletionInput: false,
+    };
+    const service = buildService(behavior, adminSocketPath);
+    await service.startDispatcher('flow');
+    const completion = envelope();
+
+    await service.deliverCompletion('flow', completion);
+    await service.deliverCompletion('flow', completion);
+    expect(behavior.calls).toBe(1);
+
+    await service.shutdown();
+  });
+
+  it('retries a completion id on a later call after an exhausted failed call', async () => {
+    const behavior: DeliveryBehavior = {
+      results: [
+        { status: 'failed', error: new Error('boom 1') },
+        { status: 'failed', error: new Error('boom 2') },
+        { status: 'failed', error: new Error('boom 3') },
+        { status: 'accepted' },
+      ],
+      calls: 0,
+      omitCompletionInput: false,
+    };
+    const service = buildService(behavior, adminSocketPath);
+    await service.startDispatcher('flow');
+    const completion = envelope();
+
+    await service.deliverCompletion('flow', completion);
+    expect(behavior.calls).toBe(3);
+
+    await service.deliverCompletion('flow', completion);
+    expect(behavior.calls).toBe(4);
+
+    await service.deliverCompletion('flow', completion);
+    expect(behavior.calls).toBe(4);
+
+    await service.shutdown();
+  });
+
   it('stops after exhausting retries without throwing', async () => {
     const behavior: DeliveryBehavior = {
       results: [

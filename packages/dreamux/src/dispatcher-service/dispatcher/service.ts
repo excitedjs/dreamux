@@ -68,6 +68,8 @@ export interface FeishuChannelToolCall {
   arguments: unknown;
 }
 
+const COMPLETION_DELIVERY_CACHE_LIMIT = 512;
+
 /**
  * Owns live dispatcher agents and their built-in Feishu channel sessions.
  *
@@ -78,6 +80,9 @@ export interface FeishuChannelToolCall {
 export class DispatcherAgentService {
   private readonly slots = new Map<string, DispatcherAgentSlot>();
   private readonly starting = new Map<string, Promise<void>>();
+  private readonly inFlightCompletionDeliveries = new Map<string, Promise<void>>();
+  private readonly deliveredCompletionIds = new Set<string>();
+  private readonly deliveredCompletionOrder: string[] = [];
   private restartIntent: RestartIntentConsumer | null = null;
 
   constructor(private readonly opts: DispatcherAgentServiceOptions) {}
@@ -135,6 +140,25 @@ export class DispatcherAgentService {
     dispatcherId: string,
     completion: CompletionEnvelope,
   ): Promise<void> {
+    const completionKey = completionDeliveryKey(dispatcherId, completion.id);
+    if (this.deliveredCompletionIds.has(completionKey)) return;
+    const inFlight = this.inFlightCompletionDeliveries.get(completionKey);
+    if (inFlight !== undefined) return inFlight;
+
+    const delivery = this.doDeliverCompletion(dispatcherId, completion, completionKey);
+    this.inFlightCompletionDeliveries.set(completionKey, delivery);
+    try {
+      await delivery;
+    } finally {
+      this.inFlightCompletionDeliveries.delete(completionKey);
+    }
+  }
+
+  private async doDeliverCompletion(
+    dispatcherId: string,
+    completion: CompletionEnvelope,
+    completionKey: string,
+  ): Promise<void> {
     const slot = this.slots.get(dispatcherId);
     if (slot === undefined) {
       this.opts.log.warn(
@@ -163,7 +187,10 @@ export class DispatcherAgentService {
         );
         return;
       }
-      if (outcome.status === 'accepted') return;
+      if (outcome.status === 'accepted') {
+        this.rememberDeliveredCompletion(completionKey);
+        return;
+      }
       if (outcome.status === 'unsupported') {
         slot.log.warn(
           { dispatcher_id: dispatcherId, source: completion.source, reason: outcome.reason },
@@ -357,6 +384,20 @@ export class DispatcherAgentService {
     }
     return slot;
   }
+
+  private rememberDeliveredCompletion(key: string): void {
+    if (this.deliveredCompletionIds.has(key)) return;
+    this.deliveredCompletionIds.add(key);
+    this.deliveredCompletionOrder.push(key);
+    while (this.deliveredCompletionOrder.length > COMPLETION_DELIVERY_CACHE_LIMIT) {
+      const evicted = this.deliveredCompletionOrder.shift();
+      if (evicted !== undefined) this.deliveredCompletionIds.delete(evicted);
+    }
+  }
+}
+
+function completionDeliveryKey(dispatcherId: string, completionId: string): string {
+  return JSON.stringify([dispatcherId, completionId]);
 }
 
 function errInfo(err: unknown): { message: string; stack?: string } {

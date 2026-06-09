@@ -119,6 +119,8 @@ export interface CodexRuntimeDeps {
   log?: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
 }
 
+const COMPLETION_ID_CACHE_LIMIT = 256;
+
 export class CodexRuntime implements AgentRuntime {
   readonly providerRef = BUILTIN_CODEX_PROVIDER_REF;
 
@@ -136,6 +138,21 @@ export class CodexRuntime implements AgentRuntime {
   private status: DispatcherStatus = 'declared';
   /** Monotonic per-attempt suffix for TeamMate delivery turn dedup ids (#110 PR8). */
   private teammateDeliverySeq = 0;
+  /**
+   * Completion deliveries currently being processed. Duplicate settled events can
+   * race into `completionInput`; coalescing by completion id keeps one logical
+   * completion from injecting or triggering more than once concurrently.
+   */
+  private readonly inFlightCompletionDeliveries = new Map<
+    string,
+    Promise<TeamMateCompletionDeliveryResult>
+  >();
+  /**
+   * Completion ids whose trigger turn has already been accepted. A later replay
+   * of the same settled teammate turn is an idempotent success, not a new wake-up.
+   */
+  private readonly acceptedCompletionIds = new Set<string>();
+  private readonly acceptedCompletionOrder: string[] = [];
   /**
    * Completion ids whose item has already been injected into the thread. The
    * Dispatcher Service retries `completionInput` on `failed`; if the inject
@@ -449,6 +466,28 @@ export class CodexRuntime implements AgentRuntime {
   async completionInput(
     completion: CompletionEnvelope,
   ): Promise<TeamMateCompletionDeliveryResult> {
+    if (this.acceptedCompletionIds.has(completion.id)) {
+      return { status: 'accepted' };
+    }
+    const inFlight = this.inFlightCompletionDeliveries.get(completion.id);
+    if (inFlight !== undefined) return inFlight;
+
+    const delivery = this.deliverCompletionInput(completion);
+    this.inFlightCompletionDeliveries.set(completion.id, delivery);
+    try {
+      const outcome = await delivery;
+      if (outcome.status === 'accepted') {
+        this.rememberAcceptedCompletion(completion.id);
+      }
+      return outcome;
+    } finally {
+      this.inFlightCompletionDeliveries.delete(completion.id);
+    }
+  }
+
+  private async deliverCompletionInput(
+    completion: CompletionEnvelope,
+  ): Promise<TeamMateCompletionDeliveryResult> {
     if (this.client === null || this.turnManager === null || this.stopping) {
       return { status: 'unsupported', reason: 'dispatcher runtime stopped' };
     }
@@ -459,7 +498,6 @@ export class CodexRuntime implements AgentRuntime {
         error: new Error('teammate completion delivery has no thread id'),
       };
     }
-    this.teammateDeliverySeq += 1;
     // Inject the completion item at most once per completion id. On a retry
     // (trigger turn failed last time) the item is already in the thread, so we
     // skip straight to re-triggering instead of persisting a duplicate.
@@ -482,8 +520,9 @@ export class CodexRuntime implements AgentRuntime {
       }
       this.rememberInjectedCompletion(completion.id);
     }
+    const deliverySeq = ++this.teammateDeliverySeq;
     const delivery = await this.channelInput({
-      sourceId: `teammate:${completion.id}#${this.teammateDeliverySeq}`,
+      sourceId: `teammate:${completion.id}#${deliverySeq}`,
       text: CODEX_COMPLETION_TRIGGER_TEXT,
     });
     switch (delivery.status) {
@@ -662,9 +701,20 @@ export class CodexRuntime implements AgentRuntime {
     if (this.injectedCompletionIds.has(id)) return;
     this.injectedCompletionIds.add(id);
     this.injectedCompletionOrder.push(id);
-    while (this.injectedCompletionOrder.length > 256) {
+    while (this.injectedCompletionOrder.length > COMPLETION_ID_CACHE_LIMIT) {
       const evicted = this.injectedCompletionOrder.shift();
       if (evicted !== undefined) this.injectedCompletionIds.delete(evicted);
+    }
+  }
+
+  /** Record a completion id as fully accepted, evicting the oldest past a cap. */
+  private rememberAcceptedCompletion(id: string): void {
+    if (this.acceptedCompletionIds.has(id)) return;
+    this.acceptedCompletionIds.add(id);
+    this.acceptedCompletionOrder.push(id);
+    while (this.acceptedCompletionOrder.length > COMPLETION_ID_CACHE_LIMIT) {
+      const evicted = this.acceptedCompletionOrder.shift();
+      if (evicted !== undefined) this.acceptedCompletionIds.delete(evicted);
     }
   }
 

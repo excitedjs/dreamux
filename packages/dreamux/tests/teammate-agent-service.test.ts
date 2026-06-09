@@ -612,7 +612,7 @@ describe('TeamMateAgentService', () => {
     });
 
     provider.runtimes[0]?.settle('failed', 'turn-7');
-    provider.runtimes[0]?.settle('stopped', null);
+    provider.runtimes[0]?.settle('stopped', 'turn-8');
     await flush();
 
     expect(received).toEqual([
@@ -624,11 +624,38 @@ describe('TeamMateAgentService', () => {
       },
       {
         source: 'breaker',
-        id: 'breaker',
+        id: 'breaker:turn-8',
         status: 'failed',
         result: 'last fake result',
       },
     ]);
+  });
+
+  it('drops null-turn settlements rather than fabricating a completion id', async () => {
+    const { catalog, provider } = providerCatalog();
+    const config = testDreamuxConfig();
+    const received: CompletionEnvelope[] = [];
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: catalog,
+      onTeamMateCompletion: (_id, env) => {
+        received.push(env);
+      },
+      log: noopLog(),
+    });
+
+    await service.spawn({
+      dispatcherId: 'flow',
+      name: 'breaker',
+      prompt: 'Run.',
+      cwd: root,
+    });
+
+    provider.runtimes[0]?.settle('stopped', null);
+    await flush();
+
+    expect(received).toEqual([]);
   });
 
   it('delivers concurrent teammate completions without dropping any', async () => {

@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Fix TeamMate reverse-completion delivery so duplicate/retried completions are idempotent and multi-send steering shares one current-turn completion.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

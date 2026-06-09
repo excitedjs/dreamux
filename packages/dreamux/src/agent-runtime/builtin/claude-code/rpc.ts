@@ -22,6 +22,9 @@ interface PendingTurn {
   reject: (err: Error) => void;
   aggregator: TurnAggregator;
   timer: NodeJS.Timeout | null;
+  settleImmediate: NodeJS.Immediate | null;
+  steered: boolean;
+  deferredOutcome: TurnOutcome | null;
 }
 
 export interface ClaudeCodeStreamRpcOptions {
@@ -57,6 +60,9 @@ export class ClaudeCodeStreamRpc {
         reject,
         aggregator: new TurnAggregator(),
         timer: null,
+        settleImmediate: null,
+        steered: false,
+        deferredOutcome: null,
       };
       this.pending = pending;
       // Arm the idle deadline (reset on every inbound stream line in `onLine`).
@@ -68,6 +74,32 @@ export class ClaudeCodeStreamRpc {
           );
         }
       });
+    });
+  }
+
+  async steerTurn(
+    prompt: string,
+    options: TurnSubmitOptions = {},
+  ): Promise<void> {
+    if (!this.stdin.writable) {
+      return Promise.reject(new Error('claude resident child is not running'));
+    }
+    if (this.pending === null) {
+      return Promise.reject(new Error('claude resident session has no active turn'));
+    }
+    const pending = this.pending;
+    pending.steered = true;
+    return new Promise<void>((resolve, reject) => {
+      this.stdin.write(
+        `${buildUserMessage(prompt, { priority: 'now', ...options })}\n`,
+        (err) => {
+          if (err != null) {
+            reject(err instanceof Error ? err : new Error(String(err)));
+            return;
+          }
+          resolve();
+        },
+      );
     });
   }
 
@@ -87,6 +119,7 @@ export class ClaudeCodeStreamRpc {
     const pending = this.pending;
     if (pending === null) return null;
     if (pending.timer !== null) clearTimeout(pending.timer);
+    if (pending.settleImmediate !== null) clearImmediate(pending.settleImmediate);
     this.pending = null;
     return pending;
   }
@@ -130,6 +163,10 @@ export class ClaudeCodeStreamRpc {
         if (this.pending === null) break;
         this.pending.aggregator.accept(line);
         const outcome = this.pending.aggregator.outcome();
+        if (this.pending.steered) {
+          this.deferSteeredResult(this.pending, outcome);
+          break;
+        }
         const pending = this.settlePending();
         if (pending === null) break;
         if (outcome !== null) pending.resolve(outcome);
@@ -148,6 +185,26 @@ export class ClaudeCodeStreamRpc {
       default:
         break;
     }
+  }
+
+  private deferSteeredResult(
+    pending: PendingTurn,
+    outcome: TurnOutcome | null,
+  ): void {
+    pending.deferredOutcome = outcome;
+    if (pending.settleImmediate !== null) return;
+    // A stream-json `priority` steer can cause Claude Code to close the
+    // interrupted run and immediately drain the queued steer in the same stdout
+    // flush. Resolve on the next tick so those follow-up lines are still folded
+    // into this one Dreamux logical turn instead of becoming a silent late result.
+    pending.settleImmediate = setImmediate(() => {
+      if (this.pending !== pending) return;
+      const finalOutcome = pending.deferredOutcome;
+      const settled = this.settlePending();
+      if (settled === null) return;
+      if (finalOutcome !== null) settled.resolve(finalOutcome);
+      else settled.reject(new Error('claude turn ended without a result'));
+    });
   }
 
   private onControlRequest(

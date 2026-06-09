@@ -154,6 +154,76 @@ describe('codex teammate completion delivery (native inject + trigger)', () => {
     expect(fake.injectItemsParams).toHaveLength(1);
   });
 
+  it('retries a previously failed completion call without accepted-cache suppression', async () => {
+    const fake = await startFakeCodex({ failTurnStartAttempts: 1 });
+    fakes.push(fake);
+    const runtime = await makeRuntime(fake);
+    const completion = {
+      source: 'teammate',
+      id: 'mate-retry-then-accept',
+      status: 'completed' as const,
+      result: 'done after retry',
+    };
+
+    await expect(runtime.completionInput!(completion)).resolves.toMatchObject({
+      status: 'failed',
+    });
+    await expect(runtime.completionInput!(completion)).resolves.toEqual({
+      status: 'accepted',
+    });
+    await expect(runtime.completionInput!(completion)).resolves.toEqual({
+      status: 'accepted',
+    });
+
+    expect(fake.injectItemsParams).toHaveLength(1);
+    expect(fake.methodLog.filter((method) => method === 'turn/start')).toHaveLength(2);
+  });
+
+  it('coalesces concurrent duplicate completions before inject and trigger', async () => {
+    const fake = await startFakeCodex();
+    fakes.push(fake);
+    const runtime = await makeRuntime(fake);
+    const completion = {
+      source: 'teammate',
+      id: 'mate-concurrent',
+      status: 'completed' as const,
+      result: 'done once',
+    };
+
+    await expect(
+      Promise.all([
+        runtime.completionInput!(completion),
+        runtime.completionInput!(completion),
+      ]),
+    ).resolves.toEqual([{ status: 'accepted' }, { status: 'accepted' }]);
+
+    expect(fake.injectItemsParams).toHaveLength(1);
+    expect(fake.methodLog.filter((method) => method === 'turn/start')).toHaveLength(1);
+    expect(fake.turnsHandled).toBe(1);
+  });
+
+  it('treats already accepted completion ids as delivered', async () => {
+    const fake = await startFakeCodex();
+    fakes.push(fake);
+    const runtime = await makeRuntime(fake);
+    const completion = {
+      source: 'teammate',
+      id: 'mate-accepted',
+      status: 'completed' as const,
+      result: 'done once',
+    };
+
+    await expect(runtime.completionInput!(completion)).resolves.toEqual({
+      status: 'accepted',
+    });
+    await expect(runtime.completionInput!(completion)).resolves.toEqual({
+      status: 'accepted',
+    });
+
+    expect(fake.injectItemsParams).toHaveLength(1);
+    expect(fake.methodLog.filter((method) => method === 'turn/start')).toHaveLength(1);
+  });
+
   it('reports unsupported once the runtime is stopped', async () => {
     const fake = await startFakeCodex();
     fakes.push(fake);

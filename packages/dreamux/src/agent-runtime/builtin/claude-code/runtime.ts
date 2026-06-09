@@ -80,6 +80,7 @@ import {
   createDefaultClaudeCodeSession,
   type ClaudeCodeSession,
   type ClaudeCodeSessionFactory,
+  type TurnOutcome,
   type TurnSubmitOptions,
 } from './supervisor.js';
 import type {
@@ -110,7 +111,7 @@ export interface ClaudeCodeAgentRuntimeProviderOptions {
 
 export const CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = {
   resume: { supported: true, checkpoint: 'claudeCodeSession' },
-  steer: { supported: false },
+  steer: { supported: true },
   events: { kind: 'synthesized' },
   last: { supported: true },
   context: { supported: false },
@@ -128,6 +129,15 @@ interface ClaudeCodeRuntimeDeps {
   sessionFactory: ClaudeCodeSessionFactory;
   resolveBinPath: (bin: string) => string;
 }
+
+interface ActiveChannelTurn {
+  turnId: string;
+  pendingSteers: string[];
+  session: ClaudeCodeSession | null;
+  steerQueue: Promise<void>;
+}
+
+let nextRuntimeInstanceId = 0;
 
 /**
  * Format a TeamMate completion as a Claude Code `<task-notification>` — the
@@ -178,9 +188,11 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   private stopped = false;
   private readonly seen = new Set<string>();
   private queue: Promise<void> = Promise.resolve();
+  private readonly runtimeInstanceId = ++nextRuntimeInstanceId;
   private turnCounter = 0;
   private session: ClaudeCodeSession | null = null;
   private lastResult: AgentRuntimeLastResult | null = null;
+  private activeChannelTurn: ActiveChannelTurn | null = null;
 
   constructor(
     private readonly context: AgentRuntimeCreateContext,
@@ -276,7 +288,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
 
   async systemInput(notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult> {
     if (this.stopped) return { status: 'stopped' };
-    const turnId = `claude-system-${++this.turnCounter}`;
+    const turnId = this.nextTurnId('system');
     void this.runTurnOnQueue(notice.text, turnId).then(
       () => this.markTurnSucceeded(turnId),
       (err) => this.markTurnFailed(turnId, err),
@@ -299,13 +311,32 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       // failure there must not drop the turn.
       this.log('warn', 'claude-code onAccepted hook failed', err);
     }
-    const turnId = `claude-turn-${++this.turnCounter}`;
+    const active = this.activeChannelTurn;
+    if (active !== null) {
+      try {
+        await this.steerChannelTurn(active, input.text);
+        return { status: 'submitted', turnId: active.turnId };
+      } catch (err) {
+        return {
+          status: 'failed',
+          error: err instanceof Error ? err : new Error(String(err)),
+        };
+      }
+    }
+    const turnId = this.nextTurnId('turn');
+    const channelTurn: ActiveChannelTurn = {
+      turnId,
+      pendingSteers: [],
+      session: null,
+      steerQueue: Promise.resolve(),
+    };
+    this.activeChannelTurn = channelTurn;
     // Submit-then-serialize: return after accept (so the channel can ack
     // promptly), run the turn on the serial queue. A turn failure cannot be
     // returned to this caller without blocking the channel ack on full turn
     // completion. Instead, a failed turn drives the runtime to `degraded` with a
     // persisted `last_error` (visible via status/doctor) — never swallowed.
-    void this.runTurnOnQueue(input.text, turnId).then(
+    void this.runChannelTurnOnQueue(input.text, channelTurn).then(
       () => this.markTurnSucceeded(turnId),
       (err) => this.markTurnFailed(turnId, err),
     );
@@ -357,6 +388,56 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       () => undefined,
     );
     return run;
+  }
+
+  private runChannelTurnOnQueue(
+    prompt: string,
+    active: ActiveChannelTurn,
+  ): Promise<void> {
+    const run = this.queue.then(() => this.runChannelTurn(prompt, active));
+    this.queue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  private async runChannelTurn(
+    prompt: string,
+    active: ActiveChannelTurn,
+  ): Promise<void> {
+    const session = await this.ensureSession();
+    const steers = active.pendingSteers.splice(0);
+    const fullPrompt =
+      steers.length === 0 ? prompt : [prompt, ...steers].join('\n\n');
+    const outcome = session.submitTurn(fullPrompt);
+    active.session = session;
+    try {
+      await this.applyTurnOutcome(await outcome, active.turnId);
+    } finally {
+      active.session = null;
+      if (this.activeChannelTurn === active) this.activeChannelTurn = null;
+      active.pendingSteers = [];
+    }
+  }
+
+  private async steerChannelTurn(
+    active: ActiveChannelTurn,
+    prompt: string,
+  ): Promise<void> {
+    const session = active.session;
+    if (session === null) {
+      active.pendingSteers.push(prompt);
+      return;
+    }
+    const steer = active.steerQueue.then(() =>
+      session.steerTurn(prompt, { priority: 'next' }),
+    );
+    active.steerQueue = steer.then(
+      () => undefined,
+      () => undefined,
+    );
+    await steer;
   }
 
   private async markTurnSucceeded(turnId: string): Promise<void> {
@@ -426,7 +507,23 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     options?: TurnSubmitOptions,
   ): Promise<void> {
     const session = await this.ensureSession();
+    await this.runTurnWithSession(session, prompt, turnId, options);
+  }
+
+  private async runTurnWithSession(
+    session: ClaudeCodeSession,
+    prompt: string,
+    turnId: string,
+    options?: TurnSubmitOptions,
+  ): Promise<void> {
     const outcome = await session.submitTurn(prompt, options);
+    await this.applyTurnOutcome(outcome, turnId);
+  }
+
+  private async applyTurnOutcome(
+    outcome: TurnOutcome,
+    turnId: string,
+  ): Promise<void> {
     if (
       outcome.sessionId !== null &&
       outcome.sessionId !== '' &&
@@ -447,6 +544,10 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       throw new Error(`claude turn ${turnId} returned an error result: ${detail}`);
     }
     this.log('info', `claude-code turn ${turnId} completed`);
+  }
+
+  private nextTurnId(kind: 'system' | 'turn'): string {
+    return `claude-${kind}-${this.runtimeInstanceId}-${++this.turnCounter}`;
   }
 
   private async setStatus(

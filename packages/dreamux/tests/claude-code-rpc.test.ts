@@ -35,11 +35,11 @@ function assistantLine(text: string): string {
   })}\n`;
 }
 
-function resultLine(): string {
+function resultLine(text = 'final'): string {
   return `${JSON.stringify({
     type: 'result',
     subtype: 'success',
-    result: 'final',
+    result: text,
     session_id: 's1',
   })}\n`;
 }
@@ -118,3 +118,60 @@ describe('ClaudeCodeStreamRpc idle deadline (issue #156)', () => {
     expect(reap).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('ClaudeCodeStreamRpc active steering', () => {
+  it('writes a stream-json user envelope while a turn is pending', async () => {
+    const stdin = new FakeStdin();
+    const rpc = new ClaudeCodeStreamRpc(stdin as unknown as Writable, {
+      turnTimeoutMs: 5_000,
+      reapOnTimeout: () => undefined,
+    });
+
+    const turn = rpc.submitTurn('first');
+    await rpc.steerTurn('second', { priority: 'next' });
+
+    expect(stdin.writes).toHaveLength(2);
+    expect(JSON.parse(stdin.writes[1] ?? '{}')).toEqual({
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'second' }],
+      },
+      priority: 'next',
+    });
+
+    rpc.onStdoutChunk(resultLine('done'));
+    await flushImmediate();
+    await expect(turn).resolves.toMatchObject({ text: 'done', isError: false });
+  });
+
+  it('folds an immediate follow-up result from a steer into the pending turn', async () => {
+    const stdin = new FakeStdin();
+    const rpc = new ClaudeCodeStreamRpc(stdin as unknown as Writable, {
+      turnTimeoutMs: 5_000,
+      reapOnTimeout: () => undefined,
+    });
+
+    const turn = rpc.submitTurn('first');
+    await rpc.steerTurn('second', { priority: 'next' });
+
+    rpc.onStdoutChunk(
+      [
+        assistantLine('original answer'),
+        resultLine('original result'),
+        assistantLine('steered answer'),
+        resultLine('steered result'),
+      ].join(''),
+    );
+    await flushImmediate();
+
+    await expect(turn).resolves.toMatchObject({
+      text: 'steered result',
+      isError: false,
+    });
+  });
+});
+
+async function flushImmediate(): Promise<void> {
+  await new Promise<void>((resolve) => setImmediate(resolve));
+}

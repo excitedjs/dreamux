@@ -76,6 +76,7 @@ export interface TeamMateAgentServiceOptions {
 export class TeamMateAgentService {
   private readonly identities: TeamMateIdentityStore;
   private readonly live = new Map<string, LiveTeamMate>();
+  private submissionSeq = 0;
 
   constructor(private readonly opts: TeamMateAgentServiceOptions) {
     this.identities = new TeamMateIdentityStore({
@@ -368,8 +369,9 @@ export class TeamMateAgentService {
     prompt: string,
   ): Promise<TeamMateTurnResult> {
     const live = await this.ensureRuntime(dispatcherId, name);
+    const submissionSeq = ++this.submissionSeq;
     const result = await live.runtime.channelInput({
-      sourceId: `teammate:${name}:${Date.now()}`,
+      sourceId: `teammate:${name}:${submissionSeq}`,
       text: prompt,
     });
     return toTurnResult(result);
@@ -380,9 +382,12 @@ export class TeamMateAgentService {
    * turn into a {@link CompletionEnvelope} and hand it to the sink. Reads the
    * teammate's final assistant-visible result via `getLast`. A `stopped` turn
    * maps to envelope status `failed` (the envelope carries only completed/failed)
-   * so a torn-down teammate still surfaces, never silently vanishing. Every step
-   * is error-isolated: this runs `void`-ed off the synchronous settle callback,
-   * so any escape would become an unhandled rejection.
+   * so a torn-down teammate still surfaces, never silently vanishing. Reverse
+   * delivery requires a stable non-null turn id because the completion id is the
+   * idempotency key; builtin runtimes only settle accepted turns after they have
+   * a turn id. Every step is error-isolated: this runs `void`-ed off the
+   * synchronous settle callback, so any escape would become an unhandled
+   * rejection.
    */
   private async deliverTurnSettled(
     dispatcherId: string,
@@ -392,6 +397,17 @@ export class TeamMateAgentService {
     sink: NonNullable<TeamMateAgentServiceOptions['onTeamMateCompletion']>,
   ): Promise<void> {
     try {
+      if (settled.turnId === null) {
+        this.opts.log.warn(
+          {
+            dispatcher_id: dispatcherId,
+            teammate: name,
+            status: settled.status,
+          },
+          'dropping teammate completion: settled turn has no turn id',
+        );
+        return;
+      }
       let result = '';
       try {
         const last = await runtime.getLast();
@@ -404,7 +420,7 @@ export class TeamMateAgentService {
       }
       const envelope: CompletionEnvelope = {
         source: name,
-        id: settled.turnId !== null ? `${name}:${settled.turnId}` : name,
+        id: `${name}:${settled.turnId}`,
         status: settled.status === 'completed' ? 'completed' : 'failed',
         result,
       };

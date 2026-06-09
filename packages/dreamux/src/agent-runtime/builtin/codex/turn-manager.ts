@@ -24,6 +24,17 @@ import {
   type TurnSettledSignal,
 } from '../../turn.js';
 
+interface ActiveTurnSlot {
+  collector: TurnCollector;
+  turnId: string | null;
+  candidateTurnId: string | null;
+  primaryFailed: boolean;
+  pendingSubmissions: number;
+  turnIdPromise: Promise<string>;
+  resolveTurnId: (turnId: string) => void;
+  rejectTurnId: (err: Error) => void;
+}
+
 export interface TurnManagerOptions {
   dispatcherId: string;
   /** Lazily resolved Codex thread id (set after thread/start | resume). */
@@ -61,6 +72,8 @@ export class TurnManager {
    * in-flight inbound and skip rather than wake the thread twice (issue #78).
    */
   private inboundSubmitted = false;
+  private activeTurnSlot: ActiveTurnSlot | null = null;
+  private activeTurnId: string | null = null;
   /**
    * Turn ids submitted to Codex that have not yet reached `turn/completed`. On
    * `stop()` each still-pending turn is settled as `stopped` so a teammate turn
@@ -98,32 +111,48 @@ export class TurnManager {
     // that a real inbound is in flight and skips itself.
     this.inboundSubmitted = true;
 
-    await this.notifyAccepted(input, hooks);
-
     const threadId = this.opts.getThreadId();
     if (threadId === null) {
+      await this.notifyAccepted(input, hooks);
       const error = new Error('inbound submitted without thread_id');
       this.log('error', error.message);
       return { status: 'failed', error };
     }
 
+    const activeTurn = this.claimActiveTurnSlot(threadId);
+    activeTurn.slot.pendingSubmissions += 1;
+    await this.notifyAccepted(input, hooks);
+
+    let res: Awaited<ReturnType<typeof submitTurnStart>>;
     try {
-      const collector = subscribeTurnCollection(this.opts.client, threadId);
-      const res = await submitTurnStart(
+      res = await submitTurnStart(
         this.opts.client,
         threadId,
         input.text,
         this.opts.turnCwd ?? null,
       );
-      this.trackTurn(res.turn.id, collector);
-      return { status: 'submitted', turnId: res.turn.id };
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
+      this.recordTurnStartFailure(activeTurn.slot, error, activeTurn.primary);
       this.log(
         'error',
         `turn/start submission failed for message ${input.sourceId === '' ? '<none>' : input.sourceId}: ${error.message}`,
         error,
       );
+      return { status: 'failed', error };
+    }
+    const turnId = this.recordTurnStartSuccess(
+      activeTurn.slot,
+      res.turn.id,
+      activeTurn.primary,
+    );
+    try {
+      return {
+        status: 'submitted',
+        turnId: turnId ?? await activeTurn.slot.turnIdPromise,
+      };
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
       return { status: 'failed', error };
     }
   }
@@ -169,6 +198,11 @@ export class TurnManager {
 
   async stop(): Promise<void> {
     this.stopped = true;
+    const activeSlot = this.activeTurnSlot;
+    this.activeTurnSlot = null;
+    if (activeSlot !== null && activeSlot.turnId === null) {
+      activeSlot.rejectTurnId(new Error('codex turn stopped before acceptance'));
+    }
     // Any turn still in flight at teardown will never reach `turn/completed`
     // (the WS is closing). Settle each as `stopped` so an interrupted teammate
     // turn is delivered with a status rather than vanishing.
@@ -176,6 +210,82 @@ export class TurnManager {
       this.opts.onTurnSettled?.({ turnId, status: 'stopped' });
     }
     this.pendingTurnIds.clear();
+    this.activeTurnId = null;
+  }
+
+  private claimActiveTurnSlot(threadId: string): {
+    slot: ActiveTurnSlot;
+    primary: boolean;
+  } {
+    const active = this.activeTurnSlot;
+    if (active !== null) return { slot: active, primary: false };
+
+    let resolveTurnId!: (turnId: string) => void;
+    let rejectTurnId!: (err: Error) => void;
+    const turnIdPromise = new Promise<string>((resolve, reject) => {
+      resolveTurnId = resolve;
+      rejectTurnId = reject;
+    });
+    // The primary submitter returns its own failure directly. The shared promise
+    // only exists for concurrent followers waiting for that primary turn id, so
+    // reject it without producing an unhandled rejection when there are none.
+    turnIdPromise.catch(() => undefined);
+    const slot: ActiveTurnSlot = {
+      collector: subscribeTurnCollection(this.opts.client, threadId),
+      turnId: null,
+      candidateTurnId: null,
+      primaryFailed: false,
+      pendingSubmissions: 0,
+      turnIdPromise,
+      resolveTurnId,
+      rejectTurnId,
+    };
+    this.activeTurnSlot = slot;
+    return { slot, primary: true };
+  }
+
+  private recordTurnStartSuccess(
+    slot: ActiveTurnSlot,
+    turnId: string,
+    primary: boolean,
+  ): string | null {
+    slot.pendingSubmissions = Math.max(0, slot.pendingSubmissions - 1);
+    if (slot.turnId !== null) return slot.turnId;
+    if (this.stopped) {
+      slot.rejectTurnId(new Error('codex turn stopped before acceptance'));
+      return null;
+    }
+    if (primary || slot.primaryFailed) {
+      this.activateTurnSlot(slot, turnId);
+      return turnId;
+    }
+    slot.candidateTurnId ??= turnId;
+    return null;
+  }
+
+  private recordTurnStartFailure(
+    slot: ActiveTurnSlot,
+    error: Error,
+    primary: boolean,
+  ): void {
+    slot.pendingSubmissions = Math.max(0, slot.pendingSubmissions - 1);
+    if (slot.turnId !== null) return;
+    if (primary) slot.primaryFailed = true;
+    if (slot.primaryFailed && slot.candidateTurnId !== null) {
+      this.activateTurnSlot(slot, slot.candidateTurnId);
+      return;
+    }
+    if (slot.primaryFailed && slot.pendingSubmissions === 0) {
+      if (this.activeTurnSlot === slot) this.activeTurnSlot = null;
+      slot.rejectTurnId(error);
+    }
+  }
+
+  private activateTurnSlot(slot: ActiveTurnSlot, turnId: string): void {
+    if (slot.turnId !== null) return;
+    slot.turnId = turnId;
+    this.trackTurn(turnId, slot.collector, slot);
+    slot.resolveTurnId(turnId);
   }
 
   /**
@@ -187,19 +297,31 @@ export class TurnManager {
    * settled as `failed` here, so a teammate turn that errors at the model level
    * is delivered with a status instead of hanging until teardown.
    */
-  private trackTurn(turnId: string, collector: TurnCollector): void {
+  private trackTurn(
+    turnId: string,
+    collector: TurnCollector,
+    slot?: ActiveTurnSlot,
+  ): void {
+    if (this.pendingTurnIds.has(turnId)) return;
     this.pendingTurnIds.add(turnId);
-    void collector.awaitTurn().then(
+    this.activeTurnId = turnId;
+    void collector.awaitTurn(turnId).then(
       (turn) => {
         // Only forward completion if this turn was still pending. If `stop()`
         // already settled it as `stopped`, the delete returns false and we drop
         // the late completion so a turn is never settled twice.
-        if (this.pendingTurnIds.delete(turnId)) this.opts.onTurnCompleted?.(turn);
+        if (this.pendingTurnIds.delete(turnId)) {
+          if (this.activeTurnSlot === slot) this.activeTurnSlot = null;
+          if (this.activeTurnId === turnId) this.activeTurnId = null;
+          this.opts.onTurnCompleted?.(turn);
+        }
       },
       (err) => {
         // Same mutual-exclusion guard as the completed path: only settle as
         // `failed` if `stop()` did not already settle it as `stopped`.
         if (this.pendingTurnIds.delete(turnId)) {
+          if (this.activeTurnSlot === slot) this.activeTurnSlot = null;
+          if (this.activeTurnId === turnId) this.activeTurnId = null;
           this.opts.onTurnSettled?.({
             turnId,
             status: 'failed',
