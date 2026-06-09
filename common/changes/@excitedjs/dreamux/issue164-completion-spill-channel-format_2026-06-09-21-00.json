@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Bound teammate completion push-back and move channel-input assembly into each runtime (#164). Completion results over an inline budget (default 32000 chars, TASK_MAX_OUTPUT_LENGTH override, clamped to 160000) are spilled to a 0600 /tmp file and only the path is inlined. The claude-code runtime drops the fake <task-notification> XML and delivers a plain status-varied user turn (isSynthetic:false; capability kind claudeCodeTaskNotification -> claudeCodePlainTurn); codex keeps its <teammate_session_completion> wrapper. CompletionEnvelope.status widens to completed|failed|stopped (no longer folded). Inbound Feishu messages are now assembled by each runtime into the native <channel source=\"feishu\" …> envelope (codex's <feishu_message> wrapper retired); the channel layer stops pre-rendering XML and hands runtimes neutral structured pieces. No persisted config/state format changes, so no rebuild is required.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}
