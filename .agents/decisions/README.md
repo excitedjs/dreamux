@@ -9,7 +9,7 @@ topic slugs remain reviewable and merge-friendly.
 | Theme | Records |
 |---|---|
 | Repository shape | [rush-pnpm-monorepo](rush-pnpm-monorepo.md), [install-model](install-model.md) |
-| Runtime architecture | [top-level-design](top-level-design.md), [issue-110-epic-closure](issue-110-epic-closure.md), [provider-references-and-capability-registry](provider-references-and-capability-registry.md), [agent-runtime-provider](agent-runtime-provider.md), [channel-provider](channel-provider.md), [server-hosted-teammate](server-hosted-teammate.md), [providerized-config-state-compatibility](providerized-config-state-compatibility.md), [agents-config-normalization](agents-config-normalization.md), [global-config-dir](global-config-dir.md), [logging](logging.md), [feishu-inbound-attachments](feishu-inbound-attachments.md) |
+| Runtime architecture | [top-level-design](top-level-design.md), [issue-110-epic-closure](issue-110-epic-closure.md), [provider-references-and-capability-registry](provider-references-and-capability-registry.md), [agent-runtime-provider](agent-runtime-provider.md), [channel-provider](channel-provider.md), [server-hosted-teammate](server-hosted-teammate.md), [providerized-config-state-compatibility](providerized-config-state-compatibility.md), [agents-config-normalization](agents-config-normalization.md), [global-config-dir](global-config-dir.md), [logging](logging.md), [feishu-inbound-attachments](feishu-inbound-attachments.md), [channel-input-runtime-assembly](channel-input-runtime-assembly.md) |
 | Public surface | [cli-and-package-naming](cli-and-package-naming.md), [dispatcher-tm-boundary](dispatcher-tm-boundary.md), [dispatcher-tm-packaging](dispatcher-tm-packaging.md), [global-bin-onboard-serve](global-bin-onboard-serve.md), [global-config-dir](global-config-dir.md) |
 | Release and safeguards | [npm-release-oidc](npm-release-oidc.md), [anti-leak-guardrail](anti-leak-guardrail.md), [no-sync-io-lint-gate](no-sync-io-lint-gate.md) |
 
@@ -19,6 +19,7 @@ topic slugs remain reviewable and merge-friendly.
 - [anti-leak-guardrail](anti-leak-guardrail.md)
 - [agent-runtime-provider](agent-runtime-provider.md)
 - [channel-provider](channel-provider.md)
+- [channel-input-runtime-assembly](channel-input-runtime-assembly.md)
 - [cli-and-package-naming](cli-and-package-naming.md)
 - [dispatcher-tm-boundary](dispatcher-tm-boundary.md)
 - [dispatcher-tm-packaging](dispatcher-tm-packaging.md)

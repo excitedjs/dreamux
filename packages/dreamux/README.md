@@ -313,7 +313,7 @@ schedule more TeamMates.
 1. `dreamux onboard --dispatcher-id flow --dispatcher-cwd <WORKSPACE> --bot-app-id <APP_ID> --bot-app-secret <APP_SECRET>`
 2. `dreamux serve` starts dispatcher `flow`.
 3. Invite the bot to a Feishu group, send a mention that passes the access gate.
-4. Server injects a `<feishu_message>` block into the selected runtime.
+4. The selected runtime assembles the inbound into a `<channel source="feishu" …>` block (the channel layer hands it neutral structured pieces; #164).
 5. The runtime calls the Feishu MCP `reply` tool; the reply is delivered to Feishu.
 6. Send another accepted message from a different chat in the same trust
    domain; it enters the same dispatcher runtime context.

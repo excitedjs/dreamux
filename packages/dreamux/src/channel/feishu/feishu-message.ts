@@ -60,7 +60,20 @@ export interface FormattedFeishuAttachment {
 }
 
 export interface FormatFeishuMessageResult {
-  formattedText: string;
+  /**
+   * Opaque display attributes for the runtime's channel block (chat_id,
+   * chat_type, message_id, sender_id, sender_name, create_time). The channel
+   * no longer renders the final XML — each runtime wraps these into its own
+   * channel envelope.
+   */
+  attrs: Array<[string, string]>;
+  /**
+   * The full pre-rendered, escaped inner content: message body (+ mentions) +
+   * parser fallback note + attachment refs + group-bots block. Everything that
+   * previously lived inside the per-message wrapper, so moving the wrapping to
+   * the runtime drops no model-visible content.
+   */
+  body: string;
   attachments: FormattedFeishuAttachment[];
   diagnostics: string[];
 }
@@ -88,18 +101,9 @@ export async function formatFeishuMessageForRuntime(
   const attachmentBlock = renderAttachments(event.messageId, attachments);
   const groupBots = renderGroupBots(options.trustedBots ?? []);
 
-  const attrLines = attrs.map(
-    ([key, value]) => `  ${key}="${escapeXmlAttribute(value)}"`,
-  );
-  attrLines[attrLines.length - 1] = `${attrLines[attrLines.length - 1]}>`;
-
   return {
-    formattedText: [
-      '<feishu_message',
-      ...attrLines,
-      `${body}${fallback}${attachmentBlock}${groupBots}`,
-      '</feishu_message>',
-    ].join('\n'),
+    attrs,
+    body: `${body}${fallback}${attachmentBlock}${groupBots}`,
     attachments,
     diagnostics: attachments
       .filter((attachment) => attachment.status === 'not_downloaded')

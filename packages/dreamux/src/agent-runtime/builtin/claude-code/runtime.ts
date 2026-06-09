@@ -19,8 +19,8 @@
  * - **Runtime-owned config** is `DispatcherClaudeCodeConfig` (bin / model /
  *   permission_mode / remote_control / extra_args / extra_env), distinct from
  *   the Codex config.
- * - **Completion delivery** is the Claude Code task-notification path, not the
- *   Codex inbox-then-trigger path.
+ * - **Completion delivery** is a plain user turn (no fake task-notification),
+ *   not the Codex inbox-then-trigger path.
  *
  * Process spawning goes through an injectable {@link ClaudeCodeSessionFactory}
  * seam (mirroring Codex's process-factory seam), so the lifecycle contract is
@@ -84,10 +84,12 @@ import {
   type TurnOutcome,
   type TurnSubmitOptions,
 } from './supervisor.js';
+import { renderChannelInput } from '../../turn.js';
 import type {
   InboundDeliveryHooks,
   InboundTurnInput,
 } from '../../turn.js';
+import { resolveCompletionBody } from '../../completion-body.js';
 import type { DispatcherStatus } from '../../../state/dispatcher-store.js';
 import type {
   AgentRuntimeCapabilities,
@@ -119,9 +121,9 @@ export const CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = 
   systemPrompt: { mode: 'append' },
   teammateCompletion: [
     {
-      kind: 'claudeCodeTaskNotification',
+      kind: 'claudeCodePlainTurn',
       description:
-        'notify the runtime through a Claude Code task notification path',
+        'deliver the completion as a plain user turn (no task-notification harness path)',
     },
   ],
 };
@@ -141,26 +143,36 @@ interface ActiveChannelTurn {
 let nextRuntimeInstanceId = 0;
 
 /**
- * Format a TeamMate completion as a Claude Code `<task-notification>` — the
- * native shape claude-code emits for background / sub-agent task completions
- * (constants/xml.ts: `task-notification` / `task-id` / `status` / `summary`).
- * The result is delivered inline in a `<result>` tag because dreamux has no
- * output file, so claude-code's optional `<output-file>` / `<tool-use-id>` tags
- * are intentionally omitted. Delivered with `isSynthetic: true` (see
- * {@link ClaudeCodeRuntime.completionInput}) so claude-code treats it as a
- * notification, not human input.
+ * Status line opening a TeamMate completion turn. Plain English, status-varied —
+ * NOT claude-code's native `<task-notification>` XML. The old XML mimicked
+ * claude-code's real task-notification system, so the model could mistake the
+ * fabricated task-id / output-file for a live background task and act on them
+ * (hallucination / harness collision). A plain user turn avoids that entirely.
  */
-function formatTaskNotification(completion: CompletionEnvelope): string {
-  return [
-    '<task-notification>',
-    `<task-id>${completion.id}</task-id>`,
-    `<status>${completion.status}</status>`,
-    `<summary>TeamMate "${completion.source}" session ${completion.status}</summary>`,
-    '<result>',
-    completion.result,
-    '</result>',
-    '</task-notification>',
-  ].join('\n');
+function completionStatusLine(completion: CompletionEnvelope): string {
+  switch (completion.status) {
+    case 'completed':
+      return `TeamMate ${completion.source} has finished its task.`;
+    case 'failed':
+      return `TeamMate ${completion.source}'s task failed.`;
+    case 'stopped':
+      return `TeamMate ${completion.source}'s task was stopped.`;
+  }
+}
+
+/**
+ * Build the plain-text completion turn. The result is inlined when short; when
+ * it overflows the inline budget the full result is spilled to a file (see
+ * {@link resolveCompletionBody}) and only the path is inlined.
+ */
+async function buildCompletionTurnText(
+  completion: CompletionEnvelope,
+): Promise<string> {
+  const line = completionStatusLine(completion);
+  const body = await resolveCompletionBody(completion);
+  return body.kind === 'inline'
+    ? `${line} Output below:\n\n${body.text}`
+    : `${line} The output is too long, so the full result was saved to a file:\n\n${body.path}`;
 }
 
 function errMessage(err: unknown): string {
@@ -312,10 +324,14 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       // failure there must not drop the turn.
       this.log('warn', 'claude-code onAccepted hook failed', err);
     }
+    // This runtime owns wrapping the channel input into its delivery shape: a
+    // structured channel turn becomes the native `<channel source="…">` block;
+    // a plain turn passes through unchanged.
+    const text = renderChannelInput(input);
     const active = this.activeChannelTurn;
     if (active !== null) {
       try {
-        await this.steerChannelTurn(active, input.text);
+        await this.steerChannelTurn(active, text);
         return { status: 'submitted', turnId: active.turnId };
       } catch (err) {
         return {
@@ -337,7 +353,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     // returned to this caller without blocking the channel ack on full turn
     // completion. Instead, a failed turn drives the runtime to `degraded` with a
     // persisted `last_error` (visible via status/doctor) — never swallowed.
-    void this.runChannelTurnOnQueue(input.text, channelTurn).then(
+    void this.runChannelTurnOnQueue(text, channelTurn).then(
       () => this.markTurnSucceeded(turnId),
       (err) => this.markTurnFailed(turnId, err),
     );
@@ -350,18 +366,17 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     if (this.stopped) {
       return { status: 'unsupported', reason: 'runtime stopped' };
     }
-    // Native task-notification delivery: a stream-json user message whose body
-    // is the `<task-notification>` tag, marked `isSynthetic: true` so claude-code
-    // routes it as a background-completion notification (internal `isMeta`:
-    // hidden in the TUI, model-visible) rather than human input. Delivery AWAITS
-    // the serial-queue turn so `accepted` means it actually ran and `failed`
-    // otherwise — the semantics the Dispatcher Service relies on for delivery
-    // retry.
+    // Plain user-turn delivery: a stream-json user message marked
+    // `isSynthetic: false`, so claude-code treats it as ordinary human input
+    // rather than routing it through its native task-notification harness path.
+    // Delivery AWAITS the serial-queue turn so `accepted` means it actually ran
+    // and `failed` otherwise — the semantics the Dispatcher Service relies on
+    // for delivery retry.
     try {
       await this.runTurnOnQueue(
-        formatTaskNotification(completion),
+        await buildCompletionTurnText(completion),
         `claude-teammate-${completion.id}`,
-        { isSynthetic: true },
+        { isSynthetic: false },
       );
       return { status: 'accepted' };
     } catch (err) {

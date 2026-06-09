@@ -55,9 +55,18 @@ Two settled shape rules govern where code lives:
   thread/home/bin/socket/stream concepts stay inside
   `agent-runtime/builtin/<name>/`. The shared contract, `state/`, `platform/`,
   `server.ts`, and the Dispatcher Service stay runtime-neutral.
-- **Do not leak channel specifics into the runtime contract.** `sender_id` /
-  `chat_id` / message ids belong to the channel layer; a runtime turn carries
-  neutral text + a dedupe id.
+- **Do not leak channel *routing* into the runtime contract.** Routing/identity
+  *decisions* — which chat to reply to, who the sender is, message threading —
+  belong to the channel layer; a runtime must never branch or reply-target on
+  `chat_id` / `sender_id` / message ids. Reply targeting stays in the channel
+  layer (the Feishu reply MCP tool takes `chat_id` as an explicit parameter).
+  What a runtime turn MAY carry, beyond neutral text + a dedupe id, is **opaque
+  display passthrough**: `InboundTurnInput.attrs` is an opaque key/value bag the
+  runtime renders verbatim into its model-visible channel block (the native
+  `<channel source="…" …>` envelope) but never interprets. Each runtime owns
+  assembling its own channel block from these neutral pieces (issue #164); the
+  channel layer no longer pre-renders the message XML. See
+  [`.agents/decisions/channel-input-runtime-assembly.md`](../../.agents/decisions/channel-input-runtime-assembly.md).
 - Direct Lark SDK / Feishu JSAPI calls belong in `@excitedjs/feishu-transport`;
   the built-in Feishu channel under `channel/feishu/` owns its MCP surface and
   handlers end-to-end (the server does not carry `*FromMcp` handlers).

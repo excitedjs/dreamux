@@ -18,7 +18,7 @@ package that exposes Lark SDK / JSAPI capabilities to channel layers.
 
 - Do not couple this package to Dreamux dispatcher state, runtime paths,
   Codex threads, cache directories, access-file layout, or logging layout.
-- Do not assemble `<feishu_message>` or `<attachment>` blocks.
+- Do not assemble the `<channel source="feishu" …>` envelope or `<attachment>` blocks.
 - Do not serialize or deserialize agent-facing message body formats.
 - Do not parse model replies or any special format emitted by an agent.
 - Do not own attachment cache layout, retention, preview extraction, or

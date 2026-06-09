@@ -406,7 +406,7 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
       {
         source: 'breaker',
         id: 'breaker:turn-4',
-        status: 'failed',
+        status: 'stopped',
         result: 'reviewer final answer',
       },
     ]);

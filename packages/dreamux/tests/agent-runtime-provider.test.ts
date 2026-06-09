@@ -166,7 +166,7 @@ describe('AgentRuntimeProviderCatalog', () => {
     // Codex-only.
     expect(
       provider.getCapabilities().teammateCompletion.map((shape) => shape.kind),
-    ).toEqual(['claudeCodeTaskNotification']);
+    ).toEqual(['claudeCodePlainTurn']);
   });
 
   it('does not expose the built-in Feishu channel through the runtime catalog', () => {

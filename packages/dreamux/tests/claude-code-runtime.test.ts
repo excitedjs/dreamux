@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -22,10 +23,11 @@ import { claudeCodeMcpConfig } from '../src/agent-runtime/builtin/claude-code/mc
 import { claudeCodeResidentArgs } from '../src/agent-runtime/builtin/claude-code/args.js';
 import { codexMcpServerArgs } from '../src/agent-runtime/builtin/codex/mcp-config.js';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
-import { defaultDispatcherCwd } from '../src/platform/paths.js';
+import { defaultDispatcherCwd, teamMateCompletionOutputPath } from '../src/platform/paths.js';
 import { dispatcherClaudeCodeMcpConfigPath } from '../src/agent-runtime/builtin/claude-code/paths.js';
 import { defaultDispatcherClaudeCodeConfig } from '../src/config/config.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
+import { renderChannelInput } from '../src/agent-runtime/turn.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 import type {
   AgentRuntime,
@@ -311,14 +313,14 @@ describe('claude-code pure translation (not Codex renamed)', () => {
 });
 
 describe('builtin:claude-code provider', () => {
-  it('exposes the claude-code ref and task-notification delivery shape', () => {
+  it('exposes the claude-code ref and plain-turn delivery shape', () => {
     const provider = claudeCodeProvider({ sessionFactory: fakeFleet().factory });
     expect(provider.ref).toBe('builtin:claude-code');
     expect(provider.descriptor.kind).toBe('agentRuntime');
     expect(provider.getCapabilities().steer.supported).toBe(true);
     expect(
       provider.getCapabilities().teammateCompletion.map((s) => s.kind),
-    ).toEqual(['claudeCodeTaskNotification']);
+    ).toEqual(['claudeCodePlainTurn']);
   });
 });
 
@@ -590,13 +592,13 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     expect(first.turnId).not.toBe(second.turnId);
   });
 
-  it('delivers a TeamMate completion via the task-notification entry', async () => {
+  it('delivers a TeamMate completion as a plain status-varied user turn', async () => {
     const fleet = fakeFleet([okOutcome('session-abc')]);
     const { runtime } = makeRuntime(fleet);
     await runtime.start();
 
     const result = await runtime.completionInput!({
-      source: 'teammate',
+      source: 'reviewer',
       id: 'mate-1',
       status: 'completed',
       result: 'all done',
@@ -605,16 +607,64 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
 
     await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
     const prompt = fleet.sessions[0]?.prompts[0] ?? '';
-    // Native claude-code <task-notification> shape, not a self-authored tag.
-    expect(prompt).toContain('<task-notification>');
-    expect(prompt).toContain('<task-id>mate-1</task-id>');
-    expect(prompt).toContain('<status>completed</status>');
-    expect(prompt).toContain('teammate');
-    expect(prompt).toContain('<result>');
+    // Plain English status line + inlined result — NOT claude-code's native
+    // <task-notification> XML (which the model could mistake for a real task).
+    expect(prompt).toContain('TeamMate reviewer has finished its task.');
+    expect(prompt).toContain('Output below:');
     expect(prompt).toContain('all done');
+    expect(prompt).not.toContain('<task-notification>');
+    expect(prompt).not.toContain('<task-id>');
     expect(prompt).not.toContain('<teammate_session_completion');
-    // Delivered with isSynthetic so claude-code treats it as a notification.
-    expect(fleet.sessions[0]?.submitOptions[0]).toEqual({ isSynthetic: true });
+    // Delivered as ordinary input, NOT a synthetic notification.
+    expect(fleet.sessions[0]?.submitOptions[0]).toEqual({ isSynthetic: false });
+  });
+
+  it('inlines a spill pointer when a completion overflows the budget', async () => {
+    const fleet = fakeFleet([okOutcome('session-abc')]);
+    const { runtime } = makeRuntime(fleet);
+    await runtime.start();
+
+    const spillPath = teamMateCompletionOutputPath('reviewer', 'mate-big');
+    process.env['TASK_MAX_OUTPUT_LENGTH'] = '8';
+    try {
+      await runtime.completionInput!({
+        source: 'reviewer',
+        id: 'mate-big',
+        status: 'completed',
+        result: 'a result far longer than eight characters',
+      });
+      await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
+      const prompt = fleet.sessions[0]?.prompts[0] ?? '';
+      expect(prompt).toContain('TeamMate reviewer has finished its task.');
+      expect(prompt).toContain(
+        'The output is too long, so the full result was saved to a file:',
+      );
+      expect(prompt).toContain(spillPath);
+      expect(prompt).not.toContain('far longer than eight');
+      expect(fleet.sessions[0]?.submitOptions[0]).toEqual({ isSynthetic: false });
+    } finally {
+      delete process.env['TASK_MAX_OUTPUT_LENGTH'];
+      await rm(spillPath, { force: true });
+    }
+  });
+
+  it('renders status-varied completion lines for failed and stopped', async () => {
+    for (const [status, expected] of [
+      ['failed', "TeamMate reviewer's task failed."],
+      ['stopped', "TeamMate reviewer's task was stopped."],
+    ] as const) {
+      const fleet = fakeFleet([okOutcome('session-abc')]);
+      const { runtime } = makeRuntime(fleet);
+      await runtime.start();
+      await runtime.completionInput!({
+        source: 'reviewer',
+        id: `mate-${status}`,
+        status,
+        result: 'r',
+      });
+      await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
+      expect(fleet.sessions[0]?.prompts[0] ?? '').toContain(expected);
+    }
   });
 
   it('does not mark a normal channel turn as synthetic', async () => {
@@ -625,6 +675,32 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     await runtime.channelInput({ sourceId: 'm1', text: 'hello' });
     await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
     expect(fleet.sessions[0]?.submitOptions[0]).toBeUndefined();
+  });
+
+  it('wraps a structured channel input into the native <channel> block', async () => {
+    const fleet = fakeFleet([okOutcome('session-abc')]);
+    const { runtime } = makeRuntime(fleet);
+    await runtime.start();
+
+    const input = {
+      sourceId: 'm1',
+      source: 'feishu',
+      text: 'fallback ignored',
+      attrs: [
+        ['chat_id', 'chat-1'],
+        ['sender_id', 'sender-1'],
+      ] as Array<[string, string]>,
+      body: 'the message body',
+    };
+    await runtime.channelInput(input);
+    await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
+    const prompt = fleet.sessions[0]?.prompts[0] ?? '';
+    // Same envelope renderChannelInput produces — both runtimes share it, so
+    // claude and codex render byte-identical channel blocks for one input.
+    expect(prompt).toBe(renderChannelInput(input));
+    expect(prompt).toBe(
+      '<channel source="feishu" chat_id="chat-1" sender_id="sender-1">\nthe message body\n</channel>',
+    );
   });
 
   it('stop() reaps the resident session and refuses further inbound', async () => {

@@ -19,15 +19,9 @@ import type { FeishuMessageResourceFetcher } from '@excitedjs/feishu-transport';
 describe('formatFeishuMessageForCodex', () => {
   it('formats text events with routable ids, empty sender_name, ISO time, and mention tags', async () => {
     await expectFormatted(event(), [
-      '<feishu_message',
-      '  chat_id="chat-group-a"',
-      '  chat_type="group"',
-      '  message_id="message-1"',
-      '  sender_id="sender-user"',
-      '  sender_name=""',
-      '  create_time="2024-03-09T16:00:00.000Z">',
+      '<channel source="feishu" chat_id="chat-group-a" chat_type="group" message_id="message-1" sender_id="sender-user" sender_name="" create_time="2024-03-09T16:00:00.000Z">',
       'hello <at id="mentioned-user">Ada</at> &amp; &lt;ok&gt;',
-      '</feishu_message>',
+      '</channel>',
     ].join('\n'));
   });
 
@@ -36,7 +30,7 @@ describe('formatFeishuMessageForCodex', () => {
       event({ senderName: 'Ada & Bob' }),
     )).formattedText;
 
-    expect(block).toContain('  sender_name="Ada &amp; Bob"');
+    expect(block).toContain(' sender_name="Ada &amp; Bob"');
   });
 
   it('omits the group_bots block when no trusted bots are supplied', async () => {
@@ -60,7 +54,7 @@ describe('formatFeishuMessageForCodex', () => {
     );
     expect(block).toContain('  <bot name="Peer &amp; &quot;A&quot;" open_id="ou-peer-a" />');
     expect(block).toContain('  <bot name="" open_id="ou-peer-b" />');
-    expect(block.endsWith('</group_bots>\n</feishu_message>')).toBe(true);
+    expect(block.endsWith('</group_bots>\n</channel>')).toBe(true);
   });
 
   it('adds a Feishu skill fallback note when text content cannot be parsed', async () => {

@@ -57,12 +57,26 @@ delivery). The completion contract is now source-agnostic: `completionInput`
 takes a neutral `CompletionEnvelope { source; id; status; result }` (C2), the
 `teammateCompletion` capability is an open `CompletionDeliveryShape
 { kind; description }` (each builtin self-declares its own kind —
-`codexInboxTurn` / `claudeCodeTaskNotification`), and the runtime-state
-checkpoint kind is capability-driven with no `codexThread` fallback. The
-channel payload is now neutral too (D): `channelInput` takes
-`InboundTurnInput { text; sourceId }` — turn text plus a dedupe/correlation id —
-and channel routing attributes (chat id, sender id, message id) stay in the
-channel layer and never cross into the runtime.
+`codexInboxTurn` / `claudeCodePlainTurn`), and the runtime-state
+checkpoint kind is capability-driven with no `codexThread` fallback.
+
+Completion delivery itself is bounded (issue #164): a result within the inline
+budget (default 32000 chars, `TASK_MAX_OUTPUT_LENGTH` override, clamped to
+160000) is inlined; a longer one is spilled to a `/tmp` file by the neutral
+`completion-body.ts` (shared, no cross-builtin import) and only the path is
+inlined. `CompletionEnvelope.status` is `completed | failed | stopped`.
+
+The channel payload is neutral but now richer (D + issue #164): `channelInput`
+takes `InboundTurnInput { text; sourceId; source?; attrs?; body?; attachments? }`.
+Routing/identity *decisions* (chat id, sender id, message id) still never cross
+into the runtime — a runtime must not route on them. `source` + `attrs` are
+**opaque display passthrough**: each runtime renders them verbatim into its own
+channel block (`renderChannelInput` → the native `<channel source="…" …>`
+envelope) but never interprets them. The channel layer stops pre-rendering the
+message XML; each runtime owns assembling its channel block, so the two builtins
+can diverge later (e.g. claude inlining image content blocks vs codex text refs)
+while rendering identical blocks today. See
+[`decisions/channel-input-runtime-assembly.md`](../../../../.agents/decisions/channel-input-runtime-assembly.md).
 
 The reverse-delivery loop is now wired end-to-end (#147), so `completionInput`
 is a live caller rather than zero-caller. A runtime fires the neutral

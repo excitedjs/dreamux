@@ -105,17 +105,15 @@ export async function formatFeishuMessageForCodex(
   const attachmentBlock = renderAttachments(event.messageId, attachments);
   const groupBots = renderGroupBots(options.trustedBots ?? []);
 
-  const attrLines = attrs.map(
-    ([key, value]) => `  ${key}="${escapeXmlAttribute(value)}"`,
-  );
-  attrLines[attrLines.length - 1] = `${attrLines[attrLines.length - 1]}>`;
+  const renderedAttrs = attrs
+    .map(([key, value]) => ` ${key}="${escapeXmlAttribute(value)}"`)
+    .join('');
 
   return {
     formattedText: [
-      '<feishu_message',
-      ...attrLines,
+      `<channel source="feishu"${renderedAttrs}>`,
       `${body}${fallback}${attachmentBlock}${groupBots}`,
-      '</feishu_message>',
+      '</channel>',
     ].join('\n'),
     attachments,
     diagnostics: attachments

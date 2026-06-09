@@ -326,9 +326,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 function echoReadableCodexInput(input: string): string {
-  const match = input.match(
-    /<feishu_message\b[^>]*>\n([\s\S]*?)\n<\/feishu_message>/,
-  );
+  const match = input.match(/<channel\b[^>]*>\n([\s\S]*?)\n<\/channel>/);
   return `echo: ${(match?.[1] ?? input).trim()}`;
 }
 
@@ -339,8 +337,8 @@ function captureAndEchoCodexInput(inputs: string[]): (input: string) => string {
   };
 }
 
-function feishuMessageBlockCount(input: string): number {
-  return input.match(/<feishu_message\b/g)?.length ?? 0;
+function channelBlockCount(input: string): number {
+  return input.match(/<channel\b/g)?.length ?? 0;
 }
 
 function writeReadyDispatcherCodexHome(dispatcherId: string, dispatcherCwd?: string): void {
@@ -444,9 +442,9 @@ describe('dreamux MVP smoke', () => {
     await sleep(80);
     expect(bot.sentMessages).toEqual([]);
     expect(codexInputs).toHaveLength(1);
-    expect(codexInputs[0]).toContain('<feishu_message');
-    expect(codexInputs[0]).toContain('  sender_name=""');
-    expect(codexInputs[0]).toContain('  create_time=');
+    expect(codexInputs[0]).toContain('<channel source="feishu"');
+    expect(codexInputs[0]).toContain(' sender_name=""');
+    expect(codexInputs[0]).toContain(' create_time=');
     expect(codexInputs[0]).toContain('hi');
     expect(bot.reactions).toEqual([
       {
@@ -2237,7 +2235,7 @@ describe('dreamux MVP smoke', () => {
       .toHaveLength(3);
     expect(codexInputs).toHaveLength(1);
     expect(codexInputs[0]).toContain('running');
-    expect(feishuMessageBlockCount(codexInputs[0] ?? '')).toBe(3);
+    expect(channelBlockCount(codexInputs[0] ?? '')).toBe(3);
     expect(codexInputs[0]).toContain('batch-1');
     expect(codexInputs[0]).toContain('batch-2');
     expect(bot.sentMessages).toEqual([]);
