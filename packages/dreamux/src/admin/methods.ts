@@ -319,6 +319,24 @@ export const adminMethods: Record<string, AdminHandler> = {
     });
   },
 
+  'mcp.team.create_group': async (server, params) => {
+    const id = mustDispatcherId(params);
+    mustExistingDispatcher(server, id);
+    return server.dispatcherService.createTeamGroup({
+      dispatcherId: id,
+      name: mustString(params, 'name'),
+      repoCwd: mustString(params, 'repo_cwd'),
+      leaderAgentRuntime: mustString(params, 'leader_agent_runtime'),
+      sourceChatId: mustString(params, 'source_chat_id'),
+      sourceChatType: mustString(params, 'source_chat_type') === 'p2p' ? 'p2p' : 'group',
+      requesterOpenId: mustString(params, 'requester_open_id'),
+      ...optionalMappedStringProp(params ?? {}, 'group_name', 'groupName'),
+      ...optionalStringProp(params ?? {}, 'intent'),
+      ...optionalStringProp(params ?? {}, 'prompt'),
+      inviteOpenIds: optionalStringArray(params, 'invite_open_ids') ?? [],
+    });
+  },
+
   'mcp.team.transfer_channel_back': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
@@ -537,12 +555,34 @@ function optionalInteger(
   return value as number;
 }
 
+function optionalStringArray(
+  params: Record<string, unknown> | undefined,
+  key: string,
+): string[] | null {
+  if (params === undefined) return null;
+  const value = params[key];
+  if (value === undefined || value === null) return null;
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
+    throw new AdminError('BAD_REQUEST', `param '${key}' must be an array of strings`);
+  }
+  return value as string[];
+}
+
 function optionalStringProp(
   params: Record<string, unknown>,
   key: string,
 ): Record<string, string> {
   const value = optionalString(params, key);
   return value === null ? {} : { [key]: value };
+}
+
+function optionalMappedStringProp(
+  params: Record<string, unknown>,
+  key: string,
+  targetKey: string,
+): Record<string, string> {
+  const value = optionalString(params, key);
+  return value === null ? {} : { [targetKey]: value };
 }
 
 function mustExistingDispatcher(server: Server, id: string): void {

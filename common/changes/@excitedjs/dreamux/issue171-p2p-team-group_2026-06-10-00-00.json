@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "BREAKING: Team Mode adds dispatcher-only `team.create_group` for P2P control requests. The command creates a Team, asks the shared dispatcher Feishu bot to create a group and invite requested peers, then binds that new group to the TeamLeader; the source P2P channel remains routed to the dispatcher. Rebuild: update Team Mode dispatcher automation to call `team.create_group({ name, repo_cwd, leader_agent_runtime, source_chat_id, source_chat_type: \"p2p\", requester_open_id, invite_open_ids? })` when a P2P requester asks for a team group. TeamLeaders still use the shared bot and do not receive independent Feishu credentials.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

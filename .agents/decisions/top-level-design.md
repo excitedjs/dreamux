@@ -636,6 +636,14 @@ active bindings back before closing the team. TeamLeader Feishu MCP calls carry
 their server-derived team principal and can reply/react only in bound team
 channels; the dispatcher keeps the global Feishu management surface.
 
+From a P2P control channel, `team.create_group` can create a Team, ask the
+shared dispatcher Feishu bot to create a new group and invite the requester /
+specified peers, then bind that new group to the TeamLeader through the same
+ChannelBindingStore path. The source P2P channel is never bound or transferred:
+it remains the dispatcher control plane. TeamLeaders do not get independent
+Feishu identities or credentials; they are internal AgentRuntime roles behind
+the dispatcher-owned shared bot.
+
 ## Reaction Ownership
 
 Channel-owned reactions and model-owned reactions are separate in process

@@ -31,7 +31,9 @@ import type {
 } from './teammate/types.js';
 import type {
   TeamBindChannelInput,
+  TeamCreateGroupInput,
   TeamCreateInput,
+  TeamCreateGroupResult,
   TeamDissolveInput,
   TeamTransferChannelBackInput,
 } from './team/types.js';
@@ -106,7 +108,10 @@ export class DispatcherService {
         this.deliverTeamMateCompletion(id, identity, completion),
       log: opts.log,
     });
-    this.teams = new TeamService({ teammates: this.teammates });
+    this.teams = new TeamService({
+      teammates: this.teammates,
+      createFeishuGroup: (input) => this.dispatchers.createFeishuGroup(input),
+    });
   }
 
   setRestartIntent(consumer: RestartIntentConsumer | null): void {
@@ -219,6 +224,10 @@ export class DispatcherService {
 
   createTeam(input: TeamCreateInput) {
     return this.teams.create(input);
+  }
+
+  createTeamGroup(input: TeamCreateGroupInput): Promise<TeamCreateGroupResult> {
+    return this.teams.createGroup(input);
   }
 
   listTeams(dispatcherId: string) {
