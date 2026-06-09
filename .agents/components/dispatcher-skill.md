@@ -6,7 +6,8 @@ ships in the npm package:
 - `dispatcher` teaches dispatcher app-server sessions how to delegate product
   work to TeamMates. The default interface is the server-hosted TeamMate MCP:
   `spawn` creates a named semi-resident TeamMate, `send` submits follow-up
-  turns, `resume` reattaches persisted checkpoints, and `close` stops one.
+  turns (and reopens a closed TeamMate from its persisted checkpoint — there is
+  no standalone dispatcher-facing `resume` verb; #155), and `close` stops one.
   `history`/`list`/`status`/`last`/`ctx`/`get_capabilities` read and recover
   state without polling. The `tm` CLI is the explicit fallback for isolated
   managed worktrees and legacy diagnostics
