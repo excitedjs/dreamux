@@ -299,6 +299,7 @@ describe('createFeishuTransport — group chats', () => {
 
     expect(result).toEqual({ chatId: 'oc_created' })
     expect(stub.chatCreate).toHaveBeenCalledWith({
+      params: { user_id_type: 'open_id' },
       data: { name: 'Dreamux Team', user_id_list: ['ou_user'] },
     })
   })

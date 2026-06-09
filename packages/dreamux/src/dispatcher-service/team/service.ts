@@ -216,6 +216,7 @@ export class TeamService {
     }
     const created = await this.create(input);
     let group: FeishuCreateGroupResult;
+    let binding: ChannelBinding | null = null;
     try {
       group = await this.opts.createFeishuGroup({
         dispatcherId: input.dispatcherId,
@@ -225,25 +226,25 @@ export class TeamService {
           ...(input.inviteOpenIds ?? []),
         ]),
       });
+      binding = await this.bindChannel({
+        dispatcherId: input.dispatcherId,
+        teamId: created.team.team_id,
+        provider: 'builtin:feishu',
+        chatId: group.chatId,
+        chatType: 'group',
+      });
+      await this.store.appendLedger(created.team, {
+        type: 'create_group',
+        summary: `created Feishu group ${group.chatId} for team ${created.team.team_id}`,
+      });
     } catch (err) {
       await this.dissolve({
         dispatcherId: input.dispatcherId,
         teamId: created.team.team_id,
-        note: 'Feishu group creation failed',
+        note: 'Feishu group setup failed',
       });
       throw err;
     }
-    const binding = await this.bindChannel({
-      dispatcherId: input.dispatcherId,
-      teamId: created.team.team_id,
-      provider: 'builtin:feishu',
-      chatId: group.chatId,
-      chatType: 'group',
-    });
-    await this.store.appendLedger(created.team, {
-      type: 'create_group',
-      summary: `created Feishu group ${group.chatId} for team ${created.team.team_id}`,
-    });
     return {
       ...created,
       binding: {

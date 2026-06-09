@@ -143,8 +143,10 @@ function renderSingleCard(text: string): RenderedCard {
 }
 
 function feishuChatClient(client: lark.Client): {
-  chatCreate?: (input: unknown) => Promise<{ data?: { chat_id?: string } }>
-  memberCreate?: (input: unknown) => Promise<unknown>
+  chat?: {
+    create?: (input: unknown) => Promise<{ data?: { chat_id?: string } }>
+    members?: { create?: (input: unknown) => Promise<unknown> }
+  }
 } {
   const root = client as unknown as {
     im?: {
@@ -154,10 +156,7 @@ function feishuChatClient(client: lark.Client): {
       }
     }
   }
-  return {
-    chatCreate: root.im?.chat?.create,
-    memberCreate: root.im?.chat?.members?.create,
-  }
+  return { chat: root.im?.chat }
 }
 
 /** One reply within a fetched document-comment thread. */
@@ -545,10 +544,11 @@ export function createFeishuTransport(
 
     async createGroup(input: FeishuCreateGroupInput): Promise<FeishuCreateGroupResult> {
       const chatClient = feishuChatClient(client)
-      if (chatClient.chatCreate === undefined) {
+      if (chatClient.chat?.create === undefined) {
         throw new Error('Feishu chat create API is not available in this SDK/client; grant chat create permission or upgrade the Feishu transport client.')
       }
-      const res = await chatClient.chatCreate({
+      const res = await chatClient.chat.create({
+        params: { user_id_type: 'open_id' },
         data: {
           name: input.name,
           user_id_list: input.userOpenIds,
@@ -564,10 +564,10 @@ export function createFeishuTransport(
     async inviteMembers(input: FeishuInviteMembersInput): Promise<FeishuInviteMembersResult> {
       if (input.userOpenIds.length === 0) return { addedOpenIds: [] }
       const chatClient = feishuChatClient(client)
-      if (chatClient.memberCreate === undefined) {
+      if (chatClient.chat?.members?.create === undefined) {
         throw new Error('Feishu chat member invite API is not available in this SDK/client; grant chat member permission or upgrade the Feishu transport client.')
       }
-      await chatClient.memberCreate({
+      await chatClient.chat.members.create({
         path: { chat_id: input.chatId },
         data: { id_list: input.userOpenIds },
         params: { member_id_type: 'open_id' },

@@ -258,10 +258,6 @@ export class DispatcherAgentService {
       name: input.name,
       userOpenIds: input.userOpenIds,
     });
-    await slot.channel.bot.inviteMembers({
-      chatId: created.chatId,
-      userOpenIds: input.userOpenIds,
-    });
     return created;
   }
 

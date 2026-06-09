@@ -137,7 +137,7 @@ function buildServices(): {
     teammates,
     createFeishuGroup: async (input) => {
       if (createGroupError !== null) throw createGroupError;
-      const chatId = `oc_group_${createdGroups.length + 1}`;
+      const chatId = `fake_group_${createdGroups.length + 1}`;
       createdGroups.push({ name: input.name, userOpenIds: input.userOpenIds, chatId });
       return { chatId };
     },
@@ -288,7 +288,7 @@ describe('TeamService', () => {
       name: 'gamma',
       repoCwd: repo,
       leaderAgentRuntime: 'flow',
-      sourceChatId: 'oc_p2p',
+      sourceChatId: 'p2p_control',
       sourceChatType: 'p2p',
       requesterOpenId: 'ou_requester',
       inviteOpenIds: ['ou_peer', 'ou_requester'],
@@ -299,12 +299,12 @@ describe('TeamService', () => {
       {
         name: 'Gamma Team',
         userOpenIds: ['ou_requester', 'ou_peer'],
-        chatId: 'oc_group_1',
+        chatId: 'fake_group_1',
       },
     ]);
     expect(result.binding).toMatchObject({
       provider: 'builtin:feishu',
-      chat_id: 'oc_group_1',
+      chat_id: 'fake_group_1',
       chat_type: 'group',
       team_id: 'gamma',
       leader_name: 'gamma-leader',
@@ -313,7 +313,7 @@ describe('TeamService', () => {
       teams.resolveChannel({
         dispatcherId: 'flow',
         provider: 'builtin:feishu',
-        chatId: 'oc_p2p',
+        chatId: 'p2p_control',
         chatType: 'p2p',
       }),
     ).resolves.toBeNull();
@@ -321,7 +321,7 @@ describe('TeamService', () => {
       teams.resolveChannel({
         dispatcherId: 'flow',
         provider: 'builtin:feishu',
-        chatId: 'oc_group_1',
+        chatId: 'fake_group_1',
         chatType: 'group',
       }),
     ).resolves.toMatchObject({ team_id: 'gamma' });
@@ -340,7 +340,7 @@ describe('TeamService', () => {
         name: 'delta',
         repoCwd: repo,
         leaderAgentRuntime: 'flow',
-        sourceChatId: 'oc_p2p',
+        sourceChatId: 'p2p_control',
         sourceChatType: 'p2p',
         requesterOpenId: 'ou_requester',
       }),
@@ -352,7 +352,7 @@ describe('TeamService', () => {
       await teams.resolveChannel({
         dispatcherId: 'flow',
         provider: 'builtin:feishu',
-        chatId: 'oc_group_1',
+        chatId: 'fake_group_1',
         chatType: 'group',
       }),
     ).toBeNull();
@@ -367,7 +367,7 @@ describe('TeamService', () => {
         name: 'epsilon',
         repoCwd: repo,
         leaderAgentRuntime: 'flow',
-        sourceChatId: 'oc_group_source',
+        sourceChatId: 'group_source',
         sourceChatType: 'group',
         requesterOpenId: 'ou_requester',
       }),
