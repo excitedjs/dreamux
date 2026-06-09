@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -22,7 +23,7 @@ import { claudeCodeMcpConfig } from '../src/agent-runtime/builtin/claude-code/mc
 import { claudeCodeResidentArgs } from '../src/agent-runtime/builtin/claude-code/args.js';
 import { codexMcpServerArgs } from '../src/agent-runtime/builtin/codex/mcp-config.js';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
-import { defaultDispatcherCwd } from '../src/platform/paths.js';
+import { defaultDispatcherCwd, teamMateCompletionOutputPath } from '../src/platform/paths.js';
 import { dispatcherClaudeCodeMcpConfigPath } from '../src/agent-runtime/builtin/claude-code/paths.js';
 import { defaultDispatcherClaudeCodeConfig } from '../src/config/config.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
@@ -616,6 +617,35 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     expect(prompt).not.toContain('<teammate_session_completion');
     // Delivered as ordinary input, NOT a synthetic notification.
     expect(fleet.sessions[0]?.submitOptions[0]).toEqual({ isSynthetic: false });
+  });
+
+  it('inlines a spill pointer when a completion overflows the budget', async () => {
+    const fleet = fakeFleet([okOutcome('session-abc')]);
+    const { runtime } = makeRuntime(fleet);
+    await runtime.start();
+
+    const spillPath = teamMateCompletionOutputPath('reviewer', 'mate-big');
+    process.env['TASK_MAX_OUTPUT_LENGTH'] = '8';
+    try {
+      await runtime.completionInput!({
+        source: 'reviewer',
+        id: 'mate-big',
+        status: 'completed',
+        result: 'a result far longer than eight characters',
+      });
+      await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
+      const prompt = fleet.sessions[0]?.prompts[0] ?? '';
+      expect(prompt).toContain('TeamMate reviewer has finished its task.');
+      expect(prompt).toContain(
+        'The output is too long, so the full result was saved to a file:',
+      );
+      expect(prompt).toContain(spillPath);
+      expect(prompt).not.toContain('far longer than eight');
+      expect(fleet.sessions[0]?.submitOptions[0]).toEqual({ isSynthetic: false });
+    } finally {
+      delete process.env['TASK_MAX_OUTPUT_LENGTH'];
+      await rm(spillPath, { force: true });
+    }
   });
 
   it('renders status-varied completion lines for failed and stopped', async () => {

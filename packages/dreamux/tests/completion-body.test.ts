@@ -58,6 +58,18 @@ describe('resolveCompletionBody', () => {
   });
 });
 
+describe('teamMateCompletionOutputPath', () => {
+  it('sanitizes unsafe characters in source and id for filename safety', () => {
+    expect(teamMateCompletionOutputPath('a/b', 'c:d')).toBe(
+      '/tmp/teammate-a_b-c_d.output',
+    );
+    // The real id shape is `name:turnId` — the colon must be sanitized.
+    expect(teamMateCompletionOutputPath('reviewer', 'reviewer:turn-7')).toBe(
+      '/tmp/teammate-reviewer-reviewer_turn-7.output',
+    );
+  });
+});
+
 describe('completionInlineBudget', () => {
   it('defaults when unset or blank', () => {
     expect(completionInlineBudget({})).toBe(COMPLETION_INLINE_BUDGET_DEFAULT);
