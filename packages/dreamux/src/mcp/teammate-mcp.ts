@@ -7,10 +7,14 @@ import {
 } from '../admin/client.js';
 import { adminSocketPath as defaultAdminSocketPath } from '../platform/paths.js';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
+import { validateTeamId } from '../dispatcher-service/team/types.js';
+import { validateTeamMateName } from '../dispatcher-service/teammate/types.js';
 
 export interface TeamMateMcpOptions {
   dispatcherId: string;
-  callerKind: 'dispatcher' | 'teammate';
+  callerKind: 'dispatcher' | 'team_leader' | 'teammate';
+  teamId?: string;
+  leaderName?: string;
   adminSocketPath?: string;
   input?: Readable;
   output?: Writable;
@@ -40,6 +44,10 @@ const SUPPORTED_MCP_PROTOCOL_VERSIONS = new Set([
 export async function runTeamMateMcp(opts: TeamMateMcpOptions): Promise<void> {
   const dispatcherId = validateDispatcherId(opts.dispatcherId);
   const callerKind = validateCallerKind(opts.callerKind);
+  const teamId = callerKind === 'team_leader' ? validateRequiredTeamId(opts.teamId) : undefined;
+  const leaderName = callerKind === 'team_leader'
+    ? validateTeamMateName(opts.leaderName ?? '')
+    : undefined;
   const socketPath = opts.adminSocketPath ?? defaultAdminSocketPath();
   const input = opts.input ?? process.stdin;
   const output = opts.output ?? process.stdout;
@@ -60,6 +68,8 @@ export async function runTeamMateMcp(opts: TeamMateMcpOptions): Promise<void> {
       await handleRequest(request, {
         dispatcherId,
         callerKind,
+        ...(teamId !== undefined ? { teamId } : {}),
+        ...(leaderName !== undefined ? { leaderName } : {}),
         socketPath,
         output,
       });
@@ -76,7 +86,9 @@ async function handleRequest(
   request: JsonRpcRequest,
   ctx: {
     dispatcherId: string;
-    callerKind: 'dispatcher' | 'teammate';
+    callerKind: 'dispatcher' | 'team_leader' | 'teammate';
+    teamId?: string;
+    leaderName?: string;
     socketPath: string;
     output: Writable;
   },
@@ -125,7 +137,9 @@ function initializeResult(params: unknown): Record<string, unknown> {
   };
 }
 
-function teammateTools(callerKind: 'dispatcher' | 'teammate'): Array<Record<string, unknown>> {
+function teammateTools(
+  callerKind: 'dispatcher' | 'team_leader' | 'teammate',
+): Array<Record<string, unknown>> {
   const readTools = [
     tool('history', 'List bounded TeamMate session ledger rows for recovery.', {
       name: { type: 'string', minLength: 1, maxLength: 64 },
@@ -157,35 +171,38 @@ function teammateTools(callerKind: 'dispatcher' | 'teammate'): Array<Record<stri
     }, ['name']),
     tool('get_capabilities', 'List TeamMate verbs and spawnable agent runtime ids.', {}, []),
   ];
-  if (callerKind !== 'dispatcher') return readTools;
+  if (callerKind === 'teammate') return readTools;
+  const spawnProperties: Record<string, unknown> = {
+    name: { type: 'string', minLength: 1, maxLength: 64 },
+    prompt: { type: 'string', minLength: 1, maxLength: 20000 },
+    agent_runtime: {
+      type: 'string',
+      description:
+        'Spawnable agents[].id returned by get_capabilities.agent_runtimes[].id.',
+    },
+    intent: { type: 'string', maxLength: 2000 },
+  };
+  if (callerKind === 'dispatcher') {
+    spawnProperties['cwd'] = { type: 'string', minLength: 1, maxLength: 4096 };
+    spawnProperties['worktree'] = {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        mode: { type: 'string', enum: ['reuse-cwd', 'managed'] },
+        slug: { type: 'string', minLength: 1, maxLength: 64 },
+        base_ref: { type: 'string', minLength: 1, maxLength: 256 },
+        branch: { type: 'string', minLength: 1, maxLength: 256 },
+        cleanup: { type: 'string', enum: ['keep', 'delete-on-close'] },
+      },
+      required: ['mode'],
+    };
+  }
   return [
     tool(
       'spawn',
       'Start a named, resumable TeamMate agent and submit its first turn. Use get_capabilities.agent_runtimes[].id as agent_runtime.',
-      {
-        name: { type: 'string', minLength: 1, maxLength: 64 },
-        prompt: { type: 'string', minLength: 1, maxLength: 20000 },
-        agent_runtime: {
-          type: 'string',
-          description:
-            'Spawnable agents[].id returned by get_capabilities.agent_runtimes[].id.',
-        },
-        cwd: { type: 'string', minLength: 1, maxLength: 4096 },
-        worktree: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            mode: { type: 'string', enum: ['reuse-cwd', 'managed'] },
-            slug: { type: 'string', minLength: 1, maxLength: 64 },
-            base_ref: { type: 'string', minLength: 1, maxLength: 256 },
-            branch: { type: 'string', minLength: 1, maxLength: 256 },
-            cleanup: { type: 'string', enum: ['keep', 'delete-on-close'] },
-          },
-          required: ['mode'],
-        },
-        intent: { type: 'string', maxLength: 2000 },
-      },
-      ['name', 'prompt', 'cwd'],
+      spawnProperties,
+      callerKind === 'team_leader' ? ['name', 'prompt'] : ['name', 'prompt', 'cwd'],
     ),
     tool('send', 'Send a turn to a TeamMate agent; reopens a closed one from its checkpoint first.', {
       name: { type: 'string', minLength: 1, maxLength: 64 },
@@ -221,19 +238,27 @@ async function callTool(
   params: unknown,
   ctx: {
     dispatcherId: string;
-    callerKind: 'dispatcher' | 'teammate';
+    callerKind: 'dispatcher' | 'team_leader' | 'teammate';
+    teamId?: string;
+    leaderName?: string;
     socketPath: string;
   },
 ): Promise<Record<string, unknown>> {
   try {
     const call = asToolCallParams(params);
-    if (ctx.callerKind !== 'dispatcher' && isLifecycleTool(call.name)) {
+    if (ctx.callerKind === 'teammate' && isLifecycleTool(call.name)) {
       return toolError(`TeamMate tool '${call.name}' is not available to teammates`);
     }
     const mapped = mapToolCall(call);
     return forwardToolCall(
       mapped.method,
-      { dispatcher_id: ctx.dispatcherId, ...mapped.params },
+      {
+        dispatcher_id: ctx.dispatcherId,
+        caller_kind: ctx.callerKind,
+        ...(ctx.teamId !== undefined ? { team_id: ctx.teamId } : {}),
+        ...(ctx.leaderName !== undefined ? { leader_name: ctx.leaderName } : {}),
+        ...mapped.params,
+      },
       ctx.socketPath,
       call.name,
     );
@@ -489,9 +514,16 @@ function write(output: Writable, line: string): void {
   output.write(line);
 }
 
-function validateCallerKind(value: string): 'dispatcher' | 'teammate' {
-  if (value === 'dispatcher' || value === 'teammate') return value;
-  throw new Error("caller kind must be 'dispatcher' or 'teammate'");
+function validateCallerKind(value: string): 'dispatcher' | 'team_leader' | 'teammate' {
+  if (value === 'dispatcher' || value === 'team_leader' || value === 'teammate') return value;
+  throw new Error("caller kind must be 'dispatcher', 'team_leader', or 'teammate'");
+}
+
+function validateRequiredTeamId(value: string | undefined): string {
+  if (value === undefined || value === '') {
+    throw new Error('team_leader caller requires team id');
+  }
+  return validateTeamId(value);
 }
 
 function parseMessage(err: unknown): string {

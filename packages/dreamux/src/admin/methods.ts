@@ -10,9 +10,12 @@ import type { Server } from '../server.js';
 import { AdminError } from './protocol.js';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
 import {
+  teamLeaderPrincipal,
+  type TeamMateCallerPrincipal,
   type TeamMateHistoryQuery,
   type TeamMateIdentityStatus,
   type TeamMateWorktreeRequest,
+  dispatcherPrincipal,
 } from '../dispatcher-service/teammate/types.js';
 
 export type AdminHandler = (
@@ -129,18 +132,28 @@ export const adminMethods: Record<string, AdminHandler> = {
   'mcp.teammate.spawn': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
+    const caller = callerPrincipal(id, params);
     const name = mustString(params, 'name');
     const prompt = mustString(params, 'prompt');
     const agentRuntime = optionalString(params, 'agent_runtime');
-    const cwd = mustString(params, 'cwd');
-    const worktree = optionalWorktreeRequest(params, 'worktree');
+    const cwd = caller.kind === 'team_leader' ? optionalString(params, 'cwd') : mustString(params, 'cwd');
+    if (caller.kind === 'team_leader' && params?.['owner'] !== undefined) {
+      throw new AdminError('BAD_REQUEST', 'TeamMate owner and team_id are server-derived for team_leader callers');
+    }
+    const worktree =
+      caller.kind === 'team_leader' ? null : optionalWorktreeRequest(params, 'worktree');
+    const sharedWorkspace =
+      caller.kind === 'team_leader'
+        ? await server.dispatcherService.teams.sharedWorkspace(id, caller.teamId)
+        : undefined;
     const intent = optionalString(params, 'intent');
     try {
-      return await server.dispatcherService.spawnTeamMate({
-        dispatcherId: id,
+      return await server.dispatcherService.teammates.spawnScoped({
+        principal: caller,
         name,
         prompt,
-        cwd,
+        ...(sharedWorkspace !== undefined ? { sharedWorkspace } : {}),
+        ...(cwd !== null ? { cwd } : {}),
         ...(agentRuntime !== null ? { agentRuntime } : {}),
         ...(worktree !== null ? { worktree } : {}),
         ...(intent !== null ? { intent } : {}),
@@ -153,11 +166,12 @@ export const adminMethods: Record<string, AdminHandler> = {
   'mcp.teammate.send': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
+    const caller = callerPrincipal(id, params);
     const name = mustString(params, 'name');
     const prompt = mustString(params, 'prompt');
     try {
-      return await server.dispatcherService.sendTeamMate({
-        dispatcherId: id,
+      return await server.dispatcherService.teammates.sendScoped({
+        principal: caller,
         name,
         prompt,
       });
@@ -169,11 +183,12 @@ export const adminMethods: Record<string, AdminHandler> = {
   'mcp.teammate.close': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
+    const caller = callerPrincipal(id, params);
     const name = mustString(params, 'name');
     const note = optionalString(params, 'note');
     try {
-      return await server.dispatcherService.closeTeamMate({
-        dispatcherId: id,
+      return await server.dispatcherService.teammates.closeScoped({
+        principal: caller,
         name,
         ...(note !== null ? { note } : {}),
       });
@@ -187,6 +202,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     mustExistingDispatcher(server, id);
     return server.dispatcherService.getTeamMateHistory({
       dispatcherId: id,
+      principal: callerPrincipal(id, params),
       ...historyQuery(params),
     });
   },
@@ -194,14 +210,19 @@ export const adminMethods: Record<string, AdminHandler> = {
   'mcp.teammate.history_events': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
+    const caller = callerPrincipal(id, params);
     const name = mustString(params, 'name');
-    return server.dispatcherService.getTeamMateHistoryEvents(id, name);
+    return server.dispatcherService.teammates.historyEventsScoped(caller, name);
   },
 
   'mcp.teammate.list': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    return { teammates: await server.dispatcherService.listTeamMates(id) };
+    return {
+      teammates: await server.dispatcherService.teammates.listScoped(
+        callerPrincipal(id, params),
+      ),
+    };
   },
 
   'mcp.teammate.status': async (server, params) => {
@@ -209,7 +230,10 @@ export const adminMethods: Record<string, AdminHandler> = {
     mustExistingDispatcher(server, id);
     const name = mustString(params, 'name');
     return {
-      teammate: await server.dispatcherService.getTeamMateStatus(id, name),
+      teammate: await server.dispatcherService.teammates.statusScoped(
+        callerPrincipal(id, params),
+        name,
+      ),
     };
   },
 
@@ -217,19 +241,99 @@ export const adminMethods: Record<string, AdminHandler> = {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     const name = mustString(params, 'name');
-    return server.dispatcherService.getTeamMateLast(id, name);
+    return server.dispatcherService.teammates.lastScoped(
+      callerPrincipal(id, params),
+      name,
+    );
   },
 
   'mcp.teammate.ctx': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     const name = mustString(params, 'name');
-    return server.dispatcherService.getTeamMateContext(id, name);
+    return server.dispatcherService.teammates.contextScoped(
+      callerPrincipal(id, params),
+      name,
+    );
   },
 
   'mcp.teammate.capabilities': (server) =>
     server.dispatcherService.getTeamMateCapabilities(),
+
+  'mcp.team.create': async (server, params) => {
+    const id = mustDispatcherId(params);
+    mustExistingDispatcher(server, id);
+    const name = mustString(params, 'name');
+    const repoCwd = mustString(params, 'repo_cwd');
+    const leaderAgentRuntime = mustString(params, 'leader_agent_runtime');
+    const worktree = optionalWorktreeRequest(params, 'worktree');
+    const intent = optionalString(params, 'intent');
+    const prompt = optionalString(params, 'prompt');
+    try {
+      return await server.dispatcherService.createTeam({
+        dispatcherId: id,
+        name,
+        repoCwd,
+        leaderAgentRuntime,
+        ...(worktree !== null ? { worktree } : {}),
+        ...(intent !== null ? { intent } : {}),
+        ...(prompt !== null ? { prompt } : {}),
+      });
+    } catch (err) {
+      throw new AdminError('TEAM_CREATE_FAILED', parseMessage(err));
+    }
+  },
+
+  'mcp.team.list': async (server, params) => {
+    const id = mustDispatcherId(params);
+    mustExistingDispatcher(server, id);
+    return { teams: await server.dispatcherService.listTeams(id) };
+  },
+
+  'mcp.team.status': async (server, params) => {
+    const id = mustDispatcherId(params);
+    mustExistingDispatcher(server, id);
+    const teamId = mustString(params, 'team_id');
+    return server.dispatcherService.getTeamStatus(id, teamId);
+  },
+
+  'mcp.team.ledger': async (server, params) => {
+    const id = mustDispatcherId(params);
+    mustExistingDispatcher(server, id);
+    const teamId = mustString(params, 'team_id');
+    return server.dispatcherService.getTeamLedger(id, teamId);
+  },
+
+  'mcp.team.dissolve': async (server, params) => {
+    const id = mustDispatcherId(params);
+    mustExistingDispatcher(server, id);
+    const teamId = mustString(params, 'team_id');
+    const note = optionalString(params, 'note');
+    return server.dispatcherService.dissolveTeam({
+      dispatcherId: id,
+      teamId,
+      ...(note !== null ? { note } : {}),
+    });
+  },
 };
+
+function callerPrincipal(
+  dispatcherId: string,
+  params: Record<string, unknown> | undefined,
+): TeamMateCallerPrincipal {
+  const kind = optionalString(params, 'caller_kind') ?? 'dispatcher';
+  if (kind === 'dispatcher') return dispatcherPrincipal(dispatcherId);
+  if (kind === 'team_leader') {
+    const teamId = mustString(params, 'team_id');
+    const leaderName = mustString(params, 'leader_name');
+    return teamLeaderPrincipal({ dispatcherId, teamId, leaderName });
+  }
+  if (kind === 'teammate') return { kind: 'teammate', dispatcherId };
+  throw new AdminError(
+    'BAD_REQUEST',
+    "param 'caller_kind' must be dispatcher, team_leader, or teammate",
+  );
+}
 
 function mustString(
   params: Record<string, unknown> | undefined,

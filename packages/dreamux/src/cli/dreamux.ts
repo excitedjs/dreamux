@@ -48,6 +48,7 @@ import { readPackagedChangelog } from './changelog.js';
 import { printDoctorResult, runDreamuxDoctor } from './doctor.js';
 import { runFeishuMcp } from '../mcp/feishu-mcp.js';
 import { runTeamMateMcp } from '../mcp/teammate-mcp.js';
+import { runTeamMcp } from '../mcp/team-mcp.js';
 import { createLogger } from '../platform/logger.js';
 import {
   feishuMcpLogPath,
@@ -59,7 +60,7 @@ const SERVER_ENTRY = join(HERE, 'server.js');
 const SERVER_CTL_ENTRY = join(HERE, 'server-ctl.js');
 
 type DispatcherVerb = 'remove' | 'status' | 'start' | 'stop';
-type TeamMateMcpCallerKind = 'dispatcher' | 'teammate';
+type TeamMateMcpCallerKind = 'dispatcher' | 'team_leader' | 'teammate';
 
 async function execEntry(
   entry: string,
@@ -491,6 +492,8 @@ function buildTeamMateMcpCommand(
 ): Argv<{
   dispatcher: string;
   caller: TeamMateMcpCallerKind;
+  teamId?: string;
+  leaderName?: string;
   adminSocket?: string;
 }> {
   return y
@@ -501,9 +504,17 @@ function buildTeamMateMcpCommand(
     })
     .option('caller', {
       type: 'string',
-      choices: ['dispatcher', 'teammate'] as const,
+      choices: ['dispatcher', 'team_leader', 'teammate'] as const,
       default: 'dispatcher' as const,
       describe: 'Dreamux-controlled caller kind for nested-dispatch enforcement',
+    })
+    .option('team-id', {
+      type: 'string',
+      describe: 'Team id for team_leader caller scope',
+    })
+    .option('leader-name', {
+      type: 'string',
+      describe: 'Leader TeamMate identity name for team_leader caller scope',
     })
     .option('admin-socket', {
       type: 'string',
@@ -511,8 +522,25 @@ function buildTeamMateMcpCommand(
     }) as Argv<{
       dispatcher: string;
       caller: TeamMateMcpCallerKind;
+      teamId?: string;
+      leaderName?: string;
       adminSocket?: string;
     }>;
+}
+
+function buildTeamMcpCommand(
+  y: Argv,
+): Argv<{ dispatcher: string; adminSocket?: string }> {
+  return y
+    .option('dispatcher', {
+      type: 'string',
+      demandOption: true,
+      describe: 'Dispatcher id this MCP shim is scoped to',
+    })
+    .option('admin-socket', {
+      type: 'string',
+      describe: 'dreamux serve admin socket path',
+    }) as Argv<{ dispatcher: string; adminSocket?: string }>;
 }
 
 async function main(): Promise<void> {
@@ -605,8 +633,22 @@ async function main(): Promise<void> {
         await runTeamMateMcp({
           dispatcherId,
           callerKind: argv.caller,
+          teamId: argv.teamId,
+          leaderName: argv.leaderName,
           adminSocketPath: argv.adminSocket,
           log: (message) => log.info(message),
+        });
+      },
+    )
+    .command(
+      'team-mcp',
+      'Run the dispatcher-scoped Team MCP stdio shim',
+      buildTeamMcpCommand,
+      async (argv) => {
+        const dispatcherId = validateDispatcherId(argv.dispatcher);
+        await runTeamMcp({
+          dispatcherId,
+          adminSocketPath: argv.adminSocket,
         });
       },
     )

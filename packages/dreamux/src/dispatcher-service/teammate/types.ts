@@ -15,11 +15,15 @@ export type TeamMateIdentityStatus =
   | 'closed'
   | 'stopped';
 
+export type TeamMateRole = 'teammate' | 'team_leader' | 'team_member';
+
 export interface TeamMateIdentity {
   version: 1;
   dispatcher_id: string;
   name: string;
   owner: TeamMateOwner;
+  role: TeamMateRole;
+  team_id: string | null;
   /**
    * The `agents[].id` this teammate runs (persisted so resume re-resolves the
    * runtime config from `DreamuxConfig.agents`). Replaces the former
@@ -62,6 +66,8 @@ export interface TeamMateHistoryEvent {
   dispatcher_id: string;
   name: string;
   owner: TeamMateOwner;
+  role: TeamMateRole;
+  team_id: string | null;
   type: TeamMateHistoryEventType;
   agent_runtime: string;
   source_cwd: string;
@@ -79,6 +85,8 @@ export interface TeamMateHistoryEvent {
 export interface TeamMateRuntimeStatus {
   name: string;
   owner: TeamMateOwner;
+  role: TeamMateRole;
+  team_id: string | null;
   agent_runtime: string;
   source_cwd: string;
   source_repo: string | null;
@@ -94,7 +102,35 @@ export interface TeamMateRuntimeStatus {
   close_note: string | null;
 }
 
-export interface TeamMateOwner {
+export type TeamMateOwner =
+  | {
+      kind: 'dispatcher';
+      dispatcher_id: string;
+    }
+  | {
+      kind: 'team';
+      dispatcher_id: string;
+      team_id: string;
+      leader_name: string;
+    };
+
+export type TeamMateCallerPrincipal =
+  | {
+      kind: 'dispatcher';
+      dispatcherId: string;
+    }
+  | {
+      kind: 'team_leader';
+      dispatcherId: string;
+      teamId: string;
+      leaderName: string;
+    }
+  | {
+      kind: 'teammate';
+      dispatcherId: string;
+    };
+
+export interface TeamMateDispatcherOwner {
   kind: 'dispatcher';
   dispatcher_id: string;
 }
@@ -114,6 +150,19 @@ export interface SpawnTeamMateInput {
   cwd: string;
   worktree?: TeamMateWorktreeRequest;
   intent?: string;
+}
+
+export interface CreateTeamLeaderInput {
+  dispatcherId: string;
+  teamId: string;
+  name: string;
+  prompt: string;
+  agentRuntime: string;
+  sourceCwd: string;
+  sourceRepo: string | null;
+  runtimeCwd: string;
+  worktree: TeamMateWorktreeIdentity;
+  intent?: string | null;
 }
 
 export interface TeamMateWorktreeRequest {
@@ -181,6 +230,7 @@ export interface TeamMateCloseResult {
 
 export interface TeamMateHistoryQuery {
   dispatcherId: string;
+  principal?: TeamMateCallerPrincipal;
   id?: string;
   name?: string;
   agentRuntime?: string;
@@ -202,6 +252,8 @@ export interface TeamMateLedgerResumeHint {
 export interface TeamMateLedgerRow {
   id: string;
   name: string;
+  team_id: string | null;
+  role: TeamMateRole;
   owner: TeamMateOwner;
   agent_runtime: string;
   source_cwd: string;
@@ -264,6 +316,31 @@ export interface TeamMateAgentRuntimeCapability {
 export interface TeamMateCapabilities {
   verbs: string[];
   agent_runtimes: TeamMateAgentRuntimeCapability[];
+}
+
+export function dispatcherPrincipal(dispatcherId: string): TeamMateCallerPrincipal {
+  return { kind: 'dispatcher', dispatcherId };
+}
+
+export function teamLeaderPrincipal(input: {
+  dispatcherId: string;
+  teamId: string;
+  leaderName: string;
+}): TeamMateCallerPrincipal {
+  return {
+    kind: 'team_leader',
+    dispatcherId: input.dispatcherId,
+    teamId: input.teamId,
+    leaderName: input.leaderName,
+  };
+}
+
+export function teammatePrincipal(dispatcherId: string): TeamMateCallerPrincipal {
+  return { kind: 'teammate', dispatcherId };
+}
+
+export function principalDispatcherId(principal: TeamMateCallerPrincipal): string {
+  return principal.dispatcherId;
 }
 
 export function validateTeamMateName(name: string): string {

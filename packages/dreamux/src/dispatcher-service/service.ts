@@ -6,18 +6,22 @@ import type { DreamuxLogger } from '../platform/logger.js';
 import type { FeishuBot } from '../channel/feishu/bot.js';
 import type { DispatcherRow } from '../state/dispatcher-store.js';
 import type { RestartIntentConsumer } from '../daemon/restart-intent.js';
+import { adminSocketPath as defaultAdminSocketPath } from '../platform/paths.js';
 import {
   DispatcherAgentService,
   type DispatcherSummary,
   type FeishuChannelToolCall,
 } from './dispatcher/service.js';
+import { TeamService } from './team/service.js';
 import { TeamMateAgentService } from './teammate/service.js';
+import { teammateMcpServerDescriptor } from './teammate/mcp-config.js';
 import type {
   CloseTeamMateInput,
   TeamMateHistoryQuery,
   SendTeamMateInput,
   SpawnTeamMateInput,
 } from './teammate/types.js';
+import type { TeamCreateInput, TeamDissolveInput } from './team/types.js';
 
 export interface DispatcherServiceOptions {
   config: DreamuxConfig;
@@ -40,6 +44,7 @@ export interface DispatcherServiceOptions {
 export class DispatcherService {
   readonly dispatchers: DispatcherAgentService;
   readonly teammates: TeamMateAgentService;
+  readonly teams: TeamService;
 
   constructor(opts: DispatcherServiceOptions) {
     this.dispatchers = new DispatcherAgentService({
@@ -60,6 +65,18 @@ export class DispatcherService {
       config: opts.config,
       dispatchers: opts.dispatchers,
       agentRuntimeProviders: opts.agentRuntimeProviders,
+      mcpServersForTeamMate: ({ dispatcherId, identity }) =>
+        identity.role === 'team_leader'
+          ? [
+              teammateMcpServerDescriptor({
+                dispatcherId,
+                callerKind: 'team_leader',
+                teamId: identity.team_id ?? '',
+                leaderName: identity.name,
+                adminSocketPath: opts.adminSocketPath ?? defaultAdminSocketPath(),
+              }),
+            ]
+          : [],
       // Reverse delivery (issue #147): a settled teammate turn bridges here to
       // the dispatcher runtime's completionInput, becoming a fresh dispatcher
       // turn. The facade is where both services meet.
@@ -67,6 +84,7 @@ export class DispatcherService {
         this.dispatchers.deliverCompletion(id, completion),
       log: opts.log,
     });
+    this.teams = new TeamService({ teammates: this.teammates });
   }
 
   setRestartIntent(consumer: RestartIntentConsumer | null): void {
@@ -131,6 +149,26 @@ export class DispatcherService {
 
   getTeamMateCapabilities() {
     return this.teammates.getCapabilities();
+  }
+
+  createTeam(input: TeamCreateInput) {
+    return this.teams.create(input);
+  }
+
+  listTeams(dispatcherId: string) {
+    return this.teams.list(dispatcherId);
+  }
+
+  getTeamStatus(dispatcherId: string, teamId: string) {
+    return this.teams.status(dispatcherId, teamId);
+  }
+
+  getTeamLedger(dispatcherId: string, teamId: string) {
+    return this.teams.ledger(dispatcherId, teamId);
+  }
+
+  dissolveTeam(input: TeamDissolveInput) {
+    return this.teams.dissolve(input);
   }
 
   async shutdown(): Promise<void> {

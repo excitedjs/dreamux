@@ -265,6 +265,7 @@ describe('teammate-mcp stdio shim', () => {
           method: 'mcp.teammate.spawn',
           params: {
             dispatcher_id: 'dispatcher-a',
+            caller_kind: 'dispatcher',
             name: 'reviewer',
             prompt: 'Review the change.',
             agent_runtime: 'codex',
@@ -510,13 +511,14 @@ describe('teammate-mcp stdio shim', () => {
       expect(admin.requests.map((request) => request.params)).toEqual([
         {
           dispatcher_id: 'dispatcher-a',
+          caller_kind: 'teammate',
           grep: 'review',
           limit: 5,
           close_status: 'open',
         },
-        { dispatcher_id: 'dispatcher-a', name: 'reviewer' },
-        { dispatcher_id: 'dispatcher-a', name: 'reviewer' },
-        { dispatcher_id: 'dispatcher-a', name: 'reviewer' },
+        { dispatcher_id: 'dispatcher-a', caller_kind: 'teammate', name: 'reviewer' },
+        { dispatcher_id: 'dispatcher-a', caller_kind: 'teammate', name: 'reviewer' },
+        { dispatcher_id: 'dispatcher-a', caller_kind: 'teammate', name: 'reviewer' },
       ]);
 
       input.end();
