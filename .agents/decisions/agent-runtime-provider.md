@@ -127,9 +127,10 @@ Implementation status:
     on the named `agents[]` runtime config, so every dispatcher or TeamMate
     launched through that agent gets the same Remote Control posture. The
     returned Remote Control URL is logged through the runtime's local diagnostic
-    log. This is not Dreamux steer: `builtin:claude-code` continues to advertise
-    `steer.supported = false`, and ownership/attribution for spontaneous
-    Remote-Control-driven turns is deferred to
+    log. Remote Control is distinct from Dreamux `send` steer; the runtime's
+    `steer.supported` capability remains the source of truth for Dreamux
+    multi-send semantics. Ownership/attribution for spontaneous
+    Remote-Control-driven turns is tracked separately in
     [issue #161](https://github.com/excitedjs/dreamux/issues/161).
   - The resident protocol model and process-supervision shape are adapted from
     the Claudemux `next` implementation; the AgentRuntime provider seam,

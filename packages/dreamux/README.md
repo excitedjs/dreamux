@@ -203,14 +203,12 @@ MCP config file. Set `remote_control` to `true` on a named Claude Code agent to
 enable Claude Code Remote Control for every dispatcher or TeamMate launched
 through that agent runtime; Dreamux logs the returned Remote Control URL through
 the runtime diagnostics log when Claude Code provides one. Remote Control is an
-external Claude UI control surface: it does not make the Dreamux Claude runtime
-steerable, so `get_capabilities` still reports `steer.supported: false` for
-Claude Code until a later design such as
-[issue #161](https://github.com/excitedjs/dreamux/issues/161) changes that
-contract. Dreamux also does not own or attribute spontaneous turns initiated
-from the Remote Control UI in this release; avoid driving external UI turns and
-Dreamux turns concurrently. It does not use Codex app-server, Codex handshake,
-or Codex home diagnostics.
+external Claude UI control surface, distinct from Dreamux `send` steering. If
+`get_capabilities` reports `steer.supported: true` for a Claude Code runtime,
+that describes Dreamux multi-send input semantics, not Remote Control. Dreamux
+does not own or attribute spontaneous turns initiated from the Remote Control UI
+in this release; avoid driving external UI turns and Dreamux turns concurrently.
+It does not use Codex app-server, Codex handshake, or Codex home diagnostics.
 
 Provider refs reserved for future external providers look like npm package refs
 or package export refs, for example `npm:@example/dreamux-provider` and

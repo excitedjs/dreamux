@@ -315,7 +315,7 @@ describe('builtin:claude-code provider', () => {
     const provider = claudeCodeProvider({ sessionFactory: fakeFleet().factory });
     expect(provider.ref).toBe('builtin:claude-code');
     expect(provider.descriptor.kind).toBe('agentRuntime');
-    expect(provider.getCapabilities().steer.supported).toBe(false);
+    expect(provider.getCapabilities().steer.supported).toBe(true);
     expect(
       provider.getCapabilities().teammateCompletion.map((s) => s.kind),
     ).toEqual(['claudeCodeTaskNotification']);
