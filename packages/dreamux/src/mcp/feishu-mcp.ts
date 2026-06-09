@@ -17,6 +17,9 @@ import { validateDispatcherId } from '../state/dispatcher-id.js';
 
 export interface FeishuMcpOptions {
   dispatcherId: string;
+  callerKind?: 'dispatcher' | 'team_leader';
+  teamId?: string;
+  leaderName?: string;
   adminSocketPath?: string;
   input?: Readable;
   output?: Writable;
@@ -40,6 +43,7 @@ const SUPPORTED_MCP_PROTOCOL_VERSIONS = new Set([
 
 export async function runFeishuMcp(opts: FeishuMcpOptions): Promise<void> {
   const dispatcherId = validateDispatcherId(opts.dispatcherId);
+  const callerKind = opts.callerKind ?? 'dispatcher';
   const socketPath = opts.adminSocketPath ?? defaultAdminSocketPath();
   const input = opts.input ?? process.stdin;
   const output = opts.output ?? process.stdout;
@@ -59,6 +63,9 @@ export async function runFeishuMcp(opts: FeishuMcpOptions): Promise<void> {
     try {
       await handleRequest(request, {
         dispatcherId,
+        callerKind,
+        teamId: opts.teamId,
+        leaderName: opts.leaderName,
         socketPath,
         output,
       });
@@ -73,7 +80,14 @@ export async function runFeishuMcp(opts: FeishuMcpOptions): Promise<void> {
 
 async function handleRequest(
   request: JsonRpcRequest,
-  ctx: { dispatcherId: string; socketPath: string; output: Writable },
+  ctx: {
+    dispatcherId: string;
+    callerKind: 'dispatcher' | 'team_leader';
+    teamId?: string;
+    leaderName?: string;
+    socketPath: string;
+    output: Writable;
+  },
 ): Promise<void> {
   if (typeof request.method !== 'string') {
     if (request.id !== undefined) {
@@ -136,14 +150,25 @@ function initializeResult(params: unknown): Record<string, unknown> {
 
 async function callTool(
   params: unknown,
-  ctx: { dispatcherId: string; socketPath: string },
+  ctx: {
+    dispatcherId: string;
+    callerKind: 'dispatcher' | 'team_leader';
+    teamId?: string;
+    leaderName?: string;
+    socketPath: string;
+  },
 ): Promise<Record<string, unknown>> {
   try {
     const call = asToolCallParams(params);
     const parsed = parseFeishuMcpToolInput(call.name, call.arguments);
     return forwardToolCall(
       feishuMcpAdminMethod(parsed.toolName),
-      feishuMcpAdminParams(ctx.dispatcherId, parsed),
+      {
+        ...feishuMcpAdminParams(ctx.dispatcherId, parsed),
+        caller_kind: ctx.callerKind,
+        ...(ctx.teamId !== undefined ? { team_id: ctx.teamId } : {}),
+        ...(ctx.leaderName !== undefined ? { leader_name: ctx.leaderName } : {}),
+      },
       ctx.socketPath,
       feishuMcpAdminLabel(parsed.toolName),
     );

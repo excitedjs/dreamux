@@ -96,8 +96,16 @@ export interface FeishuChannelSessionOptions {
 export interface FeishuInboundSubmitter {
   submitTurn(
     input: InboundTurnInput,
+    envelope: FeishuInboundEnvelope,
     hooks?: InboundDeliveryHooks,
   ): Promise<AgentRuntimeTurnResult>;
+}
+
+export interface FeishuInboundEnvelope {
+  provider: 'builtin:feishu';
+  chatId: string;
+  chatType: 'group' | 'p2p';
+  messageId: string;
 }
 
 export class FeishuChannelCapabilityError extends Error {
@@ -374,16 +382,26 @@ export class FeishuChannelSession {
         ...(attachment.path !== undefined ? { localPath: attachment.path } : {}),
       })),
     };
-    const delivery = await submitter.submitTurn(input, {
-      onAccepted: async () => {
-        await this.setInboundReaction(
-          event.messageId,
-          event.chatId,
-          RECEIVED_REACTION_EMOJI,
-          'received',
-        );
+    const envelope: FeishuInboundEnvelope = {
+      provider: BUILTIN_FEISHU_PROVIDER_REF,
+      chatId: event.chatId,
+      chatType: event.chatType === 'group' ? 'group' : 'p2p',
+      messageId: event.messageId,
+    };
+    const delivery = await submitter.submitTurn(
+      input,
+      envelope,
+      {
+        onAccepted: async () => {
+          await this.setInboundReaction(
+            event.messageId,
+            event.chatId,
+            RECEIVED_REACTION_EMOJI,
+            'received',
+          );
+        },
       },
-    });
+    );
     if (delivery.status === 'submitted') {
       this.opts.log.info(
         {

@@ -233,6 +233,10 @@ export function dispatcherTeamLedgerPath(id: string, teamId: string): string {
   return join(dispatcherTeamDir(id), 'ledger', `${teamMateNameSegment(teamId)}.jsonl`);
 }
 
+export function dispatcherChannelBindingsPath(id: string): string {
+  return join(dispatcherTeamDir(id), 'channel-bindings.json');
+}
+
 /**
  * Neutral teammate-name path segment sanitizer. Shared by the neutral
  * teammate-state builders here and by each builtin's teammate log-path builders.

@@ -6,6 +6,9 @@ export const FEISHU_MCP_SERVER_NAME = 'feishu';
 export interface FeishuMcpServerDescriptorOptions {
   dispatcherId: string;
   adminSocketPath: string;
+  callerKind?: 'dispatcher' | 'team_leader';
+  teamId?: string;
+  leaderName?: string;
   command?: string;
   env?: NodeJS.ProcessEnv;
 }
@@ -44,6 +47,9 @@ export function feishuMcpServerDescriptor(
       'feishu-mcp',
       '--dispatcher',
       opts.dispatcherId,
+      ...(opts.callerKind !== undefined ? ['--caller', opts.callerKind] : []),
+      ...(opts.teamId !== undefined ? ['--team-id', opts.teamId] : []),
+      ...(opts.leaderName !== undefined ? ['--leader-name', opts.leaderName] : []),
       '--admin-socket',
       opts.adminSocketPath,
     ],

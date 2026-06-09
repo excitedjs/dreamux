@@ -16,9 +16,9 @@ ships in the npm package:
 - `team-dev-workflow` covers multi-teammate review, design, merge, and unblock
   coordination.
 - `team` MCP is injected for dispatcher-only Team Mode lifecycle: create a
-  TeamLeader, read Team status/ledger, and dissolve a Team. TeamLeader member
-  work still uses the caller-scoped TeamMate MCP; channel binding/routing is not
-  part of the first Team Mode slice.
+  TeamLeader, read Team status/ledger, bind or transfer back Feishu group
+  channels, and dissolve a Team. TeamLeader member work still uses the
+  caller-scoped TeamMate MCP.
 - `dreamux-maintenance` covers installed Dreamux diagnosis and safe operation.
 
 They are not installed through Codex plugin marketplaces. `dreamux onboard` and

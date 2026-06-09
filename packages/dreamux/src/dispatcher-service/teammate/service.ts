@@ -422,6 +422,19 @@ export class TeamMateAgentService {
     };
   }
 
+  async channelInputScoped(
+    principal: TeamMateCallerPrincipal,
+    name: string,
+    input: import('../../agent-runtime/turn.js').InboundTurnInput,
+  ): Promise<AgentRuntimeTurnResult> {
+    const dispatcherId = principalDispatcherId(principal);
+    const live = await this.ensureRuntime(dispatcherId, name, {
+      principal,
+      reopenClosed: true,
+    });
+    return live.runtime.channelInput(input);
+  }
+
   async createTeamLeader(input: CreateTeamLeaderInput): Promise<TeamMateSpawnResult> {
     const name = validateTeamMateName(input.name);
     const existing = await this.identities.get(input.dispatcherId, name);

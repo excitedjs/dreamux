@@ -474,7 +474,13 @@ function buildConfigCommands(y: Argv): Argv {
 
 function buildFeishuMcpCommand(
   y: Argv,
-): Argv<{ dispatcher: string; adminSocket?: string }> {
+): Argv<{
+  dispatcher: string;
+  caller?: 'dispatcher' | 'team_leader';
+  teamId?: string;
+  leaderName?: string;
+  adminSocket?: string;
+}> {
   return y
     .option('dispatcher', {
       type: 'string',
@@ -484,7 +490,27 @@ function buildFeishuMcpCommand(
     .option('admin-socket', {
       type: 'string',
       describe: 'dreamux serve admin socket path',
-    }) as Argv<{ dispatcher: string; adminSocket?: string }>;
+    })
+    .option('caller', {
+      type: 'string',
+      choices: ['dispatcher', 'team_leader'] as const,
+      default: 'dispatcher' as const,
+      describe: 'Dreamux-controlled caller kind for channel scope enforcement',
+    })
+    .option('team-id', {
+      type: 'string',
+      describe: 'Team id for team_leader caller scope',
+    })
+    .option('leader-name', {
+      type: 'string',
+      describe: 'Leader TeamMate identity name for team_leader caller scope',
+    }) as Argv<{
+      dispatcher: string;
+      caller?: 'dispatcher' | 'team_leader';
+      teamId?: string;
+      leaderName?: string;
+      adminSocket?: string;
+    }>;
 }
 
 function buildTeamMateMcpCommand(
@@ -613,6 +639,9 @@ async function main(): Promise<void> {
         });
         await runFeishuMcp({
           dispatcherId,
+          callerKind: argv.caller,
+          teamId: argv.teamId,
+          leaderName: argv.leaderName,
           adminSocketPath: argv.adminSocket,
           log: (message) => log.info(message),
         });

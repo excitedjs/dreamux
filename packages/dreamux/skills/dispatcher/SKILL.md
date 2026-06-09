@@ -61,8 +61,12 @@ repo directly from the dispatcher.
   `leader_agent_runtime`; no default leader runtime is inferred.
 - `list`, `status`, `ledger` — read dispatcher-owned Team records and lifecycle
   ledger rows.
+- `bind_channel` — bind a Feishu group chat to a TeamLeader. P2P binding is
+  rejected.
+- `transfer_channel_back` — return a bound Feishu group chat to the dispatcher.
 - `dissolve` — close the TeamLeader and team-owned members, then conservatively
-  clean up the shared managed worktree.
+  clean up the shared managed worktree. Active channel bindings are transferred
+  back first.
 
 **Control and inspect.**
 

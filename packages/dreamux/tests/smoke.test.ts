@@ -11,6 +11,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+// eslint-disable-next-line no-restricted-imports -- git worktree smoke fixture setup uses synchronous git commands to create a local repository before async server assertions begin (issue #85 test-scope carve-out).
+import { execFileSync } from 'node:child_process';
 import {
   existsSync,
   lstatSync,
@@ -63,8 +65,9 @@ import { writeRestartIntent } from '../src/daemon/restart-intent.js';
 import { dreamuxBinPath } from '../src/platform/package-bin.js';
 import { createLogger, type DreamuxLogger } from '../src/platform/logger.js';
 import { DREAMUX_DISPATCHER_BASE_INSTRUCTIONS } from '../src/dispatcher-service/dispatcher/base-prompt.js';
+import { TeamMateIdentityStore } from '../src/dispatcher-service/teammate/identity-store.js';
 import { startFakeCodex, type FakeCodex } from './fake-codex.js';
-import { testDispatcherConfig } from './helpers/config.js';
+import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 import { Writable } from 'node:stream';
 import {
   loadExternalAgentRuntimeProviders,
@@ -349,6 +352,17 @@ function writeReadyDispatcherCodexHome(dispatcherId: string, dispatcherCwd?: str
   mkdirSync(dispatcherCwd ?? defaultDispatcherCwd(dispatcherId), { recursive: true });
 }
 
+function initGitRepoSync(path: string): string {
+  mkdirSync(path, { recursive: true });
+  execFileSync('git', ['init', '-b', 'main'], { cwd: path });
+  execFileSync('git', ['config', 'user.name', 'Dreamux Test'], { cwd: path });
+  execFileSync('git', ['config', 'user.email', 'dreamux-test@example.com'], { cwd: path });
+  writeFileSync(join(path, 'README.md'), 'test\n');
+  execFileSync('git', ['add', 'README.md'], { cwd: path });
+  execFileSync('git', ['commit', '-m', 'Initial test commit'], { cwd: path });
+  return path;
+}
+
 interface ConfigDispatcherOverrides {
   id?: string;
   cwd?: string | null;
@@ -358,28 +372,25 @@ interface ConfigDispatcherOverrides {
 }
 
 function configWithDispatcher(overrides: ConfigDispatcherOverrides = {}): DreamuxConfig {
-  return {
-    ...BUILT_IN_DEFAULTS,
-    dispatchers: [
-      testDispatcherConfig({
-        id: overrides.id ?? 'flow',
-        cwd: overrides.cwd ?? null,
-        enabled: overrides.enabled ?? true,
-        feishu: overrides.feishu ?? {
-          app_id: 'app-smoke',
-          app_secret: 'secret-server-only',
-        },
-        codex: overrides.codex ?? {
-          bin: 'codex',
-          approval_policy: 'never',
-          sandbox_mode: 'workspace-write',
-          extra_args: [],
-          extra_env: {},
-          initialize_timeout_ms: 10000,
-        },
-      }),
-    ],
-  };
+  return testDreamuxConfig([
+    testDispatcherConfig({
+      id: overrides.id ?? 'flow',
+      cwd: overrides.cwd ?? null,
+      enabled: overrides.enabled ?? true,
+      feishu: overrides.feishu ?? {
+        app_id: 'app-smoke',
+        app_secret: 'secret-server-only',
+      },
+      codex: overrides.codex ?? {
+        bin: 'codex',
+        approval_policy: 'never',
+        sandbox_mode: 'workspace-write',
+        extra_args: [],
+        extra_env: {},
+        initialize_timeout_ms: 10000,
+      },
+    }),
+  ]);
 }
 
 describe('dreamux MVP smoke', () => {
@@ -438,7 +449,7 @@ describe('dreamux MVP smoke', () => {
 
     await bot.inject(fakeInbound('chat-group-a', 'hi', 'msg-1-id'));
 
-    await waitFor(() => codexInputs.length === 1);
+    await waitFor(() => codexInputs.length === 1, 10000);
     await sleep(80);
     expect(bot.sentMessages).toEqual([]);
     expect(codexInputs).toHaveLength(1);
@@ -519,7 +530,7 @@ describe('dreamux MVP smoke', () => {
         mentions: atUs,
       }),
     );
-    await waitFor(() => codexInputs.length === 1);
+    await waitFor(() => codexInputs.length === 1, 10000);
     expect(codexInputs[0]).toContain('hello from bee');
 
     // 3) Trusted bot WITHOUT an @ → dropped (no new Codex turn).
@@ -819,6 +830,40 @@ describe('dreamux MVP smoke', () => {
       `mcp_servers.team.args=["team-mcp", "--dispatcher", "flow", "--admin-socket", "${join(runtimeDir, 'admin.sock')}"]`,
     );
   });
+
+  it('routes bound Feishu group inbound to the TeamLeader and transfers back', async () => {
+    const repo = initGitRepoSync(join(runtimeDir, 'team-repo'));
+    server = buildServer({ runtimeDir, fake, bot, config: configWithDispatcher() });
+    await server.start();
+
+    await server.dispatcherService.createTeam({
+      dispatcherId: 'flow',
+      name: 'alpha',
+      repoCwd: repo,
+      leaderAgentRuntime: 'flow',
+    });
+    await server.dispatcherService.bindTeamChannel({
+      dispatcherId: 'flow',
+      teamId: 'alpha',
+      provider: 'builtin:feishu',
+      chatId: 'chat-team',
+      chatType: 'group',
+    });
+    await bot.inject(fakeInbound('chat-team', 'team hello', 'msg-team'));
+    await waitFor(() => codexInputs.some((input) => input.includes('team hello')));
+    expect(codexInputs.some((input) => input.includes('team hello'))).toBe(true);
+    codexInputs.length = 0;
+
+    await server.dispatcherService.transferTeamChannelBack({
+      dispatcherId: 'flow',
+      provider: 'builtin:feishu',
+      chatId: 'chat-team',
+      chatType: 'group',
+    });
+    await bot.inject(fakeInbound('chat-team', 'dispatcher again', 'msg-back'));
+    await waitFor(() => codexInputs.length === 1);
+    expect(codexInputs[0]).toContain('dispatcher again');
+  }, 10000);
 
   it('launches a dispatcher with its own runtime.config.bin', async () => {
     const previousEnvBin = process.env['CODEX_HOST_CODEX_BIN'];

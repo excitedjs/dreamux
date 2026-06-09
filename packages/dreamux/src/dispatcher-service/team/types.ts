@@ -44,11 +44,28 @@ export interface TeamDissolveInput {
   note?: string;
 }
 
+export interface TeamBindChannelInput {
+  dispatcherId: string;
+  teamId: string;
+  provider: 'builtin:feishu';
+  chatId: string;
+  chatType: 'group' | 'p2p';
+}
+
+export interface TeamTransferChannelBackInput {
+  dispatcherId: string;
+  provider: 'builtin:feishu';
+  chatId: string;
+  chatType: 'group' | 'p2p';
+}
+
 export type TeamLedgerEventType =
   | 'create'
   | 'status'
   | 'artifact'
   | 'decision'
+  | 'bind_channel'
+  | 'transfer_channel_back'
   | 'dissolve';
 
 export interface TeamLedgerEvent {
