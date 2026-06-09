@@ -431,7 +431,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       return;
     }
     const steer = active.steerQueue.then(() =>
-      session.steerTurn(prompt, { priority: 'now' }),
+      session.steerTurn(prompt, { priority: 'next' }),
     );
     active.steerQueue = steer.then(
       () => undefined,

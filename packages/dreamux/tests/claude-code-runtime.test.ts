@@ -487,8 +487,8 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     expect(fleet.sessions[0]?.prompts).toEqual(['first', 'second', 'third']);
     expect(fleet.sessions[0]?.submitOptions).toEqual([
       undefined,
-      { priority: 'now' },
-      { priority: 'now' },
+      { priority: 'next' },
+      { priority: 'next' },
     ]);
 
     fleet.resolveNext(okOutcome('session-abc'));

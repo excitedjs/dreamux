@@ -179,6 +179,36 @@ describe('TurnManager turn settlement', () => {
     expect(completed.map((turn) => turn.turnId)).toEqual(['turn-1']);
   });
 
+  it('coalesces concurrent cold-start submissions into one completion-producing turn', async () => {
+    const client = new DelayedFakeCodexClient();
+    const completed: CollectedTurn[] = [];
+    const manager = new TurnManager({
+      dispatcherId: 'flow',
+      getThreadId: () => 'thread-1',
+      client: client as never,
+      onTurnCompleted: (turn) => completed.push(turn),
+    });
+
+    const first = manager.enqueue(input('msg-1', 'first'));
+    const second = manager.enqueue(input('msg-2', 'second'));
+    await waitFor(() => client.inputs.length === 2);
+
+    expect(client.handlerCount).toBe(1);
+    client.resolveNext('turn-1');
+    client.resolveNext('turn-2');
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      { status: 'submitted', turnId: 'turn-1' },
+      { status: 'submitted', turnId: 'turn-1' },
+    ]);
+
+    client.emitCompleted('thread-1', 'turn-1', 'folded result');
+    client.emitCompleted('thread-1', 'turn-2', 'extra physical result');
+    await waitFor(() => completed.length === 1);
+    await flush();
+
+    expect(completed.map((turn) => turn.turnId)).toEqual(['turn-1']);
+  });
+
   it('starts a fresh subscription for a sequential send after the previous turn completed', async () => {
     const client = new FoldingFakeCodexClient(['turn-1', 'turn-2']);
     const completed: CollectedTurn[] = [];
@@ -391,6 +421,62 @@ class FoldingFakeCodexClient {
     const turnId = this.turnIds[this.nextIndex++];
     if (turnId === undefined) throw new Error('no scripted turn id');
     return { turn: { id: turnId } } as TurnStartResponse as R;
+  }
+
+  emitCompleted(threadId: string, turnId: string, text: string): void {
+    this.emit({
+      method: 'item/completed',
+      params: {
+        threadId,
+        turnId,
+        completedAtMs: Date.now(),
+        item: { type: 'agentMessage', id: `item-${turnId}`, text },
+      },
+    });
+    this.emit({
+      method: 'turn/completed',
+      params: {
+        threadId,
+        turn: { id: turnId, items: [] },
+      },
+    });
+  }
+
+  private emit(notification: ServerNotification): void {
+    for (const handler of this.handlers) handler(notification);
+  }
+}
+
+class DelayedFakeCodexClient {
+  readonly inputs: string[] = [];
+  private readonly handlers: NotificationHandler[] = [];
+  private readonly pending: Array<(turnId: string) => void> = [];
+
+  get handlerCount(): number {
+    return this.handlers.length;
+  }
+
+  onNotification(handler: NotificationHandler): void {
+    this.handlers.push(handler);
+  }
+
+  request<R>(method: string, params: unknown): Promise<R> {
+    if (method !== 'turn/start') throw new Error(`unexpected method ${method}`);
+    const p = params as {
+      input: Array<{ text: string }>;
+    };
+    this.inputs.push(p.input[0]?.text ?? '');
+    return new Promise<R>((resolve) => {
+      this.pending.push((turnId) => {
+        resolve({ turn: { id: turnId } } as TurnStartResponse as R);
+      });
+    });
+  }
+
+  resolveNext(turnId: string): void {
+    const resolve = this.pending.shift();
+    if (resolve === undefined) throw new Error('no pending turn/start');
+    resolve(turnId);
   }
 
   emitCompleted(threadId: string, turnId: string, text: string): void {
