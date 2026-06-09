@@ -1167,6 +1167,7 @@ describe('dreamux MVP smoke', () => {
       'mcp.react',
       {
         dispatcher_id: 'flow',
+        chat_id: 'chat-group-a',
         message_id: 'msg-model-react',
         emoji: 'THUMBSUP',
       },

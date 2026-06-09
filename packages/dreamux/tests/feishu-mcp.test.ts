@@ -212,6 +212,7 @@ describe('feishu-mcp stdio shim', () => {
           method: 'mcp.reply',
           params: {
             dispatcher_id: 'dispatcher-a',
+            caller_kind: 'dispatcher',
             chat_id: 'chat-a',
             message_id: 'message-in',
             text: 'hello',
@@ -271,7 +272,11 @@ describe('feishu-mcp stdio shim', () => {
         {
           id: expect.any(String) as string,
           method: 'mcp.list_chat_bots',
-          params: { dispatcher_id: 'dispatcher-a', chat_id: 'chat-a' },
+          params: {
+            dispatcher_id: 'dispatcher-a',
+            caller_kind: 'dispatcher',
+            chat_id: 'chat-a',
+          },
         },
       ]);
 
@@ -363,6 +368,7 @@ describe('feishu-mcp stdio shim', () => {
         method: 'mcp.react',
         params: {
           dispatcher_id: 'dispatcher-a',
+          caller_kind: 'dispatcher',
           message_id: 'message-in',
           emoji: 'THUMBSUP',
         },

@@ -121,9 +121,10 @@ export const adminMethods: Record<string, AdminHandler> = {
   // Read-only: lists a chat's known + trusted peer bots (issue #69). Reads the
   // per-dispatcher chat-bots store, so it does not require a running slot — only
   // a declared dispatcher.
-  'mcp.list_chat_bots': (server, params) => {
+  'mcp.list_chat_bots': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
+    await assertFeishuScope(server, id, params);
     return server.dispatcherService.callFeishuMcpTool({
       dispatcherId: id,
       toolName: 'list_chat_bots',
@@ -351,7 +352,13 @@ async function assertFeishuScope(
 ): Promise<void> {
   const caller = callerPrincipal(dispatcherId, params);
   if (caller.kind !== 'team_leader') return;
-  const chatId = mustString(params, 'chat_id');
+  const chatId = optionalString(params, 'chat_id');
+  if (chatId === null) {
+    throw new AdminError(
+      'BAD_REQUEST',
+      "param 'chat_id' is required for TeamLeader Feishu tools",
+    );
+  }
   const allowed = await server.dispatcherService.teamLeaderCanUseChannel({
     dispatcherId,
     teamId: caller.teamId,
