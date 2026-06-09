@@ -593,19 +593,26 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
   });
 
   it('delivers a TeamMate completion as a plain status-varied user turn', async () => {
-    const fleet = fakeFleet([okOutcome('session-abc')]);
+    const fleet = controllableFleet();
     const { runtime } = makeRuntime(fleet);
     await runtime.start();
 
-    const result = await runtime.completionInput!({
+    const deliveryPromise = runtime.completionInput!({
       source: 'reviewer',
       id: 'mate-1',
       status: 'completed',
       result: 'all done',
     });
+    // The turn is queued but the session outcome is NOT resolved yet.
+    // The delivery should return `accepted` immediately (submit-then-serialize),
+    // decoupled from model thinking time.
+    const result = await deliveryPromise;
     expect(result).toEqual({ status: 'accepted' });
 
+    // The turn is still pending in the fleet. Resolve it so it cleans up.
+    fleet.resolveNext(okOutcome('session-abc'));
     await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
+
     const prompt = fleet.sessions[0]?.prompts[0] ?? '';
     // Plain English status line + inlined result — NOT claude-code's native
     // <task-notification> XML (which the model could mistake for a real task).
@@ -617,6 +624,20 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     expect(prompt).not.toContain('<teammate_session_completion');
     // Delivered as ordinary input, NOT a synthetic notification.
     expect(fleet.sessions[0]?.submitOptions[0]).toEqual({ isSynthetic: false });
+  });
+
+  it('resolves completionInput with failed/unsupported for pre-submit failures', async () => {
+    const fleet = fakeFleet([okOutcome('session-abc')]);
+    const { runtime } = makeRuntime(fleet);
+    await runtime.start();
+    await runtime.stop();
+    const stoppedResult = await runtime.completionInput!({
+      source: 'reviewer',
+      id: 'mate-stop',
+      status: 'completed',
+      result: 'done',
+    });
+    expect(stoppedResult.status).toBe('unsupported');
   });
 
   it('inlines a spill pointer when a completion overflows the budget', async () => {
@@ -839,22 +860,22 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     await waitFor(() => runtime.getStatus() === 'degraded', 5000);
     expect(store.get('flow')?.last_error).toMatch(/stalled|no stream activity/i);
 
-    // Delivery must return a real `failed` result (so PR8 retry can act),
-    // bounded by the same deadline — never an unresolved await.
+    // Delivery must return `accepted` immediately since acceptance is now
+    // decoupled from model outcome. The async turn failure degrades the runtime.
     const delivery = await runtime.completionInput!({
       source: 'teammate',
       id: 'mate-1',
       status: 'completed',
       result: 'done',
     });
-    expect(delivery.status).toBe('failed');
+    expect(delivery.status).toBe('accepted');
 
     await runtime.stop();
   });
 
-  it('returns failed (not accepted) when a TeamMate completion turn fails', async () => {
+  it('degrades the runtime when a TeamMate completion turn fails asynchronously', async () => {
     const fleet = fakeFleet([new Error('delivery boom')]);
-    const { runtime } = makeRuntime(fleet);
+    const { runtime, store } = makeRuntime(fleet);
     await runtime.start();
 
     const result = await runtime.completionInput!({
@@ -863,13 +884,11 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       status: 'completed',
       result: 'done',
     });
-    expect(result.status).toBe('failed');
-    if (result.status === 'failed') {
-      expect(result.error.message).toContain('delivery boom');
-    }
-    // A delivery failure is reported to the caller (PR8 retry) but does not by
-    // itself degrade the whole runtime.
-    expect(runtime.getStatus()).toBe('ready');
+    expect(result.status).toBe('accepted');
+
+    // A delivery failure degrades the whole runtime just like a channel turn
+    await waitFor(() => runtime.getStatus() === 'degraded');
+    expect(store.get('flow')?.last_error).toContain('delivery boom');
   });
 
   it('fires onTurnSettled(completed) with the turn id when an inbound turn succeeds', async () => {
