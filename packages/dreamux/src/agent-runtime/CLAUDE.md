@@ -7,8 +7,14 @@ agent session; how it talks to its engine is the engine's business.
 ## What goes where
 
 - **Top level** (`types.ts`, `turn.ts`, `catalog.ts`, `external-provider.ts`,
-  `index.ts`) — the **neutral** contract + the catalog (a view over the provider
-  registry) + the `npm:` external-provider loader. Nothing runtime-specific here.
+  `load-config.ts`, `index.ts`) — the **neutral** contract + the catalog (a view
+  over the provider registry) + the `npm:` external-provider loader +
+  `load-config.ts` (the caller-composed `loadConfigWithBuiltins` that registers
+  the builtins then delegates to `config/config.ts`, so the config leaf never
+  imports the catalog — see
+  [`decisions/agents-config-normalization.md`](../../../../.agents/decisions/agents-config-normalization.md)).
+  Nothing runtime-specific here. `load-config.ts` must never be imported by
+  `platform/paths.ts` or a `builtin/*` module (that re-forms the #148 cycle).
 - **`builtin/<name>/`** — one builtin's entire self-contained stack: transport
   (process supervisor + rpc + wire protocol/types + handshake), the runtime
   impl, the provider, CLI args, and its own `paths.ts`.

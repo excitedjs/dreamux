@@ -74,9 +74,57 @@ deferred and carry per-dispatcher credentials).
 - `DispatcherConfig` also keeps the referenced `agentRuntime` id in memory so the
   config round-trips back to the file shape (`stringifyConfig` is the in-memory →
   file translator; `DEFAULT_CONFIG_JSON` is routed through it).
-- The builtin runtime providers are registered into the registry idempotently
-  (guarded by `getImplementation(id) === undefined`) so config can register them
-  for parsing while the server's factory-bearing registration still wins.
+- The builtin runtime providers must already be registered in the registry
+  `readAgents` validates against (each agent's `config` is parsed through its
+  provider's `readConfig`). Registration is **caller-composed, not done by
+  `config/config.ts`**: the config module is a schema/parse leaf and never
+  imports the runtime catalog. `cli/server.ts` hands `loadConfig` a
+  factory-bearing registry it built; the leaf entry points
+  (doctor / daemon / onboard) call `loadConfigWithBuiltins`
+  (`agent-runtime/load-config.ts`), which builds a registry, registers the
+  builtins idempotently (guarded by `getImplementation(id) === undefined`), then
+  delegates to `loadConfig`. A bare `loadConfig` against a registry with a
+  registered-but-unimplemented builtin fails loud in `readAgents` ("registered
+  but not runnable"). External `npm:` providers still load inside
+  `readConfigFile` via the dynamic-import loader.
+
+#### De-cycle (post-#148 hotfix)
+
+The first #148 cut had `config/config.ts` import
+`registerBuiltinAgentRuntimeProviders` from `agent-runtime/catalog.ts` directly.
+That formed a static ESM import cycle —
+`config/config.ts → catalog → builtin/* → platform/paths.ts → config/config.ts`
+(`platform/paths.ts` reads `BUILT_IN_DEFAULTS` at module top level) — which
+crashed the built CLI on cold start with
+`Cannot access 'BUILT_IN_DEFAULTS' before initialization` (a temporal-dead-zone
+read). `tsc` and `vitest` (transpiled, hoisted) did not surface it; only the
+built artifact did. The fix moves registration out of the leaf to the
+caller-composed `loadConfigWithBuiltins`, severing the upward edge at its root
+(rather than deferring the TDZ read).
+
+**Invariant (precise — the hazard is reaching `platform/paths.ts`, not the
+`builtin/` directory name):**
+
+- `config/config.ts` and `platform/paths.ts` must never statically import
+  `agent-runtime/catalog.ts` or any builtin **runtime / provider / transport /
+  paths** module — i.e. anything that transitively imports `platform/paths.ts`.
+  Those are the edges that close the cycle.
+- `config/config.ts` **may** re-export from the builtin **config** modules
+  (`builtin/codex/config.ts`, `builtin/claude-code/config.ts`). This is the
+  intentional M2 back-compat surface so non-builtin callers keep their
+  `config/config.js` import paths. It is cycle-free *because* those two modules
+  are deliberately kept as leaves: they import only `registry/` and
+  `config/validate.ts`, never `platform/paths.ts` and never `config/config.ts`.
+  That leaf property is load-bearing and is guarded by a comment in each of the
+  two files — do not add a `platform/paths` or `config/config` import there.
+- `agent-runtime/load-config.ts` must never be imported by `platform/paths.ts`
+  or by any `builtin/*` module.
+
+Guarded by the `smoke-built-cli` gate (a fresh-Node `bin/dreamux --version` run
+in CI and before release publish), which exercises the compiled cold-start path
+that the unit tests cannot. `madge --circular dist/` (types erased = runtime
+truth) is the check: after this fix it shows no `config`/`paths` cycle, only two
+pre-existing intra-`builtin/codex/` cycles.
 
 ### Provider-self-reported doctor diagnostics (issue #146 doctor half)
 

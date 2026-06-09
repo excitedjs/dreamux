@@ -20,9 +20,9 @@ import {
   type DispatcherConfig,
   globalConfigDir,
   globalConfigFile,
-  loadConfig,
   type DreamuxConfig,
 } from '../config/config.js';
+import { loadConfigWithBuiltins } from '../agent-runtime/load-config.js';
 import {
   AgentRuntimeProviderCatalog,
   registerBuiltinAgentRuntimeProviders,
@@ -215,7 +215,7 @@ async function readConfigForDoctor(
   catalog: AgentRuntimeProviderCatalog;
 }> {
   try {
-    const loaded = await loadConfig({ configDir });
+    const loaded = await loadConfigWithBuiltins({ configDir });
     checks.push({
       name: 'config',
       ok: true,

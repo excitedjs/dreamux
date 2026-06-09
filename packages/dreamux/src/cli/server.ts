@@ -43,8 +43,10 @@ async function main(): Promise<void> {
   // Compose the provider registry + builtin runtime catalog (with the real
   // process factories) first, so the builtins carry runnable implementations
   // before config parses agents[] (each agent's config is parsed through its
-  // provider's readConfig). loadConfig's own idempotent registration then
-  // no-ops on these already-registered builtins.
+  // provider's readConfig). config does not register builtins itself (that
+  // would re-form the #148 import cycle); the server owns this composition and
+  // hands the populated registry to loadConfig. Leaf entry points that do not
+  // build their own registry use loadConfigWithBuiltins instead.
   const providerRegistry = createBuiltinProviderRegistry();
   const agentRuntimeProviderCatalog = createBuiltinAgentRuntimeProviderCatalog({
     registry: providerRegistry,

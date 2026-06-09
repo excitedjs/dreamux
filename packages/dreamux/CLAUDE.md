@@ -20,7 +20,7 @@ Two settled shape rules govern where code lives:
 | Path | What lives here | Why |
 |---|---|---|
 | `server.ts` | process entry + wiring only | builds registry/catalog/store/services, opens the admin socket, starts dispatchers; owns no teammate/channel/runtime orchestration |
-| `agent-runtime/` | the AgentRuntime seam: contract (`types.ts`, `turn.ts`), `catalog.ts`, `external-provider.ts` loader, `index.ts` barrel | one runtime abstraction for every agent role — see [`agent-runtime/CLAUDE.md`](src/agent-runtime/CLAUDE.md) |
+| `agent-runtime/` | the AgentRuntime seam: contract (`types.ts`, `turn.ts`), `catalog.ts`, `external-provider.ts` loader, `load-config.ts` (caller-composed builtin registration), `index.ts` barrel | one runtime abstraction for every agent role — see [`agent-runtime/CLAUDE.md`](src/agent-runtime/CLAUDE.md) |
 | `agent-runtime/builtin/codex/` | the whole `builtin:codex` stack: supervisor/rpc/events/handshake/types (transport), runtime, provider, args, codex-home, paths, turn-manager, approval | codex specifics close over here; nothing codex-named leaks out |
 | `agent-runtime/builtin/claude-code/` | the whole `builtin:claude-code` stack: supervisor/rpc/stream/types, runtime, args, paths, mcp-config | claude specifics close over here |
 | `dispatcher-service/` | the Dispatcher Service entity — see [`dispatcher-service/CLAUDE.md`](src/dispatcher-service/CLAUDE.md) | holds the dispatcher agent + orchestrates teammates |

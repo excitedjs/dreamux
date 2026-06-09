@@ -8,6 +8,12 @@
  * depends only on the neutral validation primitives (config/validate) and
  * the canonical provider ref (registry/). The host config module re-exports
  * these so the non-builtin callers (doctor, tests) keep their import paths.
+ *
+ * Load-bearing: because `config/config.ts` re-exports from here, this file must
+ * stay a leaf — never import `platform/paths` or `config/config` (only
+ * `registry/` + `config/validate`). Adding such an import re-forms the #148
+ * cold-start cycle `config -> ... -> platform/paths -> config`. See
+ * `.agents/decisions/agents-config-normalization.md` (De-cycle).
  */
 
 import { BUILTIN_CLAUDE_CODE_PROVIDER_REF } from '../../../registry/index.js';

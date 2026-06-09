@@ -4,9 +4,9 @@ import { codexArgsToCli, parseCodexArgs } from '../agent-runtime/builtin/codex/a
 import {
   assertNoLegacyTomlOnly,
   globalConfigFile,
-  loadConfig,
   stringifyConfig,
 } from '../config/config.js';
+import { loadConfigWithBuiltins } from '../agent-runtime/load-config.js';
 import {
   logsRoot,
   setRuntimeConfig,
@@ -193,7 +193,7 @@ async function readExistingDreamuxConfig(configDir: string) {
   const configPath = globalConfigFile({ configDir });
   await assertNoLegacyTomlOnly({ configDir });
   if (!(await pathExists(configPath))) return undefined;
-  return (await loadConfig({ configDir })).config;
+  return (await loadConfigWithBuiltins({ configDir })).config;
 }
 
 /** Async existence probe — the fs/promises replacement for `existsSync`. */

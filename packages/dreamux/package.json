@@ -30,6 +30,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
+    "smoke-built-cli": "node ./scripts/smoke-built-cli.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "clean": "rm -rf dist",

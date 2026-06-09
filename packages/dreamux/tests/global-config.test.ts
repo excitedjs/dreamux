@@ -27,6 +27,10 @@ import {
   stringifyConfig,
 } from '../src/config/config.js';
 import {
+  loadConfigWithBuiltins,
+  loadOrInitConfigWithBuiltins,
+} from '../src/agent-runtime/load-config.js';
+import {
   adminSocketPath,
   resetRuntimeConfig,
   serverJsonPath,
@@ -124,11 +128,11 @@ describe('global config (~/.dreamux/config.json)', () => {
         feishu: { app_id: 'app-flow', app_secret: 'secret-flow' },
       }),
     );
-    const c1 = (await loadConfig({ configDir })).config;
+    const c1 = (await loadConfigWithBuiltins({ configDir })).config;
     // load -> stringify -> load must be a fixed point: the in-memory config
     // serialised back to the file shape and reloaded yields the same config.
     writeConfigText(globalConfigFile({ configDir }), stringifyConfig(c1));
-    const c2 = (await loadConfig({ configDir })).config;
+    const c2 = (await loadConfigWithBuiltins({ configDir })).config;
     expect(c2).toEqual(c1);
   });
 
@@ -179,7 +183,7 @@ describe('global config (~/.dreamux/config.json)', () => {
     )}\n`;
     writeConfigText(file, original);
 
-    const { config, createdOnThisBoot } = await loadOrInitConfig({ configDir });
+    const { config, createdOnThisBoot } = await loadOrInitConfigWithBuiltins({ configDir });
     expect(createdOnThisBoot).toBe(false);
     expect(config.agents['flow']).toMatchObject({
       provider: 'builtin:codex',
@@ -298,7 +302,7 @@ describe('global config (~/.dreamux/config.json)', () => {
     (fileObject['dispatchers'] as Record<string, unknown>[])[0]!['enabled'] =
       'yes';
     writeConfigObject(fileObject);
-    await expect(loadOrInitConfig({ configDir })).rejects.toThrow(
+    await expect(loadOrInitConfigWithBuiltins({ configDir })).rejects.toThrow(
       /enabled must be a boolean/,
     );
   });
@@ -387,7 +391,7 @@ describe('global config (~/.dreamux/config.json)', () => {
       ],
     });
 
-    await expect(loadConfig({ configDir })).rejects.toThrow(
+    await expect(loadConfigWithBuiltins({ configDir })).rejects.toThrow(
       /dispatchers\[0\]\.agentRuntime is required/,
     );
   });
@@ -400,10 +404,10 @@ describe('global config (~/.dreamux/config.json)', () => {
       }),
     );
 
-    await expect(loadConfig({ configDir })).rejects.toThrow(
+    await expect(loadConfigWithBuiltins({ configDir })).rejects.toThrow(
       /agentRuntime='does-not-exist' does not match any agents\[\]\.id/,
     );
-    await expect(loadConfig({ configDir })).rejects.toThrow(/Known agents: 'codex'/);
+    await expect(loadConfigWithBuiltins({ configDir })).rejects.toThrow(/Known agents: 'codex'/);
   });
 
   it('fails loud on a duplicate agents[].id', async () => {
@@ -417,7 +421,7 @@ describe('global config (~/.dreamux/config.json)', () => {
       }),
     );
 
-    await expect(loadConfig({ configDir })).rejects.toThrow(
+    await expect(loadConfigWithBuiltins({ configDir })).rejects.toThrow(
       /agents\[1\]\.id duplicates agent 'codex'/,
     );
   });
@@ -458,7 +462,7 @@ describe('global config (~/.dreamux/config.json)', () => {
       }),
     );
 
-    const { config } = await loadConfig({ configDir });
+    const { config } = await loadConfigWithBuiltins({ configDir });
     expect(Object.keys(config.agents)).toEqual(['shared-codex']);
     expect(dispatcherCodexConfig(config.dispatchers[0]!).sandbox_mode).toBe(
       'read-only',
@@ -487,7 +491,7 @@ describe('global config (~/.dreamux/config.json)', () => {
       }),
     );
 
-    const { config } = await loadConfig({ configDir });
+    const { config } = await loadConfigWithBuiltins({ configDir });
     expect(config.agents['codex']?.provider).toBe('builtin:codex');
     expect(config.agents['claude']?.provider).toBe('builtin:claude-code');
     expect(config.dispatchers[0]?.runtime.provider).toBe('builtin:codex');
@@ -526,7 +530,7 @@ describe('global config (~/.dreamux/config.json)', () => {
       }),
     );
 
-    const { config } = await loadConfig({ configDir });
+    const { config } = await loadConfigWithBuiltins({ configDir });
     // Both agents map to the same provider …
     expect(config.agents['codex-safe']?.provider).toBe('builtin:codex');
     expect(config.agents['codex-yolo']?.provider).toBe('builtin:codex');
@@ -558,7 +562,7 @@ describe('global config (~/.dreamux/config.json)', () => {
         codex: { approval_policy: 'ask-every-time' },
       }),
     );
-    await expect(loadOrInitConfig({ configDir })).rejects.toThrow(
+    await expect(loadOrInitConfigWithBuiltins({ configDir })).rejects.toThrow(
       /agents\[0\]\.config\.approval_policy='ask-every-time'/,
     );
   });
@@ -567,7 +571,7 @@ describe('global config (~/.dreamux/config.json)', () => {
     writeConfigObject(
       testSingleDispatcherFileObject({ id: 'flow', codex: {} }),
     );
-    const { config } = await loadConfig({ configDir });
+    const { config } = await loadConfigWithBuiltins({ configDir });
     const codex = dispatcherCodexConfig(config.dispatchers[0]!);
     expect(codex.bin).toBe('codex');
     expect(codex.initialize_timeout_ms).toBe(10000);
@@ -580,7 +584,7 @@ describe('global config (~/.dreamux/config.json)', () => {
         codex: { bin: '/opt/custom-codex', initialize_timeout_ms: 30000 },
       }),
     );
-    const { config } = await loadConfig({ configDir });
+    const { config } = await loadConfigWithBuiltins({ configDir });
     const codex = dispatcherCodexConfig(config.dispatchers[0]!);
     expect(codex.bin).toBe('/opt/custom-codex');
     expect(codex.initialize_timeout_ms).toBe(30000);
@@ -593,7 +597,7 @@ describe('global config (~/.dreamux/config.json)', () => {
         codex: { bin: '   ' },
       }),
     );
-    await expect(loadConfig({ configDir })).rejects.toThrow(
+    await expect(loadConfigWithBuiltins({ configDir })).rejects.toThrow(
       /agents\[0\]\.config\.bin must be a non-empty string/,
     );
   });
@@ -605,7 +609,7 @@ describe('global config (~/.dreamux/config.json)', () => {
         codex: { initialize_timeout_ms: 0 },
       }),
     );
-    await expect(loadConfig({ configDir })).rejects.toThrow(
+    await expect(loadConfigWithBuiltins({ configDir })).rejects.toThrow(
       /agents\[0\]\.config\.initialize_timeout_ms must be > 0/,
     );
   });
@@ -643,7 +647,7 @@ describe('global config (~/.dreamux/config.json)', () => {
       }),
     );
 
-    const { config } = await loadConfig({ configDir });
+    const { config } = await loadConfigWithBuiltins({ configDir });
     const firstFeishu = dispatcherFeishuConfig(config.dispatchers[0]!);
     const firstCodex = dispatcherCodexConfig(config.dispatchers[0]!);
     expect(config.dispatchers[0]).toMatchObject({
@@ -686,7 +690,7 @@ describe('global config (~/.dreamux/config.json)', () => {
       }),
     );
 
-    await expect(loadConfig({ configDir })).rejects.toThrow(
+    await expect(loadConfigWithBuiltins({ configDir })).rejects.toThrow(
       /not a built-in Dreamux channel/,
     );
   });
@@ -699,7 +703,7 @@ describe('global config (~/.dreamux/config.json)', () => {
       }),
     );
 
-    await expect(loadConfig({ configDir })).rejects.toThrow(
+    await expect(loadConfigWithBuiltins({ configDir })).rejects.toThrow(
       /not a built-in Dreamux channel/,
     );
   });
@@ -712,7 +716,7 @@ describe('global config (~/.dreamux/config.json)', () => {
       }),
     );
 
-    await expect(loadConfig({ configDir })).rejects.toThrow(
+    await expect(loadConfigWithBuiltins({ configDir })).rejects.toThrow(
       /not a built-in Dreamux channel/,
     );
   });
@@ -826,7 +830,7 @@ describe('global config (~/.dreamux/config.json)', () => {
       }),
     );
 
-    const { config } = await loadConfig({ configDir });
+    const { config } = await loadConfigWithBuiltins({ configDir });
     expect(config.agents['flow']?.provider).toBe('builtin:claude-code');
     expect(config.dispatchers[0]?.runtime.provider).toBe('builtin:claude-code');
   });
@@ -847,7 +851,7 @@ describe('global config (~/.dreamux/config.json)', () => {
       }),
     );
 
-    await expect(loadConfig({ configDir })).rejects.toThrow(
+    await expect(loadConfigWithBuiltins({ configDir })).rejects.toThrow(
       /approval_policy is not supported/,
     );
   });
@@ -865,7 +869,7 @@ describe('global config (~/.dreamux/config.json)', () => {
     });
     writeConfigObject(fileObject);
 
-    await expect(loadConfig({ configDir })).rejects.toThrow(
+    await expect(loadConfigWithBuiltins({ configDir })).rejects.toThrow(
       /must contain exactly one channel in this phase/,
     );
   });
@@ -882,7 +886,7 @@ describe('global config (~/.dreamux/config.json)', () => {
       }),
     );
 
-    await expect(loadConfig({ configDir })).rejects.toThrow(
+    await expect(loadConfigWithBuiltins({ configDir })).rejects.toThrow(
       /callback_secret is not supported/,
     );
   });
@@ -891,7 +895,7 @@ describe('global config (~/.dreamux/config.json)', () => {
     const withAccess = testSingleDispatcherFileObject({ id: 'flow' });
     (withAccess['dispatchers'] as Record<string, unknown>[])[0]!['access'] = {};
     writeConfigObject(withAccess);
-    await expect(loadConfig({ configDir })).rejects.toThrow(
+    await expect(loadConfigWithBuiltins({ configDir })).rejects.toThrow(
       /access is not supported/,
     );
 
@@ -905,7 +909,7 @@ describe('global config (~/.dreamux/config.json)', () => {
         },
       }),
     );
-    await expect(loadConfig({ configDir })).rejects.toThrow(
+    await expect(loadConfigWithBuiltins({ configDir })).rejects.toThrow(
       /agents\[0\]\.config\.extra_env\.EXAMPLE_FLAG must be a string/,
     );
   });
@@ -933,7 +937,7 @@ describe('global config (~/.dreamux/config.json)', () => {
       }),
     );
 
-    await expect(loadConfig({ configDir })).rejects.toThrow(
+    await expect(loadConfigWithBuiltins({ configDir })).rejects.toThrow(
       /duplicates dispatcher 'flow'/,
     );
   });
@@ -952,8 +956,8 @@ describe('global config (~/.dreamux/config.json)', () => {
       }),
     );
 
-    await expect(loadConfig({ configDir })).rejects.toThrow(/dispatchers\[0\]\.id/);
-    await expect(loadConfig({ configDir })).rejects.toThrow(/ASCII letters/);
+    await expect(loadConfigWithBuiltins({ configDir })).rejects.toThrow(/dispatchers\[0\]\.id/);
+    await expect(loadConfigWithBuiltins({ configDir })).rejects.toThrow(/ASCII letters/);
   });
 
   it('requires non-empty Feishu app_id and app_secret values', async () => {
@@ -966,7 +970,7 @@ describe('global config (~/.dreamux/config.json)', () => {
         },
       }),
     );
-    await expect(loadConfig({ configDir })).rejects.toThrow(
+    await expect(loadConfigWithBuiltins({ configDir })).rejects.toThrow(
       /app_id must be a non-empty string/,
     );
 
@@ -979,7 +983,7 @@ describe('global config (~/.dreamux/config.json)', () => {
         },
       }),
     );
-    await expect(loadConfig({ configDir })).rejects.toThrow(
+    await expect(loadConfigWithBuiltins({ configDir })).rejects.toThrow(
       /app_secret must be a non-empty string/,
     );
   });
@@ -1112,7 +1116,7 @@ describe('sandbox_mode precedence', () => {
       configDir,
       testSingleDispatcherFileObject({ id: 'flow', codex: {} }),
     );
-    const { config } = await loadOrInitConfig({ configDir });
+    const { config } = await loadOrInitConfigWithBuiltins({ configDir });
     expect(dispatcherCodexConfig(config.dispatchers[0]!).sandbox_mode).toBe(
       'workspace-write',
     );
@@ -1126,7 +1130,7 @@ describe('sandbox_mode precedence', () => {
         codex: { sandbox_mode: 'danger-full-access' },
       }),
     );
-    const { config } = await loadOrInitConfig({ configDir });
+    const { config } = await loadOrInitConfigWithBuiltins({ configDir });
     expect(dispatcherCodexConfig(config.dispatchers[0]!).sandbox_mode).toBe(
       'danger-full-access',
     );
@@ -1140,7 +1144,7 @@ describe('sandbox_mode precedence', () => {
         codex: { sandbox_mode: 'not-a-mode' },
       }),
     );
-    await expect(loadOrInitConfig({ configDir })).rejects.toThrow(
+    await expect(loadOrInitConfigWithBuiltins({ configDir })).rejects.toThrow(
       /sandbox_mode='not-a-mode'/,
     );
   });
