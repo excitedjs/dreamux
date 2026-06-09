@@ -315,6 +315,7 @@ describe('builtin:claude-code provider', () => {
     const provider = claudeCodeProvider({ sessionFactory: fakeFleet().factory });
     expect(provider.ref).toBe('builtin:claude-code');
     expect(provider.descriptor.kind).toBe('agentRuntime');
+    expect(provider.getCapabilities().steer.supported).toBe(false);
     expect(
       provider.getCapabilities().teammateCompletion.map((s) => s.kind),
     ).toEqual(['claudeCodeTaskNotification']);
@@ -395,6 +396,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
 
   it('threads agents[].config.remote_control into the resident session spec', async () => {
     const fleet = fakeFleet();
+    const logs: string[] = [];
     const dispatcher = claudeDispatcher('flow', { remote_control: true });
     const store = new DispatcherStore(testDreamuxConfig([dispatcher]));
     const row = store.get('flow');
@@ -406,14 +408,20 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       dispatchers: store,
       cwd: defaultDispatcherCwd('flow'),
       mcpServers: [],
-      log: () => {
-        /* test sink */
+      log: (_level, msg) => {
+        logs.push(msg);
       },
     });
     await runtime.start();
 
     expect(fleet.sessions[0]?.spec.remoteControl).toBe(true);
     expect(fleet.sessions[0]?.spec.args).not.toContain('--remote-control');
+    fleet.sessions[0]?.spec.onRemoteControlUrl?.(
+      'https://example.invalid/session/fake',
+    );
+    expect(logs).toContain(
+      'claude-code remote control URL: https://example.invalid/session/fake',
+    );
   });
 
   it('start() drives the runtime to degraded and throws when the child cannot spawn', async () => {

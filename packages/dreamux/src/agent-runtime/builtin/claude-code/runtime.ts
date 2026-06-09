@@ -484,6 +484,11 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       stderrLogPath: this.stderrLogPath,
       turnTimeoutMs: this.config.turn_timeout_ms,
       remoteControl: this.config.remote_control,
+      onRemoteControlUrl: this.config.remote_control
+        ? (url) => {
+            this.log('info', `claude-code remote control URL: ${url}`);
+          }
+        : undefined,
       log: (level, msg, err) => this.log(level, msg, err),
     });
     session.setOnExit(() => {

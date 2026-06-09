@@ -251,9 +251,17 @@ export class ClaudeCodeStreamRpc {
     error: string | null,
   ): void {
     if (requestId === null || requestId !== this.remoteControlRequestId) return;
+    this.remoteControlRequestId = null;
     if (ok && response !== null) {
       const url = response['session_url'] ?? response['connect_url'];
-      if (typeof url === 'string') this.options.onRemoteControlUrl?.(url);
+      if (typeof url === 'string') {
+        this.options.onRemoteControlUrl?.(url);
+      } else {
+        this.options.log?.(
+          'warn',
+          'claude remote control enable succeeded without a URL',
+        );
+      }
       return;
     }
     this.options.log?.(

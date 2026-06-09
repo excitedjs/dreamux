@@ -95,6 +95,7 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
           /* reap is best-effort */
         });
       },
+      onRemoteControlUrl: this.spec.onRemoteControlUrl,
     });
     this.rpc = rpc;
     child.stdout?.setEncoding('utf8');

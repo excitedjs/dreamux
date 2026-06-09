@@ -515,6 +515,12 @@ Two configured agents that use the same provider appear as distinct
 `agent_runtimes[]` entries because the selector is the agent id and each entry
 may carry different provider-owned config.
 
+Claude Code Remote Control does not change the TeamMate steer contract.
+`builtin:claude-code` continues to advertise `steer.supported = false`; a later
+design such as [issue #161](https://github.com/excitedjs/dreamux/issues/161)
+must define any Dreamux-owned steering or attribution semantics for
+Remote-Control-driven turns.
+
 ## Consequences
 
 - The old "Dreamux never owns teammate state" decision is superseded.

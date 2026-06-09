@@ -52,7 +52,9 @@ the dispatcher turn end, then recover through `history`, `last`, and `ctx`.
 
 - `get_capabilities` — spawnable `agents[].id` values under `agent_runtimes[]`,
   each with runtime capabilities: resume, steer, events, last, and context. Use
-  `spawn({ agent_runtime: id, ... })` with one of those ids.
+  `spawn({ agent_runtime: id, ... })` with one of those ids. Claude Code Remote
+  Control is an external Claude UI surface; it does not imply Dreamux steer, so
+  keep trusting `steer.supported` from the returned capabilities.
 
 The persistent identity and history files are the source of truth. A TeamMate
 reopened by send continues from its saved runtime checkpoint; do not create a

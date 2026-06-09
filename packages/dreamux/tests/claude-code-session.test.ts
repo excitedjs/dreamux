@@ -49,6 +49,7 @@ describe('resident claude session (real child, fake stream-json protocol)', () =
     mode: 'echo' | 'stall',
     turnTimeoutMs: number,
     remoteControl = false,
+    onRemoteControlUrl?: (url: string) => void,
   ): ClaudeCodeSession {
     return createDefaultClaudeCodeSession({
       bin: process.execPath,
@@ -58,6 +59,7 @@ describe('resident claude session (real child, fake stream-json protocol)', () =
       stderrLogPath: stderrLog,
       turnTimeoutMs,
       remoteControl,
+      onRemoteControlUrl,
     });
   }
 
@@ -80,7 +82,8 @@ describe('resident claude session (real child, fake stream-json protocol)', () =
   });
 
   it('enables Remote Control at resident child startup when configured', async () => {
-    const session = makeSession('echo', 5_000, true);
+    const urls: string[] = [];
+    const session = makeSession('echo', 5_000, true, (url) => urls.push(url));
     await session.start();
 
     await waitFor(
@@ -88,6 +91,8 @@ describe('resident claude session (real child, fake stream-json protocol)', () =
         existsSync(stderrLog) &&
         readFileSync(stderrLog, 'utf8').includes('remote-control-requested'),
     );
+    await waitFor(() => urls.length === 1);
+    expect(urls).toEqual(['https://example.invalid/session/fake']);
 
     const turn = await session.submitTurn('after rc');
     expect(turn.text).toBe('echo:after rc');
