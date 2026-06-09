@@ -125,6 +125,29 @@ async function listTools(callerKind: 'dispatcher' | 'teammate'): Promise<string[
   return response.result.tools.map((tool) => tool.name);
 }
 
+async function toolSchemas(
+  callerKind: 'dispatcher' | 'teammate',
+): Promise<Array<Record<string, unknown>>> {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const reader = new JsonLineReader(output);
+  const run = runTeamMateMcp({
+    dispatcherId: 'dispatcher-a',
+    callerKind,
+    adminSocketPath: '/tmp/not-used.sock',
+    input,
+    output,
+    log: () => {},
+  });
+  writeJson(input, { jsonrpc: '2.0', id: 1, method: 'tools/list' });
+  const response = (await reader.next()) as {
+    result: { tools: Array<Record<string, unknown>> };
+  };
+  input.end();
+  await run;
+  return response.result.tools;
+}
+
 describe('teammate-mcp stdio shim', () => {
   it('exposes agent-centric lifecycle tools to dispatchers only', async () => {
     await expect(listTools('dispatcher')).resolves.toEqual([
@@ -147,6 +170,21 @@ describe('teammate-mcp stdio shim', () => {
       'ctx',
       'get_capabilities',
     ]);
+  });
+
+  it('marks spawn cwd as required and advertises managed worktree options', async () => {
+    const tools = await toolSchemas('dispatcher');
+    const spawn = tools.find((entry) => entry['name'] === 'spawn') as {
+      inputSchema: {
+        required: string[];
+        properties: Record<string, unknown>;
+      };
+    };
+    expect(spawn.inputSchema.required).toEqual(['name', 'prompt', 'cwd']);
+    expect(spawn.inputSchema.properties).toHaveProperty('worktree');
+    expect(JSON.stringify(spawn.inputSchema.properties['worktree'])).toContain(
+      'delete-on-close',
+    );
   });
 
   it('forwards spawn to the dispatcher-scoped admin method', async () => {
@@ -182,6 +220,14 @@ describe('teammate-mcp stdio shim', () => {
             prompt: 'Review the change.',
             agent_runtime: 'codex',
             cwd: '/workspace',
+            worktree: {
+              mode: 'managed',
+              slug: 'reviewer',
+              base_ref: 'origin/main',
+              branch: 'dreamux/reviewer',
+              cleanup: 'delete-on-close',
+            },
+            intent: 'review',
           },
         },
       });
@@ -206,9 +252,66 @@ describe('teammate-mcp stdio shim', () => {
             prompt: 'Review the change.',
             agent_runtime: 'codex',
             cwd: '/workspace',
+            worktree: {
+              mode: 'managed',
+              slug: 'reviewer',
+              base_ref: 'origin/main',
+              branch: 'dreamux/reviewer',
+              cleanup: 'delete-on-close',
+            },
+            intent: 'review',
           },
         },
       ]);
+
+      input.end();
+      await run;
+    } finally {
+      await admin.close();
+    }
+  });
+
+  it('rejects spawn without cwd before admin IPC', async () => {
+    const admin = await startFakeAdminServer((request) => ({
+      id: request.id,
+      ok: true,
+      result: {},
+    }));
+    try {
+      const input = new PassThrough();
+      const output = new PassThrough();
+      const reader = new JsonLineReader(output);
+      const run = runTeamMateMcp({
+        dispatcherId: 'dispatcher-a',
+        callerKind: 'dispatcher',
+        adminSocketPath: admin.socketPath,
+        input,
+        output,
+        log: () => {},
+      });
+
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'spawn',
+          arguments: {
+            name: 'reviewer',
+            prompt: 'Review the change.',
+          },
+        },
+      });
+
+      expect(await reader.next()).toMatchObject({
+        jsonrpc: '2.0',
+        id: 1,
+        result: {
+          isError: true,
+          content: [{ text: 'cwd must be a non-empty string' }],
+        },
+      });
+      expect(admin.requests).toEqual([]);
 
       input.end();
       await run;

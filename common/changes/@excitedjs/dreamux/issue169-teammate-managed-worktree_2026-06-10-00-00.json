@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "BREAKING: TeamMate MCP/admin spawn now requires `cwd`; the service no longer falls back to a dispatcher cwd or Dreamux runtime directory for native teammates. Call `spawn({ name, prompt, cwd, worktree?, agent_runtime? })` and pass either `worktree: { mode: \"reuse-cwd\" }` or `worktree: { mode: \"managed\", slug?, base_ref?, branch?, cleanup? }` for Dreamux-managed worktree isolation. TeamMate identities now persist dispatcher owner metadata plus source/runtime cwd and worktree cleanup metadata. Rebuild: respawn any caller-side TeamMate automation that omitted `cwd`; old identity files without owner/worktree metadata still read as dispatcher-owned reuse-cwd records and are rewritten only on later lifecycle mutation.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

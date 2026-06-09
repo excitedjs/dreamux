@@ -9,6 +9,7 @@
 import type { Server } from '../server.js';
 import { AdminError } from './protocol.js';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
+import type { TeamMateWorktreeRequest } from '../dispatcher-service/teammate/types.js';
 
 export type AdminHandler = (
   server: Server,
@@ -127,14 +128,18 @@ export const adminMethods: Record<string, AdminHandler> = {
     const name = mustString(params, 'name');
     const prompt = mustString(params, 'prompt');
     const agentRuntime = optionalString(params, 'agent_runtime');
-    const cwd = optionalString(params, 'cwd');
+    const cwd = mustString(params, 'cwd');
+    const worktree = optionalWorktreeRequest(params, 'worktree');
+    const intent = optionalString(params, 'intent');
     try {
       return await server.dispatcherService.spawnTeamMate({
         dispatcherId: id,
         name,
         prompt,
+        cwd,
         ...(agentRuntime !== null ? { agentRuntime } : {}),
-        ...(cwd !== null ? { cwd } : {}),
+        ...(worktree !== null ? { worktree } : {}),
+        ...(intent !== null ? { intent } : {}),
       });
     } catch (err) {
       throw new AdminError('TEAMMATE_SPAWN_FAILED', parseMessage(err));
@@ -246,6 +251,52 @@ function optionalString(
     throw new AdminError('BAD_REQUEST', `param '${key}' must be a string`);
   }
   return v;
+}
+
+function optionalWorktreeRequest(
+  params: Record<string, unknown> | undefined,
+  key: string,
+): TeamMateWorktreeRequest | null {
+  if (params === undefined) return null;
+  const value = params[key];
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new AdminError('BAD_REQUEST', `param '${key}' must be an object`);
+  }
+  const obj = value as Record<string, unknown>;
+  const mode = mustString(obj, 'mode');
+  if (mode !== 'reuse-cwd' && mode !== 'managed') {
+    throw new AdminError(
+      'BAD_REQUEST',
+      `param '${key}.mode' must be 'reuse-cwd' or 'managed'`,
+    );
+  }
+  const cleanup = optionalString(obj, 'cleanup');
+  if (
+    cleanup !== null &&
+    cleanup !== 'keep' &&
+    cleanup !== 'delete-on-close'
+  ) {
+    throw new AdminError(
+      'BAD_REQUEST',
+      `param '${key}.cleanup' must be 'keep' or 'delete-on-close'`,
+    );
+  }
+  return {
+    mode,
+    ...optionalStringProp(obj, 'slug'),
+    ...optionalStringProp(obj, 'base_ref'),
+    ...optionalStringProp(obj, 'branch'),
+    ...(cleanup !== null ? { cleanup } : {}),
+  };
+}
+
+function optionalStringProp(
+  params: Record<string, unknown>,
+  key: string,
+): Record<string, string> {
+  const value = optionalString(params, key);
+  return value === null ? {} : { [key]: value };
 }
 
 function mustExistingDispatcher(server: Server, id: string): void {

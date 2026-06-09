@@ -156,8 +156,21 @@ function teammateTools(callerKind: 'dispatcher' | 'teammate'): Array<Record<stri
             'Spawnable agents[].id returned by get_capabilities.agent_runtimes[].id.',
         },
         cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+        worktree: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            mode: { type: 'string', enum: ['reuse-cwd', 'managed'] },
+            slug: { type: 'string', minLength: 1, maxLength: 64 },
+            base_ref: { type: 'string', minLength: 1, maxLength: 256 },
+            branch: { type: 'string', minLength: 1, maxLength: 256 },
+            cleanup: { type: 'string', enum: ['keep', 'delete-on-close'] },
+          },
+          required: ['mode'],
+        },
+        intent: { type: 'string', maxLength: 2000 },
       },
-      ['name', 'prompt'],
+      ['name', 'prompt', 'cwd'],
     ),
     tool('send', 'Send a turn to a TeamMate agent; reopens a closed one from its checkpoint first.', {
       name: { type: 'string', minLength: 1, maxLength: 64 },
@@ -290,13 +303,52 @@ function asToolCallParams(params: unknown): ToolCall {
 function spawnArgs(value: unknown): Record<string, unknown> {
   const obj = asRecord(value, 'spawn arguments');
   const agentRuntime = optionalString(obj, 'agent_runtime');
-  const cwd = optionalString(obj, 'cwd');
+  const worktree = optionalWorktree(obj, 'worktree');
+  const intent = optionalString(obj, 'intent');
   return {
     name: requireString(obj, 'name'),
     prompt: requireString(obj, 'prompt'),
+    cwd: requireString(obj, 'cwd'),
     ...(agentRuntime !== null ? { agent_runtime: agentRuntime } : {}),
-    ...(cwd !== null ? { cwd } : {}),
+    ...(worktree !== null ? { worktree } : {}),
+    ...(intent !== null ? { intent } : {}),
   };
+}
+
+function optionalWorktree(
+  obj: Record<string, unknown>,
+  key: string,
+): Record<string, unknown> | null {
+  const value = obj[key];
+  if (value === undefined || value === null) return null;
+  const worktree = asRecord(value, key);
+  const mode = requireString(worktree, 'mode');
+  if (mode !== 'reuse-cwd' && mode !== 'managed') {
+    throw new Error(`${key}.mode must be 'reuse-cwd' or 'managed'`);
+  }
+  const cleanup = optionalString(worktree, 'cleanup');
+  if (
+    cleanup !== null &&
+    cleanup !== 'keep' &&
+    cleanup !== 'delete-on-close'
+  ) {
+    throw new Error(`${key}.cleanup must be 'keep' or 'delete-on-close'`);
+  }
+  return {
+    mode,
+    ...optionalProp(worktree, 'slug'),
+    ...optionalProp(worktree, 'base_ref'),
+    ...optionalProp(worktree, 'branch'),
+    ...(cleanup !== null ? { cleanup } : {}),
+  };
+}
+
+function optionalProp(
+  obj: Record<string, unknown>,
+  key: string,
+): Record<string, string> {
+  const value = optionalString(obj, key);
+  return value === null ? {} : { [key]: value };
 }
 
 function sendArgs(value: unknown): Record<string, unknown> {

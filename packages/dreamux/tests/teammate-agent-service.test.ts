@@ -1,7 +1,8 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execa } from 'execa';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -368,7 +369,15 @@ describe('TeamMateAgentService', () => {
     expect(spawned.turn).toEqual({ status: 'submitted', turn_id: 'turn-1' });
     expect(spawned.teammate).toMatchObject({
       name: 'reviewer',
+      owner: { kind: 'dispatcher', dispatcher_id: 'flow' },
       agent_runtime: 'flow',
+      source_cwd: root,
+      runtime_cwd: root,
+      worktree: {
+        mode: 'reuse-cwd',
+        path: root,
+        cleanup_state: 'not-managed',
+      },
       status: 'running',
       checkpoint: { kind: 'codexThread', id: expect.stringContaining('thread') },
     });
@@ -536,6 +545,149 @@ describe('TeamMateAgentService', () => {
         cwd: root,
       }),
     ).rejects.toThrow(/'no-such-agent', which matches no agents\[\]\.id/);
+  });
+
+  it('requires cwd for native teammate spawn', async () => {
+    const { catalog } = providerCatalog();
+    const config = testDreamuxConfig();
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: catalog,
+      log: noopLog(),
+    });
+    await expect(
+      service.spawn({
+        dispatcherId: 'flow',
+        name: 'no-cwd',
+        prompt: 'go',
+      } as Parameters<TeamMateAgentService['spawn']>[0]),
+    ).rejects.toThrow(/cwd/);
+  });
+
+  it('reads old identities without owner as dispatcher-owned until mutated', async () => {
+    const { catalog } = providerCatalog();
+    const config = testDreamuxConfig();
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: catalog,
+      log: noopLog(),
+    });
+    const dir = join(
+      root,
+      'home',
+      '.dreamux',
+      'state',
+      'flow',
+      'teammate',
+      'identities',
+    );
+    const path = join(dir, 'oldie.json');
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      path,
+      JSON.stringify({
+        version: 1,
+        dispatcher_id: 'flow',
+        name: 'oldie',
+        agent_runtime: 'flow',
+        cwd: root,
+        created_at: 1,
+        updated_at: 1,
+        status: 'stopped',
+        checkpoint: null,
+        last_error: null,
+        closed_at: null,
+        close_note: null,
+      }),
+      { mode: 0o600 },
+    );
+
+    expect((await service.status('flow', 'oldie')).owner).toEqual({
+      kind: 'dispatcher',
+      dispatcher_id: 'flow',
+    });
+    expect(await readFile(path, 'utf8')).not.toContain('"owner"');
+  });
+
+  it('prepares managed worktrees, persists metadata, and deletes clean worktrees on close', async () => {
+    const repo = await initGitRepo(join(root, 'repo'));
+    const { catalog, provider } = providerCatalog();
+    const config = testDreamuxConfig();
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: catalog,
+      log: noopLog(),
+    });
+
+    const spawned = await service.spawn({
+      dispatcherId: 'flow',
+      name: 'managed',
+      prompt: 'go',
+      cwd: repo,
+      worktree: {
+        mode: 'managed',
+        slug: 'managed',
+        branch: 'dreamux/managed',
+        cleanup: 'delete-on-close',
+      },
+    });
+
+    expect(spawned.teammate.source_cwd).toBe(repo);
+    expect(spawned.teammate.source_repo).toBe(repo);
+    expect(spawned.teammate.worktree).toMatchObject({
+      mode: 'managed',
+      slug: 'managed',
+      branch: 'dreamux/managed',
+      base_ref: 'HEAD',
+      cleanup: 'delete-on-close',
+      cleanup_state: 'managed-active',
+    });
+    expect(provider.contexts[0]?.cwd).toBe(spawned.teammate.worktree.path);
+    expect(existsSync(spawned.teammate.worktree.path)).toBe(true);
+
+    const closed = await service.close({
+      dispatcherId: 'flow',
+      name: 'managed',
+      note: 'done',
+    });
+    expect(closed.teammate.worktree.cleanup_state).toBe('deleted');
+    expect(existsSync(spawned.teammate.worktree.path)).toBe(false);
+  });
+
+  it('retains dirty managed worktrees on close', async () => {
+    const repo = await initGitRepo(join(root, 'dirty-repo'));
+    const { catalog } = providerCatalog();
+    const config = testDreamuxConfig();
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: catalog,
+      log: noopLog(),
+    });
+
+    const spawned = await service.spawn({
+      dispatcherId: 'flow',
+      name: 'dirty',
+      prompt: 'go',
+      cwd: repo,
+      worktree: {
+        mode: 'managed',
+        slug: 'dirty',
+        branch: 'dreamux/dirty',
+        cleanup: 'delete-on-close',
+      },
+    });
+    await writeFile(join(spawned.teammate.worktree.path, 'dirty.txt'), 'dirty');
+
+    const closed = await service.close({
+      dispatcherId: 'flow',
+      name: 'dirty',
+    });
+    expect(closed.teammate.worktree.cleanup_state).toBe('retained-dirty');
+    expect(existsSync(spawned.teammate.worktree.path)).toBe(true);
   });
 
   it('fails loud on a legacy provider_ref teammate identity (pre-#148)', async () => {
@@ -758,4 +910,17 @@ function noopLog(): {
 /** Drain the microtask/macrotask the void-ed settle handler runs on. */
 async function flush(): Promise<void> {
   await new Promise((resolve) => setImmediate(resolve));
+}
+
+async function initGitRepo(path: string): Promise<string> {
+  await mkdir(path, { recursive: true });
+  await execa('git', ['init', '-b', 'main'], { cwd: path });
+  await execa('git', ['config', 'user.name', 'Dreamux Test'], { cwd: path });
+  await execa('git', ['config', 'user.email', 'dreamux-test@example.com'], {
+    cwd: path,
+  });
+  await writeFile(join(path, 'README.md'), 'test\n');
+  await execa('git', ['add', 'README.md'], { cwd: path });
+  await execa('git', ['commit', '-m', 'Initial test commit'], { cwd: path });
+  return path;
 }

@@ -12,6 +12,8 @@ import {
   type TeamMateHistoryEventType,
   type TeamMateIdentity,
   type TeamMateIdentityStatus,
+  type TeamMateOwner,
+  type TeamMateWorktreeIdentity,
 } from './types.js';
 import type { AgentRuntimeResumeCheckpoint } from '../../agent-runtime/index.js';
 
@@ -23,14 +25,22 @@ export interface TeamMateIdentityCreateInput {
   dispatcherId: string;
   name: string;
   agentRuntime: string;
+  sourceCwd: string;
+  sourceRepo: string | null;
   cwd: string;
+  runtimeCwd: string;
+  worktree: TeamMateWorktreeIdentity;
   checkpoint?: AgentRuntimeResumeCheckpoint | null;
   status?: TeamMateIdentityStatus;
 }
 
 export interface TeamMateIdentityUpdateInput {
   agentRuntime?: string;
+  sourceCwd?: string;
+  sourceRepo?: string | null;
   cwd?: string;
+  runtimeCwd?: string;
+  worktree?: TeamMateWorktreeIdentity;
   checkpoint?: AgentRuntimeResumeCheckpoint | null;
   status?: TeamMateIdentityStatus;
   lastError?: string | null;
@@ -98,8 +108,13 @@ export class TeamMateIdentityStore {
       version: 1,
       dispatcher_id: input.dispatcherId,
       name: input.name,
+      owner: dispatcherOwner(input.dispatcherId),
       agent_runtime: input.agentRuntime,
+      source_cwd: input.sourceCwd,
+      source_repo: input.sourceRepo,
       cwd: input.cwd,
+      runtime_cwd: input.runtimeCwd,
+      worktree: input.worktree,
       created_at: now,
       updated_at: now,
       status: input.status ?? 'starting',
@@ -119,7 +134,11 @@ export class TeamMateIdentityStore {
     const updated: TeamMateIdentity = {
       ...identity,
       ...(input.agentRuntime !== undefined ? { agent_runtime: input.agentRuntime } : {}),
+      ...(input.sourceCwd !== undefined ? { source_cwd: input.sourceCwd } : {}),
+      ...(input.sourceRepo !== undefined ? { source_repo: input.sourceRepo } : {}),
       ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
+      ...(input.runtimeCwd !== undefined ? { runtime_cwd: input.runtimeCwd } : {}),
+      ...(input.worktree !== undefined ? { worktree: input.worktree } : {}),
       ...(input.checkpoint !== undefined ? { checkpoint: input.checkpoint } : {}),
       ...(input.status !== undefined ? { status: input.status } : {}),
       ...(input.lastError !== undefined ? { last_error: input.lastError } : {}),
@@ -142,9 +161,14 @@ export class TeamMateIdentityStore {
         timestamp: Date.now(),
         dispatcher_id: identity.dispatcher_id,
         name: identity.name,
+        owner: identity.owner,
         type: input.type,
         agent_runtime: identity.agent_runtime,
+        source_cwd: identity.source_cwd,
+        source_repo: identity.source_repo,
         cwd: identity.cwd,
+        runtime_cwd: identity.runtime_cwd,
+        worktree: identity.worktree,
         checkpoint: identity.checkpoint,
         prompt_preview:
           input.prompt !== undefined && input.prompt !== null
@@ -231,7 +255,84 @@ function readIdentity(
   ) {
     throw new Error(`invalid TeamMate identity ${JSON.stringify(name)}`);
   }
-  return value as unknown as TeamMateIdentity;
+  const record = value as Record<string, unknown>;
+  const sourceCwd =
+    typeof record['source_cwd'] === 'string'
+      ? record['source_cwd']
+      : (record['cwd'] as string);
+  const sourceRepo =
+    typeof record['source_repo'] === 'string' ? record['source_repo'] : null;
+  const runtimeCwd =
+    typeof record['runtime_cwd'] === 'string'
+      ? record['runtime_cwd']
+      : (record['cwd'] as string);
+  const worktree = readWorktreeIdentity(record['worktree'], runtimeCwd);
+  return {
+    ...(value as unknown as TeamMateIdentity),
+    owner: readOwner(record['owner'], dispatcherId),
+    source_cwd: sourceCwd,
+    source_repo: sourceRepo,
+    runtime_cwd: runtimeCwd,
+    worktree,
+  };
+}
+
+function readOwner(value: unknown, dispatcherId: string): TeamMateOwner {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return dispatcherOwner(dispatcherId);
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    record['kind'] !== 'dispatcher' ||
+    typeof record['dispatcher_id'] !== 'string'
+  ) {
+    return dispatcherOwner(dispatcherId);
+  }
+  return { kind: 'dispatcher', dispatcher_id: record['dispatcher_id'] };
+}
+
+function dispatcherOwner(dispatcherId: string): TeamMateOwner {
+  return { kind: 'dispatcher', dispatcher_id: dispatcherId };
+}
+
+function readWorktreeIdentity(
+  value: unknown,
+  runtimeCwd: string,
+): TeamMateWorktreeIdentity {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return {
+      mode: 'reuse-cwd',
+      slug: null,
+      path: runtimeCwd,
+      branch: null,
+      base_ref: null,
+      cleanup: 'keep',
+      cleanup_state: 'not-managed',
+      cleanup_error: null,
+    };
+  }
+  const record = value as Record<string, unknown>;
+  const mode = record['mode'] === 'managed' ? 'managed' : 'reuse-cwd';
+  return {
+    mode,
+    slug: typeof record['slug'] === 'string' ? record['slug'] : null,
+    path: typeof record['path'] === 'string' ? record['path'] : runtimeCwd,
+    branch: typeof record['branch'] === 'string' ? record['branch'] : null,
+    base_ref:
+      typeof record['base_ref'] === 'string' ? record['base_ref'] : null,
+    cleanup:
+      record['cleanup'] === 'delete-on-close' ? 'delete-on-close' : 'keep',
+    cleanup_state:
+      typeof record['cleanup_state'] === 'string'
+        ? (record['cleanup_state'] as TeamMateWorktreeIdentity['cleanup_state'])
+        : mode === 'managed'
+          ? 'managed-active'
+          : 'not-managed',
+    cleanup_error:
+      typeof record['cleanup_error'] === 'string'
+        ? record['cleanup_error']
+        : null,
+  };
 }
 
 function readHistoryEvent(

@@ -28,6 +28,7 @@ import { dispatcherTeamMateRuntimeDir } from '../../platform/paths.js';
 import { validateDispatcherId } from '../../state/dispatcher-id.js';
 import { TeamMateIdentityStore } from './identity-store.js';
 import { TeamMateRuntimeStateStore } from './runtime-state.js';
+import { WorktreeManager } from './worktree-manager.js';
 import {
   validateTeamMateName,
   type CloseTeamMateInput,
@@ -76,6 +77,7 @@ export interface TeamMateAgentServiceOptions {
 
 export class TeamMateAgentService {
   private readonly identities: TeamMateIdentityStore;
+  private readonly worktrees = new WorktreeManager();
   private readonly live = new Map<string, LiveTeamMate>();
   private submissionSeq = 0;
 
@@ -87,6 +89,9 @@ export class TeamMateAgentService {
 
   async spawn(input: SpawnTeamMateInput): Promise<TeamMateSpawnResult> {
     const name = validateTeamMateName(input.name);
+    if (typeof input.cwd !== 'string' || input.cwd.trim() === '') {
+      throw new Error('TeamMate spawn requires cwd');
+    }
     const existing = await this.identities.get(input.dispatcherId, name);
     if (existing !== null && existing.status !== 'closed') {
       throw new Error(`TeamMate ${JSON.stringify(name)} already exists; use send`);
@@ -95,18 +100,31 @@ export class TeamMateAgentService {
       input.agentRuntime ?? this.defaultAgentRuntime(input.dispatcherId);
     const agent = this.resolveAgent(input.dispatcherId, agentRuntimeId);
     const provider = this.opts.agentRuntimeProviders.resolve(agent.provider);
-    const cwd = this.resolveCwd(input.dispatcherId, input.cwd);
+    const workspace = await this.worktrees.prepare({
+      dispatcherId: input.dispatcherId,
+      teammateName: name,
+      cwd: input.cwd,
+      request: input.worktree,
+    });
     let identity =
       existing ??
       (await this.identities.create({
         dispatcherId: input.dispatcherId,
         name,
         agentRuntime: agentRuntimeId,
-        cwd,
+        sourceCwd: workspace.sourceCwd,
+        sourceRepo: workspace.sourceRepo,
+        cwd: workspace.runtimeCwd,
+        runtimeCwd: workspace.runtimeCwd,
+        worktree: workspace.worktree,
       }));
     identity = await this.identities.update(identity, {
       agentRuntime: agentRuntimeId,
-      cwd,
+      sourceCwd: workspace.sourceCwd,
+      sourceRepo: workspace.sourceRepo,
+      cwd: workspace.runtimeCwd,
+      runtimeCwd: workspace.runtimeCwd,
+      worktree: workspace.worktree,
       status: 'starting',
       closedAt: null,
       closeNote: null,
@@ -155,6 +173,7 @@ export class TeamMateAgentService {
       status: 'closed',
       closedAt: Date.now(),
       closeNote: input.note ?? null,
+      worktree: await this.worktrees.cleanup(identity),
     });
     await this.identities.appendHistory(closed, {
       type: 'close',
@@ -557,22 +576,19 @@ export class TeamMateAgentService {
     );
   }
 
-  private resolveCwd(dispatcherId: string, input: string | undefined): string {
-    if (input !== undefined && input !== '') return input;
-    return (
-      this.dispatcherConfig(dispatcherId)?.cwd ??
-      dispatcherTeamMateRuntimeDir(dispatcherId, 'default')
-    );
-  }
-
   private toStatus(
     identity: TeamMateIdentity,
     runtime: AgentRuntime | null,
   ): TeamMateRuntimeStatus {
     return {
       name: identity.name,
+      owner: identity.owner,
       agent_runtime: identity.agent_runtime,
+      source_cwd: identity.source_cwd,
+      source_repo: identity.source_repo,
       cwd: identity.cwd,
+      runtime_cwd: identity.runtime_cwd,
+      worktree: identity.worktree,
       status: identity.status,
       runtime_status: runtime?.getStatus() ?? null,
       checkpoint: identity.checkpoint,
