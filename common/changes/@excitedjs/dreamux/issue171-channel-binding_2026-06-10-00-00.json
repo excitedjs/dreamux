@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "BREAKING: Team Mode adds persistent Feishu group channel binding. Dispatcher-scoped `team` MCP/admin now includes `bind_channel` and `transfer_channel_back`; bound group inbound is routed to the TeamLeader after the normal Feishu gate/format path, while unbound and P2P inbound continue to the dispatcher. TeamLeader Feishu reply/react calls are scoped to bound team channels. Rebuild: update Team Mode dispatcher automation to call `team.bind_channel({ team_id, chat_id, chat_type: \"group\" })` for group handoff and `team.transfer_channel_back({ chat_id, chat_type: \"group\" })` before returning a group to the dispatcher.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

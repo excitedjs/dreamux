@@ -6,6 +6,9 @@ export const FEISHU_MCP_SERVER_NAME = 'feishu';
 export interface FeishuMcpServerDescriptorOptions {
   dispatcherId: string;
   adminSocketPath: string;
+  callerKind?: 'dispatcher' | 'team_leader';
+  teamId?: string;
+  leaderName?: string;
   command?: string;
   env?: NodeJS.ProcessEnv;
 }
@@ -20,6 +23,7 @@ export interface FeishuMcpReplyInput {
 }
 
 export interface FeishuMcpReactInput {
+  chatId?: string;
   messageId: string;
   emoji: string;
 }
@@ -44,6 +48,9 @@ export function feishuMcpServerDescriptor(
       'feishu-mcp',
       '--dispatcher',
       opts.dispatcherId,
+      ...(opts.callerKind !== undefined ? ['--caller', opts.callerKind] : []),
+      ...(opts.teamId !== undefined ? ['--team-id', opts.teamId] : []),
+      ...(opts.leaderName !== undefined ? ['--leader-name', opts.leaderName] : []),
       '--admin-socket',
       opts.adminSocketPath,
     ],
@@ -90,6 +97,10 @@ export function feishuMcpTools(): Array<Record<string, unknown>> {
           message_id: {
             type: 'string',
             description: 'Feishu message id to react to.',
+          },
+          chat_id: {
+            type: 'string',
+            description: 'Feishu chat id from the inbound <channel source="feishu"> block.',
           },
           emoji: {
             type: 'string',
@@ -169,6 +180,7 @@ export function feishuMcpAdminParams(
     case 'react':
       return {
         dispatcher_id: dispatcherId,
+        ...(parsed.input.chatId !== undefined ? { chat_id: parsed.input.chatId } : {}),
         message_id: parsed.input.messageId,
         emoji: parsed.input.emoji,
       };
@@ -196,7 +208,9 @@ function replyArgs(value: unknown): FeishuMcpReplyInput {
 
 function reactArgs(value: unknown): FeishuMcpReactInput {
   const obj = asRecord(value, 'react arguments');
+  const chatId = optionalString(obj, 'chat_id');
   return {
+    ...(chatId !== null ? { chatId } : {}),
     messageId: requireString(obj, 'message_id'),
     emoji: requireString(obj, 'emoji'),
   };

@@ -7,6 +7,7 @@ import type {
 import type { FeishuBot } from '../../channel/feishu/bot.js';
 import {
   FeishuChannelSession,
+  type FeishuInboundEnvelope,
   handleFeishuListChatBots,
   type FeishuMcpListChatBotsResult,
 } from '../../channel/feishu/feishu-channel.js';
@@ -46,6 +47,12 @@ export interface DispatcherAgentServiceOptions {
   skipBotSecret?: boolean;
   channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
   log: DreamuxLogger;
+  routeChannelInput?: (
+    dispatcherId: string,
+    input: import('../../agent-runtime/turn.js').InboundTurnInput,
+    envelope: FeishuInboundEnvelope,
+    hooks?: import('../../agent-runtime/turn.js').InboundDeliveryHooks,
+  ) => Promise<import('../../agent-runtime/types.js').AgentRuntimeTurnResult>;
 }
 
 export interface DispatcherAgentSlot {
@@ -300,7 +307,9 @@ export class DispatcherAgentService {
     try {
       await runtime.start();
       await channel.start({
-        submitTurn: (turn, hooks) => runtime.channelInput(turn, hooks),
+        submitTurn: (turn, envelope, hooks) =>
+          this.opts.routeChannelInput?.(id, turn, envelope, hooks) ??
+          runtime.channelInput(turn, hooks),
       });
     } catch (err) {
       try {

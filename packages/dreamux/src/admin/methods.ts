@@ -90,6 +90,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     mustRunningDispatcher(server, id);
+    await assertFeishuScope(server, id, params);
     try {
       return await server.dispatcherService.callFeishuMcpTool({
         dispatcherId: id,
@@ -105,6 +106,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     mustRunningDispatcher(server, id);
+    await assertFeishuScope(server, id, params);
     try {
       return await server.dispatcherService.callFeishuMcpTool({
         dispatcherId: id,
@@ -119,9 +121,10 @@ export const adminMethods: Record<string, AdminHandler> = {
   // Read-only: lists a chat's known + trusted peer bots (issue #69). Reads the
   // per-dispatcher chat-bots store, so it does not require a running slot — only
   // a declared dispatcher.
-  'mcp.list_chat_bots': (server, params) => {
+  'mcp.list_chat_bots': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
+    await assertFeishuScope(server, id, params);
     return server.dispatcherService.callFeishuMcpTool({
       dispatcherId: id,
       toolName: 'list_chat_bots',
@@ -304,6 +307,31 @@ export const adminMethods: Record<string, AdminHandler> = {
     return server.dispatcherService.getTeamLedger(id, teamId);
   },
 
+  'mcp.team.bind_channel': async (server, params) => {
+    const id = mustDispatcherId(params);
+    mustExistingDispatcher(server, id);
+    return server.dispatcherService.bindTeamChannel({
+      dispatcherId: id,
+      teamId: mustString(params, 'team_id'),
+      provider: 'builtin:feishu',
+      chatId: mustString(params, 'chat_id'),
+      chatType: mustString(params, 'chat_type') === 'group' ? 'group' : 'p2p',
+    });
+  },
+
+  'mcp.team.transfer_channel_back': async (server, params) => {
+    const id = mustDispatcherId(params);
+    mustExistingDispatcher(server, id);
+    return {
+      binding: await server.dispatcherService.transferTeamChannelBack({
+        dispatcherId: id,
+        provider: 'builtin:feishu',
+        chatId: mustString(params, 'chat_id'),
+        chatType: mustString(params, 'chat_type') === 'group' ? 'group' : 'p2p',
+      }),
+    };
+  },
+
   'mcp.team.dissolve': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
@@ -316,6 +344,35 @@ export const adminMethods: Record<string, AdminHandler> = {
     });
   },
 };
+
+async function assertFeishuScope(
+  server: Server,
+  dispatcherId: string,
+  params: Record<string, unknown> | undefined,
+): Promise<void> {
+  const caller = callerPrincipal(dispatcherId, params);
+  if (caller.kind !== 'team_leader') return;
+  const chatId = optionalString(params, 'chat_id');
+  if (chatId === null) {
+    throw new AdminError(
+      'BAD_REQUEST',
+      "param 'chat_id' is required for TeamLeader Feishu tools",
+    );
+  }
+  const allowed = await server.dispatcherService.teamLeaderCanUseChannel({
+    dispatcherId,
+    teamId: caller.teamId,
+    leaderName: caller.leaderName,
+    provider: 'builtin:feishu',
+    chatId,
+  });
+  if (!allowed) {
+    throw new AdminError(
+      'CHANNEL_SCOPE_DENIED',
+      'TeamLeader may use Feishu only for bound team channels',
+    );
+  }
+}
 
 function callerPrincipal(
   dispatcherId: string,

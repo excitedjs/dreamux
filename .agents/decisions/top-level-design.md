@@ -613,20 +613,28 @@ recursively spawn or close TeamMates.
 
 ## Team Mode Core
 
-Issue #171 starts Team Mode without Feishu channel routing. Dispatcher runtimes
-receive a `team` MCP server for dispatcher-only team lifecycle: `create`,
-`list`, `status`, `ledger`, and `dissolve`. `create` requires `repo_cwd` and
-`leader_agent_runtime`; Dreamux does not infer a default TeamLeader runtime. A
-TeamLeader is a TeamMate identity with `role: "team_leader"` and dispatcher
-owner. Team-owned members are normal TeamMate identities with `role:
-"team_member"` and `owner.kind: "team"`.
+Issue #171 starts Team Mode. Dispatcher runtimes receive a `team` MCP server for
+dispatcher-only team lifecycle: `create`, `list`, `status`, `ledger`,
+`bind_channel`, `transfer_channel_back`, and `dissolve`. `create` requires
+`repo_cwd` and `leader_agent_runtime`; Dreamux does not infer a default
+TeamLeader runtime. A TeamLeader is a TeamMate identity with `role:
+"team_leader"` and dispatcher owner. Team-owned members are normal TeamMate
+identities with `role: "team_member"` and `owner.kind: "team"`.
 
 The same `teammate` MCP surface is caller-scoped by server-derived principal,
 not by tool arguments. Dispatcher callers see dispatcher-owned TeamMates and
 TeamLeaders. TeamLeader callers see only members owned by their own team and
 spawn members into the shared Team managed worktree. Ordinary TeamMate callers
-still do not receive lifecycle tools. Channel binding and Feishu routing remain
-out of scope for this first Team Mode slice.
+still do not receive lifecycle tools.
+
+Channel binding is persisted under `state/<dispatcher-id>/team/` and is scoped
+to group chats only. Bound Feishu group inbound is gated and formatted by the
+Feishu channel exactly as before, then routed by Dispatcher Service to the
+owning TeamLeader runtime. Unbound and P2P inbound still route to the
+dispatcher. `transfer_channel_back` deactivates a binding; `dissolve` transfers
+active bindings back before closing the team. TeamLeader Feishu MCP calls carry
+their server-derived team principal and can reply/react only in bound team
+channels; the dispatcher keeps the global Feishu management surface.
 
 ## Reaction Ownership
 

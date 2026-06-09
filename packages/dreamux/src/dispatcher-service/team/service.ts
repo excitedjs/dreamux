@@ -1,14 +1,18 @@
 import { WorktreeManager } from '../teammate/worktree-manager.js';
 import type { TeamMateAgentService, TeamMateSharedWorkspace } from '../teammate/service.js';
-import { teamLeaderPrincipal } from '../teammate/types.js';
+import { dispatcherPrincipal, teamLeaderPrincipal } from '../teammate/types.js';
+import { ChannelBindingStore } from '../channel-binding/store.js';
+import type { ChannelBinding } from '../channel-binding/store.js';
 import { TeamStore } from './store.js';
 import type {
+  TeamBindChannelInput,
   TeamCreateInput,
   TeamCreateResult,
   TeamDissolveInput,
   TeamLedgerResult,
   TeamRecord,
   TeamSummary,
+  TeamTransferChannelBackInput,
 } from './types.js';
 import { validateTeamId } from './types.js';
 
@@ -19,6 +23,7 @@ export interface TeamServiceOptions {
 export class TeamService {
   private readonly store = new TeamStore();
   private readonly worktrees = new WorktreeManager();
+  private readonly bindings = new ChannelBindingStore();
 
   constructor(private readonly opts: TeamServiceOptions) {}
 
@@ -110,6 +115,16 @@ export class TeamService {
 
   async dissolve(input: TeamDissolveInput): Promise<TeamSummary> {
     const team = await this.mustTeam(input.dispatcherId, input.teamId);
+    for (const binding of await this.bindings.list(input.dispatcherId)) {
+      if (binding.active && binding.team_id === team.team_id) {
+        await this.bindings.transferBack({
+          dispatcherId: input.dispatcherId,
+          provider: binding.provider,
+          chatId: binding.chat_id,
+          chatType: binding.chat_type,
+        });
+      }
+    }
     const members = await this.opts.teammates.listScoped(
       teamLeaderPrincipal({
         dispatcherId: input.dispatcherId,
@@ -148,6 +163,89 @@ export class TeamService {
       summary: input.note ?? 'team dissolved',
     });
     return this.summary(closed);
+  }
+
+  async bindChannel(input: TeamBindChannelInput): Promise<ChannelBinding> {
+    const team = await this.mustTeam(input.dispatcherId, input.teamId);
+    if (team.status === 'closed') {
+      throw new Error(`Team ${JSON.stringify(input.teamId)} is closed`);
+    }
+    const binding = await this.bindings.bind({
+      dispatcherId: input.dispatcherId,
+      provider: input.provider,
+      chatId: input.chatId,
+      chatType: input.chatType,
+      teamId: team.team_id,
+      leaderName: team.leader_name,
+    });
+    await this.store.appendLedger(team, {
+      type: 'bind_channel',
+      summary: `bound ${input.provider} ${input.chatType} ${input.chatId}`,
+    });
+    return binding;
+  }
+
+  async transferChannelBack(
+    input: TeamTransferChannelBackInput,
+  ): Promise<ChannelBinding | null> {
+    const binding = await this.bindings.transferBack(input);
+    if (binding !== null) {
+      const team = await this.store.get(input.dispatcherId, binding.team_id);
+      if (team !== null) {
+        await this.store.appendLedger(team, {
+          type: 'transfer_channel_back',
+          summary: `transferred ${input.provider} ${input.chatType} ${input.chatId} back to dispatcher`,
+        });
+      }
+    }
+    return binding;
+  }
+
+  async resolveChannel(input: {
+    dispatcherId: string;
+    provider: 'builtin:feishu';
+    chatId: string;
+    chatType: 'group' | 'p2p';
+  }): Promise<ChannelBinding | null> {
+    const binding = await this.bindings.resolve(input);
+    if (binding === null) return null;
+    const team = await this.store.get(input.dispatcherId, binding.team_id);
+    if (team === null || team.status === 'closed') return null;
+    return binding;
+  }
+
+  async teamLeaderCanUseChannel(input: {
+    dispatcherId: string;
+    teamId: string;
+    leaderName: string;
+    provider: 'builtin:feishu';
+    chatId: string;
+  }): Promise<boolean> {
+    const binding = await this.bindings.resolve({
+      dispatcherId: input.dispatcherId,
+      provider: input.provider,
+      chatId: input.chatId,
+      chatType: 'group',
+    });
+    return (
+      binding !== null &&
+      binding.team_id === input.teamId &&
+      binding.leader_name === input.leaderName
+    );
+  }
+
+  async deliverToLeader(input: {
+    dispatcherId: string;
+    teamId: string;
+    turn: import('../../agent-runtime/turn.js').InboundTurnInput;
+  }): Promise<import('../../agent-runtime/types.js').AgentRuntimeTurnResult> {
+    const team = await this.mustTeam(input.dispatcherId, input.teamId);
+    if (team.status === 'closed') return { status: 'stopped' };
+    return this.opts.teammates.channelInputScoped(
+      dispatcherPrincipal(input.dispatcherId),
+      team.leader_name,
+      input.turn,
+    );
   }
 
   async sharedWorkspace(

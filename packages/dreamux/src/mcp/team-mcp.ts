@@ -113,6 +113,15 @@ function teamTools(): Array<Record<string, unknown>> {
     tool('ledger', 'Read one Team ledger.', {
       team_id: { type: 'string', minLength: 1, maxLength: 64 },
     }, ['team_id']),
+    tool('bind_channel', 'Bind a Feishu group chat to a TeamLeader.', {
+      team_id: { type: 'string', minLength: 1, maxLength: 64 },
+      chat_id: { type: 'string', minLength: 1 },
+      chat_type: { type: 'string', enum: ['group', 'p2p'] },
+    }, ['team_id', 'chat_id', 'chat_type']),
+    tool('transfer_channel_back', 'Transfer a bound Feishu group chat back to the dispatcher.', {
+      chat_id: { type: 'string', minLength: 1 },
+      chat_type: { type: 'string', enum: ['group', 'p2p'] },
+    }, ['chat_id', 'chat_type']),
     tool('dissolve', 'Close one Team and its agents.', {
       team_id: { type: 'string', minLength: 1, maxLength: 64 },
       note: { type: 'string', maxLength: 2000 },
@@ -165,6 +174,10 @@ function mapToolCall(call: ToolCall): { method: string; params: Record<string, u
       return { method: 'mcp.team.status', params: teamIdArgs(call.arguments) };
     case 'ledger':
       return { method: 'mcp.team.ledger', params: teamIdArgs(call.arguments) };
+    case 'bind_channel':
+      return { method: 'mcp.team.bind_channel', params: bindChannelArgs(call.arguments) };
+    case 'transfer_channel_back':
+      return { method: 'mcp.team.transfer_channel_back', params: channelArgs(call.arguments) };
     case 'dissolve':
       return { method: 'mcp.team.dissolve', params: dissolveArgs(call.arguments) };
     default:
@@ -196,6 +209,22 @@ function dissolveArgs(value: unknown): Record<string, unknown> {
   return {
     team_id: requireString(obj, 'team_id'),
     ...(note !== null ? { note } : {}),
+  };
+}
+
+function bindChannelArgs(value: unknown): Record<string, unknown> {
+  const obj = asRecord(value, 'bind_channel arguments');
+  return {
+    team_id: requireString(obj, 'team_id'),
+    ...channelArgs(value),
+  };
+}
+
+function channelArgs(value: unknown): Record<string, unknown> {
+  const obj = asRecord(value, 'channel arguments');
+  return {
+    chat_id: requireString(obj, 'chat_id'),
+    chat_type: requireString(obj, 'chat_type'),
   };
 }
 

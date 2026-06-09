@@ -1,8 +1,11 @@
 import type {
   AgentRuntimeProviderCatalog,
   AgentRuntime,
+  AgentRuntimeTurnResult,
   CompletionEnvelope,
 } from '../agent-runtime/index.js';
+import type { InboundDeliveryHooks, InboundTurnInput } from '../agent-runtime/turn.js';
+import type { FeishuInboundEnvelope } from '../channel/feishu/feishu-channel.js';
 import type { DreamuxConfig } from '../config/config.js';
 import type { DispatcherStore } from '../state/dispatcher-store.js';
 import type { DreamuxLogger } from '../platform/logger.js';
@@ -18,6 +21,7 @@ import {
 import { TeamService } from './team/service.js';
 import { TeamMateAgentService } from './teammate/service.js';
 import { teammateMcpServerDescriptor } from './teammate/mcp-config.js';
+import { feishuMcpServerDescriptor } from '../channel/feishu/feishu-mcp-surface.js';
 import type {
   CloseTeamMateInput,
   TeamMateHistoryQuery,
@@ -25,7 +29,12 @@ import type {
   SpawnTeamMateInput,
   TeamMateIdentity,
 } from './teammate/types.js';
-import type { TeamCreateInput, TeamDissolveInput } from './team/types.js';
+import type {
+  TeamBindChannelInput,
+  TeamCreateInput,
+  TeamDissolveInput,
+  TeamTransferChannelBackInput,
+} from './team/types.js';
 
 export interface DispatcherServiceOptions {
   config: DreamuxConfig;
@@ -64,6 +73,8 @@ export class DispatcherService {
       ...(opts.skipBotSecret !== undefined
         ? { skipBotSecret: opts.skipBotSecret }
         : {}),
+      routeChannelInput: (id, turn, envelope, hooks) =>
+        this.routeChannelInput(id, turn, envelope, hooks),
     });
     this.teammates = new TeamMateAgentService({
       config: opts.config,
@@ -73,6 +84,13 @@ export class DispatcherService {
         identity.role === 'team_leader'
           ? [
               teammateMcpServerDescriptor({
+                dispatcherId,
+                callerKind: 'team_leader',
+                teamId: identity.team_id ?? '',
+                leaderName: identity.name,
+                adminSocketPath: opts.adminSocketPath ?? defaultAdminSocketPath(),
+              }),
+              feishuMcpServerDescriptor({
                 dispatcherId,
                 callerKind: 'team_leader',
                 teamId: identity.team_id ?? '',
@@ -113,6 +131,32 @@ export class DispatcherService {
 
   callFeishuMcpTool(input: FeishuChannelToolCall) {
     return this.dispatchers.callFeishuMcpTool(input);
+  }
+
+  async routeChannelInput(
+    dispatcherId: string,
+    input: InboundTurnInput,
+    envelope: FeishuInboundEnvelope,
+    hooks?: InboundDeliveryHooks,
+  ): Promise<AgentRuntimeTurnResult> {
+    const binding = await this.teams.resolveChannel({
+      dispatcherId,
+      provider: envelope.provider,
+      chatId: envelope.chatId,
+      chatType: envelope.chatType,
+    });
+    if (binding !== null) {
+      const result = await this.teams.deliverToLeader({
+        dispatcherId,
+        teamId: binding.team_id,
+        turn: input,
+      });
+      if (result.status === 'submitted') await hooks?.onAccepted?.(input);
+      return result;
+    }
+    const runtime = this.dispatchers.getRuntime(dispatcherId);
+    if (runtime === null) return { status: 'stopped' };
+    return runtime.channelInput(input, hooks);
   }
 
   async deliverTeamMateCompletion(
@@ -191,6 +235,24 @@ export class DispatcherService {
 
   dissolveTeam(input: TeamDissolveInput) {
     return this.teams.dissolve(input);
+  }
+
+  bindTeamChannel(input: TeamBindChannelInput) {
+    return this.teams.bindChannel(input);
+  }
+
+  transferTeamChannelBack(input: TeamTransferChannelBackInput) {
+    return this.teams.transferChannelBack(input);
+  }
+
+  teamLeaderCanUseChannel(input: {
+    dispatcherId: string;
+    teamId: string;
+    leaderName: string;
+    provider: 'builtin:feishu';
+    chatId: string;
+  }) {
+    return this.teams.teamLeaderCanUseChannel(input);
   }
 
   async shutdown(): Promise<void> {
