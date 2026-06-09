@@ -19,8 +19,8 @@
  * - **Runtime-owned config** is `DispatcherClaudeCodeConfig` (bin / model /
  *   permission_mode / remote_control / extra_args / extra_env), distinct from
  *   the Codex config.
- * - **Completion delivery** is the Claude Code task-notification path, not the
- *   Codex inbox-then-trigger path.
+ * - **Completion delivery** is a plain user turn (no fake task-notification),
+ *   not the Codex inbox-then-trigger path.
  *
  * Process spawning goes through an injectable {@link ClaudeCodeSessionFactory}
  * seam (mirroring Codex's process-factory seam), so the lifecycle contract is
@@ -84,6 +84,7 @@ import {
   type TurnOutcome,
   type TurnSubmitOptions,
 } from './supervisor.js';
+import { renderChannelInput } from '../../turn.js';
 import type {
   InboundDeliveryHooks,
   InboundTurnInput,
@@ -323,10 +324,14 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       // failure there must not drop the turn.
       this.log('warn', 'claude-code onAccepted hook failed', err);
     }
+    // This runtime owns wrapping the channel input into its delivery shape: a
+    // structured channel turn becomes the native `<channel source="…">` block;
+    // a plain turn passes through unchanged.
+    const text = renderChannelInput(input);
     const active = this.activeChannelTurn;
     if (active !== null) {
       try {
-        await this.steerChannelTurn(active, input.text);
+        await this.steerChannelTurn(active, text);
         return { status: 'submitted', turnId: active.turnId };
       } catch (err) {
         return {
@@ -348,7 +353,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     // returned to this caller without blocking the channel ack on full turn
     // completion. Instead, a failed turn drives the runtime to `degraded` with a
     // persisted `last_error` (visible via status/doctor) — never swallowed.
-    void this.runChannelTurnOnQueue(input.text, channelTurn).then(
+    void this.runChannelTurnOnQueue(text, channelTurn).then(
       () => this.markTurnSucceeded(turnId),
       (err) => this.markTurnFailed(turnId, err),
     );

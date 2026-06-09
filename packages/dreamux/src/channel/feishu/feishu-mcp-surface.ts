@@ -61,7 +61,7 @@ export function feishuMcpTools(): Array<Record<string, unknown>> {
         properties: {
           chat_id: {
             type: 'string',
-            description: 'Feishu chat id from the inbound feishu_message block.',
+            description: 'Feishu chat id from the inbound <channel source="feishu"> block.',
           },
           message_id: {
             type: 'string',
@@ -109,7 +109,7 @@ export function feishuMcpTools(): Array<Record<string, unknown>> {
         properties: {
           chat_id: {
             type: 'string',
-            description: 'Feishu chat id from the inbound feishu_message block.',
+            description: 'Feishu chat id from the inbound <channel source="feishu"> block.',
           },
         },
         required: ['chat_id'],

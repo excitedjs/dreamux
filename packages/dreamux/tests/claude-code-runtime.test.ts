@@ -26,6 +26,7 @@ import { defaultDispatcherCwd } from '../src/platform/paths.js';
 import { dispatcherClaudeCodeMcpConfigPath } from '../src/agent-runtime/builtin/claude-code/paths.js';
 import { defaultDispatcherClaudeCodeConfig } from '../src/config/config.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
+import { renderChannelInput } from '../src/agent-runtime/turn.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 import type {
   AgentRuntime,
@@ -644,6 +645,32 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     await runtime.channelInput({ sourceId: 'm1', text: 'hello' });
     await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
     expect(fleet.sessions[0]?.submitOptions[0]).toBeUndefined();
+  });
+
+  it('wraps a structured channel input into the native <channel> block', async () => {
+    const fleet = fakeFleet([okOutcome('session-abc')]);
+    const { runtime } = makeRuntime(fleet);
+    await runtime.start();
+
+    const input = {
+      sourceId: 'm1',
+      source: 'feishu',
+      text: 'fallback ignored',
+      attrs: [
+        ['chat_id', 'chat-1'],
+        ['sender_id', 'sender-1'],
+      ] as Array<[string, string]>,
+      body: 'the message body',
+    };
+    await runtime.channelInput(input);
+    await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
+    const prompt = fleet.sessions[0]?.prompts[0] ?? '';
+    // Same envelope renderChannelInput produces — both runtimes share it, so
+    // claude and codex render byte-identical channel blocks for one input.
+    expect(prompt).toBe(renderChannelInput(input));
+    expect(prompt).toBe(
+      '<channel source="feishu" chat_id="chat-1" sender_id="sender-1">\nthe message body\n</channel>',
+    );
   });
 
   it('stop() reaps the resident session and refuses further inbound', async () => {

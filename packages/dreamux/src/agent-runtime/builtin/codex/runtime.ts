@@ -41,6 +41,7 @@ import {
   TurnManager,
 } from './turn-manager.js';
 import { injectThreadItems, type CollectedTurn } from './events.js';
+import { renderChannelInput } from '../../turn.js';
 import type {
   InboundDeliveryHooks,
   InboundTurnInput,
@@ -437,7 +438,14 @@ export class CodexRuntime implements AgentRuntime {
     if (this.turnManager === null) {
       return { status: 'failed', error: new Error('turn manager not initialized') };
     }
-    return this.turnManager.enqueue(input, hooks);
+    // This runtime owns wrapping the channel input into its delivery shape: a
+    // structured channel turn becomes the native `<channel source="…">` block
+    // (same envelope claude renders); a plain turn (e.g. the completion trigger)
+    // passes through unchanged.
+    return this.turnManager.enqueue(
+      { ...input, text: renderChannelInput(input) },
+      hooks,
+    );
   }
 
   /** Inject a system-originated notice (e.g. a restart notice). */

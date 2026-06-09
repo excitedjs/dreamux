@@ -278,7 +278,7 @@ describe('dreamux cross-module e2e', () => {
 
     await waitFor(() => codexInputs.length === 1);
     await waitFor(() => bot.reactions.length === 2);
-    expect(codexInputs[0]).toContain('<feishu_message');
+    expect(codexInputs[0]).toContain('<channel source="feishu"');
     expect(codexInputs[0]).toContain('sender_name="Ada"');
     expect(codexInputs[0]).toContain('please reply');
     expect(bot.reactions).toEqual([

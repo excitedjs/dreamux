@@ -356,9 +356,23 @@ export class FeishuChannelSession {
         ...(injectBots ? { trustedBots: baseline.trusted } : {}),
       },
     );
+    // Hand the runtime structured pieces, not pre-rendered XML: each runtime
+    // wraps these into its own channel block (today both render the native
+    // `<channel source="feishu" …>` envelope). `source`/`attrs` are opaque
+    // display passthrough — the runtime never routes on them; reply targeting
+    // stays here via the Feishu reply MCP tool. `text` carries the body as a
+    // neutral fallback for any runtime that ignores the structured fields.
     const input: InboundTurnInput = {
       sourceId: event.messageId,
-      text: formatted.formattedText,
+      source: 'feishu',
+      text: formatted.body,
+      attrs: formatted.attrs,
+      body: formatted.body,
+      attachments: formatted.attachments.map((attachment) => ({
+        kind: attachment.type,
+        ...(attachment.name !== undefined ? { name: attachment.name } : {}),
+        ...(attachment.path !== undefined ? { localPath: attachment.path } : {}),
+      })),
     };
     const delivery = await submitter.submitTurn(input, {
       onAccepted: async () => {
