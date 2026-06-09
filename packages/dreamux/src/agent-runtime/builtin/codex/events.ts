@@ -24,7 +24,7 @@ export interface CollectedTurn {
 }
 
 export interface TurnCollector {
-  awaitTurn(): Promise<CollectedTurn>;
+  awaitTurn(turnId?: string): Promise<CollectedTurn>;
 }
 
 /**
@@ -77,21 +77,61 @@ export function subscribeTurnCollection(
 ): TurnCollector {
   const acceptAnyThread = options.acceptAnyThread === true;
   const itemsByTurn = new Map<string, ThreadItem[]>();
-  let cached: CollectedTurn | null = null;
-  let failure: Error | null = null;
-  let awaiting: Promise<CollectedTurn> | null = null;
-  let resolveTurn: ((turn: CollectedTurn) => void) | null = null;
-  let rejectTurn: ((err: Error) => void) | null = null;
-  let done = false;
+  const completedByTurn = new Map<string, CollectedTurn>();
+  const failuresByTurn = new Map<string, Error>();
+  let firstCompleted: CollectedTurn | null = null;
+  let firstFailure: Error | null = null;
+  let unscopedFailure: Error | null = null;
+  let closed = false;
+  let awaiting:
+    | {
+        turnId: string | null;
+        promise: Promise<CollectedTurn>;
+        resolve: (turn: CollectedTurn) => void;
+        reject: (err: Error) => void;
+      }
+    | null = null;
 
-  const settleFailure = (err: Error): void => {
-    if (done) return;
-    done = true;
-    failure = err;
-    if (rejectTurn !== null) {
-      rejectTurn(err);
-      rejectTurn = null;
-      resolveTurn = null;
+  const closeCollector = (): void => {
+    closed = true;
+    itemsByTurn.clear();
+  };
+
+  const resolveAwaiting = (): void => {
+    if (awaiting === null) return;
+    const expectedTurnId = awaiting.turnId;
+    if (unscopedFailure !== null) {
+      awaiting.reject(unscopedFailure);
+      awaiting = null;
+      closeCollector();
+      return;
+    }
+    if (expectedTurnId !== null) {
+      const failure = failuresByTurn.get(expectedTurnId);
+      if (failure !== undefined) {
+        awaiting.reject(failure);
+        awaiting = null;
+        closeCollector();
+        return;
+      }
+      const completed = completedByTurn.get(expectedTurnId);
+      if (completed !== undefined) {
+        awaiting.resolve(completed);
+        awaiting = null;
+        closeCollector();
+      }
+      return;
+    }
+    if (firstFailure !== null) {
+      awaiting.reject(firstFailure);
+      awaiting = null;
+      closeCollector();
+      return;
+    }
+    if (firstCompleted !== null) {
+      awaiting.resolve(firstCompleted);
+      awaiting = null;
+      closeCollector();
     }
   };
 
@@ -108,7 +148,7 @@ export function subscribeTurnCollection(
         matched: matches,
       });
     }
-    if (done || !matches) return;
+    if (closed || !matches) return;
     if (notif.method === 'item/completed') {
       const params = notif.params as ItemCompletedNotification;
       const bucket = itemsByTurn.get(params.turnId) ?? [];
@@ -117,38 +157,74 @@ export function subscribeTurnCollection(
     } else if (notif.method === 'turn/completed') {
       const params = notif.params as TurnCompletedNotification;
       if (params.turn.error != null) {
-        settleFailure(new Error(params.turn.error.message || 'codex turn failed'));
+        const failure = new Error(params.turn.error.message || 'codex turn failed');
+        failuresByTurn.set(params.turn.id, failure);
+        firstFailure ??= failure;
+        resolveAwaiting();
         return;
       }
-      done = true;
       const items = itemsByTurn.get(params.turn.id) ?? params.turn.items ?? [];
-      cached = { threadId, turnId: params.turn.id, items };
-      if (resolveTurn !== null) {
-        resolveTurn(cached);
-        resolveTurn = null;
-        rejectTurn = null;
-      }
+      const completed = { threadId, turnId: params.turn.id, items };
+      completedByTurn.set(params.turn.id, completed);
+      firstCompleted ??= completed;
+      resolveAwaiting();
     } else if (notif.method === 'error') {
       const params = notif.params as TurnErrorNotification;
       // Only a fatal (non-retried) error terminates the turn. A transient
       // `willRetry: true` error is followed by codex's own retry and an
       // eventual `turn/completed`, so we ignore it here.
       if (params.willRetry === false) {
-        settleFailure(new Error(params.error?.message ?? 'codex turn error'));
+        const failure = new Error(params.error?.message ?? 'codex turn error');
+        if (typeof params.turnId === 'string') failuresByTurn.set(params.turnId, failure);
+        else unscopedFailure = failure;
+        firstFailure ??= failure;
+        resolveAwaiting();
       }
     }
   });
 
   return {
-    awaitTurn(): Promise<CollectedTurn> {
-      if (cached !== null) return Promise.resolve(cached);
-      if (failure !== null) return Promise.reject(failure);
-      if (awaiting !== null) return awaiting;
-      awaiting = new Promise<CollectedTurn>((res, rej) => {
+    awaitTurn(turnId?: string): Promise<CollectedTurn> {
+      const expectedTurnId = turnId ?? null;
+      if (unscopedFailure !== null) {
+        closeCollector();
+        return Promise.reject(unscopedFailure);
+      }
+      if (expectedTurnId !== null) {
+        const failure = failuresByTurn.get(expectedTurnId);
+        if (failure !== undefined) {
+          closeCollector();
+          return Promise.reject(failure);
+        }
+        const completed = completedByTurn.get(expectedTurnId);
+        if (completed !== undefined) {
+          closeCollector();
+          return Promise.resolve(completed);
+        }
+      } else {
+        if (firstFailure !== null) {
+          closeCollector();
+          return Promise.reject(firstFailure);
+        }
+        if (firstCompleted !== null) {
+          closeCollector();
+          return Promise.resolve(firstCompleted);
+        }
+      }
+      if (awaiting !== null) return awaiting.promise;
+      let resolveTurn!: (turn: CollectedTurn) => void;
+      let rejectTurn!: (err: Error) => void;
+      const promise = new Promise<CollectedTurn>((res, rej) => {
         resolveTurn = res;
         rejectTurn = rej;
       });
-      return awaiting;
+      awaiting = {
+        turnId: expectedTurnId,
+        promise,
+        resolve: resolveTurn,
+        reject: rejectTurn,
+      };
+      return promise;
     },
   };
 }
@@ -212,8 +288,8 @@ export async function runTurn(
   cwd: string | null,
 ): Promise<CollectedTurn> {
   const collector = subscribeTurnCollection(client, threadId);
-  await submitTurnStart(client, threadId, prompt, cwd);
-  return collector.awaitTurn();
+  const res = await submitTurnStart(client, threadId, prompt, cwd);
+  return collector.awaitTurn(res.turn.id);
 }
 
 /**

@@ -50,9 +50,13 @@ class FakeRuntime implements AgentRuntime {
   private threadId: string | null = null;
   private resumed = false;
   private turns = 0;
+  private activeTurnId: string | null = null;
   readonly delivered: CompletionEnvelope[] = [];
 
-  constructor(private readonly context: AgentRuntimeCreateContext) {}
+  constructor(
+    private readonly context: AgentRuntimeCreateContext,
+    private readonly instanceId: number,
+  ) {}
 
   async start(): Promise<void> {
     this.status = 'ready';
@@ -74,8 +78,12 @@ class FakeRuntime implements AgentRuntime {
   }
 
   async channelInput(_input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
+    if (this.activeTurnId !== null) {
+      return { status: 'submitted', turnId: this.activeTurnId };
+    }
     this.turns += 1;
-    return { status: 'submitted', turnId: `turn-${this.turns}` };
+    this.activeTurnId = `runtime-${this.instanceId}-turn-${this.turns}`;
+    return { status: 'submitted', turnId: this.activeTurnId };
   }
 
   async systemInput(_notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult> {
@@ -120,6 +128,7 @@ class FakeRuntime implements AgentRuntime {
 
   /** Simulate the runtime firing a terminal turn-settled signal. */
   settle(status: TurnSettledSignal['status'], turnId: string | null): void {
+    if (turnId !== null && this.activeTurnId === turnId) this.activeTurnId = null;
     this.context.onTurnSettled?.({ turnId, status });
   }
 }
@@ -135,7 +144,7 @@ class FakeProvider implements AgentRuntimeProvider {
   }
 
   createRuntime(context: AgentRuntimeCreateContext): AgentRuntime {
-    const runtime = new FakeRuntime(context);
+    const runtime = new FakeRuntime(context, this.runtimes.length + 1);
     this.runtimes.push(runtime);
     return runtime;
   }
@@ -187,7 +196,7 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
     const facade = buildFacade(provider, adminSocketPath);
 
     await facade.startDispatcher('flow');
-    await facade.spawnTeamMate({
+    const spawned = await facade.spawnTeamMate({
       dispatcherId: 'flow',
       name: 'reviewer',
       prompt: 'Review the change.',
@@ -201,13 +210,16 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
     expect(dispatcherRuntime.hasSettleHook()).toBe(false);
     expect(teammateRuntime.hasSettleHook()).toBe(true);
 
-    teammateRuntime.settle('completed', 'turn-1');
+    expect(spawned.turn.status).toBe('submitted');
+    const turnId =
+      spawned.turn.status === 'submitted' ? spawned.turn.turn_id : 'unreachable';
+    teammateRuntime.settle('completed', turnId);
     await flush();
 
     expect(dispatcherRuntime.delivered).toEqual([
       {
         source: 'reviewer',
-        id: 'reviewer:turn-1',
+        id: `reviewer:${turnId}`,
         status: 'completed',
         result: 'reviewer final answer',
       },
@@ -222,7 +234,7 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
     const facade = buildFacade(provider, adminSocketPath);
 
     await facade.startDispatcher('flow');
-    await facade.spawnTeamMate({
+    const spawned = await facade.spawnTeamMate({
       dispatcherId: 'flow',
       name: 'reviewer',
       prompt: 'Review the change.',
@@ -232,16 +244,130 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
     const dispatcherRuntime = provider.runtimes[0]!;
     const teammateRuntime = provider.runtimes[1]!;
 
-    teammateRuntime.settle('completed', 'turn-duplicate');
-    teammateRuntime.settle('completed', 'turn-duplicate');
+    const turnId =
+      spawned.turn.status === 'submitted' ? spawned.turn.turn_id : 'unreachable';
+    teammateRuntime.settle('completed', turnId);
+    teammateRuntime.settle('completed', turnId);
     await flush();
-    teammateRuntime.settle('completed', 'turn-duplicate');
+    teammateRuntime.settle('completed', turnId);
     await flush();
 
     expect(dispatcherRuntime.delivered).toEqual([
       {
         source: 'reviewer',
-        id: 'reviewer:turn-duplicate',
+        id: `reviewer:${turnId}`,
+        status: 'completed',
+        result: 'reviewer final answer',
+      },
+    ]);
+
+    await facade.shutdown();
+  });
+
+  it('reverse-delivers one completion for multiple sends steered into the current turn', async () => {
+    const descriptor = createBuiltinProviderRegistry().resolve('builtin:codex');
+    const provider = new FakeProvider(descriptor);
+    const facade = buildFacade(provider, adminSocketPath);
+
+    await facade.startDispatcher('flow');
+    const spawned = await facade.spawnTeamMate({
+      dispatcherId: 'flow',
+      name: 'reviewer',
+      prompt: 'Review the change.',
+      cwd: root,
+    });
+    const firstSend = await facade.sendTeamMate({
+      dispatcherId: 'flow',
+      name: 'reviewer',
+      prompt: 'Fold this into the active review.',
+    });
+    const secondSend = await facade.sendTeamMate({
+      dispatcherId: 'flow',
+      name: 'reviewer',
+      prompt: 'One more steering note.',
+    });
+
+    expect(spawned.turn.status).toBe('submitted');
+    expect(firstSend.turn).toEqual(spawned.turn);
+    expect(secondSend.turn).toEqual(spawned.turn);
+
+    const dispatcherRuntime = provider.runtimes[0]!;
+    const teammateRuntime = provider.runtimes[1]!;
+    const turnId =
+      spawned.turn.status === 'submitted' ? spawned.turn.turn_id : 'unreachable';
+    teammateRuntime.settle('completed', turnId);
+    await flush();
+
+    const last = await facade.getTeamMateLast('flow', 'reviewer');
+    expect(last.last).toEqual({ text: 'reviewer final answer' });
+    expect(dispatcherRuntime.delivered).toEqual([
+      {
+        source: 'reviewer',
+        id: `reviewer:${turnId}`,
+        status: 'completed',
+        result: 'reviewer final answer',
+      },
+    ]);
+
+    await facade.shutdown();
+  });
+
+  it('reverse-delivers a follow-up send after close/reopen with a fresh logical turn id', async () => {
+    const descriptor = createBuiltinProviderRegistry().resolve('builtin:codex');
+    const provider = new FakeProvider(descriptor);
+    const facade = buildFacade(provider, adminSocketPath);
+
+    await facade.startDispatcher('flow');
+    const spawned = await facade.spawnTeamMate({
+      dispatcherId: 'flow',
+      name: 'reviewer',
+      prompt: 'Review the change.',
+      cwd: root,
+    });
+
+    const dispatcherRuntime = provider.runtimes[0]!;
+    const firstTeammateRuntime = provider.runtimes[1]!;
+    const firstTurnId =
+      spawned.turn.status === 'submitted' ? spawned.turn.turn_id : 'unreachable';
+    firstTeammateRuntime.settle('completed', firstTurnId);
+    await flush();
+
+    await facade.closeTeamMate({
+      dispatcherId: 'flow',
+      name: 'reviewer',
+      note: 'done',
+    });
+    const sent = await facade.sendTeamMate({
+      dispatcherId: 'flow',
+      name: 'reviewer',
+      prompt: 'Follow up after reopen.',
+    });
+
+    const secondTeammateRuntime = provider.runtimes[2]!;
+    expect(secondTeammateRuntime.wasThreadResumed()).toBe(true);
+    expect(secondTeammateRuntime.hasSettleHook()).toBe(true);
+
+    const secondTurnId =
+      sent.turn.status === 'submitted' ? sent.turn.turn_id : 'unreachable';
+    expect(secondTurnId).not.toBe(firstTurnId);
+
+    // Duplicate settles for that reopened turn must still coalesce.
+    secondTeammateRuntime.settle('completed', secondTurnId);
+    secondTeammateRuntime.settle('completed', secondTurnId);
+    await flush();
+
+    const last = await facade.getTeamMateLast('flow', 'reviewer');
+    expect(last.last).toEqual({ text: 'reviewer final answer' });
+    expect(dispatcherRuntime.delivered).toEqual([
+      {
+        source: 'reviewer',
+        id: `reviewer:${firstTurnId}`,
+        status: 'completed',
+        result: 'reviewer final answer',
+      },
+      {
+        source: 'reviewer',
+        id: `reviewer:${secondTurnId}`,
         status: 'completed',
         result: 'reviewer final answer',
       },

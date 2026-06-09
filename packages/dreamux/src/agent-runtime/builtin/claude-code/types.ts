@@ -100,14 +100,17 @@ export interface ClaudeCodeSessionSpec {
 }
 
 /**
- * A resident Claude Code session. Turns are serialized by the caller; the
- * session itself rejects a concurrent `submitTurn` defensively.
+ * A resident Claude Code session. Full turns are serialized by the caller;
+ * `steerTurn` is the one allowed concurrent write, used to steer the active
+ * turn without creating a second completion subscription.
  */
 export interface ClaudeCodeSession {
   /** Spawn the child and resolve once it is up (reject on spawn error). */
   start(): Promise<void>;
   /** Submit one user turn; resolve with the outcome when `result` lands. */
   submitTurn(prompt: string, options?: TurnSubmitOptions): Promise<TurnOutcome>;
+  /** Send a user message into the active turn without awaiting a separate result. */
+  steerTurn(prompt: string, options?: TurnSubmitOptions): Promise<void>;
   /** Whether the child is currently alive. */
   isAlive(): boolean;
   /**

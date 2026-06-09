@@ -127,6 +127,10 @@ function fakeFleet(
         if (outcome instanceof Error) throw outcome;
         return outcome as TurnOutcome;
       },
+      async steerTurn(prompt, options) {
+        prompts.push(prompt);
+        submitOptions.push(options);
+      },
       async stop() {
         alive = false;
       },
@@ -139,6 +143,71 @@ function fakeFleet(
     return session;
   };
   return { factory, sessions };
+}
+
+function controllableFleet(): FakeFleet & {
+  resolveNext(outcome?: TurnOutcome): void;
+  rejectNext(error: Error): void;
+} {
+  const sessions: FakeSession[] = [];
+  let pendingResolve: ((outcome: TurnOutcome) => void) | null = null;
+  let pendingReject: ((error: Error) => void) | null = null;
+  const factory: ClaudeCodeSessionFactory = (spec) => {
+    let alive = false;
+    let starts = 0;
+    let onExit: (() => void) | null = null;
+    const prompts: string[] = [];
+    const submitOptions: Array<TurnSubmitOptions | undefined> = [];
+    const session: FakeSession = {
+      spec,
+      prompts,
+      submitOptions,
+      startCount: () => starts,
+      async start() {
+        starts += 1;
+        alive = true;
+      },
+      isAlive: () => alive,
+      setOnExit(handler) {
+        onExit = handler;
+      },
+      async submitTurn(prompt, options) {
+        prompts.push(prompt);
+        submitOptions.push(options);
+        return new Promise<TurnOutcome>((resolve, reject) => {
+          pendingResolve = resolve;
+          pendingReject = reject;
+        });
+      },
+      async steerTurn(prompt, options) {
+        prompts.push(prompt);
+        submitOptions.push(options);
+      },
+      async stop() {
+        alive = false;
+      },
+      triggerExit() {
+        alive = false;
+        onExit?.();
+      },
+    };
+    sessions.push(session);
+    return session;
+  };
+  return {
+    factory,
+    sessions,
+    resolveNext(outcome = okOutcome()) {
+      pendingResolve?.(outcome);
+      pendingResolve = null;
+      pendingReject = null;
+    },
+    rejectNext(error: Error) {
+      pendingReject?.(error);
+      pendingResolve = null;
+      pendingReject = null;
+    },
+  };
 }
 
 async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
@@ -399,6 +468,96 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     expect(fleet.sessions[0]?.prompts).toHaveLength(1);
   });
 
+  it('steers follow-up sends into the active channel turn and settles once', async () => {
+    const settled: TurnSettledSignal[] = [];
+    const fleet = controllableFleet();
+    const { runtime } = makeRuntime(fleet, {
+      onTurnSettled: (s) => settled.push(s),
+    });
+    await runtime.start();
+
+    const first = await runtime.channelInput({ sourceId: 'm1', text: 'first' });
+    expect(first.status).toBe('submitted');
+    await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
+
+    const second = await runtime.channelInput({ sourceId: 'm2', text: 'second' });
+    const third = await runtime.channelInput({ sourceId: 'm3', text: 'third' });
+    expect(second).toEqual(first);
+    expect(third).toEqual(first);
+    expect(fleet.sessions[0]?.prompts).toEqual(['first', 'second', 'third']);
+    expect(fleet.sessions[0]?.submitOptions).toEqual([
+      undefined,
+      { priority: 'now' },
+      { priority: 'now' },
+    ]);
+
+    fleet.resolveNext(okOutcome('session-abc'));
+    await waitFor(() => settled.length === 1);
+    expect(settled).toEqual([
+      {
+        turnId: first.status === 'submitted' ? first.turnId : 'unreachable',
+        status: 'completed',
+      },
+    ]);
+  });
+
+  it('starts a fresh logical turn for a sequential send after the previous turn completed', async () => {
+    const settled: TurnSettledSignal[] = [];
+    const fleet = fakeFleet([okOutcome('session-abc'), okOutcome('session-abc')]);
+    const { runtime } = makeRuntime(fleet, {
+      onTurnSettled: (s) => settled.push(s),
+    });
+    await runtime.start();
+
+    const first = await runtime.channelInput({ sourceId: 'm1', text: 'first' });
+    await waitFor(() => settled.length === 1);
+    const second = await runtime.channelInput({ sourceId: 'm2', text: 'second' });
+    await waitFor(() => settled.length === 2);
+
+    expect(first.status).toBe('submitted');
+    expect(second.status).toBe('submitted');
+    if (first.status !== 'submitted' || second.status !== 'submitted') {
+      throw new Error('expected submitted turns');
+    }
+    expect(first.turnId).not.toBe(second.turnId);
+    expect(settled.map((s) => s.turnId)).toEqual([
+      first.turnId,
+      second.turnId,
+    ]);
+  });
+
+  it('does not reuse logical turn ids across resumed runtime instances', async () => {
+    const firstSettled: TurnSettledSignal[] = [];
+    const firstRuntime = makeRuntime(fakeFleet([okOutcome('session-abc')]), {
+      onTurnSettled: (s) => firstSettled.push(s),
+    });
+    await firstRuntime.runtime.start();
+    const first = await firstRuntime.runtime.channelInput({
+      sourceId: 'm1',
+      text: 'first',
+    });
+    await waitFor(() => firstSettled.length === 1);
+
+    const secondSettled: TurnSettledSignal[] = [];
+    const secondRuntime = makeRuntime(fakeFleet([okOutcome('session-abc')]), {
+      resumeSession: 'session-abc',
+      onTurnSettled: (s) => secondSettled.push(s),
+    });
+    await secondRuntime.runtime.start();
+    const second = await secondRuntime.runtime.channelInput({
+      sourceId: 'm2',
+      text: 'second',
+    });
+    await waitFor(() => secondSettled.length === 1);
+
+    expect(first.status).toBe('submitted');
+    expect(second.status).toBe('submitted');
+    if (first.status !== 'submitted' || second.status !== 'submitted') {
+      throw new Error('expected submitted turns');
+    }
+    expect(first.turnId).not.toBe(second.turnId);
+  });
+
   it('delivers a TeamMate completion via the task-notification entry', async () => {
     const fleet = fakeFleet([okOutcome('session-abc')]);
     const { runtime } = makeRuntime(fleet);
@@ -657,6 +816,9 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
             releaseTurn = () =>
               reject(new Error('claude resident session stopped mid-turn'));
           });
+        },
+        async steerTurn() {
+          /* no-op: the turn is blocked until stop() */
         },
         async stop() {
           alive = false;

@@ -61,6 +61,7 @@ export class TurnManager {
    * in-flight inbound and skip rather than wake the thread twice (issue #78).
    */
   private inboundSubmitted = false;
+  private activeTurnId: string | null = null;
   /**
    * Turn ids submitted to Codex that have not yet reached `turn/completed`. On
    * `stop()` each still-pending turn is settled as `stopped` so a teammate turn
@@ -108,6 +109,16 @@ export class TurnManager {
     }
 
     try {
+      const activeTurnId = this.activeTurnId;
+      if (activeTurnId !== null) {
+        await submitTurnStart(
+          this.opts.client,
+          threadId,
+          input.text,
+          this.opts.turnCwd ?? null,
+        );
+        return { status: 'submitted', turnId: activeTurnId };
+      }
       const collector = subscribeTurnCollection(this.opts.client, threadId);
       const res = await submitTurnStart(
         this.opts.client,
@@ -176,6 +187,7 @@ export class TurnManager {
       this.opts.onTurnSettled?.({ turnId, status: 'stopped' });
     }
     this.pendingTurnIds.clear();
+    this.activeTurnId = null;
   }
 
   /**
@@ -188,18 +200,24 @@ export class TurnManager {
    * is delivered with a status instead of hanging until teardown.
    */
   private trackTurn(turnId: string, collector: TurnCollector): void {
+    if (this.pendingTurnIds.has(turnId)) return;
     this.pendingTurnIds.add(turnId);
-    void collector.awaitTurn().then(
+    this.activeTurnId = turnId;
+    void collector.awaitTurn(turnId).then(
       (turn) => {
         // Only forward completion if this turn was still pending. If `stop()`
         // already settled it as `stopped`, the delete returns false and we drop
         // the late completion so a turn is never settled twice.
-        if (this.pendingTurnIds.delete(turnId)) this.opts.onTurnCompleted?.(turn);
+        if (this.pendingTurnIds.delete(turnId)) {
+          if (this.activeTurnId === turnId) this.activeTurnId = null;
+          this.opts.onTurnCompleted?.(turn);
+        }
       },
       (err) => {
         // Same mutual-exclusion guard as the completed path: only settle as
         // `failed` if `stop()` did not already settle it as `stopped`.
         if (this.pendingTurnIds.delete(turnId)) {
+          if (this.activeTurnId === turnId) this.activeTurnId = null;
           this.opts.onTurnSettled?.({
             turnId,
             status: 'failed',

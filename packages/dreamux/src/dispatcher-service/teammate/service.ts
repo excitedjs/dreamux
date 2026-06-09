@@ -76,6 +76,7 @@ export interface TeamMateAgentServiceOptions {
 export class TeamMateAgentService {
   private readonly identities: TeamMateIdentityStore;
   private readonly live = new Map<string, LiveTeamMate>();
+  private submissionSeq = 0;
 
   constructor(private readonly opts: TeamMateAgentServiceOptions) {
     this.identities = new TeamMateIdentityStore({
@@ -368,8 +369,9 @@ export class TeamMateAgentService {
     prompt: string,
   ): Promise<TeamMateTurnResult> {
     const live = await this.ensureRuntime(dispatcherId, name);
+    const submissionSeq = ++this.submissionSeq;
     const result = await live.runtime.channelInput({
-      sourceId: `teammate:${name}:${Date.now()}`,
+      sourceId: `teammate:${name}:${submissionSeq}`,
       text: prompt,
     });
     return toTurnResult(result);

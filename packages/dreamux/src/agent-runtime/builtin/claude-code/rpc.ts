@@ -71,6 +71,30 @@ export class ClaudeCodeStreamRpc {
     });
   }
 
+  async steerTurn(
+    prompt: string,
+    options: TurnSubmitOptions = {},
+  ): Promise<void> {
+    if (!this.stdin.writable) {
+      return Promise.reject(new Error('claude resident child is not running'));
+    }
+    if (this.pending === null) {
+      return Promise.reject(new Error('claude resident session has no active turn'));
+    }
+    return new Promise<void>((resolve, reject) => {
+      this.stdin.write(
+        `${buildUserMessage(prompt, { priority: 'now', ...options })}\n`,
+        (err) => {
+          if (err != null) {
+            reject(err instanceof Error ? err : new Error(String(err)));
+            return;
+          }
+          resolve();
+        },
+      );
+    });
+  }
+
   onStdoutChunk(chunk: string): void {
     for (const line of this.lineBuf.push(chunk)) this.onLine(parseLine(line));
   }
