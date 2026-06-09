@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 
 import type {
@@ -37,8 +38,11 @@ import {
   type TeamMateCapabilities,
   type TeamMateCloseResult,
   type TeamMateContextResult,
+  type TeamMateHistoryEventsResult,
+  type TeamMateHistoryQuery,
   type TeamMateHistoryResult,
   type TeamMateIdentity,
+  type TeamMateLedgerRow,
   type TeamMateLastResult,
   type TeamMateAgentRuntimeCapability,
   type TeamMateRuntimeStatus,
@@ -118,6 +122,7 @@ export class TeamMateAgentService {
         cwd: workspace.runtimeCwd,
         runtimeCwd: workspace.runtimeCwd,
         worktree: workspace.worktree,
+        intent: input.intent ?? null,
       }));
     identity = await this.identities.update(identity, {
       agentRuntime: agentRuntimeId,
@@ -126,6 +131,7 @@ export class TeamMateAgentService {
       cwd: workspace.runtimeCwd,
       runtimeCwd: workspace.runtimeCwd,
       worktree: workspace.worktree,
+      intent: input.intent ?? null,
       status: 'starting',
       closedAt: null,
       closeNote: null,
@@ -201,10 +207,33 @@ export class TeamMateAgentService {
     );
   }
 
-  async history(
+  async history(input: TeamMateHistoryQuery): Promise<TeamMateHistoryResult> {
+    const dispatcherId = input.dispatcherId;
+    const identities = await this.identities.list(dispatcherId);
+    const rows: TeamMateLedgerRow[] = [];
+    for (const identity of identities) {
+      const row = await this.toLedgerRow(identity);
+      if (this.matchesLedgerQuery(row, input)) rows.push(row);
+    }
+    rows.sort((a, b) =>
+      b.last_seen_at - a.last_seen_at ||
+      b.updated_at - a.updated_at ||
+      a.name.localeCompare(b.name),
+    );
+    const start = input.cursor !== undefined ? decodeCursor(input.cursor) : 0;
+    const limit = clampHistoryLimit(input.limit);
+    const items = rows.slice(start, start + limit);
+    const next = start + items.length;
+    return {
+      items,
+      next_cursor: next < rows.length ? encodeCursor(next) : null,
+    };
+  }
+
+  async historyEvents(
     dispatcherId: string,
     name: string,
-  ): Promise<TeamMateHistoryResult> {
+  ): Promise<TeamMateHistoryEventsResult> {
     const teammateName = validateTeamMateName(name);
     const identity = await this.identities.get(dispatcherId, teammateName);
     return {
@@ -628,6 +657,7 @@ export class TeamMateAgentService {
       cwd: identity.cwd,
       runtime_cwd: identity.runtime_cwd,
       worktree: identity.worktree,
+      intent: identity.intent,
       status: identity.status,
       runtime_status: runtime?.getStatus() ?? null,
       checkpoint: identity.checkpoint,
@@ -635,6 +665,85 @@ export class TeamMateAgentService {
       closed_at: identity.closed_at,
       close_note: identity.close_note,
     };
+  }
+
+  private async toLedgerRow(identity: TeamMateIdentity): Promise<TeamMateLedgerRow> {
+    const runtime = this.live.get(liveKey(identity.dispatcher_id, identity.name))?.runtime ?? null;
+    const events = await this.identities.history(identity.dispatcher_id, identity.name);
+    const lastEvent = events.at(-1);
+    const lastPromptEvent = events.findLast(
+      (event) => event.prompt_preview !== null,
+    );
+    return {
+      id: identity.name,
+      name: identity.name,
+      owner: identity.owner,
+      agent_runtime: identity.agent_runtime,
+      source_cwd: identity.source_cwd,
+      source_repo: identity.source_repo,
+      cwd: identity.cwd,
+      runtime_cwd: identity.runtime_cwd,
+      worktree: identity.worktree,
+      created_at: identity.created_at,
+      updated_at: identity.updated_at,
+      last_seen_at: lastEvent?.timestamp ?? identity.updated_at,
+      state: identity.status,
+      status: identity.status,
+      runtime_status: runtime?.getStatus() ?? null,
+      checkpoint: identity.checkpoint,
+      intent: identity.intent,
+      close_status: identity.closed_at === null ? 'open' : 'closed',
+      closed_at: identity.closed_at,
+      close_note: identity.close_note,
+      close_note_preview:
+        identity.close_note !== null ? previewText(identity.close_note) : null,
+      last_prompt_preview: lastPromptEvent?.prompt_preview ?? null,
+      last_assistant_preview: null,
+      cleanup_state: identity.worktree.cleanup_state,
+      resume:
+        identity.closed_at === null || identity.checkpoint !== null
+          ? { tool: 'send', name: identity.name, checkpoint: identity.checkpoint }
+          : null,
+    };
+  }
+
+  private matchesLedgerQuery(
+    row: TeamMateLedgerRow,
+    input: TeamMateHistoryQuery,
+  ): boolean {
+    if (input.name !== undefined && row.name !== validateTeamMateName(input.name)) {
+      return false;
+    }
+    if (input.id !== undefined && !row.id.startsWith(input.id)) return false;
+    if (
+      input.agentRuntime !== undefined &&
+      row.agent_runtime !== input.agentRuntime
+    ) {
+      return false;
+    }
+    if (input.sourceCwd !== undefined && row.source_cwd !== input.sourceCwd) {
+      return false;
+    }
+    if (input.runtimeCwd !== undefined && row.runtime_cwd !== input.runtimeCwd) {
+      return false;
+    }
+    if (input.state !== undefined) {
+      if (input.state === 'active') {
+        if (row.state === 'closed' || row.state === 'stopped') return false;
+      } else if (row.state !== input.state) {
+        return false;
+      }
+    }
+    if (
+      input.closeStatus !== undefined &&
+      row.close_status !== input.closeStatus
+    ) {
+      return false;
+    }
+    if (input.grep !== undefined && !ledgerRowMatchesText(row, input.grep)) {
+      return false;
+    }
+    return true;
   }
 
   private async assertManagedWorktreeAvailable(
@@ -714,6 +823,62 @@ function toTurnResult(result: AgentRuntimeTurnResult): TeamMateTurnResult {
     case 'skipped':
       return { status: 'stopped', error: 'turn skipped' };
   }
+}
+
+function clampHistoryLimit(input: number | undefined): number {
+  if (input === undefined) return 20;
+  if (!Number.isInteger(input) || input < 1) {
+    throw new Error('history limit must be a positive integer');
+  }
+  return Math.min(input, 100);
+}
+
+function encodeCursor(offset: number): string {
+  return Buffer.from(JSON.stringify({ offset }), 'utf8').toString('base64url');
+}
+
+function decodeCursor(cursor: string): number {
+  try {
+    const parsed = JSON.parse(
+      Buffer.from(cursor, 'base64url').toString('utf8'),
+    ) as Record<string, unknown>;
+    if (
+      typeof parsed['offset'] === 'number' &&
+      Number.isInteger(parsed['offset']) &&
+      parsed['offset'] >= 0
+    ) {
+      return parsed['offset'];
+    }
+  } catch {
+    // fall through
+  }
+  throw new Error('invalid history cursor');
+}
+
+function ledgerRowMatchesText(row: TeamMateLedgerRow, grep: string): boolean {
+  const needle = grep.trim().toLowerCase();
+  if (needle === '') return true;
+  return [
+    row.id,
+    row.name,
+    row.agent_runtime,
+    row.source_cwd,
+    row.source_repo,
+    row.cwd,
+    row.runtime_cwd,
+    row.worktree.slug,
+    row.worktree.branch,
+    row.worktree.base_ref,
+    row.intent,
+    row.close_note,
+    row.last_prompt_preview,
+    row.last_assistant_preview,
+  ].some((value) => value !== null && value.toLowerCase().includes(needle));
+}
+
+function previewText(text: string): string {
+  const collapsed = text.replace(/\s+/g, ' ').trim();
+  return collapsed.length <= 500 ? collapsed : `${collapsed.slice(0, 497)}...`;
 }
 
 function liveKey(dispatcherId: string, name: string): string {

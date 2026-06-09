@@ -346,7 +346,7 @@ describe('TeamMateAgentService', () => {
     expect(provider.contexts[0]?.dispatcher?.agentRuntime).toBe('codex-yolo');
   });
 
-  it('spawns a named resumable teammate and records forward-only history', async () => {
+  it('spawns a named resumable teammate and records raw history events', async () => {
     const { catalog, provider } = providerCatalog();
     const config = testDreamuxConfig();
     const service = new TeamMateAgentService({
@@ -396,7 +396,7 @@ describe('TeamMateAgentService', () => {
     expect(provider.runtimes).toHaveLength(1);
     expect(provider.runtimes[0]?.submitted).toHaveLength(3);
 
-    const history = await service.history('flow', 'reviewer');
+    const history = await service.historyEvents('flow', 'reviewer');
     expect(history.events.map((event) => event.type)).toEqual([
       'state',
       'spawn',
@@ -436,6 +436,93 @@ describe('TeamMateAgentService', () => {
     const ctx = await second.context('flow', 'builder');
     expect(last.last).toEqual({ text: 'last fake result' });
     expect(ctx.context).toEqual({ usedTokens: 12, windowTokens: 100 });
+  });
+
+  it('returns a bounded session ledger with worktree metadata and filters', async () => {
+    const repo = await initGitRepo(join(root, 'ledger-repo'));
+    const { catalog } = providerCatalog();
+    const config = testDreamuxConfig();
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: catalog,
+      log: noopLog(),
+    });
+
+    await service.spawn({
+      dispatcherId: 'flow',
+      name: 'alpha',
+      prompt: 'Review alpha.',
+      cwd: root,
+      intent: 'review alpha',
+    });
+    await service.spawn({
+      dispatcherId: 'flow',
+      name: 'managed-ledger',
+      prompt: 'Build managed.',
+      cwd: repo,
+      worktree: {
+        mode: 'managed',
+        slug: 'managed-ledger',
+        branch: 'dreamux/managed-ledger',
+        cleanup: 'keep',
+      },
+      intent: 'managed work',
+    });
+    await service.close({ dispatcherId: 'flow', name: 'alpha', note: 'done' });
+
+    const firstPage = await service.history({ dispatcherId: 'flow', limit: 1 });
+    expect(firstPage.items).toHaveLength(1);
+    expect(firstPage.next_cursor).not.toBeNull();
+
+    const all = await service.history({ dispatcherId: 'flow' });
+    expect(all.items.map((item) => item.name).sort()).toEqual([
+      'alpha',
+      'managed-ledger',
+    ]);
+    const managed = all.items.find((item) => item.name === 'managed-ledger');
+    expect(managed).toMatchObject({
+      id: 'managed-ledger',
+      agent_runtime: 'flow',
+      source_cwd: repo,
+      source_repo: repo,
+      runtime_cwd: expect.stringContaining('managed-ledger'),
+      worktree: {
+        mode: 'managed',
+        slug: 'managed-ledger',
+        branch: 'dreamux/managed-ledger',
+        cleanup_state: 'managed-active',
+      },
+      intent: 'managed work',
+      close_status: 'open',
+      resume: { tool: 'send', name: 'managed-ledger' },
+    });
+
+    const closed = await service.history({
+      dispatcherId: 'flow',
+      closeStatus: 'closed',
+    });
+    expect(closed.items.map((item) => item.name)).toEqual(['alpha']);
+    expect(closed.items[0]).toMatchObject({
+      close_note_preview: 'done',
+      last_prompt_preview: 'Review alpha.',
+    });
+
+    const grep = await service.history({ dispatcherId: 'flow', grep: 'managed work' });
+    expect(grep.items.map((item) => item.name)).toEqual(['managed-ledger']);
+
+    const second = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: catalog,
+      log: noopLog(),
+    });
+    const afterRestart = await second.history({
+      dispatcherId: 'flow',
+      name: 'managed-ledger',
+    });
+    expect(afterRestart.items).toHaveLength(1);
+    expect(afterRestart.items[0]?.worktree.mode).toBe('managed');
   });
 
   it('closes a live teammate without deleting its history', async () => {
@@ -607,6 +694,14 @@ describe('TeamMateAgentService', () => {
     expect((await service.status('flow', 'oldie')).owner).toEqual({
       kind: 'dispatcher',
       dispatcher_id: 'flow',
+    });
+    const history = await service.history({ dispatcherId: 'flow', name: 'oldie' });
+    expect(history.items[0]).toMatchObject({
+      name: 'oldie',
+      source_cwd: root,
+      runtime_cwd: root,
+      worktree: { mode: 'reuse-cwd', cleanup_state: 'not-managed' },
+      intent: null,
     });
     expect(await readFile(path, 'utf8')).not.toContain('"owner"');
   });

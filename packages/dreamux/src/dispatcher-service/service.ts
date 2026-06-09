@@ -14,6 +14,7 @@ import {
 import { TeamMateAgentService } from './teammate/service.js';
 import type {
   CloseTeamMateInput,
+  TeamMateHistoryQuery,
   SendTeamMateInput,
   SpawnTeamMateInput,
 } from './teammate/types.js';
@@ -112,8 +113,12 @@ export class DispatcherService {
     return this.teammates.status(dispatcherId, name);
   }
 
-  getTeamMateHistory(dispatcherId: string, name: string) {
-    return this.teammates.history(dispatcherId, name);
+  getTeamMateHistory(input: TeamMateHistoryQuery) {
+    return this.teammates.history(input);
+  }
+
+  getTeamMateHistoryEvents(dispatcherId: string, name: string) {
+    return this.teammates.historyEvents(dispatcherId, name);
   }
 
   getTeamMateLast(dispatcherId: string, name: string) {

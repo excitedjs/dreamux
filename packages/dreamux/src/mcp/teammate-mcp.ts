@@ -127,7 +127,22 @@ function initializeResult(params: unknown): Record<string, unknown> {
 
 function teammateTools(callerKind: 'dispatcher' | 'teammate'): Array<Record<string, unknown>> {
   const readTools = [
-    tool('history', 'Read the forward-only history for one TeamMate.', {
+    tool('history', 'List bounded TeamMate session ledger rows for recovery.', {
+      name: { type: 'string', minLength: 1, maxLength: 64 },
+      id: { type: 'string', minLength: 1, maxLength: 64 },
+      agent_runtime: { type: 'string', minLength: 1, maxLength: 128 },
+      state: {
+        type: 'string',
+        enum: ['active', 'starting', 'running', 'degraded', 'closed', 'stopped'],
+      },
+      close_status: { type: 'string', enum: ['open', 'closed'] },
+      source_cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+      runtime_cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+      grep: { type: 'string', minLength: 1, maxLength: 500 },
+      limit: { type: 'integer', minimum: 1, maximum: 100 },
+      cursor: { type: 'string', minLength: 1, maxLength: 1000 },
+    }, []),
+    tool('history_events', 'Read the raw forward-only event timeline for one TeamMate.', {
       name: { type: 'string', minLength: 1, maxLength: 64 },
     }, ['name']),
     tool('list', 'List this dispatcher\'s TeamMate identities.', {}, []),
@@ -239,7 +254,9 @@ function mapToolCall(call: ToolCall): {
     case 'close':
       return { method: 'mcp.teammate.close', params: closeArgs(call.arguments) };
     case 'history':
-      return { method: 'mcp.teammate.history', params: nameArgs(call.arguments) };
+      return { method: 'mcp.teammate.history', params: historyArgs(call.arguments) };
+    case 'history_events':
+      return { method: 'mcp.teammate.history_events', params: nameArgs(call.arguments) };
     case 'list':
       return { method: 'mcp.teammate.list', params: {} };
     case 'status':
@@ -368,6 +385,39 @@ function closeArgs(value: unknown): Record<string, unknown> {
   };
 }
 
+function historyArgs(value: unknown): Record<string, unknown> {
+  const obj = asRecord(value, 'history arguments');
+  const name = optionalString(obj, 'name');
+  const id = optionalString(obj, 'id');
+  const agentRuntime = optionalString(obj, 'agent_runtime');
+  const state = optionalEnum(obj, 'state', [
+    'active',
+    'starting',
+    'running',
+    'degraded',
+    'closed',
+    'stopped',
+  ]);
+  const closeStatus = optionalEnum(obj, 'close_status', ['open', 'closed']);
+  const sourceCwd = optionalString(obj, 'source_cwd');
+  const runtimeCwd = optionalString(obj, 'runtime_cwd');
+  const grep = optionalString(obj, 'grep');
+  const limit = optionalInteger(obj, 'limit');
+  const cursor = optionalString(obj, 'cursor');
+  return {
+    ...(name !== null ? { name } : {}),
+    ...(id !== null ? { id } : {}),
+    ...(agentRuntime !== null ? { agent_runtime: agentRuntime } : {}),
+    ...(state !== null ? { state } : {}),
+    ...(closeStatus !== null ? { close_status: closeStatus } : {}),
+    ...(sourceCwd !== null ? { source_cwd: sourceCwd } : {}),
+    ...(runtimeCwd !== null ? { runtime_cwd: runtimeCwd } : {}),
+    ...(grep !== null ? { grep } : {}),
+    ...(limit !== null ? { limit } : {}),
+    ...(cursor !== null ? { cursor } : {}),
+  };
+}
+
 function nameArgs(value: unknown): Record<string, unknown> {
   const obj = asRecord(value, 'arguments');
   return { name: requireString(obj, 'name') };
@@ -392,6 +442,26 @@ function optionalString(obj: Record<string, unknown>, key: string): string | nul
   const value = obj[key];
   if (value === undefined || value === null) return null;
   if (typeof value !== 'string') throw new Error(`${key} must be a string`);
+  return value;
+}
+
+function optionalInteger(obj: Record<string, unknown>, key: string): number | null {
+  const value = obj[key];
+  if (value === undefined || value === null) return null;
+  if (!Number.isInteger(value)) throw new Error(`${key} must be an integer`);
+  return value as number;
+}
+
+function optionalEnum(
+  obj: Record<string, unknown>,
+  key: string,
+  values: string[],
+): string | null {
+  const value = optionalString(obj, key);
+  if (value === null) return null;
+  if (!values.includes(value)) {
+    throw new Error(`${key} must be one of: ${values.join(', ')}`);
+  }
   return value;
 }
 

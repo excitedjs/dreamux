@@ -36,6 +36,7 @@ export interface TeamMateIdentity {
   cwd: string;
   runtime_cwd: string;
   worktree: TeamMateWorktreeIdentity;
+  intent: string | null;
   created_at: number;
   updated_at: number;
   status: TeamMateIdentityStatus;
@@ -84,6 +85,7 @@ export interface TeamMateRuntimeStatus {
   cwd: string;
   runtime_cwd: string;
   worktree: TeamMateWorktreeIdentity;
+  intent: string | null;
   status: TeamMateIdentityStatus;
   runtime_status: DispatcherStatus | null;
   checkpoint: AgentRuntimeResumeCheckpoint | null;
@@ -177,7 +179,60 @@ export interface TeamMateCloseResult {
   teammate: TeamMateRuntimeStatus;
 }
 
+export interface TeamMateHistoryQuery {
+  dispatcherId: string;
+  id?: string;
+  name?: string;
+  agentRuntime?: string;
+  state?: TeamMateIdentityStatus | 'active';
+  closeStatus?: 'open' | 'closed';
+  sourceCwd?: string;
+  runtimeCwd?: string;
+  grep?: string;
+  limit?: number;
+  cursor?: string;
+}
+
+export interface TeamMateLedgerResumeHint {
+  tool: 'send';
+  name: string;
+  checkpoint: AgentRuntimeResumeCheckpoint | null;
+}
+
+export interface TeamMateLedgerRow {
+  id: string;
+  name: string;
+  owner: TeamMateOwner;
+  agent_runtime: string;
+  source_cwd: string;
+  source_repo: string | null;
+  cwd: string;
+  runtime_cwd: string;
+  worktree: TeamMateWorktreeIdentity;
+  created_at: number;
+  updated_at: number;
+  last_seen_at: number;
+  state: TeamMateIdentityStatus;
+  status: TeamMateIdentityStatus;
+  runtime_status: DispatcherStatus | null;
+  checkpoint: AgentRuntimeResumeCheckpoint | null;
+  intent: string | null;
+  close_status: 'open' | 'closed';
+  closed_at: number | null;
+  close_note: string | null;
+  close_note_preview: string | null;
+  last_prompt_preview: string | null;
+  last_assistant_preview: string | null;
+  cleanup_state: TeamMateWorktreeCleanupState;
+  resume: TeamMateLedgerResumeHint | null;
+}
+
 export interface TeamMateHistoryResult {
+  items: TeamMateLedgerRow[];
+  next_cursor: string | null;
+}
+
+export interface TeamMateHistoryEventsResult {
   teammate: TeamMateRuntimeStatus | null;
   events: TeamMateHistoryEvent[];
 }

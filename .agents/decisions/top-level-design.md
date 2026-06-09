@@ -586,12 +586,14 @@ agents. The shim is also a per-dispatcher stdio process:
 ```
 
 The dispatcher-facing tools are `spawn`, `send`, `close`, `history`,
-`list`, `status`, `last`, `ctx`, and `get_capabilities` (issue #155 removed the
-`resume` verb; `send` reopens a closed teammate from its checkpoint). Lifecycle
+`history_events`, `list`, `status`, `last`, `ctx`, and `get_capabilities`
+(issue #155 removed the `resume` verb; `send` reopens a closed teammate from its
+checkpoint). `history` is the bounded session ledger by default; `history_events`
+is the raw forward-only event timeline for one TeamMate. Lifecycle
 tools forward
 to `dreamux serve` over the local admin socket; the server owns the
-per-dispatcher TeamMate identities, runtime checkpoints, and forward-only
-history under `state/<dispatcher-id>/teammate/`. Issue #169 made `spawn.cwd`
+per-dispatcher TeamMate identities, runtime checkpoints, session ledger, and raw
+event history under `state/<dispatcher-id>/teammate/`. Issue #169 made `spawn.cwd`
 required and added optional managed worktree isolation:
 `spawn({ name, prompt, cwd, worktree?, agent_runtime? })`. A reuse-cwd teammate
 runs in the caller-supplied `cwd`; a managed teammate runs only in its prepared

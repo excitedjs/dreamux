@@ -155,6 +155,7 @@ describe('teammate-mcp stdio shim', () => {
       'send',
       'close',
       'history',
+      'history_events',
       'list',
       'status',
       'last',
@@ -164,6 +165,7 @@ describe('teammate-mcp stdio shim', () => {
 
     await expect(listTools('teammate')).resolves.toEqual([
       'history',
+      'history_events',
       'list',
       'status',
       'last',
@@ -185,6 +187,21 @@ describe('teammate-mcp stdio shim', () => {
     expect(JSON.stringify(spawn.inputSchema.properties['worktree'])).toContain(
       'delete-on-close',
     );
+  });
+
+  it('advertises history as a ledger and history_events as the raw timeline', async () => {
+    const tools = await toolSchemas('dispatcher');
+    const history = tools.find((entry) => entry['name'] === 'history') as {
+      inputSchema: { required: string[]; properties: Record<string, unknown> };
+    };
+    const events = tools.find((entry) => entry['name'] === 'history_events') as {
+      inputSchema: { required: string[]; properties: Record<string, unknown> };
+    };
+    expect(history.inputSchema.required).toEqual([]);
+    expect(history.inputSchema.properties).toHaveProperty('limit');
+    expect(history.inputSchema.properties).toHaveProperty('cursor');
+    expect(history.inputSchema.properties).toHaveProperty('source_cwd');
+    expect(events.inputSchema.required).toEqual(['name']);
   });
 
   it('forwards spawn to the dispatcher-scoped admin method', async () => {
@@ -428,7 +445,7 @@ describe('teammate-mcp stdio shim', () => {
     }
   });
 
-  it('forwards history, last, and ctx reads with a teammate name', async () => {
+  it('forwards history ledger queries, history_events, last, and ctx reads', async () => {
     const admin = await startFakeAdminServer((request) => ({
       id: request.id,
       ok: true,
@@ -447,10 +464,29 @@ describe('teammate-mcp stdio shim', () => {
         log: () => {},
       });
 
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'history',
+          arguments: {
+            grep: 'review',
+            limit: 5,
+            close_status: 'open',
+          },
+        },
+      });
+      expect(await reader.next()).toMatchObject({
+        jsonrpc: '2.0',
+        id: 1,
+        result: { structuredContent: { ok: true } },
+      });
+
       for (const [id, name] of [
-        [1, 'history'],
-        [2, 'last'],
-        [3, 'ctx'],
+        [2, 'history_events'],
+        [3, 'last'],
+        [4, 'ctx'],
       ] as const) {
         writeJson(input, {
           jsonrpc: '2.0',
@@ -467,10 +503,17 @@ describe('teammate-mcp stdio shim', () => {
 
       expect(admin.requests.map((request) => request.method)).toEqual([
         'mcp.teammate.history',
+        'mcp.teammate.history_events',
         'mcp.teammate.last',
         'mcp.teammate.ctx',
       ]);
       expect(admin.requests.map((request) => request.params)).toEqual([
+        {
+          dispatcher_id: 'dispatcher-a',
+          grep: 'review',
+          limit: 5,
+          close_status: 'open',
+        },
         { dispatcher_id: 'dispatcher-a', name: 'reviewer' },
         { dispatcher_id: 'dispatcher-a', name: 'reviewer' },
         { dispatcher_id: 'dispatcher-a', name: 'reviewer' },
