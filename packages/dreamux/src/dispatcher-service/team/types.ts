@@ -59,6 +59,31 @@ export interface TeamTransferChannelBackInput {
   chatType: 'group' | 'p2p';
 }
 
+export interface TeamCreateGroupInput {
+  dispatcherId: string;
+  name: string;
+  repoCwd: string;
+  leaderAgentRuntime: string;
+  sourceChatId: string;
+  sourceChatType: 'p2p' | 'group';
+  requesterOpenId: string;
+  groupName?: string;
+  inviteOpenIds?: string[];
+  intent?: string;
+  prompt?: string;
+}
+
+export interface TeamCreateGroupResult extends TeamCreateResult {
+  binding: {
+    provider: 'builtin:feishu';
+    chat_id: string;
+    chat_type: 'group';
+    team_id: string;
+    leader_name: string;
+  };
+  invited_open_ids: string[];
+}
+
 export type TeamLedgerEventType =
   | 'create'
   | 'status'
@@ -66,6 +91,7 @@ export type TeamLedgerEventType =
   | 'decision'
   | 'bind_channel'
   | 'transfer_channel_back'
+  | 'create_group'
   | 'dissolve';
 
 export interface TeamLedgerEvent {

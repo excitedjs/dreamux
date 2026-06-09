@@ -3,9 +3,12 @@ import type { TeamMateAgentService, TeamMateSharedWorkspace } from '../teammate/
 import { dispatcherPrincipal, teamLeaderPrincipal } from '../teammate/types.js';
 import { ChannelBindingStore } from '../channel-binding/store.js';
 import type { ChannelBinding } from '../channel-binding/store.js';
+import type { FeishuCreateGroupInput, FeishuCreateGroupResult } from '../../channel/feishu/bot.js';
 import { TeamStore } from './store.js';
 import type {
   TeamBindChannelInput,
+  TeamCreateGroupInput,
+  TeamCreateGroupResult,
   TeamCreateInput,
   TeamCreateResult,
   TeamDissolveInput,
@@ -18,6 +21,9 @@ import { validateTeamId } from './types.js';
 
 export interface TeamServiceOptions {
   teammates: TeamMateAgentService;
+  createFeishuGroup?: (
+    input: FeishuCreateGroupInput & { dispatcherId: string },
+  ) => Promise<FeishuCreateGroupResult>;
 }
 
 export class TeamService {
@@ -201,6 +207,59 @@ export class TeamService {
     return binding;
   }
 
+  async createGroup(input: TeamCreateGroupInput): Promise<TeamCreateGroupResult> {
+    if (input.sourceChatType !== 'p2p') {
+      throw new Error('create_team_group must be requested from a P2P control channel');
+    }
+    if (this.opts.createFeishuGroup === undefined) {
+      throw new Error('Feishu group creation is not available for this dispatcher');
+    }
+    const created = await this.create(input);
+    let group: FeishuCreateGroupResult;
+    try {
+      group = await this.opts.createFeishuGroup({
+        dispatcherId: input.dispatcherId,
+        name: input.groupName ?? input.name,
+        userOpenIds: uniqueOpenIds([
+          input.requesterOpenId,
+          ...(input.inviteOpenIds ?? []),
+        ]),
+      });
+    } catch (err) {
+      await this.dissolve({
+        dispatcherId: input.dispatcherId,
+        teamId: created.team.team_id,
+        note: 'Feishu group creation failed',
+      });
+      throw err;
+    }
+    const binding = await this.bindChannel({
+      dispatcherId: input.dispatcherId,
+      teamId: created.team.team_id,
+      provider: 'builtin:feishu',
+      chatId: group.chatId,
+      chatType: 'group',
+    });
+    await this.store.appendLedger(created.team, {
+      type: 'create_group',
+      summary: `created Feishu group ${group.chatId} for team ${created.team.team_id}`,
+    });
+    return {
+      ...created,
+      binding: {
+        provider: binding.provider,
+        chat_id: binding.chat_id,
+        chat_type: binding.chat_type,
+        team_id: binding.team_id,
+        leader_name: binding.leader_name,
+      },
+      invited_open_ids: uniqueOpenIds([
+        input.requesterOpenId,
+        ...(input.inviteOpenIds ?? []),
+      ]),
+    };
+  }
+
   async resolveChannel(input: {
     dispatcherId: string;
     provider: 'builtin:feishu';
@@ -299,4 +358,8 @@ function teamLeaderPrompt(team: TeamRecord): string {
     `Repository cwd: ${team.repo_cwd}`,
     team.intent !== null ? `Intent: ${team.intent}` : '',
   ].filter((line) => line !== '').join('\n');
+}
+
+function uniqueOpenIds(ids: string[]): string[] {
+  return [...new Set(ids.filter((id) => id !== ''))];
 }

@@ -59,6 +59,9 @@ repo directly from the dispatcher.
 
 - `create` — create a Team and TeamLeader. Requires `repo_cwd` and
   `leader_agent_runtime`; no default leader runtime is inferred.
+- `create_group` — from a P2P control channel, create a Team, create a Feishu
+  group, invite the requester/peers when Feishu permissions allow it, and bind
+  the new group to the TeamLeader. The source P2P remains with the dispatcher.
 - `list`, `status`, `ledger` — read dispatcher-owned Team records and lifecycle
   ledger rows.
 - `bind_channel` — bind a Feishu group chat to a TeamLeader. P2P binding is

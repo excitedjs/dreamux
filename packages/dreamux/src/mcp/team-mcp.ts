@@ -106,6 +106,18 @@ function teamTools(): Array<Record<string, unknown>> {
       intent: { type: 'string', maxLength: 2000 },
       prompt: { type: 'string', maxLength: 20000 },
     }, ['name', 'repo_cwd', 'leader_agent_runtime']),
+    tool('create_group', 'Create a Team, create a Feishu group, and bind that group to the TeamLeader.', {
+      name: { type: 'string', minLength: 1, maxLength: 64 },
+      repo_cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+      leader_agent_runtime: { type: 'string', minLength: 1, maxLength: 128 },
+      source_chat_id: { type: 'string', minLength: 1 },
+      source_chat_type: { type: 'string', enum: ['p2p', 'group'] },
+      requester_open_id: { type: 'string', minLength: 1 },
+      invite_open_ids: { type: 'array', items: { type: 'string' } },
+      group_name: { type: 'string', minLength: 1 },
+      intent: { type: 'string', maxLength: 2000 },
+      prompt: { type: 'string', maxLength: 20000 },
+    }, ['name', 'repo_cwd', 'leader_agent_runtime', 'source_chat_id', 'source_chat_type', 'requester_open_id']),
     tool('list', 'List Teams owned by this dispatcher.', {}, []),
     tool('status', 'Read one Team status.', {
       team_id: { type: 'string', minLength: 1, maxLength: 64 },
@@ -168,6 +180,8 @@ function mapToolCall(call: ToolCall): { method: string; params: Record<string, u
   switch (call.name) {
     case 'create':
       return { method: 'mcp.team.create', params: createArgs(call.arguments) };
+    case 'create_group':
+      return { method: 'mcp.team.create_group', params: createGroupArgs(call.arguments) };
     case 'list':
       return { method: 'mcp.team.list', params: {} };
     case 'status':
@@ -195,6 +209,19 @@ function createArgs(value: unknown): Record<string, unknown> {
     leader_agent_runtime: requireString(obj, 'leader_agent_runtime'),
     ...(intent !== null ? { intent } : {}),
     ...(prompt !== null ? { prompt } : {}),
+  };
+}
+
+function createGroupArgs(value: unknown): Record<string, unknown> {
+  const obj = asRecord(value, 'create_group arguments');
+  const inviteOpenIds = optionalStringArray(obj, 'invite_open_ids');
+  return {
+    ...createArgs(value),
+    source_chat_id: requireString(obj, 'source_chat_id'),
+    source_chat_type: requireString(obj, 'source_chat_type'),
+    requester_open_id: requireString(obj, 'requester_open_id'),
+    ...optionalStringProp(obj, 'group_name'),
+    ...(inviteOpenIds !== null ? { invite_open_ids: inviteOpenIds } : {}),
   };
 }
 
@@ -253,6 +280,23 @@ function optionalString(obj: Record<string, unknown>, key: string): string | nul
   if (value === undefined || value === null) return null;
   if (typeof value !== 'string') throw new Error(`${key} must be a string`);
   return value;
+}
+
+function optionalStringArray(obj: Record<string, unknown>, key: string): string[] | null {
+  const value = obj[key];
+  if (value === undefined || value === null) return null;
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
+    throw new Error(`${key} must be an array of strings`);
+  }
+  return value as string[];
+}
+
+function optionalStringProp(
+  obj: Record<string, unknown>,
+  key: string,
+): Record<string, string> {
+  const value = optionalString(obj, key);
+  return value === null ? {} : { [key]: value };
 }
 
 function okResponse(id: JsonRpcRequest['id'], result: unknown): string {

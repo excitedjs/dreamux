@@ -4,7 +4,11 @@ import type {
   AgentRuntimeProviderCatalog,
   CompletionEnvelope,
 } from '../../agent-runtime/index.js';
-import type { FeishuBot } from '../../channel/feishu/bot.js';
+import type {
+  FeishuBot,
+  FeishuCreateGroupInput,
+  FeishuCreateGroupResult,
+} from '../../channel/feishu/bot.js';
 import {
   FeishuChannelSession,
   type FeishuInboundEnvelope,
@@ -244,6 +248,21 @@ export class DispatcherAgentService {
     }
     const slot = this.mustRunningSlot(input.dispatcherId);
     return slot.channel.handleMcpTool(input.toolName, input.arguments);
+  }
+
+  async createFeishuGroup(
+    input: FeishuCreateGroupInput & { dispatcherId: string },
+  ): Promise<FeishuCreateGroupResult> {
+    const slot = this.mustRunningSlot(input.dispatcherId);
+    const created = await slot.channel.bot.createGroup({
+      name: input.name,
+      userOpenIds: input.userOpenIds,
+    });
+    await slot.channel.bot.inviteMembers({
+      chatId: created.chatId,
+      userOpenIds: input.userOpenIds,
+    });
+    return created;
   }
 
   async shutdown(): Promise<void> {

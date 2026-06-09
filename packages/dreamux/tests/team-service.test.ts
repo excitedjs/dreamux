@@ -117,6 +117,8 @@ function buildServices(): {
   teams: TeamService;
   teammates: TeamMateAgentService;
   provider: FakeProvider;
+  createdGroups: Array<{ name: string; userOpenIds: string[]; chatId: string }>;
+  setCreateGroupError(err: Error | null): void;
 } {
   const config = testDreamuxConfig();
   const registry = createBuiltinProviderRegistry();
@@ -129,7 +131,26 @@ function buildServices(): {
     agentRuntimeProviders: new AgentRuntimeProviderCatalog({ registry }),
     log: noopLog(),
   });
-  return { teams: new TeamService({ teammates }), teammates, provider };
+  const createdGroups: Array<{ name: string; userOpenIds: string[]; chatId: string }> = [];
+  let createGroupError: Error | null = null;
+  const teams = new TeamService({
+    teammates,
+    createFeishuGroup: async (input) => {
+      if (createGroupError !== null) throw createGroupError;
+      const chatId = `oc_group_${createdGroups.length + 1}`;
+      createdGroups.push({ name: input.name, userOpenIds: input.userOpenIds, chatId });
+      return { chatId };
+    },
+  });
+  return {
+    teams,
+    teammates,
+    provider,
+    createdGroups,
+    setCreateGroupError(err): void {
+      createGroupError = err;
+    },
+  };
 }
 
 describe('TeamService', () => {
@@ -256,6 +277,101 @@ describe('TeamService', () => {
     await expect(
       teammates.closeScoped({ principal: beta, name: 'builder' }),
     ).rejects.toThrow(/does not exist/);
+  });
+
+  it('creates a team group from P2P and binds the new group', async () => {
+    const repo = await initGitRepo(join(root, 'group-repo'));
+    const { teams, createdGroups } = buildServices();
+
+    const result = await teams.createGroup({
+      dispatcherId: 'flow',
+      name: 'gamma',
+      repoCwd: repo,
+      leaderAgentRuntime: 'flow',
+      sourceChatId: 'oc_p2p',
+      sourceChatType: 'p2p',
+      requesterOpenId: 'ou_requester',
+      inviteOpenIds: ['ou_peer', 'ou_requester'],
+      groupName: 'Gamma Team',
+    });
+
+    expect(createdGroups).toEqual([
+      {
+        name: 'Gamma Team',
+        userOpenIds: ['ou_requester', 'ou_peer'],
+        chatId: 'oc_group_1',
+      },
+    ]);
+    expect(result.binding).toMatchObject({
+      provider: 'builtin:feishu',
+      chat_id: 'oc_group_1',
+      chat_type: 'group',
+      team_id: 'gamma',
+      leader_name: 'gamma-leader',
+    });
+    await expect(
+      teams.resolveChannel({
+        dispatcherId: 'flow',
+        provider: 'builtin:feishu',
+        chatId: 'oc_p2p',
+        chatType: 'p2p',
+      }),
+    ).resolves.toBeNull();
+    await expect(
+      teams.resolveChannel({
+        dispatcherId: 'flow',
+        provider: 'builtin:feishu',
+        chatId: 'oc_group_1',
+        chatType: 'group',
+      }),
+    ).resolves.toMatchObject({ team_id: 'gamma' });
+    expect((await teams.ledger('flow', 'gamma')).events.map((event) => event.type))
+      .toEqual(['create', 'bind_channel', 'create_group']);
+  });
+
+  it('dissolves the team when Feishu group creation fails', async () => {
+    const repo = await initGitRepo(join(root, 'failure-repo'));
+    const { teams, setCreateGroupError } = buildServices();
+    setCreateGroupError(new Error('missing Feishu chat permission'));
+
+    await expect(
+      teams.createGroup({
+        dispatcherId: 'flow',
+        name: 'delta',
+        repoCwd: repo,
+        leaderAgentRuntime: 'flow',
+        sourceChatId: 'oc_p2p',
+        sourceChatType: 'p2p',
+        requesterOpenId: 'ou_requester',
+      }),
+    ).rejects.toThrow(/missing Feishu chat permission/);
+
+    const status = await teams.status('flow', 'delta');
+    expect(status.team.status).toBe('closed');
+    expect(
+      await teams.resolveChannel({
+        dispatcherId: 'flow',
+        provider: 'builtin:feishu',
+        chatId: 'oc_group_1',
+        chatType: 'group',
+      }),
+    ).toBeNull();
+  });
+
+  it('rejects create_group from a non-P2P source channel', async () => {
+    const repo = await initGitRepo(join(root, 'non-p2p-repo'));
+    const { teams } = buildServices();
+    await expect(
+      teams.createGroup({
+        dispatcherId: 'flow',
+        name: 'epsilon',
+        repoCwd: repo,
+        leaderAgentRuntime: 'flow',
+        sourceChatId: 'oc_group_source',
+        sourceChatType: 'group',
+        requesterOpenId: 'ou_requester',
+      }),
+    ).rejects.toThrow(/P2P control channel/);
   });
 });
 
