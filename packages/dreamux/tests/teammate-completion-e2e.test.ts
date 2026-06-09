@@ -1,7 +1,8 @@
 import { mkdtempSync, rmSync } from 'node:fs';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execa } from 'execa';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -21,6 +22,7 @@ import {
 import type { InboundTurnInput, TurnSettledSignal } from '../src/agent-runtime/turn.js';
 import { createFakeFeishuBot } from '../src/channel/feishu/bot.js';
 import { DispatcherService } from '../src/dispatcher-service/service.js';
+import { teamLeaderPrincipal } from '../src/dispatcher-service/teammate/types.js';
 import { resetRuntimeConfig } from '../src/platform/paths.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
@@ -226,6 +228,52 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
         result: 'reviewer final answer',
       },
     ]);
+
+    await facade.shutdown();
+  });
+
+  it("routes a team member completion to the owning TeamLeader runtime", async () => {
+    await initGitRepo(workspace(root));
+    const descriptor = createBuiltinProviderRegistry().resolve('builtin:codex');
+    const provider = new FakeProvider(descriptor);
+    const facade = buildFacade(provider, adminSocketPath);
+
+    await facade.startDispatcher('flow');
+    await facade.createTeam({
+      dispatcherId: 'flow',
+      name: 'alpha',
+      repoCwd: workspace(root),
+      leaderAgentRuntime: 'flow',
+    });
+    const workspaceInfo = await facade.teams.sharedWorkspace('flow', 'alpha');
+    const spawned = await facade.teammates.spawnScoped({
+      principal: teamLeaderPrincipal({
+        dispatcherId: 'flow',
+        teamId: 'alpha',
+        leaderName: 'alpha-leader',
+      }),
+      name: 'builder',
+      prompt: 'Build it.',
+      sharedWorkspace: workspaceInfo,
+    });
+
+    const dispatcherRuntime = provider.runtimes[0]!;
+    const leaderRuntime = provider.runtimes[1]!;
+    const memberRuntime = provider.runtimes[2]!;
+    const turnId =
+      spawned.turn.status === 'submitted' ? spawned.turn.turn_id : 'unreachable';
+    memberRuntime.settle('completed', turnId);
+    await flush();
+
+    expect(leaderRuntime.delivered).toEqual([
+      {
+        source: 'builder',
+        id: `builder:${turnId}`,
+        status: 'completed',
+        result: 'reviewer final answer',
+      },
+    ]);
+    expect(dispatcherRuntime.delivered).toEqual([]);
 
     await facade.shutdown();
   });
@@ -473,4 +521,14 @@ async function flush(): Promise<void> {
 
 function workspace(root: string): string {
   return join(root, 'workspace');
+}
+
+async function initGitRepo(path: string): Promise<void> {
+  await mkdir(path, { recursive: true });
+  await execa('git', ['init', '-b', 'main'], { cwd: path });
+  await execa('git', ['config', 'user.name', 'Dreamux Test'], { cwd: path });
+  await execa('git', ['config', 'user.email', 'dreamux-test@example.com'], { cwd: path });
+  await writeFile(join(path, 'README.md'), 'test\n');
+  await execa('git', ['add', 'README.md'], { cwd: path });
+  await execa('git', ['commit', '-m', 'Initial test commit'], { cwd: path });
 }

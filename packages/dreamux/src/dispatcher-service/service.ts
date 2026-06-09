@@ -1,5 +1,8 @@
-import type { AgentRuntimeProviderCatalog } from '../agent-runtime/index.js';
-import type { AgentRuntime } from '../agent-runtime/index.js';
+import type {
+  AgentRuntimeProviderCatalog,
+  AgentRuntime,
+  CompletionEnvelope,
+} from '../agent-runtime/index.js';
 import type { DreamuxConfig } from '../config/config.js';
 import type { DispatcherStore } from '../state/dispatcher-store.js';
 import type { DreamuxLogger } from '../platform/logger.js';
@@ -20,6 +23,7 @@ import type {
   TeamMateHistoryQuery,
   SendTeamMateInput,
   SpawnTeamMateInput,
+  TeamMateIdentity,
 } from './teammate/types.js';
 import type { TeamCreateInput, TeamDissolveInput } from './team/types.js';
 
@@ -80,8 +84,8 @@ export class DispatcherService {
       // Reverse delivery (issue #147): a settled teammate turn bridges here to
       // the dispatcher runtime's completionInput, becoming a fresh dispatcher
       // turn. The facade is where both services meet.
-      onTeamMateCompletion: (id, completion) =>
-        this.dispatchers.deliverCompletion(id, completion),
+      onTeamMateCompletion: (id, identity, completion) =>
+        this.deliverTeamMateCompletion(id, identity, completion),
       log: opts.log,
     });
     this.teams = new TeamService({ teammates: this.teammates });
@@ -109,6 +113,24 @@ export class DispatcherService {
 
   callFeishuMcpTool(input: FeishuChannelToolCall) {
     return this.dispatchers.callFeishuMcpTool(input);
+  }
+
+  async deliverTeamMateCompletion(
+    dispatcherId: string,
+    identity: TeamMateIdentity,
+    completion: CompletionEnvelope,
+  ): Promise<void> {
+    if (identity.owner.kind === 'team' && identity.role === 'team_member') {
+      const leader = this.teammates.getLiveRuntime(
+        dispatcherId,
+        identity.owner.leader_name,
+      );
+      if (leader?.completionInput !== undefined) {
+        const result = await leader.completionInput(completion);
+        if (result.status === 'accepted') return;
+      }
+    }
+    await this.dispatchers.deliverCompletion(dispatcherId, completion);
   }
 
   spawnTeamMate(input: SpawnTeamMateInput) {

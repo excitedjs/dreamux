@@ -81,6 +81,7 @@ export interface TeamMateAgentServiceOptions {
    */
   onTeamMateCompletion?: (
     dispatcherId: string,
+    identity: TeamMateIdentity,
     completion: CompletionEnvelope,
   ) => void | Promise<void>;
   log: DreamuxLogger;
@@ -501,6 +502,10 @@ export class TeamMateAgentService {
     }
   }
 
+  getLiveRuntime(dispatcherId: string, name: string): AgentRuntime | null {
+    return this.live.get(liveKey(dispatcherId, validateTeamMateName(name)))?.runtime ?? null;
+  }
+
   private async ensureRuntime(
     dispatcherId: string,
     name: string,
@@ -642,6 +647,7 @@ export class TeamMateAgentService {
               void this.deliverTurnSettled(
                 dispatcherId,
                 identity.name,
+                identity,
                 settledRuntime,
                 settled,
                 onTeamMateCompletion,
@@ -701,6 +707,7 @@ export class TeamMateAgentService {
   private async deliverTurnSettled(
     dispatcherId: string,
     name: string,
+    identity: TeamMateIdentity,
     runtime: AgentRuntime,
     settled: TurnSettledSignal,
     sink: NonNullable<TeamMateAgentServiceOptions['onTeamMateCompletion']>,
@@ -736,7 +743,7 @@ export class TeamMateAgentService {
         status: settled.status,
         result,
       };
-      await sink(dispatcherId, envelope);
+      await sink(dispatcherId, identity, envelope);
     } catch (err) {
       this.opts.log.warn(
         { dispatcher_id: dispatcherId, teammate: name, err: errInfo(err) },

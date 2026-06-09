@@ -249,15 +249,15 @@ async function callTool(
     if (ctx.callerKind === 'teammate' && isLifecycleTool(call.name)) {
       return toolError(`TeamMate tool '${call.name}' is not available to teammates`);
     }
-    const mapped = mapToolCall(call);
+    const mapped = mapToolCall(call, ctx.callerKind);
     return forwardToolCall(
       mapped.method,
       {
         dispatcher_id: ctx.dispatcherId,
+        ...mapped.params,
         caller_kind: ctx.callerKind,
         ...(ctx.teamId !== undefined ? { team_id: ctx.teamId } : {}),
         ...(ctx.leaderName !== undefined ? { leader_name: ctx.leaderName } : {}),
-        ...mapped.params,
       },
       ctx.socketPath,
       call.name,
@@ -267,13 +267,16 @@ async function callTool(
   }
 }
 
-function mapToolCall(call: ToolCall): {
+function mapToolCall(
+  call: ToolCall,
+  callerKind: 'dispatcher' | 'team_leader' | 'teammate',
+): {
   method: string;
   params: Record<string, unknown>;
 } {
   switch (call.name) {
     case 'spawn':
-      return { method: 'mcp.teammate.spawn', params: spawnArgs(call.arguments) };
+      return { method: 'mcp.teammate.spawn', params: spawnArgs(call.arguments, callerKind) };
     case 'send':
       return { method: 'mcp.teammate.send', params: sendArgs(call.arguments) };
     case 'close':
@@ -342,11 +345,22 @@ function asToolCallParams(params: unknown): ToolCall {
   return { name, arguments: obj['arguments'] ?? {} };
 }
 
-function spawnArgs(value: unknown): Record<string, unknown> {
+function spawnArgs(
+  value: unknown,
+  callerKind: 'dispatcher' | 'team_leader' | 'teammate',
+): Record<string, unknown> {
   const obj = asRecord(value, 'spawn arguments');
   const agentRuntime = optionalString(obj, 'agent_runtime');
-  const worktree = optionalWorktree(obj, 'worktree');
   const intent = optionalString(obj, 'intent');
+  if (callerKind === 'team_leader') {
+    return {
+      name: requireString(obj, 'name'),
+      prompt: requireString(obj, 'prompt'),
+      ...(agentRuntime !== null ? { agent_runtime: agentRuntime } : {}),
+      ...(intent !== null ? { intent } : {}),
+    };
+  }
+  const worktree = optionalWorktree(obj, 'worktree');
   return {
     name: requireString(obj, 'name'),
     prompt: requireString(obj, 'prompt'),
