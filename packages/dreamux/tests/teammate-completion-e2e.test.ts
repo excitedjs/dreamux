@@ -216,6 +216,40 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
     await facade.shutdown();
   });
 
+  it('coalesces duplicate settled events for the same teammate turn', async () => {
+    const descriptor = createBuiltinProviderRegistry().resolve('builtin:codex');
+    const provider = new FakeProvider(descriptor);
+    const facade = buildFacade(provider, adminSocketPath);
+
+    await facade.startDispatcher('flow');
+    await facade.spawnTeamMate({
+      dispatcherId: 'flow',
+      name: 'reviewer',
+      prompt: 'Review the change.',
+      cwd: root,
+    });
+
+    const dispatcherRuntime = provider.runtimes[0]!;
+    const teammateRuntime = provider.runtimes[1]!;
+
+    teammateRuntime.settle('completed', 'turn-duplicate');
+    teammateRuntime.settle('completed', 'turn-duplicate');
+    await flush();
+    teammateRuntime.settle('completed', 'turn-duplicate');
+    await flush();
+
+    expect(dispatcherRuntime.delivered).toEqual([
+      {
+        source: 'reviewer',
+        id: 'reviewer:turn-duplicate',
+        status: 'completed',
+        result: 'reviewer final answer',
+      },
+    ]);
+
+    await facade.shutdown();
+  });
+
   it('delivers a terminal failure/stop settlement to completionInput (not dropped)', async () => {
     const descriptor = createBuiltinProviderRegistry().resolve('builtin:codex');
     const provider = new FakeProvider(descriptor);

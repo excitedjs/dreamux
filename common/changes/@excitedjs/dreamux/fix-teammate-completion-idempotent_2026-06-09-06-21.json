@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Fix duplicate TeamMate reverse-completion delivery so repeated settled events and concurrent retries are idempotent.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}
