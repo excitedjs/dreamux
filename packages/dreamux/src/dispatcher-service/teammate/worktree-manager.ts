@@ -90,8 +90,11 @@ export class WorktreeManager {
     worktree: TeamMateWorktreeIdentity;
   }): Promise<TeamMateWorktreeIdentity> {
     const worktree = identity.worktree;
-    if (worktree.mode !== 'managed' || worktree.cleanup !== 'delete-on-close') {
+    if (worktree.mode !== 'managed') {
       return worktree;
+    }
+    if (worktree.cleanup !== 'delete-on-close') {
+      return { ...worktree, cleanup_state: 'kept', cleanup_error: null };
     }
     try {
       const repo = identity.source_repo ?? (await this.repoRoot(identity.source_cwd));
@@ -136,31 +139,66 @@ async function retainedState(
   if (unmerged.stdout.trim() !== '') return 'retained-unmerged';
   const status = await git(worktree.path, ['status', '--porcelain=v1', '-uall']);
   if (status.stdout.trim() !== '') return 'retained-dirty';
-  if (worktree.branch === null) return null;
+  const head = await git(worktree.path, ['rev-parse', '--verify', 'HEAD']);
+  const headSha = head.stdout.trim();
+  const safeRefs = await safeReachabilityRefs(repo, worktree);
+  if (safeRefs.length === 0) return 'retained-unique-commits';
+  const containsHead = await git(repo, [
+    'branch',
+    '--contains',
+    headSha,
+    '--format=%(refname:short)',
+  ]);
+  const containingRefs = new Set(
+    containsHead.stdout
+      .split('\n')
+      .map((line) => line.replace(/^\*\s*/, '').trim())
+      .filter((line) => line !== ''),
+  );
+  if (!safeRefs.some((ref) => containingRefs.has(ref))) {
+    return 'retained-unique-commits';
+  }
+  return null;
+}
+
+async function safeReachabilityRefs(
+  repo: string,
+  worktree: TeamMateWorktreeIdentity,
+): Promise<string[]> {
   const refs = await git(repo, [
     'for-each-ref',
     '--format=%(refname:short)',
     'refs/heads',
     'refs/remotes',
   ]);
-  const otherRefs = refs.stdout
+  const allRefs = refs.stdout
     .split('\n')
     .map((line) => line.trim())
-    .filter((ref) => ref !== '' && ref !== worktree.branch);
-  const unique =
-    otherRefs.length === 0
-      ? await git(repo, ['rev-parse', '--verify', worktree.branch])
-      : await git(repo, [
-          'log',
-          '--format=%H',
-          '--max-count=1',
-          worktree.branch,
-          '--not',
-          ...otherRefs,
-          '--',
-        ]);
-  if (unique.stdout.trim() !== '') return 'retained-unique-commits';
-  return null;
+    .filter((ref) => ref !== '');
+  const candidates = new Set<string>();
+  for (const ref of allRefs) {
+    if (worktree.branch === null || ref !== worktree.branch) candidates.add(ref);
+  }
+  if (worktree.base_ref !== null) {
+    const baseSha = await revParseOrNull(repo, worktree.base_ref);
+    if (baseSha !== null) {
+      for (const ref of allRefs) {
+        if (await gitOk(repo, ['merge-base', '--is-ancestor', baseSha, ref])) {
+          candidates.add(ref);
+        }
+      }
+    }
+  }
+  return [...candidates];
+}
+
+async function revParseOrNull(cwd: string, ref: string): Promise<string | null> {
+  try {
+    const result = await git(cwd, ['rev-parse', '--verify', ref]);
+    return result.stdout.trim();
+  } catch {
+    return null;
+  }
 }
 
 async function git(cwd: string, args: string[]): Promise<{ stdout: string }> {

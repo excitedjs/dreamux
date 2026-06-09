@@ -657,6 +657,38 @@ describe('TeamMateAgentService', () => {
     expect(existsSync(spawned.teammate.worktree.path)).toBe(false);
   });
 
+  it('marks intentionally retained managed worktrees as kept on close', async () => {
+    const repo = await initGitRepo(join(root, 'kept-repo'));
+    const { catalog } = providerCatalog();
+    const config = testDreamuxConfig();
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: catalog,
+      log: noopLog(),
+    });
+
+    const spawned = await service.spawn({
+      dispatcherId: 'flow',
+      name: 'keeper',
+      prompt: 'go',
+      cwd: repo,
+      worktree: {
+        mode: 'managed',
+        slug: 'keeper',
+        branch: 'dreamux/keeper',
+        cleanup: 'keep',
+      },
+    });
+
+    const closed = await service.close({
+      dispatcherId: 'flow',
+      name: 'keeper',
+    });
+    expect(closed.teammate.worktree.cleanup_state).toBe('kept');
+    expect(existsSync(spawned.teammate.worktree.path)).toBe(true);
+  });
+
   it('retains dirty managed worktrees on close', async () => {
     const repo = await initGitRepo(join(root, 'dirty-repo'));
     const { catalog } = providerCatalog();
@@ -688,6 +720,45 @@ describe('TeamMateAgentService', () => {
     });
     expect(closed.teammate.worktree.cleanup_state).toBe('retained-dirty');
     expect(existsSync(spawned.teammate.worktree.path)).toBe(true);
+  });
+
+  it('retains clean detached managed worktrees with unique commits', async () => {
+    const repo = await initGitRepo(join(root, 'detached-repo'));
+    const { catalog } = providerCatalog();
+    const config = testDreamuxConfig();
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: catalog,
+      log: noopLog(),
+    });
+
+    const spawned = await service.spawn({
+      dispatcherId: 'flow',
+      name: 'detached',
+      prompt: 'go',
+      cwd: repo,
+      worktree: {
+        mode: 'managed',
+        slug: 'detached',
+        branch: 'dreamux/detached',
+        cleanup: 'delete-on-close',
+      },
+    });
+    const worktreePath = spawned.teammate.worktree.path;
+    await execa('git', ['switch', '--detach'], { cwd: worktreePath });
+    await writeFile(join(worktreePath, 'detached.txt'), 'detached\n');
+    await execa('git', ['add', 'detached.txt'], { cwd: worktreePath });
+    await execa('git', ['commit', '-m', 'Detached work'], { cwd: worktreePath });
+
+    const closed = await service.close({
+      dispatcherId: 'flow',
+      name: 'detached',
+    });
+    expect(closed.teammate.worktree.cleanup_state).toBe(
+      'retained-unique-commits',
+    );
+    expect(existsSync(worktreePath)).toBe(true);
   });
 
   it('fails loud on a legacy provider_ref teammate identity (pre-#148)', async () => {
