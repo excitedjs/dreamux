@@ -1,6 +1,6 @@
 ---
 name: dispatcher
-description: Use from a Dreamux dispatcher thread when bounded repository work should be delegated to a TeamMate. The server-hosted TeamMate MCP is the default interface; spawn creates a named semi-resident TeamMate, send submits follow-up turns, resume reattaches persisted sessions, close stops one, and history/list/status/last/ctx/get_capabilities inspect state. The tm CLI is the explicit fallback for isolated worktrees and legacy diagnostics. Applies to spawning, tracking, retrieving, sending, closing, inspecting, resuming, recovering, or summarizing teammate work.
+description: Use from a Dreamux dispatcher thread when bounded repository work should be delegated to a TeamMate. The server-hosted TeamMate MCP is the default interface; spawn creates a named semi-resident TeamMate, send submits follow-up turns and reopens a closed TeamMate from its checkpoint, close stops one, and history/list/status/last/ctx/get_capabilities inspect state. The tm CLI is the explicit fallback for isolated worktrees and legacy diagnostics. Applies to spawning, tracking, retrieving, sending, closing, inspecting, reopening, recovering, or summarizing teammate work.
 ---
 
 # Dispatcher
@@ -19,18 +19,20 @@ habit.
 
 Dreamux injects a dispatcher-scoped `teammate` MCP server. It creates named
 semi-resident TeamMate agents through the same AgentRuntime contract as
-dispatchers, then lets you submit follow-up turns, resume persisted sessions,
-inspect state, and close agents without holding a shell session or polling a
-process.
+dispatchers, then lets you submit follow-up turns, reopen closed agents from
+their checkpoint, inspect state, and close agents without holding a shell
+session or polling a process.
 
 **Lifecycle.**
 
 - `spawn` — create a named TeamMate and submit the first turn. Use a stable name
   for work you may resume later.
-- `send` — submit a follow-up turn to a live or resumable TeamMate.
-- `resume` — reattach the persisted runtime checkpoint and optionally submit a
-  follow-up prompt.
-- `close` — stop the named TeamMate and mark it closed.
+- `send` — submit a turn to a TeamMate. If the named TeamMate is not live —
+  including one previously `close`d — send first reopens it from its persisted
+  checkpoint, then submits. There is no separate `resume` verb; send covers
+  reattach.
+- `close` — stop the named TeamMate and mark it closed. It stays reopenable: a
+  later `send` revives it from its checkpoint.
 
 **Watch and collect — no polling.**
 
@@ -49,9 +51,9 @@ the dispatcher turn end, then recover through `history`, `last`, and `ctx`.
 - `get_capabilities` — each provider's runtime capabilities: resume, steer,
   events, last, and context.
 
-The persistent identity and history files are the source of truth. A resumed
-TeamMate continues from its saved runtime checkpoint; do not create a new name
-unless you want a separate session.
+The persistent identity and history files are the source of truth. A TeamMate
+reopened by send continues from its saved runtime checkpoint; do not create a
+new name unless you want a separate session.
 
 ### tm CLI — the explicit fallback
 
@@ -130,9 +132,9 @@ on a flag -- do not infer one verb's flags from another.
 ## Scenario Routing
 
 These references cover the `tm` fallback path. For ordinary delegation —
-spawning a TeamMate, sending follow-up turns, resuming it, checking status, or
-reading history/last/context — use the `teammate` MCP tools above and you do
-not need a reference.
+spawning a TeamMate, sending follow-up turns (which also reopens a closed one
+from its checkpoint), checking status, or reading history/last/context — use the
+`teammate` MCP tools above and you do not need a reference.
 Read the matching reference when you have dropped to `tm`:
 
 | Intent | Reference |
@@ -167,7 +169,7 @@ Two state owners, kept distinct:
 - The Dreamux server owns the TeamMate **agent state** behind the `teammate`
   MCP — named identities, runtime checkpoints, status, history, last result,
   and context snapshots. Read and control it with `list`, `status`, `history`,
-  `last`, `ctx`, `send`, `resume`, and `close`.
+  `last`, `ctx`, `send`, and `close`.
 - `tm` owns live tm **session** state — teammate liveness, worktrees, and
   resumable session history (see `references/inspect-and-resume.md`).
 

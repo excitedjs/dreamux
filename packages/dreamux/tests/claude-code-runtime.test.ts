@@ -569,7 +569,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       text: 'go',
     });
     await waitFor(() => runtime.getStatus() === 'degraded', 5000);
-    expect(store.get('flow')?.last_error).toMatch(/timed out/i);
+    expect(store.get('flow')?.last_error).toMatch(/stalled|no stream activity/i);
 
     // Delivery must return a real `failed` result (so PR8 retry can act),
     // bounded by the same deadline — never an unresolved await.

@@ -14,7 +14,6 @@ import {
 import { TeamMateAgentService } from './teammate/service.js';
 import type {
   CloseTeamMateInput,
-  ResumeTeamMateInput,
   SendTeamMateInput,
   SpawnTeamMateInput,
 } from './teammate/types.js';
@@ -99,10 +98,6 @@ export class DispatcherService {
 
   sendTeamMate(input: SendTeamMateInput) {
     return this.teammates.send(input);
-  }
-
-  resumeTeamMate(input: ResumeTeamMateInput) {
-    return this.teammates.resume(input);
   }
 
   closeTeamMate(input: CloseTeamMateInput) {

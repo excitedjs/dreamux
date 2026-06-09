@@ -329,12 +329,12 @@ describe('TeamMateAgentService', () => {
       name: 'reviewer',
       prompt: 'Check tests too.',
     });
-    const resumed = await service.resume({
+    const sent = await service.send({
       dispatcherId: 'flow',
       name: 'reviewer',
       prompt: 'Continue from prior context.',
     });
-    expect(resumed.turn).toEqual({ status: 'submitted', turn_id: 'turn-3' });
+    expect(sent.turn).toEqual({ status: 'submitted', turn_id: 'turn-3' });
     expect(provider.runtimes).toHaveLength(1);
     expect(provider.runtimes[0]?.submitted).toHaveLength(3);
 
@@ -343,14 +343,12 @@ describe('TeamMateAgentService', () => {
       'state',
       'spawn',
       'send',
-      'resume',
       'send',
     ]);
     expect(history.events.map((event) => event.prompt_preview)).toEqual([
       null,
       'Review the change.',
       'Check tests too.',
-      'Continue from prior context.',
       'Continue from prior context.',
     ]);
   });
@@ -412,13 +410,13 @@ describe('TeamMateAgentService', () => {
       status: 'closed',
       close_note: 'done',
     });
-    await expect(
-      service.send({
-        dispatcherId: 'flow',
-        name: 'closer',
-        prompt: 'Should fail.',
-      }),
-    ).rejects.toThrow(/closed/);
+    // Read-only verbs never silently reopen a closed teammate (issue #155):
+    // only send carries the reopen flag. last/ctx need a live runtime, so they
+    // reject on a closed teammate; status reads the identity and returns the
+    // closed state without reopening (it does not throw).
+    await expect(service.last('flow', 'closer')).rejects.toThrow(/closed/);
+    await expect(service.context('flow', 'closer')).rejects.toThrow(/closed/);
+    expect((await service.status('flow', 'closer')).status).toBe('closed');
 
     const historyFile = await readFile(
       join(root, 'home', '.dreamux', 'state', 'flow', 'teammate', 'history', 'closer.jsonl'),
@@ -426,6 +424,49 @@ describe('TeamMateAgentService', () => {
     );
     expect(historyFile).toContain('"type":"spawn"');
     expect(historyFile).toContain('"type":"close"');
+  });
+
+  it('send reopens a closed teammate from its checkpoint (issue #155)', async () => {
+    const { catalog, provider } = providerCatalog();
+    const config = testDreamuxConfig();
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: catalog,
+      log: noopLog(),
+    });
+
+    await service.spawn({
+      dispatcherId: 'flow',
+      name: 'reopener',
+      prompt: 'Start.',
+      cwd: root,
+    });
+    const closed = await service.close({
+      dispatcherId: 'flow',
+      name: 'reopener',
+      note: 'paused',
+    });
+    expect(closed.teammate).toMatchObject({ status: 'closed', close_note: 'paused' });
+
+    // send must NOT throw on a closed teammate: it clears the closed markers,
+    // restarts the runtime from the persisted checkpoint, and submits.
+    const sent = await service.send({
+      dispatcherId: 'flow',
+      name: 'reopener',
+      prompt: 'Pick up where you left off.',
+    });
+    expect(sent.turn).toEqual({ status: 'submitted', turn_id: 'turn-1' });
+    expect(sent.teammate).toMatchObject({
+      name: 'reopener',
+      status: 'running',
+      closed_at: null,
+      close_note: null,
+    });
+    // A second runtime was launched and it resumed from checkpoint (not a fresh
+    // start) — that is what proves send revived the prior session.
+    expect(provider.runtimes).toHaveLength(2);
+    expect(provider.runtimes[1]?.wasThreadResumed()).toBe(true);
   });
 
   it('fails loud when spawned with an agentRuntime that matches no agent', async () => {

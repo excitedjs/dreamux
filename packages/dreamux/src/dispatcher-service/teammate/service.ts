@@ -30,7 +30,6 @@ import { TeamMateRuntimeStateStore } from './runtime-state.js';
 import {
   validateTeamMateName,
   type CloseTeamMateInput,
-  type ResumeTeamMateInput,
   type SendTeamMateInput,
   type SpawnTeamMateInput,
   type TeamMateCapabilities,
@@ -40,7 +39,6 @@ import {
   type TeamMateIdentity,
   type TeamMateLastResult,
   type TeamMateProviderCapability,
-  type TeamMateResumeResult,
   type TeamMateRuntimeStatus,
   type TeamMateSendResult,
   type TeamMateSpawnResult,
@@ -89,7 +87,7 @@ export class TeamMateAgentService {
     const name = validateTeamMateName(input.name);
     const existing = await this.identities.get(input.dispatcherId, name);
     if (existing !== null && existing.status !== 'closed') {
-      throw new Error(`TeamMate ${JSON.stringify(name)} already exists; use send or resume`);
+      throw new Error(`TeamMate ${JSON.stringify(name)} already exists; use send`);
     }
     const agentRuntimeId =
       input.agentRuntime ?? this.defaultAgentRuntime(input.dispatcherId);
@@ -125,7 +123,14 @@ export class TeamMateAgentService {
   }
 
   async send(input: SendTeamMateInput): Promise<TeamMateSendResult> {
-    const live = await this.ensureRuntime(input.dispatcherId, input.name);
+    // send subsumes the former `resume` verb (issue #155): a teammate that is
+    // not live — including one previously `close`d — is reopened from its
+    // persisted checkpoint and the turn is submitted, so send always works as
+    // long as the identity exists. reopenClosed scopes this revival to send;
+    // read-only verbs (last/ctx/status) never silently reopen a closed teammate.
+    const live = await this.ensureRuntime(input.dispatcherId, input.name, {
+      reopenClosed: true,
+    });
     const turn = await this.submitPrompt(input.dispatcherId, input.name, input.prompt);
     await this.identities.appendHistory(live.state.current(), {
       type: 'send',
@@ -133,27 +138,6 @@ export class TeamMateAgentService {
       turnId: turn.turn_id ?? null,
     });
     return { teammate: this.toStatus(live.state.current(), live.runtime), turn };
-  }
-
-  async resume(input: ResumeTeamMateInput): Promise<TeamMateResumeResult> {
-    const live = await this.ensureRuntime(input.dispatcherId, input.name);
-    await this.identities.appendHistory(live.state.current(), {
-      type: 'resume',
-      prompt: input.prompt ?? null,
-    });
-    let turn: TeamMateTurnResult | undefined;
-    if (input.prompt !== undefined && input.prompt !== '') {
-      turn = await this.submitPrompt(input.dispatcherId, input.name, input.prompt);
-      await this.identities.appendHistory(live.state.current(), {
-        type: 'send',
-        prompt: input.prompt,
-        turnId: turn.turn_id ?? null,
-      });
-    }
-    return {
-      teammate: this.toStatus(live.state.current(), live.runtime),
-      ...(turn !== undefined ? { turn } : {}),
-    };
   }
 
   async close(input: CloseTeamMateInput): Promise<TeamMateCloseResult> {
@@ -237,7 +221,6 @@ export class TeamMateAgentService {
       verbs: [
         'spawn',
         'send',
-        'resume',
         'close',
         'history',
         'list',
@@ -262,14 +245,28 @@ export class TeamMateAgentService {
   private async ensureRuntime(
     dispatcherId: string,
     name: string,
+    opts: { reopenClosed?: boolean } = {},
   ): Promise<LiveTeamMate> {
     const teammateName = validateTeamMateName(name);
     const key = liveKey(dispatcherId, teammateName);
     const existing = this.live.get(key);
     if (existing !== undefined) return existing;
-    const identity = await this.mustIdentity(dispatcherId, teammateName);
+    let identity = await this.mustIdentity(dispatcherId, teammateName);
     if (identity.status === 'closed') {
-      throw new Error(`TeamMate ${JSON.stringify(teammateName)} is closed`);
+      // Only send reopens a closed teammate (issue #155): clear the closed
+      // markers and revive from the persisted checkpoint. `checkpoint` is left
+      // intact — it is what distinguishes a reopen (resumes prior context) from
+      // a fresh spawn (which nulls it). Read-only verbs pass no flag and still
+      // fail-loud on a closed teammate.
+      if (opts.reopenClosed !== true) {
+        throw new Error(`TeamMate ${JSON.stringify(teammateName)} is closed`);
+      }
+      identity = await this.identities.update(identity, {
+        status: 'starting',
+        closedAt: null,
+        closeNote: null,
+        lastError: null,
+      });
     }
     // Re-resolve the persisted agent id against the live agents map: an agent
     // removed from config since spawn fails loud here rather than silently

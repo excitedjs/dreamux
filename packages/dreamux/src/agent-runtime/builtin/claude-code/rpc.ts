@@ -58,24 +58,9 @@ export class ClaudeCodeStreamRpc {
         aggregator: new TurnAggregator(),
         timer: null,
       };
-      // Per-turn deadline: a still-alive child that never emits a terminal
-      // `result` must not pend forever. The supervisor reaps the child, so the
-      // next turn re-spawns a clean session.
-      pending.timer = setTimeout(() => {
-        if (this.pending !== pending) return;
-        this.pending = null;
-        this.options.log?.(
-          'error',
-          `claude turn timed out after ${this.options.turnTimeoutMs}ms; reaping resident child`,
-        );
-        reject(
-          new Error(
-            `claude resident turn timed out after ${this.options.turnTimeoutMs}ms without a result`,
-          ),
-        );
-        this.options.reapOnTimeout();
-      }, this.options.turnTimeoutMs);
       this.pending = pending;
+      // Arm the idle deadline (reset on every inbound stream line in `onLine`).
+      this.armIdleTimer(pending);
       this.stdin.write(`${buildUserMessage(prompt, options)}\n`, (err) => {
         if (err != null && this.pending === pending) {
           this.settlePending()?.reject(
@@ -106,7 +91,36 @@ export class ClaudeCodeStreamRpc {
     return pending;
   }
 
+  /**
+   * (Re)arm the per-turn idle deadline. `turnTimeoutMs` is a *max-idle* window,
+   * not a total-turn cap: any inbound stream line for this turn pushes it out
+   * (see `onLine`). A genuinely wedged child (no stream activity for the whole
+   * window) is still reaped — preserving the #120 anti-hang intent — but a long
+   * but continuously-streaming turn never trips the deadline (#156).
+   */
+  private armIdleTimer(pending: PendingTurn): void {
+    if (pending.timer !== null) clearTimeout(pending.timer);
+    pending.timer = setTimeout(() => {
+      if (this.pending !== pending) return;
+      this.pending = null;
+      this.options.log?.(
+        'error',
+        `claude turn stalled: no stream activity for ${this.options.turnTimeoutMs}ms; reaping resident child`,
+      );
+      pending.reject(
+        new Error(
+          `claude resident turn stalled: no stream activity for ${this.options.turnTimeoutMs}ms`,
+        ),
+      );
+      this.options.reapOnTimeout();
+    }, this.options.turnTimeoutMs);
+  }
+
   private onLine(line: ParsedLine): void {
+    // Idle-timeout reset: any inbound stream line for the pending turn is
+    // activity, so push the deadline out. The terminal `result` clears the
+    // timer via `settlePending` below.
+    if (this.pending !== null) this.armIdleTimer(this.pending);
     switch (line.kind) {
       case 'init':
       case 'assistant':

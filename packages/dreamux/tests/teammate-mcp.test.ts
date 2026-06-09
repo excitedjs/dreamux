@@ -130,7 +130,6 @@ describe('teammate-mcp stdio shim', () => {
     await expect(listTools('dispatcher')).resolves.toEqual([
       'spawn',
       'send',
-      'resume',
       'close',
       'history',
       'list',

@@ -38,13 +38,15 @@
  * conversation. There is no background backoff timer — re-spawn is lazy and
  * bound to the (serialized) turn queue, so it stays deterministic.
  *
- * Per-turn deadline: a turn whose still-alive child never emits a terminal
- * `result` (a stall, or a wait on input the runtime cannot satisfy) would
- * otherwise pend forever and wedge the serial queue — and, behind it, TeamMate
- * completion delivery, which awaits this runtime. `turn_timeout_ms` bounds every
- * turn at the session layer: on the deadline the turn fails and the child is
- * reaped (so the next turn re-spawns), turning an infinite hang into a normal
- * degraded + `last_error` (inbound) or `failed` delivery result.
+ * Per-turn idle deadline: a turn whose still-alive child goes silent — never
+ * emitting another stream line (a stall, or a wait on input the runtime cannot
+ * satisfy) — would otherwise pend forever and wedge the serial queue, and behind
+ * it TeamMate completion delivery, which awaits this runtime. `turn_timeout_ms`
+ * is a *max-idle* window (issue #156): it is reset on every inbound stream line,
+ * so a long but continuously-streaming turn (e.g. a deep audit running many
+ * tool calls for far longer than the window) is never reaped, while a child that
+ * emits nothing for the whole window still is — turning an infinite hang into a
+ * normal degraded + `last_error` (inbound) or `failed` delivery result.
  *
  * Reference: the resident stream-json protocol model and process-supervision
  * shape are adapted from the Claudemux `next` implementation; the AgentRuntime /

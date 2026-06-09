@@ -585,8 +585,10 @@ agents. The shim is also a per-dispatcher stdio process:
 <dreamux-bin> teammate-mcp --dispatcher dispatcher-a --caller dispatcher
 ```
 
-The dispatcher-facing tools are `spawn`, `send`, `resume`, `close`, `history`,
-`list`, `status`, `last`, `ctx`, and `get_capabilities`. Lifecycle tools forward
+The dispatcher-facing tools are `spawn`, `send`, `close`, `history`,
+`list`, `status`, `last`, `ctx`, and `get_capabilities` (issue #155 removed the
+`resume` verb; `send` reopens a closed teammate from its checkpoint). Lifecycle
+tools forward
 to `dreamux serve` over the local admin socket; the server owns the
 per-dispatcher TeamMate identities, runtime checkpoints, and forward-only
 history under `state/<dispatcher-id>/teammate/`. A caller marked as `teammate`

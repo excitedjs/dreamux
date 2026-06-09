@@ -1,8 +1,9 @@
 # Dispatch A Task
 
 > This is the `tm` fallback path. Default to the `teammate` MCP —
-> `spawn` / `send` / `resume` / `close`, then inspect with
-> `history` / `last` / `ctx` (see the dispatcher skill; do not poll). Use the
+> `spawn` / `send` / `close` (send also reopens a closed TeamMate), then
+> inspect with `history` / `last` / `ctx` (see the dispatcher skill; do not
+> poll). Use the
 > `tm spawn` / `tm send` flow below only when you need an isolated managed
 > worktree or legacy tm diagnostics.
 

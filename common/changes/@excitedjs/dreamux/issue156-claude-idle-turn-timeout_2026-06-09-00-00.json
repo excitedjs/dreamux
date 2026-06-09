@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Change the builtin:claude-code per-turn deadline from a fixed total-turn wall-clock to an idle/inactivity window for issue #156. `turn_timeout_ms` (default 600000) is now reset on every inbound stream line, so it bounds the max time the resident child may emit no stream activity rather than the total turn duration. A long but continuously-streaming turn (e.g. a deep audit running many tool calls for far longer than the window) is no longer reaped mid-work, while a genuinely wedged child that goes silent for the whole window is still failed and reaped (preserving the #120 anti-hang intent). No config change is required; the field name and default are unchanged, but its semantics changed (total-turn cap -> idle window). The timeout error text changed from 'timed out ... without a result' to 'stalled: no stream activity for {ms}ms'.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}
