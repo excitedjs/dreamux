@@ -1,4 +1,4 @@
-import { access, mkdir, stat } from 'node:fs/promises';
+import { access, mkdir, realpath, stat } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 
 import { execa } from 'execa';
@@ -66,6 +66,12 @@ export class WorktreeManager {
         path,
         branchExists ? branch : baseRef,
       ]);
+    } else {
+      await assertRegisteredWorktree({
+        repo: sourceRepo,
+        path,
+        branch,
+      });
     }
     return {
       sourceCwd,
@@ -199,6 +205,46 @@ async function revParseOrNull(cwd: string, ref: string): Promise<string | null> 
   } catch {
     return null;
   }
+}
+
+async function assertRegisteredWorktree(input: {
+  repo: string;
+  path: string;
+  branch: string;
+}): Promise<void> {
+  const entries = await listWorktrees(input.repo);
+  const expectedPath = await realpath(input.path);
+  const matched = entries.find((entry) => entry.path === expectedPath);
+  if (matched === undefined) {
+    throw new Error(
+      `managed worktree path already exists but is not registered for source repo: ${input.path}`,
+    );
+  }
+  const expectedBranch = `refs/heads/${input.branch}`;
+  if (matched.branch !== expectedBranch) {
+    throw new Error(
+      `managed worktree path already exists with unexpected branch: ` +
+        `${input.path} has ${matched.branch ?? 'detached HEAD'}, expected ${expectedBranch}`,
+    );
+  }
+}
+
+async function listWorktrees(
+  repo: string,
+): Promise<Array<{ path: string; branch: string | null }>> {
+  const result = await git(repo, ['worktree', 'list', '--porcelain']);
+  const entries: Array<{ path: string; branch: string | null }> = [];
+  let current: { path: string; branch: string | null } | null = null;
+  for (const line of result.stdout.split('\n')) {
+    if (line.startsWith('worktree ')) {
+      if (current !== null) entries.push(current);
+      current = { path: await realpath(line.slice('worktree '.length)), branch: null };
+    } else if (line.startsWith('branch ') && current !== null) {
+      current.branch = line.slice('branch '.length);
+    }
+  }
+  if (current !== null) entries.push(current);
+  return entries;
 }
 
 async function git(cwd: string, args: string[]): Promise<{ stdout: string }> {

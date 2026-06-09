@@ -657,6 +657,53 @@ describe('TeamMateAgentService', () => {
     expect(existsSync(spawned.teammate.worktree.path)).toBe(false);
   });
 
+  it('recreates a deleted managed worktree when send reopens a closed teammate', async () => {
+    const repo = await initGitRepo(join(root, 'reopen-repo'));
+    const { catalog, provider } = providerCatalog();
+    const config = testDreamuxConfig();
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: catalog,
+      log: noopLog(),
+    });
+
+    const spawned = await service.spawn({
+      dispatcherId: 'flow',
+      name: 'reopen-managed',
+      prompt: 'go',
+      cwd: repo,
+      worktree: {
+        mode: 'managed',
+        slug: 'reopen-managed',
+        branch: 'dreamux/reopen-managed',
+        cleanup: 'delete-on-close',
+      },
+    });
+    const worktreePath = spawned.teammate.worktree.path;
+    await service.close({
+      dispatcherId: 'flow',
+      name: 'reopen-managed',
+    });
+    expect(existsSync(worktreePath)).toBe(false);
+
+    const sent = await service.send({
+      dispatcherId: 'flow',
+      name: 'reopen-managed',
+      prompt: 'continue',
+    });
+    expect(sent.turn).toEqual({ status: 'submitted', turn_id: 'turn-1' });
+    expect(sent.teammate.worktree).toMatchObject({
+      mode: 'managed',
+      path: worktreePath,
+      cleanup_state: 'managed-active',
+    });
+    expect(existsSync(worktreePath)).toBe(true);
+    expect(provider.runtimes).toHaveLength(2);
+    expect(provider.runtimes[1]?.wasThreadResumed()).toBe(true);
+    expect(provider.contexts[1]?.cwd).toBe(worktreePath);
+  });
+
   it('marks intentionally retained managed worktrees as kept on close', async () => {
     const repo = await initGitRepo(join(root, 'kept-repo'));
     const { catalog } = providerCatalog();
@@ -759,6 +806,85 @@ describe('TeamMateAgentService', () => {
       'retained-unique-commits',
     );
     expect(existsSync(worktreePath)).toBe(true);
+  });
+
+  it('rejects a managed path that exists for a different source repository', async () => {
+    const firstRepo = await initGitRepo(join(root, 'slug-a'));
+    const secondRepo = await initGitRepo(join(root, 'slug-b'));
+    const { catalog } = providerCatalog();
+    const config = testDreamuxConfig();
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: catalog,
+      log: noopLog(),
+    });
+
+    await service.spawn({
+      dispatcherId: 'flow',
+      name: 'first-slug',
+      prompt: 'go',
+      cwd: firstRepo,
+      worktree: {
+        mode: 'managed',
+        slug: 'shared-slug',
+        branch: 'dreamux/shared-slug',
+        cleanup: 'keep',
+      },
+    });
+    await expect(
+      service.spawn({
+        dispatcherId: 'flow',
+        name: 'second-slug',
+        prompt: 'go',
+        cwd: secondRepo,
+        worktree: {
+          mode: 'managed',
+          slug: 'shared-slug',
+          branch: 'dreamux/shared-slug',
+          cleanup: 'keep',
+        },
+      }),
+    ).rejects.toThrow(/not registered for source repo|already owned/);
+  });
+
+  it('rejects two teammate identities using the same explicit managed slug', async () => {
+    const repo = await initGitRepo(join(root, 'same-slug-repo'));
+    const { catalog } = providerCatalog();
+    const config = testDreamuxConfig();
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: catalog,
+      log: noopLog(),
+    });
+
+    await service.spawn({
+      dispatcherId: 'flow',
+      name: 'slug-one',
+      prompt: 'go',
+      cwd: repo,
+      worktree: {
+        mode: 'managed',
+        slug: 'same-slug',
+        branch: 'dreamux/same-slug',
+        cleanup: 'keep',
+      },
+    });
+    await expect(
+      service.spawn({
+        dispatcherId: 'flow',
+        name: 'slug-two',
+        prompt: 'go',
+        cwd: repo,
+        worktree: {
+          mode: 'managed',
+          slug: 'same-slug',
+          branch: 'dreamux/same-slug',
+          cleanup: 'keep',
+        },
+      }),
+    ).rejects.toThrow(/already owned by TeamMate "slug-one"/);
   });
 
   it('fails loud on a legacy provider_ref teammate identity (pre-#148)', async () => {

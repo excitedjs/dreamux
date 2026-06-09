@@ -106,6 +106,7 @@ export class TeamMateAgentService {
       cwd: input.cwd,
       request: input.worktree,
     });
+    await this.assertManagedWorktreeAvailable(input.dispatcherId, name, workspace.worktree);
     let identity =
       existing ??
       (await this.identities.create({
@@ -283,6 +284,7 @@ export class TeamMateAgentService {
       if (opts.reopenClosed !== true) {
         throw new Error(`TeamMate ${JSON.stringify(teammateName)} is closed`);
       }
+      identity = await this.reprepareDeletedManagedWorktree(identity);
       identity = await this.identities.update(identity, {
         status: 'starting',
         closedAt: null,
@@ -296,6 +298,43 @@ export class TeamMateAgentService {
     const agent = this.resolveAgent(dispatcherId, identity.agent_runtime);
     const provider = this.opts.agentRuntimeProviders.resolve(agent.provider);
     return this.startRuntime(dispatcherId, identity, provider, agent);
+  }
+
+  private async reprepareDeletedManagedWorktree(
+    identity: TeamMateIdentity,
+  ): Promise<TeamMateIdentity> {
+    if (
+      identity.worktree.mode !== 'managed' ||
+      identity.worktree.cleanup_state !== 'deleted'
+    ) {
+      return identity;
+    }
+    const workspace = await this.worktrees.prepare({
+      dispatcherId: identity.dispatcher_id,
+      teammateName: identity.name,
+      cwd: identity.source_cwd,
+      request: {
+        mode: 'managed',
+        ...(identity.worktree.slug !== null ? { slug: identity.worktree.slug } : {}),
+        ...(identity.worktree.base_ref !== null
+          ? { base_ref: identity.worktree.base_ref }
+          : {}),
+        ...(identity.worktree.branch !== null ? { branch: identity.worktree.branch } : {}),
+        cleanup: identity.worktree.cleanup,
+      },
+    });
+    await this.assertManagedWorktreeAvailable(
+      identity.dispatcher_id,
+      identity.name,
+      workspace.worktree,
+    );
+    return this.identities.update(identity, {
+      sourceCwd: workspace.sourceCwd,
+      sourceRepo: workspace.sourceRepo,
+      cwd: workspace.runtimeCwd,
+      runtimeCwd: workspace.runtimeCwd,
+      worktree: workspace.worktree,
+    });
   }
 
   private async startRuntime(
@@ -596,6 +635,27 @@ export class TeamMateAgentService {
       closed_at: identity.closed_at,
       close_note: identity.close_note,
     };
+  }
+
+  private async assertManagedWorktreeAvailable(
+    dispatcherId: string,
+    name: string,
+    worktree: TeamMateIdentity['worktree'],
+  ): Promise<void> {
+    if (worktree.mode !== 'managed') return;
+    const identities = await this.identities.list(dispatcherId);
+    const collision = identities.find(
+      (identity) =>
+        identity.name !== name &&
+        identity.worktree.mode === 'managed' &&
+        identity.worktree.path === worktree.path,
+    );
+    if (collision !== undefined) {
+      throw new Error(
+        `managed worktree path ${JSON.stringify(worktree.path)} is already ` +
+          `owned by TeamMate ${JSON.stringify(collision.name)}`,
+      );
+    }
   }
 
   private agentRuntimeCapability(
