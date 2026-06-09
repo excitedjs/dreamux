@@ -100,13 +100,31 @@ crashed the built CLI on cold start with
 read). `tsc` and `vitest` (transpiled, hoisted) did not surface it; only the
 built artifact did. The fix moves registration out of the leaf to the
 caller-composed `loadConfigWithBuiltins`, severing the upward edge at its root
-(rather than deferring the TDZ read). **Invariant: `config/config.ts` and
-`platform/paths.ts` must never statically import `agent-runtime/catalog.ts` or
-any `agent-runtime/builtin/*` module; `agent-runtime/load-config.ts` must never
-be imported by `platform/paths.ts` or a builtin.** Guarded by the
-`smoke-built-cli` gate (a fresh-Node `bin/dreamux --version` run in CI and
-before release publish), which exercises the compiled cold-start path that the
-unit tests cannot.
+(rather than deferring the TDZ read).
+
+**Invariant (precise — the hazard is reaching `platform/paths.ts`, not the
+`builtin/` directory name):**
+
+- `config/config.ts` and `platform/paths.ts` must never statically import
+  `agent-runtime/catalog.ts` or any builtin **runtime / provider / transport /
+  paths** module — i.e. anything that transitively imports `platform/paths.ts`.
+  Those are the edges that close the cycle.
+- `config/config.ts` **may** re-export from the builtin **config** modules
+  (`builtin/codex/config.ts`, `builtin/claude-code/config.ts`). This is the
+  intentional M2 back-compat surface so non-builtin callers keep their
+  `config/config.js` import paths. It is cycle-free *because* those two modules
+  are deliberately kept as leaves: they import only `registry/` and
+  `config/validate.ts`, never `platform/paths.ts` and never `config/config.ts`.
+  That leaf property is load-bearing and is guarded by a comment in each of the
+  two files — do not add a `platform/paths` or `config/config` import there.
+- `agent-runtime/load-config.ts` must never be imported by `platform/paths.ts`
+  or by any `builtin/*` module.
+
+Guarded by the `smoke-built-cli` gate (a fresh-Node `bin/dreamux --version` run
+in CI and before release publish), which exercises the compiled cold-start path
+that the unit tests cannot. `madge --circular dist/` (types erased = runtime
+truth) is the check: after this fix it shows no `config`/`paths` cycle, only two
+pre-existing intra-`builtin/codex/` cycles.
 
 ### Provider-self-reported doctor diagnostics (issue #146 doctor half)
 
