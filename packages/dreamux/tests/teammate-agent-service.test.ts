@@ -296,6 +296,55 @@ describe('TeamMateAgentService', () => {
     expect(teammateDispatcher?.runtime.provider).toBe('builtin:codex');
   });
 
+  it('getCapabilities advertises spawnable agents[].id values, not provider refs', async () => {
+    const dispatcher = testDispatcherConfig({ id: 'flow', agentRuntime: 'codex-safe' });
+    const config = {
+      agents: {
+        'codex-safe': {
+          provider: 'builtin:codex',
+          config: dispatcher.runtime.config,
+        },
+        'codex-yolo': {
+          provider: 'builtin:codex',
+          config: { ...dispatcher.runtime.config, sandbox_mode: 'danger-full-access' },
+        },
+      },
+      dispatchers: [dispatcher],
+    };
+    const registry = createBuiltinProviderRegistry();
+    const codexDesc = registry.resolve('builtin:codex');
+    const provider = new FakeProvider(codexDesc, 'builtin:codex');
+    registry.registerImplementation(codexDesc.id, provider);
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: new AgentRuntimeProviderCatalog({ registry }),
+      log: noopLog(),
+    });
+
+    const capabilities = service.getCapabilities();
+    expect(capabilities.agent_runtimes.map((entry) => entry.id)).toEqual([
+      'codex-safe',
+      'codex-yolo',
+    ]);
+    expect(
+      capabilities.agent_runtimes.map((entry) => entry.spawn.agent_runtime),
+    ).toEqual(['codex-safe', 'codex-yolo']);
+    expect(JSON.stringify(capabilities)).not.toContain('provider_ref');
+    expect(JSON.stringify(capabilities)).not.toContain('builtin:codex');
+
+    const spawnableId = capabilities.agent_runtimes[1]!.id;
+    expect(spawnableId).toBe('codex-yolo');
+    await service.spawn({
+      dispatcherId: 'flow',
+      name: 'from-caps',
+      agentRuntime: spawnableId,
+      prompt: 'go',
+      cwd: root,
+    });
+    expect(provider.contexts[0]?.dispatcher?.agentRuntime).toBe('codex-yolo');
+  });
+
   it('spawns a named resumable teammate and records forward-only history', async () => {
     const { catalog, provider } = providerCatalog();
     const config = testDreamuxConfig();

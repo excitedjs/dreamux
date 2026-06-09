@@ -36,6 +36,8 @@ export type ParsedLine =
       kind: 'control_response';
       requestId: string | null;
       ok: boolean;
+      response: JsonObject | null;
+      error: string | null;
       raw: JsonObject;
     }
   | { kind: 'other'; type: string | null; subtype: string | null; raw: JsonObject }
@@ -95,6 +97,13 @@ export interface ClaudeCodeSessionSpec {
    * wedge forever. Must be > 0.
    */
   turnTimeoutMs: number;
+  /**
+   * Enable Claude Code Remote Control for this resident session at startup.
+   * Implemented as a stream-json control request, not as a user turn.
+   */
+  remoteControl: boolean;
+  /** Surface the local-only Remote Control URL when Claude returns one. */
+  onRemoteControlUrl?: (url: string) => void;
   /** Diagnostic logger for protocol-level events (parse errors, control answers). */
   log?: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
 }

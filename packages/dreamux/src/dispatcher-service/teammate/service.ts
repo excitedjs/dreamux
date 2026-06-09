@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 
 import type {
   AgentRuntime,
+  AgentRuntimeCapabilities,
   AgentRuntimeMcpServer,
   AgentRuntimePathContext,
   AgentRuntimeProvider,
@@ -38,7 +39,7 @@ import {
   type TeamMateHistoryResult,
   type TeamMateIdentity,
   type TeamMateLastResult,
-  type TeamMateProviderCapability,
+  type TeamMateAgentRuntimeCapability,
   type TeamMateRuntimeStatus,
   type TeamMateSendResult,
   type TeamMateSpawnResult,
@@ -230,9 +231,10 @@ export class TeamMateAgentService {
         'ctx',
         'get_capabilities',
       ],
-      providers: this.opts.agentRuntimeProviders
-        .list()
-        .map((provider) => this.providerCapability(provider)),
+      agent_runtimes: Object.entries(this.opts.config.agents).map(
+        ([agentRuntimeId, agent]) =>
+          this.agentRuntimeCapability(agentRuntimeId, agent),
+      ),
     };
   }
 
@@ -576,19 +578,29 @@ export class TeamMateAgentService {
     };
   }
 
-  private providerCapability(
-    provider: AgentRuntimeProvider,
-  ): TeamMateProviderCapability {
-    const capabilities = provider.getCapabilities();
+  private agentRuntimeCapability(
+    agentRuntimeId: string,
+    agent: ResolvedAgentConfig,
+  ): TeamMateAgentRuntimeCapability {
+    let capabilities: AgentRuntimeCapabilities | null = null;
+    let unsupportedReason: string | null = null;
+    try {
+      capabilities = this.opts.agentRuntimeProviders
+        .resolve(agent.provider)
+        .getCapabilities();
+    } catch (err) {
+      unsupportedReason = err instanceof Error ? err.message : String(err);
+    }
     return {
-      provider_ref: provider.ref,
-      runtime_available: true,
-      resume: capabilities.resume,
-      steer: capabilities.steer,
-      events: capabilities.events,
-      last: capabilities.last,
-      context: capabilities.context,
-      unsupported_reason: null,
+      id: agentRuntimeId,
+      spawn: { agent_runtime: agentRuntimeId },
+      runtime_available: capabilities !== null,
+      resume: capabilities?.resume ?? { supported: false },
+      steer: capabilities?.steer ?? { supported: false },
+      events: capabilities?.events ?? { kind: 'synthesized' },
+      last: capabilities?.last ?? { supported: false },
+      context: capabilities?.context ?? { supported: false },
+      unsupported_reason: unsupportedReason,
     };
   }
 }

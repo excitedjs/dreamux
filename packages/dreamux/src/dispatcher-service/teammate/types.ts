@@ -134,8 +134,11 @@ export interface TeamMateContextResult {
   context: AgentRuntimeContextSnapshot | null;
 }
 
-export interface TeamMateProviderCapability {
-  provider_ref: string;
+export interface TeamMateAgentRuntimeCapability {
+  /** The spawnable `agents[].id`; pass this as `spawn.agent_runtime`. */
+  id: string;
+  /** Copyable argument fragment for `spawn({ agent_runtime: id, ... })`. */
+  spawn: { agent_runtime: string };
   runtime_available: boolean;
   resume: AgentRuntimeCapabilities['resume'];
   steer: AgentRuntimeCapabilities['steer'];
@@ -147,7 +150,7 @@ export interface TeamMateProviderCapability {
 
 export interface TeamMateCapabilities {
   verbs: string[];
-  providers: TeamMateProviderCapability[];
+  agent_runtimes: TeamMateAgentRuntimeCapability[];
 }
 
 export function validateTeamMateName(name: string): string {

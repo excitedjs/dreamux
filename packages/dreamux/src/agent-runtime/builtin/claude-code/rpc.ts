@@ -6,10 +6,12 @@
  */
 
 import type { Writable } from 'node:stream';
+import { randomUUID } from 'node:crypto';
 
 import {
   buildCanUseToolAllow,
   buildControlAck,
+  buildRemoteControlEnable,
   buildUserMessage,
   LineBuffer,
   parseLine,
@@ -31,11 +33,13 @@ export interface ClaudeCodeStreamRpcOptions {
   turnTimeoutMs: number;
   log?: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
   reapOnTimeout: () => void;
+  onRemoteControlUrl?: (url: string) => void;
 }
 
 export class ClaudeCodeStreamRpc {
   private readonly lineBuf = new LineBuffer();
   private pending: PendingTurn | null = null;
+  private remoteControlRequestId: string | null = null;
 
   constructor(
     private readonly stdin: Writable,
@@ -111,6 +115,12 @@ export class ClaudeCodeStreamRpc {
     this.settlePending()?.reject(err);
   }
 
+  enableRemoteControl(): void {
+    if (!this.stdin.writable) return;
+    this.remoteControlRequestId = randomUUID();
+    this.stdin.write(`${buildRemoteControlEnable(this.remoteControlRequestId)}\n`);
+  }
+
   /**
    * Detach the in-flight turn: clear its deadline timer and null `pending`,
    * returning it so the caller can resolve or reject it exactly once.
@@ -176,6 +186,9 @@ export class ClaudeCodeStreamRpc {
       case 'control_request':
         this.onControlRequest(line.requestId, line.subtype, line.request);
         break;
+      case 'control_response':
+        this.onControlResponse(line.requestId, line.ok, line.response, line.error);
+        break;
       case 'parse_error':
         this.options.log?.(
           'warn',
@@ -229,5 +242,31 @@ export class ClaudeCodeStreamRpc {
       reply = buildControlAck(requestId);
     }
     this.stdin.write(`${reply}\n`);
+  }
+
+  private onControlResponse(
+    requestId: string | null,
+    ok: boolean,
+    response: Record<string, unknown> | null,
+    error: string | null,
+  ): void {
+    if (requestId === null || requestId !== this.remoteControlRequestId) return;
+    this.remoteControlRequestId = null;
+    if (ok && response !== null) {
+      const url = response['session_url'] ?? response['connect_url'];
+      if (typeof url === 'string') {
+        this.options.onRemoteControlUrl?.(url);
+      } else {
+        this.options.log?.(
+          'warn',
+          'claude remote control enable succeeded without a URL',
+        );
+      }
+      return;
+    }
+    this.options.log?.(
+      'warn',
+      `claude remote control enable failed${error !== null ? `: ${error}` : ''}`,
+    );
   }
 }

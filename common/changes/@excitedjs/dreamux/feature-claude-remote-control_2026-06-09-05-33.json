@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Add runtime-scoped Claude Code Remote Control and make TeamMate capabilities report spawnable agent runtime ids.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

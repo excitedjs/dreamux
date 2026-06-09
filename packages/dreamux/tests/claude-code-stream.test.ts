@@ -11,6 +11,7 @@ import {
   assistantText,
   buildCanUseToolAllow,
   buildControlAck,
+  buildRemoteControlEnable,
   buildUserMessage,
   LineBuffer,
   parseLine,
@@ -120,10 +121,19 @@ describe('parseLine', () => {
     const line = parseLine(
       JSON.stringify({
         type: 'control_response',
-        response: { subtype: 'success', request_id: 'r1', response: {} },
+        response: {
+          subtype: 'success',
+          request_id: 'r1',
+          response: { session_url: 'https://example.invalid/session/fake' },
+        },
       }),
     );
     expect(line).toMatchObject({ kind: 'control_response', requestId: 'r1', ok: true });
+    if (line.kind === 'control_response') {
+      expect(line.response).toEqual({
+        session_url: 'https://example.invalid/session/fake',
+      });
+    }
   });
 
   it('classifies unmodelled JSON as other and non-JSON as parse_error', () => {
@@ -229,6 +239,14 @@ describe('outbound builders', () => {
     expect(JSON.parse(buildControlAck('r2'))).toEqual({
       type: 'control_response',
       response: { subtype: 'success', request_id: 'r2', response: {} },
+    });
+  });
+
+  it('buildRemoteControlEnable requests Claude Code Remote Control', () => {
+    expect(JSON.parse(buildRemoteControlEnable('rc-1'))).toEqual({
+      type: 'control_request',
+      request_id: 'rc-1',
+      request: { subtype: 'remote_control', enabled: true },
     });
   });
 

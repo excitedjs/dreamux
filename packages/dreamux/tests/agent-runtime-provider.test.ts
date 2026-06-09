@@ -159,6 +159,7 @@ describe('AgentRuntimeProviderCatalog', () => {
 
     expect(provider.ref).toBe('builtin:claude-code');
     expect(provider.descriptor.kind).toBe('agentRuntime');
+    expect(provider.getCapabilities().steer.supported).toBe(true);
     expect(provider.getCapabilities().last.supported).toBe(true);
     expect(provider.getCapabilities().context.supported).toBe(false);
     // Distinct delivery shape from Codex — proves the abstraction is not

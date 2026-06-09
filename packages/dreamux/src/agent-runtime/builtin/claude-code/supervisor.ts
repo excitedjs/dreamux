@@ -95,12 +95,14 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
           /* reap is best-effort */
         });
       },
+      onRemoteControlUrl: this.spec.onRemoteControlUrl,
     });
     this.rpc = rpc;
     child.stdout?.setEncoding('utf8');
     child.stdout?.on('data', (chunk: string) => {
       rpc.onStdoutChunk(chunk);
     });
+    if (this.spec.remoteControl) rpc.enableRemoteControl();
     child.once('exit', () => this.onChildExit());
   }
 

@@ -7,6 +7,7 @@
  *
  *  - reads NDJSON `user` messages on stdin and keeps stdin open (resident);
  *  - for each turn, emits a `system/init` (once) and an `assistant` snapshot;
+ *  - answers a Remote Control `control_request` with a synthetic URL;
  *  - mode `echo`   → also emits a terminal `result` (a normal, completed turn);
  *  - mode `stall`  → never emits a `result` (the stuck-turn path the per-turn
  *    deadline must cover) while the child stays alive.
@@ -27,6 +28,18 @@ rl.on('line', (line) => {
   try {
     msg = JSON.parse(line);
   } catch {
+    return;
+  }
+  if (msg?.type === 'control_request' && msg?.request?.subtype === 'remote_control') {
+    process.stderr.write('remote-control-requested\n');
+    emit({
+      type: 'control_response',
+      response: {
+        subtype: 'success',
+        request_id: msg.request_id,
+        response: { session_url: 'https://example.invalid/session/fake' },
+      },
+    });
     return;
   }
   // Ignore the session's defensive control acks; only act on user turns.
