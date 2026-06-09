@@ -70,8 +70,8 @@ export interface FormatFeishuMessageResult {
   /**
    * The full pre-rendered, escaped inner content: message body (+ mentions) +
    * parser fallback note + attachment refs + group-bots block. Everything that
-   * previously lived between the `<feishu_message>` tags, so moving the wrapping
-   * to the runtime drops no model-visible content.
+   * previously lived inside the per-message wrapper, so moving the wrapping to
+   * the runtime drops no model-visible content.
    */
   body: string;
   attachments: FormattedFeishuAttachment[];

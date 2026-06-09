@@ -78,7 +78,7 @@ describe('completionInlineBudget', () => {
     );
   });
 
-  it('defaults on non-positive or non-numeric values', () => {
+  it('defaults on non-positive, non-numeric, or partially-numeric values', () => {
     expect(completionInlineBudget({ TASK_MAX_OUTPUT_LENGTH: '0' })).toBe(
       COMPLETION_INLINE_BUDGET_DEFAULT,
     );
@@ -86,6 +86,16 @@ describe('completionInlineBudget', () => {
       COMPLETION_INLINE_BUDGET_DEFAULT,
     );
     expect(completionInlineBudget({ TASK_MAX_OUTPUT_LENGTH: 'abc' })).toBe(
+      COMPLETION_INLINE_BUDGET_DEFAULT,
+    );
+    // Strict parse: a leading-numeric string must NOT partially parse.
+    expect(completionInlineBudget({ TASK_MAX_OUTPUT_LENGTH: '123abc' })).toBe(
+      COMPLETION_INLINE_BUDGET_DEFAULT,
+    );
+    expect(completionInlineBudget({ TASK_MAX_OUTPUT_LENGTH: '32k' })).toBe(
+      COMPLETION_INLINE_BUDGET_DEFAULT,
+    );
+    expect(completionInlineBudget({ TASK_MAX_OUTPUT_LENGTH: '12.5' })).toBe(
       COMPLETION_INLINE_BUDGET_DEFAULT,
     );
   });

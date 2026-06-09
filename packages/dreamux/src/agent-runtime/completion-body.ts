@@ -31,19 +31,22 @@ export type ResolvedCompletionBody =
   | { kind: 'spilled'; path: string };
 
 /**
- * Resolve the effective inline budget from the environment, mirroring native
- * `validateBoundedIntEnvVar`: unset/blank or non-positive/non-integer falls back
- * to the default; values above the upper bound are clamped (not rejected).
+ * Resolve the effective inline budget from the environment, in the spirit of
+ * native `validateBoundedIntEnvVar`: unset/blank or non-positive falls back to
+ * the default; values above the upper bound are clamped (not rejected). Stricter
+ * than native's lenient `parseInt`, a value that is not a plain decimal integer
+ * (e.g. `32k` or `123abc`) falls back to the default rather than being partially
+ * parsed.
  */
 export function completionInlineBudget(
   env: NodeJS.ProcessEnv = globalThis.process.env,
 ): number {
-  const raw = env[COMPLETION_INLINE_BUDGET_ENV];
-  if (raw === undefined || raw.trim() === '') {
+  const raw = env[COMPLETION_INLINE_BUDGET_ENV]?.trim();
+  if (raw === undefined || raw === '' || !/^\d+$/.test(raw)) {
     return COMPLETION_INLINE_BUDGET_DEFAULT;
   }
-  const parsed = Number.parseInt(raw, 10);
-  if (Number.isNaN(parsed) || parsed <= 0) {
+  const parsed = Number(raw);
+  if (parsed <= 0) {
     return COMPLETION_INLINE_BUDGET_DEFAULT;
   }
   return Math.min(parsed, COMPLETION_INLINE_BUDGET_MAX);

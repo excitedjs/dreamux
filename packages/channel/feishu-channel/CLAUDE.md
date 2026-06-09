@@ -13,8 +13,8 @@ between `@excitedjs/feishu-transport` and `@excitedjs/dreamux`.
 - Generate honest fallback references when a resource is not downloaded,
   including the resource key and a lark-cli fetch direction that uses
   placeholder-safe identifiers in docs and tests.
-- Serialize Codex/agent-facing inbound bodies, including `<feishu_message>` and
-  `<attachment>` blocks.
+- Serialize Codex/agent-facing inbound bodies, including the
+  `<channel source="feishu" …>` envelope and `<attachment>` blocks.
 - If the channel ever needs to parse model/channel-specific markup, keep that
   deserialization here rather than in `@excitedjs/feishu-transport`.
 

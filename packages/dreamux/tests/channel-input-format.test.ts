@@ -79,7 +79,7 @@ function inboundEvent(overrides: Partial<FeishuInboundEvent> = {}): FeishuInboun
 }
 
 describe('formatFeishuMessageForRuntime (structured, no pre-rendered XML)', () => {
-  it('returns the six display attrs and never emits a <feishu_message> tag', async () => {
+  it('returns the six display attrs and an unwrapped body (no pre-rendered envelope)', async () => {
     const result = await formatFeishuMessageForRuntime(inboundEvent());
     expect(result.attrs.map(([k]) => k)).toEqual([
       'chat_id',
@@ -89,7 +89,10 @@ describe('formatFeishuMessageForRuntime (structured, no pre-rendered XML)', () =
       'sender_name',
       'create_time',
     ]);
-    expect(result.body).not.toContain('<feishu_message');
+    // The channel layer no longer pre-renders any message wrapper — the runtime
+    // owns adding the <channel> envelope.
+    expect(result.body).not.toContain('<channel');
+    expect(result.body).not.toContain('source="feishu"');
     expect(result.attrs.find(([k]) => k === 'chat_id')?.[1]).toBe('chat-1');
   });
 

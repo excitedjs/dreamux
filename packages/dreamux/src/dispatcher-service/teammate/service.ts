@@ -382,9 +382,10 @@ export class TeamMateAgentService {
   /**
    * Seam ② of the reverse-delivery path (issue #147): turn a settled teammate
    * turn into a {@link CompletionEnvelope} and hand it to the sink. Reads the
-   * teammate's final assistant-visible result via `getLast`. A `stopped` turn
-   * maps to envelope status `failed` (the envelope carries only completed/failed)
-   * so a torn-down teammate still surfaces, never silently vanishing. Reverse
+   * teammate's final assistant-visible result via `getLast`. The settle status
+   * (completed/failed/stopped) passes through to the envelope verbatim, so a
+   * torn-down teammate surfaces with its real status, never silently vanishing
+   * and never mislabeled. Reverse
    * delivery requires a stable non-null turn id because the completion id is the
    * idempotency key; builtin runtimes only settle accepted turns after they have
    * a turn id. Every step is error-isolated: this runs `void`-ed off the
