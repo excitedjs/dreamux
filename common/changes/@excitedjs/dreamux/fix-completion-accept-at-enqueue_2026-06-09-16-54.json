@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "completion delivery now returns accepted at engine-take instead of after classifying the turn's model outcome (fixes over-delivery + removes turn-duration-coupled accept latency); subtype now authoritative in claude result classification",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

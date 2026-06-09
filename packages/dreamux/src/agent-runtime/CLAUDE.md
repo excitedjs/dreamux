@@ -79,12 +79,13 @@ while rendering identical blocks today. See
 [`decisions/channel-input-runtime-assembly.md`](../../../../.agents/decisions/channel-input-runtime-assembly.md).
 
 The reverse-delivery loop is now wired end-to-end (#147), so `completionInput`
-is a live caller rather than zero-caller. A runtime fires the neutral
-`TurnSettledSignal { turnId; status }` through the optional
-`AgentRuntimeCreateContext.onTurnSettled` hook when a delivered turn reaches a
-terminal state (completed / failed / stopped) — seam ①. The teammate service
-launches teammate runtimes with that hook (and only then), maps each settle to a
-`CompletionEnvelope`, and hands it to its `onTeamMateCompletion` sink — seam ②;
+is a live caller rather than zero-caller. Both builtins (`codex` and `claude-code`)
+return `accepted` at engine-take (submit-then-serialize) rather than after the turn
+completes. A runtime fires the neutral `TurnSettledSignal { turnId; status }`
+through the optional `AgentRuntimeCreateContext.onTurnSettled` hook when a delivered
+turn reaches a terminal state (completed / failed / stopped) — seam ①. The teammate
+service launches teammate runtimes with that hook (and only then), maps each settle
+to a `CompletionEnvelope`, and hands it to its `onTeamMateCompletion` sink — seam ②;
 the dispatcher's own runtime gets no hook, so it never self-delivers. The facade
 bridges that sink to `DispatcherAgentService.deliverCompletion`, which calls the
 live dispatcher runtime's `completionInput` with bounded retry-on-`failed` — seam
