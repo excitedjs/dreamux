@@ -24,6 +24,8 @@ export interface FakeCodexOptions {
   failResume?: boolean;
   /** Force turn/start to throw. */
   failTurnStart?: boolean;
+  /** Force the first N turn/start requests to throw. */
+  failTurnStartAttempts?: number;
   /** Force codex to issue a server-request that the dispatcher must reject. */
   triggerApprovalOnTurn?: boolean;
   /** Delay between turn/start ack and the eventual turn/completed (ms). */
@@ -74,6 +76,8 @@ export async function startFakeCodex(opts: FakeCodexOptions = {}): Promise<FakeC
   let turnsCompleted = 0;
   let nextSrvReqId = 100;
   let initializedAt: number | null = null;
+  let remainingTurnStartFailures =
+    opts.failTurnStartAttempts ?? (opts.failTurnStart === true ? Infinity : 0);
   const methodLog: string[] = [];
   const threadStartParams: Array<Record<string, unknown>> = [];
   const threadResumeParams: Array<Record<string, unknown>> = [];
@@ -169,7 +173,8 @@ export async function startFakeCodex(opts: FakeCodexOptions = {}): Promise<FakeC
       return;
     }
     if (method === 'turn/start') {
-      if (opts.failTurnStart === true) {
+      if (remainingTurnStartFailures > 0) {
+        remainingTurnStartFailures -= 1;
         send(ws, {
           id,
           error: { code: -32000, message: 'fake codex: turn/start refused' },

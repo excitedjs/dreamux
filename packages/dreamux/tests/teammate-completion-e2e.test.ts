@@ -267,7 +267,7 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
     const teammateRuntime = provider.runtimes[1]!;
 
     teammateRuntime.settle('failed', 'turn-3');
-    teammateRuntime.settle('stopped', null);
+    teammateRuntime.settle('stopped', 'turn-4');
     await flush();
 
     expect(dispatcherRuntime.delivered).toEqual([
@@ -279,7 +279,7 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
       },
       {
         source: 'breaker',
-        id: 'breaker',
+        id: 'breaker:turn-4',
         status: 'failed',
         result: 'reviewer final answer',
       },
