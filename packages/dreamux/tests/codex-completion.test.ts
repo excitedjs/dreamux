@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
+import { teamMateCompletionOutputPath } from '../src/platform/paths.js';
 
 import { createCodexAgentRuntimeProvider } from '../src/agent-runtime/builtin/codex/provider.js';
 import {
@@ -114,6 +117,38 @@ describe('codex teammate completion delivery (native inject + trigger)', () => {
     const turnIdx = fake.methodLog.indexOf('turn/start');
     expect(injectIdx).toBeGreaterThanOrEqual(0);
     expect(turnIdx).toBeGreaterThan(injectIdx);
+  });
+
+  it('keeps the wrapper and inlines a spill pointer when the result overflows', async () => {
+    const fake = await startFakeCodex();
+    fakes.push(fake);
+    const runtime = await makeRuntime(fake);
+
+    const spillPath = teamMateCompletionOutputPath('teammate', 'mate-spill');
+    process.env['TASK_MAX_OUTPUT_LENGTH'] = '8';
+    try {
+      const result = await runtime.completionInput!({
+        source: 'teammate',
+        id: 'mate-spill',
+        status: 'completed',
+        result: 'a result far longer than eight characters',
+      });
+      expect(result).toEqual({ status: 'accepted' });
+
+      const items = fake.injectItemsParams[0]!['items'] as Array<Record<string, unknown>>;
+      const content = items[0]?.['content'] as Array<Record<string, unknown>>;
+      const text = content[0]?.['text'] as string;
+      // Wrapper preserved …
+      expect(text).toContain('<teammate_session_completion');
+      expect(text).toContain('status="completed"');
+      // … but the body is a spill pointer, not the full result.
+      expect(text).toContain('saved to a file:');
+      expect(text).toContain(spillPath);
+      expect(text).not.toContain('far longer than eight');
+    } finally {
+      delete process.env['TASK_MAX_OUTPUT_LENGTH'];
+      await rm(spillPath, { force: true });
+    }
   });
 
   it('reports failed (after the item was injected) when the trigger turn is refused', async () => {

@@ -215,6 +215,23 @@ export function teamMateNameSegment(name: string): string {
 }
 
 /**
+ * Spill file for a teammate completion result that overflows the inline budget
+ * (see `agent-runtime/completion-body.ts`). Both runtimes write the full result
+ * here and inline only this path into the dispatcher turn, so a large result
+ * never floods the dispatcher's context. Neutral: a completion is a
+ * runtime-agnostic concept, so no runtime specifics appear here.
+ *
+ * Lives under the OS temp dir (the spec's `/tmp/teammate-{source}-{id}.output`
+ * template); `source` and `id` are sanitized for filename safety. The id is
+ * unique per completion (teammate name + turn id), so the only realistic
+ * collision is two dispatchers producing the same teammate/turn id — acceptable
+ * for a short-lived 0600 spill file.
+ */
+export function teamMateCompletionOutputPath(source: string, id: string): string {
+  return `/tmp/teammate-${teamMateNameSegment(source)}-${teamMateNameSegment(id)}.output`;
+}
+
+/**
  * Per-dispatcher peer-bot awareness/trust store. One file per dispatcher,
  * keyed internally by chat_id, holds the *known* (passively observed) and
  * *trusted* (introduced via an allowlisted `/introduce`) peer-bot open_ids

@@ -311,14 +311,14 @@ describe('claude-code pure translation (not Codex renamed)', () => {
 });
 
 describe('builtin:claude-code provider', () => {
-  it('exposes the claude-code ref and task-notification delivery shape', () => {
+  it('exposes the claude-code ref and plain-turn delivery shape', () => {
     const provider = claudeCodeProvider({ sessionFactory: fakeFleet().factory });
     expect(provider.ref).toBe('builtin:claude-code');
     expect(provider.descriptor.kind).toBe('agentRuntime');
     expect(provider.getCapabilities().steer.supported).toBe(true);
     expect(
       provider.getCapabilities().teammateCompletion.map((s) => s.kind),
-    ).toEqual(['claudeCodeTaskNotification']);
+    ).toEqual(['claudeCodePlainTurn']);
   });
 });
 
@@ -590,13 +590,13 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     expect(first.turnId).not.toBe(second.turnId);
   });
 
-  it('delivers a TeamMate completion via the task-notification entry', async () => {
+  it('delivers a TeamMate completion as a plain status-varied user turn', async () => {
     const fleet = fakeFleet([okOutcome('session-abc')]);
     const { runtime } = makeRuntime(fleet);
     await runtime.start();
 
     const result = await runtime.completionInput!({
-      source: 'teammate',
+      source: 'reviewer',
       id: 'mate-1',
       status: 'completed',
       result: 'all done',
@@ -605,16 +605,35 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
 
     await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
     const prompt = fleet.sessions[0]?.prompts[0] ?? '';
-    // Native claude-code <task-notification> shape, not a self-authored tag.
-    expect(prompt).toContain('<task-notification>');
-    expect(prompt).toContain('<task-id>mate-1</task-id>');
-    expect(prompt).toContain('<status>completed</status>');
-    expect(prompt).toContain('teammate');
-    expect(prompt).toContain('<result>');
+    // Plain English status line + inlined result — NOT claude-code's native
+    // <task-notification> XML (which the model could mistake for a real task).
+    expect(prompt).toContain('TeamMate reviewer has finished its task.');
+    expect(prompt).toContain('Output below:');
     expect(prompt).toContain('all done');
+    expect(prompt).not.toContain('<task-notification>');
+    expect(prompt).not.toContain('<task-id>');
     expect(prompt).not.toContain('<teammate_session_completion');
-    // Delivered with isSynthetic so claude-code treats it as a notification.
-    expect(fleet.sessions[0]?.submitOptions[0]).toEqual({ isSynthetic: true });
+    // Delivered as ordinary input, NOT a synthetic notification.
+    expect(fleet.sessions[0]?.submitOptions[0]).toEqual({ isSynthetic: false });
+  });
+
+  it('renders status-varied completion lines for failed and stopped', async () => {
+    for (const [status, expected] of [
+      ['failed', "TeamMate reviewer's task failed."],
+      ['stopped', "TeamMate reviewer's task was stopped."],
+    ] as const) {
+      const fleet = fakeFleet([okOutcome('session-abc')]);
+      const { runtime } = makeRuntime(fleet);
+      await runtime.start();
+      await runtime.completionInput!({
+        source: 'reviewer',
+        id: `mate-${status}`,
+        status,
+        result: 'r',
+      });
+      await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
+      expect(fleet.sessions[0]?.prompts[0] ?? '').toContain(expected);
+    }
   });
 
   it('does not mark a normal channel turn as synthetic', async () => {

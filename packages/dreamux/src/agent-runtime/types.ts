@@ -69,7 +69,7 @@ export interface AgentRuntimeCapabilities {
 export interface CompletionEnvelope {
   source: string;
   id: string;
-  status: 'completed' | 'failed';
+  status: 'completed' | 'failed' | 'stopped';
   result: string;
 }
 

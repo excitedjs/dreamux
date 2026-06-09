@@ -423,7 +423,10 @@ export class TeamMateAgentService {
       const envelope: CompletionEnvelope = {
         source: name,
         id: `${name}:${settled.turnId}`,
-        status: settled.status === 'completed' ? 'completed' : 'failed',
+        // Pass the settle status through verbatim — completed/failed/stopped are
+        // the CompletionEnvelope statuses too. (Previously stopped was folded
+        // into failed; the runtimes now render a distinct "was stopped" line.)
+        status: settled.status,
         result,
       };
       await sink(dispatcherId, envelope);

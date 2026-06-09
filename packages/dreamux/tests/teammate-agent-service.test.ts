@@ -639,7 +639,7 @@ describe('TeamMateAgentService', () => {
     ]);
   });
 
-  it('delivers terminal failure/stop settlements with status failed', async () => {
+  it('delivers terminal failure/stop settlements with their own status', async () => {
     const { catalog, provider } = providerCatalog();
     const config = testDreamuxConfig();
     const received: CompletionEnvelope[] = [];
@@ -674,7 +674,7 @@ describe('TeamMateAgentService', () => {
       {
         source: 'breaker',
         id: 'breaker:turn-8',
-        status: 'failed',
+        status: 'stopped',
         result: 'last fake result',
       },
     ]);

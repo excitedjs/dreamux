@@ -5,6 +5,10 @@ import {
   dispatcherCodexAppServerErrorLogPath,
   dispatcherCodexAppServerLogPath,
 } from './paths.js';
+import {
+  resolveCompletionBody,
+  type ResolvedCompletionBody,
+} from '../../completion-body.js';
 import type {
   AgentRuntimePathContext,
   AgentRuntimeStateStore,
@@ -29,13 +33,25 @@ export function codexProcessEnv(
 /**
  * Frame a TeamMate completion as recognizable notification text. Delivered as
  * the body of a developer-role history item (not a fake user turn), so codex
- * treats it as injected context rather than user intent.
+ * treats it as injected context rather than user intent. The
+ * `<teammate_session_completion>` wrapper + developer role are deliberate — a
+ * neutral tag codex will not interpret as its native subagent system.
+ *
+ * Pure: the spill decision is made upstream and the resolved body is passed in,
+ * so this function performs no IO.
  */
-function frameCodexCompletion(completion: CompletionEnvelope): string {
+function frameCodexCompletion(
+  completion: CompletionEnvelope,
+  body: ResolvedCompletionBody,
+): string {
+  const inner =
+    body.kind === 'inline'
+      ? body.text
+      : `The output is too long, so the full result was saved to a file: ${body.path}`;
   return [
     `<teammate_session_completion source="${completion.source}" ` +
       `id="${completion.id}" status="${completion.status}">`,
-    completion.result,
+    inner,
     '</teammate_session_completion>',
   ].join('\n');
 }
@@ -54,13 +70,14 @@ function frameCodexCompletion(completion: CompletionEnvelope): string {
  * neutral developer message is model-visible text codex will not try to
  * interpret as engine-internal state.
  */
-export function buildCodexCompletionItem(
+export async function buildCodexCompletionItem(
   completion: CompletionEnvelope,
-): Record<string, unknown> {
+): Promise<Record<string, unknown>> {
+  const body = await resolveCompletionBody(completion);
   return {
     type: 'message',
     role: 'developer',
-    content: [{ type: 'input_text', text: frameCodexCompletion(completion) }],
+    content: [{ type: 'input_text', text: frameCodexCompletion(completion, body) }],
   };
 }
 
