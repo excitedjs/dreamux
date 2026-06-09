@@ -30,6 +30,7 @@ export interface TeamMateIdentityCreateInput {
   cwd: string;
   runtimeCwd: string;
   worktree: TeamMateWorktreeIdentity;
+  intent?: string | null;
   checkpoint?: AgentRuntimeResumeCheckpoint | null;
   status?: TeamMateIdentityStatus;
 }
@@ -41,6 +42,7 @@ export interface TeamMateIdentityUpdateInput {
   cwd?: string;
   runtimeCwd?: string;
   worktree?: TeamMateWorktreeIdentity;
+  intent?: string | null;
   checkpoint?: AgentRuntimeResumeCheckpoint | null;
   status?: TeamMateIdentityStatus;
   lastError?: string | null;
@@ -115,6 +117,7 @@ export class TeamMateIdentityStore {
       cwd: input.cwd,
       runtime_cwd: input.runtimeCwd,
       worktree: input.worktree,
+      intent: input.intent ?? null,
       created_at: now,
       updated_at: now,
       status: input.status ?? 'starting',
@@ -139,6 +142,7 @@ export class TeamMateIdentityStore {
       ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
       ...(input.runtimeCwd !== undefined ? { runtime_cwd: input.runtimeCwd } : {}),
       ...(input.worktree !== undefined ? { worktree: input.worktree } : {}),
+      ...(input.intent !== undefined ? { intent: input.intent } : {}),
       ...(input.checkpoint !== undefined ? { checkpoint: input.checkpoint } : {}),
       ...(input.status !== undefined ? { status: input.status } : {}),
       ...(input.lastError !== undefined ? { last_error: input.lastError } : {}),
@@ -274,6 +278,7 @@ function readIdentity(
     source_repo: sourceRepo,
     runtime_cwd: runtimeCwd,
     worktree,
+    intent: typeof record['intent'] === 'string' ? record['intent'] : null,
   };
 }
 

@@ -1,6 +1,6 @@
 ---
 name: dispatcher
-description: Use from a Dreamux dispatcher thread when bounded repository work should be delegated to a TeamMate. The server-hosted TeamMate MCP is the default interface; spawn creates a named semi-resident TeamMate, send submits follow-up turns and reopens a closed TeamMate from its checkpoint, close stops one, and history/list/status/last/ctx/get_capabilities inspect state. The tm CLI is the explicit fallback for isolated worktrees and legacy diagnostics. Applies to spawning, tracking, retrieving, sending, closing, inspecting, reopening, recovering, or summarizing teammate work.
+description: Use from a Dreamux dispatcher thread when bounded repository work should be delegated to a TeamMate. The server-hosted TeamMate MCP is the default interface; spawn creates a named semi-resident TeamMate, send submits follow-up turns and reopens a closed TeamMate from its checkpoint, close stops one, history lists session ledger rows, history_events reads a raw timeline, and list/status/last/ctx/get_capabilities inspect state. The tm CLI is the explicit fallback for legacy diagnostics. Applies to spawning, tracking, retrieving, sending, closing, inspecting, reopening, recovering, or summarizing teammate work.
 ---
 
 # Dispatcher
@@ -40,7 +40,9 @@ session or polling a process.
 
 - `list` — this dispatcher's TeamMates and their statuses.
 - `status` — one TeamMate status, agent runtime id, checkpoint, and close metadata.
-- `history` — forward-only history for a named TeamMate.
+- `history` — bounded session ledger rows for this dispatcher, with filters for
+  recovery across TeamMates.
+- `history_events` — raw forward-only event history for one named TeamMate.
 - `last` — the runtime's latest assistant-visible result when supported.
 - `ctx` — the runtime context snapshot when supported.
 

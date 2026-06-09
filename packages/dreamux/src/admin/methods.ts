@@ -9,7 +9,11 @@
 import type { Server } from '../server.js';
 import { AdminError } from './protocol.js';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
-import type { TeamMateWorktreeRequest } from '../dispatcher-service/teammate/types.js';
+import {
+  type TeamMateHistoryQuery,
+  type TeamMateIdentityStatus,
+  type TeamMateWorktreeRequest,
+} from '../dispatcher-service/teammate/types.js';
 
 export type AdminHandler = (
   server: Server,
@@ -181,8 +185,17 @@ export const adminMethods: Record<string, AdminHandler> = {
   'mcp.teammate.history': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
+    return server.dispatcherService.getTeamMateHistory({
+      dispatcherId: id,
+      ...historyQuery(params),
+    });
+  },
+
+  'mcp.teammate.history_events': async (server, params) => {
+    const id = mustDispatcherId(params);
+    mustExistingDispatcher(server, id);
     const name = mustString(params, 'name');
-    return server.dispatcherService.getTeamMateHistory(id, name);
+    return server.dispatcherService.getTeamMateHistoryEvents(id, name);
   },
 
   'mcp.teammate.list': async (server, params) => {
@@ -289,6 +302,78 @@ function optionalWorktreeRequest(
     ...optionalStringProp(obj, 'branch'),
     ...(cleanup !== null ? { cleanup } : {}),
   };
+}
+
+function historyQuery(
+  params: Record<string, unknown> | undefined,
+): Omit<TeamMateHistoryQuery, 'dispatcherId'> {
+  const name = optionalString(params, 'name');
+  const id = optionalString(params, 'id');
+  const agentRuntime = optionalString(params, 'agent_runtime');
+  const state = optionalHistoryState(params, 'state');
+  const closeStatus = optionalCloseStatus(params, 'close_status');
+  const sourceCwd = optionalString(params, 'source_cwd');
+  const runtimeCwd = optionalString(params, 'runtime_cwd');
+  const grep = optionalString(params, 'grep');
+  const cursor = optionalString(params, 'cursor');
+  const limit = optionalInteger(params, 'limit');
+  return {
+    ...(name !== null ? { name } : {}),
+    ...(id !== null ? { id } : {}),
+    ...(agentRuntime !== null ? { agentRuntime } : {}),
+    ...(state !== null ? { state } : {}),
+    ...(closeStatus !== null ? { closeStatus } : {}),
+    ...(sourceCwd !== null ? { sourceCwd } : {}),
+    ...(runtimeCwd !== null ? { runtimeCwd } : {}),
+    ...(grep !== null ? { grep } : {}),
+    ...(cursor !== null ? { cursor } : {}),
+    ...(limit !== null ? { limit } : {}),
+  };
+}
+
+function optionalHistoryState(
+  params: Record<string, unknown> | undefined,
+  key: string,
+): TeamMateIdentityStatus | 'active' | null {
+  const value = optionalString(params, key);
+  if (value === null) return null;
+  if (
+    value === 'active' ||
+    value === 'starting' ||
+    value === 'running' ||
+    value === 'degraded' ||
+    value === 'closed' ||
+    value === 'stopped'
+  ) {
+    return value;
+  }
+  throw new AdminError(
+    'BAD_REQUEST',
+    `param '${key}' must be active, starting, running, degraded, closed, or stopped`,
+  );
+}
+
+function optionalCloseStatus(
+  params: Record<string, unknown> | undefined,
+  key: string,
+): 'open' | 'closed' | null {
+  const value = optionalString(params, key);
+  if (value === null) return null;
+  if (value === 'open' || value === 'closed') return value;
+  throw new AdminError('BAD_REQUEST', `param '${key}' must be open or closed`);
+}
+
+function optionalInteger(
+  params: Record<string, unknown> | undefined,
+  key: string,
+): number | null {
+  if (params === undefined) return null;
+  const value = params[key];
+  if (value === undefined || value === null) return null;
+  if (!Number.isInteger(value)) {
+    throw new AdminError('BAD_REQUEST', `param '${key}' must be an integer`);
+  }
+  return value as number;
 }
 
 function optionalStringProp(

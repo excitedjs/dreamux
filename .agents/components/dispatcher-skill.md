@@ -8,9 +8,10 @@ ships in the npm package:
   `spawn` creates a named semi-resident TeamMate, `send` submits follow-up
   turns (and reopens a closed TeamMate from its persisted checkpoint — there is
   no standalone dispatcher-facing `resume` verb; #155), and `close` stops one.
-  `history`/`list`/`status`/`last`/`ctx`/`get_capabilities` read and recover
-  state without polling. The `tm` CLI is the explicit fallback for isolated
-  managed worktrees and legacy diagnostics
+  `history` returns session ledger rows, `history_events` returns one raw
+  per-TeamMate timeline, and `list`/`status`/`last`/`ctx`/`get_capabilities`
+  read and recover state without polling. The `tm` CLI is the explicit fallback
+  for legacy diagnostics
   ([provider architecture realignment](../decisions/provider-architecture-realignment.md)).
 - `team-dev-workflow` covers multi-teammate review, design, merge, and unblock
   coordination.
@@ -45,7 +46,8 @@ Two state owners are kept distinct in the skill:
 
 - The Dreamux server owns TeamMate **agent state** behind the injected
   dispatcher-scoped `teammate` MCP — identities, runtime checkpoints, statuses,
-  forward-only history, last result, and context snapshots under
+  session ledger rows, raw per-TeamMate event history, last result, and context
+  snapshots under
   `~/.dreamux/state/<dispatcher-id>/teammate/`.
 - `tm` owns live tm **session** state — teammate liveness, repository worktrees,
   and resumable session history — invoked through the command boundary.
