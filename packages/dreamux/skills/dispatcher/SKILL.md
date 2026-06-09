@@ -50,6 +50,20 @@ These serve status / history / last directly, so you do not need `tm` to check
 on a running TeamMate. Do not wait or poll for completion: submit the turn, let
 the dispatcher turn end, then recover through `history`, `last`, and `ctx`.
 
+**Team lifecycle.**
+
+Dreamux also injects a dispatcher-scoped `team` MCP server for Team Mode
+lifecycle. Use it to create a TeamLeader, inspect Team status/ledger, and
+dissolve a Team. Team work still runs through agents; do not inspect the target
+repo directly from the dispatcher.
+
+- `create` — create a Team and TeamLeader. Requires `repo_cwd` and
+  `leader_agent_runtime`; no default leader runtime is inferred.
+- `list`, `status`, `ledger` — read dispatcher-owned Team records and lifecycle
+  ledger rows.
+- `dissolve` — close the TeamLeader and team-owned members, then conservatively
+  clean up the shared managed worktree.
+
 **Control and inspect.**
 
 - `get_capabilities` — spawnable `agents[].id` values under `agent_runtimes[]`,

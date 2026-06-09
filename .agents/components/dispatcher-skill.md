@@ -15,6 +15,10 @@ ships in the npm package:
   ([provider architecture realignment](../decisions/provider-architecture-realignment.md)).
 - `team-dev-workflow` covers multi-teammate review, design, merge, and unblock
   coordination.
+- `team` MCP is injected for dispatcher-only Team Mode lifecycle: create a
+  TeamLeader, read Team status/ledger, and dissolve a Team. TeamLeader member
+  work still uses the caller-scoped TeamMate MCP; channel binding/routing is not
+  part of the first Team Mode slice.
 - `dreamux-maintenance` covers installed Dreamux diagnosis and safe operation.
 
 They are not installed through Codex plugin marketplaces. `dreamux onboard` and
@@ -49,6 +53,10 @@ Two state owners are kept distinct in the skill:
   session ledger rows, raw per-TeamMate event history, last result, and context
   snapshots under
   `~/.dreamux/state/<dispatcher-id>/teammate/`.
+- The Dreamux server owns Team **lifecycle state** behind the injected
+  dispatcher-scoped `team` MCP under `~/.dreamux/state/<dispatcher-id>/team/`.
+  TeamLeader and member agents remain TeamMate identities with role/owner
+  metadata.
 - `tm` owns live tm **session** state — teammate liveness, repository worktrees,
   and resumable session history — invoked through the command boundary.
 

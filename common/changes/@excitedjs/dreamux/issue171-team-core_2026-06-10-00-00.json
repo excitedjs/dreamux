@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "BREAKING: Team Mode core adds dispatcher-scoped `team` MCP/admin lifecycle methods (`create`, `list`, `status`, `ledger`, `dissolve`) and extends TeamMate identities with role/owner/team metadata. TeamMate MCP calls are now scoped by a server-derived caller principal: dispatchers see dispatcher-owned ordinary TeamMates and TeamLeaders, while TeamLeaders see only their own team-owned members. Rebuild: update dispatcher automation to use `team.create({ name, repo_cwd, leader_agent_runtime, ... })` for TeamLeader creation and avoid passing owner/team fields through `teammate.*`; those fields are derived by Dreamux.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

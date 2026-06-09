@@ -13,6 +13,7 @@ import {
   type TeamMateIdentity,
   type TeamMateIdentityStatus,
   type TeamMateOwner,
+  type TeamMateRole,
   type TeamMateWorktreeIdentity,
 } from './types.js';
 import type { AgentRuntimeResumeCheckpoint } from '../../agent-runtime/index.js';
@@ -24,6 +25,9 @@ export interface TeamMateIdentityStoreLog {
 export interface TeamMateIdentityCreateInput {
   dispatcherId: string;
   name: string;
+  owner?: TeamMateOwner;
+  role?: TeamMateRole;
+  teamId?: string | null;
   agentRuntime: string;
   sourceCwd: string;
   sourceRepo: string | null;
@@ -110,7 +114,9 @@ export class TeamMateIdentityStore {
       version: 1,
       dispatcher_id: input.dispatcherId,
       name: input.name,
-      owner: dispatcherOwner(input.dispatcherId),
+      owner: input.owner ?? dispatcherOwner(input.dispatcherId),
+      role: input.role ?? 'teammate',
+      team_id: input.teamId ?? null,
       agent_runtime: input.agentRuntime,
       source_cwd: input.sourceCwd,
       source_repo: input.sourceRepo,
@@ -166,6 +172,8 @@ export class TeamMateIdentityStore {
         dispatcher_id: identity.dispatcher_id,
         name: identity.name,
         owner: identity.owner,
+        role: identity.role,
+        team_id: identity.team_id,
         type: input.type,
         agent_runtime: identity.agent_runtime,
         source_cwd: identity.source_cwd,
@@ -274,6 +282,8 @@ function readIdentity(
   return {
     ...(value as unknown as TeamMateIdentity),
     owner: readOwner(record['owner'], dispatcherId),
+    role: readRole(record['role']),
+    team_id: typeof record['team_id'] === 'string' ? record['team_id'] : null,
     source_cwd: sourceCwd,
     source_repo: sourceRepo,
     runtime_cwd: runtimeCwd,
@@ -282,18 +292,33 @@ function readIdentity(
   };
 }
 
+function readRole(value: unknown): TeamMateRole {
+  if (value === 'team_leader' || value === 'team_member') return value;
+  return 'teammate';
+}
+
 function readOwner(value: unknown, dispatcherId: string): TeamMateOwner {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return dispatcherOwner(dispatcherId);
   }
   const record = value as Record<string, unknown>;
-  if (
-    record['kind'] !== 'dispatcher' ||
-    typeof record['dispatcher_id'] !== 'string'
-  ) {
-    return dispatcherOwner(dispatcherId);
+  if (record['kind'] === 'dispatcher' && typeof record['dispatcher_id'] === 'string') {
+    return { kind: 'dispatcher', dispatcher_id: record['dispatcher_id'] };
   }
-  return { kind: 'dispatcher', dispatcher_id: record['dispatcher_id'] };
+  if (
+    record['kind'] === 'team' &&
+    typeof record['dispatcher_id'] === 'string' &&
+    typeof record['team_id'] === 'string' &&
+    typeof record['leader_name'] === 'string'
+  ) {
+    return {
+      kind: 'team',
+      dispatcher_id: record['dispatcher_id'],
+      team_id: record['team_id'],
+      leader_name: record['leader_name'],
+    };
+  }
+  return dispatcherOwner(dispatcherId);
 }
 
 function dispatcherOwner(dispatcherId: string): TeamMateOwner {

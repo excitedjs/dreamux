@@ -216,6 +216,23 @@ export function dispatcherTeamMateWorktreePath(id: string, slug: string): string
   return join(dispatcherTeamMateWorktreesDir(id), teamMateNameSegment(slug));
 }
 
+/** Per-dispatcher Team Mode state root. */
+export function dispatcherTeamDir(id: string): string {
+  return join(dispatcherDir(id), 'team');
+}
+
+export function dispatcherTeamRecordsDir(id: string): string {
+  return join(dispatcherTeamDir(id), 'records');
+}
+
+export function dispatcherTeamRecordPath(id: string, teamId: string): string {
+  return join(dispatcherTeamRecordsDir(id), `${teamMateNameSegment(teamId)}.json`);
+}
+
+export function dispatcherTeamLedgerPath(id: string, teamId: string): string {
+  return join(dispatcherTeamDir(id), 'ledger', `${teamMateNameSegment(teamId)}.jsonl`);
+}
+
 /**
  * Neutral teammate-name path segment sanitizer. Shared by the neutral
  * teammate-state builders here and by each builtin's teammate log-path builders.

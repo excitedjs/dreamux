@@ -241,6 +241,13 @@ State and logs are server-owned. They are not operator-editable config.
           <name>.jsonl         forward-only TeamMate lifecycle history
         runtime/
           <name>/              runtime-private socket/config state
+        worktrees/
+          <slug>/              Dreamux-managed TeamMate/Team worktrees
+      team/
+        records/
+          <team-id>.json        Team lifecycle record and TeamLeader pointer
+        ledger/
+          <team-id>.jsonl       append-only Team lifecycle ledger
   logs/
     dreamux-server.log
     daemon.stdout.log          when run as a daemon (onboard service redirect)
@@ -603,6 +610,23 @@ Old identities without owner/worktree metadata read as dispatcher-owned
 reuse-cwd records until the next lifecycle mutation rewrites them. A caller
 marked as `teammate` does not receive lifecycle tools, so TeamMates cannot
 recursively spawn or close TeamMates.
+
+## Team Mode Core
+
+Issue #171 starts Team Mode without Feishu channel routing. Dispatcher runtimes
+receive a `team` MCP server for dispatcher-only team lifecycle: `create`,
+`list`, `status`, `ledger`, and `dissolve`. `create` requires `repo_cwd` and
+`leader_agent_runtime`; Dreamux does not infer a default TeamLeader runtime. A
+TeamLeader is a TeamMate identity with `role: "team_leader"` and dispatcher
+owner. Team-owned members are normal TeamMate identities with `role:
+"team_member"` and `owner.kind: "team"`.
+
+The same `teammate` MCP surface is caller-scoped by server-derived principal,
+not by tool arguments. Dispatcher callers see dispatcher-owned TeamMates and
+TeamLeaders. TeamLeader callers see only members owned by their own team and
+spawn members into the shared Team managed worktree. Ordinary TeamMate callers
+still do not receive lifecycle tools. Channel binding and Feishu routing remain
+out of scope for this first Team Mode slice.
 
 ## Reaction Ownership
 

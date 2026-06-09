@@ -92,13 +92,16 @@ function writeJson(input: PassThrough, value: unknown): void {
   input.write(`${JSON.stringify(value)}\n`);
 }
 
-async function listTools(callerKind: 'dispatcher' | 'teammate'): Promise<string[]> {
+async function listTools(callerKind: 'dispatcher' | 'team_leader' | 'teammate'): Promise<string[]> {
   const input = new PassThrough();
   const output = new PassThrough();
   const reader = new JsonLineReader(output);
   const run = runTeamMateMcp({
     dispatcherId: 'dispatcher-a',
     callerKind,
+    ...(callerKind === 'team_leader'
+      ? { teamId: 'alpha', leaderName: 'alpha-leader' }
+      : {}),
     adminSocketPath: '/tmp/not-used.sock',
     input,
     output,
@@ -126,7 +129,7 @@ async function listTools(callerKind: 'dispatcher' | 'teammate'): Promise<string[
 }
 
 async function toolSchemas(
-  callerKind: 'dispatcher' | 'teammate',
+  callerKind: 'dispatcher' | 'team_leader' | 'teammate',
 ): Promise<Array<Record<string, unknown>>> {
   const input = new PassThrough();
   const output = new PassThrough();
@@ -134,6 +137,9 @@ async function toolSchemas(
   const run = runTeamMateMcp({
     dispatcherId: 'dispatcher-a',
     callerKind,
+    ...(callerKind === 'team_leader'
+      ? { teamId: 'alpha', leaderName: 'alpha-leader' }
+      : {}),
     adminSocketPath: '/tmp/not-used.sock',
     input,
     output,
@@ -265,6 +271,7 @@ describe('teammate-mcp stdio shim', () => {
           method: 'mcp.teammate.spawn',
           params: {
             dispatcher_id: 'dispatcher-a',
+            caller_kind: 'dispatcher',
             name: 'reviewer',
             prompt: 'Review the change.',
             agent_runtime: 'codex',
@@ -374,6 +381,78 @@ describe('teammate-mcp stdio shim', () => {
         },
       });
       expect(admin.requests).toEqual([]);
+
+      input.end();
+      await run;
+    } finally {
+      await admin.close();
+    }
+  });
+
+  it('forwards TeamLeader spawn without caller cwd or worktree', async () => {
+    const admin = await startFakeAdminServer((request) => ({
+      id: request.id,
+      ok: true,
+      result: {
+        teammate: { name: 'builder', status: 'running' },
+        turn: { status: 'submitted', turn_id: 'turn-1' },
+      },
+    }));
+    try {
+      const input = new PassThrough();
+      const output = new PassThrough();
+      const reader = new JsonLineReader(output);
+      const run = runTeamMateMcp({
+        dispatcherId: 'dispatcher-a',
+        callerKind: 'team_leader',
+        teamId: 'alpha',
+        leaderName: 'alpha-leader',
+        adminSocketPath: admin.socketPath,
+        input,
+        output,
+        log: () => {},
+      });
+
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'spawn',
+          arguments: {
+            name: 'builder',
+            prompt: 'Build the change.',
+            cwd: '/ignored',
+            worktree: { mode: 'managed', cleanup: 'delete-on-close' },
+            intent: 'build',
+          },
+        },
+      });
+
+      expect(await reader.next()).toMatchObject({
+        jsonrpc: '2.0',
+        id: 1,
+        result: {
+          structuredContent: {
+            teammate: { name: 'builder', status: 'running' },
+          },
+        },
+      });
+      expect(admin.requests).toEqual([
+        {
+          id: expect.any(String) as string,
+          method: 'mcp.teammate.spawn',
+          params: {
+            dispatcher_id: 'dispatcher-a',
+            name: 'builder',
+            prompt: 'Build the change.',
+            intent: 'build',
+            caller_kind: 'team_leader',
+            team_id: 'alpha',
+            leader_name: 'alpha-leader',
+          },
+        },
+      ]);
 
       input.end();
       await run;
@@ -510,13 +589,14 @@ describe('teammate-mcp stdio shim', () => {
       expect(admin.requests.map((request) => request.params)).toEqual([
         {
           dispatcher_id: 'dispatcher-a',
+          caller_kind: 'teammate',
           grep: 'review',
           limit: 5,
           close_status: 'open',
         },
-        { dispatcher_id: 'dispatcher-a', name: 'reviewer' },
-        { dispatcher_id: 'dispatcher-a', name: 'reviewer' },
-        { dispatcher_id: 'dispatcher-a', name: 'reviewer' },
+        { dispatcher_id: 'dispatcher-a', caller_kind: 'teammate', name: 'reviewer' },
+        { dispatcher_id: 'dispatcher-a', caller_kind: 'teammate', name: 'reviewer' },
+        { dispatcher_id: 'dispatcher-a', caller_kind: 'teammate', name: 'reviewer' },
       ]);
 
       input.end();

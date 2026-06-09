@@ -36,8 +36,10 @@ import {
   type SendTeamMateInput,
   type SpawnTeamMateInput,
   type TeamMateCapabilities,
+  type TeamMateCallerPrincipal,
   type TeamMateCloseResult,
   type TeamMateContextResult,
+  type CreateTeamLeaderInput,
   type TeamMateHistoryEventsResult,
   type TeamMateHistoryQuery,
   type TeamMateHistoryResult,
@@ -49,6 +51,10 @@ import {
   type TeamMateSendResult,
   type TeamMateSpawnResult,
   type TeamMateTurnResult,
+  type TeamMateWorktreeIdentity,
+  type TeamMateWorktreeRequest,
+  dispatcherPrincipal,
+  principalDispatcherId,
 } from './types.js';
 
 interface LiveTeamMate {
@@ -63,6 +69,7 @@ export interface TeamMateAgentServiceOptions {
   mcpServersForTeamMate?: (input: {
     dispatcherId: string;
     name: string;
+    identity: TeamMateIdentity;
   }) => readonly AgentRuntimeMcpServer[];
   /**
    * Reverse-delivery sink: invoked when a teammate turn reaches a terminal state
@@ -74,9 +81,40 @@ export interface TeamMateAgentServiceOptions {
    */
   onTeamMateCompletion?: (
     dispatcherId: string,
+    identity: TeamMateIdentity,
     completion: CompletionEnvelope,
   ) => void | Promise<void>;
   log: DreamuxLogger;
+}
+
+export interface TeamMateSharedWorkspace {
+  sourceCwd: string;
+  sourceRepo: string | null;
+  runtimeCwd: string;
+  worktree: TeamMateWorktreeIdentity;
+}
+
+export interface ScopedSpawnTeamMateInput {
+  principal: TeamMateCallerPrincipal;
+  name: string;
+  prompt: string;
+  agentRuntime?: string;
+  cwd?: string;
+  worktree?: TeamMateWorktreeRequest;
+  sharedWorkspace?: TeamMateSharedWorkspace;
+  intent?: string;
+}
+
+export interface ScopedSendTeamMateInput {
+  principal: TeamMateCallerPrincipal;
+  name: string;
+  prompt: string;
+}
+
+export interface ScopedCloseTeamMateInput {
+  principal: TeamMateCallerPrincipal;
+  name: string;
+  note?: string;
 }
 
 export class TeamMateAgentService {
@@ -92,30 +130,59 @@ export class TeamMateAgentService {
   }
 
   async spawn(input: SpawnTeamMateInput): Promise<TeamMateSpawnResult> {
+    return this.spawnScoped({
+      principal: dispatcherPrincipal(input.dispatcherId),
+      name: input.name,
+      prompt: input.prompt,
+      ...(input.agentRuntime !== undefined ? { agentRuntime: input.agentRuntime } : {}),
+      cwd: input.cwd,
+      ...(input.worktree !== undefined ? { worktree: input.worktree } : {}),
+      ...(input.intent !== undefined ? { intent: input.intent } : {}),
+    });
+  }
+
+  async spawnScoped(input: ScopedSpawnTeamMateInput): Promise<TeamMateSpawnResult> {
+    const dispatcherId = principalDispatcherId(input.principal);
     const name = validateTeamMateName(input.name);
-    if (typeof input.cwd !== 'string' || input.cwd.trim() === '') {
+    if (input.principal.kind === 'teammate') {
+      throw new Error('ordinary TeamMates cannot spawn TeamMates');
+    }
+    const cwd = input.sharedWorkspace?.sourceCwd ?? input.cwd;
+    if (input.principal.kind === 'team_leader' && input.sharedWorkspace === undefined) {
+      throw new Error('TeamLeader member spawn requires a shared team workspace');
+    }
+    if (typeof cwd !== 'string' || cwd.trim() === '') {
       throw new Error('TeamMate spawn requires cwd');
     }
-    const existing = await this.identities.get(input.dispatcherId, name);
+    const existing = await this.identities.get(dispatcherId, name);
     if (existing !== null && existing.status !== 'closed') {
       throw new Error(`TeamMate ${JSON.stringify(name)} already exists; use send`);
     }
     const agentRuntimeId =
-      input.agentRuntime ?? this.defaultAgentRuntime(input.dispatcherId);
-    const agent = this.resolveAgent(input.dispatcherId, agentRuntimeId);
+      input.agentRuntime ?? this.defaultAgentRuntime(dispatcherId);
+    const agent = this.resolveAgent(dispatcherId, agentRuntimeId);
     const provider = this.opts.agentRuntimeProviders.resolve(agent.provider);
-    const workspace = await this.worktrees.prepare({
-      dispatcherId: input.dispatcherId,
-      teammateName: name,
-      cwd: input.cwd,
-      request: input.worktree,
-    });
-    await this.assertManagedWorktreeAvailable(input.dispatcherId, name, workspace.worktree);
+    const workspace =
+      input.sharedWorkspace ??
+      (await this.worktrees.prepare({
+        dispatcherId,
+        teammateName: name,
+        cwd,
+        request: input.worktree,
+      }));
+    if (input.sharedWorkspace === undefined) {
+      await this.assertManagedWorktreeAvailable(dispatcherId, name, workspace.worktree);
+    }
+    const owner = ownerForPrincipal(input.principal);
+    const role = input.principal.kind === 'team_leader' ? 'team_member' : 'teammate';
     let identity =
       existing ??
       (await this.identities.create({
-        dispatcherId: input.dispatcherId,
+        dispatcherId,
         name,
+        owner,
+        role,
+        teamId: owner.kind === 'team' ? owner.team_id : null,
         agentRuntime: agentRuntimeId,
         sourceCwd: workspace.sourceCwd,
         sourceRepo: workspace.sourceRepo,
@@ -124,6 +191,7 @@ export class TeamMateAgentService {
         worktree: workspace.worktree,
         intent: input.intent ?? null,
       }));
+    this.assertPrincipalCanAccess(input.principal, identity);
     identity = await this.identities.update(identity, {
       agentRuntime: agentRuntimeId,
       sourceCwd: workspace.sourceCwd,
@@ -138,9 +206,11 @@ export class TeamMateAgentService {
       lastError: null,
       checkpoint: null,
     });
-    const live = await this.startRuntime(input.dispatcherId, identity, provider, agent);
+    const live = await this.startRuntime(dispatcherId, identity, provider, agent);
     identity = live.state.current();
-    const turn = await this.submitPrompt(input.dispatcherId, name, input.prompt);
+    const turn = await this.submitPrompt(dispatcherId, name, input.prompt, {
+      principal: input.principal,
+    });
     await this.identities.appendHistory(live.state.current(), {
       type: 'spawn',
       prompt: input.prompt,
@@ -150,15 +220,27 @@ export class TeamMateAgentService {
   }
 
   async send(input: SendTeamMateInput): Promise<TeamMateSendResult> {
+    return this.sendScoped({
+      principal: dispatcherPrincipal(input.dispatcherId),
+      name: input.name,
+      prompt: input.prompt,
+    });
+  }
+
+  async sendScoped(input: ScopedSendTeamMateInput): Promise<TeamMateSendResult> {
     // send subsumes the former `resume` verb (issue #155): a teammate that is
     // not live — including one previously `close`d — is reopened from its
     // persisted checkpoint and the turn is submitted, so send always works as
     // long as the identity exists. reopenClosed scopes this revival to send;
     // read-only verbs (last/ctx/status) never silently reopen a closed teammate.
-    const live = await this.ensureRuntime(input.dispatcherId, input.name, {
+    const dispatcherId = principalDispatcherId(input.principal);
+    const live = await this.ensureRuntime(dispatcherId, input.name, {
+      principal: input.principal,
       reopenClosed: true,
     });
-    const turn = await this.submitPrompt(input.dispatcherId, input.name, input.prompt);
+    const turn = await this.submitPrompt(dispatcherId, input.name, input.prompt, {
+      principal: input.principal,
+    });
     await this.identities.appendHistory(live.state.current(), {
       type: 'send',
       prompt: input.prompt,
@@ -168,9 +250,18 @@ export class TeamMateAgentService {
   }
 
   async close(input: CloseTeamMateInput): Promise<TeamMateCloseResult> {
+    return this.closeScoped({
+      principal: dispatcherPrincipal(input.dispatcherId),
+      name: input.name,
+      ...(input.note !== undefined ? { note: input.note } : {}),
+    });
+  }
+
+  async closeScoped(input: ScopedCloseTeamMateInput): Promise<TeamMateCloseResult> {
+    const dispatcherId = principalDispatcherId(input.principal);
     const name = validateTeamMateName(input.name);
-    const identity = await this.mustIdentity(input.dispatcherId, name);
-    const key = liveKey(input.dispatcherId, name);
+    const identity = await this.mustIdentity(dispatcherId, name, input.principal);
+    const key = liveKey(dispatcherId, name);
     const live = this.live.get(key);
     if (live !== undefined) {
       await live.runtime.stop();
@@ -190,17 +281,36 @@ export class TeamMateAgentService {
   }
 
   async list(dispatcherId: string): Promise<TeamMateRuntimeStatus[]> {
+    return this.listScoped(dispatcherPrincipal(dispatcherId));
+  }
+
+  async listScoped(principal: TeamMateCallerPrincipal): Promise<TeamMateRuntimeStatus[]> {
+    const dispatcherId = principalDispatcherId(principal);
     const identities = await this.identities.list(dispatcherId);
-    return identities.map((identity) =>
-      this.toStatus(identity, this.live.get(liveKey(dispatcherId, identity.name))?.runtime ?? null),
-    );
+    return identities
+      .filter((identity) => principalCanAccess(principal, identity))
+      .map((identity) =>
+        this.toStatus(identity, this.live.get(liveKey(dispatcherId, identity.name))?.runtime ?? null),
+      );
   }
 
   async status(
     dispatcherId: string,
     name: string,
   ): Promise<TeamMateRuntimeStatus> {
-    const identity = await this.mustIdentity(dispatcherId, validateTeamMateName(name));
+    return this.statusScoped(dispatcherPrincipal(dispatcherId), name);
+  }
+
+  async statusScoped(
+    principal: TeamMateCallerPrincipal,
+    name: string,
+  ): Promise<TeamMateRuntimeStatus> {
+    const dispatcherId = principalDispatcherId(principal);
+    const identity = await this.mustIdentity(
+      dispatcherId,
+      validateTeamMateName(name),
+      principal,
+    );
     return this.toStatus(
       identity,
       this.live.get(liveKey(dispatcherId, identity.name))?.runtime ?? null,
@@ -208,12 +318,28 @@ export class TeamMateAgentService {
   }
 
   async history(input: TeamMateHistoryQuery): Promise<TeamMateHistoryResult> {
-    const dispatcherId = input.dispatcherId;
+    return this.historyScoped({
+      ...input,
+      principal: input.principal ?? dispatcherPrincipal(input.dispatcherId),
+    });
+  }
+
+  async historyScoped(
+    input: Omit<TeamMateHistoryQuery, 'dispatcherId' | 'principal'> & {
+      principal: TeamMateCallerPrincipal;
+    },
+  ): Promise<TeamMateHistoryResult> {
+    const dispatcherId = principalDispatcherId(input.principal);
     const identities = await this.identities.list(dispatcherId);
     const rows: TeamMateLedgerRow[] = [];
     for (const identity of identities) {
       const row = await this.toLedgerRow(identity);
-      if (this.matchesLedgerQuery(row, input)) rows.push(row);
+      if (
+        principalCanAccess(input.principal, identity) &&
+        this.matchesLedgerQuery(row, input)
+      ) {
+        rows.push(row);
+      }
     }
     rows.sort((a, b) =>
       b.last_seen_at - a.last_seen_at ||
@@ -234,8 +360,17 @@ export class TeamMateAgentService {
     dispatcherId: string,
     name: string,
   ): Promise<TeamMateHistoryEventsResult> {
+    return this.historyEventsScoped(dispatcherPrincipal(dispatcherId), name);
+  }
+
+  async historyEventsScoped(
+    principal: TeamMateCallerPrincipal,
+    name: string,
+  ): Promise<TeamMateHistoryEventsResult> {
+    const dispatcherId = principalDispatcherId(principal);
     const teammateName = validateTeamMateName(name);
     const identity = await this.identities.get(dispatcherId, teammateName);
+    if (identity !== null) this.assertPrincipalCanAccess(principal, identity);
     return {
       teammate:
         identity === null
@@ -249,7 +384,17 @@ export class TeamMateAgentService {
   }
 
   async last(dispatcherId: string, name: string): Promise<TeamMateLastResult> {
-    const live = await this.ensureRuntime(dispatcherId, name);
+    return this.lastScoped(dispatcherPrincipal(dispatcherId), name);
+  }
+
+  async lastScoped(
+    principal: TeamMateCallerPrincipal,
+    name: string,
+  ): Promise<TeamMateLastResult> {
+    const dispatcherId = principalDispatcherId(principal);
+    const live = await this.ensureRuntime(dispatcherId, name, {
+      principal,
+    });
     return {
       teammate: this.toStatus(live.state.current(), live.runtime),
       last: await live.runtime.getLast(),
@@ -260,11 +405,74 @@ export class TeamMateAgentService {
     dispatcherId: string,
     name: string,
   ): Promise<TeamMateContextResult> {
-    const live = await this.ensureRuntime(dispatcherId, name);
+    return this.contextScoped(dispatcherPrincipal(dispatcherId), name);
+  }
+
+  async contextScoped(
+    principal: TeamMateCallerPrincipal,
+    name: string,
+  ): Promise<TeamMateContextResult> {
+    const dispatcherId = principalDispatcherId(principal);
+    const live = await this.ensureRuntime(dispatcherId, name, {
+      principal,
+    });
     return {
       teammate: this.toStatus(live.state.current(), live.runtime),
       context: await live.runtime.getContext(),
     };
+  }
+
+  async createTeamLeader(input: CreateTeamLeaderInput): Promise<TeamMateSpawnResult> {
+    const name = validateTeamMateName(input.name);
+    const existing = await this.identities.get(input.dispatcherId, name);
+    if (existing !== null && existing.status !== 'closed') {
+      throw new Error(`TeamLeader ${JSON.stringify(name)} already exists`);
+    }
+    const agent = this.resolveAgent(input.dispatcherId, input.agentRuntime);
+    const provider = this.opts.agentRuntimeProviders.resolve(agent.provider);
+    const owner: TeamMateIdentity['owner'] = {
+      kind: 'dispatcher',
+      dispatcher_id: input.dispatcherId,
+    };
+    let identity =
+      existing ??
+      (await this.identities.create({
+        dispatcherId: input.dispatcherId,
+        name,
+        owner,
+        role: 'team_leader',
+        teamId: input.teamId,
+        agentRuntime: input.agentRuntime,
+        sourceCwd: input.sourceCwd,
+        sourceRepo: input.sourceRepo,
+        cwd: input.runtimeCwd,
+        runtimeCwd: input.runtimeCwd,
+        worktree: input.worktree,
+        intent: input.intent ?? null,
+      }));
+    identity = await this.identities.update(identity, {
+      agentRuntime: input.agentRuntime,
+      sourceCwd: input.sourceCwd,
+      sourceRepo: input.sourceRepo,
+      cwd: input.runtimeCwd,
+      runtimeCwd: input.runtimeCwd,
+      worktree: input.worktree,
+      intent: input.intent ?? null,
+      status: 'starting',
+      closedAt: null,
+      closeNote: null,
+      lastError: null,
+      checkpoint: null,
+    });
+    const live = await this.startRuntime(input.dispatcherId, identity, provider, agent);
+    identity = live.state.current();
+    const turn = await this.submitPrompt(input.dispatcherId, name, input.prompt);
+    await this.identities.appendHistory(live.state.current(), {
+      type: 'spawn',
+      prompt: input.prompt,
+      turnId: turn.turn_id ?? null,
+    });
+    return { teammate: this.toStatus(live.state.current(), live.runtime), turn };
   }
 
   getCapabilities(): TeamMateCapabilities {
@@ -294,16 +502,30 @@ export class TeamMateAgentService {
     }
   }
 
+  getLiveRuntime(dispatcherId: string, name: string): AgentRuntime | null {
+    return this.live.get(liveKey(dispatcherId, validateTeamMateName(name)))?.runtime ?? null;
+  }
+
   private async ensureRuntime(
     dispatcherId: string,
     name: string,
-    opts: { reopenClosed?: boolean } = {},
+    opts: { principal?: TeamMateCallerPrincipal; reopenClosed?: boolean } = {},
   ): Promise<LiveTeamMate> {
     const teammateName = validateTeamMateName(name);
     const key = liveKey(dispatcherId, teammateName);
     const existing = this.live.get(key);
-    if (existing !== undefined) return existing;
-    let identity = await this.mustIdentity(dispatcherId, teammateName);
+    if (existing !== undefined) {
+      this.assertPrincipalCanAccess(
+        opts.principal ?? dispatcherPrincipal(dispatcherId),
+        existing.state.current(),
+      );
+      return existing;
+    }
+    let identity = await this.mustIdentity(
+      dispatcherId,
+      teammateName,
+      opts.principal ?? dispatcherPrincipal(dispatcherId),
+    );
     if (identity.status === 'closed') {
       // Only send reopens a closed teammate (issue #155): clear the closed
       // markers and revive from the persisted checkpoint. `checkpoint` is left
@@ -410,6 +632,7 @@ export class TeamMateAgentService {
         ...(this.opts.mcpServersForTeamMate?.({
           dispatcherId,
           name: identity.name,
+          identity,
         }) ?? []),
       ],
       // Attach the settle hook only when a sink is wired (the dispatcher's own
@@ -424,6 +647,7 @@ export class TeamMateAgentService {
               void this.deliverTurnSettled(
                 dispatcherId,
                 identity.name,
+                identity,
                 settledRuntime,
                 settled,
                 onTeamMateCompletion,
@@ -456,8 +680,9 @@ export class TeamMateAgentService {
     dispatcherId: string,
     name: string,
     prompt: string,
+    opts: { principal?: TeamMateCallerPrincipal } = {},
   ): Promise<TeamMateTurnResult> {
-    const live = await this.ensureRuntime(dispatcherId, name);
+    const live = await this.ensureRuntime(dispatcherId, name, opts);
     const submissionSeq = ++this.submissionSeq;
     const result = await live.runtime.channelInput({
       sourceId: `teammate:${name}:${submissionSeq}`,
@@ -482,6 +707,7 @@ export class TeamMateAgentService {
   private async deliverTurnSettled(
     dispatcherId: string,
     name: string,
+    identity: TeamMateIdentity,
     runtime: AgentRuntime,
     settled: TurnSettledSignal,
     sink: NonNullable<TeamMateAgentServiceOptions['onTeamMateCompletion']>,
@@ -517,7 +743,7 @@ export class TeamMateAgentService {
         status: settled.status,
         result,
       };
-      await sink(dispatcherId, envelope);
+      await sink(dispatcherId, identity, envelope);
     } catch (err) {
       this.opts.log.warn(
         { dispatcher_id: dispatcherId, teammate: name, err: errInfo(err) },
@@ -529,18 +755,29 @@ export class TeamMateAgentService {
   private async mustIdentity(
     dispatcherId: string,
     name: string,
+    principal: TeamMateCallerPrincipal = dispatcherPrincipal(dispatcherId),
   ): Promise<TeamMateIdentity> {
     const identity = await this.identities.get(dispatcherId, name);
     if (identity === null) {
       throw new Error(`TeamMate ${JSON.stringify(name)} does not exist`);
     }
+    this.assertPrincipalCanAccess(principal, identity);
     return identity;
   }
 
+  private assertPrincipalCanAccess(
+    principal: TeamMateCallerPrincipal,
+    identity: TeamMateIdentity,
+  ): void {
+    if (principalCanAccess(principal, identity)) return;
+    throw new Error(`TeamMate ${JSON.stringify(identity.name)} does not exist`);
+  }
+
   private runtimeRow(identity: TeamMateIdentity): DispatcherRow {
+    const runtimeIdentity = runtimeIdentityName(identity);
     return {
-      dispatcher_id: runtimeId(identity.dispatcher_id, identity.name),
-      bot_app_id: `teammate-${identity.name}`,
+      dispatcher_id: runtimeId(identity.dispatcher_id, runtimeIdentity),
+      bot_app_id: `teammate-${runtimeIdentity}`,
       bot_secret_ref: '',
       thread_id: identity.checkpoint?.id ?? null,
       status: 'declared',
@@ -564,13 +801,14 @@ export class TeamMateAgentService {
     identity: TeamMateIdentity,
     providerRef: string,
   ): AgentRuntimePathContext {
+    const runtimeIdentity = runtimeIdentityName(identity);
     const dispatcherDir = (): string =>
-      dispatcherTeamMateRuntimeDir(identity.dispatcher_id, identity.name);
+      dispatcherTeamMateRuntimeDir(identity.dispatcher_id, runtimeIdentity);
     if (providerRef === BUILTIN_CLAUDE_CODE_PROVIDER_REF) {
       const streamLog = (): string =>
         teammateClaudeCodeStreamLogPath(
           identity.dispatcher_id,
-          identity.name,
+          runtimeIdentity,
         );
       return {
         dispatcherDir,
@@ -583,12 +821,12 @@ export class TeamMateAgentService {
       stdoutLogPath: () =>
         teammateCodexAppServerLogPath(
           identity.dispatcher_id,
-          identity.name,
+          runtimeIdentity,
         ),
       stderrLogPath: () =>
         teammateCodexAppServerErrorLogPath(
           identity.dispatcher_id,
-          identity.name,
+          runtimeIdentity,
         ),
     };
   }
@@ -650,6 +888,8 @@ export class TeamMateAgentService {
   ): TeamMateRuntimeStatus {
     return {
       name: identity.name,
+      role: identity.role,
+      team_id: identity.team_id,
       owner: identity.owner,
       agent_runtime: identity.agent_runtime,
       source_cwd: identity.source_cwd,
@@ -677,6 +917,8 @@ export class TeamMateAgentService {
     return {
       id: identity.name,
       name: identity.name,
+      role: identity.role,
+      team_id: identity.team_id,
       owner: identity.owner,
       agent_runtime: identity.agent_runtime,
       source_cwd: identity.source_cwd,
@@ -709,7 +951,7 @@ export class TeamMateAgentService {
 
   private matchesLedgerQuery(
     row: TeamMateLedgerRow,
-    input: TeamMateHistoryQuery,
+    input: Omit<TeamMateHistoryQuery, 'dispatcherId' | 'principal'>,
   ): boolean {
     if (input.name !== undefined && row.name !== validateTeamMateName(input.name)) {
       return false;
@@ -825,6 +1067,39 @@ function toTurnResult(result: AgentRuntimeTurnResult): TeamMateTurnResult {
   }
 }
 
+function ownerForPrincipal(principal: TeamMateCallerPrincipal): TeamMateIdentity['owner'] {
+  if (principal.kind === 'team_leader') {
+    return {
+      kind: 'team',
+      dispatcher_id: principal.dispatcherId,
+      team_id: principal.teamId,
+      leader_name: principal.leaderName,
+    };
+  }
+  return { kind: 'dispatcher', dispatcher_id: principal.dispatcherId };
+}
+
+function principalCanAccess(
+  principal: TeamMateCallerPrincipal,
+  identity: TeamMateIdentity,
+): boolean {
+  if (principal.kind === 'dispatcher') {
+    return (
+      identity.dispatcher_id === principal.dispatcherId &&
+      identity.owner.kind === 'dispatcher'
+    );
+  }
+  if (principal.kind === 'team_leader') {
+    return (
+      identity.dispatcher_id === principal.dispatcherId &&
+      identity.owner.kind === 'team' &&
+      identity.owner.team_id === principal.teamId &&
+      identity.role === 'team_member'
+    );
+  }
+  return false;
+}
+
 function clampHistoryLimit(input: number | undefined): number {
   if (input === undefined) return 20;
   if (!Number.isInteger(input) || input < 1) {
@@ -892,6 +1167,12 @@ function runtimeId(dispatcherId: string, name: string): string {
     .slice(0, 12);
   const prefix = dispatcherId.slice(0, 40);
   return validateDispatcherId(`${prefix}.tm.${suffix}`, 'teammate runtime id');
+}
+
+function runtimeIdentityName(identity: TeamMateIdentity): string {
+  return identity.owner.kind === 'team'
+    ? `${identity.owner.team_id}.${identity.name}`
+    : identity.name;
 }
 
 function errInfo(err: unknown): Record<string, unknown> {
