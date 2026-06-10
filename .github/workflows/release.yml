@@ -39,17 +39,16 @@
 # This repository's main protection must continue to allow that bot push, or a
 # future stricter protection rule must grant github-actions[bot] a bypass.
 #
-# The `next` beta channel reuses this same file (and therefore the same npm
-# trusted-publisher entry, Workflow: release.yml). The `beta` job below runs
-# ONLY when this workflow is dispatched against the `next` branch
-# (github.ref_name == 'next'); the stable version/publish jobs are gated to
-# main and never run on next. Beta publishes a prerelease to the `beta`
-# dist-tag and never moves `latest`. It is ephemeral: it bumps an in-tree
-# prerelease version with `--prerelease-name beta.<run_number>` and publishes,
-# but commits and pushes NOTHING back to next. Crucially, prerelease apply does
-# NOT delete the pending Rush change files (a stable `rush publish --apply`
-# does), so the eventual stable release on main still consumes them. See
-# .agents/decisions/npm-release-oidc.md ("next beta prerelease channel").
+# Prerelease channels reuse this same file (and therefore the same npm
+# trusted-publisher entry, Workflow: release.yml). Manual dispatch against
+# `next` publishes `beta`; dispatch against any other non-main branch publishes
+# `alpha`. Stable version/publish jobs are gated to main and never run on
+# prerelease branches. Prerelease publishes never move `latest`. They are
+# ephemeral: an in-tree prerelease version is applied, built, packed, audited,
+# and published, but commits and pushes NOTHING back. Prerelease apply does NOT
+# delete pending Rush change files, so a later stable release still consumes
+# them. Beta uses `beta.<github.run_number>`; alpha uses `alpha.<short_sha>` so
+# branch builds are tied to source.
 
 name: release
 
@@ -185,19 +184,14 @@ jobs:
             --set-access-level public \
             --registry https://registry.npmjs.org
 
-  beta:
-    name: publish next prerelease to npm beta dist-tag (OIDC)
-    # Beta runs only when release.yml is dispatched against `next`. The `on:`
-    # block fires `push` on main only, so this job never runs on a push; it is
-    # reachable solely via `workflow_dispatch` with ref=next. Dispatching
-    # against main runs the stable jobs above and skips this one. Single job by
-    # design: the prerelease version lives in an uncommitted working tree that
-    # must persist across apply -> build -> pack -> publish, so it cannot be
-    # split the way the stable version/publish jobs are.
-    #
-    # Gate on the fully-qualified ref (refs/heads/next), not github.ref_name, so
-    # a future tag named `next` can never satisfy it — only the next branch can.
-    if: github.ref == 'refs/heads/next'
+  prerelease:
+    name: publish prerelease to npm beta/alpha dist-tag (OIDC)
+    # This job is reachable solely via workflow_dispatch, because `on.push`
+    # listens only to main. Dispatching against main runs stable jobs and skips
+    # this one. Dispatching against next publishes beta. Dispatching against any
+    # other branch publishes alpha. Gate on full refs so a tag named next/main
+    # can never satisfy the branch policy.
+    if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -224,23 +218,33 @@ jobs:
           node common/scripts/install-run-rush.js build
           node common/scripts/install-run-rush.js smoke-built-cli
 
+      - name: Select prerelease channel
+        id: channel
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" = "refs/heads/next" ]; then
+            echo "tag=beta" >> "$GITHUB_OUTPUT"
+            echo "prerelease=beta.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          else
+            short_sha="$(git rev-parse --short=12 HEAD)"
+            echo "tag=alpha" >> "$GITHUB_OUTPUT"
+            echo "prerelease=alpha.${short_sha}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Apply prerelease version (ephemeral, never committed)
-        # github.run_number gives every dispatch a unique, monotonic prerelease
-        # id, so re-dispatching never collides with an already-published beta.
         # --partial-prerelease bumps only packages that have pending change
-        # files (e.g. 0.12.0 -> 0.12.1-beta.<n>); packages without changes stay
-        # at their published version and the publish step skips them. Unlike a
-        # stable `rush publish --apply`, prerelease apply does NOT delete the
-        # change files, so the eventual stable release on main still sees them.
-        # This working tree is throwaway CI state: NOTHING is committed/pushed.
-        env:
-          RUN_NUMBER: ${{ github.run_number }}
+        # files (e.g. 0.12.0 -> 0.12.1-alpha.<sha>); packages without changes
+        # stay at their published version and the publish step skips them.
+        # Unlike a stable `rush publish --apply`, prerelease apply does NOT
+        # delete the change files, so the eventual stable release on main still
+        # sees them. This working tree is throwaway CI state: NOTHING is
+        # committed/pushed.
         run: |
           set -euo pipefail
           node common/scripts/install-run-rush.js publish \
             --apply \
             --partial-prerelease \
-            --prerelease-name "beta.${RUN_NUMBER}"
+            --prerelease-name "${{ steps.channel.outputs.prerelease }}"
           echo "Resulting package versions:"
           git --no-pager diff -- '*/package.json' | grep -E '^\+.*"version"' || \
             echo "  (no package had pending change files; nothing to prerelease)"
@@ -257,16 +261,16 @@ jobs:
         # always has artifacts; zero tarballs means pack failed -> fail hard.
         run: |
           set -euo pipefail
-          rm -rf common/temp/beta-tarballs
+          rm -rf common/temp/prerelease-tarballs
           node common/scripts/install-run-rush.js publish \
             --include-all \
             --publish \
             --pack \
-            --release-folder common/temp/beta-tarballs
+            --release-folder common/temp/prerelease-tarballs
           shopt -s nullglob
-          tarballs=(common/temp/beta-tarballs/*.tgz)
+          tarballs=(common/temp/prerelease-tarballs/*.tgz)
           if [ ${#tarballs[@]} -eq 0 ]; then
-            echo "Expected packed tarballs under common/temp/beta-tarballs but found none." >&2
+            echo "Expected packed tarballs under common/temp/prerelease-tarballs but found none." >&2
             echo "A manifest gate that scans nothing is not a gate; aborting before publish." >&2
             exit 1
           fi
@@ -306,26 +310,24 @@ jobs:
           done
           [ "$fail" -eq 0 ] || { echo "Manifest verification failed; aborting before publish." >&2; exit 1; }
 
-      - name: Publish prerelease to npm beta dist-tag (rush native, OIDC)
-        # Same proven stable invocation, plus `--tag beta`: rush invokes
-        # `pnpm publish --tag beta`, pnpm rewrites workspace:* deps to registry
-        # versions, and npm uploads to the `beta` dist-tag — `latest` is never
-        # touched. --include-all republishes only versions newer than what npm
-        # already has, so an unchanged dep (feishu-transport at its published
-        # version) is skipped. --registry suppresses git tagging (same as the
-        # stable publish job, which runs with contents: read and never pushes).
+      - name: Publish prerelease to npm dist-tag (rush native, OIDC)
+        # Same proven stable invocation, plus the selected tag: rush invokes
+        # `pnpm publish --tag <tag>`, pnpm rewrites workspace:* deps to registry
+        # versions, and npm uploads to the prerelease dist-tag — `latest` is
+        # never touched. --include-all republishes only versions newer than what
+        # npm already has. --registry suppresses git tagging.
         env:
           NPM_CONFIG_PROVENANCE: 'true'
         run: |
           node common/scripts/install-run-rush.js publish \
             --include-all \
             --publish \
-            --tag beta \
+            --tag "${{ steps.channel.outputs.tag }}" \
             --set-access-level public \
             --registry https://registry.npmjs.org
 
       - name: Print install-verify hint
         run: |
-          echo "Beta prerelease published to the 'beta' dist-tag."
-          echo "Verify with: npm install @excitedjs/dreamux@beta"
+          echo "Prerelease published to the '${{ steps.channel.outputs.tag }}' dist-tag."
+          echo "Verify with: npm install @excitedjs/dreamux@${{ steps.channel.outputs.tag }}"
           echo "Inspect tags: npm dist-tag ls @excitedjs/dreamux"
