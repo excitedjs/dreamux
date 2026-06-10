@@ -92,6 +92,7 @@ export type TeamLedgerEventType =
   | 'bind_channel'
   | 'transfer_channel_back'
   | 'create_group'
+  | 'leader_turn'
   | 'dissolve';
 
 export interface TeamLedgerEvent {

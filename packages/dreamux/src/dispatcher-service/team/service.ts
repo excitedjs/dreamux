@@ -308,6 +308,20 @@ export class TeamService {
     );
   }
 
+  async recordLeaderTurn(input: {
+    dispatcherId: string;
+    leaderName: string;
+    summary: string;
+  }): Promise<void> {
+    const teams = await this.store.list(input.dispatcherId);
+    const team = teams.find((item) => item.leader_name === input.leaderName);
+    if (team === undefined || team.status === 'closed') return;
+    await this.store.appendLedger(team, {
+      type: 'leader_turn',
+      summary: input.summary,
+    });
+  }
+
   async sharedWorkspace(
     dispatcherId: string,
     teamId: string,

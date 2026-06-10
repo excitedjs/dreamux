@@ -60,6 +60,7 @@ import {
 interface LiveTeamMate {
   runtime: AgentRuntime;
   state: TeamMateRuntimeStateStore;
+  identity: TeamMateIdentity;
 }
 
 export interface TeamMateAgentServiceOptions {
@@ -432,7 +433,11 @@ export class TeamMateAgentService {
       principal,
       reopenClosed: true,
     });
-    return live.runtime.channelInput(input);
+    const result = await live.runtime.channelInput(input);
+    if (result.status === 'submitted' && this.opts.onTeamMateCompletion !== undefined) {
+      this.armTurnCompletion(deliverableTurnId(result), live.runtime, dispatcherId, name, live.identity);
+    }
+    return result;
   }
 
   async createTeamLeader(input: CreateTeamLeaderInput): Promise<TeamMateSpawnResult> {
@@ -684,7 +689,7 @@ export class TeamMateAgentService {
     } else {
       await runtime.start();
     }
-    const live = { runtime, state };
+    const live = { runtime, state, identity };
     this.live.set(liveKey(dispatcherId, identity.name), live);
     return live;
   }
@@ -701,7 +706,29 @@ export class TeamMateAgentService {
       sourceId: `teammate:${name}:${submissionSeq}`,
       text: prompt,
     });
+    if (result.status === 'submitted' && this.opts.onTeamMateCompletion !== undefined) {
+      this.armTurnCompletion(deliverableTurnId(result), live.runtime, dispatcherId, name, live.identity);
+    }
     return toTurnResult(result);
+  }
+
+  private armTurnCompletion(
+    turnId: string,
+    runtime: AgentRuntime,
+    dispatcherId: string,
+    name: string,
+    identity: TeamMateIdentity,
+  ): void {
+    void waitForCompletion(runtime, turnId).then((status) =>
+      this.deliverTurnSettled(
+        dispatcherId,
+        name,
+        identity,
+        runtime,
+        { turnId, status },
+        this.opts.onTeamMateCompletion!,
+      ),
+    );
   }
 
   /**
@@ -1078,6 +1105,25 @@ function toTurnResult(result: AgentRuntimeTurnResult): TeamMateTurnResult {
     case 'skipped':
       return { status: 'stopped', error: 'turn skipped' };
   }
+}
+
+function deliverableTurnId(
+  result: Extract<AgentRuntimeTurnResult, { status: 'submitted' }>,
+): string {
+  return result.turnId;
+}
+
+async function waitForCompletion(
+  runtime: AgentRuntime,
+  _turnId: string,
+): Promise<'completed' | 'failed' | 'stopped'> {
+  for (let i = 0; i < 200; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const last = await runtime.getLast();
+    if (last !== null) return 'completed';
+    if (runtime.getStatus() === 'stopped') return 'stopped';
+  }
+  return runtime.getStatus() === 'stopped' ? 'stopped' : 'completed';
 }
 
 function ownerForPrincipal(principal: TeamMateCallerPrincipal): TeamMateIdentity['owner'] {

@@ -113,7 +113,9 @@ class FakeRuntime implements AgentRuntime {
   }
 
   async getLast(): Promise<AgentRuntimeLastResult> {
-    return { text: 'reviewer final answer' };
+    return this.activeTurnId === null
+      ? { text: 'reviewer final answer' }
+      : { text: null };
   }
 
   async getContext(): Promise<{ usedTokens: number; windowTokens: number }> {
@@ -274,6 +276,43 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
       },
     ]);
     expect(dispatcherRuntime.delivered).toEqual([]);
+
+    await facade.shutdown();
+  });
+
+  it('records TeamLeader bound-channel completions in the team ledger only', async () => {
+    await initGitRepo(workspace(root));
+    const descriptor = createBuiltinProviderRegistry().resolve('builtin:codex');
+    const provider = new FakeProvider(descriptor);
+    const facade = buildFacade(provider, adminSocketPath);
+
+    await facade.startDispatcher('flow');
+    await facade.createTeam({
+      dispatcherId: 'flow',
+      name: 'alpha',
+      repoCwd: workspace(root),
+      leaderAgentRuntime: 'flow',
+    });
+
+    const dispatcherRuntime = provider.runtimes[0]!;
+    const leaderRuntime = provider.runtimes[1]!;
+    const submitted = await facade.teams.deliverToLeader({
+      dispatcherId: 'flow',
+      teamId: 'alpha',
+      turn: { sourceId: 'msg-team', text: 'team asks' },
+    });
+    const turnId = submitted.status === 'submitted' ? submitted.turnId : 'unreachable';
+    leaderRuntime.settle('completed', turnId);
+    await waitFor(async () =>
+      (await facade.getTeamLedger('flow', 'alpha')).events
+        .some((event) => event.type === 'leader_turn'),
+    );
+
+    expect(dispatcherRuntime.delivered).toEqual([]);
+    expect((await facade.getTeamLedger('flow', 'alpha')).events.at(-1)).toMatchObject({
+      type: 'leader_turn',
+      summary: expect.stringContaining('TeamLeader turn completed'),
+    });
 
     await facade.shutdown();
   });
@@ -451,13 +490,13 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
         source: 'breaker',
         id: 'breaker:turn-3',
         status: 'failed',
-        result: 'reviewer final answer',
+        result: '',
       },
       {
         source: 'breaker',
         id: 'breaker:turn-4',
         status: 'stopped',
-        result: 'reviewer final answer',
+        result: '',
       },
     ]);
 
@@ -517,6 +556,15 @@ function noopLog(): {
 /** Drain the macrotask the void-ed settle handler runs on. */
 async function flush(): Promise<void> {
   await new Promise((resolve) => setImmediate(resolve));
+}
+
+async function waitFor(predicate: () => Promise<boolean>): Promise<void> {
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline) {
+    if (await predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error('waitFor timed out');
 }
 
 function workspace(root: string): string {

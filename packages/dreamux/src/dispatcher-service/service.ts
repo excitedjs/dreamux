@@ -177,6 +177,14 @@ export class DispatcherService {
     identity: TeamMateIdentity,
     completion: CompletionEnvelope,
   ): Promise<void> {
+    if (identity.role === 'team_leader') {
+      await this.teams.recordLeaderTurn({
+        dispatcherId,
+        leaderName: identity.name,
+        summary: completionSummary(completion),
+      });
+      return;
+    }
     if (identity.owner.kind === 'team' && identity.role === 'team_member') {
       const leader = this.teammates.getLiveRuntime(
         dispatcherId,
@@ -276,4 +284,12 @@ export class DispatcherService {
     await this.teammates.stopAll();
     await this.dispatchers.shutdown();
   }
+}
+
+function completionSummary(completion: CompletionEnvelope): string {
+  const preview = completion.result.replace(/\s+/g, ' ').trim();
+  const bounded = preview.length <= 240 ? preview : `${preview.slice(0, 237)}...`;
+  return bounded === ''
+    ? `TeamLeader turn ${completion.status}`
+    : `TeamLeader turn ${completion.status}: ${bounded}`;
 }
