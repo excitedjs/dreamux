@@ -135,6 +135,17 @@ export interface TeamMateDispatcherOwner {
   dispatcher_id: string;
 }
 
+/**
+ * Where a teammate turn was submitted from, recorded per turn id at submit
+ * time and resolved again when the turn settles. This is what decides where
+ * the completion is delivered: a `channel` turn on a TeamLeader stays
+ * pull-only (team ledger), while a `dispatcher`-initiated turn returns to the
+ * dispatcher runtime as a completion. A settle whose turn id was never
+ * recorded (e.g. submitted before a server restart) resolves to `null` and
+ * the facade picks the safe default for the role.
+ */
+export type TeamMateTurnOrigin = 'channel' | 'dispatcher' | 'team_leader';
+
 export interface SpawnTeamMateInput {
   dispatcherId: string;
   name: string;

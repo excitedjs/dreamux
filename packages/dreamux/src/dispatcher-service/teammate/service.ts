@@ -50,6 +50,7 @@ import {
   type TeamMateRuntimeStatus,
   type TeamMateSendResult,
   type TeamMateSpawnResult,
+  type TeamMateTurnOrigin,
   type TeamMateTurnResult,
   type TeamMateWorktreeIdentity,
   type TeamMateWorktreeRequest,
@@ -60,8 +61,17 @@ import {
 interface LiveTeamMate {
   runtime: AgentRuntime;
   state: TeamMateRuntimeStateStore;
-  identity: TeamMateIdentity;
+  /**
+   * Per-turn submission origin, keyed by runtime turn id. First-writer-wins:
+   * a later input steered into an already-active turn never re-targets that
+   * turn's completion. Bounded FIFO (see {@link TURN_ORIGIN_CACHE_LIMIT});
+   * entries are kept after settle so duplicate settles of the same turn route
+   * consistently.
+   */
+  turnOrigins: Map<string, TeamMateTurnOrigin>;
 }
+
+const TURN_ORIGIN_CACHE_LIMIT = 256;
 
 export interface TeamMateAgentServiceOptions {
   config: DreamuxConfig;
@@ -84,6 +94,11 @@ export interface TeamMateAgentServiceOptions {
     dispatcherId: string,
     identity: TeamMateIdentity,
     completion: CompletionEnvelope,
+    /**
+     * The settled turn's submission origin, or `null` when the turn id was
+     * never recorded by this process (the sink picks the role's safe default).
+     */
+    origin: TeamMateTurnOrigin | null,
   ) => void | Promise<void>;
   log: DreamuxLogger;
 }
@@ -434,8 +449,8 @@ export class TeamMateAgentService {
       reopenClosed: true,
     });
     const result = await live.runtime.channelInput(input);
-    if (result.status === 'submitted' && this.opts.onTeamMateCompletion !== undefined) {
-      this.armTurnCompletion(deliverableTurnId(result), live.runtime, dispatcherId, name, live.identity);
+    if (result.status === 'submitted') {
+      recordTurnOrigin(live, result.turnId, 'channel');
     }
     return result;
   }
@@ -623,8 +638,9 @@ export class TeamMateAgentService {
     // Bound late so the settle handler closes over the runtime instance directly
     // rather than re-reading the live map: close() deletes the live entry right
     // after stop() fires its terminal `stopped` settles, which would otherwise
-    // race the lookup.
+    // race the lookup. The origin map is closed over for the same reason.
     let liveRuntime: AgentRuntime | null = null;
+    const turnOrigins = new Map<string, TeamMateTurnOrigin>();
     // The teammate's runtime config comes from its own resolved agent (the
     // agents[].id it was spawned with), never inherited from the dispatcher.
     // Hand the provider a create-context dispatcher whose `runtime` is the
@@ -668,6 +684,7 @@ export class TeamMateAgentService {
                 identity,
                 settledRuntime,
                 settled,
+                turnOrigins,
                 onTeamMateCompletion,
               );
             },
@@ -689,7 +706,7 @@ export class TeamMateAgentService {
     } else {
       await runtime.start();
     }
-    const live = { runtime, state, identity };
+    const live = { runtime, state, turnOrigins };
     this.live.set(liveKey(dispatcherId, identity.name), live);
     return live;
   }
@@ -706,29 +723,10 @@ export class TeamMateAgentService {
       sourceId: `teammate:${name}:${submissionSeq}`,
       text: prompt,
     });
-    if (result.status === 'submitted' && this.opts.onTeamMateCompletion !== undefined) {
-      this.armTurnCompletion(deliverableTurnId(result), live.runtime, dispatcherId, name, live.identity);
+    if (result.status === 'submitted') {
+      recordTurnOrigin(live, result.turnId, principalTurnOrigin(opts.principal));
     }
     return toTurnResult(result);
-  }
-
-  private armTurnCompletion(
-    turnId: string,
-    runtime: AgentRuntime,
-    dispatcherId: string,
-    name: string,
-    identity: TeamMateIdentity,
-  ): void {
-    void waitForCompletion(runtime, turnId).then((status) =>
-      this.deliverTurnSettled(
-        dispatcherId,
-        name,
-        identity,
-        runtime,
-        { turnId, status },
-        this.opts.onTeamMateCompletion!,
-      ),
-    );
   }
 
   /**
@@ -740,7 +738,9 @@ export class TeamMateAgentService {
    * and never mislabeled. Reverse
    * delivery requires a stable non-null turn id because the completion id is the
    * idempotency key; builtin runtimes only settle accepted turns after they have
-   * a turn id. Every step is error-isolated: this runs `void`-ed off the
+   * a turn id. The settled turn's recorded submission origin rides along so the
+   * sink can route per turn (channel-origin TeamLeader turns stay pull-only).
+   * Every step is error-isolated: this runs `void`-ed off the
    * synchronous settle callback, so any escape would become an unhandled
    * rejection.
    */
@@ -750,6 +750,7 @@ export class TeamMateAgentService {
     identity: TeamMateIdentity,
     runtime: AgentRuntime,
     settled: TurnSettledSignal,
+    turnOrigins: ReadonlyMap<string, TeamMateTurnOrigin>,
     sink: NonNullable<TeamMateAgentServiceOptions['onTeamMateCompletion']>,
   ): Promise<void> {
     try {
@@ -783,7 +784,12 @@ export class TeamMateAgentService {
         status: settled.status,
         result,
       };
-      await sink(dispatcherId, identity, envelope);
+      await sink(
+        dispatcherId,
+        identity,
+        envelope,
+        turnOrigins.get(settled.turnId) ?? null,
+      );
     } catch (err) {
       this.opts.log.warn(
         { dispatcher_id: dispatcherId, teammate: name, err: errInfo(err) },
@@ -1107,23 +1113,33 @@ function toTurnResult(result: AgentRuntimeTurnResult): TeamMateTurnResult {
   }
 }
 
-function deliverableTurnId(
-  result: Extract<AgentRuntimeTurnResult, { status: 'submitted' }>,
-): string {
-  return result.turnId;
+/**
+ * The completion origin a submitting principal implies: a TeamLeader-submitted
+ * turn (member spawn/send) answers to that leader; everything else — including
+ * the principal-less `createTeamLeader` bootstrap prompt — answers to the
+ * dispatcher. Channel-delivered turns never come through here; they are
+ * recorded as `channel` at the `channelInputScoped` seam.
+ */
+function principalTurnOrigin(
+  principal: TeamMateCallerPrincipal | undefined,
+): TeamMateTurnOrigin {
+  return principal?.kind === 'team_leader' ? 'team_leader' : 'dispatcher';
 }
 
-async function waitForCompletion(
-  runtime: AgentRuntime,
-  _turnId: string,
-): Promise<'completed' | 'failed' | 'stopped'> {
-  for (let i = 0; i < 200; i += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 25));
-    const last = await runtime.getLast();
-    if (last !== null) return 'completed';
-    if (runtime.getStatus() === 'stopped') return 'stopped';
+function recordTurnOrigin(
+  live: LiveTeamMate,
+  turnId: string,
+  origin: TeamMateTurnOrigin,
+): void {
+  // First-writer-wins: a send steered into an already-active turn must not
+  // re-target the completion of the turn that absorbed it.
+  if (live.turnOrigins.has(turnId)) return;
+  live.turnOrigins.set(turnId, origin);
+  while (live.turnOrigins.size > TURN_ORIGIN_CACHE_LIMIT) {
+    const oldest = live.turnOrigins.keys().next().value;
+    if (oldest === undefined) break;
+    live.turnOrigins.delete(oldest);
   }
-  return runtime.getStatus() === 'stopped' ? 'stopped' : 'completed';
 }
 
 function ownerForPrincipal(principal: TeamMateCallerPrincipal): TeamMateIdentity['owner'] {
