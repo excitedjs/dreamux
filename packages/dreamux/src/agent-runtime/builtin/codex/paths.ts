@@ -64,22 +64,32 @@ export function dispatcherAppServerControlDir(id: string): string {
 
 /**
  * Short private root for over-budget Codex socket fallbacks, or null when no
- * private root exists. The shared world-writable `/tmp` is never used — the
- * global-bin decision record rejects `/tmp` app-server sockets (control state
- * must be private and owner-writable). `XDG_RUNTIME_DIR` is the canonical
- * private per-user runtime dir on Linux; on macOS `os.tmpdir()` is the
- * per-user 0700 `$TMPDIR` confinement dir, which qualifies.
+ * private root exists. The shared world-writable tmp roots are never used —
+ * the global-bin decision record rejects `/tmp` app-server sockets (control
+ * state must be private and owner-writable). `XDG_RUNTIME_DIR` is the
+ * canonical private per-user runtime dir on Linux, but it is operator input,
+ * so the shared-tmp rejection applies to it too; on macOS `os.tmpdir()` is
+ * the per-user 0700 `$TMPDIR` confinement dir, which qualifies.
  */
 export function codexSocketFallbackDir(): string | null {
   const xdg = process.env['XDG_RUNTIME_DIR'];
-  if (xdg !== undefined && xdg.trim() !== '') return xdg;
+  if (xdg !== undefined && xdg.trim() !== '' && !isSharedTmp(xdg)) return xdg;
   const tmp = tmpdir();
   return isSharedTmp(tmp) ? null : tmp;
 }
 
+/**
+ * Shared world-writable system tmp roots. `/private/tmp` and
+ * `/private/var/tmp` are the macOS symlink-resolved spellings of `/tmp` and
+ * `/var/tmp`, so a canonicalized path must not slip past the guard.
+ */
+const SHARED_TMP_ROOTS = ['/tmp', '/var/tmp', '/private/tmp', '/private/var/tmp'];
+
 function isSharedTmp(path: string): boolean {
   const normalized = normalize(path);
-  return normalized === '/tmp' || normalized.startsWith(`/tmp${sep}`);
+  return SHARED_TMP_ROOTS.some(
+    (root) => normalized === root || normalized.startsWith(`${root}${sep}`),
+  );
 }
 
 /**

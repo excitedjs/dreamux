@@ -207,15 +207,16 @@ describe('runtime paths', () => {
     // A deep teammate runtime root (the macOS CI shape: long tmp HOME +
     // state/<dispatcher>/teammate/runtime/<name>/) exceeds the budget; the
     // socket must move to the short private fallback root instead of failing.
+    // Pure path derivation — the XDG dir does not need to exist.
     process.env['HOME'] = join(root, 'h'.repeat(90));
-    process.env['XDG_RUNTIME_DIR'] = join(root, 'xdg');
+    process.env['XDG_RUNTIME_DIR'] = '/run/user/424242';
     const longDir = dispatcherTeamMateRuntimeDir('dispatcher-a', 'alpha-leader');
     expect(
       unixSocketPathFitsBudget(join(longDir, 'codex.sock')),
     ).toBe(false);
     const fallback = codexSocketPathIn(longDir, 'dispatcher-a');
     expect(unixSocketPathFitsBudget(fallback)).toBe(true);
-    expect(fallback.startsWith(join(root, 'xdg', 'dreamux-codex-'))).toBe(true);
+    expect(fallback.startsWith('/run/user/424242/dreamux-codex-')).toBe(true);
     expect(fallback.endsWith('.sock')).toBe(true);
 
     // Deterministic across restart/resume, unique per runtime root.
@@ -224,7 +225,7 @@ describe('runtime paths', () => {
     expect(codexSocketPathIn(otherDir, 'dispatcher-a')).not.toBe(fallback);
   });
 
-  it('never places the Codex socket fallback in the shared /tmp', () => {
+  it('never places the Codex socket fallback in a shared tmp root', () => {
     // The global-bin decision record rejects /tmp app-server sockets: with no
     // private runtime root available, the budget assertion stays fail-loud.
     delete process.env['XDG_RUNTIME_DIR'];
@@ -237,9 +238,24 @@ describe('runtime paths', () => {
       /too long for Unix sockets/,
     );
 
-    // A private (non-/tmp) tmpdir — the macOS per-user $TMPDIR shape — is an
-    // acceptable fallback root. Pure env/path resolution; no fs access.
+    // XDG_RUNTIME_DIR is operator input: a shared-tmp value must not bypass
+    // the guard, whether it is the root itself or a subdirectory.
+    for (const sharedXdg of ['/tmp', '/tmp/xdg', '/private/tmp', '/var/tmp/xdg']) {
+      process.env['XDG_RUNTIME_DIR'] = sharedXdg;
+      expect(codexSocketFallbackDir()).toBe(null);
+      expect(() => codexSocketPathIn(longDir, 'dispatcher-a')).toThrow(
+        /too long for Unix sockets/,
+      );
+    }
+
+    // A shared-tmp XDG still allows a private tmpdir to serve as the root.
+    process.env['XDG_RUNTIME_DIR'] = '/tmp/xdg';
     process.env['TMPDIR'] = '/var/folders/zz/zyzzyva/T';
+    expect(codexSocketFallbackDir()).toBe('/var/folders/zz/zyzzyva/T');
+
+    // A private (non-shared-tmp) tmpdir — the macOS per-user $TMPDIR shape —
+    // is an acceptable fallback root. Pure env/path resolution; no fs access.
+    delete process.env['XDG_RUNTIME_DIR'];
     expect(codexSocketFallbackDir()).toBe('/var/folders/zz/zyzzyva/T');
   });
 });
