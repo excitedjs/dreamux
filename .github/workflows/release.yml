@@ -68,7 +68,7 @@ permissions:
 jobs:
   version:
     name: apply rush change files and push version bump
-    if: github.ref_name == 'main'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -191,7 +191,7 @@ jobs:
     # this one. Dispatching against next publishes beta. Dispatching against any
     # other branch publishes alpha. Gate on full refs so a tag named next/main
     # can never satisfy the branch policy.
-    if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/heads/') && github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -228,12 +228,12 @@ jobs:
           else
             short_sha="$(git rev-parse --short=12 HEAD)"
             echo "tag=alpha" >> "$GITHUB_OUTPUT"
-            echo "prerelease=alpha.${short_sha}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=alpha.g${short_sha}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Apply prerelease version (ephemeral, never committed)
         # --partial-prerelease bumps only packages that have pending change
-        # files (e.g. 0.12.0 -> 0.12.1-alpha.<sha>); packages without changes
+        # files (e.g. 0.12.0 -> 0.12.1-alpha.g<sha>); packages without changes
         # stay at their published version and the publish step skips them.
         # Unlike a stable `rush publish --apply`, prerelease apply does NOT
         # delete the change files, so the eventual stable release on main still
