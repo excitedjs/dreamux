@@ -99,12 +99,43 @@ describe('global Codex home doctor', () => {
     expect(result.ok).toBe(true);
   });
 
-  it('rejects too-long app-server socket paths before bind', async () => {
+  it('rejects too-long app-server socket paths when no private fallback root exists', async () => {
+    const previousXdg = process.env['XDG_RUNTIME_DIR'];
+    const previousTmpdir = process.env['TMPDIR'];
     process.env['HOME'] = join(runtimeDir, 'h'.repeat(90));
+    // With a private runtime root the socket falls back instead of failing
+    // (see codexSocketPathIn); the fail-loud contract holds only when the
+    // sole candidate is the shared /tmp, which is banned for sockets.
+    delete process.env['XDG_RUNTIME_DIR'];
+    process.env['TMPDIR'] = '/tmp';
 
-    await expect(
-      validateDispatcherCodexHome('dispatcher-with-long-id', { env: {} }),
-    ).rejects.toThrow(/Codex socket path is too long/);
+    try {
+      await expect(
+        validateDispatcherCodexHome('dispatcher-with-long-id', { env: {} }),
+      ).rejects.toThrow(/Codex socket path is too long/);
+    } finally {
+      if (previousXdg === undefined) delete process.env['XDG_RUNTIME_DIR'];
+      else process.env['XDG_RUNTIME_DIR'] = previousXdg;
+      if (previousTmpdir === undefined) delete process.env['TMPDIR'];
+      else process.env['TMPDIR'] = previousTmpdir;
+    }
+  });
+
+  it('falls back to a private socket path for deep runtime roots instead of failing', async () => {
+    const previousXdg = process.env['XDG_RUNTIME_DIR'];
+    process.env['HOME'] = join(runtimeDir, 'h'.repeat(90));
+    process.env['XDG_RUNTIME_DIR'] = join(runtimeDir, 'xdg');
+
+    try {
+      const socket = dispatcherSocketPath('dispatcher-with-long-id');
+      expect(socket.startsWith(join(runtimeDir, 'xdg', 'dreamux-codex-'))).toBe(true);
+      expect(Buffer.byteLength(socket, 'utf8')).toBeLessThanOrEqual(
+        DISPATCHER_APP_SERVER_SOCKET_PATH_MAX_BYTES,
+      );
+    } finally {
+      if (previousXdg === undefined) delete process.env['XDG_RUNTIME_DIR'];
+      else process.env['XDG_RUNTIME_DIR'] = previousXdg;
+    }
   });
 
   it('requires auth environment variables to be non-empty and accepts CODEX_ACCESS_TOKEN', async () => {
