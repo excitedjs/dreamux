@@ -322,11 +322,13 @@ export const adminMethods: Record<string, AdminHandler> = {
   'mcp.team.create_group': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
+    const worktree = optionalWorktreeRequest(params, 'worktree');
     return server.dispatcherService.createTeamGroup({
       dispatcherId: id,
       name: mustString(params, 'name'),
       repoCwd: mustString(params, 'repo_cwd'),
       leaderAgentRuntime: mustString(params, 'leader_agent_runtime'),
+      ...(worktree !== null ? { worktree } : {}),
       sourceChatId: mustString(params, 'source_chat_id'),
       sourceChatType: mustString(params, 'source_chat_type') === 'p2p' ? 'p2p' : 'group',
       requesterOpenId: mustString(params, 'requester_open_id'),

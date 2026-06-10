@@ -64,6 +64,7 @@ export interface TeamCreateGroupInput {
   name: string;
   repoCwd: string;
   leaderAgentRuntime: string;
+  worktree?: TeamMateWorktreeRequest;
   sourceChatId: string;
   sourceChatType: 'p2p' | 'group';
   requesterOpenId: string;

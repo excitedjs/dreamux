@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Add an optional Team worktree mode parameter to team.create and team.create_group so callers can reuse the repository cwd while the default remains managed worktrees.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "noreply@users.noreply.github.com"
+}

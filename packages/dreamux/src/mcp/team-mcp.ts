@@ -103,6 +103,7 @@ function teamTools(): Array<Record<string, unknown>> {
       name: { type: 'string', minLength: 1, maxLength: 64 },
       repo_cwd: { type: 'string', minLength: 1, maxLength: 4096 },
       leader_agent_runtime: { type: 'string', minLength: 1, maxLength: 128 },
+      worktree: worktreeSchema(),
       intent: { type: 'string', maxLength: 2000 },
       prompt: { type: 'string', maxLength: 20000 },
     }, ['name', 'repo_cwd', 'leader_agent_runtime']),
@@ -110,6 +111,7 @@ function teamTools(): Array<Record<string, unknown>> {
       name: { type: 'string', minLength: 1, maxLength: 64 },
       repo_cwd: { type: 'string', minLength: 1, maxLength: 4096 },
       leader_agent_runtime: { type: 'string', minLength: 1, maxLength: 128 },
+      worktree: worktreeSchema(),
       source_chat_id: { type: 'string', minLength: 1 },
       source_chat_type: { type: 'string', enum: ['p2p', 'group'] },
       requester_open_id: { type: 'string', minLength: 1 },
@@ -151,6 +153,21 @@ function tool(
     name,
     description,
     inputSchema: { type: 'object', additionalProperties: false, properties, required },
+  };
+}
+
+function worktreeSchema(): Record<string, unknown> {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      mode: { type: 'string', enum: ['reuse-cwd', 'managed'] },
+      slug: { type: 'string', minLength: 1, maxLength: 64 },
+      base_ref: { type: 'string', minLength: 1, maxLength: 256 },
+      branch: { type: 'string', minLength: 1, maxLength: 256 },
+      cleanup: { type: 'string', enum: ['keep', 'delete-on-close'] },
+    },
+    required: ['mode'],
   };
 }
 
@@ -201,14 +218,44 @@ function mapToolCall(call: ToolCall): { method: string; params: Record<string, u
 
 function createArgs(value: unknown): Record<string, unknown> {
   const obj = asRecord(value, 'create arguments');
+  const worktree = optionalWorktree(obj, 'worktree');
   const intent = optionalString(obj, 'intent');
   const prompt = optionalString(obj, 'prompt');
   return {
     name: requireString(obj, 'name'),
     repo_cwd: requireString(obj, 'repo_cwd'),
     leader_agent_runtime: requireString(obj, 'leader_agent_runtime'),
+    ...(worktree !== null ? { worktree } : {}),
     ...(intent !== null ? { intent } : {}),
     ...(prompt !== null ? { prompt } : {}),
+  };
+}
+
+function optionalWorktree(
+  obj: Record<string, unknown>,
+  key: string,
+): Record<string, unknown> | null {
+  const value = obj[key];
+  if (value === undefined || value === null) return null;
+  const worktree = asRecord(value, key);
+  const mode = requireString(worktree, 'mode');
+  if (mode !== 'reuse-cwd' && mode !== 'managed') {
+    throw new Error(`${key}.mode must be 'reuse-cwd' or 'managed'`);
+  }
+  const cleanup = optionalString(worktree, 'cleanup');
+  if (
+    cleanup !== null &&
+    cleanup !== 'keep' &&
+    cleanup !== 'delete-on-close'
+  ) {
+    throw new Error(`${key}.cleanup must be 'keep' or 'delete-on-close'`);
+  }
+  return {
+    mode,
+    ...optionalStringProp(worktree, 'slug'),
+    ...optionalStringProp(worktree, 'base_ref'),
+    ...optionalStringProp(worktree, 'branch'),
+    ...(cleanup !== null ? { cleanup } : {}),
   };
 }
 

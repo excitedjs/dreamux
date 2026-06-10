@@ -200,6 +200,8 @@ describe('TeamService', () => {
       owner: { kind: 'dispatcher', dispatcher_id: 'flow' },
       team_id: 'alpha',
     });
+    expect(created.team.worktree.mode).toBe('managed');
+    expect(created.team.runtime_cwd).not.toBe(repo);
     expect(existsSync(created.team.runtime_cwd)).toBe(true);
     expect((await teams.list('flow')).map((entry) => entry.team.team_id)).toEqual(['alpha']);
     expect((await teams.ledger('flow', 'alpha')).events.map((event) => event.type)).toEqual(['create']);
@@ -282,6 +284,96 @@ describe('TeamService', () => {
     ).rejects.toThrow(/does not exist/);
   });
 
+  it('runs the team in the repo cwd when worktree mode is reuse-cwd', async () => {
+    const repo = await initGitRepo(join(root, 'reuse-repo'));
+    const { teams, teammates, provider } = buildServices();
+
+    const created = await teams.create({
+      dispatcherId: 'flow',
+      name: 'alpha',
+      repoCwd: repo,
+      leaderAgentRuntime: 'flow',
+      worktree: { mode: 'reuse-cwd' },
+    });
+
+    expect(created.team).toMatchObject({
+      repo_cwd: repo,
+      source_repo: repo,
+      runtime_cwd: repo,
+    });
+    expect(created.team.worktree).toMatchObject({
+      mode: 'reuse-cwd',
+      slug: null,
+      path: repo,
+      branch: null,
+      base_ref: null,
+      cleanup_state: 'not-managed',
+    });
+    expect(created.leader).toMatchObject({
+      runtime_cwd: repo,
+      worktree: { mode: 'reuse-cwd', path: repo },
+    });
+    expect(provider.contexts.at(-1)?.cwd).toBe(repo);
+
+    const status = await teams.status('flow', 'alpha');
+    expect(status.team.worktree.mode).toBe('reuse-cwd');
+    const ledger = await teams.ledger('flow', 'alpha');
+    expect(ledger.team?.worktree.mode).toBe('reuse-cwd');
+    expect(ledger.events.map((event) => event.type)).toEqual(['create']);
+
+    const workspace = await teams.sharedWorkspace('flow', 'alpha');
+    expect(workspace).toMatchObject({
+      sourceCwd: repo,
+      sourceRepo: repo,
+      runtimeCwd: repo,
+    });
+    const member = await teammates.spawnScoped({
+      principal: teamLeaderPrincipal({
+        dispatcherId: 'flow',
+        teamId: 'alpha',
+        leaderName: 'alpha-leader',
+      }),
+      name: 'builder',
+      prompt: 'build',
+      sharedWorkspace: workspace,
+    });
+    expect(member.teammate).toMatchObject({
+      runtime_cwd: repo,
+      worktree: { mode: 'reuse-cwd', path: repo },
+    });
+    expect(provider.contexts.at(-1)?.cwd).toBe(repo);
+
+    const dissolved = await teams.dissolve({
+      dispatcherId: 'flow',
+      teamId: 'alpha',
+      note: 'done',
+    });
+    expect(dissolved.team.status).toBe('closed');
+    expect(dissolved.team.worktree.cleanup_state).toBe('not-managed');
+    expect(existsSync(repo)).toBe(true);
+    expect(existsSync(join(repo, 'README.md'))).toBe(true);
+  });
+
+  it('passes a reuse-cwd worktree request through createGroup', async () => {
+    const repo = await initGitRepo(join(root, 'group-reuse-repo'));
+    const { teams } = buildServices();
+
+    const result = await teams.createGroup({
+      dispatcherId: 'flow',
+      name: 'gamma',
+      repoCwd: repo,
+      leaderAgentRuntime: 'flow',
+      worktree: { mode: 'reuse-cwd' },
+      sourceChatId: 'p2p_control',
+      sourceChatType: 'p2p',
+      requesterOpenId: 'requester-open-id',
+    });
+
+    expect(result.team).toMatchObject({ runtime_cwd: repo, repo_cwd: repo });
+    expect(result.team.worktree).toMatchObject({ mode: 'reuse-cwd', path: repo });
+    expect(result.binding.team_id).toBe('gamma');
+  });
+
   it('creates a team group from P2P and binds the new group', async () => {
     const repo = await initGitRepo(join(root, 'group-repo'));
     const { teams, createdGroups } = buildServices();
@@ -293,15 +385,15 @@ describe('TeamService', () => {
       leaderAgentRuntime: 'flow',
       sourceChatId: 'p2p_control',
       sourceChatType: 'p2p',
-      requesterOpenId: 'ou_requester',
-      inviteOpenIds: ['ou_peer', 'ou_requester'],
+      requesterOpenId: 'requester-open-id',
+      inviteOpenIds: ['peer-open-id', 'requester-open-id'],
       groupName: 'Gamma Team',
     });
 
     expect(createdGroups).toEqual([
       {
         name: 'Gamma Team',
-        userOpenIds: ['ou_requester', 'ou_peer'],
+        userOpenIds: ['requester-open-id', 'peer-open-id'],
         chatId: 'fake_group_1',
       },
     ]);
@@ -345,7 +437,7 @@ describe('TeamService', () => {
         leaderAgentRuntime: 'flow',
         sourceChatId: 'p2p_control',
         sourceChatType: 'p2p',
-        requesterOpenId: 'ou_requester',
+        requesterOpenId: 'requester-open-id',
       }),
     ).rejects.toThrow(/missing Feishu chat permission/);
 
@@ -372,7 +464,7 @@ describe('TeamService', () => {
         leaderAgentRuntime: 'flow',
         sourceChatId: 'group_source',
         sourceChatType: 'group',
-        requesterOpenId: 'ou_requester',
+        requesterOpenId: 'requester-open-id',
       }),
     ).rejects.toThrow(/P2P control channel/);
   });
