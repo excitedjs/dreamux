@@ -28,6 +28,7 @@ import type {
   SendTeamMateInput,
   SpawnTeamMateInput,
   TeamMateIdentity,
+  TeamMateTurnOrigin,
 } from './teammate/types.js';
 import type {
   TeamBindChannelInput,
@@ -104,8 +105,8 @@ export class DispatcherService {
       // Reverse delivery (issue #147): a settled teammate turn bridges here to
       // the dispatcher runtime's completionInput, becoming a fresh dispatcher
       // turn. The facade is where both services meet.
-      onTeamMateCompletion: (id, identity, completion) =>
-        this.deliverTeamMateCompletion(id, identity, completion),
+      onTeamMateCompletion: (id, identity, completion, origin) =>
+        this.deliverTeamMateCompletion(id, identity, completion, origin),
       log: opts.log,
     });
     this.teams = new TeamService({
@@ -176,8 +177,15 @@ export class DispatcherService {
     dispatcherId: string,
     identity: TeamMateIdentity,
     completion: CompletionEnvelope,
+    origin: TeamMateTurnOrigin | null = null,
   ): Promise<void> {
-    if (identity.role === 'team_leader') {
+    // Routing is per turn, not per role: a TeamLeader turn fed by its bound
+    // channel stays pull-only (ledger), but a dispatcher-initiated send/control
+    // turn to that same leader returns to the dispatcher like any teammate.
+    // An unattributed leader turn (origin null, e.g. settled after a restart
+    // lost the in-memory origin map) defaults to the ledger so it can never
+    // inject channel traffic into dispatcher context.
+    if (identity.role === 'team_leader' && origin !== 'dispatcher') {
       await this.teams.recordLeaderTurn({
         dispatcherId,
         leaderName: identity.name,

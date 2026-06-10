@@ -266,6 +266,9 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
       spawned.turn.status === 'submitted' ? spawned.turn.turn_id : 'unreachable';
     memberRuntime.settle('completed', turnId);
     await flush();
+    // Wait past the removed 25ms poller's interval: a duplicate delivery path
+    // would have pushed a second envelope into the leader runtime by now.
+    await sleep(150);
 
     expect(leaderRuntime.delivered).toEqual([
       {
@@ -280,14 +283,14 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
     await facade.shutdown();
   });
 
-  it('records TeamLeader bound-channel completions in the team ledger only', async () => {
+  it('records a bound-channel TeamLeader completion as exactly one ledger row, never a dispatcher push', async () => {
     await initGitRepo(workspace(root));
     const descriptor = createBuiltinProviderRegistry().resolve('builtin:codex');
     const provider = new FakeProvider(descriptor);
     const facade = buildFacade(provider, adminSocketPath);
 
     await facade.startDispatcher('flow');
-    await facade.createTeam({
+    const created = await facade.createTeam({
       dispatcherId: 'flow',
       name: 'alpha',
       repoCwd: workspace(root),
@@ -296,23 +299,80 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
 
     const dispatcherRuntime = provider.runtimes[0]!;
     const leaderRuntime = provider.runtimes[1]!;
+    // Settle the dispatcher-initiated bootstrap turn first so the channel turn
+    // below gets its own turn id instead of being steered into the bootstrap.
+    const bootstrapTurnId =
+      created.turn.status === 'submitted' ? created.turn.turn_id : 'unreachable';
+    leaderRuntime.settle('completed', bootstrapTurnId);
+    await flush();
+
     const submitted = await facade.teams.deliverToLeader({
       dispatcherId: 'flow',
       teamId: 'alpha',
       turn: { sourceId: 'msg-team', text: 'team asks' },
     });
     const turnId = submitted.status === 'submitted' ? submitted.turnId : 'unreachable';
+    expect(turnId).not.toBe(bootstrapTurnId);
     leaderRuntime.settle('completed', turnId);
     await waitFor(async () =>
       (await facade.getTeamLedger('flow', 'alpha')).events
         .some((event) => event.type === 'leader_turn'),
     );
+    // Wait past the removed 25ms poller's interval: a second (duplicate)
+    // delivery path would have appended a second leader_turn row by now.
+    await sleep(150);
 
-    expect(dispatcherRuntime.delivered).toEqual([]);
-    expect((await facade.getTeamLedger('flow', 'alpha')).events.at(-1)).toMatchObject({
-      type: 'leader_turn',
+    const leaderTurnRows = (await facade.getTeamLedger('flow', 'alpha')).events
+      .filter((event) => event.type === 'leader_turn');
+    expect(leaderTurnRows).toHaveLength(1);
+    expect(leaderTurnRows[0]).toMatchObject({
       summary: expect.stringContaining('TeamLeader turn completed'),
     });
+    // The bound-channel turn never reaches dispatcher context.
+    expect(dispatcherRuntime.delivered.map((env) => env.id)).not.toContain(
+      `alpha-leader:${turnId}`,
+    );
+
+    await facade.shutdown();
+  });
+
+  it('pushes a dispatcher-initiated TeamLeader turn back to the dispatcher, not the ledger', async () => {
+    await initGitRepo(workspace(root));
+    const descriptor = createBuiltinProviderRegistry().resolve('builtin:codex');
+    const provider = new FakeProvider(descriptor);
+    const facade = buildFacade(provider, adminSocketPath);
+
+    await facade.startDispatcher('flow');
+    const created = await facade.createTeam({
+      dispatcherId: 'flow',
+      name: 'alpha',
+      repoCwd: workspace(root),
+      leaderAgentRuntime: 'flow',
+    });
+
+    const dispatcherRuntime = provider.runtimes[0]!;
+    const leaderRuntime = provider.runtimes[1]!;
+    const bootstrapTurnId =
+      created.turn.status === 'submitted' ? created.turn.turn_id : 'unreachable';
+    leaderRuntime.settle('completed', bootstrapTurnId);
+    await flush();
+
+    const sent = await facade.sendTeamMate({
+      dispatcherId: 'flow',
+      name: 'alpha-leader',
+      prompt: 'Status check from the dispatcher.',
+    });
+    const turnId =
+      sent.turn.status === 'submitted' ? sent.turn.turn_id : 'unreachable';
+    leaderRuntime.settle('completed', turnId);
+    await flush();
+
+    expect(dispatcherRuntime.delivered.map((env) => env.id)).toContain(
+      `alpha-leader:${turnId}`,
+    );
+    const leaderTurnRows = (await facade.getTeamLedger('flow', 'alpha')).events
+      .filter((event) => event.type === 'leader_turn');
+    expect(leaderTurnRows).toEqual([]);
 
     await facade.shutdown();
   });
@@ -556,6 +616,10 @@ function noopLog(): {
 /** Drain the macrotask the void-ed settle handler runs on. */
 async function flush(): Promise<void> {
   await new Promise((resolve) => setImmediate(resolve));
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function waitFor(predicate: () => Promise<boolean>): Promise<void> {

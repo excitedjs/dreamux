@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "TeamLeader completion routing is now per turn instead of per role: bound-channel leader turns stay pull-only (team ledger), while dispatcher-initiated leader send/control turns return to the dispatcher as completions; removes the redundant getLast-polling completion path that double-delivered leader ledger rows and team-member completions",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}
