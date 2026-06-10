@@ -1,6 +1,6 @@
 ---
 name: dispatcher
-description: Use from a Dreamux dispatcher thread when bounded repository work should be delegated to a TeamMate. The server-hosted TeamMate MCP is the default interface; spawn creates a named semi-resident TeamMate, send submits follow-up turns and reopens a closed TeamMate from its checkpoint, close stops one, and history/list/status/last/ctx/get_capabilities inspect state. The tm CLI is the explicit fallback for isolated worktrees and legacy diagnostics. Applies to spawning, tracking, retrieving, sending, closing, inspecting, reopening, recovering, or summarizing teammate work.
+description: Use from a Dreamux dispatcher thread when bounded repository work should be delegated to a TeamMate. The server-hosted TeamMate MCP is the default interface; spawn creates a named semi-resident TeamMate, send submits follow-up turns and reopens a closed TeamMate from its checkpoint, close stops one, history lists session ledger rows, history_events reads a raw timeline, and list/status/last/ctx/get_capabilities inspect state. The tm CLI is the explicit fallback for legacy diagnostics. Applies to spawning, tracking, retrieving, sending, closing, inspecting, reopening, recovering, or summarizing teammate work.
 ---
 
 # Dispatcher
@@ -40,13 +40,36 @@ session or polling a process.
 
 - `list` — this dispatcher's TeamMates and their statuses.
 - `status` — one TeamMate status, agent runtime id, checkpoint, and close metadata.
-- `history` — forward-only history for a named TeamMate.
+- `history` — bounded session ledger rows for this dispatcher, with filters for
+  recovery across TeamMates.
+- `history_events` — raw forward-only event history for one named TeamMate.
 - `last` — the runtime's latest assistant-visible result when supported.
 - `ctx` — the runtime context snapshot when supported.
 
 These serve status / history / last directly, so you do not need `tm` to check
 on a running TeamMate. Do not wait or poll for completion: submit the turn, let
 the dispatcher turn end, then recover through `history`, `last`, and `ctx`.
+
+**Team lifecycle.**
+
+Dreamux also injects a dispatcher-scoped `team` MCP server for Team Mode
+lifecycle. Use it to create a TeamLeader, inspect Team status/ledger, and
+dissolve a Team. Team work still runs through agents; do not inspect the target
+repo directly from the dispatcher.
+
+- `create` — create a Team and TeamLeader. Requires `repo_cwd` and
+  `leader_agent_runtime`; no default leader runtime is inferred.
+- `create_group` — from a P2P control channel, create a Team, create a Feishu
+  group, invite the requester/peers when Feishu permissions allow it, and bind
+  the new group to the TeamLeader. The source P2P remains with the dispatcher.
+- `list`, `status`, `ledger` — read dispatcher-owned Team records and lifecycle
+  ledger rows.
+- `bind_channel` — bind a Feishu group chat to a TeamLeader. P2P binding is
+  rejected.
+- `transfer_channel_back` — return a bound Feishu group chat to the dispatcher.
+- `dissolve` — close the TeamLeader and team-owned members, then conservatively
+  clean up the shared managed worktree. Active channel bindings are transferred
+  back first.
 
 **Control and inspect.**
 

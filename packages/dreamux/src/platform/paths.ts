@@ -206,6 +206,37 @@ export function dispatcherTeamMateRuntimeDir(
   return join(dispatcherTeamMateDir(id), 'runtime', teamMateNameSegment(teammateName));
 }
 
+/** Dreamux-managed Git worktrees for one dispatcher. */
+export function dispatcherTeamMateWorktreesDir(id: string): string {
+  return join(dispatcherTeamMateDir(id), 'worktrees');
+}
+
+/** One Dreamux-managed Git worktree path for a teammate slug. */
+export function dispatcherTeamMateWorktreePath(id: string, slug: string): string {
+  return join(dispatcherTeamMateWorktreesDir(id), teamMateNameSegment(slug));
+}
+
+/** Per-dispatcher Team Mode state root. */
+export function dispatcherTeamDir(id: string): string {
+  return join(dispatcherDir(id), 'team');
+}
+
+export function dispatcherTeamRecordsDir(id: string): string {
+  return join(dispatcherTeamDir(id), 'records');
+}
+
+export function dispatcherTeamRecordPath(id: string, teamId: string): string {
+  return join(dispatcherTeamRecordsDir(id), `${teamMateNameSegment(teamId)}.json`);
+}
+
+export function dispatcherTeamLedgerPath(id: string, teamId: string): string {
+  return join(dispatcherTeamDir(id), 'ledger', `${teamMateNameSegment(teamId)}.jsonl`);
+}
+
+export function dispatcherChannelBindingsPath(id: string): string {
+  return join(dispatcherTeamDir(id), 'channel-bindings.json');
+}
+
 /**
  * Neutral teammate-name path segment sanitizer. Shared by the neutral
  * teammate-state builders here and by each builtin's teammate log-path builders.

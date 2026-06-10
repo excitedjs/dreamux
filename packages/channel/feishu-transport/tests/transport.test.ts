@@ -127,11 +127,14 @@ function stubClient() {
     getReadableStream: () => Readable.from([Buffer.from('resource bytes')]),
     headers: { 'content-type': 'application/octet-stream' },
   }))
+  const chatCreate = vi.fn(async () => ({ data: { chat_id: 'oc_created' } }))
+  const memberCreate = vi.fn(async () => ({}))
   const stub = {
     im: {
       v1: { messageResource: { get: messageResourceGet } },
       message: { create, reply, patch, update },
       messageReaction: { create: reactionCreate, delete: reactionDelete },
+      chat: { create: chatCreate, members: { create: memberCreate } },
     },
     drive: {
       fileComment: { batchQuery: vi.fn(async () => ({ data: { items: [] } })) },
@@ -148,6 +151,8 @@ function stubClient() {
     reactionCreate,
     reactionDelete,
     messageResourceGet,
+    chatCreate,
+    memberCreate,
   }
 }
 
@@ -279,6 +284,52 @@ describe('createFeishuTransport — reactions', () => {
     const call = calls[0]?.[0]
     expect(call?.path.message_id).toBe('om_target')
     expect(call?.path.reaction_id).toBe('rk_stub')
+  })
+})
+
+describe('createFeishuTransport — group chats', () => {
+  test('creates a group chat and returns chat_id', async () => {
+    const stub = stubClient()
+    const transport = buildTransport(stub)
+
+    const result = await transport.createGroup({
+      name: 'Dreamux Team',
+      userOpenIds: ['ou_user'],
+    })
+
+    expect(result).toEqual({ chatId: 'oc_created' })
+    expect(stub.chatCreate).toHaveBeenCalledWith({
+      params: { user_id_type: 'open_id' },
+      data: { name: 'Dreamux Team', user_id_list: ['ou_user'] },
+    })
+  })
+
+  test('fails loud when chat create API is unavailable', async () => {
+    const stub = stubClient()
+    const raw = stub.client as unknown as { im: { chat?: unknown } }
+    delete raw.im.chat
+    const transport = buildTransport(stub)
+
+    await expect(
+      transport.createGroup({ name: 'Dreamux Team', userOpenIds: [] }),
+    ).rejects.toThrow(/chat create API is not available/)
+  })
+
+  test('invites members by open_id and returns requested ids', async () => {
+    const stub = stubClient()
+    const transport = buildTransport(stub)
+
+    const result = await transport.inviteMembers({
+      chatId: 'oc_chat',
+      userOpenIds: ['ou_a', 'ou_b'],
+    })
+
+    expect(result).toEqual({ addedOpenIds: ['ou_a', 'ou_b'] })
+    expect(stub.memberCreate).toHaveBeenCalledWith({
+      path: { chat_id: 'oc_chat' },
+      data: { id_list: ['ou_a', 'ou_b'] },
+      params: { member_id_type: 'open_id' },
+    })
   })
 })
 

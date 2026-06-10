@@ -65,43 +65,48 @@ So **Rush owns versioning and publish orchestration, pnpm owns the registry
 manifest rewrite, npm owns the OIDC/provenance upload**, and all halves are
 monorepo-wide.
 
-### `next` beta prerelease channel
+### Prerelease channels: `next` beta and feature-branch alpha
 
 A sanctioned prerelease channel publishes from `next` to the **`beta`**
 dist-tag without ever moving `latest`, so changes already merged to `next` can
 be install-verified in a real dispatcher environment ahead of a stable release.
+Feature branches can also be manually dispatched to the **`alpha`** dist-tag for
+operator-accepted pre-merge verification.
 It reuses the same `release.yml` file — and therefore the **same per-package
 npm trusted-publisher entry** (Workflow: `release.yml`) — rather than adding a
 second workflow that would need its own npm registration and reintroduce a
 default-branch dispatch dance:
 
-- A third job, **`beta`**, is gated `if: github.ref_name == 'next'`. The `on:`
-  block is unchanged (`push: [main]` + `workflow_dispatch`), so `beta` is
-  reachable only by dispatching `release.yml` against `next`. `push` fires on
-  main only; the stable `version`/`publish` jobs stay gated to main and never
-  run on next. `concurrency: release-${{ github.ref_name }}` already namespaces
-  next vs main.
+- A prerelease job is gated to `workflow_dispatch` on branch refs other than
+  `main`. Dispatching `release.yml` against `next` publishes `beta`; dispatching
+  against any other non-main branch publishes `alpha`. `push` fires on main only,
+  and the stable `version`/`publish` jobs are gated to `refs/heads/main`, so
+  feature branch pushes do not publish and tags cannot satisfy the prerelease
+  gate. `concurrency: release-${{ github.ref_name }}` already namespaces branch
+  runs.
 - The dispatch works because `release.yml` already lives on the default branch
   (main) with `workflow_dispatch`, which is what makes the workflow
   dispatchable at all; `workflow_dispatch` then **executes the copy of the file
-  from the selected ref**. The beta logic must therefore physically exist on
-  `next`, which is why the change lands on `next` (a strict superset of main),
-  not main. No two-step rollout and no new `workflow_dispatch` inputs (inputs
-  added only on a non-default branch would not render in the dispatch form,
-  which is read from the default branch).
+  from the selected ref**. The prerelease logic must therefore physically exist
+  on whichever branch is selected (`next` for beta, a feature branch for alpha).
+  No two-step rollout and no new `workflow_dispatch` inputs (inputs added only on
+  a non-default branch would not render in the dispatch form, which is read from
+  the default branch).
 - The job is **ephemeral and writes nothing back to git**. It bumps an in-tree
-  prerelease version with
-  `rush publish --apply --partial-prerelease --prerelease-name beta.<run_number>`
-  (e.g. `0.12.0` → `0.12.1-beta.<n>`), builds, packs + audits the tarballs, then
-  `rush publish --include-all --publish --tag beta --set-access-level public
-  --registry https://registry.npmjs.org` with `NPM_CONFIG_PROVENANCE=true`. It
-  is a single job because the uncommitted prerelease version must persist across
+  prerelease version with `rush publish --apply --partial-prerelease
+  --prerelease-name <channel-id>`, builds, packs + audits the tarballs, then
+  `rush publish --include-all --publish --tag <tag> --set-access-level public
+  --registry https://registry.npmjs.org` with `NPM_CONFIG_PROVENANCE=true`. It is
+  a single job because the uncommitted prerelease version must persist across
   apply → build → pack → publish.
-- **Version uniqueness is structural.** `github.run_number` is monotonic per
-  workflow, so every dispatch produces a distinct `beta.<n>` identifier and can
-  never collide with an already-published prerelease. A repeated/failed run is
-  retried by simply dispatching again (new run number); rush additionally skips
-  any package whose version is already published.
+- **Version uniqueness is structural.** For beta, `github.run_number` is
+  monotonic per workflow, so every dispatch produces a distinct `beta.<n>`
+  identifier and can never collide with an already-published prerelease. For
+  alpha, the prerelease identifier is `alpha.g<short_sha>`: the `g` prefix keeps
+  the semver identifier nonnumeric even when a short hash is all digits, while
+  still tying the version to the source commit. A repeated/failed beta run is
+  retried by dispatching again (new run number). A repeated alpha dispatch of
+  the same commit republishes nothing; a new alpha needs a new commit.
 - **The pending change files survive.** A stable `rush publish --apply` deletes
   the consumed change files (which is why the stable `version` job commits
   `common/changes`); prerelease apply (`--prerelease-name`) does **not** delete
@@ -144,13 +149,17 @@ default-branch dispatch dance:
   is the one external item to confirm before the first beta dispatch. If a
   package's entry were ever restricted to a specific environment or ref, the
   beta job would need a matching entry.
-- **How to cut and verify a beta.** Once this lands on `next`: dispatch the
-  `release` workflow (Actions → release → Run workflow) selecting branch
-  `next`. The job publishes `0.12.x-beta.<run_number>` to the `beta` tag.
-  Install-verify with `npm install @excitedjs/dreamux@beta`; inspect tags with
-  `npm dist-tag ls @excitedjs/dreamux` and confirm `latest` is unchanged. A
-  failed/duplicate run is handled by dispatching again — the new run number
-  yields a fresh version and rush skips anything already published.
+- **How to cut and verify prereleases.** For beta, dispatch the `release`
+  workflow (Actions → release → Run workflow) selecting branch `next`; the job
+  publishes `0.12.x-beta.<run_number>` to the `beta` tag. For alpha, dispatch
+  the same workflow selecting a feature branch; the job publishes
+  `0.12.x-alpha.g<short_sha>` to the `alpha` tag. Install-verify with
+  `npm install @excitedjs/dreamux@beta` or `npm install @excitedjs/dreamux@alpha`;
+  inspect tags with `npm dist-tag ls @excitedjs/dreamux` and confirm `latest`
+  is unchanged. A failed/duplicate beta run is handled by dispatching again
+  (new run number). Alpha uniqueness comes from the source commit hash, so a
+  repeat dispatch of the same commit republishes nothing and a new alpha needs a
+  new commit.
 - **First publish of any package is a one-time token bootstrap, not OIDC.** npm's
   trusted-publisher config lives on a package's settings page, which exists only
   after the package has been published once — so the *first* publish of each

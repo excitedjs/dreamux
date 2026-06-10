@@ -241,6 +241,13 @@ State and logs are server-owned. They are not operator-editable config.
           <name>.jsonl         forward-only TeamMate lifecycle history
         runtime/
           <name>/              runtime-private socket/config state
+        worktrees/
+          <slug>/              Dreamux-managed TeamMate/Team worktrees
+      team/
+        records/
+          <team-id>.json        Team lifecycle record and TeamLeader pointer
+        ledger/
+          <team-id>.jsonl       append-only Team lifecycle ledger
   logs/
     dreamux-server.log
     daemon.stdout.log          when run as a daemon (onboard service redirect)
@@ -586,14 +593,56 @@ agents. The shim is also a per-dispatcher stdio process:
 ```
 
 The dispatcher-facing tools are `spawn`, `send`, `close`, `history`,
-`list`, `status`, `last`, `ctx`, and `get_capabilities` (issue #155 removed the
-`resume` verb; `send` reopens a closed teammate from its checkpoint). Lifecycle
+`history_events`, `list`, `status`, `last`, `ctx`, and `get_capabilities`
+(issue #155 removed the `resume` verb; `send` reopens a closed teammate from its
+checkpoint). `history` is the bounded session ledger by default; `history_events`
+is the raw forward-only event timeline for one TeamMate. Lifecycle
 tools forward
 to `dreamux serve` over the local admin socket; the server owns the
-per-dispatcher TeamMate identities, runtime checkpoints, and forward-only
-history under `state/<dispatcher-id>/teammate/`. A caller marked as `teammate`
-does not receive lifecycle tools, so TeamMates cannot recursively spawn or close
-TeamMates.
+per-dispatcher TeamMate identities, runtime checkpoints, session ledger, and raw
+event history under `state/<dispatcher-id>/teammate/`. Issue #169 made `spawn.cwd`
+required and added optional managed worktree isolation:
+`spawn({ name, prompt, cwd, worktree?, agent_runtime? })`. A reuse-cwd teammate
+runs in the caller-supplied `cwd`; a managed teammate runs only in its prepared
+worktree and persists source cwd/repo, runtime cwd, worktree branch/base ref,
+cleanup policy/state, and a default dispatcher `owner` field on the identity.
+Old identities without owner/worktree metadata read as dispatcher-owned
+reuse-cwd records until the next lifecycle mutation rewrites them. A caller
+marked as `teammate` does not receive lifecycle tools, so TeamMates cannot
+recursively spawn or close TeamMates.
+
+## Team Mode Core
+
+Issue #171 starts Team Mode. Dispatcher runtimes receive a `team` MCP server for
+dispatcher-only team lifecycle: `create`, `list`, `status`, `ledger`,
+`bind_channel`, `transfer_channel_back`, and `dissolve`. `create` requires
+`repo_cwd` and `leader_agent_runtime`; Dreamux does not infer a default
+TeamLeader runtime. A TeamLeader is a TeamMate identity with `role:
+"team_leader"` and dispatcher owner. Team-owned members are normal TeamMate
+identities with `role: "team_member"` and `owner.kind: "team"`.
+
+The same `teammate` MCP surface is caller-scoped by server-derived principal,
+not by tool arguments. Dispatcher callers see dispatcher-owned TeamMates and
+TeamLeaders. TeamLeader callers see only members owned by their own team and
+spawn members into the shared Team managed worktree. Ordinary TeamMate callers
+still do not receive lifecycle tools.
+
+Channel binding is persisted under `state/<dispatcher-id>/team/` and is scoped
+to group chats only. Bound Feishu group inbound is gated and formatted by the
+Feishu channel exactly as before, then routed by Dispatcher Service to the
+owning TeamLeader runtime. Unbound and P2P inbound still route to the
+dispatcher. `transfer_channel_back` deactivates a binding; `dissolve` transfers
+active bindings back before closing the team. TeamLeader Feishu MCP calls carry
+their server-derived team principal and can reply/react only in bound team
+channels; the dispatcher keeps the global Feishu management surface.
+
+From a P2P control channel, `team.create_group` can create a Team, ask the
+shared dispatcher Feishu bot to create a new group and invite the requester /
+specified peers, then bind that new group to the TeamLeader through the same
+ChannelBindingStore path. The source P2P channel is never bound or transferred:
+it remains the dispatcher control plane. TeamLeaders do not get independent
+Feishu identities or credentials; they are internal AgentRuntime roles behind
+the dispatcher-owned shared bot.
 
 ## Reaction Ownership
 

@@ -1,6 +1,8 @@
 import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execa } from 'execa';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -20,6 +22,7 @@ import {
 import type { InboundTurnInput, TurnSettledSignal } from '../src/agent-runtime/turn.js';
 import { createFakeFeishuBot } from '../src/channel/feishu/bot.js';
 import { DispatcherService } from '../src/dispatcher-service/service.js';
+import { teamLeaderPrincipal } from '../src/dispatcher-service/teammate/types.js';
 import { resetRuntimeConfig } from '../src/platform/paths.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
@@ -110,7 +113,9 @@ class FakeRuntime implements AgentRuntime {
   }
 
   async getLast(): Promise<AgentRuntimeLastResult> {
-    return { text: 'reviewer final answer' };
+    return this.activeTurnId === null
+      ? { text: 'reviewer final answer' }
+      : { text: null };
   }
 
   async getContext(): Promise<{ usedTokens: number; windowTokens: number }> {
@@ -175,8 +180,9 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
   let adminSocketPath: string;
   let previousHome: string | undefined;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     root = mkdtempSync(join(tmpdir(), 'dx-reverse-e2e-'));
+    await mkdir(join(root, 'workspace'));
     adminSocketPath = join(root, 'a.sock');
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(root, 'home');
@@ -200,7 +206,7 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
       dispatcherId: 'flow',
       name: 'reviewer',
       prompt: 'Review the change.',
-      cwd: root,
+      cwd: workspace(root),
     });
 
     const dispatcherRuntime = provider.runtimes[0]!;
@@ -228,6 +234,149 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
     await facade.shutdown();
   });
 
+  it("routes a team member completion to the owning TeamLeader runtime", async () => {
+    await initGitRepo(workspace(root));
+    const descriptor = createBuiltinProviderRegistry().resolve('builtin:codex');
+    const provider = new FakeProvider(descriptor);
+    const facade = buildFacade(provider, adminSocketPath);
+
+    await facade.startDispatcher('flow');
+    await facade.createTeam({
+      dispatcherId: 'flow',
+      name: 'alpha',
+      repoCwd: workspace(root),
+      leaderAgentRuntime: 'flow',
+    });
+    const workspaceInfo = await facade.teams.sharedWorkspace('flow', 'alpha');
+    const spawned = await facade.teammates.spawnScoped({
+      principal: teamLeaderPrincipal({
+        dispatcherId: 'flow',
+        teamId: 'alpha',
+        leaderName: 'alpha-leader',
+      }),
+      name: 'builder',
+      prompt: 'Build it.',
+      sharedWorkspace: workspaceInfo,
+    });
+
+    const dispatcherRuntime = provider.runtimes[0]!;
+    const leaderRuntime = provider.runtimes[1]!;
+    const memberRuntime = provider.runtimes[2]!;
+    const turnId =
+      spawned.turn.status === 'submitted' ? spawned.turn.turn_id : 'unreachable';
+    memberRuntime.settle('completed', turnId);
+    await flush();
+    // Wait past the removed 25ms poller's interval: a duplicate delivery path
+    // would have pushed a second envelope into the leader runtime by now.
+    await sleep(150);
+
+    expect(leaderRuntime.delivered).toEqual([
+      {
+        source: 'builder',
+        id: `builder:${turnId}`,
+        status: 'completed',
+        result: 'reviewer final answer',
+      },
+    ]);
+    expect(dispatcherRuntime.delivered).toEqual([]);
+
+    await facade.shutdown();
+  });
+
+  it('records a bound-channel TeamLeader completion as exactly one ledger row, never a dispatcher push', async () => {
+    await initGitRepo(workspace(root));
+    const descriptor = createBuiltinProviderRegistry().resolve('builtin:codex');
+    const provider = new FakeProvider(descriptor);
+    const facade = buildFacade(provider, adminSocketPath);
+
+    await facade.startDispatcher('flow');
+    const created = await facade.createTeam({
+      dispatcherId: 'flow',
+      name: 'alpha',
+      repoCwd: workspace(root),
+      leaderAgentRuntime: 'flow',
+    });
+
+    const dispatcherRuntime = provider.runtimes[0]!;
+    const leaderRuntime = provider.runtimes[1]!;
+    // Settle the dispatcher-initiated bootstrap turn first so the channel turn
+    // below gets its own turn id instead of being steered into the bootstrap.
+    const bootstrapTurnId =
+      created.turn.status === 'submitted' ? created.turn.turn_id : 'unreachable';
+    leaderRuntime.settle('completed', bootstrapTurnId);
+    await flush();
+
+    const submitted = await facade.teams.deliverToLeader({
+      dispatcherId: 'flow',
+      teamId: 'alpha',
+      turn: { sourceId: 'msg-team', text: 'team asks' },
+    });
+    const turnId = submitted.status === 'submitted' ? submitted.turnId : 'unreachable';
+    expect(turnId).not.toBe(bootstrapTurnId);
+    leaderRuntime.settle('completed', turnId);
+    await waitFor(async () =>
+      (await facade.getTeamLedger('flow', 'alpha')).events
+        .some((event) => event.type === 'leader_turn'),
+    );
+    // Wait past the removed 25ms poller's interval: a second (duplicate)
+    // delivery path would have appended a second leader_turn row by now.
+    await sleep(150);
+
+    const leaderTurnRows = (await facade.getTeamLedger('flow', 'alpha')).events
+      .filter((event) => event.type === 'leader_turn');
+    expect(leaderTurnRows).toHaveLength(1);
+    expect(leaderTurnRows[0]).toMatchObject({
+      summary: expect.stringContaining('TeamLeader turn completed'),
+    });
+    // The bound-channel turn never reaches dispatcher context.
+    expect(dispatcherRuntime.delivered.map((env) => env.id)).not.toContain(
+      `alpha-leader:${turnId}`,
+    );
+
+    await facade.shutdown();
+  });
+
+  it('pushes a dispatcher-initiated TeamLeader turn back to the dispatcher, not the ledger', async () => {
+    await initGitRepo(workspace(root));
+    const descriptor = createBuiltinProviderRegistry().resolve('builtin:codex');
+    const provider = new FakeProvider(descriptor);
+    const facade = buildFacade(provider, adminSocketPath);
+
+    await facade.startDispatcher('flow');
+    const created = await facade.createTeam({
+      dispatcherId: 'flow',
+      name: 'alpha',
+      repoCwd: workspace(root),
+      leaderAgentRuntime: 'flow',
+    });
+
+    const dispatcherRuntime = provider.runtimes[0]!;
+    const leaderRuntime = provider.runtimes[1]!;
+    const bootstrapTurnId =
+      created.turn.status === 'submitted' ? created.turn.turn_id : 'unreachable';
+    leaderRuntime.settle('completed', bootstrapTurnId);
+    await flush();
+
+    const sent = await facade.sendTeamMate({
+      dispatcherId: 'flow',
+      name: 'alpha-leader',
+      prompt: 'Status check from the dispatcher.',
+    });
+    const turnId =
+      sent.turn.status === 'submitted' ? sent.turn.turn_id : 'unreachable';
+    leaderRuntime.settle('completed', turnId);
+    await flush();
+
+    expect(dispatcherRuntime.delivered.map((env) => env.id)).toContain(
+      `alpha-leader:${turnId}`,
+    );
+    const leaderTurnRows = (await facade.getTeamLedger('flow', 'alpha')).events
+      .filter((event) => event.type === 'leader_turn');
+    expect(leaderTurnRows).toEqual([]);
+
+    await facade.shutdown();
+  });
+
   it('coalesces duplicate settled events for the same teammate turn', async () => {
     const descriptor = createBuiltinProviderRegistry().resolve('builtin:codex');
     const provider = new FakeProvider(descriptor);
@@ -238,7 +387,7 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
       dispatcherId: 'flow',
       name: 'reviewer',
       prompt: 'Review the change.',
-      cwd: root,
+      cwd: workspace(root),
     });
 
     const dispatcherRuntime = provider.runtimes[0]!;
@@ -274,7 +423,7 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
       dispatcherId: 'flow',
       name: 'reviewer',
       prompt: 'Review the change.',
-      cwd: root,
+      cwd: workspace(root),
     });
     const firstSend = await facade.sendTeamMate({
       dispatcherId: 'flow',
@@ -322,7 +471,7 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
       dispatcherId: 'flow',
       name: 'reviewer',
       prompt: 'Review the change.',
-      cwd: root,
+      cwd: workspace(root),
     });
 
     const dispatcherRuntime = provider.runtimes[0]!;
@@ -386,7 +535,7 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
       dispatcherId: 'flow',
       name: 'breaker',
       prompt: 'Run.',
-      cwd: root,
+      cwd: workspace(root),
     });
 
     const dispatcherRuntime = provider.runtimes[0]!;
@@ -401,13 +550,13 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
         source: 'breaker',
         id: 'breaker:turn-3',
         status: 'failed',
-        result: 'reviewer final answer',
+        result: '',
       },
       {
         source: 'breaker',
         id: 'breaker:turn-4',
         status: 'stopped',
-        result: 'reviewer final answer',
+        result: '',
       },
     ]);
 
@@ -424,13 +573,13 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
       dispatcherId: 'flow',
       name: 'one',
       prompt: 'A.',
-      cwd: root,
+      cwd: workspace(root),
     });
     await facade.spawnTeamMate({
       dispatcherId: 'flow',
       name: 'two',
       prompt: 'B.',
-      cwd: root,
+      cwd: workspace(root),
     });
 
     const dispatcherRuntime = provider.runtimes[0]!;
@@ -467,4 +616,31 @@ function noopLog(): {
 /** Drain the macrotask the void-ed settle handler runs on. */
 async function flush(): Promise<void> {
   await new Promise((resolve) => setImmediate(resolve));
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitFor(predicate: () => Promise<boolean>): Promise<void> {
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline) {
+    if (await predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error('waitFor timed out');
+}
+
+function workspace(root: string): string {
+  return join(root, 'workspace');
+}
+
+async function initGitRepo(path: string): Promise<void> {
+  await mkdir(path, { recursive: true });
+  await execa('git', ['init', '-b', 'main'], { cwd: path });
+  await execa('git', ['config', 'user.name', 'Dreamux Test'], { cwd: path });
+  await execa('git', ['config', 'user.email', 'dreamux-test@example.com'], { cwd: path });
+  await writeFile(join(path, 'README.md'), 'test\n');
+  await execa('git', ['add', 'README.md'], { cwd: path });
+  await execa('git', ['commit', '-m', 'Initial test commit'], { cwd: path });
 }

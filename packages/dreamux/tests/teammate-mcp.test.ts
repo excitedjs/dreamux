@@ -92,13 +92,16 @@ function writeJson(input: PassThrough, value: unknown): void {
   input.write(`${JSON.stringify(value)}\n`);
 }
 
-async function listTools(callerKind: 'dispatcher' | 'teammate'): Promise<string[]> {
+async function listTools(callerKind: 'dispatcher' | 'team_leader' | 'teammate'): Promise<string[]> {
   const input = new PassThrough();
   const output = new PassThrough();
   const reader = new JsonLineReader(output);
   const run = runTeamMateMcp({
     dispatcherId: 'dispatcher-a',
     callerKind,
+    ...(callerKind === 'team_leader'
+      ? { teamId: 'alpha', leaderName: 'alpha-leader' }
+      : {}),
     adminSocketPath: '/tmp/not-used.sock',
     input,
     output,
@@ -125,6 +128,32 @@ async function listTools(callerKind: 'dispatcher' | 'teammate'): Promise<string[
   return response.result.tools.map((tool) => tool.name);
 }
 
+async function toolSchemas(
+  callerKind: 'dispatcher' | 'team_leader' | 'teammate',
+): Promise<Array<Record<string, unknown>>> {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const reader = new JsonLineReader(output);
+  const run = runTeamMateMcp({
+    dispatcherId: 'dispatcher-a',
+    callerKind,
+    ...(callerKind === 'team_leader'
+      ? { teamId: 'alpha', leaderName: 'alpha-leader' }
+      : {}),
+    adminSocketPath: '/tmp/not-used.sock',
+    input,
+    output,
+    log: () => {},
+  });
+  writeJson(input, { jsonrpc: '2.0', id: 1, method: 'tools/list' });
+  const response = (await reader.next()) as {
+    result: { tools: Array<Record<string, unknown>> };
+  };
+  input.end();
+  await run;
+  return response.result.tools;
+}
+
 describe('teammate-mcp stdio shim', () => {
   it('exposes agent-centric lifecycle tools to dispatchers only', async () => {
     await expect(listTools('dispatcher')).resolves.toEqual([
@@ -132,6 +161,7 @@ describe('teammate-mcp stdio shim', () => {
       'send',
       'close',
       'history',
+      'history_events',
       'list',
       'status',
       'last',
@@ -141,12 +171,43 @@ describe('teammate-mcp stdio shim', () => {
 
     await expect(listTools('teammate')).resolves.toEqual([
       'history',
+      'history_events',
       'list',
       'status',
       'last',
       'ctx',
       'get_capabilities',
     ]);
+  });
+
+  it('marks spawn cwd as required and advertises managed worktree options', async () => {
+    const tools = await toolSchemas('dispatcher');
+    const spawn = tools.find((entry) => entry['name'] === 'spawn') as {
+      inputSchema: {
+        required: string[];
+        properties: Record<string, unknown>;
+      };
+    };
+    expect(spawn.inputSchema.required).toEqual(['name', 'prompt', 'cwd']);
+    expect(spawn.inputSchema.properties).toHaveProperty('worktree');
+    expect(JSON.stringify(spawn.inputSchema.properties['worktree'])).toContain(
+      'delete-on-close',
+    );
+  });
+
+  it('advertises history as a ledger and history_events as the raw timeline', async () => {
+    const tools = await toolSchemas('dispatcher');
+    const history = tools.find((entry) => entry['name'] === 'history') as {
+      inputSchema: { required: string[]; properties: Record<string, unknown> };
+    };
+    const events = tools.find((entry) => entry['name'] === 'history_events') as {
+      inputSchema: { required: string[]; properties: Record<string, unknown> };
+    };
+    expect(history.inputSchema.required).toEqual([]);
+    expect(history.inputSchema.properties).toHaveProperty('limit');
+    expect(history.inputSchema.properties).toHaveProperty('cursor');
+    expect(history.inputSchema.properties).toHaveProperty('source_cwd');
+    expect(events.inputSchema.required).toEqual(['name']);
   });
 
   it('forwards spawn to the dispatcher-scoped admin method', async () => {
@@ -182,6 +243,14 @@ describe('teammate-mcp stdio shim', () => {
             prompt: 'Review the change.',
             agent_runtime: 'codex',
             cwd: '/workspace',
+            worktree: {
+              mode: 'managed',
+              slug: 'reviewer',
+              base_ref: 'origin/main',
+              branch: 'dreamux/reviewer',
+              cleanup: 'delete-on-close',
+            },
+            intent: 'review',
           },
         },
       });
@@ -202,13 +271,71 @@ describe('teammate-mcp stdio shim', () => {
           method: 'mcp.teammate.spawn',
           params: {
             dispatcher_id: 'dispatcher-a',
+            caller_kind: 'dispatcher',
             name: 'reviewer',
             prompt: 'Review the change.',
             agent_runtime: 'codex',
             cwd: '/workspace',
+            worktree: {
+              mode: 'managed',
+              slug: 'reviewer',
+              base_ref: 'origin/main',
+              branch: 'dreamux/reviewer',
+              cleanup: 'delete-on-close',
+            },
+            intent: 'review',
           },
         },
       ]);
+
+      input.end();
+      await run;
+    } finally {
+      await admin.close();
+    }
+  });
+
+  it('rejects spawn without cwd before admin IPC', async () => {
+    const admin = await startFakeAdminServer((request) => ({
+      id: request.id,
+      ok: true,
+      result: {},
+    }));
+    try {
+      const input = new PassThrough();
+      const output = new PassThrough();
+      const reader = new JsonLineReader(output);
+      const run = runTeamMateMcp({
+        dispatcherId: 'dispatcher-a',
+        callerKind: 'dispatcher',
+        adminSocketPath: admin.socketPath,
+        input,
+        output,
+        log: () => {},
+      });
+
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'spawn',
+          arguments: {
+            name: 'reviewer',
+            prompt: 'Review the change.',
+          },
+        },
+      });
+
+      expect(await reader.next()).toMatchObject({
+        jsonrpc: '2.0',
+        id: 1,
+        result: {
+          isError: true,
+          content: [{ text: 'cwd must be a non-empty string' }],
+        },
+      });
+      expect(admin.requests).toEqual([]);
 
       input.end();
       await run;
@@ -254,6 +381,78 @@ describe('teammate-mcp stdio shim', () => {
         },
       });
       expect(admin.requests).toEqual([]);
+
+      input.end();
+      await run;
+    } finally {
+      await admin.close();
+    }
+  });
+
+  it('forwards TeamLeader spawn without caller cwd or worktree', async () => {
+    const admin = await startFakeAdminServer((request) => ({
+      id: request.id,
+      ok: true,
+      result: {
+        teammate: { name: 'builder', status: 'running' },
+        turn: { status: 'submitted', turn_id: 'turn-1' },
+      },
+    }));
+    try {
+      const input = new PassThrough();
+      const output = new PassThrough();
+      const reader = new JsonLineReader(output);
+      const run = runTeamMateMcp({
+        dispatcherId: 'dispatcher-a',
+        callerKind: 'team_leader',
+        teamId: 'alpha',
+        leaderName: 'alpha-leader',
+        adminSocketPath: admin.socketPath,
+        input,
+        output,
+        log: () => {},
+      });
+
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'spawn',
+          arguments: {
+            name: 'builder',
+            prompt: 'Build the change.',
+            cwd: '/ignored',
+            worktree: { mode: 'managed', cleanup: 'delete-on-close' },
+            intent: 'build',
+          },
+        },
+      });
+
+      expect(await reader.next()).toMatchObject({
+        jsonrpc: '2.0',
+        id: 1,
+        result: {
+          structuredContent: {
+            teammate: { name: 'builder', status: 'running' },
+          },
+        },
+      });
+      expect(admin.requests).toEqual([
+        {
+          id: expect.any(String) as string,
+          method: 'mcp.teammate.spawn',
+          params: {
+            dispatcher_id: 'dispatcher-a',
+            name: 'builder',
+            prompt: 'Build the change.',
+            intent: 'build',
+            caller_kind: 'team_leader',
+            team_id: 'alpha',
+            leader_name: 'alpha-leader',
+          },
+        },
+      ]);
 
       input.end();
       await run;
@@ -325,7 +524,7 @@ describe('teammate-mcp stdio shim', () => {
     }
   });
 
-  it('forwards history, last, and ctx reads with a teammate name', async () => {
+  it('forwards history ledger queries, history_events, last, and ctx reads', async () => {
     const admin = await startFakeAdminServer((request) => ({
       id: request.id,
       ok: true,
@@ -344,10 +543,29 @@ describe('teammate-mcp stdio shim', () => {
         log: () => {},
       });
 
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'history',
+          arguments: {
+            grep: 'review',
+            limit: 5,
+            close_status: 'open',
+          },
+        },
+      });
+      expect(await reader.next()).toMatchObject({
+        jsonrpc: '2.0',
+        id: 1,
+        result: { structuredContent: { ok: true } },
+      });
+
       for (const [id, name] of [
-        [1, 'history'],
-        [2, 'last'],
-        [3, 'ctx'],
+        [2, 'history_events'],
+        [3, 'last'],
+        [4, 'ctx'],
       ] as const) {
         writeJson(input, {
           jsonrpc: '2.0',
@@ -364,13 +582,21 @@ describe('teammate-mcp stdio shim', () => {
 
       expect(admin.requests.map((request) => request.method)).toEqual([
         'mcp.teammate.history',
+        'mcp.teammate.history_events',
         'mcp.teammate.last',
         'mcp.teammate.ctx',
       ]);
       expect(admin.requests.map((request) => request.params)).toEqual([
-        { dispatcher_id: 'dispatcher-a', name: 'reviewer' },
-        { dispatcher_id: 'dispatcher-a', name: 'reviewer' },
-        { dispatcher_id: 'dispatcher-a', name: 'reviewer' },
+        {
+          dispatcher_id: 'dispatcher-a',
+          caller_kind: 'teammate',
+          grep: 'review',
+          limit: 5,
+          close_status: 'open',
+        },
+        { dispatcher_id: 'dispatcher-a', caller_kind: 'teammate', name: 'reviewer' },
+        { dispatcher_id: 'dispatcher-a', caller_kind: 'teammate', name: 'reviewer' },
+        { dispatcher_id: 'dispatcher-a', caller_kind: 'teammate', name: 'reviewer' },
       ]);
 
       input.end();

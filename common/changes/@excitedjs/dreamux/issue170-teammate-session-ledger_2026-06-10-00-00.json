@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "BREAKING: TeamMate MCP/admin `history` now returns bounded session ledger rows (`items`, `next_cursor`) across TeamMate identities instead of the raw event list for one required name. Use `history_events({ name })` for the raw forward-only per-TeamMate timeline. Ledger rows expose agent runtime id, dispatcher owner metadata, source/runtime cwd, managed worktree metadata, close/cleanup state, intent, prompt previews, and a structured `send` resume hint. Rebuild: update dispatcher-side automation that parsed `history({ name }).events` to call `history_events({ name })`, or switch it to the ledger row shape.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

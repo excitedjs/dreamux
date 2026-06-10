@@ -68,6 +68,24 @@ export interface FeishuSendResult {
   messageIds: string[]
 }
 
+export interface FeishuCreateGroupInput {
+  name: string
+  userOpenIds: string[]
+}
+
+export interface FeishuCreateGroupResult {
+  chatId: string
+}
+
+export interface FeishuInviteMembersInput {
+  chatId: string
+  userOpenIds: string[]
+}
+
+export interface FeishuInviteMembersResult {
+  addedOpenIds: string[]
+}
+
 /**
  * Build the `content` string for a Feishu plain-text message — the legacy
  * `msg_type: 'text'` payload, used by `editText`'s fallback path so an edit
@@ -122,6 +140,23 @@ function renderSingleCard(text: string): RenderedCard {
   // narrow that — pull the element out with the assertion that we just
   // verified there is exactly one.
   return cards[0] as RenderedCard
+}
+
+function feishuChatClient(client: lark.Client): {
+  chat?: {
+    create?: (input: unknown) => Promise<{ data?: { chat_id?: string } }>
+    members?: { create?: (input: unknown) => Promise<unknown> }
+  }
+} {
+  const root = client as unknown as {
+    im?: {
+      chat?: {
+        create?: (input: unknown) => Promise<{ data?: { chat_id?: string } }>
+        members?: { create?: (input: unknown) => Promise<unknown> }
+      }
+    }
+  }
+  return { chat: root.im?.chat }
 }
 
 /** One reply within a fetched document-comment thread. */
@@ -300,6 +335,10 @@ export interface FeishuTransport {
    * is a channel-layer routing hint the transport never reads.
    */
   send(target: OutboundTarget, text: string): Promise<FeishuSendResult>
+  /** Create a Feishu group chat. Requires the bot/app to have Feishu chat create permission. */
+  createGroup(input: FeishuCreateGroupInput): Promise<FeishuCreateGroupResult>
+  /** Invite users into an existing Feishu group chat. Requires Feishu chat member permission. */
+  inviteMembers(input: FeishuInviteMembersInput): Promise<FeishuInviteMembersResult>
   /**
    * Add an emoji reaction to a message and return the reaction_id Feishu
    * assigned. That id is what `removeReaction` needs to take the same reaction
@@ -501,6 +540,39 @@ export function createFeishuTransport(
         if (id) messageIds.push(id)
       }
       return { messageIds }
+    },
+
+    async createGroup(input: FeishuCreateGroupInput): Promise<FeishuCreateGroupResult> {
+      const chatClient = feishuChatClient(client)
+      if (chatClient.chat?.create === undefined) {
+        throw new Error('Feishu chat create API is not available in this SDK/client; grant chat create permission or upgrade the Feishu transport client.')
+      }
+      const res = await chatClient.chat.create({
+        params: { user_id_type: 'open_id' },
+        data: {
+          name: input.name,
+          user_id_list: input.userOpenIds,
+        },
+      })
+      const chatId = res.data?.chat_id
+      if (typeof chatId !== 'string' || chatId === '') {
+        throw new Error('Feishu chat create API returned no chat_id')
+      }
+      return { chatId }
+    },
+
+    async inviteMembers(input: FeishuInviteMembersInput): Promise<FeishuInviteMembersResult> {
+      if (input.userOpenIds.length === 0) return { addedOpenIds: [] }
+      const chatClient = feishuChatClient(client)
+      if (chatClient.chat?.members?.create === undefined) {
+        throw new Error('Feishu chat member invite API is not available in this SDK/client; grant chat member permission or upgrade the Feishu transport client.')
+      }
+      await chatClient.chat.members.create({
+        path: { chat_id: input.chatId },
+        data: { id_list: input.userOpenIds },
+        params: { member_id_type: 'open_id' },
+      })
+      return { addedOpenIds: input.userOpenIds }
     },
 
     async addReaction(messageId: string, emoji: string): Promise<string> {

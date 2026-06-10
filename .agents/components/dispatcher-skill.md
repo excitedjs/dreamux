@@ -8,12 +8,17 @@ ships in the npm package:
   `spawn` creates a named semi-resident TeamMate, `send` submits follow-up
   turns (and reopens a closed TeamMate from its persisted checkpoint — there is
   no standalone dispatcher-facing `resume` verb; #155), and `close` stops one.
-  `history`/`list`/`status`/`last`/`ctx`/`get_capabilities` read and recover
-  state without polling. The `tm` CLI is the explicit fallback for isolated
-  managed worktrees and legacy diagnostics
+  `history` returns session ledger rows, `history_events` returns one raw
+  per-TeamMate timeline, and `list`/`status`/`last`/`ctx`/`get_capabilities`
+  read and recover state without polling. The `tm` CLI is the explicit fallback
+  for legacy diagnostics
   ([provider architecture realignment](../decisions/provider-architecture-realignment.md)).
 - `team-dev-workflow` covers multi-teammate review, design, merge, and unblock
   coordination.
+- `team` MCP is injected for dispatcher-only Team Mode lifecycle: create a
+  TeamLeader, create and bind a Feishu group from a P2P control request, read
+  Team status/ledger, bind or transfer back Feishu group channels, and dissolve
+  a Team. TeamLeader member work still uses the caller-scoped TeamMate MCP.
 - `dreamux-maintenance` covers installed Dreamux diagnosis and safe operation.
 
 They are not installed through Codex plugin marketplaces. `dreamux onboard` and
@@ -45,8 +50,13 @@ Two state owners are kept distinct in the skill:
 
 - The Dreamux server owns TeamMate **agent state** behind the injected
   dispatcher-scoped `teammate` MCP — identities, runtime checkpoints, statuses,
-  forward-only history, last result, and context snapshots under
+  session ledger rows, raw per-TeamMate event history, last result, and context
+  snapshots under
   `~/.dreamux/state/<dispatcher-id>/teammate/`.
+- The Dreamux server owns Team **lifecycle state** behind the injected
+  dispatcher-scoped `team` MCP under `~/.dreamux/state/<dispatcher-id>/team/`.
+  TeamLeader and member agents remain TeamMate identities with role/owner
+  metadata.
 - `tm` owns live tm **session** state — teammate liveness, repository worktrees,
   and resumable session history — invoked through the command boundary.
 

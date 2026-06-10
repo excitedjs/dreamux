@@ -70,6 +70,7 @@ interface InboundReactionLedgerEntry {
 interface FeishuChannelState {
   inboundReactions: Map<string, InboundReactionLedgerEntry>;
   pendingReceivedReactionClears: Set<string>;
+  messageChats: Map<string, string>;
 }
 
 export interface WireChatBot {
@@ -96,8 +97,16 @@ export interface FeishuChannelSessionOptions {
 export interface FeishuInboundSubmitter {
   submitTurn(
     input: InboundTurnInput,
+    envelope: FeishuInboundEnvelope,
     hooks?: InboundDeliveryHooks,
   ): Promise<AgentRuntimeTurnResult>;
+}
+
+export interface FeishuInboundEnvelope {
+  provider: 'builtin:feishu';
+  chatId: string;
+  chatType: 'group' | 'p2p';
+  messageId: string;
 }
 
 export class FeishuChannelCapabilityError extends Error {
@@ -115,6 +124,7 @@ export class FeishuChannelSession {
   private readonly state: FeishuChannelState = {
     inboundReactions: new Map(),
     pendingReceivedReactionClears: new Set(),
+    messageChats: new Map(),
   };
 
   constructor(private readonly opts: FeishuChannelSessionOptions) {
@@ -171,6 +181,10 @@ export class FeishuChannelSession {
       case 'list_chat_bots':
         return this.readChatBots(parsed.input);
     }
+  }
+
+  messageBelongsToChat(messageId: string, chatId: string): boolean {
+    return this.state.messageChats.get(messageId) === chatId;
   }
 
   private async readChatBots(
@@ -341,6 +355,7 @@ export class FeishuChannelSession {
       );
       return;
     }
+    this.state.messageChats.set(event.messageId, event.chatId);
 
     const baseline =
       event.chatType === 'group'
@@ -374,16 +389,26 @@ export class FeishuChannelSession {
         ...(attachment.path !== undefined ? { localPath: attachment.path } : {}),
       })),
     };
-    const delivery = await submitter.submitTurn(input, {
-      onAccepted: async () => {
-        await this.setInboundReaction(
-          event.messageId,
-          event.chatId,
-          RECEIVED_REACTION_EMOJI,
-          'received',
-        );
+    const envelope: FeishuInboundEnvelope = {
+      provider: BUILTIN_FEISHU_PROVIDER_REF,
+      chatId: event.chatId,
+      chatType: event.chatType === 'group' ? 'group' : 'p2p',
+      messageId: event.messageId,
+    };
+    const delivery = await submitter.submitTurn(
+      input,
+      envelope,
+      {
+        onAccepted: async () => {
+          await this.setInboundReaction(
+            event.messageId,
+            event.chatId,
+            RECEIVED_REACTION_EMOJI,
+            'received',
+          );
+        },
       },
-    });
+    );
     if (delivery.status === 'submitted') {
       this.opts.log.info(
         {
