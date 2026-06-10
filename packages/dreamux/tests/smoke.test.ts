@@ -852,6 +852,36 @@ describe('dreamux MVP smoke', () => {
     await bot.inject(fakeInbound('chat-team', 'team hello', 'msg-team'));
     await waitFor(() => codexInputs.some((input) => input.includes('team hello')));
     expect(codexInputs.some((input) => input.includes('team hello'))).toBe(true);
+    await expect(
+      sendAdminRequest(
+        'mcp.react',
+        {
+          dispatcher_id: 'flow',
+          caller_kind: 'team_leader',
+          team_id: 'alpha',
+          leader_name: 'alpha-leader',
+          chat_id: 'chat-team',
+          message_id: 'msg-team',
+          emoji: 'THUMBSUP',
+        },
+        { socketPath: join(runtimeDir, 'admin.sock') },
+      ),
+    ).resolves.toMatchObject({ reaction_id: expect.any(String) });
+    await expect(
+      sendAdminRequest(
+        'mcp.react',
+        {
+          dispatcher_id: 'flow',
+          caller_kind: 'team_leader',
+          team_id: 'alpha',
+          leader_name: 'alpha-leader',
+          chat_id: 'chat-team',
+          message_id: 'msg-unknown',
+          emoji: 'THUMBSUP',
+        },
+        { socketPath: join(runtimeDir, 'admin.sock') },
+      ),
+    ).rejects.toThrow(/TeamLeader may react\/reply only to messages observed/);
     codexInputs.length = 0;
 
     await server.dispatcherService.transferTeamChannelBack({

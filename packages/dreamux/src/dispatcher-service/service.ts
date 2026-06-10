@@ -138,6 +138,14 @@ export class DispatcherService {
     return this.dispatchers.callFeishuMcpTool(input);
   }
 
+  feishuMessageBelongsToChat(
+    dispatcherId: string,
+    messageId: string,
+    chatId: string,
+  ) {
+    return this.dispatchers.feishuMessageBelongsToChat(dispatcherId, messageId, chatId);
+  }
+
   async routeChannelInput(
     dispatcherId: string,
     input: InboundTurnInput,

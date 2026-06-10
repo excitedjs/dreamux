@@ -70,6 +70,7 @@ interface InboundReactionLedgerEntry {
 interface FeishuChannelState {
   inboundReactions: Map<string, InboundReactionLedgerEntry>;
   pendingReceivedReactionClears: Set<string>;
+  messageChats: Map<string, string>;
 }
 
 export interface WireChatBot {
@@ -123,6 +124,7 @@ export class FeishuChannelSession {
   private readonly state: FeishuChannelState = {
     inboundReactions: new Map(),
     pendingReceivedReactionClears: new Set(),
+    messageChats: new Map(),
   };
 
   constructor(private readonly opts: FeishuChannelSessionOptions) {
@@ -179,6 +181,10 @@ export class FeishuChannelSession {
       case 'list_chat_bots':
         return this.readChatBots(parsed.input);
     }
+  }
+
+  messageBelongsToChat(messageId: string, chatId: string): boolean {
+    return this.state.messageChats.get(messageId) === chatId;
   }
 
   private async readChatBots(
@@ -349,6 +355,7 @@ export class FeishuChannelSession {
       );
       return;
     }
+    this.state.messageChats.set(event.messageId, event.chatId);
 
     const baseline =
       event.chatType === 'group'

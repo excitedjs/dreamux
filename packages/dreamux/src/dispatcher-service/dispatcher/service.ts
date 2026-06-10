@@ -250,6 +250,15 @@ export class DispatcherAgentService {
     return slot.channel.handleMcpTool(input.toolName, input.arguments);
   }
 
+  feishuMessageBelongsToChat(
+    dispatcherId: string,
+    messageId: string,
+    chatId: string,
+  ): boolean {
+    const slot = this.slots.get(dispatcherId);
+    return slot?.channel.messageBelongsToChat(messageId, chatId) ?? false;
+  }
+
   async createFeishuGroup(
     input: FeishuCreateGroupInput & { dispatcherId: string },
   ): Promise<FeishuCreateGroupResult> {

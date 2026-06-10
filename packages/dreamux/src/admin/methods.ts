@@ -377,6 +377,20 @@ async function assertFeishuScope(
       "param 'chat_id' is required for TeamLeader Feishu tools",
     );
   }
+  const messageId = optionalString(params, 'message_id');
+  if (
+    messageId !== null &&
+    !server.dispatcherService.feishuMessageBelongsToChat(
+      dispatcherId,
+      messageId,
+      chatId,
+    )
+  ) {
+    throw new AdminError(
+      'CHANNEL_SCOPE_DENIED',
+      'TeamLeader may react/reply only to messages observed in bound team channels',
+    );
+  }
   const allowed = await server.dispatcherService.teamLeaderCanUseChannel({
     dispatcherId,
     teamId: caller.teamId,

@@ -1048,13 +1048,13 @@ describe('TeamMateAgentService', () => {
   it('delivers a settled teammate turn upward as a completion envelope', async () => {
     const { catalog, provider } = providerCatalog();
     const config = testDreamuxConfig();
-    const received: Array<{ id: string; env: CompletionEnvelope }> = [];
+    const received: Array<{ id: string; name: string; env: CompletionEnvelope }> = [];
     const service = new TeamMateAgentService({
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: catalog,
-      onTeamMateCompletion: (id, env) => {
-        received.push({ id, env });
+      onTeamMateCompletion: (id, identity, env) => {
+        received.push({ id, name: identity.name, env });
       },
       log: noopLog(),
     });
@@ -1073,6 +1073,7 @@ describe('TeamMateAgentService', () => {
     expect(received).toEqual([
       {
         id: 'flow',
+        name: 'reviewer',
         env: {
           source: 'reviewer',
           id: 'reviewer:turn-1',
@@ -1091,7 +1092,7 @@ describe('TeamMateAgentService', () => {
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: catalog,
-      onTeamMateCompletion: (_id, env) => {
+      onTeamMateCompletion: (_id, _identity, env) => {
         received.push(env);
       },
       log: noopLog(),
@@ -1132,7 +1133,7 @@ describe('TeamMateAgentService', () => {
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: catalog,
-      onTeamMateCompletion: (_id, env) => {
+      onTeamMateCompletion: (_id, _identity, env) => {
         received.push(env);
       },
       log: noopLog(),
@@ -1159,7 +1160,7 @@ describe('TeamMateAgentService', () => {
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: catalog,
-      onTeamMateCompletion: (_id, env) => {
+      onTeamMateCompletion: (_id, _identity, env) => {
         received.push(env);
       },
       log: noopLog(),
