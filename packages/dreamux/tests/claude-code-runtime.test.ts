@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -212,7 +212,15 @@ function controllableFleet(): FakeFleet & {
   };
 }
 
-async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
+// 10s, not 2s: loaded shared CI runners (macOS especially) can stall a forked
+// worker past 2s and flake these purely-fake lifecycle tests (CI run
+// 27259524760 failed, then passed on a same-commit rerun). The poll returns as
+// soon as the predicate holds, so the ceiling costs nothing on the happy path.
+// The test timeout must stay above the waitFor ceiling or vitest's 5s default
+// would undercut it.
+vi.setConfig({ testTimeout: 15_000 });
+
+async function waitFor(predicate: () => boolean, timeoutMs = 10_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (predicate()) return;
