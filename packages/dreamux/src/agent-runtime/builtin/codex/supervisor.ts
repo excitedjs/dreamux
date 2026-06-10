@@ -84,7 +84,9 @@ export class CodexProcess {
       ...(this.opts.extraArgs ?? []),
     ];
 
-    await mkdir(dirname(this.opts.socketPath), { recursive: true });
+    // The socket dir is a private runtime root (issue #182): owner-only, so
+    // other local users can never reach the rendezvous endpoint.
+    await mkdir(dirname(this.opts.socketPath), { recursive: true, mode: 0o700 });
     await mkdir(this.opts.cwd, { recursive: true });
     await mkdir(dirname(this.opts.stdoutLogPath), { recursive: true });
     // Stale socket from a previous crashed run would otherwise prevent

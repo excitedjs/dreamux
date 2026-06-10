@@ -7,7 +7,8 @@
  */
 
 import { createServer, type Server as NetServer, type Socket } from 'node:net';
-import { chmod, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 
 import type { Server } from '../server.js';
 import {
@@ -74,6 +75,9 @@ export function createAdminSocketServer(
       // hold it, nobody else can be inside this start() concurrently.
       // Stale pidfiles (dead holder) are reclaimed up to RECLAIM_ATTEMPTS
       // times; a live holder always loses the race.
+      // The socket + lock live under the volatile run root (issue #182),
+      // which may not exist yet on a fresh install — create it owner-only.
+      await mkdir(dirname(socketPath), { recursive: true, mode: 0o700 });
       await acquirePidLock(lockPath, myPid, isAlive);
       holdLock = true;
 

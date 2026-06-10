@@ -3,8 +3,10 @@
 - **Status:** Accepted for the original MVP; superseded for issue #110
   providerized surfaces by [issue-110-epic-closure](issue-110-epic-closure.md),
   [channel-provider](channel-provider.md), [agent-runtime-provider](agent-runtime-provider.md),
-  and [server-hosted-teammate](server-hosted-teammate.md). Still applies to
-  unchanged Feishu access, local state/log ownership, admin IPC, and
+  and [server-hosted-teammate](server-hosted-teammate.md); superseded for
+  socket placement, `state/admin.sock`, `state/restart-intent.json`, and
+  `server.json` by [runtime-run-root](runtime-run-root.md) (issue #182 PR-1).
+  Still applies to unchanged Feishu access, local state/log ownership, and
   process-local inbound limitations unless a newer decision says otherwise.
 - **Date:** 2026-06-03
 - **Affects:** server runtime, dispatcher lifecycle, Feishu channel, Codex MCP, admin/outbound IPC, global config, state files, logs, CLI admin surface, workspace-local bundled skill ownership

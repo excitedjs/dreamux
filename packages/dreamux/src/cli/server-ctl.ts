@@ -1,7 +1,7 @@
 /**
  * `server-ctl` — admin CLI that talks to the server via Unix socket.
  *
- * Connects to the admin socket under ~/.dreamux/state/admin.sock, sends a
+ * Connects to the admin socket under ~/.dreamux/run/admin.sock, sends a
  * single NDJSON request, prints the response, exits.
  *
  * Usage:
@@ -180,7 +180,7 @@ Dispatcher declarations live in ~/.dreamux/config.json dispatchers[].
 Edit config and restart dreamux serve to add or remove dispatchers.
 
 Admin socket:
-  ~/.dreamux/state/admin.sock
+  ~/.dreamux/run/admin.sock
 `);
 }
 

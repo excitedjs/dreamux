@@ -33,9 +33,8 @@ import {
 import {
   adminSocketPath,
   resetRuntimeConfig,
-  serverJsonPath,
+  runRoot,
   setRuntimeConfig,
-  stateRoot,
 } from '../src/platform/paths.js';
 import { codexArgsToCli, parseCodexArgs } from '../src/agent-runtime/builtin/codex/args.js';
 import {
@@ -1080,13 +1079,12 @@ describe('runtime path precedence', () => {
     resetRuntimeConfig();
   });
 
-  it('adminSocketPath is fixed under stateRoot', async () => {
+  it('adminSocketPath is fixed under runRoot', async () => {
     writeConfigObjectAt(configDir, {});
     const { config } = await loadOrInitConfig({ configDir });
     setRuntimeConfig(config);
     process.env['CODEX_HOST_ADMIN_SOCKET'] = '/tmp/env-admin.sock';
-    expect(adminSocketPath()).toBe(join(stateRoot(), 'admin.sock'));
-    expect(serverJsonPath()).toBe(join(stateRoot(), 'server.json'));
+    expect(adminSocketPath()).toBe(join(runRoot(), 'admin.sock'));
   });
 
   it('parseCodexArgs: per-dispatcher overrides config defaults', async () => {

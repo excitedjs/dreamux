@@ -838,10 +838,12 @@ export class TeamMateAgentService {
   }
 
   /**
-   * Per-teammate path context. The teammate runtime dir is the neutral root both
-   * built-in runtimes derive their state files from (Codex `codex.sock`, Claude
-   * Code `mcp.json`); only the central-tree log files vary by runtime, so the
-   * launcher selects them from the resolved provider ref.
+   * Per-teammate path context. The teammate runtime dir is the neutral root a
+   * runtime derives its state files from (Claude Code `mcp.json`; Codex keeps
+   * no per-teammate state files — its rendezvous socket is allocated per start
+   * under the private runtime-socket root, issue #182); only the central-tree
+   * log files vary by runtime, so the launcher selects them from the resolved
+   * provider ref.
    */
   private runtimePaths(
     identity: TeamMateIdentity,

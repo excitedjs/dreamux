@@ -318,7 +318,7 @@ function buildDaemonCommands(y: Argv): Argv {
     )
     .command(
       'uninstall',
-      'Remove the user-level service unit only (keeps config, state, logs)',
+      'Remove the user-level service unit only (keeps config, run, state, logs)',
       (yy) =>
         yy.option('dry-run', {
           type: 'boolean',

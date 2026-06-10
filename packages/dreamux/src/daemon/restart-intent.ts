@@ -72,7 +72,11 @@ export async function writeRestartIntent(
         : DEFAULT_RESTART_ANNOUNCE,
     targets: dedupeNonEmpty(options.targets),
   };
-  await mkdir(dirname(path), { recursive: true });
+  // The CLI may be the first process to create the volatile run root (the
+  // upgrade sequence writes this marker before the new server ever starts), so
+  // own it owner-only here too — a later 0700 mkdir is a no-op on an existing
+  // dir (issue #182 run-root invariant).
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   await writeFile(path, `${JSON.stringify(file, null, 2)}\n`, { mode: 0o600 });
   return path;
 }

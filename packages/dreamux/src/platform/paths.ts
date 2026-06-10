@@ -1,22 +1,28 @@
 /**
- * Filesystem layout for dreamux-owned runtime state and logs.
+ * Filesystem layout for dreamux-owned runtime state, volatile run files, and
+ * logs.
  *
- * Effective MVP layout:
+ * Effective layout (issue #182 PR-1 split durable state from volatile run
+ * files):
  *   ~/.dreamux/
- *     state/
- *       server.json
- *       admin.sock
+ *     run/                    volatile IPC/control artifacts; safe to clear
+ *                             when no dreamux server is running
+ *       admin.sock            admin control socket (+ admin.sock.lock)
+ *       restart-intent.json   one-shot daemon restart marker
+ *       sockets/              fallback root for runtime rendezvous sockets
+ *                             (see platform/runtime-sockets.ts)
+ *     state/                  durable server-owned state
  *       <dispatcher-id>/
  *         status.json
  *         access.json
- *         codex.sock          Codex app-server Unix socket
  *         teammate/           Server-hosted TeamMate identities and history
  *     logs/
  *       dreamux-server.log
  *       codex-app-server/
  *         <dispatcher-id>.log
  *
- * `stateRoot()` is the single root for dreamux-owned state. The old
+ * `stateRoot()` is the single root for dreamux-owned durable state; `runRoot()`
+ * is the single root for dreamux-owned volatile run files. The old
  * `runtime_dir` concept (and its `runtimeRoot()` alias) was retired in issue #98.
  */
 
@@ -70,27 +76,37 @@ export function stateRoot(): string {
   return join(dreamuxRoot(), 'state');
 }
 
-export function serverJsonPath(): string {
-  return join(stateRoot(), 'server.json');
+/**
+ * Root for dreamux-owned volatile run files: IPC sockets, lock files, and
+ * one-shot control markers. Nothing under it is durable; it is safe to remove
+ * while no dreamux server is running. Durable state stays under `stateRoot()`.
+ */
+export function runRoot(): string {
+  return join(dreamuxRoot(), 'run');
 }
 
 /**
  * One-shot marker dropped by `dreamux daemon restart --notify-resumed` before
  * it triggers the service-manager restart. The freshly started server reads it
  * once, deletes it, and injects a "restart completed" notice into the named
- * resumed dispatchers. Server-owned state; safe to delete.
+ * resumed dispatchers. Volatile run file; safe to delete.
  */
 export function restartIntentPath(): string {
-  return join(stateRoot(), 'restart-intent.json');
+  return join(runRoot(), 'restart-intent.json');
 }
 
 export function logsRoot(): string {
   return join(dreamuxRoot(), 'logs');
 }
 
+/**
+ * The stable cross-process admin IPC endpoint. Packaged CLI commands and MCP
+ * shims resolve it through this builder only — it is a fixed path contract, so
+ * an over-budget path (extreme $HOME length) fails loudly instead of moving.
+ */
 export function adminSocketPath(): string {
   return assertUnixSocketPathBudget(
-    join(stateRoot(), 'admin.sock'),
+    join(runRoot(), 'admin.sock'),
     'admin socket path',
   );
 }

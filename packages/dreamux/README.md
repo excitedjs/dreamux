@@ -98,11 +98,11 @@ logs:
 | Path | Purpose | Source of truth |
 |---|---|---|
 | `~/.dreamux/config.json` | User-editable config and Feishu bot secrets, created by `dreamux onboard`; edit and restart to apply | the operator |
-| `~/.dreamux/state/server.json` | Server status snapshot | the server |
-| `~/.dreamux/state/admin.sock` | Admin Unix socket | the server |
+| `~/.dreamux/run/admin.sock` | Admin Unix socket (+ `admin.sock.lock`); volatile run file | the server |
+| `~/.dreamux/run/restart-intent.json` | One-shot daemon restart marker; volatile run file | the server |
+| `~/.dreamux/run/sockets/` | Fallback root for ephemeral Codex app-server rendezvous sockets (preferred root: `$XDG_RUNTIME_DIR/dreamux/sockets/`); random per start, never persisted | the server |
 | `~/.dreamux/state/<id>/status.json` | Dispatcher runtime status and runtime thread/session id | the server |
 | `~/.dreamux/state/<id>/access.json` | Dispatcher-local access-gate state | the server |
-| `~/.dreamux/state/<id>/codex.sock` | Codex app-server Unix socket | the server |
 | `~/.dreamux/state/<id>/claude-code-mcp.json` | Claude Code MCP config generated from Dreamux-owned descriptors | the server |
 | `~/.dreamux/state/<id>/teammate/` | TeamMate task ledger, results, and delivery retry state | the server |
 | `~/.dreamux/logs/codex-app-server/<id>.log` | Codex app-server stdout/stderr | the server |
@@ -111,8 +111,9 @@ logs:
 | `~/.codex/` | Codex global default home: auth, memory, and config | the operator / Codex |
 | `<dispatcher cwd>/.codex/skills/dispatcher/SKILL.md` | Dispatcher skill copied by `dreamux onboard`; reported but not deleted by `dreamux uninstall` | dreamux installer |
 
-`rm -rf ~/.dreamux/state ~/.dreamux/logs` is a state/log recovery path; dreamux
-config and global Codex auth survive.
+`rm -rf ~/.dreamux/run ~/.dreamux/state ~/.dreamux/logs` is a run/state/log
+recovery path (only while no server is running); dreamux config and global Codex
+auth survive.
 
 ## Configure dispatchers
 

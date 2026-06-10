@@ -91,6 +91,15 @@ export interface ServerOptions {
    * CLI injects a factory that writes `logs/feishu-channel/<id>.log`.
    */
   channelLoggerFactory?: (dispatcherId: string) => DreamuxLogger;
+  /**
+   * Optional sweep of the volatile runtime-socket dirs (issue #182), run once
+   * after the admin-socket lock is held (single-server guarantee — every
+   * leftover socket is a dead crash orphan) and before any dispatcher starts.
+   * The CLI injects the real `sweepRuntimeSocketDirs`; tests and embedded
+   * servers omit it so they never touch the operator's run root. Returns the
+   * swept directories for logging.
+   */
+  runtimeSocketSweep?: () => Promise<string[]>;
 }
 
 export interface Repos {
@@ -183,6 +192,18 @@ export class Server {
       { admin_socket: this.admin.socketPath },
       'admin socket listening',
     );
+
+    if (this.opts.runtimeSocketSweep !== undefined) {
+      try {
+        const swept = await this.opts.runtimeSocketSweep();
+        this.log.info({ dirs: swept }, 'swept volatile runtime-socket dirs');
+      } catch (err) {
+        this.log.warn(
+          { err: errInfo(err) },
+          'runtime-socket sweep failed; continuing startup',
+        );
+      }
+    }
 
     const rows = this.repos.dispatchers.listEnabled();
     for (const row of rows) {

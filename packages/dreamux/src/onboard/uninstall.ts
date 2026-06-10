@@ -23,7 +23,7 @@ import {
   type DispatcherConfig,
 } from '../config/config.js';
 import { loadConfigWithBuiltins } from '../agent-runtime/load-config.js';
-import { logsRoot, stateRoot } from '../platform/paths.js';
+import { logsRoot, runRoot, stateRoot } from '../platform/paths.js';
 import { dispatcherWorkspaceSkillDirs } from '../agent-runtime/builtin/codex/paths.js';
 
 export type UninstallStatus = 'removed' | 'missing' | 'skipped';
@@ -62,9 +62,11 @@ export async function runUninstall(
   const warnings: string[] = [];
   await warnIfConfigIsNotReadable(configDir, warnings);
   const stateDir = normalizePath(stateRoot());
+  const runDir = normalizePath(runRoot());
   const logDir = normalizePath(logsRoot());
 
   assertSafeOwnedDirectory(stateDir, 'dreamux state directory');
+  assertSafeOwnedDirectory(runDir, 'dreamux run directory');
   assertSafeOwnedDirectory(logDir, 'dreamux logs directory');
   assertSafeOwnedDirectory(configDir, 'dreamux config directory');
   const workspaceSkillPaths = await collectWorkspaceSkillPaths(configDir);
@@ -85,6 +87,7 @@ export async function runUninstall(
 
   await reportWorkspaceSkills(workspaceSkillPaths, entries);
   await removeOwnedDirectory(stateDir, entries, 'dreamux state directory', dryRun);
+  await removeOwnedDirectory(runDir, entries, 'dreamux run directory', dryRun);
   await removeOwnedDirectory(logDir, entries, 'dreamux logs directory', dryRun);
   await removeOwnedDirectory(configDir, entries, 'dreamux config directory', dryRun);
 

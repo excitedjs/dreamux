@@ -8,12 +8,12 @@ import {
 } from '../config/config.js';
 import { loadConfigWithBuiltins } from '../agent-runtime/load-config.js';
 import {
+  dispatcherDir,
   logsRoot,
   setRuntimeConfig,
   stateRoot,
 } from '../platform/paths.js';
 import {
-  dispatcherAppServerControlDir,
   dispatcherCodexHome,
   dispatcherWorkspaceCodexSkillsDir,
 } from '../agent-runtime/builtin/codex/paths.js';
@@ -125,9 +125,9 @@ export async function runOnboard(
     dryRun: answers.dryRun,
   });
   await ensureDirectory(
-    dispatcherAppServerControlDir(answers.dispatcherId),
+    dispatcherDir(answers.dispatcherId),
     ledger,
-    'dispatcher app-server control directory',
+    'dispatcher state directory',
     { dryRun: answers.dryRun },
   );
   await ensureDirectory(
