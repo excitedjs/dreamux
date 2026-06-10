@@ -1,5 +1,5 @@
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { existsSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
@@ -175,7 +175,10 @@ describe('TeamMateAgentService', () => {
   let previousHome: string | undefined;
 
   beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), 'dreamux-teammate-agent-'));
+    // realpath: on macOS tmpdir() is a /var -> /private/var symlink, and git
+    // reports symlink-resolved repo roots (source_repo), so fixture paths must
+    // be canonical for path equality assertions.
+    root = realpathSync(mkdtempSync(join(tmpdir(), 'dreamux-teammate-agent-')));
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(root, 'home');
     resetRuntimeConfig();
@@ -750,6 +753,35 @@ describe('TeamMateAgentService', () => {
     });
     expect(closed.teammate.worktree.cleanup_state).toBe('deleted');
     expect(existsSync(spawned.teammate.worktree.path)).toBe(false);
+  });
+
+  it('reports the git-canonical source_repo when cwd reaches the repo through a symlink', async () => {
+    // macOS regression guard: tmpdir() lives behind a /var -> /private/var
+    // symlink, so `git rev-parse --show-toplevel` reports the symlink-resolved
+    // repo root. Reproduce that shape on any OS with an explicit symlink:
+    // source_repo is the canonical root while source_cwd keeps the
+    // caller-supplied path.
+    const repo = await initGitRepo(join(root, 'real-repo'));
+    const linked = join(root, 'linked-repo');
+    await symlink(repo, linked);
+    const { catalog } = providerCatalog();
+    const config = testDreamuxConfig();
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: catalog,
+      log: noopLog(),
+    });
+
+    const spawned = await service.spawn({
+      dispatcherId: 'flow',
+      name: 'symlinked',
+      prompt: 'go',
+      cwd: linked,
+    });
+
+    expect(spawned.teammate.source_cwd).toBe(linked);
+    expect(spawned.teammate.source_repo).toBe(repo);
   });
 
   it('recreates a deleted managed worktree when send reopens a closed teammate', async () => {

@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -158,7 +158,10 @@ describe('TeamService', () => {
   let previousHome: string | undefined;
 
   beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), 'dreamux-team-'));
+    // realpath: on macOS tmpdir() is a /var -> /private/var symlink, and git
+    // reports symlink-resolved repo roots (source_repo), so fixture paths must
+    // be canonical for path equality assertions.
+    root = realpathSync(mkdtempSync(join(tmpdir(), 'dreamux-team-')));
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(root, 'home');
     resetRuntimeConfig();

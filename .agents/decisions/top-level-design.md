@@ -348,10 +348,18 @@ server-owned discovery state, safe to delete; it holds no credentials.
 dispatcher. It is not the Feishu MCP transport. The Feishu MCP default transport
 is stdio.
 
-Socket path builders must live in `src/runtime/paths.ts`. They must enforce a
-short Unix socket path budget before spawning child processes. Dispatcher ids are
-validated as stable path segments and length-checked so derived `admin.sock` and
-`codex.sock` paths stay within Linux and macOS `sun_path` limits.
+Socket path builders must live in `src/platform/paths.ts` (neutral) and each
+builtin's own `paths.ts` (runtime-specific, per the issue #143 de-leak). They
+must enforce a short Unix socket path budget before spawning child processes.
+Dispatcher ids are validated as stable path segments and length-checked so
+derived `admin.sock` and `codex.sock` paths stay within Linux and macOS
+`sun_path` limits. When a Codex socket's descriptive in-state path exceeds the
+budget (deep `$HOME`, long teammate runtime roots such as
+`state/<dispatcher>/teammate/runtime/<name>/`), the builtin falls back to a
+short deterministic digest-named socket under a private per-user runtime root —
+`XDG_RUNTIME_DIR`, or a non-shared os tmpdir such as macOS's per-user
+`$TMPDIR`. The shared `/tmp` is never used for sockets (see the global-bin
+decision record); with no private root available the start still fails loudly.
 
 There is no `runtime_dir`, no SQLite database, no persisted inbound message
 queue, and no persisted reaction ledger. `stateRoot()` is the single state root;

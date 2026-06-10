@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Fix Codex socket startup failure under deep state roots (long $HOME, long dispatcher/teammate names). When the descriptive socket path (state/<dispatcher>/.../codex.sock) exceeds the Unix sun_path budget, the socket now falls back to a short deterministic path under a private per-user runtime dir (XDG_RUNTIME_DIR, or a non-shared os tmpdir such as the macOS per-user $TMPDIR) instead of failing to start. The shared /tmp is never used; with no private root available the start still fails loudly. No action needed for existing installs whose paths fit the budget.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}
