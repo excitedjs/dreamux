@@ -136,16 +136,17 @@ multi-package release notes precise while still using Rush as the validator.
 | Path | Purpose | Source of truth |
 |---|---|---|
 | `~/.dreamux/config.json` | User-editable dreamux config, dispatcher declarations, and local Feishu credentials. Created by `dreamux onboard`; `dreamux serve` fails loudly if it is missing. | The operator |
-| `~/.dreamux/state/` | Server-owned state: `server.json`, admin socket, and per-dispatcher status/access/socket files. | The server |
+| `~/.dreamux/run/` | Volatile run files: `admin.sock` (+ lock), `restart-intent.json`, and the `sockets/` fallback root for ephemeral Codex sockets. Safe to clear while no server runs (issue #182). | The server |
+| `~/.dreamux/state/` | Durable server-owned state: per-dispatcher status/access files and `teammate/` ledgers. | The server |
 | `~/.dreamux/state/<id>/status.json` | Dispatcher runtime status and saved Codex `thread_id`. | The server |
 | `~/.dreamux/state/<id>/access.json` | Dispatcher-local Feishu access gate state. | The server / operator tools |
-| `~/.dreamux/state/<id>/codex.sock` | Runtime-created Codex app-server Unix socket for that dispatcher. | The server |
 | `~/.dreamux/logs/` | Server and per-dispatcher logs, including Codex app-server logs. | The server |
 | `~/.codex/` | Codex global default home: auth, memory, and config used by dispatcher app-server processes. | The operator / Codex |
 | `<dispatcher cwd>/.codex/skills/<skill-name>` | Workspace-local bundled skill symlink. | dreamux installer |
 
-The split is load-bearing: a `rm -rf ~/.dreamux/state ~/.dreamux/logs`
-recovery never loses user-edited dreamux settings or global Codex auth.
+The split is load-bearing: a `rm -rf ~/.dreamux/run ~/.dreamux/state ~/.dreamux/logs`
+recovery (only while no server is running) never loses user-edited dreamux
+settings or global Codex auth.
 Dispatcher app-server processes do not set `CODEX_HOME`; they use Codex's
 global default home for auth, memory, and config. The bundled skills are
 workspace-local. See [top-level-design](../decisions/top-level-design.md) and

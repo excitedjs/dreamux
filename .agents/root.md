@@ -115,6 +115,7 @@ Background and older issue context:
 | change dispatcher `tm` packaging, PATH injection, or skill install location | [`decisions/dispatcher-tm-packaging.md`](decisions/dispatcher-tm-packaging.md) |
 | add/change a package, move source between packages | [`components/repo-structure.md`](components/repo-structure.md) |
 | modify runtime state, dispatcher lifecycle, Feishu MCP, access gating, or config shape | [`decisions/top-level-design.md`](decisions/top-level-design.md) |
+| move sockets / run files, or touch the `~/.dreamux/run` vs `state` split | [`decisions/runtime-run-root.md`](decisions/runtime-run-root.md) |
 | verify issue #110 closure or provider Epic boundaries | [`decisions/issue-110-epic-closure.md`](decisions/issue-110-epic-closure.md) |
 | change Feishu inbound attachment downloads, cache, or Codex-facing message body | [`decisions/feishu-inbound-attachments.md`](decisions/feishu-inbound-attachments.md) |
 | browse decisions by topic | [`decisions/README.md`](decisions/README.md) |

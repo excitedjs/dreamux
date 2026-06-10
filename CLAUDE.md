@@ -63,8 +63,8 @@ information entry point for the 0.x fail-loud + rebuild policy (issue #98).
 `dreamux serve` is the foreground server entry point. The
 `daemon` group wraps the native user-level service manager (Linux
 `systemctl --user`, macOS `launchctl`); `daemon uninstall` removes only the
-service unit, whereas top-level `dreamux uninstall` removes config/state/logs
-too. `daemon restart --notify-resumed --dispatcher <id>` drops a one-shot
+service unit, whereas top-level `dreamux uninstall` removes
+config/run/state/logs too. `daemon restart --notify-resumed --dispatcher <id>` drops a one-shot
 restart marker before restarting, so a resumed dispatcher gets a
 `Restart completed.` turn injected — see issue #78. Do not reintroduce
 global aliases such as `dreamux-server` or `server-ctl`; issue #18 explicitly
@@ -93,10 +93,15 @@ That record wins over older runtime-dir / SQLite decisions.
   source. It holds dispatcher declarations and local Feishu credentials.
   `dreamux serve` must fail loudly when it is missing and tell the operator
   to run `dreamux onboard`.
-- `~/.dreamux/state/` — server-owned state: `server.json`, `admin.sock`, and
-  per-dispatcher `status.json`, `access.json`, Codex socket files, and
-  `teammate/` task ledgers. Safe to remove when the operator intentionally
-  wants to discard server state.
+- `~/.dreamux/state/` — durable server-owned state: per-dispatcher
+  `status.json`, `access.json`, and `teammate/` task ledgers. Safe to remove
+  when the operator intentionally wants to discard server state.
+- `~/.dreamux/run/` — volatile run files (issue #182): `admin.sock` (+ lock),
+  `restart-intent.json`, and the `sockets/` fallback root for runtime
+  rendezvous sockets (preferred root is `$XDG_RUNTIME_DIR/dreamux/sockets/`).
+  Runtime socket paths are random per start, live only in process memory, and
+  are never persisted to durable state. Safe to clear while no server runs;
+  see `.agents/decisions/runtime-run-root.md`.
 - `~/.dreamux/logs/` — server-owned logs, split by component; Codex
   app-server logs use `~/.dreamux/logs/codex-app-server/<dispatcher>.log`, and
   MCP shim diagnostics use component directories such as `feishu-mcp/` and
@@ -143,8 +148,10 @@ explicitly supersedes the top-level design.
   work from any cwd and via `~/bin/<x>` shortcuts. The POSIX symlink-walk
   loop in `/packages/dreamux/bin/dreamux` is the reference shape; reuse it
   verbatim for any new launcher.
-- **Neutral path builders go in `src/platform/paths.ts` only; per-runtime path
-  derivation lives in each builtin's `src/agent-runtime/builtin/<name>/paths.ts`.**
+- **Neutral path builders go in `src/platform/paths.ts` only (volatile
+  runtime-socket allocation in `src/platform/runtime-sockets.ts`); per-runtime
+  path derivation lives in each builtin's
+  `src/agent-runtime/builtin/<name>/paths.ts`.**
   Cross-process file contracts (the admin socket path, dispatcher state files,
   logs) drift silently if any other file constructs them by raw string
   concatenation.

@@ -13,12 +13,13 @@ import { BUILT_IN_DEFAULTS } from '../src/config/config.js';
 import {
   defaultDispatcherCwd,
   resetRuntimeConfig,
+  runRoot,
   setRuntimeConfig,
+  stateRoot,
 } from '../src/platform/paths.js';
 import {
-  dispatcherAppServerControlDir,
+  allocateCodexSocketPath,
   dispatcherCodexHome,
-  dispatcherSocketPath,
   dispatcherWorkspaceSkillPath,
 } from '../src/agent-runtime/builtin/codex/paths.js';
 
@@ -40,16 +41,24 @@ describe('global Codex home doctor', () => {
     rmSync(runtimeDir, { recursive: true, force: true });
   });
 
-  it('places app-server sockets under the dreamux dispatcher runtime directory', async () => {
-    expect(dispatcherSocketPath('flow')).toBe(
-      join(dispatcherAppServerControlDir('flow'), 'codex.sock'),
-    );
-    expect(dispatcherSocketPath('flow')).toContain(
-      join('.dreamux', 'state', 'flow'),
-    );
-    expect(dispatcherSocketPath('flow')).not.toMatch(/^\/tmp(?:\/|$)/);
-    expect(Buffer.byteLength(dispatcherSocketPath('frontend-service'), 'utf8'))
-      .toBeLessThanOrEqual(DISPATCHER_APP_SERVER_SOCKET_PATH_MAX_BYTES);
+  it('allocates app-server sockets under a private runtime root, never state or /tmp', async () => {
+    const previousXdg = process.env['XDG_RUNTIME_DIR'];
+    delete process.env['XDG_RUNTIME_DIR'];
+    try {
+      const socket = allocateCodexSocketPath('flow');
+      expect(socket.startsWith(join(runRoot(), 'sockets'))).toBe(true);
+      expect(socket.endsWith('.sock')).toBe(true);
+      expect(socket.startsWith(stateRoot())).toBe(false);
+      expect(socket).not.toMatch(/^\/tmp(?:\/|$)/);
+      expect(
+        Buffer.byteLength(allocateCodexSocketPath('frontend-service'), 'utf8'),
+      ).toBeLessThanOrEqual(DISPATCHER_APP_SERVER_SOCKET_PATH_MAX_BYTES);
+      // Random rendezvous endpoint: a fresh start never reuses a path.
+      expect(allocateCodexSocketPath('flow')).not.toBe(socket);
+    } finally {
+      if (previousXdg === undefined) delete process.env['XDG_RUNTIME_DIR'];
+      else process.env['XDG_RUNTIME_DIR'] = previousXdg;
+    }
   });
 
   it('reports every missing Codex home requirement', async () => {
@@ -99,15 +108,12 @@ describe('global Codex home doctor', () => {
     expect(result.ok).toBe(true);
   });
 
-  it('rejects too-long app-server socket paths when no private fallback root exists', async () => {
+  it('rejects too-long app-server socket paths when no private root fits the budget', async () => {
     const previousXdg = process.env['XDG_RUNTIME_DIR'];
-    const previousTmpdir = process.env['TMPDIR'];
-    process.env['HOME'] = join(runtimeDir, 'h'.repeat(90));
-    // With a private runtime root the socket falls back instead of failing
-    // (see codexSocketPathIn); the fail-loud contract holds only when the
-    // sole candidate is the shared /tmp, which is banned for sockets.
+    // A pathological $HOME blows the budget for the dreamux-owned fallback,
+    // and with no XDG root there is no other candidate: fail loudly.
+    process.env['HOME'] = join(runtimeDir, 'h'.repeat(120));
     delete process.env['XDG_RUNTIME_DIR'];
-    process.env['TMPDIR'] = '/tmp';
 
     try {
       await expect(
@@ -116,19 +122,19 @@ describe('global Codex home doctor', () => {
     } finally {
       if (previousXdg === undefined) delete process.env['XDG_RUNTIME_DIR'];
       else process.env['XDG_RUNTIME_DIR'] = previousXdg;
-      if (previousTmpdir === undefined) delete process.env['TMPDIR'];
-      else process.env['TMPDIR'] = previousTmpdir;
     }
   });
 
-  it('falls back to a private socket path for deep runtime roots instead of failing', async () => {
+  it('uses the private XDG runtime root for deep home dirs instead of failing', async () => {
     const previousXdg = process.env['XDG_RUNTIME_DIR'];
-    process.env['HOME'] = join(runtimeDir, 'h'.repeat(90));
+    process.env['HOME'] = join(runtimeDir, 'h'.repeat(120));
     process.env['XDG_RUNTIME_DIR'] = join(runtimeDir, 'xdg');
 
     try {
-      const socket = dispatcherSocketPath('dispatcher-with-long-id');
-      expect(socket.startsWith(join(runtimeDir, 'xdg', 'dreamux-codex-'))).toBe(true);
+      const socket = allocateCodexSocketPath('dispatcher-with-long-id');
+      expect(
+        socket.startsWith(join(runtimeDir, 'xdg', 'dreamux', 'sockets')),
+      ).toBe(true);
       expect(Buffer.byteLength(socket, 'utf8')).toBeLessThanOrEqual(
         DISPATCHER_APP_SERVER_SOCKET_PATH_MAX_BYTES,
       );

@@ -120,10 +120,11 @@ export interface AgentRuntimeStateStore {
 
 export interface AgentRuntimePathContext {
   /**
-   * The per-dispatcher root the runtime drops its own state files into (control
-   * socket, generated MCP config, …). Neutral: the runtime derives its own
-   * subpaths from here, so the shared layer never enumerates per-runtime
-   * artifact paths.
+   * The per-dispatcher root the runtime drops its own state files into
+   * (generated MCP config, …). Neutral: the runtime derives its own subpaths
+   * from here, so the shared layer never enumerates per-runtime artifact
+   * paths. Volatile rendezvous sockets do NOT live here (issue #182): they
+   * are allocated per start under the private runtime-socket root.
    */
   dispatcherDir(id: string): string;
   /**

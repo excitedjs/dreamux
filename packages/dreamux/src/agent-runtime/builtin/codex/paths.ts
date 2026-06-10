@@ -6,20 +6,17 @@
  * string here is byte-identical to its former `platform/paths.ts` output.
  */
 
-import { createHash } from 'node:crypto';
-import { homedir, tmpdir } from 'node:os';
-import { join, normalize, sep } from 'node:path';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 
 import {
   BUNDLED_SKILL_NAMES,
-  assertUnixSocketPathBudget,
-  dispatcherDir,
   dispatcherPathSegment,
   logsRoot,
   teamMateNameSegment,
-  unixSocketPathFitsBudget,
   type BundledSkillName,
 } from '../../../platform/paths.js';
+import { allocateRuntimeSocketPath } from '../../../platform/runtime-sockets.js';
 
 /**
  * Central Codex app-server log directory. Relocated out of `platform/paths`
@@ -57,78 +54,21 @@ export function dispatcherWorkspaceSkillPath(cwd: string): string {
   return join(dispatcherWorkspaceSkillDir(cwd, 'dispatcher'), 'SKILL.md');
 }
 
-/** Codex app-server control directory — the per-dispatcher state root. */
-export function dispatcherAppServerControlDir(id: string): string {
-  return dispatcherDir(id);
-}
-
 /**
- * Short private root for over-budget Codex socket fallbacks, or null when no
- * private root exists. The shared world-writable tmp roots are never used —
- * the global-bin decision record rejects `/tmp` app-server sockets (control
- * state must be private and owner-writable). `XDG_RUNTIME_DIR` is the
- * canonical private per-user runtime dir on Linux, but it is operator input,
- * so the shared-tmp rejection applies to it too; on macOS `os.tmpdir()` is
- * the per-user 0700 `$TMPDIR` confinement dir, which qualifies.
- */
-export function codexSocketFallbackDir(): string | null {
-  const xdg = process.env['XDG_RUNTIME_DIR'];
-  if (xdg !== undefined && xdg.trim() !== '' && !isSharedTmp(xdg)) return xdg;
-  const tmp = tmpdir();
-  return isSharedTmp(tmp) ? null : tmp;
-}
-
-/**
- * Shared world-writable system tmp roots. `/private/tmp` and
- * `/private/var/tmp` are the macOS symlink-resolved spellings of `/tmp` and
- * `/var/tmp`, so a canonicalized path must not slip past the guard.
- */
-const SHARED_TMP_ROOTS = ['/tmp', '/var/tmp', '/private/tmp', '/private/var/tmp'];
-
-function isSharedTmp(path: string): boolean {
-  const normalized = normalize(path);
-  return SHARED_TMP_ROOTS.some(
-    (root) => normalized === root || normalized.startsWith(`${root}${sep}`),
-  );
-}
-
-/**
- * Codex app-server Unix socket for the given per-dispatcher runtime root.
+ * Allocate a fresh listen socket for one Codex app-server start (issue #182).
  *
- * The descriptive in-tree path (`<dir>/codex.sock`) is used whenever it fits
- * the `sun_path` byte budget. A deep runtime root (long $HOME, long dispatcher
- * or teammate names — e.g. the teammate tree
- * `state/<dispatcher>/teammate/runtime/<name>/`) can blow that budget; in that
- * case the socket falls back to a short *private* per-user runtime path (see
- * `codexSocketFallbackDir`) whose name is a digest of the descriptive path.
- * The fallback is a pure function of the runtime root, so it keeps the
- * contract the supervisor relies on:
- *  - unique: the digest covers the full state-root + dispatcher + teammate dir;
- *  - stable across restart/resume: same root → same socket path;
- *  - cleanup unchanged: the supervisor removes `socketPath` before bind and on
- *    stop, wherever it lives.
- * When no private fallback root exists the original fail-loud budget assertion
- * stands.
+ * The socket is a pure rendezvous endpoint — dreamux starts
+ * `codex app-server --listen unix://<path>` and connects with
+ * `ws+unix://<path>` immediately; resume/checkpoint state never depends on the
+ * path. So the path is short, random, and re-allocated on every start, under a
+ * private runtime root (`$XDG_RUNTIME_DIR/dreamux/sockets/` or
+ * `~/.dreamux/run/sockets/` — never shared tmp, never the durable state tree).
+ * It must not be persisted into identity, history, ledger, checkpoint, or
+ * status records; the supervisor owns mkdir, stale-socket removal before bind,
+ * and removal on reap.
  */
-export function codexSocketPathIn(dir: string, id: string): string {
-  const descriptive = join(dir, 'codex.sock');
-  if (unixSocketPathFitsBudget(descriptive)) return descriptive;
-  const fallbackDir = codexSocketFallbackDir();
-  if (fallbackDir === null) {
-    return assertUnixSocketPathBudget(
-      descriptive,
-      `dispatcher '${id}' Codex socket path`,
-    );
-  }
-  const digest = createHash('sha256').update(descriptive).digest('hex').slice(0, 16);
-  return assertUnixSocketPathBudget(
-    join(fallbackDir, `dreamux-codex-${digest}.sock`),
-    `dispatcher '${id}' Codex socket fallback path`,
-  );
-}
-
-export function dispatcherSocketPath(id: string): string {
-  return codexSocketPathIn(dispatcherDir(id), id);
+export function allocateCodexSocketPath(id: string): string {
+  return allocateRuntimeSocketPath(`dispatcher '${id}' Codex socket path`);
 }
 
 export function dispatcherCodexAppServerLogPath(id: string): string {

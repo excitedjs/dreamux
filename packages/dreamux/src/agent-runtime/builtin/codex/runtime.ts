@@ -16,9 +16,6 @@
  *     and post a visible warning to the next source chat.
  */
 
-import { mkdir } from 'node:fs/promises';
-import { dirname } from 'node:path';
-
 import type {
   DispatcherRow,
   DispatcherStatus,
@@ -52,7 +49,7 @@ import {
   dispatcherCodexHomeDoctorContext,
   type DispatcherCodexHomeDoctor,
 } from './codex-home.js';
-import { codexSocketPathIn } from './paths.js';
+import { allocateCodexSocketPath } from './paths.js';
 import { installBundledWorkspaceSkills } from '../../../onboard/bundled-skills.js';
 import type {
   AgentRuntime,
@@ -274,10 +271,9 @@ export class CodexRuntime implements AgentRuntime {
 
   private async startCodexRuntime(): Promise<void> {
     const cwd = this.deps.cwd;
-    const socketPath = codexSocketPathIn(
-      this.paths.dispatcherDir(this.dispatcherId),
-      this.dispatcherId,
-    );
+    // Fresh random rendezvous socket per start (issue #182): held in memory
+    // only — never persisted to durable state, never derived from state paths.
+    const socketPath = allocateCodexSocketPath(this.dispatcherId);
     const extraArgs = this.deps.resolveExtraArgs?.(this.row) ?? [];
     const skillInstallResults = await installBundledWorkspaceSkills({
       dispatcherCwd: cwd,
@@ -319,7 +315,6 @@ export class CodexRuntime implements AgentRuntime {
       if (this.process !== process) return;
       this.handleChildExit(exit);
     });
-    await mkdir(dirname(socketPath), { recursive: true });
     await process.start();
 
     const clientFactory =

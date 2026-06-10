@@ -25,18 +25,16 @@ import {
   dreamuxRoot,
   logsRoot,
   resetRuntimeConfig,
-  serverJsonPath,
+  restartIntentPath,
+  runRoot,
   serverLogPath,
   stateRoot,
   unixSocketPathFitsBudget,
 } from '../src/platform/paths.js';
 import {
   codexAppServerLogDir,
-  codexSocketFallbackDir,
-  codexSocketPathIn,
   dispatcherCodexAppServerErrorLogPath,
   dispatcherCodexAppServerLogPath,
-  dispatcherSocketPath,
   dispatcherWorkspaceCodexSkillsDir,
   dispatcherWorkspaceSkillDirs,
   dispatcherWorkspaceSkillPath,
@@ -72,12 +70,15 @@ describe('runtime paths', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it('uses ~/.dreamux/state and ~/.dreamux/logs as the effective layout', () => {
+  it('uses ~/.dreamux/{run,state,logs} as the effective layout', () => {
     expect(dreamuxRoot()).toBe(join(homedir(), '.dreamux'));
     expect(stateRoot()).toBe(join(dreamuxRoot(), 'state'));
+    expect(runRoot()).toBe(join(dreamuxRoot(), 'run'));
     expect(logsRoot()).toBe(join(dreamuxRoot(), 'logs'));
-    expect(serverJsonPath()).toBe(join(stateRoot(), 'server.json'));
-    expect(adminSocketPath()).toBe(join(stateRoot(), 'admin.sock'));
+    // Volatile run files live under run/, not the durable state tree
+    // (issue #182): the admin IPC endpoint and the one-shot restart marker.
+    expect(adminSocketPath()).toBe(join(runRoot(), 'admin.sock'));
+    expect(restartIntentPath()).toBe(join(runRoot(), 'restart-intent.json'));
 
     expect(dispatcherDir('dispatcher-a')).toBe(
       join(stateRoot(), 'dispatcher-a'),
@@ -90,9 +91,6 @@ describe('runtime paths', () => {
     );
     expect(dispatcherFeishuAttachmentCacheDir('dispatcher-a')).toBe(
       join(stateRoot(), 'dispatcher-a', 'feishu-attachments'),
-    );
-    expect(dispatcherSocketPath('dispatcher-a')).toBe(
-      join(stateRoot(), 'dispatcher-a', 'codex.sock'),
     );
     expect(dispatcherTeamMateDir('dispatcher-a')).toBe(
       join(stateRoot(), 'dispatcher-a', 'teammate'),
@@ -197,65 +195,4 @@ describe('runtime paths', () => {
     expect(() => adminSocketPath()).toThrow(/too long for Unix sockets/);
   });
 
-  it('falls back to a short deterministic Codex socket when the runtime root blows the budget', () => {
-    // The descriptive in-tree socket survives short roots untouched.
-    const shortDir = dispatcherTeamMateRuntimeDir('dispatcher-a', 'reviewer-1');
-    expect(codexSocketPathIn(shortDir, 'dispatcher-a')).toBe(
-      join(shortDir, 'codex.sock'),
-    );
-
-    // A deep teammate runtime root (the macOS CI shape: long tmp HOME +
-    // state/<dispatcher>/teammate/runtime/<name>/) exceeds the budget; the
-    // socket must move to the short private fallback root instead of failing.
-    // Pure path derivation — the XDG dir does not need to exist.
-    process.env['HOME'] = join(root, 'h'.repeat(90));
-    process.env['XDG_RUNTIME_DIR'] = '/run/user/424242';
-    const longDir = dispatcherTeamMateRuntimeDir('dispatcher-a', 'alpha-leader');
-    expect(
-      unixSocketPathFitsBudget(join(longDir, 'codex.sock')),
-    ).toBe(false);
-    const fallback = codexSocketPathIn(longDir, 'dispatcher-a');
-    expect(unixSocketPathFitsBudget(fallback)).toBe(true);
-    expect(fallback.startsWith('/run/user/424242/dreamux-codex-')).toBe(true);
-    expect(fallback.endsWith('.sock')).toBe(true);
-
-    // Deterministic across restart/resume, unique per runtime root.
-    expect(codexSocketPathIn(longDir, 'dispatcher-a')).toBe(fallback);
-    const otherDir = dispatcherTeamMateRuntimeDir('dispatcher-a', 'beta-leader');
-    expect(codexSocketPathIn(otherDir, 'dispatcher-a')).not.toBe(fallback);
-  });
-
-  it('never places the Codex socket fallback in a shared tmp root', () => {
-    // The global-bin decision record rejects /tmp app-server sockets: with no
-    // private runtime root available, the budget assertion stays fail-loud.
-    delete process.env['XDG_RUNTIME_DIR'];
-    process.env['TMPDIR'] = '/tmp';
-    expect(codexSocketFallbackDir()).toBe(null);
-
-    process.env['HOME'] = join(root, 'h'.repeat(90));
-    const longDir = dispatcherTeamMateRuntimeDir('dispatcher-a', 'alpha-leader');
-    expect(() => codexSocketPathIn(longDir, 'dispatcher-a')).toThrow(
-      /too long for Unix sockets/,
-    );
-
-    // XDG_RUNTIME_DIR is operator input: a shared-tmp value must not bypass
-    // the guard, whether it is the root itself or a subdirectory.
-    for (const sharedXdg of ['/tmp', '/tmp/xdg', '/private/tmp', '/var/tmp/xdg']) {
-      process.env['XDG_RUNTIME_DIR'] = sharedXdg;
-      expect(codexSocketFallbackDir()).toBe(null);
-      expect(() => codexSocketPathIn(longDir, 'dispatcher-a')).toThrow(
-        /too long for Unix sockets/,
-      );
-    }
-
-    // A shared-tmp XDG still allows a private tmpdir to serve as the root.
-    process.env['XDG_RUNTIME_DIR'] = '/tmp/xdg';
-    process.env['TMPDIR'] = '/var/folders/zz/zyzzyva/T';
-    expect(codexSocketFallbackDir()).toBe('/var/folders/zz/zyzzyva/T');
-
-    // A private (non-shared-tmp) tmpdir — the macOS per-user $TMPDIR shape —
-    // is an acceptable fallback root. Pure env/path resolution; no fs access.
-    delete process.env['XDG_RUNTIME_DIR'];
-    expect(codexSocketFallbackDir()).toBe('/var/folders/zz/zyzzyva/T');
-  });
 });

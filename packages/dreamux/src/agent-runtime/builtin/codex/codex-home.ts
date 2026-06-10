@@ -19,10 +19,9 @@ import {
   unixSocketPathFitsBudget,
 } from '../../../platform/paths.js';
 import {
-  dispatcherAppServerControlDir,
+  allocateCodexSocketPath,
   dispatcherCodexConfigPath,
   dispatcherCodexHome,
-  dispatcherSocketPath,
   dispatcherWorkspaceCodexSkillsDir,
   dispatcherWorkspaceSkillPath,
 } from './paths.js';
@@ -37,7 +36,11 @@ export interface DispatcherCodexHomeDoctorContext {
   dispatcherCwd: string;
   skillsDir: string;
   skillPath: string;
-  appServerControlDir: string;
+  /**
+   * A representative socket allocation (issue #182: sockets are random per
+   * start, so this is a sample of the policy, not the path a runtime will
+   * bind). Doctor checks placement (never shared /tmp) and the path budget.
+   */
   socketPath: string;
   codexCliArgs: string[];
 }
@@ -74,8 +77,7 @@ export function dispatcherCodexHomeDoctorContext(
     dispatcherCwd,
     skillsDir: dispatcherWorkspaceCodexSkillsDir(dispatcherCwd),
     skillPath: dispatcherWorkspaceSkillPath(dispatcherCwd),
-    appServerControlDir: dispatcherAppServerControlDir(dispatcherId),
-    socketPath: dispatcherSocketPath(dispatcherId),
+    socketPath: allocateCodexSocketPath(dispatcherId),
     codexCliArgs: options.codexCliArgs ?? [],
   };
 }

@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "BREAKING: dreamux-owned volatile run files moved from ~/.dreamux/state to ~/.dreamux/run (issue #182 PR-1): the admin socket (state/admin.sock -> run/admin.sock, plus its .lock) and the one-shot restart marker (state/restart-intent.json -> run/restart-intent.json). Codex app-server listen sockets no longer use descriptive in-state paths (state/<dispatcher>/codex.sock or teammate runtime dirs); every runtime start now allocates a fresh short random socket under $XDG_RUNTIME_DIR/dreamux/sockets/ or ~/.dreamux/run/sockets/, swept on server start, never persisted to durable state. Mixed-version caveat: a CLI or MCP shim older than this version looks for the admin socket under state/ and cannot reach a new server (and vice versa) — upgrade the package and restart the daemon so server and shims ship from the same version. The unused server.json path declaration was removed. Rebuild: nothing to rebuild; old leftovers may be deleted manually: ~/.dreamux/state/admin.sock, ~/.dreamux/state/admin.sock.lock, ~/.dreamux/state/restart-intent.json, ~/.dreamux/state/<dispatcher>/codex.sock, ~/.dreamux/state/<dispatcher>/teammate/runtime/<name>/codex.sock, and stale dreamux-codex-*.sock files under $XDG_RUNTIME_DIR (or the per-user os temp dir, e.g. macOS $TMPDIR).",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

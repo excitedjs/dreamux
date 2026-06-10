@@ -18,6 +18,7 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -53,12 +54,14 @@ import {
 import {
   defaultDispatcherCwd,
   bundledSkillDir,
+  dispatcherDir,
+  dispatcherStatusPath,
   restartIntentPath,
+  stateRoot,
+  unixSocketPathFitsBudget,
 } from '../src/platform/paths.js';
 import {
-  dispatcherAppServerControlDir,
   dispatcherCodexHome,
-  dispatcherSocketPath,
   dispatcherWorkspaceSkillDir,
 } from '../src/agent-runtime/builtin/codex/paths.js';
 import { writeRestartIntent } from '../src/daemon/restart-intent.js';
@@ -141,12 +144,16 @@ function buildServer(opts: {
   codexRestartBackoffMaxMs?: number;
   channelLoggerFactory?: (dispatcherId: string) => DreamuxLogger;
   providerRegistry?: ProviderRegistry;
+  runtimeSocketSweep?: () => Promise<string[]>;
 }): Server {
   return new Server({
     config: opts.config ?? BUILT_IN_DEFAULTS,
     providerRegistry: opts.providerRegistry,
     adminSocketPath: join(opts.runtimeDir, 'admin.sock'),
     skipBotSecret: opts.skipBotSecret ?? true,
+    ...(opts.runtimeSocketSweep !== undefined
+      ? { runtimeSocketSweep: opts.runtimeSocketSweep }
+      : {}),
     ...(opts.channelLoggerFactory !== undefined
       ? { channelLoggerFactory: opts.channelLoggerFactory }
       : {}),
@@ -570,9 +577,16 @@ describe('dreamux MVP smoke', () => {
     );
     expect(capturedCodexOptions[0]?.env?.['CODEX_HOME']).toBeUndefined();
     expect(capturedCodexOptions[0]?.env?.['PATH']).toContain('/bin');
-    expect(capturedCodexOptions[0]?.socketPath).toBe(
-      dispatcherSocketPath('flow'),
-    );
+    // Issue #182: the listen socket is a fresh random rendezvous path under
+    // a private runtime root — never inside the durable state tree.
+    const socketPath = capturedCodexOptions[0]?.socketPath ?? '';
+    expect(socketPath.endsWith('.sock')).toBe(true);
+    expect(unixSocketPathFitsBudget(socketPath)).toBe(true);
+    expect(socketPath.startsWith(stateRoot())).toBe(false);
+    // No socket path persistence: durable dispatcher state never records it.
+    const statusRaw = readFileSync(dispatcherStatusPath('flow'), 'utf8');
+    expect(statusRaw).not.toContain(socketPath);
+    expect(statusRaw).not.toContain('.sock');
     const dispatcherSkillDir = dispatcherWorkspaceSkillDir(
       defaultDispatcherCwd('flow'),
       'dispatcher',
@@ -580,6 +594,36 @@ describe('dreamux MVP smoke', () => {
     expect(lstatSync(dispatcherSkillDir).isSymbolicLink()).toBe(true);
     expect(realpathSync(dispatcherSkillDir)).toBe(
       realpathSync(bundledSkillDir('dispatcher')),
+    );
+  });
+
+  it('runs the runtime-socket sweep before the first dispatcher starts', async () => {
+    // Issue #182: the sweep clears crash-orphan sockets wholesale, so it must
+    // finish before any runtime allocates and binds a fresh socket.
+    const events: string[] = [];
+    const capturedCodexOptions: CodexProcessOptions[] = [];
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      capturedCodexOptions,
+      config: configWithDispatcher(),
+      codexProcessFactory: (o) => {
+        events.push('dispatcher-start');
+        return new NoopCodexProcess(o);
+      },
+      runtimeSocketSweep: async () => {
+        events.push('sweep');
+        return [];
+      },
+    });
+
+    await server.start();
+
+    expect(events[0]).toBe('sweep');
+    expect(events).toContain('dispatcher-start');
+    expect(events.indexOf('sweep')).toBeLessThan(
+      events.indexOf('dispatcher-start'),
     );
   });
 
@@ -1230,13 +1274,13 @@ describe('dreamux MVP smoke', () => {
     });
     writeReadyDispatcherCodexHome('flow', join(runtimeDir, 'workspace'));
 
-    expect(existsSync(dispatcherAppServerControlDir('flow'))).toBe(false);
+    expect(existsSync(dispatcherDir('flow'))).toBe(false);
     await server.start();
 
     expect(capturedCodexOptions).toHaveLength(1);
     expect(capturedCodexOptions[0]?.env?.['CODEX_HOME']).toBeUndefined();
-    expect(existsSync(dispatcherAppServerControlDir('flow'))).toBe(true);
-    expect(dispatcherAppServerControlDir('flow')).not.toContain('codex-home');
+    expect(existsSync(dispatcherDir('flow'))).toBe(true);
+    expect(dispatcherDir('flow')).not.toContain('codex-home');
   });
 
   it('access gate drops bot-loop messages before queue or reaction', async () => {
@@ -2697,9 +2741,15 @@ describe('dreamux MVP smoke', () => {
 describe('admin socket hardening', () => {
   let runtimeDir: string;
   let stubServer: Server;
+  let previousHome: string | undefined;
 
   beforeEach(() => {
     runtimeDir = mkdtempSync(join(tmpdir(), 'dreamux-admin-'));
+    // Isolate $HOME: the sweep tests below call server.start(), which loads and
+    // deletes the restart-intent marker under ~/.dreamux/run — pointing HOME at
+    // the fixture keeps the suite from consuming the operator's real marker.
+    previousHome = process.env['HOME'];
+    process.env['HOME'] = join(runtimeDir, 'home');
     stubServer = new Server({
       adminSocketPath: join(runtimeDir, 'admin.sock'),
     });
@@ -2711,6 +2761,8 @@ describe('admin socket hardening', () => {
     } catch {
       /* */
     }
+    if (previousHome === undefined) delete process.env['HOME'];
+    else process.env['HOME'] = previousHome;
     rmSync(runtimeDir, { recursive: true, force: true });
   });
 
@@ -2748,6 +2800,55 @@ describe('admin socket hardening', () => {
       await first.close();
     }
   });
+
+  // Issue #182: the volatile runtime-socket sweep runs exactly once per
+  // start, only after the admin lock is held, and never blocks startup.
+  it('runs the injected runtime-socket sweep once after the admin lock is held', async () => {
+    const sweeps: string[][] = [];
+    const server = new Server({
+      adminSocketPath: join(runtimeDir, 'sweep.sock'),
+      runtimeSocketSweep: async () => {
+        // The admin socket must already be bound when the sweep runs.
+        const { existsSync } = await import('node:fs');
+        expect(existsSync(join(runtimeDir, 'sweep.sock'))).toBe(true);
+        const dirs = ['<swept>'];
+        sweeps.push(dirs);
+        return dirs;
+      },
+    });
+    await server.start();
+    expect(sweeps).toHaveLength(1);
+    await server.shutdown();
+  });
+
+  it('a failing runtime-socket sweep does not block server startup', async () => {
+    const server = new Server({
+      adminSocketPath: join(runtimeDir, 'sweep-fail.sock'),
+      runtimeSocketSweep: async () => {
+        throw new Error('synthetic sweep failure');
+      },
+    });
+    await expect(server.start()).resolves.toBeUndefined();
+    await server.shutdown();
+  });
+
+  // Issue #182: ~/.dreamux/run exists on no fresh install (admin.sock used to
+  // live under state/, which onboard creates; nothing else creates run/), so
+  // the admin server must create its own owner-only parent before binding.
+  it('binds when the admin socket parent directory does not exist yet', async () => {
+    const sockPath = join(runtimeDir, 'run', 'admin.sock');
+    const admin = createAdminSocketServer(stubServer, sockPath);
+    await admin.start();
+    try {
+      const { existsSync, statSync } = await import('node:fs');
+      expect(existsSync(sockPath)).toBe(true);
+      // The created run root is owner-only.
+      expect(statSync(join(runtimeDir, 'run')).mode & 0o777).toBe(0o700);
+    } finally {
+      await admin.close();
+    }
+  });
+
 
   // PR #3 review #3 r2: TOCTOU race — even when a stale socket file is
   // present, a second server must NOT delete the first's live socket. The
