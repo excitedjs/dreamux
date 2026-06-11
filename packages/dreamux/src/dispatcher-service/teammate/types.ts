@@ -371,6 +371,21 @@ export function validateTeamMateName(name: string): string {
   return name;
 }
 
+/**
+ * Service-boundary guard for a required lifecycle field — the recovery subject
+ * (`intent`) and the stop reason (`note`) made mandatory in issue #182 PR-3.
+ * The MCP shim and admin layer already reject missing/empty values, but
+ * in-process callers reach the service methods directly, so the same contract
+ * is enforced here too (defense in depth, not only a TypeScript type). `label`
+ * is interpolated into the error so the offending field is clear.
+ */
+export function requireLifecycleText(value: unknown, label: string): string {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new Error(`${label} must be a non-empty string`);
+  }
+  return value;
+}
+
 export function runtimeStatusToIdentityStatus(
   status: DispatcherStatus,
 ): TeamMateIdentityStatus {

@@ -34,6 +34,7 @@ import { TeamMateIdentityStore } from './identity-store.js';
 import { TeamMateRuntimeStateStore } from './runtime-state.js';
 import { WorktreeManager } from './worktree-manager.js';
 import {
+  requireLifecycleText,
   validateTeamMateName,
   type CloseTeamMateInput,
   type SendTeamMateInput,
@@ -170,6 +171,9 @@ export class TeamMateAgentService {
     if (input.principal.kind === 'teammate') {
       throw new Error('ordinary TeamMates cannot spawn TeamMates');
     }
+    // Required recovery subject — enforced here too for in-process callers that
+    // bypass the MCP shim / admin layer (issue #182 PR-3).
+    requireLifecycleText(input.intent, 'TeamMate spawn intent');
     const cwd = input.sharedWorkspace?.sourceCwd ?? input.cwd;
     if (input.principal.kind === 'team_leader' && input.sharedWorkspace === undefined) {
       throw new Error('TeamLeader member spawn requires a shared team workspace');
@@ -291,6 +295,10 @@ export class TeamMateAgentService {
     const dispatcherId = principalDispatcherId(input.principal);
     const name = validateTeamMateName(input.name);
     const identity = await this.mustIdentity(dispatcherId, name, input.principal);
+    // Required close reason — enforced for in-process callers too (issue #182
+    // PR-3); the Team dissolve path supplies an explicit note. Checked after the
+    // existence/access lookup so an inaccessible teammate reports that first.
+    requireLifecycleText(input.note, 'TeamMate close note');
     const key = liveKey(dispatcherId, name);
     const live = this.live.get(key);
     if (live !== undefined) {

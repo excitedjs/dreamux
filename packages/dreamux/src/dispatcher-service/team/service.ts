@@ -1,6 +1,10 @@
 import { WorktreeManager } from '../teammate/worktree-manager.js';
 import type { TeamMateAgentService, TeamMateSharedWorkspace } from '../teammate/service.js';
-import { dispatcherPrincipal, teamLeaderPrincipal } from '../teammate/types.js';
+import {
+  dispatcherPrincipal,
+  requireLifecycleText,
+  teamLeaderPrincipal,
+} from '../teammate/types.js';
 import { ChannelBindingStore } from '../channel-binding/store.js';
 import type { ChannelBinding } from '../channel-binding/store.js';
 import type { FeishuCreateGroupInput, FeishuCreateGroupResult } from '../../channel/feishu/bot.js';
@@ -34,6 +38,9 @@ export class TeamService {
   constructor(private readonly opts: TeamServiceOptions) {}
 
   async create(input: TeamCreateInput): Promise<TeamCreateResult> {
+    // Required recovery subject — enforced for in-process callers (and the
+    // create_group path that delegates here) too (issue #182 PR-3).
+    requireLifecycleText(input.intent, 'Team create intent');
     const teamId = validateTeamId(input.name);
     const existing = await this.store.get(input.dispatcherId, teamId);
     if (existing !== null && existing.status !== 'closed') {
@@ -72,6 +79,9 @@ export class TeamService {
       closedAt: null,
       closeNote: null,
       worktree: workspace.worktree,
+      // Always write the required intent, so a reused closed Team record adopts
+      // the new create.intent instead of keeping its old value (issue #182 PR-3).
+      intent: input.intent,
     });
     const prompt = input.prompt ?? teamLeaderPrompt(team);
     const leader = await this.opts.teammates.createTeamLeader({
@@ -120,6 +130,9 @@ export class TeamService {
   }
 
   async dissolve(input: TeamDissolveInput): Promise<TeamSummary> {
+    // Required dissolve reason — enforced for in-process callers too (issue
+    // #182 PR-3); it also feeds the member/leader closes and the ledger.
+    requireLifecycleText(input.note, 'Team dissolve note');
     const team = await this.mustTeam(input.dispatcherId, input.teamId);
     for (const binding of await this.bindings.list(input.dispatcherId)) {
       if (binding.active && binding.team_id === team.team_id) {

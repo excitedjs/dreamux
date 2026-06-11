@@ -883,6 +883,7 @@ describe('dreamux MVP smoke', () => {
     await server.dispatcherService.createTeam({
       dispatcherId: 'flow',
       name: 'alpha',
+      intent: 'work',
       repoCwd: repo,
       leaderAgentRuntime: 'flow',
     });
