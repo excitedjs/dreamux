@@ -48,6 +48,23 @@ Path builders stay centralized: neutral builders in
 
 ### Invariants
 
+- **Owner-only run dirs.** Dreamux-owned run/socket dirs are adopted through
+  `ensureOwnerOnlyDir` (`platform/owner-only-dir.ts`), not a bare
+  `mkdir(mode: 0o700)`: mode-on-create does nothing to a dir that already
+  exists, so the helper also rejects a symlinked leaf, fails loud on a dir
+  owned by another uid, and tightens a pre-existing group/world-traversable
+  dir to 0700. Operator-owned parents (`$XDG_RUNTIME_DIR` itself) are never
+  passed to it.
+- **Mixed-version single-server guard.** The new server locks
+  `run/admin.sock.lock`, but a still-running OLD-version server locks the
+  legacy `state/admin.sock.lock` — a different path the new lock cannot see.
+  Before binding, the new server probes the legacy lock
+  (`assertNoLegacyAdminServer`) and fails loud if a *live* holder is found, so
+  two servers never run at once (which would also break the sweep's
+  single-server premise). Detection only: a stale/dead-PID legacy lock is
+  ignored, and the legacy file is never read for migration, removed, or
+  rewritten. The CLI injects the real legacy path; the changelog tells
+  operators to stop the old daemon before upgrading.
 - **No persistence.** Runtime socket paths live in supervisor/runtime memory
   only — never in identity, history, ledger, checkpoint, `status.json`, or any
   public status surface. There is deliberately **no live socket registry**

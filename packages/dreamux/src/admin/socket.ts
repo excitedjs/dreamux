@@ -7,10 +7,11 @@
  */
 
 import { createServer, type Server as NetServer, type Socket } from 'node:net';
-import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import type { Server } from '../server.js';
+import { ensureOwnerOnlyDir } from '../platform/owner-only-dir.js';
 import {
   AdminError,
   type AdminRequest,
@@ -76,8 +77,9 @@ export function createAdminSocketServer(
       // Stale pidfiles (dead holder) are reclaimed up to RECLAIM_ATTEMPTS
       // times; a live holder always loses the race.
       // The socket + lock live under the volatile run root (issue #182),
-      // which may not exist yet on a fresh install — create it owner-only.
-      await mkdir(dirname(socketPath), { recursive: true, mode: 0o700 });
+      // which may not exist yet on a fresh install — create it owner-only, and
+      // tighten it if a pre-existing run dir is group/world-traversable.
+      await ensureOwnerOnlyDir(dirname(socketPath));
       await acquirePidLock(lockPath, myPid, isAlive);
       holdLock = true;
 
@@ -225,6 +227,43 @@ function defaultIsPidAlive(pid: number): boolean {
   } catch (e) {
     // EPERM means the process exists but we can't signal it (still alive).
     return (e as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+export interface LegacyAdminServerCheckOptions {
+  /** Pre-#182 admin lock path to probe (e.g. `state/admin.sock.lock`). */
+  legacyLockPath: string;
+  /** Liveness probe override (tests). Default: real `process.kill(pid, 0)`. */
+  isPidAlive?: (pid: number) => boolean;
+}
+
+/**
+ * Fail loud when a still-running OLD-version dreamux server holds the
+ * pre-#182 admin socket lock (issue #182 PR-1, PR #183 review P1).
+ *
+ * The new server's single-instance guard locks `run/admin.sock.lock`, but an
+ * old server locks the legacy `state/admin.sock.lock` — a different path — so
+ * the two cannot see each other and could run simultaneously, which would also
+ * break the runtime-socket sweep's single-server premise. We detect a *live*
+ * legacy holder and refuse to start. Detection only: the legacy file is never
+ * read for migration, removed, or rewritten here. A stale legacy lock (missing,
+ * unreadable, or a dead PID) is ignored so a crashed old server does not block
+ * the upgrade.
+ */
+export async function assertNoLegacyAdminServer(
+  options: LegacyAdminServerCheckOptions,
+): Promise<void> {
+  const isAlive = options.isPidAlive ?? defaultIsPidAlive;
+  const holder = await readPidFile(options.legacyLockPath);
+  if (holder !== null && isAlive(holder)) {
+    throw new Error(
+      `a legacy dreamux serve process (pid ${holder}) still holds the pre-upgrade admin ` +
+        `socket lock at ${options.legacyLockPath}. This version moved the admin socket to ` +
+        '~/.dreamux/run/admin.sock, so the old and new servers cannot see each other and ' +
+        'could run at the same time. Stop the old daemon (dreamux daemon stop, or stop the ' +
+        'managed service) before starting this version. The legacy file is left untouched; ' +
+        'remove it manually only after the old server is stopped.',
+    );
   }
 }
 
