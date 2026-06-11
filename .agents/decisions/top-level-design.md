@@ -250,6 +250,7 @@ State and logs are server-owned. They are not operator-editable config.
           <name>.json          one TeamMate identity/checkpoint per file
         history/
           <name>.jsonl         forward-only TeamMate lifecycle history
+        sessions.jsonl         per-dispatcher session ledger (issue #182 PR-5)
         runtime/
           <name>/              runtime-private socket/config state
       team/
@@ -650,6 +651,23 @@ Old identities without owner/worktree metadata read as dispatcher-owned
 reuse-cwd records until the next lifecycle mutation rewrites them. A caller
 marked as `teammate` does not receive lifecycle tools, so TeamMates cannot
 recursively spawn or close TeamMates.
+
+Issue #182 PR-5 adds a durable **session ledger**: one per-dispatcher
+append-only `state/<dispatcher-id>/teammate/sessions.jsonl` capturing session
+lifecycle events (spawn/create, send, turn settled, close/dissolve) keyed by a
+stable `session_id` minted at spawn and carried on the identity (a nullable
+`session_id` field; pre-PR-5 records read null, a fresh spawn mints one, and a
+`send` that reopens a closed teammate reuses it — the key never re-keys to the
+runtime thread id). Each event denormalizes the recovery facts — repo, source
+cwd, runtime cwd, worktree slug/path/branch/base_ref, name, role, team_id,
+human-readable leader name, intent, runtime checkpoint kind + resumable
+session/thread id, status, close note — so a session is reconstructable from the
+ledger alone weeks later. No volatile socket path is ever recorded. Capture is
+best-effort (a write failure is logged, never failing a lifecycle verb) and the
+settle event is appended after reverse-delivery so it never perturbs completion
+timing. The bounded, filterable read surface that folds the ledger into session
+rows is built on this in PR-6; PR-5 lands only the capture plus an in-process
+`materializeSessions` view.
 
 ## Team Mode Core
 

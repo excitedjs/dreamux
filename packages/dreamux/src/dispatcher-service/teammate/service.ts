@@ -1,5 +1,5 @@
 import { Buffer } from 'node:buffer';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import type {
   AgentRuntime,
@@ -33,6 +33,7 @@ import { validateDispatcherId } from '../../state/dispatcher-id.js';
 import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
 import { TeamMateIdentityStore } from './identity-store.js';
 import { TeamMateRuntimeStateStore } from './runtime-state.js';
+import { TeamMateSessionLedger } from './session-ledger.js';
 import { WorktreeManager } from './worktree-manager.js';
 import {
   requireLifecycleText,
@@ -144,6 +145,7 @@ export interface ScopedCloseTeamMateInput {
 
 export class TeamMateAgentService {
   private readonly identities: TeamMateIdentityStore;
+  private readonly sessionLedger: TeamMateSessionLedger;
   private readonly worktrees = new WorktreeManager();
   private readonly live = new Map<string, LiveTeamMate>();
   private submissionSeq = 0;
@@ -152,6 +154,18 @@ export class TeamMateAgentService {
     this.identities = new TeamMateIdentityStore({
       warn: (message, fields) => opts.log.warn(fields ?? {}, message),
     });
+    this.sessionLedger = new TeamMateSessionLedger({
+      warn: (message, fields) => opts.log.warn(fields ?? {}, message),
+    });
+  }
+
+  /**
+   * Read-only access to the durable session ledger (issue #182 PR-5). The
+   * public, filterable read surface is built on this in PR-6; exposed now so
+   * tests and future read tools can materialize recovery rows.
+   */
+  sessions(): TeamMateSessionLedger {
+    return this.sessionLedger;
   }
 
   async spawn(input: SpawnTeamMateInput): Promise<TeamMateSpawnResult> {
@@ -210,6 +224,10 @@ export class TeamMateAgentService {
     }
     const owner = ownerForPrincipal(input.principal);
     const role = input.principal.kind === 'team_leader' ? 'team_member' : 'teammate';
+    // A spawn always starts a fresh runtime session (checkpoint is nulled
+    // below), so it mints a new session id — even when reusing a closed
+    // identity record (issue #182 PR-5).
+    const sessionId = randomUUID();
     let identity =
       existing ??
       (await this.identities.create({
@@ -219,6 +237,7 @@ export class TeamMateAgentService {
         role,
         teamId: owner.kind === 'team' ? owner.team_id : null,
         agentRuntime: agentRuntimeId,
+        sessionId,
         sourceCwd: workspace.sourceCwd,
         sourceRepo: workspace.sourceRepo,
         cwd: workspace.runtimeCwd,
@@ -229,6 +248,7 @@ export class TeamMateAgentService {
     this.assertPrincipalCanAccess(input.principal, identity);
     identity = await this.identities.update(identity, {
       agentRuntime: agentRuntimeId,
+      sessionId,
       sourceCwd: workspace.sourceCwd,
       sourceRepo: workspace.sourceRepo,
       cwd: workspace.runtimeCwd,
@@ -247,6 +267,12 @@ export class TeamMateAgentService {
       principal: input.principal,
     });
     await this.identities.appendHistory(live.state.current(), {
+      type: 'spawn',
+      prompt: input.prompt,
+      turnId: turn.turn_id ?? null,
+    });
+    await this.sessionLedger.append({
+      identity: live.state.current(),
       type: 'spawn',
       prompt: input.prompt,
       turnId: turn.turn_id ?? null,
@@ -288,6 +314,15 @@ export class TeamMateAgentService {
       prompt: input.prompt,
       turnId: turn.turn_id ?? null,
     });
+    // The send may have reopened a closed teammate from its checkpoint, so the
+    // session ledger continues the SAME session id carried on the identity
+    // (issue #182 PR-5); the optional intent update above is already reflected.
+    await this.sessionLedger.append({
+      identity: live.state.current(),
+      type: 'send',
+      prompt: input.prompt,
+      turnId: turn.turn_id ?? null,
+    });
     return { teammate: this.toStatus(live.state.current(), live.runtime), turn };
   }
 
@@ -320,6 +355,11 @@ export class TeamMateAgentService {
       worktree: await this.worktrees.cleanup(identity),
     });
     await this.identities.appendHistory(closed, {
+      type: 'close',
+      note: input.note,
+    });
+    await this.sessionLedger.append({
+      identity: closed,
       type: 'close',
       note: input.note,
     });
@@ -497,6 +537,8 @@ export class TeamMateAgentService {
       kind: 'dispatcher',
       dispatcher_id: input.dispatcherId,
     };
+    // A fresh TeamLeader session mints a new session id (issue #182 PR-5).
+    const sessionId = randomUUID();
     let identity =
       existing ??
       (await this.identities.create({
@@ -506,6 +548,7 @@ export class TeamMateAgentService {
         role: 'team_leader',
         teamId: input.teamId,
         agentRuntime: input.agentRuntime,
+        sessionId,
         sourceCwd: input.sourceCwd,
         sourceRepo: input.sourceRepo,
         cwd: input.runtimeCwd,
@@ -515,6 +558,7 @@ export class TeamMateAgentService {
       }));
     identity = await this.identities.update(identity, {
       agentRuntime: input.agentRuntime,
+      sessionId,
       sourceCwd: input.sourceCwd,
       sourceRepo: input.sourceRepo,
       cwd: input.runtimeCwd,
@@ -531,6 +575,12 @@ export class TeamMateAgentService {
     identity = live.state.current();
     const turn = await this.submitPrompt(input.dispatcherId, name, input.prompt);
     await this.identities.appendHistory(live.state.current(), {
+      type: 'spawn',
+      prompt: input.prompt,
+      turnId: turn.turn_id ?? null,
+    });
+    await this.sessionLedger.append({
+      identity: live.state.current(),
       type: 'spawn',
       prompt: input.prompt,
       turnId: turn.turn_id ?? null,
@@ -821,6 +871,19 @@ export class TeamMateAgentService {
         envelope,
         turnOrigins.get(settled.turnId) ?? null,
       );
+      // Capture the settled turn in the durable session ledger AFTER delivery
+      // (issue #182 PR-5), so adding capture never perturbs reverse-delivery
+      // timing: final assistant output + the runtime checkpoint/session id, read
+      // from the freshest identity so a thread id set after spawn is recorded.
+      const settledIdentity =
+        (await this.identities.get(dispatcherId, name).catch(() => null)) ?? identity;
+      await this.sessionLedger.append({
+        identity: settledIdentity,
+        type: 'settled',
+        turnId: settled.turnId,
+        assistant: result,
+        settleStatus: settled.status,
+      });
     } catch (err) {
       this.opts.log.warn(
         { dispatcher_id: dispatcherId, teammate: name, err: errInfo(err) },

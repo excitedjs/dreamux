@@ -29,6 +29,7 @@ export interface TeamMateIdentityCreateInput {
   role?: TeamMateRole;
   teamId?: string | null;
   agentRuntime: string;
+  sessionId?: string | null;
   sourceCwd: string;
   sourceRepo: string | null;
   cwd: string;
@@ -41,6 +42,7 @@ export interface TeamMateIdentityCreateInput {
 
 export interface TeamMateIdentityUpdateInput {
   agentRuntime?: string;
+  sessionId?: string | null;
   sourceCwd?: string;
   sourceRepo?: string | null;
   cwd?: string;
@@ -118,6 +120,7 @@ export class TeamMateIdentityStore {
       role: input.role ?? 'teammate',
       team_id: input.teamId ?? null,
       agent_runtime: input.agentRuntime,
+      session_id: input.sessionId ?? null,
       source_cwd: input.sourceCwd,
       source_repo: input.sourceRepo,
       cwd: input.cwd,
@@ -143,6 +146,7 @@ export class TeamMateIdentityStore {
     const updated: TeamMateIdentity = {
       ...identity,
       ...(input.agentRuntime !== undefined ? { agent_runtime: input.agentRuntime } : {}),
+      ...(input.sessionId !== undefined ? { session_id: input.sessionId } : {}),
       ...(input.sourceCwd !== undefined ? { source_cwd: input.sourceCwd } : {}),
       ...(input.sourceRepo !== undefined ? { source_repo: input.sourceRepo } : {}),
       ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
@@ -289,6 +293,10 @@ function readIdentity(
     runtime_cwd: runtimeCwd,
     worktree,
     intent: typeof record['intent'] === 'string' ? record['intent'] : null,
+    // Pre-#182-PR-5 records have no session id; read as null (a fresh spawn
+    // mints one). Forward-compatible: newer records carry the string.
+    session_id:
+      typeof record['session_id'] === 'string' ? record['session_id'] : null,
   };
 }
 

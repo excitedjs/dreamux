@@ -296,6 +296,20 @@ export function dispatcherTeamMateHistoryPath(
   );
 }
 
+/**
+ * Per-dispatcher append-only TeamMate/Team session ledger (issue #182 PR-5).
+ * One file per dispatcher — NOT one file per transient runtime session — so the
+ * file count stays bounded as teammates come and go. Each line is a lifecycle
+ * event (spawn / send / settled / close) keyed by a stable `session_id`; a
+ * future read surface (PR-6) materializes session rows by folding the events.
+ * Durable: it preserves the facts needed to reconstruct work weeks later (repo,
+ * cwd, branch/worktree, name/team id, runtime checkpoint/session id, intent,
+ * close note) and never records a volatile runtime socket path.
+ */
+export function dispatcherTeamMateSessionLedgerPath(id: string): string {
+  return join(dispatcherTeamMateDir(id), 'sessions.jsonl');
+}
+
 export function dispatcherTeamMateRuntimeDir(
   id: string,
   teammateName: string,
