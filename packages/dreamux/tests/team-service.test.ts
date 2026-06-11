@@ -9,7 +9,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AgentRuntimeProviderCatalog } from '../src/agent-runtime/index.js';
 import { TeamService } from '../src/dispatcher-service/team/service.js';
 import { TeamMateAgentService } from '../src/dispatcher-service/teammate/service.js';
-import { teamLeaderPrincipal } from '../src/dispatcher-service/teammate/types.js';
+import {
+  teamLeaderPrincipal,
+  teammatePrincipal,
+  teamServicePrincipal,
+} from '../src/dispatcher-service/teammate/types.js';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
 import { resetRuntimeConfig } from '../src/platform/paths.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
@@ -339,8 +343,12 @@ describe('TeamService', () => {
     expect(status.leader?.name).toBe(secondLeader);
 
     // Both leader identities persist; the old closed one is still addressable by
-    // its own concrete name (not reused, not deleted).
-    const oldLeader = await teammates.status('flow', firstLeader);
+    // its own concrete name (not reused, not deleted) through the Team-service
+    // authority — a TeamLeader is never on the dispatcher `teammate.*` surface.
+    const oldLeader = await teammates.statusScoped(
+      teamServicePrincipal({ dispatcherId: 'flow', teamId: 'alpha', leaderName: firstLeader }),
+      firstLeader,
+    );
     expect(oldLeader.status).toBe('closed');
     expect(oldLeader.name).toBe(firstLeader);
   });
@@ -436,12 +444,24 @@ describe('TeamService', () => {
     expect(member.teammate).not.toHaveProperty('role');
     expect(member.teammate).not.toHaveProperty('display_name');
     expect(provider.contexts.at(-1)?.cwd).toBe(workspace.runtimeCwd);
-    // Dispatcher-scoped list sees the two leaders + the ungrouped teammate.
-    // display_name is gone, so identify by the concrete-name base (the random
-    // 8-char suffix stripped).
+    // #199 Slice 4 leak prevention: the dispatcher's teammate.* sees ONLY the
+    // ordinary teammate it spawned — never a TeamLeader and never a Team member.
+    // (concrete names carry a random 8-char suffix; identify by the base.)
     const base = (name: string): string => name.replace(/-[a-z0-9]{8}$/, '');
     expect((await teammates.list('flow')).map((entry) => base(entry.name)).sort())
-      .toEqual(['solo', 'tl-alpha', 'tl-beta']);
+      .toEqual(['solo']);
+    // A TeamLeader is invisible to the dispatcher through status / last / history.
+    for (const leaderName of [alphaTeam.team.leader_name, betaTeam.team.leader_name]) {
+      await expect(teammates.status('flow', leaderName)).rejects.toThrow(/does not exist/);
+      await expect(teammates.last('flow', leaderName)).rejects.toThrow(/does not exist/);
+    }
+    // A Team member is invisible to the dispatcher too.
+    await expect(teammates.status('flow', builderName)).rejects.toThrow(/does not exist/);
+    expect(
+      (await teammates.history({ dispatcherId: 'flow' })).items.map((row) => base(row.name)),
+    ).toEqual(['solo']);
+    // A TeamLeader sees only the members of its OWN team — not the leaders, not
+    // the dispatcher's ordinary teammates, not another team's members.
     expect((await teammates.listScoped(alpha)).map((entry) => base(entry.name))).toEqual([
       'tm-builder',
     ]);
@@ -449,6 +469,11 @@ describe('TeamService', () => {
     await expect(teammates.statusScoped(beta, builderName)).rejects.toThrow(/does not exist/);
     await expect(
       teammates.sendScoped({ principal: beta, name: builderName, prompt: 'nope' }),
+    ).rejects.toThrow(/does not exist/);
+    // An ordinary TeamMate principal can read no peers at all.
+    expect(await teammates.listScoped(teammatePrincipal('flow'))).toEqual([]);
+    await expect(
+      teammates.statusScoped(teammatePrincipal('flow'), builderName),
     ).rejects.toThrow(/does not exist/);
     await expect(
       teammates.closeScoped({ principal: beta, name: builderName, note: 'nope' }),
@@ -481,7 +506,7 @@ describe('TeamService', () => {
         chatId: 'oc_existing_group',
         chatType: 'group',
       }),
-    ).resolves.toMatchObject({ team_id: 'gamma' });
+    ).resolves.toMatchObject({ team_name: 'gamma' });
     expect((await teams.status('flow', 'gamma')).binding).toEqual({
       provider: 'builtin:feishu',
       chat_id: 'oc_existing_group',

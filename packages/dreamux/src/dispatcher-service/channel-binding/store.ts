@@ -1,6 +1,6 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { readFile } from 'node:fs/promises';
 
+import { writeFileAtomic } from '../../platform/atomic-write.js';
 import { dispatcherChannelBindingsPath } from '../../platform/paths.js';
 
 export type ChannelProvider = 'builtin:feishu';
@@ -10,7 +10,8 @@ export interface ChannelBinding {
   provider: ChannelProvider;
   chat_id: string;
   chat_type: 'group';
-  team_id: string;
+  /** The concrete Team key the chat is bound to (issue #199 Slice 4). */
+  team_name: string;
   leader_name: string;
   active: boolean;
   created_at: number;
@@ -28,7 +29,7 @@ export interface BindChannelInput {
   provider: ChannelProvider;
   chatId: string;
   chatType: ChannelChatType;
-  teamId: string;
+  teamName: string;
   leaderName: string;
 }
 
@@ -50,7 +51,7 @@ export class ChannelBindingStore {
       provider: input.provider,
       chat_id: input.chatId,
       chat_type: input.chatType,
-      team_id: input.teamId,
+      team_name: input.teamName,
       leader_name: input.leaderName,
       active: true,
       created_at: now,
@@ -123,8 +124,7 @@ export class ChannelBindingStore {
     file: ChannelBindingFile,
   ): Promise<void> {
     const path = dispatcherChannelBindingsPath(dispatcherId);
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, `${JSON.stringify(file, null, 2)}\n`, { mode: 0o600 });
+    await writeFileAtomic(path, `${JSON.stringify(file, null, 2)}\n`);
   }
 }
 

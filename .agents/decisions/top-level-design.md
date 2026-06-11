@@ -798,13 +798,23 @@ A TeamLeader is a TeamMate identity with `role:
 identities with `role: "team_member"` and `owner.kind: "team"`.
 
 The same `teammate` MCP surface is caller-scoped by server-derived principal,
-not by tool arguments. Dispatcher callers see dispatcher-owned TeamMates and
-TeamLeaders. TeamLeader callers see only members owned by their own team and
-spawn members into the shared Team managed worktree. Ordinary TeamMate callers
-still do not receive lifecycle tools.
+not by tool arguments, through a SINGLE visibility predicate (`principalCanAccess`)
+enforced at exactly two chokepoints — a scoped list read and a scoped single read
+— so no read site can widen visibility independently (issue #199 Slice 4). The
+rules: a dispatcher caller sees ONLY the ordinary TeamMates it directly spawned
+(`role: "teammate"`) — NOT the TeamLeaders (which are dispatcher-owned but
+`role: "team_leader"`) and NOT Team members; a TeamLeader caller sees only the
+members of its own Team; an ordinary TeamMate caller sees no peers (and gets no
+lifecycle tools). A dispatcher inspects its Teams — including the compact leader
+and member-count summary — through the `team.*` surface, never through
+`teammate.*`. The Team service controls its own TeamLeader and members through an
+INTERNAL `team_service` authority (constructed only by the Team service, never
+derived from a public caller), since a TeamLeader is reachable by no public
+principal. TeamLeader members spawn into the shared Team managed worktree.
 
-Channel binding is persisted under `state/<dispatcher-id>/team/` and is scoped
-to group chats only. Bound Feishu group inbound is gated and formatted by the
+Channel binding is persisted as JSON under
+`state/<dispatcher-id>/team/channel-bindings.json`, keyed by the concrete
+`team_name` (issue #199 Slice 4), and is scoped to group chats only. Bound Feishu group inbound is gated and formatted by the
 Feishu channel exactly as before, then routed by Dispatcher Service to the
 owning TeamLeader runtime. Unbound and P2P inbound still route to the
 dispatcher. `transfer_channel_back` deactivates a binding; `dissolve` transfers

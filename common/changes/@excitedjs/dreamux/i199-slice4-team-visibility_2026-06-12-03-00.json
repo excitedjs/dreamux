@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "BREAKING: Team visibility closeout (issue #199 Slice 4). The `teammate.*` surface no longer leaks TeamLeaders or Team members to the dispatcher: visibility is enforced by one predicate at two scoped read chokepoints, so a dispatcher sees only the ordinary TeamMates it spawned, a TeamLeader sees only its own members, and an ordinary TeamMate sees no peers. A dispatcher inspects Teams through `team.*` compact summaries. The persisted channel binding key is renamed from `team_id` to `team_name` in `state/<dispatcher>/team/channel-bindings.json`. 0.x is fail-loud + rebuild (no automatic migration). Rebuild: delete `~/.dreamux/state/<dispatcher>/team/channel-bindings.json` after upgrading and re-bind any Team Feishu groups via `team.bind_group`.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

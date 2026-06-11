@@ -63,6 +63,7 @@ import {
   type TeamMateWorktreeRequest,
   dispatcherPrincipal,
   principalDispatcherId,
+  teamServicePrincipal,
 } from './types.js';
 
 interface LiveTeamMate {
@@ -421,12 +422,22 @@ export class TeamMateAgentService {
 
   async listScoped(principal: TeamMateCallerPrincipal): Promise<TeamMateRuntimeStatus[]> {
     const dispatcherId = principalDispatcherId(principal);
-    const identities = await this.identities.list(dispatcherId);
-    return identities
-      .filter((identity) => principalCanAccess(principal, identity))
-      .map((identity) =>
-        this.toStatus(identity, this.live.get(liveKey(dispatcherId, identity.name))?.runtime ?? null),
-      );
+    return (await this.scopedList(principal)).map((identity) =>
+      this.toStatus(identity, this.live.get(liveKey(dispatcherId, identity.name))?.runtime ?? null),
+    );
+  }
+
+  /**
+   * The scoped LIST chokepoint (issue #199 Slice 4): the only place a list of
+   * records is read for the `teammate.*` surface. Reads every record for the
+   * principal's dispatcher and keeps just the ones {@link principalCanAccess}
+   * admits, so list/history can never widen visibility independently.
+   */
+  private async scopedList(
+    principal: TeamMateCallerPrincipal,
+  ): Promise<TeamMateIdentity[]> {
+    const identities = await this.identities.list(principalDispatcherId(principal));
+    return identities.filter((identity) => principalCanAccess(principal, identity));
   }
 
   async status(
@@ -464,19 +475,16 @@ export class TeamMateAgentService {
       principal: TeamMateCallerPrincipal;
     },
   ): Promise<TeamMateHistoryResult> {
-    const dispatcherId = principalDispatcherId(input.principal);
     // #199 Slice 3: `history` reads the per-name RECORDS only — each record
     // carries the rolling recovery summary (turn count, last-seen, previews), so
     // there is no turn/event fold here. Closed teammates keep their record and
     // stay searchable; live-only facts (runtime status) come from the live map.
-    const identities = await this.identities.list(dispatcherId);
+    // #199 Slice 4: visibility is enforced by the same scoped-list chokepoint as
+    // `list`, so `history` can never surface a record `list` would hide.
     const rows: TeamMateRecordRow[] = [];
-    for (const identity of identities) {
+    for (const identity of await this.scopedList(input.principal)) {
       const row = this.toRecordRow(identity);
-      if (
-        principalCanAccess(input.principal, identity) &&
-        this.matchesRecordQuery(row, input)
-      ) {
+      if (this.matchesRecordQuery(row, input)) {
         rows.push(row);
       }
     }
@@ -685,7 +693,16 @@ export class TeamMateAgentService {
     });
     const live = await this.startRuntime(input.dispatcherId, identity, provider, agent);
     identity = live.state.current();
-    const turn = await this.submitPrompt(input.dispatcherId, name, input.prompt);
+    // The TeamLeader is not reachable through the public dispatcher principal
+    // (issue #199 Slice 4); the bootstrap turn submits under the internal
+    // Team-service authority over this leader.
+    const turn = await this.submitPrompt(input.dispatcherId, name, input.prompt, {
+      principal: teamServicePrincipal({
+        dispatcherId: input.dispatcherId,
+        teamId: input.teamId,
+        leaderName: name,
+      }),
+    });
     await this.recordSubmittedTurn(input.dispatcherId, live, {
       turnId: turn.turn_id ?? null,
       turnOrigin: 'dispatcher',
@@ -1007,6 +1024,13 @@ export class TeamMateAgentService {
     }
   }
 
+  /**
+   * The scoped single-read chokepoint (issue #199 Slice 4): the only place a
+   * record is read by name for the `teammate.*` surface (status / last / send /
+   * close all resolve their target here). An out-of-scope record reports the
+   * same "does not exist" as a missing one, so visibility never leaks through an
+   * existence oracle.
+   */
   private async mustIdentity(
     dispatcherId: string,
     name: string,
@@ -1370,6 +1394,21 @@ function ownerForPrincipal(principal: TeamMateCallerPrincipal): TeamMateIdentity
   return { kind: 'dispatcher', dispatcher_id: principal.dispatcherId };
 }
 
+/**
+ * The single visibility predicate for the `teammate.*` surface (issue #199
+ * Slice 4). Every scoped read enforces it through exactly one of two
+ * chokepoints — {@link TeamMateAgentService.scopedList} for list reads and
+ * {@link TeamMateAgentService.mustIdentity} for single reads — so the rules
+ * below are applied consistently and cannot be bypassed by a new read site.
+ *
+ * - A dispatcher sees only the ordinary TeamMates it directly spawned: a
+ *   dispatcher-owned record with `role === 'teammate'`. A TeamLeader is also
+ *   dispatcher-owned (its `owner.kind` is `dispatcher`), so `role` is what
+ *   keeps a leader — and every Team member — out of the dispatcher's view; the
+ *   dispatcher inspects Teams through the `team.*` surface instead.
+ * - A TeamLeader sees only the members of its own Team.
+ * - An ordinary TeamMate sees nothing (it cannot read peers).
+ */
 function principalCanAccess(
   principal: TeamMateCallerPrincipal,
   identity: TeamMateIdentity,
@@ -1377,12 +1416,24 @@ function principalCanAccess(
   if (principal.kind === 'dispatcher') {
     return (
       identity.dispatcher_id === principal.dispatcherId &&
-      identity.owner.kind === 'dispatcher'
+      identity.owner.kind === 'dispatcher' &&
+      identity.role === 'teammate'
     );
   }
   if (principal.kind === 'team_leader') {
     return (
       identity.dispatcher_id === principal.dispatcherId &&
+      identity.owner.kind === 'team' &&
+      identity.owner.team_id === principal.teamId &&
+      identity.role === 'team_member'
+    );
+  }
+  if (principal.kind === 'team_service') {
+    // Internal Team-service authority: its own TeamLeader (by concrete name) plus
+    // the members of its Team. Never derived from a public caller.
+    if (identity.dispatcher_id !== principal.dispatcherId) return false;
+    if (identity.role === 'team_leader') return identity.name === principal.leaderName;
+    return (
       identity.owner.kind === 'team' &&
       identity.owner.team_id === principal.teamId &&
       identity.role === 'team_member'

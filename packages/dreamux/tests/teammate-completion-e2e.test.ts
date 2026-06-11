@@ -353,7 +353,7 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
     await facade.shutdown();
   });
 
-  it('pushes a dispatcher-initiated TeamLeader turn back to the dispatcher (not pull-only)', async () => {
+  it('pushes the dispatcher-initiated bootstrap TeamLeader completion to the dispatcher; the dispatcher cannot send to the leader directly (#199 Slice 4)', async () => {
     await initGitRepo(workspace(root));
     const descriptor = createBuiltinProviderRegistry().resolve('builtin:codex');
     const provider = new FakeProvider(descriptor);
@@ -370,27 +370,26 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
 
     const dispatcherRuntime = provider.runtimes[0]!;
     const leaderRuntime = provider.runtimes[1]!;
+    const leaderName = created.team.leader_name;
+    // The create bootstrap turn is dispatcher-initiated (origin 'dispatcher'), so
+    // settling it pushes the completion back to the dispatcher — not pull-only.
     const bootstrapTurnId =
       created.turn.status === 'submitted' ? created.turn.turn_id : 'unreachable';
     leaderRuntime.settle('completed', bootstrapTurnId);
     await flush();
-
-    const leaderName = created.team.leader_name;
-    const sent = await facade.sendTeamMate({
-      dispatcherId: 'flow',
-      name: leaderName,
-      prompt: 'Status check from the dispatcher.',
-    });
-    const turnId =
-      sent.turn.status === 'submitted' ? sent.turn.turn_id : 'unreachable';
-    leaderRuntime.settle('completed', turnId);
-    await flush();
-
-    // A dispatcher-initiated turn to the leader returns to the dispatcher like
-    // any teammate (it is not pull-only).
     expect(dispatcherRuntime.delivered.map((env) => env.id)).toContain(
-      `${leaderName}:${turnId}`,
+      `${leaderName}:${bootstrapTurnId}`,
     );
+
+    // #199 Slice 4: the dispatcher cannot reach the TeamLeader through
+    // teammate.send — a TeamLeader is not on the dispatcher `teammate.*` surface.
+    await expect(
+      facade.sendTeamMate({
+        dispatcherId: 'flow',
+        name: leaderName,
+        prompt: 'Status check from the dispatcher.',
+      }),
+    ).rejects.toThrow(/does not exist/);
 
     await facade.shutdown();
   });
@@ -469,8 +468,9 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
     teammateRuntime.settle('completed', turnId);
     await flush();
 
-    // #188: last reads the settled turn from the durable ledger by concrete
-    // name. The settled-turn append trails reverse delivery, so wait for it.
+    // #188/#199: last reads the settled turn from the per-name turns archive by
+    // concrete name. The settled-turn capture trails reverse delivery, so wait
+    // for it (the record write is atomic, so this concurrent read is safe).
     await waitFor(
       async () => (await facade.getTeamMateLast('flow', reviewer)).returned_turns === 1,
     );

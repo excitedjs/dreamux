@@ -1,6 +1,6 @@
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { readFile, readdir } from 'node:fs/promises';
 
+import { writeFileAtomic } from '../../platform/atomic-write.js';
 import {
   dispatcherTeamRecordPath,
   dispatcherTeamRecordsDir,
@@ -83,8 +83,7 @@ export class TeamStore {
 
   private async write(team: TeamRecord): Promise<void> {
     const path = dispatcherTeamRecordPath(team.dispatcher_id, team.team_id);
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, `${JSON.stringify(team, null, 2)}\n`, { mode: 0o600 });
+    await writeFileAtomic(path, `${JSON.stringify(team, null, 2)}\n`);
   }
 }
 

@@ -37,6 +37,16 @@ is wiring only — all per-dispatcher orchestration lives here.
   teammate/team-leader agent is simply not injected the "spawn teammate" tool;
   role differentiation is done by the MCP tool set + system prompt this service
   injects at launch.
+- **`teammate.*` visibility is one predicate at two chokepoints (issue #199
+  Slice 4).** `principalCanAccess` is the sole rule and is applied ONLY in
+  `scopedList` (list reads) and `mustIdentity` (single reads), so no read site
+  can widen visibility. A dispatcher principal sees only the ordinary TeamMates
+  it spawned (`role: 'teammate'`) — never a TeamLeader (dispatcher-owned but
+  `role: 'team_leader'`) or a Team member; a `team_leader` principal sees only
+  its own members; a `teammate` principal sees nothing. The Team service reaches
+  its own leader + members through the INTERNAL `team_service` principal (built
+  only by the Team service, never from a public caller); a dispatcher inspects
+  Teams via `team.*` compact summaries, never `teammate.*`.
 - **Teammate storage is the per-name record + the per-name turns archive
   (issue #199 Slice 3).** `teammate/records/<name>.json` is the primary record —
   identity plus a rolling recovery summary (turn_count / last_seen_at / last
