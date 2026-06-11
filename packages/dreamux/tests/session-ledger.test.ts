@@ -487,7 +487,7 @@ describe('session ledger capture (integration through TeamMateAgentService)', ()
     const repo = await initGitRepo(join(root, 'team-repo'));
     const { service } = buildService();
 
-    const leader = await service.createTeamLeader({
+    await service.createTeamLeader({
       dispatcherId: 'flow',
       teamId: 'alpha',
       name: 'alpha-leader',
@@ -523,7 +523,16 @@ describe('session ledger capture (integration through TeamMateAgentService)', ()
         sourceCwd: repo,
         sourceRepo: repo,
         runtimeCwd: repo,
-        worktree: leader.teammate.worktree,
+        worktree: {
+          mode: 'reuse-cwd',
+          slug: null,
+          path: repo,
+          branch: null,
+          base_ref: null,
+          cleanup: 'keep',
+          cleanup_state: 'not-managed',
+          cleanup_error: null,
+        },
       },
     });
 
@@ -751,7 +760,9 @@ describe('session ledger capture (integration through TeamMateAgentService)', ()
     );
 
     const last = await service.last('flow', 'reviewer-aaaaaaaa', 5);
-    expect(last.session_id).toBe('sess-A');
+    // #199 Slice 2: last no longer surfaces the internal ledger session_id; the
+    // session isolation it guaranteed is still asserted by the turn set below
+    // (only sess-A turns, no sess-B bleed).
     // Append order, not event_id order: turn-1 before turn-2, no sess-B bleed.
     expect(last.turns.map((t) => t.turn_id)).toEqual(['turn-1', 'turn-2']);
     // The later duplicate settled for turn-1 wins (override by append order).

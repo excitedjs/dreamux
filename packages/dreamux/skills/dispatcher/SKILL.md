@@ -30,7 +30,10 @@ session or polling a process.
   concrete, never-reused name and returns it as `teammate.name`.
   **Use that returned concrete name for every later `send`/`status`/`last`/
   `close`.** `intent` is **required**: a short recovery subject for the session ledger
-  (what this TeamMate is for). When selecting a runtime, pass one of
+  (what this TeamMate is for). The work directory is an optional `repo` object
+  (issue #199 Slice 2) — `{ mode: reuse-cwd | managed, path?, base_ref?, branch?,
+  slug?, cleanup? }`; omit it to work in the dispatcher's default directory, pass
+  `mode: managed` for an isolated worktree. When selecting a runtime, pass one of
   `get_capabilities.agent_runtimes[].id` as `agent_runtime`; do not pass provider
   refs such as `builtin:*`.
 - `send` — submit a turn to a TeamMate by its concrete name. If it is not live —
@@ -44,10 +47,13 @@ session or polling a process.
 
 **Watch and collect — no polling.**
 
-- `list` — this dispatcher's TeamMates: concrete name, status, and
-  repo/cwd/session essentials.
-- `status` — one TeamMate's current state by concrete name: agent
-  runtime id, session, cwd/repo, and close metadata.
+- `list` — this dispatcher's TeamMates: concrete name, owner, status, agent
+  runtime, intent, and a compact `repo` view.
+- `status` — one TeamMate's current state by concrete name: owner, agent
+  runtime id, the runtime-native `session_id` (the thread id, null until known),
+  a compact `repo` view, and close metadata. The public role/team_id, the
+  Dreamux-made session id, `display_name`, and the runtime `checkpoint` are no
+  longer surfaced (issue #199 Slice 2) — `owner` is the ownership authority.
 - `history` — the durable recovery search for this dispatcher: a compact list
   keyed by concrete name (filter by `name` / `status` / `agent_runtime` / `repo`
   / `grep` / `since` / `until`, paginate with `limit` / `cursor`), returning
@@ -74,17 +80,21 @@ lifecycle. It is addressed by **`team_name`** (the concrete key you create with)
 mirroring the TeamMate concrete-name model. Team work still runs through agents;
 do not inspect the target repo directly from the dispatcher.
 
-- `create` — create a Team and TeamLeader. Requires `team_name`, `repo_cwd`,
+- `create` — create a Team and TeamLeader. Requires `team_name`,
   `leader_agent_runtime`, and `intent` (the Team's recovery subject); no default
-  leader runtime is inferred. Optionally pass `bind_group: { chat_id }` to bind
-  an EXISTING Feishu group chat to the new Team at create time. (The former
-  `create_group` tool — create a brand-new Feishu group and invite users — was
-  retired; bind an existing group instead.)
+  leader runtime is inferred. The work directory is the same optional `repo`
+  object as `teammate.spawn` (issue #199 Slice 2; omit it for the default
+  directory with a managed worktree). Optionally pass `bind_group: { chat_id }`
+  to bind an EXISTING Feishu group chat to the new Team at create time. (The
+  former `create_group` tool — create a brand-new Feishu group and invite users —
+  was retired; bind an existing group instead.)
 - `list` — compact scan rows for current Teams (team_name, status, intent, repo
   signal, leader name/state, member count, bound group marker, timestamps). Keep
   it cheap and scannable; reach for `status` for detail.
-- `status` — one Team's detailed current state by `team_name`: the Team record,
-  the TeamLeader status, member count, and the active bound group.
+- `status` — one Team's detailed current state by `team_name`: the public team
+  view (keyed by `team_name`, no `team_id` / machine-local `repo_cwd` /
+  `worktree`; issue #199 Slice 2), the TeamLeader status, member count, and the
+  active bound group.
 - `history` — the durable Team recovery search (closed Teams included): filter by
   `team_name`, `status`, `repo`, `intent` text (`grep`), and time range
   (`since`/`until`), with `limit`/`cursor`, returning `{ items, next_cursor }`.

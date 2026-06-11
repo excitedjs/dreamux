@@ -138,19 +138,26 @@ export const adminMethods: Record<string, AdminHandler> = {
     const caller = callerPrincipal(id, params);
     const name = mustString(params, 'name_prefix');
     const prompt = mustString(params, 'prompt');
+    // Required recovery subject (issue #182 PR-3) — validated before any
+    // work-directory resolution so a malformed request fails fast.
+    const intent = mustNonEmptyString(params, 'intent');
     const agentRuntime = optionalString(params, 'agent_runtime');
-    const cwd = caller.kind === 'team_leader' ? optionalString(params, 'cwd') : mustString(params, 'cwd');
     if (caller.kind === 'team_leader' && params?.['owner'] !== undefined) {
       throw new AdminError('BAD_REQUEST', 'TeamMate owner and team_id are server-derived for team_leader callers');
     }
-    const worktree =
-      caller.kind === 'team_leader' ? null : optionalWorktreeRequest(params, 'worktree');
+    // #199 Slice 2: dispatcher callers pass an optional `repo` object; a
+    // team_leader member always inherits the shared team workspace and takes no
+    // repo input. Omitted repo → the dispatcher's default workspace, reuse-cwd.
+    const repo = caller.kind === 'team_leader' ? null : repoRequest(params, 'repo');
+    const cwd =
+      caller.kind === 'team_leader'
+        ? null
+        : repo?.cwd ?? (await server.dispatcherService.teammates.dispatcherWorkspace(id));
+    const worktree = caller.kind === 'team_leader' ? null : repo?.worktree ?? null;
     const sharedWorkspace =
       caller.kind === 'team_leader'
         ? await server.dispatcherService.teams.sharedWorkspace(id, caller.teamId)
         : undefined;
-    // Required recovery subject (issue #182 PR-3).
-    const intent = mustNonEmptyString(params, 'intent');
     try {
       return await server.dispatcherService.teammates.spawnScoped({
         principal: caller,
@@ -257,11 +264,17 @@ export const adminMethods: Record<string, AdminHandler> = {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     const name = mustString(params, 'team_name');
-    const repoCwd = mustString(params, 'repo_cwd');
     const leaderAgentRuntime = mustString(params, 'leader_agent_runtime');
-    const worktree = optionalWorktreeRequest(params, 'worktree');
-    // Required recovery subject (issue #182 PR-3).
+    // Required recovery subject (issue #182 PR-3) — validated before any
+    // work-directory resolution so a malformed request fails fast.
     const intent = mustNonEmptyString(params, 'intent');
+    // #199 Slice 2: optional `repo` object replaces the required `repo_cwd`.
+    // Omitted → the dispatcher's default workspace; a Team with no explicit
+    // worktree request keeps the managed-worktree default.
+    const repo = repoRequest(params, 'repo');
+    const repoCwd =
+      repo?.cwd ?? (await server.dispatcherService.teammates.dispatcherWorkspace(id));
+    const worktree = repo?.worktree ?? null;
     const prompt = optionalString(params, 'prompt');
     const bindGroup = optionalBindGroup(params, 'bind_group');
     try {
@@ -473,10 +486,18 @@ function optionalString(
   return v;
 }
 
-function optionalWorktreeRequest(
+/**
+ * Map the public `repo` input object (issue #199 Slice 2) onto the internal
+ * cwd + worktree request. Returns null when no `repo` was supplied so the caller
+ * applies the surface's own default (dispatcher workspace, and reuse-cwd for a
+ * teammate / managed for a Team). The worktree mode is always explicit when a
+ * `repo` is supplied, so a `reuse-cwd` request is never reinterpreted as the
+ * Team's managed default.
+ */
+function repoRequest(
   params: Record<string, unknown> | undefined,
   key: string,
-): TeamMateWorktreeRequest | null {
+): { cwd: string | null; worktree: TeamMateWorktreeRequest | null } | null {
   if (params === undefined) return null;
   const value = params[key];
   if (value === undefined || value === null) return null;
@@ -491,23 +512,26 @@ function optionalWorktreeRequest(
       `param '${key}.mode' must be 'reuse-cwd' or 'managed'`,
     );
   }
+  const cwd = optionalString(obj, 'path');
+  if (mode === 'reuse-cwd') {
+    return { cwd, worktree: { mode: 'reuse-cwd' } };
+  }
   const cleanup = optionalString(obj, 'cleanup');
-  if (
-    cleanup !== null &&
-    cleanup !== 'keep' &&
-    cleanup !== 'delete-on-close'
-  ) {
+  if (cleanup !== null && cleanup !== 'keep' && cleanup !== 'delete-on-close') {
     throw new AdminError(
       'BAD_REQUEST',
       `param '${key}.cleanup' must be 'keep' or 'delete-on-close'`,
     );
   }
   return {
-    mode,
-    ...optionalStringProp(obj, 'slug'),
-    ...optionalStringProp(obj, 'base_ref'),
-    ...optionalStringProp(obj, 'branch'),
-    ...(cleanup !== null ? { cleanup } : {}),
+    cwd,
+    worktree: {
+      mode,
+      ...optionalStringProp(obj, 'slug'),
+      ...optionalStringProp(obj, 'base_ref'),
+      ...optionalStringProp(obj, 'branch'),
+      ...(cleanup !== null ? { cleanup } : {}),
+    },
   };
 }
 

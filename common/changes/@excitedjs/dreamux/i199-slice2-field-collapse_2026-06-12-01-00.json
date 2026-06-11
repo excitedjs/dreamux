@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Public MCP field collapse + repo input (issue #199 Slice 2): the shared teammate spawn/send/status/list output drops display_name, public role, team_id, and the runtime checkpoint; session_id now means the runtime-native thread id (early null acceptable), and the source_cwd/cwd/runtime_cwd/worktree family collapses into one compact `repo` view. team.status returns a team_name-keyed view without the duplicate team_id or machine-local repo_cwd/runtime_cwd/worktree. teammate.last no longer surfaces the internal ledger session_id. The public work-directory INPUT for teammate.spawn and team.create is now a single optional `repo` object ({ mode: reuse-cwd | managed, path?, base_ref?, branch?, slug?, cleanup? }; omitted uses the dispatcher's default directory), replacing the old cwd / repo_cwd / worktree inputs. The Dreamux-minted session ledger key is kept internally as a transitional detail and is retired with the Slice 3 records/turns storage. The BREAKING/Rebuild upgrade note for this Epic lands in the final slice.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

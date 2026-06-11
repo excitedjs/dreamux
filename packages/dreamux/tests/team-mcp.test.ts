@@ -159,7 +159,9 @@ describe('team-mcp stdio shim', () => {
           name: 'create',
           arguments: {
             team_name: 'alpha',
-            repo_cwd: '/repo',
+            // #199 Slice 2: the public work-dir input is the optional `repo`
+            // object (replacing the old required `repo_cwd`).
+            repo: { mode: 'reuse-cwd', path: '/repo' },
             leader_agent_runtime: 'codex',
             intent: 'ship it',
             bind_group: { chat_id: 'chat-1' },
@@ -170,8 +172,10 @@ describe('team-mcp stdio shim', () => {
       expect(admin.requests[0]?.method).toBe('mcp.team.create');
       expect(admin.requests[0]?.params).toMatchObject({
         team_name: 'alpha',
+        repo: { mode: 'reuse-cwd', path: '/repo' },
         bind_group: { chat_id: 'chat-1' },
       });
+      expect(admin.requests[0]?.params).not.toHaveProperty('repo_cwd');
       input.end();
       await run;
     } finally {

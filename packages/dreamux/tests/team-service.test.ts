@@ -176,22 +176,29 @@ describe('TeamService', () => {
     // #188: the Team's leader_name is a concrete, never-reused `tl-` name; the
     // human-readable `${teamId}-leader` survives only as the leader display name.
     expect(created.team.leader_name).toMatch(/^tl-alpha-[a-z0-9]{8}$/);
+    // #199 Slice 2: the public team view is keyed by team_name and drops the
+    // duplicate team_id and the machine-local repo_cwd / runtime_cwd / worktree.
     expect(created.team).toMatchObject({
-      team_id: 'alpha',
+      team_name: 'alpha',
       leader_agent_runtime: 'flow',
       status: 'running',
-      repo_cwd: repo,
       source_repo: repo,
     });
+    expect(created.team).not.toHaveProperty('team_id');
+    expect(created.team).not.toHaveProperty('repo_cwd');
+    expect(created.team).not.toHaveProperty('runtime_cwd');
+    // The leader carries the collapsed `repo` view; owner is the sole ownership
+    // authority (no public role/team_id/display_name on the teammate status).
     expect(created.leader).toMatchObject({
       name: created.team.leader_name,
-      display_name: 'alpha-leader',
-      role: 'team_leader',
       owner: { kind: 'dispatcher', dispatcher_id: 'flow' },
-      team_id: 'alpha',
     });
-    expect(existsSync(created.team.runtime_cwd)).toBe(true);
-    // Required intent (issue #182 PR-3) is persisted on the Team record.
+    expect(created.leader).not.toHaveProperty('display_name');
+    expect(created.leader).not.toHaveProperty('role');
+    expect(created.leader).not.toHaveProperty('team_id');
+    // The leader runs in the prepared team worktree (its repo.path exists).
+    expect(existsSync(created.leader!.repo.path)).toBe(true);
+    // Required intent (issue #182 PR-3) is persisted and surfaced on the view.
     expect(created.team.intent).toBe('ship alpha');
     // #182 PR-7: list returns compact scan rows, not summaries. #199 Slice 1:
     // rows are keyed by the concrete team_name; the duplicate team_id and the
@@ -211,7 +218,7 @@ describe('TeamService', () => {
     expect((await teams.ledger('flow', 'alpha')).events.map((event) => event.type)).toEqual(['create']);
 
     const reloaded = new TeamService({ teammates });
-    expect((await reloaded.status('flow', 'alpha')).team.team_id).toBe('alpha');
+    expect((await reloaded.status('flow', 'alpha')).team.team_name).toBe('alpha');
 
     const dissolved = await reloaded.dissolve({
       dispatcherId: 'flow',
@@ -420,23 +427,29 @@ describe('TeamService', () => {
     // A Team member gets the `tm-` rule (#188).
     expect(builderName).toMatch(/^tm-builder-[a-z0-9]{8}$/);
 
+    // #199 Slice 2: owner is the sole ownership/visibility authority (no public
+    // role); the work directory is reported through the collapsed `repo` view.
     expect(member.teammate).toMatchObject({
-      role: 'team_member',
-      display_name: 'builder',
       owner: {
         kind: 'team',
         dispatcher_id: 'flow',
         team_id: 'alpha',
         leader_name: alphaTeam.team.leader_name,
       },
-      runtime_cwd: workspace.runtimeCwd,
+      repo: { path: workspace.runtimeCwd },
     });
+    expect(member.teammate).not.toHaveProperty('role');
+    expect(member.teammate).not.toHaveProperty('display_name');
     expect(provider.contexts.at(-1)?.cwd).toBe(workspace.runtimeCwd);
-    // Dispatcher-scoped list sees the two leaders + the ungrouped teammate, by
-    // their display names (concrete names carry random suffixes).
-    expect((await teammates.list('flow')).map((entry) => entry.display_name).sort())
-      .toEqual(['alpha-leader', 'beta-leader', 'solo']);
-    expect((await teammates.listScoped(alpha)).map((entry) => entry.display_name)).toEqual(['builder']);
+    // Dispatcher-scoped list sees the two leaders + the ungrouped teammate.
+    // display_name is gone, so identify by the concrete-name base (the random
+    // 8-char suffix stripped).
+    const base = (name: string): string => name.replace(/-[a-z0-9]{8}$/, '');
+    expect((await teammates.list('flow')).map((entry) => base(entry.name)).sort())
+      .toEqual(['solo', 'tl-alpha', 'tl-beta']);
+    expect((await teammates.listScoped(alpha)).map((entry) => base(entry.name))).toEqual([
+      'tm-builder',
+    ]);
     expect(await teammates.listScoped(beta)).toEqual([]);
     await expect(teammates.statusScoped(beta, builderName)).rejects.toThrow(/does not exist/);
     await expect(

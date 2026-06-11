@@ -42,7 +42,10 @@ describe('admin layer enforces required non-empty intent/note (#182 PR-3)', () =
   });
 
   it('rejects teammate.spawn with missing or empty intent', async () => {
-    const base = { dispatcher_id: 'flow', name: 'a', prompt: 'go', cwd: '/w' };
+    // #199 Slice 1/2: spawn takes name_prefix and no required cwd. intent is
+    // validated before any work-directory resolution, so the stub server here
+    // never needs a dispatcherWorkspace.
+    const base = { dispatcher_id: 'flow', name_prefix: 'a', prompt: 'go' };
     await expectBadRequest('mcp.teammate.spawn', base);
     await expectBadRequest('mcp.teammate.spawn', { ...base, intent: '' });
   });
@@ -54,10 +57,10 @@ describe('admin layer enforces required non-empty intent/note (#182 PR-3)', () =
   });
 
   it('rejects team.create with missing or empty intent', async () => {
+    // #199 Slice 1/2: create takes team_name and an optional repo (no repo_cwd).
     const base = {
       dispatcher_id: 'flow',
-      name: 'alpha',
-      repo_cwd: '/repo',
+      team_name: 'alpha',
       leader_agent_runtime: 'codex',
     };
     await expectBadRequest('mcp.team.create', base);
@@ -65,8 +68,8 @@ describe('admin layer enforces required non-empty intent/note (#182 PR-3)', () =
   });
 
   it('rejects team.dissolve with missing or empty note', async () => {
-    // #182 PR-7: Team lifecycle is addressed by `name`.
-    const base = { dispatcher_id: 'flow', name: 'alpha' };
+    // #199 Slice 1: Team lifecycle is addressed by `team_name`.
+    const base = { dispatcher_id: 'flow', team_name: 'alpha' };
     await expectBadRequest('mcp.team.dissolve', base);
     await expectBadRequest('mcp.team.dissolve', { ...base, note: '' });
   });

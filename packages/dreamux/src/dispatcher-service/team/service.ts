@@ -24,6 +24,7 @@ import type {
   TeamRecord,
   TeamSummary,
   TeamTransferChannelBackInput,
+  TeamView,
 } from './types.js';
 import { validateTeamId } from './types.js';
 import type { TeamMateIdentityStatus } from '../teammate/types.js';
@@ -149,7 +150,7 @@ export class TeamService {
       }
     }
     return {
-      team,
+      team: teamView(team),
       leader: leader.teammate,
       member_count: await this.memberCount(team),
       binding,
@@ -383,7 +384,7 @@ export class TeamService {
       leader = null;
     }
     return {
-      team,
+      team: teamView(team),
       leader,
       member_count: await this.memberCount(team),
       binding: await this.activeGroupBinding(team),
@@ -466,6 +467,26 @@ export class TeamService {
     if (team === null) throw new Error(`Team ${JSON.stringify(teamId)} does not exist`);
     return team;
   }
+}
+
+/**
+ * Project the persisted {@link TeamRecord} into the public {@link TeamView}
+ * (issue #199 Slice 2): concrete `team_name`, no duplicate `name`/`team_id`, no
+ * machine-local `repo_cwd`/`runtime_cwd`/`worktree`.
+ */
+function teamView(team: TeamRecord): TeamView {
+  return {
+    team_name: team.team_id,
+    status: team.status,
+    intent: team.intent,
+    source_repo: team.source_repo,
+    leader_name: team.leader_name,
+    leader_agent_runtime: team.leader_agent_runtime,
+    created_at: team.created_at,
+    updated_at: team.updated_at,
+    closed_at: team.closed_at,
+    close_note: team.close_note,
+  };
 }
 
 function teamLeaderPrompt(team: TeamRecord): string {
