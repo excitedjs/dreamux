@@ -161,21 +161,17 @@ describe('teammate-mcp stdio shim', () => {
       'send',
       'close',
       'history',
-      'history_events',
       'list',
       'status',
       'last',
-      'ctx',
       'get_capabilities',
     ]);
 
     await expect(listTools('teammate')).resolves.toEqual([
       'history',
-      'history_events',
       'list',
       'status',
       'last',
-      'ctx',
       'get_capabilities',
     ]);
   });
@@ -218,19 +214,30 @@ describe('teammate-mcp stdio shim', () => {
     }
   });
 
-  it('advertises history as a ledger and history_events as the raw timeline', async () => {
+  it('advertises history as the session-ledger search surface and last with turns (#188)', async () => {
     const tools = await toolSchemas('dispatcher');
     const history = tools.find((entry) => entry['name'] === 'history') as {
       inputSchema: { required: string[]; properties: Record<string, unknown> };
     };
-    const events = tools.find((entry) => entry['name'] === 'history_events') as {
+    const last = tools.find((entry) => entry['name'] === 'last') as {
       inputSchema: { required: string[]; properties: Record<string, unknown> };
     };
     expect(history.inputSchema.required).toEqual([]);
     expect(history.inputSchema.properties).toHaveProperty('limit');
     expect(history.inputSchema.properties).toHaveProperty('cursor');
     expect(history.inputSchema.properties).toHaveProperty('source_cwd');
-    expect(events.inputSchema.required).toEqual(['name']);
+    // #188: last takes name + an optional 1..5 turns count; ctx/history_events gone.
+    expect(last.inputSchema.required).toEqual(['name']);
+    expect(last.inputSchema.properties).toHaveProperty('turns');
+    expect(last.inputSchema.properties['turns']).toMatchObject({
+      type: 'integer',
+      minimum: 1,
+      maximum: 5,
+    });
+    expect(tools.find((entry) => entry['name'] === 'ctx')).toBeUndefined();
+    expect(
+      tools.find((entry) => entry['name'] === 'history_events'),
+    ).toBeUndefined();
   });
 
   it('forwards spawn to the dispatcher-scoped admin method', async () => {
@@ -611,7 +618,7 @@ describe('teammate-mcp stdio shim', () => {
     }
   });
 
-  it('forwards history ledger queries, history_events, last, and ctx reads', async () => {
+  it('forwards history ledger queries and last(turns) reads (#188)', async () => {
     const admin = await startFakeAdminServer((request) => ({
       id: request.id,
       ok: true,
@@ -649,29 +656,35 @@ describe('teammate-mcp stdio shim', () => {
         result: { structuredContent: { ok: true } },
       });
 
-      for (const [id, name] of [
-        [2, 'history_events'],
-        [3, 'last'],
-        [4, 'ctx'],
-      ] as const) {
-        writeJson(input, {
-          jsonrpc: '2.0',
-          id,
-          method: 'tools/call',
-          params: { name, arguments: { name: 'reviewer' } },
-        });
-        expect(await reader.next()).toMatchObject({
-          jsonrpc: '2.0',
-          id,
-          result: { structuredContent: { ok: true } },
-        });
-      }
+      // last without turns forwards just the name; last with turns forwards both.
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/call',
+        params: { name: 'last', arguments: { name: 'reviewer' } },
+      });
+      expect(await reader.next()).toMatchObject({
+        jsonrpc: '2.0',
+        id: 2,
+        result: { structuredContent: { ok: true } },
+      });
+
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 3,
+        method: 'tools/call',
+        params: { name: 'last', arguments: { name: 'reviewer', turns: 3 } },
+      });
+      expect(await reader.next()).toMatchObject({
+        jsonrpc: '2.0',
+        id: 3,
+        result: { structuredContent: { ok: true } },
+      });
 
       expect(admin.requests.map((request) => request.method)).toEqual([
         'mcp.teammate.history',
-        'mcp.teammate.history_events',
         'mcp.teammate.last',
-        'mcp.teammate.ctx',
+        'mcp.teammate.last',
       ]);
       expect(admin.requests.map((request) => request.params)).toEqual([
         {
@@ -682,8 +695,12 @@ describe('teammate-mcp stdio shim', () => {
           close_status: 'open',
         },
         { dispatcher_id: 'dispatcher-a', caller_kind: 'teammate', name: 'reviewer' },
-        { dispatcher_id: 'dispatcher-a', caller_kind: 'teammate', name: 'reviewer' },
-        { dispatcher_id: 'dispatcher-a', caller_kind: 'teammate', name: 'reviewer' },
+        {
+          dispatcher_id: 'dispatcher-a',
+          caller_kind: 'teammate',
+          name: 'reviewer',
+          turns: 3,
+        },
       ]);
 
       input.end();

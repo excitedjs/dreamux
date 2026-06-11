@@ -1,6 +1,6 @@
 ---
 name: dispatcher
-description: Use from a Dreamux dispatcher thread when bounded repository work should be delegated to a TeamMate. The server-hosted TeamMate MCP is the default interface; spawn creates a named semi-resident TeamMate, send submits follow-up turns and reopens a closed TeamMate from its checkpoint, close stops one, history lists session ledger rows, history_events reads a raw timeline, and list/status/last/ctx/get_capabilities inspect state. The tm CLI is the explicit fallback for legacy diagnostics. Applies to spawning, tracking, retrieving, sending, closing, inspecting, reopening, recovering, or summarizing teammate work.
+description: Use from a Dreamux dispatcher thread when bounded repository work should be delegated to a TeamMate. The server-hosted TeamMate MCP is the default interface; spawn creates a semi-resident TeamMate and RETURNS its concrete name (use that name for every later call), send submits follow-up turns and reopens a closed TeamMate from its checkpoint, close stops one, history searches the durable session ledger, and list/status/last/get_capabilities inspect state. The tm CLI is the explicit fallback for legacy diagnostics. Applies to spawning, tracking, retrieving, sending, closing, inspecting, reopening, recovering, or summarizing teammate work.
 ---
 
 # Dispatcher
@@ -25,33 +25,43 @@ session or polling a process.
 
 **Lifecycle.**
 
-- `spawn` — create a named TeamMate and submit the first turn. Use a stable name
-  for work you may resume later. `intent` is **required**: a short recovery
-  subject for the session ledger (what this TeamMate is for). When selecting a
-  runtime, pass one of `get_capabilities.agent_runtimes[].id` as `agent_runtime`;
-  do not pass provider refs such as `builtin:*`.
-- `send` — submit a turn to a TeamMate. If the named TeamMate is not live —
+- `spawn` — create a TeamMate and submit the first turn. The `name` you pass is
+  a requested label / base slug, **not** the final address: the service
+  allocates a concrete, never-reused name and returns it as `teammate.name`.
+  **Use that returned concrete name for every later `send`/`status`/`last`/
+  `close`.** Your requested label is preserved as `display_name` for display.
+  `intent` is **required**: a short recovery subject for the session ledger
+  (what this TeamMate is for). When selecting a runtime, pass one of
+  `get_capabilities.agent_runtimes[].id` as `agent_runtime`; do not pass provider
+  refs such as `builtin:*`.
+- `send` — submit a turn to a TeamMate by its concrete name. If it is not live —
   including one previously `close`d — send first reopens it from its persisted
   checkpoint, then submits. There is no separate `resume` verb; send covers
   reattach. Pass `intent` (optional) to update the recorded recovery subject
   when the work shifts.
-- `close` — stop the named TeamMate and mark it closed. `note` is **required**:
-  why you are stopping a recoverable session. It stays reopenable: a later
-  `send` revives it from its checkpoint.
+- `close` — stop the TeamMate (by concrete name) and mark it closed. `note` is
+  **required**: why you are stopping a recoverable session. It stays reopenable:
+  a later `send` revives it from its checkpoint.
 
 **Watch and collect — no polling.**
 
-- `list` — this dispatcher's TeamMates and their statuses.
-- `status` — one TeamMate status, agent runtime id, checkpoint, and close metadata.
-- `history` — bounded session ledger rows for this dispatcher, with filters for
-  recovery across TeamMates.
-- `history_events` — raw forward-only event history for one named TeamMate.
-- `last` — the runtime's latest assistant-visible result when supported.
-- `ctx` — the runtime context snapshot when supported.
+- `list` — this dispatcher's TeamMates: concrete name, display name, status, and
+  repo/cwd/session essentials.
+- `status` — one TeamMate's current state by concrete name: display name, agent
+  runtime id, session, cwd/repo, checkpoint, and close metadata.
+- `history` — the durable session-ledger search surface for this dispatcher,
+  with recovery filters across TeamMates (name/state/repo/grep/cursor).
+- `last` — a TeamMate's most recent settled turn(s), read from the durable
+  session ledger by concrete name. It accepts `turns` (1..5, default 1; newest
+  last) and returns the final assistant output as completely as it was durably
+  captured (with a truncation flag). It does **not** start or resume a runtime,
+  so it works for a closed or stopped TeamMate — this is your fallback when a
+  completion was never delivered.
 
 These serve status / history / last directly, so you do not need `tm` to check
 on a running TeamMate. Do not wait or poll for completion: submit the turn, let
-the dispatcher turn end, then recover through `history`, `last`, and `ctx`.
+the dispatcher turn end, then recover through `history` and `last`. (The former
+`ctx` and `history_events` verbs were removed; use `last` and `history`.)
 
 **Team lifecycle.**
 
@@ -166,7 +176,7 @@ on a flag -- do not infer one verb's flags from another.
 
 These references cover the `tm` fallback path. For ordinary delegation —
 spawning a TeamMate, sending follow-up turns (which also reopens a closed one
-from its checkpoint), checking status, or reading history/last/context — use the
+from its checkpoint), checking status, or reading history/last — use the
 `teammate` MCP tools above and you do not need a reference.
 Read the matching reference when you have dropped to `tm`:
 
@@ -200,9 +210,10 @@ turn's tool calls.
 Two state owners, kept distinct:
 
 - The Dreamux server owns the TeamMate **agent state** behind the `teammate`
-  MCP — named identities, runtime checkpoints, status, history, last result,
-  and context snapshots. Read and control it with `list`, `status`, `history`,
-  `last`, `ctx`, `send`, and `close`.
+  MCP — concrete identities (with their display labels), runtime checkpoints,
+  status, and the durable session ledger (prompts and captured assistant
+  output). Read and control it with `list`, `status`, `history`, `last`,
+  `send`, and `close`.
 - `tm` owns live tm **session** state — teammate liveness, worktrees, and
   resumable session history (see `references/inspect-and-resume.md`).
 

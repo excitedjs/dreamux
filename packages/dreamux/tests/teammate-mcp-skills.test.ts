@@ -10,7 +10,7 @@ import { DREAMUX_DISPATCHER_BASE_INSTRUCTIONS } from '../src/dispatcher-service/
  * dispatcher-facing skills and the injected dispatcher base prompt must present
  * the server-hosted TeamMate MCP as the DEFAULT orchestration interface for
  * named, semi-resident TeamMate agents: spawn/send/close plus
- * history/list/status/last/ctx/get_capabilities. The stale task/worker
+ * history/list/status/last/get_capabilities. The stale task/worker
  * vocabulary must stay gone after the agent-centric cut.
  *
  * These read the SHIPPED skill files (via `bundledSkillDir`) so packaging drift
@@ -28,7 +28,6 @@ const TEAMMATE_MCP_TOOLS = [
   'list',
   'status',
   'last',
-  'ctx',
   'get_capabilities',
 ];
 

@@ -48,6 +48,8 @@ class FakeRuntime implements AgentRuntime {
   private resumed = false;
   private turns = 0;
   readonly submitted: InboundTurnInput[] = [];
+  /** Overridable last-assistant text so tests can drive capture/truncation. */
+  lastText = 'last fake result';
 
   constructor(private readonly context: AgentRuntimeCreateContext) {}
 
@@ -96,7 +98,7 @@ class FakeRuntime implements AgentRuntime {
   }
 
   async getLast(): Promise<AgentRuntimeLastResult> {
-    return { text: 'last fake result' };
+    return { text: this.lastText };
   }
 
   async getContext(): Promise<{ usedTokens: number; windowTokens: number }> {
@@ -406,8 +408,12 @@ describe('TeamMateAgentService', () => {
       cwd: root,
     });
     expect(spawned.turn).toEqual({ status: 'submitted', turn_id: 'turn-1' });
+    // #188: spawn allocates a concrete name and returns it; the requested label
+    // is kept as display_name. All later calls use the returned concrete name.
+    const reviewer = spawned.teammate.name;
+    expect(reviewer).toMatch(/^reviewer-[a-z0-9]{8}$/);
     expect(spawned.teammate).toMatchObject({
-      name: 'reviewer',
+      display_name: 'reviewer',
       owner: { kind: 'dispatcher', dispatcher_id: 'flow' },
       agent_runtime: 'flow',
       source_cwd: root,
@@ -423,26 +429,35 @@ describe('TeamMateAgentService', () => {
 
     await service.send({
       dispatcherId: 'flow',
-      name: 'reviewer',
+      name: reviewer,
       prompt: 'Check tests too.',
     });
     const sent = await service.send({
       dispatcherId: 'flow',
-      name: 'reviewer',
+      name: reviewer,
       prompt: 'Continue from prior context.',
     });
     expect(sent.turn).toEqual({ status: 'submitted', turn_id: 'turn-3' });
     expect(provider.runtimes).toHaveLength(1);
     expect(provider.runtimes[0]?.submitted).toHaveLength(3);
 
-    const history = await service.historyEvents('flow', 'reviewer');
-    expect(history.events.map((event) => event.type)).toEqual([
+    // The forward-only per-name history index is still written (the raw
+    // history_events read surface was removed in #188; the file remains).
+    const historyFile = await readFile(
+      join(root, 'home', '.dreamux', 'state', 'flow', 'teammate', 'history', `${reviewer}.jsonl`),
+      'utf8',
+    );
+    const events = historyFile
+      .split('\n')
+      .filter((line) => line.trim() !== '')
+      .map((line) => JSON.parse(line) as { type: string; prompt_preview: string | null });
+    expect(events.map((event) => event.type)).toEqual([
       'state',
       'spawn',
       'send',
       'send',
     ]);
-    expect(history.events.map((event) => event.prompt_preview)).toEqual([
+    expect(events.map((event) => event.prompt_preview)).toEqual([
       null,
       'Review the change.',
       'Check tests too.',
@@ -453,29 +468,35 @@ describe('TeamMateAgentService', () => {
   it('resumes persisted identity through the same provider contract', async () => {
     const { provider } = providerCatalog();
     const first = buildService(provider);
-    await first.spawn({
-      dispatcherId: 'flow',
-      name: 'builder',
-      intent: 'work',
-      prompt: 'Build once.',
-      cwd: root,
-    });
+    const builder = (
+      await first.spawn({
+        dispatcherId: 'flow',
+        name: 'builder',
+        intent: 'work',
+        prompt: 'Build once.',
+        cwd: root,
+      })
+    ).teammate.name;
     await first.stopAll();
 
     const second = buildService(provider);
     const sent = await second.send({
       dispatcherId: 'flow',
-      name: 'builder',
+      name: builder,
       prompt: 'Resume and continue.',
     });
     expect(sent.turn).toEqual({ status: 'submitted', turn_id: 'turn-1' });
     expect(provider.runtimes).toHaveLength(2);
     expect(provider.runtimes[1]?.wasThreadResumed()).toBe(true);
 
-    const last = await second.last('flow', 'builder');
-    const ctx = await second.context('flow', 'builder');
-    expect(last.last).toEqual({ text: 'last fake result' });
-    expect(ctx.context).toEqual({ usedTokens: 12, windowTokens: 100 });
+    // #188: last is a durable ledger read keyed by the concrete name. Resolved
+    // to the identity's session, it returns a well-formed result; with no
+    // completion sink wired here, no settled turn was captured.
+    const last = await second.last('flow', builder);
+    expect(last.teammate.name).toBe(builder);
+    expect(last.requested_turns).toBe(1);
+    expect(last.session_id).not.toBeNull();
+    expect(last.turns).toEqual([]);
   });
 
   it('returns a bounded session ledger with worktree metadata and filters', async () => {
@@ -489,40 +510,49 @@ describe('TeamMateAgentService', () => {
       log: noopLog(),
     });
 
-    await service.spawn({
-      dispatcherId: 'flow',
-      name: 'alpha',
-      prompt: 'Review alpha.',
-      cwd: root,
-      intent: 'review alpha',
-    });
-    await service.spawn({
-      dispatcherId: 'flow',
-      name: 'managed-ledger',
-      prompt: 'Build managed.',
-      cwd: repo,
-      worktree: {
-        mode: 'managed',
-        slug: 'managed-ledger',
-        branch: 'dreamux/managed-ledger',
-        cleanup: 'keep',
-      },
-      intent: 'managed work',
-    });
-    await service.close({ dispatcherId: 'flow', name: 'alpha', note: 'done' });
+    const alpha = (
+      await service.spawn({
+        dispatcherId: 'flow',
+        name: 'alpha',
+        prompt: 'Review alpha.',
+        cwd: root,
+        intent: 'review alpha',
+      })
+    ).teammate.name;
+    const managedName = (
+      await service.spawn({
+        dispatcherId: 'flow',
+        name: 'managed-ledger',
+        prompt: 'Build managed.',
+        cwd: repo,
+        worktree: {
+          mode: 'managed',
+          slug: 'managed-ledger',
+          branch: 'dreamux/managed-ledger',
+          cleanup: 'keep',
+        },
+        intent: 'managed work',
+      })
+    ).teammate.name;
+    await service.close({ dispatcherId: 'flow', name: alpha, note: 'done' });
 
     const firstPage = await service.history({ dispatcherId: 'flow', limit: 1 });
     expect(firstPage.items).toHaveLength(1);
     expect(firstPage.next_cursor).not.toBeNull();
 
     const all = await service.history({ dispatcherId: 'flow' });
-    expect(all.items.map((item) => item.name).sort()).toEqual([
+    // Rows carry the concrete name plus the requested display_name (#188).
+    expect(all.items.map((item) => item.display_name).sort()).toEqual([
       'alpha',
       'managed-ledger',
     ]);
-    const managed = all.items.find((item) => item.name === 'managed-ledger');
+    expect(all.items.map((item) => item.name).sort()).toEqual(
+      [alpha, managedName].sort(),
+    );
+    const managed = all.items.find((item) => item.name === managedName);
     expect(managed).toMatchObject({
-      id: 'managed-ledger',
+      id: managedName,
+      display_name: 'managed-ledger',
       agent_runtime: 'flow',
       source_cwd: repo,
       source_repo: repo,
@@ -535,21 +565,22 @@ describe('TeamMateAgentService', () => {
       },
       intent: 'managed work',
       close_status: 'open',
-      resume: { tool: 'send', name: 'managed-ledger' },
+      resume: { tool: 'send', name: managedName },
     });
 
     const closed = await service.history({
       dispatcherId: 'flow',
       closeStatus: 'closed',
     });
-    expect(closed.items.map((item) => item.name)).toEqual(['alpha']);
+    expect(closed.items.map((item) => item.name)).toEqual([alpha]);
     expect(closed.items[0]).toMatchObject({
+      display_name: 'alpha',
       close_note_preview: 'done',
       last_prompt_preview: 'Review alpha.',
     });
 
     const grep = await service.history({ dispatcherId: 'flow', grep: 'managed work' });
-    expect(grep.items.map((item) => item.name)).toEqual(['managed-ledger']);
+    expect(grep.items.map((item) => item.name)).toEqual([managedName]);
 
     const second = new TeamMateAgentService({
       config,
@@ -559,14 +590,14 @@ describe('TeamMateAgentService', () => {
     });
     const afterRestart = await second.history({
       dispatcherId: 'flow',
-      name: 'managed-ledger',
+      name: managedName,
     });
     expect(afterRestart.items).toHaveLength(1);
     expect(afterRestart.items[0]?.worktree.mode).toBe('managed');
   });
 
   it('closes a live teammate without deleting its history', async () => {
-    const { catalog } = providerCatalog();
+    const { catalog, provider } = providerCatalog();
     const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
     const service = new TeamMateAgentService({
       config,
@@ -579,33 +610,39 @@ describe('TeamMateAgentService', () => {
       },
     });
 
-    await service.spawn({
-      dispatcherId: 'flow',
-      name: 'closer',
-      intent: 'work',
-      prompt: 'Start.',
-      cwd: root,
-    });
+    const closer = (
+      await service.spawn({
+        dispatcherId: 'flow',
+        name: 'closer',
+        intent: 'work',
+        prompt: 'Start.',
+        cwd: root,
+      })
+    ).teammate.name;
     const closed = await service.close({
       dispatcherId: 'flow',
-      name: 'closer',
+      name: closer,
       note: 'done',
     });
     expect(closed.teammate).toMatchObject({
-      name: 'closer',
+      name: closer,
+      display_name: 'closer',
       status: 'closed',
       close_note: 'done',
     });
-    // Read-only verbs never silently reopen a closed teammate (issue #155):
-    // only send carries the reopen flag. last/ctx need a live runtime, so they
-    // reject on a closed teammate; status reads the identity and returns the
-    // closed state without reopening (it does not throw).
-    await expect(service.last('flow', 'closer')).rejects.toThrow(/closed/);
-    await expect(service.context('flow', 'closer')).rejects.toThrow(/closed/);
-    expect((await service.status('flow', 'closer')).status).toBe('closed');
+    // #188: last is a pure durable-ledger read — it does NOT reopen a runtime, so
+    // it works on a CLOSED teammate (this is the failed-completion fallback). It
+    // returns the closed status and an empty turn list (no settled turn captured
+    // here, since no completion sink is wired). status likewise does not reopen.
+    expect(provider.runtimes).toHaveLength(1);
+    const closerLast = await service.last('flow', closer);
+    expect(closerLast.teammate.status).toBe('closed');
+    expect(closerLast.turns).toEqual([]);
+    expect((await service.status('flow', closer)).status).toBe('closed');
+    expect(provider.runtimes).toHaveLength(1); // no new runtime started
 
     const historyFile = await readFile(
-      join(root, 'home', '.dreamux', 'state', 'flow', 'teammate', 'history', 'closer.jsonl'),
+      join(root, 'home', '.dreamux', 'state', 'flow', 'teammate', 'history', `${closer}.jsonl`),
       'utf8',
     );
     expect(historyFile).toContain('"type":"spawn"');
@@ -622,16 +659,18 @@ describe('TeamMateAgentService', () => {
       log: noopLog(),
     });
 
-    await service.spawn({
-      dispatcherId: 'flow',
-      name: 'reopener',
-      intent: 'work',
-      prompt: 'Start.',
-      cwd: root,
-    });
+    const reopener = (
+      await service.spawn({
+        dispatcherId: 'flow',
+        name: 'reopener',
+        intent: 'work',
+        prompt: 'Start.',
+        cwd: root,
+      })
+    ).teammate.name;
     const closed = await service.close({
       dispatcherId: 'flow',
-      name: 'reopener',
+      name: reopener,
       note: 'paused',
     });
     expect(closed.teammate).toMatchObject({ status: 'closed', close_note: 'paused' });
@@ -640,12 +679,12 @@ describe('TeamMateAgentService', () => {
     // restarts the runtime from the persisted checkpoint, and submits.
     const sent = await service.send({
       dispatcherId: 'flow',
-      name: 'reopener',
+      name: reopener,
       prompt: 'Pick up where you left off.',
     });
     expect(sent.turn).toEqual({ status: 'submitted', turn_id: 'turn-1' });
     expect(sent.teammate).toMatchObject({
-      name: 'reopener',
+      name: reopener,
       status: 'running',
       closed_at: null,
       close_note: null,
@@ -666,29 +705,31 @@ describe('TeamMateAgentService', () => {
       log: noopLog(),
     });
 
-    await service.spawn({
-      dispatcherId: 'flow',
-      name: 'shifter',
-      intent: 'first task',
-      prompt: 'Start.',
-      cwd: root,
-    });
-    expect((await service.status('flow', 'shifter')).intent).toBe('first task');
+    const shifter = (
+      await service.spawn({
+        dispatcherId: 'flow',
+        name: 'shifter',
+        intent: 'first task',
+        prompt: 'Start.',
+        cwd: root,
+      })
+    ).teammate.name;
+    expect((await service.status('flow', shifter)).intent).toBe('first task');
 
     // send WITH intent updates the durable recovery subject.
     const moved = await service.send({
       dispatcherId: 'flow',
-      name: 'shifter',
+      name: shifter,
       intent: 'second task',
       prompt: 'Now do the second thing.',
     });
     expect(moved.teammate.intent).toBe('second task');
-    expect((await service.status('flow', 'shifter')).intent).toBe('second task');
+    expect((await service.status('flow', shifter)).intent).toBe('second task');
 
     // send WITHOUT intent leaves the recorded intent unchanged.
     const kept = await service.send({
       dispatcherId: 'flow',
-      name: 'shifter',
+      name: shifter,
       prompt: 'Keep going.',
     });
     expect(kept.teammate.intent).toBe('second task');
@@ -696,7 +737,7 @@ describe('TeamMateAgentService', () => {
     // send with an EMPTY intent must NOT wipe the recorded subject (#182 PR-3).
     const emptied = await service.send({
       dispatcherId: 'flow',
-      name: 'shifter',
+      name: shifter,
       intent: '',
       prompt: 'Still going.',
     });
@@ -729,15 +770,17 @@ describe('TeamMateAgentService', () => {
 
     // close.note required at the service boundary — checked after the teammate
     // is found, so spawn a real one first.
-    await service.spawn({
-      dispatcherId: 'flow',
-      name: 'closeme',
-      intent: 'work',
-      prompt: 'go',
-      cwd: root,
-    });
+    const closeme = (
+      await service.spawn({
+        dispatcherId: 'flow',
+        name: 'closeme',
+        intent: 'work',
+        prompt: 'go',
+        cwd: root,
+      })
+    ).teammate.name;
     await expect(
-      service.close({ dispatcherId: 'flow', name: 'closeme', note: '' }),
+      service.close({ dispatcherId: 'flow', name: closeme, note: '' }),
     ).rejects.toThrow(/TeamMate close note must be a non-empty string/);
   });
 
@@ -827,6 +870,10 @@ describe('TeamMateAgentService', () => {
     const history = await service.history({ dispatcherId: 'flow', name: 'oldie' });
     expect(history.items[0]).toMatchObject({
       name: 'oldie',
+      // #188: a pre-#188 record has no display name or session id; both read as
+      // null and the record stays usable without migration.
+      display_name: null,
+      session_id: null,
       source_cwd: root,
       runtime_cwd: root,
       worktree: { mode: 'reuse-cwd', cleanup_state: 'not-managed' },
@@ -875,7 +922,7 @@ describe('TeamMateAgentService', () => {
 
     const closed = await service.close({
       dispatcherId: 'flow',
-      name: 'managed',
+      name: spawned.teammate.name,
       note: 'done',
     });
     expect(closed.teammate.worktree.cleanup_state).toBe('deleted');
@@ -939,14 +986,14 @@ describe('TeamMateAgentService', () => {
     const worktreePath = spawned.teammate.worktree.path;
     await service.close({
       dispatcherId: 'flow',
-      name: 'reopen-managed',
+      name: spawned.teammate.name,
       note: 'done',
     });
     expect(existsSync(worktreePath)).toBe(false);
 
     const sent = await service.send({
       dispatcherId: 'flow',
-      name: 'reopen-managed',
+      name: spawned.teammate.name,
       prompt: 'continue',
     });
     expect(sent.turn).toEqual({ status: 'submitted', turn_id: 'turn-1' });
@@ -988,7 +1035,7 @@ describe('TeamMateAgentService', () => {
 
     const closed = await service.close({
       dispatcherId: 'flow',
-      name: 'keeper',
+      name: spawned.teammate.name,
       note: 'done',
     });
     expect(closed.teammate.worktree.cleanup_state).toBe('kept');
@@ -1023,7 +1070,7 @@ describe('TeamMateAgentService', () => {
 
     const closed = await service.close({
       dispatcherId: 'flow',
-      name: 'dirty',
+      name: spawned.teammate.name,
       note: 'done',
     });
     expect(closed.teammate.worktree.cleanup_state).toBe('retained-dirty');
@@ -1062,7 +1109,7 @@ describe('TeamMateAgentService', () => {
 
     const closed = await service.close({
       dispatcherId: 'flow',
-      name: 'detached',
+      name: spawned.teammate.name,
       note: 'done',
     });
     expect(closed.teammate.worktree.cleanup_state).toBe(
@@ -1276,7 +1323,8 @@ describe('TeamMateAgentService', () => {
           cleanup: 'keep',
         },
       }),
-    ).rejects.toThrow(/already owned by TeamMate "slug-one"/);
+      // The owner is reported by its concrete name (#188: `slug-one-<suffix>`).
+    ).rejects.toThrow(/already owned by TeamMate "slug-one-/);
   });
 
   it('fails loud on a legacy provider_ref teammate identity (pre-#148)', async () => {
@@ -1423,25 +1471,28 @@ describe('TeamMateAgentService', () => {
       log: noopLog(),
     });
 
-    await service.spawn({
-      dispatcherId: 'flow',
-      name: 'reviewer',
-      intent: 'work',
-      prompt: 'Review.',
-      cwd: root,
-    });
+    const reviewer = (
+      await service.spawn({
+        dispatcherId: 'flow',
+        name: 'reviewer',
+        intent: 'work',
+        prompt: 'Review.',
+        cwd: root,
+      })
+    ).teammate.name;
     expect(provider.runtimes[0]?.hasSettleHook()).toBe(true);
 
     provider.runtimes[0]?.settle('completed', 'turn-1');
     await flush();
 
+    // The completion envelope keys on the concrete name (#188).
     expect(received).toEqual([
       {
         id: 'flow',
-        name: 'reviewer',
+        name: reviewer,
         env: {
-          source: 'reviewer',
-          id: 'reviewer:turn-1',
+          source: reviewer,
+          id: `${reviewer}:turn-1`,
           status: 'completed',
           result: 'last fake result',
         },
@@ -1463,13 +1514,15 @@ describe('TeamMateAgentService', () => {
       log: noopLog(),
     });
 
-    await service.spawn({
-      dispatcherId: 'flow',
-      name: 'breaker',
-      intent: 'work',
-      prompt: 'Run.',
-      cwd: root,
-    });
+    const breaker = (
+      await service.spawn({
+        dispatcherId: 'flow',
+        name: 'breaker',
+        intent: 'work',
+        prompt: 'Run.',
+        cwd: root,
+      })
+    ).teammate.name;
 
     provider.runtimes[0]?.settle('failed', 'turn-7');
     provider.runtimes[0]?.settle('stopped', 'turn-8');
@@ -1477,14 +1530,14 @@ describe('TeamMateAgentService', () => {
 
     expect(received).toEqual([
       {
-        source: 'breaker',
-        id: 'breaker:turn-7',
+        source: breaker,
+        id: `${breaker}:turn-7`,
         status: 'failed',
         result: 'last fake result',
       },
       {
-        source: 'breaker',
-        id: 'breaker:turn-8',
+        source: breaker,
+        id: `${breaker}:turn-8`,
         status: 'stopped',
         result: 'last fake result',
       },
@@ -1533,29 +1586,253 @@ describe('TeamMateAgentService', () => {
       log: noopLog(),
     });
 
-    await service.spawn({
-      dispatcherId: 'flow',
-      name: 'one',
-      intent: 'work',
-      prompt: 'A.',
-      cwd: root,
-    });
-    await service.spawn({
-      dispatcherId: 'flow',
-      name: 'two',
-      intent: 'work',
-      prompt: 'B.',
-      cwd: root,
-    });
+    const one = (
+      await service.spawn({
+        dispatcherId: 'flow',
+        name: 'one',
+        intent: 'work',
+        prompt: 'A.',
+        cwd: root,
+      })
+    ).teammate.name;
+    const two = (
+      await service.spawn({
+        dispatcherId: 'flow',
+        name: 'two',
+        intent: 'work',
+        prompt: 'B.',
+        cwd: root,
+      })
+    ).teammate.name;
 
     provider.runtimes[0]?.settle('completed', 'turn-1');
     provider.runtimes[1]?.settle('completed', 'turn-1');
     await flush();
 
-    expect(received.map((env) => env.source).sort()).toEqual(['one', 'two']);
+    expect(received.map((env) => env.source).sort()).toEqual([one, two].sort());
     expect(received).toHaveLength(2);
   });
+
+  it('last(turns): defaults to 1, accepts 1..5, and rejects out-of-range/non-integer (#188)', async () => {
+    const { catalog } = providerCatalog();
+    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: catalog,
+      log: noopLog(),
+    });
+    const name = (
+      await service.spawn({
+        dispatcherId: 'flow',
+        name: 'turns',
+        intent: 'work',
+        prompt: 'go',
+        cwd: root,
+      })
+    ).teammate.name;
+
+    expect((await service.last('flow', name)).requested_turns).toBe(1);
+    expect((await service.last('flow', name, 5)).requested_turns).toBe(5);
+    await expect(service.last('flow', name, 0)).rejects.toThrow(/1\.\.5/);
+    await expect(service.last('flow', name, 6)).rejects.toThrow(/1\.\.5/);
+    await expect(service.last('flow', name, 1.5)).rejects.toThrow(/1\.\.5/);
+  });
+
+  it('last reads settled turns from the durable ledger, filtered by session, with truncation metadata (#188)', async () => {
+    const { catalog, provider } = providerCatalog();
+    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: catalog,
+      // A completion sink wires the settle hook so settled turns are captured.
+      onTeamMateCompletion: () => undefined,
+      log: noopLog(),
+    });
+
+    const reviewer = (
+      await service.spawn({
+        dispatcherId: 'flow',
+        name: 'reviewer',
+        intent: 'work',
+        prompt: 'first',
+        cwd: root,
+      })
+    ).teammate.name;
+
+    // Settle three turns with distinct assistant outputs; the third exceeds the
+    // 160k hard cap so it must come back flagged truncated.
+    const runtime = provider.runtimes[0]!;
+    runtime.lastText = 'answer one';
+    runtime.settle('completed', 'turn-1');
+    await waitForSettled(service, 1);
+    await service.send({ dispatcherId: 'flow', name: reviewer, prompt: 'second' });
+    runtime.lastText = 'answer two';
+    runtime.settle('completed', 'turn-2');
+    await waitForSettled(service, 2);
+    await service.send({ dispatcherId: 'flow', name: reviewer, prompt: 'third' });
+    const huge = 'z'.repeat(170_000);
+    runtime.lastText = huge;
+    runtime.settle('completed', 'turn-3');
+    await waitForSettled(service, 3);
+
+    // Default returns just the newest settled turn (truncated to the hard cap).
+    const latest = await service.last('flow', reviewer);
+    expect(latest.requested_turns).toBe(1);
+    expect(latest.returned_turns).toBe(1);
+    expect(latest.session_id).not.toBeNull();
+    const newest = latest.turns.at(-1)!;
+    expect(newest.turn_id).toBe('turn-3');
+    expect(newest.assistant_truncated).toBe(true);
+    expect(newest.assistant).toHaveLength(160_000);
+
+    // turns:5 returns all three in append order, oldest first; older turns are
+    // captured whole.
+    const all = await service.last('flow', reviewer, 5);
+    expect(all.returned_turns).toBe(3);
+    expect(all.turns.map((turn) => turn.turn_id)).toEqual([
+      'turn-1',
+      'turn-2',
+      'turn-3',
+    ]);
+    expect(all.turns[0]).toMatchObject({
+      assistant: 'answer one',
+      assistant_truncated: false,
+    });
+  });
+
+  it('last works on a closed teammate without starting a runtime (#188)', async () => {
+    const { catalog, provider } = providerCatalog();
+    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: catalog,
+      onTeamMateCompletion: () => undefined,
+      log: noopLog(),
+    });
+
+    const reviewer = (
+      await service.spawn({
+        dispatcherId: 'flow',
+        name: 'reviewer',
+        intent: 'work',
+        prompt: 'go',
+        cwd: root,
+      })
+    ).teammate.name;
+    provider.runtimes[0]!.lastText = 'the captured answer';
+    provider.runtimes[0]!.settle('completed', 'turn-1');
+    await waitForSettled(service, 1);
+    await service.close({ dispatcherId: 'flow', name: reviewer, note: 'done' });
+
+    const runtimesBefore = provider.runtimes.length;
+    const last = await service.last('flow', reviewer);
+    // No new runtime was launched to serve the read.
+    expect(provider.runtimes).toHaveLength(runtimesBefore);
+    expect(last.teammate.status).toBe('closed');
+    expect(last.turns.at(-1)).toMatchObject({
+      turn_id: 'turn-1',
+      assistant: 'the captured answer',
+      settle_status: 'completed',
+    });
+  });
+
+  it('concrete names are never reused, even after close (#188)', async () => {
+    const { catalog } = providerCatalog();
+    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: catalog,
+      log: noopLog(),
+    });
+    const first = (
+      await service.spawn({
+        dispatcherId: 'flow',
+        name: 'dup',
+        intent: 'work',
+        prompt: 'go',
+        cwd: root,
+      })
+    ).teammate.name;
+    await service.close({ dispatcherId: 'flow', name: first, note: 'done' });
+    // Re-spawning the same requested label allocates a DISTINCT concrete name —
+    // the closed identity's name is never handed out again.
+    const second = (
+      await service.spawn({
+        dispatcherId: 'flow',
+        name: 'dup',
+        intent: 'work',
+        prompt: 'go',
+        cwd: root,
+      })
+    ).teammate.name;
+    expect(second).not.toBe(first);
+    expect(first).toMatch(/^dup-[a-z0-9]{8}$/);
+    expect(second).toMatch(/^dup-[a-z0-9]{8}$/);
+    // Both identities persist; the closed one is still addressable by its name.
+    const names = (await service.history({ dispatcherId: 'flow' })).items.map((i) => i.name);
+    expect(names).toContain(first);
+    expect(names).toContain(second);
+  });
+
+  it('createTeamLeader fails loud on a reused concrete name, even after close (#188 P1)', async () => {
+    const { catalog } = providerCatalog();
+    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: catalog,
+      log: noopLog(),
+    });
+    const leaderInput = {
+      dispatcherId: 'flow',
+      teamId: 'alpha',
+      name: 'tl-alpha-fixedaaa',
+      displayName: 'alpha-leader',
+      prompt: 'lead',
+      agentRuntime: 'flow',
+      sourceCwd: root,
+      sourceRepo: null,
+      runtimeCwd: root,
+      worktree: {
+        mode: 'reuse-cwd' as const,
+        slug: null,
+        path: root,
+        branch: null,
+        base_ref: null,
+        cleanup: 'keep' as const,
+        cleanup_state: 'not-managed' as const,
+        cleanup_error: null,
+      },
+      intent: 'work',
+    };
+    await service.createTeamLeader(leaderInput);
+    // The public service seam must not rebind a concrete name to a new session —
+    // not even for a CLOSED leader. #188: concrete names are never reused, and
+    // the duplicate check includes closed identities.
+    await service.close({ dispatcherId: 'flow', name: 'tl-alpha-fixedaaa', note: 'done' });
+    await expect(service.createTeamLeader(leaderInput)).rejects.toThrow(
+      /already exists/,
+    );
+  });
 });
+
+/** Poll the durable ledger until it has captured `count` settled turns. */
+async function waitForSettled(
+  service: TeamMateAgentService,
+  count: number,
+): Promise<void> {
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline) {
+    const events = await service.sessions().read('flow');
+    if (events.filter((e) => e.type === 'settled').length >= count) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`timed out waiting for ${count} settled events`);
+}
 
 function noopLog(): {
   info: () => undefined;

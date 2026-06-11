@@ -630,14 +630,15 @@ agents. The shim is also a per-dispatcher stdio process:
 ```
 
 The dispatcher-facing tools are `spawn`, `send`, `close`, `history`,
-`history_events`, `list`, `status`, `last`, `ctx`, and `get_capabilities`
+`list`, `status`, `last`, and `get_capabilities`
 (issue #155 removed the `resume` verb; `send` reopens a closed teammate from its
-checkpoint). `history` is the bounded session ledger by default; `history_events`
-is the raw forward-only event timeline for one TeamMate. Lifecycle
+checkpoint). Issue #188 removed the `ctx` and `history_events` verbs: `history`
+is the durable session-ledger search surface and `last` reads a teammate's most
+recent settled turn(s) from that ledger (see below). Lifecycle
 tools forward
 to `dreamux serve` over the local admin socket; the server owns the
-per-dispatcher TeamMate identities, runtime checkpoints, session ledger, and raw
-event history under `state/<dispatcher-id>/teammate/`. Issue #169 made `spawn.cwd`
+per-dispatcher TeamMate identities, runtime checkpoints, and session ledger
+under `state/<dispatcher-id>/teammate/`. Issue #169 made `spawn.cwd`
 required and added optional managed worktree isolation:
 `spawn({ name, prompt, cwd, intent, worktree?, agent_runtime? })`. Issue #182
 PR-3 made `spawn.intent` and `close.note` required (the durable recovery subject
@@ -670,9 +671,40 @@ reconstructable from the ledger alone weeks later. No volatile socket path is
 ever recorded. Capture is best-effort (a write failure is logged, never failing
 a lifecycle verb); the settled-turn fact is appended after the reverse-delivery
 attempt regardless of its outcome, so a failed delivery still records recovery
-metadata and capture never perturbs completion timing. The bounded, filterable
-read surface that folds the ledger into session rows is built on this in PR-6;
-PR-5 lands only the capture plus an in-process `materializeSessions` view.
+metadata and capture never perturbs completion timing.
+
+Issue #182 PR-6 (#188) builds the public read surfaces on this ledger and makes
+the TeamMate name a concrete, never-reused address:
+
+- **Concrete names.** The agent-supplied `spawn.name` is only a base slug /
+  display hint; the service allocates a unique concrete name and returns it as
+  `teammate.name`, which all later `send`/`status`/`last`/`close` must use. The
+  shape is `${slug}-${suffix}` (ordinary), `tm-${slug}-${suffix}` (Team member),
+  `tl-${team_slug}-${suffix}` (TeamLeader), where `suffix` is 8 base36 chars and
+  the slug is truncated so the whole name stays within the 64-char limit.
+  Uniqueness is checked against ALL persisted identities (closed included), so a
+  concrete name is never reused; on collision the suffix is regenerated, then it
+  fails loudly. The requested slug is persisted as `display_name` (null for
+  pre-#188 records) and surfaced by list/status/history. A Team's durable
+  `leader_name` is now this concrete `tl-` name (not a reconstructed
+  `${teamId}-leader`, which survives only as the leader's `display_name`);
+  channel routing/status/dissolve read the stored `leader_name`.
+- **Durable assistant capture.** The `settled` ledger event now carries the
+  final assistant output (`assistant`) up to a hard cap of 160,000 chars with an
+  explicit `assistant_truncated` flag, alongside the existing compact
+  `assistant_preview`. No new per-turn file/index is added; cache-spill paths are
+  never persisted as the source of truth.
+- **`last(turns)`.** `last` resolves a concrete name to one identity/session_id
+  and folds `sessions.jsonl` filtered by that session_id, returning the most
+  recent `turns` settled turns (default 1, range 1..5; newest last) with the
+  captured assistant text + truncation metadata. It never starts, resumes, or
+  requires a live runtime, so it serves a closed/stopped teammate from the ledger
+  alone — it is the fallback when reverse-delivery of a completion failed.
+- **Read-surface cleanup.** `list` stays compact (concrete name, display name,
+  status, repo/cwd/session essentials), `status` exposes the current state by
+  concrete name, and `history` is the durable session-ledger search surface. The
+  obsolete `ctx` and raw `history_events` verbs are removed everywhere (MCP
+  schema, admin methods, capabilities `verbs`, docs).
 
 ## Team Mode Core
 

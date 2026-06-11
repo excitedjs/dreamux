@@ -59,7 +59,19 @@ export class TeamService {
         cleanup: 'keep',
       },
     });
-    const leaderName = `${teamId}-leader`;
+    // The TeamLeader address is a concrete, never-reused name (issue #188), not
+    // a reconstructed `${teamId}-leader`. ALWAYS allocate a fresh one — including
+    // when recreating a closed Team: `createTeamLeader` mints a new session and
+    // clears the checkpoint (it does not truly resume the old leader), so reusing
+    // the old closed `tl-` name would map one concrete name to multiple sessions
+    // and break the name↔session invariant. The old closed leader identity stays
+    // untouched. Routing/status/dissolve read the stored leader_name, never
+    // recompute it. `${teamId}-leader` survives only as the display label.
+    const leaderName = await this.opts.teammates.allocateLeaderName(
+      input.dispatcherId,
+      teamId,
+    );
+    const leaderDisplayName = `${teamId}-leader`;
     let team =
       existing ??
       (await this.store.create({
@@ -85,12 +97,16 @@ export class TeamService {
       // Always write the required intent, so a reused closed Team record adopts
       // the new create.intent instead of keeping its old value (issue #182 PR-3).
       intent: input.intent,
+      // Adopt the freshly allocated concrete leader name (#188) so a recreated
+      // closed Team routes/statuses/dissolves on the new leader, not the old one.
+      leaderName,
     });
     const prompt = input.prompt ?? teamLeaderPrompt(team);
     const leader = await this.opts.teammates.createTeamLeader({
       dispatcherId: input.dispatcherId,
       teamId,
       name: leaderName,
+      displayName: leaderDisplayName,
       prompt,
       agentRuntime: input.leaderAgentRuntime,
       sourceCwd: workspace.sourceCwd,

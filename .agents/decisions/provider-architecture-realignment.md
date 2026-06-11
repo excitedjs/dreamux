@@ -99,13 +99,14 @@ see its `verbs/` (spawn/resume/history), `persistence/history-index.ts` and
   assignment stay in the dispatcher agent (its own todolist-style tools); the
   teammate layer only knows teammate identities.
 - **Dispatcher-facing verbs, no unified suffix:** `spawn`, `send`, `close` for
-  lifecycle; `history`, `history_events`, `list`, `status`, `last`, `ctx`,
-  `get_capabilities` for read/recovery. `history` returns bounded session
-  ledger rows by default; `history_events` exposes the raw per-TeamMate
-  forward-only event timeline. `spawn`/`send` return after submitting the
-  runtime turn; the dispatcher recovers through history/last/ctx and the
-  runtime's native event surface instead of a task result ledger. (Issue #155
-  dropped the original standalone `resume` verb — see below.)
+  lifecycle; `history`, `list`, `status`, `last`, `get_capabilities` for
+  read/recovery. `history` is the durable session-ledger recovery search
+  surface; `last` reads a teammate's most recent settled turn(s) from that
+  ledger by concrete name (issue #188 reworked both and removed the obsolete
+  `ctx` and raw `history_events` verbs). `spawn`/`send` return after submitting
+  the runtime turn; the dispatcher recovers through history/last instead of a
+  task result ledger. (Issue #155 dropped the original standalone `resume`
+  verb — see below.)
 - **send subsumes resume (issue #155).** The original design carried a separate
   `resume` verb to bring back a prior teammate session with its history; that is
   gone. `send` now reopens a teammate that is not live — including a `close`d one
