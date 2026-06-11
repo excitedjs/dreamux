@@ -234,28 +234,39 @@ Rules:
 
 State and logs are server-owned. They are not operator-editable config.
 
+The tree splits volatile run files (`run/`) and rebuildable cache (`cache/`)
+from durable state (`state/`); see
+[runtime-run-root](runtime-run-root.md) for the run/cache decision.
+
 ```text
 ~/.dreamux/
-  config.json
-  state/
-    server.json
-    admin.sock
+  config.json                  operator-edited config + Feishu credentials
+  run/                         volatile; safe to clear while no server runs
+    admin.sock                 stable admin/control IPC endpoint
+    admin.sock.lock
+    restart-intent.json        one-shot daemon restart marker
+    sockets/                   fallback root for fresh random runtime sockets
+  cache/
+    dispatcher-a/              rebuildable; safe to clear while no server runs
+      spill/                   over-budget teammate completion spill files
+      feishu-attachments/      inbound attachment downloads
+  state/                       durable server-owned state
     dispatcher-a/
       status.json
       access.json
       chat-bots.json
-      codex.sock
       teammate/
         identities/
           <name>.json          one TeamMate identity/checkpoint per file
         sessions.jsonl         per-dispatcher session ledger (issue #182 PR-5)
         runtime/
-          <name>/              runtime-private socket/config state
+          <name>/              runtime-private config/control state (no sockets)
       team/
         records/
           <team-id>.json        Team lifecycle record and TeamLeader pointer
         ledger/
           <team-id>.jsonl       append-only Team lifecycle ledger
+        channel-bindings.json   Team ↔ Feishu group bindings
   logs/
     dreamux-server.log
     daemon.stdout.log          when run as a daemon (onboard service redirect)
@@ -273,7 +284,15 @@ State and logs are server-owned. They are not operator-editable config.
         dispatcher-a/
           <name>.log           TeamMate Codex runtime stdout
           <name>.stderr.log    TeamMate Codex runtime stderr
+    claude-code/
+      dispatcher-a.stderr.log  Claude Code resident child stderr
+      teammate/
+        dispatcher-a/
+          <name>.stderr.log    TeamMate Claude Code runtime stderr
 ```
+
+Empty runtime child stdout/stderr logs are removed on clean shutdown (see the
+logging note below), so a normal run leaves only files that captured output.
 
 Dreamux-managed TeamMate/Team Git worktrees are NOT under `~/.dreamux` (issue
 #182 PR-4, relocated out of `state/<id>/teammate/worktrees/`). They live in the
@@ -297,10 +316,12 @@ rewrite, no deletion); only newly created managed worktrees use the new location
 Host logging (issue #70): `dreamux serve`, the Feishu channel (gate
 deliver/drop, inbound submit, outbound, `/introduce`), and dispatcher lifecycle
 write structured `pino` JSON to these files (and mirror to stderr so a
-foreground `serve` stays visible). Path builders live in `src/runtime/paths.ts`;
-logger construction lives in `src/runtime/logger.ts`. Message bodies are never
-logged; `app_secret` is redacted. See
-[the logging decision](logging.md).
+foreground `serve` stays visible). Neutral path builders live in
+`src/platform/paths.ts` (with volatile runtime-socket allocation in
+`src/platform/runtime-sockets.ts` and per-runtime log/socket paths in each
+builtin's `src/agent-runtime/builtin/<name>/paths.ts`); logger construction
+lives in `src/platform/logger.ts`. Message bodies are never logged; `app_secret`
+is redacted. See [the logging decision](logging.md).
 
 Logs (issue #182 logs stage): logs are diagnostics, never durable state — the
 whole `logs/` tree is rebuildable and safe to clear while no server runs.
@@ -315,9 +336,6 @@ removes its child's stdout/stderr log on clean shutdown if it stayed zero-byte
 (`platform/logs.ts removeEmptyLogFile`), keeping only files that captured real
 startup/crash output. This is per-child self-cleanup of files this process
 created, distinct from the operator's manual age-based pruning.
-
-`server.json` stores process-level status only: pid, status, version, started
-time, admin socket path, and last error.
 
 `status.json` stores dispatcher process status, last-known Codex thread id,
 child process status, and diagnostic timestamps. It must not contain Feishu
@@ -385,22 +403,28 @@ grants trust. It also records bot-added baseline bookkeeping (`needsBaseline`,
 `seenEventIds` for idempotent `im.chat.member.bot.added_v1` handling). It is
 server-owned discovery state, safe to delete; it holds no credentials.
 
-`codex.sock` is the Codex app-server WebSocket-over-Unix-socket endpoint for the
-dispatcher. It is not the Feishu MCP transport. The Feishu MCP default transport
-is stdio.
+A Codex app-server runtime listens on a WebSocket-over-Unix-socket endpoint
+(`codex app-server --listen unix://<path>`, connected via `ws+unix://<path>`).
+It is not the Feishu MCP transport (the Feishu MCP default transport is stdio).
+The socket is an ephemeral rendezvous endpoint: resume/checkpoint never depends
+on the path, so each runtime start allocates a **fresh random** name and the
+path is never persisted to durable state (identity/history/ledger/checkpoint/
+status) — it lives only in supervisor/runtime memory.
 
 Socket path builders must live in `src/platform/paths.ts` (neutral) and each
-builtin's own `paths.ts` (runtime-specific, per the issue #143 de-leak). They
-must enforce a short Unix socket path budget before spawning child processes.
-Dispatcher ids are validated as stable path segments and length-checked so
-derived `admin.sock` and `codex.sock` paths stay within Linux and macOS
-`sun_path` limits. When a Codex socket's descriptive in-state path exceeds the
-budget (deep `$HOME`, long teammate runtime roots such as
-`state/<dispatcher>/teammate/runtime/<name>/`), the builtin falls back to a
-short deterministic digest-named socket under a private per-user runtime root —
-`XDG_RUNTIME_DIR`, or a non-shared os tmpdir such as macOS's per-user
-`$TMPDIR`. The shared `/tmp` is never used for sockets (see the global-bin
-decision record); with no private root available the start still fails loudly.
+builtin's own `paths.ts` (runtime-specific, per the issue #143 de-leak); the
+volatile rendezvous-socket allocation is `src/platform/runtime-sockets.ts`. They
+enforce a short Unix socket path budget before spawning child processes.
+Dispatcher ids are validated, stable, length-checked path segments so the
+derived `run/admin.sock` stays within Linux and macOS `sun_path` limits.
+`allocateRuntimeSocketPath` picks the first candidate that fits the budget, in
+order: `$XDG_RUNTIME_DIR/dreamux/sockets/`, then `~/.dreamux/run/sockets/`, then
+a private per-user OS temp dir (`<os-private-temp>/dreamux/sockets/`, e.g. macOS
+`$TMPDIR` = `/var/folders/<…>/T`, far shorter than a long durable `$HOME`). The
+shared `/tmp` / `/var/tmp` is never used for sockets (see the global-bin and
+[runtime-run-root](runtime-run-root.md) decisions); with no in-budget candidate
+the start fails loudly. The old descriptive in-state `codex.sock` and its
+deterministic digest-named fallback are gone.
 
 There is no `runtime_dir`, no SQLite database, no persisted inbound message
 queue, and no persisted reaction ledger. `stateRoot()` is the single state root;
