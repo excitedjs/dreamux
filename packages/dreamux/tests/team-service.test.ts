@@ -475,6 +475,38 @@ describe('TeamService', () => {
     });
   });
 
+  it('history paginates by cursor and rejects an invalid cursor (#182 PR-7 P2)', async () => {
+    const repo = await initGitRepo(join(root, 'history-page-repo'));
+    const { teams } = buildServices();
+    for (const name of ['t-one', 't-two', 't-three']) {
+      await teams.create({
+        dispatcherId: 'flow',
+        name,
+        repoCwd: repo,
+        leaderAgentRuntime: 'flow',
+        intent: 'work',
+      });
+    }
+
+    const page1 = await teams.history({ dispatcherId: 'flow', limit: 2 });
+    expect(page1.items).toHaveLength(2);
+    expect(page1.next_cursor).not.toBeNull();
+    const page2 = await teams.history({
+      dispatcherId: 'flow',
+      limit: 2,
+      cursor: page1.next_cursor!,
+    });
+    expect(page2.items).toHaveLength(1);
+    expect(page2.next_cursor).toBeNull();
+    // The two pages together cover all three Teams with no overlap.
+    const seen = [...page1.items, ...page2.items].map((row) => row.name).sort();
+    expect(seen).toEqual(['t-one', 't-three', 't-two']);
+    // An invalid cursor fails loud rather than silently resetting to page 0.
+    await expect(
+      teams.history({ dispatcherId: 'flow', cursor: 'not-a-cursor' }),
+    ).rejects.toThrow(/invalid history cursor/);
+  });
+
   it('history is a filterable recovery search; list/status surface the bound group (#182 PR-7)', async () => {
     const repo = await initGitRepo(join(root, 'history-repo'));
     const { teams } = buildServices();
