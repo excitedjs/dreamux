@@ -36,7 +36,11 @@ import {
   createLogger,
   type DreamuxLogger,
 } from './platform/logger.js';
-import { createAdminSocketServer, type AdminSocketServer } from './admin/socket.js';
+import {
+  assertNoLegacyAdminServer,
+  createAdminSocketServer,
+  type AdminSocketServer,
+} from './admin/socket.js';
 import { RestartIntentConsumer } from './daemon/restart-intent.js';
 import type { ClaudeCodeSessionFactory } from './agent-runtime/builtin/claude-code/supervisor.js';
 import { DispatcherService } from './dispatcher-service/service.js';
@@ -100,6 +104,14 @@ export interface ServerOptions {
    * swept directories for logging.
    */
   runtimeSocketSweep?: () => Promise<string[]>;
+  /**
+   * Pre-#182 admin lock path probed before binding the new admin socket, to
+   * detect a still-running OLD-version server (issue #182 PR-1, PR #183 review
+   * P1). The CLI injects the real legacy path (`state/admin.sock.lock`); tests
+   * and embedded servers omit it (skip the check) so they never read the
+   * operator's real state dir. Detection only — never removed or migrated.
+   */
+  legacyAdminLockPath?: string | null;
 }
 
 export interface Repos {
@@ -182,6 +194,15 @@ export class Server {
         warn: (message) => this.log.warn(message),
       }),
     );
+
+    // Before taking the new run/ admin lock, fail loud if an OLD-version
+    // server still holds the pre-#182 state/ admin lock — the two locks are at
+    // different paths and would not otherwise see each other (issue #182 P1).
+    if (this.opts.legacyAdminLockPath != null) {
+      await assertNoLegacyAdminServer({
+        legacyLockPath: this.opts.legacyAdminLockPath,
+      });
+    }
 
     this.admin = createAdminSocketServer(
       this,

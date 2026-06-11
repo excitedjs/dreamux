@@ -21,6 +21,7 @@ import {
 import { mkdir, open, rm, stat } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { isProcessAlive, killProcessGroup } from '../../../platform/process.js';
+import { ensureOwnerOnlyDir } from '../../../platform/owner-only-dir.js';
 
 export interface CodexProcessOptions {
   /** Unix socket path the daemon should listen on. */
@@ -85,8 +86,9 @@ export class CodexProcess {
     ];
 
     // The socket dir is a private runtime root (issue #182): owner-only, so
-    // other local users can never reach the rendezvous endpoint.
-    await mkdir(dirname(this.opts.socketPath), { recursive: true, mode: 0o700 });
+    // other local users can never reach the rendezvous endpoint. Enforce it
+    // even when the dir already exists with a permissive mode.
+    await ensureOwnerOnlyDir(dirname(this.opts.socketPath));
     await mkdir(this.opts.cwd, { recursive: true });
     await mkdir(dirname(this.opts.stdoutLogPath), { recursive: true });
     // Stale socket from a previous crashed run would otherwise prevent

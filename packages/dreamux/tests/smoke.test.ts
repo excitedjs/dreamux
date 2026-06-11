@@ -2849,6 +2849,40 @@ describe('admin socket hardening', () => {
     }
   });
 
+  // Issue #182 P1: a still-running OLD-version server holds the legacy
+  // state/admin.sock.lock; the new server binds a different run/ path, so it
+  // must detect the live legacy holder and refuse to start.
+  it('refuses to start when a live legacy admin server still holds the old lock', async () => {
+    const legacyLock = join(runtimeDir, 'state', 'admin.sock.lock');
+    mkdirSync(dirname(legacyLock), { recursive: true });
+    writeFileSync(legacyLock, `${process.pid}\n`);
+    const server = new Server({
+      adminSocketPath: join(runtimeDir, 'run', 'admin.sock'),
+      legacyAdminLockPath: legacyLock,
+    });
+    await expect(server.start()).rejects.toThrow(
+      /legacy dreamux serve process/,
+    );
+    // Detection only: the legacy lock is left untouched.
+    expect(existsSync(legacyLock)).toBe(true);
+    // The guard runs BEFORE binding: the new run/admin.sock must never have
+    // been created, or two servers could run at once (the P1 hazard).
+    expect(existsSync(join(runtimeDir, 'run', 'admin.sock'))).toBe(false);
+  });
+
+  it('starts past a stale legacy admin lock whose holder is dead', async () => {
+    const legacyLock = join(runtimeDir, 'state', 'admin.sock.lock');
+    mkdirSync(dirname(legacyLock), { recursive: true });
+    // A PID that is essentially never alive — a crashed old server's leftover.
+    writeFileSync(legacyLock, '2147480000\n');
+    const server = new Server({
+      adminSocketPath: join(runtimeDir, 'run', 'admin.sock'),
+      legacyAdminLockPath: legacyLock,
+    });
+    await expect(server.start()).resolves.toBeUndefined();
+    await server.shutdown();
+  });
+
 
   // PR #3 review #3 r2: TOCTOU race — even when a stale socket file is
   // present, a second server must NOT delete the first's live socket. The

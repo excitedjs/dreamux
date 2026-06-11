@@ -29,6 +29,7 @@ import {
   feishuChannelLogDir,
   feishuChannelLogPath,
   feishuMcpLogDir,
+  legacyAdminSocketPath,
   logsRoot,
   serverLogPath,
   stateRoot,
@@ -77,6 +78,7 @@ async function main(): Promise<void> {
     channelLoggerFactory: (id) =>
       createLogger({ name: `channel/${id}`, filePath: feishuChannelLogPath(id) }),
     runtimeSocketSweep: () => sweepRuntimeSocketDirs(),
+    legacyAdminLockPath: `${legacyAdminSocketPath()}.lock`,
   });
   await server.start();
   logger.info({ admin_socket: adminSocketPath() }, 'server up');

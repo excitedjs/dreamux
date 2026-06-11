@@ -111,6 +111,17 @@ export function adminSocketPath(): string {
   );
 }
 
+/**
+ * The pre-#182 admin socket location, under durable state. PR-1 moved the live
+ * admin socket to `run/admin.sock`; this builder exists only so a new server
+ * can detect a still-running OLD-version server (which locks the legacy path)
+ * and fail loud — see `assertNoLegacyAdminServer`. Detection only: dreamux
+ * never removes or migrates the legacy file.
+ */
+export function legacyAdminSocketPath(): string {
+  return join(stateRoot(), 'admin.sock');
+}
+
 export function dispatcherDir(id: string): string {
   return join(stateRoot(), dispatcherPathSegment(id));
 }
