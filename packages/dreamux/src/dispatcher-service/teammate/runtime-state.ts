@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import type {
   AgentRuntimeResumeCheckpoint,
   AgentRuntimeStateStore,
@@ -18,6 +20,23 @@ export class TeamMateRuntimeStateStore implements AgentRuntimeStateStore {
 
   current(): TeamMateIdentity {
     return this.identity;
+  }
+
+  /**
+   * Ensure the live identity carries a stable session id (issue #182 PR-5,
+   * PR #187 review P3): a teammate spawned before PR-5 has `session_id: null`,
+   * which would make every post-upgrade lifecycle event skip the session
+   * ledger. Mint and persist one lazily on the first such event. Minting goes
+   * through this store so its in-memory copy stays in sync — a later
+   * status/thread write must not clobber the file back to a null session id. It
+   * is a fresh id, never re-keyed to the runtime thread/checkpoint id.
+   */
+  async ensureSessionId(): Promise<string> {
+    const current = this.identity.session_id;
+    if (current !== null) return current;
+    const sessionId = randomUUID();
+    this.identity = await this.store.update(this.identity, { sessionId });
+    return sessionId;
   }
 
   /**

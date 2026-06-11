@@ -654,20 +654,25 @@ recursively spawn or close TeamMates.
 
 Issue #182 PR-5 adds a durable **session ledger**: one per-dispatcher
 append-only `state/<dispatcher-id>/teammate/sessions.jsonl` capturing session
-lifecycle events (spawn/create, send, turn settled, close/dissolve) keyed by a
-stable `session_id` minted at spawn and carried on the identity (a nullable
-`session_id` field; pre-PR-5 records read null, a fresh spawn mints one, and a
-`send` that reopens a closed teammate reuses it — the key never re-keys to the
-runtime thread id). Each event denormalizes the recovery facts — repo, source
-cwd, runtime cwd, worktree slug/path/branch/base_ref, name, role, team_id,
-human-readable leader name, intent, runtime checkpoint kind + resumable
-session/thread id, status, close note — so a session is reconstructable from the
-ledger alone weeks later. No volatile socket path is ever recorded. Capture is
-best-effort (a write failure is logged, never failing a lifecycle verb) and the
-settle event is appended after reverse-delivery so it never perturbs completion
-timing. The bounded, filterable read surface that folds the ledger into session
-rows is built on this in PR-6; PR-5 lands only the capture plus an in-process
-`materializeSessions` view.
+lifecycle events (spawn/create, send, turn settled, close/dissolve, and the
+TeamLeader turns delivered through a bound Team channel via
+`channelInputScoped`) keyed by a stable `session_id` carried on the identity (a
+nullable `session_id` field). A fresh spawn mints one; a `send` that reopens a
+closed teammate reuses it (the key never re-keys to the runtime thread id); and
+a pre-PR-5 identity that reads `null` gets one minted **lazily and persisted on
+its first post-upgrade lifecycle event** (spawn/send/channel turn/close), so
+existing teammates begin capturing without a rebuild. Each event denormalizes
+the recovery facts — repo, source cwd, runtime cwd, worktree
+slug/path/branch/base_ref, name, role, team_id, human-readable leader name,
+intent, turn origin (dispatcher/team_leader/channel), runtime checkpoint kind +
+resumable session/thread id, status, close note — so a session is
+reconstructable from the ledger alone weeks later. No volatile socket path is
+ever recorded. Capture is best-effort (a write failure is logged, never failing
+a lifecycle verb); the settled-turn fact is appended after the reverse-delivery
+attempt regardless of its outcome, so a failed delivery still records recovery
+metadata and capture never perturbs completion timing. The bounded, filterable
+read surface that folds the ledger into session rows is built on this in PR-6;
+PR-5 lands only the capture plus an in-process `materializeSessions` view.
 
 ## Team Mode Core
 

@@ -130,6 +130,12 @@ export interface TeamMateSessionLedgerEvent {
   status: TeamMateIdentityStatus;
   /** `send`/`spawn`: the turn id; null otherwise. */
   turn_id: string | null;
+  /**
+   * Where a turn-submitting event originated, preserved for recovery (PR #187
+   * review P1): `dispatcher` / `team_leader` for spawn+send, `channel` for a
+   * turn delivered through a bound Team channel. Null for non-turn events.
+   */
+  turn_origin: TeamMateTurnOrigin | null;
   /** `send`/`spawn`: a bounded preview of the submitted prompt. */
   prompt_preview: string | null;
   /** `settled`: a bounded preview of the teammate's final assistant output. */
