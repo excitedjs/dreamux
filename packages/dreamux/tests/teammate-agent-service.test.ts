@@ -24,6 +24,8 @@ import { TeamMateAgentService } from '../src/dispatcher-service/teammate/service
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
 import {
   dispatcherCompletionSpillDir,
+  dispatcherTeamMateIdentitiesDir,
+  dispatcherTeamMateIdentityPath,
   resetRuntimeConfig,
 } from '../src/platform/paths.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
@@ -155,8 +157,15 @@ function providerCatalog(): {
   };
 }
 
+/**
+ * The dispatcher workspace cwd for the current test (issue #182 PR-4); set in
+ * beforeEach to a non-`~/.dreamux` directory so managed worktrees land under
+ * `<workspace>/.workspace/worktree/...`. reuse-cwd tests ignore it.
+ */
+let dispatcherCwd: string;
+
 function buildService(provider: AgentRuntimeProvider): TeamMateAgentService {
-  const config = testDreamuxConfig();
+  const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
   const dispatchers = new DispatcherStore(config);
   const registry = createBuiltinProviderRegistry();
   const descriptor = registry.resolve('builtin:codex');
@@ -184,6 +193,7 @@ describe('TeamMateAgentService', () => {
     root = realpathSync(mkdtempSync(join(tmpdir(), 'dreamux-teammate-agent-')));
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(root, 'home');
+    dispatcherCwd = join(root, 'workspace');
     resetRuntimeConfig();
   });
 
@@ -376,7 +386,7 @@ describe('TeamMateAgentService', () => {
 
   it('spawns a named resumable teammate and records raw history events', async () => {
     const { catalog, provider } = providerCatalog();
-    const config = testDreamuxConfig();
+    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
     const service = new TeamMateAgentService({
       config,
       dispatchers: new DispatcherStore(config),
@@ -471,7 +481,7 @@ describe('TeamMateAgentService', () => {
   it('returns a bounded session ledger with worktree metadata and filters', async () => {
     const repo = await initGitRepo(join(root, 'ledger-repo'));
     const { catalog } = providerCatalog();
-    const config = testDreamuxConfig();
+    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
     const service = new TeamMateAgentService({
       config,
       dispatchers: new DispatcherStore(config),
@@ -557,7 +567,7 @@ describe('TeamMateAgentService', () => {
 
   it('closes a live teammate without deleting its history', async () => {
     const { catalog } = providerCatalog();
-    const config = testDreamuxConfig();
+    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
     const service = new TeamMateAgentService({
       config,
       dispatchers: new DispatcherStore(config),
@@ -604,7 +614,7 @@ describe('TeamMateAgentService', () => {
 
   it('send reopens a closed teammate from its checkpoint (issue #155)', async () => {
     const { catalog, provider } = providerCatalog();
-    const config = testDreamuxConfig();
+    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
     const service = new TeamMateAgentService({
       config,
       dispatchers: new DispatcherStore(config),
@@ -648,7 +658,7 @@ describe('TeamMateAgentService', () => {
 
   it('send updates the recorded intent when supplied, and leaves it unchanged otherwise (#182 PR-3)', async () => {
     const { catalog } = providerCatalog();
-    const config = testDreamuxConfig();
+    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
     const service = new TeamMateAgentService({
       config,
       dispatchers: new DispatcherStore(config),
@@ -695,7 +705,7 @@ describe('TeamMateAgentService', () => {
 
   it('rejects direct service spawn/close with missing or empty intent/note (#182 PR-3 P1)', async () => {
     const { catalog } = providerCatalog();
-    const config = testDreamuxConfig();
+    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
     const service = new TeamMateAgentService({
       config,
       dispatchers: new DispatcherStore(config),
@@ -733,7 +743,7 @@ describe('TeamMateAgentService', () => {
 
   it('fails loud when spawned with an agentRuntime that matches no agent', async () => {
     const { catalog } = providerCatalog();
-    const config = testDreamuxConfig();
+    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
     const service = new TeamMateAgentService({
       config,
       dispatchers: new DispatcherStore(config),
@@ -754,7 +764,7 @@ describe('TeamMateAgentService', () => {
 
   it('requires cwd for native teammate spawn', async () => {
     const { catalog } = providerCatalog();
-    const config = testDreamuxConfig();
+    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
     const service = new TeamMateAgentService({
       config,
       dispatchers: new DispatcherStore(config),
@@ -773,7 +783,7 @@ describe('TeamMateAgentService', () => {
 
   it('reads old identities without owner as dispatcher-owned until mutated', async () => {
     const { catalog } = providerCatalog();
-    const config = testDreamuxConfig();
+    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
     const service = new TeamMateAgentService({
       config,
       dispatchers: new DispatcherStore(config),
@@ -828,7 +838,7 @@ describe('TeamMateAgentService', () => {
   it('prepares managed worktrees, persists metadata, and deletes clean worktrees on close', async () => {
     const repo = await initGitRepo(join(root, 'repo'));
     const { catalog, provider } = providerCatalog();
-    const config = testDreamuxConfig();
+    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
     const service = new TeamMateAgentService({
       config,
       dispatchers: new DispatcherStore(config),
@@ -882,7 +892,7 @@ describe('TeamMateAgentService', () => {
     const linked = join(root, 'linked-repo');
     await symlink(repo, linked);
     const { catalog } = providerCatalog();
-    const config = testDreamuxConfig();
+    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
     const service = new TeamMateAgentService({
       config,
       dispatchers: new DispatcherStore(config),
@@ -905,7 +915,7 @@ describe('TeamMateAgentService', () => {
   it('recreates a deleted managed worktree when send reopens a closed teammate', async () => {
     const repo = await initGitRepo(join(root, 'reopen-repo'));
     const { catalog, provider } = providerCatalog();
-    const config = testDreamuxConfig();
+    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
     const service = new TeamMateAgentService({
       config,
       dispatchers: new DispatcherStore(config),
@@ -954,7 +964,7 @@ describe('TeamMateAgentService', () => {
   it('marks intentionally retained managed worktrees as kept on close', async () => {
     const repo = await initGitRepo(join(root, 'kept-repo'));
     const { catalog } = providerCatalog();
-    const config = testDreamuxConfig();
+    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
     const service = new TeamMateAgentService({
       config,
       dispatchers: new DispatcherStore(config),
@@ -988,7 +998,7 @@ describe('TeamMateAgentService', () => {
   it('retains dirty managed worktrees on close', async () => {
     const repo = await initGitRepo(join(root, 'dirty-repo'));
     const { catalog } = providerCatalog();
-    const config = testDreamuxConfig();
+    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
     const service = new TeamMateAgentService({
       config,
       dispatchers: new DispatcherStore(config),
@@ -1023,7 +1033,7 @@ describe('TeamMateAgentService', () => {
   it('retains clean detached managed worktrees with unique commits', async () => {
     const repo = await initGitRepo(join(root, 'detached-repo'));
     const { catalog } = providerCatalog();
-    const config = testDreamuxConfig();
+    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
     const service = new TeamMateAgentService({
       config,
       dispatchers: new DispatcherStore(config),
@@ -1061,11 +1071,14 @@ describe('TeamMateAgentService', () => {
     expect(existsSync(worktreePath)).toBe(true);
   });
 
-  it('rejects a managed path that exists for a different source repository', async () => {
+  it('disambiguates the same managed slug across different source repos (#182 PR-4)', async () => {
+    // Repo-disambiguation: two different source repos that share an inner slug
+    // must map to DISTINCT managed worktrees (under distinct repo-slug dirs),
+    // not collide at one path. This is the cross-repo uniqueness contract.
     const firstRepo = await initGitRepo(join(root, 'slug-a'));
     const secondRepo = await initGitRepo(join(root, 'slug-b'));
     const { catalog } = providerCatalog();
-    const config = testDreamuxConfig();
+    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
     const service = new TeamMateAgentService({
       config,
       dispatchers: new DispatcherStore(config),
@@ -1073,7 +1086,7 @@ describe('TeamMateAgentService', () => {
       log: noopLog(),
     });
 
-    await service.spawn({
+    const first = await service.spawn({
       dispatcherId: 'flow',
       name: 'first-slug',
       intent: 'work',
@@ -1086,27 +1099,67 @@ describe('TeamMateAgentService', () => {
         cleanup: 'keep',
       },
     });
-    await expect(
-      service.spawn({
-        dispatcherId: 'flow',
-        name: 'second-slug',
-        intent: 'work',
-        prompt: 'go',
-        cwd: secondRepo,
-        worktree: {
-          mode: 'managed',
-          slug: 'shared-slug',
-          branch: 'dreamux/shared-slug',
-          cleanup: 'keep',
-        },
-      }),
-    ).rejects.toThrow(/not registered for source repo|already owned/);
+    const second = await service.spawn({
+      dispatcherId: 'flow',
+      name: 'second-slug',
+      intent: 'work',
+      prompt: 'go',
+      cwd: secondRepo,
+      worktree: {
+        mode: 'managed',
+        slug: 'shared-slug',
+        branch: 'dreamux/shared-slug',
+        cleanup: 'keep',
+      },
+    });
+
+    const firstPath = first.teammate.worktree.path;
+    const secondPath = second.teammate.worktree.path;
+    expect(firstPath).not.toBe(secondPath);
+    // Both live under the dispatcher workspace boundary, never under ~/.dreamux.
+    const boundary = join(dispatcherCwd, '.workspace', 'worktree');
+    expect(firstPath.startsWith(boundary)).toBe(true);
+    expect(secondPath.startsWith(boundary)).toBe(true);
+    // Same inner slug, different repo-disambiguated parent dir.
+    expect(join(firstPath, '..')).not.toBe(join(secondPath, '..'));
+    expect(existsSync(firstPath)).toBe(true);
+    expect(existsSync(secondPath)).toBe(true);
+  });
+
+  it('self-ignores the .workspace boundary so managed worktrees are not repo content (#182 PR-4)', async () => {
+    const repo = await initGitRepo(join(root, 'boundary-repo'));
+    const { catalog } = providerCatalog();
+    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: catalog,
+      log: noopLog(),
+    });
+
+    await service.spawn({
+      dispatcherId: 'flow',
+      name: 'boundary',
+      intent: 'work',
+      prompt: 'go',
+      cwd: repo,
+      worktree: {
+        mode: 'managed',
+        slug: 'boundary',
+        branch: 'dreamux/boundary',
+        cleanup: 'keep',
+      },
+    });
+
+    const gitignore = join(dispatcherCwd, '.workspace', '.gitignore');
+    expect(existsSync(gitignore)).toBe(true);
+    expect((await readFile(gitignore, 'utf8')).split('\n')).toContain('*');
   });
 
   it('rejects two teammate identities using the same explicit managed slug', async () => {
     const repo = await initGitRepo(join(root, 'same-slug-repo'));
     const { catalog } = providerCatalog();
-    const config = testDreamuxConfig();
+    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
     const service = new TeamMateAgentService({
       config,
       dispatchers: new DispatcherStore(config),
@@ -1146,7 +1199,7 @@ describe('TeamMateAgentService', () => {
 
   it('fails loud on a legacy provider_ref teammate identity (pre-#148)', async () => {
     const { catalog } = providerCatalog();
-    const config = testDreamuxConfig();
+    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
     const service = new TeamMateAgentService({
       config,
       dispatchers: new DispatcherStore(config),
@@ -1189,9 +1242,75 @@ describe('TeamMateAgentService', () => {
     ).rejects.toThrow(/legacy provider_ref format/);
   });
 
+  it('reads a legacy under-state managed worktree path verbatim (#182 PR-4)', async () => {
+    // A teammate identity persisted before the worktree relocation carries a
+    // managed worktree.path under `~/.dreamux/state/.../worktrees/`. The reader
+    // must surface that legacy path UNCHANGED — never rewrite it to the new
+    // `.workspace/worktree/...` layout and never delete the old location.
+    const { catalog } = providerCatalog();
+    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: catalog,
+      log: noopLog(),
+    });
+    const legacyWorktreePath = join(
+      root,
+      'home',
+      '.dreamux',
+      'state',
+      'flow',
+      'teammate',
+      'worktrees',
+      'legacy-mate',
+    );
+    await mkdir(dispatcherTeamMateIdentitiesDir('flow'), { recursive: true });
+    await writeFile(
+      dispatcherTeamMateIdentityPath('flow', 'legacy-mate'),
+      JSON.stringify({
+        version: 1,
+        dispatcher_id: 'flow',
+        name: 'legacy-mate',
+        owner: { kind: 'dispatcher', dispatcher_id: 'flow' },
+        role: 'teammate',
+        team_id: null,
+        agent_runtime: 'flow',
+        source_cwd: root,
+        source_repo: root,
+        cwd: legacyWorktreePath,
+        runtime_cwd: legacyWorktreePath,
+        worktree: {
+          mode: 'managed',
+          slug: 'legacy-mate',
+          path: legacyWorktreePath,
+          branch: 'dreamux/legacy-mate',
+          base_ref: 'HEAD',
+          cleanup: 'keep',
+          cleanup_state: 'managed-active',
+          cleanup_error: null,
+        },
+        intent: 'legacy work',
+        created_at: 1,
+        updated_at: 1,
+        status: 'closed',
+        checkpoint: null,
+        last_error: null,
+        closed_at: 2,
+        close_note: 'archived',
+      }),
+      { mode: 0o600 },
+    );
+
+    const status = await service.status('flow', 'legacy-mate');
+    expect(status.worktree.mode).toBe('managed');
+    expect(status.worktree.path).toBe(legacyWorktreePath);
+    expect(status.runtime_cwd).toBe(legacyWorktreePath);
+  });
+
   it('does not wire the settle hook when no completion sink is configured', async () => {
     const { catalog, provider } = providerCatalog();
-    const config = testDreamuxConfig();
+    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
     const service = new TeamMateAgentService({
       config,
       dispatchers: new DispatcherStore(config),
@@ -1210,7 +1329,7 @@ describe('TeamMateAgentService', () => {
 
   it('delivers a settled teammate turn upward as a completion envelope', async () => {
     const { catalog, provider } = providerCatalog();
-    const config = testDreamuxConfig();
+    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
     const received: Array<{ id: string; name: string; env: CompletionEnvelope }> = [];
     const service = new TeamMateAgentService({
       config,
@@ -1250,7 +1369,7 @@ describe('TeamMateAgentService', () => {
 
   it('delivers terminal failure/stop settlements with their own status', async () => {
     const { catalog, provider } = providerCatalog();
-    const config = testDreamuxConfig();
+    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
     const received: CompletionEnvelope[] = [];
     const service = new TeamMateAgentService({
       config,
@@ -1292,7 +1411,7 @@ describe('TeamMateAgentService', () => {
 
   it('drops null-turn settlements rather than fabricating a completion id', async () => {
     const { catalog, provider } = providerCatalog();
-    const config = testDreamuxConfig();
+    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
     const received: CompletionEnvelope[] = [];
     const service = new TeamMateAgentService({
       config,
@@ -1320,7 +1439,7 @@ describe('TeamMateAgentService', () => {
 
   it('delivers concurrent teammate completions without dropping any', async () => {
     const { catalog, provider } = providerCatalog();
-    const config = testDreamuxConfig();
+    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
     const received: CompletionEnvelope[] = [];
     const service = new TeamMateAgentService({
       config,

@@ -50,6 +50,9 @@ export class TeamService {
       dispatcherId: input.dispatcherId,
       teammateName: `team-${teamId}`,
       cwd: input.repoCwd,
+      dispatcherWorkspace: await this.opts.teammates.dispatcherWorkspace(
+        input.dispatcherId,
+      ),
       request: input.worktree ?? {
         mode: 'managed',
         slug: `team-${teamId}`,

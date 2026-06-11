@@ -30,6 +30,7 @@ import {
   dispatcherTeamMateRuntimeDir,
 } from '../../platform/paths.js';
 import { validateDispatcherId } from '../../state/dispatcher-id.js';
+import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
 import { TeamMateIdentityStore } from './identity-store.js';
 import { TeamMateRuntimeStateStore } from './runtime-state.js';
 import { WorktreeManager } from './worktree-manager.js';
@@ -189,12 +190,19 @@ export class TeamMateAgentService {
       input.agentRuntime ?? this.defaultAgentRuntime(dispatcherId);
     const agent = this.resolveAgent(dispatcherId, agentRuntimeId);
     const provider = this.opts.agentRuntimeProviders.resolve(agent.provider);
+    // Only a managed worktree is placed under the dispatcher workspace, so only
+    // managed mode resolves (and thus enforces) the dispatcher cwd contract;
+    // reuse-cwd never forces it (issue #182 PR-4).
+    const managedMode = (input.worktree?.mode ?? 'reuse-cwd') === 'managed';
     const workspace =
       input.sharedWorkspace ??
       (await this.worktrees.prepare({
         dispatcherId,
         teammateName: name,
         cwd,
+        ...(managedMode
+          ? { dispatcherWorkspace: await this.dispatcherWorkspace(dispatcherId) }
+          : {}),
         request: input.worktree,
       }));
     if (input.sharedWorkspace === undefined) {
@@ -619,6 +627,7 @@ export class TeamMateAgentService {
       dispatcherId: identity.dispatcher_id,
       teammateName: identity.name,
       cwd: identity.source_cwd,
+      dispatcherWorkspace: await this.dispatcherWorkspace(identity.dispatcher_id),
       request: {
         mode: 'managed',
         ...(identity.worktree.slug !== null ? { slug: identity.worktree.slug } : {}),
@@ -957,6 +966,17 @@ export class TeamMateAgentService {
       this.opts.config.dispatchers.find((entry) => entry.id === dispatcherId) ??
       null
     );
+  }
+
+  /**
+   * Resolve and validate the dispatcher workspace cwd (issue #182 PR-4): the
+   * root under which managed worktrees are placed. Fails loud when the
+   * dispatcher declares no explicit `cwd` — there is no state-dir fallback.
+   * Exposed so the Team service (which owns its own WorktreeManager) resolves
+   * the same workspace.
+   */
+  async dispatcherWorkspace(dispatcherId: string): Promise<string> {
+    return ensureDispatcherWorkspace(this.opts.config, dispatcherId);
   }
 
   private toStatus(

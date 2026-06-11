@@ -15,10 +15,10 @@ import {
 } from '../src/agent-runtime/index.js';
 import { createFakeFeishuBot } from '../src/channel/feishu/bot.js';
 import { DispatcherAgentService } from '../src/dispatcher-service/dispatcher/service.js';
-import { resetRuntimeConfig } from '../src/platform/paths.js';
+import { defaultDispatcherCwd, resetRuntimeConfig } from '../src/platform/paths.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
-import { testDreamuxConfig } from './helpers/config.js';
+import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 
 const CAPABILITIES: AgentRuntimeCapabilities = {
   resume: { supported: true, checkpoint: 'codexThread' },
@@ -102,7 +102,7 @@ function buildService(
   behavior: DeliveryBehavior,
   adminSocketPath: string,
 ): DispatcherAgentService {
-  const config = testDreamuxConfig();
+  const config = testDreamuxConfig([testDispatcherConfig({ cwd: defaultDispatcherCwd('flow') })]);
   const registry = createBuiltinProviderRegistry();
   const descriptor = registry.resolve('builtin:codex');
   registry.registerImplementation(

@@ -92,7 +92,20 @@ That record wins over older runtime-dir / SQLite decisions.
 - `~/.dreamux/config.json` — the only dreamux operator-editable config
   source. It holds dispatcher declarations and local Feishu credentials.
   `dreamux serve` must fail loudly when it is missing and tell the operator
-  to run `dreamux onboard`.
+  to run `dreamux onboard`. Each dispatcher MUST declare an explicit `cwd`
+  (issue #182 PR-4): `dreamux serve` fails loud at startup if any enabled
+  dispatcher has no `cwd` — there is no fallback to a state directory. A
+  missing `cwd` directory is created (mkdir -p); an unusable one fails loud.
+  `dreamux doctor` diagnoses the same per-dispatcher contract.
+- `<dispatcher cwd>/.workspace/worktree/<repo-slug>/<slug>/` — Dreamux-managed
+  TeamMate/Team Git worktrees (issue #182 PR-4), relocated out of
+  `~/.dreamux/state/<id>/teammate/worktrees/`. They live in the dispatcher's
+  own workspace, never under `~/.dreamux`; `.workspace/` self-ignores (a `*`
+  .gitignore) so they never become repo content. `<repo-slug>` is
+  `<sanitized-basename>-<sha256(repo-root):12>`, disambiguating same-named repos
+  across Team/TeamMate usage. Managed worktree creation fails loud if the
+  workspace resolves under `~/.dreamux`. Legacy identity records pointing at the
+  old under-state path are read verbatim (no rewrite, no deletion).
 - `~/.dreamux/state/` — durable server-owned state: per-dispatcher
   `status.json`, `access.json`, and `teammate/` task ledgers. Safe to remove
   when the operator intentionally wants to discard server state.
