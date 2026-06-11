@@ -193,16 +193,21 @@ describe('TeamService', () => {
     expect(existsSync(created.team.runtime_cwd)).toBe(true);
     // Required intent (issue #182 PR-3) is persisted on the Team record.
     expect(created.team.intent).toBe('ship alpha');
-    // #182 PR-7: list returns compact scan rows (name == team_id), not summaries.
+    // #182 PR-7: list returns compact scan rows, not summaries. #199 Slice 1:
+    // rows are keyed by the concrete team_name; the duplicate team_id and the
+    // machine-local repo_cwd / worktree_mode are no longer projected.
     const listed = await teams.list('flow');
-    expect(listed.map((entry) => entry.name)).toEqual(['alpha']);
+    expect(listed.map((entry) => entry.team_name)).toEqual(['alpha']);
     expect(listed[0]).toMatchObject({
-      team_id: 'alpha',
+      team_name: 'alpha',
       status: 'running',
       leader_name: created.team.leader_name,
       member_count: 0,
       bound_group: null,
     });
+    expect(listed[0]).not.toHaveProperty('team_id');
+    expect(listed[0]).not.toHaveProperty('repo_cwd');
+    expect(listed[0]).not.toHaveProperty('worktree_mode');
     expect((await teams.ledger('flow', 'alpha')).events.map((event) => event.type)).toEqual(['create']);
 
     const reloaded = new TeamService({ teammates });
@@ -499,7 +504,7 @@ describe('TeamService', () => {
     expect(page2.items).toHaveLength(1);
     expect(page2.next_cursor).toBeNull();
     // The two pages together cover all three Teams with no overlap.
-    const seen = [...page1.items, ...page2.items].map((row) => row.name).sort();
+    const seen = [...page1.items, ...page2.items].map((row) => row.team_name).sort();
     expect(seen).toEqual(['t-one', 't-three', 't-two']);
     // An invalid cursor fails loud rather than silently resetting to page 0.
     await expect(
@@ -529,29 +534,45 @@ describe('TeamService', () => {
 
     // No filters → both Teams, most-recent first (billing was touched last).
     const all = await teams.history({ dispatcherId: 'flow' });
-    expect(all.items.map((row) => row.name).sort()).toEqual([
+    expect(all.items.map((row) => row.team_name).sort()).toEqual([
       'auth-team',
       'billing-team',
     ]);
     expect(all.next_cursor).toBeNull();
 
-    // close_status filter isolates the dissolved Team and carries recovery facts.
-    const closed = await teams.history({ dispatcherId: 'flow', closeStatus: 'closed' });
-    expect(closed.items.map((row) => row.name)).toEqual(['billing-team']);
-    expect(closed.items[0]).toMatchObject({
-      close_status: 'closed',
+    // #199 Slice 1: rows are keyed by team_name. The dissolved Team is still
+    // recoverable and carries recovery facts, but the row no longer projects a
+    // close_status flag, the duplicate team_id, or machine-local cwd/worktree.
+    const dissolved = all.items.find((row) => row.team_name === 'billing-team');
+    expect(dissolved).toMatchObject({
       close_note: 'done',
       close_note_preview: 'done',
       source_repo: repo,
     });
+    for (const removed of ['close_status', 'team_id', 'repo_cwd', 'runtime_cwd', 'worktree']) {
+      expect(dissolved).not.toHaveProperty(removed);
+    }
 
-    // grep matches intent text; status filter narrows to live Teams.
+    // The lifecycle `status` filter survives (the legacy close_status is gone):
+    // 'running' isolates the live Team, 'closed' the dissolved one.
     expect(
-      (await teams.history({ dispatcherId: 'flow', grep: 'auth' })).items.map((r) => r.name),
+      (await teams.history({ dispatcherId: 'flow', status: 'running' })).items.map(
+        (r) => r.team_name,
+      ),
     ).toEqual(['auth-team']);
     expect(
-      (await teams.history({ dispatcherId: 'flow', status: 'running' })).items.map((r) => r.name),
+      (await teams.history({ dispatcherId: 'flow', status: 'closed' })).items.map(
+        (r) => r.team_name,
+      ),
+    ).toEqual(['billing-team']);
+
+    // grep matches intent text on either Team.
+    expect(
+      (await teams.history({ dispatcherId: 'flow', grep: 'auth' })).items.map((r) => r.team_name),
     ).toEqual(['auth-team']);
+    expect(
+      (await teams.history({ dispatcherId: 'flow', grep: 'billing' })).items.map((r) => r.team_name),
+    ).toEqual(['billing-team']);
 
     // Bind a group → it surfaces in list (bound_group) and status (binding).
     await teams.bindChannel({
@@ -562,7 +583,7 @@ describe('TeamService', () => {
       chatType: 'group',
     });
     const listed = await teams.list('flow');
-    const authRow = listed.find((row) => row.name === 'auth-team');
+    const authRow = listed.find((row) => row.team_name === 'auth-team');
     expect(authRow?.bound_group).toEqual({ provider: 'builtin:feishu', chat_id: 'chat-auth' });
     const status = await teams.status('flow', 'auth-team');
     expect(status.binding).toEqual({ provider: 'builtin:feishu', chat_id: 'chat-auth' });

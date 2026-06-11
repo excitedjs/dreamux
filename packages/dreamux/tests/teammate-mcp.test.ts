@@ -185,7 +185,10 @@ describe('teammate-mcp stdio shim', () => {
       };
     };
     // Issue #182 PR-3: spawn.intent is required (durable recovery subject).
-    expect(spawn.inputSchema.required).toEqual(['name', 'prompt', 'cwd', 'intent']);
+    // Issue #199 Slice 1: the requested-name input is `name_prefix`.
+    expect(spawn.inputSchema.required).toEqual(['name_prefix', 'prompt', 'cwd', 'intent']);
+    expect(spawn.inputSchema.properties).toHaveProperty('name_prefix');
+    expect(spawn.inputSchema.properties).not.toHaveProperty('name');
     expect(spawn.inputSchema.properties).toHaveProperty('worktree');
     expect(JSON.stringify(spawn.inputSchema.properties['worktree'])).toContain(
       'delete-on-close',
@@ -225,7 +228,19 @@ describe('teammate-mcp stdio shim', () => {
     expect(history.inputSchema.required).toEqual([]);
     expect(history.inputSchema.properties).toHaveProperty('limit');
     expect(history.inputSchema.properties).toHaveProperty('cursor');
-    expect(history.inputSchema.properties).toHaveProperty('source_cwd');
+    expect(history.inputSchema.properties).toHaveProperty('name');
+    expect(history.inputSchema.properties).toHaveProperty('agent_runtime');
+    expect(history.inputSchema.properties).toHaveProperty('grep');
+    // #199 Slice 1: legacy history filters are removed from the public schema.
+    for (const removed of [
+      'id',
+      'state',
+      'close_status',
+      'source_cwd',
+      'runtime_cwd',
+    ]) {
+      expect(history.inputSchema.properties).not.toHaveProperty(removed);
+    }
     // #188: last takes name + an optional 1..5 turns count; ctx/history_events gone.
     expect(last.inputSchema.required).toEqual(['name']);
     expect(last.inputSchema.properties).toHaveProperty('turns');
@@ -269,7 +284,7 @@ describe('teammate-mcp stdio shim', () => {
         params: {
           name: 'spawn',
           arguments: {
-            name: 'reviewer',
+            name_prefix: 'reviewer',
             prompt: 'Review the change.',
             agent_runtime: 'codex',
             cwd: '/workspace',
@@ -302,7 +317,7 @@ describe('teammate-mcp stdio shim', () => {
           params: {
             dispatcher_id: 'dispatcher-a',
             caller_kind: 'dispatcher',
-            name: 'reviewer',
+            name_prefix: 'reviewer',
             prompt: 'Review the change.',
             agent_runtime: 'codex',
             cwd: '/workspace',
@@ -351,7 +366,7 @@ describe('teammate-mcp stdio shim', () => {
         params: {
           name: 'spawn',
           arguments: {
-            name: 'reviewer',
+            name_prefix: 'reviewer',
             prompt: 'Review the change.',
             // intent present so this isolates the missing-cwd case.
             intent: 'review',
@@ -402,7 +417,7 @@ describe('teammate-mcp stdio shim', () => {
         method: 'tools/call',
         params: {
           name: 'spawn',
-          arguments: { name: 'reviewer', prompt: 'go', cwd: '/workspace' },
+          arguments: { name_prefix: 'reviewer', prompt: 'go', cwd: '/workspace' },
         },
       });
       expect(await reader.next()).toMatchObject({
@@ -514,7 +529,7 @@ describe('teammate-mcp stdio shim', () => {
         params: {
           name: 'spawn',
           arguments: {
-            name: 'builder',
+            name_prefix: 'builder',
             prompt: 'Build the change.',
             cwd: '/ignored',
             worktree: { mode: 'managed', cleanup: 'delete-on-close' },
@@ -538,7 +553,7 @@ describe('teammate-mcp stdio shim', () => {
           method: 'mcp.teammate.spawn',
           params: {
             dispatcher_id: 'dispatcher-a',
-            name: 'builder',
+            name_prefix: 'builder',
             prompt: 'Build the change.',
             intent: 'build',
             caller_kind: 'team_leader',
@@ -646,7 +661,7 @@ describe('teammate-mcp stdio shim', () => {
           arguments: {
             grep: 'review',
             limit: 5,
-            close_status: 'open',
+            agent_runtime: 'codex',
           },
         },
       });
@@ -692,7 +707,7 @@ describe('teammate-mcp stdio shim', () => {
           caller_kind: 'teammate',
           grep: 'review',
           limit: 5,
-          close_status: 'open',
+          agent_runtime: 'codex',
         },
         { dispatcher_id: 'dispatcher-a', caller_kind: 'teammate', name: 'reviewer' },
         {

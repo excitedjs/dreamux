@@ -141,22 +141,21 @@ function teammateTools(
   callerKind: 'dispatcher' | 'team_leader' | 'teammate',
 ): Array<Record<string, unknown>> {
   const readTools = [
-    tool('history', 'List bounded TeamMate session ledger rows for recovery.', {
+    tool('history', 'Search this scope\'s TeamMate records for recovery (closed included). A compact recovery list keyed by concrete name, not a raw event timeline. Returns { items, next_cursor }.', {
       name: { type: 'string', minLength: 1, maxLength: 64 },
-      id: { type: 'string', minLength: 1, maxLength: 64 },
-      agent_runtime: { type: 'string', minLength: 1, maxLength: 128 },
-      state: {
+      status: {
         type: 'string',
-        enum: ['active', 'starting', 'running', 'degraded', 'closed', 'stopped'],
+        enum: ['starting', 'running', 'degraded', 'closed', 'stopped'],
       },
-      close_status: { type: 'string', enum: ['open', 'closed'] },
-      source_cwd: { type: 'string', minLength: 1, maxLength: 4096 },
-      runtime_cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+      agent_runtime: { type: 'string', minLength: 1, maxLength: 128 },
+      repo: { type: 'string', minLength: 1, maxLength: 4096 },
       grep: { type: 'string', minLength: 1, maxLength: 500 },
+      since: { type: 'integer' },
+      until: { type: 'integer' },
       limit: { type: 'integer', minimum: 1, maximum: 100 },
       cursor: { type: 'string', minLength: 1, maxLength: 1000 },
     }, []),
-    tool('list', 'List this dispatcher\'s TeamMate identities (concrete name, display name, status, repo/cwd/session essentials).', {}, []),
+    tool('list', 'List this scope\'s TeamMate identities (compact rows: concrete name, owner, status, agent runtime, intent essentials).', {}, []),
     tool('status', 'Read one TeamMate identity and live runtime status by its concrete name.', {
       name: { type: 'string', minLength: 1, maxLength: 64 },
     }, ['name']),
@@ -168,7 +167,7 @@ function teammateTools(
   ];
   if (callerKind === 'teammate') return readTools;
   const spawnProperties: Record<string, unknown> = {
-    name: { type: 'string', minLength: 1, maxLength: 64 },
+    name_prefix: { type: 'string', minLength: 1, maxLength: 64 },
     prompt: { type: 'string', minLength: 1, maxLength: 20000 },
     agent_runtime: {
       type: 'string',
@@ -195,11 +194,11 @@ function teammateTools(
   return [
     tool(
       'spawn',
-      'Start a named, resumable TeamMate agent and submit its first turn. Use get_capabilities.agent_runtimes[].id as agent_runtime. intent is required: it is the durable recovery subject for the session ledger.',
+      'Start a resumable TeamMate agent and submit its first turn. name_prefix is the requested label; spawn RETURNS the concrete, never-reused name that all later send/status/last/close MUST use. Use get_capabilities.agent_runtimes[].id as agent_runtime. intent is required: it is the durable recovery subject.',
       spawnProperties,
       callerKind === 'team_leader'
-        ? ['name', 'prompt', 'intent']
-        : ['name', 'prompt', 'cwd', 'intent'],
+        ? ['name_prefix', 'prompt', 'intent']
+        : ['name_prefix', 'prompt', 'cwd', 'intent'],
     ),
     tool('send', 'Send a turn to a TeamMate agent; reopens a closed one from its checkpoint first. Pass intent to update the recorded recovery subject before the turn.', {
       name: { type: 'string', minLength: 1, maxLength: 64 },
@@ -349,7 +348,7 @@ function spawnArgs(
   const intent = requireString(obj, 'intent');
   if (callerKind === 'team_leader') {
     return {
-      name: requireString(obj, 'name'),
+      name_prefix: requireString(obj, 'name_prefix'),
       prompt: requireString(obj, 'prompt'),
       intent,
       ...(agentRuntime !== null ? { agent_runtime: agentRuntime } : {}),
@@ -357,7 +356,7 @@ function spawnArgs(
   }
   const worktree = optionalWorktree(obj, 'worktree');
   return {
-    name: requireString(obj, 'name'),
+    name_prefix: requireString(obj, 'name_prefix'),
     prompt: requireString(obj, 'prompt'),
     cwd: requireString(obj, 'cwd'),
     intent,
@@ -426,34 +425,44 @@ function closeArgs(value: unknown): Record<string, unknown> {
 function historyArgs(value: unknown): Record<string, unknown> {
   const obj = asRecord(value, 'history arguments');
   const name = optionalString(obj, 'name');
-  const id = optionalString(obj, 'id');
-  const agentRuntime = optionalString(obj, 'agent_runtime');
-  const state = optionalEnum(obj, 'state', [
-    'active',
+  const status = optionalEnum(obj, 'status', [
     'starting',
     'running',
     'degraded',
     'closed',
     'stopped',
   ]);
-  const closeStatus = optionalEnum(obj, 'close_status', ['open', 'closed']);
-  const sourceCwd = optionalString(obj, 'source_cwd');
-  const runtimeCwd = optionalString(obj, 'runtime_cwd');
+  const agentRuntime = optionalString(obj, 'agent_runtime');
+  const repo = optionalString(obj, 'repo');
   const grep = optionalString(obj, 'grep');
+  const since = optionalInteger(obj, 'since');
+  const until = optionalInteger(obj, 'until');
   const limit = optionalInteger(obj, 'limit');
   const cursor = optionalString(obj, 'cursor');
   return {
     ...(name !== null ? { name } : {}),
-    ...(id !== null ? { id } : {}),
+    ...(status !== null ? { status } : {}),
     ...(agentRuntime !== null ? { agent_runtime: agentRuntime } : {}),
-    ...(state !== null ? { state } : {}),
-    ...(closeStatus !== null ? { close_status: closeStatus } : {}),
-    ...(sourceCwd !== null ? { source_cwd: sourceCwd } : {}),
-    ...(runtimeCwd !== null ? { runtime_cwd: runtimeCwd } : {}),
+    ...(repo !== null ? { repo } : {}),
     ...(grep !== null ? { grep } : {}),
+    ...(since !== null ? { since } : {}),
+    ...(until !== null ? { until } : {}),
     ...(limit !== null ? { limit } : {}),
     ...(cursor !== null ? { cursor } : {}),
   };
+}
+
+function optionalEnum(
+  obj: Record<string, unknown>,
+  key: string,
+  values: string[],
+): string | null {
+  const value = optionalString(obj, key);
+  if (value === null) return null;
+  if (!values.includes(value)) {
+    throw new Error(`${key} must be one of: ${values.join(', ')}`);
+  }
+  return value;
 }
 
 function nameArgs(value: unknown): Record<string, unknown> {
@@ -497,19 +506,6 @@ function optionalInteger(obj: Record<string, unknown>, key: string): number | nu
   if (value === undefined || value === null) return null;
   if (!Number.isInteger(value)) throw new Error(`${key} must be an integer`);
   return value as number;
-}
-
-function optionalEnum(
-  obj: Record<string, unknown>,
-  key: string,
-  values: string[],
-): string | null {
-  const value = optionalString(obj, key);
-  if (value === null) return null;
-  if (!values.includes(value)) {
-    throw new Error(`${key} must be one of: ${values.join(', ')}`);
-  }
-  return value;
 }
 
 function okResponse(id: JsonRpcRequest['id'], result: unknown): string {

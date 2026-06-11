@@ -341,50 +341,50 @@ export interface TeamMateCloseResult {
 export interface TeamMateHistoryQuery {
   dispatcherId: string;
   principal?: TeamMateCallerPrincipal;
-  id?: string;
   name?: string;
+  /** Lifecycle status filter (replaces the retired `state`/`close_status`). */
+  status?: TeamMateIdentityStatus;
   agentRuntime?: string;
-  state?: TeamMateIdentityStatus | 'active';
-  closeStatus?: 'open' | 'closed';
-  sourceCwd?: string;
-  runtimeCwd?: string;
+  /** Substring match over `source_repo`. */
+  repo?: string;
   grep?: string;
+  /** Inclusive lower/upper bounds on `last_seen_at`. */
+  since?: number;
+  until?: number;
   limit?: number;
   cursor?: string;
 }
 
+/**
+ * Recovery hint telling the caller how to reattach: there is no separate resume
+ * verb, so `send` (by concrete `name`) reopens a closed TeamMate from its
+ * persisted checkpoint. The checkpoint itself is internal and never surfaced
+ * (issue #199 Slice 1).
+ */
 export interface TeamMateLedgerResumeHint {
   tool: 'send';
   name: string;
-  checkpoint: AgentRuntimeResumeCheckpoint | null;
 }
 
+/**
+ * Public TeamMate recovery row (issue #199 Slice 1). A compact projection keyed
+ * by the concrete `name`: ownership/visibility via `owner`, no Dreamux-made
+ * `session_id`, no `id`/`team_id`/`display_name`/`role`, no `close_status`/`state`
+ * duplicate of `status`, and no `checkpoint` or machine-local cwd/worktree paths.
+ */
 export interface TeamMateLedgerRow {
-  id: string;
   name: string;
-  display_name: string | null;
-  /** Stable session id of the latest session, when known (issue #182 PR-5/#188). */
-  session_id: string | null;
   /** Number of submitted turns in the session ledger (0 when no session captured). */
   turn_count: number;
-  team_id: string | null;
-  role: TeamMateRole;
   owner: TeamMateOwner;
   agent_runtime: string;
-  source_cwd: string;
   source_repo: string | null;
-  cwd: string;
-  runtime_cwd: string;
-  worktree: TeamMateWorktreeIdentity;
   created_at: number;
   updated_at: number;
   last_seen_at: number;
-  state: TeamMateIdentityStatus;
   status: TeamMateIdentityStatus;
   runtime_status: DispatcherStatus | null;
-  checkpoint: AgentRuntimeResumeCheckpoint | null;
   intent: string | null;
-  close_status: 'open' | 'closed';
   closed_at: number | null;
   close_note: string | null;
   close_note_preview: string | null;

@@ -136,7 +136,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     const caller = callerPrincipal(id, params);
-    const name = mustString(params, 'name');
+    const name = mustString(params, 'name_prefix');
     const prompt = mustString(params, 'prompt');
     const agentRuntime = optionalString(params, 'agent_runtime');
     const cwd = caller.kind === 'team_leader' ? optionalString(params, 'cwd') : mustString(params, 'cwd');
@@ -256,7 +256,7 @@ export const adminMethods: Record<string, AdminHandler> = {
   'mcp.team.create': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    const name = mustString(params, 'name');
+    const name = mustString(params, 'team_name');
     const repoCwd = mustString(params, 'repo_cwd');
     const leaderAgentRuntime = mustString(params, 'leader_agent_runtime');
     const worktree = optionalWorktreeRequest(params, 'worktree');
@@ -289,17 +289,16 @@ export const adminMethods: Record<string, AdminHandler> = {
   'mcp.team.status': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    // #182 PR-7: public addressing is by `name` (== team_id storage key).
-    const name = mustString(params, 'name');
+    // #182 PR-7: public addressing is by `team_name` (== team_id storage key).
+    const name = mustString(params, 'team_name');
     return server.dispatcherService.getTeamStatus(id, name);
   },
 
   'mcp.team.history': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    const name = optionalString(params, 'name');
+    const name = optionalString(params, 'team_name');
     const status = optionalTeamStatus(params, 'status');
-    const closeStatus = optionalCloseStatus(params, 'close_status');
     const repo = optionalString(params, 'repo');
     const grep = optionalString(params, 'grep');
     const since = optionalInteger(params, 'since');
@@ -310,7 +309,6 @@ export const adminMethods: Record<string, AdminHandler> = {
       dispatcherId: id,
       ...(name !== null ? { name } : {}),
       ...(status !== null ? { status } : {}),
-      ...(closeStatus !== null ? { closeStatus } : {}),
       ...(repo !== null ? { repo } : {}),
       ...(grep !== null ? { grep } : {}),
       ...(since !== null ? { since } : {}),
@@ -327,7 +325,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     // longer takes `chat_type` (the store rejects non-group for Team binding).
     return server.dispatcherService.bindTeamChannel({
       dispatcherId: id,
-      teamId: mustString(params, 'name'),
+      teamId: mustString(params, 'team_name'),
       provider: 'builtin:feishu',
       chatId: mustString(params, 'chat_id'),
       chatType: 'group',
@@ -351,7 +349,7 @@ export const adminMethods: Record<string, AdminHandler> = {
   'mcp.team.dissolve': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    const name = mustString(params, 'name');
+    const name = mustString(params, 'team_name');
     // Required dissolve reason (issue #182 PR-3).
     const note = mustNonEmptyString(params, 'note');
     return server.dispatcherService.dissolveTeam({
@@ -517,37 +515,34 @@ function historyQuery(
   params: Record<string, unknown> | undefined,
 ): Omit<TeamMateHistoryQuery, 'dispatcherId'> {
   const name = optionalString(params, 'name');
-  const id = optionalString(params, 'id');
+  const status = optionalTeammateStatus(params, 'status');
   const agentRuntime = optionalString(params, 'agent_runtime');
-  const state = optionalHistoryState(params, 'state');
-  const closeStatus = optionalCloseStatus(params, 'close_status');
-  const sourceCwd = optionalString(params, 'source_cwd');
-  const runtimeCwd = optionalString(params, 'runtime_cwd');
+  const repo = optionalString(params, 'repo');
   const grep = optionalString(params, 'grep');
+  const since = optionalInteger(params, 'since');
+  const until = optionalInteger(params, 'until');
   const cursor = optionalString(params, 'cursor');
   const limit = optionalInteger(params, 'limit');
   return {
     ...(name !== null ? { name } : {}),
-    ...(id !== null ? { id } : {}),
+    ...(status !== null ? { status } : {}),
     ...(agentRuntime !== null ? { agentRuntime } : {}),
-    ...(state !== null ? { state } : {}),
-    ...(closeStatus !== null ? { closeStatus } : {}),
-    ...(sourceCwd !== null ? { sourceCwd } : {}),
-    ...(runtimeCwd !== null ? { runtimeCwd } : {}),
+    ...(repo !== null ? { repo } : {}),
     ...(grep !== null ? { grep } : {}),
+    ...(since !== null ? { since } : {}),
+    ...(until !== null ? { until } : {}),
     ...(cursor !== null ? { cursor } : {}),
     ...(limit !== null ? { limit } : {}),
   };
 }
 
-function optionalHistoryState(
+function optionalTeammateStatus(
   params: Record<string, unknown> | undefined,
   key: string,
-): TeamMateIdentityStatus | 'active' | null {
+): TeamMateIdentityStatus | null {
   const value = optionalString(params, key);
   if (value === null) return null;
   if (
-    value === 'active' ||
     value === 'starting' ||
     value === 'running' ||
     value === 'degraded' ||
@@ -558,18 +553,21 @@ function optionalHistoryState(
   }
   throw new AdminError(
     'BAD_REQUEST',
-    `param '${key}' must be active, starting, running, degraded, closed, or stopped`,
+    `param '${key}' must be starting, running, degraded, closed, or stopped`,
   );
 }
 
-function optionalCloseStatus(
+function optionalTeamStatus(
   params: Record<string, unknown> | undefined,
   key: string,
-): 'open' | 'closed' | null {
+): 'starting' | 'running' | 'closed' | null {
   const value = optionalString(params, key);
   if (value === null) return null;
-  if (value === 'open' || value === 'closed') return value;
-  throw new AdminError('BAD_REQUEST', `param '${key}' must be open or closed`);
+  if (value === 'starting' || value === 'running' || value === 'closed') return value;
+  throw new AdminError(
+    'BAD_REQUEST',
+    `param '${key}' must be starting, running, or closed`,
+  );
 }
 
 function optionalBindGroup(
@@ -587,19 +585,6 @@ function optionalBindGroup(
     throw new AdminError('BAD_REQUEST', `param '${key}.chat_id' must be a non-empty string`);
   }
   return { chatId };
-}
-
-function optionalTeamStatus(
-  params: Record<string, unknown> | undefined,
-  key: string,
-): 'starting' | 'running' | 'closed' | null {
-  const value = optionalString(params, key);
-  if (value === null) return null;
-  if (value === 'starting' || value === 'running' || value === 'closed') return value;
-  throw new AdminError(
-    'BAD_REQUEST',
-    `param '${key}' must be starting, running, or closed`,
-  );
 }
 
 function optionalInteger(

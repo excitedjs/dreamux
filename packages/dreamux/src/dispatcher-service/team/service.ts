@@ -172,8 +172,8 @@ export class TeamService {
   /**
    * Filterable Team recovery search (issue #182 PR-7) — the Team-side mirror of
    * the TeamMate `history` surface. Finds Teams (closed included) by
-   * name/status/repo/intent/time, sorted most-recent first, with a cursor. The
-   * raw per-team lifecycle event timeline stays internal (`ledger`), not here.
+   * team_name/status/repo/intent/time, sorted most-recent first, with a cursor.
+   * The raw per-team lifecycle event timeline stays internal (`ledger`), not here.
    */
   async history(input: TeamHistoryQuery): Promise<TeamHistoryResult> {
     const teams = await this.store.list(input.dispatcherId);
@@ -186,7 +186,7 @@ export class TeamService {
       (a, b) =>
         b.updated_at - a.updated_at ||
         b.created_at - a.created_at ||
-        a.name.localeCompare(b.name),
+        a.team_name.localeCompare(b.team_name),
     );
     const start = input.cursor !== undefined ? decodeTeamCursor(input.cursor) : 0;
     const limit = clampTeamHistoryLimit(input.limit);
@@ -392,13 +392,10 @@ export class TeamService {
 
   private async listRow(team: TeamRecord): Promise<TeamListRow> {
     return {
-      name: team.team_id,
-      team_id: team.team_id,
+      team_name: team.team_id,
       status: team.status,
       intent: team.intent,
       source_repo: team.source_repo,
-      repo_cwd: team.repo_cwd,
-      worktree_mode: team.worktree.mode,
       leader_name: team.leader_name,
       leader_state: await this.leaderState(team),
       member_count: await this.memberCount(team),
@@ -411,15 +408,10 @@ export class TeamService {
 
   private async historyRow(team: TeamRecord): Promise<TeamHistoryRow> {
     return {
-      name: team.team_id,
-      team_id: team.team_id,
+      team_name: team.team_id,
       status: team.status,
-      close_status: team.closed_at === null ? 'open' : 'closed',
       intent: team.intent,
       source_repo: team.source_repo,
-      repo_cwd: team.repo_cwd,
-      runtime_cwd: team.runtime_cwd,
-      worktree: team.worktree,
       leader_name: team.leader_name,
       leader_agent_runtime: team.leader_agent_runtime,
       leader_state: await this.leaderState(team),
@@ -489,18 +481,13 @@ function matchesTeamHistoryQuery(
   row: TeamHistoryRow,
   input: Omit<TeamHistoryQuery, 'dispatcherId'>,
 ): boolean {
-  if (input.name !== undefined && row.name !== validateTeamId(input.name)) {
+  if (input.name !== undefined && row.team_name !== validateTeamId(input.name)) {
     return false;
   }
   if (input.status !== undefined && row.status !== input.status) return false;
-  if (input.closeStatus !== undefined && row.close_status !== input.closeStatus) {
-    return false;
-  }
   if (input.repo !== undefined) {
     const needle = input.repo.toLowerCase();
-    const hit = [row.source_repo, row.repo_cwd].some(
-      (value) => value !== null && value.toLowerCase().includes(needle),
-    );
+    const hit = row.source_repo !== null && row.source_repo.toLowerCase().includes(needle);
     if (!hit) return false;
   }
   if (input.grep !== undefined && !teamRowMatchesText(row, input.grep)) {
@@ -515,10 +502,9 @@ function teamRowMatchesText(row: TeamHistoryRow, grep: string): boolean {
   const needle = grep.toLowerCase();
   if (needle === '') return true;
   return [
-    row.name,
+    row.team_name,
     row.intent,
     row.source_repo,
-    row.repo_cwd,
     row.leader_name,
     row.close_note,
   ].some((value) => value !== null && value.toLowerCase().includes(needle));

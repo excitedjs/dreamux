@@ -531,46 +531,53 @@ describe('TeamMateAgentService', () => {
     expect(firstPage.next_cursor).not.toBeNull();
 
     const all = await service.history({ dispatcherId: 'flow' });
-    // Rows carry the concrete name plus the requested display_name (#188).
-    expect(all.items.map((item) => item.display_name).sort()).toEqual([
-      'alpha',
-      'managed-ledger',
-    ]);
+    // #199 Slice 1: history rows are keyed by the concrete name; the requested
+    // label / id / cwd / worktree / close_status are no longer projected.
     expect(all.items.map((item) => item.name).sort()).toEqual(
       [alpha, managedName].sort(),
     );
     const managed = all.items.find((item) => item.name === managedName);
     expect(managed).toMatchObject({
-      id: managedName,
-      display_name: 'managed-ledger',
+      name: managedName,
       agent_runtime: 'flow',
-      source_cwd: repo,
       source_repo: repo,
-      runtime_cwd: expect.stringContaining('managed-ledger'),
-      worktree: {
-        mode: 'managed',
-        slug: 'managed-ledger',
-        branch: 'dreamux/managed-ledger',
-        cleanup_state: 'managed-active',
-      },
+      cleanup_state: 'managed-active',
       intent: 'managed work',
-      close_status: 'open',
       resume: { tool: 'send', name: managedName },
     });
+    // The trimmed legacy fields must not reappear on a history row.
+    for (const removed of [
+      'id',
+      'display_name',
+      'session_id',
+      'team_id',
+      'role',
+      'source_cwd',
+      'runtime_cwd',
+      'cwd',
+      'worktree',
+      'checkpoint',
+      'state',
+      'close_status',
+    ]) {
+      expect(managed).not.toHaveProperty(removed);
+    }
 
-    const closed = await service.history({
-      dispatcherId: 'flow',
-      closeStatus: 'closed',
-    });
-    expect(closed.items.map((item) => item.name)).toEqual([alpha]);
-    expect(closed.items[0]).toMatchObject({
-      display_name: 'alpha',
+    // The closed teammate is still recoverable via history (no close_status
+    // filter in #199 Slice 1; find it by its concrete name instead).
+    const closedRow = all.items.find((item) => item.name === alpha);
+    expect(closedRow).toMatchObject({
       close_note_preview: 'done',
       last_prompt_preview: 'Review alpha.',
     });
 
     const grep = await service.history({ dispatcherId: 'flow', grep: 'managed work' });
     expect(grep.items.map((item) => item.name)).toEqual([managedName]);
+
+    // #199 Slice 1: the lifecycle `status` filter survives (legacy `state` /
+    // `close_status` are gone). `alpha` was closed; `managed-ledger` stays open.
+    const closedByStatus = await service.history({ dispatcherId: 'flow', status: 'closed' });
+    expect(closedByStatus.items.map((item) => item.name)).toEqual([alpha]);
 
     const second = new TeamMateAgentService({
       config,
@@ -583,7 +590,7 @@ describe('TeamMateAgentService', () => {
       name: managedName,
     });
     expect(afterRestart.items).toHaveLength(1);
-    expect(afterRestart.items[0]?.worktree.mode).toBe('managed');
+    expect(afterRestart.items[0]?.cleanup_state).toBe('managed-active');
   });
 
   it('closes a live teammate without deleting its history', async () => {
@@ -858,17 +865,17 @@ describe('TeamMateAgentService', () => {
       dispatcher_id: 'flow',
     });
     const history = await service.history({ dispatcherId: 'flow', name: 'oldie' });
+    // #199 Slice 1: a pre-#188 record still reads back without migration; the
+    // trimmed history row keys on the concrete name and a reuse-cwd record
+    // surfaces a 'not-managed' cleanup state.
     expect(history.items[0]).toMatchObject({
       name: 'oldie',
-      // #188: a pre-#188 record has no display name or session id; both read as
-      // null and the record stays usable without migration.
-      display_name: null,
-      session_id: null,
-      source_cwd: root,
-      runtime_cwd: root,
-      worktree: { mode: 'reuse-cwd', cleanup_state: 'not-managed' },
       intent: null,
+      cleanup_state: 'not-managed',
     });
+    expect(history.items[0]).not.toHaveProperty('display_name');
+    expect(history.items[0]).not.toHaveProperty('session_id');
+    expect(history.items[0]).not.toHaveProperty('worktree');
     expect(await readFile(path, 'utf8')).not.toContain('"owner"');
   });
 

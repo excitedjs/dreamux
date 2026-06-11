@@ -1217,29 +1217,17 @@ export class TeamMateAgentService {
   ): TeamMateLedgerRow {
     const runtime = this.live.get(liveKey(identity.dispatcher_id, identity.name))?.runtime ?? null;
     return {
-      id: identity.name,
       name: identity.name,
-      display_name: identity.display_name,
-      session_id: identity.session_id,
       turn_count: session?.turn_count ?? 0,
-      role: identity.role,
-      team_id: identity.team_id,
       owner: identity.owner,
       agent_runtime: identity.agent_runtime,
-      source_cwd: identity.source_cwd,
       source_repo: identity.source_repo,
-      cwd: identity.cwd,
-      runtime_cwd: identity.runtime_cwd,
-      worktree: identity.worktree,
       created_at: identity.created_at,
       updated_at: identity.updated_at,
       last_seen_at: session?.last_seen_at ?? identity.updated_at,
-      state: identity.status,
       status: identity.status,
       runtime_status: runtime?.getStatus() ?? null,
-      checkpoint: identity.checkpoint,
       intent: identity.intent,
-      close_status: identity.closed_at === null ? 'open' : 'closed',
       closed_at: identity.closed_at,
       close_note: identity.close_note,
       close_note_preview:
@@ -1249,7 +1237,7 @@ export class TeamMateAgentService {
       cleanup_state: identity.worktree.cleanup_state,
       resume:
         identity.closed_at === null || identity.checkpoint !== null
-          ? { tool: 'send', name: identity.name, checkpoint: identity.checkpoint }
+          ? { tool: 'send', name: identity.name }
           : null,
     };
   }
@@ -1261,35 +1249,24 @@ export class TeamMateAgentService {
     if (input.name !== undefined && row.name !== validateTeamMateName(input.name)) {
       return false;
     }
-    if (input.id !== undefined && !row.id.startsWith(input.id)) return false;
+    if (input.status !== undefined && row.status !== input.status) return false;
     if (
       input.agentRuntime !== undefined &&
       row.agent_runtime !== input.agentRuntime
     ) {
       return false;
     }
-    if (input.sourceCwd !== undefined && row.source_cwd !== input.sourceCwd) {
-      return false;
-    }
-    if (input.runtimeCwd !== undefined && row.runtime_cwd !== input.runtimeCwd) {
-      return false;
-    }
-    if (input.state !== undefined) {
-      if (input.state === 'active') {
-        if (row.state === 'closed' || row.state === 'stopped') return false;
-      } else if (row.state !== input.state) {
-        return false;
-      }
-    }
-    if (
-      input.closeStatus !== undefined &&
-      row.close_status !== input.closeStatus
-    ) {
-      return false;
+    if (input.repo !== undefined) {
+      const needle = input.repo.toLowerCase();
+      const hit =
+        row.source_repo !== null && row.source_repo.toLowerCase().includes(needle);
+      if (!hit) return false;
     }
     if (input.grep !== undefined && !ledgerRowMatchesText(row, input.grep)) {
       return false;
     }
+    if (input.since !== undefined && row.last_seen_at < input.since) return false;
+    if (input.until !== undefined && row.last_seen_at > input.until) return false;
     return true;
   }
 
@@ -1484,19 +1461,9 @@ function ledgerRowMatchesText(row: TeamMateLedgerRow, grep: string): boolean {
   const needle = grep.trim().toLowerCase();
   if (needle === '') return true;
   return [
-    row.id,
     row.name,
-    row.display_name,
-    row.session_id,
-    row.team_id,
     row.agent_runtime,
-    row.source_cwd,
     row.source_repo,
-    row.cwd,
-    row.runtime_cwd,
-    row.worktree.slug,
-    row.worktree.branch,
-    row.worktree.base_ref,
     row.intent,
     row.close_note,
     row.last_prompt_preview,

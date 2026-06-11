@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Public MCP contract closeout (issue #199 Slice 1): teammate.spawn input is now name_prefix (returns the concrete name); team.create/status/history/dissolve/bind_group address by team_name, and team list/history rows are keyed by team_name (the duplicate team_id is dropped). teammate.history and team.history return { items, next_cursor } and keep the lifecycle status filter plus repo/since/until recovery dimensions, while dropping the legacy state/close_status filters, the id/team_id/display_name fields, the machine-local source_cwd/runtime_cwd/worktree fields, the Dreamux-made session_id, and runtime checkpoint from public history rows. The BREAKING/Rebuild upgrade note for this Epic lands in the final slice.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}
