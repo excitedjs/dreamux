@@ -1,9 +1,12 @@
-import { access, mkdir, realpath, stat, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 
 import { execa } from 'execa';
 
-import { isUnderDreamuxRoot, teamMateNameSegment } from '../../platform/paths.js';
+import {
+  isRealPathUnderDreamuxRoot,
+  teamMateNameSegment,
+} from '../../platform/paths.js';
 import {
   managedWorkspaceDir,
   managedWorkspaceGitignorePath,
@@ -63,12 +66,18 @@ export class WorktreeManager {
           'dispatcher must declare an explicit `cwd` (issue #182 PR-4)',
       );
     }
-    const dispatcherWorkspace = resolve(input.dispatcherWorkspace);
+    // Canonicalize the workspace with realpath BEFORE the Dreamux-home guard and
+    // before building the worktree path (issue #182 PR-4, PR #186 review P1): a
+    // workspace that is outside `~/.dreamux` lexically but symlinks into it would
+    // otherwise place managed worktrees physically under Dreamux home. The
+    // workspace exists here — `ensureDispatcherWorkspace` mkdir'd it — so the
+    // real path is well-defined.
+    const dispatcherWorkspace = await realpath(input.dispatcherWorkspace);
     // A managed worktree must never land inside Dreamux's own home tree —
-    // including the retired state-dir fallback. The cwd contract makes a
-    // missing workspace fail at startup; this guard additionally rejects a
-    // workspace an operator explicitly pointed at `~/.dreamux` (issue #182 PR-4).
-    if (isUnderDreamuxRoot(dispatcherWorkspace)) {
+    // including the retired state-dir fallback and any symlink into it. The cwd
+    // contract makes a missing workspace fail at startup; this guard additionally
+    // rejects a workspace that (really) resolves under `~/.dreamux`.
+    if (await isRealPathUnderDreamuxRoot(dispatcherWorkspace)) {
       throw new Error(
         'managed worktrees must not be created under the Dreamux home ' +
           `(~/.dreamux); dispatcher workspace resolves there: ${dispatcherWorkspace}`,
@@ -160,19 +169,17 @@ export class WorktreeManager {
   /**
    * Ensure `<workspace>/.workspace/` exists and self-ignores its whole subtree,
    * so Dreamux-managed worktrees never surface as content of the dispatcher's
-   * own repo (issue #182 PR-4). The `*` gitignore is written once; an existing
-   * file is left untouched.
+   * own repo (issue #182 PR-4). The boundary is Dreamux-owned, so an existing
+   * `.gitignore` that does NOT safely ignore everything is repaired to the
+   * canonical content rather than trusted (PR #186 review P2): a stale or
+   * tampered boundary file would otherwise let worktree contents leak into the
+   * dispatcher repo view.
    */
   private async ensureWorkspaceBoundary(dispatcherWorkspace: string): Promise<void> {
     await mkdir(managedWorkspaceDir(dispatcherWorkspace), { recursive: true });
     const gitignore = managedWorkspaceGitignorePath(dispatcherWorkspace);
-    if (!(await pathExists(gitignore))) {
-      await writeFile(
-        gitignore,
-        '# Dreamux-managed worktrees — never repo content.\n*\n',
-        'utf8',
-      );
-    }
+    if (await boundaryGitignoreIsSafe(gitignore)) return;
+    await writeFile(gitignore, BOUNDARY_GITIGNORE_CONTENT, 'utf8');
   }
 
   private async repoRoot(cwd: string): Promise<string> {
@@ -187,6 +194,33 @@ export class WorktreeManager {
       return null;
     }
   }
+}
+
+const BOUNDARY_GITIGNORE_CONTENT =
+  '# Dreamux-managed worktrees — never repo content.\n*\n';
+
+/**
+ * A `.workspace/.gitignore` is "safe" only when it ignores everything in the
+ * boundary: it must contain a bare `*` ignore-all line and NO `!`-negation that
+ * could un-ignore worktree content (PR #186 review P2). A missing file is
+ * unsafe (nothing is ignored yet). Comments and blank lines are ignored.
+ */
+async function boundaryGitignoreIsSafe(gitignorePath: string): Promise<boolean> {
+  let content: string;
+  try {
+    content = await readFile(gitignorePath, 'utf8');
+  } catch (err) {
+    if (isNotFound(err)) return false;
+    throw err;
+  }
+  let ignoresAll = false;
+  for (const rawLine of content.split('\n')) {
+    const line = rawLine.trim();
+    if (line === '' || line.startsWith('#')) continue;
+    if (line.startsWith('!')) return false;
+    if (line === '*') ignoresAll = true;
+  }
+  return ignoresAll;
 }
 
 async function retainedState(

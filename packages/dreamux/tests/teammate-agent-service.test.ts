@@ -1156,6 +1156,88 @@ describe('TeamMateAgentService', () => {
     expect((await readFile(gitignore, 'utf8')).split('\n')).toContain('*');
   });
 
+  it('repairs an existing unsafe .workspace/.gitignore (#182 PR-4, PR#186 P2)', async () => {
+    const repo = await initGitRepo(join(root, 'unsafe-boundary-repo'));
+    const { catalog } = providerCatalog();
+    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: catalog,
+      log: noopLog(),
+    });
+
+    // Seed an existing boundary file that does NOT safely ignore everything: it
+    // un-ignores worktree content via a negation and has no bare `*`.
+    const boundaryDir = join(dispatcherCwd, '.workspace');
+    await mkdir(boundaryDir, { recursive: true });
+    const gitignore = join(boundaryDir, '.gitignore');
+    await writeFile(gitignore, '# keep some stuff\n!leaked\n', 'utf8');
+
+    await service.spawn({
+      dispatcherId: 'flow',
+      name: 'unsafe-boundary',
+      intent: 'work',
+      prompt: 'go',
+      cwd: repo,
+      worktree: {
+        mode: 'managed',
+        slug: 'unsafe-boundary',
+        branch: 'dreamux/unsafe-boundary',
+        cleanup: 'keep',
+      },
+    });
+
+    // The unsafe file must have been repaired to the canonical ignore-all form.
+    const lines = (await readFile(gitignore, 'utf8'))
+      .split('\n')
+      .map((line) => line.trim());
+    expect(lines).toContain('*');
+    expect(lines.some((line) => line.startsWith('!'))).toBe(false);
+  });
+
+  it('rejects a managed worktree under a workspace that symlinks into Dreamux home (#182 PR-4, PR#186 P1)', async () => {
+    const repo = await initGitRepo(join(root, 'symlink-repo'));
+    // A directory physically inside Dreamux home, reached via a workspace path
+    // that is OUTSIDE Dreamux home lexically but symlinks into it.
+    const targetUnderDreamux = join(root, 'home', '.dreamux', 'state', 'sneaky');
+    await mkdir(targetUnderDreamux, { recursive: true });
+    const symlinkedWorkspace = join(root, 'outside-link');
+    await symlink(targetUnderDreamux, symlinkedWorkspace);
+
+    const config = testDreamuxConfig([
+      testDispatcherConfig({ cwd: symlinkedWorkspace }),
+    ]);
+    const { catalog } = providerCatalog();
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: catalog,
+      log: noopLog(),
+    });
+
+    await expect(
+      service.spawn({
+        dispatcherId: 'flow',
+        name: 'sneaky',
+        intent: 'work',
+        prompt: 'go',
+        cwd: repo,
+        worktree: {
+          mode: 'managed',
+          slug: 'sneaky',
+          branch: 'dreamux/sneaky',
+          cleanup: 'keep',
+        },
+      }),
+    ).rejects.toThrow(/must not be created under the Dreamux home/);
+
+    // And no managed worktree was physically created under Dreamux home.
+    expect(existsSync(join(targetUnderDreamux, '.workspace', 'worktree'))).toBe(
+      false,
+    );
+  });
+
   it('rejects two teammate identities using the same explicit managed slug', async () => {
     const repo = await initGitRepo(join(root, 'same-slug-repo'));
     const { catalog } = providerCatalog();
