@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   AgentRuntimeProviderCatalog,
@@ -210,6 +210,35 @@ describe('TeamMateSessionLedger (unit)', () => {
     const ledger = new TeamMateSessionLedger(noopLog());
     await ledger.append({ identity: identity({ session_id: null }), type: 'spawn', prompt: 'x' });
     expect(await ledger.read('flow')).toEqual([]);
+  });
+
+  it('materializeSessions folds via a streaming reader, not an unbounded read() (#182 final gate)', async () => {
+    const ledger = new TeamMateSessionLedger(noopLog());
+    // Two sessions; one carries a huge settled assistant body to model the
+    // long-ledger memory risk the streaming fold must avoid.
+    await ledger.append({ identity: identity({ session_id: 'sess-a', name: 'a' }), type: 'spawn', prompt: 'a1', turnId: 't1' });
+    await ledger.append({
+      identity: identity({ session_id: 'sess-a', name: 'a' }),
+      type: 'settled',
+      turnId: 't1',
+      assistant: 'x'.repeat(170_000),
+      settleStatus: 'completed',
+    });
+    await ledger.append({ identity: identity({ session_id: 'sess-b', name: 'b' }), type: 'spawn', prompt: 'b1', turnId: 't1' });
+
+    // The public `history` source must not buffer the whole append-only ledger
+    // into an events array via the unbounded `read()`.
+    const readSpy = vi.spyOn(ledger, 'read');
+    const rows = await ledger.materializeSessions('flow');
+    expect(readSpy).not.toHaveBeenCalled();
+    readSpy.mockRestore();
+
+    expect(rows.map((r) => r.session_id).sort()).toEqual(['sess-a', 'sess-b']);
+    // Folded rows keep only bounded previews — never the full assistant text.
+    const a = rows.find((r) => r.session_id === 'sess-a')!;
+    expect(a.last_assistant_preview).not.toBeNull();
+    expect(a.last_assistant_preview!.length).toBeLessThanOrEqual(500);
+    expect(JSON.stringify(rows)).not.toContain('x'.repeat(1000));
   });
 });
 

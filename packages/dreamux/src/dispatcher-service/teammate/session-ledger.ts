@@ -198,6 +198,21 @@ export class TeamMateSessionLedger {
     dispatcherId: string,
     sessionId: string,
   ): AsyncGenerator<TeamMateSessionLedgerEvent> {
+    for await (const event of this.streamEvents(dispatcherId)) {
+      if (event.session_id === sessionId) yield event;
+    }
+  }
+
+  /**
+   * Stream every ledger event for one dispatcher in append order, yielding line
+   * by line so callers fold with bounded memory rather than buffering the whole
+   * file (a settled event can carry up to 160k chars of assistant text, so the
+   * long-lived append-only ledger must never be materialized whole — issue #182
+   * final gate). A missing ledger yields nothing; a torn/partial line is skipped.
+   */
+  private async *streamEvents(
+    dispatcherId: string,
+  ): AsyncGenerator<TeamMateSessionLedgerEvent> {
     const path = dispatcherTeamMateSessionLedgerPath(dispatcherId);
     const stream = createReadStream(path, { encoding: 'utf8' });
     const lines = createInterface({ input: stream, crlfDelay: Infinity });
@@ -210,7 +225,7 @@ export class TeamMateSessionLedger {
         } catch {
           continue; // skip a torn/partial line rather than fail the read
         }
-        if (parsed.session_id === sessionId) yield parsed;
+        yield parsed;
       }
     } catch (err) {
       if (!isNotFound(err)) {
@@ -226,13 +241,16 @@ export class TeamMateSessionLedger {
 
   /**
    * Fold the ledger into one {@link TeamMateSessionRow} per `session_id` — the
-   * recovery view a session can be reconstructed from. PR-6 builds the public,
-   * filterable/cursored query on top of this.
+   * recovery view a session can be reconstructed from, and the source the public
+   * `history` surface filters/paginates over. Folds over a STREAMING reader so it
+   * never buffers the whole append-only ledger: only one event is live at a time
+   * and the rows hold bounded aggregates/previews (never the full assistant
+   * text), so memory scales with the session count, not the ledger length or the
+   * captured-output size (issue #182 final gate).
    */
   async materializeSessions(dispatcherId: string): Promise<TeamMateSessionRow[]> {
-    const events = await this.read(dispatcherId);
     const rows = new Map<string, TeamMateSessionRow>();
-    for (const event of events) {
+    for await (const event of this.streamEvents(dispatcherId)) {
       const existing = rows.get(event.session_id);
       const row = existing ?? newSessionRow(event);
       row.last_seen_at = Math.max(row.last_seen_at, event.timestamp);
