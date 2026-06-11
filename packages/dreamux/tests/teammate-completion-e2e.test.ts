@@ -468,8 +468,9 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
     teammateRuntime.settle('completed', turnId);
     await flush();
 
-    // #188: last reads the settled turn from the durable ledger by concrete
-    // name. The settled-turn append trails reverse delivery, so wait for it.
+    // #188/#199: last reads the settled turn from the per-name turns archive by
+    // concrete name. The settled-turn capture trails reverse delivery, so wait
+    // for it (the record write is atomic, so this concurrent read is safe).
     await waitFor(
       async () => (await facade.getTeamMateLast('flow', reviewer)).returned_turns === 1,
     );

@@ -159,7 +159,7 @@ function teammateTools(
     tool('status', 'Read one TeamMate identity and live runtime status by its concrete name.', {
       name: { type: 'string', minLength: 1, maxLength: 64 },
     }, ['name']),
-    tool('last', 'Read a TeamMate\'s most recent settled turn(s) from the durable session ledger by concrete name. Works for a closed/stopped TeamMate without starting a runtime; this is the fallback when a completion was not delivered. turns defaults to 1 (range 1..5); the newest turn is last.', {
+    tool('last', 'Read a TeamMate\'s most recent settled turn(s) by concrete name. Reads the TeamMate record first (existence / scope / common fields), then folds the recent settled turns from its per-name turns archive; it never starts or resumes a runtime, so it works for a closed/stopped TeamMate. This is the fallback when a completion was not delivered. turns defaults to 1 (range 1..5); the newest turn is last.', {
       name: { type: 'string', minLength: 1, maxLength: 64 },
       turns: { type: 'integer', minimum: 1, maximum: 5 },
     }, ['name']),

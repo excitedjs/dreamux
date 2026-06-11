@@ -1,6 +1,6 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { readFile } from 'node:fs/promises';
 
+import { writeFileAtomic } from '../../platform/atomic-write.js';
 import { dispatcherChannelBindingsPath } from '../../platform/paths.js';
 
 export type ChannelProvider = 'builtin:feishu';
@@ -124,8 +124,7 @@ export class ChannelBindingStore {
     file: ChannelBindingFile,
   ): Promise<void> {
     const path = dispatcherChannelBindingsPath(dispatcherId);
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, `${JSON.stringify(file, null, 2)}\n`, { mode: 0o600 });
+    await writeFileAtomic(path, `${JSON.stringify(file, null, 2)}\n`);
   }
 }
 

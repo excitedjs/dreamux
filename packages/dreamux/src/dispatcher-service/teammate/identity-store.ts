@@ -1,6 +1,6 @@
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { readFile, readdir } from 'node:fs/promises';
 
+import { writeFileAtomic } from '../../platform/atomic-write.js';
 import {
   dispatcherTeamMateRecordsDir,
   dispatcherTeamMateRecordPath,
@@ -171,10 +171,9 @@ export class TeamMateIdentityStore {
       identity.dispatcher_id,
       identity.name,
     );
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, `${JSON.stringify(identity, null, 2)}\n`, {
-      mode: 0o600,
-    });
+    // Atomic write (issue #199 Slice 4): a concurrent `last`/`get` reader (e.g.
+    // a parallel settle capture) must never observe a truncated record.
+    await writeFileAtomic(path, `${JSON.stringify(identity, null, 2)}\n`);
   }
 }
 
