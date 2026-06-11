@@ -1692,6 +1692,54 @@ describe('TeamMateAgentService', () => {
     });
   });
 
+  it('last(turns) evicts older turns beyond the window, keeping the most recent by start order (#188 bounded fold)', async () => {
+    const { catalog, provider } = providerCatalog();
+    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: catalog,
+      onTeamMateCompletion: () => undefined,
+      log: noopLog(),
+    });
+
+    const name = (
+      await service.spawn({
+        dispatcherId: 'flow',
+        name: 'evict',
+        intent: 'work',
+        prompt: 'first',
+        cwd: root,
+      })
+    ).teammate.name;
+    const runtime = provider.runtimes[0]!;
+    // Settle FOUR turns in one session so last(turns=2) must drive the bounded
+    // fold's eviction path (recent.size > requestedTurns) more than once.
+    runtime.lastText = 'a1';
+    runtime.settle('completed', 'turn-1');
+    await waitForSettled(service, 1);
+    for (const [turnId, text, prompt] of [
+      ['turn-2', 'a2', 'second'],
+      ['turn-3', 'a3', 'third'],
+      ['turn-4', 'a4', 'fourth'],
+    ] as const) {
+      await service.send({ dispatcherId: 'flow', name, prompt });
+      runtime.lastText = text;
+      runtime.settle('completed', turnId);
+      await waitForSettled(service, Number(turnId.slice('turn-'.length)));
+    }
+
+    // Only the two most-recent-by-start turns survive, in append order.
+    const last = await service.last('flow', name, 2);
+    expect(last.requested_turns).toBe(2);
+    expect(last.returned_turns).toBe(2);
+    expect(last.turns.map((turn) => turn.turn_id)).toEqual(['turn-3', 'turn-4']);
+    expect(last.turns.map((turn) => turn.assistant)).toEqual(['a3', 'a4']);
+    // Default (turns=1) keeps only the newest.
+    const latest = await service.last('flow', name);
+    expect(latest.turns.map((turn) => turn.turn_id)).toEqual(['turn-4']);
+  });
+
   it('last works on a closed teammate without starting a runtime (#188)', async () => {
     const { catalog, provider } = providerCatalog();
     const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);

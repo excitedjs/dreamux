@@ -123,17 +123,30 @@ export class TeamService {
       summary: `created team ${teamId} with leader ${leaderName}`,
     });
     // Optionally bind an existing Feishu group at create time (issue #182 PR-8,
-    // the settled replacement for the retired create_group flow).
+    // the settled replacement for the retired create_group flow). Bind is the
+    // last step; if it fails the Team is already persisted, so roll back by
+    // dissolving the just-created Team rather than leaving a half-created one a
+    // retry would then collide with as "already exists" (mirrors the rollback
+    // the old create_group flow did on Feishu setup failure).
     let binding: TeamChannelBindingSummary | null = null;
     if (input.bindGroup !== undefined) {
-      const bound = await this.bindChannel({
-        dispatcherId: input.dispatcherId,
-        teamId,
-        provider: 'builtin:feishu',
-        chatId: input.bindGroup.chatId,
-        chatType: 'group',
-      });
-      binding = { provider: bound.provider, chat_id: bound.chat_id };
+      try {
+        const bound = await this.bindChannel({
+          dispatcherId: input.dispatcherId,
+          teamId,
+          provider: 'builtin:feishu',
+          chatId: input.bindGroup.chatId,
+          chatType: 'group',
+        });
+        binding = { provider: bound.provider, chat_id: bound.chat_id };
+      } catch (err) {
+        await this.dissolve({
+          dispatcherId: input.dispatcherId,
+          teamId,
+          note: 'Team group binding failed at create time',
+        });
+        throw err;
+      }
     }
     return {
       team,
