@@ -304,6 +304,51 @@ describe('TeamService', () => {
     expect((await reloaded.status('flow', 'alpha')).team.intent).toBe('second intent');
   });
 
+  it('recreating a closed Team allocates a fresh leader name + session — never reuses (#188 P1)', async () => {
+    const repo = await initGitRepo(join(root, 'recreate-leader-repo'));
+    const { teams, teammates } = buildServices();
+
+    const first = await teams.create({
+      dispatcherId: 'flow',
+      name: 'alpha',
+      repoCwd: repo,
+      leaderAgentRuntime: 'flow',
+      intent: 'first',
+    });
+    const firstLeader = first.team.leader_name;
+    const firstSession = first.leader.session_id;
+    expect(firstLeader).toMatch(/^tl-alpha-[a-z0-9]{8}$/);
+    expect(firstSession).not.toBeNull();
+    await teams.dissolve({ dispatcherId: 'flow', teamId: 'alpha', note: 'done' });
+
+    const second = await teams.create({
+      dispatcherId: 'flow',
+      name: 'alpha',
+      repoCwd: repo,
+      leaderAgentRuntime: 'flow',
+      intent: 'second',
+    });
+    const secondLeader = second.team.leader_name;
+    // #188: a recreated closed Team gets a DISTINCT concrete leader name and a
+    // distinct session — the closed leader's concrete name is never reused.
+    expect(secondLeader).toMatch(/^tl-alpha-[a-z0-9]{8}$/);
+    expect(secondLeader).not.toBe(firstLeader);
+    expect(second.leader.name).toBe(secondLeader);
+    expect(second.leader.session_id).not.toBe(firstSession);
+
+    // The Team record (reloaded) routes/statuses on the NEW concrete leader name.
+    const reloaded = new TeamService({ teammates });
+    const status = await reloaded.status('flow', 'alpha');
+    expect(status.team.leader_name).toBe(secondLeader);
+    expect(status.leader?.name).toBe(secondLeader);
+
+    // Both leader identities persist; the old closed one is still addressable by
+    // its own concrete name (not reused, not deleted).
+    const oldLeader = await teammates.status('flow', firstLeader);
+    expect(oldLeader.status).toBe('closed');
+    expect(oldLeader.name).toBe(firstLeader);
+  });
+
   it('rejects direct service create/dissolve with missing or empty intent/note (#182 PR-3 P1)', async () => {
     const repo = await initGitRepo(join(root, 'svc-validate-repo'));
     const { teams } = buildServices();

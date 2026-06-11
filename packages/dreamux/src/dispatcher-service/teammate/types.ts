@@ -203,6 +203,8 @@ export interface TeamMateRuntimeStatus {
   name: string;
   /** Agent-supplied base slug / display hint (issue #188); null for legacy records. */
   display_name: string | null;
+  /** Stable session id, for recovery (issue #182 PR-5/#188); null for legacy records. */
+  session_id: string | null;
   owner: TeamMateOwner;
   role: TeamMateRole;
   team_id: string | null;
@@ -395,6 +397,8 @@ export interface TeamMateLedgerRow {
   display_name: string | null;
   /** Stable session id of the latest session, when known (issue #182 PR-5/#188). */
   session_id: string | null;
+  /** Number of submitted turns in the session ledger (0 when no session captured). */
+  turn_count: number;
   team_id: string | null;
   role: TeamMateRole;
   owner: TeamMateOwner;
@@ -428,17 +432,26 @@ export interface TeamMateHistoryResult {
 }
 
 /**
- * One settled-turn entry returned by `last` (issue #188), folded from the
- * durable session ledger by `session_id`. This is a pure read of captured
- * facts — it never starts or resumes a runtime, so it works for a closed or
- * stopped teammate.
+ * One settled turn returned by `last` (issue #188), folded from the durable
+ * session ledger by `session_id` in ledger append order. Each turn pairs the
+ * submit-side event (spawn/send/channel) with the settled row by `turn_id`, so
+ * recovery sees the prompt/intent/origin alongside the assistant output. This is
+ * a pure read of captured facts — it never starts or resumes a runtime, so it
+ * works for a closed or stopped teammate.
  */
 export interface TeamMateLastTurn {
-  /** Ledger append sequence id of the settled event (not wall-clock ordering). */
-  event_id: number;
-  timestamp: number;
-  /** The settled turn id, when recorded; pairs with the spawn/send that opened it. */
-  turn_id: string | null;
+  /** The turn id; the join key between the submit event and the settled row. */
+  turn_id: string;
+  /** Where the turn was submitted from (dispatcher/team_leader/channel), if known. */
+  turn_origin: TeamMateTurnOrigin | null;
+  /** Bounded preview of the submitted prompt, when the submit event was captured. */
+  prompt_preview: string | null;
+  /** Recovery subject recorded at submit time, when known. */
+  intent: string | null;
+  /** Ledger timestamp of the submit event, or null if only the settle was seen. */
+  submitted_at: number | null;
+  /** Ledger timestamp of the settled event. */
+  settled_at: number;
   settle_status: 'completed' | 'failed' | 'stopped' | null;
   /** The teammate's final assistant output, captured up to the hard cap. */
   assistant: string | null;

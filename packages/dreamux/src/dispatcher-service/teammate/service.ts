@@ -53,7 +53,7 @@ import {
   type TeamMateLastResult,
   type TeamMateLastTurn,
   type TeamMateRole,
-  type TeamMateSessionLedgerEvent,
+  type TeamMateSessionRow,
   type TeamMateAgentRuntimeCapability,
   type TeamMateRuntimeStatus,
   type TeamMateSendResult,
@@ -326,7 +326,7 @@ export class TeamMateAgentService {
     // not live — including one previously `close`d — is reopened from its
     // persisted checkpoint and the turn is submitted, so send always works as
     // long as the identity exists. reopenClosed scopes this revival to send;
-    // read-only verbs (last/ctx/status) never silently reopen a closed teammate.
+    // read-only verbs (last/status) never silently reopen a closed teammate.
     const dispatcherId = principalDispatcherId(input.principal);
     const live = await this.ensureRuntime(dispatcherId, input.name, {
       principal: input.principal,
@@ -456,20 +456,31 @@ export class TeamMateAgentService {
     },
   ): Promise<TeamMateHistoryResult> {
     const dispatcherId = principalDispatcherId(input.principal);
+    // `history` is the durable session-ledger recovery surface (issue #188): the
+    // session ledger is the source of every recovery fact (prompts, assistant
+    // output, intent, turn count, last-seen). The per-name forward-only history
+    // index is no longer read here. We still enumerate one row per teammate
+    // identity — joining each to its session row — so the surface also covers a
+    // legacy/never-captured teammate that has no ledger session yet, and can
+    // surface live-only facts the ledger does not hold (runtime status, the
+    // resume checkpoint, worktree cleanup state).
     const identities = await this.identities.list(dispatcherId);
-    // Fold the durable session ledger once (issue #188) so each row can surface
-    // its session's last assistant preview without an O(N) re-read per identity.
-    const previewBySession = new Map<string, string | null>();
-    for (const session of await this.sessionLedger.materializeSessions(dispatcherId)) {
-      previewBySession.set(session.session_id, session.last_assistant_preview);
+    const sessions = await this.sessionLedger.materializeSessions(dispatcherId);
+    // One session per teammate name (concrete names are never reused, so this is
+    // 1:1); if a name somehow carries more than one session id, keep the latest.
+    const sessionByName = new Map<string, TeamMateSessionRow>();
+    for (const session of sessions) {
+      const prev = sessionByName.get(session.name);
+      if (prev === undefined || session.last_seen_at >= prev.last_seen_at) {
+        sessionByName.set(session.name, session);
+      }
     }
     const rows: TeamMateLedgerRow[] = [];
     for (const identity of identities) {
-      const preview =
-        identity.session_id !== null
-          ? previewBySession.get(identity.session_id) ?? null
-          : null;
-      const row = await this.toLedgerRow(identity, preview);
+      const row = this.toLedgerRow(
+        identity,
+        sessionByName.get(identity.name) ?? null,
+      );
       if (
         principalCanAccess(input.principal, identity) &&
         this.matchesLedgerQuery(row, input)
@@ -538,39 +549,64 @@ export class TeamMateAgentService {
         turns: [],
       };
     }
+    // `readSession` streams the ledger in file APPEND ORDER, which is the only
+    // correct turn ordering: `event_id`/`timestamp` are both `Date.now()` (a
+    // wall clock that can collide within a millisecond or move backwards on an
+    // NTP step), so they must NOT be used to order or pick the latest turn.
     const events = await this.sessionLedger.readSession(dispatcherId, sessionId);
-    // Settled events carry the assistant output. A runtime can emit the same
-    // turn's settle more than once (the completion layer coalesces delivery, but
-    // each signal still appends a ledger row), so pair settled events by turn id
-    // — keeping the latest capture per turn — before ordering by ledger append
-    // sequence (event_id, not wall-clock) and keeping the most recent N turns.
-    const latestByTurn = new Map<string, TeamMateSessionLedgerEvent>();
+    // Fold events into one record per turn id, preserving first-seen (append)
+    // order via Map insertion. A submit event (spawn/send/channel) carries the
+    // prompt/intent/origin; a settled event carries the assistant output. A turn
+    // can settle more than once (the runtime may re-emit, and the completion
+    // layer only coalesces delivery) — later settled rows overwrite earlier ones
+    // because we iterate in append order.
+    const byTurn = new Map<string, TeamMateLastTurn>();
+    const blank = (turnId: string): TeamMateLastTurn => ({
+      turn_id: turnId,
+      turn_origin: null,
+      prompt_preview: null,
+      intent: null,
+      submitted_at: null,
+      settled_at: 0,
+      settle_status: null,
+      assistant: null,
+      assistant_preview: null,
+      assistant_truncated: false,
+    });
+    const settledTurnIds = new Set<string>();
     for (const event of events) {
-      if (event.type !== 'settled' || event.turn_id === null) continue;
-      const prev = latestByTurn.get(event.turn_id);
-      if (prev === undefined || event.event_id >= prev.event_id) {
-        latestByTurn.set(event.turn_id, event);
+      const turnId = event.turn_id;
+      if (turnId === null) continue;
+      if (event.type === 'spawn' || event.type === 'send') {
+        const turn = byTurn.get(turnId) ?? blank(turnId);
+        turn.turn_origin = event.turn_origin;
+        turn.prompt_preview = event.prompt_preview;
+        turn.intent = event.intent;
+        turn.submitted_at = event.timestamp;
+        byTurn.set(turnId, turn);
+      } else if (event.type === 'settled') {
+        const turn = byTurn.get(turnId) ?? blank(turnId);
+        turn.settle_status = event.settle_status;
+        turn.assistant = event.assistant;
+        turn.assistant_preview = event.assistant_preview;
+        turn.assistant_truncated = event.assistant_truncated;
+        turn.settled_at = event.timestamp;
+        byTurn.set(turnId, turn);
+        settledTurnIds.add(turnId);
       }
     }
-    const settled = [...latestByTurn.values()].sort(
-      (a, b) => a.event_id - b.event_id || a.timestamp - b.timestamp,
+    // `last` is the completion fallback, so it returns SETTLED turns (those with
+    // a durable assistant output), newest last, in append order.
+    const settledTurns = [...byTurn.values()].filter((turn) =>
+      settledTurnIds.has(turn.turn_id),
     );
-    const recent = settled.slice(-requestedTurns);
-    const lastTurns: TeamMateLastTurn[] = recent.map((event) => ({
-      event_id: event.event_id,
-      timestamp: event.timestamp,
-      turn_id: event.turn_id,
-      settle_status: event.settle_status,
-      assistant: event.assistant,
-      assistant_preview: event.assistant_preview,
-      assistant_truncated: event.assistant_truncated,
-    }));
+    const recent = settledTurns.slice(-requestedTurns);
     return {
       teammate,
       session_id: sessionId,
       requested_turns: requestedTurns,
-      returned_turns: lastTurns.length,
-      turns: lastTurns,
+      returned_turns: recent.length,
+      turns: recent,
     };
   }
 
@@ -1141,6 +1177,7 @@ export class TeamMateAgentService {
     return {
       name: identity.name,
       display_name: identity.display_name,
+      session_id: identity.session_id,
       role: identity.role,
       team_id: identity.team_id,
       owner: identity.owner,
@@ -1160,21 +1197,25 @@ export class TeamMateAgentService {
     };
   }
 
-  private async toLedgerRow(
+  /**
+   * Build one recovery row for a teammate (issue #188). Historical recovery
+   * facts — last-seen, prompt/assistant previews, turn count — come from the
+   * durable SESSION LEDGER row (`session`), not the per-name history index. Live
+   * and identity-only facts (runtime status, resume checkpoint, worktree cleanup
+   * state, owner) come from the current identity. `session` is null for a
+   * legacy/never-captured teammate, which then shows identity facts only.
+   */
+  private toLedgerRow(
     identity: TeamMateIdentity,
-    lastAssistantPreview: string | null = null,
-  ): Promise<TeamMateLedgerRow> {
+    session: TeamMateSessionRow | null,
+  ): TeamMateLedgerRow {
     const runtime = this.live.get(liveKey(identity.dispatcher_id, identity.name))?.runtime ?? null;
-    const events = await this.identities.history(identity.dispatcher_id, identity.name);
-    const lastEvent = events.at(-1);
-    const lastPromptEvent = events.findLast(
-      (event) => event.prompt_preview !== null,
-    );
     return {
       id: identity.name,
       name: identity.name,
       display_name: identity.display_name,
       session_id: identity.session_id,
+      turn_count: session?.turn_count ?? 0,
       role: identity.role,
       team_id: identity.team_id,
       owner: identity.owner,
@@ -1186,7 +1227,7 @@ export class TeamMateAgentService {
       worktree: identity.worktree,
       created_at: identity.created_at,
       updated_at: identity.updated_at,
-      last_seen_at: lastEvent?.timestamp ?? identity.updated_at,
+      last_seen_at: session?.last_seen_at ?? identity.updated_at,
       state: identity.status,
       status: identity.status,
       runtime_status: runtime?.getStatus() ?? null,
@@ -1197,8 +1238,8 @@ export class TeamMateAgentService {
       close_note: identity.close_note,
       close_note_preview:
         identity.close_note !== null ? previewText(identity.close_note) : null,
-      last_prompt_preview: lastPromptEvent?.prompt_preview ?? null,
-      last_assistant_preview: lastAssistantPreview,
+      last_prompt_preview: session?.last_prompt_preview ?? null,
+      last_assistant_preview: session?.last_assistant_preview ?? null,
       cleanup_state: identity.worktree.cleanup_state,
       resume:
         identity.closed_at === null || identity.checkpoint !== null
@@ -1439,6 +1480,9 @@ function ledgerRowMatchesText(row: TeamMateLedgerRow, grep: string): boolean {
   return [
     row.id,
     row.name,
+    row.display_name,
+    row.session_id,
+    row.team_id,
     row.agent_runtime,
     row.source_cwd,
     row.source_repo,

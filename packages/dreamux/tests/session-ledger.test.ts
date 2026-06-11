@@ -30,6 +30,7 @@ import { DispatcherStore } from '../src/state/dispatcher-store.js';
 import {
   dispatcherTeamMateIdentitiesDir,
   dispatcherTeamMateIdentityPath,
+  dispatcherTeamMateSessionLedgerPath,
   resetRuntimeConfig,
 } from '../src/platform/paths.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
@@ -620,5 +621,130 @@ describe('session ledger capture (integration through TeamMateAgentService)', ()
     expect(closes).toHaveLength(1);
     expect(closes[0]?.session_id).toMatch(/.+/);
     expect(closes[0]?.note).toBe('archived');
+  });
+
+  it('last folds the ledger in append order (not event_id), overrides settled, pairs submit, isolates sessions (#188 P1)', async () => {
+    const { service } = buildService();
+    const cwd = join(root, 'append-order');
+    await mkdir(cwd, { recursive: true });
+    // Seed an identity bound to session 'sess-A'.
+    await mkdir(dispatcherTeamMateIdentitiesDir('flow'), { recursive: true });
+    await writeFile(
+      dispatcherTeamMateIdentityPath('flow', 'reviewer-aaaaaaaa'),
+      JSON.stringify({
+        version: 1,
+        dispatcher_id: 'flow',
+        name: 'reviewer-aaaaaaaa',
+        display_name: 'reviewer',
+        owner: { kind: 'dispatcher', dispatcher_id: 'flow' },
+        role: 'teammate',
+        team_id: null,
+        agent_runtime: 'flow',
+        session_id: 'sess-A',
+        source_cwd: cwd,
+        source_repo: null,
+        cwd,
+        runtime_cwd: cwd,
+        worktree: {
+          mode: 'reuse-cwd',
+          slug: null,
+          path: cwd,
+          branch: null,
+          base_ref: null,
+          cleanup: 'keep',
+          cleanup_state: 'not-managed',
+          cleanup_error: null,
+        },
+        intent: 'review',
+        created_at: 1,
+        updated_at: 1,
+        status: 'running',
+        checkpoint: null,
+        last_error: null,
+        closed_at: null,
+        close_note: null,
+      }),
+      { mode: 0o600 },
+    );
+
+    // Hand-craft the ledger so event_id DESCENDS down the file: any code that
+    // sorted by event_id would reverse the turns and pick the wrong "latest"
+    // settled. Correct behavior follows append (line) order.
+    const base = {
+      version: 1,
+      dispatcher_id: 'flow',
+      name: 'reviewer-aaaaaaaa',
+      display_name: 'reviewer',
+      role: 'teammate',
+      team_id: null,
+      leader_name: null,
+      owner: { kind: 'dispatcher', dispatcher_id: 'flow' },
+      agent_runtime: 'flow',
+      source_repo: null,
+      source_cwd: cwd,
+      cwd,
+      worktree_slug: null,
+      worktree_path: cwd,
+      branch: null,
+      base_ref: null,
+      checkpoint_kind: null,
+      session_ref: null,
+      status: 'running',
+      turn_origin: null,
+      prompt_preview: null,
+      assistant_preview: null,
+      assistant: null,
+      assistant_truncated: false,
+      settle_status: null,
+      note: null,
+    };
+    const lines = [
+      // turn-1 submitted (dispatcher), then settled with an OLD answer.
+      { ...base, session_id: 'sess-A', event_id: 500, timestamp: 500, type: 'spawn', turn_id: 'turn-1', turn_origin: 'dispatcher', prompt_preview: 'first prompt', intent: 'review one' },
+      { ...base, session_id: 'sess-A', event_id: 400, timestamp: 400, type: 'settled', turn_id: 'turn-1', settle_status: 'completed', assistant: 'A1-old', assistant_preview: 'A1-old' },
+      // turn-2 submitted (channel), then settled.
+      { ...base, session_id: 'sess-A', event_id: 300, timestamp: 300, type: 'send', turn_id: 'turn-2', turn_origin: 'channel', prompt_preview: 'second prompt', intent: 'review two' },
+      { ...base, session_id: 'sess-A', event_id: 200, timestamp: 200, type: 'settled', turn_id: 'turn-2', settle_status: 'completed', assistant: 'A2', assistant_preview: 'A2' },
+      // A duplicate settled for turn-1 appended LATER must OVERRIDE the old one,
+      // even though its event_id is the smallest.
+      { ...base, session_id: 'sess-A', event_id: 100, timestamp: 100, type: 'settled', turn_id: 'turn-1', settle_status: 'completed', assistant: 'A1-new', assistant_preview: 'A1-new' },
+      // A different session in the same file must NOT bleed into sess-A.
+      { ...base, session_id: 'sess-B', event_id: 999, timestamp: 999, type: 'settled', turn_id: 'turn-9', settle_status: 'completed', assistant: 'other-session', assistant_preview: 'other-session' },
+    ];
+    await mkdir(
+      dispatcherTeamMateSessionLedgerPath('flow').replace(/\/[^/]+$/, ''),
+      { recursive: true },
+    );
+    await writeFile(
+      dispatcherTeamMateSessionLedgerPath('flow'),
+      lines.map((line) => JSON.stringify(line)).join('\n') + '\n',
+      { mode: 0o600 },
+    );
+
+    const last = await service.last('flow', 'reviewer-aaaaaaaa', 5);
+    expect(last.session_id).toBe('sess-A');
+    // Append order, not event_id order: turn-1 before turn-2, no sess-B bleed.
+    expect(last.turns.map((t) => t.turn_id)).toEqual(['turn-1', 'turn-2']);
+    // The later duplicate settled for turn-1 wins (override by append order).
+    expect(last.turns[0]).toMatchObject({
+      turn_id: 'turn-1',
+      assistant: 'A1-new',
+      turn_origin: 'dispatcher',
+      prompt_preview: 'first prompt',
+      intent: 'review one',
+      submitted_at: 500,
+    });
+    // turns>1 pairs each settled row with its submit-side prompt/origin/intent.
+    expect(last.turns[1]).toMatchObject({
+      turn_id: 'turn-2',
+      assistant: 'A2',
+      turn_origin: 'channel',
+      prompt_preview: 'second prompt',
+      intent: 'review two',
+    });
+
+    // turns=1 (default) returns just the newest-by-append-order settled turn.
+    const latest = await service.last('flow', 'reviewer-aaaaaaaa');
+    expect(latest.turns.map((t) => t.turn_id)).toEqual(['turn-2']);
   });
 });
