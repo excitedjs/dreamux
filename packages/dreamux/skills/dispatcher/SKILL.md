@@ -1,6 +1,6 @@
 ---
 name: dispatcher
-description: Use from a Dreamux dispatcher thread when bounded repository work should be delegated to a TeamMate. The server-hosted TeamMate MCP is the default interface; spawn creates a semi-resident TeamMate and RETURNS its concrete name (use that name for every later call), send submits follow-up turns and reopens a closed TeamMate from its checkpoint, close stops one, history searches the durable session ledger, and list/status/last/get_capabilities inspect state. The tm CLI is the explicit fallback for legacy diagnostics. Applies to spawning, tracking, retrieving, sending, closing, inspecting, reopening, recovering, or summarizing teammate work.
+description: Use from a Dreamux dispatcher thread when bounded repository work should be delegated to a TeamMate. The server-hosted TeamMate MCP is the default interface; spawn creates a semi-resident TeamMate and RETURNS its concrete name (use that name for every later call), send submits follow-up turns and reopens a closed TeamMate from its checkpoint, close stops one, history searches the durable per-name records, and list/status/last/get_capabilities inspect state. The tm CLI is the explicit fallback for legacy diagnostics. Applies to spawning, tracking, retrieving, sending, closing, inspecting, reopening, recovering, or summarizing teammate work.
 ---
 
 # Dispatcher
@@ -29,7 +29,7 @@ session or polling a process.
   pass is a requested label, **not** the final address: the service allocates a
   concrete, never-reused name and returns it as `teammate.name`.
   **Use that returned concrete name for every later `send`/`status`/`last`/
-  `close`.** `intent` is **required**: a short recovery subject for the session ledger
+  `close`.** `intent` is **required**: a short recovery subject for the record
   (what this TeamMate is for). The work directory is an optional `repo` object
   (issue #199 Slice 2) — `{ mode: reuse-cwd | managed, path?, base_ref?, branch?,
   slug?, cleanup? }`; omit it to work in the dispatcher's default directory, pass
@@ -61,8 +61,8 @@ session or polling a process.
   lifecycle `status` filter is kept; the legacy `state` / `close_status` /
   `source_cwd` / `runtime_cwd` filters and the cwd/worktree/`display_name`/
   `session_id`/`checkpoint` row fields are no longer exposed (issue #199).
-- `last` — a TeamMate's most recent settled turn(s), read from the durable
-  session ledger by concrete name. It accepts `turns` (1..5, default 1; newest
+- `last` — a TeamMate's most recent settled turn(s), read from the per-name
+  turns archive by concrete name. It accepts `turns` (1..5, default 1; newest
   last) and returns the final assistant output as completely as it was durably
   captured (with a truncation flag). It does **not** start or resume a runtime,
   so it works for a closed or stopped TeamMate — this is your fallback when a
@@ -234,10 +234,10 @@ turn's tool calls.
 Two state owners, kept distinct:
 
 - The Dreamux server owns the TeamMate **agent state** behind the `teammate`
-  MCP — concrete identities (with their display labels), runtime checkpoints,
-  status, and the durable session ledger (prompts and captured assistant
-  output). Read and control it with `list`, `status`, `history`, `last`,
-  `send`, and `close`.
+  MCP — per-name records (identity + a rolling recovery summary) and a per-name
+  turns archive (prompts and captured assistant output that `last` returns).
+  Read and control it with `list`, `status`, `history`, `last`, `send`, and
+  `close`.
 - `tm` owns live tm **session** state — teammate liveness, worktrees, and
   resumable session history (see `references/inspect-and-resume.md`).
 

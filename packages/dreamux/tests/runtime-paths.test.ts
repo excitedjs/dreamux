@@ -13,8 +13,9 @@ import {
   dispatcherDir,
   dispatcherFeishuAttachmentCacheDir,
   dispatcherTeamMateDir,
-  dispatcherTeamMateIdentitiesDir,
-  dispatcherTeamMateIdentityPath,
+  dispatcherTeamMateRecordsDir,
+  dispatcherTeamMateRecordPath,
+  dispatcherTeamMateTurnsPath,
   dispatcherTeamMateRuntimeDir,
   feishuChannelLogDir,
   feishuChannelLogPath,
@@ -100,17 +101,15 @@ describe('runtime paths', () => {
     expect(dispatcherTeamMateDir('dispatcher-a')).toBe(
       join(stateRoot(), 'dispatcher-a', 'teammate'),
     );
-    expect(dispatcherTeamMateIdentitiesDir('dispatcher-a')).toBe(
-      join(stateRoot(), 'dispatcher-a', 'teammate', 'identities'),
+    // #199 Slice 3: per-name records + per-name turns archive; no sessions.jsonl.
+    expect(dispatcherTeamMateRecordsDir('dispatcher-a')).toBe(
+      join(stateRoot(), 'dispatcher-a', 'teammate', 'records'),
     );
-    expect(dispatcherTeamMateIdentityPath('dispatcher-a', 'reviewer-1')).toBe(
-      join(
-        stateRoot(),
-        'dispatcher-a',
-        'teammate',
-        'identities',
-        'reviewer-1.json',
-      ),
+    expect(dispatcherTeamMateRecordPath('dispatcher-a', 'reviewer-1')).toBe(
+      join(stateRoot(), 'dispatcher-a', 'teammate', 'records', 'reviewer-1.json'),
+    );
+    expect(dispatcherTeamMateTurnsPath('dispatcher-a', 'reviewer-1')).toBe(
+      join(stateRoot(), 'dispatcher-a', 'teammate', 'turns', 'reviewer-1.jsonl'),
     );
     expect(dispatcherTeamMateRuntimeDir('dispatcher-a', 'reviewer-1')).toBe(
       join(stateRoot(), 'dispatcher-a', 'teammate', 'runtime', 'reviewer-1'),

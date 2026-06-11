@@ -80,12 +80,16 @@ supersedes the older dispatcher/tm boundary for server-owned TeamMate state.
 Two state owners are kept distinct in the skill:
 
 - The Dreamux server owns TeamMate **agent state** behind the injected
-  dispatcher-scoped `teammate` MCP — concrete identities, runtime checkpoints,
-  statuses, and the durable session ledger (prompts plus the captured final
-  assistant output that `last` returns) under
-  `~/.dreamux/state/<dispatcher-id>/teammate/`. The persisted identity still
-  records the requested label internally; the `history` projection no longer
-  surfaces it (issue #199 Slice 1).
+  dispatcher-scoped `teammate` MCP — per-name records
+  (`teammate/records/<name>.json`: identity + rolling recovery summary, the
+  source for history/list/status) and a per-name turns archive
+  (`teammate/turns/<name>.jsonl`, the only JSONL store: prompts plus the captured
+  final assistant output that `last` returns) under
+  `~/.dreamux/state/<dispatcher-id>/teammate/` (issue #199 Slice 3). The former
+  `sessions.jsonl` session ledger and the persisted checkpoint object are gone;
+  `session_id` is the runtime-native thread id. The persisted record still keeps
+  the requested label internally; the `history` projection no longer surfaces it
+  (issue #199 Slice 1).
 - The Dreamux server owns Team **lifecycle state** behind the injected
   dispatcher-scoped `team` MCP under `~/.dreamux/state/<dispatcher-id>/team/`.
   TeamLeader and member agents remain TeamMate identities with role/owner

@@ -178,17 +178,13 @@ export class DispatcherService {
     origin: TeamMateTurnOrigin | null = null,
   ): Promise<void> {
     // Routing is per turn, not per role: a TeamLeader turn fed by its bound
-    // channel stays pull-only (ledger), but a dispatcher-initiated send/control
-    // turn to that same leader returns to the dispatcher like any teammate.
-    // An unattributed leader turn (origin null, e.g. settled after a restart
-    // lost the in-memory origin map) defaults to the ledger so it can never
-    // inject channel traffic into dispatcher context.
+    // channel stays pull-only, but a dispatcher-initiated send/control turn to
+    // that same leader returns to the dispatcher like any teammate. An
+    // unattributed leader turn (origin null, e.g. settled after a restart lost
+    // the in-memory origin map) defaults to pull-only so it can never inject
+    // channel traffic into dispatcher context. The leader's own turns archive
+    // captures the turn (#199 Slice 3 removed the separate team audit ledger).
     if (identity.role === 'team_leader' && origin !== 'dispatcher') {
-      await this.teams.recordLeaderTurn({
-        dispatcherId,
-        leaderName: identity.name,
-        summary: completionSummary(completion),
-      });
       return;
     }
     if (identity.owner.kind === 'team' && identity.role === 'team_member') {
@@ -252,10 +248,6 @@ export class DispatcherService {
     return this.teams.history(input);
   }
 
-  getTeamLedger(dispatcherId: string, teamId: string) {
-    return this.teams.ledger(dispatcherId, teamId);
-  }
-
   dissolveTeam(input: TeamDissolveInput) {
     return this.teams.dissolve(input);
   }
@@ -282,12 +274,4 @@ export class DispatcherService {
     await this.teammates.stopAll();
     await this.dispatchers.shutdown();
   }
-}
-
-function completionSummary(completion: CompletionEnvelope): string {
-  const preview = completion.result.replace(/\s+/g, ' ').trim();
-  const bounded = preview.length <= 240 ? preview : `${preview.slice(0, 237)}...`;
-  return bounded === ''
-    ? `TeamLeader turn ${completion.status}`
-    : `TeamLeader turn ${completion.status}: ${bounded}`;
 }

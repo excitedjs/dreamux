@@ -1,5 +1,5 @@
 import { Buffer } from 'node:buffer';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 
 import type {
   AgentRuntime,
@@ -33,7 +33,7 @@ import { validateDispatcherId } from '../../state/dispatcher-id.js';
 import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
 import { TeamMateIdentityStore } from './identity-store.js';
 import { TeamMateRuntimeStateStore } from './runtime-state.js';
-import { TeamMateSessionLedger } from './session-ledger.js';
+import { TeamMateTurnsStore } from './turns-store.js';
 import { allocateConcreteName, type SuffixGenerator } from './name-allocator.js';
 import { WorktreeManager } from './worktree-manager.js';
 import {
@@ -49,11 +49,10 @@ import {
   type TeamMateHistoryQuery,
   type TeamMateHistoryResult,
   type TeamMateIdentity,
-  type TeamMateLedgerRow,
+  type TeamMateRecordRow,
   type TeamMateLastResult,
   type TeamMateLastTurn,
   type TeamMateRole,
-  type TeamMateSessionRow,
   type TeamMateAgentRuntimeCapability,
   type TeamMateRuntimeStatus,
   type TeamMateSendResult,
@@ -153,7 +152,7 @@ export interface ScopedCloseTeamMateInput {
 
 export class TeamMateAgentService {
   private readonly identities: TeamMateIdentityStore;
-  private readonly sessionLedger: TeamMateSessionLedger;
+  private readonly turnsStore: TeamMateTurnsStore;
   private readonly worktrees = new WorktreeManager();
   private readonly live = new Map<string, LiveTeamMate>();
   private submissionSeq = 0;
@@ -162,18 +161,17 @@ export class TeamMateAgentService {
     this.identities = new TeamMateIdentityStore({
       warn: (message, fields) => opts.log.warn(fields ?? {}, message),
     });
-    this.sessionLedger = new TeamMateSessionLedger({
+    this.turnsStore = new TeamMateTurnsStore({
       warn: (message, fields) => opts.log.warn(fields ?? {}, message),
     });
   }
 
   /**
-   * Read-only access to the durable session ledger (issue #182 PR-5). The
-   * public, filterable read surface is built on this in PR-6; exposed now so
-   * tests and future read tools can materialize recovery rows.
+   * Read-only access to the per-name turns archive (issue #199 Slice 3),
+   * exposed so tests and recovery tooling can stream a teammate's turn rows.
    */
-  sessions(): TeamMateSessionLedger {
-    return this.sessionLedger;
+  turns(): TeamMateTurnsStore {
+    return this.turnsStore;
   }
 
   /**
@@ -231,7 +229,7 @@ export class TeamMateAgentService {
     // The agent-supplied `name` is a base slug / display hint, not the final
     // address (issue #188): require it non-empty, then allocate a concrete,
     // never-reused name below and return it in the spawn result.
-    const displayName = requireLifecycleText(input.name, 'TeamMate spawn name');
+    const requestedName = requireLifecycleText(input.name, 'TeamMate spawn name');
     // Required recovery subject — enforced here too for in-process callers that
     // bypass the MCP shim / admin layer (issue #182 PR-3).
     requireLifecycleText(input.intent, 'TeamMate spawn intent');
@@ -247,7 +245,7 @@ export class TeamMateAgentService {
       input.principal.kind === 'team_leader' ? 'team_member' : 'teammate';
     // Allocate the concrete address from the requested slug (Team members get
     // the `tm-` rule). Checked against all persisted identities, never reused.
-    const name = await this.allocateName(dispatcherId, role, displayName);
+    const name = await this.allocateName(dispatcherId, role, requestedName);
     const agentRuntimeId =
       input.agentRuntime ?? this.defaultAgentRuntime(dispatcherId);
     const agent = this.resolveAgent(dispatcherId, agentRuntimeId);
@@ -270,19 +268,16 @@ export class TeamMateAgentService {
     if (input.sharedWorkspace === undefined) {
       await this.assertManagedWorktreeAvailable(dispatcherId, name, workspace.worktree);
     }
-    // A spawn always starts a fresh runtime session, so it mints a new session
-    // id (issue #182 PR-5). The concrete name is fresh, so this is always a
-    // create — there is no closed-identity reuse path (issue #188).
-    const sessionId = randomUUID();
+    // #199 Slice 3: no Dreamux-minted session id — session_id is the
+    // runtime-native thread id, set when the runtime reports one. The concrete
+    // name is fresh, so this is always a create (issue #188).
     let identity = await this.identities.create({
       dispatcherId,
       name,
-      displayName,
       owner,
       role,
       teamId: owner.kind === 'team' ? owner.team_id : null,
       agentRuntime: agentRuntimeId,
-      sessionId,
       sourceCwd: workspace.sourceCwd,
       sourceRepo: workspace.sourceRepo,
       cwd: workspace.runtimeCwd,
@@ -297,12 +292,10 @@ export class TeamMateAgentService {
     const turn = await this.submitPrompt(dispatcherId, name, input.prompt, {
       principal: input.principal,
     });
-    await this.sessionLedger.append({
-      identity: live.state.current(),
-      type: 'spawn',
-      prompt: input.prompt,
+    await this.recordSubmittedTurn(dispatcherId, live, {
       turnId: turn.turn_id ?? null,
       turnOrigin: principalTurnOrigin(input.principal),
+      prompt: input.prompt,
     });
     return { teammate: this.toStatus(live.state.current(), live.runtime), turn };
   }
@@ -336,18 +329,10 @@ export class TeamMateAgentService {
     const turn = await this.submitPrompt(dispatcherId, input.name, input.prompt, {
       principal: input.principal,
     });
-    // The send may have reopened a closed teammate from its checkpoint, so the
-    // session ledger continues the SAME session id carried on the identity
-    // (issue #182 PR-5); the optional intent update above is already reflected.
-    // A pre-PR-5 identity has no session id yet — mint one lazily so the event
-    // is captured rather than skipped (PR #187 review P3).
-    await live.state.ensureSessionId();
-    await this.sessionLedger.append({
-      identity: live.state.current(),
-      type: 'send',
-      prompt: input.prompt,
+    await this.recordSubmittedTurn(dispatcherId, live, {
       turnId: turn.turn_id ?? null,
       turnOrigin: principalTurnOrigin(input.principal),
+      prompt: input.prompt,
     });
     return { teammate: this.toStatus(live.state.current(), live.runtime), turn };
   }
@@ -374,22 +359,60 @@ export class TeamMateAgentService {
       await live.runtime.stop();
       this.live.delete(key);
     }
+    // #199 Slice 3: the close note and updated_at land on the record; history
+    // reads the record directly (no separate close event), and the record stays
+    // searchable/recoverable after close. No turns row is written for a close.
     const closed = await this.identities.update(identity, {
       status: 'closed',
       closedAt: Date.now(),
       closeNote: input.note,
+      lastSeenAt: Date.now(),
       worktree: await this.worktrees.cleanup(identity),
-      // A pre-PR-5 identity has no session id; mint a fresh, stable one in the
-      // same close write so the close event is captured rather than skipped
-      // (PR #187 review P3). Never re-keyed to the runtime thread id.
-      ...(identity.session_id === null ? { sessionId: randomUUID() } : {}),
-    });
-    await this.sessionLedger.append({
-      identity: closed,
-      type: 'close',
-      note: input.note,
     });
     return { teammate: this.toStatus(closed, null) };
+  }
+
+  /**
+   * Capture a submitted turn (issue #199 Slice 3): append a compact `submit`
+   * row to the per-name turns archive and bump the record's rolling summary
+   * (turn_count / last_seen / last_prompt_preview). The summary update is routed
+   * through the live state so its `current()` snapshot stays canonical.
+   */
+  private async recordSubmittedTurn(
+    dispatcherId: string,
+    live: LiveTeamMate,
+    input: { turnId: string | null; turnOrigin: TeamMateTurnOrigin | null; prompt: string },
+  ): Promise<void> {
+    const current = live.state.current();
+    await this.turnsStore.appendSubmit(dispatcherId, current.name, {
+      turnId: input.turnId,
+      turnOrigin: input.turnOrigin,
+      prompt: input.prompt,
+      intent: current.intent,
+    });
+    await live.state.recordSubmittedTurn(input.prompt);
+  }
+
+  /**
+   * Capture a settled turn: append a `settled` row (final assistant output up to
+   * the durable hard cap) and record the latest assistant preview on the record.
+   */
+  private async recordSettledTurn(
+    dispatcherId: string,
+    name: string,
+    state: TeamMateRuntimeStateStore,
+    input: {
+      turnId: string | null;
+      assistant: string | null;
+      settleStatus: 'completed' | 'failed' | 'stopped' | null;
+    },
+  ): Promise<void> {
+    await this.turnsStore.appendSettled(dispatcherId, name, {
+      turnId: input.turnId,
+      assistant: input.assistant,
+      settleStatus: input.settleStatus,
+    });
+    await state.recordSettledTurn(input.assistant);
   }
 
   async list(dispatcherId: string): Promise<TeamMateRuntimeStatus[]> {
@@ -442,34 +465,17 @@ export class TeamMateAgentService {
     },
   ): Promise<TeamMateHistoryResult> {
     const dispatcherId = principalDispatcherId(input.principal);
-    // `history` is the durable session-ledger recovery surface (issue #188): the
-    // session ledger is the source of every recovery fact (prompts, assistant
-    // output, intent, turn count, last-seen). The per-name forward-only history
-    // index is no longer read here. We still enumerate one row per teammate
-    // identity — joining each to its session row — so the surface also covers a
-    // legacy/never-captured teammate that has no ledger session yet, and can
-    // surface live-only facts the ledger does not hold (runtime status, the
-    // resume checkpoint, worktree cleanup state).
+    // #199 Slice 3: `history` reads the per-name RECORDS only — each record
+    // carries the rolling recovery summary (turn count, last-seen, previews), so
+    // there is no turn/event fold here. Closed teammates keep their record and
+    // stay searchable; live-only facts (runtime status) come from the live map.
     const identities = await this.identities.list(dispatcherId);
-    const sessions = await this.sessionLedger.materializeSessions(dispatcherId);
-    // One session per teammate name (concrete names are never reused, so this is
-    // 1:1); if a name somehow carries more than one session id, keep the latest.
-    const sessionByName = new Map<string, TeamMateSessionRow>();
-    for (const session of sessions) {
-      const prev = sessionByName.get(session.name);
-      if (prev === undefined || session.last_seen_at >= prev.last_seen_at) {
-        sessionByName.set(session.name, session);
-      }
-    }
-    const rows: TeamMateLedgerRow[] = [];
+    const rows: TeamMateRecordRow[] = [];
     for (const identity of identities) {
-      const row = this.toLedgerRow(
-        identity,
-        sessionByName.get(identity.name) ?? null,
-      );
+      const row = this.toRecordRow(identity);
       if (
         principalCanAccess(input.principal, identity) &&
-        this.matchesLedgerQuery(row, input)
+        this.matchesRecordQuery(row, input)
       ) {
         rows.push(row);
       }
@@ -499,13 +505,13 @@ export class TeamMateAgentService {
 
   /**
    * Read a closed-or-live teammate's most recent settled turn(s) from the
-   * durable session ledger (issue #188). This is a pure read: it resolves the
-   * concrete name to exactly one identity/session and folds `sessions.jsonl`
-   * filtered by that session id — it NEVER starts, resumes, or requires a live
-   * runtime, so it works after a teammate is closed or stopped. `turns` defaults
-   * to 1 and is clamped-by-rejection to 1..5; the newest turn is `turns.at(-1)`.
-   * This is the failed-completion-delivery fallback, so it returns the assistant
-   * output as completely as it was durably captured (truncation is flagged).
+   * per-name turns archive (issue #199 Slice 3). This is a pure read: it reads
+   * the RECORD first (existence / scope / common fields), then folds
+   * `turns/<name>.jsonl` — it NEVER starts, resumes, or requires a live runtime,
+   * so it works after a teammate is closed or stopped. `turns` defaults to 1 and
+   * is clamped-by-rejection to 1..5; the newest turn is `turns.at(-1)`. This is
+   * the failed-completion-delivery fallback, so it returns the assistant output
+   * as completely as it was durably captured (truncation is flagged).
    */
   async lastScoped(
     principal: TeamMateCallerPrincipal,
@@ -523,21 +529,10 @@ export class TeamMateAgentService {
       identity,
       this.live.get(liveKey(dispatcherId, identity.name))?.runtime ?? null,
     );
-    const sessionId = identity.session_id;
-    if (sessionId === null) {
-      // A pre-#182-PR-5 identity that never settled under a session id has no
-      // durable turns to read; report an empty, well-formed result.
-      return {
-        teammate,
-        requested_turns: requestedTurns,
-        returned_turns: 0,
-        turns: [],
-      };
-    }
-    // Fold the ledger by streaming it in file APPEND ORDER — the only correct
-    // turn ordering, since `event_id`/`timestamp` are both `Date.now()` (a wall
-    // clock that can collide within a millisecond or move backwards on an NTP
-    // step) and must NOT be used to order or pick the latest turn. The fold is
+    // Fold the turns archive in file APPEND ORDER — the only correct turn
+    // ordering, since `timestamp` is `Date.now()` (a wall clock that can collide
+    // within a millisecond or move backwards on an NTP step) and must NOT be used
+    // to order or pick the latest turn. The fold is
     // BOUNDED: only the most recent `requestedTurns` settled turns retain their
     // (possibly 160k-char) assistant text, so memory does not grow with session
     // length. `firstSeq` records each turn's first-seen (submit) order so a turn
@@ -561,11 +556,11 @@ export class TeamMateAgentService {
     >();
     // The bounded window of settled turns, keyed by turn id; size <= requestedTurns.
     const recent = new Map<string, TeamMateLastTurn>();
-    for await (const event of this.sessionLedger.streamSession(dispatcherId, sessionId)) {
+    for await (const event of this.turnsStore.stream(dispatcherId, identity.name)) {
       const turnId = event.turn_id;
       if (turnId === null) continue;
       seqOf(turnId);
-      if (event.type === 'spawn' || event.type === 'send') {
+      if (event.type === 'submit') {
         submitMeta.set(turnId, {
           turn_origin: event.turn_origin,
           prompt_preview: event.prompt_preview,
@@ -642,18 +637,13 @@ export class TeamMateAgentService {
     const result = await live.runtime.channelInput(input);
     if (result.status === 'submitted') {
       recordTurnOrigin(live, result.turnId, 'channel');
-      // Capture the channel-origin turn in the durable session ledger (issue
-      // #182 PR-5, PR #187 review P1): a TeamLeader's normal user turns arrive
-      // through a bound Team channel here, not via send, and would otherwise be
-      // missing from the session reconstruction. Mint a session id lazily for a
-      // pre-PR-5 identity. Best-effort: the ledger swallows its own write errors.
-      await live.state.ensureSessionId();
-      await this.sessionLedger.append({
-        identity: live.state.current(),
-        type: 'send',
-        prompt: input.text,
+      // Capture the channel-origin turn (issue #182 PR-5, PR #187 review P1): a
+      // TeamLeader's normal user turns arrive through a bound Team channel here,
+      // not via send, and would otherwise be missing from the turns archive.
+      await this.recordSubmittedTurn(dispatcherId, live, {
         turnId: result.turnId,
         turnOrigin: 'channel',
+        prompt: input.text,
       });
     }
     return result;
@@ -676,18 +666,15 @@ export class TeamMateAgentService {
       kind: 'dispatcher',
       dispatcher_id: input.dispatcherId,
     };
-    // A fresh TeamLeader session mints a new session id (issue #182 PR-5). The
-    // name is freshly allocated, so this is always a create — no reuse path.
-    const sessionId = randomUUID();
+    // #199 Slice 3: session_id is the runtime-native thread id, set when the
+    // runtime reports one. The name is freshly allocated — always a create.
     let identity = await this.identities.create({
       dispatcherId: input.dispatcherId,
       name,
-      displayName: input.displayName ?? null,
       owner,
       role: 'team_leader',
       teamId: input.teamId,
       agentRuntime: input.agentRuntime,
-      sessionId,
       sourceCwd: input.sourceCwd,
       sourceRepo: input.sourceRepo,
       cwd: input.runtimeCwd,
@@ -699,12 +686,10 @@ export class TeamMateAgentService {
     const live = await this.startRuntime(input.dispatcherId, identity, provider, agent);
     identity = live.state.current();
     const turn = await this.submitPrompt(input.dispatcherId, name, input.prompt);
-    await this.sessionLedger.append({
-      identity: live.state.current(),
-      type: 'spawn',
-      prompt: input.prompt,
+    await this.recordSubmittedTurn(input.dispatcherId, live, {
       turnId: turn.turn_id ?? null,
       turnOrigin: 'dispatcher',
+      prompt: input.prompt,
     });
     return { teammate: this.toStatus(live.state.current(), live.runtime), turn };
   }
@@ -829,11 +814,7 @@ export class TeamMateAgentService {
     agent: ResolvedAgentConfig,
   ): Promise<LiveTeamMate> {
     const resumeCapability = provider.getCapabilities().resume;
-    const state = new TeamMateRuntimeStateStore(
-      this.identities,
-      identity,
-      resumeCapability.supported ? resumeCapability.checkpoint : null,
-    );
+    const state = new TeamMateRuntimeStateStore(this.identities, identity);
     const row = this.runtimeRow(identity);
     const onTeamMateCompletion = this.opts.onTeamMateCompletion;
     // Bound late so the settle handler closes over the runtime instance directly
@@ -883,6 +864,7 @@ export class TeamMateAgentService {
                 dispatcherId,
                 identity.name,
                 identity,
+                state,
                 settledRuntime,
                 settled,
                 turnOrigins,
@@ -902,8 +884,13 @@ export class TeamMateAgentService {
         ),
     });
     liveRuntime = runtime;
-    if (identity.checkpoint !== null) {
-      await runtime.resume({ checkpoint: identity.checkpoint });
+    // #199 Slice 3: rebuild the resume checkpoint from the persisted
+    // runtime-native session_id (thread id) plus the runtime's OWN declared
+    // checkpoint kind — the kind is never persisted as a durable concept.
+    if (identity.session_id !== null && resumeCapability.supported) {
+      await runtime.resume({
+        checkpoint: { kind: resumeCapability.checkpoint, id: identity.session_id },
+      });
     } else {
       await runtime.start();
     }
@@ -949,6 +936,7 @@ export class TeamMateAgentService {
     dispatcherId: string,
     name: string,
     identity: TeamMateIdentity,
+    state: TeamMateRuntimeStateStore,
     runtime: AgentRuntime,
     settled: TurnSettledSignal,
     turnOrigins: ReadonlyMap<string, TeamMateTurnOrigin>,
@@ -1002,16 +990,11 @@ export class TeamMateAgentService {
           'teammate completion delivery failed',
         );
       }
-      // Capture the settled turn in the durable session ledger AFTER the
+      // Capture the settled turn in the per-name turns archive AFTER the
       // delivery attempt — regardless of its outcome — so capture never perturbs
-      // reverse-delivery timing: final assistant output + the runtime
-      // checkpoint/session id, read from the freshest identity so a thread id set
-      // after spawn is recorded.
-      const settledIdentity =
-        (await this.identities.get(dispatcherId, name).catch(() => null)) ?? identity;
-      await this.sessionLedger.append({
-        identity: settledIdentity,
-        type: 'settled',
+      // reverse-delivery timing. The record's rolling summary is bumped through
+      // the live state so its snapshot stays canonical (issue #199 Slice 3).
+      await this.recordSettledTurn(dispatcherId, name, state, {
         turnId: settled.turnId,
         assistant: result,
         settleStatus: settled.status,
@@ -1051,7 +1034,7 @@ export class TeamMateAgentService {
       dispatcher_id: runtimeId(identity.dispatcher_id, runtimeIdentity),
       bot_app_id: `teammate-${runtimeIdentity}`,
       bot_secret_ref: '',
-      thread_id: identity.checkpoint?.id ?? null,
+      thread_id: identity.session_id,
       status: 'declared',
       enabled: 1,
       created_at: identity.created_at,
@@ -1180,10 +1163,9 @@ export class TeamMateAgentService {
   ): TeamMateRuntimeStatus {
     return {
       name: identity.name,
-      // #199 Slice 2: public session_id is the runtime-native thread id (the
-      // checkpoint id), not the former Dreamux-minted ledger key. Null until the
-      // runtime reports one.
-      session_id: identity.checkpoint?.id ?? null,
+      // #199 Slice 3: session_id is the runtime-native thread id, persisted
+      // directly. Null until the runtime reports one.
+      session_id: identity.session_id,
       owner: identity.owner,
       agent_runtime: identity.agent_runtime,
       repo: {
@@ -1205,27 +1187,22 @@ export class TeamMateAgentService {
   }
 
   /**
-   * Build one recovery row for a teammate (issue #188). Historical recovery
-   * facts — last-seen, prompt/assistant previews, turn count — come from the
-   * durable SESSION LEDGER row (`session`), not the per-name history index. Live
-   * and identity-only facts (runtime status, resume checkpoint, worktree cleanup
-   * state, owner) come from the current identity. `session` is null for a
-   * legacy/never-captured teammate, which then shows identity facts only.
+   * Build one recovery row for a teammate (issue #199 Slice 3). All recovery
+   * facts — turn count, last-seen, prompt/assistant previews — are read from the
+   * per-name RECORD's rolling summary; `history` no longer folds the turns
+   * archive. Live-only facts (runtime status) come from the live map.
    */
-  private toLedgerRow(
-    identity: TeamMateIdentity,
-    session: TeamMateSessionRow | null,
-  ): TeamMateLedgerRow {
+  private toRecordRow(identity: TeamMateIdentity): TeamMateRecordRow {
     const runtime = this.live.get(liveKey(identity.dispatcher_id, identity.name))?.runtime ?? null;
     return {
       name: identity.name,
-      turn_count: session?.turn_count ?? 0,
+      turn_count: identity.turn_count,
       owner: identity.owner,
       agent_runtime: identity.agent_runtime,
       source_repo: identity.source_repo,
       created_at: identity.created_at,
       updated_at: identity.updated_at,
-      last_seen_at: session?.last_seen_at ?? identity.updated_at,
+      last_seen_at: identity.last_seen_at,
       status: identity.status,
       runtime_status: runtime?.getStatus() ?? null,
       intent: identity.intent,
@@ -1233,18 +1210,20 @@ export class TeamMateAgentService {
       close_note: identity.close_note,
       close_note_preview:
         identity.close_note !== null ? previewText(identity.close_note) : null,
-      last_prompt_preview: session?.last_prompt_preview ?? null,
-      last_assistant_preview: session?.last_assistant_preview ?? null,
+      last_prompt_preview: identity.last_prompt_preview,
+      last_assistant_preview: identity.last_assistant_preview,
       cleanup_state: identity.worktree.cleanup_state,
+      // A teammate is reopenable while open, or once it has a runtime-native
+      // session id to resume from after close.
       resume:
-        identity.closed_at === null || identity.checkpoint !== null
+        identity.closed_at === null || identity.session_id !== null
           ? { tool: 'send', name: identity.name }
           : null,
     };
   }
 
-  private matchesLedgerQuery(
-    row: TeamMateLedgerRow,
+  private matchesRecordQuery(
+    row: TeamMateRecordRow,
     input: Omit<TeamMateHistoryQuery, 'dispatcherId' | 'principal'>,
   ): boolean {
     if (input.name !== undefined && row.name !== validateTeamMateName(input.name)) {
@@ -1263,7 +1242,7 @@ export class TeamMateAgentService {
         row.source_repo !== null && row.source_repo.toLowerCase().includes(needle);
       if (!hit) return false;
     }
-    if (input.grep !== undefined && !ledgerRowMatchesText(row, input.grep)) {
+    if (input.grep !== undefined && !recordRowMatchesText(row, input.grep)) {
       return false;
     }
     if (input.since !== undefined && row.last_seen_at < input.since) return false;
@@ -1458,7 +1437,7 @@ function decodeCursor(cursor: string): number {
   throw new Error('invalid history cursor');
 }
 
-function ledgerRowMatchesText(row: TeamMateLedgerRow, grep: string): boolean {
+function recordRowMatchesText(row: TeamMateRecordRow, grep: string): boolean {
   const needle = grep.trim().toLowerCase();
   if (needle === '') return true;
   return [

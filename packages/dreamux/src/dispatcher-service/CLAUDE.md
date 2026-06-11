@@ -37,12 +37,16 @@ is wiring only — all per-dispatcher orchestration lives here.
   teammate/team-leader agent is simply not injected the "spawn teammate" tool;
   role differentiation is done by the MCP tool set + system prompt this service
   injects at launch.
-- **Teammate identity + history are server-owned and forward-only.** History is
-  an append-only JSONL index that stitches the resume chain; a history write
-  must never fail a lifecycle verb. The durable **session ledger**
-  (`teammate/sessions.jsonl`, issue #182 PR-5) is a second append-only index,
-  one per dispatcher, keyed by a stable `session_id` minted at spawn and carried
-  on the identity. It captures spawn/send/settled/close facts with full recovery
-  metadata (repo/cwd/worktree/checkpoint id/intent/close note) and never records
-  a runtime socket path; like history, a ledger write is best-effort and never
-  fails a lifecycle verb.
+- **Teammate storage is the per-name record + the per-name turns archive
+  (issue #199 Slice 3).** `teammate/records/<name>.json` is the primary record —
+  identity plus a rolling recovery summary (turn_count / last_seen_at / last
+  prompt+assistant previews) — and is the single source for `history` / `list` /
+  `status` (no event fold). `teammate/turns/<name>.jsonl` is the ONLY JSONL store:
+  one compact `submit`/`settled` row per turn event, holding turn-only facts (no
+  record fields repeated), folded by `last`. `last` reads the record first
+  (existence/scope), then the turns archive — it never starts or resumes a
+  runtime, so a closed/stopped teammate stays recoverable. Both writes are
+  best-effort and never fail a lifecycle verb. The former `teammate/sessions.jsonl`
+  session ledger, the Dreamux-minted `session_id` key, and the persisted
+  `checkpoint` object are gone: `session_id` is now the runtime-native thread id,
+  persisted directly, and the resume checkpoint kind is rebuilt from the runtime.

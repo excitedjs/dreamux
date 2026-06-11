@@ -298,7 +298,7 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
     await facade.shutdown();
   });
 
-  it('records a bound-channel TeamLeader completion as exactly one ledger row, never a dispatcher push', async () => {
+  it('captures a bound-channel TeamLeader completion in the leader turns archive, never a dispatcher push', async () => {
     await initGitRepo(workspace(root));
     const descriptor = createBuiltinProviderRegistry().resolve('builtin:codex');
     const provider = new FakeProvider(descriptor);
@@ -330,29 +330,30 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
     const turnId = submitted.status === 'submitted' ? submitted.turnId : 'unreachable';
     expect(turnId).not.toBe(bootstrapTurnId);
     leaderRuntime.settle('completed', turnId);
-    await waitFor(async () =>
-      (await facade.getTeamLedger('flow', 'alpha')).events
-        .some((event) => event.type === 'leader_turn'),
-    );
-    // Wait past the removed 25ms poller's interval: a second (duplicate)
-    // delivery path would have appended a second leader_turn row by now.
+    const leaderName = created.team.leader_name;
+    const settledRowsFor = async (): Promise<number> => {
+      let count = 0;
+      for await (const row of facade.teammates.turns().stream('flow', leaderName)) {
+        if (row.type === 'settled' && row.turn_id === turnId) count += 1;
+      }
+      return count;
+    };
+    // #199 Slice 3: the channel-origin leader completion lands as a settled row
+    // in the LEADER's own turns archive (pull-only), not the removed team ledger.
+    await waitFor(async () => (await settledRowsFor()) >= 1);
+    // Wait past the removed 25ms poller's interval: a second (duplicate) delivery
+    // path would have appended a second settled row by now.
     await sleep(150);
-
-    const leaderTurnRows = (await facade.getTeamLedger('flow', 'alpha')).events
-      .filter((event) => event.type === 'leader_turn');
-    expect(leaderTurnRows).toHaveLength(1);
-    expect(leaderTurnRows[0]).toMatchObject({
-      summary: expect.stringContaining('TeamLeader turn completed'),
-    });
+    expect(await settledRowsFor()).toBe(1);
     // The bound-channel turn never reaches dispatcher context.
     expect(dispatcherRuntime.delivered.map((env) => env.id)).not.toContain(
-      `${created.team.leader_name}:${turnId}`,
+      `${leaderName}:${turnId}`,
     );
 
     await facade.shutdown();
   });
 
-  it('pushes a dispatcher-initiated TeamLeader turn back to the dispatcher, not the ledger', async () => {
+  it('pushes a dispatcher-initiated TeamLeader turn back to the dispatcher (not pull-only)', async () => {
     await initGitRepo(workspace(root));
     const descriptor = createBuiltinProviderRegistry().resolve('builtin:codex');
     const provider = new FakeProvider(descriptor);
@@ -385,12 +386,11 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
     leaderRuntime.settle('completed', turnId);
     await flush();
 
+    // A dispatcher-initiated turn to the leader returns to the dispatcher like
+    // any teammate (it is not pull-only).
     expect(dispatcherRuntime.delivered.map((env) => env.id)).toContain(
       `${leaderName}:${turnId}`,
     );
-    const leaderTurnRows = (await facade.getTeamLedger('flow', 'alpha')).events
-      .filter((event) => event.type === 'leader_turn');
-    expect(leaderTurnRows).toEqual([]);
 
     await facade.shutdown();
   });
