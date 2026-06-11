@@ -62,9 +62,13 @@ checkpoint kind is capability-driven with no `codexThread` fallback.
 
 Completion delivery itself is bounded (issue #164): a result within the inline
 budget (default 32000 chars, `TASK_MAX_OUTPUT_LENGTH` override, clamped to
-160000) is inlined; a longer one is spilled to a `/tmp` file by the neutral
+160000) is inlined; a longer one is spilled to a file by the neutral
 `completion-body.ts` (shared, no cross-builtin import) and only the path is
-inlined. `CompletionEnvelope.status` is `completed | failed | stopped`.
+inlined. The spill lives under the owning dispatcher's cache spill dir
+(`~/.dreamux/cache/<dispatcher-id>/spill/`, issue #182 PR-2 — moved out of
+shared `/tmp`), supplied by the runtime via
+`AgentRuntimePathContext.completionSpillDir` so the neutral module never names
+a dispatcher id. `CompletionEnvelope.status` is `completed | failed | stopped`.
 
 The channel payload is neutral but now richer (D + issue #164): `channelInput`
 takes `InboundTurnInput { text; sourceId; source?; attrs?; body?; attachments? }`.
