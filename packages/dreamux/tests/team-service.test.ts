@@ -535,23 +535,27 @@ describe('TeamService', () => {
     ]);
     expect(all.next_cursor).toBeNull();
 
-    // close_status filter isolates the dissolved Team and carries recovery facts.
-    const closed = await teams.history({ dispatcherId: 'flow', closeStatus: 'closed' });
-    expect(closed.items.map((row) => row.name)).toEqual(['billing-team']);
-    expect(closed.items[0]).toMatchObject({
-      close_status: 'closed',
+    // #199 Slice 1: no status / close_status filters — a dissolved Team is still
+    // recoverable in history (found by its concrete name) and carries recovery
+    // facts, but the row no longer projects a close_status flag.
+    const dissolved = all.items.find((row) => row.name === 'billing-team');
+    expect(dissolved).toMatchObject({
       close_note: 'done',
       close_note_preview: 'done',
       source_repo: repo,
     });
+    expect(dissolved).not.toHaveProperty('close_status');
+    expect(dissolved).not.toHaveProperty('team_id');
+    expect(dissolved).not.toHaveProperty('repo_cwd');
+    expect(dissolved).not.toHaveProperty('worktree');
 
-    // grep matches intent text; status filter narrows to live Teams.
+    // grep matches intent text on either Team.
     expect(
       (await teams.history({ dispatcherId: 'flow', grep: 'auth' })).items.map((r) => r.name),
     ).toEqual(['auth-team']);
     expect(
-      (await teams.history({ dispatcherId: 'flow', status: 'running' })).items.map((r) => r.name),
-    ).toEqual(['auth-team']);
+      (await teams.history({ dispatcherId: 'flow', grep: 'billing' })).items.map((r) => r.name),
+    ).toEqual(['billing-team']);
 
     // Bind a group → it surfaces in list (bound_group) and status (binding).
     await teams.bindChannel({

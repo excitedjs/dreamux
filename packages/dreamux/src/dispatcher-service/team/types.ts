@@ -112,7 +112,7 @@ export interface TeamSummary {
  * runtime status or full worktree record. Reach for `team.status` for detail.
  */
 export interface TeamListRow {
-  /** Public Team identifier; equal to `team_id` (the storage key) today. */
+  /** Public Team key (the concrete `team_name`, == `team_id` storage key). */
   name: string;
   team_id: string;
   status: TeamStatus;
@@ -138,8 +138,6 @@ export interface TeamListRow {
 export interface TeamHistoryQuery {
   dispatcherId: string;
   name?: string;
-  status?: TeamStatus;
-  closeStatus?: 'open' | 'closed';
   /** Substring match over `source_repo` / `repo_cwd`. */
   repo?: string;
   /** Substring match over name / intent / repo / leader name. */
@@ -151,16 +149,16 @@ export interface TeamHistoryQuery {
   cursor?: string;
 }
 
+/**
+ * Public Team recovery row (issue #199 Slice 1). A compact projection keyed by
+ * the concrete `team_name` (`name`): no `team_id`, no `close_status` duplicate of
+ * `status`, and no machine-local `repo_cwd`/`runtime_cwd`/`worktree` paths.
+ */
 export interface TeamHistoryRow {
   name: string;
-  team_id: string;
   status: TeamStatus;
-  close_status: 'open' | 'closed';
   intent: string | null;
   source_repo: string | null;
-  repo_cwd: string;
-  runtime_cwd: string;
-  worktree: TeamMateWorktreeIdentity;
   leader_name: string;
   leader_agent_runtime: string;
   leader_state: TeamMateIdentityStatus | null;

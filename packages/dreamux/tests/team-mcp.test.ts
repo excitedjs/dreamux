@@ -128,8 +128,10 @@ describe('team-mcp stdio shim', () => {
     // existing group is bound via the optional `bind_group` on `create` instead.
     expect(tools.map((t) => t['name'])).not.toContain('create_group');
     expect(schemaOf(tools, 'create').properties).toHaveProperty('bind_group');
-    // #182 PR-7: public addressing is by `name`.
-    expect(schemaOf(tools, 'dissolve').required).toEqual(['name', 'note']);
+    // #199 Slice 1: public addressing is by the concrete `team_name`.
+    expect(schemaOf(tools, 'create').required).toContain('team_name');
+    expect(schemaOf(tools, 'create').properties).not.toHaveProperty('name');
+    expect(schemaOf(tools, 'dissolve').required).toEqual(['team_name', 'note']);
   });
 
   it('forwards create.bind_group to the admin create method (#182 PR-8)', async () => {
@@ -156,7 +158,7 @@ describe('team-mcp stdio shim', () => {
         params: {
           name: 'create',
           arguments: {
-            name: 'alpha',
+            team_name: 'alpha',
             repo_cwd: '/repo',
             leader_agent_runtime: 'codex',
             intent: 'ship it',
@@ -167,7 +169,7 @@ describe('team-mcp stdio shim', () => {
       await reader.next();
       expect(admin.requests[0]?.method).toBe('mcp.team.create');
       expect(admin.requests[0]?.params).toMatchObject({
-        name: 'alpha',
+        team_name: 'alpha',
         bind_group: { chat_id: 'chat-1' },
       });
       input.end();
@@ -177,7 +179,7 @@ describe('team-mcp stdio shim', () => {
     }
   });
 
-  it('aligns the Team read surface with the TeamMate model and addresses by name (#182 PR-7)', async () => {
+  it('aligns the Team read surface with the TeamMate model and addresses by team_name (#199 Slice 1)', async () => {
     const tools = await toolSchemas();
     const names = tools.map((t) => t['name']);
     // ledger verb retired in favour of a filterable history recovery surface;
@@ -186,13 +188,17 @@ describe('team-mcp stdio shim', () => {
     expect(names).toContain('bind_group');
     expect(names).not.toContain('ledger');
     expect(names).not.toContain('bind_channel');
-    // status / history / dissolve / bind_group address by name, not team_id.
-    expect(schemaOf(tools, 'status').required).toEqual(['name']);
-    expect(schemaOf(tools, 'bind_group').required).toEqual(['name', 'chat_id']);
+    // status / history / dissolve / bind_group address by team_name, not team_id/name.
+    expect(schemaOf(tools, 'status').required).toEqual(['team_name']);
+    expect(schemaOf(tools, 'bind_group').required).toEqual(['team_name', 'chat_id']);
     // history is filterable and fully optional; chat_type is gone from binding.
     expect(schemaOf(tools, 'history').required).toEqual([]);
     expect(schemaOf(tools, 'history').properties).toHaveProperty('grep');
-    expect(schemaOf(tools, 'history').properties).toHaveProperty('status');
+    expect(schemaOf(tools, 'history').properties).toHaveProperty('team_name');
+    // #199 Slice 1: legacy status / close_status filters are removed from history.
+    expect(schemaOf(tools, 'history').properties).not.toHaveProperty('status');
+    expect(schemaOf(tools, 'history').properties).not.toHaveProperty('close_status');
+    expect(schemaOf(tools, 'history').properties).not.toHaveProperty('name');
     expect(schemaOf(tools, 'bind_group').properties).not.toHaveProperty('chat_type');
     expect(schemaOf(tools, 'transfer_channel_back').properties).not.toHaveProperty(
       'chat_type',
@@ -221,7 +227,7 @@ describe('team-mcp stdio shim', () => {
         jsonrpc: '2.0',
         id: 1,
         method: 'tools/call',
-        params: { name: 'status', arguments: { name: 'alpha' } },
+        params: { name: 'status', arguments: { team_name: 'alpha' } },
       });
       await reader.next();
       writeJson(input, {
@@ -230,7 +236,7 @@ describe('team-mcp stdio shim', () => {
         method: 'tools/call',
         params: {
           name: 'history',
-          arguments: { grep: 'auth', status: 'closed', limit: 5 },
+          arguments: { grep: 'auth', team_name: 'alpha', limit: 5 },
         },
       });
       await reader.next();
@@ -238,7 +244,7 @@ describe('team-mcp stdio shim', () => {
         jsonrpc: '2.0',
         id: 3,
         method: 'tools/call',
-        params: { name: 'bind_group', arguments: { name: 'alpha', chat_id: 'chat-1' } },
+        params: { name: 'bind_group', arguments: { team_name: 'alpha', chat_id: 'chat-1' } },
       });
       await reader.next();
 
@@ -247,14 +253,16 @@ describe('team-mcp stdio shim', () => {
         'mcp.team.history',
         'mcp.team.bind_group',
       ]);
-      expect(admin.requests[0]?.params).toMatchObject({ name: 'alpha' });
+      expect(admin.requests[0]?.params).toMatchObject({ team_name: 'alpha' });
       expect(admin.requests[1]?.params).toMatchObject({
         grep: 'auth',
-        status: 'closed',
+        team_name: 'alpha',
         limit: 5,
       });
+      // #199 Slice 1: a legacy `status` filter is dropped at the shim, not forwarded.
+      expect(admin.requests[1]?.params).not.toHaveProperty('status');
       expect(admin.requests[2]?.params).toMatchObject({
-        name: 'alpha',
+        team_name: 'alpha',
         chat_id: 'chat-1',
       });
       // No chat_type leaks through the simplified binding surface.
@@ -292,7 +300,7 @@ describe('team-mcp stdio shim', () => {
         method: 'tools/call',
         params: {
           name: 'create',
-          arguments: { name: 'alpha', repo_cwd: '/repo', leader_agent_runtime: 'codex' },
+          arguments: { team_name: 'alpha', repo_cwd: '/repo', leader_agent_runtime: 'codex' },
         },
       });
       expect(await reader.next()).toMatchObject({
@@ -309,7 +317,7 @@ describe('team-mcp stdio shim', () => {
         jsonrpc: '2.0',
         id: 2,
         method: 'tools/call',
-        params: { name: 'dissolve', arguments: { name: 'alpha' } },
+        params: { name: 'dissolve', arguments: { team_name: 'alpha' } },
       });
       expect(await reader.next()).toMatchObject({
         jsonrpc: '2.0',

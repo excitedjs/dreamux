@@ -25,12 +25,11 @@ session or polling a process.
 
 **Lifecycle.**
 
-- `spawn` — create a TeamMate and submit the first turn. The `name` you pass is
-  a requested label / base slug, **not** the final address: the service
-  allocates a concrete, never-reused name and returns it as `teammate.name`.
+- `spawn` — create a TeamMate and submit the first turn. The `name_prefix` you
+  pass is a requested label, **not** the final address: the service allocates a
+  concrete, never-reused name and returns it as `teammate.name`.
   **Use that returned concrete name for every later `send`/`status`/`last`/
-  `close`.** Your requested label is preserved as `display_name` for display.
-  `intent` is **required**: a short recovery subject for the session ledger
+  `close`.** `intent` is **required**: a short recovery subject for the session ledger
   (what this TeamMate is for). When selecting a runtime, pass one of
   `get_capabilities.agent_runtimes[].id` as `agent_runtime`; do not pass provider
   refs such as `builtin:*`.
@@ -45,12 +44,16 @@ session or polling a process.
 
 **Watch and collect — no polling.**
 
-- `list` — this dispatcher's TeamMates: concrete name, display name, status, and
+- `list` — this dispatcher's TeamMates: concrete name, status, and
   repo/cwd/session essentials.
-- `status` — one TeamMate's current state by concrete name: display name, agent
-  runtime id, session, cwd/repo, checkpoint, and close metadata.
-- `history` — the durable session-ledger search surface for this dispatcher,
-  with recovery filters across TeamMates (name/state/repo/grep/cursor).
+- `status` — one TeamMate's current state by concrete name: agent
+  runtime id, session, cwd/repo, and close metadata.
+- `history` — the durable recovery search for this dispatcher: a compact list
+  keyed by concrete name (filter by `name` / `agent_runtime` / `grep`, paginate
+  with `limit` / `cursor`), returning `{ items, next_cursor }`. It is a recovery
+  list, not a raw event timeline; the legacy `id` / `state` / `close_status` /
+  `source_cwd` / `runtime_cwd` filters and the cwd/worktree/`display_name`/
+  `session_id`/`checkpoint` row fields are no longer exposed (issue #199).
 - `last` — a TeamMate's most recent settled turn(s), read from the durable
   session ledger by concrete name. It accepts `turns` (1..5, default 1; newest
   last) and returns the final assistant output as completely as it was durably
@@ -66,26 +69,27 @@ the dispatcher turn end, then recover through `history` and `last`. (The former
 **Team lifecycle.**
 
 Dreamux also injects a dispatcher-scoped `team` MCP server for Team Mode
-lifecycle. It is addressed by **Team name** (the same value you create with),
-mirroring the TeamMate read-surface model. Team work still runs through agents;
+lifecycle. It is addressed by **`team_name`** (the concrete key you create with),
+mirroring the TeamMate concrete-name model. Team work still runs through agents;
 do not inspect the target repo directly from the dispatcher.
 
-- `create` — create a Team and TeamLeader. Requires `repo_cwd`,
+- `create` — create a Team and TeamLeader. Requires `team_name`, `repo_cwd`,
   `leader_agent_runtime`, and `intent` (the Team's recovery subject); no default
   leader runtime is inferred. Optionally pass `bind_group: { chat_id }` to bind
   an EXISTING Feishu group chat to the new Team at create time. (The former
   `create_group` tool — create a brand-new Feishu group and invite users — was
   retired; bind an existing group instead.)
-- `list` — compact scan rows for current Teams (name, status, intent, repo
+- `list` — compact scan rows for current Teams (team_name, status, intent, repo
   signal, leader name/state, member count, bound group marker, timestamps). Keep
   it cheap and scannable; reach for `status` for detail.
-- `status` — one Team's detailed current state by name: the Team record, the
-  TeamLeader status/session, member count, and the active bound group.
+- `status` — one Team's detailed current state by `team_name`: the Team record,
+  the TeamLeader status, member count, and the active bound group.
 - `history` — the durable Team recovery search (closed Teams included): filter by
-  `name`, `status`, `close_status`, `repo`, `intent` text (`grep`), and time
-  range (`since`/`until`), with `limit`/`cursor`. This is the recovery interface;
-  the raw per-Team lifecycle event timeline stays internal.
-- `bind_group` — bind an existing Feishu group chat to a Team by name and
+  `team_name`, `repo`, `intent` text (`grep`), and time range (`since`/`until`),
+  with `limit`/`cursor`, returning `{ items, next_cursor }`. This is the recovery
+  list, not a raw event timeline; the legacy `status` / `close_status` filters and
+  `team_id` / cwd / worktree row fields are no longer exposed (issue #199).
+- `bind_group` — bind an existing Feishu group chat to a Team by `team_name` and
   `chat_id` (group chats only; no `chat_type`).
 - `transfer_channel_back` — return a bound Feishu group chat (`chat_id`) to the
   dispatcher.

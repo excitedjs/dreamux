@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Public MCP contract closeout (issue #199 Slice 1): teammate.spawn input is now name_prefix (returns the concrete name); team.create/status/history/dissolve/bind_group address by team_name. teammate.history and team.history return { items, next_cursor } and drop the legacy id/team_id/display_name/close_status/state filters, the machine-local source_cwd/runtime_cwd/worktree fields, the Dreamux-made session_id, and runtime checkpoint from public params and rows. The BREAKING/Rebuild upgrade note for this Epic lands in the final slice.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}
