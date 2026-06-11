@@ -22,7 +22,10 @@ import type { TurnSettledSignal } from '../src/agent-runtime/turn.js';
 import type { InboundTurnInput } from '../src/agent-runtime/turn.js';
 import { TeamMateAgentService } from '../src/dispatcher-service/teammate/service.js';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
-import { resetRuntimeConfig } from '../src/platform/paths.js';
+import {
+  dispatcherCompletionSpillDir,
+  resetRuntimeConfig,
+} from '../src/platform/paths.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 
@@ -257,6 +260,24 @@ describe('TeamMateAgentService', () => {
     expect(codexProvider.contexts[0]?.dispatcher?.runtime.provider).toBe(
       'builtin:codex',
     );
+
+    // Issue #182 PR-2: a teammate runtime spills under its OPERATOR dispatcher
+    // id ('flow'), NOT its composite runtime id — for both runtime kinds. The
+    // launcher resolves completionSpillDir to the operator cache regardless of
+    // the id argument, and the spill dir must not carry the teammate-name
+    // segment that the runtime dir (dispatcherDir) does.
+    const operatorSpill = dispatcherCompletionSpillDir('flow');
+    for (const { captured, name } of [
+      { captured: claudeProvider.contexts[0], name: 'claude-mate' },
+      { captured: codexProvider.contexts[0], name: 'codex-mate' },
+    ]) {
+      const paths = captured?.paths;
+      expect(paths).toBeDefined();
+      expect(paths!.completionSpillDir('ignored-arg')).toBe(operatorSpill);
+      // The runtime dir is keyed by the teammate name; the spill dir is not.
+      expect(paths!.dispatcherDir('ignored-arg')).toContain(name);
+      expect(paths!.completionSpillDir('ignored-arg')).not.toContain(name);
+    }
   });
 
   it('dispatcher and teammate referencing the same agent id get the same resolved runtime (#148)', async () => {

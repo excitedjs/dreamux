@@ -64,7 +64,7 @@ information entry point for the 0.x fail-loud + rebuild policy (issue #98).
 `daemon` group wraps the native user-level service manager (Linux
 `systemctl --user`, macOS `launchctl`); `daemon uninstall` removes only the
 service unit, whereas top-level `dreamux uninstall` removes
-config/run/state/logs too. `daemon restart --notify-resumed --dispatcher <id>` drops a one-shot
+config/run/cache/state/logs too. `daemon restart --notify-resumed --dispatcher <id>` drops a one-shot
 restart marker before restarting, so a resumed dispatcher gets a
 `Restart completed.` turn injected — see issue #78. Do not reintroduce
 global aliases such as `dreamux-server` or `server-ctl`; issue #18 explicitly
@@ -102,6 +102,12 @@ That record wins over older runtime-dir / SQLite decisions.
   Runtime socket paths are random per start, live only in process memory, and
   are never persisted to durable state. Safe to clear while no server runs;
   see `.agents/decisions/runtime-run-root.md`.
+- `~/.dreamux/cache/<dispatcher-id>/` — rebuildable cache (issue #182 PR-2):
+  `spill/` for over-budget teammate completion results (only the path is
+  inlined into a dispatcher turn) and `feishu-attachments/` for inbound
+  attachment downloads. Not durable state; safe to delete while no server runs.
+  Completion spill was relocated out of shared `/tmp`, attachments out of
+  `state/<dispatcher-id>/`.
 - `~/.dreamux/logs/` — server-owned logs, split by component; Codex
   app-server logs use `~/.dreamux/logs/codex-app-server/<dispatcher>.log`, and
   MCP shim diagnostics use component directories such as `feishu-mcp/` and

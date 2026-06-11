@@ -45,17 +45,21 @@ describe('codex teammate completion delivery (native inject + trigger)', () => {
     for (const dir of tmpDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
-  async function makeRuntime(fake: FakeCodex): Promise<AgentRuntime> {
+  async function makeRuntime(
+    fake: FakeCodex,
+  ): Promise<{ runtime: AgentRuntime; spillDir: string }> {
     const dispatcher = testDispatcherConfig({ id: 'flow' });
     const store = new DispatcherStore(testDreamuxConfig([dispatcher]));
     const row = store.get('flow');
     expect(row).not.toBeNull();
     const tmp = mkdtempSync(join(tmpdir(), 'dx-codex-completion-'));
     tmpDirs.push(tmp);
+    const spillDir = join(tmp, 'spill');
     const paths: AgentRuntimePathContext = {
       dispatcherDir: () => tmp,
       stdoutLogPath: () => join(tmp, 'out.log'),
       stderrLogPath: () => join(tmp, 'err.log'),
+      completionSpillDir: () => spillDir,
     };
     const provider = createCodexAgentRuntimeProvider({
       descriptor: createBuiltinProviderRegistry().resolve('builtin:codex'),
@@ -78,13 +82,13 @@ describe('codex teammate completion delivery (native inject + trigger)', () => {
     });
     runtimes.push(runtime);
     await runtime.start();
-    return runtime;
+    return { runtime, spillDir };
   }
 
   it('injects a developer item then triggers a turn, reporting accepted', async () => {
     const fake = await startFakeCodex();
     fakes.push(fake);
-    const runtime = await makeRuntime(fake);
+    const { runtime } = await makeRuntime(fake);
 
     const result = await runtime.completionInput!({
       source: 'teammate',
@@ -122,9 +126,13 @@ describe('codex teammate completion delivery (native inject + trigger)', () => {
   it('keeps the wrapper and inlines a spill pointer when the result overflows', async () => {
     const fake = await startFakeCodex();
     fakes.push(fake);
-    const runtime = await makeRuntime(fake);
+    const { runtime, spillDir } = await makeRuntime(fake);
 
-    const spillPath = teamMateCompletionOutputPath('teammate', 'mate-spill');
+    const spillPath = teamMateCompletionOutputPath(
+      spillDir,
+      'teammate',
+      'mate-spill',
+    );
     process.env['TASK_MAX_OUTPUT_LENGTH'] = '8';
     try {
       const result = await runtime.completionInput!({
@@ -154,7 +162,7 @@ describe('codex teammate completion delivery (native inject + trigger)', () => {
   it('reports failed (after the item was injected) when the trigger turn is refused', async () => {
     const fake = await startFakeCodex({ failTurnStart: true });
     fakes.push(fake);
-    const runtime = await makeRuntime(fake);
+    const { runtime } = await makeRuntime(fake);
 
     const result = await runtime.completionInput!({
       source: 'teammate',
@@ -171,7 +179,7 @@ describe('codex teammate completion delivery (native inject + trigger)', () => {
   it('does not re-inject the same completion on a retry (idempotent)', async () => {
     const fake = await startFakeCodex({ failTurnStart: true });
     fakes.push(fake);
-    const runtime = await makeRuntime(fake);
+    const { runtime } = await makeRuntime(fake);
 
     const completion = {
       source: 'teammate',
@@ -192,7 +200,7 @@ describe('codex teammate completion delivery (native inject + trigger)', () => {
   it('retries a previously failed completion call without accepted-cache suppression', async () => {
     const fake = await startFakeCodex({ failTurnStartAttempts: 1 });
     fakes.push(fake);
-    const runtime = await makeRuntime(fake);
+    const { runtime } = await makeRuntime(fake);
     const completion = {
       source: 'teammate',
       id: 'mate-retry-then-accept',
@@ -217,7 +225,7 @@ describe('codex teammate completion delivery (native inject + trigger)', () => {
   it('coalesces concurrent duplicate completions before inject and trigger', async () => {
     const fake = await startFakeCodex();
     fakes.push(fake);
-    const runtime = await makeRuntime(fake);
+    const { runtime } = await makeRuntime(fake);
     const completion = {
       source: 'teammate',
       id: 'mate-concurrent',
@@ -240,7 +248,7 @@ describe('codex teammate completion delivery (native inject + trigger)', () => {
   it('treats already accepted completion ids as delivered', async () => {
     const fake = await startFakeCodex();
     fakes.push(fake);
-    const runtime = await makeRuntime(fake);
+    const { runtime } = await makeRuntime(fake);
     const completion = {
       source: 'teammate',
       id: 'mate-accepted',
@@ -262,7 +270,7 @@ describe('codex teammate completion delivery (native inject + trigger)', () => {
   it('reports unsupported once the runtime is stopped', async () => {
     const fake = await startFakeCodex();
     fakes.push(fake);
-    const runtime = await makeRuntime(fake);
+    const { runtime } = await makeRuntime(fake);
     await runtime.stop();
 
     const result = await runtime.completionInput!({

@@ -507,7 +507,10 @@ export class CodexRuntime implements AgentRuntime {
     if (!this.injectedCompletionIds.has(completion.id)) {
       try {
         await injectThreadItems(this.client, threadId, [
-          await buildCodexCompletionItem(completion),
+          await buildCodexCompletionItem(
+            completion,
+            this.paths.completionSpillDir(this.dispatcherId),
+          ),
         ]);
       } catch (err) {
         const cause = err instanceof Error ? err.message : String(err);

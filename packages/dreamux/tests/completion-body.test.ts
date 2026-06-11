@@ -1,6 +1,9 @@
-import { readFile, rm, stat } from 'node:fs/promises';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { readFile, stat } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   COMPLETION_INLINE_BUDGET_DEFAULT,
@@ -13,59 +16,73 @@ import type { CompletionEnvelope } from '../src/agent-runtime/types.js';
 
 const SOURCE = 'reviewer';
 const ID = 'reviewer:turn-7';
-const SPILL_PATH = teamMateCompletionOutputPath(SOURCE, ID);
 
 function completion(result: string): CompletionEnvelope {
   return { source: SOURCE, id: ID, status: 'completed', result };
 }
 
-afterEach(async () => {
-  delete process.env['TASK_MAX_OUTPUT_LENGTH'];
-  await rm(SPILL_PATH, { force: true });
-});
-
 describe('resolveCompletionBody', () => {
+  let spillDir: string;
+  let spillPath: string;
+
+  beforeEach(() => {
+    // A throwaway spill dir per test, standing in for a dispatcher's
+    // cache/<id>/spill — the dir need not pre-exist (resolveCompletionBody
+    // creates it owner-only).
+    spillDir = join(mkdtempSync(join(tmpdir(), 'dx-spill-')), 'spill');
+    spillPath = teamMateCompletionOutputPath(spillDir, SOURCE, ID);
+  });
+
+  afterEach(() => {
+    delete process.env['TASK_MAX_OUTPUT_LENGTH'];
+    rmSync(spillDir, { recursive: true, force: true });
+  });
+
   it('inlines a result within the budget', async () => {
-    const body = await resolveCompletionBody(completion('short result'));
+    const body = await resolveCompletionBody(completion('short result'), spillDir);
     expect(body).toEqual({ kind: 'inline', text: 'short result' });
-    await expect(stat(SPILL_PATH)).rejects.toThrow();
+    await expect(stat(spillPath)).rejects.toThrow();
   });
 
   it('inlines a result exactly at the budget boundary', async () => {
     const result = 'x'.repeat(COMPLETION_INLINE_BUDGET_DEFAULT);
-    const body = await resolveCompletionBody(completion(result));
+    const body = await resolveCompletionBody(completion(result), spillDir);
     expect(body.kind).toBe('inline');
   });
 
   it('spills a result over the budget to a 0600 file with the full content', async () => {
     const result = 'y'.repeat(COMPLETION_INLINE_BUDGET_DEFAULT + 1);
-    const body = await resolveCompletionBody(completion(result));
-    expect(body).toEqual({ kind: 'spilled', path: SPILL_PATH });
+    const body = await resolveCompletionBody(completion(result), spillDir);
+    expect(body).toEqual({ kind: 'spilled', path: spillPath });
     if (body.kind !== 'spilled') throw new Error('expected spilled');
 
     // Full result on disk — not truncated.
     expect(await readFile(body.path, 'utf8')).toBe(result);
-    // Owner-only permissions.
-    const info = await stat(body.path);
-    expect(info.mode & 0o777).toBe(0o600);
+    // Owner-only file in an owner-only spill dir.
+    expect((await stat(body.path)).mode & 0o777).toBe(0o600);
+    expect((await stat(spillDir)).mode & 0o777).toBe(0o700);
   });
 
   it('honors a TASK_MAX_OUTPUT_LENGTH override that forces a small budget', async () => {
     process.env['TASK_MAX_OUTPUT_LENGTH'] = '8';
     expect(completionInlineBudget()).toBe(8);
-    const body = await resolveCompletionBody(completion('this is longer than eight'));
+    const body = await resolveCompletionBody(
+      completion('this is longer than eight'),
+      spillDir,
+    );
     expect(body.kind).toBe('spilled');
   });
 });
 
 describe('teamMateCompletionOutputPath', () => {
   it('sanitizes unsafe characters in source and id for filename safety', () => {
-    expect(teamMateCompletionOutputPath('a/b', 'c:d')).toBe(
-      '/tmp/teammate-a_b-c_d.output',
+    const dir = '/cache/flow/spill';
+    expect(teamMateCompletionOutputPath(dir, 'a/b', 'c:d')).toBe(
+      '/cache/flow/spill/teammate-a_b-c_d.output',
     );
     // The real id shape is `name:turnId` — the colon must be sanitized.
-    expect(teamMateCompletionOutputPath('reviewer', 'reviewer:turn-7')).toBe(
-      '/tmp/teammate-reviewer-reviewer_turn-7.output',
+    expect(teamMateCompletionOutputPath(dir, 'reviewer', 'reviewer:turn-7')).toBe(
+      '/cache/flow/spill/teammate-reviewer-reviewer_turn-7.output',
     );
   });
 });

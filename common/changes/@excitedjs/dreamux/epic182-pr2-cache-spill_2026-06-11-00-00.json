@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "BREAKING: dreamux cache/spill artifacts moved into a new ~/.dreamux/cache tree (issue #182 PR-2). Teammate completion spill files moved from shared /tmp/teammate-<source>-<id>.output to ~/.dreamux/cache/<dispatcher-id>/spill/, and the Feishu inbound attachment cache moved from ~/.dreamux/state/<dispatcher-id>/feishu-attachments/ to ~/.dreamux/cache/<dispatcher-id>/feishu-attachments/. Both are rebuildable cache, not durable state: nothing reads a spill file back (only its path is inlined into a dispatcher turn) and attachments are re-fetchable. dreamux uninstall now also removes ~/.dreamux/cache. No automatic migration. Rebuild: nothing to rebuild; old leftovers may be deleted manually: stale /tmp/teammate-*.output files and the old ~/.dreamux/state/<dispatcher-id>/feishu-attachments/ directories.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

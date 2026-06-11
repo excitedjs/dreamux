@@ -207,7 +207,7 @@ narrow decisions above. Everything else in this record stands.
   `install`/`uninstall` reuse the onboard service slice
   ([`/packages/dreamux/src/daemon/install.ts`](/packages/dreamux/src/daemon/install.ts)).
   `daemon uninstall` removes only the service unit; top-level
-  `dreamux uninstall` still removes config/state/logs. Native `systemctl`/
+  `dreamux uninstall` still removes config/run/cache/state/logs. Native `systemctl`/
   `launchctl` remain valid; the group is a convenience and the home of the new
   `restart` verb (which did not exist before).
 - **`loginctl enable-linger` is enabled best-effort** by both `onboard` and

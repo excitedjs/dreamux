@@ -67,15 +67,17 @@ be refetched later.
 
 ## Cache Contract
 
-Dreamux provides the cache root through `dispatcherFeishuAttachmentCacheDir()`.
-The channel package creates a sanitized per-resource file under that root,
-never trusts raw filenames as paths, resolves the final path back under the
-cache root, writes a temp file first, and renames into place only after the
-download completes under the configured limits.
+Dreamux provides the cache root through `dispatcherFeishuAttachmentCacheDir()`,
+which lives under the dreamux cache tree `~/.dreamux/cache/<dispatcher-id>/
+feishu-attachments/` (issue #182 PR-2 moved it out of durable
+`state/<dispatcher-id>/`). The channel package creates a sanitized per-resource
+file under that root, never trusts raw filenames as paths, resolves the final
+path back under the cache root, writes a temp file first, and renames into place
+only after the download completes under the configured limits.
 
-The cache is server-owned state. It is safe to delete; deletion only turns a
-future duplicate delivery into another Feishu resource fetch or a fallback
-block.
+The cache is server-owned, rebuildable artifact data — not durable state. It is
+safe to delete; deletion only turns a future duplicate delivery into another
+Feishu resource fetch or a fallback block.
 
 ## Consequences
 

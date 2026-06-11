@@ -140,11 +140,13 @@ multi-package release notes precise while still using Rush as the validator.
 | `~/.dreamux/state/` | Durable server-owned state: per-dispatcher status/access files and `teammate/` ledgers. | The server |
 | `~/.dreamux/state/<id>/status.json` | Dispatcher runtime status and saved Codex `thread_id`. | The server |
 | `~/.dreamux/state/<id>/access.json` | Dispatcher-local Feishu access gate state. | The server / operator tools |
+| `~/.dreamux/cache/<id>/` | Rebuildable cache: completion `spill/` files and `feishu-attachments/`. Not durable state; safe to clear while no server runs (issue #182 PR-2). | The server |
 | `~/.dreamux/logs/` | Server and per-dispatcher logs, including Codex app-server logs. | The server |
 | `~/.codex/` | Codex global default home: auth, memory, and config used by dispatcher app-server processes. | The operator / Codex |
 | `<dispatcher cwd>/.codex/skills/<skill-name>` | Workspace-local bundled skill symlink. | dreamux installer |
 
-The split is load-bearing: a `rm -rf ~/.dreamux/run ~/.dreamux/state ~/.dreamux/logs`
+The split is load-bearing: a
+`rm -rf ~/.dreamux/run ~/.dreamux/cache ~/.dreamux/state ~/.dreamux/logs`
 recovery (only while no server is running) never loses user-edited dreamux
 settings or global Codex auth.
 Dispatcher app-server processes do not set `CODEX_HOME`; they use Codex's

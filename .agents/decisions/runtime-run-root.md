@@ -5,12 +5,13 @@
   [top-level-design](top-level-design.md).
 - **Date:** 2026-06-10
 - **Affects:** `~/.dreamux` layout, admin IPC path contract, Codex app-server
-  socket placement, `dreamux serve` startup, `dreamux uninstall`
-- **PR / Issue:** Epic issue #182, PR-1
+  socket placement, completion spill + attachment cache placement,
+  `dreamux serve` startup, `dreamux uninstall`
+- **PR / Issue:** Epic issue #182, PR-1 (run/sockets) and PR-2 (cache/spill)
 
 ## Decision
 
-`~/.dreamux` splits volatile run files from durable state:
+`~/.dreamux` splits volatile run files and rebuildable cache from durable state:
 
 ```text
 ~/.dreamux/
@@ -18,13 +19,39 @@
     admin.sock             stable cross-process admin IPC endpoint (+ .lock)
     restart-intent.json    one-shot daemon restart marker
     sockets/               fallback root for runtime rendezvous sockets
+  cache/<dispatcher-id>/   rebuildable artifacts (PR-2); safe to clear
+    spill/                 over-budget teammate completion spill files
+    feishu-attachments/    inbound attachment downloads
   state/                   durable server-owned state only
 ```
 
 Path builders stay centralized: neutral builders in
 `/packages/dreamux/src/platform/paths.ts` (`runRoot()`, `adminSocketPath()`,
-`restartIntentPath()`); volatile socket allocation in
+`restartIntentPath()`, `cacheRoot()`, `dispatcherCompletionSpillDir()`,
+`dispatcherFeishuAttachmentCacheDir()`); volatile socket allocation in
 `/packages/dreamux/src/platform/runtime-sockets.ts`.
+
+### Cache tree (PR-2)
+
+Completion spill and the Feishu attachment cache are rebuildable artifacts, not
+durable state, so they live under `cache/`, not `state/`:
+
+- **Completion spill** moved out of shared `/tmp` (a path surfaced verbatim in
+  dispatcher-visible text should not be a world-writable temp file). The neutral
+  `agent-runtime/completion-body.ts` stays runtime-agnostic — it never names a
+  dispatcher id — and receives the owning dispatcher's spill dir through the
+  runtime's `AgentRuntimePathContext.completionSpillDir`. The launcher resolves
+  that to the **operator** dispatcher's cache even for a teammate/team-leader
+  runtime (whose own `dispatcher_id` is a composite runtime id), so one
+  operator's spill groups under one `cache/<id>/spill`. The spill file is read
+  by no process; only its path is inlined.
+- **Feishu attachment cache** moved out of `state/<id>/` into
+  `cache/<id>/feishu-attachments/` (see
+  [feishu-inbound-attachments](feishu-inbound-attachments.md)).
+
+`dreamux uninstall` removes `cache/` alongside `run/`, `state/`, and `logs/`.
+No automatic migration of the old `/tmp` spill files or `state/<id>/
+feishu-attachments/` dirs — the changelog notes them as manually deletable.
 
 ### Two socket classes, two contracts
 
