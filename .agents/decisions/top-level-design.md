@@ -302,6 +302,20 @@ logger construction lives in `src/runtime/logger.ts`. Message bodies are never
 logged; `app_secret` is redacted. See
 [the logging decision](logging.md).
 
+Logs (issue #182 logs stage): logs are diagnostics, never durable state — the
+whole `logs/` tree is rebuildable and safe to clear while no server runs.
+Retention is **manual**, not automatic: Dreamux does not age-prune logs in 0.x;
+a 7-day retention is the documented guidance and zero-byte files are always safe
+to delete (see the `dreamux-maintenance` skill's Log Maintenance section). Runtime
+child stdout/stderr logs are opened eagerly as inherited fds (they cannot be
+lazily created — the child needs a valid fd at spawn), and normal Codex/Claude
+traffic flows over the socket/stream rather than stdout/stderr, so they are
+usually empty. To stop one-empty-file-per-start accumulation, each supervisor
+removes its child's stdout/stderr log on clean shutdown if it stayed zero-byte
+(`platform/logs.ts removeEmptyLogFile`), keeping only files that captured real
+startup/crash output. This is per-child self-cleanup of files this process
+created, distinct from the operator's manual age-based pruning.
+
 `server.json` stores process-level status only: pid, status, version, started
 time, admin socket path, and last error.
 

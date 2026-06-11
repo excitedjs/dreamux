@@ -15,6 +15,7 @@ import {
   isProcessAlive,
   killProcessGroup,
 } from '../../../platform/process.js';
+import { removeEmptyLogFile } from '../../../platform/logs.js';
 import { ClaudeCodeStreamRpc } from './rpc.js';
 import type {
   ClaudeCodeSession,
@@ -160,6 +161,10 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
     this.exited = true;
     this.rpc = null;
     this.child = null;
+    // The child is gone, so its inherited stderr fd is released. Drop the stderr
+    // log if it stayed empty — claude traffic flows over the resident stream, so
+    // it usually captures nothing (issue #182 logs stage).
+    await removeEmptyLogFile(this.spec.stderrLogPath);
   }
 
   private onChildExit(): void {

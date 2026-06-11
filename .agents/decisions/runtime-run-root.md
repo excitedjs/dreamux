@@ -65,10 +65,20 @@ feishu-attachments/` dirs — the changelog notes them as manually deletable.
   `codex app-server --listen unix://<path>` and connect with
   `ws+unix://<path>`; resume/checkpoint never depends on the path. Each
   runtime start allocates a fresh short random name
-  (`allocateRuntimeSocketPath`) under, in preference order:
+  (`allocateRuntimeSocketPath`), picking the first of these that fits the
+  `sun_path` budget, in preference order:
   1. `$XDG_RUNTIME_DIR/dreamux/sockets/` (operator input — shared-tmp values
      like `/tmp` are rejected);
-  2. `~/.dreamux/run/sockets/`.
+  2. `~/.dreamux/run/sockets/`;
+  3. `<os-private-temp>/dreamux/sockets/` — the per-user OS temp dir **only when
+     it is private, not world-shared `/tmp`** (issue #182 final gate). On macOS
+     `os.tmpdir()` is the per-user `$TMPDIR` (`/var/folders/<…>/T`, owner-only)
+     and is far shorter than a long per-run durable `$HOME`, so it keeps Codex
+     sockets within budget when there is no `$XDG_RUNTIME_DIR` and
+     `~/.dreamux/run/sockets/` is over budget (the macOS CI failure mode). On
+     Linux `os.tmpdir()` is `/tmp` (shared) and is rejected, so this candidate
+     never reintroduces a world-shared tmp socket. The temp dir is resolved from
+     `TMPDIR`/`TMP`/`TEMP` then `os.tmpdir()`.
   Shared `/tmp` / `/var/tmp` are never used; if no candidate fits the budget,
   allocation fails loudly. The old descriptive `state/<id>/codex.sock` path
   and its digest-named fallback are deleted.

@@ -21,6 +21,7 @@ describe('runtime socket allocation', () => {
   let root: string;
   let previousHome: string | undefined;
   let previousXdg: string | undefined;
+  let previousTmpdir: string | undefined;
 
   beforeEach(() => {
     // The fixture root must NOT live under /tmp: the shared-tmp guard would
@@ -29,8 +30,14 @@ describe('runtime socket allocation', () => {
     root = mkdtempSync(join(homedir(), '.dreamux-sockets-test-'));
     previousHome = process.env['HOME'];
     previousXdg = process.env['XDG_RUNTIME_DIR'];
+    previousTmpdir = process.env['TMPDIR'];
     process.env['HOME'] = join(root, 'home');
     delete process.env['XDG_RUNTIME_DIR'];
+    // Pin TMPDIR to a shared-tmp value so the private-OS-temp candidate is
+    // excluded by default; tests that exercise it set TMPDIR explicitly. This
+    // keeps allocation deterministic across Linux (`/tmp`) and macOS
+    // (`$TMPDIR` = `/var/folders/…`, which would otherwise be a valid candidate).
+    process.env['TMPDIR'] = '/tmp';
     resetRuntimeConfig();
   });
 
@@ -39,6 +46,8 @@ describe('runtime socket allocation', () => {
     else process.env['HOME'] = previousHome;
     if (previousXdg === undefined) delete process.env['XDG_RUNTIME_DIR'];
     else process.env['XDG_RUNTIME_DIR'] = previousXdg;
+    if (previousTmpdir === undefined) delete process.env['TMPDIR'];
+    else process.env['TMPDIR'] = previousTmpdir;
     resetRuntimeConfig();
     rmSync(root, { recursive: true, force: true });
   });
@@ -86,8 +95,40 @@ describe('runtime socket allocation', () => {
     }
   });
 
+  it('uses a private OS temp dir when XDG is absent and the run root is over budget (#182 macOS gate)', () => {
+    // Reproduce the macOS CI failure: no XDG_RUNTIME_DIR and a long per-run HOME
+    // push ~/.dreamux/run/sockets over the sun_path budget. A short, PRIVATE
+    // TMPDIR (the macOS $TMPDIR analog) must keep the socket within budget
+    // without touching shared /tmp or depending on the long durable HOME.
+    process.env['HOME'] = join(root, 'h'.repeat(120));
+    resetRuntimeConfig();
+    const privateTmp = join(root, 't'); // short, under the real (short) home
+    const path = allocateRuntimeSocketPath('test socket', { TMPDIR: privateTmp });
+    expect(path.startsWith(join(privateTmp, 'dreamux', 'sockets'))).toBe(true);
+    expect(path.endsWith('.sock')).toBe(true);
+    expect(unixSocketPathFitsBudget(path)).toBe(true);
+    expect(isSharedTmpPath(path)).toBe(false);
+  });
+
+  it('never uses a shared-tmp TMPDIR for sockets', () => {
+    // On Linux os.tmpdir() is /tmp (shared); the private-temp candidate must be
+    // excluded so we never reintroduce a world-shared tmp socket.
+    for (const sharedTmp of ['/tmp', '/var/tmp', '/private/tmp']) {
+      expect(runtimeSocketDirCandidates({ TMPDIR: sharedTmp })).toEqual([
+        join(runRoot(), 'sockets'),
+      ]);
+    }
+    // A private TMPDIR is appended after the dreamux run root, never before it.
+    expect(runtimeSocketDirCandidates({ TMPDIR: join(root, 't') })).toEqual([
+      join(runRoot(), 'sockets'),
+      join(root, 't', 'dreamux', 'sockets'),
+    ]);
+  });
+
   it('fails loudly when even the dreamux-owned fallback is over budget', () => {
     process.env['HOME'] = join(root, 'h'.repeat(120));
+    // TMPDIR pinned to shared /tmp (beforeEach) is excluded, so no private-temp
+    // candidate rescues an over-budget run root here.
     expect(() => allocateRuntimeSocketPath('test socket', {})).toThrow(
       /test socket is too long for Unix sockets/,
     );

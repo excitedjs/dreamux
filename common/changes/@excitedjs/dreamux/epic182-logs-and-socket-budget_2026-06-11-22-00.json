@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Logs stage + runtime socket path-budget fix (issue #182). Logs: runtime child stdout/stderr log files are opened eagerly as inherited fds and normal Codex/Claude traffic flows over the socket/stream, so they are usually empty; each supervisor now removes its child's stdout/stderr log on clean shutdown when it stayed zero-byte, so empty logs no longer accumulate one-per-start (files that captured startup/crash output are kept). Log retention stays MANUAL in 0.x — Dreamux does not age-prune logs; a 7-day retention is the documented guidance and zero-byte files are always safe to delete (see the dreamux-maintenance skill's Log Maintenance section). The whole ~/.dreamux/logs/ tree is rebuildable and safe to clear while no server runs. Runtime sockets: the volatile rendezvous-socket allocator now also considers a private per-user OS temp dir (resolved from TMPDIR/TMP/TEMP then os.tmpdir()) after $XDG_RUNTIME_DIR and ~/.dreamux/run/sockets/, but only when it is NOT a world-shared root like /tmp (Linux /tmp is still rejected). On macOS, os.tmpdir() is the per-user $TMPDIR (/var/folders/.../T, owner-only) and is far shorter than a long per-run $HOME, so Codex/Claude sockets stay within the Unix sun_path budget when there is no $XDG_RUNTIME_DIR and the run root would be over budget — fixing the macOS path-budget failure without using shared /tmp and without persisting socket paths. Rebuild: none. No config/state schema change; old empty log files left by a previous version may be deleted manually.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}
