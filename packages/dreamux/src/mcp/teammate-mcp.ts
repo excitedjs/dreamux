@@ -156,18 +156,13 @@ function teammateTools(
       limit: { type: 'integer', minimum: 1, maximum: 100 },
       cursor: { type: 'string', minLength: 1, maxLength: 1000 },
     }, []),
-    tool('history_events', 'Read the raw forward-only event timeline for one TeamMate.', {
+    tool('list', 'List this dispatcher\'s TeamMate identities (concrete name, display name, status, repo/cwd/session essentials).', {}, []),
+    tool('status', 'Read one TeamMate identity and live runtime status by its concrete name.', {
       name: { type: 'string', minLength: 1, maxLength: 64 },
     }, ['name']),
-    tool('list', 'List this dispatcher\'s TeamMate identities.', {}, []),
-    tool('status', 'Read one TeamMate identity and live runtime status.', {
+    tool('last', 'Read a TeamMate\'s most recent settled turn(s) from the durable session ledger by concrete name. Works for a closed/stopped TeamMate without starting a runtime; this is the fallback when a completion was not delivered. turns defaults to 1 (range 1..5); the newest turn is last.', {
       name: { type: 'string', minLength: 1, maxLength: 64 },
-    }, ['name']),
-    tool('last', 'Read the last visible result reported by one TeamMate runtime.', {
-      name: { type: 'string', minLength: 1, maxLength: 64 },
-    }, ['name']),
-    tool('ctx', 'Read one TeamMate runtime context-window snapshot.', {
-      name: { type: 'string', minLength: 1, maxLength: 64 },
+      turns: { type: 'integer', minimum: 1, maximum: 5 },
     }, ['name']),
     tool('get_capabilities', 'List TeamMate verbs and spawnable agent runtime ids.', {}, []),
   ];
@@ -286,16 +281,12 @@ function mapToolCall(
       return { method: 'mcp.teammate.close', params: closeArgs(call.arguments) };
     case 'history':
       return { method: 'mcp.teammate.history', params: historyArgs(call.arguments) };
-    case 'history_events':
-      return { method: 'mcp.teammate.history_events', params: nameArgs(call.arguments) };
     case 'list':
       return { method: 'mcp.teammate.list', params: {} };
     case 'status':
       return { method: 'mcp.teammate.status', params: nameArgs(call.arguments) };
     case 'last':
-      return { method: 'mcp.teammate.last', params: nameArgs(call.arguments) };
-    case 'ctx':
-      return { method: 'mcp.teammate.ctx', params: nameArgs(call.arguments) };
+      return { method: 'mcp.teammate.last', params: lastArgs(call.arguments) };
     case 'get_capabilities':
       return { method: 'mcp.teammate.capabilities', params: {} };
     default:
@@ -468,6 +459,15 @@ function historyArgs(value: unknown): Record<string, unknown> {
 function nameArgs(value: unknown): Record<string, unknown> {
   const obj = asRecord(value, 'arguments');
   return { name: requireString(obj, 'name') };
+}
+
+function lastArgs(value: unknown): Record<string, unknown> {
+  const obj = asRecord(value, 'last arguments');
+  const turns = optionalInteger(obj, 'turns');
+  return {
+    name: requireString(obj, 'name'),
+    ...(turns !== null ? { turns } : {}),
+  };
 }
 
 function asRecord(value: unknown, label: string): Record<string, unknown> {

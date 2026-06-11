@@ -231,10 +231,11 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
     teammateRuntime.settle('completed', turnId);
     await flush();
 
+    const reviewer = spawned.teammate.name;
     expect(dispatcherRuntime.delivered).toEqual([
       {
-        source: 'reviewer',
-        id: `reviewer:${turnId}`,
+        source: reviewer,
+        id: `${reviewer}:${turnId}`,
         status: 'completed',
         result: 'reviewer final answer',
       },
@@ -250,7 +251,7 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
     const facade = buildFacade(provider, adminSocketPath);
 
     await facade.startDispatcher('flow');
-    await facade.createTeam({
+    const created = await facade.createTeam({
       dispatcherId: 'flow',
       name: 'alpha',
       intent: 'work',
@@ -262,13 +263,16 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
       principal: teamLeaderPrincipal({
         dispatcherId: 'flow',
         teamId: 'alpha',
-        leaderName: 'alpha-leader',
+        // #188: scope to the team's concrete leader name (routing resolves the
+        // live leader runtime by this stored name).
+        leaderName: created.team.leader_name,
       }),
       name: 'builder',
       intent: 'work',
       prompt: 'Build it.',
       sharedWorkspace: workspaceInfo,
     });
+    const builder = spawned.teammate.name;
 
     const dispatcherRuntime = provider.runtimes[0]!;
     const leaderRuntime = provider.runtimes[1]!;
@@ -283,8 +287,8 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
 
     expect(leaderRuntime.delivered).toEqual([
       {
-        source: 'builder',
-        id: `builder:${turnId}`,
+        source: builder,
+        id: `${builder}:${turnId}`,
         status: 'completed',
         result: 'reviewer final answer',
       },
@@ -342,7 +346,7 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
     });
     // The bound-channel turn never reaches dispatcher context.
     expect(dispatcherRuntime.delivered.map((env) => env.id)).not.toContain(
-      `alpha-leader:${turnId}`,
+      `${created.team.leader_name}:${turnId}`,
     );
 
     await facade.shutdown();
@@ -370,9 +374,10 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
     leaderRuntime.settle('completed', bootstrapTurnId);
     await flush();
 
+    const leaderName = created.team.leader_name;
     const sent = await facade.sendTeamMate({
       dispatcherId: 'flow',
-      name: 'alpha-leader',
+      name: leaderName,
       prompt: 'Status check from the dispatcher.',
     });
     const turnId =
@@ -381,7 +386,7 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
     await flush();
 
     expect(dispatcherRuntime.delivered.map((env) => env.id)).toContain(
-      `alpha-leader:${turnId}`,
+      `${leaderName}:${turnId}`,
     );
     const leaderTurnRows = (await facade.getTeamLedger('flow', 'alpha')).events
       .filter((event) => event.type === 'leader_turn');
@@ -415,10 +420,11 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
     teammateRuntime.settle('completed', turnId);
     await flush();
 
+    const reviewer = spawned.teammate.name;
     expect(dispatcherRuntime.delivered).toEqual([
       {
-        source: 'reviewer',
-        id: `reviewer:${turnId}`,
+        source: reviewer,
+        id: `${reviewer}:${turnId}`,
         status: 'completed',
         result: 'reviewer final answer',
       },
@@ -440,14 +446,15 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
       prompt: 'Review the change.',
       cwd: workspace(root),
     });
+    const reviewer = spawned.teammate.name;
     const firstSend = await facade.sendTeamMate({
       dispatcherId: 'flow',
-      name: 'reviewer',
+      name: reviewer,
       prompt: 'Fold this into the active review.',
     });
     const secondSend = await facade.sendTeamMate({
       dispatcherId: 'flow',
-      name: 'reviewer',
+      name: reviewer,
       prompt: 'One more steering note.',
     });
 
@@ -462,12 +469,21 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
     teammateRuntime.settle('completed', turnId);
     await flush();
 
-    const last = await facade.getTeamMateLast('flow', 'reviewer');
-    expect(last.last).toEqual({ text: 'reviewer final answer' });
+    // #188: last reads the settled turn from the durable ledger by concrete
+    // name. The settled-turn append trails reverse delivery, so wait for it.
+    await waitFor(
+      async () => (await facade.getTeamMateLast('flow', reviewer)).returned_turns === 1,
+    );
+    const last = await facade.getTeamMateLast('flow', reviewer);
+    expect(last.turns.at(-1)).toMatchObject({
+      assistant: 'reviewer final answer',
+      assistant_truncated: false,
+      settle_status: 'completed',
+    });
     expect(dispatcherRuntime.delivered).toEqual([
       {
-        source: 'reviewer',
-        id: `reviewer:${turnId}`,
+        source: reviewer,
+        id: `${reviewer}:${turnId}`,
         status: 'completed',
         result: 'reviewer final answer',
       },
@@ -489,6 +505,7 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
       prompt: 'Review the change.',
       cwd: workspace(root),
     });
+    const reviewer = spawned.teammate.name;
 
     const dispatcherRuntime = provider.runtimes[0]!;
     const firstTeammateRuntime = provider.runtimes[1]!;
@@ -499,12 +516,12 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
 
     await facade.closeTeamMate({
       dispatcherId: 'flow',
-      name: 'reviewer',
+      name: reviewer,
       note: 'done',
     });
     const sent = await facade.sendTeamMate({
       dispatcherId: 'flow',
-      name: 'reviewer',
+      name: reviewer,
       prompt: 'Follow up after reopen.',
     });
 
@@ -521,18 +538,28 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
     secondTeammateRuntime.settle('completed', secondTurnId);
     await flush();
 
-    const last = await facade.getTeamMateLast('flow', 'reviewer');
-    expect(last.last).toEqual({ text: 'reviewer final answer' });
+    // #188: last(turns) reads settled turns from the durable ledger. Both turns
+    // share the one session id (close/reopen never re-keys it). The settled-turn
+    // ledger append trails the reverse delivery, so wait for both to land.
+    await waitFor(
+      async () => (await facade.getTeamMateLast('flow', reviewer, 2)).returned_turns === 2,
+    );
+    const last = await facade.getTeamMateLast('flow', reviewer, 2);
+    expect(last.turns.map((turn) => turn.turn_id)).toEqual([
+      firstTurnId,
+      secondTurnId,
+    ]);
+    expect(last.turns.at(-1)?.assistant).toBe('reviewer final answer');
     expect(dispatcherRuntime.delivered).toEqual([
       {
-        source: 'reviewer',
-        id: `reviewer:${firstTurnId}`,
+        source: reviewer,
+        id: `${reviewer}:${firstTurnId}`,
         status: 'completed',
         result: 'reviewer final answer',
       },
       {
-        source: 'reviewer',
-        id: `reviewer:${secondTurnId}`,
+        source: reviewer,
+        id: `${reviewer}:${secondTurnId}`,
         status: 'completed',
         result: 'reviewer final answer',
       },
@@ -547,13 +574,15 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
     const facade = buildFacade(provider, adminSocketPath);
 
     await facade.startDispatcher('flow');
-    await facade.spawnTeamMate({
-      dispatcherId: 'flow',
-      name: 'breaker',
-      intent: 'work',
-      prompt: 'Run.',
-      cwd: workspace(root),
-    });
+    const breaker = (
+      await facade.spawnTeamMate({
+        dispatcherId: 'flow',
+        name: 'breaker',
+        intent: 'work',
+        prompt: 'Run.',
+        cwd: workspace(root),
+      })
+    ).teammate.name;
 
     const dispatcherRuntime = provider.runtimes[0]!;
     const teammateRuntime = provider.runtimes[1]!;
@@ -564,14 +593,14 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
 
     expect(dispatcherRuntime.delivered).toEqual([
       {
-        source: 'breaker',
-        id: 'breaker:turn-3',
+        source: breaker,
+        id: `${breaker}:turn-3`,
         status: 'failed',
         result: '',
       },
       {
-        source: 'breaker',
-        id: 'breaker:turn-4',
+        source: breaker,
+        id: `${breaker}:turn-4`,
         status: 'stopped',
         result: '',
       },
@@ -586,20 +615,24 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
     const facade = buildFacade(provider, adminSocketPath);
 
     await facade.startDispatcher('flow');
-    await facade.spawnTeamMate({
-      dispatcherId: 'flow',
-      name: 'one',
-      intent: 'work',
-      prompt: 'A.',
-      cwd: workspace(root),
-    });
-    await facade.spawnTeamMate({
-      dispatcherId: 'flow',
-      name: 'two',
-      intent: 'work',
-      prompt: 'B.',
-      cwd: workspace(root),
-    });
+    const one = (
+      await facade.spawnTeamMate({
+        dispatcherId: 'flow',
+        name: 'one',
+        intent: 'work',
+        prompt: 'A.',
+        cwd: workspace(root),
+      })
+    ).teammate.name;
+    const two = (
+      await facade.spawnTeamMate({
+        dispatcherId: 'flow',
+        name: 'two',
+        intent: 'work',
+        prompt: 'B.',
+        cwd: workspace(root),
+      })
+    ).teammate.name;
 
     const dispatcherRuntime = provider.runtimes[0]!;
     const teammateOne = provider.runtimes[1]!;
@@ -610,10 +643,9 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
     await flush();
 
     // Both delivered exactly once each: accepted submit never retries.
-    expect(dispatcherRuntime.delivered.map((env) => env.source).sort()).toEqual([
-      'one',
-      'two',
-    ]);
+    expect(dispatcherRuntime.delivered.map((env) => env.source).sort()).toEqual(
+      [one, two].sort(),
+    );
     expect(dispatcherRuntime.delivered).toHaveLength(2);
 
     await facade.shutdown();

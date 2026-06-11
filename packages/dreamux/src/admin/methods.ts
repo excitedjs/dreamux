@@ -216,14 +216,6 @@ export const adminMethods: Record<string, AdminHandler> = {
     });
   },
 
-  'mcp.teammate.history_events': async (server, params) => {
-    const id = mustDispatcherId(params);
-    mustExistingDispatcher(server, id);
-    const caller = callerPrincipal(id, params);
-    const name = mustString(params, 'name');
-    return server.dispatcherService.teammates.historyEventsScoped(caller, name);
-  },
-
   'mcp.teammate.list': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
@@ -250,19 +242,11 @@ export const adminMethods: Record<string, AdminHandler> = {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     const name = mustString(params, 'name');
+    const turns = optionalInteger(params, 'turns');
     return server.dispatcherService.teammates.lastScoped(
       callerPrincipal(id, params),
       name,
-    );
-  },
-
-  'mcp.teammate.ctx': async (server, params) => {
-    const id = mustDispatcherId(params);
-    mustExistingDispatcher(server, id);
-    const name = mustString(params, 'name');
-    return server.dispatcherService.teammates.contextScoped(
-      callerPrincipal(id, params),
-      name,
+      turns ?? undefined,
     );
   },
 

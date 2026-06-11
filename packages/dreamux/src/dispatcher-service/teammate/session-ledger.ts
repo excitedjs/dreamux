@@ -31,6 +31,15 @@ const PREVIEW_MAX = 500;
 const PREVIEW_HEAD = 497;
 
 /**
+ * Hard cap on the durable assistant output captured in a `settled` event
+ * (issue #188). The full final output (up to this many chars) is the
+ * failed-completion-delivery fallback `last` returns; beyond it the text is
+ * truncated and {@link TeamMateSessionLedgerEvent.assistant_truncated} is set.
+ * This keeps the append-only ledger bounded without a new per-turn file.
+ */
+export const ASSISTANT_TEXT_MAX = 160_000;
+
+/**
  * Durable, append-only TeamMate/Team session ledger (issue #182 PR-5).
  *
  * Capture is forward-only: lifecycle facts are appended as events at the
@@ -63,6 +72,21 @@ export class TeamMateSessionLedger {
     }
     try {
       const now = Date.now();
+      // Capture the full final assistant output up to the hard cap (issue #188);
+      // the preview stays the compact form. A capped capture sets the truncated
+      // flag so `last` can report completeness honestly.
+      const rawAssistant =
+        input.assistant !== undefined && input.assistant !== null
+          ? input.assistant
+          : null;
+      const assistantTruncated =
+        rawAssistant !== null && rawAssistant.length > ASSISTANT_TEXT_MAX;
+      const assistant =
+        rawAssistant === null
+          ? null
+          : assistantTruncated
+            ? rawAssistant.slice(0, ASSISTANT_TEXT_MAX)
+            : rawAssistant;
       const event: TeamMateSessionLedgerEvent = {
         version: 1,
         session_id: sessionId,
@@ -71,6 +95,7 @@ export class TeamMateSessionLedger {
         type: input.type,
         dispatcher_id: identity.dispatcher_id,
         name: identity.name,
+        display_name: identity.display_name,
         role: identity.role,
         team_id: identity.team_id,
         leader_name: leaderNameFor(identity),
@@ -93,10 +118,9 @@ export class TeamMateSessionLedger {
           input.prompt !== undefined && input.prompt !== null
             ? preview(input.prompt)
             : null,
-        assistant_preview:
-          input.assistant !== undefined && input.assistant !== null
-            ? preview(input.assistant)
-            : null,
+        assistant_preview: rawAssistant !== null ? preview(rawAssistant) : null,
+        assistant,
+        assistant_truncated: assistantTruncated,
         settle_status: input.settleStatus ?? null,
         note: input.note ?? null,
       };
@@ -161,6 +185,50 @@ export class TeamMateSessionLedger {
   }
 
   /**
+   * Stream the ledger events of exactly one `session_id` in append order
+   * (issue #188). This is the session-scoped read `last` folds: it never starts
+   * or resumes a runtime, so it serves a closed or stopped teammate from the
+   * durable ledger alone. A missing ledger or unknown session reads as empty.
+   */
+  async readSession(
+    dispatcherId: string,
+    sessionId: string,
+  ): Promise<TeamMateSessionLedgerEvent[]> {
+    const path = dispatcherTeamMateSessionLedgerPath(dispatcherId);
+    const events: TeamMateSessionLedgerEvent[] = [];
+    let stream;
+    try {
+      stream = createReadStream(path, { encoding: 'utf8' });
+    } catch {
+      return [];
+    }
+    const lines = createInterface({ input: stream, crlfDelay: Infinity });
+    try {
+      for await (const line of lines) {
+        if (line.trim() === '') continue;
+        let parsed: TeamMateSessionLedgerEvent;
+        try {
+          parsed = JSON.parse(line) as TeamMateSessionLedgerEvent;
+        } catch {
+          continue; // skip a torn/partial line rather than fail the read
+        }
+        if (parsed.session_id === sessionId) events.push(parsed);
+      }
+    } catch (err) {
+      if (!isNotFound(err)) {
+        this.log.warn('TeamMate session ledger read failed', {
+          dispatcher_id: dispatcherId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+      return events;
+    } finally {
+      lines.close();
+    }
+    return events;
+  }
+
+  /**
    * Fold the ledger into one {@link TeamMateSessionRow} per `session_id` — the
    * recovery view a session can be reconstructed from. PR-6 builds the public,
    * filterable/cursored query on top of this.
@@ -186,6 +254,7 @@ export class TeamMateSessionLedger {
       row.source_cwd = event.source_cwd;
       row.cwd = event.cwd;
       row.leader_name = event.leader_name;
+      if (event.display_name !== null) row.display_name = event.display_name;
       if (event.type === 'spawn' || event.type === 'send') {
         row.turn_count += 1;
         if (event.prompt_preview !== null) row.last_prompt_preview = event.prompt_preview;
@@ -207,6 +276,7 @@ function newSessionRow(event: TeamMateSessionLedgerEvent): TeamMateSessionRow {
     session_id: event.session_id,
     dispatcher_id: event.dispatcher_id,
     name: event.name,
+    display_name: event.display_name,
     role: event.role,
     team_id: event.team_id,
     leader_name: event.leader_name,

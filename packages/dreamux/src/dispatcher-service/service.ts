@@ -230,16 +230,8 @@ export class DispatcherService {
     return this.teammates.history(input);
   }
 
-  getTeamMateHistoryEvents(dispatcherId: string, name: string) {
-    return this.teammates.historyEvents(dispatcherId, name);
-  }
-
-  getTeamMateLast(dispatcherId: string, name: string) {
-    return this.teammates.last(dispatcherId, name);
-  }
-
-  getTeamMateContext(dispatcherId: string, name: string) {
-    return this.teammates.context(dispatcherId, name);
+  getTeamMateLast(dispatcherId: string, name: string, turns?: number) {
+    return this.teammates.last(dispatcherId, name, turns);
   }
 
   getTeamMateCapabilities() {

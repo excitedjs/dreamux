@@ -25,6 +25,8 @@ export interface TeamMateIdentityStoreLog {
 export interface TeamMateIdentityCreateInput {
   dispatcherId: string;
   name: string;
+  /** Agent-supplied base slug / display hint behind the concrete name (issue #188). */
+  displayName?: string | null;
   owner?: TeamMateOwner;
   role?: TeamMateRole;
   teamId?: string | null;
@@ -116,6 +118,7 @@ export class TeamMateIdentityStore {
       version: 1,
       dispatcher_id: input.dispatcherId,
       name: input.name,
+      display_name: input.displayName ?? null,
       owner: input.owner ?? dispatcherOwner(input.dispatcherId),
       role: input.role ?? 'teammate',
       team_id: input.teamId ?? null,
@@ -297,6 +300,10 @@ function readIdentity(
     // mints one). Forward-compatible: newer records carry the string.
     session_id:
       typeof record['session_id'] === 'string' ? record['session_id'] : null,
+    // Pre-#188 records have no display name; read as null so callers fall back
+    // to the concrete `name`. Legacy records stay readable without migration.
+    display_name:
+      typeof record['display_name'] === 'string' ? record['display_name'] : null,
   };
 }
 

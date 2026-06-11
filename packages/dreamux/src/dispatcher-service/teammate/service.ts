@@ -34,6 +34,7 @@ import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
 import { TeamMateIdentityStore } from './identity-store.js';
 import { TeamMateRuntimeStateStore } from './runtime-state.js';
 import { TeamMateSessionLedger } from './session-ledger.js';
+import { allocateConcreteName, type SuffixGenerator } from './name-allocator.js';
 import { WorktreeManager } from './worktree-manager.js';
 import {
   requireLifecycleText,
@@ -44,14 +45,15 @@ import {
   type TeamMateCapabilities,
   type TeamMateCallerPrincipal,
   type TeamMateCloseResult,
-  type TeamMateContextResult,
   type CreateTeamLeaderInput,
-  type TeamMateHistoryEventsResult,
   type TeamMateHistoryQuery,
   type TeamMateHistoryResult,
   type TeamMateIdentity,
   type TeamMateLedgerRow,
   type TeamMateLastResult,
+  type TeamMateLastTurn,
+  type TeamMateRole,
+  type TeamMateSessionLedgerEvent,
   type TeamMateAgentRuntimeCapability,
   type TeamMateRuntimeStatus,
   type TeamMateSendResult,
@@ -106,6 +108,12 @@ export interface TeamMateAgentServiceOptions {
      */
     origin: TeamMateTurnOrigin | null,
   ) => void | Promise<void>;
+  /**
+   * Test seam (issue #188): override the random suffix generator used by
+   * concrete-name allocation so collisions and exhaustion are reproducible.
+   * Production leaves this unset and uses the CSPRNG default.
+   */
+  suffixGenerator?: SuffixGenerator;
   log: DreamuxLogger;
 }
 
@@ -168,6 +176,41 @@ export class TeamMateAgentService {
     return this.sessionLedger;
   }
 
+  /**
+   * Allocate a concrete, never-reused TeamLeader name for a team (issue #188).
+   * The Team service calls this once at create time and persists the result as
+   * the team's durable `leader_name`; routing reads that stored name rather
+   * than reconstructing `${teamId}-leader`.
+   */
+  async allocateLeaderName(dispatcherId: string, teamId: string): Promise<string> {
+    return this.allocateName(dispatcherId, 'team_leader', teamId, teamId);
+  }
+
+  /**
+   * Allocate a concrete name from an agent-supplied base slug (issue #188).
+   * Uniqueness is checked against ALL persisted identities (closed included),
+   * so a concrete name is never reused; the suffix is regenerated on collision
+   * and the allocation fails loudly if the attempt budget is exhausted.
+   */
+  private async allocateName(
+    dispatcherId: string,
+    role: TeamMateRole,
+    base: string,
+    teamSlug?: string,
+  ): Promise<string> {
+    const identities = await this.identities.list(dispatcherId);
+    const taken = new Set(identities.map((identity) => identity.name));
+    return allocateConcreteName({
+      role,
+      base,
+      ...(teamSlug !== undefined ? { teamSlug } : {}),
+      exists: (candidate) => taken.has(candidate),
+      ...(this.opts.suffixGenerator !== undefined
+        ? { generateSuffix: this.opts.suffixGenerator }
+        : {}),
+    });
+  }
+
   async spawn(input: SpawnTeamMateInput): Promise<TeamMateSpawnResult> {
     return this.spawnScoped({
       principal: dispatcherPrincipal(input.dispatcherId),
@@ -182,10 +225,13 @@ export class TeamMateAgentService {
 
   async spawnScoped(input: ScopedSpawnTeamMateInput): Promise<TeamMateSpawnResult> {
     const dispatcherId = principalDispatcherId(input.principal);
-    const name = validateTeamMateName(input.name);
     if (input.principal.kind === 'teammate') {
       throw new Error('ordinary TeamMates cannot spawn TeamMates');
     }
+    // The agent-supplied `name` is a base slug / display hint, not the final
+    // address (issue #188): require it non-empty, then allocate a concrete,
+    // never-reused name below and return it in the spawn result.
+    const displayName = requireLifecycleText(input.name, 'TeamMate spawn name');
     // Required recovery subject — enforced here too for in-process callers that
     // bypass the MCP shim / admin layer (issue #182 PR-3).
     requireLifecycleText(input.intent, 'TeamMate spawn intent');
@@ -196,10 +242,12 @@ export class TeamMateAgentService {
     if (typeof cwd !== 'string' || cwd.trim() === '') {
       throw new Error('TeamMate spawn requires cwd');
     }
-    const existing = await this.identities.get(dispatcherId, name);
-    if (existing !== null && existing.status !== 'closed') {
-      throw new Error(`TeamMate ${JSON.stringify(name)} already exists; use send`);
-    }
+    const owner = ownerForPrincipal(input.principal);
+    const role: TeamMateRole =
+      input.principal.kind === 'team_leader' ? 'team_member' : 'teammate';
+    // Allocate the concrete address from the requested slug (Team members get
+    // the `tm-` rule). Checked against all persisted identities, never reused.
+    const name = await this.allocateName(dispatcherId, role, displayName);
     const agentRuntimeId =
       input.agentRuntime ?? this.defaultAgentRuntime(dispatcherId);
     const agent = this.resolveAgent(dispatcherId, agentRuntimeId);
@@ -222,31 +270,17 @@ export class TeamMateAgentService {
     if (input.sharedWorkspace === undefined) {
       await this.assertManagedWorktreeAvailable(dispatcherId, name, workspace.worktree);
     }
-    const owner = ownerForPrincipal(input.principal);
-    const role = input.principal.kind === 'team_leader' ? 'team_member' : 'teammate';
-    // A spawn always starts a fresh runtime session (checkpoint is nulled
-    // below), so it mints a new session id — even when reusing a closed
-    // identity record (issue #182 PR-5).
+    // A spawn always starts a fresh runtime session, so it mints a new session
+    // id (issue #182 PR-5). The concrete name is fresh, so this is always a
+    // create — there is no closed-identity reuse path (issue #188).
     const sessionId = randomUUID();
-    let identity =
-      existing ??
-      (await this.identities.create({
-        dispatcherId,
-        name,
-        owner,
-        role,
-        teamId: owner.kind === 'team' ? owner.team_id : null,
-        agentRuntime: agentRuntimeId,
-        sessionId,
-        sourceCwd: workspace.sourceCwd,
-        sourceRepo: workspace.sourceRepo,
-        cwd: workspace.runtimeCwd,
-        runtimeCwd: workspace.runtimeCwd,
-        worktree: workspace.worktree,
-        intent: input.intent,
-      }));
-    this.assertPrincipalCanAccess(input.principal, identity);
-    identity = await this.identities.update(identity, {
+    let identity = await this.identities.create({
+      dispatcherId,
+      name,
+      displayName,
+      owner,
+      role,
+      teamId: owner.kind === 'team' ? owner.team_id : null,
       agentRuntime: agentRuntimeId,
       sessionId,
       sourceCwd: workspace.sourceCwd,
@@ -256,11 +290,8 @@ export class TeamMateAgentService {
       worktree: workspace.worktree,
       intent: input.intent,
       status: 'starting',
-      closedAt: null,
-      closeNote: null,
-      lastError: null,
-      checkpoint: null,
     });
+    this.assertPrincipalCanAccess(input.principal, identity);
     const live = await this.startRuntime(dispatcherId, identity, provider, agent);
     identity = live.state.current();
     const turn = await this.submitPrompt(dispatcherId, name, input.prompt, {
@@ -426,9 +457,19 @@ export class TeamMateAgentService {
   ): Promise<TeamMateHistoryResult> {
     const dispatcherId = principalDispatcherId(input.principal);
     const identities = await this.identities.list(dispatcherId);
+    // Fold the durable session ledger once (issue #188) so each row can surface
+    // its session's last assistant preview without an O(N) re-read per identity.
+    const previewBySession = new Map<string, string | null>();
+    for (const session of await this.sessionLedger.materializeSessions(dispatcherId)) {
+      previewBySession.set(session.session_id, session.last_assistant_preview);
+    }
     const rows: TeamMateLedgerRow[] = [];
     for (const identity of identities) {
-      const row = await this.toLedgerRow(identity);
+      const preview =
+        identity.session_id !== null
+          ? previewBySession.get(identity.session_id) ?? null
+          : null;
+      const row = await this.toLedgerRow(identity, preview);
       if (
         principalCanAccess(input.principal, identity) &&
         this.matchesLedgerQuery(row, input)
@@ -451,69 +492,85 @@ export class TeamMateAgentService {
     };
   }
 
-  async historyEvents(
+  async last(
     dispatcherId: string,
     name: string,
-  ): Promise<TeamMateHistoryEventsResult> {
-    return this.historyEventsScoped(dispatcherPrincipal(dispatcherId), name);
+    turns?: number,
+  ): Promise<TeamMateLastResult> {
+    return this.lastScoped(dispatcherPrincipal(dispatcherId), name, turns);
   }
 
-  async historyEventsScoped(
-    principal: TeamMateCallerPrincipal,
-    name: string,
-  ): Promise<TeamMateHistoryEventsResult> {
-    const dispatcherId = principalDispatcherId(principal);
-    const teammateName = validateTeamMateName(name);
-    const identity = await this.identities.get(dispatcherId, teammateName);
-    if (identity !== null) this.assertPrincipalCanAccess(principal, identity);
-    return {
-      teammate:
-        identity === null
-          ? null
-          : this.toStatus(
-              identity,
-              this.live.get(liveKey(dispatcherId, teammateName))?.runtime ?? null,
-            ),
-      events: await this.identities.history(dispatcherId, teammateName),
-    };
-  }
-
-  async last(dispatcherId: string, name: string): Promise<TeamMateLastResult> {
-    return this.lastScoped(dispatcherPrincipal(dispatcherId), name);
-  }
-
+  /**
+   * Read a closed-or-live teammate's most recent settled turn(s) from the
+   * durable session ledger (issue #188). This is a pure read: it resolves the
+   * concrete name to exactly one identity/session and folds `sessions.jsonl`
+   * filtered by that session id — it NEVER starts, resumes, or requires a live
+   * runtime, so it works after a teammate is closed or stopped. `turns` defaults
+   * to 1 and is clamped-by-rejection to 1..5; the newest turn is `turns.at(-1)`.
+   * This is the failed-completion-delivery fallback, so it returns the assistant
+   * output as completely as it was durably captured (truncation is flagged).
+   */
   async lastScoped(
     principal: TeamMateCallerPrincipal,
     name: string,
+    turns?: number,
   ): Promise<TeamMateLastResult> {
+    const requestedTurns = validateLastTurns(turns);
     const dispatcherId = principalDispatcherId(principal);
-    const live = await this.ensureRuntime(dispatcherId, name, {
+    const identity = await this.mustIdentity(
+      dispatcherId,
+      validateTeamMateName(name),
       principal,
-    });
+    );
+    const teammate = this.toStatus(
+      identity,
+      this.live.get(liveKey(dispatcherId, identity.name))?.runtime ?? null,
+    );
+    const sessionId = identity.session_id;
+    if (sessionId === null) {
+      // A pre-#182-PR-5 identity that never settled under a session id has no
+      // durable turns to read; report an empty, well-formed result.
+      return {
+        teammate,
+        session_id: null,
+        requested_turns: requestedTurns,
+        returned_turns: 0,
+        turns: [],
+      };
+    }
+    const events = await this.sessionLedger.readSession(dispatcherId, sessionId);
+    // Settled events carry the assistant output. A runtime can emit the same
+    // turn's settle more than once (the completion layer coalesces delivery, but
+    // each signal still appends a ledger row), so pair settled events by turn id
+    // — keeping the latest capture per turn — before ordering by ledger append
+    // sequence (event_id, not wall-clock) and keeping the most recent N turns.
+    const latestByTurn = new Map<string, TeamMateSessionLedgerEvent>();
+    for (const event of events) {
+      if (event.type !== 'settled' || event.turn_id === null) continue;
+      const prev = latestByTurn.get(event.turn_id);
+      if (prev === undefined || event.event_id >= prev.event_id) {
+        latestByTurn.set(event.turn_id, event);
+      }
+    }
+    const settled = [...latestByTurn.values()].sort(
+      (a, b) => a.event_id - b.event_id || a.timestamp - b.timestamp,
+    );
+    const recent = settled.slice(-requestedTurns);
+    const lastTurns: TeamMateLastTurn[] = recent.map((event) => ({
+      event_id: event.event_id,
+      timestamp: event.timestamp,
+      turn_id: event.turn_id,
+      settle_status: event.settle_status,
+      assistant: event.assistant,
+      assistant_preview: event.assistant_preview,
+      assistant_truncated: event.assistant_truncated,
+    }));
     return {
-      teammate: this.toStatus(live.state.current(), live.runtime),
-      last: await live.runtime.getLast(),
-    };
-  }
-
-  async context(
-    dispatcherId: string,
-    name: string,
-  ): Promise<TeamMateContextResult> {
-    return this.contextScoped(dispatcherPrincipal(dispatcherId), name);
-  }
-
-  async contextScoped(
-    principal: TeamMateCallerPrincipal,
-    name: string,
-  ): Promise<TeamMateContextResult> {
-    const dispatcherId = principalDispatcherId(principal);
-    const live = await this.ensureRuntime(dispatcherId, name, {
-      principal,
-    });
-    return {
-      teammate: this.toStatus(live.state.current(), live.runtime),
-      context: await live.runtime.getContext(),
+      teammate,
+      session_id: sessionId,
+      requested_turns: requestedTurns,
+      returned_turns: lastTurns.length,
+      turns: lastTurns,
     };
   }
 
@@ -566,6 +623,7 @@ export class TeamMateAgentService {
       (await this.identities.create({
         dispatcherId: input.dispatcherId,
         name,
+        displayName: input.displayName ?? null,
         owner,
         role: 'team_leader',
         teamId: input.teamId,
@@ -621,7 +679,6 @@ export class TeamMateAgentService {
         'list',
         'status',
         'last',
-        'ctx',
         'get_capabilities',
       ],
       agent_runtimes: Object.entries(this.opts.config.agents).map(
@@ -1083,6 +1140,7 @@ export class TeamMateAgentService {
   ): TeamMateRuntimeStatus {
     return {
       name: identity.name,
+      display_name: identity.display_name,
       role: identity.role,
       team_id: identity.team_id,
       owner: identity.owner,
@@ -1102,7 +1160,10 @@ export class TeamMateAgentService {
     };
   }
 
-  private async toLedgerRow(identity: TeamMateIdentity): Promise<TeamMateLedgerRow> {
+  private async toLedgerRow(
+    identity: TeamMateIdentity,
+    lastAssistantPreview: string | null = null,
+  ): Promise<TeamMateLedgerRow> {
     const runtime = this.live.get(liveKey(identity.dispatcher_id, identity.name))?.runtime ?? null;
     const events = await this.identities.history(identity.dispatcher_id, identity.name);
     const lastEvent = events.at(-1);
@@ -1112,6 +1173,8 @@ export class TeamMateAgentService {
     return {
       id: identity.name,
       name: identity.name,
+      display_name: identity.display_name,
+      session_id: identity.session_id,
       role: identity.role,
       team_id: identity.team_id,
       owner: identity.owner,
@@ -1135,7 +1198,7 @@ export class TeamMateAgentService {
       close_note_preview:
         identity.close_note !== null ? previewText(identity.close_note) : null,
       last_prompt_preview: lastPromptEvent?.prompt_preview ?? null,
-      last_assistant_preview: null,
+      last_assistant_preview: lastAssistantPreview,
       cleanup_state: identity.worktree.cleanup_state,
       resume:
         identity.closed_at === null || identity.checkpoint !== null
@@ -1330,6 +1393,22 @@ function clampHistoryLimit(input: number | undefined): number {
     throw new Error('history limit must be a positive integer');
   }
   return Math.min(input, 100);
+}
+
+const LAST_TURNS_DEFAULT = 1;
+const LAST_TURNS_MAX = 5;
+
+/**
+ * Validate the `last` turn count (issue #188): default 1, integer in 1..5.
+ * Out-of-range is rejected (fail loud) rather than silently clamped, so a
+ * caller asking for 10 turns learns its request was invalid.
+ */
+function validateLastTurns(input: number | undefined): number {
+  if (input === undefined) return LAST_TURNS_DEFAULT;
+  if (!Number.isInteger(input) || input < 1 || input > LAST_TURNS_MAX) {
+    throw new Error(`last turns must be an integer in 1..${LAST_TURNS_MAX}`);
+  }
+  return input;
 }
 
 function encodeCursor(offset: number): string {

@@ -1,7 +1,5 @@
 import type {
   AgentRuntimeCapabilities,
-  AgentRuntimeContextSnapshot,
-  AgentRuntimeLastResult,
   AgentRuntimeResumeCheckpoint,
 } from '../../agent-runtime/index.js';
 import type { DispatcherStatus } from '../../state/dispatcher-store.js';
@@ -20,7 +18,19 @@ export type TeamMateRole = 'teammate' | 'team_leader' | 'team_member';
 export interface TeamMateIdentity {
   version: 1;
   dispatcher_id: string;
+  /**
+   * The concrete, never-reused stable address (issue #188). Allocated by the
+   * service from the agent-supplied base slug plus a random suffix; this is the
+   * value all later send/status/last/close calls key on.
+   */
   name: string;
+  /**
+   * The agent-supplied base slug / display hint that produced {@link name}
+   * (issue #188). Surfaced by list/status/history so a human sees the requested
+   * label while `name` stays the address. Null for pre-#188 records (which
+   * read back with no display name) — callers fall back to `name`.
+   */
+  display_name: string | null;
   owner: TeamMateOwner;
   role: TeamMateRole;
   team_id: string | null;
@@ -109,9 +119,11 @@ export interface TeamMateSessionLedgerEvent {
   type: TeamMateSessionEventType;
   dispatcher_id: string;
   name: string;
+  /** Agent-supplied base slug / display hint (issue #188); null for legacy events. */
+  display_name: string | null;
   role: TeamMateRole;
   team_id: string | null;
-  /** Human-readable TeamLeader name for a team member, else the leader's own name. */
+  /** Concrete TeamLeader name for a team member, else the leader's own name. */
   leader_name: string | null;
   owner: TeamMateOwner;
   agent_runtime: string;
@@ -140,6 +152,14 @@ export interface TeamMateSessionLedgerEvent {
   prompt_preview: string | null;
   /** `settled`: a bounded preview of the teammate's final assistant output. */
   assistant_preview: string | null;
+  /**
+   * `settled`: the teammate's final assistant output, captured durably up to a
+   * hard cap (issue #188). This is the failed-completion-delivery fallback that
+   * `last` returns; null for non-settled events or when no output was captured.
+   */
+  assistant: string | null;
+  /** `settled`: true when {@link assistant} was truncated at the hard cap. */
+  assistant_truncated: boolean;
   /** `settled`: the terminal turn status. */
   settle_status: 'completed' | 'failed' | 'stopped' | null;
   /** `close`: the required close/dissolve note. */
@@ -155,6 +175,7 @@ export interface TeamMateSessionRow {
   session_id: string;
   dispatcher_id: string;
   name: string;
+  display_name: string | null;
   role: TeamMateRole;
   team_id: string | null;
   leader_name: string | null;
@@ -180,6 +201,8 @@ export interface TeamMateSessionRow {
 
 export interface TeamMateRuntimeStatus {
   name: string;
+  /** Agent-supplied base slug / display hint (issue #188); null for legacy records. */
+  display_name: string | null;
   owner: TeamMateOwner;
   role: TeamMateRole;
   team_id: string | null;
@@ -263,7 +286,10 @@ export interface SpawnTeamMateInput {
 export interface CreateTeamLeaderInput {
   dispatcherId: string;
   teamId: string;
+  /** The concrete, never-reused TeamLeader address allocated by the caller (issue #188). */
   name: string;
+  /** Human-readable display label (e.g. `${teamId}-leader`); falls back to `name`. */
+  displayName?: string | null;
   prompt: string;
   agentRuntime: string;
   sourceCwd: string;
@@ -366,6 +392,9 @@ export interface TeamMateLedgerResumeHint {
 export interface TeamMateLedgerRow {
   id: string;
   name: string;
+  display_name: string | null;
+  /** Stable session id of the latest session, when known (issue #182 PR-5/#188). */
+  session_id: string | null;
   team_id: string | null;
   role: TeamMateRole;
   owner: TeamMateOwner;
@@ -398,19 +427,37 @@ export interface TeamMateHistoryResult {
   next_cursor: string | null;
 }
 
-export interface TeamMateHistoryEventsResult {
-  teammate: TeamMateRuntimeStatus | null;
-  events: TeamMateHistoryEvent[];
+/**
+ * One settled-turn entry returned by `last` (issue #188), folded from the
+ * durable session ledger by `session_id`. This is a pure read of captured
+ * facts — it never starts or resumes a runtime, so it works for a closed or
+ * stopped teammate.
+ */
+export interface TeamMateLastTurn {
+  /** Ledger append sequence id of the settled event (not wall-clock ordering). */
+  event_id: number;
+  timestamp: number;
+  /** The settled turn id, when recorded; pairs with the spawn/send that opened it. */
+  turn_id: string | null;
+  settle_status: 'completed' | 'failed' | 'stopped' | null;
+  /** The teammate's final assistant output, captured up to the hard cap. */
+  assistant: string | null;
+  /** A compact preview of {@link assistant} for terse displays. */
+  assistant_preview: string | null;
+  /** True when {@link assistant} was truncated at the durable hard cap. */
+  assistant_truncated: boolean;
 }
 
 export interface TeamMateLastResult {
   teammate: TeamMateRuntimeStatus;
-  last: AgentRuntimeLastResult | null;
-}
-
-export interface TeamMateContextResult {
-  teammate: TeamMateRuntimeStatus;
-  context: AgentRuntimeContextSnapshot | null;
+  /** The resolved session the turns were read from, or null when none exists yet. */
+  session_id: string | null;
+  /** The validated requested turn count (1..5). */
+  requested_turns: number;
+  /** How many settled turns were actually available (<= requested). */
+  returned_turns: number;
+  /** Settled turns in append order, oldest first; the last entry is the newest. */
+  turns: TeamMateLastTurn[];
 }
 
 export interface TeamMateAgentRuntimeCapability {

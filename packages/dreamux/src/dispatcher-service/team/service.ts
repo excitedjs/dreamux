@@ -59,7 +59,16 @@ export class TeamService {
         cleanup: 'keep',
       },
     });
-    const leaderName = `${teamId}-leader`;
+    // The TeamLeader address is a concrete, never-reused name (issue #188), not
+    // a reconstructed `${teamId}-leader`. A reused (closed) Team record keeps its
+    // existing concrete leader_name so its closed leader identity is reopened;
+    // a fresh Team allocates a new one. Routing/status/dissolve all read the
+    // stored leader_name, never recompute it. `${teamId}-leader` survives only as
+    // the human-readable display label.
+    const leaderName =
+      existing?.leader_name ??
+      (await this.opts.teammates.allocateLeaderName(input.dispatcherId, teamId));
+    const leaderDisplayName = `${teamId}-leader`;
     let team =
       existing ??
       (await this.store.create({
@@ -91,6 +100,7 @@ export class TeamService {
       dispatcherId: input.dispatcherId,
       teamId,
       name: leaderName,
+      displayName: leaderDisplayName,
       prompt,
       agentRuntime: input.leaderAgentRuntime,
       sourceCwd: workspace.sourceCwd,

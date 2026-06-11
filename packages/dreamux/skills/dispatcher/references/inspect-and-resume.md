@@ -1,9 +1,11 @@
 # Inspect And Resume
 
 > Default to the `teammate` MCP for inspection: `list`, `status`, `history`,
-> `last`, and `ctx` cover server-owned TeamMate state without `tm`; do not poll.
-> This `tm` fallback owns what the MCP does not: legacy tm sessions, worktrees,
-> and tm history.
+> and `last` cover server-owned TeamMate state without `tm`; do not poll. `last`
+> reads the most recent settled turn(s) (turns 1..5) from the durable session
+> ledger by the concrete name `spawn` returned, even for a closed TeamMate. This
+> `tm` fallback owns what the MCP does not: legacy tm sessions, worktrees, and tm
+> history.
 
 ## Trigger
 

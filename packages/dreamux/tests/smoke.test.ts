@@ -895,13 +895,16 @@ describe('dreamux MVP smoke', () => {
     });
     await server.start();
 
-    await server.dispatcherService.createTeam({
+    const createdTeam = await server.dispatcherService.createTeam({
       dispatcherId: 'flow',
       name: 'alpha',
       intent: 'work',
       repoCwd: repo,
       leaderAgentRuntime: 'flow',
     });
+    // #188: the TeamLeader address is a concrete, never-reused name; channel
+    // scope checks resolve against this stored name, not `${teamId}-leader`.
+    const leaderName = createdTeam.team.leader_name;
     await server.dispatcherService.bindTeamChannel({
       dispatcherId: 'flow',
       teamId: 'alpha',
@@ -919,7 +922,7 @@ describe('dreamux MVP smoke', () => {
           dispatcher_id: 'flow',
           caller_kind: 'team_leader',
           team_id: 'alpha',
-          leader_name: 'alpha-leader',
+          leader_name: leaderName,
           chat_id: 'chat-team',
           message_id: 'msg-team',
           emoji: 'THUMBSUP',
@@ -934,7 +937,7 @@ describe('dreamux MVP smoke', () => {
           dispatcher_id: 'flow',
           caller_kind: 'team_leader',
           team_id: 'alpha',
-          leader_name: 'alpha-leader',
+          leader_name: leaderName,
           chat_id: 'chat-team',
           message_id: 'msg-unknown',
           emoji: 'THUMBSUP',

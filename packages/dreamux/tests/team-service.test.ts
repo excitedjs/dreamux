@@ -193,16 +193,19 @@ describe('TeamService', () => {
       intent: 'ship alpha',
     });
 
+    // #188: the Team's leader_name is a concrete, never-reused `tl-` name; the
+    // human-readable `${teamId}-leader` survives only as the leader display name.
+    expect(created.team.leader_name).toMatch(/^tl-alpha-[a-z0-9]{8}$/);
     expect(created.team).toMatchObject({
       team_id: 'alpha',
-      leader_name: 'alpha-leader',
       leader_agent_runtime: 'flow',
       status: 'running',
       repo_cwd: repo,
       source_repo: repo,
     });
     expect(created.leader).toMatchObject({
-      name: 'alpha-leader',
+      name: created.team.leader_name,
+      display_name: 'alpha-leader',
       role: 'team_leader',
       owner: { kind: 'dispatcher', dispatcher_id: 'flow' },
       team_id: 'alpha',
@@ -235,13 +238,14 @@ describe('TeamService', () => {
     const repo = await initGitRepo(join(root, 'channel-repo'));
     const { teams, teammates } = buildServices();
 
-    await teams.create({
+    const created = await teams.create({
       dispatcherId: 'flow',
       name: 'alpha',
       repoCwd: repo,
       leaderAgentRuntime: 'flow',
       intent: 'ship alpha',
     });
+    const leaderName = created.team.leader_name;
 
     // A normal user turn delivered through a bound Team channel goes
     // create -> routeChannelInput -> deliverToLeader -> channelInputScoped, which
@@ -257,16 +261,17 @@ describe('TeamService', () => {
     const channelTurn = events.find((e) => e.turn_origin === 'channel');
     expect(channelTurn).toMatchObject({
       type: 'send',
-      name: 'alpha-leader',
+      name: leaderName,
+      display_name: 'alpha-leader',
       role: 'team_leader',
       team_id: 'alpha',
-      leader_name: 'alpha-leader',
+      leader_name: leaderName,
       turn_origin: 'channel',
       prompt_preview: 'please review the auth change',
     });
     // Carries a stable session id (same as the leader's spawn), never re-keyed.
     expect(channelTurn?.session_id).toBe(
-      events.find((e) => e.type === 'spawn' && e.name === 'alpha-leader')?.session_id,
+      events.find((e) => e.type === 'spawn' && e.name === leaderName)?.session_id,
     );
   });
 
@@ -337,14 +342,14 @@ describe('TeamService', () => {
       prompt: 'solo',
       cwd: root,
     });
-    await teams.create({
+    const alphaTeam = await teams.create({
       dispatcherId: 'flow',
       name: 'alpha',
       intent: 'work',
       repoCwd: repo,
       leaderAgentRuntime: 'flow',
     });
-    await teams.create({
+    const betaTeam = await teams.create({
       dispatcherId: 'flow',
       name: 'beta',
       intent: 'work',
@@ -352,15 +357,17 @@ describe('TeamService', () => {
       leaderAgentRuntime: 'flow',
     });
 
+    // #188: principals carry the team's concrete leader_name, the same value the
+    // Team service stores and routes on.
     const alpha = teamLeaderPrincipal({
       dispatcherId: 'flow',
       teamId: 'alpha',
-      leaderName: 'alpha-leader',
+      leaderName: alphaTeam.team.leader_name,
     });
     const beta = teamLeaderPrincipal({
       dispatcherId: 'flow',
       teamId: 'beta',
-      leaderName: 'beta-leader',
+      leaderName: betaTeam.team.leader_name,
     });
     const workspace = await teams.sharedWorkspace('flow', 'alpha');
     const member = await teammates.spawnScoped({
@@ -370,28 +377,34 @@ describe('TeamService', () => {
       prompt: 'build',
       sharedWorkspace: workspace,
     });
+    const builderName = member.teammate.name;
+    // A Team member gets the `tm-` rule (#188).
+    expect(builderName).toMatch(/^tm-builder-[a-z0-9]{8}$/);
 
     expect(member.teammate).toMatchObject({
       role: 'team_member',
+      display_name: 'builder',
       owner: {
         kind: 'team',
         dispatcher_id: 'flow',
         team_id: 'alpha',
-        leader_name: 'alpha-leader',
+        leader_name: alphaTeam.team.leader_name,
       },
       runtime_cwd: workspace.runtimeCwd,
     });
     expect(provider.contexts.at(-1)?.cwd).toBe(workspace.runtimeCwd);
-    expect((await teammates.list('flow')).map((entry) => entry.name).sort())
+    // Dispatcher-scoped list sees the two leaders + the ungrouped teammate, by
+    // their display names (concrete names carry random suffixes).
+    expect((await teammates.list('flow')).map((entry) => entry.display_name).sort())
       .toEqual(['alpha-leader', 'beta-leader', 'solo']);
-    expect((await teammates.listScoped(alpha)).map((entry) => entry.name)).toEqual(['builder']);
+    expect((await teammates.listScoped(alpha)).map((entry) => entry.display_name)).toEqual(['builder']);
     expect(await teammates.listScoped(beta)).toEqual([]);
-    await expect(teammates.statusScoped(beta, 'builder')).rejects.toThrow(/does not exist/);
+    await expect(teammates.statusScoped(beta, builderName)).rejects.toThrow(/does not exist/);
     await expect(
-      teammates.sendScoped({ principal: beta, name: 'builder', prompt: 'nope' }),
+      teammates.sendScoped({ principal: beta, name: builderName, prompt: 'nope' }),
     ).rejects.toThrow(/does not exist/);
     await expect(
-      teammates.closeScoped({ principal: beta, name: 'builder' }),
+      teammates.closeScoped({ principal: beta, name: builderName, note: 'nope' }),
     ).rejects.toThrow(/does not exist/);
   });
 
@@ -419,12 +432,13 @@ describe('TeamService', () => {
         chatId: 'fake_group_1',
       },
     ]);
+    expect(result.team.leader_name).toMatch(/^tl-gamma-[a-z0-9]{8}$/);
     expect(result.binding).toMatchObject({
       provider: 'builtin:feishu',
       chat_id: 'fake_group_1',
       chat_type: 'group',
       team_id: 'gamma',
-      leader_name: 'gamma-leader',
+      leader_name: result.team.leader_name,
     });
     await expect(
       teams.resolveChannel({

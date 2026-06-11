@@ -352,18 +352,20 @@ describe('session ledger capture (integration through TeamMateAgentService)', ()
     const repo = await initGitRepo(join(root, 'repo'));
     const { service, provider } = buildService();
 
-    await service.spawn({
-      dispatcherId: 'flow',
-      name: 'reviewer',
-      intent: 'review the auth change',
-      prompt: 'Please review.',
-      cwd: repo,
-      worktree: { mode: 'managed', slug: 'reviewer', branch: 'dreamux/reviewer', cleanup: 'keep' },
-    });
+    const reviewer = (
+      await service.spawn({
+        dispatcherId: 'flow',
+        name: 'reviewer',
+        intent: 'review the auth change',
+        prompt: 'Please review.',
+        cwd: repo,
+        worktree: { mode: 'managed', slug: 'reviewer', branch: 'dreamux/reviewer', cleanup: 'keep' },
+      })
+    ).teammate.name;
 
     await service.send({
       dispatcherId: 'flow',
-      name: 'reviewer',
+      name: reviewer,
       prompt: 'Any progress?',
       intent: 'follow up on review',
     });
@@ -375,14 +377,15 @@ describe('session ledger capture (integration through TeamMateAgentService)', ()
       return events.some((e) => e.type === 'settled');
     });
 
-    await service.close({ dispatcherId: 'flow', name: 'reviewer', note: 'merged and done' });
+    await service.close({ dispatcherId: 'flow', name: reviewer, note: 'merged and done' });
 
     const events = await service.sessions().read('flow');
     expect(events.map((e) => e.type)).toEqual(['spawn', 'send', 'settled', 'close']);
 
     const spawn = events.find((e) => e.type === 'spawn')!;
     expect(spawn).toMatchObject({
-      name: 'reviewer',
+      name: reviewer,
+      display_name: 'reviewer',
       role: 'teammate',
       intent: 'review the auth change',
       source_repo: repo,
@@ -400,6 +403,9 @@ describe('session ledger capture (integration through TeamMateAgentService)', ()
     expect(settled).toMatchObject({
       settle_status: 'completed',
       assistant_preview: 'final assistant output',
+      // #188: the full assistant output is captured durably with a truncation flag.
+      assistant: 'final assistant output',
+      assistant_truncated: false,
       session_ref: 'thread-1',
       checkpoint_kind: 'codexThread',
     });
@@ -411,7 +417,8 @@ describe('session ledger capture (integration through TeamMateAgentService)', ()
 
     const [session] = await service.sessions().materializeSessions('flow');
     expect(session).toMatchObject({
-      name: 'reviewer',
+      name: reviewer,
+      display_name: 'reviewer',
       session_ref: 'thread-1',
       intent: 'follow up on review',
       status: 'closed',
@@ -425,17 +432,19 @@ describe('session ledger capture (integration through TeamMateAgentService)', ()
     const repo = await initGitRepo(join(root, 'reopen-repo'));
     const { service } = buildService();
 
-    await service.spawn({
-      dispatcherId: 'flow',
-      name: 'reviewer',
-      intent: 'first pass',
-      prompt: 'go',
-      cwd: repo,
-      worktree: { mode: 'managed', slug: 'reviewer', cleanup: 'keep' },
-    });
-    await service.close({ dispatcherId: 'flow', name: 'reviewer', note: 'paused' });
+    const reviewer = (
+      await service.spawn({
+        dispatcherId: 'flow',
+        name: 'reviewer',
+        intent: 'first pass',
+        prompt: 'go',
+        cwd: repo,
+        worktree: { mode: 'managed', slug: 'reviewer', cleanup: 'keep' },
+      })
+    ).teammate.name;
+    await service.close({ dispatcherId: 'flow', name: reviewer, note: 'paused' });
     // send reopens the closed teammate from its checkpoint — same session.
-    await service.send({ dispatcherId: 'flow', name: 'reviewer', prompt: 'resume' });
+    await service.send({ dispatcherId: 'flow', name: reviewer, prompt: 'resume' });
 
     const events = await service.sessions().read('flow');
     const reopenSend = events.filter((e) => e.type === 'send');
@@ -489,18 +498,22 @@ describe('session ledger capture (integration through TeamMateAgentService)', ()
     });
 
     const events = await service.sessions().read('flow');
+    // The leader name here is caller-supplied ('alpha-leader'); the member name
+    // is service-allocated (#188), so it is found by role/display_name.
     const leaderEvent = events.find((e) => e.name === 'alpha-leader')!;
     expect(leaderEvent).toMatchObject({
       role: 'team_leader',
       team_id: 'alpha',
       leader_name: 'alpha-leader',
     });
-    const memberEvent = events.find((e) => e.name === 'builder')!;
+    const memberEvent = events.find((e) => e.role === 'team_member')!;
     expect(memberEvent).toMatchObject({
       role: 'team_member',
+      display_name: 'builder',
       team_id: 'alpha',
       leader_name: 'alpha-leader',
     });
+    expect(memberEvent.name).toMatch(/^tm-builder-[a-z0-9]{8}$/);
   });
 
   it('captures the settled turn even when reverse delivery fails (#182 PR-5, PR#187 P2)', async () => {
