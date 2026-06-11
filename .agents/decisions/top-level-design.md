@@ -709,11 +709,28 @@ the TeamMate name a concrete, never-reused address:
 ## Team Mode Core
 
 Issue #171 starts Team Mode. Dispatcher runtimes receive a `team` MCP server for
-dispatcher-only team lifecycle: `create`, `list`, `status`, `ledger`,
-`bind_channel`, `transfer_channel_back`, and `dissolve`. `create` requires
-`repo_cwd`, `leader_agent_runtime`, and `intent` (issue #182 PR-3 — the same
-`intent` requirement applies to `create_group`); `dissolve` requires `note`.
-Dreamux does not infer a default TeamLeader runtime. A TeamLeader is a TeamMate identity with `role:
+dispatcher-only team lifecycle: `create`, `create_group`, `list`, `status`,
+`history`, `bind_group`, `transfer_channel_back`, and `dissolve`. `create`
+requires `repo_cwd`, `leader_agent_runtime`, and `intent` (issue #182 PR-3 — the
+same `intent` requirement applies to `create_group`); `dissolve` requires
+`note`. Dreamux does not infer a default TeamLeader runtime.
+
+Issue #182 PR-7 aligned the Team read/binding surface with the TeamMate
+read-surface model: the public surface is addressed by **Team name** (the
+storage key `team_id` stays internal — today they are the same value); `list`
+returns compact scan rows; `status` returns one Team's detail including the
+active bound group; the raw per-team event `ledger` verb is replaced by a
+filterable `history` recovery search (name / status / close_status / repo /
+intent `grep` / `since` / `until` / `limit` / `cursor`) over Team records,
+mirroring the TeamMate `history`, while the raw lifecycle event timeline stays
+an internal/debug ledger; and `bind_channel` is simplified to `bind_group`
+(Team name + `chat_id`, group-only — the redundant `chat_type` is gone from the
+public surface, since the binding store rejects non-group anyway).
+`transfer_channel_back` likewise drops `chat_type`. (`create_group` — create a
+brand-new Feishu group from a P2P control channel — is retained for now; its
+retirement is tracked as a follow-up.)
+
+A TeamLeader is a TeamMate identity with `role:
 "team_leader"` and dispatcher owner. Team-owned members are normal TeamMate
 identities with `role: "team_member"` and `owner.kind: "team"`.
 

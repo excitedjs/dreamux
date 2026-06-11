@@ -213,7 +213,16 @@ describe('TeamService', () => {
     expect(existsSync(created.team.runtime_cwd)).toBe(true);
     // Required intent (issue #182 PR-3) is persisted on the Team record.
     expect(created.team.intent).toBe('ship alpha');
-    expect((await teams.list('flow')).map((entry) => entry.team.team_id)).toEqual(['alpha']);
+    // #182 PR-7: list returns compact scan rows (name == team_id), not summaries.
+    const listed = await teams.list('flow');
+    expect(listed.map((entry) => entry.name)).toEqual(['alpha']);
+    expect(listed[0]).toMatchObject({
+      team_id: 'alpha',
+      status: 'running',
+      leader_name: created.team.leader_name,
+      member_count: 0,
+      bound_group: null,
+    });
     expect((await teams.ledger('flow', 'alpha')).events.map((event) => event.type)).toEqual(['create']);
 
     const reloaded = new TeamService({ teammates });
@@ -550,6 +559,67 @@ describe('TeamService', () => {
         requesterOpenId: 'ou_requester',
       }),
     ).rejects.toThrow(/P2P control channel/);
+  });
+
+  it('history is a filterable recovery search; list/status surface the bound group (#182 PR-7)', async () => {
+    const repo = await initGitRepo(join(root, 'history-repo'));
+    const { teams } = buildServices();
+
+    await teams.create({
+      dispatcherId: 'flow',
+      name: 'auth-team',
+      repoCwd: repo,
+      leaderAgentRuntime: 'flow',
+      intent: 'ship the auth change',
+    });
+    await teams.create({
+      dispatcherId: 'flow',
+      name: 'billing-team',
+      repoCwd: repo,
+      leaderAgentRuntime: 'flow',
+      intent: 'fix billing',
+    });
+    await teams.dissolve({ dispatcherId: 'flow', teamId: 'billing-team', note: 'done' });
+
+    // No filters → both Teams, most-recent first (billing was touched last).
+    const all = await teams.history({ dispatcherId: 'flow' });
+    expect(all.items.map((row) => row.name).sort()).toEqual([
+      'auth-team',
+      'billing-team',
+    ]);
+    expect(all.next_cursor).toBeNull();
+
+    // close_status filter isolates the dissolved Team and carries recovery facts.
+    const closed = await teams.history({ dispatcherId: 'flow', closeStatus: 'closed' });
+    expect(closed.items.map((row) => row.name)).toEqual(['billing-team']);
+    expect(closed.items[0]).toMatchObject({
+      close_status: 'closed',
+      close_note: 'done',
+      close_note_preview: 'done',
+      source_repo: repo,
+    });
+
+    // grep matches intent text; status filter narrows to live Teams.
+    expect(
+      (await teams.history({ dispatcherId: 'flow', grep: 'auth' })).items.map((r) => r.name),
+    ).toEqual(['auth-team']);
+    expect(
+      (await teams.history({ dispatcherId: 'flow', status: 'running' })).items.map((r) => r.name),
+    ).toEqual(['auth-team']);
+
+    // Bind a group → it surfaces in list (bound_group) and status (binding).
+    await teams.bindChannel({
+      dispatcherId: 'flow',
+      teamId: 'auth-team',
+      provider: 'builtin:feishu',
+      chatId: 'chat-auth',
+      chatType: 'group',
+    });
+    const listed = await teams.list('flow');
+    const authRow = listed.find((row) => row.name === 'auth-team');
+    expect(authRow?.bound_group).toEqual({ provider: 'builtin:feishu', chat_id: 'chat-auth' });
+    const status = await teams.status('flow', 'auth-team');
+    expect(status.binding).toEqual({ provider: 'builtin:feishu', chat_id: 'chat-auth' });
   });
 });
 

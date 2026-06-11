@@ -1,4 +1,5 @@
 import type {
+  TeamMateIdentityStatus,
   TeamMateRuntimeStatus,
   TeamMateTurnResult,
   TeamMateWorktreeIdentity,
@@ -108,10 +109,93 @@ export interface TeamLedgerEvent {
   summary: string;
 }
 
+/**
+ * Active group binding marker surfaced by the Team read tools (issue #182 PR-7).
+ * Bindings are always Feishu group chats, so only the chat id varies.
+ */
+export interface TeamChannelBindingSummary {
+  provider: 'builtin:feishu';
+  chat_id: string;
+}
+
 export interface TeamSummary {
   team: TeamRecord;
   leader: TeamMateRuntimeStatus | null;
   member_count: number;
+  /** The active bound group chat, or null when no group is bound (issue #182 PR-7). */
+  binding: TeamChannelBindingSummary | null;
+}
+
+/**
+ * Cheap scan row for `team.list` (issue #182 PR-7), mirroring the TeamMate
+ * `list`/`status` split: compact current-Team fields only, no inlined leader
+ * runtime status or full worktree record. Reach for `team.status` for detail.
+ */
+export interface TeamListRow {
+  /** Public Team identifier; equal to `team_id` (the storage key) today. */
+  name: string;
+  team_id: string;
+  status: TeamStatus;
+  intent: string | null;
+  source_repo: string | null;
+  repo_cwd: string;
+  worktree_mode: TeamMateWorktreeIdentity['mode'];
+  leader_name: string;
+  leader_state: TeamMateIdentityStatus | null;
+  member_count: number;
+  bound_group: TeamChannelBindingSummary | null;
+  created_at: number;
+  updated_at: number;
+  closed_at: number | null;
+}
+
+/**
+ * Filterable recovery search over Teams (issue #182 PR-7), the Team-side mirror
+ * of the TeamMate `history` surface: it finds Teams (including closed ones) by
+ * name / status / repo / intent text / time range, rather than reading one
+ * team's raw lifecycle event timeline (which stays an internal/debug ledger).
+ */
+export interface TeamHistoryQuery {
+  dispatcherId: string;
+  name?: string;
+  status?: TeamStatus;
+  closeStatus?: 'open' | 'closed';
+  /** Substring match over `source_repo` / `repo_cwd`. */
+  repo?: string;
+  /** Substring match over name / intent / repo / leader name. */
+  grep?: string;
+  /** Inclusive lower/upper bounds on `updated_at`. */
+  since?: number;
+  until?: number;
+  limit?: number;
+  cursor?: string;
+}
+
+export interface TeamHistoryRow {
+  name: string;
+  team_id: string;
+  status: TeamStatus;
+  close_status: 'open' | 'closed';
+  intent: string | null;
+  source_repo: string | null;
+  repo_cwd: string;
+  runtime_cwd: string;
+  worktree: TeamMateWorktreeIdentity;
+  leader_name: string;
+  leader_agent_runtime: string;
+  leader_state: TeamMateIdentityStatus | null;
+  member_count: number;
+  bound_group: TeamChannelBindingSummary | null;
+  created_at: number;
+  updated_at: number;
+  closed_at: number | null;
+  close_note: string | null;
+  close_note_preview: string | null;
+}
+
+export interface TeamHistoryResult {
+  items: TeamHistoryRow[];
+  next_cursor: string | null;
 }
 
 export interface TeamCreateResult extends TeamSummary {

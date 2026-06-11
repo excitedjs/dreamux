@@ -287,26 +287,48 @@ export const adminMethods: Record<string, AdminHandler> = {
   'mcp.team.status': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    const teamId = mustString(params, 'team_id');
-    return server.dispatcherService.getTeamStatus(id, teamId);
+    // #182 PR-7: public addressing is by `name` (== team_id storage key).
+    const name = mustString(params, 'name');
+    return server.dispatcherService.getTeamStatus(id, name);
   },
 
-  'mcp.team.ledger': async (server, params) => {
+  'mcp.team.history': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    const teamId = mustString(params, 'team_id');
-    return server.dispatcherService.getTeamLedger(id, teamId);
+    const name = optionalString(params, 'name');
+    const status = optionalTeamStatus(params, 'status');
+    const closeStatus = optionalCloseStatus(params, 'close_status');
+    const repo = optionalString(params, 'repo');
+    const grep = optionalString(params, 'grep');
+    const since = optionalInteger(params, 'since');
+    const until = optionalInteger(params, 'until');
+    const limit = optionalInteger(params, 'limit');
+    const cursor = optionalString(params, 'cursor');
+    return server.dispatcherService.getTeamHistory({
+      dispatcherId: id,
+      ...(name !== null ? { name } : {}),
+      ...(status !== null ? { status } : {}),
+      ...(closeStatus !== null ? { closeStatus } : {}),
+      ...(repo !== null ? { repo } : {}),
+      ...(grep !== null ? { grep } : {}),
+      ...(since !== null ? { since } : {}),
+      ...(until !== null ? { until } : {}),
+      ...(limit !== null ? { limit } : {}),
+      ...(cursor !== null ? { cursor } : {}),
+    });
   },
 
-  'mcp.team.bind_channel': async (server, params) => {
+  'mcp.team.bind_group': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
+    // #182 PR-7: bindings are always Feishu group chats; the public surface no
+    // longer takes `chat_type` (the store rejects non-group for Team binding).
     return server.dispatcherService.bindTeamChannel({
       dispatcherId: id,
-      teamId: mustString(params, 'team_id'),
+      teamId: mustString(params, 'name'),
       provider: 'builtin:feishu',
       chatId: mustString(params, 'chat_id'),
-      chatType: mustString(params, 'chat_type') === 'group' ? 'group' : 'p2p',
+      chatType: 'group',
     });
   },
 
@@ -337,7 +359,8 @@ export const adminMethods: Record<string, AdminHandler> = {
         dispatcherId: id,
         provider: 'builtin:feishu',
         chatId: mustString(params, 'chat_id'),
-        chatType: mustString(params, 'chat_type') === 'group' ? 'group' : 'p2p',
+        // #182 PR-7: group-only; the public surface no longer takes `chat_type`.
+        chatType: 'group',
       }),
     };
   },
@@ -345,12 +368,12 @@ export const adminMethods: Record<string, AdminHandler> = {
   'mcp.team.dissolve': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    const teamId = mustString(params, 'team_id');
+    const name = mustString(params, 'name');
     // Required dissolve reason (issue #182 PR-3).
     const note = mustNonEmptyString(params, 'note');
     return server.dispatcherService.dissolveTeam({
       dispatcherId: id,
-      teamId,
+      teamId: name,
       note,
     });
   },
@@ -564,6 +587,19 @@ function optionalCloseStatus(
   if (value === null) return null;
   if (value === 'open' || value === 'closed') return value;
   throw new AdminError('BAD_REQUEST', `param '${key}' must be open or closed`);
+}
+
+function optionalTeamStatus(
+  params: Record<string, unknown> | undefined,
+  key: string,
+): 'starting' | 'running' | 'closed' | null {
+  const value = optionalString(params, key);
+  if (value === null) return null;
+  if (value === 'starting' || value === 'running' || value === 'closed') return value;
+  throw new AdminError(
+    'BAD_REQUEST',
+    `param '${key}' must be starting, running, or closed`,
+  );
 }
 
 function optionalInteger(

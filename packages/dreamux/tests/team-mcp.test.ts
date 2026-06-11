@@ -125,7 +125,98 @@ describe('team-mcp stdio shim', () => {
     const tools = await toolSchemas();
     expect(schemaOf(tools, 'create').required).toContain('intent');
     expect(schemaOf(tools, 'create_group').required).toContain('intent');
-    expect(schemaOf(tools, 'dissolve').required).toEqual(['team_id', 'note']);
+    // #182 PR-7: public addressing is by `name`.
+    expect(schemaOf(tools, 'dissolve').required).toEqual(['name', 'note']);
+  });
+
+  it('aligns the Team read surface with the TeamMate model and addresses by name (#182 PR-7)', async () => {
+    const tools = await toolSchemas();
+    const names = tools.map((t) => t['name']);
+    // ledger verb retired in favour of a filterable history recovery surface;
+    // bind_channel simplified to group-only bind_group.
+    expect(names).toContain('history');
+    expect(names).toContain('bind_group');
+    expect(names).not.toContain('ledger');
+    expect(names).not.toContain('bind_channel');
+    // status / history / dissolve / bind_group address by name, not team_id.
+    expect(schemaOf(tools, 'status').required).toEqual(['name']);
+    expect(schemaOf(tools, 'bind_group').required).toEqual(['name', 'chat_id']);
+    // history is filterable and fully optional; chat_type is gone from binding.
+    expect(schemaOf(tools, 'history').required).toEqual([]);
+    expect(schemaOf(tools, 'history').properties).toHaveProperty('grep');
+    expect(schemaOf(tools, 'history').properties).toHaveProperty('status');
+    expect(schemaOf(tools, 'bind_group').properties).not.toHaveProperty('chat_type');
+    expect(schemaOf(tools, 'transfer_channel_back').properties).not.toHaveProperty(
+      'chat_type',
+    );
+  });
+
+  it('forwards the redesigned read/bind verbs to the right admin methods (#182 PR-7)', async () => {
+    const admin = await startFakeAdminServer((request) => ({
+      id: request.id,
+      ok: true,
+      result: { ok: true },
+    }));
+    try {
+      const input = new PassThrough();
+      const output = new PassThrough();
+      const reader = new JsonLineReader(output);
+      const run = runTeamMcp({
+        dispatcherId: 'dispatcher-a',
+        adminSocketPath: admin.socketPath,
+        input,
+        output,
+        log: () => {},
+      });
+
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: { name: 'status', arguments: { name: 'alpha' } },
+      });
+      await reader.next();
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/call',
+        params: {
+          name: 'history',
+          arguments: { grep: 'auth', status: 'closed', limit: 5 },
+        },
+      });
+      await reader.next();
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 3,
+        method: 'tools/call',
+        params: { name: 'bind_group', arguments: { name: 'alpha', chat_id: 'chat-1' } },
+      });
+      await reader.next();
+
+      expect(admin.requests.map((r) => r.method)).toEqual([
+        'mcp.team.status',
+        'mcp.team.history',
+        'mcp.team.bind_group',
+      ]);
+      expect(admin.requests[0]?.params).toMatchObject({ name: 'alpha' });
+      expect(admin.requests[1]?.params).toMatchObject({
+        grep: 'auth',
+        status: 'closed',
+        limit: 5,
+      });
+      expect(admin.requests[2]?.params).toMatchObject({
+        name: 'alpha',
+        chat_id: 'chat-1',
+      });
+      // No chat_type leaks through the simplified binding surface.
+      expect(admin.requests[2]?.params).not.toHaveProperty('chat_type');
+
+      input.end();
+      await run;
+    } finally {
+      await admin.close();
+    }
   });
 
   it('rejects create without intent and dissolve without note before admin IPC (#182 PR-3)', async () => {
@@ -170,7 +261,7 @@ describe('team-mcp stdio shim', () => {
         jsonrpc: '2.0',
         id: 2,
         method: 'tools/call',
-        params: { name: 'dissolve', arguments: { team_id: 'alpha' } },
+        params: { name: 'dissolve', arguments: { name: 'alpha' } },
       });
       expect(await reader.next()).toMatchObject({
         jsonrpc: '2.0',

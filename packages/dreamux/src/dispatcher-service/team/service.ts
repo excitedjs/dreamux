@@ -1,3 +1,5 @@
+import { Buffer } from 'node:buffer';
+
 import { WorktreeManager } from '../teammate/worktree-manager.js';
 import type { TeamMateAgentService, TeamMateSharedWorkspace } from '../teammate/service.js';
 import {
@@ -11,17 +13,23 @@ import type { FeishuCreateGroupInput, FeishuCreateGroupResult } from '../../chan
 import { TeamStore } from './store.js';
 import type {
   TeamBindChannelInput,
+  TeamChannelBindingSummary,
   TeamCreateGroupInput,
   TeamCreateGroupResult,
   TeamCreateInput,
   TeamCreateResult,
   TeamDissolveInput,
+  TeamHistoryQuery,
+  TeamHistoryResult,
+  TeamHistoryRow,
   TeamLedgerResult,
+  TeamListRow,
   TeamRecord,
   TeamSummary,
   TeamTransferChannelBackInput,
 } from './types.js';
 import { validateTeamId } from './types.js';
+import type { TeamMateIdentityStatus } from '../teammate/types.js';
 
 export interface TeamServiceOptions {
   teammates: TeamMateAgentService;
@@ -124,20 +132,51 @@ export class TeamService {
       team,
       leader: leader.teammate,
       member_count: await this.memberCount(team),
+      // No group is bound at create time; `create_group`/`bind_group` set it.
+      binding: null,
       turn: leader.turn,
     };
   }
 
-  async list(dispatcherId: string): Promise<TeamSummary[]> {
+  async list(dispatcherId: string): Promise<TeamListRow[]> {
     const teams = await this.store.list(dispatcherId);
-    const out: TeamSummary[] = [];
-    for (const team of teams) out.push(await this.summary(team));
+    const out: TeamListRow[] = [];
+    for (const team of teams) out.push(await this.listRow(team));
     return out;
   }
 
   async status(dispatcherId: string, teamId: string): Promise<TeamSummary> {
     const team = await this.mustTeam(dispatcherId, teamId);
     return this.summary(team);
+  }
+
+  /**
+   * Filterable Team recovery search (issue #182 PR-7) — the Team-side mirror of
+   * the TeamMate `history` surface. Finds Teams (closed included) by
+   * name/status/repo/intent/time, sorted most-recent first, with a cursor. The
+   * raw per-team lifecycle event timeline stays internal (`ledger`), not here.
+   */
+  async history(input: TeamHistoryQuery): Promise<TeamHistoryResult> {
+    const teams = await this.store.list(input.dispatcherId);
+    const rows: TeamHistoryRow[] = [];
+    for (const team of teams) {
+      const row = await this.historyRow(team);
+      if (matchesTeamHistoryQuery(row, input)) rows.push(row);
+    }
+    rows.sort(
+      (a, b) =>
+        b.updated_at - a.updated_at ||
+        b.created_at - a.created_at ||
+        a.name.localeCompare(b.name),
+    );
+    const start = input.cursor !== undefined ? decodeTeamCursor(input.cursor) : 0;
+    const limit = clampTeamHistoryLimit(input.limit);
+    const items = rows.slice(start, start + limit);
+    const next = start + items.length;
+    return {
+      items,
+      next_cursor: next < rows.length ? encodeTeamCursor(next) : null,
+    };
   }
 
   async ledger(dispatcherId: string, teamId: string): Promise<TeamLedgerResult> {
@@ -382,7 +421,77 @@ export class TeamService {
       team,
       leader,
       member_count: await this.memberCount(team),
+      binding: await this.activeGroupBinding(team),
     };
+  }
+
+  private async listRow(team: TeamRecord): Promise<TeamListRow> {
+    return {
+      name: team.team_id,
+      team_id: team.team_id,
+      status: team.status,
+      intent: team.intent,
+      source_repo: team.source_repo,
+      repo_cwd: team.repo_cwd,
+      worktree_mode: team.worktree.mode,
+      leader_name: team.leader_name,
+      leader_state: await this.leaderState(team),
+      member_count: await this.memberCount(team),
+      bound_group: await this.activeGroupBinding(team),
+      created_at: team.created_at,
+      updated_at: team.updated_at,
+      closed_at: team.closed_at,
+    };
+  }
+
+  private async historyRow(team: TeamRecord): Promise<TeamHistoryRow> {
+    return {
+      name: team.team_id,
+      team_id: team.team_id,
+      status: team.status,
+      close_status: team.closed_at === null ? 'open' : 'closed',
+      intent: team.intent,
+      source_repo: team.source_repo,
+      repo_cwd: team.repo_cwd,
+      runtime_cwd: team.runtime_cwd,
+      worktree: team.worktree,
+      leader_name: team.leader_name,
+      leader_agent_runtime: team.leader_agent_runtime,
+      leader_state: await this.leaderState(team),
+      member_count: await this.memberCount(team),
+      bound_group: await this.activeGroupBinding(team),
+      created_at: team.created_at,
+      updated_at: team.updated_at,
+      closed_at: team.closed_at,
+      close_note: team.close_note,
+      close_note_preview:
+        team.close_note !== null ? previewTeamText(team.close_note) : null,
+    };
+  }
+
+  /** The leader's current identity state (cheap read), or null if unreadable. */
+  private async leaderState(
+    team: TeamRecord,
+  ): Promise<TeamMateIdentityStatus | null> {
+    try {
+      return (await this.opts.teammates.status(team.dispatcher_id, team.leader_name))
+        .status;
+    } catch {
+      return null;
+    }
+  }
+
+  /** The active bound Feishu group for a Team, or null when none is bound. */
+  private async activeGroupBinding(
+    team: TeamRecord,
+  ): Promise<TeamChannelBindingSummary | null> {
+    const bindings = await this.bindings.list(team.dispatcher_id);
+    const active = bindings.find(
+      (binding) => binding.active && binding.team_id === team.team_id,
+    );
+    return active === undefined
+      ? null
+      : { provider: active.provider, chat_id: active.chat_id };
   }
 
   private async memberCount(team: TeamRecord): Promise<number> {
@@ -413,4 +522,74 @@ function teamLeaderPrompt(team: TeamRecord): string {
 
 function uniqueOpenIds(ids: string[]): string[] {
   return [...new Set(ids.filter((id) => id !== ''))];
+}
+
+function matchesTeamHistoryQuery(
+  row: TeamHistoryRow,
+  input: Omit<TeamHistoryQuery, 'dispatcherId'>,
+): boolean {
+  if (input.name !== undefined && row.name !== validateTeamId(input.name)) {
+    return false;
+  }
+  if (input.status !== undefined && row.status !== input.status) return false;
+  if (input.closeStatus !== undefined && row.close_status !== input.closeStatus) {
+    return false;
+  }
+  if (input.repo !== undefined) {
+    const needle = input.repo.toLowerCase();
+    const hit = [row.source_repo, row.repo_cwd].some(
+      (value) => value !== null && value.toLowerCase().includes(needle),
+    );
+    if (!hit) return false;
+  }
+  if (input.grep !== undefined && !teamRowMatchesText(row, input.grep)) {
+    return false;
+  }
+  if (input.since !== undefined && row.updated_at < input.since) return false;
+  if (input.until !== undefined && row.updated_at > input.until) return false;
+  return true;
+}
+
+function teamRowMatchesText(row: TeamHistoryRow, grep: string): boolean {
+  const needle = grep.toLowerCase();
+  if (needle === '') return true;
+  return [
+    row.name,
+    row.intent,
+    row.source_repo,
+    row.repo_cwd,
+    row.leader_name,
+    row.close_note,
+  ].some((value) => value !== null && value.toLowerCase().includes(needle));
+}
+
+function clampTeamHistoryLimit(input: number | undefined): number {
+  if (input === undefined) return 20;
+  if (!Number.isInteger(input) || input < 1) {
+    throw new Error('history limit must be a positive integer');
+  }
+  return Math.min(input, 100);
+}
+
+function encodeTeamCursor(offset: number): string {
+  return Buffer.from(JSON.stringify({ offset }), 'utf8').toString('base64url');
+}
+
+function decodeTeamCursor(cursor: string): number {
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as {
+      offset?: unknown;
+    };
+    if (typeof parsed.offset === 'number' && Number.isInteger(parsed.offset) && parsed.offset >= 0) {
+      return parsed.offset;
+    }
+  } catch {
+    // fall through to the loud error below
+  }
+  throw new Error('invalid history cursor');
+}
+
+function previewTeamText(text: string): string {
+  const collapsed = text.replace(/\s+/g, ' ').trim();
+  return collapsed.length <= 500 ? collapsed : `${collapsed.slice(0, 497)}...`;
 }

@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "BREAKING: Align the Team MCP surface with the TeamMate read-surface model (issue #182 PR-7). The dispatcher-only `team` MCP is now addressed by Team `name` (the internal `team_id` storage key is unchanged and equal to `name` today), and its read tools mirror the TeamMate `list`/`status`/`history` split: `team.list` returns compact scan rows (name, status, intent, repo signal, leader name/state, member count, bound-group marker, timestamps) instead of full summaries; `team.status` returns one Team's detail by name including the active bound Feishu group; and the raw per-Team event `team.ledger` verb is replaced by a filterable `team.history` recovery search over Teams (filters: name, status, close_status, repo, intent text `grep`, `since`/`until`, `limit`, `cursor`) — the raw lifecycle event timeline stays internal. Binding is simplified: `team.bind_channel` becomes `team.bind_group` taking Team `name` + `chat_id` (Feishu group only; the redundant `chat_type` is removed from the public surface, which the binding store rejected for non-group anyway), and `team.transfer_channel_back` likewise drops `chat_type`. `team.create`/`team.create_group` are unchanged in this PR (create_group retirement is deferred to a follow-up). Rebuild: none for stored state — Team records, ledgers, and channel bindings load unchanged. But any saved automation or prompt that calls the Team MCP with `team_id`, or that uses the removed `team.ledger`/`team.bind_channel` verbs or a `chat_type` argument, must switch to addressing by `name` and to `team.history`/`team.bind_group` without `chat_type`.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}
