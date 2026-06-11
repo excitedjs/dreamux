@@ -668,23 +668,29 @@ agents. The shim is also a per-dispatcher stdio process:
 
 The dispatcher-facing tools are `spawn`, `send`, `close`, `history`,
 `list`, `status`, `last`, and `get_capabilities`
-(issue #155 removed the `resume` verb; `send` reopens a closed teammate from its
-checkpoint). Issue #188 removed the `ctx` and `history_events` verbs: `history`
-is the durable session-ledger search surface and `last` reads a teammate's most
-recent settled turn(s) from that ledger (see below). Lifecycle
-tools forward
-to `dreamux serve` over the local admin socket; the server owns the
-per-dispatcher TeamMate identities, runtime checkpoints, and session ledger
-under `state/<dispatcher-id>/teammate/`. Issue #169 made `spawn.cwd`
-required and added optional managed worktree isolation:
-`spawn({ name, prompt, cwd, intent, worktree?, agent_runtime? })`. Issue #182
-PR-3 made `spawn.intent` and `close.note` required (the durable recovery subject
-and the close reason for the session ledger), added an optional `send.intent`
-that updates the recorded subject before the turn, and dropped the synthetic
-`'team dissolved'` fallback. A reuse-cwd teammate
-runs in the caller-supplied `cwd`; a managed teammate runs only in its prepared
-worktree and persists source cwd/repo, runtime cwd, worktree branch/base ref,
-cleanup policy/state, and a default dispatcher `owner` field on the identity.
+(issue #155 removed the `resume` verb; `send` reopens a closed teammate).
+Issue #188 removed the `ctx` and `history_events` verbs.
+
+**As of issue #199 (the final contract).** `spawn` takes a requested
+`name_prefix` and returns the concrete, never-reused `name`; the work directory
+is a single optional `repo` object (`{ mode: reuse-cwd | managed, path?,
+base_ref?, branch?, slug?, cleanup? }`; omitted → the dispatcher's default
+directory), replacing the old required `cwd` + `worktree`. `spawn.intent` and
+`close.note` stay required; `send.intent` optionally updates the recovery
+subject. `history` / `list` / `status` are backed by the per-name records
+(`state/<dispatcher-id>/teammate/records/<name>.json`: identity + a rolling
+recovery summary) — `history` is a records search, not an event fold — and
+`last` reads the record first (existence/scope), then folds the per-name turns
+archive (`teammate/turns/<name>.jsonl`, the only JSONL store) without starting or
+resuming a runtime, so a closed/stopped teammate stays recoverable. `session_id`
+is the runtime-native thread id (persisted directly; early `null` acceptable);
+the former Dreamux-minted ledger key, the persisted `checkpoint` object, and the
+`checkpoint_kind` / `session_ref` durable fields are gone — the resume checkpoint
+kind is rebuilt from the runtime. Lifecycle tools forward to `dreamux serve` over
+the local admin socket. A reuse-cwd teammate runs in the resolved work
+directory; a managed teammate runs only in its prepared worktree and persists
+source cwd/repo, runtime cwd, worktree branch/base ref, cleanup policy/state, and
+a default dispatcher `owner` field on the record.
 Old identities without owner/worktree metadata read as dispatcher-owned
 reuse-cwd records until the next lifecycle mutation rewrites them. A caller
 marked as `teammate` does not receive lifecycle tools, so TeamMates cannot
@@ -742,17 +748,17 @@ the TeamMate name a concrete, never-reused address:
   explicit `assistant_truncated` flag, alongside the existing compact
   `assistant_preview`. No new per-turn file/index is added; cache-spill paths are
   never persisted as the source of truth.
-- **`last(turns)`.** `last` resolves a concrete name to one identity/session_id
-  and folds `sessions.jsonl` filtered by that session_id, returning the most
-  recent `turns` settled turns (default 1, range 1..5; newest last) with the
-  captured assistant text + truncation metadata. It never starts, resumes, or
-  requires a live runtime, so it serves a closed/stopped teammate from the ledger
-  alone — it is the fallback when reverse-delivery of a completion failed.
-- **Read-surface cleanup.** `list` stays compact (concrete name, display name,
-  status, repo/cwd/session essentials), `status` exposes the current state by
-  concrete name, and `history` is the durable session-ledger search surface. The
-  obsolete `ctx` and raw `history_events` verbs are removed everywhere (MCP
-  schema, admin methods, capabilities `verbs`, docs).
+- **`last(turns)`** (as built in #188; the source moved to `teammate/turns` in
+  #199 Slice 3). `last` returned the most recent `turns` settled turns (default
+  1, range 1..5; newest last) with the captured assistant text + truncation
+  metadata. It never starts, resumes, or requires a live runtime, so it serves a
+  closed/stopped teammate — it is the fallback when reverse-delivery of a
+  completion failed.
+- **Read-surface cleanup** (#188). `list`/`status`/`history` were established as
+  the no-poll read surfaces; #199 reshaped their backing storage (records +
+  turns) and trimmed the public rows. The obsolete `ctx` and raw `history_events`
+  verbs are removed everywhere (MCP schema, admin methods, capabilities `verbs`,
+  docs).
 
 ## Team Mode Core
 

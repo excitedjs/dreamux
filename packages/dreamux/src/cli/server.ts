@@ -110,7 +110,7 @@ Runtime data:
                             restart marker, and runtime rendezvous sockets.
                             Safe to clear while no server is running.
   ~/.dreamux/state/         durable server state: per-dispatcher status/access
-                            files and TeamMate ledgers.
+                            files and TeamMate records.
   ~/.dreamux/logs/          server, Feishu channel, Codex app-server, and MCP
                             shim logs.
 

@@ -504,7 +504,9 @@ describe('TeamMateAgentService', () => {
       await readFile(dispatcherTeamMateRecordPath('flow', name), 'utf8'),
     ) as Record<string, unknown>;
     expect(record['version']).toBe(1);
-    for (const removed of ['checkpoint', 'checkpoint_kind', 'session_ref']) {
+    // The runtime checkpoint wrapper and the write-only `display_name` are no
+    // longer persisted (issue #199 Slice 2/3).
+    for (const removed of ['checkpoint', 'checkpoint_kind', 'session_ref', 'display_name']) {
       expect(record).not.toHaveProperty(removed);
     }
     expect(record).toHaveProperty('turn_count');
@@ -1972,7 +1974,9 @@ async function waitForSettled(
   name: string,
   count: number,
 ): Promise<void> {
-  const deadline = Date.now() + 3000;
+  // Generous deadline: the settle handler runs off a void-ed callback, so under
+  // full-suite parallel load the turns-archive write can lag a few ticks.
+  const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
     let settled = 0;
     for await (const row of service.turns().stream('flow', name)) {

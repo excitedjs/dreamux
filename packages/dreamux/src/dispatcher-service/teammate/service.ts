@@ -49,7 +49,7 @@ import {
   type TeamMateHistoryQuery,
   type TeamMateHistoryResult,
   type TeamMateIdentity,
-  type TeamMateLedgerRow,
+  type TeamMateRecordRow,
   type TeamMateLastResult,
   type TeamMateLastTurn,
   type TeamMateRole,
@@ -229,7 +229,7 @@ export class TeamMateAgentService {
     // The agent-supplied `name` is a base slug / display hint, not the final
     // address (issue #188): require it non-empty, then allocate a concrete,
     // never-reused name below and return it in the spawn result.
-    const displayName = requireLifecycleText(input.name, 'TeamMate spawn name');
+    const requestedName = requireLifecycleText(input.name, 'TeamMate spawn name');
     // Required recovery subject — enforced here too for in-process callers that
     // bypass the MCP shim / admin layer (issue #182 PR-3).
     requireLifecycleText(input.intent, 'TeamMate spawn intent');
@@ -245,7 +245,7 @@ export class TeamMateAgentService {
       input.principal.kind === 'team_leader' ? 'team_member' : 'teammate';
     // Allocate the concrete address from the requested slug (Team members get
     // the `tm-` rule). Checked against all persisted identities, never reused.
-    const name = await this.allocateName(dispatcherId, role, displayName);
+    const name = await this.allocateName(dispatcherId, role, requestedName);
     const agentRuntimeId =
       input.agentRuntime ?? this.defaultAgentRuntime(dispatcherId);
     const agent = this.resolveAgent(dispatcherId, agentRuntimeId);
@@ -274,7 +274,6 @@ export class TeamMateAgentService {
     let identity = await this.identities.create({
       dispatcherId,
       name,
-      displayName,
       owner,
       role,
       teamId: owner.kind === 'team' ? owner.team_id : null,
@@ -471,12 +470,12 @@ export class TeamMateAgentService {
     // there is no turn/event fold here. Closed teammates keep their record and
     // stay searchable; live-only facts (runtime status) come from the live map.
     const identities = await this.identities.list(dispatcherId);
-    const rows: TeamMateLedgerRow[] = [];
+    const rows: TeamMateRecordRow[] = [];
     for (const identity of identities) {
-      const row = this.toLedgerRow(identity);
+      const row = this.toRecordRow(identity);
       if (
         principalCanAccess(input.principal, identity) &&
-        this.matchesLedgerQuery(row, input)
+        this.matchesRecordQuery(row, input)
       ) {
         rows.push(row);
       }
@@ -672,7 +671,6 @@ export class TeamMateAgentService {
     let identity = await this.identities.create({
       dispatcherId: input.dispatcherId,
       name,
-      displayName: input.displayName ?? null,
       owner,
       role: 'team_leader',
       teamId: input.teamId,
@@ -1194,7 +1192,7 @@ export class TeamMateAgentService {
    * per-name RECORD's rolling summary; `history` no longer folds the turns
    * archive. Live-only facts (runtime status) come from the live map.
    */
-  private toLedgerRow(identity: TeamMateIdentity): TeamMateLedgerRow {
+  private toRecordRow(identity: TeamMateIdentity): TeamMateRecordRow {
     const runtime = this.live.get(liveKey(identity.dispatcher_id, identity.name))?.runtime ?? null;
     return {
       name: identity.name,
@@ -1224,8 +1222,8 @@ export class TeamMateAgentService {
     };
   }
 
-  private matchesLedgerQuery(
-    row: TeamMateLedgerRow,
+  private matchesRecordQuery(
+    row: TeamMateRecordRow,
     input: Omit<TeamMateHistoryQuery, 'dispatcherId' | 'principal'>,
   ): boolean {
     if (input.name !== undefined && row.name !== validateTeamMateName(input.name)) {
@@ -1244,7 +1242,7 @@ export class TeamMateAgentService {
         row.source_repo !== null && row.source_repo.toLowerCase().includes(needle);
       if (!hit) return false;
     }
-    if (input.grep !== undefined && !ledgerRowMatchesText(row, input.grep)) {
+    if (input.grep !== undefined && !recordRowMatchesText(row, input.grep)) {
       return false;
     }
     if (input.since !== undefined && row.last_seen_at < input.since) return false;
@@ -1439,7 +1437,7 @@ function decodeCursor(cursor: string): number {
   throw new Error('invalid history cursor');
 }
 
-function ledgerRowMatchesText(row: TeamMateLedgerRow, grep: string): boolean {
+function recordRowMatchesText(row: TeamMateRecordRow, grep: string): boolean {
   const needle = grep.trim().toLowerCase();
   if (needle === '') return true;
   return [

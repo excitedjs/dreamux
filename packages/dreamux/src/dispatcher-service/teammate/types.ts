@@ -21,14 +21,14 @@ export interface TeamMateIdentity {
    * value all later send/status/last/close calls key on.
    */
   name: string;
-  /**
-   * The agent-supplied base slug / display hint that produced {@link name}
-   * (issue #188). Surfaced by list/status/history so a human sees the requested
-   * label while `name` stays the address. Null for pre-#188 records (which
-   * read back with no display name) — callers fall back to `name`.
-   */
-  display_name: string | null;
   owner: TeamMateOwner;
+  /**
+   * Minimal internal routing state (issue #199 Slice 3): `owner` is the
+   * ownership/visibility authority, but a TeamLeader's `owner.kind` is
+   * `dispatcher` (like an ordinary teammate), so `role` is what distinguishes a
+   * leader from an ordinary teammate, and `team_id` carries the leader's team
+   * (its `owner` has no `team_id`). Both stay off every public surface.
+   */
   role: TeamMateRole;
   team_id: string | null;
   /**
@@ -193,7 +193,7 @@ export interface TeamMateDispatcherOwner {
  * Where a teammate turn was submitted from, recorded per turn id at submit
  * time and resolved again when the turn settles. This is what decides where
  * the completion is delivered: a `channel` turn on a TeamLeader stays
- * pull-only (team ledger), while a `dispatcher`-initiated turn returns to the
+ * pull-only, while a `dispatcher`-initiated turn returns to the
  * dispatcher runtime as a completion. A settle whose turn id was never
  * recorded (e.g. submitted before a server restart) resolves to `null` and
  * the facade picks the safe default for the role.
@@ -214,7 +214,7 @@ export interface SpawnTeamMateInput {
   agentRuntime?: string;
   cwd: string;
   worktree?: TeamMateWorktreeRequest;
-  /** Required recovery subject for the session ledger (issue #182 PR-3). */
+  /** Required recovery subject for the record (issue #182 PR-3). */
   intent: string;
 }
 
@@ -223,8 +223,6 @@ export interface CreateTeamLeaderInput {
   teamId: string;
   /** The concrete, never-reused TeamLeader address allocated by the caller (issue #188). */
   name: string;
-  /** Human-readable display label (e.g. `${teamId}-leader`); falls back to `name`. */
-  displayName?: string | null;
   prompt: string;
   agentRuntime: string;
   sourceCwd: string;
@@ -279,7 +277,7 @@ export interface SendTeamMateInput {
 export interface CloseTeamMateInput {
   dispatcherId: string;
   name: string;
-  /** Required close reason recorded in the ledger (issue #182 PR-3). */
+  /** Required close reason recorded on the record (issue #182 PR-3). */
   note: string;
 }
 
@@ -326,7 +324,7 @@ export interface TeamMateHistoryQuery {
  * persisted checkpoint. The checkpoint itself is internal and never surfaced
  * (issue #199 Slice 1).
  */
-export interface TeamMateLedgerResumeHint {
+export interface TeamMateResumeHint {
   tool: 'send';
   name: string;
 }
@@ -337,9 +335,9 @@ export interface TeamMateLedgerResumeHint {
  * `session_id`, no `id`/`team_id`/`display_name`/`role`, no `close_status`/`state`
  * duplicate of `status`, and no `checkpoint` or machine-local cwd/worktree paths.
  */
-export interface TeamMateLedgerRow {
+export interface TeamMateRecordRow {
   name: string;
-  /** Number of submitted turns in the session ledger (0 when no session captured). */
+  /** Number of submitted turns recorded on the record (0 when none yet). */
   turn_count: number;
   owner: TeamMateOwner;
   agent_runtime: string;
@@ -356,21 +354,21 @@ export interface TeamMateLedgerRow {
   last_prompt_preview: string | null;
   last_assistant_preview: string | null;
   cleanup_state: TeamMateWorktreeCleanupState;
-  resume: TeamMateLedgerResumeHint | null;
+  resume: TeamMateResumeHint | null;
 }
 
 export interface TeamMateHistoryResult {
-  items: TeamMateLedgerRow[];
+  items: TeamMateRecordRow[];
   next_cursor: string | null;
 }
 
 /**
- * One settled turn returned by `last` (issue #188), folded from the durable
- * session ledger by `session_id` in ledger append order. Each turn pairs the
- * submit-side event (spawn/send/channel) with the settled row by `turn_id`, so
- * recovery sees the prompt/intent/origin alongside the assistant output. This is
- * a pure read of captured facts — it never starts or resumes a runtime, so it
- * works for a closed or stopped teammate.
+ * One settled turn returned by `last` (issue #199 Slice 3), folded from the
+ * per-name turns archive in file append order. Each turn pairs the submit row
+ * (spawn/send/channel) with the settled row by `turn_id`, so recovery sees the
+ * prompt/intent/origin alongside the assistant output. This is a pure read of
+ * captured facts — it never starts or resumes a runtime, so it works for a
+ * closed or stopped teammate.
  */
 export interface TeamMateLastTurn {
   /** The turn id; the join key between the submit event and the settled row. */
@@ -381,9 +379,9 @@ export interface TeamMateLastTurn {
   prompt_preview: string | null;
   /** Recovery subject recorded at submit time, when known. */
   intent: string | null;
-  /** Ledger timestamp of the submit event, or null if only the settle was seen. */
+  /** Turn-archive timestamp of the submit row, or null if only the settle was seen. */
   submitted_at: number | null;
-  /** Ledger timestamp of the settled event. */
+  /** Turn-archive timestamp of the settled row. */
   settled_at: number;
   settle_status: 'completed' | 'failed' | 'stopped' | null;
   /** The teammate's final assistant output, captured up to the hard cap. */

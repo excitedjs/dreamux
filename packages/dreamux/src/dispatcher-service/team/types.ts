@@ -49,7 +49,7 @@ export interface TeamCreateInput {
 export interface TeamDissolveInput {
   dispatcherId: string;
   teamId: string;
-  /** Required dissolve reason recorded in the ledger (issue #182 PR-3). */
+  /** Required dissolve reason recorded on the team record (issue #182 PR-3). */
   note: string;
 }
 
@@ -106,15 +106,9 @@ export interface TeamSummary {
 }
 
 /**
- * Cheap scan row for `team.list` (issue #182 PR-7), mirroring the TeamMate
- * `list`/`status` split: compact current-Team fields only, no inlined leader
- * runtime status or full worktree record. Reach for `team.status` for detail.
- */
-/**
- * Compact scan row for `team.list` (issue #199 Slice 1). Keyed by the concrete
+ * Compact scan row for `team.list` (issue #199 Slice 1/2). Keyed by the concrete
  * `team_name`; the duplicate `team_id` and the machine-local `repo_cwd` /
- * `worktree_mode` are no longer projected. The cwd/worktree→`repo` field
- * collapse for the remaining surfaces is Slice 2 work.
+ * `worktree_mode` are no longer projected — reach for `team.status` for detail.
  */
 export interface TeamListRow {
   team_name: string;
@@ -134,7 +128,7 @@ export interface TeamListRow {
  * Filterable recovery search over Teams (issue #182 PR-7), the Team-side mirror
  * of the TeamMate `history` surface: it finds Teams (including closed ones) by
  * name / status / repo / intent text / time range, rather than reading one
- * team's raw lifecycle event timeline (which stays an internal/debug ledger).
+ * team's raw lifecycle event timeline (which no longer exists).
  */
 export interface TeamHistoryQuery {
   dispatcherId: string;

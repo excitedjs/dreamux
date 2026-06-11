@@ -21,8 +21,6 @@ export interface TeamMateIdentityStoreLog {
 export interface TeamMateIdentityCreateInput {
   dispatcherId: string;
   name: string;
-  /** Agent-supplied base slug / display hint behind the concrete name (issue #188). */
-  displayName?: string | null;
   owner?: TeamMateOwner;
   role?: TeamMateRole;
   teamId?: string | null;
@@ -110,7 +108,6 @@ export class TeamMateIdentityStore {
       version: 1,
       dispatcher_id: input.dispatcherId,
       name: input.name,
-      display_name: input.displayName ?? null,
       owner: input.owner ?? dispatcherOwner(input.dispatcherId),
       role: input.role ?? 'teammate',
       team_id: input.teamId ?? null,
@@ -225,27 +222,35 @@ function readIdentity(
   const worktree = readWorktreeIdentity(record['worktree'], runtimeCwd);
   const createdAt = typeof record['created_at'] === 'number' ? record['created_at'] : 0;
   const updatedAt = typeof record['updated_at'] === 'number' ? record['updated_at'] : createdAt;
+  // #199 Slice 3: build the record by EXPLICIT field, never a loose spread of the
+  // raw JSON — so a removed legacy field (e.g. `display_name`, the old
+  // `checkpoint` object, or the Dreamux-minted session id) is never carried back
+  // out or re-persisted. Missing fields read forward-compatibly with defaults.
   return {
-    ...(value as unknown as TeamMateIdentity),
+    version: 1,
+    dispatcher_id: dispatcherId,
+    name,
     owner: readOwner(record['owner'], dispatcherId),
     role: readRole(record['role']),
     team_id: typeof record['team_id'] === 'string' ? record['team_id'] : null,
+    agent_runtime: record['agent_runtime'] as string,
+    // session_id is the runtime-native thread id (null until the runtime reports
+    // one); the removed `checkpoint` object is never read back.
+    session_id:
+      typeof record['session_id'] === 'string' ? record['session_id'] : null,
     source_cwd: sourceCwd,
     source_repo: sourceRepo,
+    cwd: record['cwd'] as string,
     runtime_cwd: runtimeCwd,
     worktree,
     intent: typeof record['intent'] === 'string' ? record['intent'] : null,
-    // #199 Slice 3: session_id is the runtime-native thread id (null until the
-    // runtime reports one). The removed `checkpoint` object is not carried.
-    session_id:
-      typeof record['session_id'] === 'string' ? record['session_id'] : null,
-    checkpoint: undefined,
-    // Pre-#188 records have no display name; read as null so callers fall back
-    // to the concrete `name`. Legacy records stay readable without migration.
-    display_name:
-      typeof record['display_name'] === 'string' ? record['display_name'] : null,
-    // #199 Slice 3 rolling summary — default for a record written before these
-    // fields existed (forward-compatible read, no migration).
+    created_at: createdAt,
+    updated_at: updatedAt,
+    status: readStatus(record['status']),
+    last_error: typeof record['last_error'] === 'string' ? record['last_error'] : null,
+    closed_at: typeof record['closed_at'] === 'number' ? record['closed_at'] : null,
+    close_note: typeof record['close_note'] === 'string' ? record['close_note'] : null,
+    // Rolling summary — default for a record written before these fields existed.
     turn_count: typeof record['turn_count'] === 'number' ? record['turn_count'] : 0,
     last_seen_at:
       typeof record['last_seen_at'] === 'number' ? record['last_seen_at'] : updatedAt,
@@ -257,7 +262,21 @@ function readIdentity(
       typeof record['last_assistant_preview'] === 'string'
         ? record['last_assistant_preview']
         : null,
-  } as TeamMateIdentity;
+  };
+}
+
+const IDENTITY_STATUSES = new Set<TeamMateIdentityStatus>([
+  'starting',
+  'running',
+  'degraded',
+  'closed',
+  'stopped',
+]);
+
+function readStatus(value: unknown): TeamMateIdentityStatus {
+  return typeof value === 'string' && IDENTITY_STATUSES.has(value as TeamMateIdentityStatus)
+    ? (value as TeamMateIdentityStatus)
+    : 'stopped';
 }
 
 function readRole(value: unknown): TeamMateRole {

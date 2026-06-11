@@ -73,7 +73,6 @@ export class TeamService {
       input.dispatcherId,
       teamId,
     );
-    const leaderDisplayName = `${teamId}-leader`;
     let team =
       existing ??
       (await this.store.create({
@@ -108,7 +107,6 @@ export class TeamService {
       dispatcherId: input.dispatcherId,
       teamId,
       name: leaderName,
-      displayName: leaderDisplayName,
       prompt,
       agentRuntime: input.leaderAgentRuntime,
       sourceCwd: workspace.sourceCwd,
