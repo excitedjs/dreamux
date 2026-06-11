@@ -176,7 +176,7 @@ describe('teammate-mcp stdio shim', () => {
     ]);
   });
 
-  it('marks spawn cwd as required and advertises managed worktree options', async () => {
+  it('takes an optional repo input and no longer requires cwd/worktree (#199 Slice 2)', async () => {
     const tools = await toolSchemas('dispatcher');
     const spawn = tools.find((entry) => entry['name'] === 'spawn') as {
       inputSchema: {
@@ -184,15 +184,19 @@ describe('teammate-mcp stdio shim', () => {
         properties: Record<string, unknown>;
       };
     };
-    // Issue #182 PR-3: spawn.intent is required (durable recovery subject).
-    // Issue #199 Slice 1: the requested-name input is `name_prefix`.
-    expect(spawn.inputSchema.required).toEqual(['name_prefix', 'prompt', 'cwd', 'intent']);
+    // #182 PR-3: intent required. #199 Slice 1: requested-name is name_prefix.
+    // #199 Slice 2: cwd is no longer required and the public work-directory input
+    // is the single optional `repo` object (the legacy `cwd`/`worktree` are gone).
+    expect(spawn.inputSchema.required).toEqual(['name_prefix', 'prompt', 'intent']);
     expect(spawn.inputSchema.properties).toHaveProperty('name_prefix');
-    expect(spawn.inputSchema.properties).not.toHaveProperty('name');
-    expect(spawn.inputSchema.properties).toHaveProperty('worktree');
-    expect(JSON.stringify(spawn.inputSchema.properties['worktree'])).toContain(
-      'delete-on-close',
-    );
+    expect(spawn.inputSchema.properties).toHaveProperty('repo');
+    expect(spawn.inputSchema.properties).not.toHaveProperty('cwd');
+    expect(spawn.inputSchema.properties).not.toHaveProperty('worktree');
+    // The repo object exposes the reuse-cwd / managed work modes + cleanup.
+    const repo = JSON.stringify(spawn.inputSchema.properties['repo']);
+    expect(repo).toContain('reuse-cwd');
+    expect(repo).toContain('managed');
+    expect(repo).toContain('delete-on-close');
   });
 
   it('marks spawn.intent and close.note required, and send.intent optional (#182 PR-3)', async () => {
@@ -287,9 +291,9 @@ describe('teammate-mcp stdio shim', () => {
             name_prefix: 'reviewer',
             prompt: 'Review the change.',
             agent_runtime: 'codex',
-            cwd: '/workspace',
-            worktree: {
+            repo: {
               mode: 'managed',
+              path: '/workspace',
               slug: 'reviewer',
               base_ref: 'origin/main',
               branch: 'dreamux/reviewer',
@@ -310,6 +314,8 @@ describe('teammate-mcp stdio shim', () => {
           },
         },
       });
+      // #199 Slice 2: the shim forwards the validated `repo` object verbatim; the
+      // admin layer maps it onto the internal cwd + worktree request.
       expect(admin.requests).toEqual([
         {
           id: expect.any(String) as string,
@@ -320,9 +326,9 @@ describe('teammate-mcp stdio shim', () => {
             name_prefix: 'reviewer',
             prompt: 'Review the change.',
             agent_runtime: 'codex',
-            cwd: '/workspace',
-            worktree: {
+            repo: {
               mode: 'managed',
+              path: '/workspace',
               slug: 'reviewer',
               base_ref: 'origin/main',
               branch: 'dreamux/reviewer',
@@ -340,7 +346,7 @@ describe('teammate-mcp stdio shim', () => {
     }
   });
 
-  it('rejects spawn without cwd before admin IPC', async () => {
+  it('rejects a repo input with an invalid mode before admin IPC (#199 Slice 2)', async () => {
     const admin = await startFakeAdminServer((request) => ({
       id: request.id,
       ok: true,
@@ -359,6 +365,8 @@ describe('teammate-mcp stdio shim', () => {
         log: () => {},
       });
 
+      // cwd is no longer required (omitting repo uses the default directory); an
+      // explicit repo with a bad mode is rejected before any admin IPC.
       writeJson(input, {
         jsonrpc: '2.0',
         id: 1,
@@ -368,8 +376,8 @@ describe('teammate-mcp stdio shim', () => {
           arguments: {
             name_prefix: 'reviewer',
             prompt: 'Review the change.',
-            // intent present so this isolates the missing-cwd case.
             intent: 'review',
+            repo: { mode: 'bogus' },
           },
         },
       });
@@ -379,7 +387,7 @@ describe('teammate-mcp stdio shim', () => {
         id: 1,
         result: {
           isError: true,
-          content: [{ text: 'cwd must be a non-empty string' }],
+          content: [{ text: "repo.mode must be 'reuse-cwd' or 'managed'" }],
         },
       });
       expect(admin.requests).toEqual([]);

@@ -529,7 +529,6 @@ export class TeamMateAgentService {
       // durable turns to read; report an empty, well-formed result.
       return {
         teammate,
-        session_id: null,
         requested_turns: requestedTurns,
         returned_turns: 0,
         turns: [],
@@ -624,7 +623,6 @@ export class TeamMateAgentService {
     );
     return {
       teammate,
-      session_id: sessionId,
       requested_turns: requestedTurns,
       returned_turns: lastTurns.length,
       turns: lastTurns,
@@ -1182,21 +1180,24 @@ export class TeamMateAgentService {
   ): TeamMateRuntimeStatus {
     return {
       name: identity.name,
-      display_name: identity.display_name,
-      session_id: identity.session_id,
-      role: identity.role,
-      team_id: identity.team_id,
+      // #199 Slice 2: public session_id is the runtime-native thread id (the
+      // checkpoint id), not the former Dreamux-minted ledger key. Null until the
+      // runtime reports one.
+      session_id: identity.checkpoint?.id ?? null,
       owner: identity.owner,
       agent_runtime: identity.agent_runtime,
-      source_cwd: identity.source_cwd,
-      source_repo: identity.source_repo,
-      cwd: identity.cwd,
-      runtime_cwd: identity.runtime_cwd,
-      worktree: identity.worktree,
+      repo: {
+        mode: identity.worktree.mode,
+        path: identity.runtime_cwd,
+        source_repo: identity.source_repo,
+        branch: identity.worktree.branch,
+        base_ref: identity.worktree.base_ref,
+        cleanup: identity.worktree.cleanup,
+        cleanup_state: identity.worktree.cleanup_state,
+      },
       intent: identity.intent,
       status: identity.status,
       runtime_status: runtime?.getStatus() ?? null,
-      checkpoint: identity.checkpoint,
       last_error: identity.last_error,
       closed_at: identity.closed_at,
       close_note: identity.close_note,

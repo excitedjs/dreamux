@@ -20,9 +20,16 @@ ships in the npm package:
   `status` filter is kept; the public `history` surface no longer exposes the
   retired `state` / `close_status` filters, the Dreamux-made `session_id`,
   `id`/`team_id`, `display_name`, the machine-local cwd/worktree paths, or
-  runtime `checkpoint` (issue #199 Slice 1). The lighter `list`/`status`
-  projections and the cwd/worktree→`repo` field collapse are deferred to later
-  Epic slices. The obsolete `ctx` and
+  runtime `checkpoint` (issue #199 Slice 1). Issue #199 Slice 2 collapses the
+  shared spawn/send/status/list output (`TeamMateRuntimeStatus`): `owner` is the
+  sole ownership authority (no public `role`/`team_id`), `display_name` and the
+  runtime `checkpoint` are gone, `session_id` now means the runtime-native thread
+  id (early `null` acceptable), and the cwd/source/worktree family is reported
+  through one compact `repo` view. The public work-directory INPUT for
+  `spawn`/`team.create` is the matching optional `repo` object (`{ mode: reuse-cwd
+  | managed, path?, base_ref?, branch?, slug?, cleanup? }`; omitted → the
+  dispatcher's default directory), replacing the old `cwd` / `repo_cwd` /
+  `worktree` inputs. The obsolete `ctx` and
   `history_events` verbs were removed (issue #188). The
   `tm` CLI is the explicit fallback for legacy diagnostics
   ([provider architecture realignment](../decisions/provider-architecture-realignment.md)).
@@ -30,9 +37,12 @@ ships in the npm package:
   coordination.
 - `team` MCP is injected for dispatcher-only Team Mode lifecycle, addressed by
   `team_name` (issue #182 PR-7/PR-8; concrete-key rename in #199 Slice 1):
-  `create` a TeamLeader (optionally binding an EXISTING Feishu group via
-  `bind_group: { chat_id }`), inspect with `list` (compact rows) / `status` (one
-  Team's detail incl. active bound group) / `history` (a compact recovery search
+  `create` a TeamLeader (with an optional `repo` object, same shape as
+  `teammate.spawn`, replacing the old `repo_cwd`; #199 Slice 2) — optionally
+  binding an EXISTING Feishu group via `bind_group: { chat_id }` — inspect with
+  `list` (compact rows) / `status` (the public `team_name`-keyed team view +
+  leader/binding summary, no machine-local `repo_cwd`/`worktree`; #199 Slice 2) /
+  `history` (a compact recovery search
   by `team_name` / `status` / `repo` / `grep` / `since` / `until`, returning
   `{ items, next_cursor }`; the retired `close_status` filter and the
   `team_id` / machine-local cwd/worktree rows are gone in #199 Slice 1),

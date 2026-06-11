@@ -41,12 +41,14 @@ export interface TeamMateIdentity {
    */
   agent_runtime: string;
   /**
-   * Stable session identifier (issue #182 PR-5), generated at spawn and reused
-   * when `send` reopens a closed teammate from its checkpoint, so the durable
-   * session ledger keys on a value that never re-keys to the runtime thread id.
-   * Nullable for backward compatibility: identity records written before PR-5
-   * read as `null`. A fresh spawn (including reusing a closed record) mints a
-   * new id.
+   * Internal session-ledger join key (issue #182 PR-5), generated at spawn and
+   * reused when `send` reopens a closed teammate, so the durable session ledger
+   * keys on a value that never re-keys to the runtime thread id. Nullable for
+   * pre-PR-5 records. As of issue #199 Slice 2 this is NOT the public
+   * `session_id`: the public surfaces now report the runtime-native thread id
+   * (the checkpoint id). This Dreamux-minted key is an internal/transitional
+   * ledger detail and is retired when the Slice 3 records/turns storage replaces
+   * the session ledger.
    */
   session_id: string | null;
   /**
@@ -75,6 +77,13 @@ export interface TeamMateIdentity {
  * the recovery facts (repo / cwd / worktree / name / team / intent / runtime
  * checkpoint id) so a session can be reconstructed weeks later from the ledger
  * alone, without joining other files. No volatile socket path is ever recorded.
+ *
+ * This is INTERNAL/transitional storage. As of issue #199 Slice 2 the public MCP
+ * surfaces no longer expose `display_name`, the public `role`/`team_id`, the
+ * Dreamux-made `session_id`, the `checkpoint_kind`/`session_ref` pair, or the
+ * machine-local cwd/worktree fields captured here. The whole session ledger
+ * (these denormalized fields included) is replaced by the `teammate/turns`
+ * storage in Slice 3; the capture shape is left intact until then.
  */
 export type TeamMateSessionEventType = 'spawn' | 'send' | 'settled' | 'close';
 
@@ -167,25 +176,42 @@ export interface TeamMateSessionRow {
   close_note_preview: string | null;
 }
 
+/**
+ * Compact `repo` output view (issue #199 Slice 2). Collapses the legacy
+ * `source_cwd` / `cwd` / `runtime_cwd` / `source_repo` / flattened `worktree`
+ * fields into one object that mirrors the public `repo` INPUT vocabulary: it
+ * reports the resolved work directory (`path`), the git-canonical repository
+ * identity (`source_repo`), and the worktree mode / cleanup facts. The
+ * machine-local `slug` and `cleanup_error` internals stay off the public view.
+ */
+export interface TeamMateRepoView {
+  mode: TeamMateWorktreeIdentity['mode'];
+  path: string;
+  source_repo: string | null;
+  branch: string | null;
+  base_ref: string | null;
+  cleanup: TeamMateWorktreeCleanupPolicy;
+  cleanup_state: TeamMateWorktreeCleanupState;
+}
+
+/**
+ * Public single-record / list projection for a TeamMate (issue #199 Slice 2).
+ * `owner` is the sole ownership/visibility authority — the public `role` and the
+ * redundant `team_id` are gone. The Dreamux-made `display_name` and the runtime
+ * `checkpoint` wrapper are no longer surfaced. `session_id` now means the
+ * runtime-native session/thread id (early `null` is acceptable), not the former
+ * Dreamux-minted ledger key. The cwd/worktree family is collapsed into `repo`.
+ */
 export interface TeamMateRuntimeStatus {
   name: string;
-  /** Agent-supplied base slug / display hint (issue #188); null for legacy records. */
-  display_name: string | null;
-  /** Stable session id, for recovery (issue #182 PR-5/#188); null for legacy records. */
+  /** Runtime-native session/thread id (the runtime checkpoint id); null until known. */
   session_id: string | null;
   owner: TeamMateOwner;
-  role: TeamMateRole;
-  team_id: string | null;
   agent_runtime: string;
-  source_cwd: string;
-  source_repo: string | null;
-  cwd: string;
-  runtime_cwd: string;
-  worktree: TeamMateWorktreeIdentity;
+  repo: TeamMateRepoView;
   intent: string | null;
   status: TeamMateIdentityStatus;
   runtime_status: DispatcherStatus | null;
-  checkpoint: AgentRuntimeResumeCheckpoint | null;
   last_error: string | null;
   closed_at: number | null;
   close_note: string | null;
@@ -431,8 +457,6 @@ export interface TeamMateLastTurn {
 
 export interface TeamMateLastResult {
   teammate: TeamMateRuntimeStatus;
-  /** The resolved session the turns were read from, or null when none exists yet. */
-  session_id: string | null;
   /** The validated requested turn count (1..5). */
   requested_turns: number;
   /** How many settled turns were actually available (<= requested). */

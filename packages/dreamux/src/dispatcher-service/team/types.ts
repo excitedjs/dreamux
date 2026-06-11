@@ -98,8 +98,28 @@ export interface TeamChannelBindingSummary {
   chat_id: string;
 }
 
+/**
+ * Public Team record view (issue #199 Slice 2). The status surface speaks the
+ * concrete `team_name`; the duplicate `name` / `team_id`, the machine-local
+ * `repo_cwd` / `runtime_cwd` / flattened `worktree`, and the persisted `version`
+ * are projected away. The persisted {@link TeamRecord} keeps them for internal
+ * orchestration and storage (the storage rewrite is Slice 3).
+ */
+export interface TeamView {
+  team_name: string;
+  status: TeamStatus;
+  intent: string | null;
+  source_repo: string | null;
+  leader_name: string;
+  leader_agent_runtime: string;
+  created_at: number;
+  updated_at: number;
+  closed_at: number | null;
+  close_note: string | null;
+}
+
 export interface TeamSummary {
-  team: TeamRecord;
+  team: TeamView;
   leader: TeamMateRuntimeStatus | null;
   member_count: number;
   /** The active bound group chat, or null when no group is bound (issue #182 PR-7). */

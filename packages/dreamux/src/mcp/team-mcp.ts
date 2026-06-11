@@ -4,6 +4,7 @@ import type { Readable, Writable } from 'node:stream';
 import { AdminClientError, sendAdminRequest } from '../admin/client.js';
 import { adminSocketPath as defaultAdminSocketPath } from '../platform/paths.js';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
+import { optionalRepoInput, repoInputSchema } from './teammate-mcp.js';
 
 export interface TeamMcpOptions {
   dispatcherId: string;
@@ -99,9 +100,9 @@ async function handleRequest(
 
 function teamTools(): Array<Record<string, unknown>> {
   return [
-    tool('create', 'Create a Team and start its TeamLeader. team_name is the concrete Team key used by all later status/history/dissolve/bind_group calls. intent is required: it is the durable recovery subject for the Team. Optionally bind an existing Feishu group chat at create time via bind_group.', {
+    tool('create', 'Create a Team and start its TeamLeader. team_name is the concrete Team key used by all later status/history/dissolve/bind_group calls. intent is required: it is the durable recovery subject for the Team. repo is optional: omit it to use the dispatcher\'s default directory, or pass { mode: reuse-cwd | managed, path?, base_ref?, branch?, slug?, cleanup? } to choose the repository work mode. Optionally bind an existing Feishu group chat at create time via bind_group.', {
       team_name: { type: 'string', minLength: 1, maxLength: 64 },
-      repo_cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+      repo: repoInputSchema(),
       leader_agent_runtime: { type: 'string', minLength: 1, maxLength: 128 },
       intent: { type: 'string', minLength: 1, maxLength: 2000 },
       prompt: { type: 'string', maxLength: 20000 },
@@ -111,7 +112,7 @@ function teamTools(): Array<Record<string, unknown>> {
         properties: { chat_id: { type: 'string', minLength: 1 } },
         required: ['chat_id'],
       },
-    }, ['team_name', 'repo_cwd', 'leader_agent_runtime', 'intent']),
+    }, ['team_name', 'leader_agent_runtime', 'intent']),
     tool('list', 'List Teams owned by this dispatcher (compact scan rows: team_name, status, intent, repo, leader, member count, bound group).', {}, []),
     tool('status', 'Read one Team\'s detailed current status by its team_name (record, TeamLeader status, member count, active bound group).', {
       team_name: { type: 'string', minLength: 1, maxLength: 64 },
@@ -206,12 +207,16 @@ function createArgs(value: unknown): Record<string, unknown> {
     const bindObj = asRecord(bindGroupRaw, 'bind_group');
     bindGroup = { chat_id: requireString(bindObj, 'chat_id') };
   }
+  // #199 Slice 2: the public work-directory input is a single optional `repo`
+  // object (replacing the old required `repo_cwd`). Omitted → the dispatcher's
+  // default directory.
+  const repo = optionalRepoInput(obj, 'repo');
   return {
     team_name: requireString(obj, 'team_name'),
-    repo_cwd: requireString(obj, 'repo_cwd'),
     leader_agent_runtime: requireString(obj, 'leader_agent_runtime'),
     // Required recovery subject (issue #182 PR-3).
     intent: requireString(obj, 'intent'),
+    ...(repo !== null ? { repo } : {}),
     ...(prompt !== null ? { prompt } : {}),
     ...(bindGroup !== null ? { bind_group: bindGroup } : {}),
   };

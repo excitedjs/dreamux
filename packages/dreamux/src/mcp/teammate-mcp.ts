@@ -177,28 +177,14 @@ function teammateTools(
     intent: { type: 'string', minLength: 1, maxLength: 2000 },
   };
   if (callerKind === 'dispatcher') {
-    spawnProperties['cwd'] = { type: 'string', minLength: 1, maxLength: 4096 };
-    spawnProperties['worktree'] = {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        mode: { type: 'string', enum: ['reuse-cwd', 'managed'] },
-        slug: { type: 'string', minLength: 1, maxLength: 64 },
-        base_ref: { type: 'string', minLength: 1, maxLength: 256 },
-        branch: { type: 'string', minLength: 1, maxLength: 256 },
-        cleanup: { type: 'string', enum: ['keep', 'delete-on-close'] },
-      },
-      required: ['mode'],
-    };
+    spawnProperties['repo'] = repoInputSchema();
   }
   return [
     tool(
       'spawn',
-      'Start a resumable TeamMate agent and submit its first turn. name_prefix is the requested label; spawn RETURNS the concrete, never-reused name that all later send/status/last/close MUST use. Use get_capabilities.agent_runtimes[].id as agent_runtime. intent is required: it is the durable recovery subject.',
+      'Start a resumable TeamMate agent and submit its first turn. name_prefix is the requested label; spawn RETURNS the concrete, never-reused name that all later send/status/last/close MUST use. Use get_capabilities.agent_runtimes[].id as agent_runtime. intent is required: it is the durable recovery subject. repo is optional: omit it to work in the dispatcher\'s default directory, or pass { mode: reuse-cwd | managed, path?, base_ref?, branch?, slug?, cleanup? } to choose the repository work mode.',
       spawnProperties,
-      callerKind === 'team_leader'
-        ? ['name_prefix', 'prompt', 'intent']
-        : ['name_prefix', 'prompt', 'cwd', 'intent'],
+      ['name_prefix', 'prompt', 'intent'],
     ),
     tool('send', 'Send a turn to a TeamMate agent; reopens a closed one from its checkpoint first. Pass intent to update the recorded recovery subject before the turn.', {
       name: { type: 'string', minLength: 1, maxLength: 64 },
@@ -354,42 +340,16 @@ function spawnArgs(
       ...(agentRuntime !== null ? { agent_runtime: agentRuntime } : {}),
     };
   }
-  const worktree = optionalWorktree(obj, 'worktree');
+  // #199 Slice 2: the public work-directory input is a single optional `repo`
+  // object (replacing the old required `cwd` + `worktree`). Omitted → the server
+  // uses the dispatcher's default directory.
+  const repo = optionalRepoInput(obj, 'repo');
   return {
     name_prefix: requireString(obj, 'name_prefix'),
     prompt: requireString(obj, 'prompt'),
-    cwd: requireString(obj, 'cwd'),
     intent,
     ...(agentRuntime !== null ? { agent_runtime: agentRuntime } : {}),
-    ...(worktree !== null ? { worktree } : {}),
-  };
-}
-
-function optionalWorktree(
-  obj: Record<string, unknown>,
-  key: string,
-): Record<string, unknown> | null {
-  const value = obj[key];
-  if (value === undefined || value === null) return null;
-  const worktree = asRecord(value, key);
-  const mode = requireString(worktree, 'mode');
-  if (mode !== 'reuse-cwd' && mode !== 'managed') {
-    throw new Error(`${key}.mode must be 'reuse-cwd' or 'managed'`);
-  }
-  const cleanup = optionalString(worktree, 'cleanup');
-  if (
-    cleanup !== null &&
-    cleanup !== 'keep' &&
-    cleanup !== 'delete-on-close'
-  ) {
-    throw new Error(`${key}.cleanup must be 'keep' or 'delete-on-close'`);
-  }
-  return {
-    mode,
-    ...optionalProp(worktree, 'slug'),
-    ...optionalProp(worktree, 'base_ref'),
-    ...optionalProp(worktree, 'branch'),
-    ...(cleanup !== null ? { cleanup } : {}),
+    ...(repo !== null ? { repo } : {}),
   };
 }
 
@@ -399,6 +359,57 @@ function optionalProp(
 ): Record<string, string> {
   const value = optionalString(obj, key);
   return value === null ? {} : { [key]: value };
+}
+
+/**
+ * Public `repo` input schema (issue #199 Slice 2), shared by `teammate.spawn`
+ * and `team.create`: omit it to use the default work directory, or choose a
+ * repository work mode (`reuse-cwd` / `managed`) with an optional `path`.
+ */
+export function repoInputSchema(): Record<string, unknown> {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      mode: { type: 'string', enum: ['reuse-cwd', 'managed'] },
+      path: { type: 'string', minLength: 1, maxLength: 4096 },
+      base_ref: { type: 'string', minLength: 1, maxLength: 256 },
+      branch: { type: 'string', minLength: 1, maxLength: 256 },
+      slug: { type: 'string', minLength: 1, maxLength: 64 },
+      cleanup: { type: 'string', enum: ['keep', 'delete-on-close'] },
+    },
+    required: ['mode'],
+  };
+}
+
+/**
+ * Validate and normalize the optional `repo` input object, returned verbatim for
+ * the admin layer to map onto the internal cwd + worktree request. `managed`
+ * worktree fields are ignored for `reuse-cwd`.
+ */
+export function optionalRepoInput(
+  obj: Record<string, unknown>,
+  key: string,
+): Record<string, unknown> | null {
+  const value = obj[key];
+  if (value === undefined || value === null) return null;
+  const repo = asRecord(value, key);
+  const mode = requireString(repo, 'mode');
+  if (mode !== 'reuse-cwd' && mode !== 'managed') {
+    throw new Error(`${key}.mode must be 'reuse-cwd' or 'managed'`);
+  }
+  const cleanup = optionalString(repo, 'cleanup');
+  if (cleanup !== null && cleanup !== 'keep' && cleanup !== 'delete-on-close') {
+    throw new Error(`${key}.cleanup must be 'keep' or 'delete-on-close'`);
+  }
+  return {
+    mode,
+    ...optionalProp(repo, 'path'),
+    ...optionalProp(repo, 'slug'),
+    ...optionalProp(repo, 'base_ref'),
+    ...optionalProp(repo, 'branch'),
+    ...(cleanup !== null ? { cleanup } : {}),
+  };
 }
 
 function sendArgs(value: unknown): Record<string, unknown> {

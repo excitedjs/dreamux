@@ -412,20 +412,34 @@ describe('TeamMateAgentService', () => {
     // is kept as display_name. All later calls use the returned concrete name.
     const reviewer = spawned.teammate.name;
     expect(reviewer).toMatch(/^reviewer-[a-z0-9]{8}$/);
+    // #199 Slice 2: the collapsed status exposes owner (no public role/team_id),
+    // a compact `repo` view (no source_cwd/cwd/worktree), and the runtime-native
+    // session_id (the checkpoint id); display_name and checkpoint are gone.
     expect(spawned.teammate).toMatchObject({
-      display_name: 'reviewer',
+      name: reviewer,
       owner: { kind: 'dispatcher', dispatcher_id: 'flow' },
       agent_runtime: 'flow',
-      source_cwd: root,
-      runtime_cwd: root,
-      worktree: {
+      repo: {
         mode: 'reuse-cwd',
         path: root,
+        source_repo: null,
         cleanup_state: 'not-managed',
       },
       status: 'running',
-      checkpoint: { kind: 'codexThread', id: expect.stringContaining('thread') },
+      session_id: expect.stringContaining('thread'),
     });
+    for (const removed of [
+      'display_name',
+      'role',
+      'team_id',
+      'checkpoint',
+      'source_cwd',
+      'cwd',
+      'runtime_cwd',
+      'worktree',
+    ]) {
+      expect(spawned.teammate).not.toHaveProperty(removed);
+    }
 
     await service.send({
       dispatcherId: 'flow',
@@ -623,10 +637,10 @@ describe('TeamMateAgentService', () => {
     });
     expect(closed.teammate).toMatchObject({
       name: closer,
-      display_name: 'closer',
       status: 'closed',
       close_note: 'done',
     });
+    expect(closed.teammate).not.toHaveProperty('display_name');
     // #188: last is a pure durable-ledger read — it does NOT reopen a runtime, so
     // it works on a CLOSED teammate (this is the failed-completion fallback). It
     // returns the closed status and an empty turn list (no settled turn captured
@@ -904,26 +918,24 @@ describe('TeamMateAgentService', () => {
       },
     });
 
-    expect(spawned.teammate.source_cwd).toBe(repo);
-    expect(spawned.teammate.source_repo).toBe(repo);
-    expect(spawned.teammate.worktree).toMatchObject({
+    expect(spawned.teammate.repo).toMatchObject({
       mode: 'managed',
-      slug: 'managed',
+      source_repo: repo,
       branch: 'dreamux/managed',
       base_ref: 'HEAD',
       cleanup: 'delete-on-close',
       cleanup_state: 'managed-active',
     });
-    expect(provider.contexts[0]?.cwd).toBe(spawned.teammate.worktree.path);
-    expect(existsSync(spawned.teammate.worktree.path)).toBe(true);
+    expect(provider.contexts[0]?.cwd).toBe(spawned.teammate.repo.path);
+    expect(existsSync(spawned.teammate.repo.path)).toBe(true);
 
     const closed = await service.close({
       dispatcherId: 'flow',
       name: spawned.teammate.name,
       note: 'done',
     });
-    expect(closed.teammate.worktree.cleanup_state).toBe('deleted');
-    expect(existsSync(spawned.teammate.worktree.path)).toBe(false);
+    expect(closed.teammate.repo.cleanup_state).toBe('deleted');
+    expect(existsSync(spawned.teammate.repo.path)).toBe(false);
   });
 
   it('reports the git-canonical source_repo when cwd reaches the repo through a symlink', async () => {
@@ -952,8 +964,9 @@ describe('TeamMateAgentService', () => {
       cwd: linked,
     });
 
-    expect(spawned.teammate.source_cwd).toBe(linked);
-    expect(spawned.teammate.source_repo).toBe(repo);
+    // #199 Slice 2: source_cwd is no longer surfaced; repo.source_repo is the
+    // git-canonical root even when the caller cwd reaches it through a symlink.
+    expect(spawned.teammate.repo.source_repo).toBe(repo);
   });
 
   it('recreates a deleted managed worktree when send reopens a closed teammate', async () => {
@@ -980,7 +993,7 @@ describe('TeamMateAgentService', () => {
         cleanup: 'delete-on-close',
       },
     });
-    const worktreePath = spawned.teammate.worktree.path;
+    const worktreePath = spawned.teammate.repo.path;
     await service.close({
       dispatcherId: 'flow',
       name: spawned.teammate.name,
@@ -994,7 +1007,7 @@ describe('TeamMateAgentService', () => {
       prompt: 'continue',
     });
     expect(sent.turn).toEqual({ status: 'submitted', turn_id: 'turn-1' });
-    expect(sent.teammate.worktree).toMatchObject({
+    expect(sent.teammate.repo).toMatchObject({
       mode: 'managed',
       path: worktreePath,
       cleanup_state: 'managed-active',
@@ -1035,8 +1048,8 @@ describe('TeamMateAgentService', () => {
       name: spawned.teammate.name,
       note: 'done',
     });
-    expect(closed.teammate.worktree.cleanup_state).toBe('kept');
-    expect(existsSync(spawned.teammate.worktree.path)).toBe(true);
+    expect(closed.teammate.repo.cleanup_state).toBe('kept');
+    expect(existsSync(spawned.teammate.repo.path)).toBe(true);
   });
 
   it('retains dirty managed worktrees on close', async () => {
@@ -1063,15 +1076,15 @@ describe('TeamMateAgentService', () => {
         cleanup: 'delete-on-close',
       },
     });
-    await writeFile(join(spawned.teammate.worktree.path, 'dirty.txt'), 'dirty');
+    await writeFile(join(spawned.teammate.repo.path, 'dirty.txt'), 'dirty');
 
     const closed = await service.close({
       dispatcherId: 'flow',
       name: spawned.teammate.name,
       note: 'done',
     });
-    expect(closed.teammate.worktree.cleanup_state).toBe('retained-dirty');
-    expect(existsSync(spawned.teammate.worktree.path)).toBe(true);
+    expect(closed.teammate.repo.cleanup_state).toBe('retained-dirty');
+    expect(existsSync(spawned.teammate.repo.path)).toBe(true);
   });
 
   it('retains clean detached managed worktrees with unique commits', async () => {
@@ -1098,7 +1111,7 @@ describe('TeamMateAgentService', () => {
         cleanup: 'delete-on-close',
       },
     });
-    const worktreePath = spawned.teammate.worktree.path;
+    const worktreePath = spawned.teammate.repo.path;
     await execa('git', ['switch', '--detach'], { cwd: worktreePath });
     await writeFile(join(worktreePath, 'detached.txt'), 'detached\n');
     await execa('git', ['add', 'detached.txt'], { cwd: worktreePath });
@@ -1109,7 +1122,7 @@ describe('TeamMateAgentService', () => {
       name: spawned.teammate.name,
       note: 'done',
     });
-    expect(closed.teammate.worktree.cleanup_state).toBe(
+    expect(closed.teammate.repo.cleanup_state).toBe(
       'retained-unique-commits',
     );
     expect(existsSync(worktreePath)).toBe(true);
@@ -1157,8 +1170,8 @@ describe('TeamMateAgentService', () => {
       },
     });
 
-    const firstPath = first.teammate.worktree.path;
-    const secondPath = second.teammate.worktree.path;
+    const firstPath = first.teammate.repo.path;
+    const secondPath = second.teammate.repo.path;
     expect(firstPath).not.toBe(secondPath);
     // Both live under the dispatcher workspace boundary, never under ~/.dreamux.
     const boundary = join(dispatcherCwd, '.workspace', 'worktree');
@@ -1430,9 +1443,8 @@ describe('TeamMateAgentService', () => {
     );
 
     const status = await service.status('flow', 'legacy-mate');
-    expect(status.worktree.mode).toBe('managed');
-    expect(status.worktree.path).toBe(legacyWorktreePath);
-    expect(status.runtime_cwd).toBe(legacyWorktreePath);
+    expect(status.repo.mode).toBe('managed');
+    expect(status.repo.path).toBe(legacyWorktreePath);
   });
 
   it('does not wire the settle hook when no completion sink is configured', async () => {
