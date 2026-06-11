@@ -63,7 +63,7 @@ export class TeamService {
         runtime_cwd: workspace.runtimeCwd,
         worktree: workspace.worktree,
         status: 'starting',
-        intent: input.intent ?? null,
+        intent: input.intent,
         closed_at: null,
         close_note: null,
       }));
@@ -84,7 +84,7 @@ export class TeamService {
       sourceRepo: workspace.sourceRepo,
       runtimeCwd: workspace.runtimeCwd,
       worktree: workspace.worktree,
-      intent: input.intent ?? null,
+      intent: input.intent,
     });
     team = await this.store.update(team, { status: 'running' });
     await this.store.appendLedger(team, {
@@ -138,6 +138,10 @@ export class TeamService {
         leaderName: team.leader_name,
       }),
     );
+    // dissolve note is required (issue #182 PR-3), so the member/leader close
+    // calls and the ledger carry the operator's real reason — no synthetic
+    // 'team dissolved' fallback. Internal/system dissolves (e.g. the
+    // create_group rollback) pass an explicit system-authored note instead.
     for (const member of members) {
       await this.opts.teammates.closeScoped({
         principal: teamLeaderPrincipal({
@@ -146,18 +150,18 @@ export class TeamService {
           leaderName: team.leader_name,
         }),
         name: member.name,
-        note: input.note ?? 'team dissolved',
+        note: input.note,
       });
     }
     await this.opts.teammates.close({
       dispatcherId: input.dispatcherId,
       name: team.leader_name,
-      note: input.note ?? 'team dissolved',
+      note: input.note,
     });
     const closed = await this.store.update(team, {
       status: 'closed',
       closedAt: Date.now(),
-      closeNote: input.note ?? null,
+      closeNote: input.note,
       worktree: await this.worktrees.cleanup({
         source_cwd: team.repo_cwd,
         source_repo: team.source_repo,
@@ -166,7 +170,7 @@ export class TeamService {
     });
     await this.store.appendLedger(closed, {
       type: 'dissolve',
-      summary: input.note ?? 'team dissolved',
+      summary: input.note,
     });
     return this.summary(closed);
   }

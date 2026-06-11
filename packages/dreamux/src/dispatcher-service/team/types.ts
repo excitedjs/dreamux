@@ -34,14 +34,16 @@ export interface TeamCreateInput {
   repoCwd: string;
   leaderAgentRuntime: string;
   worktree?: TeamMateWorktreeRequest;
-  intent?: string;
+  /** Required recovery subject for the Team (issue #182 PR-3). */
+  intent: string;
   prompt?: string;
 }
 
 export interface TeamDissolveInput {
   dispatcherId: string;
   teamId: string;
-  note?: string;
+  /** Required dissolve reason recorded in the ledger (issue #182 PR-3). */
+  note: string;
 }
 
 export interface TeamBindChannelInput {
@@ -69,7 +71,8 @@ export interface TeamCreateGroupInput {
   requesterOpenId: string;
   groupName?: string;
   inviteOpenIds?: string[];
-  intent?: string;
+  /** Required recovery subject — same contract as TeamCreateInput (issue #182 PR-3). */
+  intent: string;
   prompt?: string;
 }
 

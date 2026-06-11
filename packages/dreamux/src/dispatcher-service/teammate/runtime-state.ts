@@ -20,6 +20,15 @@ export class TeamMateRuntimeStateStore implements AgentRuntimeStateStore {
     return this.identity;
   }
 
+  /**
+   * Update the recorded recovery subject (issue #182 PR-3 `send` intent). Kept
+   * on this store so the live identity snapshot returned by `current()` stays in
+   * sync with the persisted record.
+   */
+  async updateIntent(intent: string): Promise<void> {
+    this.identity = await this.store.update(this.identity, { intent });
+  }
+
   async setStatus(
     _id: string,
     status: DispatcherStatus,

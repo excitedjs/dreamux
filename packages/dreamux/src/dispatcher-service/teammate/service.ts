@@ -121,19 +121,23 @@ export interface ScopedSpawnTeamMateInput {
   cwd?: string;
   worktree?: TeamMateWorktreeRequest;
   sharedWorkspace?: TeamMateSharedWorkspace;
-  intent?: string;
+  /** Required recovery subject (issue #182 PR-3). */
+  intent: string;
 }
 
 export interface ScopedSendTeamMateInput {
   principal: TeamMateCallerPrincipal;
   name: string;
   prompt: string;
+  /** Optional updated recovery subject, applied before the turn (issue #182 PR-3). */
+  intent?: string;
 }
 
 export interface ScopedCloseTeamMateInput {
   principal: TeamMateCallerPrincipal;
   name: string;
-  note?: string;
+  /** Required close reason (issue #182 PR-3). */
+  note: string;
 }
 
 export class TeamMateAgentService {
@@ -153,10 +157,10 @@ export class TeamMateAgentService {
       principal: dispatcherPrincipal(input.dispatcherId),
       name: input.name,
       prompt: input.prompt,
+      intent: input.intent,
       ...(input.agentRuntime !== undefined ? { agentRuntime: input.agentRuntime } : {}),
       cwd: input.cwd,
       ...(input.worktree !== undefined ? { worktree: input.worktree } : {}),
-      ...(input.intent !== undefined ? { intent: input.intent } : {}),
     });
   }
 
@@ -208,7 +212,7 @@ export class TeamMateAgentService {
         cwd: workspace.runtimeCwd,
         runtimeCwd: workspace.runtimeCwd,
         worktree: workspace.worktree,
-        intent: input.intent ?? null,
+        intent: input.intent,
       }));
     this.assertPrincipalCanAccess(input.principal, identity);
     identity = await this.identities.update(identity, {
@@ -218,7 +222,7 @@ export class TeamMateAgentService {
       cwd: workspace.runtimeCwd,
       runtimeCwd: workspace.runtimeCwd,
       worktree: workspace.worktree,
-      intent: input.intent ?? null,
+      intent: input.intent,
       status: 'starting',
       closedAt: null,
       closeNote: null,
@@ -243,6 +247,7 @@ export class TeamMateAgentService {
       principal: dispatcherPrincipal(input.dispatcherId),
       name: input.name,
       prompt: input.prompt,
+      ...(input.intent !== undefined ? { intent: input.intent } : {}),
     });
   }
 
@@ -257,6 +262,12 @@ export class TeamMateAgentService {
       principal: input.principal,
       reopenClosed: true,
     });
+    // Optional intent update is applied BEFORE the turn so the recorded recovery
+    // subject reflects the work this turn is about (issue #182 PR-3). An empty
+    // string is ignored so a stray send never wipes a meaningful subject.
+    if (input.intent !== undefined && input.intent !== '') {
+      await live.state.updateIntent(input.intent);
+    }
     const turn = await this.submitPrompt(dispatcherId, input.name, input.prompt, {
       principal: input.principal,
     });
@@ -272,7 +283,7 @@ export class TeamMateAgentService {
     return this.closeScoped({
       principal: dispatcherPrincipal(input.dispatcherId),
       name: input.name,
-      ...(input.note !== undefined ? { note: input.note } : {}),
+      note: input.note,
     });
   }
 
@@ -289,12 +300,12 @@ export class TeamMateAgentService {
     const closed = await this.identities.update(identity, {
       status: 'closed',
       closedAt: Date.now(),
-      closeNote: input.note ?? null,
+      closeNote: input.note,
       worktree: await this.worktrees.cleanup(identity),
     });
     await this.identities.appendHistory(closed, {
       type: 'close',
-      note: input.note ?? null,
+      note: input.note,
     });
     return { teammate: this.toStatus(closed, null) };
   }

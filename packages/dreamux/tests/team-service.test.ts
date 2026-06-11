@@ -201,6 +201,8 @@ describe('TeamService', () => {
       team_id: 'alpha',
     });
     expect(existsSync(created.team.runtime_cwd)).toBe(true);
+    // Required intent (issue #182 PR-3) is persisted on the Team record.
+    expect(created.team.intent).toBe('ship alpha');
     expect((await teams.list('flow')).map((entry) => entry.team.team_id)).toEqual(['alpha']);
     expect((await teams.ledger('flow', 'alpha')).events.map((event) => event.type)).toEqual(['create']);
 
@@ -213,9 +215,13 @@ describe('TeamService', () => {
       note: 'done',
     });
     expect(dissolved.team.status).toBe('closed');
+    expect(dissolved.team.close_note).toBe('done');
     expect(dissolved.leader?.status).toBe('closed');
-    expect((await reloaded.ledger('flow', 'alpha')).events.map((event) => event.type))
-      .toEqual(['create', 'dissolve']);
+    const ledger = (await reloaded.ledger('flow', 'alpha')).events;
+    expect(ledger.map((event) => event.type)).toEqual(['create', 'dissolve']);
+    // Required dissolve note (issue #182 PR-3) is the ledger summary — no
+    // synthetic 'team dissolved' fallback.
+    expect(ledger.find((e) => e.type === 'dissolve')?.summary).toBe('done');
   });
 
   it('scopes TeamLeader member visibility to its own team', async () => {
@@ -224,18 +230,21 @@ describe('TeamService', () => {
     await teammates.spawn({
       dispatcherId: 'flow',
       name: 'solo',
+      intent: 'work',
       prompt: 'solo',
       cwd: root,
     });
     await teams.create({
       dispatcherId: 'flow',
       name: 'alpha',
+      intent: 'work',
       repoCwd: repo,
       leaderAgentRuntime: 'flow',
     });
     await teams.create({
       dispatcherId: 'flow',
       name: 'beta',
+      intent: 'work',
       repoCwd: repo,
       leaderAgentRuntime: 'flow',
     });
@@ -254,6 +263,7 @@ describe('TeamService', () => {
     const member = await teammates.spawnScoped({
       principal: alpha,
       name: 'builder',
+      intent: 'work',
       prompt: 'build',
       sharedWorkspace: workspace,
     });
@@ -289,6 +299,7 @@ describe('TeamService', () => {
     const result = await teams.createGroup({
       dispatcherId: 'flow',
       name: 'gamma',
+      intent: 'work',
       repoCwd: repo,
       leaderAgentRuntime: 'flow',
       sourceChatId: 'p2p_control',
@@ -341,6 +352,7 @@ describe('TeamService', () => {
       teams.createGroup({
         dispatcherId: 'flow',
         name: 'delta',
+        intent: 'work',
         repoCwd: repo,
         leaderAgentRuntime: 'flow',
         sourceChatId: 'p2p_control',
@@ -368,6 +380,7 @@ describe('TeamService', () => {
       teams.createGroup({
         dispatcherId: 'flow',
         name: 'epsilon',
+        intent: 'work',
         repoCwd: repo,
         leaderAgentRuntime: 'flow',
         sourceChatId: 'group_source',

@@ -612,7 +612,11 @@ to `dreamux serve` over the local admin socket; the server owns the
 per-dispatcher TeamMate identities, runtime checkpoints, session ledger, and raw
 event history under `state/<dispatcher-id>/teammate/`. Issue #169 made `spawn.cwd`
 required and added optional managed worktree isolation:
-`spawn({ name, prompt, cwd, worktree?, agent_runtime? })`. A reuse-cwd teammate
+`spawn({ name, prompt, cwd, intent, worktree?, agent_runtime? })`. Issue #182
+PR-3 made `spawn.intent` and `close.note` required (the durable recovery subject
+and the close reason for the session ledger), added an optional `send.intent`
+that updates the recorded subject before the turn, and dropped the synthetic
+`'team dissolved'` fallback. A reuse-cwd teammate
 runs in the caller-supplied `cwd`; a managed teammate runs only in its prepared
 worktree and persists source cwd/repo, runtime cwd, worktree branch/base ref,
 cleanup policy/state, and a default dispatcher `owner` field on the identity.
@@ -626,8 +630,9 @@ recursively spawn or close TeamMates.
 Issue #171 starts Team Mode. Dispatcher runtimes receive a `team` MCP server for
 dispatcher-only team lifecycle: `create`, `list`, `status`, `ledger`,
 `bind_channel`, `transfer_channel_back`, and `dissolve`. `create` requires
-`repo_cwd` and `leader_agent_runtime`; Dreamux does not infer a default
-TeamLeader runtime. A TeamLeader is a TeamMate identity with `role:
+`repo_cwd`, `leader_agent_runtime`, and `intent` (issue #182 PR-3 — the same
+`intent` requirement applies to `create_group`); `dissolve` requires `note`.
+Dreamux does not infer a default TeamLeader runtime. A TeamLeader is a TeamMate identity with `role:
 "team_leader"` and dispatcher owner. Team-owned members are normal TeamMate
 identities with `role: "team_member"` and `owner.kind: "team"`.
 

@@ -180,7 +180,7 @@ function teammateTools(
       description:
         'Spawnable agents[].id returned by get_capabilities.agent_runtimes[].id.',
     },
-    intent: { type: 'string', maxLength: 2000 },
+    intent: { type: 'string', minLength: 1, maxLength: 2000 },
   };
   if (callerKind === 'dispatcher') {
     spawnProperties['cwd'] = { type: 'string', minLength: 1, maxLength: 4096 };
@@ -200,18 +200,21 @@ function teammateTools(
   return [
     tool(
       'spawn',
-      'Start a named, resumable TeamMate agent and submit its first turn. Use get_capabilities.agent_runtimes[].id as agent_runtime.',
+      'Start a named, resumable TeamMate agent and submit its first turn. Use get_capabilities.agent_runtimes[].id as agent_runtime. intent is required: it is the durable recovery subject for the session ledger.',
       spawnProperties,
-      callerKind === 'team_leader' ? ['name', 'prompt'] : ['name', 'prompt', 'cwd'],
+      callerKind === 'team_leader'
+        ? ['name', 'prompt', 'intent']
+        : ['name', 'prompt', 'cwd', 'intent'],
     ),
-    tool('send', 'Send a turn to a TeamMate agent; reopens a closed one from its checkpoint first.', {
+    tool('send', 'Send a turn to a TeamMate agent; reopens a closed one from its checkpoint first. Pass intent to update the recorded recovery subject before the turn.', {
       name: { type: 'string', minLength: 1, maxLength: 64 },
       prompt: { type: 'string', minLength: 1, maxLength: 20000 },
+      intent: { type: 'string', minLength: 1, maxLength: 2000 },
     }, ['name', 'prompt']),
-    tool('close', 'Close a named TeamMate agent and retain its history; send reopens it later.', {
+    tool('close', 'Close a named TeamMate agent and retain its history; send reopens it later. note is required: it records why a recoverable session was stopped.', {
       name: { type: 'string', minLength: 1, maxLength: 64 },
-      note: { type: 'string', maxLength: 2000 },
-    }, ['name']),
+      note: { type: 'string', minLength: 1, maxLength: 2000 },
+    }, ['name', 'note']),
     ...readTools,
   ];
 }
@@ -351,13 +354,14 @@ function spawnArgs(
 ): Record<string, unknown> {
   const obj = asRecord(value, 'spawn arguments');
   const agentRuntime = optionalString(obj, 'agent_runtime');
-  const intent = optionalString(obj, 'intent');
+  // Required recovery subject (issue #182 PR-3).
+  const intent = requireString(obj, 'intent');
   if (callerKind === 'team_leader') {
     return {
       name: requireString(obj, 'name'),
       prompt: requireString(obj, 'prompt'),
+      intent,
       ...(agentRuntime !== null ? { agent_runtime: agentRuntime } : {}),
-      ...(intent !== null ? { intent } : {}),
     };
   }
   const worktree = optionalWorktree(obj, 'worktree');
@@ -365,9 +369,9 @@ function spawnArgs(
     name: requireString(obj, 'name'),
     prompt: requireString(obj, 'prompt'),
     cwd: requireString(obj, 'cwd'),
+    intent,
     ...(agentRuntime !== null ? { agent_runtime: agentRuntime } : {}),
     ...(worktree !== null ? { worktree } : {}),
-    ...(intent !== null ? { intent } : {}),
   };
 }
 
@@ -409,18 +413,22 @@ function optionalProp(
 
 function sendArgs(value: unknown): Record<string, unknown> {
   const obj = asRecord(value, 'send arguments');
+  // Optional updated recovery subject (issue #182 PR-3). An empty string is
+  // treated as absent so it never wipes the recorded subject.
+  const intent = optionalString(obj, 'intent');
   return {
     name: requireString(obj, 'name'),
     prompt: requireString(obj, 'prompt'),
+    ...(intent !== null && intent !== '' ? { intent } : {}),
   };
 }
 
 function closeArgs(value: unknown): Record<string, unknown> {
   const obj = asRecord(value, 'close arguments');
-  const note = optionalString(obj, 'note');
+  // Required close reason (issue #182 PR-3).
   return {
     name: requireString(obj, 'name'),
-    ...(note !== null ? { note } : {}),
+    note: requireString(obj, 'note'),
   };
 }
 

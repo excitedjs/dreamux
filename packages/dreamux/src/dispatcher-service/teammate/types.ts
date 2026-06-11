@@ -160,7 +160,8 @@ export interface SpawnTeamMateInput {
   agentRuntime?: string;
   cwd: string;
   worktree?: TeamMateWorktreeRequest;
-  intent?: string;
+  /** Required recovery subject for the session ledger (issue #182 PR-3). */
+  intent: string;
 }
 
 export interface CreateTeamLeaderInput {
@@ -211,12 +212,18 @@ export interface SendTeamMateInput {
   dispatcherId: string;
   name: string;
   prompt: string;
+  /**
+   * Optional updated recovery subject (issue #182 PR-3). When supplied, the
+   * teammate's recorded `intent` is updated before the turn is submitted.
+   */
+  intent?: string;
 }
 
 export interface CloseTeamMateInput {
   dispatcherId: string;
   name: string;
-  note?: string;
+  /** Required close reason recorded in the ledger (issue #182 PR-3). */
+  note: string;
 }
 
 export interface TeamMateTurnResult {

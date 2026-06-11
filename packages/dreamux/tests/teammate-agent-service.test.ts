@@ -236,6 +236,7 @@ describe('TeamMateAgentService', () => {
     await service.spawn({
       dispatcherId: 'flow',
       name: 'claude-mate',
+      intent: 'work',
       agentRuntime: 'claude',
       prompt: 'go',
       cwd: root,
@@ -252,6 +253,7 @@ describe('TeamMateAgentService', () => {
     await service.spawn({
       dispatcherId: 'flow',
       name: 'codex-mate',
+      intent: 'work',
       prompt: 'go',
       cwd: root,
     });
@@ -308,6 +310,7 @@ describe('TeamMateAgentService', () => {
     await service.spawn({
       dispatcherId: 'flow',
       name: 'same-mate',
+      intent: 'work',
       agentRuntime: 'shared',
       prompt: 'go',
       cwd: root,
@@ -363,6 +366,7 @@ describe('TeamMateAgentService', () => {
     await service.spawn({
       dispatcherId: 'flow',
       name: 'from-caps',
+      intent: 'work',
       agentRuntime: spawnableId,
       prompt: 'go',
       cwd: root,
@@ -387,6 +391,7 @@ describe('TeamMateAgentService', () => {
     const spawned = await service.spawn({
       dispatcherId: 'flow',
       name: 'reviewer',
+      intent: 'work',
       prompt: 'Review the change.',
       cwd: root,
     });
@@ -441,6 +446,7 @@ describe('TeamMateAgentService', () => {
     await first.spawn({
       dispatcherId: 'flow',
       name: 'builder',
+      intent: 'work',
       prompt: 'Build once.',
       cwd: root,
     });
@@ -566,6 +572,7 @@ describe('TeamMateAgentService', () => {
     await service.spawn({
       dispatcherId: 'flow',
       name: 'closer',
+      intent: 'work',
       prompt: 'Start.',
       cwd: root,
     });
@@ -608,6 +615,7 @@ describe('TeamMateAgentService', () => {
     await service.spawn({
       dispatcherId: 'flow',
       name: 'reopener',
+      intent: 'work',
       prompt: 'Start.',
       cwd: root,
     });
@@ -638,6 +646,53 @@ describe('TeamMateAgentService', () => {
     expect(provider.runtimes[1]?.wasThreadResumed()).toBe(true);
   });
 
+  it('send updates the recorded intent when supplied, and leaves it unchanged otherwise (#182 PR-3)', async () => {
+    const { catalog } = providerCatalog();
+    const config = testDreamuxConfig();
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: catalog,
+      log: noopLog(),
+    });
+
+    await service.spawn({
+      dispatcherId: 'flow',
+      name: 'shifter',
+      intent: 'first task',
+      prompt: 'Start.',
+      cwd: root,
+    });
+    expect((await service.status('flow', 'shifter')).intent).toBe('first task');
+
+    // send WITH intent updates the durable recovery subject.
+    const moved = await service.send({
+      dispatcherId: 'flow',
+      name: 'shifter',
+      intent: 'second task',
+      prompt: 'Now do the second thing.',
+    });
+    expect(moved.teammate.intent).toBe('second task');
+    expect((await service.status('flow', 'shifter')).intent).toBe('second task');
+
+    // send WITHOUT intent leaves the recorded intent unchanged.
+    const kept = await service.send({
+      dispatcherId: 'flow',
+      name: 'shifter',
+      prompt: 'Keep going.',
+    });
+    expect(kept.teammate.intent).toBe('second task');
+
+    // send with an EMPTY intent must NOT wipe the recorded subject (#182 PR-3).
+    const emptied = await service.send({
+      dispatcherId: 'flow',
+      name: 'shifter',
+      intent: '',
+      prompt: 'Still going.',
+    });
+    expect(emptied.teammate.intent).toBe('second task');
+  });
+
   it('fails loud when spawned with an agentRuntime that matches no agent', async () => {
     const { catalog } = providerCatalog();
     const config = testDreamuxConfig();
@@ -651,6 +706,7 @@ describe('TeamMateAgentService', () => {
       service.spawn({
         dispatcherId: 'flow',
         name: 'ghost',
+        intent: 'work',
         agentRuntime: 'no-such-agent',
         prompt: 'go',
         cwd: root,
@@ -671,6 +727,7 @@ describe('TeamMateAgentService', () => {
       service.spawn({
         dispatcherId: 'flow',
         name: 'no-cwd',
+        intent: 'work',
         prompt: 'go',
       } as Parameters<TeamMateAgentService['spawn']>[0]),
     ).rejects.toThrow(/cwd/);
@@ -744,6 +801,7 @@ describe('TeamMateAgentService', () => {
     const spawned = await service.spawn({
       dispatcherId: 'flow',
       name: 'managed',
+      intent: 'work',
       prompt: 'go',
       cwd: repo,
       worktree: {
@@ -797,6 +855,7 @@ describe('TeamMateAgentService', () => {
     const spawned = await service.spawn({
       dispatcherId: 'flow',
       name: 'symlinked',
+      intent: 'work',
       prompt: 'go',
       cwd: linked,
     });
@@ -819,6 +878,7 @@ describe('TeamMateAgentService', () => {
     const spawned = await service.spawn({
       dispatcherId: 'flow',
       name: 'reopen-managed',
+      intent: 'work',
       prompt: 'go',
       cwd: repo,
       worktree: {
@@ -866,6 +926,7 @@ describe('TeamMateAgentService', () => {
     const spawned = await service.spawn({
       dispatcherId: 'flow',
       name: 'keeper',
+      intent: 'work',
       prompt: 'go',
       cwd: repo,
       worktree: {
@@ -898,6 +959,7 @@ describe('TeamMateAgentService', () => {
     const spawned = await service.spawn({
       dispatcherId: 'flow',
       name: 'dirty',
+      intent: 'work',
       prompt: 'go',
       cwd: repo,
       worktree: {
@@ -931,6 +993,7 @@ describe('TeamMateAgentService', () => {
     const spawned = await service.spawn({
       dispatcherId: 'flow',
       name: 'detached',
+      intent: 'work',
       prompt: 'go',
       cwd: repo,
       worktree: {
@@ -971,6 +1034,7 @@ describe('TeamMateAgentService', () => {
     await service.spawn({
       dispatcherId: 'flow',
       name: 'first-slug',
+      intent: 'work',
       prompt: 'go',
       cwd: firstRepo,
       worktree: {
@@ -984,6 +1048,7 @@ describe('TeamMateAgentService', () => {
       service.spawn({
         dispatcherId: 'flow',
         name: 'second-slug',
+        intent: 'work',
         prompt: 'go',
         cwd: secondRepo,
         worktree: {
@@ -1010,6 +1075,7 @@ describe('TeamMateAgentService', () => {
     await service.spawn({
       dispatcherId: 'flow',
       name: 'slug-one',
+      intent: 'work',
       prompt: 'go',
       cwd: repo,
       worktree: {
@@ -1023,6 +1089,7 @@ describe('TeamMateAgentService', () => {
       service.spawn({
         dispatcherId: 'flow',
         name: 'slug-two',
+        intent: 'work',
         prompt: 'go',
         cwd: repo,
         worktree: {
@@ -1092,6 +1159,7 @@ describe('TeamMateAgentService', () => {
     await service.spawn({
       dispatcherId: 'flow',
       name: 'solo',
+      intent: 'work',
       prompt: 'Start.',
       cwd: root,
     });
@@ -1115,6 +1183,7 @@ describe('TeamMateAgentService', () => {
     await service.spawn({
       dispatcherId: 'flow',
       name: 'reviewer',
+      intent: 'work',
       prompt: 'Review.',
       cwd: root,
     });
@@ -1154,6 +1223,7 @@ describe('TeamMateAgentService', () => {
     await service.spawn({
       dispatcherId: 'flow',
       name: 'breaker',
+      intent: 'work',
       prompt: 'Run.',
       cwd: root,
     });
@@ -1195,6 +1265,7 @@ describe('TeamMateAgentService', () => {
     await service.spawn({
       dispatcherId: 'flow',
       name: 'breaker',
+      intent: 'work',
       prompt: 'Run.',
       cwd: root,
     });
@@ -1222,12 +1293,14 @@ describe('TeamMateAgentService', () => {
     await service.spawn({
       dispatcherId: 'flow',
       name: 'one',
+      intent: 'work',
       prompt: 'A.',
       cwd: root,
     });
     await service.spawn({
       dispatcherId: 'flow',
       name: 'two',
+      intent: 'work',
       prompt: 'B.',
       cwd: root,
     });
