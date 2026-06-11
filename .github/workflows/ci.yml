@@ -23,11 +23,17 @@
 
 name: ci
 
+# Trigger scope: these gates must cover the epic integration branches too, not
+# only `main`. Implementation PRs target a `feature/**` integration branch first
+# (issue #182), so a `main`-only filter left those PRs unchecked and forced
+# manual `workflow_dispatch` runs. Run on PRs into `main` or any `feature/**`
+# branch, on pushes to those branches (validating the integrated state after a
+# merge), and on manual dispatch.
 on:
   push:
-    branches: [main]
+    branches: [main, 'feature/**']
   pull_request:
-    branches: [main]
+    branches: [main, 'feature/**']
   workflow_dispatch:
 
 permissions:
