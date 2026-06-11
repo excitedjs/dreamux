@@ -1,4 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import {
+  chmodSync,
+  lstatSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Readable } from 'node:stream';
 
 import {
   renderChannelBlock,
@@ -117,5 +128,79 @@ describe('formatFeishuMessageForRuntime (structured, no pre-rendered XML)', () =
     expect(wrapped).toContain('<attachment');
     expect(wrapped).toContain('<group_bots');
     expect(wrapped.endsWith('</channel>')).toBe(true);
+  });
+});
+
+describe('attachment cache owner-only enforcement (issue #182 PR-2)', () => {
+  const dirs: string[] = [];
+
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function cacheDir(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'dx-attach-cache-'));
+    dirs.push(dir);
+    return dir;
+  }
+
+  /** A fetcher that streams fixed bytes; counts how many times it was called. */
+  function countingFetcher(): {
+    fetchMessageResource: () => Promise<{ stream: Readable; headers: Record<string, unknown> }>;
+    calls: number;
+  } {
+    const f = {
+      calls: 0,
+      async fetchMessageResource() {
+        f.calls += 1;
+        return { stream: Readable.from([Buffer.from('pdf-bytes')]), headers: {} };
+      },
+    };
+    return f;
+  }
+
+  it('tightens a pre-existing permissive cache dir on a cache HIT, not only on a miss', async () => {
+    const cache = cacheDir();
+    const fetcher = countingFetcher();
+
+    // First call: cache miss populates the file and creates the dir 0700.
+    const miss = await formatFeishuMessageForRuntime(inboundEvent(), {
+      cacheDir: cache,
+      resourceFetcher: fetcher,
+    });
+    expect(miss.attachments[0]?.status).toBe('downloaded');
+    expect(fetcher.calls).toBe(1);
+
+    // Someone loosens the cache dir behind our back.
+    chmodSync(cache, 0o755);
+    expect(statSync(cache).mode & 0o777).toBe(0o755);
+
+    // Second call: cache HIT. The fix runs ensureOwnerOnlyDir BEFORE the
+    // fast-path return, so the dir is re-tightened and the fetcher is not hit.
+    const hit = await formatFeishuMessageForRuntime(inboundEvent(), {
+      cacheDir: cache,
+      resourceFetcher: fetcher,
+    });
+    expect(hit.attachments[0]?.status).toBe('downloaded');
+    expect(fetcher.calls).toBe(1);
+    expect(statSync(cache).mode & 0o777).toBe(0o700);
+  });
+
+  it('refuses a symlinked cache dir instead of returning a downloaded path', async () => {
+    const real = cacheDir();
+    const link = `${real}-link`;
+    symlinkSync(real, link);
+    dirs.push(link);
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
+
+    const fetcher = countingFetcher();
+    const result = await formatFeishuMessageForRuntime(inboundEvent(), {
+      cacheDir: link,
+      resourceFetcher: fetcher,
+    });
+    // ensureOwnerOnlyDir rejects the symlinked leaf; the attachment falls back
+    // to not_downloaded rather than exposing a path under an unverified dir.
+    expect(result.attachments[0]?.status).toBe('not_downloaded');
+    expect(fetcher.calls).toBe(0);
   });
 });

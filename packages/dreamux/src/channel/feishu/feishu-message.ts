@@ -220,12 +220,16 @@ async function resolveAttachment(
 
   try {
     const cacheRoot = resolve(options.cacheDir);
+    // Owner-only cache dir (issue #182): tighten a pre-existing permissive dir
+    // and reject a symlink / foreign-uid dir, matching the run/spill trees.
+    // Done BEFORE the cache-hit fast path below, so a pre-existing file in a
+    // permissive/symlinked/foreign-owned dir is never returned as `downloaded`
+    // without the dir first passing (or being tightened to) the owner-only
+    // invariant.
+    await ensureOwnerOnlyDir(cacheRoot);
     const path = attachmentPath(cacheRoot, resource);
     if (await fileExists(path)) return { ...base, status: 'downloaded', path };
 
-    // Owner-only cache dir (issue #182): tighten a pre-existing permissive dir
-    // and reject a symlink / foreign-uid dir, matching the run/spill trees.
-    await ensureOwnerOnlyDir(cacheRoot);
     const response = await options.resourceFetcher.fetchMessageResource({
       messageId,
       fileKey: resource.key,
