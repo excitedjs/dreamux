@@ -1,42 +1,20 @@
-import { randomUUID } from 'node:crypto';
-
-import type {
-  AgentRuntimeResumeCheckpoint,
-  AgentRuntimeStateStore,
-} from '../../agent-runtime/index.js';
+import type { AgentRuntimeStateStore } from '../../agent-runtime/index.js';
 import type { DispatcherStatus } from '../../state/dispatcher-store.js';
 import type { TeamMateIdentityStore } from './identity-store.js';
 import {
   runtimeStatusToIdentityStatus,
   type TeamMateIdentity,
 } from './types.js';
+import { preview } from './turns-store.js';
 
 export class TeamMateRuntimeStateStore implements AgentRuntimeStateStore {
   constructor(
     private readonly store: TeamMateIdentityStore,
     private identity: TeamMateIdentity,
-    private readonly checkpointKind: AgentRuntimeResumeCheckpoint['kind'] | null,
   ) {}
 
   current(): TeamMateIdentity {
     return this.identity;
-  }
-
-  /**
-   * Ensure the live identity carries a stable session id (issue #182 PR-5,
-   * PR #187 review P3): a teammate spawned before PR-5 has `session_id: null`,
-   * which would make every post-upgrade lifecycle event skip the session
-   * ledger. Mint and persist one lazily on the first such event. Minting goes
-   * through this store so its in-memory copy stays in sync — a later
-   * status/thread write must not clobber the file back to a null session id. It
-   * is a fresh id, never re-keyed to the runtime thread/checkpoint id.
-   */
-  async ensureSessionId(): Promise<string> {
-    const current = this.identity.session_id;
-    if (current !== null) return current;
-    const sessionId = randomUUID();
-    this.identity = await this.store.update(this.identity, { sessionId });
-    return sessionId;
   }
 
   /**
@@ -46,6 +24,27 @@ export class TeamMateRuntimeStateStore implements AgentRuntimeStateStore {
    */
   async updateIntent(intent: string): Promise<void> {
     this.identity = await this.store.update(this.identity, { intent });
+  }
+
+  /**
+   * Bump the record's rolling recovery summary when a turn is submitted (issue
+   * #199 Slice 3). Routed through this store so the live `current()` snapshot
+   * stays canonical and a later status/thread write never clobbers the bump.
+   */
+  async recordSubmittedTurn(prompt: string): Promise<void> {
+    this.identity = await this.store.update(this.identity, {
+      turnCount: this.identity.turn_count + 1,
+      lastSeenAt: Date.now(),
+      lastPromptPreview: preview(prompt),
+    });
+  }
+
+  /** Record the most recent settled assistant output on the rolling summary. */
+  async recordSettledTurn(assistant: string | null): Promise<void> {
+    this.identity = await this.store.update(this.identity, {
+      lastSeenAt: Date.now(),
+      ...(assistant !== null ? { lastAssistantPreview: preview(assistant) } : {}),
+    });
   }
 
   async setStatus(
@@ -66,11 +65,11 @@ export class TeamMateRuntimeStateStore implements AgentRuntimeStateStore {
   }
 
   async setThreadId(_id: string, threadId: string): Promise<void> {
-    // A runtime that declares no resume support has no checkpoint kind, so there
-    // is nothing to persist a resumable checkpoint under.
-    if (this.checkpointKind === null) return;
+    // #199 Slice 3: persist the runtime-native thread id directly as the public
+    // session_id. The resume checkpoint KIND is never persisted — it is rebuilt
+    // from the runtime's own declared capability when reopening.
     this.identity = await this.store.update(this.identity, {
-      checkpoint: { kind: this.checkpointKind, id: threadId },
+      sessionId: threadId,
     });
   }
 

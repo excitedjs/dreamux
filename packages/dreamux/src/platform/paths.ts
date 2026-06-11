@@ -15,7 +15,7 @@
  *       <dispatcher-id>/
  *         status.json
  *         access.json
- *         teammate/           Server-hosted TeamMate identities and history
+ *         teammate/           Server-hosted TeamMate records/, turns/, runtime/
  *     logs/
  *       dreamux-server.log
  *       codex-app-server/
@@ -269,33 +269,44 @@ export function dispatcherTeamMateDir(id: string): string {
   return join(dispatcherDir(id), 'teammate');
 }
 
-/** Directory containing one stable TeamMate identity record per file. */
-export function dispatcherTeamMateIdentitiesDir(id: string): string {
-  return join(dispatcherTeamMateDir(id), 'identities');
+/**
+ * Directory containing one primary TeamMate record per file (issue #199
+ * Slice 3): `teammate/records/<name>.json` is the source for history / list /
+ * status. Renamed from the former `teammate/identities/` directory.
+ */
+export function dispatcherTeamMateRecordsDir(id: string): string {
+  return join(dispatcherTeamMateDir(id), 'records');
 }
 
-export function dispatcherTeamMateIdentityPath(
+export function dispatcherTeamMateRecordPath(
   id: string,
   teammateName: string,
 ): string {
   return join(
-    dispatcherTeamMateIdentitiesDir(id),
+    dispatcherTeamMateRecordsDir(id),
     `${teamMateNameSegment(teammateName)}.json`,
   );
 }
 
+/** Directory of per-name turn archives (issue #199 Slice 3). */
+export function dispatcherTeamMateTurnsDir(id: string): string {
+  return join(dispatcherTeamMateDir(id), 'turns');
+}
+
 /**
- * Per-dispatcher append-only TeamMate/Team session ledger (issue #182 PR-5).
- * One file per dispatcher — NOT one file per transient runtime session — so the
- * file count stays bounded as teammates come and go. Each line is a lifecycle
- * event (spawn / send / settled / close) keyed by a stable `session_id`; a
- * future read surface (PR-6) materializes session rows by folding the events.
- * Durable: it preserves the facts needed to reconstruct work weeks later (repo,
- * cwd, branch/worktree, name/team id, runtime checkpoint/session id, intent,
- * close note) and never records a volatile runtime socket path.
+ * Per-name append-only TeamMate turns archive (issue #199 Slice 3) — the only
+ * JSONL store. One file per concrete teammate name; each line is a compact turn
+ * event (submit / settled) folded by `last`. Common recovery facts live on the
+ * `teammate/records/<name>.json` record and are not repeated here.
  */
-export function dispatcherTeamMateSessionLedgerPath(id: string): string {
-  return join(dispatcherTeamMateDir(id), 'sessions.jsonl');
+export function dispatcherTeamMateTurnsPath(
+  id: string,
+  teammateName: string,
+): string {
+  return join(
+    dispatcherTeamMateTurnsDir(id),
+    `${teamMateNameSegment(teammateName)}.jsonl`,
+  );
 }
 
 export function dispatcherTeamMateRuntimeDir(
@@ -316,10 +327,6 @@ export function dispatcherTeamRecordsDir(id: string): string {
 
 export function dispatcherTeamRecordPath(id: string, teamId: string): string {
   return join(dispatcherTeamRecordsDir(id), `${teamMateNameSegment(teamId)}.json`);
-}
-
-export function dispatcherTeamLedgerPath(id: string, teamId: string): string {
-  return join(dispatcherTeamDir(id), 'ledger', `${teamMateNameSegment(teamId)}.jsonl`);
 }
 
 export function dispatcherChannelBindingsPath(id: string): string {

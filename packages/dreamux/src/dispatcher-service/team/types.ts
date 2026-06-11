@@ -68,27 +68,6 @@ export interface TeamTransferChannelBackInput {
   chatType: 'group' | 'p2p';
 }
 
-export type TeamLedgerEventType =
-  | 'create'
-  | 'status'
-  | 'artifact'
-  | 'decision'
-  | 'bind_channel'
-  | 'transfer_channel_back'
-  | 'create_group'
-  | 'leader_turn'
-  | 'dissolve';
-
-export interface TeamLedgerEvent {
-  version: 1;
-  event_id: number;
-  timestamp: number;
-  dispatcher_id: string;
-  team_id: string;
-  type: TeamLedgerEventType;
-  summary: string;
-}
-
 /**
  * Active group binding marker surfaced by the Team read tools (issue #182 PR-7).
  * Bindings are always Feishu group chats, so only the chat id varies.
@@ -202,11 +181,6 @@ export interface TeamHistoryResult {
 
 export interface TeamCreateResult extends TeamSummary {
   turn: TeamMateTurnResult;
-}
-
-export interface TeamLedgerResult {
-  team: TeamRecord | null;
-  events: TeamLedgerEvent[];
 }
 
 export function validateTeamId(id: string): string {

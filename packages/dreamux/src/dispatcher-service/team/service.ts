@@ -19,7 +19,6 @@ import type {
   TeamHistoryQuery,
   TeamHistoryResult,
   TeamHistoryRow,
-  TeamLedgerResult,
   TeamListRow,
   TeamRecord,
   TeamSummary,
@@ -119,10 +118,6 @@ export class TeamService {
       intent: input.intent,
     });
     team = await this.store.update(team, { status: 'running' });
-    await this.store.appendLedger(team, {
-      type: 'create',
-      summary: `created team ${teamId} with leader ${leaderName}`,
-    });
     // Optionally bind an existing Feishu group at create time (issue #182 PR-8,
     // the settled replacement for the retired create_group flow). Bind is the
     // last step; if it fails the Team is already persisted, so roll back by
@@ -199,14 +194,6 @@ export class TeamService {
     };
   }
 
-  async ledger(dispatcherId: string, teamId: string): Promise<TeamLedgerResult> {
-    const team = await this.store.get(dispatcherId, validateTeamId(teamId));
-    return {
-      team,
-      events: await this.store.ledger(dispatcherId, teamId),
-    };
-  }
-
   async dissolve(input: TeamDissolveInput): Promise<TeamSummary> {
     // Required dissolve reason — enforced for in-process callers too (issue
     // #182 PR-3); it also feeds the member/leader closes and the ledger.
@@ -259,10 +246,6 @@ export class TeamService {
         worktree: team.worktree,
       }),
     });
-    await this.store.appendLedger(closed, {
-      type: 'dissolve',
-      summary: input.note,
-    });
     return this.summary(closed);
   }
 
@@ -279,27 +262,13 @@ export class TeamService {
       teamId: team.team_id,
       leaderName: team.leader_name,
     });
-    await this.store.appendLedger(team, {
-      type: 'bind_channel',
-      summary: `bound ${input.provider} ${input.chatType} ${input.chatId}`,
-    });
     return binding;
   }
 
   async transferChannelBack(
     input: TeamTransferChannelBackInput,
   ): Promise<ChannelBinding | null> {
-    const binding = await this.bindings.transferBack(input);
-    if (binding !== null) {
-      const team = await this.store.get(input.dispatcherId, binding.team_id);
-      if (team !== null) {
-        await this.store.appendLedger(team, {
-          type: 'transfer_channel_back',
-          summary: `transferred ${input.provider} ${input.chatType} ${input.chatId} back to dispatcher`,
-        });
-      }
-    }
-    return binding;
+    return this.bindings.transferBack(input);
   }
 
   async resolveChannel(input: {
@@ -347,20 +316,6 @@ export class TeamService {
       team.leader_name,
       input.turn,
     );
-  }
-
-  async recordLeaderTurn(input: {
-    dispatcherId: string;
-    leaderName: string;
-    summary: string;
-  }): Promise<void> {
-    const teams = await this.store.list(input.dispatcherId);
-    const team = teams.find((item) => item.leader_name === input.leaderName);
-    if (team === undefined || team.status === 'closed') return;
-    await this.store.appendLedger(team, {
-      type: 'leader_turn',
-      summary: input.summary,
-    });
   }
 
   async sharedWorkspace(

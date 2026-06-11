@@ -1,5 +1,5 @@
 import { existsSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
-import { mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
@@ -24,8 +24,10 @@ import { TeamMateAgentService } from '../src/dispatcher-service/teammate/service
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
 import {
   dispatcherCompletionSpillDir,
-  dispatcherTeamMateIdentitiesDir,
-  dispatcherTeamMateIdentityPath,
+  dispatcherTeamMateDir,
+  dispatcherTeamMateRecordsDir,
+  dispatcherTeamMateRecordPath,
+  dispatcherTeamMateTurnsPath,
   resetRuntimeConfig,
 } from '../src/platform/paths.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
@@ -455,18 +457,99 @@ describe('TeamMateAgentService', () => {
     expect(provider.runtimes).toHaveLength(1);
     expect(provider.runtimes[0]?.submitted).toHaveLength(3);
 
-    // #182 PR-8: the write-only per-name history index was removed; the durable
-    // session ledger is the single recovery record. It captures the spawn + each
-    // send (no synthetic 'state' rows), in append order, with prompt previews.
-    const events = (await service.sessions().read('flow')).filter(
-      (event) => event.name === reviewer,
-    );
-    expect(events.map((event) => event.type)).toEqual(['spawn', 'send', 'send']);
-    expect(events.map((event) => event.prompt_preview)).toEqual([
+    // #199 Slice 3: the per-name turns archive captures one compact `submit`
+    // row per spawn/send, in append order, with prompt previews. No settle rows
+    // here (no completion sink wired).
+    const turnRows = [];
+    for await (const row of service.turns().stream('flow', reviewer)) {
+      turnRows.push(row);
+    }
+    expect(turnRows.map((row) => row.type)).toEqual(['submit', 'submit', 'submit']);
+    expect(turnRows.map((row) => row.prompt_preview)).toEqual([
       'Review the change.',
       'Check tests too.',
       'Continue from prior context.',
     ]);
+    // The record's rolling summary tracks the turn count + last prompt preview.
+    const reviewerRecord = (await service.status('flow', reviewer));
+    expect(reviewerRecord.status).toBe('running');
+  });
+
+  it('persists records as JSON + per-name turns as the only JSONL store (#199 Slice 3)', async () => {
+    const { catalog, provider } = providerCatalog();
+    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: catalog,
+      onTeamMateCompletion: () => undefined,
+      log: noopLog(),
+    });
+    const name = (
+      await service.spawn({
+        dispatcherId: 'flow',
+        name: 'archiver',
+        intent: 'work',
+        prompt: 'go',
+        cwd: root,
+      })
+    ).teammate.name;
+    provider.runtimes[0]!.lastText = 'the answer';
+    provider.runtimes[0]!.settle('completed', 'turn-1');
+    await waitForSettled(service, name, 1);
+
+    // The per-name record is JSON and never persists the runtime checkpoint
+    // wrapper (checkpoint / checkpoint_kind / session_ref).
+    const record = JSON.parse(
+      await readFile(dispatcherTeamMateRecordPath('flow', name), 'utf8'),
+    ) as Record<string, unknown>;
+    expect(record['version']).toBe(1);
+    for (const removed of ['checkpoint', 'checkpoint_kind', 'session_ref']) {
+      expect(record).not.toHaveProperty(removed);
+    }
+    expect(record).toHaveProperty('turn_count');
+
+    // The turns archive is JSONL and its rows are compact — turn facts only, no
+    // record/common fields repeated.
+    const turnLines = (
+      await readFile(dispatcherTeamMateTurnsPath('flow', name), 'utf8')
+    )
+      .trim()
+      .split('\n');
+    const allowed = new Set([
+      'version',
+      'type',
+      'turn_id',
+      'timestamp',
+      'turn_origin',
+      'prompt_preview',
+      'intent',
+      'settle_status',
+      'assistant',
+      'assistant_preview',
+      'assistant_truncated',
+    ]);
+    for (const line of turnLines) {
+      const row = JSON.parse(line) as Record<string, unknown>;
+      for (const key of Object.keys(row)) expect(allowed.has(key)).toBe(true);
+      for (const forbidden of ['name', 'owner', 'agent_runtime', 'source_repo', 'cwd', 'worktree']) {
+        expect(row).not.toHaveProperty(forbidden);
+      }
+    }
+    expect(turnLines.map((line) => (JSON.parse(line) as { type: string }).type)).toEqual([
+      'submit',
+      'settled',
+    ]);
+
+    // The only JSONL anywhere under the dispatcher's state is teammate/turns/*;
+    // the session ledger and the team ledger are gone.
+    const teammateDir = dispatcherTeamMateDir('flow');
+    expect(existsSync(join(teammateDir, 'sessions.jsonl'))).toBe(false);
+    const jsonl = await collectJsonl(join(teammateDir, '..'));
+    expect(jsonl.length).toBeGreaterThan(0);
+    for (const file of jsonl) {
+      expect(file.includes(join('teammate', 'turns'))).toBe(true);
+    }
   });
 
   it('resumes persisted identity through the same provider contract', async () => {
@@ -499,7 +582,8 @@ describe('TeamMateAgentService', () => {
     const last = await second.last('flow', builder);
     expect(last.teammate.name).toBe(builder);
     expect(last.requested_turns).toBe(1);
-    expect(last.session_id).not.toBeNull();
+    // #199 Slice 2/3: the internal session id is not surfaced on the last result.
+    expect(last).not.toHaveProperty('session_id');
     expect(last.turns).toEqual([]);
   });
 
@@ -652,12 +736,18 @@ describe('TeamMateAgentService', () => {
     expect((await service.status('flow', closer)).status).toBe('closed');
     expect(provider.runtimes).toHaveLength(1); // no new runtime started
 
-    // #182 PR-8: closing retains the durable session ledger (spawn + close),
-    // the single recovery record now that the per-name history index is gone.
-    const events = (await service.sessions().read('flow')).filter(
-      (event) => event.name === closer,
-    );
-    expect(events.map((event) => event.type)).toEqual(['spawn', 'close']);
+    // #199 Slice 3: closing retains the per-name record — the closed teammate is
+    // still searchable in history — and the turns archive keeps its submit row.
+    // No separate close row is written; the close note lands on the record.
+    const closerHistory = await service.history({ dispatcherId: 'flow', name: closer });
+    expect(closerHistory.items.map((item) => item.name)).toEqual([closer]);
+    expect(closerHistory.items[0]?.status).toBe('closed');
+    expect(closerHistory.items[0]?.close_note).toBe('done');
+    const turnRows = [];
+    for await (const row of service.turns().stream('flow', closer)) {
+      turnRows.push(row);
+    }
+    expect(turnRows.map((row) => row.type)).toEqual(['submit']);
   });
 
   it('send reopens a closed teammate from its checkpoint (issue #155)', async () => {
@@ -851,7 +941,7 @@ describe('TeamMateAgentService', () => {
       'state',
       'flow',
       'teammate',
-      'identities',
+      'records',
     );
     const path = join(dir, 'oldie.json');
     await mkdir(dir, { recursive: true });
@@ -1356,7 +1446,7 @@ describe('TeamMateAgentService', () => {
       'state',
       'flow',
       'teammate',
-      'identities',
+      'records',
     );
     await mkdir(dir, { recursive: true });
     await writeFile(
@@ -1405,9 +1495,9 @@ describe('TeamMateAgentService', () => {
       'worktrees',
       'legacy-mate',
     );
-    await mkdir(dispatcherTeamMateIdentitiesDir('flow'), { recursive: true });
+    await mkdir(dispatcherTeamMateRecordsDir('flow'), { recursive: true });
     await writeFile(
-      dispatcherTeamMateIdentityPath('flow', 'legacy-mate'),
+      dispatcherTeamMateRecordPath('flow', 'legacy-mate'),
       JSON.stringify({
         version: 1,
         dispatcher_id: 'flow',
@@ -1675,22 +1765,21 @@ describe('TeamMateAgentService', () => {
     const runtime = provider.runtimes[0]!;
     runtime.lastText = 'answer one';
     runtime.settle('completed', 'turn-1');
-    await waitForSettled(service, 1);
+    await waitForSettled(service, reviewer, 1);
     await service.send({ dispatcherId: 'flow', name: reviewer, prompt: 'second' });
     runtime.lastText = 'answer two';
     runtime.settle('completed', 'turn-2');
-    await waitForSettled(service, 2);
+    await waitForSettled(service, reviewer, 2);
     await service.send({ dispatcherId: 'flow', name: reviewer, prompt: 'third' });
     const huge = 'z'.repeat(170_000);
     runtime.lastText = huge;
     runtime.settle('completed', 'turn-3');
-    await waitForSettled(service, 3);
+    await waitForSettled(service, reviewer, 3);
 
     // Default returns just the newest settled turn (truncated to the hard cap).
     const latest = await service.last('flow', reviewer);
     expect(latest.requested_turns).toBe(1);
     expect(latest.returned_turns).toBe(1);
-    expect(latest.session_id).not.toBeNull();
     const newest = latest.turns.at(-1)!;
     expect(newest.turn_id).toBe('turn-3');
     expect(newest.assistant_truncated).toBe(true);
@@ -1736,7 +1825,7 @@ describe('TeamMateAgentService', () => {
     // fold's eviction path (recent.size > requestedTurns) more than once.
     runtime.lastText = 'a1';
     runtime.settle('completed', 'turn-1');
-    await waitForSettled(service, 1);
+    await waitForSettled(service, name, 1);
     for (const [turnId, text, prompt] of [
       ['turn-2', 'a2', 'second'],
       ['turn-3', 'a3', 'third'],
@@ -1745,7 +1834,7 @@ describe('TeamMateAgentService', () => {
       await service.send({ dispatcherId: 'flow', name, prompt });
       runtime.lastText = text;
       runtime.settle('completed', turnId);
-      await waitForSettled(service, Number(turnId.slice('turn-'.length)));
+      await waitForSettled(service, name, Number(turnId.slice('turn-'.length)));
     }
 
     // Only the two most-recent-by-start turns survive, in append order.
@@ -1781,7 +1870,7 @@ describe('TeamMateAgentService', () => {
     ).teammate.name;
     provider.runtimes[0]!.lastText = 'the captured answer';
     provider.runtimes[0]!.settle('completed', 'turn-1');
-    await waitForSettled(service, 1);
+    await waitForSettled(service, reviewer, 1);
     await service.close({ dispatcherId: 'flow', name: reviewer, note: 'done' });
 
     const runtimesBefore = provider.runtimes.length;
@@ -1880,15 +1969,36 @@ describe('TeamMateAgentService', () => {
 /** Poll the durable ledger until it has captured `count` settled turns. */
 async function waitForSettled(
   service: TeamMateAgentService,
+  name: string,
   count: number,
 ): Promise<void> {
   const deadline = Date.now() + 3000;
   while (Date.now() < deadline) {
-    const events = await service.sessions().read('flow');
-    if (events.filter((e) => e.type === 'settled').length >= count) return;
+    let settled = 0;
+    for await (const row of service.turns().stream('flow', name)) {
+      if (row.type === 'settled') settled += 1;
+    }
+    if (settled >= count) return;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
-  throw new Error(`timed out waiting for ${count} settled events`);
+  throw new Error(`timed out waiting for ${count} settled turns`);
+}
+
+/** Recursively collect every `.jsonl` file path under a directory. */
+async function collectJsonl(dir: string): Promise<string[]> {
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const out: string[] = [];
+  for (const entry of entries) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...(await collectJsonl(full)));
+    else if (entry.name.endsWith('.jsonl')) out.push(full);
+  }
+  return out;
 }
 
 function noopLog(): {

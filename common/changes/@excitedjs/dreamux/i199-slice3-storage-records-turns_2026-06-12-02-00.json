@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "BREAKING: local storage model closeout (issue #199 Slice 3). Per-dispatcher TeamMate state moves to a per-name layout: `state/<dispatcher>/teammate/records/<name>.json` (the primary record: identity + a rolling recovery summary, the source for history/list/status) and `state/<dispatcher>/teammate/turns/<name>.jsonl` (the ONLY JSONL store: compact per-turn rows folded by `last`). The former `teammate/identities/<name>.json`, the per-dispatcher `teammate/sessions.jsonl` session ledger, and the `team/ledger/<team_name>.jsonl` team audit ledger are removed; team records and `team/channel-bindings.json` stay JSON. The Dreamux-minted `session_id` ledger key and the persisted `checkpoint` object are gone: `session_id` is now the runtime-native thread id, persisted directly, and the resume checkpoint kind is rebuilt from the runtime. 0.x is fail-loud + rebuild (no automatic migration). Rebuild: delete the old `~/.dreamux/state/<dispatcher>/teammate/identities/`, `~/.dreamux/state/<dispatcher>/teammate/sessions.jsonl`, and `~/.dreamux/state/<dispatcher>/team/ledger/` after upgrading, then close and respawn any teammates/teams to repopulate `teammate/records`, `teammate/turns`, and `team/records`.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

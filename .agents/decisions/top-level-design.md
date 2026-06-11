@@ -256,17 +256,18 @@ from durable state (`state/`); see
       access.json
       chat-bots.json
       teammate/
-        identities/
-          <name>.json          one TeamMate identity/checkpoint per file
-        sessions.jsonl         per-dispatcher session ledger (issue #182 PR-5)
+        records/
+          <name>.json          primary TeamMate record: identity + rolling
+                               recovery summary (issue #199 Slice 3)
+        turns/
+          <name>.jsonl         per-name turns archive — the ONLY JSONL store;
+                               compact submit/settled turn rows folded by `last`
         runtime/
           <name>/              runtime-private config/control state (no sockets)
       team/
         records/
-          <team-id>.json        Team lifecycle record and TeamLeader pointer
-        ledger/
-          <team-id>.jsonl       append-only Team lifecycle ledger
-        channel-bindings.json   Team ↔ Feishu group bindings
+          <team-name>.json      Team lifecycle record and TeamLeader pointer
+        channel-bindings.json   Team ↔ Feishu group bindings (JSON only)
   logs/
     dreamux-server.log
     daemon.stdout.log          when run as a daemon (onboard service redirect)
@@ -688,6 +689,17 @@ Old identities without owner/worktree metadata read as dispatcher-owned
 reuse-cwd records until the next lifecycle mutation rewrites them. A caller
 marked as `teammate` does not receive lifecycle tools, so TeamMates cannot
 recursively spawn or close TeamMates.
+
+> **Superseded by issue #199 Slice 3.** The per-dispatcher `sessions.jsonl`
+> session ledger described below was replaced by the per-name storage in the
+> layout above: `teammate/records/<name>.json` (identity + a rolling recovery
+> summary; the source for history/list/status) and `teammate/turns/<name>.jsonl`
+> (the only JSONL store; compact per-turn rows folded by `last`). The
+> Dreamux-minted `session_id` ledger key and the persisted `checkpoint` object
+> are gone — `session_id` is now the runtime-native thread id, persisted
+> directly, and the resume checkpoint kind is rebuilt from the runtime. The team
+> audit ledger (`team/ledger/<id>.jsonl`) was removed too; only `teammate/turns`
+> uses JSONL. The historical narrative below is kept for context.
 
 Issue #182 PR-5 adds a durable **session ledger**: one per-dispatcher
 append-only `state/<dispatcher-id>/teammate/sessions.jsonl` capturing session

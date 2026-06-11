@@ -215,11 +215,13 @@ describe('TeamService', () => {
     expect(listed[0]).not.toHaveProperty('team_id');
     expect(listed[0]).not.toHaveProperty('repo_cwd');
     expect(listed[0]).not.toHaveProperty('worktree_mode');
-    expect((await teams.ledger('flow', 'alpha')).events.map((event) => event.type)).toEqual(['create']);
 
     const reloaded = new TeamService({ teammates });
     expect((await reloaded.status('flow', 'alpha')).team.team_name).toBe('alpha');
 
+    // #199 Slice 3: the team audit ledger JSONL was removed. Dissolve persists
+    // the closed status + the required note on the JSON team record, surfaced by
+    // status/history (no separate event stream).
     const dissolved = await reloaded.dissolve({
       dispatcherId: 'flow',
       teamId: 'alpha',
@@ -228,14 +230,12 @@ describe('TeamService', () => {
     expect(dissolved.team.status).toBe('closed');
     expect(dissolved.team.close_note).toBe('done');
     expect(dissolved.leader?.status).toBe('closed');
-    const ledger = (await reloaded.ledger('flow', 'alpha')).events;
-    expect(ledger.map((event) => event.type)).toEqual(['create', 'dissolve']);
-    // Required dissolve note (issue #182 PR-3) is the ledger summary — no
-    // synthetic 'team dissolved' fallback.
-    expect(ledger.find((e) => e.type === 'dissolve')?.summary).toBe('done');
+    const closedView = (await reloaded.history({ dispatcherId: 'flow', status: 'closed' }))
+      .items.find((item) => item.team_name === 'alpha');
+    expect(closedView?.close_note).toBe('done');
   });
 
-  it('captures a bound-channel TeamLeader turn in the session ledger (#182 PR-5, PR#187 P1)', async () => {
+  it('captures a bound-channel TeamLeader turn in the leader turns archive (#199 Slice 3)', async () => {
     const repo = await initGitRepo(join(root, 'channel-repo'));
     const { teams, teammates } = buildServices();
 
@@ -258,22 +258,19 @@ describe('TeamService', () => {
       turn: { text: 'please review the auth change', sourceId: 'msg-1' },
     });
 
-    const events = await teammates.sessions().read('flow');
-    const channelTurn = events.find((e) => e.turn_origin === 'channel');
+    // #199 Slice 3: the channel-origin turn is captured as a compact `submit`
+    // row in the LEADER's own per-name turns archive (no separate session ledger;
+    // the row carries turn-specific facts only — no name/role/team_id).
+    const turnRows = [];
+    for await (const row of teammates.turns().stream('flow', leaderName)) {
+      turnRows.push(row);
+    }
+    const channelTurn = turnRows.find((row) => row.turn_origin === 'channel');
     expect(channelTurn).toMatchObject({
-      type: 'send',
-      name: leaderName,
-      display_name: 'alpha-leader',
-      role: 'team_leader',
-      team_id: 'alpha',
-      leader_name: leaderName,
+      type: 'submit',
       turn_origin: 'channel',
       prompt_preview: 'please review the auth change',
     });
-    // Carries a stable session id (same as the leader's spawn), never re-keyed.
-    expect(channelTurn?.session_id).toBe(
-      events.find((e) => e.type === 'spawn' && e.name === leaderName)?.session_id,
-    );
   });
 
   it('recreating a closed Team persists the new create.intent (#182 PR-3 P1)', async () => {
@@ -317,9 +314,7 @@ describe('TeamService', () => {
       intent: 'first',
     });
     const firstLeader = first.team.leader_name;
-    const firstSession = first.leader.session_id;
     expect(firstLeader).toMatch(/^tl-alpha-[a-z0-9]{8}$/);
-    expect(firstSession).not.toBeNull();
     await teams.dissolve({ dispatcherId: 'flow', teamId: 'alpha', note: 'done' });
 
     const second = await teams.create({
@@ -330,12 +325,12 @@ describe('TeamService', () => {
       intent: 'second',
     });
     const secondLeader = second.team.leader_name;
-    // #188: a recreated closed Team gets a DISTINCT concrete leader name and a
-    // distinct session — the closed leader's concrete name is never reused.
+    // #188: a recreated closed Team gets a DISTINCT concrete leader name — the
+    // closed leader's concrete name is never reused (the name is the session
+    // identity now that the Dreamux-minted session id is gone, #199 Slice 3).
     expect(secondLeader).toMatch(/^tl-alpha-[a-z0-9]{8}$/);
     expect(secondLeader).not.toBe(firstLeader);
     expect(second.leader.name).toBe(secondLeader);
-    expect(second.leader.session_id).not.toBe(firstSession);
 
     // The Team record (reloaded) routes/statuses on the NEW concrete leader name.
     const reloaded = new TeamService({ teammates });
