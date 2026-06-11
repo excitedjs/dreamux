@@ -1,15 +1,12 @@
-import { appendFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import {
-  dispatcherTeamMateHistoryPath,
   dispatcherTeamMateIdentitiesDir,
   dispatcherTeamMateIdentityPath,
 } from '../../platform/paths.js';
 import {
   validateTeamMateName,
-  type TeamMateHistoryEvent,
-  type TeamMateHistoryEventType,
   type TeamMateIdentity,
   type TeamMateIdentityStatus,
   type TeamMateOwner,
@@ -56,13 +53,6 @@ export interface TeamMateIdentityUpdateInput {
   lastError?: string | null;
   closedAt?: number | null;
   closeNote?: string | null;
-}
-
-export interface TeamMateHistoryAppendInput {
-  type: TeamMateHistoryEventType;
-  prompt?: string | null;
-  turnId?: string | null;
-  note?: string | null;
 }
 
 export class TeamMateIdentityStore {
@@ -165,71 +155,6 @@ export class TeamMateIdentityStore {
     };
     await this.write(updated);
     return updated;
-  }
-
-  async appendHistory(
-    identity: TeamMateIdentity,
-    input: TeamMateHistoryAppendInput,
-  ): Promise<void> {
-    try {
-      const event: TeamMateHistoryEvent = {
-        version: 1,
-        event_id: Date.now(),
-        timestamp: Date.now(),
-        dispatcher_id: identity.dispatcher_id,
-        name: identity.name,
-        owner: identity.owner,
-        role: identity.role,
-        team_id: identity.team_id,
-        type: input.type,
-        agent_runtime: identity.agent_runtime,
-        source_cwd: identity.source_cwd,
-        source_repo: identity.source_repo,
-        cwd: identity.cwd,
-        runtime_cwd: identity.runtime_cwd,
-        worktree: identity.worktree,
-        checkpoint: identity.checkpoint,
-        prompt_preview:
-          input.prompt !== undefined && input.prompt !== null
-            ? preview(input.prompt)
-            : null,
-        turn_id: input.turnId ?? null,
-        status: identity.status,
-        note: input.note ?? null,
-      };
-      const path = dispatcherTeamMateHistoryPath(
-        identity.dispatcher_id,
-        identity.name,
-      );
-      await mkdir(dirname(path), { recursive: true });
-      await appendFile(path, `${JSON.stringify(event)}\n`, { mode: 0o600 });
-    } catch (err) {
-      this.log.warn('TeamMate history append failed', {
-        dispatcher_id: identity.dispatcher_id,
-        name: identity.name,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
-
-  async history(
-    dispatcherId: string,
-    name: string,
-  ): Promise<TeamMateHistoryEvent[]> {
-    validateTeamMateName(name);
-    let raw: string;
-    try {
-      raw = await readFile(dispatcherTeamMateHistoryPath(dispatcherId, name), 'utf8');
-    } catch (err) {
-      if (isNotFound(err)) return [];
-      throw err;
-    }
-    const events: TeamMateHistoryEvent[] = [];
-    for (const line of raw.split('\n')) {
-      if (line.trim() === '') continue;
-      events.push(readHistoryEvent(dispatcherId, name, JSON.parse(line) as unknown));
-    }
-    return events.sort((a, b) => a.timestamp - b.timestamp || a.event_id - b.event_id);
   }
 
   private async write(identity: TeamMateIdentity): Promise<void> {
@@ -378,32 +303,6 @@ function readWorktreeIdentity(
         ? record['cleanup_error']
         : null,
   };
-}
-
-function readHistoryEvent(
-  dispatcherId: string,
-  name: string,
-  value: unknown,
-): TeamMateHistoryEvent {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error('invalid TeamMate history event');
-  }
-  const record = value as Record<string, unknown>;
-  if (
-    record['version'] !== 1 ||
-    record['dispatcher_id'] !== dispatcherId ||
-    record['name'] !== name ||
-    typeof record['timestamp'] !== 'number' ||
-    typeof record['event_id'] !== 'number'
-  ) {
-    throw new Error(`invalid TeamMate history event for ${JSON.stringify(name)}`);
-  }
-  return record as unknown as TeamMateHistoryEvent;
-}
-
-function preview(text: string): string {
-  const collapsed = text.replace(/\s+/g, ' ').trim();
-  return collapsed.length <= 500 ? collapsed : `${collapsed.slice(0, 497)}...`;
 }
 
 function isNotFound(err: unknown): boolean {

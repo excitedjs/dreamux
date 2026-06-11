@@ -13,7 +13,6 @@ import {
   dispatcherDir,
   dispatcherFeishuAttachmentCacheDir,
   dispatcherTeamMateDir,
-  dispatcherTeamMateHistoryPath,
   dispatcherTeamMateIdentitiesDir,
   dispatcherTeamMateIdentityPath,
   dispatcherTeamMateRuntimeDir,
@@ -111,15 +110,6 @@ describe('runtime paths', () => {
         'teammate',
         'identities',
         'reviewer-1.json',
-      ),
-    );
-    expect(dispatcherTeamMateHistoryPath('dispatcher-a', 'reviewer-1')).toBe(
-      join(
-        stateRoot(),
-        'dispatcher-a',
-        'teammate',
-        'history',
-        'reviewer-1.jsonl',
       ),
     );
     expect(dispatcherTeamMateRuntimeDir('dispatcher-a', 'reviewer-1')).toBe(

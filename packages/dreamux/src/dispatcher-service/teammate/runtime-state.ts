@@ -63,10 +63,6 @@ export class TeamMateRuntimeStateStore implements AgentRuntimeStateStore {
         ? { lastError: extras.last_error }
         : {}),
     });
-    await this.store.appendHistory(this.identity, {
-      type: 'state',
-      note: status,
-    });
   }
 
   async setThreadId(_id: string, threadId: string): Promise<void> {
@@ -88,10 +84,6 @@ export class TeamMateRuntimeStateStore implements AgentRuntimeStateStore {
     this.identity = await this.store.update(this.identity, {
       status: 'degraded',
       lastError: error,
-    });
-    await this.store.appendHistory(this.identity, {
-      type: 'state',
-      note: error,
     });
   }
 }

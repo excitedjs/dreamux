@@ -263,6 +263,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     // Required recovery subject (issue #182 PR-3).
     const intent = mustNonEmptyString(params, 'intent');
     const prompt = optionalString(params, 'prompt');
+    const bindGroup = optionalBindGroup(params, 'bind_group');
     try {
       return await server.dispatcherService.createTeam({
         dispatcherId: id,
@@ -272,6 +273,7 @@ export const adminMethods: Record<string, AdminHandler> = {
         intent,
         ...(worktree !== null ? { worktree } : {}),
         ...(prompt !== null ? { prompt } : {}),
+        ...(bindGroup !== null ? { bindGroup } : {}),
       });
     } catch (err) {
       throw new AdminError('TEAM_CREATE_FAILED', parseMessage(err));
@@ -329,25 +331,6 @@ export const adminMethods: Record<string, AdminHandler> = {
       provider: 'builtin:feishu',
       chatId: mustString(params, 'chat_id'),
       chatType: 'group',
-    });
-  },
-
-  'mcp.team.create_group': async (server, params) => {
-    const id = mustDispatcherId(params);
-    mustExistingDispatcher(server, id);
-    return server.dispatcherService.createTeamGroup({
-      dispatcherId: id,
-      name: mustString(params, 'name'),
-      repoCwd: mustString(params, 'repo_cwd'),
-      leaderAgentRuntime: mustString(params, 'leader_agent_runtime'),
-      sourceChatId: mustString(params, 'source_chat_id'),
-      sourceChatType: mustString(params, 'source_chat_type') === 'p2p' ? 'p2p' : 'group',
-      requesterOpenId: mustString(params, 'requester_open_id'),
-      // Required recovery subject — same contract as team.create (issue #182 PR-3).
-      intent: mustNonEmptyString(params, 'intent'),
-      ...optionalMappedStringProp(params ?? {}, 'group_name', 'groupName'),
-      ...optionalStringProp(params ?? {}, 'prompt'),
-      inviteOpenIds: optionalStringArray(params, 'invite_open_ids') ?? [],
     });
   },
 
@@ -589,6 +572,23 @@ function optionalCloseStatus(
   throw new AdminError('BAD_REQUEST', `param '${key}' must be open or closed`);
 }
 
+function optionalBindGroup(
+  params: Record<string, unknown> | undefined,
+  key: string,
+): { chatId: string } | null {
+  if (params === undefined) return null;
+  const value = params[key];
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new AdminError('BAD_REQUEST', `param '${key}' must be an object`);
+  }
+  const chatId = (value as Record<string, unknown>)['chat_id'];
+  if (typeof chatId !== 'string' || chatId === '') {
+    throw new AdminError('BAD_REQUEST', `param '${key}.chat_id' must be a non-empty string`);
+  }
+  return { chatId };
+}
+
 function optionalTeamStatus(
   params: Record<string, unknown> | undefined,
   key: string,
@@ -615,34 +615,12 @@ function optionalInteger(
   return value as number;
 }
 
-function optionalStringArray(
-  params: Record<string, unknown> | undefined,
-  key: string,
-): string[] | null {
-  if (params === undefined) return null;
-  const value = params[key];
-  if (value === undefined || value === null) return null;
-  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
-    throw new AdminError('BAD_REQUEST', `param '${key}' must be an array of strings`);
-  }
-  return value as string[];
-}
-
 function optionalStringProp(
   params: Record<string, unknown>,
   key: string,
 ): Record<string, string> {
   const value = optionalString(params, key);
   return value === null ? {} : { [key]: value };
-}
-
-function optionalMappedStringProp(
-  params: Record<string, unknown>,
-  key: string,
-  targetKey: string,
-): Record<string, string> {
-  const value = optionalString(params, key);
-  return value === null ? {} : { [targetKey]: value };
 }
 
 function mustExistingDispatcher(server: Server, id: string): void {

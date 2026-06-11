@@ -297,11 +297,6 @@ export class TeamMateAgentService {
     const turn = await this.submitPrompt(dispatcherId, name, input.prompt, {
       principal: input.principal,
     });
-    await this.identities.appendHistory(live.state.current(), {
-      type: 'spawn',
-      prompt: input.prompt,
-      turnId: turn.turn_id ?? null,
-    });
     await this.sessionLedger.append({
       identity: live.state.current(),
       type: 'spawn',
@@ -340,11 +335,6 @@ export class TeamMateAgentService {
     }
     const turn = await this.submitPrompt(dispatcherId, input.name, input.prompt, {
       principal: input.principal,
-    });
-    await this.identities.appendHistory(live.state.current(), {
-      type: 'send',
-      prompt: input.prompt,
-      turnId: turn.turn_id ?? null,
     });
     // The send may have reopened a closed teammate from its checkpoint, so the
     // session ledger continues the SAME session id carried on the identity
@@ -393,10 +383,6 @@ export class TeamMateAgentService {
       // same close write so the close event is captured rather than skipped
       // (PR #187 review P3). Never re-keyed to the runtime thread id.
       ...(identity.session_id === null ? { sessionId: randomUUID() } : {}),
-    });
-    await this.identities.appendHistory(closed, {
-      type: 'close',
-      note: input.note,
     });
     await this.sessionLedger.append({
       identity: closed,
@@ -715,11 +701,6 @@ export class TeamMateAgentService {
     const live = await this.startRuntime(input.dispatcherId, identity, provider, agent);
     identity = live.state.current();
     const turn = await this.submitPrompt(input.dispatcherId, name, input.prompt);
-    await this.identities.appendHistory(live.state.current(), {
-      type: 'spawn',
-      prompt: input.prompt,
-      turnId: turn.turn_id ?? null,
-    });
     await this.sessionLedger.append({
       identity: live.state.current(),
       type: 'spawn',

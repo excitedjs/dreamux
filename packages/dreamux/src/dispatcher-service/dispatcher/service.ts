@@ -4,11 +4,7 @@ import type {
   AgentRuntimeProviderCatalog,
   CompletionEnvelope,
 } from '../../agent-runtime/index.js';
-import type {
-  FeishuBot,
-  FeishuCreateGroupInput,
-  FeishuCreateGroupResult,
-} from '../../channel/feishu/bot.js';
+import type { FeishuBot } from '../../channel/feishu/bot.js';
 import {
   FeishuChannelSession,
   type FeishuInboundEnvelope,
@@ -255,17 +251,6 @@ export class DispatcherAgentService {
   ): boolean {
     const slot = this.slots.get(dispatcherId);
     return slot?.channel.messageBelongsToChat(messageId, chatId) ?? false;
-  }
-
-  async createFeishuGroup(
-    input: FeishuCreateGroupInput & { dispatcherId: string },
-  ): Promise<FeishuCreateGroupResult> {
-    const slot = this.mustRunningSlot(input.dispatcherId);
-    const created = await slot.channel.bot.createGroup({
-      name: input.name,
-      userOpenIds: input.userOpenIds,
-    });
-    return created;
   }
 
   async shutdown(): Promise<void> {

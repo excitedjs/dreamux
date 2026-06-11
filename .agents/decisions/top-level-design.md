@@ -248,8 +248,6 @@ State and logs are server-owned. They are not operator-editable config.
       teammate/
         identities/
           <name>.json          one TeamMate identity/checkpoint per file
-        history/
-          <name>.jsonl         forward-only TeamMate lifecycle history
         sessions.jsonl         per-dispatcher session ledger (issue #182 PR-5)
         runtime/
           <name>/              runtime-private socket/config state
@@ -709,11 +707,10 @@ the TeamMate name a concrete, never-reused address:
 ## Team Mode Core
 
 Issue #171 starts Team Mode. Dispatcher runtimes receive a `team` MCP server for
-dispatcher-only team lifecycle: `create`, `create_group`, `list`, `status`,
-`history`, `bind_group`, `transfer_channel_back`, and `dissolve`. `create`
-requires `repo_cwd`, `leader_agent_runtime`, and `intent` (issue #182 PR-3 — the
-same `intent` requirement applies to `create_group`); `dissolve` requires
-`note`. Dreamux does not infer a default TeamLeader runtime.
+dispatcher-only team lifecycle: `create`, `list`, `status`, `history`,
+`bind_group`, `transfer_channel_back`, and `dissolve`. `create` requires
+`repo_cwd`, `leader_agent_runtime`, and `intent` (issue #182 PR-3); `dissolve`
+requires `note`. Dreamux does not infer a default TeamLeader runtime.
 
 Issue #182 PR-7 aligned the Team read/binding surface with the TeamMate
 read-surface model: the public surface is addressed by **Team name** (the
@@ -726,9 +723,19 @@ mirroring the TeamMate `history`, while the raw lifecycle event timeline stays
 an internal/debug ledger; and `bind_channel` is simplified to `bind_group`
 (Team name + `chat_id`, group-only — the redundant `chat_type` is gone from the
 public surface, since the binding store rejects non-group anyway).
-`transfer_channel_back` likewise drops `chat_type`. (`create_group` — create a
-brand-new Feishu group from a P2P control channel — is retained for now; its
-retirement is tracked as a follow-up.)
+`transfer_channel_back` likewise drops `chat_type`.
+
+Issue #182 PR-8 (the epic's final cleanup) retired `create_group` — the
+create-a-brand-new-Feishu-group-and-invite-users tool — from the public Team MCP
+surface, capabilities, and docs. Its binding role is replaced by an optional
+`create.bind_group: { chat_id }` that binds an EXISTING group at create time
+through the same `ChannelBindingStore` path; the generic Feishu
+`bot.createGroup` transport primitive and the dispatcher's group-create wiring
+were removed with it. The same PR removed the write-only per-name TeamMate
+history index (`state/<id>/teammate/history/<name>.jsonl` plus
+`appendHistory`/`TeamMateIdentityStore.history()`): after PR-6 the durable
+session ledger (`sessions.jsonl`) is the single recovery record, so the per-name
+index had no readers and only added files.
 
 A TeamLeader is a TeamMate identity with `role:
 "team_leader"` and dispatcher owner. Team-owned members are normal TeamMate
@@ -749,13 +756,14 @@ active bindings back before closing the team. TeamLeader Feishu MCP calls carry
 their server-derived team principal and can reply/react only in bound team
 channels; the dispatcher keeps the global Feishu management surface.
 
-From a P2P control channel, `team.create_group` can create a Team, ask the
-shared dispatcher Feishu bot to create a new group and invite the requester /
-specified peers, then bind that new group to the TeamLeader through the same
-ChannelBindingStore path. The source P2P channel is never bound or transferred:
-it remains the dispatcher control plane. TeamLeaders do not get independent
-Feishu identities or credentials; they are internal AgentRuntime roles behind
-the dispatcher-owned shared bot.
+A Team binds to an EXISTING Feishu group chat — at create time via
+`create.bind_group: { chat_id }`, or later via `team.bind_group` — through the
+`ChannelBindingStore` path; bindings are group-only. (Issue #182 PR-8 retired the
+older `create_group` flow that created a brand-new group and invited users.)
+A dispatcher's P2P control channel is never bound or transferred: it remains the
+dispatcher control plane. TeamLeaders do not get independent Feishu identities or
+credentials; they are internal AgentRuntime roles behind the dispatcher-owned
+shared bot.
 
 ## Reaction Ownership
 

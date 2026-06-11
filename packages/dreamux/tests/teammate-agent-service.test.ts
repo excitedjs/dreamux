@@ -441,24 +441,14 @@ describe('TeamMateAgentService', () => {
     expect(provider.runtimes).toHaveLength(1);
     expect(provider.runtimes[0]?.submitted).toHaveLength(3);
 
-    // The forward-only per-name history index is still written (the raw
-    // history_events read surface was removed in #188; the file remains).
-    const historyFile = await readFile(
-      join(root, 'home', '.dreamux', 'state', 'flow', 'teammate', 'history', `${reviewer}.jsonl`),
-      'utf8',
+    // #182 PR-8: the write-only per-name history index was removed; the durable
+    // session ledger is the single recovery record. It captures the spawn + each
+    // send (no synthetic 'state' rows), in append order, with prompt previews.
+    const events = (await service.sessions().read('flow')).filter(
+      (event) => event.name === reviewer,
     );
-    const events = historyFile
-      .split('\n')
-      .filter((line) => line.trim() !== '')
-      .map((line) => JSON.parse(line) as { type: string; prompt_preview: string | null });
-    expect(events.map((event) => event.type)).toEqual([
-      'state',
-      'spawn',
-      'send',
-      'send',
-    ]);
+    expect(events.map((event) => event.type)).toEqual(['spawn', 'send', 'send']);
     expect(events.map((event) => event.prompt_preview)).toEqual([
-      null,
       'Review the change.',
       'Check tests too.',
       'Continue from prior context.',
@@ -641,12 +631,12 @@ describe('TeamMateAgentService', () => {
     expect((await service.status('flow', closer)).status).toBe('closed');
     expect(provider.runtimes).toHaveLength(1); // no new runtime started
 
-    const historyFile = await readFile(
-      join(root, 'home', '.dreamux', 'state', 'flow', 'teammate', 'history', `${closer}.jsonl`),
-      'utf8',
+    // #182 PR-8: closing retains the durable session ledger (spawn + close),
+    // the single recovery record now that the per-name history index is gone.
+    const events = (await service.sessions().read('flow')).filter(
+      (event) => event.name === closer,
     );
-    expect(historyFile).toContain('"type":"spawn"');
-    expect(historyFile).toContain('"type":"close"');
+    expect(events.map((event) => event.type)).toEqual(['spawn', 'close']);
   });
 
   it('send reopens a closed teammate from its checkpoint (issue #155)', async () => {
@@ -1700,6 +1690,54 @@ describe('TeamMateAgentService', () => {
       assistant: 'answer one',
       assistant_truncated: false,
     });
+  });
+
+  it('last(turns) evicts older turns beyond the window, keeping the most recent by start order (#188 bounded fold)', async () => {
+    const { catalog, provider } = providerCatalog();
+    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: catalog,
+      onTeamMateCompletion: () => undefined,
+      log: noopLog(),
+    });
+
+    const name = (
+      await service.spawn({
+        dispatcherId: 'flow',
+        name: 'evict',
+        intent: 'work',
+        prompt: 'first',
+        cwd: root,
+      })
+    ).teammate.name;
+    const runtime = provider.runtimes[0]!;
+    // Settle FOUR turns in one session so last(turns=2) must drive the bounded
+    // fold's eviction path (recent.size > requestedTurns) more than once.
+    runtime.lastText = 'a1';
+    runtime.settle('completed', 'turn-1');
+    await waitForSettled(service, 1);
+    for (const [turnId, text, prompt] of [
+      ['turn-2', 'a2', 'second'],
+      ['turn-3', 'a3', 'third'],
+      ['turn-4', 'a4', 'fourth'],
+    ] as const) {
+      await service.send({ dispatcherId: 'flow', name, prompt });
+      runtime.lastText = text;
+      runtime.settle('completed', turnId);
+      await waitForSettled(service, Number(turnId.slice('turn-'.length)));
+    }
+
+    // Only the two most-recent-by-start turns survive, in append order.
+    const last = await service.last('flow', name, 2);
+    expect(last.requested_turns).toBe(2);
+    expect(last.returned_turns).toBe(2);
+    expect(last.turns.map((turn) => turn.turn_id)).toEqual(['turn-3', 'turn-4']);
+    expect(last.turns.map((turn) => turn.assistant)).toEqual(['a3', 'a4']);
+    // Default (turns=1) keeps only the newest.
+    const latest = await service.last('flow', name);
+    expect(latest.turns.map((turn) => turn.turn_id)).toEqual(['turn-4']);
   });
 
   it('last works on a closed teammate without starting a runtime (#188)', async () => {

@@ -99,25 +99,19 @@ async function handleRequest(
 
 function teamTools(): Array<Record<string, unknown>> {
   return [
-    tool('create', 'Create a Team and start its TeamLeader. intent is required: it is the durable recovery subject for the Team.', {
+    tool('create', 'Create a Team and start its TeamLeader. intent is required: it is the durable recovery subject for the Team. Optionally bind an existing Feishu group chat at create time via bind_group.', {
       name: { type: 'string', minLength: 1, maxLength: 64 },
       repo_cwd: { type: 'string', minLength: 1, maxLength: 4096 },
       leader_agent_runtime: { type: 'string', minLength: 1, maxLength: 128 },
       intent: { type: 'string', minLength: 1, maxLength: 2000 },
       prompt: { type: 'string', maxLength: 20000 },
+      bind_group: {
+        type: 'object',
+        additionalProperties: false,
+        properties: { chat_id: { type: 'string', minLength: 1 } },
+        required: ['chat_id'],
+      },
     }, ['name', 'repo_cwd', 'leader_agent_runtime', 'intent']),
-    tool('create_group', 'Create a Team, create a Feishu group, and bind that group to the TeamLeader. intent is required (same contract as create).', {
-      name: { type: 'string', minLength: 1, maxLength: 64 },
-      repo_cwd: { type: 'string', minLength: 1, maxLength: 4096 },
-      leader_agent_runtime: { type: 'string', minLength: 1, maxLength: 128 },
-      source_chat_id: { type: 'string', minLength: 1 },
-      source_chat_type: { type: 'string', enum: ['p2p', 'group'] },
-      requester_open_id: { type: 'string', minLength: 1 },
-      invite_open_ids: { type: 'array', items: { type: 'string' } },
-      group_name: { type: 'string', minLength: 1 },
-      intent: { type: 'string', minLength: 1, maxLength: 2000 },
-      prompt: { type: 'string', maxLength: 20000 },
-    }, ['name', 'repo_cwd', 'leader_agent_runtime', 'source_chat_id', 'source_chat_type', 'requester_open_id', 'intent']),
     tool('list', 'List Teams owned by this dispatcher (compact scan rows: name, status, intent, repo, leader, member count, bound group).', {}, []),
     tool('status', 'Read one Team\'s detailed current status by its name (record, TeamLeader status/session, member count, active bound group).', {
       name: { type: 'string', minLength: 1, maxLength: 64 },
@@ -186,8 +180,6 @@ function mapToolCall(call: ToolCall): { method: string; params: Record<string, u
   switch (call.name) {
     case 'create':
       return { method: 'mcp.team.create', params: createArgs(call.arguments) };
-    case 'create_group':
-      return { method: 'mcp.team.create_group', params: createGroupArgs(call.arguments) };
     case 'list':
       return { method: 'mcp.team.list', params: {} };
     case 'status':
@@ -208,26 +200,21 @@ function mapToolCall(call: ToolCall): { method: string; params: Record<string, u
 function createArgs(value: unknown): Record<string, unknown> {
   const obj = asRecord(value, 'create arguments');
   const prompt = optionalString(obj, 'prompt');
+  // Optional: bind an existing Feishu group at create time (issue #182 PR-8).
+  const bindGroupRaw = obj['bind_group'];
+  let bindGroup: { chat_id: string } | null = null;
+  if (bindGroupRaw !== undefined && bindGroupRaw !== null) {
+    const bindObj = asRecord(bindGroupRaw, 'bind_group');
+    bindGroup = { chat_id: requireString(bindObj, 'chat_id') };
+  }
   return {
     name: requireString(obj, 'name'),
     repo_cwd: requireString(obj, 'repo_cwd'),
     leader_agent_runtime: requireString(obj, 'leader_agent_runtime'),
-    // Required recovery subject (issue #182 PR-3); create_group reuses this.
+    // Required recovery subject (issue #182 PR-3).
     intent: requireString(obj, 'intent'),
     ...(prompt !== null ? { prompt } : {}),
-  };
-}
-
-function createGroupArgs(value: unknown): Record<string, unknown> {
-  const obj = asRecord(value, 'create_group arguments');
-  const inviteOpenIds = optionalStringArray(obj, 'invite_open_ids');
-  return {
-    ...createArgs(value),
-    source_chat_id: requireString(obj, 'source_chat_id'),
-    source_chat_type: requireString(obj, 'source_chat_type'),
-    requester_open_id: requireString(obj, 'requester_open_id'),
-    ...optionalStringProp(obj, 'group_name'),
-    ...(inviteOpenIds !== null ? { invite_open_ids: inviteOpenIds } : {}),
+    ...(bindGroup !== null ? { bind_group: bindGroup } : {}),
   };
 }
 
@@ -316,23 +303,6 @@ function optionalInteger(obj: Record<string, unknown>, key: string): number | nu
   if (value === undefined || value === null) return null;
   if (!Number.isInteger(value)) throw new Error(`${key} must be an integer`);
   return value as number;
-}
-
-function optionalStringArray(obj: Record<string, unknown>, key: string): string[] | null {
-  const value = obj[key];
-  if (value === undefined || value === null) return null;
-  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
-    throw new Error(`${key} must be an array of strings`);
-  }
-  return value as string[];
-}
-
-function optionalStringProp(
-  obj: Record<string, unknown>,
-  key: string,
-): Record<string, string> {
-  const value = optionalString(obj, key);
-  return value === null ? {} : { [key]: value };
 }
 
 function okResponse(id: JsonRpcRequest['id'], result: unknown): string {

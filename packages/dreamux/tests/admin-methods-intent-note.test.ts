@@ -16,12 +16,11 @@ import type { Server } from '../src/server.js';
  */
 const stubServer = {
   repos: { dispatchers: { get: () => ({ dispatcher_id: 'flow' }) } },
-  // create_group reads intent while building the call args, so member access on
-  // createTeamGroup happens before validation throws — the stub just needs the
-  // property to exist; the validation rejects before it is ever invoked.
+  // Lifecycle calls reject on the intent/note guard before the service is ever
+  // reached; the stub service methods just assert they are not invoked.
   dispatcherService: {
-    createTeamGroup: () => {
-      throw new Error('createTeamGroup must not be reached on a rejected request');
+    createTeam: () => {
+      throw new Error('createTeam must not be reached on a rejected request');
     },
   },
 } as unknown as Server;
@@ -65,22 +64,9 @@ describe('admin layer enforces required non-empty intent/note (#182 PR-3)', () =
     await expectBadRequest('mcp.team.create', { ...base, intent: '' });
   });
 
-  it('rejects team.create_group with missing or empty intent', async () => {
-    const base = {
-      dispatcher_id: 'flow',
-      name: 'alpha',
-      repo_cwd: '/repo',
-      leader_agent_runtime: 'codex',
-      source_chat_id: 'chat-1',
-      source_chat_type: 'p2p',
-      requester_open_id: 'user-1',
-    };
-    await expectBadRequest('mcp.team.create_group', base);
-    await expectBadRequest('mcp.team.create_group', { ...base, intent: '' });
-  });
-
   it('rejects team.dissolve with missing or empty note', async () => {
-    const base = { dispatcher_id: 'flow', team_id: 'alpha' };
+    // #182 PR-7: Team lifecycle is addressed by `name`.
+    const base = { dispatcher_id: 'flow', name: 'alpha' };
     await expectBadRequest('mcp.team.dissolve', base);
     await expectBadRequest('mcp.team.dissolve', { ...base, note: '' });
   });

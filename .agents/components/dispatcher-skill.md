@@ -19,10 +19,14 @@ ships in the npm package:
   ([provider architecture realignment](../decisions/provider-architecture-realignment.md)).
 - `team-dev-workflow` covers multi-teammate review, design, merge, and unblock
   coordination.
-- `team` MCP is injected for dispatcher-only Team Mode lifecycle: create a
-  TeamLeader, create and bind a Feishu group from a P2P control request, read
-  Team status/ledger, bind or transfer back Feishu group channels, and dissolve
-  a Team. TeamLeader member work still uses the caller-scoped TeamMate MCP.
+- `team` MCP is injected for dispatcher-only Team Mode lifecycle, addressed by
+  Team name (issue #182 PR-7/PR-8): `create` a TeamLeader (optionally binding an
+  EXISTING Feishu group via `bind_group: { chat_id }`), inspect with `list`
+  (compact rows) / `status` (one Team's detail incl. active bound group) /
+  `history` (filterable recovery search), `bind_group` an existing group or
+  `transfer_channel_back`, and `dissolve` a Team. The `create_group`
+  (create-a-new-group) and raw `ledger` verbs were retired. TeamLeader member
+  work still uses the caller-scoped TeamMate MCP.
 - `dreamux-maintenance` covers installed Dreamux diagnosis and safe operation.
 
 They are not installed through Codex plugin marketplaces. `dreamux onboard` and

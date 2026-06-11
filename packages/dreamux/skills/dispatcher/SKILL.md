@@ -72,11 +72,10 @@ do not inspect the target repo directly from the dispatcher.
 
 - `create` — create a Team and TeamLeader. Requires `repo_cwd`,
   `leader_agent_runtime`, and `intent` (the Team's recovery subject); no default
-  leader runtime is inferred.
-- `create_group` — from a P2P control channel, create a Team, create a Feishu
-  group, invite the requester/peers when Feishu permissions allow it, and bind
-  the new group to the TeamLeader. Requires `intent`, same as `create`. The
-  source P2P remains with the dispatcher.
+  leader runtime is inferred. Optionally pass `bind_group: { chat_id }` to bind
+  an EXISTING Feishu group chat to the new Team at create time. (The former
+  `create_group` tool — create a brand-new Feishu group and invite users — was
+  retired; bind an existing group instead.)
 - `list` — compact scan rows for current Teams (name, status, intent, repo
   signal, leader name/state, member count, bound group marker, timestamps). Keep
   it cheap and scannable; reach for `status` for detail.

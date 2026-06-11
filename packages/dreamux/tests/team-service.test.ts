@@ -120,8 +120,6 @@ function buildServices(): {
   teams: TeamService;
   teammates: TeamMateAgentService;
   provider: FakeProvider;
-  createdGroups: Array<{ name: string; userOpenIds: string[]; chatId: string }>;
-  setCreateGroupError(err: Error | null): void;
 } {
   const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
   const registry = createBuiltinProviderRegistry();
@@ -134,26 +132,8 @@ function buildServices(): {
     agentRuntimeProviders: new AgentRuntimeProviderCatalog({ registry }),
     log: noopLog(),
   });
-  const createdGroups: Array<{ name: string; userOpenIds: string[]; chatId: string }> = [];
-  let createGroupError: Error | null = null;
-  const teams = new TeamService({
-    teammates,
-    createFeishuGroup: async (input) => {
-      if (createGroupError !== null) throw createGroupError;
-      const chatId = `fake_group_${createdGroups.length + 1}`;
-      createdGroups.push({ name: input.name, userOpenIds: input.userOpenIds, chatId });
-      return { chatId };
-    },
-  });
-  return {
-    teams,
-    teammates,
-    provider,
-    createdGroups,
-    setCreateGroupError(err): void {
-      createGroupError = err;
-    },
-  };
+  const teams = new TeamService({ teammates });
+  return { teams, teammates, provider };
 }
 
 describe('TeamService', () => {
@@ -462,103 +442,69 @@ describe('TeamService', () => {
     ).rejects.toThrow(/does not exist/);
   });
 
-  it('creates a team group from P2P and binds the new group', async () => {
-    const repo = await initGitRepo(join(root, 'group-repo'));
-    const { teams, createdGroups } = buildServices();
+  it('create binds an existing Feishu group via bind_group (#182 PR-8)', async () => {
+    const repo = await initGitRepo(join(root, 'bindgroup-repo'));
+    const { teams } = buildServices();
 
-    const result = await teams.createGroup({
+    // #182 PR-8: the retired create_group is replaced by binding an EXISTING
+    // group at create time — no new Feishu group is created.
+    const result = await teams.create({
       dispatcherId: 'flow',
       name: 'gamma',
       intent: 'work',
       repoCwd: repo,
       leaderAgentRuntime: 'flow',
-      sourceChatId: 'p2p_control',
-      sourceChatType: 'p2p',
-      requesterOpenId: 'ou_requester',
-      inviteOpenIds: ['ou_peer', 'ou_requester'],
-      groupName: 'Gamma Team',
+      bindGroup: { chatId: 'oc_existing_group' },
     });
-
-    expect(createdGroups).toEqual([
-      {
-        name: 'Gamma Team',
-        userOpenIds: ['ou_requester', 'ou_peer'],
-        chatId: 'fake_group_1',
-      },
-    ]);
-    expect(result.team.leader_name).toMatch(/^tl-gamma-[a-z0-9]{8}$/);
-    expect(result.binding).toMatchObject({
+    expect(result.binding).toEqual({
       provider: 'builtin:feishu',
-      chat_id: 'fake_group_1',
-      chat_type: 'group',
-      team_id: 'gamma',
-      leader_name: result.team.leader_name,
+      chat_id: 'oc_existing_group',
     });
+    // The bound group resolves to the Team, and status/list surface it.
     await expect(
       teams.resolveChannel({
         dispatcherId: 'flow',
         provider: 'builtin:feishu',
-        chatId: 'p2p_control',
-        chatType: 'p2p',
-      }),
-    ).resolves.toBeNull();
-    await expect(
-      teams.resolveChannel({
-        dispatcherId: 'flow',
-        provider: 'builtin:feishu',
-        chatId: 'fake_group_1',
+        chatId: 'oc_existing_group',
         chatType: 'group',
       }),
     ).resolves.toMatchObject({ team_id: 'gamma' });
-    expect((await teams.ledger('flow', 'gamma')).events.map((event) => event.type))
-      .toEqual(['create', 'bind_channel', 'create_group']);
+    expect((await teams.status('flow', 'gamma')).binding).toEqual({
+      provider: 'builtin:feishu',
+      chat_id: 'oc_existing_group',
+    });
   });
 
-  it('dissolves the team when Feishu group creation fails', async () => {
-    const repo = await initGitRepo(join(root, 'failure-repo'));
-    const { teams, setCreateGroupError } = buildServices();
-    setCreateGroupError(new Error('missing Feishu chat permission'));
-
-    await expect(
-      teams.createGroup({
-        dispatcherId: 'flow',
-        name: 'delta',
-        intent: 'work',
-        repoCwd: repo,
-        leaderAgentRuntime: 'flow',
-        sourceChatId: 'p2p_control',
-        sourceChatType: 'p2p',
-        requesterOpenId: 'ou_requester',
-      }),
-    ).rejects.toThrow(/missing Feishu chat permission/);
-
-    const status = await teams.status('flow', 'delta');
-    expect(status.team.status).toBe('closed');
-    expect(
-      await teams.resolveChannel({
-        dispatcherId: 'flow',
-        provider: 'builtin:feishu',
-        chatId: 'fake_group_1',
-        chatType: 'group',
-      }),
-    ).toBeNull();
-  });
-
-  it('rejects create_group from a non-P2P source channel', async () => {
-    const repo = await initGitRepo(join(root, 'non-p2p-repo'));
+  it('history paginates by cursor and rejects an invalid cursor (#182 PR-7 P2)', async () => {
+    const repo = await initGitRepo(join(root, 'history-page-repo'));
     const { teams } = buildServices();
-    await expect(
-      teams.createGroup({
+    for (const name of ['t-one', 't-two', 't-three']) {
+      await teams.create({
         dispatcherId: 'flow',
-        name: 'epsilon',
-        intent: 'work',
+        name,
         repoCwd: repo,
         leaderAgentRuntime: 'flow',
-        sourceChatId: 'group_source',
-        sourceChatType: 'group',
-        requesterOpenId: 'ou_requester',
-      }),
-    ).rejects.toThrow(/P2P control channel/);
+        intent: 'work',
+      });
+    }
+
+    const page1 = await teams.history({ dispatcherId: 'flow', limit: 2 });
+    expect(page1.items).toHaveLength(2);
+    expect(page1.next_cursor).not.toBeNull();
+    const page2 = await teams.history({
+      dispatcherId: 'flow',
+      limit: 2,
+      cursor: page1.next_cursor!,
+    });
+    expect(page2.items).toHaveLength(1);
+    expect(page2.next_cursor).toBeNull();
+    // The two pages together cover all three Teams with no overlap.
+    const seen = [...page1.items, ...page2.items].map((row) => row.name).sort();
+    expect(seen).toEqual(['t-one', 't-three', 't-two']);
+    // An invalid cursor fails loud rather than silently resetting to page 0.
+    await expect(
+      teams.history({ dispatcherId: 'flow', cursor: 'not-a-cursor' }),
+    ).rejects.toThrow(/invalid history cursor/);
   });
 
   it('history is a filterable recovery search; list/status surface the bound group (#182 PR-7)', async () => {

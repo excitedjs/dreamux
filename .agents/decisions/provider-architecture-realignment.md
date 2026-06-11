@@ -120,9 +120,11 @@ see its `verbs/` (spawn/resume/history), `persistence/history-index.ts` and
 - **Identity and state location.** A teammate is a flat name plus a base record
   (agent runtime id, dispatcher owner, source/runtime cwd, optional managed
   worktree metadata, checkpoint, status, close metadata). State is server-owned
-  under `~/.dreamux/state/<dispatcher>/teammate/` with `identities/`,
-  `history/`, `runtime/`, and managed `worktrees/` subtrees; paths go through
-  `/packages/dreamux/src/platform/paths.ts`.
+  under `~/.dreamux/state/<dispatcher>/teammate/` with `identities/`, `runtime/`,
+  and managed `worktrees/` subtrees plus the per-dispatcher `sessions.jsonl`
+  recovery ledger; paths go through `/packages/dreamux/src/platform/paths.ts`.
+  (The per-name `history/<name>.jsonl` index was removed in issue #182 PR-8 — the
+  session ledger is the single durable recovery record; see top-level-design.)
 - **Ownership.** The Dispatcher Service owns TeamMate identity and history
   through focused modules under
   `/packages/dreamux/src/dispatcher-service/teammate/`.

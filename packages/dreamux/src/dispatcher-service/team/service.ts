@@ -9,13 +9,10 @@ import {
 } from '../teammate/types.js';
 import { ChannelBindingStore } from '../channel-binding/store.js';
 import type { ChannelBinding } from '../channel-binding/store.js';
-import type { FeishuCreateGroupInput, FeishuCreateGroupResult } from '../../channel/feishu/bot.js';
 import { TeamStore } from './store.js';
 import type {
   TeamBindChannelInput,
   TeamChannelBindingSummary,
-  TeamCreateGroupInput,
-  TeamCreateGroupResult,
   TeamCreateInput,
   TeamCreateResult,
   TeamDissolveInput,
@@ -33,9 +30,6 @@ import type { TeamMateIdentityStatus } from '../teammate/types.js';
 
 export interface TeamServiceOptions {
   teammates: TeamMateAgentService;
-  createFeishuGroup?: (
-    input: FeishuCreateGroupInput & { dispatcherId: string },
-  ) => Promise<FeishuCreateGroupResult>;
 }
 
 export class TeamService {
@@ -46,8 +40,8 @@ export class TeamService {
   constructor(private readonly opts: TeamServiceOptions) {}
 
   async create(input: TeamCreateInput): Promise<TeamCreateResult> {
-    // Required recovery subject — enforced for in-process callers (and the
-    // create_group path that delegates here) too (issue #182 PR-3).
+    // Required recovery subject — enforced for in-process callers too
+    // (issue #182 PR-3).
     requireLifecycleText(input.intent, 'Team create intent');
     const teamId = validateTeamId(input.name);
     const existing = await this.store.get(input.dispatcherId, teamId);
@@ -128,12 +122,37 @@ export class TeamService {
       type: 'create',
       summary: `created team ${teamId} with leader ${leaderName}`,
     });
+    // Optionally bind an existing Feishu group at create time (issue #182 PR-8,
+    // the settled replacement for the retired create_group flow). Bind is the
+    // last step; if it fails the Team is already persisted, so roll back by
+    // dissolving the just-created Team rather than leaving a half-created one a
+    // retry would then collide with as "already exists" (mirrors the rollback
+    // the old create_group flow did on Feishu setup failure).
+    let binding: TeamChannelBindingSummary | null = null;
+    if (input.bindGroup !== undefined) {
+      try {
+        const bound = await this.bindChannel({
+          dispatcherId: input.dispatcherId,
+          teamId,
+          provider: 'builtin:feishu',
+          chatId: input.bindGroup.chatId,
+          chatType: 'group',
+        });
+        binding = { provider: bound.provider, chat_id: bound.chat_id };
+      } catch (err) {
+        await this.dissolve({
+          dispatcherId: input.dispatcherId,
+          teamId,
+          note: 'Team group binding failed at create time',
+        });
+        throw err;
+      }
+    }
     return {
       team,
       leader: leader.teammate,
       member_count: await this.memberCount(team),
-      // No group is bound at create time; `create_group`/`bind_group` set it.
-      binding: null,
+      binding,
       turn: leader.turn,
     };
   }
@@ -211,8 +230,8 @@ export class TeamService {
     );
     // dissolve note is required (issue #182 PR-3), so the member/leader close
     // calls and the ledger carry the operator's real reason — no synthetic
-    // 'team dissolved' fallback. Internal/system dissolves (e.g. the
-    // create_group rollback) pass an explicit system-authored note instead.
+    // 'team dissolved' fallback. Internal/system dissolves pass an explicit
+    // system-authored note instead.
     for (const member of members) {
       await this.opts.teammates.closeScoped({
         principal: teamLeaderPrincipal({
@@ -280,60 +299,6 @@ export class TeamService {
       }
     }
     return binding;
-  }
-
-  async createGroup(input: TeamCreateGroupInput): Promise<TeamCreateGroupResult> {
-    if (input.sourceChatType !== 'p2p') {
-      throw new Error('create_team_group must be requested from a P2P control channel');
-    }
-    if (this.opts.createFeishuGroup === undefined) {
-      throw new Error('Feishu group creation is not available for this dispatcher');
-    }
-    const created = await this.create(input);
-    let group: FeishuCreateGroupResult;
-    let binding: ChannelBinding | null = null;
-    try {
-      group = await this.opts.createFeishuGroup({
-        dispatcherId: input.dispatcherId,
-        name: input.groupName ?? input.name,
-        userOpenIds: uniqueOpenIds([
-          input.requesterOpenId,
-          ...(input.inviteOpenIds ?? []),
-        ]),
-      });
-      binding = await this.bindChannel({
-        dispatcherId: input.dispatcherId,
-        teamId: created.team.team_id,
-        provider: 'builtin:feishu',
-        chatId: group.chatId,
-        chatType: 'group',
-      });
-      await this.store.appendLedger(created.team, {
-        type: 'create_group',
-        summary: `created Feishu group ${group.chatId} for team ${created.team.team_id}`,
-      });
-    } catch (err) {
-      await this.dissolve({
-        dispatcherId: input.dispatcherId,
-        teamId: created.team.team_id,
-        note: 'Feishu group setup failed',
-      });
-      throw err;
-    }
-    return {
-      ...created,
-      binding: {
-        provider: binding.provider,
-        chat_id: binding.chat_id,
-        chat_type: binding.chat_type,
-        team_id: binding.team_id,
-        leader_name: binding.leader_name,
-      },
-      invited_open_ids: uniqueOpenIds([
-        input.requesterOpenId,
-        ...(input.inviteOpenIds ?? []),
-      ]),
-    };
   }
 
   async resolveChannel(input: {
@@ -518,10 +483,6 @@ function teamLeaderPrompt(team: TeamRecord): string {
     `Repository cwd: ${team.repo_cwd}`,
     team.intent !== null ? `Intent: ${team.intent}` : '',
   ].filter((line) => line !== '').join('\n');
-}
-
-function uniqueOpenIds(ids: string[]): string[] {
-  return [...new Set(ids.filter((id) => id !== ''))];
 }
 
 function matchesTeamHistoryQuery(

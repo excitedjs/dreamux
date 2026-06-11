@@ -38,14 +38,10 @@ import {
   type TransportLogger,
 } from '@excitedjs/feishu-transport';
 import type {
-  FeishuCreateGroupInput,
-  FeishuCreateGroupResult,
   FeishuInviteMembersInput,
   FeishuInviteMembersResult,
 } from '@excitedjs/feishu-transport';
 export type {
-  FeishuCreateGroupInput,
-  FeishuCreateGroupResult,
   FeishuInviteMembersInput,
   FeishuInviteMembersResult,
 } from '@excitedjs/feishu-transport';
@@ -117,7 +113,6 @@ export interface FeishuBot extends FeishuMessageResourceFetcher {
   readonly botOpenId: string | undefined;
   start(routes: FeishuInboundRoutes): Promise<void>;
   send(target: OutboundTarget, text: string): Promise<FeishuSendResult>;
-  createGroup(input: FeishuCreateGroupInput): Promise<FeishuCreateGroupResult>;
   inviteMembers(input: FeishuInviteMembersInput): Promise<FeishuInviteMembersResult>;
   addReaction(messageId: string, emoji: string): Promise<string>;
   removeReaction(messageId: string, reactionId: string): Promise<void>;
@@ -207,10 +202,6 @@ export function createFeishuBot(
     async send(target: OutboundTarget, text: string): Promise<FeishuSendResult> {
       const { messageIds } = await transport.send(target, text);
       return { messageIds };
-    },
-
-    createGroup(input: FeishuCreateGroupInput): Promise<FeishuCreateGroupResult> {
-      return transport.createGroup(input);
     },
 
     inviteMembers(input: FeishuInviteMembersInput): Promise<FeishuInviteMembersResult> {
@@ -336,7 +327,6 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 // -------------------------------------------------------------- fake (tests)
 
 export interface FakeFeishuBot extends FeishuBot {
-  readonly createdGroups: Array<{ name: string; userOpenIds: string[]; chatId: string }>;
   readonly sentMessages: Array<{
     chatId: string;
     target: OutboundTarget;
@@ -358,7 +348,6 @@ export interface FakeFeishuBot extends FeishuBot {
     | { op: 'remove'; messageId: string; reactionId: string }
   >;
   inject(event: FeishuInboundEvent): Promise<void>;
-  setCreateGroupError(err: Error | null): void;
   injectBotMemberAdded(event: FeishuBotMemberAddedEvent): Promise<void>;
   setSendError(err: Error | null): void;
   setReactionError(err: Error | null): void;
@@ -380,7 +369,6 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
   let nextMessageId = 1;
   let nextReactionId = 1;
   let sendError: Error | null = null;
-  let createGroupError: Error | null = null;
   let reactionError: Error | null = null;
   let removeReactionError: Error | null = null;
   const messageResources = new Map<string, FeishuMessageResourceResponse | Error>();
@@ -395,7 +383,6 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
     reactionId: string;
   }> = [];
   const reactionOps: FakeFeishuBot['reactionOps'] = [];
-  const createdGroups: Array<{ name: string; userOpenIds: string[]; chatId: string }> = [];
 
   return {
     appId,
@@ -412,12 +399,6 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
       const id = `message-fake-${nextMessageId++}`;
       sent.push({ chatId: target.chatId, target, text, messageIds: [id] });
       return { messageIds: [id] };
-    },
-    async createGroup(input: FeishuCreateGroupInput): Promise<FeishuCreateGroupResult> {
-      if (createGroupError !== null) throw createGroupError;
-      const chatId = `oc_fake_group_${createdGroups.length + 1}`;
-      createdGroups.push({ name: input.name, userOpenIds: input.userOpenIds, chatId });
-      return { chatId };
     },
     async inviteMembers(input: FeishuInviteMembersInput): Promise<FeishuInviteMembersResult> {
       return { addedOpenIds: input.userOpenIds };
@@ -454,9 +435,6 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
     get sentMessages() {
       return sent;
     },
-    get createdGroups() {
-      return createdGroups;
-    },
     get reactions() {
       return reactions;
     },
@@ -469,9 +447,6 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
     async inject(event: FeishuInboundEvent): Promise<void> {
       if (routes === null) throw new Error('fake bot not started');
       await routes.onMessage(event);
-    },
-    setCreateGroupError(err: Error | null): void {
-      createGroupError = err;
     },
     async injectBotMemberAdded(event: FeishuBotMemberAddedEvent): Promise<void> {
       if (routes === null) throw new Error('fake bot not started');

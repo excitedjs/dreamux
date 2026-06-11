@@ -38,6 +38,12 @@ export interface TeamCreateInput {
   /** Required recovery subject for the Team (issue #182 PR-3). */
   intent: string;
   prompt?: string;
+  /**
+   * Optional: bind an EXISTING Feishu group chat to the new Team at create time
+   * (issue #182 PR-7/PR-8). This is the settled replacement for the retired
+   * `create_group` flow — it binds an existing group, it does not create one.
+   */
+  bindGroup?: { chatId: string };
 }
 
 export interface TeamDissolveInput {
@@ -60,32 +66,6 @@ export interface TeamTransferChannelBackInput {
   provider: 'builtin:feishu';
   chatId: string;
   chatType: 'group' | 'p2p';
-}
-
-export interface TeamCreateGroupInput {
-  dispatcherId: string;
-  name: string;
-  repoCwd: string;
-  leaderAgentRuntime: string;
-  sourceChatId: string;
-  sourceChatType: 'p2p' | 'group';
-  requesterOpenId: string;
-  groupName?: string;
-  inviteOpenIds?: string[];
-  /** Required recovery subject — same contract as TeamCreateInput (issue #182 PR-3). */
-  intent: string;
-  prompt?: string;
-}
-
-export interface TeamCreateGroupResult extends TeamCreateResult {
-  binding: {
-    provider: 'builtin:feishu';
-    chat_id: string;
-    chat_type: 'group';
-    team_id: string;
-    leader_name: string;
-  };
-  invited_open_ids: string[];
 }
 
 export type TeamLedgerEventType =
