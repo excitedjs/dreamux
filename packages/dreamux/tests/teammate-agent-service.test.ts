@@ -693,6 +693,44 @@ describe('TeamMateAgentService', () => {
     expect(emptied.teammate.intent).toBe('second task');
   });
 
+  it('rejects direct service spawn/close with missing or empty intent/note (#182 PR-3 P1)', async () => {
+    const { catalog } = providerCatalog();
+    const config = testDreamuxConfig();
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: catalog,
+      log: noopLog(),
+    });
+
+    // spawn.intent required at the service boundary (in-process bypass of the
+    // MCP shim / admin layer). Empty and missing both rejected.
+    await expect(
+      service.spawn({ dispatcherId: 'flow', name: 'a', intent: '', prompt: 'go', cwd: root }),
+    ).rejects.toThrow(/TeamMate spawn intent must be a non-empty string/);
+    await expect(
+      service.spawn({
+        dispatcherId: 'flow',
+        name: 'a',
+        prompt: 'go',
+        cwd: root,
+      } as unknown as Parameters<TeamMateAgentService['spawn']>[0]),
+    ).rejects.toThrow(/TeamMate spawn intent must be a non-empty string/);
+
+    // close.note required at the service boundary — checked after the teammate
+    // is found, so spawn a real one first.
+    await service.spawn({
+      dispatcherId: 'flow',
+      name: 'closeme',
+      intent: 'work',
+      prompt: 'go',
+      cwd: root,
+    });
+    await expect(
+      service.close({ dispatcherId: 'flow', name: 'closeme', note: '' }),
+    ).rejects.toThrow(/TeamMate close note must be a non-empty string/);
+  });
+
   it('fails loud when spawned with an agentRuntime that matches no agent', async () => {
     const { catalog } = providerCatalog();
     const config = testDreamuxConfig();
@@ -892,6 +930,7 @@ describe('TeamMateAgentService', () => {
     await service.close({
       dispatcherId: 'flow',
       name: 'reopen-managed',
+      note: 'done',
     });
     expect(existsSync(worktreePath)).toBe(false);
 
@@ -940,6 +979,7 @@ describe('TeamMateAgentService', () => {
     const closed = await service.close({
       dispatcherId: 'flow',
       name: 'keeper',
+      note: 'done',
     });
     expect(closed.teammate.worktree.cleanup_state).toBe('kept');
     expect(existsSync(spawned.teammate.worktree.path)).toBe(true);
@@ -974,6 +1014,7 @@ describe('TeamMateAgentService', () => {
     const closed = await service.close({
       dispatcherId: 'flow',
       name: 'dirty',
+      note: 'done',
     });
     expect(closed.teammate.worktree.cleanup_state).toBe('retained-dirty');
     expect(existsSync(spawned.teammate.worktree.path)).toBe(true);
@@ -1012,6 +1053,7 @@ describe('TeamMateAgentService', () => {
     const closed = await service.close({
       dispatcherId: 'flow',
       name: 'detached',
+      note: 'done',
     });
     expect(closed.teammate.worktree.cleanup_state).toBe(
       'retained-unique-commits',

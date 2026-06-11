@@ -245,6 +245,7 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
     await facade.createTeam({
       dispatcherId: 'flow',
       name: 'alpha',
+      intent: 'work',
       repoCwd: workspace(root),
       leaderAgentRuntime: 'flow',
     });
@@ -295,6 +296,7 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
     const created = await facade.createTeam({
       dispatcherId: 'flow',
       name: 'alpha',
+      intent: 'work',
       repoCwd: workspace(root),
       leaderAgentRuntime: 'flow',
     });
@@ -348,6 +350,7 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
     const created = await facade.createTeam({
       dispatcherId: 'flow',
       name: 'alpha',
+      intent: 'work',
       repoCwd: workspace(root),
       leaderAgentRuntime: 'flow',
     });

@@ -224,6 +224,63 @@ describe('TeamService', () => {
     expect(ledger.find((e) => e.type === 'dissolve')?.summary).toBe('done');
   });
 
+  it('recreating a closed Team persists the new create.intent (#182 PR-3 P1)', async () => {
+    const repo = await initGitRepo(join(root, 'reuse-repo'));
+    const { teams, teammates } = buildServices();
+
+    const first = await teams.create({
+      dispatcherId: 'flow',
+      name: 'alpha',
+      repoCwd: repo,
+      leaderAgentRuntime: 'flow',
+      intent: 'first intent',
+    });
+    expect(first.team.intent).toBe('first intent');
+    await teams.dissolve({ dispatcherId: 'flow', teamId: 'alpha', note: 'done' });
+
+    // Reusing the closed record must adopt the NEW intent, not keep the old one
+    // (the store.update path previously could not write intent).
+    const second = await teams.create({
+      dispatcherId: 'flow',
+      name: 'alpha',
+      repoCwd: repo,
+      leaderAgentRuntime: 'flow',
+      intent: 'second intent',
+    });
+    expect(second.team.intent).toBe('second intent');
+    // And the durable record (reloaded from disk) carries the new intent.
+    const reloaded = new TeamService({ teammates });
+    expect((await reloaded.status('flow', 'alpha')).team.intent).toBe('second intent');
+  });
+
+  it('rejects direct service create/dissolve with missing or empty intent/note (#182 PR-3 P1)', async () => {
+    const repo = await initGitRepo(join(root, 'svc-validate-repo'));
+    const { teams } = buildServices();
+
+    // create.intent required at the service boundary (in-process bypass).
+    await expect(
+      teams.create({
+        dispatcherId: 'flow',
+        name: 'novalidate',
+        repoCwd: repo,
+        leaderAgentRuntime: 'flow',
+        intent: '',
+      }),
+    ).rejects.toThrow(/Team create intent must be a non-empty string/);
+
+    // dissolve.note required at the service boundary, checked before lookup.
+    await teams.create({
+      dispatcherId: 'flow',
+      name: 'beta',
+      repoCwd: repo,
+      leaderAgentRuntime: 'flow',
+      intent: 'work',
+    });
+    await expect(
+      teams.dissolve({ dispatcherId: 'flow', teamId: 'beta', note: '' }),
+    ).rejects.toThrow(/Team dissolve note must be a non-empty string/);
+  });
+
   it('scopes TeamLeader member visibility to its own team', async () => {
     const repo = await initGitRepo(join(root, 'scope-repo'));
     const { teams, teammates, provider } = buildServices();
