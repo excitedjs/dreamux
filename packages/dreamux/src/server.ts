@@ -44,6 +44,7 @@ import {
 import { RestartIntentConsumer } from './daemon/restart-intent.js';
 import type { ClaudeCodeSessionFactory } from './agent-runtime/builtin/claude-code/supervisor.js';
 import { DispatcherService } from './dispatcher-service/service.js';
+import { ensureDispatcherWorkspace } from './dispatcher-service/dispatcher-workspace.js';
 export {
   IN_PROGRESS_REACTION_EMOJI,
   RECEIVED_REACTION_EMOJI,
@@ -195,6 +196,13 @@ export class Server {
       }),
     );
 
+    // Dispatcher workspace cwd contract (issue #182 PR-4): every enabled
+    // dispatcher must declare an explicit, usable `cwd` — there is no fallback
+    // to a Dreamux state dir. Pre-flight all of them before taking the admin
+    // lock or launching anything, and fail the whole start loud (aggregated) so
+    // a misconfigured deployment never comes up half-broken.
+    await this.assertDispatcherWorkspaces();
+
     // Before taking the new run/ admin lock, fail loud if an OLD-version
     // server still holds the pre-#182 state/ admin lock — the two locks are at
     // different paths and would not otherwise see each other (issue #182 P1).
@@ -236,6 +244,30 @@ export class Server {
           'dispatcher failed to start',
         );
       }
+    }
+  }
+
+  /**
+   * Validate the workspace cwd of every enabled dispatcher (issue #182 PR-4).
+   * Aggregates all failures into one loud error so the operator sees every
+   * misconfigured dispatcher at once, rather than fixing them one boot at a
+   * time. A throw here aborts `start()` before any socket or dispatcher.
+   */
+  private async assertDispatcherWorkspaces(): Promise<void> {
+    const config = this.opts.config ?? BUILT_IN_DEFAULTS;
+    const failures: string[] = [];
+    for (const row of this.repos.dispatchers.listEnabled()) {
+      try {
+        await ensureDispatcherWorkspace(config, row.dispatcher_id);
+      } catch (err) {
+        failures.push(err instanceof Error ? err.message : String(err));
+      }
+    }
+    if (failures.length > 0) {
+      throw new Error(
+        `dreamux serve cannot start — dispatcher workspace cwd contract failed:\n` +
+          failures.map((message) => `  - ${message}`).join('\n'),
+      );
     }
   }
 

@@ -93,7 +93,9 @@ function configWithDispatcher(): DreamuxConfig {
     dispatchers: [
       testDispatcherConfig({
         id: 'flow',
-        cwd: null,
+        // Explicit workspace cwd (issue #182 PR-4): no state-dir fallback. The
+        // e2e flow runs no managed worktree, so the per-dispatcher dir works.
+        cwd: defaultDispatcherCwd('flow'),
         enabled: true,
         feishu: {
           app_id: 'app-e2e',

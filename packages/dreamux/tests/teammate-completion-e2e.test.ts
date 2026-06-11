@@ -26,7 +26,7 @@ import { teamLeaderPrincipal } from '../src/dispatcher-service/teammate/types.js
 import { resetRuntimeConfig } from '../src/platform/paths.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
-import { testDreamuxConfig } from './helpers/config.js';
+import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 
 const FAKE_CAPABILITIES: AgentRuntimeCapabilities = {
   resume: { supported: true, checkpoint: 'codexThread' },
@@ -155,11 +155,18 @@ class FakeProvider implements AgentRuntimeProvider {
   }
 }
 
+/**
+ * Dispatcher workspace cwd for the current test (issue #182 PR-4); set in
+ * beforeEach to the per-test `workspace/` dir (a real, non-`~/.dreamux` repo)
+ * so managed team worktrees land under `<workspace>/.workspace/worktree/...`.
+ */
+let dispatcherCwd: string;
+
 function buildFacade(
   provider: FakeProvider,
   adminSocketPath: string,
 ): DispatcherService {
-  const config = testDreamuxConfig();
+  const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
   const registry = createBuiltinProviderRegistry();
   const descriptor = registry.resolve('builtin:codex');
   registry.registerImplementation(descriptor.id, provider);
@@ -183,6 +190,7 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
   beforeEach(async () => {
     root = mkdtempSync(join(tmpdir(), 'dx-reverse-e2e-'));
     await mkdir(join(root, 'workspace'));
+    dispatcherCwd = join(root, 'workspace');
     adminSocketPath = join(root, 'a.sock');
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(root, 'home');

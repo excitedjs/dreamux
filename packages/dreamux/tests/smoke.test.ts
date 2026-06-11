@@ -147,7 +147,11 @@ function buildServer(opts: {
   runtimeSocketSweep?: () => Promise<string[]>;
 }): Server {
   return new Server({
-    config: opts.config ?? BUILT_IN_DEFAULTS,
+    // The dispatcher workspace cwd contract (issue #182 PR-4) resolves cwd from
+    // config, so the default smoke config declares `flow` with an explicit cwd.
+    // Tests that register the row via the store use `upsert` to stay idempotent
+    // against this seed.
+    config: opts.config ?? configWithDispatcher(),
     providerRegistry: opts.providerRegistry,
     adminSocketPath: join(opts.runtimeDir, 'admin.sock'),
     skipBotSecret: opts.skipBotSecret ?? true,
@@ -382,7 +386,10 @@ function configWithDispatcher(overrides: ConfigDispatcherOverrides = {}): Dreamu
   return testDreamuxConfig([
     testDispatcherConfig({
       id: overrides.id ?? 'flow',
-      cwd: overrides.cwd ?? null,
+      // The dispatcher workspace cwd contract (issue #182 PR-4) requires an
+      // explicit cwd. The smoke flow runs no managed worktree, so the legacy
+      // per-dispatcher dir is a fine, already-provisioned workspace here.
+      cwd: overrides.cwd ?? defaultDispatcherCwd(overrides.id ?? 'flow'),
       enabled: overrides.enabled ?? true,
       feishu: overrides.feishu ?? {
         app_id: 'app-smoke',
@@ -447,7 +454,7 @@ describe('dreamux MVP smoke', () => {
 
   it('happy path: inbound reaches Codex, and assistant text is not auto-sent', async () => {
     server = buildServer({ runtimeDir, fake, bot });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -493,7 +500,7 @@ describe('dreamux MVP smoke', () => {
     const self = 'fake-open-id-app-smoke'; // the fake bot's own open_id
     const atUs = [{ key: '@_bot', id: { open_id: self }, name: 'Dispatcher' }];
     server = buildServer({ runtimeDir, fake, bot });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -563,7 +570,7 @@ describe('dreamux MVP smoke', () => {
   it('starts the dispatcher app-server with global default Codex home and tm on PATH', async () => {
     const capturedCodexOptions: CodexProcessOptions[] = [];
     server = buildServer({ runtimeDir, fake, bot, capturedCodexOptions });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -650,6 +657,7 @@ describe('dreamux MVP smoke', () => {
         dispatchers: [
           testDispatcherConfig({
             id: 'flow',
+            cwd: defaultDispatcherCwd('flow'),
             runtime: {
               provider: providerRef,
               config: {
@@ -696,7 +704,7 @@ describe('dreamux MVP smoke', () => {
 
   it('starts fresh Codex threads with Dreamux dispatcher base instructions', async () => {
     server = buildServer({ runtimeDir, fake, bot });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -752,7 +760,7 @@ describe('dreamux MVP smoke', () => {
 
   it('resumes Codex threads with Dreamux dispatcher base instructions', async () => {
     server = buildServer({ runtimeDir, fake, bot });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -877,7 +885,14 @@ describe('dreamux MVP smoke', () => {
 
   it('routes bound Feishu group inbound to the TeamLeader and transfers back', async () => {
     const repo = initGitRepoSync(join(runtimeDir, 'team-repo'));
-    server = buildServer({ runtimeDir, fake, bot, config: configWithDispatcher() });
+    // Team creation builds a managed worktree, which must live under a real
+    // workspace, never `~/.dreamux` (issue #182 PR-4).
+    server = buildServer({
+      runtimeDir,
+      fake,
+      bot,
+      config: configWithDispatcher({ cwd: join(runtimeDir, 'workspace') }),
+    });
     await server.start();
 
     await server.dispatcherService.createTeam({
@@ -1010,7 +1025,7 @@ describe('dreamux MVP smoke', () => {
       replyFor: captureAndEchoCodexInput(codexInputs),
     });
     server = buildServer({ runtimeDir, fake, bot });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -1081,7 +1096,7 @@ describe('dreamux MVP smoke', () => {
     };
 
     server = buildServer({ runtimeDir, fake, bot });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -1127,7 +1142,7 @@ describe('dreamux MVP smoke', () => {
 
   it('adds the in-progress reaction before cancelling the received one (add-then-cancel)', async () => {
     server = buildServer({ runtimeDir, fake, bot });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -1177,7 +1192,7 @@ describe('dreamux MVP smoke', () => {
     };
 
     server = buildServer({ runtimeDir, fake, bot });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -1231,7 +1246,7 @@ describe('dreamux MVP smoke', () => {
 
   it('mcp.react adds a model-owned reaction without clearing received reactions', async () => {
     server = buildServer({ runtimeDir, fake, bot });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -1286,7 +1301,7 @@ describe('dreamux MVP smoke', () => {
 
   it('access gate drops bot-loop messages before queue or reaction', async () => {
     server = buildServer({ runtimeDir, fake, bot });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -1306,7 +1321,7 @@ describe('dreamux MVP smoke', () => {
 
   it('access gate drops Feishu bot/app sender types before queue or reaction', async () => {
     server = buildServer({ runtimeDir, fake, bot });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -1327,7 +1342,7 @@ describe('dreamux MVP smoke', () => {
 
   it('access gate drops unmentioned group messages before queue or reaction', async () => {
     server = buildServer({ runtimeDir, fake, bot });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -1359,7 +1374,7 @@ describe('dreamux MVP smoke', () => {
       last_gate: null,
     });
     server = buildServer({ runtimeDir, fake, bot });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -1402,7 +1417,7 @@ describe('dreamux MVP smoke', () => {
       last_gate: null,
     });
     server = buildServer({ runtimeDir, fake, bot });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -1454,7 +1469,7 @@ describe('dreamux MVP smoke', () => {
       last_gate: null,
     });
     server = buildServer({ runtimeDir, fake, bot });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -1501,7 +1516,7 @@ describe('dreamux MVP smoke', () => {
       last_gate: null,
     });
     server = buildServer({ runtimeDir, fake, bot });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -1559,7 +1574,7 @@ describe('dreamux MVP smoke', () => {
       bot,
       channelLoggerFactory: () => channel.logger,
     });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -1611,7 +1626,7 @@ describe('dreamux MVP smoke', () => {
       last_gate: null,
     });
     server = buildServer({ runtimeDir, fake, bot });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -1658,7 +1673,7 @@ describe('dreamux MVP smoke', () => {
       bot,
       channelLoggerFactory: () => channel.logger,
     });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -1704,7 +1719,7 @@ describe('dreamux MVP smoke', () => {
       last_gate: null,
     });
     server = buildServer({ runtimeDir, fake, bot });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -1743,7 +1758,7 @@ describe('dreamux MVP smoke', () => {
       last_gate: null,
     });
     server = buildServer({ runtimeDir, fake, bot });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -1787,7 +1802,7 @@ describe('dreamux MVP smoke', () => {
       last_gate: null,
     });
     server = buildServer({ runtimeDir, fake, bot });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -1849,7 +1864,7 @@ describe('dreamux MVP smoke', () => {
       bot,
       channelLoggerFactory: () => channel.logger,
     });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -1925,7 +1940,7 @@ describe('dreamux MVP smoke', () => {
       bot,
       channelLoggerFactory: () => channel.logger,
     });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -1979,7 +1994,7 @@ describe('dreamux MVP smoke', () => {
       bot,
       channelLoggerFactory: () => channel.logger,
     });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -2027,7 +2042,7 @@ describe('dreamux MVP smoke', () => {
       bot,
       channelLoggerFactory: () => channel.logger,
     });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -2075,7 +2090,7 @@ describe('dreamux MVP smoke', () => {
       bot,
       channelLoggerFactory: () => channel.logger,
     });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -2100,7 +2115,7 @@ describe('dreamux MVP smoke', () => {
 
   it('records a trust-domain warning when one dispatcher receives multiple chats', async () => {
     server = buildServer({ runtimeDir, fake, bot });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -2134,7 +2149,7 @@ describe('dreamux MVP smoke', () => {
       bot,
       channelLoggerFactory: () => capture.logger,
     });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -2171,7 +2186,7 @@ describe('dreamux MVP smoke', () => {
       bot,
       channelLoggerFactory: () => capture.logger,
     });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -2203,7 +2218,7 @@ describe('dreamux MVP smoke', () => {
       bot,
       channelLoggerFactory: () => capture.logger,
     });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -2243,7 +2258,7 @@ describe('dreamux MVP smoke', () => {
       bot,
       channelLoggerFactory: () => capture.logger,
     });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -2284,7 +2299,7 @@ describe('dreamux MVP smoke', () => {
       bot,
       channelLoggerFactory: () => capture.logger,
     });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -2345,7 +2360,7 @@ describe('dreamux MVP smoke', () => {
     });
 
     server = buildServer({ runtimeDir, fake, bot });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -2371,7 +2386,7 @@ describe('dreamux MVP smoke', () => {
 
   it('process-local dedupe drops Feishu redelivery before turn and reaction', async () => {
     server = buildServer({ runtimeDir, fake, bot });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -2469,7 +2484,7 @@ describe('dreamux MVP smoke', () => {
     });
 
     server = buildServer({ runtimeDir, fake, bot });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -2492,7 +2507,7 @@ describe('dreamux MVP smoke', () => {
     });
 
     server = buildServer({ runtimeDir, fake, bot });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -2517,7 +2532,7 @@ describe('dreamux MVP smoke', () => {
   // before any business RPC; without it, every call comes back "Not initialized".
   it('init handshake runs before thread/start', async () => {
     server = buildServer({ runtimeDir, fake, bot });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -2569,7 +2584,7 @@ describe('dreamux MVP smoke', () => {
   it('concurrent startDispatcher calls coalesce — only one Codex spawn', async () => {
     const counter = { count: 0 };
     server = buildServer({ runtimeDir, fake, bot, spawnCounter: counter });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -2599,7 +2614,7 @@ describe('dreamux MVP smoke', () => {
       codexRestartBackoffBaseMs: 5,
       codexRestartBackoffMaxMs: 5,
     });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -2635,7 +2650,7 @@ describe('dreamux MVP smoke', () => {
       codexRestartBackoffBaseMs: 100,
       codexRestartBackoffMaxMs: 100,
     });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -2673,7 +2688,7 @@ describe('dreamux MVP smoke', () => {
       codexRestartBackoffBaseMs: 5,
       codexRestartBackoffMaxMs: 5,
     });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',
@@ -2717,7 +2732,7 @@ describe('dreamux MVP smoke', () => {
       codexRestartBackoffBaseMs: 5,
       codexRestartBackoffMaxMs: 5,
     });
-    server.repos.dispatchers.create({
+    server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
       bot_app_id: 'app-smoke',
       bot_secret_ref: 'env:UNUSED',

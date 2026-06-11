@@ -113,6 +113,15 @@ state that the dispatcher shares one Codex context across those chats.
 It holds dispatcher declarations, local Feishu credentials, and the dispatcher
 cwd used for the workspace-local skill install.
 
+Each dispatcher MUST declare an explicit `cwd` (issue #182 PR-4). `dreamux serve`
+fails loud at startup if any enabled dispatcher has no `cwd` — there is no
+fallback to a Dreamux state directory (`~/.dreamux/state/<id>/cwd`). A
+configured-but-missing `cwd` is created with mkdir -p; a `cwd` that is not a
+usable directory fails startup. `dreamux doctor` diagnoses the same contract per
+dispatcher. The workspace is also the root under which managed worktrees live
+(see State And Logs), so it must be a real operator project dir, never inside
+`~/.dreamux`.
+
 Issue #110 supersedes the earlier Feishu/Codex-specific dispatcher keys with a
 providerized config v2 envelope. Issue #135 refines the runtime boundary: this
 phase wires one built-in `builtin:feishu` bidirectional channel and one
@@ -243,8 +252,6 @@ State and logs are server-owned. They are not operator-editable config.
           <name>.jsonl         forward-only TeamMate lifecycle history
         runtime/
           <name>/              runtime-private socket/config state
-        worktrees/
-          <slug>/              Dreamux-managed TeamMate/Team worktrees
       team/
         records/
           <team-id>.json        Team lifecycle record and TeamLeader pointer
@@ -268,6 +275,25 @@ State and logs are server-owned. They are not operator-editable config.
           <name>.log           TeamMate Codex runtime stdout
           <name>.stderr.log    TeamMate Codex runtime stderr
 ```
+
+Dreamux-managed TeamMate/Team Git worktrees are NOT under `~/.dreamux` (issue
+#182 PR-4, relocated out of `state/<id>/teammate/worktrees/`). They live in the
+dispatcher's own workspace:
+
+```text
+<dispatcher cwd>/
+  .workspace/
+    .gitignore                 self-ignores the whole subtree (`*`)
+    worktree/
+      <repo-slug>/             <sanitized-basename>-<sha256(repo-root):12>
+        <slug>/                one managed TeamMate/Team worktree
+```
+
+`.workspace/` self-ignores so managed worktrees never become repo content;
+`<repo-slug>` disambiguates same-named repos across Team/TeamMate usage. Managed
+worktree creation fails loud if the workspace resolves under `~/.dreamux`. Legacy
+identity records still pointing at the old under-state path are read verbatim (no
+rewrite, no deletion); only newly created managed worktrees use the new location.
 
 Host logging (issue #70): `dreamux serve`, the Feishu channel (gate
 deliver/drop, inbound submit, outbound, `/introduce`), and dispatcher lifecycle

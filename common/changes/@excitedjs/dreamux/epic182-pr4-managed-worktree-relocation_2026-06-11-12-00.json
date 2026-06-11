@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "BREAKING (dispatcher workspace + managed worktree layout): every configured dispatcher must now declare an explicit `cwd` (issue #182 PR-4). `dreamux serve` fails loud at startup if any enabled dispatcher has no `cwd` — there is no longer a fallback to a Dreamux state directory (`~/.dreamux/state/<id>/cwd`). A configured-but-missing `cwd` is created with mkdir -p; a `cwd` that is not a usable directory fails startup. `dreamux doctor` diagnoses the same contract per dispatcher (`dispatcher <id> workspace`). Rebuild: add `\"cwd\": \"/abs/path/to/workspace\"` to each dispatcher in ~/.dreamux/config.json (a real, operator-owned project directory, NOT inside ~/.dreamux) and `daemon restart`. Dreamux-managed TeamMate/Team Git worktrees were relocated OUT of `~/.dreamux/state/<id>/teammate/worktrees/` into the dispatcher workspace at `<cwd>/.workspace/worktree/<repo-disambiguated-slug>/<teammate-or-team-slug>/`. `.workspace/` is self-ignored (a `*` .gitignore) so managed worktrees never become repo content. The repo-disambiguated slug (`<sanitized-basename>-<sha256(repo-root):12>`) keeps same-named repos and Team/TeamMate worktrees distinct across repos. Managed worktree creation fails loud if the workspace resolves under `~/.dreamux`. Legacy teammate/Team identity records that still point at the old under-state worktree path are read verbatim (no rewrite, no deletion); only newly created managed worktrees use the new location, so a teammate with a since-deleted old managed worktree is re-prepared at the new path on reopen. reuse-cwd teammates are unchanged and do not require the dispatcher cwd contract. No persisted file FORMAT change. Not included: PR-5 session ledger, PR-6 list/status/history read surface, PR-7 Team MCP cleanup, logs/retention.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

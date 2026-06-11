@@ -27,7 +27,7 @@
  */
 
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -70,6 +70,18 @@ export function getRuntimeConfig(): DreamuxConfig {
 
 export function dreamuxRoot(): string {
   return join(homedir(), '.dreamux');
+}
+
+/**
+ * True when `path` resolves to, or inside, the dreamux home root
+ * (`~/.dreamux`). Managed worktree creation uses this to fail loud rather than
+ * place a worktree under Dreamux's own state/run/cache tree (issue #182 PR-4):
+ * a dispatcher workspace must be a real operator project directory, never the
+ * retired state-dir fallback or any other path inside `~/.dreamux`.
+ */
+export function isUnderDreamuxRoot(path: string): boolean {
+  const rel = relative(dreamuxRoot(), resolve(path));
+  return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel));
 }
 
 export function stateRoot(): string {
@@ -256,16 +268,6 @@ export function dispatcherTeamMateRuntimeDir(
   teammateName: string,
 ): string {
   return join(dispatcherTeamMateDir(id), 'runtime', teamMateNameSegment(teammateName));
-}
-
-/** Dreamux-managed Git worktrees for one dispatcher. */
-export function dispatcherTeamMateWorktreesDir(id: string): string {
-  return join(dispatcherTeamMateDir(id), 'worktrees');
-}
-
-/** One Dreamux-managed Git worktree path for a teammate slug. */
-export function dispatcherTeamMateWorktreePath(id: string, slug: string): string {
-  return join(dispatcherTeamMateWorktreesDir(id), teamMateNameSegment(slug));
 }
 
 /** Per-dispatcher Team Mode state root. */

@@ -25,10 +25,14 @@ is wiring only — all per-dispatcher orchestration lives here.
 - **Same creation path for dispatcher and teammate agents.** Both go through
   `AgentRuntimeProviderCatalog.resolve(ref).createRuntime(...)`. No parallel
   worker/runtime tree.
-- **cwd is supplied by the launcher.** The dispatcher agent's cwd is computed
-  here (`config.cwd ?? defaultDispatcherCwd(id)`); a teammate's cwd is its
+- **cwd is supplied by the launcher.** The dispatcher agent's cwd is its
+  validated workspace (`ensureDispatcherWorkspace(config, id)` in
+  `dispatcher-workspace.ts`): every dispatcher MUST declare an explicit `cwd`,
+  there is no state-dir fallback (issue #182 PR-4). A teammate's cwd is its
   resolved target (`identity.cwd`). Passed as the required `cwd` create-context
-  field — never derived inside the runtime.
+  field — never derived inside the runtime. Managed TeamMate/Team worktrees live
+  under that workspace at `<cwd>/.workspace/worktree/<repo-slug>/<slug>/`, never
+  under `~/.dreamux`.
 - **Nested dispatch is prevented by MCP injection, not a runtime check.** A
   teammate/team-leader agent is simply not injected the "spawn teammate" tool;
   role differentiation is done by the MCP tool set + system prompt this service

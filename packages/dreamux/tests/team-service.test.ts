@@ -13,7 +13,7 @@ import { teamLeaderPrincipal } from '../src/dispatcher-service/teammate/types.js
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
 import { resetRuntimeConfig } from '../src/platform/paths.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
-import { testDreamuxConfig } from './helpers/config.js';
+import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 import type {
   AgentRuntime,
   AgentRuntimeCapabilities,
@@ -113,6 +113,9 @@ class FakeProvider implements AgentRuntimeProvider {
   }
 }
 
+/** The dispatcher workspace cwd for the current test; set in beforeEach. */
+let dispatcherCwd: string;
+
 function buildServices(): {
   teams: TeamService;
   teammates: TeamMateAgentService;
@@ -120,7 +123,7 @@ function buildServices(): {
   createdGroups: Array<{ name: string; userOpenIds: string[]; chatId: string }>;
   setCreateGroupError(err: Error | null): void;
 } {
-  const config = testDreamuxConfig();
+  const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
   const registry = createBuiltinProviderRegistry();
   const descriptor = registry.resolve('builtin:codex');
   const provider = new FakeProvider(descriptor);
@@ -164,6 +167,10 @@ describe('TeamService', () => {
     root = realpathSync(mkdtempSync(join(tmpdir(), 'dreamux-team-')));
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(root, 'home');
+    // The dispatcher workspace cwd contract (issue #182 PR-4) requires an
+    // explicit, non-`~/.dreamux` workspace; managed team worktrees land under
+    // `<workspace>/.workspace/worktree/...`.
+    dispatcherCwd = join(root, 'workspace');
     resetRuntimeConfig();
   });
 

@@ -1,10 +1,14 @@
-import { access, mkdir, realpath, stat } from 'node:fs/promises';
+import { access, mkdir, realpath, stat, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 
 import { execa } from 'execa';
 
-import { dispatcherTeamMateWorktreePath } from '../../platform/paths.js';
-import { teamMateNameSegment } from '../../platform/paths.js';
+import { isUnderDreamuxRoot, teamMateNameSegment } from '../../platform/paths.js';
+import {
+  managedWorkspaceDir,
+  managedWorkspaceGitignorePath,
+  managedWorktreePath,
+} from './worktree-paths.js';
 import type {
   TeamMateWorktreeCleanupState,
   TeamMateWorktreeIdentity,
@@ -23,6 +27,13 @@ export class WorktreeManager {
     dispatcherId: string;
     teammateName: string;
     cwd: string;
+    /**
+     * The validated dispatcher workspace (issue #182 PR-4): managed worktrees
+     * are placed under `<dispatcherWorkspace>/.workspace/worktree/...`. Required
+     * for managed mode; reuse-cwd ignores it (and callers omit it there, so a
+     * reuse-cwd spawn never forces the dispatcher cwd contract).
+     */
+    dispatcherWorkspace?: string;
     request?: TeamMateWorktreeRequest;
   }): Promise<PreparedTeamMateWorkspace> {
     const sourceCwd = resolve(input.cwd);
@@ -46,11 +57,34 @@ export class WorktreeManager {
       };
     }
 
+    if (input.dispatcherWorkspace === undefined) {
+      throw new Error(
+        'managed worktree creation requires a dispatcher workspace; the ' +
+          'dispatcher must declare an explicit `cwd` (issue #182 PR-4)',
+      );
+    }
+    const dispatcherWorkspace = resolve(input.dispatcherWorkspace);
+    // A managed worktree must never land inside Dreamux's own home tree —
+    // including the retired state-dir fallback. The cwd contract makes a
+    // missing workspace fail at startup; this guard additionally rejects a
+    // workspace an operator explicitly pointed at `~/.dreamux` (issue #182 PR-4).
+    if (isUnderDreamuxRoot(dispatcherWorkspace)) {
+      throw new Error(
+        'managed worktrees must not be created under the Dreamux home ' +
+          `(~/.dreamux); dispatcher workspace resolves there: ${dispatcherWorkspace}`,
+      );
+    }
     const sourceRepo = await this.repoRoot(sourceCwd);
+    const canonicalRepoRoot = await realpath(sourceRepo);
     const slug = validateWorktreeSlug(input.request?.slug ?? input.teammateName);
     const branch = input.request?.branch ?? `dreamux/${teamMateNameSegment(slug)}`;
     const baseRef = input.request?.base_ref ?? 'HEAD';
-    const path = dispatcherTeamMateWorktreePath(input.dispatcherId, slug);
+    const path = managedWorktreePath({
+      dispatcherWorkspace,
+      canonicalRepoRoot,
+      slug,
+    });
+    await this.ensureWorkspaceBoundary(dispatcherWorkspace);
     await mkdir(dirname(path), { recursive: true });
     const exists = await pathExists(path);
     if (!exists) {
@@ -120,6 +154,24 @@ export class WorktreeManager {
         cleanup_state: 'retained-error',
         cleanup_error: err instanceof Error ? err.message : String(err),
       };
+    }
+  }
+
+  /**
+   * Ensure `<workspace>/.workspace/` exists and self-ignores its whole subtree,
+   * so Dreamux-managed worktrees never surface as content of the dispatcher's
+   * own repo (issue #182 PR-4). The `*` gitignore is written once; an existing
+   * file is left untouched.
+   */
+  private async ensureWorkspaceBoundary(dispatcherWorkspace: string): Promise<void> {
+    await mkdir(managedWorkspaceDir(dispatcherWorkspace), { recursive: true });
+    const gitignore = managedWorkspaceGitignorePath(dispatcherWorkspace);
+    if (!(await pathExists(gitignore))) {
+      await writeFile(
+        gitignore,
+        '# Dreamux-managed worktrees — never repo content.\n*\n',
+        'utf8',
+      );
     }
   }
 

@@ -26,10 +26,8 @@ import {
   type DispatcherRow,
   type DispatcherStatus,
 } from '../../state/dispatcher-store.js';
-import {
-  adminSocketPath as defaultAdminSocketPath,
-  defaultDispatcherCwd,
-} from '../../platform/paths.js';
+import { adminSocketPath as defaultAdminSocketPath } from '../../platform/paths.js';
+import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
 import {
   loggerToLevelFn,
   type DreamuxLogger,
@@ -295,7 +293,11 @@ export class DispatcherAgentService {
     const runtimeProvider = this.opts.agentRuntimeProviders.resolve(
       dispatcherConfig?.runtime.provider ?? BUILTIN_CODEX_PROVIDER_REF,
     );
-    const cwd = dispatcherConfig?.cwd ?? defaultDispatcherCwd(id);
+    // The dispatcher agent runs in its validated workspace (issue #182 PR-4):
+    // no fallback to a Dreamux state dir. Server startup pre-flights this, so a
+    // misconfigured dispatcher never reaches launch; the call here is idempotent
+    // and keeps the launch path self-validating.
+    const cwd = await ensureDispatcherWorkspace(this.opts.config, id);
     const channelLog = this.opts.channelLoggerFactory(id);
     const channel = new FeishuChannelSession({
       dispatcherId: id,

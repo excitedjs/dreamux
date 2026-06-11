@@ -37,6 +37,7 @@ import {
   setRuntimeConfig,
   stateRoot,
 } from '../platform/paths.js';
+import { diagnoseDispatcherWorkspace } from '../dispatcher-service/dispatcher-workspace.js';
 import { ExecaCommandRunner } from '../onboard/commands.js';
 import {
   defaultServiceNodeProbe,
@@ -128,6 +129,17 @@ export async function runDreamuxDoctor(
       name: check.name,
       ok: await runner.check(check.bin, check.args),
       detail: check.bin,
+    });
+  }
+
+  // Dispatcher workspace cwd contract (issue #182 PR-4): each configured
+  // dispatcher must declare an explicit, usable `cwd` — no state-dir fallback.
+  for (const dispatcher of config.dispatchers) {
+    const diagnosis = await diagnoseDispatcherWorkspace(config, dispatcher.id);
+    checks.push({
+      name: `dispatcher ${dispatcher.id} workspace`,
+      ok: diagnosis.ok,
+      detail: diagnosis.detail,
     });
   }
 
