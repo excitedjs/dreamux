@@ -31,6 +31,15 @@ export interface TeamMateIdentity {
    */
   agent_runtime: string;
   /**
+   * Stable session identifier (issue #182 PR-5), generated at spawn and reused
+   * when `send` reopens a closed teammate from its checkpoint, so the durable
+   * session ledger keys on a value that never re-keys to the runtime thread id.
+   * Nullable for backward compatibility: identity records written before PR-5
+   * read as `null`. A fresh spawn (including reusing a closed record) mints a
+   * new id.
+   */
+  session_id: string | null;
+  /**
    * The caller-supplied workspace cwd. `cwd` remains the runtime cwd for
    * compatibility with pre-#169 clients and equals either this value
    * (`reuse-cwd`) or the prepared managed worktree path.
@@ -80,6 +89,87 @@ export interface TeamMateHistoryEvent {
   turn_id: string | null;
   status: TeamMateIdentityStatus;
   note: string | null;
+}
+
+/**
+ * One durable session-ledger event (issue #182 PR-5). Append-only, one line per
+ * lifecycle fact in the per-dispatcher `sessions.jsonl`. Every event denormalizes
+ * the recovery facts (repo / cwd / worktree / name / team / intent / runtime
+ * checkpoint id) so a session can be reconstructed weeks later from the ledger
+ * alone, without joining other files. No volatile socket path is ever recorded.
+ */
+export type TeamMateSessionEventType = 'spawn' | 'send' | 'settled' | 'close';
+
+export interface TeamMateSessionLedgerEvent {
+  version: 1;
+  /** Stable per-session key, minted at spawn (not the runtime thread id). */
+  session_id: string;
+  event_id: number;
+  timestamp: number;
+  type: TeamMateSessionEventType;
+  dispatcher_id: string;
+  name: string;
+  role: TeamMateRole;
+  team_id: string | null;
+  /** Human-readable TeamLeader name for a team member, else the leader's own name. */
+  leader_name: string | null;
+  owner: TeamMateOwner;
+  agent_runtime: string;
+  source_repo: string | null;
+  source_cwd: string;
+  cwd: string;
+  worktree_slug: string | null;
+  worktree_path: string;
+  branch: string | null;
+  base_ref: string | null;
+  intent: string | null;
+  /** Runtime checkpoint kind (e.g. the codex/claude session kind), when known. */
+  checkpoint_kind: string | null;
+  /** Runtime-resumable session/thread id (checkpoint id), when known. Not a socket. */
+  session_ref: string | null;
+  status: TeamMateIdentityStatus;
+  /** `send`/`spawn`: the turn id; null otherwise. */
+  turn_id: string | null;
+  /** `send`/`spawn`: a bounded preview of the submitted prompt. */
+  prompt_preview: string | null;
+  /** `settled`: a bounded preview of the teammate's final assistant output. */
+  assistant_preview: string | null;
+  /** `settled`: the terminal turn status. */
+  settle_status: 'completed' | 'failed' | 'stopped' | null;
+  /** `close`: the required close/dissolve note. */
+  note: string | null;
+}
+
+/**
+ * A materialized session row (issue #182 PR-5), folded from the ledger events of
+ * one `session_id`. This is the recovery view a future read surface (PR-6) will
+ * expose; PR-5 builds the durable capture and the in-process materialization.
+ */
+export interface TeamMateSessionRow {
+  session_id: string;
+  dispatcher_id: string;
+  name: string;
+  role: TeamMateRole;
+  team_id: string | null;
+  leader_name: string | null;
+  agent_runtime: string;
+  checkpoint_kind: string | null;
+  session_ref: string | null;
+  source_repo: string | null;
+  source_cwd: string;
+  cwd: string;
+  worktree_slug: string | null;
+  worktree_path: string;
+  branch: string | null;
+  base_ref: string | null;
+  intent: string | null;
+  created_at: number;
+  last_seen_at: number;
+  status: TeamMateIdentityStatus;
+  turn_count: number;
+  last_prompt_preview: string | null;
+  last_assistant_preview: string | null;
+  close_note_preview: string | null;
 }
 
 export interface TeamMateRuntimeStatus {

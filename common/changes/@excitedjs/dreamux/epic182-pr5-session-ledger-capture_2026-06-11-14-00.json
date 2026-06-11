@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Add durable TeamMate/Team session ledger capture (issue #182 PR-5). A new per-dispatcher append-only file `~/.dreamux/state/<dispatcher-id>/teammate/sessions.jsonl` records session lifecycle events (spawn/create, send, turn settled, close/dissolve) keyed by a stable `session_id` minted at spawn. Each event denormalizes the facts needed to reconstruct work weeks later: repo, source cwd, runtime cwd, worktree slug/path/branch/base_ref, name, role (teammate/team_leader/team_member), team_id, human-readable leader name, intent, runtime checkpoint kind + resumable session/thread id, status, and close note — never a volatile runtime socket path. TeamMate identity records gain a nullable `session_id` field; records written before this change read as null and a fresh spawn mints a new id (send reopening a closed teammate reuses the existing id, so the key never re-keys to the runtime thread id). This is additive and backward compatible: no existing public MCP/tool behavior changes, the per-name history index and Team ledger are unchanged, and old state still loads. The capture is best-effort (a ledger write failure is logged, never failing a lifecycle verb) and settle capture runs after reverse-delivery so it never perturbs completion timing. No Rebuild required. Not included: the public `last(turns=N)`/filterable session read surface (PR-6), the `ctx`/`history_events`/Team-surface redesign (PR-6/PR-7), and any log relocation/cleanup.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

@@ -39,4 +39,10 @@ is wiring only — all per-dispatcher orchestration lives here.
   injects at launch.
 - **Teammate identity + history are server-owned and forward-only.** History is
   an append-only JSONL index that stitches the resume chain; a history write
-  must never fail a lifecycle verb.
+  must never fail a lifecycle verb. The durable **session ledger**
+  (`teammate/sessions.jsonl`, issue #182 PR-5) is a second append-only index,
+  one per dispatcher, keyed by a stable `session_id` minted at spawn and carried
+  on the identity. It captures spawn/send/settled/close facts with full recovery
+  metadata (repo/cwd/worktree/checkpoint id/intent/close note) and never records
+  a runtime socket path; like history, a ledger write is best-effort and never
+  fails a lifecycle verb.
