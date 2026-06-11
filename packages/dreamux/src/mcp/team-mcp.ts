@@ -99,14 +99,14 @@ async function handleRequest(
 
 function teamTools(): Array<Record<string, unknown>> {
   return [
-    tool('create', 'Create a Team and start its TeamLeader.', {
+    tool('create', 'Create a Team and start its TeamLeader. intent is required: it is the durable recovery subject for the Team.', {
       name: { type: 'string', minLength: 1, maxLength: 64 },
       repo_cwd: { type: 'string', minLength: 1, maxLength: 4096 },
       leader_agent_runtime: { type: 'string', minLength: 1, maxLength: 128 },
-      intent: { type: 'string', maxLength: 2000 },
+      intent: { type: 'string', minLength: 1, maxLength: 2000 },
       prompt: { type: 'string', maxLength: 20000 },
-    }, ['name', 'repo_cwd', 'leader_agent_runtime']),
-    tool('create_group', 'Create a Team, create a Feishu group, and bind that group to the TeamLeader.', {
+    }, ['name', 'repo_cwd', 'leader_agent_runtime', 'intent']),
+    tool('create_group', 'Create a Team, create a Feishu group, and bind that group to the TeamLeader. intent is required (same contract as create).', {
       name: { type: 'string', minLength: 1, maxLength: 64 },
       repo_cwd: { type: 'string', minLength: 1, maxLength: 4096 },
       leader_agent_runtime: { type: 'string', minLength: 1, maxLength: 128 },
@@ -115,9 +115,9 @@ function teamTools(): Array<Record<string, unknown>> {
       requester_open_id: { type: 'string', minLength: 1 },
       invite_open_ids: { type: 'array', items: { type: 'string' } },
       group_name: { type: 'string', minLength: 1 },
-      intent: { type: 'string', maxLength: 2000 },
+      intent: { type: 'string', minLength: 1, maxLength: 2000 },
       prompt: { type: 'string', maxLength: 20000 },
-    }, ['name', 'repo_cwd', 'leader_agent_runtime', 'source_chat_id', 'source_chat_type', 'requester_open_id']),
+    }, ['name', 'repo_cwd', 'leader_agent_runtime', 'source_chat_id', 'source_chat_type', 'requester_open_id', 'intent']),
     tool('list', 'List Teams owned by this dispatcher.', {}, []),
     tool('status', 'Read one Team status.', {
       team_id: { type: 'string', minLength: 1, maxLength: 64 },
@@ -134,10 +134,10 @@ function teamTools(): Array<Record<string, unknown>> {
       chat_id: { type: 'string', minLength: 1 },
       chat_type: { type: 'string', enum: ['group', 'p2p'] },
     }, ['chat_id', 'chat_type']),
-    tool('dissolve', 'Close one Team and its agents.', {
+    tool('dissolve', 'Close one Team and its agents. note is required: it records why a recoverable Team was stopped.', {
       team_id: { type: 'string', minLength: 1, maxLength: 64 },
-      note: { type: 'string', maxLength: 2000 },
-    }, ['team_id']),
+      note: { type: 'string', minLength: 1, maxLength: 2000 },
+    }, ['team_id', 'note']),
   ];
 }
 
@@ -201,13 +201,13 @@ function mapToolCall(call: ToolCall): { method: string; params: Record<string, u
 
 function createArgs(value: unknown): Record<string, unknown> {
   const obj = asRecord(value, 'create arguments');
-  const intent = optionalString(obj, 'intent');
   const prompt = optionalString(obj, 'prompt');
   return {
     name: requireString(obj, 'name'),
     repo_cwd: requireString(obj, 'repo_cwd'),
     leader_agent_runtime: requireString(obj, 'leader_agent_runtime'),
-    ...(intent !== null ? { intent } : {}),
+    // Required recovery subject (issue #182 PR-3); create_group reuses this.
+    intent: requireString(obj, 'intent'),
     ...(prompt !== null ? { prompt } : {}),
   };
 }
@@ -232,10 +232,10 @@ function teamIdArgs(value: unknown): Record<string, unknown> {
 
 function dissolveArgs(value: unknown): Record<string, unknown> {
   const obj = asRecord(value, 'dissolve arguments');
-  const note = optionalString(obj, 'note');
+  // Required dissolve reason (issue #182 PR-3).
   return {
     team_id: requireString(obj, 'team_id'),
-    ...(note !== null ? { note } : {}),
+    note: requireString(obj, 'note'),
   };
 }
 

@@ -26,15 +26,18 @@ session or polling a process.
 **Lifecycle.**
 
 - `spawn` — create a named TeamMate and submit the first turn. Use a stable name
-  for work you may resume later. When selecting a runtime, pass one of
-  `get_capabilities.agent_runtimes[].id` as `agent_runtime`; do not pass
-  provider refs such as `builtin:*`.
+  for work you may resume later. `intent` is **required**: a short recovery
+  subject for the session ledger (what this TeamMate is for). When selecting a
+  runtime, pass one of `get_capabilities.agent_runtimes[].id` as `agent_runtime`;
+  do not pass provider refs such as `builtin:*`.
 - `send` — submit a turn to a TeamMate. If the named TeamMate is not live —
   including one previously `close`d — send first reopens it from its persisted
   checkpoint, then submits. There is no separate `resume` verb; send covers
-  reattach.
-- `close` — stop the named TeamMate and mark it closed. It stays reopenable: a
-  later `send` revives it from its checkpoint.
+  reattach. Pass `intent` (optional) to update the recorded recovery subject
+  when the work shifts.
+- `close` — stop the named TeamMate and mark it closed. `note` is **required**:
+  why you are stopping a recoverable session. It stays reopenable: a later
+  `send` revives it from its checkpoint.
 
 **Watch and collect — no polling.**
 
@@ -57,19 +60,21 @@ lifecycle. Use it to create a TeamLeader, inspect Team status/ledger, and
 dissolve a Team. Team work still runs through agents; do not inspect the target
 repo directly from the dispatcher.
 
-- `create` — create a Team and TeamLeader. Requires `repo_cwd` and
-  `leader_agent_runtime`; no default leader runtime is inferred.
+- `create` — create a Team and TeamLeader. Requires `repo_cwd`,
+  `leader_agent_runtime`, and `intent` (the Team's recovery subject); no default
+  leader runtime is inferred.
 - `create_group` — from a P2P control channel, create a Team, create a Feishu
   group, invite the requester/peers when Feishu permissions allow it, and bind
-  the new group to the TeamLeader. The source P2P remains with the dispatcher.
+  the new group to the TeamLeader. Requires `intent`, same as `create`. The
+  source P2P remains with the dispatcher.
 - `list`, `status`, `ledger` — read dispatcher-owned Team records and lifecycle
   ledger rows.
 - `bind_channel` — bind a Feishu group chat to a TeamLeader. P2P binding is
   rejected.
 - `transfer_channel_back` — return a bound Feishu group chat to the dispatcher.
 - `dissolve` — close the TeamLeader and team-owned members, then conservatively
-  clean up the shared managed worktree. Active channel bindings are transferred
-  back first.
+  clean up the shared managed worktree. `note` is **required**: why the Team is
+  being dissolved. Active channel bindings are transferred back first.
 
 **Control and inspect.**
 

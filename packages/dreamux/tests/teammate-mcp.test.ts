@@ -188,11 +188,34 @@ describe('teammate-mcp stdio shim', () => {
         properties: Record<string, unknown>;
       };
     };
-    expect(spawn.inputSchema.required).toEqual(['name', 'prompt', 'cwd']);
+    // Issue #182 PR-3: spawn.intent is required (durable recovery subject).
+    expect(spawn.inputSchema.required).toEqual(['name', 'prompt', 'cwd', 'intent']);
     expect(spawn.inputSchema.properties).toHaveProperty('worktree');
     expect(JSON.stringify(spawn.inputSchema.properties['worktree'])).toContain(
       'delete-on-close',
     );
+  });
+
+  it('marks spawn.intent and close.note required, and send.intent optional (#182 PR-3)', async () => {
+    for (const callerKind of ['dispatcher', 'team_leader'] as const) {
+      const tools = await toolSchemas(callerKind);
+      const spawn = tools.find((e) => e['name'] === 'spawn') as {
+        inputSchema: { required: string[]; properties: Record<string, unknown> };
+      };
+      const send = tools.find((e) => e['name'] === 'send') as {
+        inputSchema: { required: string[]; properties: Record<string, unknown> };
+      };
+      const close = tools.find((e) => e['name'] === 'close') as {
+        inputSchema: { required: string[]; properties: Record<string, unknown> };
+      };
+      // spawn.intent required for both caller kinds.
+      expect(spawn.inputSchema.required).toContain('intent');
+      // send.intent is an advertised optional property, not required.
+      expect(send.inputSchema.properties).toHaveProperty('intent');
+      expect(send.inputSchema.required).toEqual(['name', 'prompt']);
+      // close.note required.
+      expect(close.inputSchema.required).toEqual(['name', 'note']);
+    }
   });
 
   it('advertises history as a ledger and history_events as the raw timeline', async () => {
@@ -323,6 +346,8 @@ describe('teammate-mcp stdio shim', () => {
           arguments: {
             name: 'reviewer',
             prompt: 'Review the change.',
+            // intent present so this isolates the missing-cwd case.
+            intent: 'review',
           },
         },
       });
@@ -337,6 +362,68 @@ describe('teammate-mcp stdio shim', () => {
       });
       expect(admin.requests).toEqual([]);
 
+      input.end();
+      await run;
+    } finally {
+      await admin.close();
+    }
+  });
+
+  it('rejects spawn without intent and close without note before admin IPC (#182 PR-3)', async () => {
+    const admin = await startFakeAdminServer((request) => ({
+      id: request.id,
+      ok: true,
+      result: {},
+    }));
+    try {
+      const input = new PassThrough();
+      const output = new PassThrough();
+      const reader = new JsonLineReader(output);
+      const run = runTeamMateMcp({
+        dispatcherId: 'dispatcher-a',
+        callerKind: 'dispatcher',
+        adminSocketPath: admin.socketPath,
+        input,
+        output,
+        log: () => {},
+      });
+
+      // spawn without intent → rejected before admin IPC.
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'spawn',
+          arguments: { name: 'reviewer', prompt: 'go', cwd: '/workspace' },
+        },
+      });
+      expect(await reader.next()).toMatchObject({
+        jsonrpc: '2.0',
+        id: 1,
+        result: {
+          isError: true,
+          content: [{ text: 'intent must be a non-empty string' }],
+        },
+      });
+
+      // close without note → rejected before admin IPC.
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/call',
+        params: { name: 'close', arguments: { name: 'reviewer' } },
+      });
+      expect(await reader.next()).toMatchObject({
+        jsonrpc: '2.0',
+        id: 2,
+        result: {
+          isError: true,
+          content: [{ text: 'note must be a non-empty string' }],
+        },
+      });
+
+      expect(admin.requests).toEqual([]);
       input.end();
       await run;
     } finally {

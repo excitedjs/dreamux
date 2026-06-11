@@ -149,17 +149,18 @@ export const adminMethods: Record<string, AdminHandler> = {
       caller.kind === 'team_leader'
         ? await server.dispatcherService.teams.sharedWorkspace(id, caller.teamId)
         : undefined;
-    const intent = optionalString(params, 'intent');
+    // Required recovery subject (issue #182 PR-3).
+    const intent = mustNonEmptyString(params, 'intent');
     try {
       return await server.dispatcherService.teammates.spawnScoped({
         principal: caller,
         name,
         prompt,
+        intent,
         ...(sharedWorkspace !== undefined ? { sharedWorkspace } : {}),
         ...(cwd !== null ? { cwd } : {}),
         ...(agentRuntime !== null ? { agentRuntime } : {}),
         ...(worktree !== null ? { worktree } : {}),
-        ...(intent !== null ? { intent } : {}),
       });
     } catch (err) {
       throw new AdminError('TEAMMATE_SPAWN_FAILED', parseMessage(err));
@@ -172,11 +173,15 @@ export const adminMethods: Record<string, AdminHandler> = {
     const caller = callerPrincipal(id, params);
     const name = mustString(params, 'name');
     const prompt = mustString(params, 'prompt');
+    // Optional: when supplied, updates the recorded recovery subject before the
+    // turn (issue #182 PR-3).
+    const intent = optionalString(params, 'intent');
     try {
       return await server.dispatcherService.teammates.sendScoped({
         principal: caller,
         name,
         prompt,
+        ...(intent !== null ? { intent } : {}),
       });
     } catch (err) {
       throw new AdminError('TEAMMATE_SEND_FAILED', parseMessage(err));
@@ -188,12 +193,13 @@ export const adminMethods: Record<string, AdminHandler> = {
     mustExistingDispatcher(server, id);
     const caller = callerPrincipal(id, params);
     const name = mustString(params, 'name');
-    const note = optionalString(params, 'note');
+    // Required close reason (issue #182 PR-3).
+    const note = mustNonEmptyString(params, 'note');
     try {
       return await server.dispatcherService.teammates.closeScoped({
         principal: caller,
         name,
-        ...(note !== null ? { note } : {}),
+        note,
       });
     } catch (err) {
       throw new AdminError('TEAMMATE_CLOSE_FAILED', parseMessage(err));
@@ -270,7 +276,8 @@ export const adminMethods: Record<string, AdminHandler> = {
     const repoCwd = mustString(params, 'repo_cwd');
     const leaderAgentRuntime = mustString(params, 'leader_agent_runtime');
     const worktree = optionalWorktreeRequest(params, 'worktree');
-    const intent = optionalString(params, 'intent');
+    // Required recovery subject (issue #182 PR-3).
+    const intent = mustNonEmptyString(params, 'intent');
     const prompt = optionalString(params, 'prompt');
     try {
       return await server.dispatcherService.createTeam({
@@ -278,8 +285,8 @@ export const adminMethods: Record<string, AdminHandler> = {
         name,
         repoCwd,
         leaderAgentRuntime,
+        intent,
         ...(worktree !== null ? { worktree } : {}),
-        ...(intent !== null ? { intent } : {}),
         ...(prompt !== null ? { prompt } : {}),
       });
     } catch (err) {
@@ -330,8 +337,9 @@ export const adminMethods: Record<string, AdminHandler> = {
       sourceChatId: mustString(params, 'source_chat_id'),
       sourceChatType: mustString(params, 'source_chat_type') === 'p2p' ? 'p2p' : 'group',
       requesterOpenId: mustString(params, 'requester_open_id'),
+      // Required recovery subject — same contract as team.create (issue #182 PR-3).
+      intent: mustNonEmptyString(params, 'intent'),
       ...optionalMappedStringProp(params ?? {}, 'group_name', 'groupName'),
-      ...optionalStringProp(params ?? {}, 'intent'),
       ...optionalStringProp(params ?? {}, 'prompt'),
       inviteOpenIds: optionalStringArray(params, 'invite_open_ids') ?? [],
     });
@@ -354,11 +362,12 @@ export const adminMethods: Record<string, AdminHandler> = {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     const teamId = mustString(params, 'team_id');
-    const note = optionalString(params, 'note');
+    // Required dissolve reason (issue #182 PR-3).
+    const note = mustNonEmptyString(params, 'note');
     return server.dispatcherService.dissolveTeam({
       dispatcherId: id,
       teamId,
-      ...(note !== null ? { note } : {}),
+      note,
     });
   },
 };
@@ -432,6 +441,23 @@ function mustString(
     throw new AdminError('BAD_REQUEST', `missing or non-string param '${key}'`);
   }
   return params[key] as string;
+}
+
+/**
+ * Like `mustString` but rejects the empty string too — the admin-layer guard
+ * for required, meaningful fields (issue #182 PR-3 intent/note). Matches the
+ * shim's `requireString` so an empty required field is rejected at every layer,
+ * including a direct admin caller that bypasses the shim.
+ */
+function mustNonEmptyString(
+  params: Record<string, unknown> | undefined,
+  key: string,
+): string {
+  const value = mustString(params, key);
+  if (value === '') {
+    throw new AdminError('BAD_REQUEST', `param '${key}' must be a non-empty string`);
+  }
+  return value;
 }
 
 function mustDispatcherId(

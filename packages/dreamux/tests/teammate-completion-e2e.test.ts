@@ -205,6 +205,7 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
     const spawned = await facade.spawnTeamMate({
       dispatcherId: 'flow',
       name: 'reviewer',
+      intent: 'work',
       prompt: 'Review the change.',
       cwd: workspace(root),
     });
@@ -255,6 +256,7 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
         leaderName: 'alpha-leader',
       }),
       name: 'builder',
+      intent: 'work',
       prompt: 'Build it.',
       sharedWorkspace: workspaceInfo,
     });
@@ -386,6 +388,7 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
     const spawned = await facade.spawnTeamMate({
       dispatcherId: 'flow',
       name: 'reviewer',
+      intent: 'work',
       prompt: 'Review the change.',
       cwd: workspace(root),
     });
@@ -422,6 +425,7 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
     const spawned = await facade.spawnTeamMate({
       dispatcherId: 'flow',
       name: 'reviewer',
+      intent: 'work',
       prompt: 'Review the change.',
       cwd: workspace(root),
     });
@@ -470,6 +474,7 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
     const spawned = await facade.spawnTeamMate({
       dispatcherId: 'flow',
       name: 'reviewer',
+      intent: 'work',
       prompt: 'Review the change.',
       cwd: workspace(root),
     });
@@ -534,6 +539,7 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
     await facade.spawnTeamMate({
       dispatcherId: 'flow',
       name: 'breaker',
+      intent: 'work',
       prompt: 'Run.',
       cwd: workspace(root),
     });
@@ -572,12 +578,14 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
     await facade.spawnTeamMate({
       dispatcherId: 'flow',
       name: 'one',
+      intent: 'work',
       prompt: 'A.',
       cwd: workspace(root),
     });
     await facade.spawnTeamMate({
       dispatcherId: 'flow',
       name: 'two',
+      intent: 'work',
       prompt: 'B.',
       cwd: workspace(root),
     });
