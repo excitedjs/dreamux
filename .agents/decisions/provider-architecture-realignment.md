@@ -111,13 +111,19 @@ see its `verbs/` (spawn/resume/history), `persistence/history-index.ts` and
 - **send subsumes resume (issue #155).** The original design carried a separate
   `resume` verb to bring back a prior teammate session with its history; that is
   gone. `send` now reopens a teammate that is not live — including a `close`d one
-  — from its persisted checkpoint, then submits, so `close` is a reversible
+  — by rebuilding the resume checkpoint from the record's runtime-native
+  `session_id` plus the runtime's own declared checkpoint kind (issue #199 Slice
+  3; the kind is never persisted), then submits, so `close` is a reversible
   soft-stop. Read-only verbs never reopen a closed teammate.
-- **History stitches the resume chain.** A forward-only JSONL index records
-  `spawn`, `send`, `close`, and runtime state events (`resume` events remain a
-  readable legacy type from pre-#155 history). History writes must never fail a
-  lifecycle verb. Per-runtime checkpoint mechanics are absorbed by the runtime
-  implementation behind one `resume()` runtime surface.
+- **History reads the record, not an event stream (issue #199 Slice 3).**
+  `history` / `list` / `status` project the per-name `records/<name>.json`
+  recovery record — identity plus a rolling summary (turn count, last-seen,
+  last prompt/assistant previews) maintained on each turn. The only JSONL store
+  is the per-name `turns/<name>.jsonl` archive (compact submit/settled rows)
+  that `last` folds; there is no separate forward-only history event index, and
+  neither store write may fail a lifecycle verb. Per-runtime checkpoint
+  mechanics are absorbed by the runtime implementation behind one `resume()`
+  runtime surface.
 - **Identity and state location.** A teammate is a flat name plus a base record
   (agent runtime id, dispatcher owner, source/runtime cwd, optional managed
   worktree metadata, runtime-native `session_id`, status, close metadata). State

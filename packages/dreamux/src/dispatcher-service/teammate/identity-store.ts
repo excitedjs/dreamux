@@ -1,10 +1,12 @@
 import { readFile, readdir } from 'node:fs/promises';
 
 import { writeFileAtomic } from '../../platform/atomic-write.js';
+import { isNotFound } from '../../platform/fs-errors.js';
 import {
   dispatcherTeamMateRecordsDir,
   dispatcherTeamMateRecordPath,
 } from '../../platform/paths.js';
+import { assertNoRemovedRecordFields } from '../legacy-state.js';
 import {
   validateTeamMateName,
   type TeamMateIdentity,
@@ -198,6 +200,16 @@ function readIdentity(
         'file to rebuild it.',
     );
   }
+  // #199 Slice 5 fail-loud: a pre-#199 record carried the Dreamux resume
+  // wrapper (`checkpoint` / `checkpoint_kind` / `session_ref`), the Dreamux-made
+  // `display_name`, or the retired `close_status`. Those concepts are gone, so
+  // reject the record with rebuild guidance rather than reading a stale shape.
+  assertNoRemovedRecordFields(
+    `TeamMate record ${JSON.stringify(name)}`,
+    value,
+    ['checkpoint', 'checkpoint_kind', 'session_ref', 'display_name', 'close_status'],
+    `close and respawn this teammate, or delete its record at ${dispatcherTeamMateRecordPath(dispatcherId, name)} to rebuild it.`,
+  );
   if (
     value['version'] !== 1 ||
     value['dispatcher_id'] !== dispatcherId ||
@@ -349,13 +361,4 @@ function readWorktreeIdentity(
         ? record['cleanup_error']
         : null,
   };
-}
-
-function isNotFound(err: unknown): boolean {
-  return (
-    typeof err === 'object' &&
-    err !== null &&
-    'code' in err &&
-    (err as { code?: unknown }).code === 'ENOENT'
-  );
 }

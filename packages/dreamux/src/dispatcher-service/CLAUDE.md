@@ -60,3 +60,14 @@ is wiring only — all per-dispatcher orchestration lives here.
   session ledger, the Dreamux-minted `session_id` key, and the persisted
   `checkpoint` object are gone: `session_id` is now the runtime-native thread id,
   persisted directly, and the resume checkpoint kind is rebuilt from the runtime.
+- **Pre-#199 state fails loud, it is never migrated (issue #199 Slice 5).** 0.x
+  has no schema migration (issue #98). `legacy-state.ts` is the one place that
+  knows the removed layout: `detectLegacyDispatcherState` probes the removed
+  whole-file/dir paths (`teammate/identities/`, `teammate/sessions.jsonl`,
+  `teammate/history/`, `team/ledger/`) and `dreamux serve` aborts startup —
+  `dreamux doctor` diagnoses — naming the path to delete. Removed *fields* left in
+  a present record (`checkpoint` / `checkpoint_kind` / `session_ref` /
+  `display_name` / `close_status`, or a channel binding keyed by `team_id`) are
+  rejected by that record's reader via `assertNoRemovedRecordFields`. Detection
+  only: the legacy paths/files are never read for migration, rewritten, or
+  removed.

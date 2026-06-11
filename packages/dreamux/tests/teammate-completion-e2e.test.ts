@@ -201,7 +201,12 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
     if (previousHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = previousHome;
     resetRuntimeConfig();
-    rmSync(root, { recursive: true, force: true });
+    // A best-effort record/turns write (atomic write = temp file + rename, issue
+    // #199 Slice 4) can still be in flight when teardown runs, leaving a
+    // transient `.tmp` sibling in `teammate/records/`. On slower filesystems the
+    // recursive remove then races it and `rmdir` fails ENOTEMPTY. maxRetries
+    // re-attempts (Node retries ENOTEMPTY) once the rename/cleanup completes.
+    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   });
 
   it("settles a teammate turn and reaches the dispatcher runtime's completionInput", async () => {

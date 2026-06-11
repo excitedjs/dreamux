@@ -3,6 +3,7 @@ import { dirname, resolve } from 'node:path';
 
 import { execa } from 'execa';
 
+import { isNotFound } from '../../platform/fs-errors.js';
 import {
   isRealPathUnderDreamuxRoot,
   teamMateNameSegment,
@@ -371,13 +372,4 @@ function validateWorktreeSlug(slug: string): string {
     );
   }
   return slug;
-}
-
-function isNotFound(err: unknown): boolean {
-  return (
-    typeof err === 'object' &&
-    err !== null &&
-    'code' in err &&
-    (err as { code?: unknown }).code === 'ENOENT'
-  );
 }

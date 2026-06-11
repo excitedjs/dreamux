@@ -45,6 +45,10 @@ import { RestartIntentConsumer } from './daemon/restart-intent.js';
 import type { ClaudeCodeSessionFactory } from './agent-runtime/builtin/claude-code/supervisor.js';
 import { DispatcherService } from './dispatcher-service/service.js';
 import { ensureDispatcherWorkspace } from './dispatcher-service/dispatcher-workspace.js';
+import {
+  detectLegacyDispatcherState,
+  legacyDispatcherStateMessage,
+} from './dispatcher-service/legacy-state.js';
 export {
   IN_PROGRESS_REACTION_EMOJI,
   RECEIVED_REACTION_EMOJI,
@@ -203,6 +207,12 @@ export class Server {
     // a misconfigured deployment never comes up half-broken.
     await this.assertDispatcherWorkspaces();
 
+    // Pre-#199 local state contract (issue #199 Slice 5): a leftover session
+    // ledger / identities dir / Team audit ledger from an earlier layout is a
+    // hard upgrade blocker — 0.x does not migrate it. Aggregate every
+    // dispatcher's findings and fail the whole start loud before launching.
+    await this.assertNoLegacyDispatcherState();
+
     // Before taking the new run/ admin lock, fail loud if an OLD-version
     // server still holds the pre-#182 state/ admin lock — the two locks are at
     // different paths and would not otherwise see each other (issue #182 P1).
@@ -267,6 +277,28 @@ export class Server {
       throw new Error(
         `dreamux serve cannot start — dispatcher workspace cwd contract failed:\n` +
           failures.map((message) => `  - ${message}`).join('\n'),
+      );
+    }
+  }
+
+  /**
+   * Fail loud when any dispatcher still has pre-#199 local state (issue #199
+   * Slice 5). Detection only — the legacy paths are never read for migration,
+   * rewritten, or removed; the operator deletes them and lets the current layout
+   * rebuild. Aggregated like the workspace contract so every stale dispatcher is
+   * reported at once.
+   */
+  private async assertNoLegacyDispatcherState(): Promise<void> {
+    const messages: string[] = [];
+    for (const row of this.repos.dispatchers.listEnabled()) {
+      const findings = await detectLegacyDispatcherState(row.dispatcher_id);
+      if (findings.length > 0) {
+        messages.push(legacyDispatcherStateMessage(row.dispatcher_id, findings));
+      }
+    }
+    if (messages.length > 0) {
+      throw new Error(
+        `dreamux serve cannot start — pre-#199 local state found:\n${messages.join('\n')}`,
       );
     }
   }

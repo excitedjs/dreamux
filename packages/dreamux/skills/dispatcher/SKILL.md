@@ -118,9 +118,10 @@ do not inspect the target repo directly from the dispatcher.
   Control is an external Claude UI surface, distinct from Dreamux `send` steer;
   keep trusting `steer.supported` from the returned capabilities.
 
-The persistent identity and history files are the source of truth. A TeamMate
-reopened by send continues from its saved runtime checkpoint; do not create a
-new name unless you want a separate session.
+The persistent record and turns files are the source of truth. A TeamMate
+reopened by send resumes from its saved runtime-native session (the resume
+checkpoint is rebuilt from it); do not create a new name unless you want a
+separate session.
 
 ### tm CLI — the explicit fallback
 
