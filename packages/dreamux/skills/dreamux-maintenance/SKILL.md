@@ -71,6 +71,27 @@ dreamux config show
 | Skill path is a real file or directory | Dreamux leaves it untouched. If this is an intentional override, keep it; otherwise rename or remove it and restart the dispatcher. |
 | Skill symlink is broken after an upgrade | Restart the dispatcher or rerun `dreamux onboard`; startup recreates stale or broken bundled skill symlinks. |
 
+## Log Maintenance
+
+Dreamux does not auto-prune logs (no automatic retention in 0.x). Pruning is a
+deliberate operator action:
+
+- A **7-day retention** is acceptable; delete logs older than that when disk
+  matters. Logs hold only diagnostics, never durable state.
+- **Zero-byte log files are always safe to delete.** Empty runtime child
+  stdout/stderr logs are now removed automatically when the child shuts down
+  cleanly, so they no longer accumulate one-per-start; what remains under
+  `~/.dreamux/logs/` are files that actually captured startup/crash output.
+- The whole `~/.dreamux/logs/` tree is rebuildable: it is safe to clear while no
+  `dreamux serve` is running; it is recreated on the next start.
+
+Prune manually, e.g. (run only while the server is stopped):
+
+```bash
+find ~/.dreamux/logs -type f -mtime +7 -delete   # drop logs older than 7 days
+find ~/.dreamux/logs -type f -empty -delete       # drop any leftover empties
+```
+
 ## Turn Mechanics
 
 For questions about active turns, steering, background commands, and repeated

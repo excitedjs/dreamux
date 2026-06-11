@@ -8,11 +8,20 @@
  * path must never be persisted into durable state (identity, history, ledger,
  * checkpoint, or status surfaces) — it lives only in supervisor/runtime memory.
  *
- * Placement preference:
+ * Placement preference (the allocator picks the first that fits the `sun_path`
+ * budget):
  *   1. `$XDG_RUNTIME_DIR/dreamux/sockets/` — the canonical private per-user
  *      runtime dir on Linux. It is operator input, so a shared-tmp value is
  *      rejected rather than trusted.
  *   2. `~/.dreamux/run/sockets/` — the dreamux-owned volatile run root.
+ *   3. `<os-private-temp>/dreamux/sockets/` — the per-user OS temp dir **only
+ *      when it is a private root, not world-shared `/tmp`** (issue #182 final
+ *      gate). On macOS `os.tmpdir()` is the per-user `$TMPDIR`
+ *      (`/var/folders/<…>/T`, owner-only) and is far shorter than a long
+ *      per-run durable `$HOME`, so it keeps Codex sockets within budget when
+ *      there is no `$XDG_RUNTIME_DIR` and `~/.dreamux/run/sockets/` is over
+ *      budget. On Linux `os.tmpdir()` is `/tmp` (shared) and is rejected, so
+ *      this candidate never reintroduces a world-shared tmp socket.
  * Shared world-writable tmp roots (`/tmp`, `/var/tmp`) are never used for
  * sockets (global-bin decision record). When no candidate fits the `sun_path`
  * budget, allocation fails loudly.
@@ -25,6 +34,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join, normalize, sep } from 'node:path';
 
 import {
@@ -61,7 +71,30 @@ export function runtimeSocketDirCandidates(
     candidates.push(join(xdg, 'dreamux', 'sockets'));
   }
   candidates.push(join(runRoot(), 'sockets'));
+  // Per-user OS temp dir, but only when it is a PRIVATE root (macOS `$TMPDIR`
+  // = `/var/folders/<…>/T`, owner-only) — never world-shared `/tmp` (Linux),
+  // which `isSharedTmpPath` rejects. This is the short, private fallback that
+  // keeps sockets within the `sun_path` budget on macOS with no
+  // `$XDG_RUNTIME_DIR` and a long per-run `$HOME` (issue #182 final gate). It
+  // is consulted after the dreamux-owned run root, so short-`$HOME` placement
+  // is unchanged; the supervisor still enforces owner-only on the dir.
+  const tmp = osTempDir(env);
+  if (tmp !== '' && !isSharedTmpPath(tmp)) {
+    candidates.push(join(tmp, 'dreamux', 'sockets'));
+  }
   return candidates;
+}
+
+/**
+ * The per-user OS temp directory, resolved from the passed env so tests are
+ * deterministic, mirroring Node's `os.tmpdir()` precedence
+ * (`TMPDIR` → `TMP` → `TEMP` → platform default).
+ */
+function osTempDir(env: NodeJS.ProcessEnv): string {
+  const fromEnv = env['TMPDIR'] ?? env['TMP'] ?? env['TEMP'];
+  const raw = fromEnv !== undefined && fromEnv.trim() !== '' ? fromEnv : tmpdir();
+  // Strip a single trailing separator so joined paths stay canonical.
+  return raw.endsWith(sep) && raw.length > 1 ? raw.slice(0, -1) : raw;
 }
 
 /**
@@ -81,9 +114,9 @@ export function allocateRuntimeSocketPath(
     const path = join(dir, name);
     if (unixSocketPathFitsBudget(path)) return path;
   }
-  // No candidate fits the budget. `runtimeSocketDirCandidates` always ends with
-  // the dreamux-owned run/sockets dir, so re-asserting on the last candidate
-  // (still a sweepable dir, not the bare run root) yields the fail-loud message.
+  // No candidate fits the budget. Every candidate is a dreamux-owned, sweepable
+  // sockets dir (never the bare run root), so re-asserting on the last one
+  // yields the fail-loud message naming the longest-shot placement we tried.
   const fallback = candidates[candidates.length - 1] as string;
   return assertUnixSocketPathBudget(join(fallback, name), label);
 }

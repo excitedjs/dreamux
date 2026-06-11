@@ -16,6 +16,7 @@ import {
   runRoot,
   setRuntimeConfig,
   stateRoot,
+  unixSocketPathFitsBudget,
 } from '../src/platform/paths.js';
 import {
   allocateCodexSocketPath,
@@ -110,10 +111,15 @@ describe('global Codex home doctor', () => {
 
   it('rejects too-long app-server socket paths when no private root fits the budget', async () => {
     const previousXdg = process.env['XDG_RUNTIME_DIR'];
-    // A pathological $HOME blows the budget for the dreamux-owned fallback,
-    // and with no XDG root there is no other candidate: fail loudly.
+    const previousTmpdir = process.env['TMPDIR'];
+    // A pathological $HOME blows the budget for the dreamux-owned fallback. To
+    // assert the fail-loud path deterministically across platforms, also remove
+    // the other private candidates: no XDG root, and a shared-tmp TMPDIR so the
+    // private-OS-temp candidate is rejected too (on macOS the real $TMPDIR is a
+    // short private root that would otherwise fit; issue #182 final gate).
     process.env['HOME'] = join(runtimeDir, 'h'.repeat(120));
     delete process.env['XDG_RUNTIME_DIR'];
+    process.env['TMPDIR'] = '/tmp';
 
     try {
       await expect(
@@ -122,6 +128,29 @@ describe('global Codex home doctor', () => {
     } finally {
       if (previousXdg === undefined) delete process.env['XDG_RUNTIME_DIR'];
       else process.env['XDG_RUNTIME_DIR'] = previousXdg;
+      if (previousTmpdir === undefined) delete process.env['TMPDIR'];
+      else process.env['TMPDIR'] = previousTmpdir;
+    }
+  });
+
+  it('uses the private OS temp dir for deep home dirs when XDG is absent (#182 macOS gate)', async () => {
+    const previousXdg = process.env['XDG_RUNTIME_DIR'];
+    const previousTmpdir = process.env['TMPDIR'];
+    // The macOS CI shape: long $HOME, no $XDG_RUNTIME_DIR, but a short PRIVATE
+    // $TMPDIR keeps the Codex socket within budget instead of failing loudly.
+    process.env['HOME'] = join(runtimeDir, 'h'.repeat(120));
+    delete process.env['XDG_RUNTIME_DIR'];
+    process.env['TMPDIR'] = join(runtimeDir, 't');
+
+    try {
+      const socket = allocateCodexSocketPath('dispatcher-with-long-id');
+      expect(socket.startsWith(join(runtimeDir, 't', 'dreamux', 'sockets'))).toBe(true);
+      expect(unixSocketPathFitsBudget(socket)).toBe(true);
+    } finally {
+      if (previousXdg === undefined) delete process.env['XDG_RUNTIME_DIR'];
+      else process.env['XDG_RUNTIME_DIR'] = previousXdg;
+      if (previousTmpdir === undefined) delete process.env['TMPDIR'];
+      else process.env['TMPDIR'] = previousTmpdir;
     }
   });
 

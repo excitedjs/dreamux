@@ -22,6 +22,7 @@ import { mkdir, open, rm, stat } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { isProcessAlive, killProcessGroup } from '../../../platform/process.js';
 import { ensureOwnerOnlyDir } from '../../../platform/owner-only-dir.js';
+import { removeEmptyLogFile } from '../../../platform/logs.js';
 
 export interface CodexProcessOptions {
   /** Unix socket path the daemon should listen on. */
@@ -190,6 +191,11 @@ export class CodexProcess {
     } catch {
       /* best effort */
     }
+    // The child has exited, so its inherited stdout/stderr fds are released.
+    // Drop the log files if the child produced no output — normal Codex traffic
+    // flows over the socket, so they are usually empty (issue #182 logs stage).
+    await removeEmptyLogFile(this.opts.stdoutLogPath);
+    await removeEmptyLogFile(this.opts.stderrLogPath);
     this.child = null;
   }
 }
