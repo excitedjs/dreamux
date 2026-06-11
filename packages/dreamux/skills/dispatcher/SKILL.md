@@ -49,9 +49,10 @@ session or polling a process.
 - `status` — one TeamMate's current state by concrete name: agent
   runtime id, session, cwd/repo, and close metadata.
 - `history` — the durable recovery search for this dispatcher: a compact list
-  keyed by concrete name (filter by `name` / `agent_runtime` / `grep`, paginate
-  with `limit` / `cursor`), returning `{ items, next_cursor }`. It is a recovery
-  list, not a raw event timeline; the legacy `id` / `state` / `close_status` /
+  keyed by concrete name (filter by `name` / `status` / `agent_runtime` / `repo`
+  / `grep` / `since` / `until`, paginate with `limit` / `cursor`), returning
+  `{ items, next_cursor }`. It is a recovery list, not a raw event timeline. The
+  lifecycle `status` filter is kept; the legacy `state` / `close_status` /
   `source_cwd` / `runtime_cwd` filters and the cwd/worktree/`display_name`/
   `session_id`/`checkpoint` row fields are no longer exposed (issue #199).
 - `last` — a TeamMate's most recent settled turn(s), read from the durable
@@ -85,10 +86,11 @@ do not inspect the target repo directly from the dispatcher.
 - `status` — one Team's detailed current state by `team_name`: the Team record,
   the TeamLeader status, member count, and the active bound group.
 - `history` — the durable Team recovery search (closed Teams included): filter by
-  `team_name`, `repo`, `intent` text (`grep`), and time range (`since`/`until`),
-  with `limit`/`cursor`, returning `{ items, next_cursor }`. This is the recovery
-  list, not a raw event timeline; the legacy `status` / `close_status` filters and
-  `team_id` / cwd / worktree row fields are no longer exposed (issue #199).
+  `team_name`, `status`, `repo`, `intent` text (`grep`), and time range
+  (`since`/`until`), with `limit`/`cursor`, returning `{ items, next_cursor }`.
+  This is the recovery list, not a raw event timeline. The lifecycle `status`
+  filter is kept; the legacy `close_status` filter and the `team_id` / cwd /
+  worktree row fields are no longer exposed (issue #199).
 - `bind_group` — bind an existing Feishu group chat to a Team by `team_name` and
   `chat_id` (group chats only; no `chat_type`).
 - `transfer_channel_back` — return a bound Feishu group chat (`chat_id`) to the

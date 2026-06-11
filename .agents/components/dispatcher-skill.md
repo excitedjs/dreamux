@@ -11,16 +11,18 @@ ships in the npm package:
   submits follow-up turns (and reopens a closed TeamMate when one is not live —
   there is no standalone dispatcher-facing `resume` verb; #155), and `close`
   stops one. `history` is a compact recovery search keyed by concrete name
-  (filter by `name` / `agent_runtime` / `grep`; returns `{ items, next_cursor }`)
+  (filter by `name` / `status` / `agent_runtime` / `repo` / `grep` / `since` /
+  `until`, paginate with `limit` / `cursor`; returns `{ items, next_cursor }`)
   — a recovery list, not a raw event timeline; `last` reads a TeamMate's most
   recent settled turn(s) (`turns` 1..5) by concrete name — working even for a
   closed TeamMate without starting a runtime — and
-  `list`/`status`/`get_capabilities` read state without polling. The public
-  `history` projection no longer exposes the Dreamux-made `session_id`,
-  `id`/`team_id`, `display_name`, `close_status`, the `state` filter, the
-  machine-local cwd/worktree paths, or runtime `checkpoint` (issue #199 Slice 1).
-  The lighter `list`/`status` projections and the cwd/worktree→`repo` field
-  collapse are deferred to later Epic slices. The obsolete `ctx` and
+  `list`/`status`/`get_capabilities` read state without polling. The lifecycle
+  `status` filter is kept; the public `history` surface no longer exposes the
+  retired `state` / `close_status` filters, the Dreamux-made `session_id`,
+  `id`/`team_id`, `display_name`, the machine-local cwd/worktree paths, or
+  runtime `checkpoint` (issue #199 Slice 1). The lighter `list`/`status`
+  projections and the cwd/worktree→`repo` field collapse are deferred to later
+  Epic slices. The obsolete `ctx` and
   `history_events` verbs were removed (issue #188). The
   `tm` CLI is the explicit fallback for legacy diagnostics
   ([provider architecture realignment](../decisions/provider-architecture-realignment.md)).
@@ -31,9 +33,11 @@ ships in the npm package:
   `create` a TeamLeader (optionally binding an EXISTING Feishu group via
   `bind_group: { chat_id }`), inspect with `list` (compact rows) / `status` (one
   Team's detail incl. active bound group) / `history` (a compact recovery search
-  returning `{ items, next_cursor }`; no `status`/`close_status` filters and no
-  machine-local cwd/worktree rows in #199 Slice 1), `bind_group` an existing
-  group or `transfer_channel_back`, and `dissolve` a Team. The `create_group`
+  by `team_name` / `status` / `repo` / `grep` / `since` / `until`, returning
+  `{ items, next_cursor }`; the retired `close_status` filter and the
+  `team_id` / machine-local cwd/worktree rows are gone in #199 Slice 1),
+  `bind_group` an existing group or `transfer_channel_back`, and `dissolve` a
+  Team. The `create_group`
   (create-a-new-group) and raw `ledger` verbs were retired. TeamLeader member
   work still uses the caller-scoped TeamMate MCP.
 - `dreamux-maintenance` covers installed Dreamux diagnosis and safe operation.

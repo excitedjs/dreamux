@@ -574,6 +574,11 @@ describe('TeamMateAgentService', () => {
     const grep = await service.history({ dispatcherId: 'flow', grep: 'managed work' });
     expect(grep.items.map((item) => item.name)).toEqual([managedName]);
 
+    // #199 Slice 1: the lifecycle `status` filter survives (legacy `state` /
+    // `close_status` are gone). `alpha` was closed; `managed-ledger` stays open.
+    const closedByStatus = await service.history({ dispatcherId: 'flow', status: 'closed' });
+    expect(closedByStatus.items.map((item) => item.name)).toEqual([alpha]);
+
     const second = new TeamMateAgentService({
       config,
       dispatchers: new DispatcherStore(config),

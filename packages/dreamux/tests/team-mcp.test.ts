@@ -195,8 +195,9 @@ describe('team-mcp stdio shim', () => {
     expect(schemaOf(tools, 'history').required).toEqual([]);
     expect(schemaOf(tools, 'history').properties).toHaveProperty('grep');
     expect(schemaOf(tools, 'history').properties).toHaveProperty('team_name');
-    // #199 Slice 1: legacy status / close_status filters are removed from history.
-    expect(schemaOf(tools, 'history').properties).not.toHaveProperty('status');
+    // #199 Slice 1: the lifecycle `status` filter stays; the legacy
+    // `close_status` filter and the legacy `name` key are removed.
+    expect(schemaOf(tools, 'history').properties).toHaveProperty('status');
     expect(schemaOf(tools, 'history').properties).not.toHaveProperty('close_status');
     expect(schemaOf(tools, 'history').properties).not.toHaveProperty('name');
     expect(schemaOf(tools, 'bind_group').properties).not.toHaveProperty('chat_type');
@@ -236,7 +237,7 @@ describe('team-mcp stdio shim', () => {
         method: 'tools/call',
         params: {
           name: 'history',
-          arguments: { grep: 'auth', team_name: 'alpha', limit: 5 },
+          arguments: { grep: 'auth', team_name: 'alpha', status: 'running', limit: 5 },
         },
       });
       await reader.next();
@@ -257,10 +258,11 @@ describe('team-mcp stdio shim', () => {
       expect(admin.requests[1]?.params).toMatchObject({
         grep: 'auth',
         team_name: 'alpha',
+        status: 'running',
         limit: 5,
       });
-      // #199 Slice 1: a legacy `status` filter is dropped at the shim, not forwarded.
-      expect(admin.requests[1]?.params).not.toHaveProperty('status');
+      // #199 Slice 1: the legacy `close_status` filter is not part of the surface.
+      expect(admin.requests[1]?.params).not.toHaveProperty('close_status');
       expect(admin.requests[2]?.params).toMatchObject({
         team_name: 'alpha',
         chat_id: 'chat-1',

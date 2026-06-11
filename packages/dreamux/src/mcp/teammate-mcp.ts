@@ -143,8 +143,15 @@ function teammateTools(
   const readTools = [
     tool('history', 'Search this scope\'s TeamMate records for recovery (closed included). A compact recovery list keyed by concrete name, not a raw event timeline. Returns { items, next_cursor }.', {
       name: { type: 'string', minLength: 1, maxLength: 64 },
+      status: {
+        type: 'string',
+        enum: ['starting', 'running', 'degraded', 'closed', 'stopped'],
+      },
       agent_runtime: { type: 'string', minLength: 1, maxLength: 128 },
+      repo: { type: 'string', minLength: 1, maxLength: 4096 },
       grep: { type: 'string', minLength: 1, maxLength: 500 },
+      since: { type: 'integer' },
+      until: { type: 'integer' },
       limit: { type: 'integer', minimum: 1, maximum: 100 },
       cursor: { type: 'string', minLength: 1, maxLength: 1000 },
     }, []),
@@ -418,17 +425,44 @@ function closeArgs(value: unknown): Record<string, unknown> {
 function historyArgs(value: unknown): Record<string, unknown> {
   const obj = asRecord(value, 'history arguments');
   const name = optionalString(obj, 'name');
+  const status = optionalEnum(obj, 'status', [
+    'starting',
+    'running',
+    'degraded',
+    'closed',
+    'stopped',
+  ]);
   const agentRuntime = optionalString(obj, 'agent_runtime');
+  const repo = optionalString(obj, 'repo');
   const grep = optionalString(obj, 'grep');
+  const since = optionalInteger(obj, 'since');
+  const until = optionalInteger(obj, 'until');
   const limit = optionalInteger(obj, 'limit');
   const cursor = optionalString(obj, 'cursor');
   return {
     ...(name !== null ? { name } : {}),
+    ...(status !== null ? { status } : {}),
     ...(agentRuntime !== null ? { agent_runtime: agentRuntime } : {}),
+    ...(repo !== null ? { repo } : {}),
     ...(grep !== null ? { grep } : {}),
+    ...(since !== null ? { since } : {}),
+    ...(until !== null ? { until } : {}),
     ...(limit !== null ? { limit } : {}),
     ...(cursor !== null ? { cursor } : {}),
   };
+}
+
+function optionalEnum(
+  obj: Record<string, unknown>,
+  key: string,
+  values: string[],
+): string | null {
+  const value = optionalString(obj, key);
+  if (value === null) return null;
+  if (!values.includes(value)) {
+    throw new Error(`${key} must be one of: ${values.join(', ')}`);
+  }
+  return value;
 }
 
 function nameArgs(value: unknown): Record<string, unknown> {

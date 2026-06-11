@@ -342,8 +342,15 @@ export interface TeamMateHistoryQuery {
   dispatcherId: string;
   principal?: TeamMateCallerPrincipal;
   name?: string;
+  /** Lifecycle status filter (replaces the retired `state`/`close_status`). */
+  status?: TeamMateIdentityStatus;
   agentRuntime?: string;
+  /** Substring match over `source_repo`. */
+  repo?: string;
   grep?: string;
+  /** Inclusive lower/upper bounds on `last_seen_at`. */
+  since?: number;
+  until?: number;
   limit?: number;
   cursor?: string;
 }

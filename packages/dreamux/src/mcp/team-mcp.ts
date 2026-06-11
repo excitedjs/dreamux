@@ -116,8 +116,9 @@ function teamTools(): Array<Record<string, unknown>> {
     tool('status', 'Read one Team\'s detailed current status by its team_name (record, TeamLeader status, member count, active bound group).', {
       team_name: { type: 'string', minLength: 1, maxLength: 64 },
     }, ['team_name']),
-    tool('history', 'Search Teams for recovery (closed included) by team_name, repo, intent text, and time range. A compact recovery list, not a raw event timeline. Returns { items, next_cursor }.', {
+    tool('history', 'Search Teams for recovery (closed included) by team_name, status, repo, intent text, and time range. A compact recovery list, not a raw event timeline. Returns { items, next_cursor }.', {
       team_name: { type: 'string', minLength: 1, maxLength: 64 },
+      status: { type: 'string', enum: ['starting', 'running', 'closed'] },
       repo: { type: 'string', minLength: 1, maxLength: 4096 },
       grep: { type: 'string', minLength: 1, maxLength: 500 },
       since: { type: 'integer' },
@@ -224,6 +225,7 @@ function teamNameArgs(value: unknown): Record<string, unknown> {
 function historyArgs(value: unknown): Record<string, unknown> {
   const obj = asRecord(value, 'history arguments');
   const teamName = optionalString(obj, 'team_name');
+  const status = optionalString(obj, 'status');
   const repo = optionalString(obj, 'repo');
   const grep = optionalString(obj, 'grep');
   const since = optionalInteger(obj, 'since');
@@ -232,6 +234,7 @@ function historyArgs(value: unknown): Record<string, unknown> {
   const cursor = optionalString(obj, 'cursor');
   return {
     ...(teamName !== null ? { team_name: teamName } : {}),
+    ...(status !== null ? { status } : {}),
     ...(repo !== null ? { repo } : {}),
     ...(grep !== null ? { grep } : {}),
     ...(since !== null ? { since } : {}),

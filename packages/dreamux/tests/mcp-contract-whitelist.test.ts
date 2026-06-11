@@ -102,7 +102,8 @@ function schemaOf(tools: Array<Record<string, unknown>>, name: string): ToolSche
   return (entry as { inputSchema: ToolSchema }).inputSchema;
 }
 
-// Legacy public fields retired from history/list filters and the rename surface.
+// The retired legacy filters. `status` stays a supported lifecycle filter and is
+// therefore NOT forbidden — only the legacy `state` / `close_status` names go.
 const FORBIDDEN_TEAMMATE_HISTORY_PARAMS = [
   'id',
   'state',
@@ -116,12 +117,35 @@ const FORBIDDEN_TEAMMATE_HISTORY_PARAMS = [
   'checkpoint',
 ];
 const FORBIDDEN_TEAM_HISTORY_PARAMS = [
-  'status',
   'close_status',
   'team_id',
   'display_name',
   'checkpoint',
   'name',
+];
+
+// The intended Slice 1 recovery filter sets (#199): lifecycle `status` kept,
+// `repo` / `since` / `until` recovery dimensions aligned across both surfaces.
+const TEAMMATE_HISTORY_PARAMS = [
+  'name',
+  'status',
+  'agent_runtime',
+  'repo',
+  'grep',
+  'since',
+  'until',
+  'limit',
+  'cursor',
+];
+const TEAM_HISTORY_PARAMS = [
+  'team_name',
+  'status',
+  'repo',
+  'grep',
+  'since',
+  'until',
+  'limit',
+  'cursor',
 ];
 
 describe('issue #199 Slice 1 — public MCP contract whitelist', () => {
@@ -138,11 +162,13 @@ describe('issue #199 Slice 1 — public MCP contract whitelist', () => {
   it('teammate.history params are exactly the trimmed recovery set', async () => {
     const history = schemaOf(await teammateTools('dispatcher'), 'history');
     expect(Object.keys(history.properties).sort()).toEqual(
-      ['agent_runtime', 'cursor', 'grep', 'limit', 'name'].sort(),
+      [...TEAMMATE_HISTORY_PARAMS].sort(),
     );
     for (const forbidden of FORBIDDEN_TEAMMATE_HISTORY_PARAMS) {
       expect(history.properties).not.toHaveProperty(forbidden);
     }
+    // The lifecycle `status` filter survives; the legacy `state` is gone.
+    expect(history.properties).toHaveProperty('status');
     expect(history.required).toEqual([]);
   });
 
@@ -166,11 +192,13 @@ describe('issue #199 Slice 1 — public MCP contract whitelist', () => {
   it('team.history params are exactly the trimmed recovery set', async () => {
     const history = schemaOf(await teamTools(), 'history');
     expect(Object.keys(history.properties).sort()).toEqual(
-      ['cursor', 'grep', 'limit', 'repo', 'since', 'team_name', 'until'].sort(),
+      [...TEAM_HISTORY_PARAMS].sort(),
     );
     for (const forbidden of FORBIDDEN_TEAM_HISTORY_PARAMS) {
       expect(history.properties).not.toHaveProperty(forbidden);
     }
+    // The lifecycle `status` filter survives; the legacy `close_status` is gone.
+    expect(history.properties).toHaveProperty('status');
     expect(history.required).toEqual([]);
   });
 });

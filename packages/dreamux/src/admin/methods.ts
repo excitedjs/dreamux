@@ -13,6 +13,7 @@ import {
   teamLeaderPrincipal,
   type TeamMateCallerPrincipal,
   type TeamMateHistoryQuery,
+  type TeamMateIdentityStatus,
   type TeamMateWorktreeRequest,
   dispatcherPrincipal,
 } from '../dispatcher-service/teammate/types.js';
@@ -297,6 +298,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     const name = optionalString(params, 'team_name');
+    const status = optionalTeamStatus(params, 'status');
     const repo = optionalString(params, 'repo');
     const grep = optionalString(params, 'grep');
     const since = optionalInteger(params, 'since');
@@ -306,6 +308,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     return server.dispatcherService.getTeamHistory({
       dispatcherId: id,
       ...(name !== null ? { name } : {}),
+      ...(status !== null ? { status } : {}),
       ...(repo !== null ? { repo } : {}),
       ...(grep !== null ? { grep } : {}),
       ...(since !== null ? { since } : {}),
@@ -512,17 +515,59 @@ function historyQuery(
   params: Record<string, unknown> | undefined,
 ): Omit<TeamMateHistoryQuery, 'dispatcherId'> {
   const name = optionalString(params, 'name');
+  const status = optionalTeammateStatus(params, 'status');
   const agentRuntime = optionalString(params, 'agent_runtime');
+  const repo = optionalString(params, 'repo');
   const grep = optionalString(params, 'grep');
+  const since = optionalInteger(params, 'since');
+  const until = optionalInteger(params, 'until');
   const cursor = optionalString(params, 'cursor');
   const limit = optionalInteger(params, 'limit');
   return {
     ...(name !== null ? { name } : {}),
+    ...(status !== null ? { status } : {}),
     ...(agentRuntime !== null ? { agentRuntime } : {}),
+    ...(repo !== null ? { repo } : {}),
     ...(grep !== null ? { grep } : {}),
+    ...(since !== null ? { since } : {}),
+    ...(until !== null ? { until } : {}),
     ...(cursor !== null ? { cursor } : {}),
     ...(limit !== null ? { limit } : {}),
   };
+}
+
+function optionalTeammateStatus(
+  params: Record<string, unknown> | undefined,
+  key: string,
+): TeamMateIdentityStatus | null {
+  const value = optionalString(params, key);
+  if (value === null) return null;
+  if (
+    value === 'starting' ||
+    value === 'running' ||
+    value === 'degraded' ||
+    value === 'closed' ||
+    value === 'stopped'
+  ) {
+    return value;
+  }
+  throw new AdminError(
+    'BAD_REQUEST',
+    `param '${key}' must be starting, running, degraded, closed, or stopped`,
+  );
+}
+
+function optionalTeamStatus(
+  params: Record<string, unknown> | undefined,
+  key: string,
+): 'starting' | 'running' | 'closed' | null {
+  const value = optionalString(params, key);
+  if (value === null) return null;
+  if (value === 'starting' || value === 'running' || value === 'closed') return value;
+  throw new AdminError(
+    'BAD_REQUEST',
+    `param '${key}' must be starting, running, or closed`,
+  );
 }
 
 function optionalBindGroup(

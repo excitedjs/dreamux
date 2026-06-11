@@ -1249,15 +1249,24 @@ export class TeamMateAgentService {
     if (input.name !== undefined && row.name !== validateTeamMateName(input.name)) {
       return false;
     }
+    if (input.status !== undefined && row.status !== input.status) return false;
     if (
       input.agentRuntime !== undefined &&
       row.agent_runtime !== input.agentRuntime
     ) {
       return false;
     }
+    if (input.repo !== undefined) {
+      const needle = input.repo.toLowerCase();
+      const hit =
+        row.source_repo !== null && row.source_repo.toLowerCase().includes(needle);
+      if (!hit) return false;
+    }
     if (input.grep !== undefined && !ledgerRowMatchesText(row, input.grep)) {
       return false;
     }
+    if (input.since !== undefined && row.last_seen_at < input.since) return false;
+    if (input.until !== undefined && row.last_seen_at > input.until) return false;
     return true;
   }
 

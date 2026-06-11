@@ -111,15 +111,17 @@ export interface TeamSummary {
  * `list`/`status` split: compact current-Team fields only, no inlined leader
  * runtime status or full worktree record. Reach for `team.status` for detail.
  */
+/**
+ * Compact scan row for `team.list` (issue #199 Slice 1). Keyed by the concrete
+ * `team_name`; the duplicate `team_id` and the machine-local `repo_cwd` /
+ * `worktree_mode` are no longer projected. The cwd/worktree→`repo` field
+ * collapse for the remaining surfaces is Slice 2 work.
+ */
 export interface TeamListRow {
-  /** Public Team key (the concrete `team_name`, == `team_id` storage key). */
-  name: string;
-  team_id: string;
+  team_name: string;
   status: TeamStatus;
   intent: string | null;
   source_repo: string | null;
-  repo_cwd: string;
-  worktree_mode: TeamMateWorktreeIdentity['mode'];
   leader_name: string;
   leader_state: TeamMateIdentityStatus | null;
   member_count: number;
@@ -138,9 +140,11 @@ export interface TeamListRow {
 export interface TeamHistoryQuery {
   dispatcherId: string;
   name?: string;
+  /** Lifecycle status filter (the retired `close_status` is gone). */
+  status?: TeamStatus;
   /** Substring match over `source_repo` / `repo_cwd`. */
   repo?: string;
-  /** Substring match over name / intent / repo / leader name. */
+  /** Substring match over team_name / intent / repo / leader name. */
   grep?: string;
   /** Inclusive lower/upper bounds on `updated_at`. */
   since?: number;
@@ -155,7 +159,7 @@ export interface TeamHistoryQuery {
  * `status`, and no machine-local `repo_cwd`/`runtime_cwd`/`worktree` paths.
  */
 export interface TeamHistoryRow {
-  name: string;
+  team_name: string;
   status: TeamStatus;
   intent: string | null;
   source_repo: string | null;
