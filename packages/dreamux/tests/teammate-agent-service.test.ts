@@ -1777,6 +1777,47 @@ describe('TeamMateAgentService', () => {
     expect(names).toContain(first);
     expect(names).toContain(second);
   });
+
+  it('createTeamLeader fails loud on a reused concrete name, even after close (#188 P1)', async () => {
+    const { catalog } = providerCatalog();
+    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: catalog,
+      log: noopLog(),
+    });
+    const leaderInput = {
+      dispatcherId: 'flow',
+      teamId: 'alpha',
+      name: 'tl-alpha-fixedaaa',
+      displayName: 'alpha-leader',
+      prompt: 'lead',
+      agentRuntime: 'flow',
+      sourceCwd: root,
+      sourceRepo: null,
+      runtimeCwd: root,
+      worktree: {
+        mode: 'reuse-cwd' as const,
+        slug: null,
+        path: root,
+        branch: null,
+        base_ref: null,
+        cleanup: 'keep' as const,
+        cleanup_state: 'not-managed' as const,
+        cleanup_error: null,
+      },
+      intent: 'work',
+    };
+    await service.createTeamLeader(leaderInput);
+    // The public service seam must not rebind a concrete name to a new session —
+    // not even for a CLOSED leader. #188: concrete names are never reused, and
+    // the duplicate check includes closed identities.
+    await service.close({ dispatcherId: 'flow', name: 'tl-alpha-fixedaaa', note: 'done' });
+    await expect(service.createTeamLeader(leaderInput)).rejects.toThrow(
+      /already exists/,
+    );
+  });
 });
 
 /** Poll the durable ledger until it has captured `count` settled turns. */

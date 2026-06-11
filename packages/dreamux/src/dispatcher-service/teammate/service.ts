@@ -549,64 +549,99 @@ export class TeamMateAgentService {
         turns: [],
       };
     }
-    // `readSession` streams the ledger in file APPEND ORDER, which is the only
-    // correct turn ordering: `event_id`/`timestamp` are both `Date.now()` (a
-    // wall clock that can collide within a millisecond or move backwards on an
-    // NTP step), so they must NOT be used to order or pick the latest turn.
-    const events = await this.sessionLedger.readSession(dispatcherId, sessionId);
-    // Fold events into one record per turn id, preserving first-seen (append)
-    // order via Map insertion. A submit event (spawn/send/channel) carries the
-    // prompt/intent/origin; a settled event carries the assistant output. A turn
-    // can settle more than once (the runtime may re-emit, and the completion
-    // layer only coalesces delivery) — later settled rows overwrite earlier ones
-    // because we iterate in append order.
-    const byTurn = new Map<string, TeamMateLastTurn>();
-    const blank = (turnId: string): TeamMateLastTurn => ({
-      turn_id: turnId,
-      turn_origin: null,
-      prompt_preview: null,
-      intent: null,
-      submitted_at: null,
-      settled_at: 0,
-      settle_status: null,
-      assistant: null,
-      assistant_preview: null,
-      assistant_truncated: false,
-    });
-    const settledTurnIds = new Set<string>();
-    for (const event of events) {
+    // Fold the ledger by streaming it in file APPEND ORDER — the only correct
+    // turn ordering, since `event_id`/`timestamp` are both `Date.now()` (a wall
+    // clock that can collide within a millisecond or move backwards on an NTP
+    // step) and must NOT be used to order or pick the latest turn. The fold is
+    // BOUNDED: only the most recent `requestedTurns` settled turns retain their
+    // (possibly 160k-char) assistant text, so memory does not grow with session
+    // length. `firstSeq` records each turn's first-seen (submit) order so a turn
+    // is ranked by when it STARTED, not by when a (possibly duplicate) settle was
+    // written; it holds only short turn ids, never assistant text.
+    let nextSeq = 0;
+    const firstSeq = new Map<string, number>();
+    const seqOf = (turnId: string): number => {
+      const existing = firstSeq.get(turnId);
+      if (existing !== undefined) return existing;
+      const seq = nextSeq;
+      nextSeq += 1;
+      firstSeq.set(turnId, seq);
+      return seq;
+    };
+    // Submit metadata (prompt/intent/origin) for turns not yet paired with a
+    // settle; dropped once paired, so it stays small.
+    const submitMeta = new Map<
+      string,
+      Pick<TeamMateLastTurn, 'turn_origin' | 'prompt_preview' | 'intent' | 'submitted_at'>
+    >();
+    // The bounded window of settled turns, keyed by turn id; size <= requestedTurns.
+    const recent = new Map<string, TeamMateLastTurn>();
+    for await (const event of this.sessionLedger.streamSession(dispatcherId, sessionId)) {
       const turnId = event.turn_id;
       if (turnId === null) continue;
+      seqOf(turnId);
       if (event.type === 'spawn' || event.type === 'send') {
-        const turn = byTurn.get(turnId) ?? blank(turnId);
-        turn.turn_origin = event.turn_origin;
-        turn.prompt_preview = event.prompt_preview;
-        turn.intent = event.intent;
-        turn.submitted_at = event.timestamp;
-        byTurn.set(turnId, turn);
-      } else if (event.type === 'settled') {
-        const turn = byTurn.get(turnId) ?? blank(turnId);
-        turn.settle_status = event.settle_status;
-        turn.assistant = event.assistant;
-        turn.assistant_preview = event.assistant_preview;
-        turn.assistant_truncated = event.assistant_truncated;
-        turn.settled_at = event.timestamp;
-        byTurn.set(turnId, turn);
-        settledTurnIds.add(turnId);
+        submitMeta.set(turnId, {
+          turn_origin: event.turn_origin,
+          prompt_preview: event.prompt_preview,
+          intent: event.intent,
+          submitted_at: event.timestamp,
+        });
+        continue;
+      }
+      if (event.type !== 'settled') continue;
+      const present = recent.get(turnId);
+      if (present !== undefined) {
+        // Duplicate/re-settle of a turn still in the window: override the settle
+        // fields in append order, keeping its already-paired submit fields.
+        present.settle_status = event.settle_status;
+        present.assistant = event.assistant;
+        present.assistant_preview = event.assistant_preview;
+        present.assistant_truncated = event.assistant_truncated;
+        present.settled_at = event.timestamp;
+        continue;
+      }
+      const submit = submitMeta.get(turnId);
+      submitMeta.delete(turnId);
+      recent.set(turnId, {
+        turn_id: turnId,
+        turn_origin: submit?.turn_origin ?? null,
+        prompt_preview: submit?.prompt_preview ?? null,
+        intent: submit?.intent ?? null,
+        submitted_at: submit?.submitted_at ?? null,
+        settled_at: event.timestamp,
+        settle_status: event.settle_status,
+        assistant: event.assistant,
+        assistant_preview: event.assistant_preview,
+        assistant_truncated: event.assistant_truncated,
+      });
+      if (recent.size > requestedTurns) {
+        // Evict the oldest-by-first-seen turn so the window holds the most recent
+        // `requestedTurns` turns by START order (a late re-settle of an already
+        // evicted, older turn is evicted again here rather than resurfacing).
+        let evictId: string | undefined;
+        let evictSeq = Infinity;
+        for (const id of recent.keys()) {
+          const seq = firstSeq.get(id) ?? Infinity;
+          if (seq < evictSeq) {
+            evictSeq = seq;
+            evictId = id;
+          }
+        }
+        if (evictId !== undefined) recent.delete(evictId);
       }
     }
     // `last` is the completion fallback, so it returns SETTLED turns (those with
-    // a durable assistant output), newest last, in append order.
-    const settledTurns = [...byTurn.values()].filter((turn) =>
-      settledTurnIds.has(turn.turn_id),
+    // a durable assistant output), ordered oldest-first by start order.
+    const lastTurns = [...recent.values()].sort(
+      (a, b) => (firstSeq.get(a.turn_id) ?? 0) - (firstSeq.get(b.turn_id) ?? 0),
     );
-    const recent = settledTurns.slice(-requestedTurns);
     return {
       teammate,
       session_id: sessionId,
       requested_turns: requestedTurns,
-      returned_turns: recent.length,
-      turns: recent,
+      returned_turns: lastTurns.length,
+      turns: lastTurns,
     };
   }
 
@@ -642,8 +677,13 @@ export class TeamMateAgentService {
 
   async createTeamLeader(input: CreateTeamLeaderInput): Promise<TeamMateSpawnResult> {
     const name = validateTeamMateName(input.name);
+    // #188: a concrete name is never reused — the duplicate check includes closed
+    // identities. The caller (TeamService) always passes a freshly allocated `tl-`
+    // name, so a pre-existing identity under this name (closed OR live) means a
+    // collision or a misuse of this seam; fail loud rather than rebinding the
+    // name to a new session (which would map one concrete name to >1 session).
     const existing = await this.identities.get(input.dispatcherId, name);
-    if (existing !== null && existing.status !== 'closed') {
+    if (existing !== null) {
       throw new Error(`TeamLeader ${JSON.stringify(name)} already exists`);
     }
     const agent = this.resolveAgent(input.dispatcherId, input.agentRuntime);
@@ -652,27 +692,16 @@ export class TeamMateAgentService {
       kind: 'dispatcher',
       dispatcher_id: input.dispatcherId,
     };
-    // A fresh TeamLeader session mints a new session id (issue #182 PR-5).
+    // A fresh TeamLeader session mints a new session id (issue #182 PR-5). The
+    // name is freshly allocated, so this is always a create — no reuse path.
     const sessionId = randomUUID();
-    let identity =
-      existing ??
-      (await this.identities.create({
-        dispatcherId: input.dispatcherId,
-        name,
-        displayName: input.displayName ?? null,
-        owner,
-        role: 'team_leader',
-        teamId: input.teamId,
-        agentRuntime: input.agentRuntime,
-        sessionId,
-        sourceCwd: input.sourceCwd,
-        sourceRepo: input.sourceRepo,
-        cwd: input.runtimeCwd,
-        runtimeCwd: input.runtimeCwd,
-        worktree: input.worktree,
-        intent: input.intent ?? null,
-      }));
-    identity = await this.identities.update(identity, {
+    let identity = await this.identities.create({
+      dispatcherId: input.dispatcherId,
+      name,
+      displayName: input.displayName ?? null,
+      owner,
+      role: 'team_leader',
+      teamId: input.teamId,
       agentRuntime: input.agentRuntime,
       sessionId,
       sourceCwd: input.sourceCwd,
@@ -682,10 +711,6 @@ export class TeamMateAgentService {
       worktree: input.worktree,
       intent: input.intent ?? null,
       status: 'starting',
-      closedAt: null,
-      closeNote: null,
-      lastError: null,
-      checkpoint: null,
     });
     const live = await this.startRuntime(input.dispatcherId, identity, provider, agent);
     identity = live.state.current();

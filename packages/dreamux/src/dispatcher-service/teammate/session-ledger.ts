@@ -186,22 +186,20 @@ export class TeamMateSessionLedger {
 
   /**
    * Stream the ledger events of exactly one `session_id` in append order
-   * (issue #188). This is the session-scoped read `last` folds: it never starts
-   * or resumes a runtime, so it serves a closed or stopped teammate from the
-   * durable ledger alone. A missing ledger or unknown session reads as empty.
+   * (issue #188), yielding line by line so the caller folds with bounded memory
+   * rather than materializing the whole session (a settled event can carry up to
+   * 160k chars of assistant text, so a long session must never be buffered whole
+   * — this is why #188 scans `sessions.jsonl` directly instead of adding a
+   * per-turn index). It never starts or resumes a runtime, so it serves a closed
+   * or stopped teammate from the durable ledger alone. A missing ledger or
+   * unknown session yields nothing.
    */
-  async readSession(
+  async *streamSession(
     dispatcherId: string,
     sessionId: string,
-  ): Promise<TeamMateSessionLedgerEvent[]> {
+  ): AsyncGenerator<TeamMateSessionLedgerEvent> {
     const path = dispatcherTeamMateSessionLedgerPath(dispatcherId);
-    const events: TeamMateSessionLedgerEvent[] = [];
-    let stream;
-    try {
-      stream = createReadStream(path, { encoding: 'utf8' });
-    } catch {
-      return [];
-    }
+    const stream = createReadStream(path, { encoding: 'utf8' });
     const lines = createInterface({ input: stream, crlfDelay: Infinity });
     try {
       for await (const line of lines) {
@@ -212,7 +210,7 @@ export class TeamMateSessionLedger {
         } catch {
           continue; // skip a torn/partial line rather than fail the read
         }
-        if (parsed.session_id === sessionId) events.push(parsed);
+        if (parsed.session_id === sessionId) yield parsed;
       }
     } catch (err) {
       if (!isNotFound(err)) {
@@ -221,11 +219,9 @@ export class TeamMateSessionLedger {
           error: err instanceof Error ? err.message : String(err),
         });
       }
-      return events;
     } finally {
       lines.close();
     }
-    return events;
   }
 
   /**
