@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Internal: fold the per-dispatcher session ledger via a streaming reader so `teammate.history` (materializeSessions) no longer buffers the whole append-only sessions.jsonl into an events array (issue #182 final gate). No user-visible behavior, API, schema, or path change; history output is identical.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}
