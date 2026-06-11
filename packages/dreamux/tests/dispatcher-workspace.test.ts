@@ -1,5 +1,5 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { mkdir, stat } from 'node:fs/promises';
+import { mkdir, stat, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -18,6 +18,7 @@ import {
 } from '../src/dispatcher-service/teammate/worktree-paths.js';
 import {
   dreamuxRoot,
+  isRealPathUnderDreamuxRoot,
   isUnderDreamuxRoot,
   resetRuntimeConfig,
 } from '../src/platform/paths.js';
@@ -195,6 +196,26 @@ describe('dispatcher workspace cwd contract (issue #182 PR-4)', () => {
       expect(isUnderDreamuxRoot(join(root, 'home', 'projects'))).toBe(false);
       // `~/.dreamux-foo` shares a textual prefix but is NOT under `~/.dreamux`.
       expect(isUnderDreamuxRoot(`${dreamuxRoot()}-foo`)).toBe(false);
+    });
+  });
+
+  describe('isRealPathUnderDreamuxRoot (symlink-safe)', () => {
+    it('catches a path outside ~/.dreamux that symlinks into it', async () => {
+      const target = join(dreamuxRoot(), 'state', 'sneaky');
+      await mkdir(target, { recursive: true });
+      const outsideLink = join(root, 'outside-link');
+      await symlink(target, outsideLink);
+
+      // Lexically outside (the pure check misses it)...
+      expect(isUnderDreamuxRoot(outsideLink)).toBe(false);
+      // ...but the symlink-safe check follows the link and rejects it.
+      expect(await isRealPathUnderDreamuxRoot(outsideLink)).toBe(true);
+    });
+
+    it('is false for a genuine project dir outside ~/.dreamux', async () => {
+      const project = join(root, 'home', 'projects', 'app');
+      await mkdir(project, { recursive: true });
+      expect(await isRealPathUnderDreamuxRoot(project)).toBe(false);
     });
   });
 });

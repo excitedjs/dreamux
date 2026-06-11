@@ -205,6 +205,47 @@ describe('dreamux doctor command', () => {
     expect(result.ok).toBe(false);
   });
 
+  it('does not fail the workspace check for a disabled dispatcher with no cwd (#182 PR-4, PR#186 P3)', async () => {
+    const runner = new FakeRunner();
+    runner.nodeVersions.set('codex', 'codex-cli 0.137.0');
+    // A DISABLED dispatcher with `cwd` omitted: server startup never enforces
+    // the cwd contract for it, so doctor must report it as a non-blocking
+    // diagnostic rather than a failure (alignment with serve semantics).
+    const configPath = join(root, 'config', 'config.json');
+    mkdirSync(dirname(configPath), { recursive: true });
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        testSingleDispatcherFileObject({
+          id: 'flow',
+          enabled: false,
+          feishu: { app_id: 'app-test', app_secret: 'secret-test' },
+          codex: {
+            approval_policy: 'never',
+            sandbox_mode: 'workspace-write',
+            extra_args: [],
+            extra_env: {},
+          },
+        }),
+      ),
+      { mode: 0o600 },
+    );
+    writeDispatcherHome({ auth: true });
+
+    const result = await runDreamuxDoctor({
+      runner,
+      platform: 'linux',
+      homeDir: join(root, 'home'),
+      env: {},
+    });
+
+    const workspaceCheck = result.checks.find(
+      (check) => check.name === 'dispatcher flow workspace',
+    );
+    expect(workspaceCheck?.ok).toBe(true);
+    expect(workspaceCheck?.detail).toMatch(/disabled/);
+  });
+
   it('does not expose Feishu app secrets in doctor results', async () => {
     const runner = new FakeRunner();
     writeConfig();
