@@ -36,6 +36,7 @@ import type {
   TeamCreateInput,
   TeamCreateGroupResult,
   TeamDissolveInput,
+  TeamHistoryQuery,
   TeamTransferChannelBackInput,
 } from './team/types.js';
 
@@ -252,6 +253,10 @@ export class DispatcherService {
 
   getTeamStatus(dispatcherId: string, teamId: string) {
     return this.teams.status(dispatcherId, teamId);
+  }
+
+  getTeamHistory(input: TeamHistoryQuery) {
+    return this.teams.history(input);
   }
 
   getTeamLedger(dispatcherId: string, teamId: string) {

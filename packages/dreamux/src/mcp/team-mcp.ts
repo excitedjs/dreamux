@@ -118,26 +118,32 @@ function teamTools(): Array<Record<string, unknown>> {
       intent: { type: 'string', minLength: 1, maxLength: 2000 },
       prompt: { type: 'string', maxLength: 20000 },
     }, ['name', 'repo_cwd', 'leader_agent_runtime', 'source_chat_id', 'source_chat_type', 'requester_open_id', 'intent']),
-    tool('list', 'List Teams owned by this dispatcher.', {}, []),
-    tool('status', 'Read one Team status.', {
-      team_id: { type: 'string', minLength: 1, maxLength: 64 },
-    }, ['team_id']),
-    tool('ledger', 'Read one Team ledger.', {
-      team_id: { type: 'string', minLength: 1, maxLength: 64 },
-    }, ['team_id']),
-    tool('bind_channel', 'Bind a Feishu group chat to a TeamLeader.', {
-      team_id: { type: 'string', minLength: 1, maxLength: 64 },
+    tool('list', 'List Teams owned by this dispatcher (compact scan rows: name, status, intent, repo, leader, member count, bound group).', {}, []),
+    tool('status', 'Read one Team\'s detailed current status by its name (record, TeamLeader status/session, member count, active bound group).', {
+      name: { type: 'string', minLength: 1, maxLength: 64 },
+    }, ['name']),
+    tool('history', 'Search Teams for recovery (closed included) by name, status, repo, intent text, and time range. This is the durable recovery surface, not a raw event timeline.', {
+      name: { type: 'string', minLength: 1, maxLength: 64 },
+      status: { type: 'string', enum: ['starting', 'running', 'closed'] },
+      close_status: { type: 'string', enum: ['open', 'closed'] },
+      repo: { type: 'string', minLength: 1, maxLength: 4096 },
+      grep: { type: 'string', minLength: 1, maxLength: 500 },
+      since: { type: 'integer' },
+      until: { type: 'integer' },
+      limit: { type: 'integer', minimum: 1, maximum: 100 },
+      cursor: { type: 'string', minLength: 1, maxLength: 1000 },
+    }, []),
+    tool('bind_group', 'Bind an existing Feishu group chat to a Team by name (group chats only).', {
+      name: { type: 'string', minLength: 1, maxLength: 64 },
       chat_id: { type: 'string', minLength: 1 },
-      chat_type: { type: 'string', enum: ['group', 'p2p'] },
-    }, ['team_id', 'chat_id', 'chat_type']),
+    }, ['name', 'chat_id']),
     tool('transfer_channel_back', 'Transfer a bound Feishu group chat back to the dispatcher.', {
       chat_id: { type: 'string', minLength: 1 },
-      chat_type: { type: 'string', enum: ['group', 'p2p'] },
-    }, ['chat_id', 'chat_type']),
-    tool('dissolve', 'Close one Team and its agents. note is required: it records why a recoverable Team was stopped.', {
-      team_id: { type: 'string', minLength: 1, maxLength: 64 },
+    }, ['chat_id']),
+    tool('dissolve', 'Close one Team (by name) and its agents. note is required: it records why a recoverable Team was stopped.', {
+      name: { type: 'string', minLength: 1, maxLength: 64 },
       note: { type: 'string', minLength: 1, maxLength: 2000 },
-    }, ['team_id', 'note']),
+    }, ['name', 'note']),
   ];
 }
 
@@ -185,13 +191,13 @@ function mapToolCall(call: ToolCall): { method: string; params: Record<string, u
     case 'list':
       return { method: 'mcp.team.list', params: {} };
     case 'status':
-      return { method: 'mcp.team.status', params: teamIdArgs(call.arguments) };
-    case 'ledger':
-      return { method: 'mcp.team.ledger', params: teamIdArgs(call.arguments) };
-    case 'bind_channel':
-      return { method: 'mcp.team.bind_channel', params: bindChannelArgs(call.arguments) };
+      return { method: 'mcp.team.status', params: nameArgs(call.arguments) };
+    case 'history':
+      return { method: 'mcp.team.history', params: historyArgs(call.arguments) };
+    case 'bind_group':
+      return { method: 'mcp.team.bind_group', params: bindGroupArgs(call.arguments) };
     case 'transfer_channel_back':
-      return { method: 'mcp.team.transfer_channel_back', params: channelArgs(call.arguments) };
+      return { method: 'mcp.team.transfer_channel_back', params: transferArgs(call.arguments) };
     case 'dissolve':
       return { method: 'mcp.team.dissolve', params: dissolveArgs(call.arguments) };
     default:
@@ -225,34 +231,57 @@ function createGroupArgs(value: unknown): Record<string, unknown> {
   };
 }
 
-function teamIdArgs(value: unknown): Record<string, unknown> {
+function nameArgs(value: unknown): Record<string, unknown> {
   const obj = asRecord(value, 'arguments');
-  return { team_id: requireString(obj, 'team_id') };
+  return { name: requireString(obj, 'name') };
+}
+
+function historyArgs(value: unknown): Record<string, unknown> {
+  const obj = asRecord(value, 'history arguments');
+  const name = optionalString(obj, 'name');
+  const status = optionalString(obj, 'status');
+  const closeStatus = optionalString(obj, 'close_status');
+  const repo = optionalString(obj, 'repo');
+  const grep = optionalString(obj, 'grep');
+  const since = optionalInteger(obj, 'since');
+  const until = optionalInteger(obj, 'until');
+  const limit = optionalInteger(obj, 'limit');
+  const cursor = optionalString(obj, 'cursor');
+  return {
+    ...(name !== null ? { name } : {}),
+    ...(status !== null ? { status } : {}),
+    ...(closeStatus !== null ? { close_status: closeStatus } : {}),
+    ...(repo !== null ? { repo } : {}),
+    ...(grep !== null ? { grep } : {}),
+    ...(since !== null ? { since } : {}),
+    ...(until !== null ? { until } : {}),
+    ...(limit !== null ? { limit } : {}),
+    ...(cursor !== null ? { cursor } : {}),
+  };
 }
 
 function dissolveArgs(value: unknown): Record<string, unknown> {
   const obj = asRecord(value, 'dissolve arguments');
   // Required dissolve reason (issue #182 PR-3).
   return {
-    team_id: requireString(obj, 'team_id'),
+    name: requireString(obj, 'name'),
     note: requireString(obj, 'note'),
   };
 }
 
-function bindChannelArgs(value: unknown): Record<string, unknown> {
-  const obj = asRecord(value, 'bind_channel arguments');
+function bindGroupArgs(value: unknown): Record<string, unknown> {
+  // #182 PR-7: bind an existing Feishu group by Team name + chat id. Group-only,
+  // so no `chat_type` is accepted (the binding store rejects non-group anyway).
+  const obj = asRecord(value, 'bind_group arguments');
   return {
-    team_id: requireString(obj, 'team_id'),
-    ...channelArgs(value),
+    name: requireString(obj, 'name'),
+    chat_id: requireString(obj, 'chat_id'),
   };
 }
 
-function channelArgs(value: unknown): Record<string, unknown> {
-  const obj = asRecord(value, 'channel arguments');
-  return {
-    chat_id: requireString(obj, 'chat_id'),
-    chat_type: requireString(obj, 'chat_type'),
-  };
+function transferArgs(value: unknown): Record<string, unknown> {
+  const obj = asRecord(value, 'transfer arguments');
+  return { chat_id: requireString(obj, 'chat_id') };
 }
 
 function asToolCallParams(params: unknown): ToolCall {
@@ -280,6 +309,13 @@ function optionalString(obj: Record<string, unknown>, key: string): string | nul
   if (value === undefined || value === null) return null;
   if (typeof value !== 'string') throw new Error(`${key} must be a string`);
   return value;
+}
+
+function optionalInteger(obj: Record<string, unknown>, key: string): number | null {
+  const value = obj[key];
+  if (value === undefined || value === null) return null;
+  if (!Number.isInteger(value)) throw new Error(`${key} must be an integer`);
+  return value as number;
 }
 
 function optionalStringArray(obj: Record<string, unknown>, key: string): string[] | null {

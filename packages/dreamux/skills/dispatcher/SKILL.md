@@ -66,9 +66,9 @@ the dispatcher turn end, then recover through `history` and `last`. (The former
 **Team lifecycle.**
 
 Dreamux also injects a dispatcher-scoped `team` MCP server for Team Mode
-lifecycle. Use it to create a TeamLeader, inspect Team status/ledger, and
-dissolve a Team. Team work still runs through agents; do not inspect the target
-repo directly from the dispatcher.
+lifecycle. It is addressed by **Team name** (the same value you create with),
+mirroring the TeamMate read-surface model. Team work still runs through agents;
+do not inspect the target repo directly from the dispatcher.
 
 - `create` — create a Team and TeamLeader. Requires `repo_cwd`,
   `leader_agent_runtime`, and `intent` (the Team's recovery subject); no default
@@ -77,14 +77,23 @@ repo directly from the dispatcher.
   group, invite the requester/peers when Feishu permissions allow it, and bind
   the new group to the TeamLeader. Requires `intent`, same as `create`. The
   source P2P remains with the dispatcher.
-- `list`, `status`, `ledger` — read dispatcher-owned Team records and lifecycle
-  ledger rows.
-- `bind_channel` — bind a Feishu group chat to a TeamLeader. P2P binding is
-  rejected.
-- `transfer_channel_back` — return a bound Feishu group chat to the dispatcher.
-- `dissolve` — close the TeamLeader and team-owned members, then conservatively
-  clean up the shared managed worktree. `note` is **required**: why the Team is
-  being dissolved. Active channel bindings are transferred back first.
+- `list` — compact scan rows for current Teams (name, status, intent, repo
+  signal, leader name/state, member count, bound group marker, timestamps). Keep
+  it cheap and scannable; reach for `status` for detail.
+- `status` — one Team's detailed current state by name: the Team record, the
+  TeamLeader status/session, member count, and the active bound group.
+- `history` — the durable Team recovery search (closed Teams included): filter by
+  `name`, `status`, `close_status`, `repo`, `intent` text (`grep`), and time
+  range (`since`/`until`), with `limit`/`cursor`. This is the recovery interface;
+  the raw per-Team lifecycle event timeline stays internal.
+- `bind_group` — bind an existing Feishu group chat to a Team by name and
+  `chat_id` (group chats only; no `chat_type`).
+- `transfer_channel_back` — return a bound Feishu group chat (`chat_id`) to the
+  dispatcher.
+- `dissolve` — close the TeamLeader and team-owned members by Team name, then
+  conservatively clean up the shared managed worktree. `note` is **required**:
+  why the Team is being dissolved. Active channel bindings are transferred back
+  first.
 
 **Control and inspect.**
 
