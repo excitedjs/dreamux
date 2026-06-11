@@ -160,7 +160,7 @@ export class DispatcherService {
     if (binding !== null) {
       const result = await this.teams.deliverToLeader({
         dispatcherId,
-        teamId: binding.team_id,
+        teamId: binding.team_name,
         turn: input,
       });
       if (result.status === 'submitted') await hooks?.onAccepted?.(input);

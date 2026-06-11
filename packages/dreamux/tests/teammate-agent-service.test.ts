@@ -21,6 +21,7 @@ import {
 import type { TurnSettledSignal } from '../src/agent-runtime/turn.js';
 import type { InboundTurnInput } from '../src/agent-runtime/turn.js';
 import { TeamMateAgentService } from '../src/dispatcher-service/teammate/service.js';
+import { teamServicePrincipal } from '../src/dispatcher-service/teammate/types.js';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
 import {
   dispatcherCompletionSpillDir,
@@ -578,7 +579,7 @@ describe('TeamMateAgentService', () => {
     expect(provider.runtimes).toHaveLength(2);
     expect(provider.runtimes[1]?.wasThreadResumed()).toBe(true);
 
-    // #188: last is a durable ledger read keyed by the concrete name. Resolved
+    // #188/#199: last is a pure record+turns read keyed by the concrete name. Resolved
     // to the identity's session, it returns a well-formed result; with no
     // completion sink wired here, no settled turn was captured.
     const last = await second.last('flow', builder);
@@ -589,7 +590,7 @@ describe('TeamMateAgentService', () => {
     expect(last.turns).toEqual([]);
   });
 
-  it('returns a bounded session ledger with worktree metadata and filters', async () => {
+  it('returns bounded history rows with worktree metadata and filters (#199)', async () => {
     const repo = await initGitRepo(join(root, 'ledger-repo'));
     const { catalog } = providerCatalog();
     const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
@@ -1740,7 +1741,7 @@ describe('TeamMateAgentService', () => {
     await expect(service.last('flow', name, 1.5)).rejects.toThrow(/1\.\.5/);
   });
 
-  it('last reads settled turns from the durable ledger, filtered by session, with truncation metadata (#188)', async () => {
+  it('last reads settled turns from the per-name turns archive with truncation metadata (#188/#199)', async () => {
     const { catalog, provider } = providerCatalog();
     const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
     const service = new TeamMateAgentService({
@@ -1960,15 +1961,25 @@ describe('TeamMateAgentService', () => {
     await service.createTeamLeader(leaderInput);
     // The public service seam must not rebind a concrete name to a new session —
     // not even for a CLOSED leader. #188: concrete names are never reused, and
-    // the duplicate check includes closed identities.
-    await service.close({ dispatcherId: 'flow', name: 'tl-alpha-fixedaaa', note: 'done' });
+    // the duplicate check includes closed identities. #199 Slice 4: a TeamLeader
+    // is closed through the internal Team-service authority — it is not visible
+    // on the dispatcher `teammate.*` surface.
+    await service.closeScoped({
+      principal: teamServicePrincipal({
+        dispatcherId: 'flow',
+        teamId: 'alpha',
+        leaderName: 'tl-alpha-fixedaaa',
+      }),
+      name: 'tl-alpha-fixedaaa',
+      note: 'done',
+    });
     await expect(service.createTeamLeader(leaderInput)).rejects.toThrow(
       /already exists/,
     );
   });
 });
 
-/** Poll the durable ledger until it has captured `count` settled turns. */
+/** Poll the per-name turns archive until it has captured `count` settled turns. */
 async function waitForSettled(
   service: TeamMateAgentService,
   name: string,

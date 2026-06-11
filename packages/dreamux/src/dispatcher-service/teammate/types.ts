@@ -182,6 +182,20 @@ export type TeamMateCallerPrincipal =
   | {
       kind: 'teammate';
       dispatcherId: string;
+    }
+  | {
+      /**
+       * Internal Team-service authority (issue #199 Slice 4): grants the Team
+       * service control over its OWN Team — the TeamLeader record plus the
+       * members of `teamId`. It is constructed ONLY by the Team service (the
+       * public admin/MCP layer never derives it from a caller), so it can never
+       * widen the dispatcher/team_leader/teammate visibility of the public
+       * `teammate.*` surface.
+       */
+      kind: 'team_service';
+      dispatcherId: string;
+      teamId: string;
+      leaderName: string;
     };
 
 export interface TeamMateDispatcherOwner {
@@ -440,6 +454,23 @@ export function teamLeaderPrincipal(input: {
 
 export function teammatePrincipal(dispatcherId: string): TeamMateCallerPrincipal {
   return { kind: 'teammate', dispatcherId };
+}
+
+/**
+ * The internal Team-service authority over one Team (issue #199 Slice 4): the
+ * TeamLeader record plus the members of `teamId`. Built ONLY by the Team service.
+ */
+export function teamServicePrincipal(input: {
+  dispatcherId: string;
+  teamId: string;
+  leaderName: string;
+}): TeamMateCallerPrincipal {
+  return {
+    kind: 'team_service',
+    dispatcherId: input.dispatcherId,
+    teamId: input.teamId,
+    leaderName: input.leaderName,
+  };
 }
 
 export function principalDispatcherId(principal: TeamMateCallerPrincipal): string {
