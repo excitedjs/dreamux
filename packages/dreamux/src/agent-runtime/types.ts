@@ -134,6 +134,13 @@ export interface AgentRuntimePathContext {
   stdoutLogPath(id: string): string;
   /** The runtime's primary-process stderr/diagnostic log file in the central logs tree. */
   stderrLogPath(id: string): string;
+  /**
+   * The owning dispatcher's completion-spill directory in the cache tree
+   * (issue #182 PR-2). Supplied by the launcher so a teammate runtime spills
+   * under its operator dispatcher, not its composite runtime id — the same
+   * launcher-resolves-the-real-dir pattern as the log paths above.
+   */
+  completionSpillDir(id: string): string;
 }
 
 export interface AgentRuntime {

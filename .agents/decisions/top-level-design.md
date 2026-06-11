@@ -706,7 +706,7 @@ it to let startup recreate the bundled symlink. Custom symlinks in these
 bundled skill slots are treated as Dreamux-managed links and may be replaced;
 use a real file or directory to opt out.
 
-`uninstall` removes dreamux-owned config, state, logs, and service integration
+`uninstall` removes dreamux-owned config, run, cache, state, logs, and service integration
 by default. It reports workspace-local bundled skill paths, but it does not
 delete files under operator workspaces by default.
 

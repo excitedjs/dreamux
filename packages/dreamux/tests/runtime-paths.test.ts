@@ -7,7 +7,9 @@ import {
   DREAMUX_UNIX_SOCKET_PATH_MAX_BYTES,
   BUNDLED_SKILL_NAMES,
   adminSocketPath,
+  cacheRoot,
   dispatcherAccessPath,
+  dispatcherCompletionSpillDir,
   dispatcherDir,
   dispatcherFeishuAttachmentCacheDir,
   dispatcherTeamMateDir,
@@ -89,8 +91,12 @@ describe('runtime paths', () => {
     expect(dispatcherAccessPath('dispatcher-a')).toBe(
       join(stateRoot(), 'dispatcher-a', 'access.json'),
     );
+    // Cache, not durable state (issue #182 PR-2).
     expect(dispatcherFeishuAttachmentCacheDir('dispatcher-a')).toBe(
-      join(stateRoot(), 'dispatcher-a', 'feishu-attachments'),
+      join(cacheRoot(), 'dispatcher-a', 'feishu-attachments'),
+    );
+    expect(dispatcherCompletionSpillDir('dispatcher-a')).toBe(
+      join(cacheRoot(), 'dispatcher-a', 'spill'),
     );
     expect(dispatcherTeamMateDir('dispatcher-a')).toBe(
       join(stateRoot(), 'dispatcher-a', 'teammate'),
@@ -149,6 +155,17 @@ describe('runtime paths', () => {
         join(workspace, '.codex', 'skills', skillName),
       ),
     );
+  });
+
+  it('keeps cache artifacts under cache/, never under durable state (issue #182 PR-2)', () => {
+    expect(cacheRoot()).toBe(join(dreamuxRoot(), 'cache'));
+    for (const cachePath of [
+      dispatcherCompletionSpillDir('dispatcher-a'),
+      dispatcherFeishuAttachmentCacheDir('dispatcher-a'),
+    ]) {
+      expect(cachePath.startsWith(cacheRoot())).toBe(true);
+      expect(cachePath.startsWith(stateRoot())).toBe(false);
+    }
   });
 
   it('places logs under component log directories', () => {

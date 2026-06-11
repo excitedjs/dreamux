@@ -25,7 +25,10 @@ import {
   teammateCodexAppServerErrorLogPath,
   teammateCodexAppServerLogPath,
 } from '../../agent-runtime/builtin/codex/paths.js';
-import { dispatcherTeamMateRuntimeDir } from '../../platform/paths.js';
+import {
+  dispatcherCompletionSpillDir,
+  dispatcherTeamMateRuntimeDir,
+} from '../../platform/paths.js';
 import { validateDispatcherId } from '../../state/dispatcher-id.js';
 import { TeamMateIdentityStore } from './identity-store.js';
 import { TeamMateRuntimeStateStore } from './runtime-state.js';
@@ -852,6 +855,11 @@ export class TeamMateAgentService {
     const runtimeIdentity = runtimeIdentityName(identity);
     const dispatcherDir = (): string =>
       dispatcherTeamMateRuntimeDir(identity.dispatcher_id, runtimeIdentity);
+    // Completion spill belongs to the OPERATOR dispatcher's cache, not the
+    // teammate's composite runtime id, so it groups with the rest of that
+    // dispatcher's ephemera (issue #182 PR-2).
+    const completionSpillDir = (): string =>
+      dispatcherCompletionSpillDir(identity.dispatcher_id);
     if (providerRef === BUILTIN_CLAUDE_CODE_PROVIDER_REF) {
       const streamLog = (): string =>
         teammateClaudeCodeStreamLogPath(
@@ -862,6 +870,7 @@ export class TeamMateAgentService {
         dispatcherDir,
         stdoutLogPath: streamLog,
         stderrLogPath: streamLog,
+        completionSpillDir,
       };
     }
     return {
@@ -876,6 +885,7 @@ export class TeamMateAgentService {
           identity.dispatcher_id,
           runtimeIdentity,
         ),
+      completionSpillDir,
     };
   }
 

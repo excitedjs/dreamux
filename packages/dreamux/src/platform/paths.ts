@@ -100,6 +100,31 @@ export function logsRoot(): string {
 }
 
 /**
+ * Root for dreamux-owned cache: rebuildable, droppable artifacts that are
+ * neither durable state nor volatile run files (issue #182 PR-2). Holds
+ * per-dispatcher completion spill files and inbound attachment caches. Safe to
+ * remove while no server is running; nothing here is part of identity, status,
+ * history, or checkpoint recovery.
+ */
+export function cacheRoot(): string {
+  return join(dreamuxRoot(), 'cache');
+}
+
+export function dispatcherCacheDir(id: string): string {
+  return join(cacheRoot(), dispatcherPathSegment(id));
+}
+
+/**
+ * Per-dispatcher completion-spill directory (issue #182 PR-2): where an
+ * over-budget teammate completion result is written so only its path is inlined
+ * into the dispatcher turn. Cache, not state — the file is read by no process;
+ * it is surfaced to the dispatcher model as text and is safe to delete.
+ */
+export function dispatcherCompletionSpillDir(id: string): string {
+  return join(dispatcherCacheDir(id), 'spill');
+}
+
+/**
  * The stable cross-process admin IPC endpoint. Packaged CLI commands and MCP
  * shims resolve it through this builder only — it is a fixed path contract, so
  * an over-budget path (extreme $HOME length) fails loudly instead of moving.
@@ -279,14 +304,23 @@ export function teamMateNameSegment(name: string): string {
  * never floods the dispatcher's context. Neutral: a completion is a
  * runtime-agnostic concept, so no runtime specifics appear here.
  *
- * Lives under the OS temp dir (the spec's `/tmp/teammate-{source}-{id}.output`
- * template); `source` and `id` are sanitized for filename safety. The id is
- * unique per completion (teammate name + turn id), so the only realistic
- * collision is two dispatchers producing the same teammate/turn id — acceptable
- * for a short-lived 0600 spill file.
+ * Lives under the dispatcher's cache spill dir (issue #182 PR-2 moved it out of
+ * shared `/tmp`, which is not a good long-term contract for a path surfaced in
+ * dispatcher-visible text). `spillDir` is the owning dispatcher's
+ * `dispatcherCompletionSpillDir`, supplied by the runtime's path context so a
+ * teammate runtime spills under its operator dispatcher, not its composite
+ * runtime id. `source` and `id` are sanitized for filename safety; the id is
+ * unique per completion (teammate name + turn id).
  */
-export function teamMateCompletionOutputPath(source: string, id: string): string {
-  return `/tmp/teammate-${teamMateNameSegment(source)}-${teamMateNameSegment(id)}.output`;
+export function teamMateCompletionOutputPath(
+  spillDir: string,
+  source: string,
+  id: string,
+): string {
+  return join(
+    spillDir,
+    `teammate-${teamMateNameSegment(source)}-${teamMateNameSegment(id)}.output`,
+  );
 }
 
 /**
@@ -299,9 +333,13 @@ export function dispatcherChatBotsPath(id: string): string {
   return join(dispatcherDir(id), 'chat-bots.json');
 }
 
-/** Per-dispatcher Feishu inbound attachment cache, owned by the server. */
+/**
+ * Per-dispatcher Feishu inbound attachment cache, owned by the server. Cache,
+ * not durable state (issue #182 PR-2 moved it out of `state/<id>/` into
+ * `cache/<id>/`): inbound attachments are re-fetchable and safe to delete.
+ */
 export function dispatcherFeishuAttachmentCacheDir(id: string): string {
-  return join(dispatcherDir(id), 'feishu-attachments');
+  return join(dispatcherCacheDir(id), 'feishu-attachments');
 }
 
 export function unixSocketPathFitsBudget(path: string): boolean {

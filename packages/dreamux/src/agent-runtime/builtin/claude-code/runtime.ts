@@ -75,6 +75,7 @@ import {
   dispatcherClaudeCodeStreamLogPath,
 } from './paths.js';
 import { dispatcherProcessEnv } from '../../../platform/package-bin.js';
+import { dispatcherCompletionSpillDir } from '../../../platform/paths.js';
 import { claudeCodeResidentArgs } from './args.js';
 import { stringifyClaudeCodeMcpConfig } from './mcp-config.js';
 import {
@@ -167,9 +168,10 @@ function completionStatusLine(completion: CompletionEnvelope): string {
  */
 async function buildCompletionTurnText(
   completion: CompletionEnvelope,
+  spillDir: string,
 ): Promise<string> {
   const line = completionStatusLine(completion);
-  const body = await resolveCompletionBody(completion);
+  const body = await resolveCompletionBody(completion, spillDir);
   return body.kind === 'inline'
     ? `${line} Output below:\n\n${body.text}`
     : `${line} The output is too long, so the full result was saved to a file:\n\n${body.path}`;
@@ -195,6 +197,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   private readonly mcpConfigPath: string;
   private readonly mcpConfigDoc: string;
   private readonly stderrLogPath: string;
+  private readonly completionSpillDir: string;
   private status: DispatcherStatus = 'declared';
   private threadId: string | null;
   private resumed: boolean;
@@ -226,6 +229,9 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     this.stderrLogPath =
       context.paths?.stderrLogPath(this.dispatcherId) ??
       dispatcherClaudeCodeStreamLogPath(this.dispatcherId);
+    this.completionSpillDir =
+      context.paths?.completionSpillDir(this.dispatcherId) ??
+      dispatcherCompletionSpillDir(this.dispatcherId);
     this.threadId = context.row.thread_id;
     this.resumed = context.row.thread_id !== null;
   }
@@ -373,7 +379,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     // is decoupled from model thinking time.
     let text: string;
     try {
-      text = await buildCompletionTurnText(completion);
+      text = await buildCompletionTurnText(completion, this.completionSpillDir);
     } catch (err) {
       return {
         status: 'failed',

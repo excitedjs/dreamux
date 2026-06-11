@@ -23,7 +23,11 @@ import { claudeCodeMcpConfig } from '../src/agent-runtime/builtin/claude-code/mc
 import { claudeCodeResidentArgs } from '../src/agent-runtime/builtin/claude-code/args.js';
 import { codexMcpServerArgs } from '../src/agent-runtime/builtin/codex/mcp-config.js';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
-import { defaultDispatcherCwd, teamMateCompletionOutputPath } from '../src/platform/paths.js';
+import {
+  defaultDispatcherCwd,
+  dispatcherCompletionSpillDir,
+  teamMateCompletionOutputPath,
+} from '../src/platform/paths.js';
 import { dispatcherClaudeCodeMcpConfigPath } from '../src/agent-runtime/builtin/claude-code/paths.js';
 import { defaultDispatcherClaudeCodeConfig } from '../src/config/config.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
@@ -653,7 +657,13 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     const { runtime } = makeRuntime(fleet);
     await runtime.start();
 
-    const spillPath = teamMateCompletionOutputPath('reviewer', 'mate-big');
+    // No path context → the runtime falls back to the operator dispatcher's
+    // cache spill dir under the (HOME-isolated) ~/.dreamux/cache/flow/spill.
+    const spillPath = teamMateCompletionOutputPath(
+      dispatcherCompletionSpillDir('flow'),
+      'reviewer',
+      'mate-big',
+    );
     process.env['TASK_MAX_OUTPUT_LENGTH'] = '8';
     try {
       await runtime.completionInput!({

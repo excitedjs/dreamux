@@ -11,10 +11,10 @@
  * runtime owns how it frames the resolved body into its own delivery shape.
  */
 
-import { chmod, mkdir, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { chmod, writeFile } from 'node:fs/promises';
 
 import { teamMateCompletionOutputPath } from '../platform/paths.js';
+import { ensureOwnerOnlyDir } from '../platform/owner-only-dir.js';
 import type { CompletionEnvelope } from './types.js';
 
 /**
@@ -54,21 +54,31 @@ export function completionInlineBudget(
 
 /**
  * Decide whether a completion result is inlined or spilled. Spilling writes the
- * FULL result to a 0600 file (async fs only — no sync IO, repo rule #85) and
- * returns the path; the caller inlines only that path.
+ * FULL result to a 0600 file (async fs only — no sync IO, repo rule #85) under
+ * the owning dispatcher's `spillDir` (cache, not state — issue #182 PR-2) and
+ * returns the path; the caller inlines only that path. `spillDir` is supplied
+ * by the runtime's path context, so this module stays runtime-neutral and never
+ * names a dispatcher id.
  */
 export async function resolveCompletionBody(
   completion: CompletionEnvelope,
+  spillDir: string,
 ): Promise<ResolvedCompletionBody> {
   const budget = completionInlineBudget();
   if (completion.result.length <= budget) {
     return { kind: 'inline', text: completion.result };
   }
-  const path = teamMateCompletionOutputPath(completion.source, completion.id);
-  await mkdir(dirname(path), { recursive: true });
+  const path = teamMateCompletionOutputPath(
+    spillDir,
+    completion.source,
+    completion.id,
+  );
+  // Owner-only spill dir: the cache may hold full teammate output. Use the
+  // shared helper so a pre-existing permissive dir is tightened and a symlink /
+  // foreign-uid dir is rejected (issue #182 — same invariant as the run tree),
+  // then a 0600 file + explicit chmod (writeFile's `mode` honors the umask).
+  await ensureOwnerOnlyDir(spillDir);
   await writeFile(path, completion.result, { mode: 0o600 });
-  // Explicit chmod: writeFile's `mode` is subject to the process umask, so a
-  // restrictive 0600 is not guaranteed by the open flags alone.
   await chmod(path, 0o600);
   return { kind: 'spilled', path };
 }

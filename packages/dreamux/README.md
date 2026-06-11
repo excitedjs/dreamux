@@ -105,15 +105,17 @@ logs:
 | `~/.dreamux/state/<id>/access.json` | Dispatcher-local access-gate state | the server |
 | `~/.dreamux/state/<id>/claude-code-mcp.json` | Claude Code MCP config generated from Dreamux-owned descriptors | the server |
 | `~/.dreamux/state/<id>/teammate/` | TeamMate task ledger, results, and delivery retry state | the server |
+| `~/.dreamux/cache/<id>/spill/` | Over-budget teammate completion spill files; rebuildable cache, only the path is inlined into a dispatcher turn | the server |
+| `~/.dreamux/cache/<id>/feishu-attachments/` | Feishu inbound attachment cache; re-fetchable, safe to delete | the server |
 | `~/.dreamux/logs/codex-app-server/<id>.log` | Codex app-server stdout/stderr | the server |
 | `~/.dreamux/logs/feishu-channel/<id>.log` | Feishu channel logs | the server |
 | `~/.dreamux/logs/teammate-mcp/<id>.log` | TeamMate MCP shim diagnostics | the server |
 | `~/.codex/` | Codex global default home: auth, memory, and config | the operator / Codex |
 | `<dispatcher cwd>/.codex/skills/dispatcher/SKILL.md` | Dispatcher skill copied by `dreamux onboard`; reported but not deleted by `dreamux uninstall` | dreamux installer |
 
-`rm -rf ~/.dreamux/run ~/.dreamux/state ~/.dreamux/logs` is a run/state/log
-recovery path (only while no server is running); dreamux config and global Codex
-auth survive.
+`rm -rf ~/.dreamux/run ~/.dreamux/cache ~/.dreamux/state ~/.dreamux/logs` is a
+run/cache/state/log recovery path (only while no server is running); dreamux
+config and global Codex auth survive.
 
 ## Configure dispatchers
 

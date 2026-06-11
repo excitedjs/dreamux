@@ -54,7 +54,7 @@ must match for each shipped skill. Older package-specific source-directory names
 must be renamed away before this design is implemented.
 
 `dreamux uninstall` does not delete these workspace-local skills by default. It
-removes dreamux-owned config, state, logs, and service integration, then reports
+removes dreamux-owned config, run, cache, state, logs, and service integration, then reports
 the workspace skill paths created by Dreamux so the operator can remove them
 manually when desired. This avoids deleting files under arbitrary operator
 workspaces during a global uninstall.

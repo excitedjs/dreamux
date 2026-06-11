@@ -1,5 +1,8 @@
 import type { DispatcherStore } from '../../../state/dispatcher-store.js';
-import { dispatcherDir } from '../../../platform/paths.js';
+import {
+  dispatcherCompletionSpillDir,
+  dispatcherDir,
+} from '../../../platform/paths.js';
 import { dispatcherProcessEnv } from '../../../platform/package-bin.js';
 import {
   dispatcherCodexAppServerErrorLogPath,
@@ -72,8 +75,9 @@ function frameCodexCompletion(
  */
 export async function buildCodexCompletionItem(
   completion: CompletionEnvelope,
+  spillDir: string,
 ): Promise<Record<string, unknown>> {
-  const body = await resolveCompletionBody(completion);
+  const body = await resolveCompletionBody(completion, spillDir);
   return {
     type: 'message',
     role: 'developer',
@@ -95,6 +99,7 @@ export const defaultCodexRuntimePaths: AgentRuntimePathContext = {
   dispatcherDir,
   stdoutLogPath: dispatcherCodexAppServerLogPath,
   stderrLogPath: dispatcherCodexAppServerErrorLogPath,
+  completionSpillDir: dispatcherCompletionSpillDir,
 };
 
 export function codexRowStateStore(
