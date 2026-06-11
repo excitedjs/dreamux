@@ -32,9 +32,7 @@ import type {
 } from './teammate/types.js';
 import type {
   TeamBindChannelInput,
-  TeamCreateGroupInput,
   TeamCreateInput,
-  TeamCreateGroupResult,
   TeamDissolveInput,
   TeamHistoryQuery,
   TeamTransferChannelBackInput,
@@ -112,7 +110,6 @@ export class DispatcherService {
     });
     this.teams = new TeamService({
       teammates: this.teammates,
-      createFeishuGroup: (input) => this.dispatchers.createFeishuGroup(input),
     });
   }
 
@@ -241,10 +238,6 @@ export class DispatcherService {
 
   createTeam(input: TeamCreateInput) {
     return this.teams.create(input);
-  }
-
-  createTeamGroup(input: TeamCreateGroupInput): Promise<TeamCreateGroupResult> {
-    return this.teams.createGroup(input);
   }
 
   listTeams(dispatcherId: string) {

@@ -284,18 +284,6 @@ export function dispatcherTeamMateIdentityPath(
   );
 }
 
-/** Forward-only JSONL history for one TeamMate identity. */
-export function dispatcherTeamMateHistoryPath(
-  id: string,
-  teammateName: string,
-): string {
-  return join(
-    dispatcherTeamMateDir(id),
-    'history',
-    `${teamMateNameSegment(teammateName)}.jsonl`,
-  );
-}
-
 /**
  * Per-dispatcher append-only TeamMate/Team session ledger (issue #182 PR-5).
  * One file per dispatcher — NOT one file per transient runtime session — so the

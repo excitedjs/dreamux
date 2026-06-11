@@ -441,24 +441,14 @@ describe('TeamMateAgentService', () => {
     expect(provider.runtimes).toHaveLength(1);
     expect(provider.runtimes[0]?.submitted).toHaveLength(3);
 
-    // The forward-only per-name history index is still written (the raw
-    // history_events read surface was removed in #188; the file remains).
-    const historyFile = await readFile(
-      join(root, 'home', '.dreamux', 'state', 'flow', 'teammate', 'history', `${reviewer}.jsonl`),
-      'utf8',
+    // #182 PR-8: the write-only per-name history index was removed; the durable
+    // session ledger is the single recovery record. It captures the spawn + each
+    // send (no synthetic 'state' rows), in append order, with prompt previews.
+    const events = (await service.sessions().read('flow')).filter(
+      (event) => event.name === reviewer,
     );
-    const events = historyFile
-      .split('\n')
-      .filter((line) => line.trim() !== '')
-      .map((line) => JSON.parse(line) as { type: string; prompt_preview: string | null });
-    expect(events.map((event) => event.type)).toEqual([
-      'state',
-      'spawn',
-      'send',
-      'send',
-    ]);
+    expect(events.map((event) => event.type)).toEqual(['spawn', 'send', 'send']);
     expect(events.map((event) => event.prompt_preview)).toEqual([
-      null,
       'Review the change.',
       'Check tests too.',
       'Continue from prior context.',
@@ -641,12 +631,12 @@ describe('TeamMateAgentService', () => {
     expect((await service.status('flow', closer)).status).toBe('closed');
     expect(provider.runtimes).toHaveLength(1); // no new runtime started
 
-    const historyFile = await readFile(
-      join(root, 'home', '.dreamux', 'state', 'flow', 'teammate', 'history', `${closer}.jsonl`),
-      'utf8',
+    // #182 PR-8: closing retains the durable session ledger (spawn + close),
+    // the single recovery record now that the per-name history index is gone.
+    const events = (await service.sessions().read('flow')).filter(
+      (event) => event.name === closer,
     );
-    expect(historyFile).toContain('"type":"spawn"');
-    expect(historyFile).toContain('"type":"close"');
+    expect(events.map((event) => event.type)).toEqual(['spawn', 'close']);
   });
 
   it('send reopens a closed teammate from its checkpoint (issue #155)', async () => {

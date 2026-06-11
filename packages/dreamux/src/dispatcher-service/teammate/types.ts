@@ -69,38 +69,6 @@ export interface TeamMateIdentity {
   close_note: string | null;
 }
 
-export type TeamMateHistoryEventType =
-  | 'spawn'
-  | 'send'
-  // Legacy event, no longer written (the `resume` verb was removed in #155;
-  // send now subsumes it). Retained so pre-#155 history files still parse.
-  | 'resume'
-  | 'close'
-  | 'state';
-
-export interface TeamMateHistoryEvent {
-  version: 1;
-  event_id: number;
-  timestamp: number;
-  dispatcher_id: string;
-  name: string;
-  owner: TeamMateOwner;
-  role: TeamMateRole;
-  team_id: string | null;
-  type: TeamMateHistoryEventType;
-  agent_runtime: string;
-  source_cwd: string;
-  source_repo: string | null;
-  cwd: string;
-  runtime_cwd: string;
-  worktree: TeamMateWorktreeIdentity;
-  checkpoint: AgentRuntimeResumeCheckpoint | null;
-  prompt_preview: string | null;
-  turn_id: string | null;
-  status: TeamMateIdentityStatus;
-  note: string | null;
-}
-
 /**
  * One durable session-ledger event (issue #182 PR-5). Append-only, one line per
  * lifecycle fact in the per-dispatcher `sessions.jsonl`. Every event denormalizes

@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "BREAKING: Final #182 cleanup — retire the public `team.create_group` tool and remove the write-only per-name TeamMate history index (issue #182 PR-8). (1) `team.create_group` (create a brand-new Feishu group and invite users) is removed from the Team MCP tool list, capabilities, admin methods, and docs. Its binding role is replaced by an optional `team.create` argument `bind_group: { chat_id }` that binds an EXISTING Feishu group chat to the new Team at create time; a standalone `team.bind_group` still binds an existing group later. The dreamux-side group-creation plumbing (TeamService.createGroup, the dispatcher's createFeishuGroup wiring, and the channel bot's createGroup method) was removed with it. (2) The per-name TeamMate history index `~/.dreamux/state/<dispatcher-id>/teammate/history/<name>.jsonl` is no longer written or read: since PR-6 the durable session ledger `sessions.jsonl` is the single recovery record (list/status/history/last all read it), so the per-name index had no readers and only added files. `appendHistory`, `TeamMateIdentityStore.history()`, the per-name path builder, and the `TeamMateHistoryEvent` types were removed. Rebuild: none required for stored state — Team records, channel bindings, and the session ledger load unchanged. Existing `teammate/history/<name>.jsonl` files become unused and may be deleted manually. Any saved automation or prompt that called `team.create_group` must switch to `team.create` with `bind_group` (binding an existing group); creating a brand-new Feishu group from the Team MCP is no longer supported.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

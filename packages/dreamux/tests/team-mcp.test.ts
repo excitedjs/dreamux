@@ -121,12 +121,60 @@ function schemaOf(
 }
 
 describe('team-mcp stdio shim', () => {
-  it('marks create.intent, create_group.intent, and dissolve.note required (#182 PR-3)', async () => {
+  it('marks create.intent and dissolve.note required; create_group is retired (#182 PR-3/PR-8)', async () => {
     const tools = await toolSchemas();
     expect(schemaOf(tools, 'create').required).toContain('intent');
-    expect(schemaOf(tools, 'create_group').required).toContain('intent');
+    // #182 PR-8: create_group is retired from the public Team MCP surface; an
+    // existing group is bound via the optional `bind_group` on `create` instead.
+    expect(tools.map((t) => t['name'])).not.toContain('create_group');
+    expect(schemaOf(tools, 'create').properties).toHaveProperty('bind_group');
     // #182 PR-7: public addressing is by `name`.
     expect(schemaOf(tools, 'dissolve').required).toEqual(['name', 'note']);
+  });
+
+  it('forwards create.bind_group to the admin create method (#182 PR-8)', async () => {
+    const admin = await startFakeAdminServer((request) => ({
+      id: request.id,
+      ok: true,
+      result: { ok: true },
+    }));
+    try {
+      const input = new PassThrough();
+      const output = new PassThrough();
+      const reader = new JsonLineReader(output);
+      const run = runTeamMcp({
+        dispatcherId: 'dispatcher-a',
+        adminSocketPath: admin.socketPath,
+        input,
+        output,
+        log: () => {},
+      });
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'create',
+          arguments: {
+            name: 'alpha',
+            repo_cwd: '/repo',
+            leader_agent_runtime: 'codex',
+            intent: 'ship it',
+            bind_group: { chat_id: 'chat-1' },
+          },
+        },
+      });
+      await reader.next();
+      expect(admin.requests[0]?.method).toBe('mcp.team.create');
+      expect(admin.requests[0]?.params).toMatchObject({
+        name: 'alpha',
+        bind_group: { chat_id: 'chat-1' },
+      });
+      input.end();
+      await run;
+    } finally {
+      await admin.close();
+    }
   });
 
   it('aligns the Team read surface with the TeamMate model and addresses by name (#182 PR-7)', async () => {
