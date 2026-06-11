@@ -9,6 +9,7 @@ import type {
   TeamMateSessionEventType,
   TeamMateSessionLedgerEvent,
   TeamMateSessionRow,
+  TeamMateTurnOrigin,
 } from './types.js';
 
 export interface TeamMateSessionLedgerLog {
@@ -19,6 +20,7 @@ export interface TeamMateSessionAppendInput {
   identity: TeamMateIdentity;
   type: TeamMateSessionEventType;
   turnId?: string | null;
+  turnOrigin?: TeamMateTurnOrigin | null;
   prompt?: string | null;
   assistant?: string | null;
   settleStatus?: 'completed' | 'failed' | 'stopped' | null;
@@ -86,6 +88,7 @@ export class TeamMateSessionLedger {
         session_ref: identity.checkpoint?.id ?? null,
         status: identity.status,
         turn_id: input.turnId ?? null,
+        turn_origin: input.turnOrigin ?? null,
         prompt_preview:
           input.prompt !== undefined && input.prompt !== null
             ? preview(input.prompt)

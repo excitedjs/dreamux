@@ -231,6 +231,45 @@ describe('TeamService', () => {
     expect(ledger.find((e) => e.type === 'dissolve')?.summary).toBe('done');
   });
 
+  it('captures a bound-channel TeamLeader turn in the session ledger (#182 PR-5, PR#187 P1)', async () => {
+    const repo = await initGitRepo(join(root, 'channel-repo'));
+    const { teams, teammates } = buildServices();
+
+    await teams.create({
+      dispatcherId: 'flow',
+      name: 'alpha',
+      repoCwd: repo,
+      leaderAgentRuntime: 'flow',
+      intent: 'ship alpha',
+    });
+
+    // A normal user turn delivered through a bound Team channel goes
+    // create -> routeChannelInput -> deliverToLeader -> channelInputScoped, which
+    // must now append a durable channel-origin turn (it previously recorded only
+    // the in-memory origin).
+    await teams.deliverToLeader({
+      dispatcherId: 'flow',
+      teamId: 'alpha',
+      turn: { text: 'please review the auth change', sourceId: 'msg-1' },
+    });
+
+    const events = await teammates.sessions().read('flow');
+    const channelTurn = events.find((e) => e.turn_origin === 'channel');
+    expect(channelTurn).toMatchObject({
+      type: 'send',
+      name: 'alpha-leader',
+      role: 'team_leader',
+      team_id: 'alpha',
+      leader_name: 'alpha-leader',
+      turn_origin: 'channel',
+      prompt_preview: 'please review the auth change',
+    });
+    // Carries a stable session id (same as the leader's spawn), never re-keyed.
+    expect(channelTurn?.session_id).toBe(
+      events.find((e) => e.type === 'spawn' && e.name === 'alpha-leader')?.session_id,
+    );
+  });
+
   it('recreating a closed Team persists the new create.intent (#182 PR-3 P1)', async () => {
     const repo = await initGitRepo(join(root, 'reuse-repo'));
     const { teams, teammates } = buildServices();

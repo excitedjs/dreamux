@@ -1,5 +1,5 @@
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
@@ -27,7 +27,11 @@ import {
   type TeamMateIdentity,
 } from '../src/dispatcher-service/teammate/types.js';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
-import { resetRuntimeConfig } from '../src/platform/paths.js';
+import {
+  dispatcherTeamMateIdentitiesDir,
+  dispatcherTeamMateIdentityPath,
+  resetRuntimeConfig,
+} from '../src/platform/paths.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 
@@ -308,7 +312,9 @@ describe('session ledger capture (integration through TeamMateAgentService)', ()
   let dispatcherCwd: string;
   let previousHome: string | undefined;
 
-  function buildService(): { service: TeamMateAgentService; provider: FakeProvider } {
+  function buildService(
+    options: { sink?: () => Promise<never> } = {},
+  ): { service: TeamMateAgentService; provider: FakeProvider } {
     const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
     const registry = createBuiltinProviderRegistry();
     const descriptor = registry.resolve('builtin:codex');
@@ -319,8 +325,10 @@ describe('session ledger capture (integration through TeamMateAgentService)', ()
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: new AgentRuntimeProviderCatalog({ registry }),
       log: noopLog(),
-      // A no-op completion sink so teammate runtimes get the settle hook wired.
-      onTeamMateCompletion: async () => ({ status: 'accepted' }) as never,
+      // A completion sink so teammate runtimes get the settle hook wired. The
+      // default no-op accepts; tests can inject a throwing sink.
+      onTeamMateCompletion:
+        options.sink ?? (async () => ({ status: 'accepted' }) as never),
     });
     return { service, provider };
   }
@@ -493,5 +501,111 @@ describe('session ledger capture (integration through TeamMateAgentService)', ()
       team_id: 'alpha',
       leader_name: 'alpha-leader',
     });
+  });
+
+  it('captures the settled turn even when reverse delivery fails (#182 PR-5, PR#187 P2)', async () => {
+    const repo = await initGitRepo(join(root, 'sink-fail-repo'));
+    const { service, provider } = buildService({
+      sink: async () => {
+        throw new Error('reverse delivery boom');
+      },
+    });
+
+    await service.spawn({
+      dispatcherId: 'flow',
+      name: 'reviewer',
+      intent: 'review',
+      prompt: 'go',
+      cwd: repo,
+      worktree: { mode: 'managed', slug: 'reviewer', cleanup: 'keep' },
+    });
+
+    provider.runtimes[0]?.settle('failed');
+
+    // The terminal lifecycle fact is captured despite the failed delivery — that
+    // is exactly when recovery metadata is most useful.
+    await waitFor(async () => {
+      const events = await service.sessions().read('flow');
+      return events.some((e) => e.type === 'settled');
+    });
+    const settled = (await service.sessions().read('flow')).find((e) => e.type === 'settled')!;
+    expect(settled).toMatchObject({
+      settle_status: 'failed',
+      assistant_preview: 'final assistant output',
+      session_ref: 'thread-1',
+    });
+  });
+
+  /** Seed a pre-PR-5 identity file (no `session_id`) directly on disk. */
+  async function seedOldIdentity(
+    name: string,
+    status: 'running' | 'closed',
+    cwd: string,
+  ): Promise<void> {
+    await mkdir(dispatcherTeamMateIdentitiesDir('flow'), { recursive: true });
+    await writeFile(
+      dispatcherTeamMateIdentityPath('flow', name),
+      JSON.stringify({
+        version: 1,
+        dispatcher_id: 'flow',
+        name,
+        owner: { kind: 'dispatcher', dispatcher_id: 'flow' },
+        role: 'teammate',
+        team_id: null,
+        agent_runtime: 'flow',
+        // session_id intentionally absent — a pre-PR-5 record.
+        source_cwd: cwd,
+        source_repo: null,
+        cwd,
+        runtime_cwd: cwd,
+        worktree: {
+          mode: 'reuse-cwd',
+          slug: null,
+          path: cwd,
+          branch: null,
+          base_ref: null,
+          cleanup: 'keep',
+          cleanup_state: 'not-managed',
+          cleanup_error: null,
+        },
+        intent: 'legacy work',
+        created_at: 1,
+        updated_at: 1,
+        status,
+        checkpoint: null,
+        last_error: null,
+        closed_at: status === 'closed' ? 2 : null,
+        close_note: status === 'closed' ? 'paused' : null,
+      }),
+      { mode: 0o600 },
+    );
+  }
+
+  it('mints a session id and captures send on a pre-PR-5 identity (#182 PR-5, PR#187 P3)', async () => {
+    const { service } = buildService();
+    const cwd = join(root, 'legacy-send');
+    await mkdir(cwd, { recursive: true });
+    await seedOldIdentity('legacy', 'closed', cwd);
+
+    await service.send({ dispatcherId: 'flow', name: 'legacy', prompt: 'resume work' });
+
+    const sends = (await service.sessions().read('flow')).filter((e) => e.type === 'send');
+    expect(sends).toHaveLength(1);
+    expect(sends[0]?.session_id).toMatch(/.+/);
+    expect(sends[0]?.prompt_preview).toBe('resume work');
+  });
+
+  it('mints a session id and captures close on a pre-PR-5 identity (#182 PR-5, PR#187 P3)', async () => {
+    const { service } = buildService();
+    const cwd = join(root, 'legacy-close');
+    await mkdir(cwd, { recursive: true });
+    await seedOldIdentity('legacy', 'running', cwd);
+
+    await service.close({ dispatcherId: 'flow', name: 'legacy', note: 'archived' });
+
+    const closes = (await service.sessions().read('flow')).filter((e) => e.type === 'close');
+    expect(closes).toHaveLength(1);
+    expect(closes[0]?.session_id).toMatch(/.+/);
+    expect(closes[0]?.note).toBe('archived');
   });
 });

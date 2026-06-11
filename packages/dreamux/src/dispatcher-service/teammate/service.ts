@@ -276,6 +276,7 @@ export class TeamMateAgentService {
       type: 'spawn',
       prompt: input.prompt,
       turnId: turn.turn_id ?? null,
+      turnOrigin: principalTurnOrigin(input.principal),
     });
     return { teammate: this.toStatus(live.state.current(), live.runtime), turn };
   }
@@ -317,11 +318,15 @@ export class TeamMateAgentService {
     // The send may have reopened a closed teammate from its checkpoint, so the
     // session ledger continues the SAME session id carried on the identity
     // (issue #182 PR-5); the optional intent update above is already reflected.
+    // A pre-PR-5 identity has no session id yet — mint one lazily so the event
+    // is captured rather than skipped (PR #187 review P3).
+    await live.state.ensureSessionId();
     await this.sessionLedger.append({
       identity: live.state.current(),
       type: 'send',
       prompt: input.prompt,
       turnId: turn.turn_id ?? null,
+      turnOrigin: principalTurnOrigin(input.principal),
     });
     return { teammate: this.toStatus(live.state.current(), live.runtime), turn };
   }
@@ -353,6 +358,10 @@ export class TeamMateAgentService {
       closedAt: Date.now(),
       closeNote: input.note,
       worktree: await this.worktrees.cleanup(identity),
+      // A pre-PR-5 identity has no session id; mint a fresh, stable one in the
+      // same close write so the close event is captured rather than skipped
+      // (PR #187 review P3). Never re-keyed to the runtime thread id.
+      ...(identity.session_id === null ? { sessionId: randomUUID() } : {}),
     });
     await this.identities.appendHistory(closed, {
       type: 'close',
@@ -521,6 +530,19 @@ export class TeamMateAgentService {
     const result = await live.runtime.channelInput(input);
     if (result.status === 'submitted') {
       recordTurnOrigin(live, result.turnId, 'channel');
+      // Capture the channel-origin turn in the durable session ledger (issue
+      // #182 PR-5, PR #187 review P1): a TeamLeader's normal user turns arrive
+      // through a bound Team channel here, not via send, and would otherwise be
+      // missing from the session reconstruction. Mint a session id lazily for a
+      // pre-PR-5 identity. Best-effort: the ledger swallows its own write errors.
+      await live.state.ensureSessionId();
+      await this.sessionLedger.append({
+        identity: live.state.current(),
+        type: 'send',
+        prompt: input.text,
+        turnId: result.turnId,
+        turnOrigin: 'channel',
+      });
     }
     return result;
   }
@@ -584,6 +606,7 @@ export class TeamMateAgentService {
       type: 'spawn',
       prompt: input.prompt,
       turnId: turn.turn_id ?? null,
+      turnOrigin: 'dispatcher',
     });
     return { teammate: this.toStatus(live.state.current(), live.runtime), turn };
   }
@@ -865,16 +888,28 @@ export class TeamMateAgentService {
         status: settled.status,
         result,
       };
-      await sink(
-        dispatcherId,
-        identity,
-        envelope,
-        turnOrigins.get(settled.turnId) ?? null,
-      );
-      // Capture the settled turn in the durable session ledger AFTER delivery
-      // (issue #182 PR-5), so adding capture never perturbs reverse-delivery
-      // timing: final assistant output + the runtime checkpoint/session id, read
-      // from the freshest identity so a thread id set after spawn is recorded.
+      // Attempt reverse delivery first (unchanged timing), but isolate its
+      // failure so it never skips the durable settled-turn capture below — a
+      // failed delivery is exactly when the recovery metadata matters most
+      // (issue #182 PR-5, PR #187 review P2).
+      try {
+        await sink(
+          dispatcherId,
+          identity,
+          envelope,
+          turnOrigins.get(settled.turnId) ?? null,
+        );
+      } catch (err) {
+        this.opts.log.warn(
+          { dispatcher_id: dispatcherId, teammate: name, err: errInfo(err) },
+          'teammate completion delivery failed',
+        );
+      }
+      // Capture the settled turn in the durable session ledger AFTER the
+      // delivery attempt — regardless of its outcome — so capture never perturbs
+      // reverse-delivery timing: final assistant output + the runtime
+      // checkpoint/session id, read from the freshest identity so a thread id set
+      // after spawn is recorded.
       const settledIdentity =
         (await this.identities.get(dispatcherId, name).catch(() => null)) ?? identity;
       await this.sessionLedger.append({
@@ -887,7 +922,7 @@ export class TeamMateAgentService {
     } catch (err) {
       this.opts.log.warn(
         { dispatcher_id: dispatcherId, teammate: name, err: errInfo(err) },
-        'teammate completion delivery failed',
+        'teammate settled-turn capture failed',
       );
     }
   }
