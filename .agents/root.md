@@ -30,6 +30,11 @@ baseline and the issue #135 realigned provider surfaces:
   Dispatcher Service as a real module, two plugin seams only (`agentRuntime` +
   `channel`), registry demoted to a provider loader, Feishu pulled out of the
   plugin seam.
+- [NPM package split and channel targets](decisions/npm-package-split-and-channel-targets.md)
+  — issue #209 package-boundary and target-routing decision: a published
+  type-only contract package, built-in runtime/channel npm packages, core-owned
+  `bind_channel`, channel-owned target resolution, and built-in skill injection
+  without workspace symlinks.
 
 Background and older issue context:
 
@@ -124,7 +129,7 @@ Background and older issue context:
 | rename or restructure the public CLI / package | [`decisions/cli-and-package-naming.md`](decisions/cli-and-package-naming.md) |
 | implement issue #18 global bin / onboard / serve | [`proposals/global-bin-onboard-serve.md`](proposals/global-bin-onboard-serve.md) + [`decisions/global-bin-onboard-serve.md`](decisions/global-bin-onboard-serve.md) |
 | add / change a config key (`~/.dreamux/config.json`) | [`decisions/top-level-design.md`](decisions/top-level-design.md) first, then historical context in [`decisions/global-config-dir.md`](decisions/global-config-dir.md) |
-| change provider refs, Agent Runtime providers, channel plugin reservations, or server-hosted TeamMate | [`decisions/provider-architecture-realignment.md`](decisions/provider-architecture-realignment.md) + [`decisions/provider-references-and-capability-registry.md`](decisions/provider-references-and-capability-registry.md) |
+| change provider refs, Agent Runtime providers, channel plugin reservations, channel target bindings, or server-hosted TeamMate | [`decisions/provider-architecture-realignment.md`](decisions/provider-architecture-realignment.md) + [`decisions/provider-references-and-capability-registry.md`](decisions/provider-references-and-capability-registry.md) + [`decisions/npm-package-split-and-channel-targets.md`](decisions/npm-package-split-and-channel-targets.md) |
 | touch the anti-leak guardrail (`.gitleaks.toml`, `.npmrc`, CI / hook) | [`decisions/anti-leak-guardrail.md`](decisions/anti-leak-guardrail.md) |
 | touch npm publishing / the release workflows | [`decisions/npm-release-oidc.md`](decisions/npm-release-oidc.md) |
 | change dispatcher inbound delivery, turn submission, or received-reaction timing | [`domains/non-blocking-dispatcher-inbound.md`](domains/non-blocking-dispatcher-inbound.md) + [`decisions/top-level-design.md`](decisions/top-level-design.md) + read the source |
