@@ -1,3 +1,4 @@
+import { pathExists } from '../platform/fs-errors.js';
 /**
  * `dreamux` — the single public CLI entry point.
  *
@@ -7,7 +8,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { access, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -431,16 +432,6 @@ function printServiceWarnings(
   }
   for (const warning of warnings) {
     console.error(`warning: ${warning}`);
-  }
-}
-
-/** Async existence probe — the fs/promises replacement for `existsSync`. */
-async function pathExists(path: string): Promise<boolean> {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
   }
 }
 

@@ -6,7 +6,7 @@ import {
   dispatcherTeamMateRecordsDir,
   dispatcherTeamMateRecordPath,
 } from '../../platform/paths.js';
-import { assertNoRemovedRecordFields } from '../legacy-state.js';
+import { assertNoRemovedRecordFields, LegacyStateError } from '../legacy-state.js';
 import {
   validateTeamMateName,
   type TeamMateIdentity,
@@ -93,6 +93,10 @@ export class TeamMateIdentityStore {
         const identity = await this.get(dispatcherId, name);
         if (identity !== null) identities.push(identity);
       } catch (err) {
+        // #199 Slice 5: removed-field / legacy old state must fail loud on the
+        // list/history read paths too (scopedList → here), never silently skip.
+        // A genuinely corrupt/unreadable record is still tolerated with a warn.
+        if (err instanceof LegacyStateError) throw err;
         this.log.warn('skipping unreadable TeamMate identity', {
           dispatcher_id: dispatcherId,
           name,
@@ -193,7 +197,7 @@ function readIdentity(
     typeof value['agent_runtime'] !== 'string' &&
     typeof value['provider_ref'] === 'string'
   ) {
-    throw new Error(
+    throw new LegacyStateError(
       `TeamMate identity ${JSON.stringify(name)} uses the legacy provider_ref ` +
         'format (pre-#148). Teammate identities now reference an agents[].id via ' +
         'agent_runtime. Close and respawn this teammate, or delete its identity ' +

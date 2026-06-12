@@ -1,6 +1,7 @@
 import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { isNotFound } from '../platform/fs-errors.js';
 import { dispatcherTeamDir, dispatcherTeamMateDir } from '../platform/paths.js';
 
 /**
@@ -17,6 +18,20 @@ export interface LegacyStateFinding {
   path: string;
   /** What it was and what replaced it, for the rebuild message. */
   what: string;
+}
+
+/**
+ * Marks a deliberate pre-#199 old-state rejection (a removed field in a present
+ * record, or a record still keyed the old way) as distinct from a genuinely
+ * corrupt/unreadable file. The list chokepoint re-throws this so old state fails
+ * loud on `list`/`history` instead of being silently skipped, while a
+ * malformed/partial record may still be tolerated.
+ */
+export class LegacyStateError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'LegacyStateError';
+  }
 }
 
 /**
@@ -89,7 +104,7 @@ export function assertNoRemovedRecordFields(
     Object.prototype.hasOwnProperty.call(value, key),
   );
   if (present.length > 0) {
-    throw new Error(
+    throw new LegacyStateError(
       `${label} carries fields removed in issue #199 (${present.join(', ')}). ` +
         `Dreamux 0.x does not migrate old state — ${rebuild}`,
     );
@@ -100,7 +115,10 @@ async function pathExists(path: string): Promise<boolean> {
   try {
     await access(path);
     return true;
-  } catch {
-    return false;
+  } catch (err) {
+    // Only a missing entry counts as "not present". A different access error
+    // (e.g. EACCES) is a real problem the operator must see, not silent absence.
+    if (isNotFound(err)) return false;
+    throw err;
   }
 }

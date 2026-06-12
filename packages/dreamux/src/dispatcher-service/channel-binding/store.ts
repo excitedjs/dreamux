@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { writeFileAtomic } from '../../platform/atomic-write.js';
 import { isNotFound } from '../../platform/fs-errors.js';
 import { dispatcherChannelBindingsPath } from '../../platform/paths.js';
+import { LegacyStateError } from '../legacy-state.js';
 
 export type ChannelProvider = 'builtin:feishu';
 export type ChannelChatType = 'group' | 'p2p';
@@ -128,7 +129,7 @@ export class ChannelBindingStore {
       Object.prototype.hasOwnProperty.call(row, 'team_id'),
     );
     if (legacy) {
-      throw new Error(
+      throw new LegacyStateError(
         `channel binding store for dispatcher ${dispatcherId} has pre-#199 rows keyed by ` +
           'team_id instead of team_name. Dreamux 0.x does not migrate old state — delete ' +
           `${dispatcherChannelBindingsPath(dispatcherId)} and re-bind the channel(s) to rebuild it.`,

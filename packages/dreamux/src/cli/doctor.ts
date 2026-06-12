@@ -1,17 +1,7 @@
-import { access, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { homedir, userInfo } from 'node:os';
 
 import { parse as parsePlist, type PlistValue } from 'plist';
-
-/** Async existence probe — the fs/promises replacement for `existsSync`. */
-async function pathExists(path: string): Promise<boolean> {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 import { resolveCodexBinPath } from '../agent-runtime/builtin/codex/provider.js';
 import {
@@ -33,6 +23,7 @@ import type {
   AgentRuntimeDiagnosticContext,
   AgentRuntimeDoctorResult,
 } from '../agent-runtime/types.js';
+import { pathExists } from '../platform/fs-errors.js';
 import {
   setRuntimeConfig,
   stateRoot,

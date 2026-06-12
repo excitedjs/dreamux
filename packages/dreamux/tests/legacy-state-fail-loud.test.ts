@@ -101,6 +101,35 @@ describe('issue #199 Slice 5 — pre-#199 local state fails loud', () => {
       const identity = await store.get(DISPATCHER, 'alice');
       expect(identity?.name).toBe('alice');
     });
+
+    it('fails loud (does NOT skip) on the list() path for a removed-field record', async () => {
+      // A clean record + a stale one: list() must not silently drop the stale
+      // record (which would hide it from teammate.list / teammate.history); it
+      // re-throws the legacy-state error.
+      writeRaw(dispatcherTeamMateRecordPath(DISPATCHER, 'alice'), base);
+      writeRaw(dispatcherTeamMateRecordPath(DISPATCHER, 'stale'), {
+        ...base,
+        name: 'stale',
+        checkpoint: null,
+      });
+      const store = new TeamMateIdentityStore(silentLog);
+      await expect(store.list(DISPATCHER)).rejects.toThrow(/removed in issue #199/);
+    });
+
+    it('still tolerates a genuinely unreadable (non-legacy) record in list()', async () => {
+      // Resilience is preserved for corrupt JSON: it warns + skips, only the
+      // good record is returned. Old-state detection must not over-reach into
+      // every read failure.
+      writeRaw(dispatcherTeamMateRecordPath(DISPATCHER, 'alice'), base);
+      writeFileSync(
+        dispatcherTeamMateRecordPath(DISPATCHER, 'broken'),
+        '{ not json',
+        { mode: 0o600 },
+      );
+      const store = new TeamMateIdentityStore(silentLog);
+      const names = (await store.list(DISPATCHER)).map((identity) => identity.name);
+      expect(names).toEqual(['alice']);
+    });
   });
 
   describe('channel-binding reader rejects pre-#199 team_id rows', () => {

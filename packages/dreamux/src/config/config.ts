@@ -1,3 +1,4 @@
+import { pathExists } from '../platform/fs-errors.js';
 /**
  * Global dreamux configuration loaded from `~/.dreamux/config.json`.
  *
@@ -9,7 +10,7 @@
 
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
-import { access, mkdir, open, readFile, stat } from 'node:fs/promises';
+import { mkdir, open, readFile, stat } from 'node:fs/promises';
 import {
   loadExternalAgentRuntimeProviders,
   type ExternalAgentRuntimeModuleImporter,
@@ -68,16 +69,6 @@ export {
   dispatcherClaudeCodeConfig,
 } from '../agent-runtime/builtin/claude-code/config.js';
 export type { DispatcherClaudeCodeConfig } from '../agent-runtime/builtin/claude-code/config.js';
-
-/** Async existence probe — the fs/promises replacement for `existsSync`. */
-async function pathExists(path: string): Promise<boolean> {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 export interface DreamuxConfig {
   /**

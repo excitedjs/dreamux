@@ -1,6 +1,6 @@
+import { pathExists } from '../platform/fs-errors.js';
 import { randomUUID } from 'node:crypto';
 import {
-  access,
   lstat,
   mkdir,
   realpath,
@@ -20,16 +20,6 @@ import {
   dispatcherWorkspaceCodexSkillsDir,
   dispatcherWorkspaceSkillDir,
 } from '../agent-runtime/builtin/codex/paths.js';
-
-/** Async existence probe - the fs/promises replacement for existsSync. */
-async function pathExists(path: string): Promise<boolean> {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 export type BundledSkillInstallStatus =
   | 'linked'

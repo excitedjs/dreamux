@@ -1,6 +1,6 @@
 ---
 name: dispatcher
-description: Use from a Dreamux dispatcher thread when bounded repository work should be delegated to a TeamMate. The server-hosted TeamMate MCP is the default interface; spawn creates a semi-resident TeamMate and RETURNS its concrete name (use that name for every later call), send submits follow-up turns and reopens a closed TeamMate from its checkpoint, close stops one, history searches the durable per-name records, and list/status/last/get_capabilities inspect state. The tm CLI is the explicit fallback for legacy diagnostics. Applies to spawning, tracking, retrieving, sending, closing, inspecting, reopening, recovering, or summarizing teammate work.
+description: Use from a Dreamux dispatcher thread when bounded repository work should be delegated to a TeamMate. The server-hosted TeamMate MCP is the default interface; spawn creates a semi-resident TeamMate and RETURNS its concrete name (use that name for every later call), send submits follow-up turns and reopens a closed TeamMate from its recorded runtime-native session_id, close stops one, history searches the durable per-name records, and list/status/last/get_capabilities inspect state. The tm CLI is the explicit fallback for legacy diagnostics. Applies to spawning, tracking, retrieving, sending, closing, inspecting, reopening, recovering, or summarizing teammate work.
 ---
 
 # Dispatcher
@@ -20,8 +20,8 @@ habit.
 Dreamux injects a dispatcher-scoped `teammate` MCP server. It creates named
 semi-resident TeamMate agents through the same AgentRuntime contract as
 dispatchers, then lets you submit follow-up turns, reopen closed agents from
-their checkpoint, inspect state, and close agents without holding a shell
-session or polling a process.
+their recorded runtime-native session_id, inspect state, and close agents
+without holding a shell session or polling a process.
 
 **Lifecycle.**
 
@@ -37,13 +37,14 @@ session or polling a process.
   `get_capabilities.agent_runtimes[].id` as `agent_runtime`; do not pass provider
   refs such as `builtin:*`.
 - `send` — submit a turn to a TeamMate by its concrete name. If it is not live —
-  including one previously `close`d — send first reopens it from its persisted
-  checkpoint, then submits. There is no separate `resume` verb; send covers
-  reattach. Pass `intent` (optional) to update the recorded recovery subject
-  when the work shifts.
+  including one previously `close`d — send first reopens it from its recorded
+  runtime-native `session_id` (the `agent_runtime` rebuilds the resume from it),
+  then submits. There is no separate `resume` verb; send covers reattach. Pass
+  `intent` (optional) to update the recorded recovery subject when the work
+  shifts.
 - `close` — stop the TeamMate (by concrete name) and mark it closed. `note` is
   **required**: why you are stopping a recoverable session. It stays reopenable:
-  a later `send` revives it from its checkpoint.
+  a later `send` revives it from its recorded runtime-native `session_id`.
 
 **Watch and collect — no polling.**
 
@@ -201,7 +202,8 @@ on a flag -- do not infer one verb's flags from another.
 
 These references cover the `tm` fallback path. For ordinary delegation —
 spawning a TeamMate, sending follow-up turns (which also reopens a closed one
-from its checkpoint), checking status, or reading history/last — use the
+from its recorded runtime-native session_id), checking status, or reading
+history/last — use the
 `teammate` MCP tools above and you do not need a reference.
 Read the matching reference when you have dropped to `tm`:
 

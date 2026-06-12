@@ -186,7 +186,7 @@ function teammateTools(
       spawnProperties,
       ['name_prefix', 'prompt', 'intent'],
     ),
-    tool('send', 'Send a turn to a TeamMate agent; reopens a closed one from its checkpoint first. Pass intent to update the recorded recovery subject before the turn.', {
+    tool('send', 'Send a turn to a TeamMate agent; reopens a closed one from the runtime-native session_id recorded on it (interpreted by its agent_runtime) first. Pass intent to update the recorded recovery subject before the turn.', {
       name: { type: 'string', minLength: 1, maxLength: 64 },
       prompt: { type: 'string', minLength: 1, maxLength: 20000 },
       intent: { type: 'string', minLength: 1, maxLength: 2000 },
