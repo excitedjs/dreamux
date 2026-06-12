@@ -3,6 +3,7 @@ import { appendFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { createInterface } from 'node:readline';
 
+import { isNotFound } from '../../platform/fs-errors.js';
 import { dispatcherTeamMateTurnsPath } from '../../platform/paths.js';
 import type { TeamMateTurnRecord } from './types.js';
 
@@ -150,13 +151,4 @@ export class TeamMateTurnsStore {
 export function preview(text: string): string {
   const collapsed = text.replace(/\s+/g, ' ').trim();
   return collapsed.length <= PREVIEW_MAX ? collapsed : `${collapsed.slice(0, PREVIEW_HEAD)}...`;
-}
-
-function isNotFound(err: unknown): boolean {
-  return (
-    typeof err === 'object' &&
-    err !== null &&
-    'code' in err &&
-    (err as { code?: unknown }).code === 'ENOENT'
-  );
 }

@@ -1,15 +1,6 @@
-import { access, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
+import { pathExists } from '../platform/fs-errors.js';
+import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-
-/** Async existence probe — the fs/promises replacement for `existsSync`. */
-async function pathExists(path: string): Promise<boolean> {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 import type {
   OnboardFileLedger,

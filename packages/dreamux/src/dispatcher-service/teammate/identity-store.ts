@@ -1,10 +1,12 @@
 import { readFile, readdir } from 'node:fs/promises';
 
 import { writeFileAtomic } from '../../platform/atomic-write.js';
+import { isNotFound } from '../../platform/fs-errors.js';
 import {
   dispatcherTeamMateRecordsDir,
   dispatcherTeamMateRecordPath,
 } from '../../platform/paths.js';
+import { assertNoRemovedRecordFields, LegacyStateError } from '../legacy-state.js';
 import {
   validateTeamMateName,
   type TeamMateIdentity,
@@ -91,6 +93,10 @@ export class TeamMateIdentityStore {
         const identity = await this.get(dispatcherId, name);
         if (identity !== null) identities.push(identity);
       } catch (err) {
+        // #199 Slice 5: removed-field / legacy old state must fail loud on the
+        // list/history read paths too (scopedList → here), never silently skip.
+        // A genuinely corrupt/unreadable record is still tolerated with a warn.
+        if (err instanceof LegacyStateError) throw err;
         this.log.warn('skipping unreadable TeamMate identity', {
           dispatcher_id: dispatcherId,
           name,
@@ -191,13 +197,23 @@ function readIdentity(
     typeof value['agent_runtime'] !== 'string' &&
     typeof value['provider_ref'] === 'string'
   ) {
-    throw new Error(
+    throw new LegacyStateError(
       `TeamMate identity ${JSON.stringify(name)} uses the legacy provider_ref ` +
         'format (pre-#148). Teammate identities now reference an agents[].id via ' +
         'agent_runtime. Close and respawn this teammate, or delete its identity ' +
         'file to rebuild it.',
     );
   }
+  // #199 Slice 5 fail-loud: a pre-#199 record carried the Dreamux resume
+  // wrapper (`checkpoint` / `checkpoint_kind` / `session_ref`), the Dreamux-made
+  // `display_name`, or the retired `close_status`. Those concepts are gone, so
+  // reject the record with rebuild guidance rather than reading a stale shape.
+  assertNoRemovedRecordFields(
+    `TeamMate record ${JSON.stringify(name)}`,
+    value,
+    ['checkpoint', 'checkpoint_kind', 'session_ref', 'display_name', 'close_status'],
+    `close and respawn this teammate, or delete its record at ${dispatcherTeamMateRecordPath(dispatcherId, name)} to rebuild it.`,
+  );
   if (
     value['version'] !== 1 ||
     value['dispatcher_id'] !== dispatcherId ||
@@ -349,13 +365,4 @@ function readWorktreeIdentity(
         ? record['cleanup_error']
         : null,
   };
-}
-
-function isNotFound(err: unknown): boolean {
-  return (
-    typeof err === 'object' &&
-    err !== null &&
-    'code' in err &&
-    (err as { code?: unknown }).code === 'ENOENT'
-  );
 }

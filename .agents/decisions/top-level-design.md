@@ -696,6 +696,19 @@ reuse-cwd records until the next lifecycle mutation rewrites them. A caller
 marked as `teammate` does not receive lifecycle tools, so TeamMates cannot
 recursively spawn or close TeamMates.
 
+Pre-#199 *removed* state is a different case from a forward-compatible missing
+field: it fails loud (issue #199 Slice 5, the 0.x no-migration policy of issue
+#98). A removed whole-file/dir layout — the `teammate/identities/` directory,
+the `teammate/sessions.jsonl` session ledger, the per-name `teammate/history/`
+index, or the `team/ledger/` audit dir — is detected by
+`dispatcher-service/legacy-state.ts` and aborts `dreamux serve` startup with the
+exact path(s) to delete (`dreamux doctor` reports the same as a diagnostic);
+detection only, the files are never read for migration or removed. A removed
+*field* still sitting in a present record (`checkpoint` / `checkpoint_kind` /
+`session_ref` / `display_name` / `close_status` on a teammate record, or a
+channel binding keyed by the old `team_id` instead of `team_name`) is rejected
+by that record's reader with the same rebuild guidance.
+
 > **Superseded by issue #199 Slice 3.** The per-dispatcher `sessions.jsonl`
 > session ledger described below was replaced by the per-name storage in the
 > layout above: `teammate/records/<name>.json` (identity + a rolling recovery

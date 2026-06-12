@@ -1,17 +1,7 @@
-import { access, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { homedir, userInfo } from 'node:os';
 
 import { parse as parsePlist, type PlistValue } from 'plist';
-
-/** Async existence probe — the fs/promises replacement for `existsSync`. */
-async function pathExists(path: string): Promise<boolean> {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 import { resolveCodexBinPath } from '../agent-runtime/builtin/codex/provider.js';
 import {
@@ -33,11 +23,16 @@ import type {
   AgentRuntimeDiagnosticContext,
   AgentRuntimeDoctorResult,
 } from '../agent-runtime/types.js';
+import { pathExists } from '../platform/fs-errors.js';
 import {
   setRuntimeConfig,
   stateRoot,
 } from '../platform/paths.js';
 import { diagnoseDispatcherWorkspace } from '../dispatcher-service/dispatcher-workspace.js';
+import {
+  detectLegacyDispatcherState,
+  legacyDispatcherStateMessage,
+} from '../dispatcher-service/legacy-state.js';
 import { ExecaCommandRunner } from '../onboard/commands.js';
 import {
   defaultServiceNodeProbe,
@@ -152,6 +147,18 @@ export async function runDreamuxDoctor(
       name: `dispatcher ${dispatcher.id} workspace`,
       ok: diagnosis.ok,
       detail: diagnosis.detail,
+    });
+    // Pre-#199 local state (issue #199 Slice 5): mirror the `dreamux serve`
+    // fail-loud as a diagnostic so the operator sees the same rebuild guidance
+    // without first failing a start.
+    const legacy = await detectLegacyDispatcherState(dispatcher.id);
+    checks.push({
+      name: `dispatcher ${dispatcher.id} legacy state`,
+      ok: legacy.length === 0,
+      detail:
+        legacy.length === 0
+          ? 'no pre-#199 state paths found'
+          : legacyDispatcherStateMessage(dispatcher.id, legacy),
     });
   }
 

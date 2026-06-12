@@ -1,17 +1,8 @@
+import { pathExists } from '../platform/fs-errors.js';
 import { constants } from 'node:fs';
 import { access, realpath, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
-
-/** Async existence probe — the fs/promises replacement for `existsSync`. */
-async function pathExists(path: string): Promise<boolean> {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 import { build as buildPlist } from 'plist';
 import { expandHome } from '../config/config.js';

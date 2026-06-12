@@ -1,7 +1,9 @@
 import { readFile } from 'node:fs/promises';
 
 import { writeFileAtomic } from '../../platform/atomic-write.js';
+import { isNotFound } from '../../platform/fs-errors.js';
 import { dispatcherChannelBindingsPath } from '../../platform/paths.js';
+import { LegacyStateError } from '../legacy-state.js';
 
 export type ChannelProvider = 'builtin:feishu';
 export type ChannelChatType = 'group' | 'p2p';
@@ -116,6 +118,23 @@ export class ChannelBindingStore {
     if (value['version'] !== 1 || !Array.isArray(value['bindings'])) {
       throw new Error(`invalid channel binding store for dispatcher ${dispatcherId}`);
     }
+    // #199 Slice 5 fail-loud: a pre-Slice-4 binding keyed the chat on the old
+    // `team_id` instead of the concrete `team_name`. Dreamux 0.x does not
+    // migrate it — reject with rebuild guidance rather than reading a row that
+    // can no longer resolve a Team.
+    const legacy = (value['bindings'] as Record<string, unknown>[]).some((row) =>
+      typeof row === 'object' &&
+      row !== null &&
+      !Object.prototype.hasOwnProperty.call(row, 'team_name') &&
+      Object.prototype.hasOwnProperty.call(row, 'team_id'),
+    );
+    if (legacy) {
+      throw new LegacyStateError(
+        `channel binding store for dispatcher ${dispatcherId} has pre-#199 rows keyed by ` +
+          'team_id instead of team_name. Dreamux 0.x does not migrate old state — delete ' +
+          `${dispatcherChannelBindingsPath(dispatcherId)} and re-bind the channel(s) to rebuild it.`,
+      );
+    }
     return value as unknown as ChannelBindingFile;
   }
 
@@ -126,13 +145,4 @@ export class ChannelBindingStore {
     const path = dispatcherChannelBindingsPath(dispatcherId);
     await writeFileAtomic(path, `${JSON.stringify(file, null, 2)}\n`);
   }
-}
-
-function isNotFound(err: unknown): boolean {
-  return (
-    typeof err === 'object' &&
-    err !== null &&
-    'code' in err &&
-    (err as { code?: unknown }).code === 'ENOENT'
-  );
 }

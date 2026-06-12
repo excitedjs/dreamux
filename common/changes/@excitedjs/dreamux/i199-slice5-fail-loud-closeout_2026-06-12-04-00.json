@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "BREAKING: Pre-#199 local-state fail-loud closeout (issue #199 Slice 5). Dreamux 0.x does not migrate old TeamMate/Team state — a server that ran an earlier layout fails loud with explicit rebuild guidance. `dreamux serve` aborts startup (and `dreamux doctor` reports a matching diagnostic) when a dispatcher still has a removed whole-file/dir layout: `teammate/identities/`, `teammate/sessions.jsonl`, `teammate/history/`, or `team/ledger/`. A removed field still sitting in a present record is rejected by that record's reader: `checkpoint` / `checkpoint_kind` / `session_ref` / `display_name` / `close_status` on a `teammate/records/<name>.json`, or a `team/channel-bindings.json` row keyed by the old `team_id` instead of `team_name`. Detection only — the legacy paths/files are never read for migration, rewritten, or removed. Rebuild: after upgrading, delete the named path(s) under `~/.dreamux/state/<dispatcher>/` (run `dreamux doctor` to list them) and let the current `teammate/records/<name>.json` + `teammate/turns/<name>.jsonl` + `team/records/<team_name>.json` + `team/channel-bindings.json` layout rebuild; re-bind any Team Feishu groups via `team.bind_group`.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

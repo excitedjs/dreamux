@@ -1,6 +1,7 @@
 import { readFile, readdir } from 'node:fs/promises';
 
 import { writeFileAtomic } from '../../platform/atomic-write.js';
+import { isNotFound } from '../../platform/fs-errors.js';
 import {
   dispatcherTeamRecordPath,
   dispatcherTeamRecordsDir,
@@ -99,13 +100,4 @@ function readTeam(dispatcherId: string, teamId: string, raw: string): TeamRecord
     throw new Error(`invalid Team record ${JSON.stringify(teamId)}`);
   }
   return value as unknown as TeamRecord;
-}
-
-function isNotFound(err: unknown): boolean {
-  return (
-    typeof err === 'object' &&
-    err !== null &&
-    'code' in err &&
-    (err as { code?: unknown }).code === 'ENOENT'
-  );
 }

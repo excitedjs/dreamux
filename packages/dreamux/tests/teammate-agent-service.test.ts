@@ -959,7 +959,6 @@ describe('TeamMateAgentService', () => {
         created_at: 1,
         updated_at: 1,
         status: 'stopped',
-        checkpoint: null,
         last_error: null,
         closed_at: null,
         close_note: null,
@@ -1475,6 +1474,44 @@ describe('TeamMateAgentService', () => {
     ).rejects.toThrow(/legacy provider_ref format/);
   });
 
+  it('fails loud on list/history when a record carries a removed #199 field', async () => {
+    const { catalog } = providerCatalog();
+    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: catalog,
+      log: noopLog(),
+    });
+    // A stale record carrying the removed `checkpoint` field must not be quietly
+    // skipped by the list chokepoint (which feeds teammate.list AND
+    // teammate.history); both public read surfaces fail loud (issue #199 Slice 5).
+    const dir = join(root, 'home', '.dreamux', 'state', 'flow', 'teammate', 'records');
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      join(dir, 'stale.json'),
+      JSON.stringify({
+        version: 1,
+        dispatcher_id: 'flow',
+        name: 'stale',
+        agent_runtime: 'flow',
+        cwd: root,
+        created_at: 1,
+        updated_at: 1,
+        status: 'stopped',
+        checkpoint: null,
+        last_error: null,
+        closed_at: null,
+        close_note: null,
+      }),
+      { mode: 0o600 },
+    );
+    await expect(service.list('flow')).rejects.toThrow(/removed in issue #199/);
+    await expect(
+      service.history({ dispatcherId: 'flow' }),
+    ).rejects.toThrow(/removed in issue #199/);
+  });
+
   it('reads a legacy under-state managed worktree path verbatim (#182 PR-4)', async () => {
     // A teammate identity persisted before the worktree relocation carries a
     // managed worktree.path under `~/.dreamux/state/.../worktrees/`. The reader
@@ -1527,7 +1564,6 @@ describe('TeamMateAgentService', () => {
         created_at: 1,
         updated_at: 1,
         status: 'closed',
-        checkpoint: null,
         last_error: null,
         closed_at: 2,
         close_note: 'archived',

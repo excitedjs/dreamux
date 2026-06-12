@@ -1,4 +1,4 @@
-import { access } from 'node:fs/promises';
+import { pathExists } from '../platform/fs-errors.js';
 
 import { codexArgsToCli, parseCodexArgs } from '../agent-runtime/builtin/codex/args.js';
 import {
@@ -194,16 +194,6 @@ async function readExistingDreamuxConfig(configDir: string) {
   await assertNoLegacyTomlOnly({ configDir });
   if (!(await pathExists(configPath))) return undefined;
   return (await loadConfigWithBuiltins({ configDir })).config;
-}
-
-/** Async existence probe — the fs/promises replacement for `existsSync`. */
-async function pathExists(path: string): Promise<boolean> {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 async function runDispatcherDoctor(

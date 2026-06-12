@@ -1,15 +1,6 @@
-import { access, readFile } from 'node:fs/promises';
+import { pathExists } from '../../../platform/fs-errors.js';
+import { readFile } from 'node:fs/promises';
 import { join, normalize, sep } from 'node:path';
-
-/** Async existence probe — the fs/promises replacement for `existsSync`. */
-async function pathExists(path: string): Promise<boolean> {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 import { parse as parseToml, TomlError } from 'smol-toml';
 
