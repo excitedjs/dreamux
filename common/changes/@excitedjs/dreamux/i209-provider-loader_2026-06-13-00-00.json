@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Refactor the external provider loader into a kind-agnostic package-loader skeleton (registry/provider-loader.ts) plus per-kind contract assertions for agentRuntime and channel, and add a channel provider loader that resolves builtin:feishu -> @excitedjs/feishu-channel through the shared built-in package alias map (issue #209). The public loadExternalAgentRuntimeProviders surface and its error classes are unchanged; no behavior change.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

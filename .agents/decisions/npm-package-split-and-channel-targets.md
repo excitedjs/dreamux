@@ -549,6 +549,19 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   remaining guards (core not importing the Feishu SDK/transport; built-in
   packages bundled by default; binding store v2; Team/Channel MCP ownership;
   role-gated skill injection; symlink removal) land in their respective slices.
+- **Slice 2 (generic provider loader + channel kind) — satisfied now:** the
+  runtime-specific external loader is split into a kind-agnostic skeleton
+  (`registry/provider-loader.ts`: dynamic import, default/named export
+  selection, factory invocation, duplicate-ref skipping, descriptor
+  registration, fail-loud formatting) plus per-kind contract assertions
+  (`agent-runtime/external-provider.ts` for `agentRuntime`,
+  `channel/external-channel-provider.ts` for `channel`). `builtin:*` refs resolve
+  through the `BUILTIN_PROVIDER_PACKAGES` alias map and use the same loading path
+  as `npm:*` refs; a missing/unmapped built-in package fails loud with the named
+  ref. The public `loadExternalAgentRuntimeProviders` surface and its error
+  classes are unchanged, so runtime loading stays behavior-stable. Wiring the
+  channel loader into config validation and promoting `@excitedjs/feishu-channel`
+  to a real provider implementation remain later channel slices.
 
 ## Alternatives Considered
 
