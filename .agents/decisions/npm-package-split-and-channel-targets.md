@@ -552,16 +552,21 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
 - **Slice 2 (generic provider loader + channel kind) — satisfied now:** the
   runtime-specific external loader is split into a kind-agnostic skeleton
   (`registry/provider-loader.ts`: dynamic import, default/named export
-  selection, factory invocation, duplicate-ref skipping, descriptor
-  registration, fail-loud formatting) plus per-kind contract assertions
+  selection, factory invocation, descriptor registration, fail-loud formatting)
+  plus per-kind contract assertions
   (`agent-runtime/external-provider.ts` for `agentRuntime`,
   `channel/external-channel-provider.ts` for `channel`). `builtin:*` refs resolve
   through the `BUILTIN_PROVIDER_PACKAGES` alias map and use the same loading path
   as `npm:*` refs; a missing/unmapped built-in package fails loud with the named
-  ref. The public `loadExternalAgentRuntimeProviders` surface and its error
-  classes are unchanged, so runtime loading stays behavior-stable. Wiring the
-  channel loader into config validation and promoting `@excitedjs/feishu-channel`
-  to a real provider implementation remain later channel slices.
+  ref. The loader's already-loaded skip is implementation-aware: a built-in
+  descriptor that is pre-registered without an implementation still flows through
+  import + factory + implementation registration (reusing the existing
+  descriptor), so the slice-3 Codex/Claude extraction can switch built-ins onto
+  this loader without no-op'ing. The public `loadExternalAgentRuntimeProviders`
+  surface and its error class identities are unchanged, so runtime loading stays
+  behavior-stable. Wiring the channel loader into config validation and promoting
+  `@excitedjs/feishu-channel` to a real provider implementation remain later
+  channel slices.
 
 ## Alternatives Considered
 

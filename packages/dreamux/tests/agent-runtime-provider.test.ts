@@ -237,6 +237,46 @@ describe('AgentRuntimeProviderCatalog', () => {
     expect(created).toHaveLength(1);
   });
 
+  it('loads a package implementation for a pre-registered builtin descriptor', async () => {
+    // The builtin registry pre-registers builtin:codex / builtin:claude-code
+    // descriptors without implementations. The loader skip must be
+    // implementation-aware: a descriptor that exists but has no implementation
+    // must still flow through import + factory + implementation registration,
+    // so the slice-3 Codex/Claude extraction can switch builtins onto this
+    // loader without no-op'ing. (PR #212 P1.)
+    const registry = createBuiltinProviderRegistry();
+    const codexDescriptor = registry.resolve('builtin:codex');
+    expect(registry.getImplementation(codexDescriptor.id)).toBeUndefined();
+
+    let importCount = 0;
+    await loadExternalAgentRuntimeProviders({
+      registry,
+      refs: ['builtin:codex'],
+      importModule: async (packageName) => {
+        importCount += 1;
+        expect(packageName).toBe('@excitedjs/agent-runtime-codex');
+        return { default: externalFactory() };
+      },
+    });
+
+    expect(importCount).toBe(1);
+    // The existing builtin descriptor is reused (not duplicated), and now has an
+    // implementation registered against it.
+    expect(registry.resolve('builtin:codex')).toBe(codexDescriptor);
+    expect(registry.getImplementation(codexDescriptor.id)).toBeDefined();
+
+    // A second load is a true no-op now that the implementation exists.
+    await loadExternalAgentRuntimeProviders({
+      registry,
+      refs: ['builtin:codex'],
+      importModule: async () => {
+        importCount += 1;
+        return { default: externalFactory() };
+      },
+    });
+    expect(importCount).toBe(1);
+  });
+
   it('reports external package import failures with the provider ref', async () => {
     await expect(
       loadExternalAgentRuntimeProviders({

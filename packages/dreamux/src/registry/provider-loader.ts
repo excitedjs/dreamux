@@ -80,8 +80,15 @@ export interface LoadProviderPackagesOptions {
 /**
  * Load every package-backed provider ref in `refs` into the registry using the
  * kind-specific `spec`. Builtin (`builtin:`) and external (`npm:`) refs both
- * flow through here; already-registered refs are skipped, and refs are
- * de-duplicated by canonical form.
+ * flow through here; refs are de-duplicated by canonical form.
+ *
+ * The skip condition is implementation-aware, not descriptor-aware: a ref is
+ * skipped only once its *implementation* is registered. A built-in descriptor
+ * may already exist in the registry (the builtin descriptors are pre-registered)
+ * while its package implementation has not been loaded yet — that ref must still
+ * flow through import + factory + implementation registration. Skipping on
+ * descriptor existence alone would silently leave pre-registered built-ins
+ * without a loaded implementation (the slice-3 Codex/Claude extraction path).
  */
 export async function loadProviderPackages<
   TProvider extends { readonly descriptor: ProviderDescriptor },
@@ -91,9 +98,23 @@ export async function loadProviderPackages<
 ): Promise<void> {
   const importModule = options.importModule ?? defaultImportModule;
   for (const ref of uniqueLoadableRefs(options.refs)) {
-    if (options.registry.hasRef(ref.raw)) continue;
+    if (isImplementationLoaded(options.registry, ref)) continue;
     await loadOneProviderPackage(options.registry, ref, importModule, spec);
   }
+}
+
+/**
+ * True when `ref` already has both a registered descriptor and a registered
+ * implementation. A descriptor without an implementation (a pre-registered
+ * built-in awaiting its package) returns false so the loader proceeds.
+ */
+function isImplementationLoaded(
+  registry: ProviderRegistry,
+  ref: ProviderRef,
+): boolean {
+  if (!registry.hasRef(ref.raw)) return false;
+  const descriptor = registry.resolve(ref.raw);
+  return registry.getImplementation(descriptor.id) !== undefined;
 }
 
 async function loadOneProviderPackage<
@@ -104,10 +125,13 @@ async function loadOneProviderPackage<
   importModule: ProviderModuleImporter,
   spec: ProviderPackageLoaderSpec<TProvider>,
 ): Promise<void> {
+  const existing = registry.hasRef(ref.raw)
+    ? registry.resolve(ref.raw)
+    : undefined;
   const packageName = resolvePackageName(ref, spec);
   const module = await importProviderModule(ref, packageName, importModule, spec);
   const factory = selectFactoryExport(ref, module, spec);
-  const seedDescriptor: ProviderDescriptor = {
+  const seedDescriptor: ProviderDescriptor = existing ?? {
     id: seedDescriptorId(ref),
     kind: spec.kind,
     ref,
@@ -132,8 +156,13 @@ async function loadOneProviderPackage<
     },
   });
 
-  registry.register(provider.descriptor);
-  registry.registerImplementation(provider.descriptor.id, provider);
+  // A pre-registered built-in keeps its existing descriptor; only its
+  // implementation is loaded from the package. Package-backed refs register
+  // both the descriptor and the implementation.
+  if (existing === undefined) {
+    registry.register(provider.descriptor);
+  }
+  registry.registerImplementation(seedDescriptor.id, provider);
 }
 
 function resolvePackageName<
@@ -178,7 +207,7 @@ function selectFactoryExport<
   if (typeof value !== 'function') {
     throw spec.createContractError(
       ref.raw,
-      `expected ${exportName ?? 'default'} export to be a ${spec.kind} provider factory`,
+      `expected ${exportName ?? 'default'} export to be a provider factory function for kind ${JSON.stringify(spec.kind)}`,
     );
   }
   return value as ProviderFactory<TProvider>;

@@ -60,6 +60,18 @@ describe('channel provider loader', () => {
     expect(BUILTIN_PROVIDER_PACKAGES['feishu']).toBe('@excitedjs/feishu-channel');
   });
 
+  it('maps the built-in agent-runtime refs to their extraction packages', () => {
+    // Forward-looking for slice 3: the same alias map carries the runtime
+    // packages, so builtin:codex / builtin:claude-code resolve through the
+    // identical loader path once those packages exist.
+    expect(resolveBuiltinProviderPackage('codex')).toBe(
+      '@excitedjs/agent-runtime-codex',
+    );
+    expect(resolveBuiltinProviderPackage('claude-code')).toBe(
+      '@excitedjs/agent-runtime-claude-code',
+    );
+  });
+
   it('loads builtin:feishu through the same package-loader path', async () => {
     const registry = createBuiltinProviderRegistry();
     const imported: string[] = [];
