@@ -30,9 +30,15 @@ is wiring only — all per-dispatcher orchestration lives here.
   `dispatcher-workspace.ts`): every dispatcher MUST declare an explicit `cwd`,
   there is no state-dir fallback (issue #182 PR-4). A teammate's cwd is its
   resolved target (`identity.cwd`). Passed as the required `cwd` create-context
-  field — never derived inside the runtime. Managed TeamMate/Team worktrees live
-  under that workspace at `<cwd>/.workspace/worktree/<repo-slug>/<slug>/`, never
-  under `~/.dreamux`.
+  field — never derived inside the runtime. Managed TeamMate/Team git worktrees
+  live under that workspace at `<cwd>/.workspace/worktree/<repo-slug>/<slug>/`,
+  never under `~/.dreamux`. When a `spawn`/`create` omits `repo` (issue #199),
+  the work directory is instead a plain `<cwd>/.workspace/work/<name>/` dir
+  (`WorktreeManager.prepareDefaultWorkspace`) — `mkdir -p`, no git worktree, so
+  the dispatcher cwd need not be a git repo; it is persisted as a `reuse-cwd`
+  worktree with `source_repo: null`. `WorktreeManager` resolves all three modes
+  (default work dir, reuse-cwd, managed); the admin layer signals "default" by
+  forwarding no cwd/worktree.
 - **Nested dispatch is prevented by MCP injection, not a runtime check.** A
   teammate/team-leader agent is simply not injected the "spawn teammate" tool;
   role differentiation is done by the MCP tool set + system prompt this service

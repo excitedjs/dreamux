@@ -100,7 +100,7 @@ async function handleRequest(
 
 function teamTools(): Array<Record<string, unknown>> {
   return [
-    tool('create', 'Create a Team and start its TeamLeader. team_name is the concrete Team key used by all later status/history/dissolve/bind_group calls. intent is required: it is the durable recovery subject for the Team. repo is optional: omit it to use the dispatcher\'s default directory, or pass { mode: reuse-cwd | managed, path?, base_ref?, branch?, slug?, cleanup? } to choose the repository work mode. Optionally bind an existing Feishu group chat at create time via bind_group.', {
+    tool('create', 'Create a Team and start its TeamLeader. team_name is the concrete Team key used by all later status/history/dissolve/bind_group calls. intent is required: it is the durable recovery subject for the Team. repo is optional: omit it to run the TeamLeader and members in a plain shared work directory under the dispatcher workspace (.workspace/work/<team_name>/ — the dispatcher cwd need not be a git repo), or pass { mode: reuse-cwd | managed, path?, base_ref?, branch?, slug?, cleanup? } — managed creates a git worktree. Optionally bind an existing Feishu group chat at create time via bind_group.', {
       team_name: { type: 'string', minLength: 1, maxLength: 64 },
       repo: repoInputSchema(),
       leader_agent_runtime: { type: 'string', minLength: 1, maxLength: 128 },
@@ -208,8 +208,8 @@ function createArgs(value: unknown): Record<string, unknown> {
     bindGroup = { chat_id: requireString(bindObj, 'chat_id') };
   }
   // #199 Slice 2: the public work-directory input is a single optional `repo`
-  // object (replacing the old required `repo_cwd`). Omitted → the dispatcher's
-  // default directory.
+  // object (replacing the old required `repo_cwd`). Omitted → a plain shared
+  // .workspace/work/<team_name>/ dir (no git worktree, issue #199).
   const repo = optionalRepoInput(obj, 'repo');
   return {
     team_name: requireString(obj, 'team_name'),

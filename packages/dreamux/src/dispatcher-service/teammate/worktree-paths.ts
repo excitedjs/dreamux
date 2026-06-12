@@ -20,6 +20,7 @@ import { teamMateNameSegment } from '../../platform/paths.js';
 /** Dreamux-owned boundary directory inside a dispatcher workspace. */
 export const MANAGED_WORKSPACE_DIRNAME = '.workspace';
 const WORKTREE_SUBDIR = 'worktree';
+const WORK_SUBDIR = 'work';
 
 /** `<workspace>/.workspace` — the Dreamux-owned boundary, self-ignored. */
 export function managedWorkspaceDir(dispatcherWorkspace: string): string {
@@ -31,9 +32,32 @@ export function managedWorkspaceGitignorePath(dispatcherWorkspace: string): stri
   return join(managedWorkspaceDir(dispatcherWorkspace), '.gitignore');
 }
 
-/** `<workspace>/.workspace/worktree` — root of all managed worktrees. */
+/** `<workspace>/.workspace/worktree` — root of all managed git worktrees. */
 export function managedWorktreeRoot(dispatcherWorkspace: string): string {
   return join(managedWorkspaceDir(dispatcherWorkspace), WORKTREE_SUBDIR);
+}
+
+/** `<workspace>/.workspace/work` — root of default (non-git) per-name work dirs. */
+export function managedWorkRoot(dispatcherWorkspace: string): string {
+  return join(managedWorkspaceDir(dispatcherWorkspace), WORK_SUBDIR);
+}
+
+/**
+ * Absolute path of the default (no-`repo`) plain work directory for a concrete
+ * TeamMate/Team name under a dispatcher workspace (issue #199). Unlike a managed
+ * worktree this is a plain `mkdir`'d directory, not a git worktree — so the
+ * dispatcher cwd need not be a git repo — and it shares the self-ignored
+ * `.workspace/` boundary so it never becomes dispatcher-repo content. The inner
+ * segment is sanitized the same way every neutral teammate path segment is.
+ */
+export function defaultWorkspaceWorkPath(input: {
+  dispatcherWorkspace: string;
+  slug: string;
+}): string {
+  return join(
+    managedWorkRoot(input.dispatcherWorkspace),
+    teamMateNameSegment(input.slug),
+  );
 }
 
 /**

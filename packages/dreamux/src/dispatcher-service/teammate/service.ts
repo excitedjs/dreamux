@@ -35,7 +35,7 @@ import { TeamMateIdentityStore } from './identity-store.js';
 import { TeamMateRuntimeStateStore } from './runtime-state.js';
 import { TeamMateTurnsStore } from './turns-store.js';
 import { allocateConcreteName, type SuffixGenerator } from './name-allocator.js';
-import { WorktreeManager } from './worktree-manager.js';
+import { WorktreeManager, type PreparedTeamMateWorkspace } from './worktree-manager.js';
 import {
   requireLifecycleText,
   validateTeamMateName,
@@ -234,12 +234,8 @@ export class TeamMateAgentService {
     // Required recovery subject — enforced here too for in-process callers that
     // bypass the MCP shim / admin layer (issue #182 PR-3).
     requireLifecycleText(input.intent, 'TeamMate spawn intent');
-    const cwd = input.sharedWorkspace?.sourceCwd ?? input.cwd;
     if (input.principal.kind === 'team_leader' && input.sharedWorkspace === undefined) {
       throw new Error('TeamLeader member spawn requires a shared team workspace');
-    }
-    if (typeof cwd !== 'string' || cwd.trim() === '') {
-      throw new Error('TeamMate spawn requires cwd');
     }
     const owner = ownerForPrincipal(input.principal);
     const role: TeamMateRole =
@@ -251,21 +247,7 @@ export class TeamMateAgentService {
       input.agentRuntime ?? this.defaultAgentRuntime(dispatcherId);
     const agent = this.resolveAgent(dispatcherId, agentRuntimeId);
     const provider = this.opts.agentRuntimeProviders.resolve(agent.provider);
-    // Only a managed worktree is placed under the dispatcher workspace, so only
-    // managed mode resolves (and thus enforces) the dispatcher cwd contract;
-    // reuse-cwd never forces it (issue #182 PR-4).
-    const managedMode = (input.worktree?.mode ?? 'reuse-cwd') === 'managed';
-    const workspace =
-      input.sharedWorkspace ??
-      (await this.worktrees.prepare({
-        dispatcherId,
-        teammateName: name,
-        cwd,
-        ...(managedMode
-          ? { dispatcherWorkspace: await this.dispatcherWorkspace(dispatcherId) }
-          : {}),
-        request: input.worktree,
-      }));
+    const workspace = await this.resolveSpawnWorkspace(dispatcherId, name, input);
     if (input.sharedWorkspace === undefined) {
       await this.assertManagedWorktreeAvailable(dispatcherId, name, workspace.worktree);
     }
@@ -299,6 +281,47 @@ export class TeamMateAgentService {
       prompt: input.prompt,
     });
     return { teammate: this.toStatus(live.state.current(), live.runtime), turn };
+  }
+
+  /**
+   * Resolve a spawn's workspace (issue #199). Three cases, in order:
+   *   - a Team member inherits the Team's shared workspace verbatim;
+   *   - no `repo` and no explicit cwd → a plain per-name work directory under
+   *     the dispatcher workspace (`.workspace/work/<name>/`), NOT a git worktree,
+   *     so the dispatcher cwd need not be a git repo;
+   *   - an explicit cwd and/or `repo` mode → reuse-cwd runs in the given cwd;
+   *     managed creates a git worktree under the dispatcher workspace (only
+   *     managed forces the dispatcher cwd contract — issue #182 PR-4).
+   */
+  private async resolveSpawnWorkspace(
+    dispatcherId: string,
+    name: string,
+    input: ScopedSpawnTeamMateInput,
+  ): Promise<PreparedTeamMateWorkspace | TeamMateSharedWorkspace> {
+    if (input.sharedWorkspace !== undefined) return input.sharedWorkspace;
+    if (
+      input.worktree === undefined &&
+      (input.cwd === undefined || input.cwd.trim() === '')
+    ) {
+      return this.worktrees.prepareDefaultWorkspace({
+        dispatcherWorkspace: await this.dispatcherWorkspace(dispatcherId),
+        slug: name,
+      });
+    }
+    const cwd = input.cwd;
+    if (typeof cwd !== 'string' || cwd.trim() === '') {
+      throw new Error('TeamMate spawn requires cwd');
+    }
+    const managedMode = (input.worktree?.mode ?? 'reuse-cwd') === 'managed';
+    return this.worktrees.prepare({
+      dispatcherId,
+      teammateName: name,
+      cwd,
+      ...(managedMode
+        ? { dispatcherWorkspace: await this.dispatcherWorkspace(dispatcherId) }
+        : {}),
+      request: input.worktree,
+    });
   }
 
   async send(input: SendTeamMateInput): Promise<TeamMateSendResult> {

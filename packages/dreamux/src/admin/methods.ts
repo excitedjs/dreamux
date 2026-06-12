@@ -145,14 +145,16 @@ export const adminMethods: Record<string, AdminHandler> = {
     if (caller.kind === 'team_leader' && params?.['owner'] !== undefined) {
       throw new AdminError('BAD_REQUEST', 'TeamMate owner and team_id are server-derived for team_leader callers');
     }
-    // #199 Slice 2: dispatcher callers pass an optional `repo` object; a
-    // team_leader member always inherits the shared team workspace and takes no
-    // repo input. Omitted repo → the dispatcher's default workspace, reuse-cwd.
+    // #199: dispatcher callers pass an optional `repo` object; a team_leader
+    // member always inherits the shared team workspace and takes no repo input.
+    // Omitted `repo` → leave cwd unset so the service creates the default
+    // per-name work dir (`.workspace/work/<name>/`). An explicit `repo` resolves
+    // to its `path`, or the dispatcher workspace when the repo gives no path.
     const repo = caller.kind === 'team_leader' ? null : repoRequest(params, 'repo');
     const cwd =
-      caller.kind === 'team_leader'
+      caller.kind === 'team_leader' || repo === null
         ? null
-        : repo?.cwd ?? (await server.dispatcherService.teammates.dispatcherWorkspace(id));
+        : repo.cwd ?? (await server.dispatcherService.teammates.dispatcherWorkspace(id));
     const worktree = caller.kind === 'team_leader' ? null : repo?.worktree ?? null;
     const sharedWorkspace =
       caller.kind === 'team_leader'
@@ -268,12 +270,16 @@ export const adminMethods: Record<string, AdminHandler> = {
     // Required recovery subject (issue #182 PR-3) — validated before any
     // work-directory resolution so a malformed request fails fast.
     const intent = mustNonEmptyString(params, 'intent');
-    // #199 Slice 2: optional `repo` object replaces the required `repo_cwd`.
-    // Omitted → the dispatcher's default workspace; a Team with no explicit
-    // worktree request keeps the managed-worktree default.
+    // #199: optional `repo` object replaces the required `repo_cwd`. Omitted →
+    // leave repoCwd unset so the Team runs in the default
+    // `.workspace/work/<team_name>/` dir (no git worktree). An explicit `repo`
+    // resolves to its `path`, or the dispatcher workspace when the repo gives no
+    // path; `repo: { mode: 'managed' }` creates a git worktree.
     const repo = repoRequest(params, 'repo');
     const repoCwd =
-      repo?.cwd ?? (await server.dispatcherService.teammates.dispatcherWorkspace(id));
+      repo === null
+        ? null
+        : repo.cwd ?? (await server.dispatcherService.teammates.dispatcherWorkspace(id));
     const worktree = repo?.worktree ?? null;
     const prompt = optionalString(params, 'prompt');
     const bindGroup = optionalBindGroup(params, 'bind_group');
@@ -281,7 +287,7 @@ export const adminMethods: Record<string, AdminHandler> = {
       return await server.dispatcherService.createTeam({
         dispatcherId: id,
         name,
-        repoCwd,
+        ...(repoCwd !== null ? { repoCwd } : {}),
         leaderAgentRuntime,
         intent,
         ...(worktree !== null ? { worktree } : {}),

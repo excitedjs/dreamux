@@ -182,7 +182,7 @@ function teammateTools(
   return [
     tool(
       'spawn',
-      'Start a resumable TeamMate agent and submit its first turn. name_prefix is the requested label; spawn RETURNS the concrete, never-reused name that all later send/status/last/close MUST use. Use get_capabilities.agent_runtimes[].id as agent_runtime. intent is required: it is the durable recovery subject. repo is optional: omit it to work in the dispatcher\'s default directory, or pass { mode: reuse-cwd | managed, path?, base_ref?, branch?, slug?, cleanup? } to choose the repository work mode.',
+      'Start a resumable TeamMate agent and submit its first turn. name_prefix is the requested label; spawn RETURNS the concrete, never-reused name that all later send/status/last/close MUST use. Use get_capabilities.agent_runtimes[].id as agent_runtime. intent is required: it is the durable recovery subject. repo is optional: omit it to run in a fresh per-TeamMate work directory under the dispatcher workspace (.workspace/work/<name>/, a plain directory — the dispatcher cwd need not be a git repo), or pass { mode: reuse-cwd | managed, path?, base_ref?, branch?, slug?, cleanup? } — reuse-cwd runs in path, managed creates a git worktree.',
       spawnProperties,
       ['name_prefix', 'prompt', 'intent'],
     ),
@@ -342,7 +342,7 @@ function spawnArgs(
   }
   // #199 Slice 2: the public work-directory input is a single optional `repo`
   // object (replacing the old required `cwd` + `worktree`). Omitted → the server
-  // uses the dispatcher's default directory.
+  // creates a plain per-name work dir (.workspace/work/<name>/, issue #199).
   const repo = optionalRepoInput(obj, 'repo');
   return {
     name_prefix: requireString(obj, 'name_prefix'),
@@ -363,8 +363,10 @@ function optionalProp(
 
 /**
  * Public `repo` input schema (issue #199 Slice 2), shared by `teammate.spawn`
- * and `team.create`: omit it to use the default work directory, or choose a
- * repository work mode (`reuse-cwd` / `managed`) with an optional `path`.
+ * and `team.create`: omit it for a plain per-name work dir under the dispatcher
+ * workspace (`.workspace/work/<name>/`, no git repo required), or choose a
+ * repository work mode (`reuse-cwd` runs in `path`; `managed` creates a git
+ * worktree).
  */
 export function repoInputSchema(): Record<string, unknown> {
   return {

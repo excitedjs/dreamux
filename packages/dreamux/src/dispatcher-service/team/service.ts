@@ -50,19 +50,33 @@ export class TeamService {
     if (existing !== null && existing.status !== 'closed') {
       throw new Error(`Team ${JSON.stringify(teamId)} already exists`);
     }
-    const workspace = await this.worktrees.prepare({
-      dispatcherId: input.dispatcherId,
-      teammateName: `team-${teamId}`,
-      cwd: input.repoCwd,
-      dispatcherWorkspace: await this.opts.teammates.dispatcherWorkspace(
-        input.dispatcherId,
-      ),
-      request: input.worktree ?? {
-        mode: 'managed',
-        slug: `team-${teamId}`,
-        cleanup: 'keep',
-      },
-    });
+    const dispatcherWorkspace = await this.opts.teammates.dispatcherWorkspace(
+      input.dispatcherId,
+    );
+    // #199: no `repo` (no explicit cwd, no worktree request) → a plain
+    // `<dispatcher cwd>/.workspace/work/<team_name>/` directory shared by the
+    // TeamLeader and every member, NOT a git worktree, so the dispatcher cwd
+    // need not be a git repo. An explicit `repo` keeps the prior semantics:
+    // reuse-cwd runs in the given cwd; managed (also the in-process default when
+    // a repoCwd is supplied) creates a git worktree under the dispatcher
+    // workspace.
+    const workspace =
+      input.worktree === undefined && input.repoCwd === undefined
+        ? await this.worktrees.prepareDefaultWorkspace({
+            dispatcherWorkspace,
+            slug: teamId,
+          })
+        : await this.worktrees.prepare({
+            dispatcherId: input.dispatcherId,
+            teammateName: `team-${teamId}`,
+            cwd: input.repoCwd ?? dispatcherWorkspace,
+            dispatcherWorkspace,
+            request: input.worktree ?? {
+              mode: 'managed',
+              slug: `team-${teamId}`,
+              cleanup: 'keep',
+            },
+          });
     // The TeamLeader address is a concrete, never-reused name (issue #188), not
     // a reconstructed `${teamId}-leader`. ALWAYS allocate a fresh one — including
     // when recreating a closed Team: `createTeamLeader` mints a new session and
