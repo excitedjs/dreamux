@@ -14,35 +14,22 @@
  * config validation and future manifests never re-parse refs with ad hoc string
  * handling after startup. It is pure: no IO, no dynamic import. Resolution and
  * dynamic loading stay in the registry / runtime loader layer.
+ *
+ * The structural ref shapes (`ProviderRef`, `BuiltinProviderRef`,
+ * `NpmProviderRef`, `ProviderRefSource`) are published by
+ * `@excitedjs/dreamux-types` and re-exported here so the many in-repo imports
+ * from `../registry/index.js` stay stable (issue #209). The parsing/formatting
+ * runtime stays in this package.
  */
 
-/** Where a provider's implementation comes from. */
-export type ProviderRefSource = 'builtin' | 'npm';
+export type {
+  ProviderRefSource,
+  BuiltinProviderRef,
+  NpmProviderRef,
+  ProviderRef,
+} from '@excitedjs/dreamux-types';
 
-/** A bundled, first-party provider selected by id, e.g. `builtin:codex`. */
-export interface BuiltinProviderRef {
-  source: 'builtin';
-  /** Bundled provider id, e.g. `codex` or `claude-code`. */
-  id: string;
-  /** The original, canonical string form. */
-  raw: string;
-}
-
-/**
- * An external provider selected by npm package, optionally narrowed to a named
- * export.
- */
-export interface NpmProviderRef {
-  source: 'npm';
-  /** npm package name, e.g. `@example/dreamux-provider` or `some-provider`. */
-  package: string;
-  /** Named export within the package, or null for the package default. */
-  export: string | null;
-  /** The original, canonical string form. */
-  raw: string;
-}
-
-export type ProviderRef = BuiltinProviderRef | NpmProviderRef;
+import type { ProviderRef, BuiltinProviderRef, NpmProviderRef } from '@excitedjs/dreamux-types';
 
 /** Bundled provider id: lowercase, starts with a letter, kebab-friendly. */
 export const BUILTIN_PROVIDER_ID_PATTERN = /^[a-z][a-z0-9-]*$/;

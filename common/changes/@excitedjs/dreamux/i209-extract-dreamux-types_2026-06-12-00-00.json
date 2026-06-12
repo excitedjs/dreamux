@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Depend on the new declaration-only @excitedjs/dreamux-types package and re-export the provider-authoring contracts (provider ref/descriptor, agent-runtime, channel, turn, logger) from their existing internal paths (issue #209). Internal imports stay stable; no behavior change.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

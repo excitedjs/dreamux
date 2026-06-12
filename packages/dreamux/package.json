@@ -37,6 +37,7 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
+    "@excitedjs/dreamux-types": "workspace:*",
     "@excitedjs/feishu-transport": "workspace:*",
     "@excitedjs/tm": "2.4.1",
     "smol-toml": "^1.6.1",
