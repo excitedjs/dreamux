@@ -208,7 +208,7 @@ Rules:
 - `app_secret` must be redacted from `config show`, `status`, `doctor`, and
   logs.
 - A top-level `codex` block is **not** supported: it is rejected loudly on
-  load with migration guidance. All Codex settings are per-dispatcher.
+  load with rebuild guidance. All Codex settings are per-dispatcher.
 - Pre-providerized `dispatchers[].feishu` and `dispatchers[].codex` blocks are
   **not** silently migrated. They fail loudly with v2 rebuild guidance.
 - `runtime.config.bin` (default `"codex"`) is that dispatcher's Codex binary
@@ -233,6 +233,25 @@ Rules:
 ## State And Logs
 
 State and logs are server-owned. They are not operator-editable config.
+
+### 0.x Upgrade Policy
+
+Dreamux is a bootstrap project during 0.x, so incompatible config, state,
+cache, and workspace-local file shape changes must not accumulate automatic
+migrations or legacy compatibility bridges. A current reader has two allowed
+behaviors: accept the current schema, or fail loudly with exact
+rebuild/delete/onboard guidance. Server-owned state that is explicitly
+rebuildable may warn-and-recreate or warn-and-drop when the loss is documented
+and safe; authorization, TeamMate/Team recovery records, and other
+user-meaningful durable facts fail instead of being inferred.
+
+Removed whole-file or directory layouts may be detected only to produce
+diagnostics (for example during `dreamux serve` startup or `dreamux doctor`);
+the detector must not read them as source data, transform them, or delete them.
+Removed fields in otherwise-current files are rejected by the owning reader.
+The changelog is the upgrade-time contract: breaking entries must explain what
+to rebuild. Prefer pruning runtime compatibility code over carrying 0.x
+migrations forward.
 
 The tree splits volatile run files (`run/`) and rebuildable cache (`cache/`)
 from durable state (`state/`); see
