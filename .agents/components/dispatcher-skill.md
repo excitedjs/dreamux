@@ -27,9 +27,12 @@ ships in the npm package:
   id (early `null` acceptable), and the cwd/source/worktree family is reported
   through one compact `repo` view. The public work-directory INPUT for
   `spawn`/`team.create` is the matching optional `repo` object (`{ mode: reuse-cwd
-  | managed, path?, base_ref?, branch?, slug?, cleanup? }`; omitted → the
-  dispatcher's default directory), replacing the old `cwd` / `repo_cwd` /
-  `worktree` inputs. The obsolete `ctx` and
+  | managed, path?, base_ref?, branch?, slug?, cleanup? }`; omitted → a plain
+  per-name work dir under the dispatcher workspace,
+  `<dispatcher cwd>/.workspace/work/<name>/`, created with `mkdir -p` and NOT a
+  git worktree, so the dispatcher cwd need not be a git repo — `reuse-cwd` runs
+  in `path`, `managed` creates a git worktree; issue #199), replacing the old
+  `cwd` / `repo_cwd` / `worktree` inputs. The obsolete `ctx` and
   `history_events` verbs were removed (issue #188). The
   `tm` CLI is the explicit fallback for legacy diagnostics
   ([provider architecture realignment](../decisions/provider-architecture-realignment.md)).

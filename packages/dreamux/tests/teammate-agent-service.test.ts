@@ -909,9 +909,48 @@ describe('TeamMateAgentService', () => {
     ).rejects.toThrow(/'no-such-agent', which matches no agents\[\]\.id/);
   });
 
-  it('requires cwd for native teammate spawn', async () => {
+  it('spawns with no repo into a plain .workspace/work/<name> dir (non-git cwd)', async () => {
+    // #199: omitting `repo` (no explicit cwd) creates a plain per-name work
+    // directory under the dispatcher workspace — NOT a git worktree — so the
+    // dispatcher cwd need not be a git repo. dispatcherCwd here is a plain
+    // (non-git) directory.
     const { catalog } = providerCatalog();
     const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
+    const service = new TeamMateAgentService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: catalog,
+      log: noopLog(),
+    });
+    const spawned = await service.spawn({
+      dispatcherId: 'flow',
+      name: 'solo',
+      intent: 'work',
+      prompt: 'go',
+    } as Parameters<TeamMateAgentService['spawn']>[0]);
+    const reviewer = spawned.teammate.name;
+    expect(spawned.teammate.repo).toMatchObject({
+      mode: 'reuse-cwd',
+      source_repo: null,
+      cleanup_state: 'not-managed',
+    });
+    // The runtime cwd is the default work dir, not the dispatcher cwd itself.
+    expect(spawned.teammate.repo.path).toMatch(
+      new RegExp(`/\\.workspace/work/${reviewer}$`),
+    );
+    expect(spawned.teammate.repo.path).not.toBe(dispatcherCwd);
+    expect(existsSync(spawned.teammate.repo.path)).toBe(true);
+    // The boundary `.gitignore` (`*`) keeps the work dir out of any repo view.
+    expect(
+      await readFile(join(dispatcherCwd, '.workspace', '.gitignore'), 'utf8'),
+    ).toContain('*');
+  });
+
+  it('fails loud when a no-repo spawn has no configured dispatcher cwd', async () => {
+    // The dispatcher cwd contract still holds: with no configured cwd there is
+    // nowhere to root the default work dir, so spawn fails loud (issue #182).
+    const { catalog } = providerCatalog();
+    const config = testDreamuxConfig([testDispatcherConfig({ cwd: null })]);
     const service = new TeamMateAgentService({
       config,
       dispatchers: new DispatcherStore(config),

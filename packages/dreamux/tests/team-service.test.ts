@@ -239,6 +239,47 @@ describe('TeamService', () => {
     expect(closedView?.close_note).toBe('done');
   });
 
+  it('creates a team with no repo in a plain .workspace/work/<team_name> dir, members inherit it', async () => {
+    // #199: a Team with no `repo` runs the TeamLeader (and every member) in a
+    // plain `<dispatcher cwd>/.workspace/work/<team_name>/` directory — NOT a git
+    // worktree — so the dispatcher cwd need not be a git repo. dispatcherCwd is a
+    // plain (non-git) directory here.
+    const { teams, teammates } = buildServices();
+    const created = await teams.create({
+      dispatcherId: 'flow',
+      name: 'plain',
+      intent: 'work',
+      leaderAgentRuntime: 'flow',
+    });
+    expect(created.team).toMatchObject({
+      team_name: 'plain',
+      status: 'running',
+      source_repo: null,
+    });
+    expect(created.leader!.repo).toMatchObject({
+      mode: 'reuse-cwd',
+      source_repo: null,
+      cleanup_state: 'not-managed',
+    });
+    expect(created.leader!.repo.path).toMatch(/\/\.workspace\/work\/plain$/);
+    expect(existsSync(created.leader!.repo.path)).toBe(true);
+
+    // A member spawned by the TeamLeader inherits the SAME shared work dir.
+    const workspace = await teams.sharedWorkspace('flow', 'plain');
+    const member = await teammates.spawnScoped({
+      principal: teamLeaderPrincipal({
+        dispatcherId: 'flow',
+        teamId: 'plain',
+        leaderName: created.team.leader_name,
+      }),
+      name: 'builder',
+      intent: 'work',
+      prompt: 'build',
+      sharedWorkspace: workspace,
+    });
+    expect(member.teammate.repo.path).toBe(created.leader!.repo.path);
+  });
+
   it('captures a bound-channel TeamLeader turn in the leader turns archive (#199 Slice 3)', async () => {
     const repo = await initGitRepo(join(root, 'channel-repo'));
     const { teams, teammates } = buildServices();

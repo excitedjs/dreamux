@@ -9,6 +9,7 @@ import {
   teamMateNameSegment,
 } from '../../platform/paths.js';
 import {
+  defaultWorkspaceWorkPath,
   managedWorkspaceDir,
   managedWorkspaceGitignorePath,
   managedWorktreePath,
@@ -129,6 +130,46 @@ export class WorktreeManager {
         base_ref: baseRef,
         cleanup: input.request?.cleanup ?? 'keep',
         cleanup_state: 'managed-active',
+        cleanup_error: null,
+      },
+    };
+  }
+
+  /**
+   * Prepare the default (no-`repo`) workspace for a concrete TeamMate/Team name
+   * (issue #199): a plain `<dispatcherWorkspace>/.workspace/work/<slug>/`
+   * directory, NOT a git worktree. The dispatcher cwd need not be a git repo —
+   * no git command runs — so `source_repo` is reported as null even if the
+   * directory happens to sit inside a repo. The `.workspace/` boundary is
+   * self-ignored exactly as for managed worktrees, so the work dir never becomes
+   * dispatcher-repo content.
+   */
+  async prepareDefaultWorkspace(input: {
+    dispatcherWorkspace: string;
+    slug: string;
+  }): Promise<PreparedTeamMateWorkspace> {
+    const dispatcherWorkspace = await realpath(input.dispatcherWorkspace);
+    if (await isRealPathUnderDreamuxRoot(dispatcherWorkspace)) {
+      throw new Error(
+        'default TeamMate/Team work directories must not be created under the ' +
+          `Dreamux home (~/.dreamux); dispatcher workspace resolves there: ${dispatcherWorkspace}`,
+      );
+    }
+    await this.ensureWorkspaceBoundary(dispatcherWorkspace);
+    const path = defaultWorkspaceWorkPath({ dispatcherWorkspace, slug: input.slug });
+    await mkdir(path, { recursive: true });
+    return {
+      sourceCwd: path,
+      sourceRepo: null,
+      runtimeCwd: path,
+      worktree: {
+        mode: 'reuse-cwd',
+        slug: null,
+        path,
+        branch: null,
+        base_ref: null,
+        cleanup: 'keep',
+        cleanup_state: 'not-managed',
         cleanup_error: null,
       },
     };

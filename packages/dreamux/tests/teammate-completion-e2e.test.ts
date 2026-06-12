@@ -434,6 +434,13 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
       },
     ]);
 
+    // The settled-turn capture is a best-effort (fire-and-forget) record write.
+    // Wait until it is durable before tearing down, so a still-in-flight atomic
+    // write (temp file + rename) cannot race the recursive cleanup (ENOTEMPTY).
+    await waitFor(
+      async () => (await facade.getTeamMateLast('flow', reviewer)).returned_turns === 1,
+    );
+
     await facade.shutdown();
   });
 

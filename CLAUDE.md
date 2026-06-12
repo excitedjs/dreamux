@@ -106,6 +106,14 @@ That record wins over older runtime-dir / SQLite decisions.
   across Team/TeamMate usage. Managed worktree creation fails loud if the
   workspace resolves under `~/.dreamux`. Legacy identity records pointing at the
   old under-state path are read verbatim (no rewrite, no deletion).
+- `<dispatcher cwd>/.workspace/work/<name>/` — the **default** TeamMate/Team work
+  directory (issue #199), used when `teammate.spawn` / `team.create` omits
+  `repo`. A plain `mkdir -p` directory, NOT a git worktree, so the dispatcher cwd
+  need not be a git repo (no git command runs; `source_repo` is reported `null`).
+  It shares the self-ignored `.workspace/` boundary and the under-`~/.dreamux`
+  fail-loud guard. Only an explicit `repo: { mode: 'managed' }` creates a git
+  worktree under `.workspace/worktree/`; `repo: { mode: 'reuse-cwd' }` runs in the
+  given path.
 - `~/.dreamux/state/` — durable server-owned state: per-dispatcher
   `status.json`, `access.json`, and `teammate/` task ledgers. Safe to remove
   when the operator intentionally wants to discard server state.

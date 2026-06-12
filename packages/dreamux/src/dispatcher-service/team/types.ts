@@ -32,7 +32,14 @@ export interface TeamRecord {
 export interface TeamCreateInput {
   dispatcherId: string;
   name: string;
-  repoCwd: string;
+  /**
+   * Explicit repository cwd for the Team workspace (issue #199). Omitted when
+   * the caller passes no `repo`: the Team then runs in a plain
+   * `<dispatcher cwd>/.workspace/work/<team_name>/` directory (no git worktree,
+   * dispatcher cwd need not be a git repo). A managed git worktree is created
+   * only for an explicit `worktree` request.
+   */
+  repoCwd?: string;
   leaderAgentRuntime: string;
   worktree?: TeamMateWorktreeRequest;
   /** Required recovery subject for the Team (issue #182 PR-3). */

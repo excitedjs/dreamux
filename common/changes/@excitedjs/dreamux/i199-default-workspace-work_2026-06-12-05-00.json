@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "BREAKING: Default (no-`repo`) TeamMate/Team work directory (issue #199). A `teammate.spawn` or `team.create` that omits `repo` now runs in a fresh plain directory under the dispatcher workspace — `<dispatcher cwd>/.workspace/work/<name>/` for a TeamMate, `.workspace/work/<team_name>/` shared by the TeamLeader and members for a Team — created with `mkdir -p`. This is NOT a git worktree and runs no git command, so the dispatcher cwd no longer needs to be a git repo for the default case. Previously: a no-`repo` TeamMate ran directly in the dispatcher cwd, and a no-`repo` Team created a managed git worktree (which required the dispatcher cwd to be a git repo). To keep the old behavior, pass `repo: { mode: 'reuse-cwd' }` (run in the dispatcher cwd / given path) or `repo: { mode: 'managed' }` (create a git worktree). The `.workspace/` boundary still self-ignores (a `*` .gitignore) so work dirs never become dispatcher-repo content, and default-work-dir creation fails loud if the workspace resolves under `~/.dreamux`. No state rebuild is required: existing TeamMate/Team records keep their persisted runtime paths and are read verbatim; only newly spawned/created agents that omit `repo` land in the new default location.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

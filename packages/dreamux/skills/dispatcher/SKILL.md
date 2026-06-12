@@ -32,8 +32,10 @@ without holding a shell session or polling a process.
   `close`.** `intent` is **required**: a short recovery subject for the record
   (what this TeamMate is for). The work directory is an optional `repo` object
   (issue #199 Slice 2) — `{ mode: reuse-cwd | managed, path?, base_ref?, branch?,
-  slug?, cleanup? }`; omit it to work in the dispatcher's default directory, pass
-  `mode: managed` for an isolated worktree. When selecting a runtime, pass one of
+  slug?, cleanup? }`; omit it to run in a fresh per-TeamMate work dir
+  (`<dispatcher cwd>/.workspace/work/<name>/`, a plain directory — the dispatcher
+  cwd need not be a git repo), or pass `mode: managed` for an isolated git
+  worktree. When selecting a runtime, pass one of
   `get_capabilities.agent_runtimes[].id` as `agent_runtime`; do not pass provider
   refs such as `builtin:*`.
 - `send` — submit a turn to a TeamMate by its concrete name. If it is not live —
@@ -84,8 +86,9 @@ do not inspect the target repo directly from the dispatcher.
 - `create` — create a Team and TeamLeader. Requires `team_name`,
   `leader_agent_runtime`, and `intent` (the Team's recovery subject); no default
   leader runtime is inferred. The work directory is the same optional `repo`
-  object as `teammate.spawn` (issue #199 Slice 2; omit it for the default
-  directory with a managed worktree). Optionally pass `bind_group: { chat_id }`
+  object as `teammate.spawn` (issue #199 Slice 2; omit it for a plain shared
+  `<dispatcher cwd>/.workspace/work/<team_name>/` dir — no git repo required —
+  or pass `mode: managed` for a git worktree). Optionally pass `bind_group: { chat_id }`
   to bind an EXISTING Feishu group chat to the new Team at create time. (The
   former `create_group` tool — create a brand-new Feishu group and invite users —
   was retired; bind an existing group instead.)

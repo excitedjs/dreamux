@@ -324,14 +324,20 @@ dispatcher's own workspace:
     .gitignore                 self-ignores the whole subtree (`*`)
     worktree/
       <repo-slug>/             <sanitized-basename>-<sha256(repo-root):12>
-        <slug>/                one managed TeamMate/Team worktree
+        <slug>/                one managed TeamMate/Team git worktree
+    work/
+      <name>/                  default (no-`repo`) plain TeamMate/Team work dir
 ```
 
-`.workspace/` self-ignores so managed worktrees never become repo content;
-`<repo-slug>` disambiguates same-named repos across Team/TeamMate usage. Managed
-worktree creation fails loud if the workspace resolves under `~/.dreamux`. Legacy
-identity records still pointing at the old under-state path are read verbatim (no
-rewrite, no deletion); only newly created managed worktrees use the new location.
+`.workspace/` self-ignores so neither managed worktrees nor default work dirs
+ever become repo content; `<repo-slug>` disambiguates same-named repos across
+Team/TeamMate usage. The default `work/<name>/` dir (issue #199) is a plain
+`mkdir -p` directory used when a `spawn`/`create` omits `repo` — no git command
+runs, so the dispatcher cwd need not be a git repo. Both managed-worktree and
+default-work-dir creation fail loud if the workspace resolves under `~/.dreamux`.
+Legacy identity records still pointing at the old under-state path are read
+verbatim (no rewrite, no deletion); only newly created worktrees use the new
+location.
 
 Host logging (issue #70): `dreamux serve`, the Feishu channel (gate
 deliver/drop, inbound submit, outbound, `/introduce`), and dispatcher lifecycle
@@ -693,8 +699,12 @@ Issue #188 removed the `ctx` and `history_events` verbs.
 **As of issue #199 (the final contract).** `spawn` takes a requested
 `name_prefix` and returns the concrete, never-reused `name`; the work directory
 is a single optional `repo` object (`{ mode: reuse-cwd | managed, path?,
-base_ref?, branch?, slug?, cleanup? }`; omitted → the dispatcher's default
-directory), replacing the old required `cwd` + `worktree`. `spawn.intent` and
+base_ref?, branch?, slug?, cleanup? }`; omitted → a plain per-name work
+directory under the dispatcher workspace,
+`<dispatcher cwd>/.workspace/work/<name>/`, created with `mkdir -p` and NOT a git
+worktree, so the dispatcher cwd need not be a git repo; `team.create` likewise
+defaults to a shared `.workspace/work/<team_name>/` dir), replacing the old
+required `cwd` + `worktree`. `spawn.intent` and
 `close.note` stay required; `send.intent` optionally updates the recovery
 subject. `history` / `list` / `status` are backed by the per-name records
 (`state/<dispatcher-id>/teammate/records/<name>.json`: identity + a rolling
@@ -706,8 +716,10 @@ is the runtime-native thread id (persisted directly; early `null` acceptable);
 the former Dreamux-minted ledger key, the persisted `checkpoint` object, and the
 `checkpoint_kind` / `session_ref` durable fields are gone — the resume checkpoint
 kind is rebuilt from the runtime. Lifecycle tools forward to `dreamux serve` over
-the local admin socket. A reuse-cwd teammate runs in the resolved work
-directory; a managed teammate runs only in its prepared worktree and persists
+the local admin socket. A default (no-`repo`) teammate runs in its plain
+`.workspace/work/<name>/` dir (persisted as a `reuse-cwd` worktree with
+`source_repo: null`); a `reuse-cwd` teammate runs in the resolved work
+directory; a managed teammate runs only in its prepared git worktree and persists
 source cwd/repo, runtime cwd, worktree branch/base ref, cleanup policy/state, and
 a default dispatcher `owner` field on the record.
 Old identities without owner/worktree metadata read as dispatcher-owned
@@ -842,7 +854,9 @@ and member-count summary — through the `team.*` surface, never through
 `teammate.*`. The Team service controls its own TeamLeader and members through an
 INTERNAL `team_service` authority (constructed only by the Team service, never
 derived from a public caller), since a TeamLeader is reachable by no public
-principal. TeamLeader members spawn into the shared Team managed worktree.
+principal. TeamLeader members spawn into the shared Team workspace (a managed git
+worktree, or — when the Team was created with no `repo` — the plain
+`.workspace/work/<team_name>/` dir), never a separate per-member directory.
 
 Channel binding is persisted as JSON under
 `state/<dispatcher-id>/team/channel-bindings.json`, keyed by the concrete
