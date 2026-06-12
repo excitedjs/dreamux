@@ -13,17 +13,15 @@ import {
   isBuiltinRef,
   parseProviderRef,
 } from './provider-ref.js';
+import type { ProviderDescriptor, ProviderKind } from '@excitedjs/dreamux-types';
 
-/** Kinds of provider the registry can hold. */
-export type ProviderKind = 'channel' | 'agentRuntime';
-
-/** A registered provider descriptor. Capabilities live on provider instances. */
-export interface ProviderDescriptor {
-  /** Stable registry id; builtin providers use their builtin id. */
-  id: string;
-  kind: ProviderKind;
-  ref: ProviderRef;
-}
+/**
+ * Provider kind and descriptor structural shapes are published by
+ * `@excitedjs/dreamux-types`; re-exported here so the many in-repo imports from
+ * `../registry/index.js` stay stable (issue #209). The registry runtime stays
+ * in this package.
+ */
+export type { ProviderDescriptor, ProviderKind } from '@excitedjs/dreamux-types';
 
 /** Thrown when registering a provider id that is already registered. */
 export class DuplicateProviderError extends Error {

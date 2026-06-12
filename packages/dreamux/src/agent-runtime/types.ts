@@ -1,10 +1,15 @@
-import type {
-  InboundDeliveryHooks,
-  InboundDeliveryResult,
-  InboundTurnInput,
-  NoticeInjectionResult,
-  TurnSettledSignal,
-} from './turn.js';
+/**
+ * Agent Runtime contract for Dreamux core.
+ *
+ * The neutral, provider-authoring subset of this contract is published by
+ * `@excitedjs/dreamux-types`; this module re-exports those declarations so the
+ * many existing in-repo imports from `../agent-runtime/types.js` stay stable
+ * (issue #209). The host-coupled shapes that still reference Dreamux-private
+ * types (`DispatcherStatus`, `DispatcherRow`, `DispatcherStore`,
+ * `DispatcherConfig`, `DispatcherProviderConfig`, `ProviderDescriptor`) remain
+ * defined here until later slices replace their host coupling with neutral
+ * public sinks.
+ */
 import type { DispatcherConfig } from '../config/config.js';
 import type { DispatcherProviderConfig } from '../config/config.js';
 import type {
@@ -13,91 +18,49 @@ import type {
   DispatcherStore,
 } from '../state/dispatcher-store.js';
 import type { ProviderDescriptor } from '../registry/index.js';
+import type {
+  AgentRuntimeBinCheck,
+  AgentRuntimeCapabilities,
+  AgentRuntimeContextSnapshot,
+  AgentRuntimeDiagnosticRunner,
+  AgentRuntimeDoctorResult,
+  AgentRuntimeLastResult,
+  AgentRuntimeMcpServer,
+  AgentRuntimePathContext,
+  AgentRuntimeProviderConfigReadContext,
+  AgentRuntimeResumeInput,
+  AgentRuntimeSystemInput,
+  CompletionEnvelope,
+  TeamMateCompletionDeliveryResult,
+} from '@excitedjs/dreamux-types';
+import type {
+  InboundDeliveryHooks,
+  InboundDeliveryResult,
+  InboundTurnInput,
+  NoticeInjectionResult,
+  TurnSettledSignal,
+} from './turn.js';
 
-export interface AgentRuntimeMcpServer {
-  name: string;
-  command: string;
-  args: string[];
-}
-
-/**
- * An open, source-agnostic completion delivery shape. Each runtime self-declares
- * its own `kind` string inside its own capabilities; the shared contract never
- * enumerates them.
- */
-export interface CompletionDeliveryShape {
-  kind: string;
-  description: string;
-}
-
-export interface AgentRuntimeResumeCheckpoint {
-  /** Runtime-owned checkpoint kind; each runtime self-declares its own. */
-  kind: string;
-  id: string;
-}
-
-export type AgentRuntimeResumeCapability =
-  | { supported: true; checkpoint: AgentRuntimeResumeCheckpoint['kind'] }
-  | { supported: false };
-
-export interface AgentRuntimeCapabilities {
-  /** Whether this runtime can resume a prior checkpoint, and which checkpoint id it expects. */
-  resume: AgentRuntimeResumeCapability;
-  /** Whether a follow-up turn can steer/fold into an active turn. */
-  steer: { supported: boolean };
-  /** How runtime events are surfaced to Dreamux. */
-  events: { kind: 'push' | 'synthesized' };
-  /** Whether the runtime can report the last assistant/user-visible result. */
-  last: { supported: boolean };
-  /** Whether the runtime can report context-window usage. */
-  context: { supported: boolean };
-  /**
-   * How the launcher-supplied role/system prompt content
-   * (`AgentRuntimeCreateContext.systemPromptContent`) is applied: `replace`
-   * swaps the engine's base instructions, `append` adds to them.
-   */
-  systemPrompt: { mode: 'replace' | 'append' };
-  /** Upward delivery shapes this runtime supports for teammate completion. */
-  teammateCompletion: readonly CompletionDeliveryShape[];
-}
-
-/**
- * A source-agnostic completion delivered upward to a runtime. `teammate` is one
- * source; `id` identifies the completing entity within that source (e.g. the
- * teammate name).
- */
-export interface CompletionEnvelope {
-  source: string;
-  id: string;
-  status: 'completed' | 'failed' | 'stopped';
-  result: string;
-}
-
-export type TeamMateCompletionDeliveryResult =
-  | { status: 'accepted' }
-  | { status: 'unsupported'; reason: string }
-  | { status: 'failed'; error: Error };
-
-export interface AgentRuntimeSystemInput {
-  kind: 'system';
-  text: string;
-  reason: 'restart-notice' | 'teammate-completion' | 'runtime-control';
-}
-
-export type AgentRuntimeTurnResult = InboundDeliveryResult | NoticeInjectionResult;
-
-export interface AgentRuntimeResumeInput {
-  checkpoint?: AgentRuntimeResumeCheckpoint | null;
-}
-
-export interface AgentRuntimeLastResult {
-  text: string | null;
-}
-
-export interface AgentRuntimeContextSnapshot {
-  usedTokens: number | null;
-  windowTokens: number | null;
-}
+export type {
+  AgentRuntimeMcpServer,
+  AgentRuntimeRole,
+  AgentRuntimeSkillSource,
+  CompletionDeliveryShape,
+  AgentRuntimeResumeCheckpoint,
+  AgentRuntimeResumeCapability,
+  AgentRuntimeCapabilities,
+  CompletionEnvelope,
+  TeamMateCompletionDeliveryResult,
+  AgentRuntimeSystemInput,
+  AgentRuntimeResumeInput,
+  AgentRuntimeLastResult,
+  AgentRuntimeContextSnapshot,
+  AgentRuntimePathContext,
+  AgentRuntimeProviderConfigReadContext,
+  AgentRuntimeBinCheck,
+  AgentRuntimeDoctorResult,
+  AgentRuntimeDiagnosticRunner,
+} from '@excitedjs/dreamux-types';
 
 export interface AgentRuntimeStateStore {
   setStatus(
@@ -118,30 +81,7 @@ export interface AgentRuntimeStateStore {
   ): Promise<void>;
 }
 
-export interface AgentRuntimePathContext {
-  /**
-   * The per-dispatcher root the runtime drops its own state files into
-   * (generated MCP config, …). Neutral: the runtime derives its own subpaths
-   * from here, so the shared layer never enumerates per-runtime artifact
-   * paths. Volatile rendezvous sockets do NOT live here (issue #182): they
-   * are allocated per start under the private runtime-socket root.
-   */
-  dispatcherDir(id: string): string;
-  /**
-   * The runtime's primary-process stdout log file in the central logs tree.
-   * Runtimes without a separate stdout stream may ignore it.
-   */
-  stdoutLogPath(id: string): string;
-  /** The runtime's primary-process stderr/diagnostic log file in the central logs tree. */
-  stderrLogPath(id: string): string;
-  /**
-   * The owning dispatcher's completion-spill directory in the cache tree
-   * (issue #182 PR-2). Supplied by the launcher so a teammate runtime spills
-   * under its operator dispatcher, not its composite runtime id — the same
-   * launcher-resolves-the-real-dir pattern as the log paths above.
-   */
-  completionSpillDir(id: string): string;
-}
+export type AgentRuntimeTurnResult = InboundDeliveryResult | NoticeInjectionResult;
 
 export interface AgentRuntime {
   readonly providerRef: string;
@@ -203,54 +143,6 @@ export interface AgentRuntimeCreateContext {
    */
   onTurnSettled?: (settled: TurnSettledSignal) => void;
   log: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
-}
-
-export interface AgentRuntimeProviderConfigReadContext {
-  providerRef: string;
-  /**
-   * The `agents[].id` whose config block is being parsed — a config-internal
-   * alias, not a dispatcher identity. Provider `readConfig` implementations may
-   * use it for diagnostics; both builtins ignore it.
-   */
-  agentId: string;
-  file: string;
-  prefix: string;
-}
-
-/**
- * A neutral runtime-binary launch descriptor a provider DECLARES for doctor.
- * Doctor dedups these across dispatchers via its own Map and executes them
- * (foreground: a plain `check`; managed service: a launch under the unit env).
- * Pure data — the provider never runs it itself, so codex/claude bin execution
- * never leaks into the provider's own diagnostic pass.
- */
-export interface AgentRuntimeBinCheck {
-  name: string;
-  bin: string;
-  args: string[];
-}
-
-/**
- * The neutral result of a provider's own (non-bin) diagnostic pass — e.g. codex
- * home validation and the codex version gate. Replaces doctor's old
- * codex-specific result union so `cli/doctor.ts` never branches on runtime
- * identity. `detail` is a one-line summary; `errors` are per-problem lines.
- */
-export interface AgentRuntimeDoctorResult {
-  ok: boolean;
-  detail: string;
-  errors: string[];
-}
-
-/**
- * The minimal command runner a provider's diagnostic needs. A structural subset
- * of the CLI's `CommandRunner` so the provider never imports `cli/doctor` or
- * `onboard/types` (that would invert layering and re-leak runtime specifics into
- * the doctor surface).
- */
-export interface AgentRuntimeDiagnosticRunner {
-  check(command: string, args: string[], options?: { env?: NodeJS.ProcessEnv }): Promise<boolean>;
-  capture(command: string, args: string[], options?: { env?: NodeJS.ProcessEnv }): Promise<string>;
 }
 
 /**

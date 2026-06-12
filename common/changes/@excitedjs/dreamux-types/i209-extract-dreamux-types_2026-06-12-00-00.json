@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Introduce the declaration-only @excitedjs/dreamux-types package as the provider-authoring contract anchor (issue #209). Emits .d.ts only with no runtime dependencies.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux-types"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-types",
+  "email": "053700@gmail.com"
+}
