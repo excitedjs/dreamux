@@ -44,7 +44,13 @@ agent session; how it talks to its engine is the engine's business.
 - **External providers use the same path.** `npm:` providers load through
   `external-provider.ts` into the same `ProviderRegistry` + catalog as builtins
   (no third provider tree); they self-declare capabilities, which core validates
-  but never mirrors.
+  but never mirrors. `external-provider.ts` is now the `agentRuntime`
+  specialization of the kind-agnostic `registry/provider-loader.ts` skeleton (it
+  owns dynamic import, export selection, factory invocation, duplicate handling,
+  descriptor registration, and fail-loud formatting); the `channel` kind reuses
+  that same skeleton through `channel/external-channel-provider.ts`. `builtin:*`
+  refs resolve to their package via `registry/builtins.ts`
+  (`BUILTIN_PROVIDER_PACKAGES`) and then take the identical loading path.
 - **cwd is a required launch parameter** on the create context — supplied by the
   launcher (Dispatcher Service), never derived inside the runtime.
 

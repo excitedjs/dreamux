@@ -32,6 +32,43 @@ export const BUILTIN_FEISHU_PROVIDER_REF = 'builtin:feishu';
 export const BUILTIN_CODEX_PROVIDER_REF = 'builtin:codex';
 export const BUILTIN_CLAUDE_CODE_PROVIDER_REF = 'builtin:claude-code';
 
+/**
+ * Built-in provider id -> npm package the generic loader imports for it
+ * (issue #209). The built-in refs stay stable; Dreamux resolves them to the
+ * packages that ship the built-in providers so `builtin:*` and `npm:*` refs use
+ * the same loading path. Each package version-bumps independently behind the
+ * stable ref.
+ */
+export const BUILTIN_PROVIDER_PACKAGES: Readonly<Record<string, string>> = {
+  codex: '@excitedjs/agent-runtime-codex',
+  'claude-code': '@excitedjs/agent-runtime-claude-code',
+  feishu: '@excitedjs/feishu-channel',
+};
+
+/** Thrown when a `builtin:` ref has no known package mapping. */
+export class UnknownBuiltinProviderPackageError extends Error {
+  constructor(readonly id: string) {
+    super(
+      `builtin provider ${JSON.stringify(`builtin:${id}`)} has no known ` +
+        'package mapping',
+    );
+    this.name = 'UnknownBuiltinProviderPackageError';
+  }
+}
+
+/**
+ * Resolve a built-in provider id to the npm package that ships it. Throws
+ * {@link UnknownBuiltinProviderPackageError} for an unmapped id so the loader can
+ * fail loud with a named ref rather than a raw module-loader error.
+ */
+export function resolveBuiltinProviderPackage(id: string): string {
+  const packageName = BUILTIN_PROVIDER_PACKAGES[id];
+  if (packageName === undefined) {
+    throw new UnknownBuiltinProviderPackageError(id);
+  }
+  return packageName;
+}
+
 /** The provider refs Dreamux ships and recognizes. */
 export const BUILTIN_PROVIDERS: readonly BuiltinSpec[] = [
   { id: 'codex', kind: 'agentRuntime' },

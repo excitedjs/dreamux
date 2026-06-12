@@ -1,10 +1,32 @@
+/**
+ * External `agentRuntime` provider loader (issue #209).
+ *
+ * This is the `agentRuntime` specialization of the generic provider package
+ * loader (`../registry/provider-loader.ts`). It keeps the public surface in-repo
+ * callers and tests import (`loadExternalAgentRuntimeProviders`, the factory
+ * type, and the two error classes) while delegating the kind-agnostic mechanics
+ * — dynamic import, export selection, factory invocation, duplicate handling,
+ * descriptor registration, and fail-loud formatting — to the shared skeleton.
+ *
+ * The `channel` kind reuses the same skeleton through a sibling loader; only the
+ * contract assertions below are runtime-specific.
+ */
 import {
-  formatProviderRef,
-  parseProviderRef,
-  type NpmProviderRef,
   type ProviderDescriptor,
   type ProviderRegistry,
 } from '../registry/index.js';
+import {
+  assertLoadedProviderObject,
+  assertProviderDescriptorShape,
+  errMessage,
+  isRecord,
+  loadProviderPackages,
+  type ProviderContractContext,
+  type ProviderFactory,
+  type ProviderModule,
+  type ProviderModuleImporter,
+  type ProviderPackageLoaderSpec,
+} from '../registry/provider-loader.js';
 import type {
   AgentRuntimeCapabilities,
   AgentRuntimeProvider,
@@ -18,17 +40,11 @@ export interface ExternalAgentRuntimeProviderFactoryContext {
   descriptor: ProviderDescriptor;
 }
 
-export type ExternalAgentRuntimeProviderFactory = (
-  context: ExternalAgentRuntimeProviderFactoryContext,
-) => AgentRuntimeProvider | Promise<AgentRuntimeProvider>;
+export type ExternalAgentRuntimeProviderFactory = ProviderFactory<AgentRuntimeProvider>;
 
-export type ExternalAgentRuntimeModule = Record<string, unknown> & {
-  default?: unknown;
-};
+export type ExternalAgentRuntimeModule = ProviderModule;
 
-export type ExternalAgentRuntimeModuleImporter = (
-  packageName: string,
-) => Promise<ExternalAgentRuntimeModule>;
+export type ExternalAgentRuntimeModuleImporter = ProviderModuleImporter;
 
 export class ExternalAgentRuntimeProviderLoadError extends Error {
   constructor(
@@ -59,197 +75,77 @@ export interface LoadExternalAgentRuntimeProvidersOptions {
   importModule?: ExternalAgentRuntimeModuleImporter;
 }
 
+const AGENT_RUNTIME_LOADER_SPEC: ProviderPackageLoaderSpec<AgentRuntimeProvider> = {
+  kind: 'agentRuntime',
+  createLoadError: (ref, message, options) =>
+    new ExternalAgentRuntimeProviderLoadError(ref, message, options),
+  createContractError: (ref, message) =>
+    new ExternalAgentRuntimeProviderContractError(ref, message),
+  assertProvider: assertExternalAgentRuntimeProvider,
+};
+
 export async function loadExternalAgentRuntimeProviders(
   options: LoadExternalAgentRuntimeProvidersOptions,
 ): Promise<void> {
-  const importModule = options.importModule ?? defaultImportModule;
-  const refs = uniqueNpmRefs(options.refs);
-  for (const ref of refs) {
-    if (options.registry.hasRef(ref.raw)) continue;
-    await loadOneExternalAgentRuntimeProvider({
-      registry: options.registry,
-      ref,
-      importModule,
-    });
-  }
-}
-
-async function loadOneExternalAgentRuntimeProvider(options: {
-  registry: ProviderRegistry;
-  ref: NpmProviderRef;
-  importModule: ExternalAgentRuntimeModuleImporter;
-}): Promise<void> {
-  const module = await importExternalModule(options.ref, options.importModule);
-  const factory = externalFactoryExport(options.ref, module);
-  const seedDescriptor: ProviderDescriptor = {
-    id: options.ref.raw,
-    kind: 'agentRuntime',
-    ref: options.ref,
-  };
-  let provider: AgentRuntimeProvider;
-  try {
-    provider = await factory({
-      ref: options.ref.raw,
-      descriptor: seedDescriptor,
-    });
-  } catch (err) {
-    throw new ExternalAgentRuntimeProviderLoadError(
-      options.ref.raw,
-      `provider factory threw: ${errMessage(err)}`,
-      { cause: err },
-    );
-  }
-
-  assertExternalAgentRuntimeProvider(options.ref.raw, provider);
-  options.registry.register(provider.descriptor);
-  options.registry.registerImplementation(provider.descriptor.id, provider);
-}
-
-async function importExternalModule(
-  ref: NpmProviderRef,
-  importModule: ExternalAgentRuntimeModuleImporter,
-): Promise<ExternalAgentRuntimeModule> {
-  try {
-    return await importModule(ref.package);
-  } catch (err) {
-    throw new ExternalAgentRuntimeProviderLoadError(
-      ref.raw,
-      `could not import package ${JSON.stringify(ref.package)}: ${errMessage(err)}`,
-      { cause: err },
-    );
-  }
-}
-
-function externalFactoryExport(
-  ref: NpmProviderRef,
-  module: ExternalAgentRuntimeModule,
-): ExternalAgentRuntimeProviderFactory {
-  const exportName = ref.export ?? 'default';
-  const value = ref.export === null ? module.default : module[ref.export];
-  if (typeof value !== 'function') {
-    throw new ExternalAgentRuntimeProviderContractError(
-      ref.raw,
-      `expected ${exportName} export to be an agentRuntime provider factory`,
-    );
-  }
-  return value as ExternalAgentRuntimeProviderFactory;
+  await loadProviderPackages(options, AGENT_RUNTIME_LOADER_SPEC);
 }
 
 function assertExternalAgentRuntimeProvider(
-  expectedRef: string,
   value: unknown,
+  context: ProviderContractContext,
 ): asserts value is AgentRuntimeProvider {
-  if (typeof value !== 'object' || value === null) {
-    throw new ExternalAgentRuntimeProviderContractError(
-      expectedRef,
-      'factory must return an AgentRuntimeProvider object',
-    );
-  }
+  assertLoadedProviderObject(value, context);
   const candidate = value as Partial<AgentRuntimeProvider>;
-  if (candidate.ref !== expectedRef) {
-    throw new ExternalAgentRuntimeProviderContractError(
-      expectedRef,
-      `provider.ref must be ${JSON.stringify(expectedRef)}`,
-    );
-  }
-  assertDescriptor(expectedRef, candidate.descriptor);
+  assertProviderDescriptorShape(candidate.descriptor, 'agentRuntime', context);
   if (typeof candidate.getCapabilities !== 'function') {
-    throw new ExternalAgentRuntimeProviderContractError(
-      expectedRef,
-      'provider.getCapabilities must be a function',
-    );
+    context.fail('provider.getCapabilities must be a function');
   }
   if (typeof candidate.createRuntime !== 'function') {
-    throw new ExternalAgentRuntimeProviderContractError(
-      expectedRef,
-      'provider.createRuntime must be a function',
-    );
+    context.fail('provider.createRuntime must be a function');
   }
   let capabilities: AgentRuntimeCapabilities;
   try {
-    capabilities = candidate.getCapabilities();
+    capabilities = candidate.getCapabilities!();
   } catch (err) {
-    throw new ExternalAgentRuntimeProviderContractError(
-      expectedRef,
-      `provider.getCapabilities threw: ${errMessage(err)}`,
-    );
+    context.fail(`provider.getCapabilities threw: ${errMessage(err)}`);
   }
-  assertCapabilities(expectedRef, capabilities);
-}
-
-function assertDescriptor(
-  expectedRef: string,
-  descriptor: ProviderDescriptor | undefined,
-): asserts descriptor is ProviderDescriptor {
-  if (descriptor === undefined) {
-    throw new ExternalAgentRuntimeProviderContractError(
-      expectedRef,
-      'provider.descriptor is required',
-    );
-  }
-  if (descriptor.kind !== 'agentRuntime') {
-    throw new ExternalAgentRuntimeProviderContractError(
-      expectedRef,
-      `provider.descriptor.kind must be "agentRuntime" (got ${JSON.stringify(descriptor.kind)})`,
-    );
-  }
-  if (typeof descriptor.id !== 'string' || descriptor.id.trim() === '') {
-    throw new ExternalAgentRuntimeProviderContractError(
-      expectedRef,
-      'provider.descriptor.id must be a non-empty string',
-    );
-  }
-  if (formatProviderRef(descriptor.ref) !== expectedRef) {
-    throw new ExternalAgentRuntimeProviderContractError(
-      expectedRef,
-      `provider.descriptor.ref must be ${JSON.stringify(expectedRef)}`,
-    );
-  }
+  assertCapabilities(capabilities, context);
 }
 
 function assertCapabilities(
-  expectedRef: string,
   value: unknown,
+  context: ProviderContractContext,
 ): asserts value is AgentRuntimeCapabilities {
   if (!isRecord(value)) {
-    throw new ExternalAgentRuntimeProviderContractError(
-      expectedRef,
-      'capabilities must be an object',
-    );
+    context.fail('capabilities must be an object');
   }
   const capabilities = value as Partial<AgentRuntimeCapabilities>;
-  assertResumeCapability(expectedRef, capabilities.resume);
-  assertSupportedBoolean(expectedRef, 'steer', capabilities.steer);
+  assertResumeCapability(capabilities.resume, context);
+  assertSupportedBoolean('steer', capabilities.steer, context);
   if (!isRecord(capabilities.events) || !isEventKind(capabilities.events['kind'])) {
-    throw new ExternalAgentRuntimeProviderContractError(
-      expectedRef,
-      'capabilities.events.kind must be "push" or "synthesized"',
-    );
+    context.fail('capabilities.events.kind must be "push" or "synthesized"');
   }
-  assertSupportedBoolean(expectedRef, 'last', capabilities.last);
-  assertSupportedBoolean(expectedRef, 'context', capabilities.context);
+  assertSupportedBoolean('last', capabilities.last, context);
+  assertSupportedBoolean('context', capabilities.context, context);
   if (!Array.isArray(capabilities.teammateCompletion)) {
-    throw new ExternalAgentRuntimeProviderContractError(
-      expectedRef,
-      'capabilities.teammateCompletion must be an array',
-    );
+    context.fail('capabilities.teammateCompletion must be an array');
   }
   for (const shape of capabilities.teammateCompletion) {
-    assertCompletionDeliveryShape(expectedRef, shape);
+    assertCompletionDeliveryShape(shape, context);
   }
 }
 
-function assertResumeCapability(expectedRef: string, value: unknown): void {
+function assertResumeCapability(
+  value: unknown,
+  context: ProviderContractContext,
+): void {
   if (!isRecord(value) || typeof value['supported'] !== 'boolean') {
-    throw new ExternalAgentRuntimeProviderContractError(
-      expectedRef,
-      'capabilities.resume.supported must be a boolean',
-    );
+    context.fail('capabilities.resume.supported must be a boolean');
   }
-  if (value['supported'] === true) {
-    if (typeof value['checkpoint'] !== 'string' || value['checkpoint'] === '') {
-      throw new ExternalAgentRuntimeProviderContractError(
-        expectedRef,
+  const resume = value as Record<string, unknown>;
+  if (resume['supported'] === true) {
+    if (typeof resume['checkpoint'] !== 'string' || resume['checkpoint'] === '') {
+      context.fail(
         'capabilities.resume.checkpoint must be a non-empty string when resume is supported',
       );
     }
@@ -257,67 +153,35 @@ function assertResumeCapability(expectedRef: string, value: unknown): void {
 }
 
 function assertSupportedBoolean(
-  expectedRef: string,
   name: string,
   value: unknown,
+  context: ProviderContractContext,
 ): void {
   if (!isRecord(value) || typeof value['supported'] !== 'boolean') {
-    throw new ExternalAgentRuntimeProviderContractError(
-      expectedRef,
-      `capabilities.${name}.supported must be a boolean`,
-    );
+    context.fail(`capabilities.${name}.supported must be a boolean`);
   }
 }
 
 function assertCompletionDeliveryShape(
-  expectedRef: string,
   value: unknown,
+  context: ProviderContractContext,
 ): asserts value is CompletionDeliveryShape {
   if (!isRecord(value)) {
-    throw new ExternalAgentRuntimeProviderContractError(
-      expectedRef,
-      'capabilities.teammateCompletion entries must be objects',
-    );
+    context.fail('capabilities.teammateCompletion entries must be objects');
   }
-  if (typeof value['kind'] !== 'string' || value['kind'] === '') {
-    throw new ExternalAgentRuntimeProviderContractError(
-      expectedRef,
-      'capabilities.teammateCompletion entries must include a kind',
-    );
+  const shape = value as Record<string, unknown>;
+  if (typeof shape['kind'] !== 'string' || shape['kind'] === '') {
+    context.fail('capabilities.teammateCompletion entries must include a kind');
   }
-  if (typeof value['description'] !== 'string' || value['description'] === '') {
-    throw new ExternalAgentRuntimeProviderContractError(
-      expectedRef,
+  if (typeof shape['description'] !== 'string' || shape['description'] === '') {
+    context.fail(
       'capabilities.teammateCompletion entries must include a description',
     );
   }
-}
-
-function uniqueNpmRefs(refs: Iterable<string>): NpmProviderRef[] {
-  const out = new Map<string, NpmProviderRef>();
-  for (const raw of refs) {
-    const parsed = parseProviderRef(raw);
-    if (parsed.source === 'npm') out.set(parsed.raw, parsed);
-  }
-  return [...out.values()];
-}
-
-async function defaultImportModule(
-  packageName: string,
-): Promise<ExternalAgentRuntimeModule> {
-  return import(packageName) as Promise<ExternalAgentRuntimeModule>;
 }
 
 function isEventKind(
   value: unknown,
 ): value is AgentRuntimeCapabilities['events']['kind'] {
   return value === 'push' || value === 'synthesized';
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function errMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
