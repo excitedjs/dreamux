@@ -51,6 +51,10 @@ describe('@excitedjs/dreamux-types manifest', () => {
   it('ships only declarations + docs in the published files list', () => {
     expect(pkg.files).toEqual(['dist', 'README.md', 'LICENSE']);
   });
+
+  it('is not marked private (publishable)', () => {
+    expect(pkg.private).toBeUndefined();
+  });
 });
 
 describe('@excitedjs/dreamux-types tsconfig', () => {

@@ -1,15 +1,30 @@
 /**
  * Agent Runtime provider-authoring contracts (declaration-only).
  *
- * The neutral subset of the Agent Runtime contract that an external runtime
- * package needs to author against. Host-coupled shapes (the runtime create
- * context that today carries dispatcher rows/stores, the diagnostic context
- * that carries a `DispatcherConfig`, the live `AgentRuntime` handle whose status
- * type is a host enum) intentionally stay in `@excitedjs/dreamux` until the
- * runtime-split slices replace their host coupling with neutral sinks. This
- * package never exposes host-private types.
+ * The complete, neutral Agent Runtime provider contract an external runtime
+ * package (or a future built-in runtime package such as
+ * `@excitedjs/agent-runtime-codex`) implements while importing only
+ * `@excitedjs/dreamux-types`. The public create context, runtime handle, state
+ * callbacks, and status are deliberately neutral: they never expose Dreamux
+ * host-private types (`DispatcherRow`, `DispatcherStore`, `DispatcherStatus`,
+ * `DispatcherConfig`, config/state stores, or host path-helper implementations).
+ * Dreamux core adapts its private objects into these public shapes.
+ *
+ * Note on sequencing: Dreamux core's own launcher still threads a host-coupled
+ * create context internally; converging that launcher onto this neutral context
+ * is the runtime-split slice's job (issue #209 slice 3). This package already
+ * publishes the stable public target so external and built-in runtime packages
+ * can be authored against it today.
  */
 import type { DreamuxLogger } from './logger.js';
+import type { ProviderDescriptor } from './provider.js';
+import type {
+  InboundDeliveryHooks,
+  InboundDeliveryResult,
+  InboundTurnInput,
+  NoticeInjectionResult,
+  TurnSettledSignal,
+} from './turn.js';
 
 export interface AgentRuntimeMcpServer {
   name: string;
@@ -171,6 +186,174 @@ export interface AgentRuntimeDiagnosticRunner {
     args: string[],
     options?: { env?: NodeJS.ProcessEnv },
   ): Promise<string>;
+}
+
+/**
+ * Neutral runtime status. Mirrors the host's dispatcher lifecycle states without
+ * importing the host enum, so a provider can report status without depending on
+ * `@excitedjs/dreamux`.
+ */
+export type AgentRuntimeStatus =
+  | 'declared'
+  | 'starting'
+  | 'ready'
+  | 'degraded'
+  | 'stopping'
+  | 'stopped';
+
+/**
+ * Neutral state sink the runtime writes status/thread transitions to. Dreamux
+ * core adapts its own dispatcher store to this shape; the runtime never sees the
+ * host store type.
+ */
+export interface AgentRuntimeStateCallbacks {
+  setStatus(
+    id: string,
+    status: AgentRuntimeStatus,
+    extras?: {
+      last_error?: string | null;
+      last_started_at?: number;
+      last_ready_at?: number;
+    },
+  ): Promise<void>;
+  setThreadId(id: string, threadId: string): Promise<void>;
+  recordLostThread?(
+    id: string,
+    lostThreadId: string,
+    newThreadId: string,
+    error: string,
+  ): Promise<void>;
+}
+
+export type AgentRuntimeTurnResult = InboundDeliveryResult | NoticeInjectionResult;
+
+/**
+ * The neutral, launcher-supplied identity of the runtime instance. Replaces the
+ * host's `DispatcherRow` in the public create context: a provider reads only the
+ * fields it needs (its own id, an optional resumable checkpoint id) and never
+ * the host row.
+ */
+export interface AgentRuntimeIdentity {
+  /** The runtime instance id (the dispatcher/teammate id the launcher assigns). */
+  runtime_id: string;
+  /**
+   * A prior resumable checkpoint id the launcher recovered, or null for a fresh
+   * start. The runtime interprets it per its own `resume` capability.
+   */
+  checkpoint_id?: string | null;
+}
+
+/**
+ * The neutral create context a provider's `createRuntime` receives. Carries the
+ * runtime identity, role, parsed provider config, cwd, optional system-prompt
+ * content, MCP servers, bundled skill sources, and neutral logger/path/state
+ * sinks. It never exposes host dispatcher rows, stores, or config models.
+ */
+export interface AgentRuntimeCreateContext<TConfig = unknown> {
+  identity: AgentRuntimeIdentity;
+  role: AgentRuntimeRole;
+  /** Provider-parsed config (the output of the provider's own `readConfig`). */
+  config: TConfig;
+  /**
+   * The directory the runtime runs in. Always supplied by the launcher; never
+   * derived inside the runtime.
+   */
+  cwd: string;
+  /**
+   * Launcher-supplied role/system-prompt content, applied per the runtime's
+   * `systemPrompt.mode` capability. Optional: teammate launches may omit it.
+   */
+  systemPromptContent?: string;
+  mcpServers: readonly AgentRuntimeMcpServer[];
+  /**
+   * Bundled skill sources core selected for this role. Empty for roles that
+   * receive no bundled Dreamux skills (ordinary teammate/team-member).
+   */
+  skillSources?: readonly AgentRuntimeSkillSource[];
+  logger?: DreamuxLogger;
+  paths?: AgentRuntimePathContext;
+  state?: AgentRuntimeStateCallbacks;
+  /**
+   * Fired each time a delivered turn reaches a terminal state. Capability-
+   * neutral; the launcher opts in.
+   */
+  onTurnSettled?: (settled: TurnSettledSignal) => void;
+}
+
+/**
+ * The live runtime handle a provider's `createRuntime` returns. Neutral: its
+ * status type is {@link AgentRuntimeStatus}, not a host enum.
+ */
+export interface AgentRuntime {
+  readonly providerRef: string;
+  start(): Promise<void>;
+  resume(input?: AgentRuntimeResumeInput): Promise<void>;
+  stop(): Promise<void>;
+  /** Deliver a channel-inbound turn. */
+  channelInput(
+    input: InboundTurnInput,
+    hooks?: InboundDeliveryHooks,
+  ): Promise<AgentRuntimeTurnResult>;
+  /** Inject a system-originated notice (e.g. a restart notice). */
+  systemInput(notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult>;
+  getStatus(): AgentRuntimeStatus;
+  getThreadId(): string | null;
+  wasThreadResumed(): boolean;
+  getLast(): Promise<AgentRuntimeLastResult | null>;
+  getContext(): Promise<AgentRuntimeContextSnapshot | null>;
+  getCapabilities(): AgentRuntimeCapabilities;
+  /**
+   * Deliver a teammate-completion envelope upward. Optional: a runtime whose
+   * capabilities declare no `teammateCompletion` shapes may not support it.
+   */
+  completionInput?(
+    completion: CompletionEnvelope,
+  ): Promise<TeamMateCompletionDeliveryResult>;
+}
+
+/**
+ * Per-runtime diagnostic context. Neutral: it carries the runtime instance id,
+ * the provider-parsed config, the resolved env, and the doctor pass `scope`,
+ * rather than a host `DispatcherConfig`.
+ */
+export interface AgentRuntimeDiagnosticContext<TConfig = unknown> {
+  runtime_id: string;
+  config: TConfig;
+  env: NodeJS.ProcessEnv;
+  scope: 'foreground' | 'managedService';
+}
+
+/**
+ * A provider's self-reported diagnostics: it DECLARES the bin checks doctor
+ * should dedup + execute, and RUNS its own non-bin internal checks. Doctor
+ * iterates providers and calls these instead of branching on a builtin ref.
+ */
+export interface AgentRuntimeDiagnostic<TConfig = unknown> {
+  binChecks(context: AgentRuntimeDiagnosticContext<TConfig>): AgentRuntimeBinCheck[];
+  runDiagnostic(
+    context: AgentRuntimeDiagnosticContext<TConfig>,
+    runner: AgentRuntimeDiagnosticRunner,
+  ): Promise<AgentRuntimeDoctorResult>;
+}
+
+/**
+ * The Agent Runtime provider contract. An external or built-in runtime package
+ * implements this against `@excitedjs/dreamux-types` only.
+ */
+export interface AgentRuntimeProvider<TConfig = unknown> {
+  readonly ref: string;
+  readonly descriptor: ProviderDescriptor;
+  getCapabilities(): AgentRuntimeCapabilities;
+  readConfig?(
+    rawConfig: Record<string, unknown>,
+    context: AgentRuntimeProviderConfigReadContext,
+  ): TConfig;
+  /**
+   * Self-reported doctor diagnostics. Optional: a provider with no diagnostic
+   * surface may omit it.
+   */
+  diagnostic?: AgentRuntimeDiagnostic<TConfig>;
+  createRuntime(context: AgentRuntimeCreateContext<TConfig>): AgentRuntime;
 }
 
 /** Re-export so provider packages can take a logger in their own contexts. */

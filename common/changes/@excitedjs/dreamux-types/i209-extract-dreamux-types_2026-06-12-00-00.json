@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "Introduce the declaration-only @excitedjs/dreamux-types package as the provider-authoring contract anchor (issue #209). Emits .d.ts only with no runtime dependencies.",
+      "comment": "Introduce the declaration-only @excitedjs/dreamux-types package as the provider-authoring contract anchor (issue #209). Emits .d.ts only with no runtime dependencies, and publishes the complete neutral AgentRuntimeProvider/AgentRuntime/AgentRuntimeCreateContext and ChannelProvider contracts so external and built-in runtime/channel packages can be authored against types only.",
       "type": "minor",
       "packageName": "@excitedjs/dreamux-types"
     }

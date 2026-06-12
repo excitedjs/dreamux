@@ -532,6 +532,24 @@ The implementation must add or preserve guards for these invariants:
 - bundled skills are injected only for Dispatcher and TeamLeader roles;
 - runtime startup no longer creates Dreamux-owned workspace skill symlinks.
 
+### Implementation status by slice
+
+These guards are epic-wide; they land across the issue #209 slices. Status:
+
+- **Slice 1 (`@excitedjs/dreamux-types` extraction) — satisfied now:**
+  `@excitedjs/dreamux-types` has no runtime dependencies and emits declarations
+  only; the type package and its provider fixtures import
+  `@excitedjs/dreamux-types` only (an import-boundary test rejects any
+  `@excitedjs/dreamux` import); the fixture compiles a complete
+  `AgentRuntimeProvider` (`readConfig` + `getCapabilities` + `createRuntime`) and
+  a `ChannelProvider` against the type package alone.
+- **Deferred to later slices:** core's own launcher still threads a host-coupled
+  `AgentRuntimeCreateContext` internally — converging it onto the neutral public
+  context (and deleting the host-coupled variant) is slice 3's job. The
+  remaining guards (core not importing the Feishu SDK/transport; built-in
+  packages bundled by default; binding store v2; Team/Channel MCP ownership;
+  role-gated skill injection; symlink removal) land in their respective slices.
+
 ## Alternatives Considered
 
 - **Let each channel own `bind_channel`:** rejected because binding state and

@@ -1,14 +1,22 @@
 /**
  * Agent Runtime contract for Dreamux core.
  *
- * The neutral, provider-authoring subset of this contract is published by
- * `@excitedjs/dreamux-types`; this module re-exports those declarations so the
- * many existing in-repo imports from `../agent-runtime/types.js` stay stable
- * (issue #209). The host-coupled shapes that still reference Dreamux-private
- * types (`DispatcherStatus`, `DispatcherRow`, `DispatcherStore`,
- * `DispatcherConfig`, `DispatcherProviderConfig`, `ProviderDescriptor`) remain
- * defined here until later slices replace their host coupling with neutral
- * public sinks.
+ * The neutral, provider-authoring contract is published by
+ * `@excitedjs/dreamux-types` — including the complete public
+ * `AgentRuntimeProvider`, `AgentRuntime`, and `AgentRuntimeCreateContext`
+ * (issue #209). This module re-exports the neutral sub-shapes so the many
+ * existing in-repo imports from `../agent-runtime/types.js` stay stable.
+ *
+ * The `AgentRuntimeStateStore`, `AgentRuntime`, `AgentRuntimeCreateContext`,
+ * `AgentRuntimeProvider`, `AgentRuntimeDiagnostic`, and
+ * `AgentRuntimeDiagnosticContext` interfaces below are the host-coupled variants
+ * core's own launcher still threads (they reference `DispatcherStatus`,
+ * `DispatcherRow`, `DispatcherStore`, `DispatcherConfig`,
+ * `DispatcherProviderConfig`, and `ProviderDescriptor`). Converging core's
+ * launcher onto the neutral public context — and deleting these host-coupled
+ * variants — is the runtime-split slice's job (issue #209 slice 3). External and
+ * built-in runtime packages should implement
+ * `import type { AgentRuntimeProvider } from '@excitedjs/dreamux-types'` instead.
  */
 import type { DispatcherConfig } from '../config/config.js';
 import type { DispatcherProviderConfig } from '../config/config.js';
@@ -60,6 +68,9 @@ export type {
   AgentRuntimeBinCheck,
   AgentRuntimeDoctorResult,
   AgentRuntimeDiagnosticRunner,
+  AgentRuntimeIdentity,
+  AgentRuntimeStateCallbacks,
+  AgentRuntimeStatus,
 } from '@excitedjs/dreamux-types';
 
 export interface AgentRuntimeStateStore {

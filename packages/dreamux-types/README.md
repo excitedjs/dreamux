@@ -21,9 +21,10 @@ shared structural types.
 ## What it exports
 
 - provider descriptor / ref shapes;
-- Agent Runtime contracts: capabilities, role, skill sources, completion
-  delivery, resume/last/context, MCP server descriptor, diagnostic helper
-  shapes;
+- the complete Agent Runtime provider contract: `AgentRuntimeProvider`,
+  `AgentRuntime`, the neutral `AgentRuntimeCreateContext`, capabilities, role,
+  skill sources, completion delivery, resume/last/context, MCP server
+  descriptor, neutral state callbacks, and diagnostic helper shapes;
 - Channel provider/session contracts, target shapes, inbound envelope shapes,
   tool descriptor/call shapes, and config/session contexts;
 - a minimal public logger type (`DreamuxLogger`).
@@ -31,6 +32,18 @@ shared structural types.
 It does **not** export runtime implementations, default loggers, loader logic,
 provider registry implementations, path helpers, config parsers, or Dreamux host
 state models.
+
+A provider implements the full contract against this package only — see
+`tests/fixtures/external-provider.ts` for a complete `AgentRuntimeProvider`
+(`readConfig` + `getCapabilities` + `createRuntime`) and a `ChannelProvider`
+authored with `@excitedjs/dreamux-types` imports alone.
+
+> **Core convergence is in progress.** Dreamux core's own launcher still threads
+> a host-coupled create context internally; converging it onto the neutral
+> public `AgentRuntimeCreateContext` (and deleting the host-coupled variant in
+> `packages/dreamux/src/agent-runtime/types.ts`) is the runtime-split slice's job
+> (issue #209 slice 3). The public target published here is already stable for
+> external and built-in runtime/channel packages to author against.
 
 ## Build / test
 
