@@ -200,12 +200,32 @@ export function defaultDispatcherCwd(id: string): string {
   return join(dispatcherDir(id), 'cwd');
 }
 
+/**
+ * The bundled-skills *add-dir parent* (issue #209): the directory Claude Code is
+ * pointed at with `--add-dir`, so it discovers skills under its
+ * `.claude/skills/<name>` subtree. The skills physically live one level down at
+ * `<bundledSkillsDir>/.claude/skills/<name>` so this single on-disk copy serves
+ * BOTH engines — Claude Code via `--add-dir <bundledSkillsDir>` and Codex via an
+ * extra root of `bundledSkillContainerDir()` (the `.claude/skills` container,
+ * whose immediate children are skill dirs). Shipped via the package `files`
+ * allowlist (`skills`), which carries the whole subtree.
+ */
 export function bundledSkillsDir(): string {
   return join(PACKAGE_ROOT, 'skills');
 }
 
+/**
+ * The container whose immediate children are the bundled skill directories —
+ * `<bundledSkillsDir>/.claude/skills`. This is the Codex extra-skills-root for
+ * the bundled skills (codex treats an extra root as a dir whose children are
+ * skill dirs) and the `.claude/skills` tree Claude Code reads under its add-dir.
+ */
+export function bundledSkillContainerDir(): string {
+  return join(bundledSkillsDir(), '.claude', 'skills');
+}
+
 export function bundledSkillDir(skillName: BundledSkillName): string {
-  return join(bundledSkillsDir(), skillName);
+  return join(bundledSkillContainerDir(), skillName);
 }
 
 /**

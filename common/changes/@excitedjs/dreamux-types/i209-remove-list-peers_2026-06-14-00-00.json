@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Remove the speculative `list_peers` channel capability (issue #209): the optional `ChannelSession.listPeers?` method and the `ChannelListPeersInput` type are removed from the public channel contract. They were never an owner-designed capability and had no implementation; external channel providers do not need to declare or implement peer enumeration. The rest of the `ChannelSession` contract (`reply` / `react` / `resolveTarget` / `tools` / `handleTool` / `messageBelongsToTarget`) is unchanged.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux-types"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-types",
+  "email": "053700@gmail.com"
+}

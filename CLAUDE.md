@@ -66,7 +66,7 @@ The user-facing CLI is the single global bin `dreamux`. Current command tree:
 `onboard`, `uninstall`, `serve`, `status`, `doctor`,
 `daemon install|uninstall|start|stop|restart`,
 `dispatcher add|remove|list|status|start|stop`, `feishu-mcp`, `teammate-mcp`,
-`team-mcp`, `channel-mcp`, `config path|show`, and `changelog [--json]`. `dreamux changelog` prints the
+`team-mcp`, `config path|show`, and `changelog [--json]`. `dreamux changelog` prints the
 installed package's rush-generated `CHANGELOG.md` (or `CHANGELOG.json` with
 `--json`) — an offline read of the installed version, the upgrade-time
 information entry point for the 0.x fail-loud + rebuild policy (issue #98).

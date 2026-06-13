@@ -37,7 +37,6 @@ import {
 } from '../../platform/logger.js';
 import { teammateMcpServerDescriptor } from '../teammate/mcp-config.js';
 import { teamMcpServerDescriptor } from '../team/mcp-config.js';
-import { channelMcpServerDescriptor } from '../../channel/channel-mcp-config.js';
 import {
   DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS,
   DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
@@ -89,7 +88,7 @@ const COMPLETION_DELIVERY_CACHE_LIMIT = 512;
  *
  * Server bootstraps this service and admin/MCP layers route into it; the service
  * owns runtime creation, channel connection lifecycle, restart-notice delivery,
- * and per-dispatcher channel MCP dispatch.
+ * and per-dispatcher channel tool dispatch.
  */
 export class DispatcherAgentService {
   private readonly slots = new Map<string, DispatcherAgentSlot>();
@@ -383,7 +382,6 @@ export class DispatcherAgentService {
     };
     return [
       feishuMcpServerDescriptor(context),
-      channelMcpServerDescriptor(context),
       teamMcpServerDescriptor(context),
       teammateMcpServerDescriptor({
         ...context,

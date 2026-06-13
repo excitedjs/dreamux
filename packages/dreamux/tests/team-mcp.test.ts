@@ -121,13 +121,13 @@ function schemaOf(
 }
 
 describe('team-mcp stdio shim', () => {
-  it('marks create.intent and dissolve.note required; create_group + bind_group are gone (#209 slice 8)', async () => {
+  it('marks create.intent and dissolve.note required; create_group + create-time bind_group are gone', async () => {
     const tools = await toolSchemas();
     expect(schemaOf(tools, 'create').required).toContain('intent');
     // #182 PR-8: create_group is retired from the public Team MCP surface.
     expect(tools.map((t) => t['name'])).not.toContain('create_group');
-    // #209 slice 8: the create-time `bind_group` convenience is removed; group
-    // binding moved to the core Channel MCP `bind_channel` tool.
+    // The create-time `bind_group` convenience is removed; bind a channel after
+    // create with the dedicated Team `bind_channel` tool.
     expect(schemaOf(tools, 'create').properties).not.toHaveProperty('bind_group');
     // #199 Slice 1: public addressing is by the concrete `team_name`.
     expect(schemaOf(tools, 'create').required).toContain('team_name');
@@ -135,15 +135,34 @@ describe('team-mcp stdio shim', () => {
     expect(schemaOf(tools, 'dissolve').required).toEqual(['team_name', 'note']);
   });
 
-  it('no longer exposes the Feishu binding tools (moved to Channel MCP, #209 slice 8)', async () => {
+  it('owns channel bind_channel / transfer_back with the generalized channel_id + meta model (#209)', async () => {
     const tools = await toolSchemas();
     const names = tools.map((t) => t['name']);
-    // The binding/transfer surface moved to the core Channel MCP without aliases.
+    // Binding a channel to a Team/TeamLeader is a core-owned Team capability, so
+    // the binding verbs live on Team MCP — not a separate generic channel MCP.
+    // The retired Feishu-shaped aliases stay gone.
     expect(names).not.toContain('bind_group');
     expect(names).not.toContain('transfer_channel_back');
-    expect(names).not.toContain('bind_channel');
-    // The lifecycle surface is unchanged.
-    expect(names).toEqual(['create', 'list', 'status', 'history', 'dissolve']);
+    expect(names).toEqual([
+      'create',
+      'list',
+      'status',
+      'history',
+      'dissolve',
+      'bind_channel',
+      'transfer_back',
+    ]);
+    // bind_channel: team_name + provider selector `meta` required; channel_id
+    // optional; no chat_id/chat_type on the core surface.
+    expect(schemaOf(tools, 'bind_channel').required).toEqual(['team_name', 'meta']);
+    expect(schemaOf(tools, 'bind_channel').properties).toHaveProperty('channel_id');
+    expect(schemaOf(tools, 'bind_channel').properties).toHaveProperty('meta');
+    expect(schemaOf(tools, 'bind_channel').properties).not.toHaveProperty('chat_id');
+    expect(schemaOf(tools, 'bind_channel').properties).not.toHaveProperty('chat_type');
+    // transfer_back: meta required; channel_id optional.
+    expect(schemaOf(tools, 'transfer_back').required).toEqual(['meta']);
+    expect(schemaOf(tools, 'transfer_back').properties).toHaveProperty('channel_id');
+    expect(schemaOf(tools, 'transfer_back').properties).not.toHaveProperty('chat_id');
   });
 
   it('aligns the Team read surface with the TeamMate model and addresses by team_name (#199 Slice 1)', async () => {

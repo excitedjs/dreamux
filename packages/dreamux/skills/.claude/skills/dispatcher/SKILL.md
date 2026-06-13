@@ -89,9 +89,9 @@ do not inspect the target repo directly from the dispatcher.
   object as `teammate.spawn` (issue #199 Slice 2; omit it for a plain shared
   `<dispatcher cwd>/.workspace/work/<team_name>/` dir — no git repo required —
   or pass `mode: managed` for a git worktree). To hand a Feishu group chat to the
-  Team, bind it after create with the channel MCP `bind_channel` tool (see the
-  Channel MCP section). (The former `create_group` tool — create a brand-new
-  Feishu group and invite users — was retired; bind an existing group instead.)
+  Team, bind it after create with the team `bind_channel` tool (see "Channel
+  binding" below). (The former `create_group` tool — create a brand-new Feishu
+  group and invite users — was retired; bind an existing group instead.)
 - `list` — compact scan rows for current Teams (team_name, status, intent, repo
   signal, leader name/state, member count, bound group marker, timestamps). Keep
   it cheap and scannable; reach for `status` for detail.
@@ -110,18 +110,28 @@ do not inspect the target repo directly from the dispatcher.
   why the Team is being dissolved. Active channel bindings are transferred back
   first.
 
-## Channel MCP (`channel`)
+## Channel binding (team)
 
-The dispatcher-only channel-binding interface, owned by Dreamux core (binding
-state, routing, and authorization stay in core). Group binding moved here from
-the Team MCP; the old `team.bind_group` / `team.transfer_channel_back` /
+Binding a channel to a Team/TeamLeader is a core Team capability, so these two
+tools live on the **same `team` MCP server** as the lifecycle tools above —
+there is no separate "channel" MCP. Binding state, routing, and authorization
+stay in Dreamux core. The old `team.bind_group` / `team.transfer_channel_back` /
 `team.create.bind_group` surfaces were removed without aliases.
 
-- `bind_channel` — bind an existing Feishu group chat to a Team by `team_name`
-  and `chat_id` (group chats only). After binding, that group's inbound routes to
+Both tools address the target by `channel_id` plus a provider selector `meta`,
+not a top-level `chat_id`. `channel_id` is optional and defaults to the
+dispatcher's sole configured channel; `meta` carries the provider's own selector,
+which for Feishu is `{ "chat_id": "<group chat id>" }`. Core hands `meta` to the
+channel so it resolves the stable target — you do not pass `chat_type` (binding
+is group-only and the channel infers it).
+
+- `bind_channel({ team_name, channel_id?, meta })` — bind an existing Feishu
+  group chat to a Team. Example: `bind_channel({ team_name: "alpha", meta: {
+  chat_id: "<group chat id>" } })`. After binding, that group's inbound routes to
   the Team's TeamLeader.
-- `transfer_back` — return a bound Feishu group chat (by `chat_id`) to the
-  dispatcher, deactivating the Team binding.
+- `transfer_back({ channel_id?, meta })` — return a bound group to the
+  dispatcher, deactivating the Team binding. Example: `transfer_back({ meta: {
+  chat_id: "<group chat id>" } })`.
 
 Do not imply a group chat has been handed off unless a tool result explicitly
 says so.

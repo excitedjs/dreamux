@@ -58,7 +58,6 @@ export type {
 export type {
   ChannelConfigContext,
   ChannelInboundEnvelope,
-  ChannelListPeersInput,
   ChannelMessageTargetCheck,
   ChannelProvider,
   ChannelReactInput,

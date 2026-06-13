@@ -819,8 +819,8 @@ Issue #171 starts Team Mode. Dispatcher runtimes receive a `team` MCP server for
 dispatcher-only team lifecycle: `create`, `list`, `status`, `history`, and
 `dissolve`. `create` requires `leader_agent_runtime` and `intent` (issue #182
 PR-3); `dissolve` requires `note`. Dreamux does not infer a default TeamLeader
-runtime. Channel binding/transfer is no longer a Team MCP concern — it moved to a
-core-hosted Channel MCP (issue #209 slice 8, below).
+runtime. Channel binding/transfer is a core Team capability carried on the Team
+MCP as `bind_channel` / `transfer_back` (issue #209, below).
 
 Issue #182 PR-7 aligned the Team read/binding surface with the TeamMate
 read-surface model: the public surface is addressed by **Team name** (the
@@ -832,15 +832,16 @@ intent `grep` / `since` / `until` / `limit` / `cursor`) over Team records,
 mirroring the TeamMate `history`, while the raw lifecycle event timeline stays
 an internal/debug ledger. (PR-7 also simplified the then-Team-MCP binding tools
 to group-only `bind_group` / `transfer_channel_back` without `chat_type`; those
-binding tools later moved off the Team MCP entirely — see the issue #209 slice 8
-Channel MCP paragraph below.)
+Feishu-specific tools were later replaced by the generalized `bind_channel` /
+`transfer_back` (`channel_id` + `meta`) on the Team MCP — see the issue #209
+paragraph below.)
 
 Issue #182 PR-8 (the epic's final cleanup) retired `create_group` — the
 create-a-brand-new-Feishu-group-and-invite-users tool — from the public Team MCP
 surface, capabilities, and docs. Its binding role was replaced by an optional
 `create.bind_group: { chat_id }` that bound an EXISTING group at create time
-through the same `ChannelBindingStore` path (itself later removed in issue #209
-slice 8, which moved binding to the Channel MCP — see below); the generic Feishu
+through the same `ChannelBindingStore` path (itself later removed in issue #209;
+binding is now the generalized Team MCP `bind_channel` — see below); the generic Feishu
 `bot.createGroup` transport primitive and the dispatcher's group-create wiring
 were removed with it. The same PR removed the write-only per-name TeamMate
 history index (`state/<id>/teammate/history/<name>.jsonl` plus
@@ -848,19 +849,22 @@ history index (`state/<id>/teammate/history/<name>.jsonl` plus
 session ledger (`sessions.jsonl`) is the single recovery record, so the per-name
 index had no readers and only added files.
 
-Issue #209 slice 8 moved channel binding off the Team MCP onto a **core-hosted
-Channel MCP** (`channel` server, the `channel-mcp` stdio shim), injected into the
-dispatcher MCP set like the Team MCP it split from. The old Feishu-specific Team
-tools are removed without aliases: `team.bind_group` → `channel.bind_channel`,
-`team.transfer_channel_back` → `channel.transfer_back`, and the create-time
-`team.create.bind_group` convenience is gone (bind after create). The Channel MCP
-forwards to core admin methods `mcp.channel.bind_channel` /
-`mcp.channel.transfer_back`, which delegate to the same `ChannelBindingStore`
-path as before — binding state, routing, and authorization stay core-owned and
-are NOT moved into any provider/runtime package. This is a surface/ownership move
-only; the channel-neutral `channel_id` + `resolveTarget` target model and binding
-store v2 landed in the next slice (below), while `list_peers` and moving `reply` /
-`react` onto the generic surface remain deferred.
+Issue #209 keeps channel binding on the **Team MCP** — binding a channel to a
+Team/TeamLeader is a core Team capability, so there is no separate generic
+`channel` MCP surface. The Team MCP carries the binding verbs alongside its
+lifecycle tools: `bind_channel({ team_name, channel_id?, meta })` and
+`transfer_back({ channel_id?, meta })`. `channel_id` selects the configured
+channel (optional; defaults to the dispatcher's sole channel); `meta` is the
+opaque provider selector (Feishu: `{ chat_id }`) core hands to the channel's
+`resolveTarget(meta)`, which infers/validates the group target. They forward to
+core admin methods `mcp.team.bind_channel` / `mcp.team.transfer_back`, which
+delegate to the `ChannelBindingStore` (binding store v2, keyed by
+`(channel_id, target_key)`) — binding state, target normalization, routing, P2P
+denial, and TeamLeader authorization stay core-owned and are NOT moved into any
+provider/runtime package. The old Feishu-specific `team.bind_group` /
+`team.transfer_channel_back` / `team.create.bind_group` tools are removed without
+aliases. Provider-specific channel tools (Feishu `reply` / `react` /
+`list_chat_bots`) stay on the provider-owned `feishu` MCP server.
 
 A TeamLeader is a TeamMate identity with `role:
 "team_leader"` and dispatcher owner. Team-owned members are normal TeamMate
@@ -899,7 +903,7 @@ identically. Bound Feishu group inbound is gated and formatted by the Feishu
 channel, then routed by Dispatcher Service to the owning TeamLeader runtime; an
 unbound bindable target and any non-bindable P2P target route to the dispatcher
 (P2P short-circuits before any binding lookup and can never be bound to a
-TeamLeader). The Channel MCP `transfer_back` deactivates a binding; `dissolve`
+TeamLeader). The Team MCP `transfer_back` deactivates a binding; `dissolve`
 transfers active bindings back before closing the team. TeamLeader Feishu MCP
 calls carry their server-derived team principal and can reply/react only in bound
 team channels (authorization keys on `(channel_id, target_key)`); the dispatcher
@@ -907,8 +911,8 @@ keeps the global Feishu management surface. A pre-v2 store fails loud at
 `dreamux serve` / `dreamux doctor` with rebuild guidance — 0.x does not migrate
 it.
 
-A Team binds to an EXISTING Feishu group chat via the Channel MCP
-`channel.bind_channel` (`team_name` + `chat_id`, after create) through the
+A Team binds to an EXISTING Feishu group chat via the Team MCP
+`bind_channel` (`team_name` + `meta: { chat_id }`, after create) through the
 `ChannelBindingStore` path; bindings are group-only. (Issue #182 PR-8 retired the
 older `create_group` flow that created a brand-new group and invited users;
 issue #209 slice 8 removed the create-time `bind_group` convenience.)

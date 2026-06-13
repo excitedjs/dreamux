@@ -251,7 +251,8 @@ underlying engine.
 The channel seam becomes a real provider seam. A Channel provider owns platform
 I/O, platform-specific tools, inbound normalization, target resolution, and
 provider-local message ownership facts. Dreamux core owns binding state,
-routing, authorization, and the model-facing Channel MCP shim.
+routing, authorization, and the model-facing channel-binding tools (on the Team
+MCP — binding a channel to a Team is a core Team capability).
 
 ```ts
 export interface ChannelProvider<TConfig = unknown> {
@@ -282,7 +283,6 @@ export interface ChannelSession {
   resolveTarget(meta: unknown): Promise<ChannelTarget>;
   reply?(input: ChannelReplyInput): Promise<unknown>;
   react?(input: ChannelReactInput): Promise<unknown>;
-  listPeers?(input: ChannelListPeersInput): Promise<unknown>;
   tools?(context: ChannelToolListContext): readonly ChannelToolDescriptor[];
   handleTool?(
     call: ChannelToolCall,
@@ -331,47 +331,51 @@ depend on `@excitedjs/feishu-transport` only for the existing shared concern —
 never to perform platform I/O itself. That narrow type/install dependency must not
 grow into platform-I/O coupling.
 
-## Channel MCP
+## Channel binding tools (Team MCP)
 
-Dreamux core hosts the generic Channel MCP shim injected into Dispatcher and
-TeamLeader runtimes.
+Binding a channel target to a Team/TeamLeader is a Dreamux **core Team
+capability**, so the binding verbs live on the core-owned **Team MCP** — there is
+no separate generic "channel" MCP surface for this epic. The Team MCP gains two
+channel-binding tools alongside its lifecycle tools (`create` / `list` /
+`status` / `history` / `dissolve`):
 
-The core-owned standard tool set is:
+- `bind_channel({ team_name, channel_id?, meta })` — hand a configured channel
+  target to a Team so inbound from that target routes to the Team's TeamLeader;
+- `transfer_back({ channel_id?, meta })` — return a bound target to the
+  dispatcher, deactivating the binding.
 
-- `bind_channel`;
-- `transfer_back`;
-- `reply`;
-- `react`;
-- `list_peers`.
+`channel_id` identifies the configured channel (`dispatchers[].channels[].id`);
+it is optional and defaults to the dispatcher's sole configured channel (an
+explicit value must match it). `meta` is the provider-specific selector, opaque
+to core (for Feishu, `{ chat_id: '<group chat id>' }`); core hands it to the
+channel's `resolveTarget(meta)`, which infers/validates the target — binding is
+group-only and `chat_type` is not required on the surface. Binding state, target
+normalization, routing, P2P denial, and TeamLeader authorization stay core-owned;
+the channel provider only normalizes the selector and does platform I/O.
 
-Provider-specific tools are exposed through the same Channel MCP and are scoped
-by `channel_id` so two configured channels cannot collide on a tool name. Core
-does not validate provider-specific tool schemas beyond routing and caller
-authorization.
-
-Team MCP no longer owns channel binding. The old Feishu-specific
-`create.bind_group`, `bind_group`, and `transfer_channel_back` surfaces are
-removed without forwarding aliases.
+The old Feishu-specific Team binding surfaces (`create.bind_group`, `bind_group`,
+and `transfer_channel_back`) remain removed without forwarding aliases.
+Provider-specific channel tools (for Feishu, `reply` / `react` /
+`list_chat_bots`) stay on the provider-owned `feishu` MCP server; this epic does
+not introduce a generic standard tool set or a `list_peers` capability.
 
 ## Channel Targets and Binding
 
-`bind_channel` is a core-owned Channel MCP capability. It writes core binding
+`bind_channel` is a core-owned **Team MCP** capability. It writes core binding
 state, but it relies on the selected channel to normalize provider-specific
 selectors:
 
 ```ts
 bind_channel({
+  team_name: 'dreamux',
   channel_id: 'feishu',
-  target_type: 'group',
-  meta: { chat_id: '<provider-local-chat-id>', chat_type: 'group' },
-  team_name: 'dreamux'
+  meta: { chat_id: '<provider-local-chat-id>' }
 });
 
 bind_channel({
+  team_name: 'dreamux',
   channel_id: 'github',
-  target_type: 'issue',
-  meta: { url: 'https://github.com/excitedjs/dreamux/issues/209' },
-  team_name: 'dreamux'
+  meta: { url: 'https://github.com/excitedjs/dreamux/issues/209' }
 });
 ```
 
@@ -538,9 +542,11 @@ The implementation must add or preserve guards for these invariants:
 - external Agent Runtime and Channel provider fixtures compile against
   `@excitedjs/dreamux-types` only;
 - binding store version 2 fails loudly for incompatible legacy rows;
-- Team MCP no longer exposes binding tools;
-- Channel MCP owns binding, outbound channel tools, and provider-specific tool
-  forwarding;
+- the old Feishu-specific Team binding aliases (`create.bind_group`,
+  `bind_group`, `transfer_channel_back`) are gone without forwarding aliases;
+- Team MCP owns channel binding via the generalized `bind_channel` /
+  `transfer_back` (`channel_id` + `meta`); there is no separate generic Channel
+  MCP, and provider-specific channel tools stay on the provider's own MCP server;
 - bundled skills are injected only for Dispatcher and TeamLeader roles;
 - runtime startup no longer creates Dreamux-owned workspace skill symlinks.
 
@@ -559,8 +565,9 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   `AgentRuntimeCreateContext` internally — converging it onto the neutral public
   context (and deleting the host-coupled variant) is slice 3's job. The
   remaining guards (core not importing the Feishu SDK directly; built-in
-  packages bundled by default; binding store v2; Team/Channel MCP ownership;
-  role-gated skill injection; symlink removal) land in their respective slices.
+  packages bundled by default; binding store v2; Team MCP channel-binding
+  ownership; role-gated skill injection; symlink removal) land in their
+  respective slices.
 - **Slice 2 (generic provider loader + channel kind) — satisfied now:** the
   runtime-specific external loader is split into a kind-agnostic skeleton
   (`registry/provider-loader.ts`: dynamic import, default/named export
@@ -690,12 +697,12 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   suite green). The accepted generalizations in this record — **binding store v2**
   (the `version: 2` / `target_key` / `meta` schema and its fail-loud migration),
   **target-key routing** (resolving inbound on `(channel_id, target_key)` instead
-  of `{ provider, chatId, chatType }`), and the **generic Channel MCP /
-  `bind_channel` and binding migration** onto the neutral
-  `tools()`/`handleTool()` path — are **not** implemented by this slice and
-  remain later slices. (**Multi-channel config validation** was deferred from
-  this slice too; it has since landed — see the multi-channel config slice
-  below.)
+  of `{ provider, chatId, chatType }`), and the **generalized `bind_channel`
+  binding model** (`channel_id` + `meta`, on the Team MCP) — are **not**
+  implemented by this slice and landed later (see the binding-store-v2 and
+  owner-scope-correction statuses below). (**Multi-channel config validation** was
+  deferred from this slice too; it has since landed — see the multi-channel config
+  slice below.)
 - **Slice 6 (role-gated skill injection) — satisfied now:** the workspace-symlink
   bundled-skill model is removed from onboarding and runtime startup, replaced by
   role-gated `AgentRuntimeCreateContext.skillSources` injection. Core owns the
@@ -722,10 +729,9 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   is present from 0.137, so no second gate is added. **Claude Code** translates
   add-dir-compatible sources into startup `--add-dir <dir>` flags (pointing at
   directories that contain `.claude/skills`), present on both start and re-spawn.
-  The bundled Dreamux skills use the `skill-dir` layout, which is NOT
-  add-dir-compatible, so claude-code emits none for them — preserving its prior
-  behavior of injecting no bundled skills; the `--add-dir` mapping is implemented
-  and tested for compatible / external sources.
+  (Claude Code's end-to-end bundled-skill injection was completed later — see the
+  "Claude Code bundled-skill injection" status below — so a Dispatcher/TeamLeader
+  Claude launch DOES receive the bundled skills via a real `--add-dir`.)
 
   Startup does **not** delete pre-existing old `<dispatcher cwd>/.codex/skills`
   symlinks. On an upgraded dispatcher, codex would then list each bundled skill
@@ -768,29 +774,15 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   rather than at config load, so config can express the general shape while the
   runtime catches up. Binding store v2 and target-key routing remain later
   slices; the Channel MCP *surface* move landed in the next slice (below).
-- **Channel MCP surface move — satisfied now (surface only):** the Feishu-specific
-  Team MCP binding tools were removed without aliases and re-exposed on a new
-  core-hosted **Channel MCP** server (`channel`, the `channel-mcp` stdio shim).
-  `team.bind_group` → `channel.bind_channel`, `team.transfer_channel_back` →
-  `channel.transfer_back`, and the create-time `team.create.bind_group`
-  convenience is gone (bind after create instead). The new shim forwards to core
-  admin methods `mcp.channel.bind_channel` / `mcp.channel.transfer_back`, which
-  delegate to the **same** Team-service binding store as before — binding state,
-  routing, and authorization stay core-owned and were not moved into any provider
-  or runtime package. The Channel MCP descriptor is injected into the
-  dispatcher's MCP set (`channelMcpServerDescriptor`), dispatcher-only like the
-  Team MCP it split from. **Scope kept deliberately narrow:** this is the MCP
-  *surface/ownership* move only. Targets are still addressed by Feishu `chat_id`
-  (group chats), NOT the channel-neutral `channel_id` + `resolveTarget` target
-  model; binding store v2, `(channel_id, target_key)` routing, P2P dispatcher
-  routing, and `list_peers` are still deferred to the routing slice. `reply` /
-  `react` / `list_chat_bots` stay on the provider-owned `feishu` MCP server for
-  now (moving them onto the generic surface, and adding `list_peers`, is
-  target-enumeration / routing-slice work). So the end-state Channel MCP described
-  above (`bind_channel` by `channel_id` + resolveTarget, the standard
-  reply/react/list_peers set) is only partially realized: the binding *verbs*
-  moved to core ownership; the channel-neutral *addressing* has not (it lands in
-  the binding store v2 slice below).
+- **Channel MCP surface move — SUPERSEDED by the owner scope correction below.**
+  An interim slice moved the binding verbs off Team MCP onto a separate
+  core-hosted generic `channel` MCP server (the `channel-mcp` shim,
+  `mcp.channel.*`). The owner's final design keeps channel binding on the **Team
+  MCP** — binding a channel to a Team/TeamLeader is a core Team capability — so
+  that generic surface (the `channel-mcp` shim, `channelMcpServerDescriptor`, and
+  the `mcp.channel.*` methods) was removed. See "Channel MCP reversal" below. The
+  removal of the old Feishu-specific `create.bind_group` / `bind_group` /
+  `transfer_channel_back` aliases (without forwarding) still stands.
 - **Binding store v2 + channel target routing — satisfied now:** the persisted
   channel-binding store moved to `version: 2`. Flat rows now key on
   `(channel_id, target_key)` and carry `channel_id`, the provider-owned opaque
@@ -813,16 +805,13 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   `channel_id` is the dispatcher-local `dispatchers[].channels[].id`, resolved
   once by `dispatcherChannelId(config)` — the single source of truth shared by the
   bind path and the router so a stored binding and an inbound message resolve to
-  the same key. The Channel MCP `bind_channel` / `transfer_back` tools keep
-  `chat_id` terminology and gain an optional `channel_id` (defaults to the sole
-  configured channel; an explicit id must match it). A pre-v2 store fails loud at
-  `dreamux serve` / `dreamux doctor` (and on access) with rebuild guidance —
-  Dreamux 0.x does not migrate it. **Still deferred to a later slice:** moving
-  `reply` / `react` / `list_chat_bots` off the provider-owned `feishu` MCP server
-  onto the generic surface, `list_peers`, and live multi-channel routing (the
-  runtime still runs exactly one Feishu channel per dispatcher).
-- **Final hardening (package-boundary guards + acceptance inventory) — satisfied
-  now:** the epic's acceptance criteria are met and verified from code/tests. The
+  the same key. The `bind_channel` / `transfer_back` tools (on the **Team MCP** —
+  see the reversal below) take a provider selector `meta` (Feishu: `{ chat_id }`)
+  and an optional `channel_id` (defaults to the sole configured channel; an
+  explicit id must match it). A pre-v2 store fails loud at `dreamux serve` /
+  `dreamux doctor` (and on access) with rebuild guidance — Dreamux 0.x does not
+  migrate it.
+- **Final hardening (package-boundary guards) — satisfied now:** the
   remaining §Validation Guards that were only "currently true" by inspection now
   have repo-wide regression tests (`packages/dreamux/tests/package-boundary-guards.test.ts`):
   the Feishu/Lark SDK is imported by exactly one package
@@ -836,40 +825,46 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   sole-owner guard captures.) The per-package `import-boundary.test.ts` files
   already guard each provider's own `src/`; these add the reciprocal repo-wide and
   manifest-level assertions.
-
-  **Three items remain deferred to a dedicated follow-up issue, cited honestly
-  rather than hidden behind AC "may expose" wording:**
-  - **Channel MCP `reply` / `react` / `list_chat_bots` surface taxonomy.** Channel
-    MCP *ownership* of binding + transfer-back is complete and gated
-    (`channel-mcp.test.ts`, `team-mcp.test.ts`). `reply` / `react` /
-    `list_chat_bots` are ALREADY core-owned, core-hosted (the `feishu-mcp` shim
-    forwards to core admin methods `mcp.reply` / `mcp.react` / `mcp.list_chat_bots`),
-    and core-authorized (the v2-keyed `assertFeishuScope` →
-    `teamLeaderCanUseChannel` on `(channel_id, target_key)`). What is NOT done is
-    presenting them under the generic `channel` server name instead of `feishu`.
-    Doing that the generic (non-Feishu-coupled) way requires a `channel_id`-scoped
-    provider-tool-forwarding mechanism (core fetches the active channel's tool
-    descriptors and forwards `tools/call` generically, with auth interposed) — the
-    SAME mechanism the deferred multi-channel work needs. Building it here would
-    half-build that feature; importing `feishuMcpTools` into the generic core shim
-    would instead violate the core-stays-generic boundary. So the taxonomy move
-    travels with multi-channel to the follow-up. This satisfies the §Validation
-    Guards "Channel MCP owns … outbound channel tools" intent at the *ownership*
-    layer (which is what the boundary rule protects); only the server-name
-    presentation is deferred.
-  - **`list_peers`.** Net-new platform capability (member enumeration) with the
-    same `channel_id`-scoped provider-forwarding dependency as `list_chat_bots`;
-    AC lists it under tools Channel MCP "may expose" and it has no task-breakdown
-    line. Deferred with the taxonomy move.
-  - **Live multi-channel routing.** Config validation already accepts N channels
-    with unique ids and provider-owned `readConfig`; the *runtime* still runs
-    exactly one `builtin:feishu` channel per dispatcher, fail-loud on any other
-    shape at the dispatcher launch guard (`assertRunnableChannelShape`). Running N
-    sessions and routing inbound across them by `channel_id` is a multi-session
-    feature the decision record and final plan both scope as a follow-up; the plan's
-    multi-channel task line ("config support with unique `channel_id` + provider-owned
-    parsing") is done. This is a decision point for the epic owner at
-    feature-branch → `main` merge, not a silent omission.
+- **Channel MCP reversal + Claude Code bundled skills + `list_peers` removal
+  (owner scope correction) — satisfied now:** three owner decisions land here.
+  (1) **No generic Channel MCP.** Binding a channel to a Team/TeamLeader is a core
+  Team capability, so the interim generic `channel` MCP surface (the `channel-mcp`
+  shim, `channelMcpServerDescriptor`, `mcp.channel.*`, and the `channel-mcp` CLI
+  command) was removed, and the binding verbs live on the **Team MCP** as
+  `bind_channel({ team_name, channel_id?, meta })` /
+  `transfer_back({ channel_id?, meta })`. `channel_id` selects the configured
+  channel (optional, defaults to the sole channel); `meta` is the opaque provider
+  selector (Feishu: `{ chat_id }`) core hands to `resolveTarget(meta)`, which
+  infers/validates the group target (no `chat_type` required). Binding state,
+  normalization, routing, P2P denial, and TeamLeader authorization remain
+  core-owned; the binding-store-v2 schema and `(channel_id, target_key)` routing
+  are unchanged. (2) **`list_peers` removed** from `@excitedjs/dreamux-types`
+  (`ChannelSession.listPeers?` + `ChannelListPeersInput`) and from all docs/tests
+  — it was never an owner-designed capability, acceptance item, or follow-up.
+  (3) **Claude Code bundled-skill injection now works end-to-end** — see below.
+- **Claude Code bundled-skill injection — satisfied now:** the bundled Dreamux
+  skills are stored under `packages/dreamux/skills/.claude/skills/<name>/` (shipped
+  via the package `files` allowlist), so ONE on-disk copy serves both engines.
+  `bundledSkillSourcesForRole('dispatcher' | 'team_leader')` now emits BOTH a
+  per-skill `skill-dir` source (path = the skill dir) AND a single
+  `claude-skills-parent` source (path = `bundledSkillsDir()`, the add-dir parent
+  that contains `.claude/skills`). **Codex** still applies the `skill-dir` sources
+  via `skills/extraRoots/set` (the shared parent — now the `.claude/skills`
+  container — is one root; the skill set is unchanged). **Claude Code** translates
+  the `claude-skills-parent` source into a real
+  `--add-dir <absolute package path>` flag, so a Dispatcher/TeamLeader Claude
+  launch genuinely discovers the bundled skills (no more filtering to zero). Both
+  engines read the same physical skills; ordinary teammate/team_member roles still
+  receive none; no workspace mutation and no symlink/copy model. Runtime packages
+  still depend on `@excitedjs/dreamux-types` only.
+- **Deferred — accepted follow-up (NOT part of this epic's shipped scope): live
+  multi-channel runtime routing.** Config validation already accepts N channels
+  with unique ids and provider-owned `readConfig`, but the *runtime* runs exactly
+  one `builtin:feishu` channel per dispatcher and fails loud on any other shape at
+  the dispatcher launch guard (`assertRunnableChannelShape`). Running N sessions
+  and routing inbound across them by `channel_id` is a multi-session feature
+  accepted by the owner as a follow-up; the config-layer task is done. Where this
+  is currently unsupported it fails loud rather than silently degrading.
 
 ## Alternatives Considered
 

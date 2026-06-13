@@ -8,7 +8,7 @@
  * host contracts the package must not reconstruct: the bot-secret resolution,
  * the per-dispatcher state dir (`access.json` / `chat-bots.json`) and the
  * attachment cache dir, and the `dispatcher id -> chat-bots state` listing
- * helper. Routing, binding, authorization, Team lifecycle, and the Channel MCP
+ * helper. Routing, binding, authorization, Team lifecycle, and the Feishu MCP
  * server descriptor / admin routing stay core-owned (here and in
  * `feishu-mcp-surface.ts`).
  */
