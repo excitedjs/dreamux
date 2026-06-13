@@ -187,16 +187,20 @@ an agent's `config` object can be omitted entirely:
 | `extra_env` | `{}` | merged over the dispatcher's process env |
 | `initialize_timeout_ms` | `10000` | handshake timeout (positive integer) |
 
-`channels[].config.app_id` for `builtin:feishu` identifies the bot used by a
-dispatcher. Since the multi-channel config slice (#209) **config load** no
-longer enforces cross-dispatcher uniqueness of this app id: validation is owned
-by the channel provider's `readConfig`, which sees only its own channel config
-and cannot compare across dispatchers. A hand-edited `config.json` with two
-dispatchers sharing one app id therefore loads and runs. `onboard` still guards
-write-time uniqueness (it holds the whole config in hand and can compare), so
-the interactive flow will not create a duplicate; operators editing config
-directly must keep bot app ids distinct themselves. Channel ids, by contrast,
-must be unique within a single dispatcher (enforced at config load).
+`channels[].config.app_id` for `builtin:feishu` is a unique dispatcher
+identity. Across all declared dispatchers, including disabled ones, an app id
+must map to exactly one dispatcher: two dispatchers sharing one app id would
+connect as the same bot. The multi-channel config slice (#209) moved
+provider-specific *field* validation (non-empty `app_id`/`app_secret`,
+unknown-key rejection) into the channel provider's `readConfig`, but
+cross-dispatcher uniqueness stays a **core** concern — a per-channel `readConfig`
+cannot see other dispatchers, while core holds them all — so config load runs a
+post-parse pass that fails loud on a duplicate. `dreamux serve`, `doctor`, and
+`onboard` therefore tell the same story: a duplicate app id is a blocking error.
+Dispatchers with an ambiguous (≠1) Feishu channel count are skipped by this pass
+(they are unrunnable and fail loud at the dispatcher runtime boundary instead).
+Channel ids, by contrast, must be unique within a single dispatcher (enforced at
+config load).
 
 Rules:
 

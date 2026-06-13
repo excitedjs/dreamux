@@ -2,7 +2,7 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import {
-  dispatcherFeishuConfig,
+  dispatcherFeishuAppId,
   type DispatcherConfig,
   type DreamuxConfig,
 } from '../config/config.js';
@@ -226,10 +226,13 @@ export class DispatcherStore {
 
 /** Config-only row (no persisted status); used before `hydrate()` runs. */
 function rowDefaults(config: DispatcherConfig, now: number): DispatcherRow {
-  const feishu = dispatcherFeishuConfig(config);
+  // Best-effort bot identity: a dispatcher with an ambiguous (≠1) Feishu channel
+  // count is not runnable, so store seeding stays fail-soft and the unrunnable
+  // shape fails loud at the dispatcher service launch guard (the one intended
+  // runtime boundary), not here during state construction (issue #209 review).
   return {
     dispatcher_id: config.id,
-    bot_app_id: feishu.app_id,
+    bot_app_id: dispatcherFeishuAppId(config),
     bot_secret_ref: `config:${config.id}`,
     thread_id: null,
     status: 'declared',

@@ -8,9 +8,12 @@
  * validates channel-provider-specific config itself.
  *
  * Today only `builtin:feishu` (the `@excitedjs/feishu-channel` package's
- * `ChannelProvider`) is registered. External `npm:` channel providers load
- * through the generic channel loader before config validation, exactly like
- * external agent runtimes.
+ * `ChannelProvider`) is registered. External `npm:` channel providers are NOT
+ * loaded at config time yet: `readConfigFile` loads only external agent-runtime
+ * refs, so an `npm:` ref on a `dispatchers[].channels[].provider` resolves as an
+ * unloaded external provider and fails loud. Wiring a generic channel loader
+ * (mirroring `loadExternalAgentRuntimeProviders`) is a follow-up; this slice
+ * lands built-in channel provider validation only.
  */
 import { createFeishuChannelProvider } from '@excitedjs/feishu-channel';
 

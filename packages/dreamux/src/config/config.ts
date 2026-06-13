@@ -520,6 +520,7 @@ function readDispatchers(
       },
     });
   }
+  assertUniqueFeishuAppIds(out, file);
   return out;
 }
 
@@ -676,10 +677,70 @@ function feishuConfigFromChannels(
   return feishuChannels[0]!.config as unknown as DispatcherFeishuConfig;
 }
 
+/**
+ * The sole Feishu channel config for a dispatcher, or `null` when the dispatcher
+ * has zero or more than one Feishu channel. Unlike {@link feishuConfigFromChannels}
+ * this never throws: a dispatcher with an ambiguous (≠1) Feishu channel count is
+ * not runnable until the channel-routing slice, and that fail-loud lives at the
+ * runtime boundary (the dispatcher service launch guard), not in config-layer
+ * helpers that run during state seeding. Callers that need a best-effort bot
+ * identity or a cross-dispatcher uniqueness key use this lenient form.
+ */
+function soleFeishuConfigFromChannels(
+  channels: DispatcherChannelConfig[],
+): DispatcherFeishuConfig | null {
+  const feishuChannels = channels.filter(
+    (item) => item.provider === BUILTIN_FEISHU_PROVIDER_REF,
+  );
+  if (feishuChannels.length !== 1) return null;
+  return feishuChannels[0]!.config as unknown as DispatcherFeishuConfig;
+}
+
 export function dispatcherFeishuConfig(
   dispatcher: Pick<DispatcherConfig, 'channels' | 'id'>,
 ): DispatcherFeishuConfig {
   return feishuConfigFromChannels(dispatcher.channels, dispatcher.id);
+}
+
+/**
+ * Best-effort Feishu bot app id for a dispatcher's state row. Returns the sole
+ * Feishu channel's `app_id`, or `''` when the dispatcher has an ambiguous (≠1)
+ * Feishu channel count. Such a dispatcher is not runnable (the dispatcher
+ * service launch guard rejects it), so this placeholder is never used for live
+ * routing; it keeps store seeding fail-soft so the unrunnable shape fails at the
+ * one intended runtime boundary instead of during state construction.
+ */
+export function dispatcherFeishuAppId(
+  dispatcher: Pick<DispatcherConfig, 'channels'>,
+): string {
+  return soleFeishuConfigFromChannels(dispatcher.channels)?.app_id ?? '';
+}
+
+/**
+ * Cross-dispatcher Feishu bot-identity uniqueness (a core concern: a per-channel
+ * `readConfig` cannot see other dispatchers, but core holds them all). Two
+ * dispatchers — enabled or not — declaring the same Feishu `app_id` would
+ * connect as the same bot, so this fails loud at config load, the same story
+ * `dreamux serve` / `doctor` / `onboard` tell. Dispatchers with an ambiguous
+ * (≠1) Feishu channel count are skipped here; they are caught fail-loud at the
+ * runtime boundary instead. Provider-owned field validation is unaffected.
+ */
+function assertUniqueFeishuAppIds(
+  dispatchers: DispatcherConfig[],
+  file: string,
+): void {
+  const appIdToDispatcher = new Map<string, string>();
+  for (const dispatcher of dispatchers) {
+    const feishu = soleFeishuConfigFromChannels(dispatcher.channels);
+    if (feishu === null) continue;
+    const existing = appIdToDispatcher.get(feishu.app_id);
+    if (existing !== undefined) {
+      throw new Error(
+        `dreamux config error in ${file}: dispatcher '${dispatcher.id}' Feishu app_id duplicates dispatcher '${existing}'. Two dispatchers cannot share one bot identity; give each its own ${BUILTIN_FEISHU_PROVIDER_REF} app_id.`,
+      );
+    }
+    appIdToDispatcher.set(feishu.app_id, dispatcher.id);
+  }
 }
 
 function resolveConfigProvider(

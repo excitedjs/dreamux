@@ -224,11 +224,11 @@ or package export refs, for example `npm:@example/dreamux-provider` and
 dreamux does not install, import, or execute them.
 
 Edit and restart `dreamux serve` to apply dispatcher declaration changes.
-Channel ids must be unique within a dispatcher. Dreamux no longer enforces
-cross-dispatcher uniqueness of the Feishu `app_id` (a per-channel `readConfig`
-cannot see other dispatchers), so operators must keep distinct bot app ids
-distinct themselves. Dispatcher ids use a path-safe character set so they map
-one-to-one to state directories.
+Channel ids must be unique within a dispatcher, and the Feishu `app_id` must be
+unique across all declared dispatchers (including disabled ones) — two
+dispatchers cannot share one bot identity, and config load fails loud on a
+duplicate. Dispatcher ids use a path-safe character set so they map one-to-one
+to state directories.
 
 Access-gate allowlists are not part of `config.json`. Configure them in
 `~/.dreamux/state/<id>/access.json`:

@@ -219,31 +219,35 @@ describe('dispatcher store feishu channel resolution (multi-channel config)', ()
     expect(store.get('flow')?.bot_app_id).toBe('app-flow');
   });
 
-  it('fails loud (no silent first-pick) when a dispatcher declares more than one feishu channel', () => {
-    // Config accepts multiple channels with unique ids, but the runtime cannot
-    // resolve an unambiguous bot identity from two feishu channels — store build
-    // must throw rather than silently picking the first (issue #209).
-    expect(
-      () =>
-        new DispatcherStore({
-          dispatchers: [
-            testDispatcherConfig({
-              id: 'flow',
-              channels: [
-                {
-                  id: 'primary',
-                  provider: 'builtin:feishu',
-                  config: { app_id: 'app-a', app_secret: 'secret-a' },
-                },
-                {
-                  id: 'secondary',
-                  provider: 'builtin:feishu',
-                  config: { app_id: 'app-b', app_secret: 'secret-b' },
-                },
-              ],
-            }),
-          ],
-        }),
-    ).toThrow(/exactly one is required to resolve the bot identity/);
+  it('stays fail-soft (no throw, empty bot app id) on an ambiguous >1 feishu channel count', () => {
+    // The store is state construction, not a runtime boundary: a dispatcher with
+    // an ambiguous (≠1) feishu channel count is unrunnable, but that fail-loud
+    // belongs at the dispatcher service launch guard (assertRunnableChannelShape),
+    // not here. Store seeding must tolerate the shape with a best-effort empty bot
+    // app id so the failure surfaces at the one intended boundary (issue #209
+    // review).
+    let store: DispatcherStore | undefined;
+    expect(() => {
+      store = new DispatcherStore({
+        dispatchers: [
+          testDispatcherConfig({
+            id: 'flow',
+            channels: [
+              {
+                id: 'primary',
+                provider: 'builtin:feishu',
+                config: { app_id: 'app-a', app_secret: 'secret-a' },
+              },
+              {
+                id: 'secondary',
+                provider: 'builtin:feishu',
+                config: { app_id: 'app-b', app_secret: 'secret-b' },
+              },
+            ],
+          }),
+        ],
+      });
+    }).not.toThrow();
+    expect(store?.get('flow')?.bot_app_id).toBe('');
   });
 });

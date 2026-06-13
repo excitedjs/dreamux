@@ -734,25 +734,33 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   channel provider's `readConfig` — resolved through the provider registry the
   same way agent runtimes are (`registerBuiltinChannelProviders` registers the
   `@excitedjs/feishu-channel` provider; `builtin:feishu` is now a `channel`
-  registry descriptor). Core removed its Feishu-specific channel checks — the
-  app id/secret non-empty checks, the unknown-key check, and the cross-dispatcher
-  app id uniqueness check; the Feishu provider's `readConfig` owns the first two
-  (and, since the bot secret is config-sourced, keeps the non-empty `app_secret`
-  fail-loud at config load), while the cross-dispatcher uniqueness check is
-  intentionally dropped (a per-channel `readConfig` cannot see other dispatchers).
-  Config now stores the **raw** channel config — the production Feishu adapter
-  consumes `{ app_id, app_secret }`; wiring channels through `createSession` with
-  the parsed config is the channel-routing slice, so the parsed `readConfig`
-  result is validated-and-discarded this slice. A channel provider whose
-  `readConfig` is async is rejected at config load (sync only this phase, like
-  agent runtimes). This is the config-layer half of the channel work: **live
+  registry descriptor). Core moved its Feishu-specific channel *field* checks —
+  the app id/secret non-empty checks and the unknown-key check — into the Feishu
+  provider's `readConfig` (and, since the bot secret is config-sourced, that keeps
+  the non-empty `app_secret` fail-loud at config load). The cross-dispatcher
+  `app_id` uniqueness check stays in **core**, not the provider: bot-identity
+  uniqueness across dispatchers is a core concern (a per-channel `readConfig`
+  cannot see other dispatchers, but core holds them all), so config load runs a
+  post-parse pass that fails loud when two dispatchers — enabled or not — declare
+  the same Feishu `app_id`, the same story `dreamux serve` / `doctor` / `onboard`
+  tell. Field validation is provider-owned; cross-dispatcher identity is
+  core-owned. Config now stores the **raw** channel config — the production Feishu
+  adapter consumes `{ app_id, app_secret }`; wiring channels through
+  `createSession` with the parsed config is the channel-routing slice, so the
+  parsed `readConfig` result is validated-and-discarded this slice. A channel
+  provider whose `readConfig` is async is rejected at config load (sync only this
+  phase, like agent runtimes). External `npm:` channel providers are not loaded at
+  config time yet (`readConfigFile` loads only external agent-runtime refs); an
+  `npm:` channel ref fails loud as an unloaded external provider until a generic
+  channel loader lands. This is the config-layer half of the channel work: **live
   multi-channel routing is deferred** — a runnable dispatcher must declare exactly
-  one `builtin:feishu` channel, enforced fail-loud at the runtime boundary
-  (the dispatcher store throws on more than one Feishu channel; the dispatcher
-  service rejects more than one channel or a non-feishu channel at launch) rather
-  than at config load, so config can express the general shape while the runtime
-  catches up. Binding store v2, target-key routing, and the generic Channel MCP /
-  `bind_channel` migration remain later slices.
+  one `builtin:feishu` channel, enforced fail-loud at the **dispatcher runtime
+  boundary** (`assertRunnableChannelShape` in the dispatcher service launch guard
+  rejects more than one channel or a non-feishu channel; state seeding stays
+  fail-soft so this is the one intended place that rejects an unrunnable shape)
+  rather than at config load, so config can express the general shape while the
+  runtime catches up. Binding store v2, target-key routing, and the generic
+  Channel MCP / `bind_channel` migration remain later slices.
 
 ## Alternatives Considered
 

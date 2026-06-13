@@ -19,9 +19,9 @@ import {
 } from '../../channel/feishu/feishu-mcp-surface.js';
 import {
   BUILTIN_CODEX_PROVIDER_REF,
-  BUILTIN_FEISHU_PROVIDER_REF,
   type DreamuxConfig,
 } from '../../config/config.js';
+import { assertRunnableChannelShape } from './runnable-channel.js';
 import {
   DispatcherStore,
   type DispatcherRow,
@@ -272,22 +272,13 @@ export class DispatcherAgentService {
     const dispatcherConfig = this.opts.config.dispatchers.find(
       (dispatcher) => dispatcher.id === id,
     );
-    const channelRef =
-      dispatcherConfig?.channels[0]?.provider ?? BUILTIN_FEISHU_PROVIDER_REF;
-    // Config accepts multiple channels (issue #209 multi-channel config), but
-    // live multi-channel routing is a follow-up slice: a runnable dispatcher must
-    // declare exactly one channel and it must be builtin:feishu. Fail loud rather
-    // than silently wiring only the first channel.
-    const channels = dispatcherConfig?.channels;
-    if (channels !== undefined && channels.length > 1) {
-      throw new Error(
-        `dispatcher '${id}' declares ${channels.length} channels; live multi-channel routing is a follow-up slice, so a runnable dispatcher must declare exactly one ${BUILTIN_FEISHU_PROVIDER_REF} channel`,
-      );
-    }
-    if (channelRef !== BUILTIN_FEISHU_PROVIDER_REF) {
-      throw new Error(
-        `dispatcher '${id}' channel ${JSON.stringify(channelRef)} is not wired; only ${BUILTIN_FEISHU_PROVIDER_REF} is built in this phase`,
-      );
+    // Config accepts the general multi-channel shape (issue #209), but live
+    // routing is a follow-up slice: fail loud here — the one intended runtime
+    // boundary — for any not-yet-runnable shape rather than silently wiring only
+    // the first channel. State seeding stays fail-soft so this is the only place
+    // that rejects it.
+    if (dispatcherConfig !== undefined) {
+      assertRunnableChannelShape(dispatcherConfig);
     }
 
     const runtimeProvider = this.opts.agentRuntimeProviders.resolve(

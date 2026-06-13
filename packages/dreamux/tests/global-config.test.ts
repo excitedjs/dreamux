@@ -964,12 +964,12 @@ describe('global config (~/.dreamux/config.json)', () => {
     );
   });
 
-  it('no longer enforces cross-dispatcher Feishu app_id uniqueness in core', async () => {
-    // The cross-dispatcher app_id dedup was a Feishu-specific check; core removed
-    // it (issue #209) because channel config validation is provider-owned and a
-    // per-channel readConfig cannot see other dispatchers. Two dispatchers may
-    // now declare the same app_id at the config layer. (Residual risk noted in
-    // the change file: operators must keep bot app ids distinct.)
+  it('enforces cross-dispatcher Feishu app_id uniqueness in core (incl. disabled)', async () => {
+    // Field validation is provider-owned, but cross-dispatcher bot-identity
+    // uniqueness is a core concern (a per-channel readConfig cannot see other
+    // dispatchers, but core holds them all): config load fails loud when two
+    // dispatchers — one of them disabled here — declare the same app_id, the
+    // same story serve/doctor/onboard tell (issue #209 review).
     writeConfigObject(
       testConfigFileObject({
         agents: [
@@ -992,8 +992,9 @@ describe('global config (~/.dreamux/config.json)', () => {
       }),
     );
 
-    const { config } = await loadConfigWithBuiltins({ configDir });
-    expect(config.dispatchers).toHaveLength(2);
+    await expect(loadConfigWithBuiltins({ configDir })).rejects.toThrow(
+      /Feishu app_id duplicates dispatcher 'flow'/,
+    );
   });
 
   it('rejects dispatcher ids that would not be stable path segments', async () => {
