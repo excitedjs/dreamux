@@ -117,12 +117,14 @@ async function handleRequest(
 
 function channelTools(): Array<Record<string, unknown>> {
   return [
-    tool('bind_channel', 'Bind an existing Feishu group chat to a Team by team_name (group chats only). After binding, inbound from that chat routes to the Team\'s TeamLeader.', {
+    tool('bind_channel', 'Bind an existing Feishu group chat to a Team by team_name (group chats only). After binding, inbound from that chat routes to the Team\'s TeamLeader. channel_id is optional and defaults to the dispatcher\'s configured channel.', {
       team_name: { type: 'string', minLength: 1, maxLength: 64 },
       chat_id: { type: 'string', minLength: 1 },
+      channel_id: { type: 'string', minLength: 1, maxLength: 64 },
     }, ['team_name', 'chat_id']),
-    tool('transfer_back', 'Return a bound Feishu group chat (by chat_id) to the dispatcher, deactivating the Team binding.', {
+    tool('transfer_back', 'Return a bound Feishu group chat (by chat_id) to the dispatcher, deactivating the Team binding. channel_id is optional and defaults to the dispatcher\'s configured channel.', {
       chat_id: { type: 'string', minLength: 1 },
+      channel_id: { type: 'string', minLength: 1, maxLength: 64 },
     }, ['chat_id']),
   ];
 }
@@ -174,19 +176,29 @@ function mapToolCall(call: ToolCall): { method: string; params: Record<string, u
 }
 
 function bindChannelArgs(value: unknown): Record<string, unknown> {
-  // Group-only bind by team_name + Feishu chat id; no `chat_type` (the binding
-  // store rejects non-group anyway). channel_id/target-key addressing is the
-  // routing slice.
+  // Group-only bind by team_name + Feishu chat id; no `chat_type` (binding is
+  // group-only). channel_id is optional (defaults to the sole configured
+  // channel); core resolves the (channel_id, target_key) v2 binding key.
   const obj = asRecord(value, 'bind_channel arguments');
   return {
     team_name: requireString(obj, 'team_name'),
     chat_id: requireString(obj, 'chat_id'),
+    ...optionalChannelId(obj),
   };
 }
 
 function transferArgs(value: unknown): Record<string, unknown> {
   const obj = asRecord(value, 'transfer_back arguments');
-  return { chat_id: requireString(obj, 'chat_id') };
+  return { chat_id: requireString(obj, 'chat_id'), ...optionalChannelId(obj) };
+}
+
+function optionalChannelId(obj: Record<string, unknown>): Record<string, unknown> {
+  const value = obj['channel_id'];
+  if (value === undefined || value === null) return {};
+  if (typeof value !== 'string' || value === '') {
+    throw new Error('channel_id must be a non-empty string');
+  }
+  return { channel_id: value };
 }
 
 function asToolCallParams(params: unknown): ToolCall {

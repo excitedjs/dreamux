@@ -132,29 +132,10 @@ describe('issue #199 Slice 5 — pre-#199 local state fails loud', () => {
     });
   });
 
-  describe('channel-binding reader rejects pre-#199 team_id rows', () => {
-    it('fails loud on a row keyed by team_id instead of team_name', async () => {
-      writeRaw(dispatcherChannelBindingsPath(DISPATCHER), {
-        version: 1,
-        bindings: [
-          {
-            provider: 'builtin:feishu',
-            chat_id: 'chat-x',
-            chat_type: 'group',
-            team_id: 'gamma',
-            leader_name: 'lead-1',
-            active: true,
-            created_at: 1,
-            updated_at: 1,
-            deactivated_at: null,
-          },
-        ],
-      });
-      const store = new ChannelBindingStore();
-      await expect(store.list(DISPATCHER)).rejects.toThrow(/keyed by team_id/);
-    });
-
-    it('accepts a current team_name-keyed binding', async () => {
+  describe('channel-binding reader rejects pre-v2 stores (#209 binding store v2)', () => {
+    it('fails loud on a pre-v2 (version 1) store with rebuild guidance', async () => {
+      // The old store was version 1, keyed by (provider, chat_id) with no
+      // channel_id / target_key. 0.x does not migrate it.
       writeRaw(dispatcherChannelBindingsPath(DISPATCHER), {
         version: 1,
         bindings: [
@@ -172,9 +153,61 @@ describe('issue #199 Slice 5 — pre-#199 local state fails loud', () => {
         ],
       });
       const store = new ChannelBindingStore();
+      await expect(store.list(DISPATCHER)).rejects.toThrow(
+        /not version 2 .*delete .*channel-bindings\.json/s,
+      );
+    });
+
+    it('fails loud on a v2 store with a row missing channel_id / target_key', async () => {
+      writeRaw(dispatcherChannelBindingsPath(DISPATCHER), {
+        version: 2,
+        bindings: [
+          {
+            provider: 'builtin:feishu',
+            chat_id: 'chat-x',
+            chat_type: 'group',
+            team_name: 'gamma',
+            leader_name: 'lead-1',
+            active: true,
+            created_at: 1,
+            updated_at: 1,
+            deactivated_at: null,
+          },
+        ],
+      });
+      const store = new ChannelBindingStore();
+      await expect(store.list(DISPATCHER)).rejects.toThrow(
+        /missing channel_id \/ target_key/,
+      );
+    });
+
+    it('accepts a current v2 binding keyed by (channel_id, target_key)', async () => {
+      writeRaw(dispatcherChannelBindingsPath(DISPATCHER), {
+        version: 2,
+        bindings: [
+          {
+            channel_id: 'primary',
+            provider: 'builtin:feishu',
+            target_type: 'group',
+            target_key: 'chat-x',
+            display: null,
+            canonical_url: null,
+            meta: { chat_id: 'chat-x', chat_type: 'group' },
+            team_name: 'gamma',
+            leader_name: 'lead-1',
+            active: true,
+            created_at: 1,
+            updated_at: 1,
+            deactivated_at: null,
+          },
+        ],
+      });
+      const store = new ChannelBindingStore();
       const bindings = await store.list(DISPATCHER);
       expect(bindings).toHaveLength(1);
       expect(bindings[0]!.team_name).toBe('gamma');
+      expect(bindings[0]!.target_key).toBe('chat-x');
+      expect(bindings[0]!.channel_id).toBe('primary');
     });
   });
 });

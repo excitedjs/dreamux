@@ -33,6 +33,7 @@ import {
   detectLegacyDispatcherState,
   legacyDispatcherStateMessage,
 } from '../dispatcher-service/legacy-state.js';
+import { detectLegacyChannelBindingStore } from '../dispatcher-service/channel-binding/store.js';
 import { ExecaCommandRunner } from '../onboard/commands.js';
 import {
   defaultServiceNodeProbe,
@@ -159,6 +160,14 @@ export async function runDreamuxDoctor(
         legacy.length === 0
           ? 'no pre-#199 state paths found'
           : legacyDispatcherStateMessage(dispatcher.id, legacy),
+    });
+    // Issue #209 binding store v2: a pre-v2 channel-binding store is the same
+    // fail-loud rebuild signal, surfaced here before a start fails.
+    const bindingLegacy = await detectLegacyChannelBindingStore(dispatcher.id);
+    checks.push({
+      name: `dispatcher ${dispatcher.id} channel bindings`,
+      ok: bindingLegacy === null,
+      detail: bindingLegacy ?? 'channel binding store is current (v2) or absent',
     });
   }
 

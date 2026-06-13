@@ -120,6 +120,16 @@ class FakeProvider implements AgentRuntimeProvider {
 /** The dispatcher workspace cwd for the current test; set in beforeEach. */
 let dispatcherCwd: string;
 
+/** A Feishu group `ChannelTarget` as the channel session's resolveTarget emits. */
+function feishuGroupTarget(chatId: string) {
+  return {
+    target_type: 'group',
+    target_key: chatId,
+    bindable: true,
+    meta: { chat_id: chatId, chat_type: 'group' },
+  };
+}
+
 function buildServices(): {
   teams: TeamService;
   teammates: TeamMateAgentService;
@@ -540,26 +550,29 @@ describe('TeamService', () => {
     const bound = await teams.bindChannel({
       dispatcherId: 'flow',
       teamId: 'gamma',
+      channelId: 'primary',
       provider: 'builtin:feishu',
-      chatId: 'oc_existing_group',
-      chatType: 'group',
+      target: feishuGroupTarget('chat-existing-group'),
     });
     expect(bound).toMatchObject({
+      channel_id: 'primary',
       provider: 'builtin:feishu',
-      chat_id: 'oc_existing_group',
+      target_type: 'group',
+      target_key: 'chat-existing-group',
+      meta: { chat_id: 'chat-existing-group', chat_type: 'group' },
     });
-    // The bound group resolves to the Team, and status surfaces it.
+    // The bound target resolves to the Team by (channel_id, target_key), and
+    // status surfaces it with the chat id from meta.
     await expect(
       teams.resolveChannel({
         dispatcherId: 'flow',
-        provider: 'builtin:feishu',
-        chatId: 'oc_existing_group',
-        chatType: 'group',
+        channelId: 'primary',
+        targetKey: 'chat-existing-group',
       }),
     ).resolves.toMatchObject({ team_name: 'gamma' });
     expect((await teams.status('flow', 'gamma')).binding).toEqual({
       provider: 'builtin:feishu',
-      chat_id: 'oc_existing_group',
+      chat_id: 'chat-existing-group',
     });
   });
 
@@ -661,9 +674,9 @@ describe('TeamService', () => {
     await teams.bindChannel({
       dispatcherId: 'flow',
       teamId: 'auth-team',
+      channelId: 'primary',
       provider: 'builtin:feishu',
-      chatId: 'chat-auth',
-      chatType: 'group',
+      target: feishuGroupTarget('chat-auth'),
     });
     const listed = await teams.list('flow');
     const authRow = listed.find((row) => row.team_name === 'auth-team');

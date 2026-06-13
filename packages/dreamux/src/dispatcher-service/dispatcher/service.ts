@@ -1,3 +1,5 @@
+import type { ChannelTarget } from '@excitedjs/dreamux-types';
+
 import {
   bundledSkillSourcesForRole,
   type AgentRuntime,
@@ -257,6 +259,17 @@ export class DispatcherAgentService {
   ): boolean {
     const slot = this.slots.get(dispatcherId);
     return slot?.channel.messageBelongsToChat(messageId, chatId) ?? false;
+  }
+
+  /**
+   * Resolve a provider selector to a neutral `ChannelTarget` via the live channel
+   * session (issue #209 binding store v2). Target resolution is provider-owned;
+   * core calls it here for both binding and inbound routing so `target_key` stays
+   * opaque to core. Requires a running dispatcher — both call paths (the bind
+   * tool, the inbound router) run only while the channel session is live.
+   */
+  resolveChannelTarget(dispatcherId: string, meta: unknown): ChannelTarget {
+    return this.mustRunningSlot(dispatcherId).channel.resolveTarget(meta);
   }
 
   async shutdown(): Promise<void> {

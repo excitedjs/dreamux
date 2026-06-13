@@ -49,6 +49,7 @@ import {
   detectLegacyDispatcherState,
   legacyDispatcherStateMessage,
 } from './dispatcher-service/legacy-state.js';
+import { detectLegacyChannelBindingStore } from './dispatcher-service/channel-binding/store.js';
 export {
   IN_PROGRESS_REACTION_EMOJI,
   RECEIVED_REACTION_EMOJI,
@@ -295,10 +296,14 @@ export class Server {
       if (findings.length > 0) {
         messages.push(legacyDispatcherStateMessage(row.dispatcher_id, findings));
       }
+      // Issue #209 binding store v2: a pre-v2 channel-binding store fails loud at
+      // boot with rebuild guidance, not lazily on the first inbound message.
+      const bindingLegacy = await detectLegacyChannelBindingStore(row.dispatcher_id);
+      if (bindingLegacy !== null) messages.push(bindingLegacy);
     }
     if (messages.length > 0) {
       throw new Error(
-        `dreamux serve cannot start — pre-#199 local state found:\n${messages.join('\n')}`,
+        `dreamux serve cannot start — incompatible local state found:\n${messages.join('\n')}`,
       );
     }
   }

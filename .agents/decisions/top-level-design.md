@@ -858,10 +858,9 @@ forwards to core admin methods `mcp.channel.bind_channel` /
 `mcp.channel.transfer_back`, which delegate to the same `ChannelBindingStore`
 path as before — binding state, routing, and authorization stay core-owned and
 are NOT moved into any provider/runtime package. This is a surface/ownership move
-only: targets are still Feishu group chats addressed by `chat_id`; the
-channel-neutral `channel_id` + `resolveTarget` target model, binding store v2,
-and `list_peers` remain deferred to the routing slice, and `reply` / `react` stay
-on the provider-owned `feishu` MCP server for now.
+only; the channel-neutral `channel_id` + `resolveTarget` target model and binding
+store v2 landed in the next slice (below), while `list_peers` and moving `reply` /
+`react` onto the generic surface remain deferred.
 
 A TeamLeader is a TeamMate identity with `role:
 "team_leader"` and dispatcher owner. Team-owned members are normal TeamMate
@@ -885,14 +884,28 @@ worktree, or — when the Team was created with no `repo` — the plain
 `.workspace/work/<team_name>/` dir), never a separate per-member directory.
 
 Channel binding is persisted as JSON under
-`state/<dispatcher-id>/team/channel-bindings.json`, keyed by the concrete
-`team_name` (issue #199 Slice 4), and is scoped to group chats only. Bound Feishu group inbound is gated and formatted by the
-Feishu channel exactly as before, then routed by Dispatcher Service to the
-owning TeamLeader runtime. Unbound and P2P inbound still route to the
-dispatcher. The Channel MCP `transfer_back` deactivates a binding; `dissolve`
+`state/<dispatcher-id>/team/channel-bindings.json` (issue #209 binding store v2:
+`version: 2`). Flat rows key active bindings on `(channel_id, target_key)` and
+carry `channel_id`, the provider-owned opaque `target_key`, `target_type`,
+`display`, `canonical_url`, a `meta` object (Feishu `chat_id` / `chat_type` live
+here, not as core columns), plus `team_name` / `leader_name` / `active` /
+timestamps. Active uniqueness is `(channel_id, target_key)` — one target is active
+for at most one Team; re-binding reassigns it. Targets are resolved by the channel
+provider's `resolveTarget(meta)`, run by core at the bind/route edge; the Team
+service and store operate on the resolved `(channel_id, target_key)` primitives.
+`channel_id` is the dispatcher-local `dispatchers[].channels[].id`, resolved once
+by `dispatcherChannelId(config)` so the bind path and the inbound router key
+identically. Bound Feishu group inbound is gated and formatted by the Feishu
+channel, then routed by Dispatcher Service to the owning TeamLeader runtime; an
+unbound bindable target and any non-bindable P2P target route to the dispatcher
+(P2P short-circuits before any binding lookup and can never be bound to a
+TeamLeader). The Channel MCP `transfer_back` deactivates a binding; `dissolve`
 transfers active bindings back before closing the team. TeamLeader Feishu MCP
 calls carry their server-derived team principal and can reply/react only in bound
-team channels; the dispatcher keeps the global Feishu management surface.
+team channels (authorization keys on `(channel_id, target_key)`); the dispatcher
+keeps the global Feishu management surface. A pre-v2 store fails loud at
+`dreamux serve` / `dreamux doctor` with rebuild guidance — 0.x does not migrate
+it.
 
 A Team binds to an EXISTING Feishu group chat via the Channel MCP
 `channel.bind_channel` (`team_name` + `chat_id`, after create) through the

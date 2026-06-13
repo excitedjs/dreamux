@@ -1,3 +1,5 @@
+import type { ChannelTarget } from '@excitedjs/dreamux-types';
+
 import type {
   TeamMateIdentityStatus,
   TeamMateRuntimeStatus,
@@ -57,16 +59,18 @@ export interface TeamDissolveInput {
 export interface TeamBindChannelInput {
   dispatcherId: string;
   teamId: string;
+  /** Dispatcher-local channel id (`dispatchers[].channels[].id`). */
+  channelId: string;
   provider: 'builtin:feishu';
-  chatId: string;
-  chatType: 'group' | 'p2p';
+  /** Provider-resolved target (the caller already ran `resolveTarget`). */
+  target: ChannelTarget;
 }
 
 export interface TeamTransferChannelBackInput {
   dispatcherId: string;
-  provider: 'builtin:feishu';
-  chatId: string;
-  chatType: 'group' | 'p2p';
+  channelId: string;
+  /** Provider-owned routing key (Feishu: the chat id). */
+  targetKey: string;
 }
 
 /**
