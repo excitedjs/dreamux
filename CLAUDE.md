@@ -186,10 +186,12 @@ explicitly supersedes the top-level design.
   Cross-process file contracts (the admin socket path, dispatcher state files,
   logs) drift silently if any other file constructs them by raw string
   concatenation.
-- **Codex protocol bumps run through `src/agent-runtime/builtin/codex/handshake.ts`
-  first.** Any
-  RPC before `initialize` is rejected with `Not initialized` on codex
-  0.134+ — confirmed end-to-end in `tests/codex-0135-live.test.ts`.
+- **Codex protocol bumps run through the `@excitedjs/agent-runtime-codex` package's
+  `src/handshake.ts` first** (the in-core
+  `packages/dreamux/src/agent-runtime/builtin/codex/handshake.ts` is now a
+  re-export shim — #209 slice 3). Any RPC before `initialize` is rejected with
+  `Not initialized` on codex 0.134+ — confirmed end-to-end in
+  `tests/codex-0135-live.test.ts`.
 - **Teammate reverse-delivery requires codex 0.137+.** `completionInput`
   delivers a finished teammate's result to the dispatcher via
   `thread/inject_items` (codex 0.137+; see issue #147), then triggers a turn.

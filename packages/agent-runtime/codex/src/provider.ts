@@ -16,6 +16,7 @@ import {
 } from './config.js';
 import { codexArgsFromConfig, codexArgsToCli } from './args.js';
 import { BUILTIN_CODEX_PROVIDER_REF } from './provider-ref.js';
+import { defaultVolatileSocketPath } from './internal/socket.js';
 import type {
   AgentRuntimeCapabilities,
   AgentRuntime,
@@ -37,8 +38,10 @@ export interface CodexAgentRuntimeProviderOptions {
   /** The registry descriptor for `builtin:codex`. Defaults to a minimal one. */
   descriptor?: ProviderDescriptor;
   /**
-   * Allocate a fresh volatile rendezvous socket path per app-server start
-   * (host runtime-socket contract). Required for a runnable runtime.
+   * Allocate a fresh volatile rendezvous socket path per app-server start. The
+   * Dreamux host injects its own shared runtime-socket root here; when omitted
+   * the package falls back to {@link defaultVolatileSocketPath} so a
+   * loader-constructed / standalone runtime is still runnable.
    */
   allocateSocketPath?: (id: string) => string;
   /** Materialize bundled skill sources into the runtime workspace before start. */
@@ -122,11 +125,6 @@ export function createCodexAgentRuntimeProvider(
       if (context.paths === undefined) {
         throw new Error('codex runtime requires a path context in the create context');
       }
-      if (options.allocateSocketPath === undefined) {
-        throw new Error(
-          'codex runtime requires a socket allocator (host runtime-socket contract)',
-        );
-      }
       const codexConfig = context.config;
       const codexArgs = codexArgsFromConfig(codexConfig);
       const runtimeArgs = [
@@ -137,7 +135,7 @@ export function createCodexAgentRuntimeProvider(
         cwd: context.cwd,
         state: context.state,
         paths: context.paths,
-        allocateSocketPath: options.allocateSocketPath,
+        allocateSocketPath: options.allocateSocketPath ?? defaultVolatileSocketPath,
         codexBinPath: resolveCodexBinPath(codexConfig.bin),
         resolveExtraArgs: () => runtimeArgs,
         handshakeTimeoutMs: codexConfig.initialize_timeout_ms,
@@ -183,4 +181,38 @@ export function codexRuntimeArgsForMcpServers(
   servers: readonly AgentRuntimeMcpServer[],
 ): string[] {
   return codexMcpServerArgs(servers);
+}
+
+/**
+ * The context Dreamux core's generic provider package-loader passes to a
+ * package's factory export: the canonical ref and the seed descriptor the
+ * provider echoes back. Structurally matches core's `ProviderFactoryContext`
+ * without importing core.
+ */
+export interface CodexProviderFactoryContext {
+  ref: string;
+  descriptor: ProviderDescriptor;
+}
+
+/**
+ * Default export — the factory Dreamux core's generic provider-loader selects
+ * for the `builtin:codex` ref (it imports this package and calls the default
+ * export with `{ ref, descriptor }`). It returns a provider that runs on package
+ * defaults: a standalone volatile-socket allocator and no host-injected bundled
+ * skills.
+ *
+ * The Dreamux host does NOT use this bare path in production: its launcher still
+ * drives the host-shaped create context, so it constructs the provider through
+ * its own core-owned adapter (`@excitedjs/dreamux` `builtin/codex/provider.ts`)
+ * to map that context onto the neutral one AND inject its host contracts (the
+ * shared runtime-socket root, the package-bin `PATH`, and the bundled Dreamux
+ * skills). This default export keeps the package a first-class, loadable
+ * `AgentRuntimeProvider` for the generic loader and for external embedders;
+ * converging core's launcher onto the neutral context so it can drive the loaded
+ * provider directly is later-slice work.
+ */
+export default function codexAgentRuntimeProviderFactory(
+  context: CodexProviderFactoryContext,
+): AgentRuntimeProvider<DispatcherCodexConfig> {
+  return createCodexAgentRuntimeProvider({ descriptor: context.descriptor });
 }

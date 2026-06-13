@@ -6,12 +6,14 @@
  */
 
 export {
+  default,
   createCodexAgentRuntimeProvider,
   resolveCodexBinPath,
   codexRuntimeArgsForMcpServers,
   dispatcherCodexConfig,
   CODEX_AGENT_RUNTIME_CAPABILITIES,
   type CodexAgentRuntimeProviderOptions,
+  type CodexProviderFactoryContext,
 } from './provider.js';
 
 export {

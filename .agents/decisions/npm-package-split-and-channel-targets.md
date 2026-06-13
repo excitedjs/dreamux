@@ -574,15 +574,31 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   `AgentRuntimeProvider` and depending on `@excitedjs/dreamux-types` ONLY — an
   import-boundary test rejects any `@excitedjs/dreamux` import or relative escape.
   `@excitedjs/dreamux` depends on the package by default (bundled built-in) and
-  resolves `builtin:codex` to it. Rather than converge core's whole launcher onto
-  the neutral context in this slice, core keeps a thin **core-owned adapter**
-  (`agent-runtime/builtin/codex/provider.ts`) that maps its host create context
-  (dispatcher row/store/host logger) onto the neutral one, supplying the host
-  contracts the package must not reconstruct — per-dispatcher path context, the
-  volatile rendezvous-socket allocator, the package-bin `PATH` seed, the
-  dispatcher-store-backed state sink, the Codex home/auth doctor, and the
-  bundled-skill install. The package vendors only generic OS/validation/turn
-  helpers (not host layout/path/socket/log contracts) and owns its own `~/.codex`
+  resolves `builtin:codex` to it.
+
+  The package satisfies the slice-2 generic provider-loader path for real: it
+  **default-exports** the loader factory, so
+  `loadExternalAgentRuntimeProviders({ refs: ['builtin:codex'] })` imports the
+  ACTUAL package (resolved through `BUILTIN_PROVIDER_PACKAGES`), selects the
+  default export, and registers a contract-valid provider whose `createRuntime`
+  constructs a runnable runtime from the neutral create context alone — the
+  package falls back to its own standalone volatile-socket allocator when no host
+  allocator is injected. A core test (`builtin-codex-package-loader.test.ts`)
+  exercises this against the real package (no fake module), replacing the
+  slice-2 fake-module placeholder as the proof.
+
+  Production does **not** use that bare-loader path, because core's launcher still
+  drives the host-shaped create context (`row`/`store`/host logger). So core keeps
+  a thin **core-owned adapter** (`agent-runtime/builtin/codex/provider.ts`) that
+  maps the host context onto the neutral one and injects the Dreamux host
+  contracts the bare `{ ref, descriptor }` factory cannot deliver — per-dispatcher
+  path context, the shared volatile rendezvous-socket root, the package-bin `PATH`
+  seed, the dispatcher-store-backed state sink, the Codex home/auth doctor, and
+  the bundled-skill install. Both paths construct the same package provider;
+  converging core's launcher onto the neutral context so it can drive the
+  loaded provider directly (and retire the adapter) is later-slice work. The
+  package vendors only generic OS/validation/turn/socket-fallback helpers (never
+  the Dreamux host layout/path/socket/log contracts) and owns its own `~/.codex`
   config parsing and the Codex version gate. The remaining `builtin/codex/*` core
   files are the adapter plus host codex paths, the codex-home doctor, the
   diagnostic, and re-export shims kept so existing core/test import paths stay
