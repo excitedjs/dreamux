@@ -92,7 +92,7 @@ describe('Channel MCP admin methods replace the Team binding methods (#209 slice
     // #209 slice 8 review P2: the two sibling Channel MCP methods must return the
     // same shape — the binding summary directly — so a caller does not unwrap one
     // and not the other.
-    const binding = { provider: 'builtin:feishu', chat_id: 'oc_demo_group' };
+    const binding = { provider: 'builtin:feishu', chat_id: 'chat-demo' };
     const channelStub = {
       repos: { dispatchers: { get: () => ({ dispatcher_id: 'flow' }) } },
       dispatcherService: {
@@ -104,11 +104,11 @@ describe('Channel MCP admin methods replace the Team binding methods (#209 slice
     const bound = await adminMethods['mcp.channel.bind_channel']!(channelStub, {
       dispatcher_id: 'flow',
       team_name: 'alpha',
-      chat_id: 'oc_demo_group',
+      chat_id: 'chat-demo',
     });
     const transferred = await adminMethods['mcp.channel.transfer_back']!(channelStub, {
       dispatcher_id: 'flow',
-      chat_id: 'oc_demo_group',
+      chat_id: 'chat-demo',
     });
     expect(bound).toEqual(binding);
     expect(transferred).toEqual(binding);
