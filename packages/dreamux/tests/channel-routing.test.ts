@@ -146,3 +146,64 @@ describe('routeChannelInput keys by (channel_id, target_key) (#209 binding store
     expect(dispatcherRuntime.channelInput).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('resolveChannelId guards the explicit channel_id on bind (#209 binding store v2)', () => {
+  beforeEach(() => resetRuntimeConfig());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    resetRuntimeConfig();
+  });
+
+  it('passes an explicit channel_id that matches the configured channel through to the store', async () => {
+    const service = buildService();
+    vi.spyOn(service.dispatchers, 'resolveChannelTarget').mockReturnValue(
+      feishuTarget('group'),
+    );
+    const bindSpy = vi
+      .spyOn(service.teams, 'bindChannel')
+      .mockResolvedValue({ team_name: 'alpha' } as never);
+
+    await service.bindTeamChannel({
+      dispatcherId: 'flow',
+      teamId: 'alpha',
+      channelId: 'primary',
+      chatId: 'chat-x',
+    });
+
+    expect(bindSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dispatcherId: 'flow',
+        teamId: 'alpha',
+        channelId: 'primary',
+        provider: 'builtin:feishu',
+        target: expect.objectContaining({ target_key: 'chat-x' }),
+      }),
+    );
+  });
+
+  it('rejects an explicit channel_id that does not match the configured channel (fail-loud, no store write)', () => {
+    const service = buildService();
+    const bindSpy = vi.spyOn(service.teams, 'bindChannel');
+
+    expect(() =>
+      service.bindTeamChannel({
+        dispatcherId: 'flow',
+        teamId: 'alpha',
+        channelId: 'wrong',
+        chatId: 'chat-x',
+      }),
+    ).toThrow(/unknown channel_id 'wrong'/);
+    expect(bindSpy).not.toHaveBeenCalled();
+  });
+
+  it('rejects a dispatcher with no single resolvable channel', () => {
+    const service = buildService();
+    expect(() =>
+      service.bindTeamChannel({
+        dispatcherId: 'ghost',
+        teamId: 'alpha',
+        chatId: 'chat-x',
+      }),
+    ).toThrow(/no single resolvable channel/);
+  });
+});

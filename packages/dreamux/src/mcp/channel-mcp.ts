@@ -10,11 +10,12 @@
  * implementation behind `mcp.channel.*` is the same core binding store the Team
  * service uses.
  *
- * Scope note: this slice moves the MCP *surface* only. Targets are still
- * addressed by Feishu `chat_id` (group chats), not the channel-neutral
- * `channel_id` + `resolveTarget` target model — that, binding store v2, and
- * `list_peers` land in the routing slice. `reply` / `react` stay on the
- * provider-owned `feishu` MCP server for now.
+ * Scope note: only the user-facing Channel MCP selector remains Feishu
+ * `chat_id` based for now (group chats, plus the optional `channel_id`). Core's
+ * channel-neutral v2 target model — provider-owned `resolveTarget`, the
+ * `(channel_id, target_key)` binding store, and routing/authorization — is
+ * implemented (issue #209 binding store v2); `list_peers` is still unimplemented
+ * and `reply` / `react` stay on the provider-owned `feishu` MCP server for now.
  */
 import { createInterface } from 'node:readline';
 import type { Readable, Writable } from 'node:stream';

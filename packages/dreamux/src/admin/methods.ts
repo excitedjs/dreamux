@@ -338,9 +338,11 @@ export const adminMethods: Record<string, AdminHandler> = {
   // Channel MCP (issue #209 slice 8): core-hosted generic channel-binding
   // surface, replacing the removed Feishu-specific Team MCP `bind_group` /
   // `transfer_channel_back`. Binding state/routing/authorization stay core-owned;
-  // these delegate to the same Team-service binding store as before. Targets are
-  // still Feishu group chats addressed by `chat_id` (the channel-neutral
-  // `channel_id` + target-key model is the routing slice).
+  // these delegate to the same Team-service binding store as before. Only the
+  // user-facing selector remains Feishu `chat_id` based (group chats, plus the
+  // optional `channel_id`); core's channel-neutral v2 target store and
+  // `(channel_id, target_key)` routing are implemented (issue #209 binding store
+  // v2) and resolve the target at the facade edge.
   'mcp.channel.bind_channel': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
