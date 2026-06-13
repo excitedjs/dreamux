@@ -46,5 +46,5 @@ submission path or whether another gate rejected the later message.
 
 Before business RPCs, the Codex app-server connection must complete the
 initialize handshake. A daemon that exits before binding its socket, fails the
-handshake, or cannot read workspace-local skills should be treated as a
-startup readiness failure, not as a chat delivery bug.
+handshake, or rejects the role-gated skill roots (`skills/extraRoots/set`) should
+be treated as a startup readiness failure, not as a chat delivery bug.

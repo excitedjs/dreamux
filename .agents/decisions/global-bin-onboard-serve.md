@@ -87,10 +87,19 @@ status, and uninstall operations.
 [amendment](#amendment-issue-78-daemon-group--linger).)*
 
 Dispatcher app-server processes do not set `CODEX_HOME`; they use Codex's
-global default home (`~/.codex`) for auth, config, and memory. The consumer is
-still the dispatcher agent: the dispatcher is the long-lived Codex app-server,
-and its bundled skills are scoped to that agent's workspace. Onboarding
-installs them as symlinks under `<dispatcher cwd>/.codex/skills/<skill-name>`.
+global default home (`~/.codex`) for auth, config, and memory.
+
+> **Skill install superseded by issue #209 slice 6.** This record's
+> bundled-skill *symlink* install (`<dispatcher cwd>/.codex/skills/<skill-name>`,
+> during onboard and startup) is retired. Core now injects bundled skills at
+> runtime by role via the Agent Runtime `skillSources` (Dispatcher/TeamLeader
+> only); onboard and startup no longer write `.codex/skills`. The CODEX_HOME and
+> socket/state decisions on this record are unaffected. See
+> [npm-package-split-and-channel-targets.md](npm-package-split-and-channel-targets.md).
+
+Historical: the dispatcher was treated as the long-lived Codex app-server with
+its bundled skills scoped to that agent's workspace, and onboarding installed
+them as symlinks under `<dispatcher cwd>/.codex/skills/<skill-name>`.
 
 Skill installation, Codex global state, and app-server control state are
 separate concerns: the bundled skills are workspace-local, Codex's own

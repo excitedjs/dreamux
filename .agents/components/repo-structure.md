@@ -50,7 +50,7 @@ verbatim through the move):
 | `db/migrations/0001_init.sql` | Legacy SQLite schema; targeted for removal by [top-level-design](../decisions/top-level-design.md) |
 | `bin/dreamux` | Public CLI launcher (`dreamux serve`, `dreamux dispatcher ...`) |
 | `bin/tm` | Public wrapper that forwards to the package-local `@excitedjs/tm` executable |
-| `skills/` | Bundled Codex skills symlinked into each dispatcher's `<cwd>/.codex/skills/<skill-name>` by onboarding and dispatcher startup |
+| `skills/` | Bundled Dreamux skills injected at runtime by role (#209 slice 6): core hands them to Dispatcher/TeamLeader runtimes as `skillSources` and the runtime applies them (Codex `skills/extraRoots/set`, Claude Code `--add-dir`) — no longer symlinked into the workspace |
 | `tests/` | vitest: smoke, bin-launcher, dispatcher Codex home doctor, codex live integration |
 
 ## Installation — the rush path only
@@ -143,13 +143,13 @@ multi-package release notes precise while still using Rush as the validator.
 | `~/.dreamux/cache/<id>/` | Rebuildable cache: completion `spill/` files and `feishu-attachments/`. Not durable state; safe to clear while no server runs (issue #182 PR-2). | The server |
 | `~/.dreamux/logs/` | Server and per-dispatcher logs, including Codex app-server logs. | The server |
 | `~/.codex/` | Codex global default home: auth, memory, and config used by dispatcher app-server processes. | The operator / Codex |
-| `<dispatcher cwd>/.codex/skills/<skill-name>` | Workspace-local bundled skill symlink. | dreamux installer |
 
 The split is load-bearing: a
 `rm -rf ~/.dreamux/run ~/.dreamux/cache ~/.dreamux/state ~/.dreamux/logs`
 recovery (only while no server is running) never loses user-edited dreamux
 settings or global Codex auth.
 Dispatcher app-server processes do not set `CODEX_HOME`; they use Codex's
-global default home for auth, memory, and config. The bundled skills are
-workspace-local. See [top-level-design](../decisions/top-level-design.md) and
+global default home for auth, memory, and config. Bundled skills are injected at
+runtime by role (#209 slice 6), not written into the workspace. See
+[top-level-design](../decisions/top-level-design.md) and
 [dispatcher-tm-packaging](../decisions/dispatcher-tm-packaging.md).

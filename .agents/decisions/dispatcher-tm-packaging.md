@@ -37,14 +37,25 @@ package command.
 Dreamux ships a small set of bundled Codex skills in the npm package:
 `dispatcher`, `team-dev-workflow`, and `dreamux-maintenance`.
 
-`dreamux onboard` and dispatcher startup install these bundled skills into each
-dispatcher's workspace-local Codex skill directory as symlinks:
+> **Superseded by issue #209 slice 6 (role-gated skill injection).** The
+> workspace-symlink install described below is retired. Core now injects the
+> bundled skills at runtime by role through the Agent Runtime create context's
+> `skillSources` — Dispatcher and TeamLeader only — and the runtime applies them
+> to its engine (Codex `skills/extraRoots/set`, Claude Code `--add-dir`).
+> `dreamux onboard` and dispatcher startup no longer write
+> `<dispatcher cwd>/.codex/skills`; old symlinks are left untouched (a benign
+> duplicate listing, safe to delete). See
+> [npm-package-split-and-channel-targets.md](npm-package-split-and-channel-targets.md).
+
+Historical model (pre-slice-6): `dreamux onboard` and dispatcher startup
+installed these bundled skills into each dispatcher's workspace-local Codex skill
+directory as symlinks:
 
 ```text
 <dispatcher cwd>/.codex/skills/<skill-name> -> <dreamux package>/skills/<skill-name>
 ```
 
-This is intentionally not `~/.codex/skills/...`. The dispatcher skill is tied
+This was intentionally not `~/.codex/skills/...`. The dispatcher skill is tied
 to the dispatcher workspace and command environment, and the workflow /
 maintenance skills should appear only in that same dispatcher context. Codex
 auth, memory, and user configuration still follow Codex's normal global home.
