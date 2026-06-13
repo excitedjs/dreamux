@@ -814,6 +814,55 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   `reply` / `react` / `list_chat_bots` off the provider-owned `feishu` MCP server
   onto the generic surface, `list_peers`, and live multi-channel routing (the
   runtime still runs exactly one Feishu channel per dispatcher).
+- **Final hardening (package-boundary guards + acceptance inventory) — satisfied
+  now:** the epic's acceptance criteria are met and verified from code/tests. The
+  remaining §Validation Guards that were only "currently true" by inspection now
+  have repo-wide regression tests (`packages/dreamux/tests/package-boundary-guards.test.ts`):
+  the Feishu/Lark SDK is imported by exactly one package
+  (`@excitedjs/feishu-transport`); a default `@excitedjs/dreamux` install bundles
+  the built-in provider packages (`@excitedjs/agent-runtime-codex` /
+  `-claude-code` / `@excitedjs/feishu-channel`); and no provider/type package
+  lists `@excitedjs/dreamux` in its manifest. (A "core must not import
+  `@excitedjs/feishu-transport`" guard was deliberately NOT added: core legitimately
+  depends on the transport package and carries an `import type { TransportLogger }`
+  type-only import, so the actual coupling concern — the SDK — is what the
+  sole-owner guard captures.) The per-package `import-boundary.test.ts` files
+  already guard each provider's own `src/`; these add the reciprocal repo-wide and
+  manifest-level assertions.
+
+  **Three items remain deferred to a dedicated follow-up issue, cited honestly
+  rather than hidden behind AC "may expose" wording:**
+  - **Channel MCP `reply` / `react` / `list_chat_bots` surface taxonomy.** Channel
+    MCP *ownership* of binding + transfer-back is complete and gated
+    (`channel-mcp.test.ts`, `team-mcp.test.ts`). `reply` / `react` /
+    `list_chat_bots` are ALREADY core-owned, core-hosted (the `feishu-mcp` shim
+    forwards to core admin methods `mcp.reply` / `mcp.react` / `mcp.list_chat_bots`),
+    and core-authorized (the v2-keyed `assertFeishuScope` →
+    `teamLeaderCanUseChannel` on `(channel_id, target_key)`). What is NOT done is
+    presenting them under the generic `channel` server name instead of `feishu`.
+    Doing that the generic (non-Feishu-coupled) way requires a `channel_id`-scoped
+    provider-tool-forwarding mechanism (core fetches the active channel's tool
+    descriptors and forwards `tools/call` generically, with auth interposed) — the
+    SAME mechanism the deferred multi-channel work needs. Building it here would
+    half-build that feature; importing `feishuMcpTools` into the generic core shim
+    would instead violate the core-stays-generic boundary. So the taxonomy move
+    travels with multi-channel to the follow-up. This satisfies the §Validation
+    Guards "Channel MCP owns … outbound channel tools" intent at the *ownership*
+    layer (which is what the boundary rule protects); only the server-name
+    presentation is deferred.
+  - **`list_peers`.** Net-new platform capability (member enumeration) with the
+    same `channel_id`-scoped provider-forwarding dependency as `list_chat_bots`;
+    AC lists it under tools Channel MCP "may expose" and it has no task-breakdown
+    line. Deferred with the taxonomy move.
+  - **Live multi-channel routing.** Config validation already accepts N channels
+    with unique ids and provider-owned `readConfig`; the *runtime* still runs
+    exactly one `builtin:feishu` channel per dispatcher, fail-loud on any other
+    shape at the dispatcher launch guard (`assertRunnableChannelShape`). Running N
+    sessions and routing inbound across them by `channel_id` is a multi-session
+    feature the decision record and final plan both scope as a follow-up; the plan's
+    multi-channel task line ("config support with unique `channel_id` + provider-owned
+    parsing") is done. This is a decision point for the epic owner at
+    feature-branch → `main` merge, not a silent omission.
 
 ## Alternatives Considered
 
