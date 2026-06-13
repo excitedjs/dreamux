@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   existsSync,
-  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -220,11 +219,14 @@ describe('dreamux onboard', () => {
     expect(dreamuxConfig).not.toHaveProperty('runtime_dir');
     expect(dreamuxConfig).not.toHaveProperty('admin_socket');
     expect(dreamuxConfig).not.toHaveProperty('outbound');
+    // Onboard no longer symlinks bundled skills into the workspace (issue #209
+    // slice 6): no `.codex/skills` skill dir, no skill path, and the ledger
+    // records no skill entry. Core injects skills at runtime by role instead.
     expect(
       existsSync(dispatcherWorkspaceSkillPath(answers.dispatcherCwd)),
-    ).toBe(true);
+    ).toBe(false);
     for (const skillDir of dispatcherWorkspaceSkillDirs(answers.dispatcherCwd)) {
-      expect(lstatSync(skillDir).isSymbolicLink()).toBe(true);
+      expect(existsSync(skillDir)).toBe(false);
     }
     expect(
       existsSync(
@@ -236,7 +238,7 @@ describe('dreamux onboard', () => {
       'created',
     );
     for (const skillDir of dispatcherWorkspaceSkillDirs(answers.dispatcherCwd)) {
-      expect(ledger.get(skillDir)?.status).toBe('created');
+      expect(ledger.get(skillDir)).toBeUndefined();
     }
     expect(
       ledger.get(
@@ -262,19 +264,23 @@ describe('dreamux onboard', () => {
     );
   });
 
-  it('reports skipped bundled skill conflicts during onboard', async () => {
+  it('leaves a pre-existing workspace skill dir untouched during onboard', async () => {
+    // Onboard installs no skills and touches no `.codex/skills` path, so an
+    // operator's own skill dir there survives onboarding unchanged (issue #209
+    // slice 6). Old bundled symlinks are likewise never created or removed here.
     const runner = new FakeRunner();
     const answers = testAnswers({
-      configDir: join(root, 'config'),      registerService: false,
+      configDir: join(root, 'config'),
+      registerService: false,
       startService: false,
     });
     writeGlobalCodexAuth(answers);
-    const conflictDir = dispatcherWorkspaceSkillDir(
+    const userSkillDir = dispatcherWorkspaceSkillDir(
       answers.dispatcherCwd,
       'dreamux-maintenance',
     );
-    mkdirSync(conflictDir, { recursive: true });
-    writeFileSync(join(conflictDir, 'SKILL.md'), '# user maintenance skill\n');
+    mkdirSync(userSkillDir, { recursive: true });
+    writeFileSync(join(userSkillDir, 'SKILL.md'), '# user maintenance skill\n');
 
     const result = await runOnboard({
       answers,
@@ -286,9 +292,8 @@ describe('dreamux onboard', () => {
     });
 
     const ledger = new Map(result.files.map((entry) => [entry.path, entry]));
-    expect(ledger.get(conflictDir)?.status).toBe('skipped');
-    expect(ledger.get(conflictDir)?.reason).toContain('left untouched');
-    expect(readFileSync(join(conflictDir, 'SKILL.md'), 'utf8')).toBe(
+    expect(ledger.get(userSkillDir)).toBeUndefined();
+    expect(readFileSync(join(userSkillDir, 'SKILL.md'), 'utf8')).toBe(
       '# user maintenance skill\n',
     );
   });

@@ -1,15 +1,16 @@
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 
-import type {
-  AgentRuntime,
-  AgentRuntimeCapabilities,
-  AgentRuntimeMcpServer,
-  AgentRuntimePathContext,
-  AgentRuntimeProvider,
-  AgentRuntimeProviderCatalog,
-  AgentRuntimeTurnResult,
-  CompletionEnvelope,
+import {
+  bundledSkillSourcesForRole,
+  type AgentRuntime,
+  type AgentRuntimeCapabilities,
+  type AgentRuntimeMcpServer,
+  type AgentRuntimePathContext,
+  type AgentRuntimeProvider,
+  type AgentRuntimeProviderCatalog,
+  type AgentRuntimeTurnResult,
+  type CompletionEnvelope,
 } from '../../agent-runtime/index.js';
 import type { TurnSettledSignal } from '../../agent-runtime/turn.js';
 import {
@@ -881,6 +882,12 @@ export class TeamMateAgentService {
       row,
       dispatcher: createContextDispatcher,
       dispatchers: this.opts.dispatchers,
+      // The teammate identity's role drives bundled-skill gating (issue #209
+      // slice 6): only a `team_leader` receives bundled Dreamux skills; ordinary
+      // `teammate` / `team_member` launches receive none. `TeamMateRole` is a
+      // subset of `AgentRuntimeRole`, so it maps through directly.
+      role: identity.role,
+      skillSources: bundledSkillSourcesForRole(identity.role),
       cwd: identity.cwd,
       state,
       paths: this.runtimePaths(identity, provider.ref),

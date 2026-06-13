@@ -8,8 +8,8 @@
  * This adapter bridges the two: it presents the host `AgentRuntimeProvider`
  * core already wires through the catalog, and on `createRuntime` it maps the
  * host context onto the neutral one — resolving the host path/socket/log/state
- * contracts and the bundled-skill install the package must not reconstruct, then
- * delegating to the package provider.
+ * contracts and forwarding the role-gated bundled `skillSources` core selected,
+ * then delegating to the package provider.
  */
 import {
   createCodexAgentRuntimeProvider as createPackageCodexProvider,
@@ -32,7 +32,6 @@ import {
   defaultCodexRuntimePaths,
 } from './runtime-support.js';
 import { allocateCodexSocketPath } from './paths.js';
-import { installBundledWorkspaceSkills } from '../../../onboard/bundled-skills.js';
 import { dispatcherProcessEnv } from '../../../platform/package-bin.js';
 import {
   dispatcherCodexHomeDoctorContext,
@@ -43,7 +42,6 @@ import type {
   AgentRuntime,
   AgentRuntimeCreateContext,
   AgentRuntimeProvider,
-  AgentRuntimeRole,
 } from '../../types.js';
 import type { DispatcherProviderConfig } from '../../../config/config.js';
 
@@ -52,8 +50,8 @@ export { resolveCodexBinPath, CODEX_AGENT_RUNTIME_CAPABILITIES };
 /**
  * Host-shaped options for the built-in Codex provider. Unchanged from before the
  * package split so the server and tests keep their factory/doctor/backoff seams;
- * core fills the package's host hooks (socket allocator, package-bin env,
- * bundled-skill install) internally.
+ * core fills the package's host hooks (socket allocator, package-bin env)
+ * internally.
  */
 export interface CodexAgentRuntimeProviderOptions {
   descriptor: ProviderDescriptor;
@@ -90,8 +88,6 @@ export function createCodexAgentRuntimeProvider(
     descriptor: options.descriptor,
     allocateSocketPath: allocateCodexSocketPath,
     baseProcessEnv: (extraEnv) => dispatcherProcessEnv(process.env, extraEnv),
-    prepareWorkspaceSkills: (cwd) =>
-      installBundledWorkspaceSkills({ dispatcherCwd: cwd }),
     ...(options.codexProcessFactory !== undefined
       ? { codexProcessFactory: options.codexProcessFactory }
       : {}),
@@ -132,21 +128,19 @@ export function createCodexAgentRuntimeProvider(
         context.dispatcher === null
           ? defaultDispatcherCodexConfig()
           : dispatcherCodexConfig(context.dispatcher);
-      // Role is cosmetic for Codex (it ignores it); the teammate launcher is the
-      // only caller that passes onTurnSettled. Proper role/skill selection is a
-      // later slice.
-      const role: AgentRuntimeRole =
-        context.onTurnSettled !== undefined ? 'teammate' : 'dispatcher';
+      // The launcher now assigns the role explicitly (issue #209 slice 6); the
+      // adapter forwards it plus the role-gated bundled `skillSources` core
+      // selected, which the package applies via `skills/extraRoots/set`.
       const neutralContext: NeutralCreateContext<DispatcherCodexConfig> = {
         identity: {
           runtime_id: context.row.dispatcher_id,
           checkpoint_id: context.row.thread_id,
         },
-        role,
+        role: context.role,
         config: codexConfig,
         cwd: context.cwd,
         mcpServers: context.mcpServers,
-        skillSources: [],
+        skillSources: context.skillSources ?? [],
         logger: loggerFromHostLog(context.log),
         paths: context.paths ?? defaultCodexRuntimePaths,
         state: context.state ?? codexRowStateStore(context.dispatchers),

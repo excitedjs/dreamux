@@ -23,8 +23,11 @@ Design background:
 - Public CLI bins: `dreamux` and `tm`. `dreamux` owns onboarding, serving,
   status, doctor, dispatcher commands, and config commands. `tm` is a wrapper
   around the package-local `@excitedjs/tm` dependency for dispatcher skills.
-- A bundled dispatcher Codex skill, copied by `dreamux onboard` into
-  `<dispatcher cwd>/.codex/skills/dispatcher/SKILL.md`.
+- Bundled Dreamux skills injected at runtime by role (issue #209 slice 6):
+  core hands the Dispatcher and TeamLeader runtimes their bundled skill sources
+  and the runtime applies them to its engine (Codex `skills/extraRoots/set`,
+  Claude Code `--add-dir`). `dreamux onboard` no longer writes
+  `<dispatcher cwd>/.codex/skills`.
 - Providerized dispatcher declarations, a process-local Capability Registry,
   server-owned state/log paths, the `builtin:feishu` Channel provider, the
   `builtin:codex` and `builtin:claude-code` Agent Runtime providers, and
@@ -46,8 +49,8 @@ Design background:
   unrelated private chats to the same dispatcher.
 - **Dispatcher cwd is explicit.** Codex-backed dispatchers use Codex's global
   default home (`~/.codex`) for auth, memory, and config. Claude Code-backed
-  dispatchers use Claude Code's own CLI/auth behavior. The dispatcher skill is
-  workspace-local under the dispatcher cwd.
+  dispatchers use Claude Code's own CLI/auth behavior. Bundled skills are
+  injected at runtime by role (not written into the dispatcher cwd).
 - **Inbound state is in memory.** The server keeps only process-local turn
   queues, message dedupe, coalescing state, and received-reaction ownership.
   Restarting the server drops unprocessed inbound messages and may leave
@@ -111,7 +114,6 @@ logs:
 | `~/.dreamux/logs/feishu-channel/<id>.log` | Feishu channel logs | the server |
 | `~/.dreamux/logs/teammate-mcp/<id>.log` | TeamMate MCP shim diagnostics | the server |
 | `~/.codex/` | Codex global default home: auth, memory, and config | the operator / Codex |
-| `<dispatcher cwd>/.codex/skills/dispatcher/SKILL.md` | Dispatcher skill copied by `dreamux onboard`; reported but not deleted by `dreamux uninstall` | dreamux installer |
 
 `rm -rf ~/.dreamux/run ~/.dreamux/cache ~/.dreamux/state ~/.dreamux/logs` is a
 run/cache/state/log recovery path (only while no server is running); dreamux

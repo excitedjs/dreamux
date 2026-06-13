@@ -55,25 +55,27 @@ ships in the npm package:
   work still uses the caller-scoped TeamMate MCP.
 - `dreamux-maintenance` covers installed Dreamux diagnosis and safe operation.
 
-They are not installed through Codex plugin marketplaces. `dreamux onboard` and
-dispatcher startup symlink the bundled skill directories into each dispatcher's
-workspace-local Codex skill directory:
-
-```text
-<dispatcher cwd>/.codex/skills/<skill-name> -> <dreamux package>/skills/<skill-name>
-```
+They are not installed through Codex plugin marketplaces. Core injects them at
+runtime by role (issue #209 slice 6): `bundledSkillSourcesForRole(role)` selects
+the bundled skill sources for the Dispatcher and TeamLeader roles only (ordinary
+teammate / team-member runtimes get none), the launcher passes them as the create
+context's `skillSources`, and the runtime package applies them to its engine —
+Codex via the app-server `skills/extraRoots/set` RPC (each `skill-dir` source's
+parent becomes an extra skills root), Claude Code via `--add-dir` for compatible
+sources. `dreamux onboard` and dispatcher startup no longer symlink skills into
+`<dispatcher cwd>/.codex/skills`; an old symlink dir from a prior version is left
+untouched (Codex lists the skill twice but does not fail) and is safe to delete.
 
 Dispatcher app-server processes do not set `CODEX_HOME`; they use Codex's
-global default home for auth, config, and memory. The bundled skills are
-workspace-local because they belong to that dispatcher's command environment.
-See [the dispatcher tm packaging decision](../decisions/dispatcher-tm-packaging.md).
+global default home for auth, config, and memory. See
+[the dispatcher tm packaging decision](../decisions/dispatcher-tm-packaging.md)
+and [the npm package split record](../decisions/npm-package-split-and-channel-targets.md).
 
 ## Files
 
 | Path | Role |
 |---|---|
-| `/packages/dreamux/skills/<skill-name>/` | Bundled skill directory shipped in the npm package |
-| `<dispatcher cwd>/.codex/skills/<skill-name>` | Workspace-local symlink installed for one dispatcher |
+| `/packages/dreamux/skills/<skill-name>/` | Bundled skill directory shipped in the npm package, injected at runtime by role |
 | `/packages/dreamux/bin/tm` | Public wrapper that forwards to the package-local `@excitedjs/tm` executable |
 
 ## Runtime Boundary
@@ -116,20 +118,21 @@ Do not reintroduce `npx`, `npm exec`, plugin marketplace installation, or
 `@excitedjs/tm@latest` in the dispatcher skill. The installed package version is
 the compatibility boundary.
 
-## Symlink Strategy
+## Injection Strategy
 
-The runtime installer is intentionally symlink-only:
+Bundled skills are injected at runtime by role (issue #209 slice 6); the old
+workspace-symlink installer is retired. Nothing is written into the dispatcher
+workspace:
 
-- correct symlinks are left unchanged
-- stale or broken symlinks are replaced
-- real user files/directories are not overwritten; startup logs a diagnostic
-  and onboard reports the path as `skipped`. This includes an old hand-copied
-  `dispatcher` directory — Dreamux no longer fingerprints and migrates it
-  (issue #98); remove or rename it to let startup recreate the bundled symlink
-- custom symlinks in these bundled skill slots are treated as replaceable
-  Dreamux-managed links; use a real file or directory to opt out
-- missing `.codex/skills` directories are created
-- a missing dispatcher cwd is a startup error because it likely means the
-  configured dispatcher path is wrong
-- unsupported symlink platforms or permission errors fail loudly instead of
-  copying bundled content
+- core selects the bundled skill sources for the Dispatcher and TeamLeader roles
+  only (`bundledSkillSourcesForRole`); ordinary teammate / team-member runtimes
+  receive none
+- the runtime package applies them on each (re)start: Codex sets the deduped
+  parent roots via `skills/extraRoots/set` after initialize and before thread
+  start/resume, reapplying after every app-server restart; Claude Code emits
+  `--add-dir` for add-dir-compatible sources
+- a Codex `skills/extraRoots/set` failure fails the start loud — a
+  dispatcher/leader must not run skill-blind
+- an old `<dispatcher cwd>/.codex/skills` symlink dir from a prior version is
+  left untouched (Codex lists the skill twice but does not fail) and is safe to
+  delete; startup neither creates nor recreates it

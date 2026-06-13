@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "BREAKING: Replace the workspace-symlink bundled-skill model with role-gated runtime skill injection (issue #209 slice 6). `dreamux onboard` and dispatcher startup no longer create or write `<dispatcher cwd>/.codex/skills`; core now selects bundled `skillSources` for the Dispatcher and TeamLeader roles only and the runtime applies them (Codex via the app-server `skills/extraRoots/set` RPC after initialize and before thread start/resume, reapplied on restart; Claude Code via `--add-dir` for compatible sources). Ordinary teammates/team-members receive no bundled skills. Pre-existing old `.codex/skills` symlinks are NOT deleted and do not break startup — codex simply lists each bundled skill twice (an old repo-scoped copy plus the new user-scoped extra root). Rebuild: optionally delete `<dispatcher cwd>/.codex/skills` to remove the duplicate skill listing; no other action is required and dispatcher/teammate runtime behavior is otherwise unchanged.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

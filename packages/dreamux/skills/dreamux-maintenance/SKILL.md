@@ -17,11 +17,15 @@ explaining a failure or taking action.
   machine-local paths into public issues, PRs, or commits.
 - Prefer diagnostics and restart commands that preserve state. Do not remove
   state or logs unless the operator explicitly asks.
-- Do not copy bundled skills into a dispatcher workspace. Dreamux installs them
-  as symlinks under `<dispatcher cwd>/.codex/skills/`.
-- Treat bundled skill paths as Dreamux-managed slots. A custom symlink at one
-  of those paths can be replaced by Dreamux; use a real directory or file only
-  when deliberately opting out of the bundled skill.
+- Do not copy bundled skills into a dispatcher workspace. Dreamux injects them
+  at runtime by role: a Dispatcher/TeamLeader runtime is handed the bundled skill
+  sources and the runtime applies them to its engine (Codex via
+  `skills/extraRoots/set`, Claude Code via `--add-dir`). Onboard and startup no
+  longer write `<dispatcher cwd>/.codex/skills`.
+- An upgraded dispatcher may still have an old `<dispatcher cwd>/.codex/skills`
+  symlink dir from a prior version. It is harmless — Codex simply lists each
+  bundled skill twice — and is safe to delete; Dreamux neither needs nor recreates
+  it.
 
 ## Quick Triage
 
@@ -62,14 +66,14 @@ dreamux config show
 
 | Symptom | First checks |
 |---|---|
-| Dispatcher does not start | `dreamux doctor`, dispatcher cwd exists, Codex auth exists, bundled skill symlinks are readable. |
+| Dispatcher does not start | `dreamux doctor`, dispatcher cwd exists, Codex auth exists. |
 | Inbound accepted but no reply | Dispatcher status, Codex app-server log, whether the turn is still active. |
 | Restart did not announce recovery | `dreamux daemon restart --notify-resumed --dispatcher <id>` was used, and the dispatcher resumed an existing thread. |
 | TeamMate MCP fails | The `teammate` MCP server is injected into the dispatcher runtime; check `teammate-mcp/<dispatcher-id>.log` and that `~/.dreamux/state/<dispatcher-id>/teammate/` is readable. |
 | `tm` not found inside dispatcher (fallback path) | The tm CLI is the labeled local-execution fallback. Confirm the Dreamux package `bin/` directory is on dispatcher process `PATH`; rerun `dreamux doctor`. |
-| Skill changes did not appear | Verify `<dispatcher cwd>/.codex/skills/<name>` is a symlink to the installed Dreamux package skill directory. |
-| Skill path is a real file or directory | Dreamux leaves it untouched. If this is an intentional override, keep it; otherwise rename or remove it and restart the dispatcher. |
-| Skill symlink is broken after an upgrade | Restart the dispatcher or rerun `dreamux onboard`; startup recreates stale or broken bundled skill symlinks. |
+| Skill changes did not appear | Bundled skills are injected at runtime by role. Restart the dispatcher so it re-applies the skill roots (Codex `skills/extraRoots/set`); confirm the dispatcher's role is Dispatcher or TeamLeader (ordinary teammates get none). |
+| Bundled skill missing for a teammate | Expected: only Dispatcher and TeamLeader runtimes receive bundled skills; ordinary teammate / team-member runtimes get none by default. |
+| Old `.codex/skills` symlinks present after upgrade | Harmless leftovers from a prior version (Codex lists each bundled skill twice). Safe to delete `<dispatcher cwd>/.codex/skills`; Dreamux no longer creates or needs it. |
 
 ## Log Maintenance
 

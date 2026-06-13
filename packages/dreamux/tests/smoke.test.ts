@@ -15,11 +15,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import {
   existsSync,
-  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  realpathSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -53,7 +51,6 @@ import {
 } from '../src/config/config.js';
 import {
   defaultDispatcherCwd,
-  bundledSkillDir,
   dispatcherDir,
   dispatcherStatusPath,
   restartIntentPath,
@@ -62,7 +59,7 @@ import {
 } from '../src/platform/paths.js';
 import {
   dispatcherCodexHome,
-  dispatcherWorkspaceSkillDir,
+  dispatcherWorkspaceCodexSkillsDir,
 } from '../src/agent-runtime/builtin/codex/paths.js';
 import { writeRestartIntent } from '../src/daemon/restart-intent.js';
 import { dreamuxBinPath } from '../src/platform/package-bin.js';
@@ -594,14 +591,12 @@ describe('dreamux MVP smoke', () => {
     const statusRaw = readFileSync(dispatcherStatusPath('flow'), 'utf8');
     expect(statusRaw).not.toContain(socketPath);
     expect(statusRaw).not.toContain('.sock');
-    const dispatcherSkillDir = dispatcherWorkspaceSkillDir(
-      defaultDispatcherCwd('flow'),
-      'dispatcher',
-    );
-    expect(lstatSync(dispatcherSkillDir).isSymbolicLink()).toBe(true);
-    expect(realpathSync(dispatcherSkillDir)).toBe(
-      realpathSync(bundledSkillDir('dispatcher')),
-    );
+    // Starting the dispatcher does NOT dirty its workspace with bundled-skill
+    // symlinks (issue #209 slice 6): no `.codex/skills` dir is created. Core
+    // injects skills at runtime via `skills/extraRoots/set` instead.
+    expect(
+      existsSync(dispatcherWorkspaceCodexSkillsDir(defaultDispatcherCwd('flow'))),
+    ).toBe(false);
   });
 
   it('runs the runtime-socket sweep before the first dispatcher starts', async () => {

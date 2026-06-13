@@ -13,8 +13,6 @@ import {
   allocateCodexSocketPath,
   dispatcherCodexConfigPath,
   dispatcherCodexHome,
-  dispatcherWorkspaceCodexSkillsDir,
-  dispatcherWorkspaceSkillPath,
 } from './paths.js';
 
 export const DISPATCHER_APP_SERVER_SOCKET_PATH_MAX_BYTES =
@@ -25,8 +23,6 @@ export interface DispatcherCodexHomeDoctorContext {
   codexHome: string;
   configPath: string;
   dispatcherCwd: string;
-  skillsDir: string;
-  skillPath: string;
   /**
    * A representative socket allocation (issue #182: sockets are random per
    * start, so this is a sample of the policy, not the path a runtime will
@@ -66,8 +62,6 @@ export function dispatcherCodexHomeDoctorContext(
     codexHome: dispatcherCodexHome(dispatcherId),
     configPath: dispatcherCodexConfigPath(dispatcherId),
     dispatcherCwd,
-    skillsDir: dispatcherWorkspaceCodexSkillsDir(dispatcherCwd),
-    skillPath: dispatcherWorkspaceSkillPath(dispatcherCwd),
     socketPath: allocateCodexSocketPath(dispatcherId),
     codexCliArgs: options.codexCliArgs ?? [],
   };
@@ -114,9 +108,9 @@ export async function validateDispatcherCodexHome(
       `dispatcher app-server socket path is too long for Unix sockets (${bytes} bytes > ${DISPATCHER_APP_SERVER_SOCKET_PATH_MAX_BYTES} safe bytes): ${context.socketPath}`,
     );
   }
-  if (!(await dispatcherSkillExists(context.skillPath))) {
-    errors.push(`missing dispatcher skill: ${context.skillPath}`);
-  }
+  // The bundled dispatcher skill is no longer symlinked into the workspace
+  // (issue #209 slice 6); core injects it at runtime by role via
+  // `skills/extraRoots/set`, so the doctor no longer checks for an on-disk skill.
 
   if (!(await hasAuth(context.codexHome, env))) {
     errors.push(
@@ -156,10 +150,6 @@ function formatTomlError(err: unknown, file: string): string {
   }
   const msg = err instanceof Error ? err.message : String(err);
   return `Codex config parse error in ${file}: ${msg}`;
-}
-
-async function dispatcherSkillExists(skillPath: string): Promise<boolean> {
-  return pathExists(skillPath);
 }
 
 async function hasAuth(

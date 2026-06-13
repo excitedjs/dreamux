@@ -24,8 +24,10 @@ agent session; how it talks to its engine is the engine's business.
     version) lives in the package and implements the neutral
     `@excitedjs/dreamux-types` `AgentRuntimeProvider`. What stays in core:
     `provider.ts` (the host→neutral adapter that supplies the host
-    path/socket/log/state/skill contracts and presents the host-shaped provider
-    the catalog wires), `paths.ts` (host codex log/socket/workspace-skill paths),
+    path/socket/log/state contracts and forwards the role-gated bundled
+    `skillSources` core selected — the package applies them via
+    `skills/extraRoots/set`, #209 slice 6 — and presents the host-shaped provider
+    the catalog wires), `paths.ts` (host codex log/socket paths),
     `codex-home.ts` (home/auth doctor), `diagnostic.ts` (host doctor surface), and
     `runtime-support.ts` (the host path + state-sink adapters). `config.ts`,
     `args.ts`, `supervisor.ts`, `rpc.ts`, `handshake.ts`, `types.ts`,
@@ -43,7 +45,10 @@ agent session; how it talks to its engine is the engine's business.
     `args.ts`, `supervisor.ts`, `mcp-config.ts` are re-export shims back to the
     package so existing core/test import paths stay stable. The package must
     never import `@excitedjs/dreamux`. Claude Code is stdio-based: no socket, no
-    app-server home, and it injects no bundled skills in the runtime path.
+    app-server home. It translates add-dir-compatible role-gated `skillSources`
+    into startup `--add-dir` flags (#209 slice 6); the bundled Dreamux skills use
+    the `skill-dir` layout, which is not add-dir-compatible, so claude-code still
+    injects none of them today.
 
 ## Invariants (why it's shaped this way)
 

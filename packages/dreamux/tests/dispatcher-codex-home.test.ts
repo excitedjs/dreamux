@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 
 import {
   DISPATCHER_APP_SERVER_SOCKET_PATH_MAX_BYTES,
@@ -11,7 +11,6 @@ import {
 } from '../src/agent-runtime/builtin/codex/codex-home.js';
 import { BUILT_IN_DEFAULTS } from '../src/config/config.js';
 import {
-  defaultDispatcherCwd,
   resetRuntimeConfig,
   runRoot,
   setRuntimeConfig,
@@ -21,7 +20,6 @@ import {
 import {
   allocateCodexSocketPath,
   dispatcherCodexHome,
-  dispatcherWorkspaceSkillPath,
 } from '../src/agent-runtime/builtin/codex/paths.js';
 
 describe('global Codex home doctor', () => {
@@ -69,9 +67,13 @@ describe('global Codex home doctor', () => {
     expect(result.errors).toEqual(
       expect.arrayContaining([
         expect.stringContaining('missing Codex home directory'),
-        expect.stringContaining('missing dispatcher skill'),
         expect.stringContaining('missing Codex auth state'),
       ]),
+    );
+    // The doctor no longer checks for an on-disk dispatcher skill — bundled
+    // skills are injected at runtime by role (issue #209 slice 6).
+    expect(result.errors).not.toEqual(
+      expect.arrayContaining([expect.stringContaining('dispatcher skill')]),
     );
   });
 
@@ -209,21 +211,24 @@ describe('global Codex home doctor', () => {
     );
   });
 
-  it('rejects missing workspace-local dispatcher skills', async () => {
-    writeDispatcherHome('flow', { installDispatcherSkill: false });
+  it('does not require an on-disk workspace dispatcher skill', async () => {
+    // Bundled skills are injected at runtime via `skills/extraRoots/set`
+    // (issue #209 slice 6), so a ready Codex home needs no `.codex/skills`
+    // symlink — the doctor passes without one.
+    writeDispatcherHome('flow');
 
     const result = await validateDispatcherCodexHome('flow', { env: {} });
 
-    expect(result.ok).toBe(false);
-    expect(formatDispatcherCodexHomeErrors(result)).toContain(
-      'missing dispatcher skill',
+    expect(result.ok).toBe(true);
+    expect(result.errors).not.toEqual(
+      expect.arrayContaining([expect.stringContaining('dispatcher skill')]),
     );
   });
 });
 
 function writeDispatcherHome(
   dispatcherId: string,
-  options: { installDispatcherSkill?: boolean; writeAuth?: boolean } = {},
+  options: { writeAuth?: boolean } = {},
 ): void {
   mkdirSync(dispatcherCodexHome(dispatcherId), { recursive: true });
   if (options.writeAuth !== false) {
@@ -231,11 +236,4 @@ function writeDispatcherHome(
       mode: 0o600,
     });
   }
-
-  if (options.installDispatcherSkill === false) return;
-  const skillPath = dispatcherWorkspaceSkillPath(defaultDispatcherCwd(dispatcherId));
-  mkdirSync(dirname(skillPath), {
-    recursive: true,
-  });
-  writeFileSync(skillPath, '# test skill\n');
 }

@@ -9,7 +9,9 @@
  * `AgentRuntimeProvider` core already wires through the catalog, and on
  * `createRuntime` it maps the host context onto the neutral one — resolving the
  * host path/log/state contracts and the package-bin `PATH` the package must not
- * reconstruct, then delegating to the package provider.
+ * reconstruct, and forwarding the role-gated bundled `skillSources` core selected
+ * (the package owns layout filtering + `--add-dir` mapping), then delegating to
+ * the package provider.
  */
 import {
   createClaudeCodeAgentRuntimeProvider as createPackageClaudeCodeProvider,
@@ -34,7 +36,6 @@ import type {
   AgentRuntime,
   AgentRuntimeCreateContext,
   AgentRuntimeProvider,
-  AgentRuntimeRole,
 } from '../../types.js';
 import type { DispatcherProviderConfig } from '../../../config/config.js';
 
@@ -103,21 +104,20 @@ export function createClaudeCodeAgentRuntimeProvider(
         context.dispatcher === null
           ? defaultDispatcherClaudeCodeConfig()
           : dispatcherClaudeCodeConfig(context.dispatcher);
-      // Role is cosmetic for Claude Code (it ignores it); the teammate launcher
-      // is the only caller that passes onTurnSettled. Proper role/skill
-      // selection is a later slice.
-      const role: AgentRuntimeRole =
-        context.onTurnSettled !== undefined ? 'teammate' : 'dispatcher';
+      // The launcher now assigns the role explicitly (issue #209 slice 6); the
+      // adapter forwards it plus the role-gated bundled `skillSources` core
+      // selected, mirroring the Codex adapter. The package owns layout filtering
+      // and `--add-dir` mapping.
       const neutralContext: NeutralCreateContext<DispatcherClaudeCodeConfig> = {
         identity: {
           runtime_id: context.row.dispatcher_id,
           checkpoint_id: context.row.thread_id,
         },
-        role,
+        role: context.role,
         config: claudeConfig,
         cwd: context.cwd,
         mcpServers: context.mcpServers,
-        skillSources: [],
+        skillSources: context.skillSources ?? [],
         logger: loggerFromHostLog(context.log),
         paths: context.paths ?? defaultClaudeCodeRuntimePaths,
         state: context.state ?? claudeCodeRowStateStore(context.dispatchers),

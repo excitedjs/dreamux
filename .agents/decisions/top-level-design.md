@@ -912,26 +912,27 @@ location into that thread's `PATH`. This lets the dispatcher skills call bare
 `tm` without constructing long `npx` commands.
 
 The npm package ships bundled Codex skills under `/packages/dreamux/skills/`.
-During `onboard` and dispatcher startup, `dreamux` symlinks each bundled skill
-directory into:
 
-```text
-<dispatcher cwd>/.codex/skills/<skill-name>
-```
+> **Superseded by issue #209 slice 6 (role-gated skill injection).** The
+> workspace-symlink model below — `onboard` and dispatcher startup symlinking
+> each bundled skill into `<dispatcher cwd>/.codex/skills/<skill-name>` — is
+> retired. Core now injects the bundled skills at runtime by role through the
+> Agent Runtime create context's `skillSources`: only the Dispatcher and
+> TeamLeader roles receive them, and the runtime package applies them to its
+> engine (Codex `skills/extraRoots/set`, Claude Code `--add-dir`). `onboard` and
+> startup no longer create or write `<dispatcher cwd>/.codex/skills`. Pre-existing
+> old symlinks are left untouched (codex lists the skill twice but does not fail);
+> operators may delete that directory. See
+> [`npm-package-split-and-channel-targets.md`](npm-package-split-and-channel-targets.md).
 
-The workspace-local skills are intentionally not installed into the operator's
-global `~/.codex/skills`. The installer creates a missing `.codex/skills`
-parent and replaces stale or broken symlinks. Real user files or directories
-are left untouched with a startup diagnostic and an onboard `skipped` ledger
-entry — including an old hand-copied `dispatcher` directory, which Dreamux no
-longer fingerprints and migrates (issue #98); the operator removes or renames
-it to let startup recreate the bundled symlink. Custom symlinks in these
-bundled skill slots are treated as Dreamux-managed links and may be replaced;
-use a real file or directory to opt out.
+Historical model (pre-slice-6): during `onboard` and dispatcher startup,
+`dreamux` symlinked each bundled skill directory into
+`<dispatcher cwd>/.codex/skills/<skill-name>`, intentionally not into the
+operator's global `~/.codex/skills`.
 
 `uninstall` removes dreamux-owned config, run, cache, state, logs, and service integration
-by default. It reports workspace-local bundled skill paths, but it does not
-delete files under operator workspaces by default.
+by default. It still reports any pre-existing workspace-local bundled skill
+paths, but it does not delete files under operator workspaces by default.
 
 ## CLI And Admin
 

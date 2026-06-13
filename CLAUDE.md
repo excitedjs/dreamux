@@ -146,9 +146,13 @@ That record wins over older runtime-dir / SQLite decisions.
 - `~/.codex/` — Codex's own global home for auth, config, and memory.
   Dispatcher app-server processes follow Codex here; dreamux must not create
   dispatcher-private `CODEX_HOME` directories for the MVP.
-- `<dispatcher cwd>/.codex/skills/dispatcher/SKILL.md` — workspace-local
-  dispatcher skill installed by `dreamux onboard`; do not install this skill
-  into the operator's global `~/.codex/skills/` for the MVP.
+- Bundled Dreamux skills are injected at runtime by role (issue #209 slice 6),
+  not symlinked into the workspace. `dreamux onboard` and runtime startup no
+  longer write `<dispatcher cwd>/.codex/skills`; core selects the bundled
+  `skillSources` for the Dispatcher and TeamLeader roles only and the runtime
+  package applies them (Codex `skills/extraRoots/set`, Claude Code `--add-dir`).
+  Pre-existing old `.codex/skills` symlinks are left untouched (codex lists the
+  skill twice but does not fail); operators may delete that directory.
 
 Do not reintroduce `runtime_dir`, SQLite-backed dispatcher state, or
 `~/.codex-host/` as dreamux runtime state unless a new decision record
