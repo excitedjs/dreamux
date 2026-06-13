@@ -76,10 +76,6 @@ export interface ChannelReactInput {
   reaction: string;
 }
 
-export interface ChannelListPeersInput {
-  target: ChannelTarget;
-}
-
 export interface ChannelToolListContext {
   dispatcher_id: string;
   channel_id: string;
@@ -114,7 +110,6 @@ export interface ChannelSession {
   resolveTarget(meta: unknown): Promise<ChannelTarget>;
   reply?(input: ChannelReplyInput): Promise<unknown>;
   react?(input: ChannelReactInput): Promise<unknown>;
-  listPeers?(input: ChannelListPeersInput): Promise<unknown>;
   tools?(context: ChannelToolListContext): readonly ChannelToolDescriptor[];
   handleTool?(
     call: ChannelToolCall,

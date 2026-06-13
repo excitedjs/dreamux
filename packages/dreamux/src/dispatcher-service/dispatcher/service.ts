@@ -37,7 +37,6 @@ import {
 } from '../../platform/logger.js';
 import { teammateMcpServerDescriptor } from '../teammate/mcp-config.js';
 import { teamMcpServerDescriptor } from '../team/mcp-config.js';
-import { channelMcpServerDescriptor } from '../../channel/channel-mcp-config.js';
 import {
   DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS,
   DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
@@ -383,7 +382,6 @@ export class DispatcherAgentService {
     };
     return [
       feishuMcpServerDescriptor(context),
-      channelMcpServerDescriptor(context),
       teamMcpServerDescriptor(context),
       teammateMcpServerDescriptor({
         ...context,

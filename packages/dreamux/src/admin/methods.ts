@@ -335,41 +335,36 @@ export const adminMethods: Record<string, AdminHandler> = {
     });
   },
 
-  // Channel MCP (issue #209 slice 8): core-hosted generic channel-binding
-  // surface, replacing the removed Feishu-specific Team MCP `bind_group` /
-  // `transfer_channel_back`. Binding state/routing/authorization stay core-owned;
-  // these delegate to the same Team-service binding store as before. Only the
-  // user-facing selector remains Feishu `chat_id` based (group chats, plus the
-  // optional `channel_id`); core's channel-neutral v2 target store and
-  // `(channel_id, target_key)` routing are implemented (issue #209 binding store
-  // v2) and resolve the target at the facade edge.
-  'mcp.channel.bind_channel': async (server, params) => {
+  // Team MCP channel binding (issue #209): binding a configured channel target
+  // to a Team/TeamLeader is a Dreamux core Team capability, so it lives on the
+  // Team MCP. Binding state, target normalization, routing, P2P denial, and
+  // TeamLeader authorization stay core-owned and resolve the provider target at
+  // the facade edge. `channel_id` selects the configured channel (optional;
+  // defaults to the dispatcher's sole channel). `meta` is the provider-specific
+  // selector (Feishu: `{ chat_id }`), passed opaquely to `resolveTarget(meta)`,
+  // which infers/validates the target (group-only — chat_type is not required).
+  'mcp.team.bind_channel': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    // Core resolves channel_id + the provider-owned target at the facade edge and
-    // stores a v2 (channel_id, target_key) row (issue #209 binding store v2).
-    // channel_id is optional and defaults to the dispatcher's sole configured
-    // channel; chat_type is always group (binding is group-only).
     const channelId = optionalString(params, 'channel_id');
     return server.dispatcherService.bindTeamChannel({
       dispatcherId: id,
       teamId: mustString(params, 'team_name'),
       ...(channelId !== null ? { channelId } : {}),
-      chatId: mustString(params, 'chat_id'),
+      meta: mustRecord(params, 'meta'),
     });
   },
 
-  'mcp.channel.transfer_back': async (server, params) => {
+  'mcp.team.transfer_back': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     // Return the deactivated binding (or null when nothing was bound) directly,
-    // matching `bind_channel` above so the two sibling Channel MCP methods share
-    // one envelope.
+    // matching `bind_channel` so the two sibling tools share one envelope.
     const channelId = optionalString(params, 'channel_id');
     return server.dispatcherService.transferTeamChannelBack({
       dispatcherId: id,
       ...(channelId !== null ? { channelId } : {}),
-      chatId: mustString(params, 'chat_id'),
+      meta: mustRecord(params, 'meta'),
     });
   },
 
@@ -472,6 +467,22 @@ function mustNonEmptyString(
     throw new AdminError('BAD_REQUEST', `param '${key}' must be a non-empty string`);
   }
   return value;
+}
+
+/**
+ * A required object param, returned opaquely. Used for the channel-binding
+ * `meta` selector: core does not interpret it — it hands it to the channel
+ * provider's `resolveTarget(meta)`, which owns selector validation.
+ */
+function mustRecord(
+  params: Record<string, unknown> | undefined,
+  key: string,
+): Record<string, unknown> {
+  const value = params?.[key];
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new AdminError('BAD_REQUEST', `param '${key}' must be an object`);
+  }
+  return value as Record<string, unknown>;
 }
 
 function mustDispatcherId(

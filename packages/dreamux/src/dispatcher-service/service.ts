@@ -289,23 +289,25 @@ export class DispatcherService {
   }
 
   /**
-   * Bind a channel target to a Team. Core resolves `channel_id` and runs the
-   * channel's `resolveTarget` (provider-owned) at this edge, then passes the
-   * resolved `(channel_id, target)` down to the Team service / store. The Channel
-   * MCP keeps `chat_id` terminology; `chat_type` is always `group` (binding is
-   * group-only). A non-bindable (P2P) target is rejected fail-loud.
+   * Bind a channel target to a Team (a core-owned Team capability, exposed on the
+   * Team MCP). Core resolves `channel_id` and runs the channel's `resolveTarget`
+   * (provider-owned) over the caller's `meta` selector at this edge, then passes
+   * the resolved `(channel_id, target)` down to the Team service / store. `meta`
+   * is opaque to core (Feishu: `{ chat_id }`); the provider infers/validates the
+   * target (group-only). A non-bindable (P2P) target is rejected fail-loud by the
+   * store.
    */
   bindTeamChannel(input: {
     dispatcherId: string;
     teamId: string;
     channelId?: string;
-    chatId: string;
+    meta: Record<string, unknown>;
   }) {
     const channelId = this.resolveChannelId(input.dispatcherId, input.channelId);
-    const target = this.dispatchers.resolveChannelTarget(input.dispatcherId, {
-      chat_id: input.chatId,
-      chat_type: 'group',
-    });
+    const target = this.dispatchers.resolveChannelTarget(
+      input.dispatcherId,
+      input.meta,
+    );
     return this.teams.bindChannel({
       dispatcherId: input.dispatcherId,
       teamId: input.teamId,
@@ -318,13 +320,13 @@ export class DispatcherService {
   transferTeamChannelBack(input: {
     dispatcherId: string;
     channelId?: string;
-    chatId: string;
+    meta: Record<string, unknown>;
   }) {
     const channelId = this.resolveChannelId(input.dispatcherId, input.channelId);
-    const target = this.dispatchers.resolveChannelTarget(input.dispatcherId, {
-      chat_id: input.chatId,
-      chat_type: 'group',
-    });
+    const target = this.dispatchers.resolveChannelTarget(
+      input.dispatcherId,
+      input.meta,
+    );
     return this.teams.transferChannelBack({
       dispatcherId: input.dispatcherId,
       channelId,

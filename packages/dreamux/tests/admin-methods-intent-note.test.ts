@@ -83,36 +83,62 @@ describe('Channel MCP admin methods replace the Team binding methods (#209 slice
     expect(adminMethods['mcp.team.transfer_channel_back']).toBeUndefined();
   });
 
-  it('registers the core Channel MCP binding methods', () => {
-    expect(typeof adminMethods['mcp.channel.bind_channel']).toBe('function');
-    expect(typeof adminMethods['mcp.channel.transfer_back']).toBe('function');
+  it('registers the Team MCP channel-binding methods (and no generic channel.* aliases)', () => {
+    // Channel binding is a core-owned Team capability → it lives under mcp.team.*.
+    expect(typeof adminMethods['mcp.team.bind_channel']).toBe('function');
+    expect(typeof adminMethods['mcp.team.transfer_back']).toBe('function');
+    // The generic Channel MCP surface was removed; no channel.* method survives.
+    expect(adminMethods['mcp.channel.bind_channel']).toBeUndefined();
+    expect(adminMethods['mcp.channel.transfer_back']).toBeUndefined();
   });
 
-  it('bind_channel and transfer_back share one return envelope (the binding, not wrapped)', async () => {
-    // #209 slice 8 review P2: the two sibling Channel MCP methods must return the
-    // same shape — the binding summary directly — so a caller does not unwrap one
-    // and not the other.
-    const binding = { provider: 'builtin:feishu', chat_id: 'chat-demo' };
+  it('bind_channel and transfer_back share one return envelope (the binding, not wrapped) and pass meta through', async () => {
+    // The two sibling Team binding methods must return the same shape — the
+    // binding summary directly — so a caller does not unwrap one and not the
+    // other. They forward the provider selector `meta` opaquely to the facade.
+    const binding = { provider: 'builtin:feishu', target_key: 'chat-demo' };
+    const seen: Array<Record<string, unknown>> = [];
     const channelStub = {
       repos: { dispatchers: { get: () => ({ dispatcher_id: 'flow' }) } },
       dispatcherService: {
-        bindTeamChannel: async () => binding,
-        transferTeamChannelBack: async () => binding,
+        bindTeamChannel: async (input: Record<string, unknown>) => {
+          seen.push(input);
+          return binding;
+        },
+        transferTeamChannelBack: async (input: Record<string, unknown>) => {
+          seen.push(input);
+          return binding;
+        },
       },
     } as unknown as Server;
 
-    const bound = await adminMethods['mcp.channel.bind_channel']!(channelStub, {
+    const bound = await adminMethods['mcp.team.bind_channel']!(channelStub, {
       dispatcher_id: 'flow',
       team_name: 'alpha',
-      chat_id: 'chat-demo',
+      meta: { chat_id: 'chat-demo' },
     });
-    const transferred = await adminMethods['mcp.channel.transfer_back']!(channelStub, {
+    const transferred = await adminMethods['mcp.team.transfer_back']!(channelStub, {
       dispatcher_id: 'flow',
-      chat_id: 'chat-demo',
+      meta: { chat_id: 'chat-demo' },
     });
     expect(bound).toEqual(binding);
     expect(transferred).toEqual(binding);
-    // No `{ binding: ... }` wrapper on either method.
     expect(transferred).not.toHaveProperty('binding');
+    // meta reached the facade verbatim on both methods.
+    expect(seen[0]).toMatchObject({ teamId: 'alpha', meta: { chat_id: 'chat-demo' } });
+    expect(seen[1]).toMatchObject({ meta: { chat_id: 'chat-demo' } });
+  });
+
+  it('rejects a bind_channel call whose meta is missing or not an object', async () => {
+    const channelStub = {
+      repos: { dispatchers: { get: () => ({ dispatcher_id: 'flow' }) } },
+      dispatcherService: { bindTeamChannel: async () => ({}) },
+    } as unknown as Server;
+    await expect(
+      adminMethods['mcp.team.bind_channel']!(channelStub, {
+        dispatcher_id: 'flow',
+        team_name: 'alpha',
+      }),
+    ).rejects.toThrow(/meta/);
   });
 });

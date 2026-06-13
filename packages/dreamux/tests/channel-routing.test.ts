@@ -167,7 +167,7 @@ describe('resolveChannelId guards the explicit channel_id on bind (#209 binding 
       dispatcherId: 'flow',
       teamId: 'alpha',
       channelId: 'primary',
-      chatId: 'chat-x',
+      meta: { chat_id: 'chat-x' },
     });
 
     expect(bindSpy).toHaveBeenCalledWith(
@@ -190,7 +190,7 @@ describe('resolveChannelId guards the explicit channel_id on bind (#209 binding 
         dispatcherId: 'flow',
         teamId: 'alpha',
         channelId: 'wrong',
-        chatId: 'chat-x',
+        meta: { chat_id: 'chat-x' },
       }),
     ).toThrow(/unknown channel_id 'wrong'/);
     expect(bindSpy).not.toHaveBeenCalled();
@@ -202,7 +202,7 @@ describe('resolveChannelId guards the explicit channel_id on bind (#209 binding 
       service.bindTeamChannel({
         dispatcherId: 'ghost',
         teamId: 'alpha',
-        chatId: 'chat-x',
+        meta: { chat_id: 'chat-x' },
       }),
     ).toThrow(/no single resolvable channel/);
   });
