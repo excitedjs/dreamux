@@ -100,18 +100,12 @@ async function handleRequest(
 
 function teamTools(): Array<Record<string, unknown>> {
   return [
-    tool('create', 'Create a Team and start its TeamLeader. team_name is the concrete Team key used by all later status/history/dissolve/bind_group calls. intent is required: it is the durable recovery subject for the Team. repo is optional: omit it to run the TeamLeader and members in a plain shared work directory under the dispatcher workspace (.workspace/work/<team_name>/ — the dispatcher cwd need not be a git repo), or pass { mode: reuse-cwd | managed, path?, base_ref?, branch?, slug?, cleanup? } — managed creates a git worktree. Optionally bind an existing Feishu group chat at create time via bind_group.', {
+    tool('create', 'Create a Team and start its TeamLeader. team_name is the concrete Team key used by all later status/history/dissolve calls. intent is required: it is the durable recovery subject for the Team. repo is optional: omit it to run the TeamLeader and members in a plain shared work directory under the dispatcher workspace (.workspace/work/<team_name>/ — the dispatcher cwd need not be a git repo), or pass { mode: reuse-cwd | managed, path?, base_ref?, branch?, slug?, cleanup? } — managed creates a git worktree. To hand a Feishu group chat to the Team, bind it after create with the channel MCP bind_channel tool.', {
       team_name: { type: 'string', minLength: 1, maxLength: 64 },
       repo: repoInputSchema(),
       leader_agent_runtime: { type: 'string', minLength: 1, maxLength: 128 },
       intent: { type: 'string', minLength: 1, maxLength: 2000 },
       prompt: { type: 'string', maxLength: 20000 },
-      bind_group: {
-        type: 'object',
-        additionalProperties: false,
-        properties: { chat_id: { type: 'string', minLength: 1 } },
-        required: ['chat_id'],
-      },
     }, ['team_name', 'leader_agent_runtime', 'intent']),
     tool('list', 'List Teams owned by this dispatcher (compact scan rows: team_name, status, intent, repo, leader, member count, bound group).', {}, []),
     tool('status', 'Read one Team\'s detailed current status by its team_name (record, TeamLeader status, member count, active bound group).', {
@@ -127,13 +121,6 @@ function teamTools(): Array<Record<string, unknown>> {
       limit: { type: 'integer', minimum: 1, maximum: 100 },
       cursor: { type: 'string', minLength: 1, maxLength: 1000 },
     }, []),
-    tool('bind_group', 'Bind an existing Feishu group chat to a Team by team_name (group chats only).', {
-      team_name: { type: 'string', minLength: 1, maxLength: 64 },
-      chat_id: { type: 'string', minLength: 1 },
-    }, ['team_name', 'chat_id']),
-    tool('transfer_channel_back', 'Transfer a bound Feishu group chat back to the dispatcher.', {
-      chat_id: { type: 'string', minLength: 1 },
-    }, ['chat_id']),
     tool('dissolve', 'Close one Team (by team_name) and its agents. note is required: it records why a recoverable Team was stopped.', {
       team_name: { type: 'string', minLength: 1, maxLength: 64 },
       note: { type: 'string', minLength: 1, maxLength: 2000 },
@@ -186,10 +173,6 @@ function mapToolCall(call: ToolCall): { method: string; params: Record<string, u
       return { method: 'mcp.team.status', params: teamNameArgs(call.arguments) };
     case 'history':
       return { method: 'mcp.team.history', params: historyArgs(call.arguments) };
-    case 'bind_group':
-      return { method: 'mcp.team.bind_group', params: bindGroupArgs(call.arguments) };
-    case 'transfer_channel_back':
-      return { method: 'mcp.team.transfer_channel_back', params: transferArgs(call.arguments) };
     case 'dissolve':
       return { method: 'mcp.team.dissolve', params: dissolveArgs(call.arguments) };
     default:
@@ -200,13 +183,6 @@ function mapToolCall(call: ToolCall): { method: string; params: Record<string, u
 function createArgs(value: unknown): Record<string, unknown> {
   const obj = asRecord(value, 'create arguments');
   const prompt = optionalString(obj, 'prompt');
-  // Optional: bind an existing Feishu group at create time (issue #182 PR-8).
-  const bindGroupRaw = obj['bind_group'];
-  let bindGroup: { chat_id: string } | null = null;
-  if (bindGroupRaw !== undefined && bindGroupRaw !== null) {
-    const bindObj = asRecord(bindGroupRaw, 'bind_group');
-    bindGroup = { chat_id: requireString(bindObj, 'chat_id') };
-  }
   // #199 Slice 2: the public work-directory input is a single optional `repo`
   // object (replacing the old required `repo_cwd`). Omitted → a plain shared
   // .workspace/work/<team_name>/ dir (no git worktree, issue #199).
@@ -218,7 +194,6 @@ function createArgs(value: unknown): Record<string, unknown> {
     intent: requireString(obj, 'intent'),
     ...(repo !== null ? { repo } : {}),
     ...(prompt !== null ? { prompt } : {}),
-    ...(bindGroup !== null ? { bind_group: bindGroup } : {}),
   };
 }
 
@@ -256,21 +231,6 @@ function dissolveArgs(value: unknown): Record<string, unknown> {
     team_name: requireString(obj, 'team_name'),
     note: requireString(obj, 'note'),
   };
-}
-
-function bindGroupArgs(value: unknown): Record<string, unknown> {
-  // #182 PR-7: bind an existing Feishu group by team_name + chat id. Group-only,
-  // so no `chat_type` is accepted (the binding store rejects non-group anyway).
-  const obj = asRecord(value, 'bind_group arguments');
-  return {
-    team_name: requireString(obj, 'team_name'),
-    chat_id: requireString(obj, 'chat_id'),
-  };
-}
-
-function transferArgs(value: unknown): Record<string, unknown> {
-  const obj = asRecord(value, 'transfer arguments');
-  return { chat_id: requireString(obj, 'chat_id') };
 }
 
 function asToolCallParams(params: unknown): ToolCall {

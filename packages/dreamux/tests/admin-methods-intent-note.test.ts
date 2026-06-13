@@ -74,3 +74,17 @@ describe('admin layer enforces required non-empty intent/note (#182 PR-3)', () =
     await expectBadRequest('mcp.team.dissolve', { ...base, note: '' });
   });
 });
+
+describe('Channel MCP admin methods replace the Team binding methods (#209 slice 8)', () => {
+  it('removes the old Feishu binding methods without aliases', () => {
+    // No silent alias survives: the old method keys are gone entirely, so a shim
+    // calling them gets an unknown-method error at the admin socket.
+    expect(adminMethods['mcp.team.bind_group']).toBeUndefined();
+    expect(adminMethods['mcp.team.transfer_channel_back']).toBeUndefined();
+  });
+
+  it('registers the core Channel MCP binding methods', () => {
+    expect(typeof adminMethods['mcp.channel.bind_channel']).toBe('function');
+    expect(typeof adminMethods['mcp.channel.transfer_back']).toBe('function');
+  });
+});

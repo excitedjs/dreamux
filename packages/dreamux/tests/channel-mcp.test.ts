@@ -7,7 +7,7 @@ import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 
 import type { AdminRequest, AdminResponse } from '../src/admin/protocol.js';
-import { runTeamMcp } from '../src/mcp/team-mcp.js';
+import { runChannelMcp } from '../src/mcp/channel-mcp.js';
 
 class JsonLineReader {
   private buffer = '';
@@ -53,7 +53,7 @@ interface FakeAdminServer {
 async function startFakeAdminServer(
   respond: (request: AdminRequest) => AdminResponse,
 ): Promise<FakeAdminServer> {
-  const dir = mkdtempSync(join(tmpdir(), 'dreamux-team-mcp-admin-'));
+  const dir = mkdtempSync(join(tmpdir(), 'dreamux-channel-mcp-admin-'));
   const socketPath = join(dir, 'admin.sock');
   const requests: AdminRequest[] = [];
   const server: NetServer = createServer((socket) => {
@@ -94,7 +94,7 @@ async function toolSchemas(): Promise<Array<Record<string, unknown>>> {
   const input = new PassThrough();
   const output = new PassThrough();
   const reader = new JsonLineReader(output);
-  const run = runTeamMcp({
+  const run = runChannelMcp({
     dispatcherId: 'dispatcher-a',
     adminSocketPath: '/tmp/not-used.sock',
     input,
@@ -120,52 +120,18 @@ function schemaOf(
   return entry.inputSchema;
 }
 
-describe('team-mcp stdio shim', () => {
-  it('marks create.intent and dissolve.note required; create_group + bind_group are gone (#209 slice 8)', async () => {
+describe('channel-mcp stdio shim (issue #209 slice 8)', () => {
+  it('exposes exactly the core channel-binding tools', async () => {
     const tools = await toolSchemas();
-    expect(schemaOf(tools, 'create').required).toContain('intent');
-    // #182 PR-8: create_group is retired from the public Team MCP surface.
-    expect(tools.map((t) => t['name'])).not.toContain('create_group');
-    // #209 slice 8: the create-time `bind_group` convenience is removed; group
-    // binding moved to the core Channel MCP `bind_channel` tool.
-    expect(schemaOf(tools, 'create').properties).not.toHaveProperty('bind_group');
-    // #199 Slice 1: public addressing is by the concrete `team_name`.
-    expect(schemaOf(tools, 'create').required).toContain('team_name');
-    expect(schemaOf(tools, 'create').properties).not.toHaveProperty('name');
-    expect(schemaOf(tools, 'dissolve').required).toEqual(['team_name', 'note']);
+    expect(tools.map((t) => t['name'])).toEqual(['bind_channel', 'transfer_back']);
+    // chat_id terminology; group-only, so no chat_type on the surface.
+    expect(schemaOf(tools, 'bind_channel').required).toEqual(['team_name', 'chat_id']);
+    expect(schemaOf(tools, 'bind_channel').properties).not.toHaveProperty('chat_type');
+    expect(schemaOf(tools, 'transfer_back').required).toEqual(['chat_id']);
+    expect(schemaOf(tools, 'transfer_back').properties).not.toHaveProperty('chat_type');
   });
 
-  it('no longer exposes the Feishu binding tools (moved to Channel MCP, #209 slice 8)', async () => {
-    const tools = await toolSchemas();
-    const names = tools.map((t) => t['name']);
-    // The binding/transfer surface moved to the core Channel MCP without aliases.
-    expect(names).not.toContain('bind_group');
-    expect(names).not.toContain('transfer_channel_back');
-    expect(names).not.toContain('bind_channel');
-    // The lifecycle surface is unchanged.
-    expect(names).toEqual(['create', 'list', 'status', 'history', 'dissolve']);
-  });
-
-  it('aligns the Team read surface with the TeamMate model and addresses by team_name (#199 Slice 1)', async () => {
-    const tools = await toolSchemas();
-    const names = tools.map((t) => t['name']);
-    // ledger verb retired in favour of a filterable history recovery surface.
-    expect(names).toContain('history');
-    expect(names).not.toContain('ledger');
-    // status / history / dissolve address by team_name, not team_id/name.
-    expect(schemaOf(tools, 'status').required).toEqual(['team_name']);
-    // history is filterable and fully optional.
-    expect(schemaOf(tools, 'history').required).toEqual([]);
-    expect(schemaOf(tools, 'history').properties).toHaveProperty('grep');
-    expect(schemaOf(tools, 'history').properties).toHaveProperty('team_name');
-    // #199 Slice 1: the lifecycle `status` filter stays; the legacy
-    // `close_status` filter and the legacy `name` key are removed.
-    expect(schemaOf(tools, 'history').properties).toHaveProperty('status');
-    expect(schemaOf(tools, 'history').properties).not.toHaveProperty('close_status');
-    expect(schemaOf(tools, 'history').properties).not.toHaveProperty('name');
-  });
-
-  it('forwards the redesigned read/bind verbs to the right admin methods (#182 PR-7)', async () => {
+  it('forwards bind_channel / transfer_back to the mcp.channel.* admin methods', async () => {
     const admin = await startFakeAdminServer((request) => ({
       id: request.id,
       ok: true,
@@ -175,7 +141,7 @@ describe('team-mcp stdio shim', () => {
       const input = new PassThrough();
       const output = new PassThrough();
       const reader = new JsonLineReader(output);
-      const run = runTeamMcp({
+      const run = runChannelMcp({
         dispatcherId: 'dispatcher-a',
         adminSocketPath: admin.socketPath,
         input,
@@ -187,33 +153,32 @@ describe('team-mcp stdio shim', () => {
         jsonrpc: '2.0',
         id: 1,
         method: 'tools/call',
-        params: { name: 'status', arguments: { team_name: 'alpha' } },
+        params: { name: 'bind_channel', arguments: { team_name: 'alpha', chat_id: 'chat-1' } },
       });
       await reader.next();
       writeJson(input, {
         jsonrpc: '2.0',
         id: 2,
         method: 'tools/call',
-        params: {
-          name: 'history',
-          arguments: { grep: 'auth', team_name: 'alpha', status: 'running', limit: 5 },
-        },
+        params: { name: 'transfer_back', arguments: { chat_id: 'chat-1' } },
       });
       await reader.next();
 
       expect(admin.requests.map((r) => r.method)).toEqual([
-        'mcp.team.status',
-        'mcp.team.history',
+        'mcp.channel.bind_channel',
+        'mcp.channel.transfer_back',
       ]);
-      expect(admin.requests[0]?.params).toMatchObject({ team_name: 'alpha' });
-      expect(admin.requests[1]?.params).toMatchObject({
-        grep: 'auth',
+      expect(admin.requests[0]?.params).toMatchObject({
+        dispatcher_id: 'dispatcher-a',
         team_name: 'alpha',
-        status: 'running',
-        limit: 5,
+        chat_id: 'chat-1',
       });
-      // #199 Slice 1: the legacy `close_status` filter is not part of the surface.
-      expect(admin.requests[1]?.params).not.toHaveProperty('close_status');
+      // No chat_type leaks through the group-only binding surface.
+      expect(admin.requests[0]?.params).not.toHaveProperty('chat_type');
+      expect(admin.requests[1]?.params).toMatchObject({
+        dispatcher_id: 'dispatcher-a',
+        chat_id: 'chat-1',
+      });
 
       input.end();
       await run;
@@ -222,7 +187,7 @@ describe('team-mcp stdio shim', () => {
     }
   });
 
-  it('rejects create without intent and dissolve without note before admin IPC (#182 PR-3)', async () => {
+  it('rejects bind_channel without required params before admin IPC', async () => {
     const admin = await startFakeAdminServer((request) => ({
       id: request.id,
       ok: true,
@@ -232,7 +197,7 @@ describe('team-mcp stdio shim', () => {
       const input = new PassThrough();
       const output = new PassThrough();
       const reader = new JsonLineReader(output);
-      const run = runTeamMcp({
+      const run = runChannelMcp({
         dispatcherId: 'dispatcher-a',
         adminSocketPath: admin.socketPath,
         input,
@@ -240,42 +205,16 @@ describe('team-mcp stdio shim', () => {
         log: () => {},
       });
 
-      // create without intent → rejected before admin IPC.
       writeJson(input, {
         jsonrpc: '2.0',
         id: 1,
         method: 'tools/call',
-        params: {
-          name: 'create',
-          arguments: { team_name: 'alpha', repo_cwd: '/repo', leader_agent_runtime: 'codex' },
-        },
+        params: { name: 'bind_channel', arguments: { team_name: 'alpha' } },
       });
-      expect(await reader.next()).toMatchObject({
-        jsonrpc: '2.0',
-        id: 1,
-        result: {
-          isError: true,
-          content: [{ text: 'intent must be a non-empty string' }],
-        },
-      });
+      const response = (await reader.next()) as { result: { isError?: boolean } };
+      expect(response.result.isError).toBe(true);
+      expect(admin.requests).toHaveLength(0);
 
-      // dissolve without note → rejected before admin IPC.
-      writeJson(input, {
-        jsonrpc: '2.0',
-        id: 2,
-        method: 'tools/call',
-        params: { name: 'dissolve', arguments: { team_name: 'alpha' } },
-      });
-      expect(await reader.next()).toMatchObject({
-        jsonrpc: '2.0',
-        id: 2,
-        result: {
-          isError: true,
-          content: [{ text: 'note must be a non-empty string' }],
-        },
-      });
-
-      expect(admin.requests).toEqual([]);
       input.end();
       await run;
     } finally {

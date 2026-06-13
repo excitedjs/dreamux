@@ -816,10 +816,11 @@ the TeamMate name a concrete, never-reused address:
 ## Team Mode Core
 
 Issue #171 starts Team Mode. Dispatcher runtimes receive a `team` MCP server for
-dispatcher-only team lifecycle: `create`, `list`, `status`, `history`,
-`bind_group`, `transfer_channel_back`, and `dissolve`. `create` requires
-`repo_cwd`, `leader_agent_runtime`, and `intent` (issue #182 PR-3); `dissolve`
-requires `note`. Dreamux does not infer a default TeamLeader runtime.
+dispatcher-only team lifecycle: `create`, `list`, `status`, `history`, and
+`dissolve`. `create` requires `leader_agent_runtime` and `intent` (issue #182
+PR-3); `dissolve` requires `note`. Dreamux does not infer a default TeamLeader
+runtime. Channel binding/transfer is no longer a Team MCP concern — it moved to a
+core-hosted Channel MCP (issue #209 slice 8, below).
 
 Issue #182 PR-7 aligned the Team read/binding surface with the TeamMate
 read-surface model: the public surface is addressed by **Team name** (the
@@ -829,22 +830,38 @@ active bound group; the raw per-team event `ledger` verb is replaced by a
 filterable `history` recovery search (name / status / close_status / repo /
 intent `grep` / `since` / `until` / `limit` / `cursor`) over Team records,
 mirroring the TeamMate `history`, while the raw lifecycle event timeline stays
-an internal/debug ledger; and `bind_channel` is simplified to `bind_group`
-(Team name + `chat_id`, group-only — the redundant `chat_type` is gone from the
-public surface, since the binding store rejects non-group anyway).
-`transfer_channel_back` likewise drops `chat_type`.
+an internal/debug ledger. (PR-7 also simplified the then-Team-MCP binding tools
+to group-only `bind_group` / `transfer_channel_back` without `chat_type`; those
+binding tools later moved off the Team MCP entirely — see the issue #209 slice 8
+Channel MCP paragraph below.)
 
 Issue #182 PR-8 (the epic's final cleanup) retired `create_group` — the
 create-a-brand-new-Feishu-group-and-invite-users tool — from the public Team MCP
-surface, capabilities, and docs. Its binding role is replaced by an optional
-`create.bind_group: { chat_id }` that binds an EXISTING group at create time
-through the same `ChannelBindingStore` path; the generic Feishu
+surface, capabilities, and docs. Its binding role was replaced by an optional
+`create.bind_group: { chat_id }` that bound an EXISTING group at create time
+through the same `ChannelBindingStore` path (itself later removed in issue #209
+slice 8, which moved binding to the Channel MCP — see below); the generic Feishu
 `bot.createGroup` transport primitive and the dispatcher's group-create wiring
 were removed with it. The same PR removed the write-only per-name TeamMate
 history index (`state/<id>/teammate/history/<name>.jsonl` plus
 `appendHistory`/`TeamMateIdentityStore.history()`): after PR-6 the durable
 session ledger (`sessions.jsonl`) is the single recovery record, so the per-name
 index had no readers and only added files.
+
+Issue #209 slice 8 moved channel binding off the Team MCP onto a **core-hosted
+Channel MCP** (`channel` server, the `channel-mcp` stdio shim), injected into the
+dispatcher MCP set like the Team MCP it split from. The old Feishu-specific Team
+tools are removed without aliases: `team.bind_group` → `channel.bind_channel`,
+`team.transfer_channel_back` → `channel.transfer_back`, and the create-time
+`team.create.bind_group` convenience is gone (bind after create). The Channel MCP
+forwards to core admin methods `mcp.channel.bind_channel` /
+`mcp.channel.transfer_back`, which delegate to the same `ChannelBindingStore`
+path as before — binding state, routing, and authorization stay core-owned and
+are NOT moved into any provider/runtime package. This is a surface/ownership move
+only: targets are still Feishu group chats addressed by `chat_id`; the
+channel-neutral `channel_id` + `resolveTarget` target model, binding store v2,
+and `list_peers` remain deferred to the routing slice, and `reply` / `react` stay
+on the provider-owned `feishu` MCP server for now.
 
 A TeamLeader is a TeamMate identity with `role:
 "team_leader"` and dispatcher owner. Team-owned members are normal TeamMate
@@ -872,15 +889,16 @@ Channel binding is persisted as JSON under
 `team_name` (issue #199 Slice 4), and is scoped to group chats only. Bound Feishu group inbound is gated and formatted by the
 Feishu channel exactly as before, then routed by Dispatcher Service to the
 owning TeamLeader runtime. Unbound and P2P inbound still route to the
-dispatcher. `transfer_channel_back` deactivates a binding; `dissolve` transfers
-active bindings back before closing the team. TeamLeader Feishu MCP calls carry
-their server-derived team principal and can reply/react only in bound team
-channels; the dispatcher keeps the global Feishu management surface.
+dispatcher. The Channel MCP `transfer_back` deactivates a binding; `dissolve`
+transfers active bindings back before closing the team. TeamLeader Feishu MCP
+calls carry their server-derived team principal and can reply/react only in bound
+team channels; the dispatcher keeps the global Feishu management surface.
 
-A Team binds to an EXISTING Feishu group chat — at create time via
-`create.bind_group: { chat_id }`, or later via `team.bind_group` — through the
+A Team binds to an EXISTING Feishu group chat via the Channel MCP
+`channel.bind_channel` (`team_name` + `chat_id`, after create) through the
 `ChannelBindingStore` path; bindings are group-only. (Issue #182 PR-8 retired the
-older `create_group` flow that created a brand-new group and invited users.)
+older `create_group` flow that created a brand-new group and invited users;
+issue #209 slice 8 removed the create-time `bind_group` convenience.)
 A dispatcher's P2P control channel is never bound or transferred: it remains the
 dispatcher control plane. TeamLeaders do not get independent Feishu identities or
 credentials; they are internal AgentRuntime roles behind the dispatcher-owned

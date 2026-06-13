@@ -132,37 +132,15 @@ export class TeamService {
       intent: input.intent,
     });
     team = await this.store.update(team, { status: 'running' });
-    // Optionally bind an existing Feishu group at create time (issue #182 PR-8,
-    // the settled replacement for the retired create_group flow). Bind is the
-    // last step; if it fails the Team is already persisted, so roll back by
-    // dissolving the just-created Team rather than leaving a half-created one a
-    // retry would then collide with as "already exists" (mirrors the rollback
-    // the old create_group flow did on Feishu setup failure).
-    let binding: TeamChannelBindingSummary | null = null;
-    if (input.bindGroup !== undefined) {
-      try {
-        const bound = await this.bindChannel({
-          dispatcherId: input.dispatcherId,
-          teamId,
-          provider: 'builtin:feishu',
-          chatId: input.bindGroup.chatId,
-          chatType: 'group',
-        });
-        binding = { provider: bound.provider, chat_id: bound.chat_id };
-      } catch (err) {
-        await this.dissolve({
-          dispatcherId: input.dispatcherId,
-          teamId,
-          note: 'Team group binding failed at create time',
-        });
-        throw err;
-      }
-    }
+    // A freshly created Team has no bound channel: binding is done after create
+    // via the core Channel MCP `bind_channel` tool (issue #209 slice 8 removed
+    // the create-time `bind_group` convenience). `binding` is therefore null
+    // here — honestly "no active bound group yet", not a placeholder.
     return {
       team: teamView(team),
       leader: leader.teammate,
       member_count: await this.memberCount(team),
-      binding,
+      binding: null,
       turn: leader.turn,
     };
   }

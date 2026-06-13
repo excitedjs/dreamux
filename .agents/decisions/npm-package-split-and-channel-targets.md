@@ -759,8 +759,30 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   rejects more than one channel or a non-feishu channel; state seeding stays
   fail-soft so this is the one intended place that rejects an unrunnable shape)
   rather than at config load, so config can express the general shape while the
-  runtime catches up. Binding store v2, target-key routing, and the generic
-  Channel MCP / `bind_channel` migration remain later slices.
+  runtime catches up. Binding store v2 and target-key routing remain later
+  slices; the Channel MCP *surface* move landed in the next slice (below).
+- **Channel MCP surface move — satisfied now (surface only):** the Feishu-specific
+  Team MCP binding tools were removed without aliases and re-exposed on a new
+  core-hosted **Channel MCP** server (`channel`, the `channel-mcp` stdio shim).
+  `team.bind_group` → `channel.bind_channel`, `team.transfer_channel_back` →
+  `channel.transfer_back`, and the create-time `team.create.bind_group`
+  convenience is gone (bind after create instead). The new shim forwards to core
+  admin methods `mcp.channel.bind_channel` / `mcp.channel.transfer_back`, which
+  delegate to the **same** Team-service binding store as before — binding state,
+  routing, and authorization stay core-owned and were not moved into any provider
+  or runtime package. The Channel MCP descriptor is injected into the
+  dispatcher's MCP set (`channelMcpServerDescriptor`), dispatcher-only like the
+  Team MCP it split from. **Scope kept deliberately narrow:** this is the MCP
+  *surface/ownership* move only. Targets are still addressed by Feishu `chat_id`
+  (group chats), NOT the channel-neutral `channel_id` + `resolveTarget` target
+  model; binding store v2, `(channel_id, target_key)` routing, P2P dispatcher
+  routing, and `list_peers` are still deferred to the routing slice. `reply` /
+  `react` / `list_chat_bots` stay on the provider-owned `feishu` MCP server for
+  now (moving them onto the generic surface, and adding `list_peers`, is
+  target-enumeration / routing-slice work). So the end-state Channel MCP described
+  above (`bind_channel` by `channel_id` + resolveTarget, the standard
+  reply/react/list_peers set) is only partially realized: the binding *verbs*
+  moved to core ownership; the channel-neutral *addressing* has not.
 
 ## Alternatives Considered
 

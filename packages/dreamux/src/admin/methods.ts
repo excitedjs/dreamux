@@ -282,7 +282,6 @@ export const adminMethods: Record<string, AdminHandler> = {
         : repo.cwd ?? (await server.dispatcherService.teammates.dispatcherWorkspace(id));
     const worktree = repo?.worktree ?? null;
     const prompt = optionalString(params, 'prompt');
-    const bindGroup = optionalBindGroup(params, 'bind_group');
     try {
       return await server.dispatcherService.createTeam({
         dispatcherId: id,
@@ -292,7 +291,6 @@ export const adminMethods: Record<string, AdminHandler> = {
         intent,
         ...(worktree !== null ? { worktree } : {}),
         ...(prompt !== null ? { prompt } : {}),
-        ...(bindGroup !== null ? { bindGroup } : {}),
       });
     } catch (err) {
       throw new AdminError('TEAM_CREATE_FAILED', parseMessage(err));
@@ -337,11 +335,15 @@ export const adminMethods: Record<string, AdminHandler> = {
     });
   },
 
-  'mcp.team.bind_group': async (server, params) => {
+  // Channel MCP (issue #209 slice 8): core-hosted generic channel-binding
+  // surface, replacing the removed Feishu-specific Team MCP `bind_group` /
+  // `transfer_channel_back`. Binding state/routing/authorization stay core-owned;
+  // these delegate to the same Team-service binding store as before. Targets are
+  // still Feishu group chats addressed by `chat_id` (the channel-neutral
+  // `channel_id` + target-key model is the routing slice).
+  'mcp.channel.bind_channel': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    // #182 PR-7: bindings are always Feishu group chats; the public surface no
-    // longer takes `chat_type` (the store rejects non-group for Team binding).
     return server.dispatcherService.bindTeamChannel({
       dispatcherId: id,
       teamId: mustString(params, 'team_name'),
@@ -351,7 +353,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     });
   },
 
-  'mcp.team.transfer_channel_back': async (server, params) => {
+  'mcp.channel.transfer_back': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     return {
@@ -359,7 +361,6 @@ export const adminMethods: Record<string, AdminHandler> = {
         dispatcherId: id,
         provider: 'builtin:feishu',
         chatId: mustString(params, 'chat_id'),
-        // #182 PR-7: group-only; the public surface no longer takes `chat_type`.
         chatType: 'group',
       }),
     };
@@ -598,23 +599,6 @@ function optionalTeamStatus(
     'BAD_REQUEST',
     `param '${key}' must be starting, running, or closed`,
   );
-}
-
-function optionalBindGroup(
-  params: Record<string, unknown> | undefined,
-  key: string,
-): { chatId: string } | null {
-  if (params === undefined) return null;
-  const value = params[key];
-  if (value === undefined || value === null) return null;
-  if (typeof value !== 'object' || Array.isArray(value)) {
-    throw new AdminError('BAD_REQUEST', `param '${key}' must be an object`);
-  }
-  const chatId = (value as Record<string, unknown>)['chat_id'];
-  if (typeof chatId !== 'string' || chatId === '') {
-    throw new AdminError('BAD_REQUEST', `param '${key}.chat_id' must be a non-empty string`);
-  }
-  return { chatId };
 }
 
 function optionalInteger(

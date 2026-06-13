@@ -182,11 +182,17 @@ describe('issue #199 Slice 1 — public MCP contract whitelist', () => {
 
   it('team verbs address by team_name, never the legacy name/team_id', async () => {
     const tools = await teamTools();
-    for (const verb of ['create', 'status', 'bind_group', 'dissolve']) {
+    for (const verb of ['create', 'status', 'dissolve']) {
       expect(schemaOf(tools, verb).properties).toHaveProperty('team_name');
       expect(schemaOf(tools, verb).properties).not.toHaveProperty('name');
       expect(schemaOf(tools, verb).properties).not.toHaveProperty('team_id');
     }
+  });
+
+  it('the Feishu binding verbs left the Team MCP (#209 slice 8)', async () => {
+    const names = (await teamTools()).map((tool) => tool['name']);
+    expect(names).not.toContain('bind_group');
+    expect(names).not.toContain('transfer_channel_back');
   });
 
   it('team.history params are exactly the trimmed recovery set', async () => {
