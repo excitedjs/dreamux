@@ -88,7 +88,7 @@ const COMPLETION_DELIVERY_CACHE_LIMIT = 512;
  *
  * Server bootstraps this service and admin/MCP layers route into it; the service
  * owns runtime creation, channel connection lifecycle, restart-notice delivery,
- * and per-dispatcher channel MCP dispatch.
+ * and per-dispatcher channel tool dispatch.
  */
 export class DispatcherAgentService {
   private readonly slots = new Map<string, DispatcherAgentSlot>();
