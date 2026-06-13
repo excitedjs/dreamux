@@ -45,8 +45,8 @@ import {
   TRUST_DOMAIN_WARNING,
   loadDispatcherAccess,
   saveDispatcherAccess,
-} from '../src/channel/feishu/feishu-gate.js';
-import { loadChatBots } from '../src/channel/feishu/chat-bots-store.js';
+  loadChatBots,
+} from '@excitedjs/feishu-channel';
 import {
   BUILT_IN_DEFAULTS,
   type DreamuxConfig,
@@ -430,7 +430,7 @@ describe('dreamux MVP smoke', () => {
     // Empty `allow_users` now authorizes nobody (the follow-user fix), so
     // tests that exercise delivery need this seed; tests that assert a drop
     // override it or rely on a different gate reason (no mention, bot sender).
-    await saveDispatcherAccess('flow', {
+    await saveDispatcherAccess(dispatcherDir('flow'), {
       version: 2,
       allow_users: ['sender-test'],
       group: { policy: 'follow-user', allow_chats: [], require_mention: true },
@@ -1364,7 +1364,7 @@ describe('dreamux MVP smoke', () => {
   });
 
   it('reads access gate configuration from access.json and allows configured DMs', async () => {
-    await saveDispatcherAccess('flow', {
+    await saveDispatcherAccess(dispatcherDir('flow'), {
       version: 2,
       allow_users: ['sender-dm'],
       group: {
@@ -1391,7 +1391,7 @@ describe('dreamux MVP smoke', () => {
     }));
 
     await waitFor(() => fake.turnsHandled === 1);
-    const access = await loadDispatcherAccess('flow');
+    const access = await loadDispatcherAccess(dispatcherDir('flow'));
     expect(access.allow_users).toEqual(['sender-dm']);
     expect(access.group.policy).toEqual('allowlist');
     expect(access.group.allow_chats).toEqual(['chat-group-a']);
@@ -1407,7 +1407,7 @@ describe('dreamux MVP smoke', () => {
   });
 
   it('consumes a no-@ /introduce from an allowlisted sender and records trust without enqueue or reactions', async () => {
-    await saveDispatcherAccess('flow', {
+    await saveDispatcherAccess(dispatcherDir('flow'), {
       version: 2,
       allow_users: ['sender-test'],
       group: {
@@ -1448,7 +1448,7 @@ describe('dreamux MVP smoke', () => {
     ]);
     expect(bot.reactions).toEqual([]);
     // The peer bot is now trusted for this chat (and known), but not the sender.
-    const entry = (await loadChatBots('flow')).chats['chat-group-a'];
+    const entry = (await loadChatBots(dispatcherDir('flow'))).chats['chat-group-a'];
     expect(entry?.trusted).toEqual(['peer-bot-1']);
     expect(entry?.known).toEqual(['peer-bot-1']);
   });
@@ -1459,7 +1459,7 @@ describe('dreamux MVP smoke', () => {
     // allow_user in a group not in allow_chats could never /introduce. This
     // reproduces the literal runtime state: allow_chats names ANOTHER group, the
     // current chat is absent, yet the command must consume, trust, and ack.
-    await saveDispatcherAccess('flow', {
+    await saveDispatcherAccess(dispatcherDir('flow'), {
       version: 2,
       allow_users: ['sender-test'],
       group: {
@@ -1497,7 +1497,7 @@ describe('dreamux MVP smoke', () => {
       },
     ]);
     expect(bot.reactions).toEqual([]);
-    const entry = (await loadChatBots('flow')).chats['chat-group-new'];
+    const entry = (await loadChatBots(dispatcherDir('flow'))).chats['chat-group-new'];
     expect(entry?.trusted).toEqual(['peer-bot-fu-1']);
     expect(entry?.known).toEqual(['peer-bot-fu-1']);
   });
@@ -1506,7 +1506,7 @@ describe('dreamux MVP smoke', () => {
     // Mentioning our bot must not change the introduce path — it still consumes,
     // trusts, and acks without reaching Codex (the mention requirement is waived
     // for introduce, not required).
-    await saveDispatcherAccess('flow', {
+    await saveDispatcherAccess(dispatcherDir('flow'), {
       version: 2,
       allow_users: ['sender-test'],
       group: {
@@ -1547,7 +1547,7 @@ describe('dreamux MVP smoke', () => {
       },
     ]);
     expect(bot.reactions).toEqual([]);
-    const entry = (await loadChatBots('flow')).chats['chat-group-new'];
+    const entry = (await loadChatBots(dispatcherDir('flow'))).chats['chat-group-new'];
     expect(entry?.trusted).toEqual(['peer-bot-fu-2']);
     expect(entry?.known).toEqual(['peer-bot-fu-2']);
   });
@@ -1558,7 +1558,7 @@ describe('dreamux MVP smoke', () => {
     // the chat being unlisted — that proves the chat check is skipped under
     // follow-user. Normal gate behavior is preserved: it still falls through and
     // drops as `bot not mentioned`.
-    await saveDispatcherAccess('flow', {
+    await saveDispatcherAccess(dispatcherDir('flow'), {
       version: 2,
       allow_users: ['sender-test'],
       group: {
@@ -1595,7 +1595,7 @@ describe('dreamux MVP smoke', () => {
     expect(fake.turnsHandled).toBe(0);
     expect(bot.sentMessages).toEqual([]);
     expect(bot.reactions).toEqual([]);
-    expect((await loadChatBots('flow')).chats['chat-group-new']?.trusted ?? []).not.toContain(
+    expect((await loadChatBots(dispatcherDir('flow'))).chats['chat-group-new']?.trusted ?? []).not.toContain(
       'peer-bot-fu-3',
     );
 
@@ -1616,7 +1616,7 @@ describe('dreamux MVP smoke', () => {
   });
 
   it('does not ack an authorized /introduce with no external peer', async () => {
-    await saveDispatcherAccess('flow', {
+    await saveDispatcherAccess(dispatcherDir('flow'), {
       version: 2,
       allow_users: ['sender-test'],
       group: {
@@ -1652,11 +1652,11 @@ describe('dreamux MVP smoke', () => {
     expect(fake.turnsHandled).toBe(0);
     expect(bot.sentMessages).toEqual([]);
     expect(bot.reactions).toEqual([]);
-    expect((await loadChatBots('flow')).chats['chat-group-a']?.trusted ?? []).toEqual([]);
+    expect((await loadChatBots(dispatcherDir('flow'))).chats['chat-group-a']?.trusted ?? []).toEqual([]);
   });
 
   it('keeps /introduce trust when the best-effort ack send fails', async () => {
-    await saveDispatcherAccess('flow', {
+    await saveDispatcherAccess(dispatcherDir('flow'), {
       version: 2,
       allow_users: ['sender-test'],
       group: {
@@ -1694,7 +1694,7 @@ describe('dreamux MVP smoke', () => {
     expect(fake.turnsHandled).toBe(0);
     expect(bot.sentMessages).toEqual([]);
     expect(bot.reactions).toEqual([]);
-    expect((await loadChatBots('flow')).chats['chat-group-a']?.trusted).toEqual([
+    expect((await loadChatBots(dispatcherDir('flow'))).chats['chat-group-a']?.trusted).toEqual([
       'peer-bot-ack-fail',
     ]);
     const failed = channel.lines().find((l) => l['msg'] === 'introduce ack failed');
@@ -1709,7 +1709,7 @@ describe('dreamux MVP smoke', () => {
   });
 
   it('acks already-trusted peers when they are reintroduced', async () => {
-    await saveDispatcherAccess('flow', {
+    await saveDispatcherAccess(dispatcherDir('flow'), {
       version: 2,
       allow_users: ['sender-test'],
       group: {
@@ -1738,7 +1738,7 @@ describe('dreamux MVP smoke', () => {
 
     expect(fake.turnsHandled).toBe(0);
     expect(bot.reactions).toEqual([]);
-    expect((await loadChatBots('flow')).chats['chat-group-a']?.trusted).toEqual([
+    expect((await loadChatBots(dispatcherDir('flow'))).chats['chat-group-a']?.trusted).toEqual([
       'peer-bot-repeat',
     ]);
     expect(bot.sentMessages.map((message) => message.text)).toEqual([
@@ -1748,7 +1748,7 @@ describe('dreamux MVP smoke', () => {
   });
 
   it('injects a one-shot group_bots context on the next group message after /introduce', async () => {
-    await saveDispatcherAccess('flow', {
+    await saveDispatcherAccess(dispatcherDir('flow'), {
       version: 2,
       allow_users: ['sender-test'],
       group: {
@@ -1788,11 +1788,11 @@ describe('dreamux MVP smoke', () => {
     await bot.inject(fakeInbound('chat-group-a', 'and again', 'msg-after-2'));
     await waitFor(() => codexInputs.length === 2);
     expect(codexInputs[1]).not.toContain('<group_bots');
-    expect((await loadChatBots('flow')).chats['chat-group-a']?.needsBaseline).toBe(false);
+    expect((await loadChatBots(dispatcherDir('flow'))).chats['chat-group-a']?.needsBaseline).toBe(false);
   });
 
   it('mcp.list_chat_bots returns the chat known + trusted bots with names', async () => {
-    await saveDispatcherAccess('flow', {
+    await saveDispatcherAccess(dispatcherDir('flow'), {
       version: 2,
       allow_users: ['sender-test'],
       group: {
@@ -1848,7 +1848,7 @@ describe('dreamux MVP smoke', () => {
   });
 
   it('does NOT consume /introduce from a non-allowlisted sender (no trust, dropped by the gate)', async () => {
-    await saveDispatcherAccess('flow', {
+    await saveDispatcherAccess(dispatcherDir('flow'), {
       version: 2,
       allow_users: ['sender-test'],
       group: {
@@ -1887,7 +1887,7 @@ describe('dreamux MVP smoke', () => {
     expect(fake.turnsHandled).toBe(0);
     expect(bot.sentMessages).toEqual([]);
     expect(bot.reactions).toEqual([]);
-    const entry = (await loadChatBots('flow')).chats['chat-group-a'];
+    const entry = (await loadChatBots(dispatcherDir('flow'))).chats['chat-group-a'];
     expect(entry?.trusted ?? []).not.toContain('peer-bot-2');
 
     // Issue #77: the unauthorized introduce is diagnosed before the gate runs,
@@ -1924,7 +1924,7 @@ describe('dreamux MVP smoke', () => {
     // unauthorized, and because the gate is mention-first the eventual drop
     // reason is `bot not mentioned` — which looks like the user simply forgot to
     // @ the bot, hiding the real cause that the issue #77 diagnostic names.
-    await saveDispatcherAccess('flow', {
+    await saveDispatcherAccess(dispatcherDir('flow'), {
       version: 2,
       allow_users: [],
       group: {
@@ -1960,7 +1960,7 @@ describe('dreamux MVP smoke', () => {
     await sleep(60);
     expect(fake.turnsHandled).toBe(0);
     expect(bot.reactions).toEqual([]);
-    expect((await loadChatBots('flow')).chats['chat-group-a']?.trusted ?? []).not.toContain('peer-bot-3');
+    expect((await loadChatBots(dispatcherDir('flow'))).chats['chat-group-a']?.trusted ?? []).not.toContain('peer-bot-3');
 
     const lines = channel.lines();
     expect(lines.find((l) => l['msg'] === 'introduce detected but not authorized')).toMatchObject({
@@ -1978,7 +1978,7 @@ describe('dreamux MVP smoke', () => {
   });
 
   it('diagnoses an unauthorized /introduce when the chat is not allowlisted', async () => {
-    await saveDispatcherAccess('flow', {
+    await saveDispatcherAccess(dispatcherDir('flow'), {
       version: 2,
       allow_users: ['sender-test'],
       group: {
@@ -2013,7 +2013,7 @@ describe('dreamux MVP smoke', () => {
 
     await sleep(60);
     expect(fake.turnsHandled).toBe(0);
-    expect((await loadChatBots('flow')).chats['chat-group-a']?.trusted ?? []).not.toContain('peer-bot-4');
+    expect((await loadChatBots(dispatcherDir('flow'))).chats['chat-group-a']?.trusted ?? []).not.toContain('peer-bot-4');
 
     expect(
       channel.lines().find((l) => l['msg'] === 'introduce detected but not authorized'),
@@ -2026,7 +2026,7 @@ describe('dreamux MVP smoke', () => {
   });
 
   it('diagnoses an unauthorized /introduce sent as a direct message (non_group)', async () => {
-    await saveDispatcherAccess('flow', {
+    await saveDispatcherAccess(dispatcherDir('flow'), {
       version: 2,
       allow_users: ['sender-test'],
       group: {
@@ -2074,7 +2074,7 @@ describe('dreamux MVP smoke', () => {
   });
 
   it('an authorized /introduce is consumed without emitting the unauthorized diagnostic', async () => {
-    await saveDispatcherAccess('flow', {
+    await saveDispatcherAccess(dispatcherDir('flow'), {
       version: 2,
       allow_users: ['sender-test'],
       group: {
@@ -2110,7 +2110,7 @@ describe('dreamux MVP smoke', () => {
     await sleep(60);
     // Consumed: trust written, no enqueue, and crucially no unauthorized diagnostic.
     expect(fake.turnsHandled).toBe(0);
-    expect((await loadChatBots('flow')).chats['chat-group-a']?.trusted).toEqual(['peer-bot-5']);
+    expect((await loadChatBots(dispatcherDir('flow'))).chats['chat-group-a']?.trusted).toEqual(['peer-bot-5']);
     const lines = channel.lines();
     expect(lines.some((l) => l['msg'] === 'introduce consumed')).toBe(true);
     expect(lines.some((l) => l['msg'] === 'introduce detected but not authorized')).toBe(false);
@@ -2128,7 +2128,7 @@ describe('dreamux MVP smoke', () => {
     await bot.inject(fakeInbound('chat-group-a', 'first chat', 'msg-chat-a'));
     await bot.inject(fakeInbound('chat-group-b', 'second chat', 'msg-chat-b'));
 
-    const access = await loadDispatcherAccess('flow');
+    const access = await loadDispatcherAccess(dispatcherDir('flow'));
     expect(access.observed_chats).toEqual(['chat-group-a', 'chat-group-b']);
     expect(access.warnings).toEqual([TRUST_DOMAIN_WARNING]);
     expect(bot.reactions.map((reaction) => reaction.messageId)).toEqual([

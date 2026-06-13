@@ -18,8 +18,7 @@ import {
   loadDispatcherAccess,
   saveDispatcherAccess,
   type DispatcherAccessState,
-} from '../src/channel/feishu/feishu-gate.js';
-import { dispatcherAccessPath, resetRuntimeConfig } from '../src/platform/paths.js';
+} from '../src/feishu-gate.js';
 
 describe('dreamuxFeishuGate', () => {
   it('delivers direct messages only from senders on the global allow-user list', () => {
@@ -241,25 +240,18 @@ describe('dreamuxFeishuGate', () => {
 });
 
 describe('dispatcher access state files', () => {
-  let root: string;
-  let previousHome: string | undefined;
+  let stateDir: string;
 
   beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), 'dreamux-access-'));
-    previousHome = process.env['HOME'];
-    process.env['HOME'] = join(root, 'home');
-    resetRuntimeConfig();
+    stateDir = mkdtempSync(join(tmpdir(), 'dreamux-access-'));
   });
 
   afterEach(() => {
-    if (previousHome === undefined) delete process.env['HOME'];
-    else process.env['HOME'] = previousHome;
-    resetRuntimeConfig();
-    rmSync(root, { recursive: true, force: true });
+    rmSync(stateDir, { recursive: true, force: true });
   });
 
   it('defaults a missing access.json to the secure follow-user shape', async () => {
-    const loaded = await loadDispatcherAccess('flow');
+    const loaded = await loadDispatcherAccess(stateDir);
     expect(loaded).toEqual(defaultDispatcherAccessState());
     expect(loaded.version).toBe(2);
     expect(loaded.allow_users).toEqual([]);
@@ -271,9 +263,9 @@ describe('dispatcher access state files', () => {
       allow_users: ['sender-allowed'],
       observed_chats: ['chat-group-a'],
     });
-    await saveDispatcherAccess('flow', access);
+    await saveDispatcherAccess(stateDir, access);
 
-    const path = dispatcherAccessPath('flow');
+    const path = join(stateDir, 'access.json');
     expect(existsSync(path)).toBe(true);
     expect(statSync(path).mode & 0o777).toBe(0o600);
     const onDisk = JSON.parse(readFileSync(path, 'utf8'));
@@ -285,12 +277,12 @@ describe('dispatcher access state files', () => {
     // The legacy fields must not be written back.
     expect(onDisk.dm).toBeUndefined();
     expect(onDisk.group.follow_users).toBeUndefined();
-    expect(await loadDispatcherAccess('flow')).toEqual(access);
+    expect(await loadDispatcherAccess(stateDir)).toEqual(access);
   });
 
   describe('v2-only access schema (issue #98: no migration)', () => {
     it('fails loud on a legacy v1 file instead of migrating it', async () => {
-      writeRawAccess('flow', {
+      writeRawAccess(stateDir, {
         version: 1,
         dm: { allow_users: ['user-a'] },
         group: {
@@ -299,24 +291,24 @@ describe('dispatcher access state files', () => {
           require_mention: true,
         },
       });
-      await expect(loadDispatcherAccess('flow')).rejects.toThrow(
+      await expect(loadDispatcherAccess(stateDir)).rejects.toThrow(
         /unsupported schema version.*expected 2/s,
       );
     });
 
     it('error names the action: delete to reset, then recreate a v2 file', async () => {
-      writeRawAccess('flow', { version: 1, dm: { allow_users: ['user-a'] } });
-      await expect(loadDispatcherAccess('flow')).rejects.toThrow(
+      writeRawAccess(stateDir, { version: 1, dm: { allow_users: ['user-a'] } });
+      await expect(loadDispatcherAccess(stateDir)).rejects.toThrow(
         /Delete it.*recreate it as a v2 access\.json/s,
       );
     });
 
     it('fails loud when the version field is missing', async () => {
-      writeRawAccess('flow', {
+      writeRawAccess(stateDir, {
         allow_users: ['user-a'],
         group: { policy: 'follow-user', allow_chats: [], require_mention: true },
       });
-      await expect(loadDispatcherAccess('flow')).rejects.toThrow(
+      await expect(loadDispatcherAccess(stateDir)).rejects.toThrow(
         /unsupported schema version \(found missing/,
       );
     });
@@ -324,7 +316,7 @@ describe('dispatcher access state files', () => {
     it('does not infer from legacy fields present on a v2 file', async () => {
       // Legacy-only fields carry no meaning anymore: dm.* and group.follow_users
       // are ignored, and a present allow_chats does NOT infer an allowlist policy.
-      writeRawAccess('flow', {
+      writeRawAccess(stateDir, {
         version: 2,
         allow_users: ['user-a'],
         dm: { allow_users: ['ignored'] },
@@ -334,24 +326,24 @@ describe('dispatcher access state files', () => {
           require_mention: true,
         },
       });
-      const access = await loadDispatcherAccess('flow');
+      const access = await loadDispatcherAccess(stateDir);
       expect(access.allow_users).toEqual(['user-a']);
       expect(access.group.policy).toBe('follow-user');
     });
 
     it('defaults an absent group.policy on a v2 file to secure follow-user', async () => {
-      writeRawAccess('flow', {
+      writeRawAccess(stateDir, {
         version: 2,
         allow_users: [],
         group: { allow_chats: ['chat-group-a'], require_mention: true },
       });
-      expect((await loadDispatcherAccess('flow')).group.policy).toBe(
+      expect((await loadDispatcherAccess(stateDir)).group.policy).toBe(
         'follow-user',
       );
     });
 
     it('honors an explicit group.policy on a v2 file', async () => {
-      writeRawAccess('flow', {
+      writeRawAccess(stateDir, {
         version: 2,
         allow_users: ['user-a'],
         group: {
@@ -360,22 +352,22 @@ describe('dispatcher access state files', () => {
           require_mention: true,
         },
       });
-      expect((await loadDispatcherAccess('flow')).group.policy).toBe('allowlist');
+      expect((await loadDispatcherAccess(stateDir)).group.policy).toBe('allowlist');
     });
 
     it('rejects an invalid group.policy on a v2 file', async () => {
-      writeRawAccess('flow', {
+      writeRawAccess(stateDir, {
         version: 2,
         allow_users: [],
         group: { policy: 'nonsense', allow_chats: [], require_mention: true },
       });
-      await expect(loadDispatcherAccess('flow')).rejects.toThrow(/group\.policy/);
+      await expect(loadDispatcherAccess(stateDir)).rejects.toThrow(/group\.policy/);
     });
   });
 });
 
 function writeRawAccess(id: string, raw: unknown): void {
-  const path = dispatcherAccessPath(id);
+  const path = join(id, 'access.json');
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, JSON.stringify(raw), 'utf8');
 }

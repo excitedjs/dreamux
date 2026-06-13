@@ -55,7 +55,7 @@
     {
       "packageName": "@excitedjs/feishu-channel",
       "projectFolder": "packages/channel/feishu-channel",
-      "shouldPublish": false
+      "shouldPublish": true
     },
     {
       "packageName": "@excitedjs/agent-runtime-codex",

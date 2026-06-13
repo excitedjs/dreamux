@@ -16,8 +16,8 @@ import {
   renderChannelInput,
   type InboundTurnInput,
 } from '../src/agent-runtime/turn.js';
-import { formatFeishuMessageForRuntime } from '../src/channel/feishu/feishu-message.js';
-import type { FeishuInboundEvent } from '../src/channel/feishu/bot.js';
+import { formatFeishuMessageForRuntime } from '@excitedjs/feishu-channel';
+import type { FeishuInboundEvent } from '@excitedjs/feishu-channel';
 
 describe('renderChannelBlock (native <channel> wrap, shared by both runtimes)', () => {
   it('renders source + attrs + body in the native envelope', () => {

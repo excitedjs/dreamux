@@ -18,7 +18,7 @@ import { sendAdminRequest } from '../src/admin/client.js';
 import {
   loadDispatcherAccess,
   saveDispatcherAccess,
-} from '../src/channel/feishu/feishu-gate.js';
+} from '@excitedjs/feishu-channel';
 import { CodexWsClient } from '../src/agent-runtime/builtin/codex/rpc.js';
 import {
   CodexProcess,
@@ -31,7 +31,7 @@ import {
 } from '../src/channel/feishu/bot.js';
 import { runFeishuMcp } from '../src/mcp/feishu-mcp.js';
 import { BUILT_IN_DEFAULTS, type DreamuxConfig } from '../src/config/config.js';
-import { defaultDispatcherCwd } from '../src/platform/paths.js';
+import { defaultDispatcherCwd, dispatcherDir } from '../src/platform/paths.js';
 import { dispatcherCodexHome } from '../src/agent-runtime/builtin/codex/paths.js';
 import { startFakeCodex, type FakeCodex } from './fake-codex.js';
 import { testDispatcherConfig } from './helpers/config.js';
@@ -244,7 +244,7 @@ describe('dreamux cross-module e2e', () => {
     // Onboard the canonical sender onto the global allow-user list so a
     // mentioned group message is delivered (empty `allow_users` authorizes
     // nobody under the follow-user gate).
-    await saveDispatcherAccess('flow', {
+    await saveDispatcherAccess(dispatcherDir('flow'), {
       version: 2,
       allow_users: ['sender-test'],
       group: { policy: 'follow-user', allow_chats: [], require_mention: true },
@@ -346,7 +346,7 @@ describe('dreamux cross-module e2e', () => {
     );
     await waitFor(() => codexInputs.length === 1);
     await waitFor(() => bot.reactions.length === 2);
-    expect((await loadDispatcherAccess('flow')).observed_chats).toEqual([
+    expect((await loadDispatcherAccess(dispatcherDir('flow'))).observed_chats).toEqual([
       'chat-group-a',
     ]);
 

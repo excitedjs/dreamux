@@ -4,9 +4,8 @@ import {
   type Mention,
 } from '@excitedjs/feishu-transport';
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 
-import { dispatcherAccessPath } from '../../platform/paths.js';
 
 export const TRUST_DOMAIN_WARNING =
   'dispatcher shares one runtime context across multiple Feishu chats';
@@ -109,9 +108,9 @@ export function defaultDispatcherAccessState(): DispatcherAccessState {
 }
 
 export async function loadDispatcherAccess(
-  dispatcherId: string,
+  stateDir: string,
 ): Promise<DispatcherAccessState> {
-  const path = dispatcherAccessPath(dispatcherId);
+  const path = join(stateDir, 'access.json');
   let raw: string;
   try {
     raw = await readFile(path, 'utf8');
@@ -132,10 +131,10 @@ export async function loadDispatcherAccess(
 }
 
 export async function saveDispatcherAccess(
-  dispatcherId: string,
+  stateDir: string,
   access: DispatcherAccessState,
 ): Promise<void> {
-  const path = dispatcherAccessPath(dispatcherId);
+  const path = join(stateDir, 'access.json');
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, `${JSON.stringify(access, null, 2)}\n`, { mode: 0o600 });
   await chmod(path, 0o600);

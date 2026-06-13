@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  FeishuChannelSession,
+  createFeishuChannelSession,
 } from '../src/channel/feishu/feishu-channel.js';
 import { feishuMcpServerDescriptor } from '../src/channel/feishu/feishu-mcp-surface.js';
 import type {
@@ -27,11 +27,10 @@ function feishuSession() {
   const bot = createFakeFeishuBot('app-test');
   return {
     bot,
-    session: new FeishuChannelSession({
+    session: createFeishuChannelSession({
       dispatcherId: 'flow',
       row: row!,
       config,
-      adminSocketPath: '/tmp/admin.sock',
       log,
       skipBotSecret: true,
       botFactory: () => bot,
@@ -40,14 +39,16 @@ function feishuSession() {
 }
 
 describe('built-in Feishu channel', () => {
-  it('contributes its own MCP descriptor', () => {
-    const { session } = feishuSession();
-    expect(session.mcpServerDescriptors()).toEqual([
-      feishuMcpServerDescriptor({
-        dispatcherId: 'flow',
-        adminSocketPath: '/tmp/admin.sock',
-      }),
-    ]);
+  it('exposes a core-owned Feishu MCP server descriptor', () => {
+    // The MCP server descriptor (dreamux bin + admin socket + feishu-mcp shim)
+    // is a host contract owned by core, not the channel package session.
+    const descriptor = feishuMcpServerDescriptor({
+      dispatcherId: 'flow',
+      adminSocketPath: '/tmp/admin.sock',
+    });
+    expect(descriptor.name).toBe('feishu');
+    expect(descriptor.args).toContain('feishu-mcp');
+    expect(descriptor.args).toContain('flow');
   });
 
   it('handles reply MCP calls inside the channel module', async () => {
