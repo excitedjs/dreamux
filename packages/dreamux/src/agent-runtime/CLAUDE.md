@@ -31,6 +31,19 @@ agent session; how it talks to its engine is the engine's business.
     `args.ts`, `supervisor.ts`, `rpc.ts`, `handshake.ts`, `types.ts`,
     `mcp-config.ts` are re-export shims back to the package so existing core/test
     import paths stay stable. The package must never import `@excitedjs/dreamux`.
+  - **`builtin/claude-code/` is now a thin core adapter over the published
+    `@excitedjs/agent-runtime-claude-code` package (issue #209 slice 4).** The
+    Claude Code engine (supervisor/rpc/stream/runtime/args/config/mcp-config)
+    lives in the package and implements the neutral `@excitedjs/dreamux-types`
+    `AgentRuntimeProvider`. What stays in core: `provider.ts` (the host→neutral
+    adapter that supplies the host path/log/state contracts and the package-bin
+    `PATH`, and presents the host-shaped provider the catalog wires), `paths.ts`
+    (host claude-code log/state paths), `diagnostic.ts` (host doctor surface),
+    and `runtime-support.ts` (the host path + state-sink adapters). `config.ts`,
+    `args.ts`, `supervisor.ts`, `mcp-config.ts` are re-export shims back to the
+    package so existing core/test import paths stay stable. The package must
+    never import `@excitedjs/dreamux`. Claude Code is stdio-based: no socket, no
+    app-server home, and it injects no bundled skills in the runtime path.
 
 ## Invariants (why it's shaped this way)
 

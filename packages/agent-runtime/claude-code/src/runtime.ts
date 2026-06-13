@@ -1,19 +1,19 @@
 /**
- * `builtin:claude-code` AgentRuntimeProvider (issue #110 PR6, resident
- * stream-json transport since issue #120).
+ * `builtin:claude-code` AgentRuntime (issue #110 PR6, resident stream-json
+ * transport since issue #120; extracted into `@excitedjs/agent-runtime-claude-code`
+ * in issue #209).
  *
  * A real second agent runtime that proves the AgentRuntimeProvider abstraction
- * is not "Codex renamed". Like Codex it now runs a **resident child process**
- * supervised for the dispatcher's lifetime — but it differs in every
+ * is not "Codex renamed". Like Codex it runs a **resident child process**
+ * supervised for the runtime's lifetime — but it differs in every
  * runtime-specific dimension:
  *
  * - **Stream-json over stdio, not an app-server WebSocket.** The resident child
  *   is `claude --print --input-format stream-json --output-format stream-json`
- *   (see `runtime/claude-code-args.ts`); turns are NDJSON `user` lines on stdin
- *   and `init`/`assistant`/`result` envelopes on stdout (see
- *   `claude-code/stream.ts`). There is no `initialize` handshake — the
- *   child emits `init` lazily with the first turn — so readiness is "child
- *   spawned", not "handshake completed".
+ *   (see `./args.ts`); turns are NDJSON `user` lines on stdin and
+ *   `init`/`assistant`/`result` envelopes on stdout (see `./stream.ts`). There
+ *   is no `initialize` handshake — the child emits `init` lazily with the first
+ *   turn — so readiness is "child spawned", not "handshake completed".
  * - **MCP injection is a JSON config document** (`--mcp-config <file>`), not
  *   Codex's `-c mcp_servers.*` TOML CLI flags.
  * - **Runtime-owned config** is `DispatcherClaudeCodeConfig` (bin / model /
@@ -59,79 +59,76 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
-import {
-  BUILTIN_CLAUDE_CODE_PROVIDER_REF,
-  type ProviderDescriptor,
-} from '../../../registry/index.js';
-import {
-  defaultDispatcherClaudeCodeConfig,
-  dispatcherClaudeCodeConfig,
-  readDispatcherClaudeCodeConfig,
-  type DispatcherClaudeCodeConfig,
-} from './config.js';
-import { claudeCodeAgentRuntimeDiagnostic } from './diagnostic.js';
-import {
-  dispatcherClaudeCodeMcpConfigPath,
-  dispatcherClaudeCodeStreamLogPath,
-} from './paths.js';
-import { dispatcherProcessEnv } from '../../../platform/package-bin.js';
-import { dispatcherCompletionSpillDir } from '../../../platform/paths.js';
+import { BUILTIN_CLAUDE_CODE_PROVIDER_REF } from './provider-ref.js';
+import type { DispatcherClaudeCodeConfig } from './config.js';
 import { claudeCodeResidentArgs } from './args.js';
 import { stringifyClaudeCodeMcpConfig } from './mcp-config.js';
 import {
-  createDefaultClaudeCodeSession,
   type ClaudeCodeSession,
   type ClaudeCodeSessionFactory,
   type TurnOutcome,
   type TurnSubmitOptions,
 } from './supervisor.js';
-import { renderChannelInput } from '../../turn.js';
-import type {
-  InboundDeliveryHooks,
-  InboundTurnInput,
-} from '../../turn.js';
-import { resolveCompletionBody } from '../../completion-body.js';
-import type { DispatcherStatus } from '../../../state/dispatcher-store.js';
+import { renderChannelInput } from './internal/turn-render.js';
+import { resolveCompletionBody } from './internal/completion-body.js';
+import { CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES } from './provider.js';
 import type {
   AgentRuntimeCapabilities,
   AgentRuntime,
-  AgentRuntimeCreateContext,
+  AgentRuntimeIdentity,
   AgentRuntimeLastResult,
-  AgentRuntimeProvider,
+  AgentRuntimeMcpServer,
+  AgentRuntimePathContext,
   AgentRuntimeResumeInput,
+  AgentRuntimeStateCallbacks,
+  AgentRuntimeStatus,
   AgentRuntimeSystemInput,
   AgentRuntimeTurnResult,
   CompletionEnvelope,
+  DreamuxLogger,
+  InboundDeliveryHooks,
+  InboundTurnInput,
   TeamMateCompletionDeliveryResult,
-} from '../../types.js';
+  TurnSettledSignal,
+} from '@excitedjs/dreamux-types';
 
-export interface ClaudeCodeAgentRuntimeProviderOptions {
-  descriptor: ProviderDescriptor;
-  /** Optional host-level bin resolver (default: identity on the config bin). */
-  resolveBinPath?: (bin: string) => string;
-  /** Override the resident-session factory (tests inject a fake). */
-  sessionFactory?: ClaudeCodeSessionFactory;
-}
-
-export const CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = {
-  resume: { supported: true, checkpoint: 'claudeCodeSession' },
-  steer: { supported: true },
-  events: { kind: 'synthesized' },
-  last: { supported: true },
-  context: { supported: false },
-  systemPrompt: { mode: 'append' },
-  teammateCompletion: [
-    {
-      kind: 'claudeCodePlainTurn',
-      description:
-        'deliver the completion as a plain user turn (no task-notification harness path)',
-    },
-  ],
-};
-
-interface ClaudeCodeRuntimeDeps {
+/**
+ * Everything the Claude Code runtime needs, assembled by the provider from the
+ * neutral create context plus host-supplied hooks. The host contracts the
+ * package must not reconstruct — the per-dispatcher path context, the durable
+ * state sink, and the base process env (`PATH` seeded with the host package
+ * bins) — arrive here; nothing references a Dreamux host module.
+ */
+export interface ClaudeCodeRuntimeDeps {
+  /** Provider-parsed Claude Code runtime config. */
+  config: DispatcherClaudeCodeConfig;
+  /** Working directory the resident `claude` child runs in. */
+  cwd: string;
+  /** Neutral state sink for status/thread transitions. */
+  state: AgentRuntimeStateCallbacks;
+  /** Neutral path context: the runtime derives its mcp-config / log subpaths here. */
+  paths: AgentRuntimePathContext;
+  /** MCP server descriptors translated into the `--mcp-config` JSON document. */
+  mcpServers: readonly AgentRuntimeMcpServer[];
+  /** Resident-session factory (tests inject a fake). */
   sessionFactory: ClaudeCodeSessionFactory;
+  /** Host-level bin resolver (default: identity on the config bin). */
   resolveBinPath: (bin: string) => string;
+  /**
+   * Build the base process env for the resident child (host seeds `PATH` with
+   * the Dreamux package bins). When omitted, the package falls back to
+   * `process.env` so a loader-constructed / standalone runtime still spawns.
+   */
+  baseProcessEnv?: (extraEnv: Record<string, string>) => NodeJS.ProcessEnv;
+  /**
+   * Launcher-supplied role/system-prompt content, applied as an APPEND via
+   * `--append-system-prompt`. Omitted for launches that supply none (teammates).
+   */
+  systemPromptContent?: string;
+  /** Fired each time a delivered turn reaches a terminal state. */
+  onTurnSettled?: (settled: TurnSettledSignal) => void;
+  /** Structured logger; falls back to a minimal `console.error` sink. */
+  logger?: DreamuxLogger;
 }
 
 interface ActiveChannelTurn {
@@ -198,7 +195,8 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   private readonly mcpConfigDoc: string;
   private readonly stderrLogPath: string;
   private readonly completionSpillDir: string;
-  private status: DispatcherStatus = 'declared';
+  private readonly logger: DreamuxLogger;
+  private status: AgentRuntimeStatus = 'declared';
   private threadId: string | null;
   private resumed: boolean;
   private stopped = false;
@@ -211,32 +209,26 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   private activeChannelTurn: ActiveChannelTurn | null = null;
 
   constructor(
-    private readonly context: AgentRuntimeCreateContext,
+    identity: AgentRuntimeIdentity,
     private readonly deps: ClaudeCodeRuntimeDeps,
   ) {
-    this.dispatcherId = context.row.dispatcher_id;
-    this.config =
-      context.dispatcher === null
-        ? defaultDispatcherClaudeCodeConfig()
-        : dispatcherClaudeCodeConfig(context.dispatcher);
+    this.dispatcherId = identity.runtime_id;
+    this.config = deps.config;
     this.bin = deps.resolveBinPath(this.config.bin);
-    this.cwd = context.cwd;
-    this.mcpConfigPath =
-      context.paths === undefined
-        ? dispatcherClaudeCodeMcpConfigPath(this.dispatcherId)
-        : join(context.paths.dispatcherDir(this.dispatcherId), 'mcp.json');
-    this.mcpConfigDoc = stringifyClaudeCodeMcpConfig(context.mcpServers);
-    this.stderrLogPath =
-      context.paths?.stderrLogPath(this.dispatcherId) ??
-      dispatcherClaudeCodeStreamLogPath(this.dispatcherId);
-    this.completionSpillDir =
-      context.paths?.completionSpillDir(this.dispatcherId) ??
-      dispatcherCompletionSpillDir(this.dispatcherId);
-    this.threadId = context.row.thread_id;
-    this.resumed = context.row.thread_id !== null;
+    this.cwd = deps.cwd;
+    this.mcpConfigPath = join(
+      deps.paths.dispatcherDir(this.dispatcherId),
+      'mcp.json',
+    );
+    this.mcpConfigDoc = stringifyClaudeCodeMcpConfig(deps.mcpServers);
+    this.stderrLogPath = deps.paths.stderrLogPath(this.dispatcherId);
+    this.completionSpillDir = deps.paths.completionSpillDir(this.dispatcherId);
+    this.threadId = identity.checkpoint_id ?? null;
+    this.resumed = (identity.checkpoint_id ?? null) !== null;
+    this.logger = deps.logger ?? consoleFallbackLogger(this.dispatcherId);
   }
 
-  getStatus(): DispatcherStatus {
+  getStatus(): AgentRuntimeStatus {
     return this.status;
   }
 
@@ -464,7 +456,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   }
 
   private async markTurnSucceeded(turnId: string): Promise<void> {
-    this.context.onTurnSettled?.({ turnId, status: 'completed' });
+    this.deps.onTurnSettled?.({ turnId, status: 'completed' });
     if (this.stopped) return;
     if (this.status !== 'ready') await this.setStatus('ready');
   }
@@ -475,7 +467,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     // torn down) is a `stopped` settlement; otherwise it is a genuine `failed`.
     // Fire before the stopped early-return so an interrupted teammate turn is
     // never lost.
-    this.context.onTurnSettled?.({
+    this.deps.onTurnSettled?.({
       turnId,
       status: this.stopped ? 'stopped' : 'failed',
       error: err instanceof Error ? err : new Error(String(err)),
@@ -496,13 +488,13 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       config: this.config,
       mcpConfigPath: this.mcpConfigPath,
       resumeSessionId: this.threadId,
-      systemPromptContent: this.context.systemPromptContent,
+      systemPromptContent: this.deps.systemPromptContent,
     });
     const session = this.deps.sessionFactory({
       bin: this.bin,
       args,
       cwd: this.cwd,
-      env: dispatcherProcessEnv(globalThis.process.env, this.config.extra_env),
+      env: this.buildProcessEnv(this.config.extra_env),
       stderrLogPath: this.stderrLogPath,
       turnTimeoutMs: this.config.turn_timeout_ms,
       remoteControl: this.config.remote_control,
@@ -559,10 +551,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       outcome.sessionId !== this.threadId
     ) {
       this.threadId = outcome.sessionId;
-      await (this.context.state ?? this.context.dispatchers).setThreadId(
-        this.dispatcherId,
-        outcome.sessionId,
-      );
+      await this.deps.state.setThreadId(this.dispatcherId, outcome.sessionId);
     }
     if (!outcome.isError) this.lastResult = { text: outcome.text };
     if (outcome.isError) {
@@ -579,12 +568,20 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     return `claude-${kind}-${this.runtimeInstanceId}-${++this.turnCounter}`;
   }
 
+  private buildProcessEnv(
+    extraEnv: Record<string, string>,
+  ): NodeJS.ProcessEnv {
+    return this.deps.baseProcessEnv !== undefined
+      ? this.deps.baseProcessEnv(extraEnv)
+      : { ...globalThis.process.env, ...extraEnv };
+  }
+
   private async setStatus(
-    status: DispatcherStatus,
+    status: AgentRuntimeStatus,
     err?: unknown,
   ): Promise<void> {
     this.status = status;
-    await (this.context.state ?? this.context.dispatchers).setStatus(
+    await this.deps.state.setStatus(
       this.dispatcherId,
       status,
       err !== undefined ? { last_error: errMessage(err) } : {},
@@ -596,31 +593,29 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     msg: string,
     err?: unknown,
   ): void {
-    this.context.log(level, msg, err);
+    this.logger[level](msg, err !== undefined ? { err } : undefined);
   }
 }
 
-/** Build the Phase 1 `builtin:claude-code` agent runtime provider. */
-export function createClaudeCodeAgentRuntimeProvider(
-  options: ClaudeCodeAgentRuntimeProviderOptions,
-): AgentRuntimeProvider {
-  const sessionFactory =
-    options.sessionFactory ?? createDefaultClaudeCodeSession;
-  const resolveBinPath = options.resolveBinPath ?? ((bin: string) => bin);
+/**
+ * Minimal `console.error`-backed logger the runtime falls back to when the host
+ * passes none (the bare generic-loader / standalone path). Owned here, never in
+ * `@excitedjs/dreamux-types` (which is declaration-only).
+ */
+function consoleFallbackLogger(dispatcherId: string): DreamuxLogger {
+  const sink =
+    (level: string) =>
+    (message: string, fields?: Record<string, unknown>): void => {
+      const prefix = `[claude-code ${dispatcherId}] ${level}`;
+      const err = fields?.['err'];
+      if (err !== undefined) console.error(prefix, message, err);
+      else console.error(prefix, message);
+    };
   return {
-    ref: BUILTIN_CLAUDE_CODE_PROVIDER_REF,
-    descriptor: options.descriptor,
-    getCapabilities: () => CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES,
-    diagnostic: claudeCodeAgentRuntimeDiagnostic,
-    readConfig(rawConfig, context) {
-      return readDispatcherClaudeCodeConfig(
-        rawConfig,
-        context.file,
-        context.prefix,
-      ) as unknown as Record<string, unknown>;
-    },
-    createRuntime(context: AgentRuntimeCreateContext): AgentRuntime {
-      return new ClaudeCodeRuntime(context, { sessionFactory, resolveBinPath });
-    },
+    error: sink('error'),
+    warn: sink('warn'),
+    info: sink('info'),
+    debug: () => {},
+    trace: () => {},
   };
 }

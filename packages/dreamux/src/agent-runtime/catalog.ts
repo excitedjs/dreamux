@@ -6,8 +6,8 @@ import {
 } from '../registry/index.js';
 import { createCodexAgentRuntimeProvider } from './builtin/codex/provider.js';
 import type { CodexAgentRuntimeProviderOptions } from './builtin/codex/provider.js';
-import { createClaudeCodeAgentRuntimeProvider } from './builtin/claude-code/runtime.js';
-import type { ClaudeCodeAgentRuntimeProviderOptions } from './builtin/claude-code/runtime.js';
+import { createClaudeCodeAgentRuntimeProvider } from './builtin/claude-code/provider.js';
+import type { ClaudeCodeAgentRuntimeProviderOptions } from './builtin/claude-code/provider.js';
 import type { AgentRuntimeProvider } from './types.js';
 
 export class UnsupportedAgentRuntimeProviderError extends Error {

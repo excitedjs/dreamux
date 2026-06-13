@@ -61,6 +61,11 @@
       "packageName": "@excitedjs/agent-runtime-codex",
       "projectFolder": "packages/agent-runtime/codex",
       "shouldPublish": true
+    },
+    {
+      "packageName": "@excitedjs/agent-runtime-claude-code",
+      "projectFolder": "packages/agent-runtime/claude-code",
+      "shouldPublish": true
     }
   ]
 }

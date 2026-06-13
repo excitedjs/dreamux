@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 import {
   createDefaultClaudeCodeSession,
   type ClaudeCodeSession,
-} from '../src/agent-runtime/builtin/claude-code/supervisor.js';
+} from '../src/supervisor.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURE = join(HERE, 'fixtures', 'fake-claude-stream.mjs');

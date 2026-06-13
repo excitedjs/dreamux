@@ -609,13 +609,40 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   diagnostic, and re-export shims kept so existing core/test import paths stay
   stable. Runtime semantics, the `builtin:codex` alias, config, paths, state, and
   the server/test factory seams are unchanged (full repo test suite green).
-- **Deferred to slice 4 (role-gated skill injection):** the slice preserves the
-  existing workspace-symlink bundled-skill model — core still owns
-  `installBundledWorkspaceSkills` and the adapter invokes it through a package
-  hook on each (re)start. Replacing it with role-selected `skillSources` applied
-  natively via the codex `skills/extraRoots/set` RPC (and deleting the symlink
-  install) is slice 4. `@excitedjs/agent-runtime-claude-code` extraction is also a
-  later slice; Claude Code stays in core for now.
+- **Slice 4 (`@excitedjs/agent-runtime-claude-code` extraction) — satisfied now:**
+  the built-in Claude Code engine lives in the publishable
+  `@excitedjs/agent-runtime-claude-code` package (`packages/agent-runtime/claude-code`,
+  `shouldPublish: true`, independent version), implementing the neutral
+  `@excitedjs/dreamux-types` `AgentRuntimeProvider` and depending on
+  `@excitedjs/dreamux-types` ONLY — an import-boundary test rejects any
+  `@excitedjs/dreamux` import or relative escape. `@excitedjs/dreamux` depends on
+  the package by default (bundled built-in) and resolves `builtin:claude-code` to
+  it. As with Codex, the package **default-exports** the loader factory, so
+  `loadExternalAgentRuntimeProviders({ refs: ['builtin:claude-code'] })` imports
+  the ACTUAL package and registers a contract-valid provider whose `createRuntime`
+  constructs from the neutral create context alone (no host hooks needed —
+  Claude Code is stdio-based with no socket, no app-server home, and no bundled
+  skills in the runtime path); a core test
+  (`builtin-claude-code-package-loader.test.ts`) exercises this against the real
+  package. Production wires Claude Code through a thin **core-owned adapter**
+  (`agent-runtime/builtin/claude-code/provider.ts`) that maps the host context
+  onto the neutral one and injects the host contracts the bare factory cannot
+  deliver — the per-dispatcher path context, the dispatcher-store-backed state
+  sink, and the package-bin `PATH` seed. The package vendors only generic
+  OS/validation/turn helpers (never the Dreamux host layout/path/log contracts)
+  and owns its own Claude Code config parsing. The remaining `builtin/claude-code/*`
+  core files are the adapter plus host claude-code paths, the diagnostic,
+  `runtime-support.ts`, and re-export shims kept so existing core/test import paths
+  stay stable. Runtime semantics, the `builtin:claude-code` alias, config, paths,
+  state, and the server/test session-factory seam are unchanged (full repo test
+  suite green).
+- **Deferred to a later slice (role-gated skill injection):** the Codex slice
+  preserves the existing workspace-symlink bundled-skill model — core still owns
+  `installBundledWorkspaceSkills` and the Codex adapter invokes it through a
+  package hook on each (re)start. Replacing it with role-selected `skillSources`
+  applied natively (the codex `skills/extraRoots/set` RPC, Claude Code `--add-dir`)
+  and deleting the symlink install is a later slice. Claude Code injects no
+  bundled skills today, so its extraction carries no skill-model change.
 
 ## Alternatives Considered
 

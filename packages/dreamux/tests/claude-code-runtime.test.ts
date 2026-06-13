@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import {
   createClaudeCodeAgentRuntimeProvider,
   type ClaudeCodeAgentRuntimeProviderOptions,
-} from '../src/agent-runtime/builtin/claude-code/runtime.js';
+} from '../src/agent-runtime/builtin/claude-code/provider.js';
 import {
   createDefaultClaudeCodeSession,
   type ClaudeCodeSession,
