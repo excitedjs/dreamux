@@ -58,6 +58,8 @@ export {
 
 export {
   claudeCodeResidentArgs,
+  claudeCodeSkillAddDirArgs,
+  CLAUDE_SKILLS_PARENT_LAYOUT,
   type ClaudeCodeResidentArgsInput,
 } from './args.js';
 

@@ -33,9 +33,12 @@ import { defaultDispatcherClaudeCodeConfig } from '../src/config/config.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
 import { renderChannelInput } from '../src/agent-runtime/turn.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
+import { CLAUDE_SKILLS_PARENT_LAYOUT } from '@excitedjs/agent-runtime-claude-code';
 import type {
   AgentRuntime,
   AgentRuntimeMcpServer,
+  AgentRuntimeRole,
+  AgentRuntimeSkillSource,
 } from '../src/agent-runtime/types.js';
 import type { TurnSettledSignal } from '../src/agent-runtime/turn.js';
 
@@ -357,6 +360,8 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     opts: {
       resumeSession?: string;
       onTurnSettled?: (settled: TurnSettledSignal) => void;
+      role?: AgentRuntimeRole;
+      skillSources?: AgentRuntimeSkillSource[];
     } = {},
   ): { runtime: AgentRuntime; store: DispatcherStore; fleet: FakeFleet } {
     const dispatcher = claudeDispatcher('flow');
@@ -372,8 +377,12 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       row: row!,
       dispatcher,
       dispatchers: store,
+      role: opts.role ?? 'dispatcher',
       cwd: defaultDispatcherCwd('flow'),
       mcpServers: [FEISHU_MCP],
+      ...(opts.skillSources !== undefined
+        ? { skillSources: opts.skillSources }
+        : {}),
       ...(opts.onTurnSettled !== undefined
         ? { onTurnSettled: opts.onTurnSettled }
         : {}),
@@ -383,6 +392,41 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     });
     return { runtime, store, fleet };
   }
+
+  it('forwards role-gated skillSources from the host context into --add-dir (not hardcoded [])', async () => {
+    // The core adapter must mirror the Codex adapter: forward context.skillSources
+    // into the package, which owns the --add-dir mapping (issue #209 slice 6).
+    // A claude-compatible source therefore reaches the spawned launch args.
+    const fleet = fakeFleet();
+    const { runtime } = makeRuntime(fleet, {
+      role: 'dispatcher',
+      skillSources: [
+        {
+          name: 'team-skills',
+          path: '/ext/team-skills',
+          layout: CLAUDE_SKILLS_PARENT_LAYOUT,
+          source: 'ext',
+        },
+      ],
+    });
+    await runtime.start();
+    const args = fleet.sessions[0]?.spec.args ?? [];
+    expect(args.slice(args.indexOf('--add-dir'), args.indexOf('--add-dir') + 2)).toEqual(
+      ['--add-dir', '/ext/team-skills'],
+    );
+  });
+
+  it('emits no --add-dir for bundled skill-dir sources (package owns layout filtering)', async () => {
+    const fleet = fakeFleet();
+    const { runtime } = makeRuntime(fleet, {
+      role: 'dispatcher',
+      skillSources: [
+        { name: 'dispatcher', path: '/pkg/skills/dispatcher', layout: 'skill-dir', source: 'dreamux-core' },
+      ],
+    });
+    await runtime.start();
+    expect(fleet.sessions[0]?.spec.args).not.toContain('--add-dir');
+  });
 
   it('start() materializes the MCP config, spawns one resident session, and reports ready', async () => {
     const fleet = fakeFleet();
