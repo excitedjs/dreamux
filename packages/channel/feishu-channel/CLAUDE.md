@@ -1,11 +1,21 @@
 # @excitedjs/feishu-channel
 
-This package is the Feishu channel layer for Dreamux-side behavior. It sits
-between `@excitedjs/feishu-transport` and `@excitedjs/dreamux`.
+This package is the built-in Feishu `ChannelProvider` for Dreamux (alias
+`builtin:feishu`, issue #209 slice 5). It sits between
+`@excitedjs/feishu-transport` and `@excitedjs/dreamux`, implements the neutral
+`@excitedjs/dreamux-types` `ChannelProvider`/`ChannelSession` contract, and
+depends on `@excitedjs/dreamux-types` + `@excitedjs/feishu-transport` **only** —
+never on `@excitedjs/dreamux` core.
 
 ## Responsibilities
 
-- Own Feishu channel semantics above raw Lark JSAPI calls.
+- Own Feishu channel semantics above raw Lark JSAPI calls: the live channel
+  session (bot start/close), access/trust behavior (the gate + chat-bots store,
+  read/written under a host-supplied state dir), and provider-local
+  message-to-target ownership tracking.
+- Own the Feishu MCP **tool backing** — the `reply` / `react` / `list_chat_bots`
+  tool parsing + handlers. (Core owns the MCP *server descriptor* and the
+  admin-method routing; see Boundaries.)
 - Normalize inbound Feishu content into agent-facing channel results.
 - Download inbound attachments after the host access gate allows delivery.
 - Own attachment cache layout, path sanitization, permissions, retention, and
@@ -21,10 +31,14 @@ between `@excitedjs/feishu-transport` and `@excitedjs/dreamux`.
 ## Boundaries
 
 - Do not import the Lark SDK directly. Use `@excitedjs/feishu-transport` for
-  platform calls.
-- Do not own dispatcher lifecycle, Codex process supervision, thread state,
-  admin socket handling, or Feishu MCP tool execution. Those stay in
-  `@excitedjs/dreamux`.
+  platform calls. Do not import `@excitedjs/dreamux` core.
+- Do not own dispatcher lifecycle, agent/Codex process supervision, thread
+  state, admin socket handling, routing, binding state, authorization, Team
+  lifecycle, or the Feishu MCP **server descriptor** / admin-method routing
+  (Dreamux bin + admin socket + the core `feishu-mcp` shim). Those stay in
+  `@excitedjs/dreamux`. The host supplies the bot secret/app id and the
+  state/cache dirs; the package reconstructs no Dreamux host layout/path
+  contract.
 - Do not write private Feishu identifiers, internal domains, operator paths, or
   real resource keys into committed fixtures or docs.
 - Do not make download failure look like success. If no local readable file

@@ -65,6 +65,9 @@ importers:
 
   ../../packages/channel/feishu-channel:
     dependencies:
+      '@excitedjs/dreamux-types':
+        specifier: workspace:*
+        version: link:../../dreamux-types
       '@excitedjs/feishu-transport':
         specifier: workspace:*
         version: link:../feishu-transport
@@ -124,6 +127,9 @@ importers:
       '@excitedjs/dreamux-types':
         specifier: workspace:*
         version: link:../dreamux-types
+      '@excitedjs/feishu-channel':
+        specifier: workspace:*
+        version: link:../channel/feishu-channel
       '@excitedjs/feishu-transport':
         specifier: workspace:*
         version: link:../channel/feishu-transport

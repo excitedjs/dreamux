@@ -20,9 +20,8 @@
  */
 
 import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 
-import { dispatcherChatBotsPath } from '../../platform/paths.js';
 
 /** Retain at most this many recent bot-added event ids per chat for dedupe. */
 const MAX_SEEN_EVENT_IDS = 200;
@@ -115,9 +114,9 @@ function peerBotsFrom(entry: ChatBotsEntry, openIds: string[]): PeerBot[] {
  * load failure degrades to an empty store rather than throwing.
  */
 export async function loadChatBots(
-  dispatcherId: string,
+  stateDir: string,
 ): Promise<ChatBotsState> {
-  const path = dispatcherChatBotsPath(dispatcherId);
+  const path = join(stateDir, 'chat-bots.json');
   try {
     const parsed = JSON.parse(await readFile(path, 'utf8')) as unknown;
     return normalizeChatBots(parsed);
@@ -127,10 +126,10 @@ export async function loadChatBots(
 }
 
 export async function saveChatBots(
-  dispatcherId: string,
+  stateDir: string,
   state: ChatBotsState,
 ): Promise<void> {
-  const path = dispatcherChatBotsPath(dispatcherId);
+  const path = join(stateDir, 'chat-bots.json');
   await mkdir(dirname(path), { recursive: true });
   const tmp = `${path}.tmp-${process.pid}-${tmpCounter++}`;
   await writeFile(tmp, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
@@ -148,19 +147,19 @@ function entryFor(state: ChatBotsState, chatId: string): ChatBotsEntry {
 
 /** Record a passively observed peer bot as *known* (awareness only). */
 export async function observeKnownBot(
-  dispatcherId: string,
+  stateDir: string,
   chatId: string,
   bot: PeerBot,
 ): Promise<void> {
   if (bot.openId === '') return;
-  const state = await loadChatBots(dispatcherId);
+  const state = await loadChatBots(stateDir);
   const entry = entryFor(state, chatId);
   let changed = recordName(entry, bot);
   if (!entry.known.includes(bot.openId)) {
     entry.known.push(bot.openId);
     changed = true;
   }
-  if (changed) await saveChatBots(dispatcherId, state);
+  if (changed) await saveChatBots(stateDir, state);
 }
 
 /**
@@ -168,11 +167,11 @@ export async function observeKnownBot(
  * Trusted bots are also known. Returns the open_ids newly added to trust.
  */
 export async function trustIntroducedBots(
-  dispatcherId: string,
+  stateDir: string,
   chatId: string,
   bots: PeerBot[],
 ): Promise<string[]> {
-  const state = await loadChatBots(dispatcherId);
+  const state = await loadChatBots(stateDir);
   const entry = entryFor(state, chatId);
   const added: string[] = [];
   let changed = false;
@@ -193,7 +192,7 @@ export async function trustIntroducedBots(
   // (issue #69). Re-introducing already-trusted bots changes nothing, so it
   // does not re-arm the one-shot.
   if (added.length > 0) markBaseline(entry);
-  if (changed) await saveChatBots(dispatcherId, state);
+  if (changed) await saveChatBots(stateDir, state);
   return added;
 }
 
@@ -204,10 +203,10 @@ export async function trustIntroducedBots(
  * `clearBaselineIfCurrent` only after a successful submission.
  */
 export async function pendingBaseline(
-  dispatcherId: string,
+  stateDir: string,
   chatId: string,
 ): Promise<PendingBaseline> {
-  const entry = (await loadChatBots(dispatcherId)).chats[chatId];
+  const entry = (await loadChatBots(stateDir)).chats[chatId];
   if (entry === undefined) {
     return { needsBaseline: false, generation: 0, trusted: [] };
   }
@@ -225,24 +224,24 @@ export async function pendingBaseline(
  * dropping the newer pending context (issue #69).
  */
 export async function clearBaselineIfCurrent(
-  dispatcherId: string,
+  stateDir: string,
   chatId: string,
   generation: number,
 ): Promise<void> {
-  const state = await loadChatBots(dispatcherId);
+  const state = await loadChatBots(stateDir);
   const entry = state.chats[chatId];
   if (entry === undefined || !entry.needsBaseline) return;
   if (entry.baselineGeneration !== generation) return;
   entry.needsBaseline = false;
-  await saveChatBots(dispatcherId, state);
+  await saveChatBots(stateDir, state);
 }
 
 /** Known and trusted peer bots for one chat (the `list_chat_bots` tool). */
 export async function listChatBots(
-  dispatcherId: string,
+  stateDir: string,
   chatId: string,
 ): Promise<ChatBotsListing> {
-  const entry = (await loadChatBots(dispatcherId)).chats[chatId];
+  const entry = (await loadChatBots(stateDir)).chats[chatId];
   if (entry === undefined) return { known: [], trusted: [] };
   return {
     known: peerBotsFrom(entry, entry.known),
@@ -252,10 +251,10 @@ export async function listChatBots(
 
 /** The trust set the gate consults for one chat. */
 export async function trustedBotIds(
-  dispatcherId: string,
+  stateDir: string,
   chatId: string,
 ): Promise<Set<string>> {
-  return new Set((await loadChatBots(dispatcherId)).chats[chatId]?.trusted ?? []);
+  return new Set((await loadChatBots(stateDir)).chats[chatId]?.trusted ?? []);
 }
 
 /**
@@ -264,11 +263,11 @@ export async function trustedBotIds(
  * Returns true when the event was newly recorded.
  */
 export async function recordBotAdded(
-  dispatcherId: string,
+  stateDir: string,
   chatId: string,
   eventId: string,
 ): Promise<boolean> {
-  const state = await loadChatBots(dispatcherId);
+  const state = await loadChatBots(stateDir);
   const entry = entryFor(state, chatId);
   if (eventId !== '' && entry.seenEventIds.includes(eventId)) return false;
   if (eventId !== '') {
@@ -276,7 +275,7 @@ export async function recordBotAdded(
     while (entry.seenEventIds.length > MAX_SEEN_EVENT_IDS) entry.seenEventIds.shift();
   }
   markBaseline(entry);
-  await saveChatBots(dispatcherId, state);
+  await saveChatBots(stateDir, state);
   return true;
 }
 

@@ -636,6 +636,52 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   stay stable. Runtime semantics, the `builtin:claude-code` alias, config, paths,
   state, and the server/test session-factory seam are unchanged (full repo test
   suite green).
+- **Slice 5 (`@excitedjs/feishu-channel` promotion) — satisfied now:** the live
+  Feishu channel session — platform I/O, access/trust behavior, inbound
+  normalization, attachment handling, and MCP tool backing — moved out of core
+  (`packages/dreamux/src/channel/feishu/*`) into the now-publishable
+  `@excitedjs/feishu-channel` package (`shouldPublish: true`, independent
+  version), which depends on `@excitedjs/dreamux-types` +
+  `@excitedjs/feishu-transport` ONLY — an import-boundary test rejects any
+  `@excitedjs/dreamux` import or relative escape, and `@excitedjs/feishu-transport`
+  stays the sole owner of the Lark SDK. `@excitedjs/dreamux` depends on the package
+  by default and resolves `builtin:feishu` to it. The package **default-exports**
+  the neutral `ChannelProvider` loader factory, so
+  `loadChannelProviders({ refs: ['builtin:feishu'] })` imports the ACTUAL package
+  and registers a contract-valid provider whose `createSession` builds a
+  genuinely functional neutral `ChannelSession` (`reply`/`react`/`resolveTarget`/
+  `tools`/`handleTool`/`messageBelongsToTarget` wired to the real session); a core
+  test (`builtin-feishu-package-loader.test.ts`) exercises this against the real
+  package.
+
+  Production does **not** drive that neutral path: core's dispatcher wiring keeps
+  the package's richer host-shaped session API — a **result-returning inbound
+  submitter** (the reaction ledger keys off `submitted`/`failed`, which the
+  neutral void `routes.deliver` cannot carry, so neutral `start(routes)` is
+  real-but-not-the-production-path), plus the core-owned Channel **MCP server
+  descriptor** (Dreamux bin + admin socket + the `feishu-mcp` shim) and admin-method
+  routing. A thin **core-owned adapter** (`channel/feishu/feishu-channel.ts`)
+  resolves the host contracts the package must not reconstruct — the bot secret /
+  app id from the dispatcher row+config, the per-dispatcher state dir
+  (`access.json` / `chat-bots.json`, byte-identical via `dispatcherDir(id)`) and
+  the attachment cache dir — and constructs the package session; `bot.ts` and
+  `feishu-mcp-surface.ts` become re-export shims (the latter keeping the host
+  descriptor + admin routing and re-exporting the package's tool parser). Routing,
+  binding state, authorization, Team lifecycle, and P2P/group ownership stay
+  core-owned — meaning this slice did **not** move any of them into the package,
+  **not** that the generalized channel-target model described above is in place.
+  Core still runs the **pre-slice-5 binding/routing model**: `ChannelBindingStore`
+  is still **version 1**, keyed by top-level `provider + chat_id` with no
+  `channel_id` / `target_key` / `target_type` / provider `meta` columns, and
+  `TeamService.resolveChannel` still resolves by `{ provider, chatId, chatType }`.
+  Current `builtin:feishu` operator/runtime behavior is unchanged (full repo test
+  suite green). The accepted generalizations in this record — **binding store v2**
+  (the `version: 2` / `target_key` / `meta` schema and its fail-loud migration),
+  **target-key routing** (resolving inbound on `(channel_id, target_key)` instead
+  of `{ provider, chatId, chatType }`), the **generic Channel MCP / `bind_channel`
+  and binding migration** onto the neutral `tools()`/`handleTool()` path, and
+  **multi-channel config validation** — are **not** implemented by this slice and
+  remain later slices.
 - **Deferred to a later slice (role-gated skill injection):** the Codex slice
   preserves the existing workspace-symlink bundled-skill model — core still owns
   `installBundledWorkspaceSkills` and the Codex adapter invokes it through a

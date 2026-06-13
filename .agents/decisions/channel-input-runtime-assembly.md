@@ -5,7 +5,7 @@
 - **Affects:** the runtime contract
   [`/packages/dreamux/src/agent-runtime/turn.ts`](/packages/dreamux/src/agent-runtime/turn.ts),
   both builtins' `channelInput`, the Feishu channel message layer
-  [`/packages/dreamux/src/channel/feishu/feishu-message.ts`](/packages/dreamux/src/channel/feishu/feishu-message.ts),
+  [`/packages/channel/feishu-channel/src/feishu-message.ts`](/packages/channel/feishu-channel/src/feishu-message.ts),
   the no-leak boundary in
   [`/packages/dreamux/CLAUDE.md`](/packages/dreamux/CLAUDE.md) and
   [`/packages/dreamux/src/agent-runtime/CLAUDE.md`](/packages/dreamux/src/agent-runtime/CLAUDE.md)

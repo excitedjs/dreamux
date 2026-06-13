@@ -15,14 +15,14 @@ import {
   defaultDispatcherAccessState,
   dreamuxFeishuGate,
   type DispatcherAccessState,
-} from '../src/channel/feishu/feishu-gate.js';
+} from '../src/feishu-gate.js';
 import {
   canRunIntroduce,
   detectIntroduce,
   introduceAckText,
   introduceDenyReason,
   introducedPeers,
-} from '../src/channel/feishu/introduce.js';
+} from '../src/introduce.js';
 import {
   clearBaselineIfCurrent,
   listChatBots,
@@ -32,8 +32,7 @@ import {
   recordBotAdded,
   trustIntroducedBots,
   trustedBotIds,
-} from '../src/channel/feishu/chat-bots-store.js';
-import { resetRuntimeConfig } from '../src/platform/paths.js';
+} from '../src/chat-bots-store.js';
 import type { Mention } from '@excitedjs/feishu-transport';
 
 function state(overrides: Partial<DispatcherAccessState> = {}): DispatcherAccessState {
@@ -482,118 +481,104 @@ describe('gate trust — only introduced bots may speak in a group', () => {
 });
 
 describe('chat-bots store — awareness vs trust are separate', () => {
-  let root: string;
-  let previousHome: string | undefined;
+  let stateDir: string;
 
   beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), 'dreamux-chatbots-'));
-    previousHome = process.env['HOME'];
-    process.env['HOME'] = join(root, 'home');
-    resetRuntimeConfig();
+    stateDir = mkdtempSync(join(tmpdir(), 'dreamux-chatbots-'));
   });
 
   afterEach(() => {
-    if (previousHome === undefined) delete process.env['HOME'];
-    else process.env['HOME'] = previousHome;
-    resetRuntimeConfig();
-    rmSync(root, { recursive: true, force: true });
+    rmSync(stateDir, { recursive: true, force: true });
   });
 
   it('observing a bot records awareness but never trust', async () => {
-    await observeKnownBot('d1', 'chat-a', { openId: 'peer-a', name: 'Peer A' });
-    const entry = (await loadChatBots('d1')).chats['chat-a'];
+    await observeKnownBot(stateDir, 'chat-a', { openId: 'peer-a', name: 'Peer A' });
+    const entry = (await loadChatBots(stateDir)).chats['chat-a'];
     expect(entry?.known).toEqual(['peer-a']);
     expect(entry?.trusted ?? []).toEqual([]);
-    expect((await trustedBotIds('d1', 'chat-a')).has('peer-a')).toBe(false);
+    expect((await trustedBotIds(stateDir, 'chat-a')).has('peer-a')).toBe(false);
   });
 
   it('introducing a bot records trust (and awareness)', async () => {
-    const added = await trustIntroducedBots('d1', 'chat-a', [
+    const added = await trustIntroducedBots(stateDir, 'chat-a', [
       { openId: 'peer-a', name: 'Peer A' },
     ]);
     expect(added).toEqual(['peer-a']);
-    const entry = (await loadChatBots('d1')).chats['chat-a'];
+    const entry = (await loadChatBots(stateDir)).chats['chat-a'];
     expect(entry?.trusted).toEqual(['peer-a']);
     expect(entry?.known).toEqual(['peer-a']);
-    expect((await trustedBotIds('d1', 'chat-a')).has('peer-a')).toBe(true);
+    expect((await trustedBotIds(stateDir, 'chat-a')).has('peer-a')).toBe(true);
   });
 
   it('recordBotAdded is idempotent by event id and flags a baseline', async () => {
-    expect(await recordBotAdded('d1', 'chat-a', 'evt-1')).toBe(true);
-    expect(await recordBotAdded('d1', 'chat-a', 'evt-1')).toBe(false);
-    expect((await loadChatBots('d1')).chats['chat-a']?.needsBaseline).toBe(true);
+    expect(await recordBotAdded(stateDir, 'chat-a', 'evt-1')).toBe(true);
+    expect(await recordBotAdded(stateDir, 'chat-a', 'evt-1')).toBe(false);
+    expect((await loadChatBots(stateDir)).chats['chat-a']?.needsBaseline).toBe(true);
   });
 });
 
 describe('chat-bots store — one-shot pending context (issue #69)', () => {
-  let root: string;
-  let previousHome: string | undefined;
+  let stateDir: string;
 
   beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), 'dreamux-chatbots-pending-'));
-    previousHome = process.env['HOME'];
-    process.env['HOME'] = join(root, 'home');
-    resetRuntimeConfig();
+    stateDir = mkdtempSync(join(tmpdir(), 'dreamux-chatbots-pending-'));
   });
 
   afterEach(() => {
-    if (previousHome === undefined) delete process.env['HOME'];
-    else process.env['HOME'] = previousHome;
-    resetRuntimeConfig();
-    rmSync(root, { recursive: true, force: true });
+    rmSync(stateDir, { recursive: true, force: true });
   });
 
   it('arms a generation-stamped pending baseline carrying the trusted bots', async () => {
-    await trustIntroducedBots('d1', 'chat-a', [{ openId: 'peer-a', name: 'Peer A' }]);
-    const pending = await pendingBaseline('d1', 'chat-a');
+    await trustIntroducedBots(stateDir, 'chat-a', [{ openId: 'peer-a', name: 'Peer A' }]);
+    const pending = await pendingBaseline(stateDir, 'chat-a');
     expect(pending.needsBaseline).toBe(true);
     expect(pending.generation).toBe(1);
     expect(pending.trusted).toEqual([{ openId: 'peer-a', name: 'Peer A' }]);
   });
 
   it('only trusted (not passively known) bots ride the pending baseline', async () => {
-    await observeKnownBot('d1', 'chat-a', { openId: 'known-only', name: 'Known' });
-    await trustIntroducedBots('d1', 'chat-a', [{ openId: 'peer-a', name: 'Peer A' }]);
-    expect((await pendingBaseline('d1', 'chat-a')).trusted).toEqual([
+    await observeKnownBot(stateDir, 'chat-a', { openId: 'known-only', name: 'Known' });
+    await trustIntroducedBots(stateDir, 'chat-a', [{ openId: 'peer-a', name: 'Peer A' }]);
+    expect((await pendingBaseline(stateDir, 'chat-a')).trusted).toEqual([
       { openId: 'peer-a', name: 'Peer A' },
     ]);
   });
 
   it('re-introducing an already-trusted bot does not re-arm the one-shot', async () => {
-    await trustIntroducedBots('d1', 'chat-a', [{ openId: 'peer-a' }]);
+    await trustIntroducedBots(stateDir, 'chat-a', [{ openId: 'peer-a' }]);
     await clearBaselineIfCurrent(
-      'd1',
+      stateDir,
       'chat-a',
-      (await pendingBaseline('d1', 'chat-a')).generation,
+      (await pendingBaseline(stateDir, 'chat-a')).generation,
     );
-    expect((await pendingBaseline('d1', 'chat-a')).needsBaseline).toBe(false);
-    const added = await trustIntroducedBots('d1', 'chat-a', [{ openId: 'peer-a' }]);
+    expect((await pendingBaseline(stateDir, 'chat-a')).needsBaseline).toBe(false);
+    const added = await trustIntroducedBots(stateDir, 'chat-a', [{ openId: 'peer-a' }]);
     expect(added).toEqual([]);
-    expect((await pendingBaseline('d1', 'chat-a')).needsBaseline).toBe(false);
+    expect((await pendingBaseline(stateDir, 'chat-a')).needsBaseline).toBe(false);
   });
 
   it('clears the flag when the generation still matches the snapshot', async () => {
-    await trustIntroducedBots('d1', 'chat-a', [{ openId: 'peer-a' }]);
-    const snapshot = await pendingBaseline('d1', 'chat-a');
-    await clearBaselineIfCurrent('d1', 'chat-a', snapshot.generation);
-    expect((await pendingBaseline('d1', 'chat-a')).needsBaseline).toBe(false);
+    await trustIntroducedBots(stateDir, 'chat-a', [{ openId: 'peer-a' }]);
+    const snapshot = await pendingBaseline(stateDir, 'chat-a');
+    await clearBaselineIfCurrent(stateDir, 'chat-a', snapshot.generation);
+    expect((await pendingBaseline(stateDir, 'chat-a')).needsBaseline).toBe(false);
   });
 
   it('does NOT clear when a newer event bumped the generation mid-enqueue', async () => {
-    await trustIntroducedBots('d1', 'chat-a', [{ openId: 'peer-a' }]);
-    const stale = await pendingBaseline('d1', 'chat-a'); // generation 1
+    await trustIntroducedBots(stateDir, 'chat-a', [{ openId: 'peer-a' }]);
+    const stale = await pendingBaseline(stateDir, 'chat-a'); // generation 1
     // A second /introduce arrives before the stale clear runs.
-    await trustIntroducedBots('d1', 'chat-a', [{ openId: 'peer-b' }]); // generation 2
-    await clearBaselineIfCurrent('d1', 'chat-a', stale.generation);
-    const after = await pendingBaseline('d1', 'chat-a');
+    await trustIntroducedBots(stateDir, 'chat-a', [{ openId: 'peer-b' }]); // generation 2
+    await clearBaselineIfCurrent(stateDir, 'chat-a', stale.generation);
+    const after = await pendingBaseline(stateDir, 'chat-a');
     expect(after.needsBaseline).toBe(true);
     expect(after.trusted).toEqual([{ openId: 'peer-a' }, { openId: 'peer-b' }]);
   });
 
   it('listChatBots returns known and trusted separately, with names', async () => {
-    await observeKnownBot('d1', 'chat-a', { openId: 'known-a', name: 'Known A' });
-    await trustIntroducedBots('d1', 'chat-a', [{ openId: 'peer-a', name: 'Peer A' }]);
-    const listing = await listChatBots('d1', 'chat-a');
+    await observeKnownBot(stateDir, 'chat-a', { openId: 'known-a', name: 'Known A' });
+    await trustIntroducedBots(stateDir, 'chat-a', [{ openId: 'peer-a', name: 'Peer A' }]);
+    const listing = await listChatBots(stateDir, 'chat-a');
     expect(listing.known).toEqual([
       { openId: 'known-a', name: 'Known A' },
       { openId: 'peer-a', name: 'Peer A' },
@@ -604,16 +589,16 @@ describe('chat-bots store — one-shot pending context (issue #69)', () => {
   // #102: a peer introduced without a name still trusts its open_id; the
   // listing omits `name` entirely rather than echoing the raw open_id as a name.
   it('trusts an open_id with no name and omits name in the listing', async () => {
-    await trustIntroducedBots('d1', 'chat-a', [{ openId: 'peer-noname' }]);
-    expect((await trustedBotIds('d1', 'chat-a')).has('peer-noname')).toBe(true);
-    const listing = await listChatBots('d1', 'chat-a');
+    await trustIntroducedBots(stateDir, 'chat-a', [{ openId: 'peer-noname' }]);
+    expect((await trustedBotIds(stateDir, 'chat-a')).has('peer-noname')).toBe(true);
+    const listing = await listChatBots(stateDir, 'chat-a');
     expect(listing.trusted).toEqual([{ openId: 'peer-noname' }]);
     expect(listing.trusted[0]).not.toHaveProperty('name');
   });
 
   it('returns empty listings/baseline for an unknown chat', async () => {
-    expect(await listChatBots('d1', 'nope')).toEqual({ known: [], trusted: [] });
-    expect(await pendingBaseline('d1', 'nope')).toEqual({
+    expect(await listChatBots(stateDir, 'nope')).toEqual({ known: [], trusted: [] });
+    expect(await pendingBaseline(stateDir, 'nope')).toEqual({
       needsBaseline: false,
       generation: 0,
       trusted: [],

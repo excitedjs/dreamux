@@ -4,7 +4,7 @@ import {
   createFeishuBot,
   type CreateBotOptions,
   type FeishuInboundEvent,
-} from '../src/channel/feishu/bot.js';
+} from '../src/bot.js';
 import type {
   FeishuDocComment,
   FeishuDocMeta,

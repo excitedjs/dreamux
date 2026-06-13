@@ -26,7 +26,10 @@ fix it in the same PR.
   behind `builtin:claude-code`, #209 slice 4 — depends on
   `@excitedjs/dreamux-types` only, never on core), `@excitedjs/feishu-transport`
   (the platform-I/O core, sole owner of the `@larksuiteoapi/node-sdk` import),
-  and `@excitedjs/feishu-channel` (per-host channel layer, a placeholder today) —
+  and `@excitedjs/feishu-channel` (the built-in Feishu `ChannelProvider` behind
+  `builtin:feishu`, #209 slice 5 — the live Feishu channel session, access/trust,
+  inbound normalization, and MCP tool backing; depends on
+  `@excitedjs/dreamux-types` + `@excitedjs/feishu-transport` only, never on core) —
   see the channel refactor (#4). Private (unpublished):
   `@excitedjs/eslint-config`, the shared ESLint flat config that is the single
   source of the synchronous-blocking-IO ban (#85).

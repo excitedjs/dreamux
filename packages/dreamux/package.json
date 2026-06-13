@@ -40,6 +40,7 @@
     "@excitedjs/agent-runtime-claude-code": "workspace:*",
     "@excitedjs/agent-runtime-codex": "workspace:*",
     "@excitedjs/dreamux-types": "workspace:*",
+    "@excitedjs/feishu-channel": "workspace:*",
     "@excitedjs/feishu-transport": "workspace:*",
     "@excitedjs/tm": "2.4.1",
     "smol-toml": "^1.6.1",

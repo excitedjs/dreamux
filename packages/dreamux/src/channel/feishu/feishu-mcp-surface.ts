@@ -1,5 +1,29 @@
+/**
+ * Host-owned half of the Feishu Channel MCP surface (issue #209 slice 5).
+ *
+ * The channel-owned half — tool names, input shapes, JSON-schema descriptors,
+ * and the raw-argument parser — moved to `@excitedjs/feishu-channel` (re-exported
+ * below so existing core/shim import paths stay stable). What stays here is
+ * host/shim machinery: the MCP *server descriptor* (which points at the Dreamux
+ * bin + admin socket + the core `feishu-mcp` shim) and the admin-method routing
+ * the shim uses to forward a tool call to core's admin socket.
+ */
 import { dreamuxBinPath } from '../../platform/package-bin.js';
 import type { AgentRuntimeMcpServer } from '../../agent-runtime/types.js';
+import type {
+  FeishuMcpToolInput,
+  FeishuMcpToolName,
+} from '@excitedjs/feishu-channel';
+
+export {
+  feishuMcpTools,
+  parseFeishuMcpToolInput,
+  type FeishuMcpToolName,
+  type FeishuMcpToolInput,
+  type FeishuMcpReplyInput,
+  type FeishuMcpReactInput,
+  type FeishuMcpListChatBotsInput,
+} from '@excitedjs/feishu-channel';
 
 export const FEISHU_MCP_SERVER_NAME = 'feishu';
 
@@ -12,30 +36,6 @@ export interface FeishuMcpServerDescriptorOptions {
   command?: string;
   env?: NodeJS.ProcessEnv;
 }
-
-export type FeishuMcpToolName = 'reply' | 'react' | 'list_chat_bots';
-
-export interface FeishuMcpReplyInput {
-  chatId: string;
-  text: string;
-  messageId?: string;
-  mentionUserIds?: string[];
-}
-
-export interface FeishuMcpReactInput {
-  chatId?: string;
-  messageId: string;
-  emoji: string;
-}
-
-export interface FeishuMcpListChatBotsInput {
-  chatId: string;
-}
-
-export type FeishuMcpToolInput =
-  | { toolName: 'reply'; input: FeishuMcpReplyInput }
-  | { toolName: 'react'; input: FeishuMcpReactInput }
-  | { toolName: 'list_chat_bots'; input: FeishuMcpListChatBotsInput };
 
 export function feishuMcpServerDescriptor(
   opts: FeishuMcpServerDescriptorOptions,
@@ -55,94 +55,6 @@ export function feishuMcpServerDescriptor(
       opts.adminSocketPath,
     ],
   };
-}
-
-export function feishuMcpTools(): Array<Record<string, unknown>> {
-  return [
-    {
-      name: 'reply',
-      description: 'Send a Feishu message through this dispatcher channel.',
-      inputSchema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          chat_id: {
-            type: 'string',
-            description: 'Feishu chat id from the inbound <channel source="feishu"> block.',
-          },
-          message_id: {
-            type: 'string',
-            description: 'Optional source message id to reply under.',
-          },
-          text: {
-            type: 'string',
-            description: 'Message text to send.',
-          },
-          mention_user_ids: {
-            type: 'array',
-            items: { type: 'string' },
-            description: 'Optional Feishu user ids to mention.',
-          },
-        },
-        required: ['chat_id', 'text'],
-      },
-    },
-    {
-      name: 'react',
-      description: 'Add a model-owned Feishu reaction through this dispatcher channel.',
-      inputSchema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          message_id: {
-            type: 'string',
-            description: 'Feishu message id to react to.',
-          },
-          chat_id: {
-            type: 'string',
-            description: 'Feishu chat id from the inbound <channel source="feishu"> block.',
-          },
-          emoji: {
-            type: 'string',
-            description: 'Feishu reaction emoji key.',
-          },
-        },
-        required: ['message_id', 'emoji'],
-      },
-    },
-    {
-      name: 'list_chat_bots',
-      description:
-        'List the peer bots known and trusted in a Feishu group chat (names + open_ids). Use to recover bot identities after a context compaction.',
-      inputSchema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          chat_id: {
-            type: 'string',
-            description: 'Feishu chat id from the inbound <channel source="feishu"> block.',
-          },
-        },
-        required: ['chat_id'],
-      },
-    },
-  ];
-}
-
-export function parseFeishuMcpToolInput(
-  toolName: string,
-  value: unknown,
-): FeishuMcpToolInput {
-  if (toolName === 'reply') {
-    return { toolName, input: replyArgs(value) };
-  }
-  if (toolName === 'react') {
-    return { toolName, input: reactArgs(value) };
-  }
-  if (toolName === 'list_chat_bots') {
-    return { toolName, input: listChatBotsArgs(value) };
-  }
-  throw new Error(`unknown Feishu tool '${toolName}'`);
 }
 
 export function feishuMcpAdminMethod(toolName: FeishuMcpToolName): string {
@@ -190,74 +102,4 @@ export function feishuMcpAdminParams(
         chat_id: parsed.input.chatId,
       };
   }
-}
-
-function replyArgs(value: unknown): FeishuMcpReplyInput {
-  const obj = asRecord(value, 'reply arguments');
-  const chatId = requireString(obj, 'chat_id');
-  const text = requireString(obj, 'text');
-  const messageId = optionalString(obj, 'message_id');
-  const mentionUserIds = optionalStringArray(obj, 'mention_user_ids');
-  return {
-    chatId,
-    text,
-    ...(messageId !== null ? { messageId } : {}),
-    ...(mentionUserIds !== null ? { mentionUserIds } : {}),
-  };
-}
-
-function reactArgs(value: unknown): FeishuMcpReactInput {
-  const obj = asRecord(value, 'react arguments');
-  const chatId = optionalString(obj, 'chat_id');
-  return {
-    ...(chatId !== null ? { chatId } : {}),
-    messageId: requireString(obj, 'message_id'),
-    emoji: requireString(obj, 'emoji'),
-  };
-}
-
-function listChatBotsArgs(value: unknown): FeishuMcpListChatBotsInput {
-  const obj = asRecord(value, 'list_chat_bots arguments');
-  return {
-    chatId: requireString(obj, 'chat_id'),
-  };
-}
-
-function asRecord(value: unknown, label: string): Record<string, unknown> {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error(`${label} must be an object`);
-  }
-  return value as Record<string, unknown>;
-}
-
-function requireString(obj: Record<string, unknown>, key: string): string {
-  const value = obj[key];
-  if (typeof value !== 'string' || value === '') {
-    throw new Error(`${key} must be a non-empty string`);
-  }
-  return value;
-}
-
-function optionalString(
-  obj: Record<string, unknown>,
-  key: string,
-): string | null {
-  const value = obj[key];
-  if (value === undefined || value === null || value === '') return null;
-  if (typeof value !== 'string') {
-    throw new Error(`${key} must be a string`);
-  }
-  return value;
-}
-
-function optionalStringArray(
-  obj: Record<string, unknown>,
-  key: string,
-): string[] | null {
-  const value = obj[key];
-  if (value === undefined || value === null) return null;
-  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
-    throw new Error(`${key} must be an array of strings`);
-  }
-  return value as string[];
 }

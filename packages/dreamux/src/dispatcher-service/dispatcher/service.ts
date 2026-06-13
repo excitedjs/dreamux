@@ -7,11 +7,15 @@ import type {
 import type { FeishuBot } from '../../channel/feishu/bot.js';
 import {
   FeishuChannelSession,
+  createFeishuChannelSession,
   type FeishuInboundEnvelope,
   handleFeishuListChatBots,
   type FeishuMcpListChatBotsResult,
 } from '../../channel/feishu/feishu-channel.js';
-import type { FeishuMcpToolName } from '../../channel/feishu/feishu-mcp-surface.js';
+import {
+  feishuMcpServerDescriptor,
+  type FeishuMcpToolName,
+} from '../../channel/feishu/feishu-mcp-surface.js';
 import {
   BUILTIN_CODEX_PROVIDER_REF,
   BUILTIN_FEISHU_PROVIDER_REF,
@@ -284,11 +288,10 @@ export class DispatcherAgentService {
     // and keeps the launch path self-validating.
     const cwd = await ensureDispatcherWorkspace(this.opts.config, id);
     const channelLog = this.opts.channelLoggerFactory(id);
-    const channel = new FeishuChannelSession({
+    const channel = createFeishuChannelSession({
       dispatcherId: id,
       row,
       config: this.opts.config,
-      adminSocketPath: this.opts.adminSocketPath ?? defaultAdminSocketPath(),
       log: channelLog,
       ...(this.opts.botFactory !== undefined
         ? { botFactory: this.opts.botFactory }
@@ -311,7 +314,7 @@ export class DispatcherAgentService {
       dispatcher: dispatcherConfig ?? null,
       cwd,
       systemPromptContent,
-      mcpServers: this.dreamuxMcpServerDescriptors(channel, id),
+      mcpServers: this.dreamuxMcpServerDescriptors(id),
       log: loggerToLevelFn(channelLog),
     });
 
@@ -354,7 +357,6 @@ export class DispatcherAgentService {
   }
 
   private dreamuxMcpServerDescriptors(
-    channel: FeishuChannelSession,
     dispatcherId: string,
   ): AgentRuntimeMcpServer[] {
     const context = {
@@ -362,7 +364,7 @@ export class DispatcherAgentService {
       adminSocketPath: this.opts.adminSocketPath ?? defaultAdminSocketPath(),
     };
     return [
-      ...channel.mcpServerDescriptors(),
+      feishuMcpServerDescriptor(context),
       teamMcpServerDescriptor(context),
       teammateMcpServerDescriptor({
         ...context,
