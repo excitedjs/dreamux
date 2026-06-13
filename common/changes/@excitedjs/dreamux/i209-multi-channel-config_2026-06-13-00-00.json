@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Multi-channel config support (issue #209): `dispatchers[].channels[]` now accepts more than one channel per dispatcher, requires unique dispatcher-local channel ids, and delegates provider-specific field validation to the selected channel provider's `readConfig` (resolved through the provider registry like agent runtimes; `builtin:feishu` is now a `channel` registry descriptor). Core no longer performs Feishu-specific channel *field* validation (non-empty `app_id`/`app_secret` and unknown-key rejection now fail loud from `@excitedjs/feishu-channel`, e.g. 'feishu channel config requires a non-empty app_id'), but core still owns the cross-dispatcher concern: two dispatchers (enabled or not) declaring the same Feishu `app_id` still fail loud at config load, the same story `dreamux serve` / `doctor` / `onboard` tell. No Rebuild required: a valid single-`builtin:feishu` config still loads and runs unchanged; only operators relying on the old core wording for empty/unknown Feishu fields will see new (channel-provider) error text. Live multi-channel routing is a follow-up slice, so a runnable dispatcher must still declare exactly one `builtin:feishu` channel — more than one channel, more than one feishu channel, or a non-feishu channel fails loud at the dispatcher runtime boundary (server start), not at config load.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

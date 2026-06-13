@@ -5,17 +5,21 @@ import {
   type LoadConfigResult,
 } from '../config/config.js';
 import { createBuiltinProviderRegistry } from '../registry/index.js';
+import { registerBuiltinChannelProviders } from '../channel/builtin-channel-providers.js';
 import { registerBuiltinAgentRuntimeProviders } from './catalog.js';
 
 /**
- * Build a provider registry with the builtin agentRuntime implementations
- * registered, reusing a caller-supplied registry when present (and registering
- * idempotently into it). Shared by both load helpers below.
+ * Build a provider registry with the builtin agentRuntime AND channel
+ * implementations registered, reusing a caller-supplied registry when present
+ * (and registering idempotently into it). Shared by both load helpers below.
+ * The channel providers are needed so `dispatchers[].channels[].provider` refs
+ * parse through each channel provider's `readConfig` (issue #209 multi-channel).
  */
 function registryWithBuiltins(overrides: ConfigPathOverrides) {
   const providerRegistry =
     overrides.providerRegistry ?? createBuiltinProviderRegistry();
   registerBuiltinAgentRuntimeProviders({ registry: providerRegistry });
+  registerBuiltinChannelProviders({ registry: providerRegistry });
   return providerRegistry;
 }
 

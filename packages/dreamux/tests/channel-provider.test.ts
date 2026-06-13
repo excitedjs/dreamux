@@ -85,12 +85,14 @@ describe('built-in Feishu channel', () => {
 });
 
 describe('subscription channel plugin interface', () => {
-  it('is interface-only; no builtin subscription channel is registered', () => {
+  it('registers only the built-in feishu channel; subscription plugins stay interface-only', () => {
+    // Since the multi-channel config slice (#209) the built-in feishu channel IS
+    // a registry descriptor (kind `channel`); it is the only builtin channel.
+    // Subscription-style channel plugins (github/jira) remain interface-only —
+    // no builtin subscription channel descriptor is registered.
     const registry = createBuiltinProviderRegistry();
-    expect(registry.listByKind('channel')).toEqual([]);
-    expect(() => registry.resolve('builtin:feishu')).toThrow(
-      /unknown builtin provider/,
-    );
+    expect(registry.listByKind('channel').map((d) => d.id)).toEqual(['feishu']);
+    expect(registry.resolve('builtin:feishu').kind).toBe('channel');
   });
 
   it('reserves the shape future subscription plugins must implement', () => {

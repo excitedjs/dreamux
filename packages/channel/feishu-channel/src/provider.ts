@@ -187,15 +187,29 @@ export function createFeishuChannelProvider(): ChannelProvider<FeishuChannelConf
     descriptor: DEFAULT_FEISHU_DESCRIPTOR,
     readConfig(raw): FeishuChannelConfig {
       const obj = (raw ?? {}) as Record<string, unknown>;
+      // The Feishu channel owns its config validation (issue #209 multi-channel
+      // slice): the host no longer pre-validates Feishu app credentials. The bot
+      // secret is config-sourced, so a non-empty app_secret is required at
+      // config-load time to preserve fail-loud — not deferred to session start.
+      const unknown = Object.keys(obj).filter(
+        (key) => key !== 'app_id' && key !== 'app_secret',
+      );
+      if (unknown.length > 0) {
+        throw new Error(
+          `feishu channel config has unknown key(s): ${unknown
+            .map((key) => `'${key}'`)
+            .join(', ')}. Allowed: app_id, app_secret.`,
+        );
+      }
       const appId = obj['app_id'];
       const appSecret = obj['app_secret'];
-      if (typeof appId !== 'string' || appId === '') {
+      if (typeof appId !== 'string' || appId.trim() === '') {
         throw new Error('feishu channel config requires a non-empty app_id');
       }
-      return {
-        appId,
-        appSecret: typeof appSecret === 'string' ? appSecret : '',
-      };
+      if (typeof appSecret !== 'string' || appSecret.trim() === '') {
+        throw new Error('feishu channel config requires a non-empty app_secret');
+      }
+      return { appId, appSecret };
     },
     createSession(
       context: ChannelSessionCreateContext<FeishuChannelConfig>,

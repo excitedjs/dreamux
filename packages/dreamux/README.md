@@ -37,9 +37,12 @@ Design background:
 
 ## Phase 1 contract
 
-- **One Node process, many Dispatchers.** Each Dispatcher has one configured
-  channel in Phase 1. The config shape is already `channels[]`, but runtime
-  routing still accepts exactly one channel per dispatcher.
+- **One Node process, many Dispatchers.** `dispatchers[].channels[]` accepts
+  multiple channels with unique dispatcher-local ids, and each channel provider
+  validates its own config (issue #209 multi-channel config). Live multi-channel
+  routing is a follow-up, so a runnable dispatcher must still declare exactly one
+  `builtin:feishu` channel — more than one channel (or a non-feishu channel)
+  fails loud at server start.
 - **Provider refs are explicit.** Wired builtin refs are `builtin:feishu`,
   `builtin:codex`, and `builtin:claude-code`. Npm package refs and package
   export refs are reserved syntax only in Phase 1; dreamux parses and rejects
@@ -221,9 +224,11 @@ or package export refs, for example `npm:@example/dreamux-provider` and
 dreamux does not install, import, or execute them.
 
 Edit and restart `dreamux serve` to apply dispatcher declaration changes.
-`app_id` values must be unique across all declared dispatchers, including
-disabled ones. Dispatcher ids use a path-safe character set so they map
-one-to-one to state directories.
+Channel ids must be unique within a dispatcher, and the Feishu `app_id` must be
+unique across all declared dispatchers (including disabled ones) — two
+dispatchers cannot share one bot identity, and config load fails loud on a
+duplicate. Dispatcher ids use a path-safe character set so they map one-to-one
+to state directories.
 
 Access-gate allowlists are not part of `config.json`. Configure them in
 `~/.dreamux/state/<id>/access.json`:

@@ -690,7 +690,7 @@ describe('global config (~/.dreamux/config.json)', () => {
     );
 
     await expect(loadConfigWithBuiltins({ configDir })).rejects.toThrow(
-      /not a built-in Dreamux channel/,
+      /was not loaded as an external channel provider/,
     );
   });
 
@@ -703,7 +703,7 @@ describe('global config (~/.dreamux/config.json)', () => {
     );
 
     await expect(loadConfigWithBuiltins({ configDir })).rejects.toThrow(
-      /not a built-in Dreamux channel/,
+      /unknown builtin provider/,
     );
   });
 
@@ -716,7 +716,7 @@ describe('global config (~/.dreamux/config.json)', () => {
     );
 
     await expect(loadConfigWithBuiltins({ configDir })).rejects.toThrow(
-      /not a built-in Dreamux channel/,
+      /is a agentRuntime provider, expected channel/,
     );
   });
 
@@ -755,7 +755,11 @@ describe('global config (~/.dreamux/config.json)', () => {
       }),
     );
 
-    const { config, providerRegistry } = await loadConfig({
+    // Use loadConfigWithBuiltins so the builtin feishu channel provider is
+    // registered (the default dispatcher declares a builtin:feishu channel,
+    // whose readConfig validates the channel config); the external runtime is
+    // still loaded through the injected importer.
+    const { config, providerRegistry } = await loadConfigWithBuiltins({
       configDir,
       externalAgentRuntimeModuleImporter: async (packageName) => {
         expect(packageName).toBe('@example/dreamux-runtime');
@@ -878,7 +882,10 @@ describe('global config (~/.dreamux/config.json)', () => {
     );
   });
 
-  it('rejects multiple channels while Phase 1 wires one channel per dispatcher', async () => {
+  it('accepts multiple channels with unique dispatcher-local ids', async () => {
+    // Multi-channel config (issue #209): the config layer accepts more than one
+    // channel per dispatcher. (Live multi-channel routing is a follow-up slice,
+    // enforced fail-loud at the runtime boundary, not at config load.)
     const fileObject = testSingleDispatcherFileObject({ id: 'flow' });
     const dispatcher = (fileObject['dispatchers'] as Record<string, unknown>[])[0]!;
     (dispatcher['channels'] as unknown[]).push({
@@ -891,12 +898,33 @@ describe('global config (~/.dreamux/config.json)', () => {
     });
     writeConfigObject(fileObject);
 
+    const { config } = await loadConfigWithBuiltins({ configDir });
+    expect(config.dispatchers[0]?.channels.map((c) => c.id)).toEqual([
+      'primary',
+      'secondary',
+    ]);
+    expect(config.dispatchers[0]?.channels.map((c) => c.provider)).toEqual([
+      'builtin:feishu',
+      'builtin:feishu',
+    ]);
+  });
+
+  it('rejects duplicate channel ids within a dispatcher', async () => {
+    const fileObject = testSingleDispatcherFileObject({ id: 'flow' });
+    const dispatcher = (fileObject['dispatchers'] as Record<string, unknown>[])[0]!;
+    (dispatcher['channels'] as unknown[]).push({
+      id: 'primary',
+      provider: 'builtin:feishu',
+      config: { app_id: 'app-flow-2', app_secret: 'secret-flow-2' },
+    });
+    writeConfigObject(fileObject);
+
     await expect(loadConfigWithBuiltins({ configDir })).rejects.toThrow(
-      /must contain exactly one channel in this phase/,
+      /channel ids must be unique per dispatcher/,
     );
   });
 
-  it('rejects unsupported dispatcher secret fields', async () => {
+  it('rejects unknown channel config fields via the channel provider', async () => {
     writeConfigObject(
       testSingleDispatcherFileObject({
         id: 'flow',
@@ -909,7 +937,7 @@ describe('global config (~/.dreamux/config.json)', () => {
     );
 
     await expect(loadConfigWithBuiltins({ configDir })).rejects.toThrow(
-      /callback_secret is not supported/,
+      /feishu channel config has unknown key\(s\): 'callback_secret'/,
     );
   });
 
@@ -936,7 +964,12 @@ describe('global config (~/.dreamux/config.json)', () => {
     );
   });
 
-  it('requires unique Feishu app_id values across all dispatchers', async () => {
+  it('enforces cross-dispatcher Feishu app_id uniqueness in core (incl. disabled)', async () => {
+    // Field validation is provider-owned, but cross-dispatcher bot-identity
+    // uniqueness is a core concern (a per-channel readConfig cannot see other
+    // dispatchers, but core holds them all): config load fails loud when two
+    // dispatchers — one of them disabled here — declare the same app_id, the
+    // same story serve/doctor/onboard tell (issue #209 review).
     writeConfigObject(
       testConfigFileObject({
         agents: [
@@ -960,7 +993,7 @@ describe('global config (~/.dreamux/config.json)', () => {
     );
 
     await expect(loadConfigWithBuiltins({ configDir })).rejects.toThrow(
-      /duplicates dispatcher 'flow'/,
+      /Feishu app_id duplicates dispatcher 'flow'/,
     );
   });
 
@@ -993,7 +1026,7 @@ describe('global config (~/.dreamux/config.json)', () => {
       }),
     );
     await expect(loadConfigWithBuiltins({ configDir })).rejects.toThrow(
-      /app_id must be a non-empty string/,
+      /feishu channel config requires a non-empty app_id/,
     );
 
     writeConfigObject(
@@ -1006,7 +1039,7 @@ describe('global config (~/.dreamux/config.json)', () => {
       }),
     );
     await expect(loadConfigWithBuiltins({ configDir })).rejects.toThrow(
-      /app_secret must be a non-empty string/,
+      /feishu channel config requires a non-empty app_secret/,
     );
   });
 

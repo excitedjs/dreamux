@@ -205,3 +205,49 @@ describe('dispatcher status hydration (issue #98: warn + rebuild)', () => {
     expect(warnings).toEqual([]);
   });
 });
+
+describe('dispatcher store feishu channel resolution (multi-channel config)', () => {
+  it('populates the bot app id from the single feishu channel (builtin:feishu alias stable)', () => {
+    const store = new DispatcherStore({
+      dispatchers: [
+        testDispatcherConfig({
+          id: 'flow',
+          feishu: { app_id: 'app-flow', app_secret: 'secret-flow' },
+        }),
+      ],
+    });
+    expect(store.get('flow')?.bot_app_id).toBe('app-flow');
+  });
+
+  it('stays fail-soft (no throw, empty bot app id) on an ambiguous >1 feishu channel count', () => {
+    // The store is state construction, not a runtime boundary: a dispatcher with
+    // an ambiguous (≠1) feishu channel count is unrunnable, but that fail-loud
+    // belongs at the dispatcher service launch guard (assertRunnableChannelShape),
+    // not here. Store seeding must tolerate the shape with a best-effort empty bot
+    // app id so the failure surfaces at the one intended boundary (issue #209
+    // review).
+    let store: DispatcherStore | undefined;
+    expect(() => {
+      store = new DispatcherStore({
+        dispatchers: [
+          testDispatcherConfig({
+            id: 'flow',
+            channels: [
+              {
+                id: 'primary',
+                provider: 'builtin:feishu',
+                config: { app_id: 'app-a', app_secret: 'secret-a' },
+              },
+              {
+                id: 'secondary',
+                provider: 'builtin:feishu',
+                config: { app_id: 'app-b', app_secret: 'secret-b' },
+              },
+            ],
+          }),
+        ],
+      });
+    }).not.toThrow();
+    expect(store?.get('flow')?.bot_app_id).toBe('');
+  });
+});

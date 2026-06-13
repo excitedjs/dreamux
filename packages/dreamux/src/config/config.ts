@@ -16,6 +16,7 @@ import {
   type ExternalAgentRuntimeModuleImporter,
 } from '../agent-runtime/external-provider.js';
 import type { AgentRuntimeProvider } from '../agent-runtime/types.js';
+import type { ChannelProvider } from '@excitedjs/dreamux-types';
 import {
   BUILTIN_FEISHU_PROVIDER_REF,
   InvalidProviderRefError,
@@ -116,7 +117,13 @@ export interface DispatcherConfig {
 export interface DispatcherChannelConfig {
   id: string;
   provider: string;
-  config: DispatcherProviderConfig | DispatcherFeishuConfig;
+  /**
+   * The raw provider-specific channel config, validated by the channel
+   * provider's `readConfig` at load (issue #209 multi-channel). Kept raw: the
+   * production Feishu adapter reads `{ app_id, app_secret }` from here. Core does
+   * not interpret it beyond that adapter.
+   */
+  config: DispatcherProviderConfig;
 }
 
 export interface DispatcherRuntimeConfig {
@@ -344,7 +351,7 @@ function mergeWithDefaults(
   const agents = readAgents(raw['agents'], file, providerRegistry);
   return {
     agents,
-    dispatchers: readDispatchers(raw['dispatchers'], file, agents),
+    dispatchers: readDispatchers(raw['dispatchers'], file, agents, providerRegistry),
   };
 }
 
@@ -445,6 +452,7 @@ function readDispatchers(
   rawDispatchers: unknown,
   file: string,
   agents: Record<string, ResolvedAgentConfig>,
+  providerRegistry: ProviderRegistry,
 ): DispatcherConfig[] {
   if (rawDispatchers === undefined) return [];
   if (!Array.isArray(rawDispatchers)) {
@@ -454,7 +462,6 @@ function readDispatchers(
   }
   const out: DispatcherConfig[] = [];
   const ids = new Set<string>();
-  const appIdToDispatcher = new Map<string, string>();
   for (let index = 0; index < rawDispatchers.length; index++) {
     const raw = rawDispatchers[index];
     const prefix = `dispatchers[${index}].`;
@@ -491,16 +498,13 @@ function readDispatchers(
     }
     ids.add(id);
 
-    const channels = readDispatcherChannels(raw['channels'], file, prefix);
-    const feishu = feishuConfigFromChannels(channels, id);
-    const app_id = feishu.app_id;
-    const existing = appIdToDispatcher.get(app_id);
-    if (existing !== undefined) {
-      throw new Error(
-        `dreamux config error in ${file}: dispatchers[${index}].channels[0].config.app_id duplicates dispatcher '${existing}'`,
-      );
-    }
-    appIdToDispatcher.set(app_id, id);
+    const channels = readDispatcherChannels(
+      raw['channels'],
+      file,
+      prefix,
+      id,
+      providerRegistry,
+    );
 
     const cwd = readOptionalString(raw, 'cwd', file, prefix);
     const agentRuntimeId = resolveAgentRuntime(raw, prefix, file, agents);
@@ -516,6 +520,7 @@ function readDispatchers(
       },
     });
   }
+  assertUniqueFeishuAppIds(out, file);
   return out;
 }
 
@@ -553,10 +558,20 @@ function resolveAgentRuntime(
   return agentRuntimeId;
 }
 
+/**
+ * Parse `dispatchers[].channels[]` (issue #209 multi-channel config). The
+ * envelope accepts one or more channels with unique dispatcher-local ids; each
+ * channel's provider-specific config is validated by the selected channel
+ * provider's own `readConfig`. Core no longer validates Feishu-specific channel
+ * fields (app id/secret, unknown keys, cross-dispatcher app id uniqueness) — the
+ * channel provider owns them.
+ */
 function readDispatcherChannels(
   rawChannels: unknown,
   file: string,
   dispatcherPrefix: string,
+  dispatcherId: string,
+  providerRegistry: ProviderRegistry,
 ): DispatcherChannelConfig[] {
   const prefix = `${dispatcherPrefix}channels`;
   if (!Array.isArray(rawChannels)) {
@@ -565,69 +580,167 @@ function readDispatcherChannels(
         'Use providerized config v2: dispatchers[].channels[] with provider "builtin:feishu".',
     );
   }
-  if (rawChannels.length !== 1) {
+  if (rawChannels.length === 0) {
     throw new Error(
-      `dreamux config error in ${file}: ${prefix} must contain exactly one channel in this phase (got ${rawChannels.length}).\n` +
-        'The config envelope is channels[] for the provider architecture, but Phase 1 still wires one channel per dispatcher. Multi-channel routing is a follow-up.',
+      `dreamux config error in ${file}: ${prefix} must contain at least one channel.`,
     );
   }
-  const raw = rawChannels[0];
-  const channelPrefix = `${dispatcherPrefix}channels[0].`;
-  if (!isPlainObject(raw)) {
-    throw new Error(
-      `dreamux config error in ${file}: ${channelPrefix.slice(0, -1)} must be an object (got ${describeType(raw)})`,
+  const out: DispatcherChannelConfig[] = [];
+  const channelIds = new Set<string>();
+  for (let index = 0; index < rawChannels.length; index++) {
+    const raw = rawChannels[index];
+    const channelPrefix = `${prefix}[${index}].`;
+    if (!isPlainObject(raw)) {
+      throw new Error(
+        `dreamux config error in ${file}: ${channelPrefix.slice(0, -1)} must be an object (got ${describeType(raw)})`,
+      );
+    }
+    rejectUnknownKeys(raw, new Set(['id', 'provider', 'config']), file, channelPrefix);
+    const id = requireNonEmptyString(raw, 'id', file, channelPrefix);
+    if (channelIds.has(id)) {
+      throw new Error(
+        `dreamux config error in ${file}: ${channelPrefix}id='${id}' duplicates another channel in this dispatcher; channel ids must be unique per dispatcher.`,
+      );
+    }
+    channelIds.add(id);
+    const provider = resolveConfigProvider(
+      requireNonEmptyString(raw, 'provider', file, channelPrefix),
+      'channel',
+      file,
+      channelPrefix,
+      providerRegistry,
     );
-  }
-  rejectUnknownKeys(raw, new Set(['id', 'provider', 'config']), file, channelPrefix);
-  const id = requireNonEmptyString(raw, 'id', file, channelPrefix);
-  const provider = requireNonEmptyString(raw, 'provider', file, channelPrefix);
-  if (provider !== BUILTIN_FEISHU_PROVIDER_REF) {
-    throw new Error(
-      `dreamux config error in ${file}: ${channelPrefix}provider='${provider}' is not a built-in Dreamux channel.\n` +
-        'Only built-in channel "builtin:feishu" is wired in this phase; subscription channel plugins are interface-only.',
+    const rawConfig = readProviderConfigObject(
+      raw['config'],
+      file,
+      `${channelPrefix}config`,
+      { allowMissing: true },
     );
+    const channelProvider = asChannelProvider(
+      providerRegistry.getImplementation(provider.descriptor.id),
+    );
+    if (channelProvider === null) {
+      throw new Error(
+        `dreamux config error in ${file}: ${channelPrefix}provider='${provider.ref}' is registered but has no channel implementation.\n` +
+          'Builtin channels are wired by the caller: load config through ' +
+          '`loadConfigWithBuiltins` (or pass a providerRegistry that already has ' +
+          'the builtin implementations). External channels must load and register ' +
+          'a channel provider before config validation.',
+      );
+    }
+    // Provider-owned validation, fail-loud at config-load: the parsed result is
+    // intentionally discarded this slice — the production Feishu adapter consumes
+    // the raw config; wiring channels through `createSession` with the parsed
+    // config is the channel-routing slice. A channel provider whose `readConfig`
+    // is async is not supported at config-load time in this phase.
+    const parsed = channelProvider.readConfig?.(rawConfig, {
+      dispatcher_id: dispatcherId,
+      channel_id: id,
+      provider: provider.ref,
+    });
+    if (parsed !== undefined && typeof (parsed as { then?: unknown }).then === 'function') {
+      throw new Error(
+        `dreamux config error in ${file}: ${channelPrefix}provider='${provider.ref}' readConfig returned a Promise; channel config validation must be synchronous in this phase.`,
+      );
+    }
+    out.push({ id, provider: provider.ref, config: rawConfig });
   }
-  const config = readProviderConfigObject(raw['config'], file, `${channelPrefix}config`);
-  return [
-    {
-      id,
-      provider,
-      config: readDispatcherFeishuConfig(config, file, `${channelPrefix}config.`),
-    },
-  ];
+  return out;
 }
 
+/**
+ * The single Feishu channel config for a dispatcher (runtime consumption: the
+ * dispatcher store's bot app id and the bot-secret resolution). Throws fail-loud
+ * if the dispatcher has no Feishu channel, or more than one (an ambiguous bot
+ * identity). Core reads the raw `{ app_id, app_secret }`, which the Feishu
+ * channel provider's `readConfig` already validated at config-load.
+ */
 function feishuConfigFromChannels(
   channels: DispatcherChannelConfig[],
   dispatcherId: string,
 ): DispatcherFeishuConfig {
-  const channel = channels.find(
+  const feishuChannels = channels.filter(
     (item) => item.provider === BUILTIN_FEISHU_PROVIDER_REF,
   );
-  if (channel === undefined) {
+  if (feishuChannels.length === 0) {
     throw new Error(
       `dispatcher '${dispatcherId}' has no ${BUILTIN_FEISHU_PROVIDER_REF} channel`,
     );
   }
-  return channel.config as DispatcherFeishuConfig;
+  if (feishuChannels.length > 1) {
+    throw new Error(
+      `dispatcher '${dispatcherId}' has ${feishuChannels.length} ${BUILTIN_FEISHU_PROVIDER_REF} channels; exactly one is required to resolve the bot identity`,
+    );
+  }
+  // The Feishu provider's readConfig validated `app_id` / `app_secret` are
+  // non-empty strings at load, so the raw config carries this shape.
+  return feishuChannels[0]!.config as unknown as DispatcherFeishuConfig;
 }
 
-function readDispatcherFeishuConfig(
-  rawFeishu: Record<string, unknown>,
-  file: string,
-  prefix: string,
-): DispatcherFeishuConfig {
-  rejectUnknownKeys(rawFeishu, new Set(['app_id', 'app_secret']), file, prefix);
-  return {
-    app_id: requireNonEmptyString(rawFeishu, 'app_id', file, prefix),
-    app_secret: requireNonEmptyString(rawFeishu, 'app_secret', file, prefix),
-  };
+/**
+ * The sole Feishu channel config for a dispatcher, or `null` when the dispatcher
+ * has zero or more than one Feishu channel. Unlike {@link feishuConfigFromChannels}
+ * this never throws: a dispatcher with an ambiguous (≠1) Feishu channel count is
+ * not runnable until the channel-routing slice, and that fail-loud lives at the
+ * runtime boundary (the dispatcher service launch guard), not in config-layer
+ * helpers that run during state seeding. Callers that need a best-effort bot
+ * identity or a cross-dispatcher uniqueness key use this lenient form.
+ */
+function soleFeishuConfigFromChannels(
+  channels: DispatcherChannelConfig[],
+): DispatcherFeishuConfig | null {
+  const feishuChannels = channels.filter(
+    (item) => item.provider === BUILTIN_FEISHU_PROVIDER_REF,
+  );
+  if (feishuChannels.length !== 1) return null;
+  return feishuChannels[0]!.config as unknown as DispatcherFeishuConfig;
 }
 
 export function dispatcherFeishuConfig(
   dispatcher: Pick<DispatcherConfig, 'channels' | 'id'>,
 ): DispatcherFeishuConfig {
   return feishuConfigFromChannels(dispatcher.channels, dispatcher.id);
+}
+
+/**
+ * Best-effort Feishu bot app id for a dispatcher's state row. Returns the sole
+ * Feishu channel's `app_id`, or `''` when the dispatcher has an ambiguous (≠1)
+ * Feishu channel count. Such a dispatcher is not runnable (the dispatcher
+ * service launch guard rejects it), so this placeholder is never used for live
+ * routing; it keeps store seeding fail-soft so the unrunnable shape fails at the
+ * one intended runtime boundary instead of during state construction.
+ */
+export function dispatcherFeishuAppId(
+  dispatcher: Pick<DispatcherConfig, 'channels'>,
+): string {
+  return soleFeishuConfigFromChannels(dispatcher.channels)?.app_id ?? '';
+}
+
+/**
+ * Cross-dispatcher Feishu bot-identity uniqueness (a core concern: a per-channel
+ * `readConfig` cannot see other dispatchers, but core holds them all). Two
+ * dispatchers — enabled or not — declaring the same Feishu `app_id` would
+ * connect as the same bot, so this fails loud at config load, the same story
+ * `dreamux serve` / `doctor` / `onboard` tell. Dispatchers with an ambiguous
+ * (≠1) Feishu channel count are skipped here; they are caught fail-loud at the
+ * runtime boundary instead. Provider-owned field validation is unaffected.
+ */
+function assertUniqueFeishuAppIds(
+  dispatchers: DispatcherConfig[],
+  file: string,
+): void {
+  const appIdToDispatcher = new Map<string, string>();
+  for (const dispatcher of dispatchers) {
+    const feishu = soleFeishuConfigFromChannels(dispatcher.channels);
+    if (feishu === null) continue;
+    const existing = appIdToDispatcher.get(feishu.app_id);
+    if (existing !== undefined) {
+      throw new Error(
+        `dreamux config error in ${file}: dispatcher '${dispatcher.id}' Feishu app_id duplicates dispatcher '${existing}'. Two dispatchers cannot share one bot identity; give each its own ${BUILTIN_FEISHU_PROVIDER_REF} app_id.`,
+      );
+    }
+    appIdToDispatcher.set(feishu.app_id, dispatcher.id);
+  }
 }
 
 function resolveConfigProvider(
@@ -653,7 +766,7 @@ function resolveConfigProvider(
     }
     if (err instanceof ReservedExternalProviderError) {
       throw new Error(
-        `dreamux config error in ${file}: ${prefix}provider='${rawProvider}' was not loaded as an external agentRuntime provider.\n` +
+        `dreamux config error in ${file}: ${prefix}provider='${rawProvider}' was not loaded as an external ${expectedKind} provider.\n` +
           err.message,
       );
     }
@@ -697,6 +810,19 @@ function asAgentRuntimeProvider(value: unknown): AgentRuntimeProvider | null {
     return null;
   }
   return value as AgentRuntimeProvider;
+}
+
+function asChannelProvider(value: unknown): ChannelProvider | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const candidate = value as Partial<ChannelProvider>;
+  if (
+    typeof candidate.ref !== 'string' ||
+    candidate.descriptor === undefined ||
+    typeof candidate.createSession !== 'function'
+  ) {
+    return null;
+  }
+  return value as ChannelProvider;
 }
 
 function readOptionalBoolean(
