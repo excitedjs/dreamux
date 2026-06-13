@@ -80,6 +80,7 @@ import type {
   AgentRuntimeMcpServer,
   AgentRuntimePathContext,
   AgentRuntimeResumeInput,
+  AgentRuntimeSkillSource,
   AgentRuntimeStateCallbacks,
   AgentRuntimeStatus,
   AgentRuntimeSystemInput,
@@ -125,6 +126,11 @@ export interface ClaudeCodeRuntimeDeps {
    * `--append-system-prompt`. Omitted for launches that supply none (teammates).
    */
   systemPromptContent?: string;
+  /**
+   * Role-gated skill sources core selected (issue #209 slice 6). The
+   * add-dir-compatible ones become `--add-dir` flags on every (re)spawn.
+   */
+  skillSources?: readonly AgentRuntimeSkillSource[];
   /** Fired each time a delivered turn reaches a terminal state. */
   onTurnSettled?: (settled: TurnSettledSignal) => void;
   /** Structured logger; falls back to a minimal `console.error` sink. */
@@ -489,6 +495,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       mcpConfigPath: this.mcpConfigPath,
       resumeSessionId: this.threadId,
       systemPromptContent: this.deps.systemPromptContent,
+      skillSources: this.deps.skillSources,
     });
     const session = this.deps.sessionFactory({
       bin: this.bin,

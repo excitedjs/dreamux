@@ -1,8 +1,9 @@
-import type {
-  AgentRuntime,
-  AgentRuntimeMcpServer,
-  AgentRuntimeProviderCatalog,
-  CompletionEnvelope,
+import {
+  bundledSkillSourcesForRole,
+  type AgentRuntime,
+  type AgentRuntimeMcpServer,
+  type AgentRuntimeProviderCatalog,
+  type CompletionEnvelope,
 } from '../../agent-runtime/index.js';
 import type { FeishuBot } from '../../channel/feishu/bot.js';
 import {
@@ -312,6 +313,8 @@ export class DispatcherAgentService {
       row,
       dispatchers: this.opts.dispatchers,
       dispatcher: dispatcherConfig ?? null,
+      role: 'dispatcher',
+      skillSources: bundledSkillSourcesForRole('dispatcher'),
       cwd,
       systemPromptContent,
       mcpServers: this.dreamuxMcpServerDescriptors(id),

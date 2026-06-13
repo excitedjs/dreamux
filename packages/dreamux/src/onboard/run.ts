@@ -13,10 +13,7 @@ import {
   setRuntimeConfig,
   stateRoot,
 } from '../platform/paths.js';
-import {
-  dispatcherCodexHome,
-  dispatcherWorkspaceCodexSkillsDir,
-} from '../agent-runtime/builtin/codex/paths.js';
+import { dispatcherCodexHome } from '../agent-runtime/builtin/codex/paths.js';
 import {
   dispatcherCodexHomeDoctorContext,
   validateDispatcherCodexHome,
@@ -27,7 +24,6 @@ import {
   dispatcherCodexArgsJson,
   dreamuxConfigFromAnswers,
 } from './config-files.js';
-import { installDispatcherSkill } from './dispatcher-skill.js';
 import {
   ensureDirectory,
   TransparentFileLedger,
@@ -136,18 +132,12 @@ export async function runOnboard(
     'dispatcher cwd',
     { dryRun: answers.dryRun },
   );
-  await ensureDirectory(
-    dispatcherWorkspaceCodexSkillsDir(effectiveAnswers.dispatcherCwd),
-    ledger,
-    'workspace-local Codex skills directory',
-    { dryRun: answers.dryRun },
-  );
-
-  await installDispatcherSkill({
-    dispatcherCwd: effectiveAnswers.dispatcherCwd,
-    ledger,
-    dryRun: answers.dryRun,
-  });
+  // Bundled Dreamux skills are no longer symlinked into the workspace
+  // (`<cwd>/.codex/skills`) at onboard time (issue #209 slice 6). Core now
+  // injects them at runtime by role via the create context's `skillSources`
+  // (codex `skills/extraRoots/set`), so onboarding creates no skill dir or
+  // symlinks. Pre-existing old symlinks are left untouched; `dreamux uninstall`
+  // reports but does not remove them.
 
   const doctor = await runDispatcherDoctor(effectiveAnswers, env);
   if (!effectiveAnswers.dryRun && !doctor.ok) {

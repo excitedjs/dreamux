@@ -34,8 +34,9 @@ the implementation is still mostly host-local:
   multiple channel instances or non-chat channel targets.
 - Team MCP exposes Feishu-specific binding tools:
   `create.bind_group`, `bind_group`, and `transfer_channel_back`.
-- Bundled skills are installed through workspace symlinks by onboarding and
-  Codex runtime startup. Claude Code has no bundled-skill injection path.
+- Bundled skills were installed through workspace symlinks by onboarding and
+  Codex runtime startup, and Claude Code had no bundled-skill injection path
+  (both replaced in slice 6 by role-gated `skillSources` injection — see below).
 
 Issue #209 turns the provider seams into real npm package boundaries so
 external providers can develop against stable types, while Dreamux core remains
@@ -682,13 +683,45 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   and binding migration** onto the neutral `tools()`/`handleTool()` path, and
   **multi-channel config validation** — are **not** implemented by this slice and
   remain later slices.
-- **Deferred to a later slice (role-gated skill injection):** the Codex slice
-  preserves the existing workspace-symlink bundled-skill model — core still owns
-  `installBundledWorkspaceSkills` and the Codex adapter invokes it through a
-  package hook on each (re)start. Replacing it with role-selected `skillSources`
-  applied natively (the codex `skills/extraRoots/set` RPC, Claude Code `--add-dir`)
-  and deleting the symlink install is a later slice. Claude Code injects no
-  bundled skills today, so its extraction carries no skill-model change.
+- **Slice 6 (role-gated skill injection) — satisfied now:** the workspace-symlink
+  bundled-skill model is removed from onboarding and runtime startup, replaced by
+  role-gated `AgentRuntimeCreateContext.skillSources` injection. Core owns the
+  bundled skills and the role gate: `bundledSkillSourcesForRole(role)`
+  (`agent-runtime/bundled-skill-sources.ts`) returns the bundled sources only for
+  the `dispatcher` and `team_leader` roles, and an empty set for ordinary
+  `teammate` / `team_member`. The launcher sets `role` and `skillSources`
+  explicitly (the dispatcher service for the dispatcher agent; the teammate
+  identity's role for teammate/leader/member launches), retiring the old
+  `onTurnSettled`-presence role heuristic in the Codex adapter — which had
+  mislabeled a TeamLeader as `teammate`.
+
+  Runtime packages own the engine mapping. **Codex** applies the sources via the
+  app-server `skills/extraRoots/set` RPC AFTER `initialize` and BEFORE
+  `thread/start` / `thread/resume`, and re-applies the full replacement set after
+  every app-server restart (the same start path runs again). Each `skill-dir`
+  source maps to the *parent* of its own directory (codex treats an extra root as
+  a directory whose immediate children are skill dirs — verified against codex
+  0.137's generated app-server schema and a live `skills/list` probe); the bundled
+  Dreamux skills share one parent, so one deduped root is set. Empty
+  `skillSources` skips the RPC. An RPC error fails the start loud (a
+  dispatcher/leader must not run skill-blind). Support is gated by the existing
+  codex `>= 0.137` version floor (`MIN_CODEX_VERSION`) — `skills/extraRoots/set`
+  is present from 0.137, so no second gate is added. **Claude Code** translates
+  add-dir-compatible sources into startup `--add-dir <dir>` flags (pointing at
+  directories that contain `.claude/skills`), present on both start and re-spawn.
+  The bundled Dreamux skills use the `skill-dir` layout, which is NOT
+  add-dir-compatible, so claude-code emits none for them — preserving its prior
+  behavior of injecting no bundled skills; the `--add-dir` mapping is implemented
+  and tested for compatible / external sources.
+
+  Startup does **not** delete pre-existing old `<dispatcher cwd>/.codex/skills`
+  symlinks. On an upgraded dispatcher, codex would then list each bundled skill
+  twice — once `repo`-scoped from the leftover cwd symlink and once `user`-scoped
+  from the new extra root — which is a benign duplicate listing (verified: no
+  error, no crash), not an upgrade blocker. Operators may delete
+  `<dispatcher cwd>/.codex/skills` to remove the duplicate; the changelog says so.
+  The `@excitedjs/agent-runtime-codex` `prepareWorkspaceSkills` host hook (and its
+  `CodexWorkspaceSkillPrepResult` type) is removed.
 
 ## Alternatives Considered
 

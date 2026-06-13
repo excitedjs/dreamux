@@ -19,7 +19,6 @@ export {
 export {
   CodexRuntime,
   type CodexRuntimeDeps,
-  type CodexWorkspaceSkillPrepResult,
 } from './runtime.js';
 
 export {

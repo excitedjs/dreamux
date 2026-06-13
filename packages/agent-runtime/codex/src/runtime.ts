@@ -16,6 +16,8 @@
  *     and post a visible warning to the next source chat.
  */
 
+import { dirname } from 'node:path';
+
 import {
   CodexProcess,
   type CodexProcessExit,
@@ -42,6 +44,7 @@ import type {
   AgentRuntimeLastResult,
   AgentRuntimePathContext,
   AgentRuntimeResumeInput,
+  AgentRuntimeSkillSource,
   AgentRuntimeStateCallbacks,
   AgentRuntimeStatus,
   AgentRuntimeSystemInput,
@@ -62,18 +65,13 @@ import {
 } from './runtime-support.js';
 
 /**
- * One bundled-skill preparation result the host's workspace skill installer
- * returns. Structural: the package logs the outcome but owns neither the
- * install mechanism nor the on-disk skill layout (a host-owned contract). The
- * full host shape (`@excitedjs/dreamux`'s `installBundledWorkspaceSkills`)
- * satisfies this at the call site.
+ * The skill-source `layout` this runtime knows how to apply. `path` is one
+ * skill's own directory (containing `SKILL.md`); codex's `skills/extraRoots/set`
+ * takes the *parent* of such a dir as a skills root (a root whose immediate
+ * children are skill dirs — verified against codex 0.137's app-server schema).
+ * Sources with any other layout are ignored by the codex mapping.
  */
-export interface CodexWorkspaceSkillPrepResult {
-  skillName: string;
-  targetPath: string;
-  status: string;
-  reason: string;
-}
+const CODEX_SKILL_DIR_LAYOUT = 'skill-dir';
 
 const DEFAULT_RESTART_BACKOFF_BASE_MS = 1000;
 const DEFAULT_RESTART_BACKOFF_MAX_MS = 30_000;
@@ -98,13 +96,13 @@ export interface CodexRuntimeDeps {
    */
   allocateSocketPath: (id: string) => string;
   /**
-   * Optional host hook to materialize bundled skill sources into the runtime
-   * workspace before each (re)start. The host owns which skills and the on-disk
-   * layout; this package only invokes it and logs the outcome.
+   * Role-gated bundled skill sources core selected for this runtime (issue #209
+   * slice 6). Applied via the app-server `skills/extraRoots/set` RPC after
+   * initialize and before thread start/resume, and reapplied after every
+   * app-server restart. Empty/omitted means no roots are set (the default for
+   * teammates and any role core does not gate skills for).
    */
-  prepareWorkspaceSkills?: (
-    cwd: string,
-  ) => Promise<readonly CodexWorkspaceSkillPrepResult[]>;
+  skillSources?: readonly AgentRuntimeSkillSource[];
   /**
    * Build the base process env for the codex child (host seeds `PATH` with the
    * Dreamux package bins). Optional: standalone use falls back to the live env.
@@ -314,21 +312,6 @@ export class CodexRuntime implements AgentRuntime {
     // only — never persisted to durable state, never derived from state paths.
     const socketPath = this.deps.allocateSocketPath(this.dispatcherId);
     const extraArgs = this.deps.resolveExtraArgs?.() ?? [];
-    const skillInstallResults =
-      (await this.deps.prepareWorkspaceSkills?.(cwd)) ?? [];
-    for (const result of skillInstallResults) {
-      if (result.status === 'skipped') {
-        this.log(
-          'warn',
-          `bundled skill '${result.skillName}' not installed at ${result.targetPath}: ${result.reason}`,
-        );
-      } else if (result.status === 'linked' || result.status === 'replaced') {
-        this.log(
-          'info',
-          `bundled skill '${result.skillName}' ${result.status} at ${result.targetPath}`,
-        );
-      }
-    }
     if (this.deps.codexHomeDoctor !== undefined) {
       await this.deps.codexHomeDoctor({ runtimeId: this.dispatcherId, cwd });
     }
@@ -383,6 +366,11 @@ export class CodexRuntime implements AgentRuntime {
       `codex initialized: ${initResponse.userAgent} (home=${initResponse.codexHome}, ${initResponse.platformOs})`,
     );
 
+    // Role-gated bundled skills (issue #209 slice 6): set the extra skill roots
+    // AFTER initialize and BEFORE thread start/resume, and on every restart this
+    // method runs again so the roots are reapplied to the fresh app-server.
+    await this.applySkillExtraRoots();
+
     await this.resolveThread();
 
     this.turnManager = new TurnManager({
@@ -393,6 +381,35 @@ export class CodexRuntime implements AgentRuntime {
       onTurnSettled: this.deps.onTurnSettled,
       log: this.log,
     });
+  }
+
+  /**
+   * Apply the role-gated bundled skill sources to the live app-server via
+   * `skills/extraRoots/set`. Codex treats each extra root as a directory whose
+   * immediate children are skill dirs, so a `skill-dir` source maps to the
+   * *parent* of its own directory; roots are deduped (the bundled Dreamux skills
+   * share one parent). Empty input skips the RPC entirely (a fresh per-runtime
+   * app-server starts with no extra roots, so nothing to clear). Errors are
+   * fatal to the start: a dispatcher/leader that cannot load its operational
+   * skills must fail loud, not run skill-blind.
+   */
+  private async applySkillExtraRoots(): Promise<void> {
+    if (this.client === null) throw new Error('client not initialized');
+    const sources = this.deps.skillSources ?? [];
+    if (sources.length === 0) return;
+    const extraRoots = [
+      ...new Set(
+        sources
+          .filter((s) => s.layout === CODEX_SKILL_DIR_LAYOUT)
+          .map((s) => dirname(s.path)),
+      ),
+    ];
+    if (extraRoots.length === 0) return;
+    await this.client.request('skills/extraRoots/set', { extraRoots });
+    this.log(
+      'info',
+      `applied ${extraRoots.length} skill extra root(s): ${extraRoots.join(', ')}`,
+    );
   }
 
   private async resolveThread(): Promise<void> {

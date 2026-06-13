@@ -112,6 +112,9 @@ export function createClaudeCodeAgentRuntimeProvider(
         ...(options.baseProcessEnv !== undefined
           ? { baseProcessEnv: options.baseProcessEnv }
           : {}),
+        ...(context.skillSources !== undefined
+          ? { skillSources: context.skillSources }
+          : {}),
         ...(context.systemPromptContent !== undefined
           ? { systemPromptContent: context.systemPromptContent }
           : {}),

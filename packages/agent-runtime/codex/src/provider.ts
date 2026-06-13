@@ -7,7 +7,6 @@ import {
 import {
   CodexRuntime,
   type CodexRuntimeDeps,
-  type CodexWorkspaceSkillPrepResult,
 } from './runtime.js';
 import {
   dispatcherCodexConfig,
@@ -29,10 +28,11 @@ import type {
 /**
  * Host-supplied hooks for the built-in Codex provider. Everything that is a
  * Dreamux host contract — the volatile socket root, the package-bin `PATH`, the
- * bundled-skill install mechanism, the Codex home/auth pre-start check — is
- * injected here by Dreamux core (or by an external embedder), so this package
- * reconstructs none of it. The `descriptor` and the test factories let core and
- * tests wire process/WS/home seams without changing the provider.
+ * Codex home/auth pre-start check — is injected here by Dreamux core (or by an
+ * external embedder), so this package reconstructs none of it. Role-gated
+ * bundled skills arrive on the create context as neutral `skillSources` (not a
+ * host hook). The `descriptor` and the test factories let core and tests wire
+ * process/WS/home seams without changing the provider.
  */
 export interface CodexAgentRuntimeProviderOptions {
   /** The registry descriptor for `builtin:codex`. Defaults to a minimal one. */
@@ -44,10 +44,6 @@ export interface CodexAgentRuntimeProviderOptions {
    * loader-constructed / standalone runtime is still runnable.
    */
   allocateSocketPath?: (id: string) => string;
-  /** Materialize bundled skill sources into the runtime workspace before start. */
-  prepareWorkspaceSkills?: (
-    cwd: string,
-  ) => Promise<readonly CodexWorkspaceSkillPrepResult[]>;
   /** Build the base process env (host seeds `PATH` with the Dreamux package bins). */
   baseProcessEnv?: (extraEnv: Record<string, string>) => NodeJS.ProcessEnv;
   /** Host-owned Codex home/auth pre-start check, invoked with the runtime id and cwd. */
@@ -140,6 +136,9 @@ export function createCodexAgentRuntimeProvider(
         resolveExtraArgs: () => runtimeArgs,
         handshakeTimeoutMs: codexConfig.initialize_timeout_ms,
         extraEnv: codexConfig.extra_env,
+        ...(context.skillSources !== undefined
+          ? { skillSources: context.skillSources }
+          : {}),
         ...(context.systemPromptContent !== undefined
           ? { systemPromptContent: context.systemPromptContent }
           : {}),
@@ -147,9 +146,6 @@ export function createCodexAgentRuntimeProvider(
           ? { onTurnSettled: context.onTurnSettled }
           : {}),
         ...(context.logger !== undefined ? { logger: context.logger } : {}),
-        ...(options.prepareWorkspaceSkills !== undefined
-          ? { prepareWorkspaceSkills: options.prepareWorkspaceSkills }
-          : {}),
         ...(options.baseProcessEnv !== undefined
           ? { baseProcessEnv: options.baseProcessEnv }
           : {}),

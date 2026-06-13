@@ -37,6 +37,8 @@ import type {
   AgentRuntimePathContext,
   AgentRuntimeProviderConfigReadContext,
   AgentRuntimeResumeInput,
+  AgentRuntimeRole,
+  AgentRuntimeSkillSource,
   AgentRuntimeSystemInput,
   CompletionEnvelope,
   TeamMateCompletionDeliveryResult,
@@ -130,6 +132,21 @@ export interface AgentRuntimeCreateContext {
   row: DispatcherRow;
   dispatcher: DispatcherConfig | null;
   dispatchers: DispatcherStore;
+  /**
+   * The role Dreamux core assigns to this runtime launch. The launcher sets it
+   * explicitly (`dispatcher` for the dispatcher agent; the teammate identity's
+   * role for teammate/team-leader/team-member launches) — runtimes must never
+   * infer it from incidental signals such as the presence of `onTurnSettled`.
+   * Core selects role-gated bundled `skillSources` from it (issue #209 slice 6).
+   */
+  role: AgentRuntimeRole;
+  /**
+   * Bundled Dreamux skill sources core selected for this role. Populated only for
+   * Dispatcher and TeamLeader launches; empty for ordinary teammate/team-member
+   * launches. The runtime package owns the mechanics of applying them to its
+   * engine (codex `skills/extraRoots/set`, claude-code `--add-dir`).
+   */
+  skillSources?: readonly AgentRuntimeSkillSource[];
   /**
    * The directory the runtime runs in. Always supplied by whoever launches the
    * runtime (the Dispatcher Service for dispatcher agents, the dispatcher for
