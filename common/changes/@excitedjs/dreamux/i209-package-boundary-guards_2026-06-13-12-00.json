@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Final-hardening test + docs only, no published-package change (issue #209): adds repo-wide package-boundary regression guards (tests/package-boundary-guards.test.ts) — Feishu/Lark SDK has a single owner, a default install bundles the builtin provider packages, and no provider/type package depends on @excitedjs/dreamux core — and records the epic acceptance inventory plus cited deferrals in the decision record. Nothing in the published package (the `files` allowlist) changes, so this carries no version bump and no changelog entry.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}
