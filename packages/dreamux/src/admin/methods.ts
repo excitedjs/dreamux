@@ -356,14 +356,16 @@ export const adminMethods: Record<string, AdminHandler> = {
   'mcp.channel.transfer_back': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    return {
-      binding: await server.dispatcherService.transferTeamChannelBack({
-        dispatcherId: id,
-        provider: 'builtin:feishu',
-        chatId: mustString(params, 'chat_id'),
-        chatType: 'group',
-      }),
-    };
+    // Return the deactivated binding (or null when nothing was bound) directly,
+    // matching `bind_channel` above so the two sibling Channel MCP methods share
+    // one envelope. The eventual standard Channel MCP surface (routing slice) may
+    // revise the shape; until then both verbs return the channel binding.
+    return server.dispatcherService.transferTeamChannelBack({
+      dispatcherId: id,
+      provider: 'builtin:feishu',
+      chatId: mustString(params, 'chat_id'),
+      chatType: 'group',
+    });
   },
 
   'mcp.team.dissolve': async (server, params) => {

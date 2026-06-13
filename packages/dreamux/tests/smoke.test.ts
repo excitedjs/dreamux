@@ -858,14 +858,21 @@ describe('dreamux MVP smoke', () => {
       `mcp_servers.teammate.command=${JSON.stringify(dreamuxBinPath())}`;
     const teamCommand =
       `mcp_servers.team.command=${JSON.stringify(dreamuxBinPath())}`;
+    // #209 slice 8: the core-hosted Channel MCP descriptor must be injected into
+    // the dispatcher runtime startup args. This guards against an accidental drop
+    // of `channelMcpServerDescriptor` from `dreamuxMcpServerDescriptors`.
+    const channelCommand =
+      `mcp_servers.channel.command=${JSON.stringify(dreamuxBinPath())}`;
     expect(args).toContain('mcp_servers.feishu.command="operator-feishu"');
     const operatorIdx = args.indexOf('mcp_servers.feishu.command="operator-feishu"');
     const feishuIdx = args.indexOf(feishuCommand);
     const teammateIdx = args.indexOf(teammateCommand);
     const teamIdx = args.indexOf(teamCommand);
+    const channelIdx = args.indexOf(channelCommand);
     expect(feishuIdx).toBeGreaterThan(operatorIdx);
     expect(teammateIdx).toBeGreaterThan(operatorIdx);
     expect(teamIdx).toBeGreaterThan(operatorIdx);
+    expect(channelIdx).toBeGreaterThan(operatorIdx);
     expect(dreamuxBinPath()).toMatch(/\/dreamux$/);
     expect(args).toContain(
       `mcp_servers.feishu.args=["feishu-mcp", "--dispatcher", "flow", "--admin-socket", "${join(runtimeDir, 'admin.sock')}"]`,
@@ -875,6 +882,9 @@ describe('dreamux MVP smoke', () => {
     );
     expect(args).toContain(
       `mcp_servers.team.args=["team-mcp", "--dispatcher", "flow", "--admin-socket", "${join(runtimeDir, 'admin.sock')}"]`,
+    );
+    expect(args).toContain(
+      `mcp_servers.channel.args=["channel-mcp", "--dispatcher", "flow", "--admin-socket", "${join(runtimeDir, 'admin.sock')}"]`,
     );
   });
 
