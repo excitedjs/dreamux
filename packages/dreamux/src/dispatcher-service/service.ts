@@ -6,7 +6,7 @@ import type {
 } from '../agent-runtime/index.js';
 import type { InboundDeliveryHooks, InboundTurnInput } from '../agent-runtime/turn.js';
 import type { FeishuInboundEnvelope } from '../channel/feishu/feishu-channel.js';
-import type { DreamuxConfig } from '../config/config.js';
+import { dispatcherChannelId, type DreamuxConfig } from '../config/config.js';
 import type { DispatcherStore } from '../state/dispatcher-store.js';
 import type { DreamuxLogger } from '../platform/logger.js';
 import type { FeishuBot } from '../channel/feishu/bot.js';
@@ -31,11 +31,9 @@ import type {
   TeamMateTurnOrigin,
 } from './teammate/types.js';
 import type {
-  TeamBindChannelInput,
   TeamCreateInput,
   TeamDissolveInput,
   TeamHistoryQuery,
-  TeamTransferChannelBackInput,
 } from './team/types.js';
 
 export interface DispatcherServiceOptions {
@@ -60,8 +58,10 @@ export class DispatcherService {
   readonly dispatchers: DispatcherAgentService;
   readonly teammates: TeamMateAgentService;
   readonly teams: TeamService;
+  private readonly config: DreamuxConfig;
 
   constructor(opts: DispatcherServiceOptions) {
+    this.config = opts.config;
     this.dispatchers = new DispatcherAgentService({
       config: opts.config,
       dispatchers: opts.dispatchers,
@@ -145,26 +145,62 @@ export class DispatcherService {
     return this.dispatchers.feishuMessageBelongsToChat(dispatcherId, messageId, chatId);
   }
 
+  /**
+   * Resolve the dispatcher-local `channel_id` for a dispatcher — the single
+   * source of truth shared by the bind path and the inbound router so a stored
+   * binding and an inbound message resolve to the same `(channel_id, target_key)`
+   * (issue #209 binding store v2). An explicit `requested` id must match the sole
+   * configured channel, so a caller cannot bind under a channel id the router
+   * would never key on.
+   */
+  private resolveChannelId(dispatcherId: string, requested?: string): string {
+    const dispatcher = this.config.dispatchers.find(
+      (entry) => entry.id === dispatcherId,
+    );
+    const channelId = dispatcher ? dispatcherChannelId(dispatcher) : null;
+    if (channelId === null) {
+      throw new Error(
+        `dispatcher '${dispatcherId}' has no single resolvable channel`,
+      );
+    }
+    if (requested !== undefined && requested !== channelId) {
+      throw new Error(
+        `unknown channel_id '${requested}' for dispatcher '${dispatcherId}'; ` +
+          `its configured channel is '${channelId}'`,
+      );
+    }
+    return channelId;
+  }
+
   async routeChannelInput(
     dispatcherId: string,
     input: InboundTurnInput,
     envelope: FeishuInboundEnvelope,
     hooks?: InboundDeliveryHooks,
   ): Promise<AgentRuntimeTurnResult> {
-    const binding = await this.teams.resolveChannel({
-      dispatcherId,
-      provider: envelope.provider,
-      chatId: envelope.chatId,
-      chatType: envelope.chatType,
+    const channelId = this.resolveChannelId(dispatcherId);
+    // The channel owns target resolution; core routes by (channel_id, target_key).
+    const target = this.dispatchers.resolveChannelTarget(dispatcherId, {
+      chat_id: envelope.chatId,
+      chat_type: envelope.chatType,
     });
-    if (binding !== null) {
-      const result = await this.teams.deliverToLeader({
+    // Only a bindable target (a group) can carry an active Team binding; a P2P
+    // (non-bindable) target always routes to the dispatcher, never a TeamLeader.
+    if (target.bindable) {
+      const binding = await this.teams.resolveChannel({
         dispatcherId,
-        teamId: binding.team_name,
-        turn: input,
+        channelId,
+        targetKey: target.target_key,
       });
-      if (result.status === 'submitted') await hooks?.onAccepted?.(input);
-      return result;
+      if (binding !== null) {
+        const result = await this.teams.deliverToLeader({
+          dispatcherId,
+          teamId: binding.team_name,
+          turn: input,
+        });
+        if (result.status === 'submitted') await hooks?.onAccepted?.(input);
+        return result;
+      }
     }
     const runtime = this.dispatchers.getRuntime(dispatcherId);
     if (runtime === null) return { status: 'stopped' };
@@ -252,22 +288,68 @@ export class DispatcherService {
     return this.teams.dissolve(input);
   }
 
-  bindTeamChannel(input: TeamBindChannelInput) {
-    return this.teams.bindChannel(input);
+  /**
+   * Bind a channel target to a Team. Core resolves `channel_id` and runs the
+   * channel's `resolveTarget` (provider-owned) at this edge, then passes the
+   * resolved `(channel_id, target)` down to the Team service / store. The Channel
+   * MCP keeps `chat_id` terminology; `chat_type` is always `group` (binding is
+   * group-only). A non-bindable (P2P) target is rejected fail-loud.
+   */
+  bindTeamChannel(input: {
+    dispatcherId: string;
+    teamId: string;
+    channelId?: string;
+    chatId: string;
+  }) {
+    const channelId = this.resolveChannelId(input.dispatcherId, input.channelId);
+    const target = this.dispatchers.resolveChannelTarget(input.dispatcherId, {
+      chat_id: input.chatId,
+      chat_type: 'group',
+    });
+    return this.teams.bindChannel({
+      dispatcherId: input.dispatcherId,
+      teamId: input.teamId,
+      channelId,
+      provider: 'builtin:feishu',
+      target,
+    });
   }
 
-  transferTeamChannelBack(input: TeamTransferChannelBackInput) {
-    return this.teams.transferChannelBack(input);
+  transferTeamChannelBack(input: {
+    dispatcherId: string;
+    channelId?: string;
+    chatId: string;
+  }) {
+    const channelId = this.resolveChannelId(input.dispatcherId, input.channelId);
+    const target = this.dispatchers.resolveChannelTarget(input.dispatcherId, {
+      chat_id: input.chatId,
+      chat_type: 'group',
+    });
+    return this.teams.transferChannelBack({
+      dispatcherId: input.dispatcherId,
+      channelId,
+      targetKey: target.target_key,
+    });
   }
 
   teamLeaderCanUseChannel(input: {
     dispatcherId: string;
     teamId: string;
     leaderName: string;
-    provider: 'builtin:feishu';
     chatId: string;
   }) {
-    return this.teams.teamLeaderCanUseChannel(input);
+    const channelId = this.resolveChannelId(input.dispatcherId);
+    const target = this.dispatchers.resolveChannelTarget(input.dispatcherId, {
+      chat_id: input.chatId,
+      chat_type: 'group',
+    });
+    return this.teams.teamLeaderCanUseChannel({
+      dispatcherId: input.dispatcherId,
+      teamId: input.teamId,
+      leaderName: input.leaderName,
+      channelId,
+      targetKey: target.target_key,
+    });
   }
 
   async shutdown(): Promise<void> {

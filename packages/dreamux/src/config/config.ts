@@ -717,6 +717,25 @@ export function dispatcherFeishuAppId(
 }
 
 /**
+ * The dispatcher-local channel id of the sole Feishu channel
+ * (`dispatchers[].channels[].id`), or `null` when the dispatcher has an
+ * ambiguous (≠1) Feishu channel count. This is the single source of truth for
+ * the `channel_id` half of the `(channel_id, target_key)` binding/routing key
+ * (issue #209 binding store v2): the Channel MCP bind path and the inbound router
+ * both derive `channel_id` from here so a stored binding and an inbound message
+ * resolve to the same key. A runnable dispatcher declares exactly one Feishu
+ * channel (the launch guard enforces it), so this is non-null at runtime.
+ */
+export function dispatcherChannelId(
+  dispatcher: Pick<DispatcherConfig, 'channels'>,
+): string | null {
+  const feishuChannels = dispatcher.channels.filter(
+    (item) => item.provider === BUILTIN_FEISHU_PROVIDER_REF,
+  );
+  return feishuChannels.length === 1 ? feishuChannels[0]!.id : null;
+}
+
+/**
  * Cross-dispatcher Feishu bot-identity uniqueness (a core concern: a per-channel
  * `readConfig` cannot see other dispatchers, but core holds them all). Two
  * dispatchers — enabled or not — declaring the same Feishu `app_id` would

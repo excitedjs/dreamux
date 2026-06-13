@@ -4,6 +4,7 @@ import {
 } from '@excitedjs/feishu-transport';
 import type {
   AgentRuntimeTurnResult,
+  ChannelTarget,
   InboundDeliveryHooks,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
@@ -201,6 +202,28 @@ export class FeishuChannelSession {
 
   messageBelongsToChat(messageId: string, chatId: string): boolean {
     return this.state.messageChats.get(messageId) === chatId;
+  }
+
+  /**
+   * Provider-owned target resolution (issue #209 binding store v2). Normalizes a
+   * Feishu selector `{ chat_id, chat_type }` into a neutral `ChannelTarget` whose
+   * `target_key` is the durable routing key core stores and routes by. For Feishu
+   * the stable key is the chat id itself; group chats are bindable, P2P chats are
+   * not (they always route to the dispatcher). Pure — no platform call.
+   */
+  resolveTarget(meta: unknown): ChannelTarget {
+    const obj = (meta ?? {}) as Record<string, unknown>;
+    const chatId = obj['chat_id'];
+    if (typeof chatId !== 'string' || chatId === '') {
+      throw new Error('feishu resolveTarget requires a non-empty chat_id');
+    }
+    const type = obj['chat_type'] === 'p2p' ? 'p2p' : 'group';
+    return {
+      target_type: type,
+      target_key: chatId,
+      bindable: type === 'group',
+      meta: { chat_id: chatId, chat_type: type },
+    };
   }
 
   private async readChatBots(

@@ -196,9 +196,8 @@ export class TeamService {
       if (binding.active && binding.team_name === team.team_id) {
         await this.bindings.transferBack({
           dispatcherId: input.dispatcherId,
-          provider: binding.provider,
-          chatId: binding.chat_id,
-          chatType: binding.chat_type,
+          channelId: binding.channel_id,
+          targetKey: binding.target_key,
         });
       }
     }
@@ -237,15 +236,17 @@ export class TeamService {
     if (team.status === 'closed') {
       throw new Error(`Team ${JSON.stringify(input.teamId)} is closed`);
     }
-    const binding = await this.bindings.bind({
+    // The caller resolved `target` via the channel session; core derives the
+    // leader identity from the active Team record (never trusts a caller-supplied
+    // leader). The store enforces target bindability (P2P is rejected).
+    return this.bindings.bind({
       dispatcherId: input.dispatcherId,
+      channelId: input.channelId,
       provider: input.provider,
-      chatId: input.chatId,
-      chatType: input.chatType,
+      target: input.target,
       teamName: team.team_id,
       leaderName: team.leader_name,
     });
-    return binding;
   }
 
   async transferChannelBack(
@@ -256,9 +257,8 @@ export class TeamService {
 
   async resolveChannel(input: {
     dispatcherId: string;
-    provider: 'builtin:feishu';
-    chatId: string;
-    chatType: 'group' | 'p2p';
+    channelId: string;
+    targetKey: string;
   }): Promise<ChannelBinding | null> {
     const binding = await this.bindings.resolve(input);
     if (binding === null) return null;
@@ -271,14 +271,13 @@ export class TeamService {
     dispatcherId: string;
     teamId: string;
     leaderName: string;
-    provider: 'builtin:feishu';
-    chatId: string;
+    channelId: string;
+    targetKey: string;
   }): Promise<boolean> {
     const binding = await this.bindings.resolve({
       dispatcherId: input.dispatcherId,
-      provider: input.provider,
-      chatId: input.chatId,
-      chatType: 'group',
+      channelId: input.channelId,
+      targetKey: input.targetKey,
     });
     return (
       binding !== null &&
@@ -391,9 +390,15 @@ export class TeamService {
     const active = bindings.find(
       (binding) => binding.active && binding.team_name === team.team_id,
     );
-    return active === undefined
-      ? null
-      : { provider: active.provider, chat_id: active.chat_id };
+    if (active === undefined) return null;
+    // The read-tool summary keeps the `{ provider, chat_id }` shape; the Feishu
+    // chat id is the provider selector stored in `meta` (v2 keeps chat_id out of
+    // the core top-level columns).
+    const chatId = active.meta['chat_id'];
+    return {
+      provider: active.provider,
+      chat_id: typeof chatId === 'string' ? chatId : active.target_key,
+    };
   }
 
   private async memberCount(team: TeamRecord): Promise<number> {

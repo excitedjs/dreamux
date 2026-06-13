@@ -782,7 +782,38 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   target-enumeration / routing-slice work). So the end-state Channel MCP described
   above (`bind_channel` by `channel_id` + resolveTarget, the standard
   reply/react/list_peers set) is only partially realized: the binding *verbs*
-  moved to core ownership; the channel-neutral *addressing* has not.
+  moved to core ownership; the channel-neutral *addressing* has not (it lands in
+  the binding store v2 slice below).
+- **Binding store v2 + channel target routing — satisfied now:** the persisted
+  channel-binding store moved to `version: 2`. Flat rows now key on
+  `(channel_id, target_key)` and carry `channel_id`, the provider-owned opaque
+  `target_key`, `target_type`, `display`, `canonical_url`, and a `meta` object;
+  the Feishu `chat_id` / `chat_type` selectors moved OUT of core top-level columns
+  INTO `meta`, so the store is channel-neutral. Active uniqueness is
+  `(channel_id, target_key)` — one channel target is active for at most one Team,
+  and re-binding reassigns it (one row per key, `created_at` preserved). Target
+  resolution is provider-owned: the Feishu `ChannelSession.resolveTarget(meta)`
+  maps `{ chat_id, chat_type }` to a stable key (group chats are bindable; P2P is
+  not). Core runs `resolveTarget` at the bind/route *edge* (the dispatcher service
+  facade, via the live channel session) and passes primitives
+  `(channel_id, target_key)` down to the Team service and store, so the store and
+  team service stay session-free. Inbound routing
+  (`DispatcherService.routeChannelInput`) and TeamLeader authorization
+  (`teamLeaderCanUseChannel`) key on `(channel_id, target_key)`: a bound bindable
+  target routes to its TeamLeader; an unbound bindable target and any non-bindable
+  (P2P) target route to the dispatcher; a P2P target short-circuits to the
+  dispatcher BEFORE any binding lookup and can never be bound to a TeamLeader.
+  `channel_id` is the dispatcher-local `dispatchers[].channels[].id`, resolved
+  once by `dispatcherChannelId(config)` — the single source of truth shared by the
+  bind path and the router so a stored binding and an inbound message resolve to
+  the same key. The Channel MCP `bind_channel` / `transfer_back` tools keep
+  `chat_id` terminology and gain an optional `channel_id` (defaults to the sole
+  configured channel; an explicit id must match it). A pre-v2 store fails loud at
+  `dreamux serve` / `dreamux doctor` (and on access) with rebuild guidance —
+  Dreamux 0.x does not migrate it. **Still deferred to a later slice:** moving
+  `reply` / `react` / `list_chat_bots` off the provider-owned `feishu` MCP server
+  onto the generic surface, `list_peers`, and live multi-channel routing (the
+  runtime still runs exactly one Feishu channel per dispatcher).
 
 ## Alternatives Considered
 

@@ -117,19 +117,10 @@ class NeutralFeishuChannelSession implements ChannelSession {
   }
 
   async resolveTarget(meta: unknown): Promise<ChannelTarget> {
-    const obj = (meta ?? {}) as Record<string, unknown>;
-    const chatId = obj['chat_id'];
-    const chatType = obj['chat_type'];
-    if (typeof chatId !== 'string' || chatId === '') {
-      throw new Error('feishu resolveTarget requires a non-empty chat_id');
-    }
-    const type = chatType === 'p2p' ? 'p2p' : 'group';
-    return {
-      target_type: type,
-      target_key: chatId,
-      bindable: type === 'group',
-      meta: { chat_id: chatId, chat_type: type },
-    };
+    // Provider-owned target resolution lives on the raw session so both the
+    // neutral wrapper and the core live path share one implementation (#209
+    // binding store v2).
+    return this.session.resolveTarget(meta);
   }
 
   async reply(input: ChannelReplyInput): Promise<unknown> {

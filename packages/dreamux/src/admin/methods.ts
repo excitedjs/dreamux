@@ -338,18 +338,24 @@ export const adminMethods: Record<string, AdminHandler> = {
   // Channel MCP (issue #209 slice 8): core-hosted generic channel-binding
   // surface, replacing the removed Feishu-specific Team MCP `bind_group` /
   // `transfer_channel_back`. Binding state/routing/authorization stay core-owned;
-  // these delegate to the same Team-service binding store as before. Targets are
-  // still Feishu group chats addressed by `chat_id` (the channel-neutral
-  // `channel_id` + target-key model is the routing slice).
+  // these delegate to the same Team-service binding store as before. Only the
+  // user-facing selector remains Feishu `chat_id` based (group chats, plus the
+  // optional `channel_id`); core's channel-neutral v2 target store and
+  // `(channel_id, target_key)` routing are implemented (issue #209 binding store
+  // v2) and resolve the target at the facade edge.
   'mcp.channel.bind_channel': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
+    // Core resolves channel_id + the provider-owned target at the facade edge and
+    // stores a v2 (channel_id, target_key) row (issue #209 binding store v2).
+    // channel_id is optional and defaults to the dispatcher's sole configured
+    // channel; chat_type is always group (binding is group-only).
+    const channelId = optionalString(params, 'channel_id');
     return server.dispatcherService.bindTeamChannel({
       dispatcherId: id,
       teamId: mustString(params, 'team_name'),
-      provider: 'builtin:feishu',
+      ...(channelId !== null ? { channelId } : {}),
       chatId: mustString(params, 'chat_id'),
-      chatType: 'group',
     });
   },
 
@@ -358,13 +364,12 @@ export const adminMethods: Record<string, AdminHandler> = {
     mustExistingDispatcher(server, id);
     // Return the deactivated binding (or null when nothing was bound) directly,
     // matching `bind_channel` above so the two sibling Channel MCP methods share
-    // one envelope. The eventual standard Channel MCP surface (routing slice) may
-    // revise the shape; until then both verbs return the channel binding.
+    // one envelope.
+    const channelId = optionalString(params, 'channel_id');
     return server.dispatcherService.transferTeamChannelBack({
       dispatcherId: id,
-      provider: 'builtin:feishu',
+      ...(channelId !== null ? { channelId } : {}),
       chatId: mustString(params, 'chat_id'),
-      chatType: 'group',
     });
   },
 
@@ -414,7 +419,6 @@ async function assertFeishuScope(
     dispatcherId,
     teamId: caller.teamId,
     leaderName: caller.leaderName,
-    provider: 'builtin:feishu',
     chatId,
   });
   if (!allowed) {

@@ -910,12 +910,12 @@ describe('dreamux MVP smoke', () => {
     // #188: the TeamLeader address is a concrete, never-reused name; channel
     // scope checks resolve against this stored name, not `${teamId}-leader`.
     const leaderName = createdTeam.team.leader_name;
+    // Bind the group: core resolves channel_id + the provider target and stores
+    // a v2 (channel_id, target_key) row (issue #209 binding store v2).
     await server.dispatcherService.bindTeamChannel({
       dispatcherId: 'flow',
       teamId: 'alpha',
-      provider: 'builtin:feishu',
       chatId: 'chat-team',
-      chatType: 'group',
     });
     await bot.inject(fakeInbound('chat-team', 'team hello', 'msg-team'));
     await waitFor(() => codexInputs.some((input) => input.includes('team hello')));
@@ -954,9 +954,7 @@ describe('dreamux MVP smoke', () => {
 
     await server.dispatcherService.transferTeamChannelBack({
       dispatcherId: 'flow',
-      provider: 'builtin:feishu',
       chatId: 'chat-team',
-      chatType: 'group',
     });
     await bot.inject(fakeInbound('chat-team', 'dispatcher again', 'msg-back'));
     await waitFor(() => codexInputs.length === 1);
