@@ -668,9 +668,19 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   `feishu-mcp-surface.ts` become re-export shims (the latter keeping the host
   descriptor + admin routing and re-exporting the package's tool parser). Routing,
   binding state, authorization, Team lifecycle, and P2P/group ownership stay
-  core-owned. Current `builtin:feishu` operator/runtime behavior is unchanged
-  (full repo test suite green). Multi-channel config validation, Channel MCP tool
-  migration onto the neutral `tools()`/`handleTool()` path, and binding store v2
+  core-owned — meaning this slice did **not** move any of them into the package,
+  **not** that the generalized channel-target model described above is in place.
+  Core still runs the **pre-slice-5 binding/routing model**: `ChannelBindingStore`
+  is still **version 1**, keyed by top-level `provider + chat_id` with no
+  `channel_id` / `target_key` / `target_type` / provider `meta` columns, and
+  `TeamService.resolveChannel` still resolves by `{ provider, chatId, chatType }`.
+  Current `builtin:feishu` operator/runtime behavior is unchanged (full repo test
+  suite green). The accepted generalizations in this record — **binding store v2**
+  (the `version: 2` / `target_key` / `meta` schema and its fail-loud migration),
+  **target-key routing** (resolving inbound on `(channel_id, target_key)` instead
+  of `{ provider, chatId, chatType }`), the **generic Channel MCP / `bind_channel`
+  and binding migration** onto the neutral `tools()`/`handleTool()` path, and
+  **multi-channel config validation** — are **not** implemented by this slice and
   remain later slices.
 - **Deferred to a later slice (role-gated skill injection):** the Codex slice
   preserves the existing workspace-symlink bundled-skill model — core still owns
