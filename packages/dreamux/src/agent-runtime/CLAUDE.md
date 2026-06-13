@@ -18,6 +18,19 @@ agent session; how it talks to its engine is the engine's business.
 - **`builtin/<name>/`** — one builtin's entire self-contained stack: transport
   (process supervisor + rpc + wire protocol/types + handshake), the runtime
   impl, the provider, CLI args, and its own `paths.ts`.
+  - **`builtin/codex/` is now a thin core adapter over the published
+    `@excitedjs/agent-runtime-codex` package (issue #209 slice 3).** The Codex
+    engine (supervisor/rpc/handshake/turn-manager/events/runtime/args/config/
+    version) lives in the package and implements the neutral
+    `@excitedjs/dreamux-types` `AgentRuntimeProvider`. What stays in core:
+    `provider.ts` (the host→neutral adapter that supplies the host
+    path/socket/log/state/skill contracts and presents the host-shaped provider
+    the catalog wires), `paths.ts` (host codex log/socket/workspace-skill paths),
+    `codex-home.ts` (home/auth doctor), `diagnostic.ts` (host doctor surface), and
+    `runtime-support.ts` (the host path + state-sink adapters). `config.ts`,
+    `args.ts`, `supervisor.ts`, `rpc.ts`, `handshake.ts`, `types.ts`,
+    `mcp-config.ts` are re-export shims back to the package so existing core/test
+    import paths stay stable. The package must never import `@excitedjs/dreamux`.
 
 ## Invariants (why it's shaped this way)
 

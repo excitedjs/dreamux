@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { TurnManager } from '../src/agent-runtime/builtin/codex/turn-manager.js';
-import type { NotificationHandler } from '../src/agent-runtime/builtin/codex/rpc.js';
-import type { ServerNotification, TurnStartResponse } from '../src/agent-runtime/builtin/codex/types.js';
-import type { CollectedTurn } from '../src/agent-runtime/builtin/codex/events.js';
-import type { TurnSettledSignal } from '../src/agent-runtime/turn.js';
+import { TurnManager } from '../src/turn-manager.js';
+import type { NotificationHandler } from '../src/rpc.js';
+import type { ServerNotification, TurnStartResponse } from '../src/types.js';
+import type { CollectedTurn } from '../src/events.js';
+import type { TurnSettledSignal } from '@excitedjs/dreamux-types';
 
 describe('TurnManager inbound submission', () => {
   it('submits every accepted message through turn/start without coalescing', async () => {

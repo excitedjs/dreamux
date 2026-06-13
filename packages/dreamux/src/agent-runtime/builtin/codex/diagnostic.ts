@@ -13,33 +13,19 @@ import {
   validateDispatcherCodexHome,
 } from './codex-home.js';
 import { resolveCodexBinPath } from './provider.js';
+import {
+  MIN_CODEX_VERSION,
+  codexVersionSatisfies,
+} from '@excitedjs/agent-runtime-codex';
 
-/**
- * Minimum codex version dreamux requires. The teammate-completion reverse leg
- * (#147) appends the completion to the dispatcher thread via `thread/inject_items`,
- * an RPC that exists only on codex >= 0.137. Doctor surfaces this loudly rather
- * than letting a teammate completion silently RPC-fail at runtime.
- */
-export const MIN_CODEX_VERSION = '0.137.0';
-
-/** Parse a `major.minor.patch` triple out of a `codex --version` line. */
-export function parseCodexVersion(raw: string): [number, number, number] | null {
-  const match = raw.match(/(\d+)\.(\d+)\.(\d+)/);
-  if (match === null) return null;
-  return [Number(match[1]), Number(match[2]), Number(match[3])];
-}
-
-/** Numeric (not string) component-wise compare against {@link MIN_CODEX_VERSION}. */
-export function codexVersionSatisfies(raw: string): boolean {
-  const got = parseCodexVersion(raw);
-  if (got === null) return false;
-  const min = parseCodexVersion(MIN_CODEX_VERSION)!;
-  for (let i = 0; i < 3; i += 1) {
-    if (got[i] > min[i]) return true;
-    if (got[i] < min[i]) return false;
-  }
-  return true;
-}
+// The codex version gate (MIN_CODEX_VERSION / parseCodexVersion /
+// codexVersionSatisfies) now lives in `@excitedjs/agent-runtime-codex`; it is
+// re-exported here so existing import paths stay stable (issue #209 slice 3).
+export {
+  MIN_CODEX_VERSION,
+  parseCodexVersion,
+  codexVersionSatisfies,
+} from '@excitedjs/agent-runtime-codex';
 
 function codexBinCheckName(scope: AgentRuntimeDiagnosticContext['scope']): string {
   return scope === 'managedService' ? 'managed service Codex binary' : 'codex binary';

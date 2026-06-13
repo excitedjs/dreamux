@@ -1,59 +1,54 @@
 {
-  "name": "@excitedjs/dreamux",
-  "version": "0.15.0",
-  "description": "Codex-host server — single-session MVP. One node process hosts N dispatchers, each binding 1 Feishu bot + 1 Codex thread.",
+  "name": "@excitedjs/agent-runtime-codex",
+  "version": "0.1.0",
+  "description": "Built-in Codex Agent Runtime provider for Dreamux (alias builtin:codex). Implements the @excitedjs/dreamux-types AgentRuntimeProvider contract against the Codex app-server; depends on @excitedjs/dreamux-types only, never on @excitedjs/dreamux core (issue excitedjs/dreamux#209).",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/excitedjs/dreamux.git",
-    "directory": "packages/dreamux"
+    "directory": "packages/agent-runtime/codex"
   },
   "type": "module",
-  "main": "./dist/server.js",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./config": {
+      "types": "./dist/config.d.ts",
+      "import": "./dist/config.js",
+      "default": "./dist/config.js"
+    }
+  },
   "engines": {
     "node": ">=22.7"
   },
-  "bin": {
-    "dreamux": "./bin/dreamux",
-    "tm": "./bin/tm"
-  },
   "files": [
-    "bin",
     "dist",
-    "skills",
     "README.md",
-    "LICENSE",
-    "CHANGELOG.md",
-    "CHANGELOG.json"
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
-    "smoke-built-cli": "node ./scripts/smoke-built-cli.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "clean": "rm -rf dist",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@excitedjs/agent-runtime-codex": "workspace:*",
     "@excitedjs/dreamux-types": "workspace:*",
-    "@excitedjs/feishu-transport": "workspace:*",
-    "@excitedjs/tm": "2.4.1",
     "smol-toml": "^1.6.1",
-    "ws": "^8.18.0",
-    "yargs": "^17.7.2",
-    "@clack/prompts": "^1.5.0",
-    "execa": "^9.6.1",
-    "pino": "^9.5.0",
-    "plist": "^5.0.0"
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "@excitedjs/eslint-config": "workspace:*",
     "@types/node": "^22.10.0",
     "@types/ws": "^8.5.13",
-    "@types/yargs": "^17.0.35",
     "eslint": "^9.39.0",
     "typescript": "^5.7.0",
     "vitest": "^2.1.0"

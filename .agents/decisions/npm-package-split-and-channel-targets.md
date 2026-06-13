@@ -567,6 +567,34 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   behavior-stable. Wiring the channel loader into config validation and promoting
   `@excitedjs/feishu-channel` to a real provider implementation remain later
   channel slices.
+- **Slice 3 (`@excitedjs/agent-runtime-codex` extraction) — satisfied now:** the
+  built-in Codex engine lives in the publishable `@excitedjs/agent-runtime-codex`
+  package (`packages/agent-runtime/codex`, `shouldPublish: true`, independent
+  version), implementing the neutral `@excitedjs/dreamux-types`
+  `AgentRuntimeProvider` and depending on `@excitedjs/dreamux-types` ONLY — an
+  import-boundary test rejects any `@excitedjs/dreamux` import or relative escape.
+  `@excitedjs/dreamux` depends on the package by default (bundled built-in) and
+  resolves `builtin:codex` to it. Rather than converge core's whole launcher onto
+  the neutral context in this slice, core keeps a thin **core-owned adapter**
+  (`agent-runtime/builtin/codex/provider.ts`) that maps its host create context
+  (dispatcher row/store/host logger) onto the neutral one, supplying the host
+  contracts the package must not reconstruct — per-dispatcher path context, the
+  volatile rendezvous-socket allocator, the package-bin `PATH` seed, the
+  dispatcher-store-backed state sink, the Codex home/auth doctor, and the
+  bundled-skill install. The package vendors only generic OS/validation/turn
+  helpers (not host layout/path/socket/log contracts) and owns its own `~/.codex`
+  config parsing and the Codex version gate. The remaining `builtin/codex/*` core
+  files are the adapter plus host codex paths, the codex-home doctor, the
+  diagnostic, and re-export shims kept so existing core/test import paths stay
+  stable. Runtime semantics, the `builtin:codex` alias, config, paths, state, and
+  the server/test factory seams are unchanged (full repo test suite green).
+- **Deferred to slice 4 (role-gated skill injection):** the slice preserves the
+  existing workspace-symlink bundled-skill model — core still owns
+  `installBundledWorkspaceSkills` and the adapter invokes it through a package
+  hook on each (re)start. Replacing it with role-selected `skillSources` applied
+  natively via the codex `skills/extraRoots/set` RPC (and deleting the symlink
+  install) is slice 4. `@excitedjs/agent-runtime-claude-code` extraction is also a
+  later slice; Claude Code stays in core for now.
 
 ## Alternatives Considered
 
