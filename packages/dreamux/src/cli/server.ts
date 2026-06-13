@@ -23,6 +23,7 @@ import { Server } from '../server.js';
 import { loadConfig } from '../config/config.js';
 import { createBuiltinProviderRegistry } from '../registry/index.js';
 import { createBuiltinAgentRuntimeProviderCatalog } from '../agent-runtime/index.js';
+import { registerBuiltinChannelProviders } from '../channel/builtin-channel-providers.js';
 import { createLogger } from '../platform/logger.js';
 import {
   adminSocketPath,
@@ -54,6 +55,11 @@ async function main(): Promise<void> {
     registry: providerRegistry,
     codex: {},
   });
+  // Register the builtin channel providers too, so `dispatchers[].channels[]`
+  // refs parse through each channel provider's `readConfig` (issue #209
+  // multi-channel). The leaf entry points use `loadConfigWithBuiltins`, which
+  // registers both; the server composes its own registry here.
+  registerBuiltinChannelProviders({ registry: providerRegistry });
 
   // Load ~/.dreamux/config.json before anything else starts. Missing or invalid
   // config is a setup error; `dreamux serve` must not silently create defaults.

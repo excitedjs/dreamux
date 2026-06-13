@@ -98,7 +98,10 @@ describe('createBuiltinProviderRegistry', () => {
   it('registers exactly the confirmed builtins', () => {
     const registry = createBuiltinProviderRegistry();
     const ids = registry.list().map((d) => d.id).sort();
-    expect(ids).toEqual(['claude-code', 'codex']);
+    // `feishu` joined the registry as a `channel` descriptor with the
+    // multi-channel config slice (#209), so config resolves it through the same
+    // provider path and delegates validation to its `readConfig`.
+    expect(ids).toEqual(['claude-code', 'codex', 'feishu']);
     for (const spec of BUILTIN_PROVIDERS) {
       expect(registry.resolve(`builtin:${spec.id}`).kind).toBe(spec.kind);
     }

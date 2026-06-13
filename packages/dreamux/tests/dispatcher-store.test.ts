@@ -205,3 +205,45 @@ describe('dispatcher status hydration (issue #98: warn + rebuild)', () => {
     expect(warnings).toEqual([]);
   });
 });
+
+describe('dispatcher store feishu channel resolution (multi-channel config)', () => {
+  it('populates the bot app id from the single feishu channel (builtin:feishu alias stable)', () => {
+    const store = new DispatcherStore({
+      dispatchers: [
+        testDispatcherConfig({
+          id: 'flow',
+          feishu: { app_id: 'app-flow', app_secret: 'secret-flow' },
+        }),
+      ],
+    });
+    expect(store.get('flow')?.bot_app_id).toBe('app-flow');
+  });
+
+  it('fails loud (no silent first-pick) when a dispatcher declares more than one feishu channel', () => {
+    // Config accepts multiple channels with unique ids, but the runtime cannot
+    // resolve an unambiguous bot identity from two feishu channels — store build
+    // must throw rather than silently picking the first (issue #209).
+    expect(
+      () =>
+        new DispatcherStore({
+          dispatchers: [
+            testDispatcherConfig({
+              id: 'flow',
+              channels: [
+                {
+                  id: 'primary',
+                  provider: 'builtin:feishu',
+                  config: { app_id: 'app-a', app_secret: 'secret-a' },
+                },
+                {
+                  id: 'secondary',
+                  provider: 'builtin:feishu',
+                  config: { app_id: 'app-b', app_secret: 'secret-b' },
+                },
+              ],
+            }),
+          ],
+        }),
+    ).toThrow(/exactly one is required to resolve the bot identity/);
+  });
+});

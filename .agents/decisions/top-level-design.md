@@ -187,11 +187,16 @@ an agent's `config` object can be omitted entirely:
 | `extra_env` | `{}` | merged over the dispatcher's process env |
 | `initialize_timeout_ms` | `10000` | handshake timeout (positive integer) |
 
-`channels[].config.app_id` for `builtin:feishu` is a unique dispatcher
-identity. Across all declared dispatchers, including disabled dispatchers, an
-app id must map to exactly one dispatcher. `dreamux serve`, `doctor`, and
-`onboard` must fail or report a blocking error when two dispatchers use the
-same app id.
+`channels[].config.app_id` for `builtin:feishu` identifies the bot used by a
+dispatcher. Since the multi-channel config slice (#209) **config load** no
+longer enforces cross-dispatcher uniqueness of this app id: validation is owned
+by the channel provider's `readConfig`, which sees only its own channel config
+and cannot compare across dispatchers. A hand-edited `config.json` with two
+dispatchers sharing one app id therefore loads and runs. `onboard` still guards
+write-time uniqueness (it holds the whole config in hand and can compare), so
+the interactive flow will not create a duplicate; operators editing config
+directly must keep bot app ids distinct themselves. Channel ids, by contrast,
+must be unique within a single dispatcher (enforced at config load).
 
 Rules:
 

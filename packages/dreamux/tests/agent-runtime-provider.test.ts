@@ -5,6 +5,7 @@ import {
   ExternalAgentRuntimeProviderContractError,
   ExternalAgentRuntimeProviderLoadError,
   UnsupportedAgentRuntimeProviderError,
+  WrongProviderKindError,
   createBuiltinAgentRuntimeProviderCatalog,
   createCodexAgentRuntimeProvider,
   loadExternalAgentRuntimeProviders,
@@ -170,8 +171,11 @@ describe('AgentRuntimeProviderCatalog', () => {
   });
 
   it('does not expose the built-in Feishu channel through the runtime catalog', () => {
+    // Since the multi-channel config slice (#209) `builtin:feishu` IS a registry
+    // descriptor, but a `channel` one — the runtime catalog rejects it as a wrong
+    // kind, so it still cannot be driven as an agent runtime.
     expect(() => builtinCatalog().resolve('builtin:feishu')).toThrow(
-      UnknownBuiltinProviderError,
+      WrongProviderKindError,
     );
   });
 

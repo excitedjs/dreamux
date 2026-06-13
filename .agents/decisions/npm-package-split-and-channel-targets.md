@@ -27,8 +27,12 @@ the implementation is still mostly host-local:
 - `/packages/channel/feishu-channel` exists but is scaffold-level and is not
   publishable in `rush.json`.
 - `/packages/dreamux/src/config/config.ts` accepts a
-  `dispatchers[].channels[]` envelope, but currently requires exactly one
-  `builtin:feishu` channel and carries Feishu-specific validation.
+  `dispatchers[].channels[]` envelope. Since the multi-channel config slice
+  (#209) it accepts multiple channels with unique dispatcher-local ids and
+  delegates provider-specific validation to each channel provider's `readConfig`
+  (no Feishu-specific checks in core). Live multi-channel routing is still a
+  follow-up: a runnable dispatcher must declare exactly one `builtin:feishu`
+  channel (fail-loud at server start otherwise).
 - `/packages/dreamux/src/dispatcher-service/channel-binding/store.ts` stores
   version 1 rows keyed by `(provider, chat_id)`, which cannot distinguish
   multiple channel instances or non-chat channel targets.
@@ -679,10 +683,12 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   suite green). The accepted generalizations in this record — **binding store v2**
   (the `version: 2` / `target_key` / `meta` schema and its fail-loud migration),
   **target-key routing** (resolving inbound on `(channel_id, target_key)` instead
-  of `{ provider, chatId, chatType }`), the **generic Channel MCP / `bind_channel`
-  and binding migration** onto the neutral `tools()`/`handleTool()` path, and
-  **multi-channel config validation** — are **not** implemented by this slice and
-  remain later slices.
+  of `{ provider, chatId, chatType }`), and the **generic Channel MCP /
+  `bind_channel` and binding migration** onto the neutral
+  `tools()`/`handleTool()` path — are **not** implemented by this slice and
+  remain later slices. (**Multi-channel config validation** was deferred from
+  this slice too; it has since landed — see the multi-channel config slice
+  below.)
 - **Slice 6 (role-gated skill injection) — satisfied now:** the workspace-symlink
   bundled-skill model is removed from onboarding and runtime startup, replaced by
   role-gated `AgentRuntimeCreateContext.skillSources` injection. Core owns the
@@ -722,6 +728,31 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   `<dispatcher cwd>/.codex/skills` to remove the duplicate; the changelog says so.
   The `@excitedjs/agent-runtime-codex` `prepareWorkspaceSkills` host hook (and its
   `CodexWorkspaceSkillPrepResult` type) is removed.
+- **Multi-channel config support — satisfied now:** `dispatchers[].channels[]`
+  accepts more than one channel per dispatcher, requires unique dispatcher-local
+  channel ids, and delegates provider-specific config validation to the selected
+  channel provider's `readConfig` — resolved through the provider registry the
+  same way agent runtimes are (`registerBuiltinChannelProviders` registers the
+  `@excitedjs/feishu-channel` provider; `builtin:feishu` is now a `channel`
+  registry descriptor). Core removed its Feishu-specific channel checks — the
+  app id/secret non-empty checks, the unknown-key check, and the cross-dispatcher
+  app id uniqueness check; the Feishu provider's `readConfig` owns the first two
+  (and, since the bot secret is config-sourced, keeps the non-empty `app_secret`
+  fail-loud at config load), while the cross-dispatcher uniqueness check is
+  intentionally dropped (a per-channel `readConfig` cannot see other dispatchers).
+  Config now stores the **raw** channel config — the production Feishu adapter
+  consumes `{ app_id, app_secret }`; wiring channels through `createSession` with
+  the parsed config is the channel-routing slice, so the parsed `readConfig`
+  result is validated-and-discarded this slice. A channel provider whose
+  `readConfig` is async is rejected at config load (sync only this phase, like
+  agent runtimes). This is the config-layer half of the channel work: **live
+  multi-channel routing is deferred** — a runnable dispatcher must declare exactly
+  one `builtin:feishu` channel, enforced fail-loud at the runtime boundary
+  (the dispatcher store throws on more than one Feishu channel; the dispatcher
+  service rejects more than one channel or a non-feishu channel at launch) rather
+  than at config load, so config can express the general shape while the runtime
+  catches up. Binding store v2, target-key routing, and the generic Channel MCP /
+  `bind_channel` migration remain later slices.
 
 ## Alternatives Considered
 

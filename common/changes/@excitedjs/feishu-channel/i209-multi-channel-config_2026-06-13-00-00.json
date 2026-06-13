@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "The Feishu channel provider's `readConfig` is now the config-validation authority for `builtin:feishu` (issue #209 multi-channel config): Dreamux core registers this provider and calls `readConfig` at config load instead of validating Feishu fields itself. `readConfig` now fails loud on an empty/whitespace `app_id` or `app_secret` (the bot secret is config-sourced, so this preserves the host's previous config-load fail-loud) and on unknown config keys. Parsing of a valid `{ app_id, app_secret }` into `{ appId, appSecret }` is unchanged.",
+      "type": "minor",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "053700@gmail.com"
+}
