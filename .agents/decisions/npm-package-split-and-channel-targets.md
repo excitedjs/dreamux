@@ -324,7 +324,12 @@ the Dreamux Channel provider implementation, including Feishu session startup,
 MCP tool backing logic, access/trust behavior, inbound formatting, and
 message-to-target ownership tracking.
 
-Core must not import `@excitedjs/feishu-transport` or the Feishu SDK directly.
+Core must not import the Feishu SDK directly, and production Feishu platform I/O
+stays behind `@excitedjs/feishu-channel` / `@excitedjs/feishu-transport`. Core may
+depend on `@excitedjs/feishu-transport` only for the existing shared concern — the
+`TransportLogger` type seam (a type-only import) and the workspace install model —
+never to perform platform I/O itself. That narrow type/install dependency must not
+grow into platform-I/O coupling.
 
 ## Channel MCP
 
@@ -523,7 +528,9 @@ The implementation must add or preserve guards for these invariants:
 
 - provider packages import `@excitedjs/dreamux-types` only and do not import
   `@excitedjs/dreamux`;
-- core imports neither the Feishu SDK nor `@excitedjs/feishu-transport`;
+- core does not import the Feishu SDK directly, and does not import
+  `@excitedjs/feishu-transport` for platform I/O — its only `feishu-transport` use
+  is the type-only `TransportLogger` seam (plus the workspace install dependency);
 - the Feishu SDK is imported only by `@excitedjs/feishu-transport`;
 - `@excitedjs/dreamux-types` has no runtime dependencies and emits
   declarations only;
@@ -551,7 +558,7 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
 - **Deferred to later slices:** core's own launcher still threads a host-coupled
   `AgentRuntimeCreateContext` internally — converging it onto the neutral public
   context (and deleting the host-coupled variant) is slice 3's job. The
-  remaining guards (core not importing the Feishu SDK/transport; built-in
+  remaining guards (core not importing the Feishu SDK directly; built-in
   packages bundled by default; binding store v2; Team/Channel MCP ownership;
   role-gated skill injection; symlink removal) land in their respective slices.
 - **Slice 2 (generic provider loader + channel kind) — satisfied now:** the
