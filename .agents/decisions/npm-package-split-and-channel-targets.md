@@ -581,11 +581,16 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   `loadExternalAgentRuntimeProviders({ refs: ['builtin:codex'] })` imports the
   ACTUAL package (resolved through `BUILTIN_PROVIDER_PACKAGES`), selects the
   default export, and registers a contract-valid provider whose `createRuntime`
-  constructs a runnable runtime from the neutral create context alone — the
-  package falls back to its own standalone volatile-socket allocator when no host
-  allocator is injected. A core test (`builtin-codex-package-loader.test.ts`)
-  exercises this against the real package (no fake module), replacing the
-  slice-2 fake-module placeholder as the proof.
+  constructs a runtime from the neutral create context alone, **without throwing
+  on absent host hooks**: every injected dep is optional, so the bare path falls
+  back to the package's own standalone volatile-socket allocator, the default
+  `CodexProcess`/`CodexWsClient` factories, `process.env` base env, and a no-op
+  skill prep — none of these re-create the "structurally valid but fails at
+  `start()`" gap (a live `start()` still needs a `codex` binary, exactly as on the
+  adapter path). A core test (`builtin-codex-package-loader.test.ts`) exercises
+  this against the real package (no fake module) — provider contract, real config
+  parse, and throw-free construction — replacing the slice-2 fake-module
+  placeholder as the proof.
 
   Production does **not** use that bare-loader path, because core's launcher still
   drives the host-shaped create context (`row`/`store`/host logger). So core keeps

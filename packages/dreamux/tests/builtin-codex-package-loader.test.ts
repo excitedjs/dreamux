@@ -77,7 +77,7 @@ describe('builtin:codex loads the real @excitedjs/agent-runtime-codex package', 
     expect(config.bin).toBe('codex');
   });
 
-  it('constructs a runnable runtime from the neutral create context alone', async () => {
+  it('constructs a runtime from the neutral context without throwing on absent host hooks', async () => {
     const provider = await loadRealCodexProvider();
     const config = provider.readConfig!(
       {},
