@@ -88,10 +88,10 @@ do not inspect the target repo directly from the dispatcher.
   leader runtime is inferred. The work directory is the same optional `repo`
   object as `teammate.spawn` (issue #199 Slice 2; omit it for a plain shared
   `<dispatcher cwd>/.workspace/work/<team_name>/` dir — no git repo required —
-  or pass `mode: managed` for a git worktree). Optionally pass `bind_group: { chat_id }`
-  to bind an EXISTING Feishu group chat to the new Team at create time. (The
-  former `create_group` tool — create a brand-new Feishu group and invite users —
-  was retired; bind an existing group instead.)
+  or pass `mode: managed` for a git worktree). To hand a Feishu group chat to the
+  Team, bind it after create with the channel MCP `bind_channel` tool (see the
+  Channel MCP section). (The former `create_group` tool — create a brand-new
+  Feishu group and invite users — was retired; bind an existing group instead.)
 - `list` — compact scan rows for current Teams (team_name, status, intent, repo
   signal, leader name/state, member count, bound group marker, timestamps). Keep
   it cheap and scannable; reach for `status` for detail.
@@ -105,14 +105,26 @@ do not inspect the target repo directly from the dispatcher.
   This is the recovery list, not a raw event timeline. The lifecycle `status`
   filter is kept; the legacy `close_status` filter and the `team_id` / cwd /
   worktree row fields are no longer exposed (issue #199).
-- `bind_group` — bind an existing Feishu group chat to a Team by `team_name` and
-  `chat_id` (group chats only; no `chat_type`).
-- `transfer_channel_back` — return a bound Feishu group chat (`chat_id`) to the
-  dispatcher.
 - `dissolve` — close the TeamLeader and team-owned members by Team name, then
   conservatively clean up the shared managed worktree. `note` is **required**:
   why the Team is being dissolved. Active channel bindings are transferred back
   first.
+
+## Channel MCP (`channel`)
+
+The dispatcher-only channel-binding interface, owned by Dreamux core (binding
+state, routing, and authorization stay in core). Group binding moved here from
+the Team MCP; the old `team.bind_group` / `team.transfer_channel_back` /
+`team.create.bind_group` surfaces were removed without aliases.
+
+- `bind_channel` — bind an existing Feishu group chat to a Team by `team_name`
+  and `chat_id` (group chats only). After binding, that group's inbound routes to
+  the Team's TeamLeader.
+- `transfer_back` — return a bound Feishu group chat (by `chat_id`) to the
+  dispatcher, deactivating the Team binding.
+
+Do not imply a group chat has been handed off unless a tool result explicitly
+says so.
 
 **Control and inspect.**
 

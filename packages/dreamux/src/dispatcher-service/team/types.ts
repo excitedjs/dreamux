@@ -45,12 +45,6 @@ export interface TeamCreateInput {
   /** Required recovery subject for the Team (issue #182 PR-3). */
   intent: string;
   prompt?: string;
-  /**
-   * Optional: bind an EXISTING Feishu group chat to the new Team at create time
-   * (issue #182 PR-7/PR-8). This is the settled replacement for the retired
-   * `create_group` flow — it binds an existing group, it does not create one.
-   */
-  bindGroup?: { chatId: string };
 }
 
 export interface TeamDissolveInput {

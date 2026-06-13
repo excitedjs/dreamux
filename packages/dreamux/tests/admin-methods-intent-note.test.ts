@@ -74,3 +74,45 @@ describe('admin layer enforces required non-empty intent/note (#182 PR-3)', () =
     await expectBadRequest('mcp.team.dissolve', { ...base, note: '' });
   });
 });
+
+describe('Channel MCP admin methods replace the Team binding methods (#209 slice 8)', () => {
+  it('removes the old Feishu binding methods without aliases', () => {
+    // No silent alias survives: the old method keys are gone entirely, so a shim
+    // calling them gets an unknown-method error at the admin socket.
+    expect(adminMethods['mcp.team.bind_group']).toBeUndefined();
+    expect(adminMethods['mcp.team.transfer_channel_back']).toBeUndefined();
+  });
+
+  it('registers the core Channel MCP binding methods', () => {
+    expect(typeof adminMethods['mcp.channel.bind_channel']).toBe('function');
+    expect(typeof adminMethods['mcp.channel.transfer_back']).toBe('function');
+  });
+
+  it('bind_channel and transfer_back share one return envelope (the binding, not wrapped)', async () => {
+    // #209 slice 8 review P2: the two sibling Channel MCP methods must return the
+    // same shape — the binding summary directly — so a caller does not unwrap one
+    // and not the other.
+    const binding = { provider: 'builtin:feishu', chat_id: 'chat-demo' };
+    const channelStub = {
+      repos: { dispatchers: { get: () => ({ dispatcher_id: 'flow' }) } },
+      dispatcherService: {
+        bindTeamChannel: async () => binding,
+        transferTeamChannelBack: async () => binding,
+      },
+    } as unknown as Server;
+
+    const bound = await adminMethods['mcp.channel.bind_channel']!(channelStub, {
+      dispatcher_id: 'flow',
+      team_name: 'alpha',
+      chat_id: 'chat-demo',
+    });
+    const transferred = await adminMethods['mcp.channel.transfer_back']!(channelStub, {
+      dispatcher_id: 'flow',
+      chat_id: 'chat-demo',
+    });
+    expect(bound).toEqual(binding);
+    expect(transferred).toEqual(binding);
+    // No `{ binding: ... }` wrapper on either method.
+    expect(transferred).not.toHaveProperty('binding');
+  });
+});

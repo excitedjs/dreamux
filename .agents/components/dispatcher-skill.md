@@ -41,18 +41,21 @@ ships in the npm package:
 - `team` MCP is injected for dispatcher-only Team Mode lifecycle, addressed by
   `team_name` (issue #182 PR-7/PR-8; concrete-key rename in #199 Slice 1):
   `create` a TeamLeader (with an optional `repo` object, same shape as
-  `teammate.spawn`, replacing the old `repo_cwd`; #199 Slice 2) — optionally
-  binding an EXISTING Feishu group via `bind_group: { chat_id }` — inspect with
+  `teammate.spawn`, replacing the old `repo_cwd`; #199 Slice 2) — inspect with
   `list` (compact rows) / `status` (the public `team_name`-keyed team view +
   leader/binding summary, no machine-local `repo_cwd`/`worktree`; #199 Slice 2) /
   `history` (a compact recovery search
   by `team_name` / `status` / `repo` / `grep` / `since` / `until`, returning
   `{ items, next_cursor }`; the retired `close_status` filter and the
-  `team_id` / machine-local cwd/worktree rows are gone in #199 Slice 1),
-  `bind_group` an existing group or `transfer_channel_back`, and `dissolve` a
-  Team. The `create_group`
-  (create-a-new-group) and raw `ledger` verbs were retired. TeamLeader member
-  work still uses the caller-scoped TeamMate MCP.
+  `team_id` / machine-local cwd/worktree rows are gone in #199 Slice 1), and
+  `dissolve` a Team. The `create_group` (create-a-new-group) and raw `ledger`
+  verbs were retired.
+- `channel` MCP is injected for dispatcher-only channel binding (core-hosted,
+  #209 slice 8): `bind_channel` hands an existing Feishu group chat to a Team by
+  `team_name` + `chat_id`, and `transfer_back` returns a bound group (by
+  `chat_id`) to the dispatcher. This replaces the removed `team.bind_group` /
+  `team.transfer_channel_back` / `team.create.bind_group` surfaces (no aliases).
+  TeamLeader member work still uses the caller-scoped TeamMate MCP.
 - `dreamux-maintenance` covers installed Dreamux diagnosis and safe operation.
 
 They are not installed through Codex plugin marketplaces. Core injects them at

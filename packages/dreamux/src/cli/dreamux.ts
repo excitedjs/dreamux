@@ -50,6 +50,7 @@ import { printDoctorResult, runDreamuxDoctor } from './doctor.js';
 import { runFeishuMcp } from '../mcp/feishu-mcp.js';
 import { runTeamMateMcp } from '../mcp/teammate-mcp.js';
 import { runTeamMcp } from '../mcp/team-mcp.js';
+import { runChannelMcp } from '../mcp/channel-mcp.js';
 import { createLogger } from '../platform/logger.js';
 import {
   feishuMcpLogPath,
@@ -560,6 +561,21 @@ function buildTeamMcpCommand(
     }) as Argv<{ dispatcher: string; adminSocket?: string }>;
 }
 
+function buildChannelMcpCommand(
+  y: Argv,
+): Argv<{ dispatcher: string; adminSocket?: string }> {
+  return y
+    .option('dispatcher', {
+      type: 'string',
+      demandOption: true,
+      describe: 'Dispatcher id this MCP shim is scoped to',
+    })
+    .option('admin-socket', {
+      type: 'string',
+      describe: 'dreamux serve admin socket path',
+    }) as Argv<{ dispatcher: string; adminSocket?: string }>;
+}
+
 async function main(): Promise<void> {
   await yargs(hideBin(process.argv))
     .scriptName('dreamux')
@@ -667,6 +683,18 @@ async function main(): Promise<void> {
       async (argv) => {
         const dispatcherId = validateDispatcherId(argv.dispatcher);
         await runTeamMcp({
+          dispatcherId,
+          adminSocketPath: argv.adminSocket,
+        });
+      },
+    )
+    .command(
+      'channel-mcp',
+      'Run the dispatcher-scoped Channel MCP stdio shim',
+      buildChannelMcpCommand,
+      async (argv) => {
+        const dispatcherId = validateDispatcherId(argv.dispatcher);
+        await runChannelMcp({
           dispatcherId,
           adminSocketPath: argv.adminSocket,
         });

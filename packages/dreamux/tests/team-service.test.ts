@@ -521,25 +521,34 @@ describe('TeamService', () => {
     ).rejects.toThrow(/does not exist/);
   });
 
-  it('create binds an existing Feishu group via bind_group (#182 PR-8)', async () => {
+  it('binds an existing Feishu group to a Team after create (#209 slice 8)', async () => {
     const repo = await initGitRepo(join(root, 'bindgroup-repo'));
     const { teams } = buildServices();
 
-    // #182 PR-8: the retired create_group is replaced by binding an EXISTING
-    // group at create time — no new Feishu group is created.
+    // #209 slice 8: the create-time `bind_group` convenience is gone; create is
+    // honestly unbound, and a group is bound afterward through the same core
+    // binding store the Channel MCP `bind_channel` tool drives.
     const result = await teams.create({
       dispatcherId: 'flow',
       name: 'gamma',
       intent: 'work',
       repoCwd: repo,
       leaderAgentRuntime: 'flow',
-      bindGroup: { chatId: 'oc_existing_group' },
     });
-    expect(result.binding).toEqual({
+    expect(result.binding).toBeNull();
+
+    const bound = await teams.bindChannel({
+      dispatcherId: 'flow',
+      teamId: 'gamma',
+      provider: 'builtin:feishu',
+      chatId: 'oc_existing_group',
+      chatType: 'group',
+    });
+    expect(bound).toMatchObject({
       provider: 'builtin:feishu',
       chat_id: 'oc_existing_group',
     });
-    // The bound group resolves to the Team, and status/list surface it.
+    // The bound group resolves to the Team, and status surfaces it.
     await expect(
       teams.resolveChannel({
         dispatcherId: 'flow',
