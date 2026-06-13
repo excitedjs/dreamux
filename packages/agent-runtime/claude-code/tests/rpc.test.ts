@@ -14,7 +14,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Writable } from 'node:stream';
 
-import { ClaudeCodeStreamRpc } from '../src/agent-runtime/builtin/claude-code/rpc.js';
+import { ClaudeCodeStreamRpc } from '../src/rpc.js';
 
 /** Minimal Writable stub: records writes, reports writable, fires the cb. */
 class FakeStdin {

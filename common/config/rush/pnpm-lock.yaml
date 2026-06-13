@@ -10,6 +10,28 @@ importers:
 
   .: {}
 
+  ../../packages/agent-runtime/claude-code:
+    dependencies:
+      '@excitedjs/dreamux-types':
+        specifier: workspace:*
+        version: link:../../dreamux-types
+    devDependencies:
+      '@excitedjs/eslint-config':
+        specifier: workspace:*
+        version: link:../../eslint-config
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.19.19
+      eslint:
+        specifier: ^9.39.0
+        version: 9.39.4
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@22.19.19)
+
   ../../packages/agent-runtime/codex:
     dependencies:
       '@excitedjs/dreamux-types':
@@ -93,6 +115,9 @@ importers:
       '@clack/prompts':
         specifier: ^1.5.0
         version: 1.5.0
+      '@excitedjs/agent-runtime-claude-code':
+        specifier: workspace:*
+        version: link:../agent-runtime/claude-code
       '@excitedjs/agent-runtime-codex':
         specifier: workspace:*
         version: link:../agent-runtime/codex
@@ -117,9 +142,6 @@ importers:
       smol-toml:
         specifier: ^1.6.1
         version: 1.6.1
-      ws:
-        specifier: ^8.18.0
-        version: 8.21.0
       yargs:
         specifier: ^17.7.2
         version: 17.7.2
@@ -145,6 +167,9 @@ importers:
       vitest:
         specifier: ^2.1.0
         version: 2.1.9(@types/node@22.19.19)
+      ws:
+        specifier: ^8.18.0
+        version: 8.21.0
 
   ../../packages/dreamux-types:
     devDependencies:

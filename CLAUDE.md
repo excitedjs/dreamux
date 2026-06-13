@@ -21,6 +21,9 @@ fix it in the same PR.
   (the host), `@excitedjs/dreamux-types` (declaration-only provider-authoring
   contracts, #209 slice 1), `@excitedjs/agent-runtime-codex` (the built-in Codex
   Agent Runtime behind `builtin:codex`, #209 slice 3 — depends on
+  `@excitedjs/dreamux-types` only, never on core),
+  `@excitedjs/agent-runtime-claude-code` (the built-in Claude Code Agent Runtime
+  behind `builtin:claude-code`, #209 slice 4 — depends on
   `@excitedjs/dreamux-types` only, never on core), `@excitedjs/feishu-transport`
   (the platform-I/O core, sole owner of the `@larksuiteoapi/node-sdk` import),
   and `@excitedjs/feishu-channel` (per-host channel layer, a placeholder today) —

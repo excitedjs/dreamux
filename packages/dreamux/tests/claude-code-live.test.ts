@@ -22,7 +22,7 @@ import { promisify } from 'node:util';
 import {
   createClaudeCodeAgentRuntimeProvider,
   type ClaudeCodeAgentRuntimeProviderOptions,
-} from '../src/agent-runtime/builtin/claude-code/runtime.js';
+} from '../src/agent-runtime/builtin/claude-code/provider.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
