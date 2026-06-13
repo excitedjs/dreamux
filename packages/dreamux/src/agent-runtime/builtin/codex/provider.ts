@@ -1,29 +1,60 @@
-import { codexMcpServerArgs } from './mcp-config.js';
-import { CodexWsClient } from './rpc.js';
+/**
+ * Core-owned adapter for the built-in Codex runtime (issue #209 slice 3).
+ *
+ * The Codex engine now lives in the published `@excitedjs/agent-runtime-codex`
+ * package, which implements the neutral `@excitedjs/dreamux-types`
+ * `AgentRuntimeProvider`. Core's launcher (server / Dispatcher Service) still
+ * threads its host-shaped create context (dispatcher row, store, host logger).
+ * This adapter bridges the two: it presents the host `AgentRuntimeProvider`
+ * core already wires through the catalog, and on `createRuntime` it maps the
+ * host context onto the neutral one — resolving the host path/socket/log/state
+ * contracts and the bundled-skill install the package must not reconstruct, then
+ * delegating to the package provider.
+ */
 import {
-  CodexProcess,
-  type CodexProcessOptions,
-} from './supervisor.js';
-import { CodexRuntime } from './runtime.js';
-import {
-  defaultDispatcherCodexConfig,
+  createCodexAgentRuntimeProvider as createPackageCodexProvider,
+  CODEX_AGENT_RUNTIME_CAPABILITIES,
+  resolveCodexBinPath,
   dispatcherCodexConfig,
-  readDispatcherCodexConfig,
-} from './config.js';
-import type { DispatcherCodexHomeDoctor } from './codex-home.js';
-import { codexAgentRuntimeDiagnostic } from './diagnostic.js';
-import { codexArgsFromConfig, codexArgsToCli } from './args.js';
-import {
-  BUILTIN_CODEX_PROVIDER_REF,
-  type ProviderDescriptor,
-} from '../../../registry/index.js';
+  defaultDispatcherCodexConfig,
+  type CodexProcess,
+  type CodexProcessOptions,
+  type CodexWsClient,
+  type DispatcherCodexConfig,
+} from '@excitedjs/agent-runtime-codex';
 import type {
-  AgentRuntimeCapabilities,
+  AgentRuntimeCreateContext as NeutralCreateContext,
+  DreamuxLogger,
+} from '@excitedjs/dreamux-types';
+import { codexAgentRuntimeDiagnostic } from './diagnostic.js';
+import {
+  codexRowStateStore,
+  defaultCodexRuntimePaths,
+} from './runtime-support.js';
+import { allocateCodexSocketPath } from './paths.js';
+import { installBundledWorkspaceSkills } from '../../../onboard/bundled-skills.js';
+import { dispatcherProcessEnv } from '../../../platform/package-bin.js';
+import {
+  dispatcherCodexHomeDoctorContext,
+  type DispatcherCodexHomeDoctor,
+} from './codex-home.js';
+import type { ProviderDescriptor } from '../../../registry/index.js';
+import type {
   AgentRuntime,
+  AgentRuntimeCreateContext,
   AgentRuntimeProvider,
-  AgentRuntimeMcpServer,
+  AgentRuntimeRole,
 } from '../../types.js';
+import type { DispatcherProviderConfig } from '../../../config/config.js';
 
+export { resolveCodexBinPath, CODEX_AGENT_RUNTIME_CAPABILITIES };
+
+/**
+ * Host-shaped options for the built-in Codex provider. Unchanged from before the
+ * package split so the server and tests keep their factory/doctor/backoff seams;
+ * core fills the package's host hooks (socket allocator, package-bin env,
+ * bundled-skill install) internally.
+ */
 export interface CodexAgentRuntimeProviderOptions {
   descriptor: ProviderDescriptor;
   codexProcessFactory?: (opts: CodexProcessOptions) => CodexProcess;
@@ -33,102 +64,100 @@ export interface CodexAgentRuntimeProviderOptions {
   restartBackoffMaxMs?: number;
 }
 
-/**
- * Final codex binary path for one dispatcher. The `CODEX_HOST_CODEX_BIN`
- * environment variable is a deliberate host-level override that takes
- * precedence over the dispatcher's `runtime.config.bin`; otherwise the
- * dispatcher-local bin (default `"codex"`) is used. `env` defaults to the live
- * process environment for the runtime spawn path; doctor passes the installed
- * service unit's environment so it checks what the service will run.
- */
-export function resolveCodexBinPath(
-  configBin: string,
-  env: NodeJS.ProcessEnv = process.env,
-): string {
-  const fromEnv = env['CODEX_HOST_CODEX_BIN'];
-  if (fromEnv !== undefined && fromEnv.trim() !== '') return fromEnv;
-  return configBin;
+/** Adapt the host's level/msg/err log callback to the neutral structured logger. */
+function loggerFromHostLog(
+  log: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void,
+): DreamuxLogger {
+  const forward =
+    (lvl: 'info' | 'warn' | 'error') =>
+    (msg: string, fields?: Record<string, unknown>) =>
+      log(lvl, msg, fields?.['err']);
+  return {
+    error: forward('error'),
+    warn: forward('warn'),
+    info: forward('info'),
+    // The Codex runtime only ever logs at info/warn/error; the host log has no
+    // debug/trace sink, so these are intentional no-ops.
+    debug: () => {},
+    trace: () => {},
+  };
 }
-
-export const CODEX_AGENT_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = {
-  resume: { supported: true, checkpoint: 'codexThread' },
-  steer: { supported: true },
-  events: { kind: 'push' },
-  last: { supported: true },
-  context: { supported: false },
-  systemPrompt: { mode: 'replace' },
-  teammateCompletion: [
-    {
-      kind: 'codexInboxTurn',
-      description:
-        'inject the completion into thread history (thread/inject_items), then ' +
-        'trigger a dispatcher turn',
-    },
-  ],
-};
 
 export function createCodexAgentRuntimeProvider(
   options: CodexAgentRuntimeProviderOptions,
 ): AgentRuntimeProvider {
+  const pkg = createPackageCodexProvider({
+    descriptor: options.descriptor,
+    allocateSocketPath: allocateCodexSocketPath,
+    baseProcessEnv: (extraEnv) => dispatcherProcessEnv(process.env, extraEnv),
+    prepareWorkspaceSkills: (cwd) =>
+      installBundledWorkspaceSkills({ dispatcherCwd: cwd }),
+    ...(options.codexProcessFactory !== undefined
+      ? { codexProcessFactory: options.codexProcessFactory }
+      : {}),
+    ...(options.codexClientFactory !== undefined
+      ? { codexClientFactory: options.codexClientFactory }
+      : {}),
+    ...(options.codexHomeDoctor !== undefined
+      ? {
+          codexHomeDoctor: ({ runtimeId, cwd }) =>
+            options.codexHomeDoctor!(
+              dispatcherCodexHomeDoctorContext(runtimeId, {
+                dispatcherCwd: cwd,
+              }),
+            ),
+        }
+      : {}),
+    ...(options.restartBackoffBaseMs !== undefined
+      ? { restartBackoffBaseMs: options.restartBackoffBaseMs }
+      : {}),
+    ...(options.restartBackoffMaxMs !== undefined
+      ? { restartBackoffMaxMs: options.restartBackoffMaxMs }
+      : {}),
+  });
+
   return {
-    ref: BUILTIN_CODEX_PROVIDER_REF,
+    ref: pkg.ref,
     descriptor: options.descriptor,
     getCapabilities: () => CODEX_AGENT_RUNTIME_CAPABILITIES,
     diagnostic: codexAgentRuntimeDiagnostic,
     readConfig(rawConfig, context) {
-      return readDispatcherCodexConfig(
+      return pkg.readConfig!(
         rawConfig,
-        context.file,
-        context.prefix,
-      ) as unknown as Record<string, unknown>;
+        context,
+      ) as unknown as DispatcherProviderConfig;
     },
-    createRuntime(context): AgentRuntime {
-      const codexConfig =
+    createRuntime(context: AgentRuntimeCreateContext): AgentRuntime {
+      const codexConfig: DispatcherCodexConfig =
         context.dispatcher === null
           ? defaultDispatcherCodexConfig()
           : dispatcherCodexConfig(context.dispatcher);
-      const codexArgs = codexArgsFromConfig(codexConfig);
-      const runtimeArgs = [
-        ...codexArgsToCli(codexArgs),
-        ...codexMcpServerArgs(context.mcpServers),
-      ];
-      const runtimeDeps = {
-        dispatchers: context.dispatchers,
+      // Role is cosmetic for Codex (it ignores it); the teammate launcher is the
+      // only caller that passes onTurnSettled. Proper role/skill selection is a
+      // later slice.
+      const role: AgentRuntimeRole =
+        context.onTurnSettled !== undefined ? 'teammate' : 'dispatcher';
+      const neutralContext: NeutralCreateContext<DispatcherCodexConfig> = {
+        identity: {
+          runtime_id: context.row.dispatcher_id,
+          checkpoint_id: context.row.thread_id,
+        },
+        role,
+        config: codexConfig,
         cwd: context.cwd,
-        systemPromptContent: context.systemPromptContent,
-        state: context.state,
-        paths: context.paths,
-        codexBinPath: resolveCodexBinPath(codexConfig.bin),
-        resolveExtraArgs: () => runtimeArgs,
-        handshakeTimeoutMs: codexConfig.initialize_timeout_ms,
-        extraEnv: codexConfig.extra_env,
-        onTurnSettled: context.onTurnSettled,
-        log: context.log,
-        ...(options.codexProcessFactory !== undefined
-          ? { codexProcessFactory: options.codexProcessFactory }
+        mcpServers: context.mcpServers,
+        skillSources: [],
+        logger: loggerFromHostLog(context.log),
+        paths: context.paths ?? defaultCodexRuntimePaths,
+        state: context.state ?? codexRowStateStore(context.dispatchers),
+        ...(context.systemPromptContent !== undefined
+          ? { systemPromptContent: context.systemPromptContent }
           : {}),
-        ...(options.codexClientFactory !== undefined
-          ? { codexClientFactory: options.codexClientFactory }
-          : {}),
-        ...(options.codexHomeDoctor !== undefined
-          ? { codexHomeDoctor: options.codexHomeDoctor }
-          : {}),
-        ...(options.restartBackoffBaseMs !== undefined
-          ? { restartBackoffBaseMs: options.restartBackoffBaseMs }
-          : {}),
-        ...(options.restartBackoffMaxMs !== undefined
-          ? { restartBackoffMaxMs: options.restartBackoffMaxMs }
+        ...(context.onTurnSettled !== undefined
+          ? { onTurnSettled: context.onTurnSettled }
           : {}),
       };
-      return new CodexRuntime(context.row, {
-        ...runtimeDeps,
-      });
+      return pkg.createRuntime(neutralContext);
     },
   };
-}
-
-export function codexRuntimeArgsForMcpServers(
-  servers: readonly AgentRuntimeMcpServer[],
-): string[] {
-  return codexMcpServerArgs(servers);
 }

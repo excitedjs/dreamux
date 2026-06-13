@@ -18,11 +18,15 @@ fix it in the same PR.
 `excitedjs/dreamux` is a **Rush + pnpm monorepo** since issue #4.
 
 - `/packages/<name>/` holds packages. Publishable today: `@excitedjs/dreamux`
-  (the host), `@excitedjs/feishu-transport` (the platform-I/O core, sole owner
-  of the `@larksuiteoapi/node-sdk` import), and `@excitedjs/feishu-channel`
-  (per-host channel layer, a placeholder today) — see the channel refactor (#4).
-  Private (unpublished): `@excitedjs/eslint-config`, the shared ESLint flat
-  config that is the single source of the synchronous-blocking-IO ban (#85).
+  (the host), `@excitedjs/dreamux-types` (declaration-only provider-authoring
+  contracts, #209 slice 1), `@excitedjs/agent-runtime-codex` (the built-in Codex
+  Agent Runtime behind `builtin:codex`, #209 slice 3 — depends on
+  `@excitedjs/dreamux-types` only, never on core), `@excitedjs/feishu-transport`
+  (the platform-I/O core, sole owner of the `@larksuiteoapi/node-sdk` import),
+  and `@excitedjs/feishu-channel` (per-host channel layer, a placeholder today) —
+  see the channel refactor (#4). Private (unpublished):
+  `@excitedjs/eslint-config`, the shared ESLint flat config that is the single
+  source of the synchronous-blocking-IO ban (#85).
 - `/rush.json`, `/common/config/rush/`, `/common/scripts/install-run-rush.js`
   are the rush + pnpm scaffolding.
 - `/bin/dreamux` is a source-checkout convenience shim that forwards to
@@ -182,10 +186,12 @@ explicitly supersedes the top-level design.
   Cross-process file contracts (the admin socket path, dispatcher state files,
   logs) drift silently if any other file constructs them by raw string
   concatenation.
-- **Codex protocol bumps run through `src/agent-runtime/builtin/codex/handshake.ts`
-  first.** Any
-  RPC before `initialize` is rejected with `Not initialized` on codex
-  0.134+ — confirmed end-to-end in `tests/codex-0135-live.test.ts`.
+- **Codex protocol bumps run through the `@excitedjs/agent-runtime-codex` package's
+  `src/handshake.ts` first** (the in-core
+  `packages/dreamux/src/agent-runtime/builtin/codex/handshake.ts` is now a
+  re-export shim — #209 slice 3). Any RPC before `initialize` is rejected with
+  `Not initialized` on codex 0.134+ — confirmed end-to-end in
+  `tests/codex-0135-live.test.ts`.
 - **Teammate reverse-delivery requires codex 0.137+.** `completionInput`
   delivers a finished teammate's result to the dispatcher via
   `thread/inject_items` (codex 0.137+; see issue #147), then triggers a turn.

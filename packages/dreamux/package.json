@@ -37,11 +37,11 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
+    "@excitedjs/agent-runtime-codex": "workspace:*",
     "@excitedjs/dreamux-types": "workspace:*",
     "@excitedjs/feishu-transport": "workspace:*",
     "@excitedjs/tm": "2.4.1",
     "smol-toml": "^1.6.1",
-    "ws": "^8.18.0",
     "yargs": "^17.7.2",
     "@clack/prompts": "^1.5.0",
     "execa": "^9.6.1",
@@ -55,6 +55,7 @@
     "@types/yargs": "^17.0.35",
     "eslint": "^9.39.0",
     "typescript": "^5.7.0",
-    "vitest": "^2.1.0"
+    "vitest": "^2.1.0",
+    "ws": "^8.18.0"
   }
 }

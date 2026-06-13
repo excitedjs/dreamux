@@ -10,6 +10,37 @@ importers:
 
   .: {}
 
+  ../../packages/agent-runtime/codex:
+    dependencies:
+      '@excitedjs/dreamux-types':
+        specifier: workspace:*
+        version: link:../../dreamux-types
+      smol-toml:
+        specifier: ^1.6.1
+        version: 1.6.1
+      ws:
+        specifier: ^8.18.0
+        version: 8.21.0
+    devDependencies:
+      '@excitedjs/eslint-config':
+        specifier: workspace:*
+        version: link:../../eslint-config
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.19.19
+      '@types/ws':
+        specifier: ^8.5.13
+        version: 8.18.1
+      eslint:
+        specifier: ^9.39.0
+        version: 9.39.4
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@22.19.19)
+
   ../../packages/channel/feishu-channel:
     dependencies:
       '@excitedjs/feishu-transport':
@@ -62,6 +93,9 @@ importers:
       '@clack/prompts':
         specifier: ^1.5.0
         version: 1.5.0
+      '@excitedjs/agent-runtime-codex':
+        specifier: workspace:*
+        version: link:../agent-runtime/codex
       '@excitedjs/dreamux-types':
         specifier: workspace:*
         version: link:../dreamux-types

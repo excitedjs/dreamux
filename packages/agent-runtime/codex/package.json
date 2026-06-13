@@ -1,0 +1,56 @@
+{
+  "name": "@excitedjs/agent-runtime-codex",
+  "version": "0.1.0",
+  "description": "Built-in Codex Agent Runtime provider for Dreamux (alias builtin:codex). Implements the @excitedjs/dreamux-types AgentRuntimeProvider contract against the Codex app-server; depends on @excitedjs/dreamux-types only, never on @excitedjs/dreamux core (issue excitedjs/dreamux#209).",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/excitedjs/dreamux.git",
+    "directory": "packages/agent-runtime/codex"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./config": {
+      "types": "./dist/config.d.ts",
+      "import": "./dist/config.js",
+      "default": "./dist/config.js"
+    }
+  },
+  "engines": {
+    "node": ">=22.7"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@excitedjs/dreamux-types": "workspace:*",
+    "smol-toml": "^1.6.1",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@excitedjs/eslint-config": "workspace:*",
+    "@types/node": "^22.10.0",
+    "@types/ws": "^8.5.13",
+    "eslint": "^9.39.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  }
+}

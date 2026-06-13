@@ -15,14 +15,14 @@ import {
   type TurnCollector,
 } from './events.js';
 import type { CodexWsClient } from './rpc.js';
-import {
-  DEFAULT_MESSAGE_ID_DEDUPE_WINDOW,
-  type InboundTurnInput,
-  type InboundDeliveryResult,
-  type NoticeInjectionResult,
-  type InboundDeliveryHooks,
-  type TurnSettledSignal,
-} from '../../turn.js';
+import { DEFAULT_MESSAGE_ID_DEDUPE_WINDOW } from './internal/turn-render.js';
+import type {
+  InboundTurnInput,
+  InboundDeliveryResult,
+  NoticeInjectionResult,
+  InboundDeliveryHooks,
+  TurnSettledSignal,
+} from '@excitedjs/dreamux-types';
 
 interface ActiveTurnSlot {
   collector: TurnCollector;

@@ -16,11 +16,6 @@
  *     and post a visible warning to the next source chat.
  */
 
-import type {
-  DispatcherRow,
-  DispatcherStatus,
-  DispatcherStore,
-} from '../../../state/dispatcher-store.js';
 import {
   CodexProcess,
   type CodexProcessExit,
@@ -38,46 +33,52 @@ import {
   TurnManager,
 } from './turn-manager.js';
 import { injectThreadItems, type CollectedTurn } from './events.js';
-import { renderChannelInput } from '../../turn.js';
-import type {
-  InboundDeliveryHooks,
-  InboundTurnInput,
-  TurnSettledSignal,
-} from '../../turn.js';
+import { renderChannelInput } from './internal/turn-render.js';
 import { createFailFastApprovalHandler } from './approval.js';
-import {
-  dispatcherCodexHomeDoctorContext,
-  type DispatcherCodexHomeDoctor,
-} from './codex-home.js';
-import { allocateCodexSocketPath } from './paths.js';
-import { installBundledWorkspaceSkills } from '../../../onboard/bundled-skills.js';
 import type {
   AgentRuntime,
   AgentRuntimeCapabilities,
+  AgentRuntimeIdentity,
   AgentRuntimeLastResult,
   AgentRuntimePathContext,
   AgentRuntimeResumeInput,
-  AgentRuntimeStateStore,
+  AgentRuntimeStateCallbacks,
+  AgentRuntimeStatus,
   AgentRuntimeSystemInput,
   AgentRuntimeTurnResult,
   CompletionEnvelope,
+  DreamuxLogger,
+  InboundDeliveryHooks,
+  InboundTurnInput,
   TeamMateCompletionDeliveryResult,
-} from '../../types.js';
-import { BUILTIN_CODEX_PROVIDER_REF } from '../../../registry/index.js';
+  TurnSettledSignal,
+} from '@excitedjs/dreamux-types';
+import { BUILTIN_CODEX_PROVIDER_REF } from './provider-ref.js';
 import { CODEX_AGENT_RUNTIME_CAPABILITIES } from './provider.js';
 import {
   buildCodexCompletionItem,
   CODEX_COMPLETION_TRIGGER_TEXT,
   codexProcessEnv,
-  codexRowStateStore,
-  defaultCodexRuntimePaths,
 } from './runtime-support.js';
+
+/**
+ * One bundled-skill preparation result the host's workspace skill installer
+ * returns. Structural: the package logs the outcome but owns neither the
+ * install mechanism nor the on-disk skill layout (a host-owned contract). The
+ * full host shape (`@excitedjs/dreamux`'s `installBundledWorkspaceSkills`)
+ * satisfies this at the call site.
+ */
+export interface CodexWorkspaceSkillPrepResult {
+  skillName: string;
+  targetPath: string;
+  status: string;
+  reason: string;
+}
 
 const DEFAULT_RESTART_BACKOFF_BASE_MS = 1000;
 const DEFAULT_RESTART_BACKOFF_MAX_MS = 30_000;
 
 export interface CodexRuntimeDeps {
-  dispatchers: DispatcherStore;
   /** Working directory the codex app-server runs in (required launch param). */
   cwd: string;
   /**
@@ -86,18 +87,46 @@ export interface CodexRuntimeDeps {
    * for launches that supply none (e.g. teammates).
    */
   systemPromptContent?: string;
-  state?: AgentRuntimeStateStore;
-  paths?: AgentRuntimePathContext;
+  /** Neutral state sink the host adapts from its dispatcher store. */
+  state: AgentRuntimeStateCallbacks;
+  /** Host-supplied per-dispatcher path context (logs/spill live in the host tree). */
+  paths: AgentRuntimePathContext;
+  /**
+   * Allocate a fresh volatile rendezvous socket path for one app-server start.
+   * Host-supplied: the socket root is a Dreamux runtime contract this package
+   * must not reconstruct.
+   */
+  allocateSocketPath: (id: string) => string;
+  /**
+   * Optional host hook to materialize bundled skill sources into the runtime
+   * workspace before each (re)start. The host owns which skills and the on-disk
+   * layout; this package only invokes it and logs the outcome.
+   */
+  prepareWorkspaceSkills?: (
+    cwd: string,
+  ) => Promise<readonly CodexWorkspaceSkillPrepResult[]>;
+  /**
+   * Build the base process env for the codex child (host seeds `PATH` with the
+   * Dreamux package bins). Optional: standalone use falls back to the live env.
+   */
+  baseProcessEnv?: (extraEnv: Record<string, string>) => NodeJS.ProcessEnv;
   /** Optional bin path override for tests. */
   codexBinPath?: string;
   /** Override process construction for tests. */
   codexProcessFactory?: (opts: CodexProcessOptions) => CodexProcess;
   /** Override WS client factory for tests. */
   codexClientFactory?: (socketPath: string) => CodexWsClient;
-  /** Optional Codex home validator for tests and explicit diagnostics. */
-  codexHomeDoctor?: DispatcherCodexHomeDoctor;
+  /**
+   * Optional host-owned Codex home/auth pre-start check, invoked before the
+   * child spawns with the runtime id and cwd. The host owns its path/socket
+   * inputs and builds its own validation context from these.
+   */
+  codexHomeDoctor?: (info: {
+    runtimeId: string;
+    cwd: string;
+  }) => void | Promise<void>;
   /** Codex extraArgs (parsed from dispatcher.codex_args_json). */
-  resolveExtraArgs?: (row: DispatcherRow) => string[];
+  resolveExtraArgs?: () => string[];
   /**
    * Codex initialize handshake timeout (ms). From this dispatcher's
    * `dispatchers[].runtime.config.initialize_timeout_ms` (default 10000).
@@ -114,7 +143,8 @@ export interface CodexRuntimeDeps {
    * launcher (teammate service) and omitted for dispatcher launches.
    */
   onTurnSettled?: (settled: TurnSettledSignal) => void;
-  log?: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
+  /** Neutral logger the host passes in; a console fallback is used when absent. */
+  logger?: DreamuxLogger;
 }
 
 const COMPLETION_ID_CACHE_LIMIT = 256;
@@ -133,7 +163,7 @@ export class CodexRuntime implements AgentRuntime {
    * `daemon restart` notice should be injected (issue #78).
    */
   private threadResumed = false;
-  private status: DispatcherStatus = 'declared';
+  private status: AgentRuntimeStatus = 'declared';
   /** Monotonic per-attempt suffix for TeamMate delivery turn dedup ids (#110 PR8). */
   private teammateDeliverySeq = 0;
   /**
@@ -160,34 +190,43 @@ export class CodexRuntime implements AgentRuntime {
    */
   private readonly injectedCompletionIds = new Set<string>();
   private readonly injectedCompletionOrder: string[] = [];
-  private readonly log: NonNullable<CodexRuntimeDeps['log']>;
+  private readonly log: (
+    level: 'info' | 'warn' | 'error',
+    msg: string,
+    err?: unknown,
+  ) => void;
   private stopping = false;
   private restarting = false;
   private restartAttempts = 0;
   private restartTimer: NodeJS.Timeout | null = null;
   private lastResult: AgentRuntimeLastResult | null = null;
-  private readonly state: AgentRuntimeStateStore;
+  private readonly state: AgentRuntimeStateCallbacks;
   private readonly paths: AgentRuntimePathContext;
 
   constructor(
-    public readonly row: DispatcherRow,
+    public readonly identity: AgentRuntimeIdentity,
     private readonly deps: CodexRuntimeDeps,
   ) {
-    this.log = deps.log ?? ((lvl, msg, err) => {
-      const prefix = `[dispatcher ${row.dispatcher_id}] ${lvl}`;
-      if (err !== undefined) console.error(prefix, msg, err);
-      else console.error(prefix, msg);
-    });
-    this.threadId = row.thread_id;
-    this.state = deps.state ?? codexRowStateStore(deps.dispatchers);
-    this.paths = deps.paths ?? defaultCodexRuntimePaths;
+    const logger = deps.logger;
+    this.log =
+      logger !== undefined
+        ? (lvl, msg, err) =>
+            logger[lvl](msg, err !== undefined ? { err } : undefined)
+        : (lvl, msg, err) => {
+            const prefix = `[dispatcher ${identity.runtime_id}] ${lvl}`;
+            if (err !== undefined) console.error(prefix, msg, err);
+            else console.error(prefix, msg);
+          };
+    this.threadId = identity.checkpoint_id ?? null;
+    this.state = deps.state;
+    this.paths = deps.paths;
   }
 
   get dispatcherId(): string {
-    return this.row.dispatcher_id;
+    return this.identity.runtime_id;
   }
 
-  getStatus(): DispatcherStatus {
+  getStatus(): AgentRuntimeStatus {
     return this.status;
   }
 
@@ -273,11 +312,10 @@ export class CodexRuntime implements AgentRuntime {
     const cwd = this.deps.cwd;
     // Fresh random rendezvous socket per start (issue #182): held in memory
     // only — never persisted to durable state, never derived from state paths.
-    const socketPath = allocateCodexSocketPath(this.dispatcherId);
-    const extraArgs = this.deps.resolveExtraArgs?.(this.row) ?? [];
-    const skillInstallResults = await installBundledWorkspaceSkills({
-      dispatcherCwd: cwd,
-    });
+    const socketPath = this.deps.allocateSocketPath(this.dispatcherId);
+    const extraArgs = this.deps.resolveExtraArgs?.() ?? [];
+    const skillInstallResults =
+      (await this.deps.prepareWorkspaceSkills?.(cwd)) ?? [];
     for (const result of skillInstallResults) {
       if (result.status === 'skipped') {
         this.log(
@@ -292,12 +330,7 @@ export class CodexRuntime implements AgentRuntime {
       }
     }
     if (this.deps.codexHomeDoctor !== undefined) {
-      await this.deps.codexHomeDoctor(
-        dispatcherCodexHomeDoctorContext(this.dispatcherId, {
-          codexCliArgs: extraArgs,
-          dispatcherCwd: cwd,
-        }),
-      );
+      await this.deps.codexHomeDoctor({ runtimeId: this.dispatcherId, cwd });
     }
 
     const factory = this.deps.codexProcessFactory ?? ((o) => new CodexProcess(o));
@@ -308,7 +341,7 @@ export class CodexRuntime implements AgentRuntime {
       stderrLogPath: this.paths.stderrLogPath(this.dispatcherId),
       binPath: this.deps.codexBinPath,
       extraArgs,
-      env: codexProcessEnv(this.deps.extraEnv ?? {}),
+      env: codexProcessEnv(this.deps.baseProcessEnv, this.deps.extraEnv ?? {}),
     });
     this.process = process;
     process.onExit((exit) => {
@@ -367,7 +400,7 @@ export class CodexRuntime implements AgentRuntime {
     // Each resolution recomputes whether we resumed; a fresh start or a
     // resume-failure recovery must not look like a resume to the notice gate.
     this.threadResumed = false;
-    const existing = this.threadId ?? this.row.thread_id;
+    const existing = this.threadId ?? this.identity.checkpoint_id ?? null;
     if (existing === null) {
       // Fresh thread.
       const params: ThreadStartParams = {
@@ -724,7 +757,7 @@ export class CodexRuntime implements AgentRuntime {
     }
   }
 
-  private setStatus(s: DispatcherStatus): void {
+  private setStatus(s: AgentRuntimeStatus): void {
     this.status = s;
   }
 }

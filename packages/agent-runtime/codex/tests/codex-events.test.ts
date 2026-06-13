@@ -16,8 +16,8 @@ import { describe, expect, it } from 'vitest';
 import {
   subscribeTurnCollection,
   type TurnTraceEvent,
-} from '../src/agent-runtime/builtin/codex/events.js';
-import type { CodexWsClient } from '../src/agent-runtime/builtin/codex/rpc.js';
+} from '../src/events.js';
+import type { CodexWsClient } from '../src/rpc.js';
 
 /** Minimal CodexWsClient stub exposing only the onNotification seam + emit. */
 function fakeClient(): {
