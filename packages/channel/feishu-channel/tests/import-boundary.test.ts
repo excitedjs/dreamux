@@ -35,6 +35,9 @@ const HOST_IMPORT = /from\s+['"]@excitedjs\/dreamux['"]/;
 // Any relative import that climbs above the package src root would reach the
 // host tree in the monorepo layout; the package must stay self-contained.
 const RELATIVE_ESCAPE = /from\s+['"]\.\.\/\.\.\//;
+// `@excitedjs/feishu-transport` is the SOLE owner of the Lark SDK import; the
+// channel package must reach the platform only through it, never directly.
+const LARK_SDK_IMPORT = /from\s+['"]@larksuiteoapi\//;
 
 describe('feishu-channel import boundary', () => {
   const files = walk(join(pkgRoot, 'src'));
@@ -49,6 +52,13 @@ describe('feishu-channel import boundary', () => {
   it('package src never escapes its own tree with a relative import', () => {
     const offenders = files.filter((file) =>
       RELATIVE_ESCAPE.test(readFileSync(file, 'utf8')),
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it('package src never imports the Lark SDK directly', () => {
+    const offenders = files.filter((file) =>
+      LARK_SDK_IMPORT.test(readFileSync(file, 'utf8')),
     );
     expect(offenders).toEqual([]);
   });
