@@ -56,8 +56,6 @@ export type {
   AgentRuntimeRole,
   AgentRuntimeSkillSource,
   CompletionDeliveryShape,
-  AgentRuntimeResumeCheckpoint,
-  AgentRuntimeResumeCapability,
   AgentRuntimeCapabilities,
   CompletionEnvelope,
   TeamMateCompletionDeliveryResult,
@@ -208,7 +206,7 @@ export interface AgentRuntimeProvider {
   readConfig?(
     rawConfig: Record<string, unknown>,
     context: AgentRuntimeProviderConfigReadContext,
-  ): DispatcherProviderConfig;
+  ): DispatcherProviderConfig | Promise<DispatcherProviderConfig>;
   /**
    * Self-reported doctor diagnostics. Optional: a provider with no diagnostic
    * surface (no bin, no internal state) may omit it; doctor then reports a

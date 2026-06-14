@@ -158,6 +158,37 @@ Core adapts its logger to this shape. Provider packages own their own minimal
 console fallback when core does not pass a logger. That fallback is
 implementation code and does not belong in the types package.
 
+### Public surface boundaries (issue #209 types-API audit)
+
+The type package also publishes the *factory* contract, so an external
+provider's default export is typed against the same shape core's loader calls:
+
+- `ProviderFactoryContext<TDescriptor>` / `ProviderFactory<TProvider, TDescriptor>`
+  mirror the loader call (`{ ref, descriptor }` → provider). Kind-specific aliases
+  `AgentRuntimeProviderFactory` / `ChannelProviderFactory` carry the already-narrowed
+  descriptor so a package assigns `provider.descriptor` without a cast.
+- Descriptors are narrowed by kind: `AgentRuntimeProviderDescriptor`
+  (`kind: 'agentRuntime'`) and `ChannelProviderDescriptor` (`kind: 'channel'`);
+  `AgentRuntimeProvider.descriptor` / `ChannelProvider.descriptor` use them.
+- The package owns its environment shape: `DreamuxEnvironment`
+  (`Record<string, string | undefined>`). No public declaration references a
+  `@types/node` global (`NodeJS.*`, `Buffer`); a guard test enforces this so the
+  contract never drags host typings into an external provider package.
+- `AgentRuntimeProvider.readConfig` may return `TConfig | Promise<TConfig>`
+  (parity with `ChannelProvider.readConfig`); core awaits it at config load.
+
+Root-export minimization: the `exports` map publishes only the package root, so
+the names re-exported by `src/index.ts` ARE the public API. Helper shapes a
+provider reaches only contextually — a property of a public interface, or a
+parameter of a *required* interface method — stay `export`ed from their source
+module (the emitted `.d.ts` resolves them transitively) but are NOT root
+re-exported. Parameters of *optional* interface methods (e.g. `ChannelToolCall`
+on `ChannelSession.handleTool?`) are NOT contextually inferred under `strict`, so
+those stay root exports. A root-export allowlist test pins the surface so later
+slices grow it deliberately, and the expanded external-provider fixture proves
+the allowlist is sufficient to author a full provider importing from the root
+only.
+
 ## Provider Loading
 
 Dreamux core owns provider loading. The current runtime-specific external

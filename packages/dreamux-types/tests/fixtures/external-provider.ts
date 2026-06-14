@@ -3,28 +3,50 @@
  *
  * This file imports Dreamux contracts from `@excitedjs/dreamux-types` ONLY and
  * implements a complete Agent Runtime provider (descriptor + `readConfig` +
- * `getCapabilities` + `createRuntime` returning a live `AgentRuntime` handle)
- * and a Channel provider, the way an external provider package in another
- * repository would. It must never import `@excitedjs/dreamux`. The fixture is
- * type-checked by the package's test typecheck; the runtime assertions live in
+ * `getCapabilities` + optional `diagnostic` + `createRuntime` returning a live
+ * `AgentRuntime` handle, including the optional `completionInput`) and a Channel
+ * provider (with the optional `reply` / `react` / `tools` / `handleTool` /
+ * `messageBelongsToTarget`), the way an external provider package in another
+ * repository would. It also exercises the published provider factory contracts
+ * (`AgentRuntimeProviderFactory` / `ChannelProviderFactory`).
+ *
+ * It must never import `@excitedjs/dreamux`. Because it imports from the package
+ * ROOT only, it doubles as the over-exposure oracle: every type it must name to
+ * implement these surfaces has to be a root export. The fixture is type-checked
+ * by the package's test typecheck; the runtime assertions live in
  * `fixtures.test.ts`.
  */
 import type {
   AgentRuntime,
+  AgentRuntimeBinCheck,
   AgentRuntimeCapabilities,
   AgentRuntimeContextSnapshot,
   AgentRuntimeCreateContext,
+  AgentRuntimeDiagnostic,
+  AgentRuntimeDoctorResult,
   AgentRuntimeLastResult,
   AgentRuntimeProvider,
   AgentRuntimeProviderConfigReadContext,
+  AgentRuntimeProviderDescriptor,
+  AgentRuntimeProviderFactory,
   AgentRuntimeStatus,
   AgentRuntimeTurnResult,
+  ChannelInboundEnvelope,
+  ChannelMessageTargetCheck,
   ChannelProvider,
+  ChannelProviderDescriptor,
+  ChannelProviderFactory,
+  ChannelReactInput,
+  ChannelReplyInput,
+  ChannelRoutes,
   ChannelSession,
   ChannelTarget,
+  ChannelToolCall,
+  ChannelToolDescriptor,
+  CompletionEnvelope,
   DreamuxLogger,
   InboundTurnInput,
-  ProviderDescriptor,
+  TeamMateCompletionDeliveryResult,
 } from '@excitedjs/dreamux-types';
 
 export const EXTERNAL_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = {
@@ -34,7 +56,9 @@ export const EXTERNAL_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = {
   last: { supported: false },
   context: { supported: false },
   systemPrompt: { mode: 'append' },
-  teammateCompletion: [],
+  teammateCompletion: [
+    { kind: 'fixturePlainTurn', description: 'deliver as a plain user turn' },
+  ],
 };
 
 export function describeConfigContext(
@@ -103,9 +127,16 @@ class FixtureRuntime implements AgentRuntime {
   getCapabilities(): AgentRuntimeCapabilities {
     return EXTERNAL_RUNTIME_CAPABILITIES;
   }
+
+  async completionInput(
+    completion: CompletionEnvelope,
+  ): Promise<TeamMateCompletionDeliveryResult> {
+    this.logger?.info('fixture completion', { id: completion.id });
+    return { status: 'accepted' };
+  }
 }
 
-const runtimeDescriptor: ProviderDescriptor = {
+const runtimeDescriptor: AgentRuntimeProviderDescriptor = {
   id: 'fixture-runtime',
   kind: 'agentRuntime',
   ref: {
@@ -113,6 +144,22 @@ const runtimeDescriptor: ProviderDescriptor = {
     package: '@example/fixture-runtime',
     export: null,
     raw: 'npm:@example/fixture-runtime',
+  },
+};
+
+/**
+ * An optional diagnostic the host's doctor pass drives. The host supplies the
+ * command runner; the fixture only declares bin checks and runs its own check.
+ */
+const fixtureRuntimeDiagnostic: AgentRuntimeDiagnostic<FixtureRuntimeConfig> = {
+  binChecks(): AgentRuntimeBinCheck[] {
+    return [{ name: 'fixture', bin: 'fixture-cli', args: ['--version'] }];
+  },
+  async runDiagnostic(context, runner): Promise<AgentRuntimeDoctorResult> {
+    const ok = await runner.check('fixture-cli', ['--version'], {
+      env: context.env,
+    });
+    return { ok, detail: ok ? 'fixture ready' : 'fixture missing', errors: [] };
   },
 };
 
@@ -127,10 +174,18 @@ export const fixtureRuntimeProvider: AgentRuntimeProvider<FixtureRuntimeConfig> 
       const model = typeof rawConfig.model === 'string' ? rawConfig.model : 'default';
       return { model };
     },
+    diagnostic: fixtureRuntimeDiagnostic,
     createRuntime(context) {
       return new FixtureRuntime(context);
     },
   };
+
+/**
+ * The package's default export an external runtime ships: the loader invokes it
+ * with the seed `ProviderFactoryContext`, narrowed to the Agent Runtime kind.
+ */
+export const fixtureRuntimeFactory: AgentRuntimeProviderFactory<FixtureRuntimeConfig> =
+  (context) => ({ ...fixtureRuntimeProvider, descriptor: context.descriptor });
 
 class FixtureChannelSession implements ChannelSession {
   readonly provider = 'npm:@example/fixture-channel';
@@ -142,8 +197,14 @@ class FixtureChannelSession implements ChannelSession {
     this.logger = logger;
   }
 
-  async start(): Promise<void> {
+  async start(routes: ChannelRoutes): Promise<void> {
     this.logger?.info('fixture channel started', { channel_id: this.channel_id });
+    const envelope: ChannelInboundEnvelope = {
+      provider: this.provider,
+      channel_id: this.channel_id,
+      target: { target_type: 'group', target_key: 'demo', bindable: true },
+    };
+    await routes.deliver(envelope);
   }
 
   async close(): Promise<void> {}
@@ -157,9 +218,32 @@ class FixtureChannelSession implements ChannelSession {
       bindable: true,
     };
   }
+
+  async reply(input: ChannelReplyInput): Promise<unknown> {
+    this.logger?.info('reply', { key: input.target.target_key });
+    return { delivered: true };
+  }
+
+  async react(input: ChannelReactInput): Promise<unknown> {
+    return { reacted: input.reaction };
+  }
+
+  tools(): readonly ChannelToolDescriptor[] {
+    return [{ name: 'echo', description: 'echo a message' }];
+  }
+
+  // Optional ChannelSession methods: a strict implementer names these param
+  // types (they are not contextually inferred for optional members).
+  async handleTool(call: ChannelToolCall): Promise<unknown> {
+    return { echoed: call.name };
+  }
+
+  messageBelongsToTarget(input: ChannelMessageTargetCheck): boolean {
+    return input.target.target_key === input.message_id;
+  }
 }
 
-const descriptor: ProviderDescriptor & { kind: 'channel' } = {
+const channelDescriptor: ChannelProviderDescriptor = {
   id: 'fixture-channel',
   kind: 'channel',
   ref: {
@@ -172,8 +256,14 @@ const descriptor: ProviderDescriptor & { kind: 'channel' } = {
 
 export const fixtureChannelProvider: ChannelProvider = {
   ref: 'npm:@example/fixture-channel',
-  descriptor,
+  descriptor: channelDescriptor,
   createSession(context) {
     return new FixtureChannelSession(context.channel_id, context.logger);
   },
 };
+
+/** The package's default export an external channel ships. */
+export const fixtureChannelFactory: ChannelProviderFactory = (context) => ({
+  ...fixtureChannelProvider,
+  descriptor: context.descriptor,
+});

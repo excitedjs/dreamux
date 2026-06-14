@@ -17,7 +17,10 @@ import type {
   AgentRuntime,
   AgentRuntimeCreateContext,
   AgentRuntimeProvider,
+  AgentRuntimeProviderDescriptor,
+  AgentRuntimeProviderFactory,
   ProviderDescriptor,
+  ProviderFactoryContext,
 } from '@excitedjs/dreamux-types';
 
 /**
@@ -28,7 +31,12 @@ import type {
  * tests wire the resident-process seam without changing the provider.
  */
 export interface ClaudeCodeAgentRuntimeProviderOptions {
-  /** The registry descriptor for `builtin:claude-code`. Defaults to a minimal one. */
+  /**
+   * The registry descriptor for `builtin:claude-code`. Defaults to a minimal
+   * one. Accepted wide (`ProviderDescriptor`) so a host that resolved it from
+   * its registry need not pre-narrow the kind; the factory validates it is an
+   * `agentRuntime` descriptor.
+   */
   descriptor?: ProviderDescriptor;
   /** Optional host-level bin resolver (default: identity on the config bin). */
   resolveBinPath?: (bin: string) => string;
@@ -54,7 +62,7 @@ export const CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = 
   ],
 };
 
-const DEFAULT_CLAUDE_CODE_DESCRIPTOR: ProviderDescriptor = {
+const DEFAULT_CLAUDE_CODE_DESCRIPTOR: AgentRuntimeProviderDescriptor = {
   id: 'claude-code',
   kind: 'agentRuntime',
   ref: {
@@ -63,6 +71,19 @@ const DEFAULT_CLAUDE_CODE_DESCRIPTOR: ProviderDescriptor = {
     raw: BUILTIN_CLAUDE_CODE_PROVIDER_REF,
   },
 };
+
+/** Validate + narrow a seed descriptor to the Agent Runtime kind. */
+function asAgentRuntimeDescriptor(
+  descriptor: ProviderDescriptor,
+): AgentRuntimeProviderDescriptor {
+  if (descriptor.kind !== 'agentRuntime') {
+    throw new Error(
+      `@excitedjs/agent-runtime-claude-code: descriptor.kind must be ` +
+        `'agentRuntime' (got ${JSON.stringify(descriptor.kind)})`,
+    );
+  }
+  return { ...descriptor, kind: descriptor.kind };
+}
 
 /**
  * Create the built-in Claude Code `AgentRuntimeProvider`. It implements the
@@ -79,7 +100,10 @@ export function createClaudeCodeAgentRuntimeProvider(
   const resolveBinPath = options.resolveBinPath ?? ((bin: string) => bin);
   return {
     ref: BUILTIN_CLAUDE_CODE_PROVIDER_REF,
-    descriptor: options.descriptor ?? DEFAULT_CLAUDE_CODE_DESCRIPTOR,
+    descriptor:
+      options.descriptor === undefined
+        ? DEFAULT_CLAUDE_CODE_DESCRIPTOR
+        : asAgentRuntimeDescriptor(options.descriptor),
     getCapabilities: () => CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES,
     readConfig(rawConfig, context) {
       return readDispatcherClaudeCodeConfig(
@@ -132,15 +156,13 @@ export function createClaudeCodeAgentRuntimeProvider(
 export { dispatcherClaudeCodeConfig };
 
 /**
- * The context Dreamux core's generic provider package-loader passes to a
- * package's factory export: the canonical ref and the seed descriptor the
- * provider echoes back. Structurally matches core's `ProviderFactoryContext`
- * without importing core.
+ * The context Dreamux core's generic provider package-loader passes to this
+ * package's factory export. A back-compat alias of the public
+ * {@link ProviderFactoryContext}, narrowed to the Agent Runtime descriptor kind
+ * so the factory assigns `descriptor` without a cast.
  */
-export interface ClaudeCodeProviderFactoryContext {
-  ref: string;
-  descriptor: ProviderDescriptor;
-}
+export type ClaudeCodeProviderFactoryContext =
+  ProviderFactoryContext<AgentRuntimeProviderDescriptor>;
 
 /**
  * Default export — the factory Dreamux core's generic provider-loader selects
@@ -158,8 +180,8 @@ export interface ClaudeCodeProviderFactoryContext {
  * first-class, loadable `AgentRuntimeProvider` for the generic loader and for
  * external embedders.
  */
-export default function claudeCodeAgentRuntimeProviderFactory(
-  context: ClaudeCodeProviderFactoryContext,
-): AgentRuntimeProvider<DispatcherClaudeCodeConfig> {
-  return createClaudeCodeAgentRuntimeProvider({ descriptor: context.descriptor });
-}
+const claudeCodeAgentRuntimeProviderFactory: AgentRuntimeProviderFactory<DispatcherClaudeCodeConfig> =
+  (context) =>
+    createClaudeCodeAgentRuntimeProvider({ descriptor: context.descriptor });
+
+export default claudeCodeAgentRuntimeProviderFactory;

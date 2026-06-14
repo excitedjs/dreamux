@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Support async Agent Runtime `readConfig` end-to-end (issue #209 types-API audit, F4). The host `AgentRuntimeProvider.readConfig` now allows `DispatcherProviderConfig | Promise<...>` and config load awaits it, matching `ChannelProvider.readConfig`; a rejected/thrown parse still fails loud. No operator-facing config/state change. Also drops two vestigial type re-exports from `agent-runtime/types.ts` that `@excitedjs/dreamux-types` no longer root-exports.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

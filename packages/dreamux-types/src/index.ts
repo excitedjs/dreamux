@@ -8,12 +8,27 @@
  * This package emits declarations only: there is no runtime JS contract surface
  * and no runtime dependencies. See
  * `.agents/decisions/npm-package-split-and-channel-targets.md`.
+ *
+ * Root-export policy (issue #209 overexposure audit): the names below are the
+ * intentional public surface an external provider author names directly. Helper
+ * shapes that a provider only reaches *contextually* — through a property of one
+ * of these interfaces or an implemented method's parameter — are intentionally
+ * NOT re-exported here even though they remain `export`ed from their source
+ * module (so the emitted `.d.ts` still resolves them transitively). The
+ * `exports` map publishes only this root, so an un-re-exported name is genuinely
+ * unnameable by consumers. `tests/root-exports.test.ts` locks this allowlist so
+ * future slices grow the surface deliberately, not by accident.
  */
 export type { DreamuxLogger } from './logger.js';
 export type {
+  AgentRuntimeProviderDescriptor,
   BuiltinProviderRef,
+  ChannelProviderDescriptor,
+  DreamuxEnvironment,
   NpmProviderRef,
   ProviderDescriptor,
+  ProviderFactory,
+  ProviderFactoryContext,
   ProviderKind,
   ProviderRef,
   ProviderRefSource,
@@ -33,7 +48,6 @@ export type {
   AgentRuntimeContextSnapshot,
   AgentRuntimeCreateContext,
   AgentRuntimeDiagnostic,
-  AgentRuntimeDiagnosticContext,
   AgentRuntimeDiagnosticRunner,
   AgentRuntimeDoctorResult,
   AgentRuntimeIdentity,
@@ -42,8 +56,7 @@ export type {
   AgentRuntimePathContext,
   AgentRuntimeProvider,
   AgentRuntimeProviderConfigReadContext,
-  AgentRuntimeResumeCapability,
-  AgentRuntimeResumeCheckpoint,
+  AgentRuntimeProviderFactory,
   AgentRuntimeResumeInput,
   AgentRuntimeRole,
   AgentRuntimeSkillSource,
@@ -60,10 +73,10 @@ export type {
   ChannelInboundEnvelope,
   ChannelMessageTargetCheck,
   ChannelProvider,
+  ChannelProviderFactory,
   ChannelReactInput,
   ChannelReplyInput,
   ChannelRoutes,
-  ChannelSender,
   ChannelSession,
   ChannelSessionCreateContext,
   ChannelTarget,

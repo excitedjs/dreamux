@@ -785,6 +785,81 @@ describe('global config (~/.dreamux/config.json)', () => {
     expect(providerRegistry.getImplementation(providerRef)).not.toBeUndefined();
   });
 
+  it('awaits an external runtime provider whose readConfig is async (#209 F4)', async () => {
+    const providerRef = 'npm:@example/dreamux-async-runtime#provider';
+    writeConfigObject(
+      testConfigFileObject({
+        agents: [
+          { id: 'flow', provider: providerRef, config: { provider_option: 'kept' } },
+        ],
+        dispatchers: [{ id: 'flow', agentRuntime: 'flow' }],
+      }),
+    );
+
+    // Agent-runtime readConfig is now sync-or-async (parity with
+    // ChannelProvider.readConfig); core awaits the result at config load.
+    const asyncFactory: ExternalAgentRuntimeProviderFactory = ({
+      ref,
+      descriptor,
+    }) => ({
+      ref,
+      descriptor,
+      getCapabilities: () => EXTERNAL_RUNTIME_CAPABILITIES,
+      async readConfig(rawConfig) {
+        await Promise.resolve();
+        return { ...rawConfig, parsed_async: true };
+      },
+      createRuntime() {
+        throw new Error('async runtime config test does not create a runtime');
+      },
+    });
+
+    const { config } = await loadConfigWithBuiltins({
+      configDir,
+      externalAgentRuntimeModuleImporter: async () => ({ provider: asyncFactory }),
+    });
+
+    expect(config.agents['flow']).toEqual({
+      provider: providerRef,
+      config: { provider_option: 'kept', parsed_async: true },
+    });
+  });
+
+  it('fails loud when an external runtime async readConfig rejects (#209 F4)', async () => {
+    const providerRef = 'npm:@example/dreamux-bad-runtime#provider';
+    writeConfigObject(
+      testConfigFileObject({
+        agents: [{ id: 'flow', provider: providerRef, config: {} }],
+        dispatchers: [{ id: 'flow', agentRuntime: 'flow' }],
+      }),
+    );
+
+    const rejectingFactory: ExternalAgentRuntimeProviderFactory = ({
+      ref,
+      descriptor,
+    }) => ({
+      ref,
+      descriptor,
+      getCapabilities: () => EXTERNAL_RUNTIME_CAPABILITIES,
+      async readConfig() {
+        await Promise.resolve();
+        throw new Error('async config validation failed: bad flow');
+      },
+      createRuntime() {
+        throw new Error('rejecting runtime config test does not create a runtime');
+      },
+    });
+
+    await expect(
+      loadConfigWithBuiltins({
+        configDir,
+        externalAgentRuntimeModuleImporter: async () => ({
+          provider: rejectingFactory,
+        }),
+      }),
+    ).rejects.toThrow(/async config validation failed: bad flow/);
+  });
+
   it('fails loudly when an external npm runtime package cannot be imported', async () => {
     writeConfigObject(
       testConfigFileObject({

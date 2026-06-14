@@ -17,7 +17,11 @@
  * can be authored against it today.
  */
 import type { DreamuxLogger } from './logger.js';
-import type { ProviderDescriptor } from './provider.js';
+import type {
+  AgentRuntimeProviderDescriptor,
+  DreamuxEnvironment,
+  ProviderFactory,
+} from './provider.js';
 import type {
   InboundDeliveryHooks,
   InboundDeliveryResult,
@@ -46,6 +50,14 @@ export type AgentRuntimeRole =
 export interface AgentRuntimeSkillSource {
   name: string;
   path: string;
+  /**
+   * How the runtime should mount `path` into its engine. An open string, not a
+   * closed union: a new runtime may define its own layout without a types bump.
+   * Standard layouts core emits today are `skill-dir` (a single skill directory,
+   * e.g. a Codex `skills/extraRoots` entry) and `claude-skills-parent` (the
+   * parent of a `.claude/skills` tree, e.g. a Claude `--add-dir` root). A runtime
+   * that does not recognize a layout should ignore that source, not fail.
+   */
   layout: string;
   source: 'dreamux-core' | string;
 }
@@ -73,13 +85,18 @@ export type AgentRuntimeResumeCapability =
 export interface AgentRuntimeCapabilities {
   /** Whether this runtime can resume a prior checkpoint, and which checkpoint id it expects. */
   resume: AgentRuntimeResumeCapability;
-  /** Whether a follow-up turn can steer/fold into an active turn. */
+  /**
+   * Whether a follow-up turn delivered while a turn is active folds into that
+   * turn rather than queueing behind it. Purely behavioral: there is no separate
+   * "steer" method — core still delivers through `channelInput`/`systemInput`,
+   * and this flag only tells core whether mid-turn delivery is absorbed.
+   */
   steer: { supported: boolean };
   /** How runtime events are surfaced to Dreamux. */
   events: { kind: 'push' | 'synthesized' };
-  /** Whether the runtime can report the last assistant/user-visible result. */
+  /** Whether {@link AgentRuntime.getLast} can report the last result. */
   last: { supported: boolean };
-  /** Whether the runtime can report context-window usage. */
+  /** Whether {@link AgentRuntime.getContext} can report context-window usage. */
   context: { supported: boolean };
   /**
    * How the launcher-supplied role/system prompt content is applied: `replace`
@@ -179,12 +196,12 @@ export interface AgentRuntimeDiagnosticRunner {
   check(
     command: string,
     args: string[],
-    options?: { env?: NodeJS.ProcessEnv },
+    options?: { env?: DreamuxEnvironment },
   ): Promise<boolean>;
   capture(
     command: string,
     args: string[],
-    options?: { env?: NodeJS.ProcessEnv },
+    options?: { env?: DreamuxEnvironment },
   ): Promise<string>;
 }
 
@@ -264,6 +281,11 @@ export interface AgentRuntimeCreateContext<TConfig = unknown> {
    * `systemPrompt.mode` capability. Optional: teammate launches may omit it.
    */
   systemPromptContent?: string;
+  /**
+   * MCP servers the launcher injects for this runtime instance. Already fully
+   * resolved by core: an empty array means "no MCP servers", and the provider
+   * must launch exactly these — it must not infer, append, or mutate the list.
+   */
   mcpServers: readonly AgentRuntimeMcpServer[];
   /**
    * Bundled skill sources core selected for this role. Empty for roles that
@@ -299,12 +321,24 @@ export interface AgentRuntime {
   getStatus(): AgentRuntimeStatus;
   getThreadId(): string | null;
   wasThreadResumed(): boolean;
+  /**
+   * The last assistant/user-visible result, or `null` when unavailable.
+   * A runtime whose `capabilities.last.supported` is false returns `null`
+   * rather than throwing or blocking — core treats `null` as "not reported".
+   */
   getLast(): Promise<AgentRuntimeLastResult | null>;
+  /**
+   * Context-window usage, or `null` when unavailable. A runtime whose
+   * `capabilities.context.supported` is false returns `null` rather than
+   * throwing or blocking.
+   */
   getContext(): Promise<AgentRuntimeContextSnapshot | null>;
   getCapabilities(): AgentRuntimeCapabilities;
   /**
-   * Deliver a teammate-completion envelope upward. Optional: a runtime whose
-   * capabilities declare no `teammateCompletion` shapes may not support it.
+   * Deliver a teammate-completion envelope upward. Optional, and feature-detected
+   * by presence: a runtime that declares no `capabilities.teammateCompletion`
+   * shapes should omit this method entirely rather than ship a throwing/no-op
+   * stub, since callers test for the method, not the capability array.
    */
   completionInput?(
     completion: CompletionEnvelope,
@@ -319,7 +353,7 @@ export interface AgentRuntime {
 export interface AgentRuntimeDiagnosticContext<TConfig = unknown> {
   runtime_id: string;
   config: TConfig;
-  env: NodeJS.ProcessEnv;
+  env: DreamuxEnvironment;
   scope: 'foreground' | 'managedService';
 }
 
@@ -327,6 +361,10 @@ export interface AgentRuntimeDiagnosticContext<TConfig = unknown> {
  * A provider's self-reported diagnostics: it DECLARES the bin checks doctor
  * should dedup + execute, and RUNS its own non-bin internal checks. Doctor
  * iterates providers and calls these instead of branching on a builtin ref.
+ *
+ * Optional on {@link AgentRuntimeProvider}: a provider with no diagnostic surface
+ * omits it. The host supplies the {@link AgentRuntimeDiagnosticRunner} to
+ * `runDiagnostic`; the provider only implements the checks, never the runner.
  */
 export interface AgentRuntimeDiagnostic<TConfig = unknown> {
   binChecks(context: AgentRuntimeDiagnosticContext<TConfig>): AgentRuntimeBinCheck[];
@@ -342,12 +380,18 @@ export interface AgentRuntimeDiagnostic<TConfig = unknown> {
  */
 export interface AgentRuntimeProvider<TConfig = unknown> {
   readonly ref: string;
-  readonly descriptor: ProviderDescriptor;
+  readonly descriptor: AgentRuntimeProviderDescriptor;
   getCapabilities(): AgentRuntimeCapabilities;
+  /**
+   * Parse + validate this provider's own config block. May return synchronously
+   * or as a promise; Dreamux core awaits the result, mirroring
+   * `ChannelProvider.readConfig`. A parse/validation failure must throw (the host
+   * fails loud), never return a partially-valid config.
+   */
   readConfig?(
     rawConfig: Record<string, unknown>,
     context: AgentRuntimeProviderConfigReadContext,
-  ): TConfig;
+  ): TConfig | Promise<TConfig>;
   /**
    * Self-reported doctor diagnostics. Optional: a provider with no diagnostic
    * surface may omit it.
@@ -355,6 +399,17 @@ export interface AgentRuntimeProvider<TConfig = unknown> {
   diagnostic?: AgentRuntimeDiagnostic<TConfig>;
   createRuntime(context: AgentRuntimeCreateContext<TConfig>): AgentRuntime;
 }
+
+/**
+ * The default (or `npm:pkg#export`-selected) factory export an Agent Runtime
+ * package ships. Its {@link ProviderFactoryContext} carries the already-narrowed
+ * {@link AgentRuntimeProviderDescriptor}, so the package assigns
+ * `provider.descriptor` from the seed without a cast.
+ */
+export type AgentRuntimeProviderFactory<TConfig = unknown> = ProviderFactory<
+  AgentRuntimeProvider<TConfig>,
+  AgentRuntimeProviderDescriptor
+>;
 
 /** Re-export so provider packages can take a logger in their own contexts. */
 export type { DreamuxLogger };
