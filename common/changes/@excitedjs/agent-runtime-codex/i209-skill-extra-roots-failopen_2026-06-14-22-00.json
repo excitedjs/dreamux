@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Fix: a codex app-server that predates the `skills/extraRoots/set` RPC no longer hard-bricks dispatcher startup (issue #209 slice 6 repair). `CodexRuntime.applySkillExtraRoots()` now distinguishes a capability/version gap — the backend does not implement the method at all, answering with an `unknown variant`/method-not-found error — from a genuine failure of the existing RPC. On a capability gap it fails OPEN: logs a warning and continues skill-blind instead of failing the start, so an older backend comes up rather than landing permanently `stopped`. Every other error (the RPC exists but applying the given roots failed) still fails LOUD, exactly as before. Classification is message-based (the RPC layer drops the JSON-RPC error code) and deliberately narrow.",
+      "type": "patch",
+      "packageName": "@excitedjs/agent-runtime-codex"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-codex",
+  "email": "053700@gmail.com"
+}

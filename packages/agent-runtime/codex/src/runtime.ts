@@ -389,9 +389,16 @@ export class CodexRuntime implements AgentRuntime {
    * immediate children are skill dirs, so a `skill-dir` source maps to the
    * *parent* of its own directory; roots are deduped (the bundled Dreamux skills
    * share one parent). Empty input skips the RPC entirely (a fresh per-runtime
-   * app-server starts with no extra roots, so nothing to clear). Errors are
-   * fatal to the start: a dispatcher/leader that cannot load its operational
-   * skills must fail loud, not run skill-blind.
+   * app-server starts with no extra roots, so nothing to clear).
+   *
+   * Error handling distinguishes two failure modes (issue #209 slice 6 repair):
+   *   1. The app-server does not implement `skills/extraRoots/set` at all — a
+   *      capability/version skew against an older codex backend (it answers with
+   *      an `unknown variant`/method-not-found error). This is NOT a real
+   *      failure: fail open, warn, and continue skill-blind rather than bricking
+   *      startup against every backend that predates the RPC.
+   *   2. The RPC exists but applying the given roots genuinely failed — fail
+   *      loud, exactly as before, so real misconfiguration is not masked.
    */
   private async applySkillExtraRoots(): Promise<void> {
     if (this.client === null) throw new Error('client not initialized');
@@ -405,7 +412,19 @@ export class CodexRuntime implements AgentRuntime {
       ),
     ];
     if (extraRoots.length === 0) return;
-    await this.client.request('skills/extraRoots/set', { extraRoots });
+    try {
+      await this.client.request('skills/extraRoots/set', { extraRoots });
+    } catch (err) {
+      if (isUnsupportedRpcMethodError(err)) {
+        this.log(
+          'warn',
+          `skills/extraRoots/set unsupported by this app-server; continuing skill-blind (${extraRoots.length} extra root(s) not applied)`,
+          err,
+        );
+        return;
+      }
+      throw err;
+    }
     this.log(
       'info',
       `applied ${extraRoots.length} skill extra root(s): ${extraRoots.join(', ')}`,
@@ -777,4 +796,39 @@ export class CodexRuntime implements AgentRuntime {
   private setStatus(s: AgentRuntimeStatus): void {
     this.status = s;
   }
+}
+
+/**
+ * Classify an RPC rejection as a capability/version gap — the app-server does
+ * not implement the requested method at all — rather than a genuine failure of
+ * an existing method.
+ *
+ * The rpc layer collapses codex's structured error to `Error(message)` (it
+ * drops the JSON-RPC error code), so the *message* is all we have. codex
+ * surfaces an unimplemented method as a serde enum-deserialization failure of
+ * the request's `method` field — `unknown variant \`<method>\`, expected one of
+ * …` — while a spec-compliant JSON-RPC peer answers method-not-found (-32601).
+ * We match those canonical phrasings only; the test stays deliberately narrow
+ * so a real error from an *existing* method (a bad root path, a permission
+ * failure) is NOT swallowed and still fails loud.
+ *
+ * The match is message-based by necessity: the rpc layer drops the structured
+ * JSON-RPC error code, so the message is all we have. The one residual
+ * false-positive is a server that *implements* the method but rejects a bad
+ * *param value* with an "unknown variant `<value>`" serde error. That is safe
+ * for our sole caller — `skills/extraRoots/set` takes a `string[]` of paths,
+ * which codex never enum-rejects — but a future caller passing an enum-typed
+ * param should not reuse this classifier blindly.
+ */
+export function isUnsupportedRpcMethodError(err: unknown): boolean {
+  const message = (
+    err instanceof Error ? err.message : String(err)
+  ).toLowerCase();
+  return (
+    message.includes('unknown variant') ||
+    message.includes('method not found') ||
+    message.includes('unknown method') ||
+    message.includes('no such method') ||
+    message.includes('unsupported method')
+  );
 }

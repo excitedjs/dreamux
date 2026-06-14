@@ -158,6 +158,15 @@ export class TeamMateAgentService {
   private readonly worktrees = new WorktreeManager();
   private readonly live = new Map<string, LiveTeamMate>();
   private submissionSeq = 0;
+  /**
+   * In-flight best-effort settled-turn captures (issue #209 slice 6 repair). The
+   * settle hook fires `deliverTurnSettled` fire-and-forget so it never perturbs
+   * the settle path, but its durable record/turns writes (atomic temp+rename)
+   * would otherwise outlive `stopAll()` and race teardown. Tracking the promises
+   * here lets shutdown drain them, so a caller that awaits `stopAll()` observes
+   * no still-pending writes.
+   */
+  private readonly inFlightSettleCaptures = new Set<Promise<void>>();
 
   constructor(private readonly opts: TeamMateAgentServiceOptions) {
     this.identities = new TeamMateIdentityStore({
@@ -759,6 +768,14 @@ export class TeamMateAgentService {
       await live.runtime.stop();
       this.live.delete(key);
     }
+    // Drain any best-effort settled-turn captures dispatched before/at stop so a
+    // caller awaiting shutdown sees no still-pending durable writes racing
+    // teardown (issue #209 slice 6 repair). A capture may enqueue another while
+    // we await (a settle landing during stop), so loop until quiescent. Captures
+    // self-isolate errors, so allSettled never throws.
+    while (this.inFlightSettleCaptures.size > 0) {
+      await Promise.allSettled([...this.inFlightSettleCaptures]);
+    }
   }
 
   getLiveRuntime(dispatcherId: string, name: string): AgentRuntime | null {
@@ -907,7 +924,9 @@ export class TeamMateAgentService {
             onTurnSettled: (settled: TurnSettledSignal): void => {
               const settledRuntime = liveRuntime;
               if (settledRuntime === null) return;
-              void this.deliverTurnSettled(
+              // Track the fire-and-forget capture so shutdown can drain it; the
+              // promise self-isolates all errors, so this never rejects.
+              const capture = this.deliverTurnSettled(
                 dispatcherId,
                 identity.name,
                 identity,
@@ -917,6 +936,10 @@ export class TeamMateAgentService {
                 turnOrigins,
                 onTeamMateCompletion,
               );
+              this.inFlightSettleCaptures.add(capture);
+              void capture.finally(() => {
+                this.inFlightSettleCaptures.delete(capture);
+              });
             },
           }
         : {}),
