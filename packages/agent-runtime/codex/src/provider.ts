@@ -22,7 +22,10 @@ import type {
   AgentRuntimeCreateContext,
   AgentRuntimeMcpServer,
   AgentRuntimeProvider,
+  AgentRuntimeProviderDescriptor,
+  AgentRuntimeProviderFactory,
   ProviderDescriptor,
+  ProviderFactoryContext,
 } from '@excitedjs/dreamux-types';
 
 /**
@@ -35,7 +38,12 @@ import type {
  * process/WS/home seams without changing the provider.
  */
 export interface CodexAgentRuntimeProviderOptions {
-  /** The registry descriptor for `builtin:codex`. Defaults to a minimal one. */
+  /**
+   * The registry descriptor for `builtin:codex`. Defaults to a minimal one.
+   * Accepted wide (`ProviderDescriptor`) so a host that resolved it from its
+   * registry need not pre-narrow the kind; the factory validates it is an
+   * `agentRuntime` descriptor.
+   */
   descriptor?: ProviderDescriptor;
   /**
    * Allocate a fresh volatile rendezvous socket path per app-server start. The
@@ -91,11 +99,24 @@ export const CODEX_AGENT_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = {
   ],
 };
 
-const DEFAULT_CODEX_DESCRIPTOR: ProviderDescriptor = {
+const DEFAULT_CODEX_DESCRIPTOR: AgentRuntimeProviderDescriptor = {
   id: 'codex',
   kind: 'agentRuntime',
   ref: { source: 'builtin', id: 'codex', raw: BUILTIN_CODEX_PROVIDER_REF },
 };
+
+/** Validate + narrow a seed descriptor to the Agent Runtime kind. */
+function asAgentRuntimeDescriptor(
+  descriptor: ProviderDescriptor,
+): AgentRuntimeProviderDescriptor {
+  if (descriptor.kind !== 'agentRuntime') {
+    throw new Error(
+      `@excitedjs/agent-runtime-codex: descriptor.kind must be 'agentRuntime' ` +
+        `(got ${JSON.stringify(descriptor.kind)})`,
+    );
+  }
+  return { ...descriptor, kind: descriptor.kind };
+}
 
 /**
  * Create the built-in Codex `AgentRuntimeProvider`. It implements the neutral
@@ -109,7 +130,10 @@ export function createCodexAgentRuntimeProvider(
 ): AgentRuntimeProvider<DispatcherCodexConfig> {
   return {
     ref: BUILTIN_CODEX_PROVIDER_REF,
-    descriptor: options.descriptor ?? DEFAULT_CODEX_DESCRIPTOR,
+    descriptor:
+      options.descriptor === undefined
+        ? DEFAULT_CODEX_DESCRIPTOR
+        : asAgentRuntimeDescriptor(options.descriptor),
     getCapabilities: () => CODEX_AGENT_RUNTIME_CAPABILITIES,
     readConfig(rawConfig, context) {
       return readDispatcherCodexConfig(rawConfig, context.file, context.prefix);
@@ -180,15 +204,13 @@ export function codexRuntimeArgsForMcpServers(
 }
 
 /**
- * The context Dreamux core's generic provider package-loader passes to a
- * package's factory export: the canonical ref and the seed descriptor the
- * provider echoes back. Structurally matches core's `ProviderFactoryContext`
- * without importing core.
+ * The context Dreamux core's generic provider package-loader passes to this
+ * package's factory export. A back-compat alias of the public
+ * {@link ProviderFactoryContext}, narrowed to the Agent Runtime descriptor kind
+ * so the factory assigns `descriptor` without a cast.
  */
-export interface CodexProviderFactoryContext {
-  ref: string;
-  descriptor: ProviderDescriptor;
-}
+export type CodexProviderFactoryContext =
+  ProviderFactoryContext<AgentRuntimeProviderDescriptor>;
 
 /**
  * Default export — the factory Dreamux core's generic provider-loader selects
@@ -207,8 +229,7 @@ export interface CodexProviderFactoryContext {
  * converging core's launcher onto the neutral context so it can drive the loaded
  * provider directly is later-slice work.
  */
-export default function codexAgentRuntimeProviderFactory(
-  context: CodexProviderFactoryContext,
-): AgentRuntimeProvider<DispatcherCodexConfig> {
-  return createCodexAgentRuntimeProvider({ descriptor: context.descriptor });
-}
+const codexAgentRuntimeProviderFactory: AgentRuntimeProviderFactory<DispatcherCodexConfig> =
+  (context) => createCodexAgentRuntimeProvider({ descriptor: context.descriptor });
+
+export default codexAgentRuntimeProviderFactory;

@@ -21,6 +21,8 @@
 import type {
   ChannelInboundEnvelope,
   ChannelProvider,
+  ChannelProviderDescriptor,
+  ChannelProviderFactory,
   ChannelReactInput,
   ChannelReplyInput,
   ChannelRoutes,
@@ -30,7 +32,6 @@ import type {
   ChannelToolCall,
   ChannelToolDescriptor,
   DreamuxLogger,
-  ProviderDescriptor,
 } from '@excitedjs/dreamux-types';
 import {
   FeishuChannelSession,
@@ -46,7 +47,7 @@ export interface FeishuChannelConfig {
   appSecret: string;
 }
 
-const DEFAULT_FEISHU_DESCRIPTOR: ProviderDescriptor & { kind: 'channel' } = {
+const DEFAULT_FEISHU_DESCRIPTOR: ChannelProviderDescriptor = {
   id: 'feishu',
   kind: 'channel',
   ref: { source: 'builtin', id: 'feishu', raw: BUILTIN_FEISHU_PROVIDER_REF },
@@ -227,9 +228,7 @@ export function createFeishuChannelProvider(): ChannelProvider<FeishuChannelConf
  * core-owned adapter instead (see the module doc); this keeps the package a
  * loader-real `ChannelProvider`.
  */
-export default function feishuChannelProviderFactory(_context: {
-  ref: string;
-  descriptor: ProviderDescriptor;
-}): ChannelProvider<FeishuChannelConfig> {
-  return createFeishuChannelProvider();
-}
+const feishuChannelProviderFactory: ChannelProviderFactory<FeishuChannelConfig> =
+  () => createFeishuChannelProvider();
+
+export default feishuChannelProviderFactory;

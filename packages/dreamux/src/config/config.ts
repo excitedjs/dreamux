@@ -287,7 +287,7 @@ async function readConfigFile(
     refs: agentProviderRefs(parsed),
     importModule: overrides.externalAgentRuntimeModuleImporter,
   });
-  return mergeWithDefaults(parsed, file, providerRegistry);
+  return await mergeWithDefaults(parsed, file, providerRegistry);
 }
 
 export async function assertNoLegacyTomlOnly(
@@ -337,18 +337,18 @@ function providerRegistryFor(overrides: ConfigPathOverrides): ProviderRegistry {
   return overrides.providerRegistry ?? createBuiltinProviderRegistry();
 }
 
-function mergeWithDefaults(
+async function mergeWithDefaults(
   raw: unknown,
   file: string,
   providerRegistry: ProviderRegistry,
-): DreamuxConfig {
+): Promise<DreamuxConfig> {
   if (!isPlainObject(raw)) {
     throw new Error(`dreamux config error in ${file}: top-level must be an object`);
   }
   rejectTopLevelCodex(raw, file);
   rejectUnknownKeys(raw, new Set(['agents', 'dispatchers']), file, '');
 
-  const agents = readAgents(raw['agents'], file, providerRegistry);
+  const agents = await readAgents(raw['agents'], file, providerRegistry);
   return {
     agents,
     dispatchers: readDispatchers(raw['dispatchers'], file, agents, providerRegistry),
@@ -383,11 +383,11 @@ function rejectTopLevelCodex(raw: Record<string, unknown>, file: string): void {
  * `agents`, a non-object entry, a missing/empty `id`, a duplicate `id`, or a
  * provider that is registered but not runnable each throws with the file named.
  */
-function readAgents(
+async function readAgents(
   rawAgents: unknown,
   file: string,
   providerRegistry: ProviderRegistry,
-): Record<string, ResolvedAgentConfig> {
+): Promise<Record<string, ResolvedAgentConfig>> {
   if (rawAgents === undefined) return {};
   if (!Array.isArray(rawAgents)) {
     throw new Error(
@@ -434,15 +434,19 @@ function readAgents(
           'agentRuntime provider before config validation.',
       );
     }
+    // A provider's `readConfig` may be sync or async (parity with
+    // `ChannelProvider.readConfig`); await covers both and preserves fail-loud —
+    // a thrown or rejected parse aborts config load.
+    const parsedConfig =
+      (await runtimeProvider.readConfig?.(rawConfig, {
+        providerRef: provider.ref,
+        agentId: id,
+        file,
+        prefix: `${prefix}config.`,
+      })) ?? rawConfig;
     out[id] = {
       provider: provider.ref,
-      config:
-        runtimeProvider.readConfig?.(rawConfig, {
-          providerRef: provider.ref,
-          agentId: id,
-          file,
-          prefix: `${prefix}config.`,
-        }) ?? rawConfig,
+      config: parsedConfig,
     };
   }
   return out;

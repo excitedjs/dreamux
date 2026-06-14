@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Public types-API audit (issue #209). Remove `@types/node` host globals from the public contract: `AgentRuntimeDiagnosticRunner` options + `AgentRuntimeDiagnosticContext.env` now use the package-owned `DreamuxEnvironment` (`Record<string, string | undefined>`) instead of `NodeJS.ProcessEnv`; a guard test forbids `NodeJS.*` / `Buffer` from reappearing. Publish the provider factory contract: `ProviderFactoryContext<TDescriptor>` / `ProviderFactory<TProvider, TDescriptor>` plus kind-specific aliases `AgentRuntimeProviderFactory` / `ChannelProviderFactory`. Narrow descriptors by kind: new `AgentRuntimeProviderDescriptor` / `ChannelProviderDescriptor`, and `AgentRuntimeProvider.descriptor` is now `agentRuntime`-narrowed. `AgentRuntimeProvider.readConfig` may now return `TConfig | Promise<TConfig>` (parity with `ChannelProvider.readConfig`). Root-export minimization: the package root no longer re-exports purely-contextual helper shapes (`AgentRuntimeDiagnosticContext`, `AgentRuntimeResumeCapability`, `AgentRuntimeResumeCheckpoint`, `ChannelSender`); they remain exported from their source module and resolve transitively through the public interfaces, but are no longer importable by name. A root-export allowlist test pins the surface. Update the stale `channel.ts` header that implied a generic Channel MCP.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux-types"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-types",
+  "email": "053700@gmail.com"
+}

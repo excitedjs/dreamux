@@ -11,14 +11,54 @@ import { describe, it, expect } from 'vitest';
 import {
   EXTERNAL_RUNTIME_CAPABILITIES,
   describeConfigContext,
+  fixtureChannelFactory,
   fixtureChannelProvider,
+  fixtureRuntimeFactory,
   fixtureRuntimeProvider,
 } from './fixtures/external-provider.js';
 
 describe('external provider fixture', () => {
   it('declares neutral runtime capabilities', () => {
     expect(EXTERNAL_RUNTIME_CAPABILITIES.events.kind).toBe('synthesized');
-    expect(EXTERNAL_RUNTIME_CAPABILITIES.teammateCompletion).toEqual([]);
+    expect(EXTERNAL_RUNTIME_CAPABILITIES.teammateCompletion).toEqual([
+      { kind: 'fixturePlainTurn', description: 'deliver as a plain user turn' },
+    ]);
+  });
+
+  it('narrows provider descriptors to their kind (P2)', () => {
+    expect(fixtureRuntimeProvider.descriptor.kind).toBe('agentRuntime');
+    expect(fixtureChannelProvider.descriptor.kind).toBe('channel');
+  });
+
+  it('factories echo the seed descriptor from the loader context (P1)', () => {
+    const runtime = fixtureRuntimeFactory({
+      ref: 'npm:@example/fixture-runtime',
+      descriptor: fixtureRuntimeProvider.descriptor,
+    });
+    expect(runtime.descriptor.kind).toBe('agentRuntime');
+    const channel = fixtureChannelFactory({
+      ref: 'npm:@example/fixture-channel',
+      descriptor: fixtureChannelProvider.descriptor,
+    });
+    expect(channel.descriptor.kind).toBe('channel');
+  });
+
+  it('delivers a completion upward through the optional completionInput', async () => {
+    const runtime = fixtureRuntimeProvider.createRuntime({
+      identity: { runtime_id: 'd1', checkpoint_id: null },
+      role: 'dispatcher',
+      config: { model: 'm' },
+      cwd: '/tmp/fixture',
+      mcpServers: [],
+    });
+    expect(runtime.completionInput).toBeDefined();
+    const result = await runtime.completionInput?.({
+      source: 'teammate',
+      id: 't1',
+      status: 'completed',
+      result: 'done',
+    });
+    expect(result).toEqual({ status: 'accepted' });
   });
 
   it('formats a config-read context', () => {
@@ -34,7 +74,9 @@ describe('external provider fixture', () => {
 
   it('implements a full AgentRuntimeProvider against types only', async () => {
     expect(fixtureRuntimeProvider.descriptor.kind).toBe('agentRuntime');
-    const config = fixtureRuntimeProvider.readConfig?.(
+    // `readConfig` is sync-or-async (parity with `ChannelProvider.readConfig`,
+    // F4); awaiting covers both shapes.
+    const config = await fixtureRuntimeProvider.readConfig?.(
       { model: 'fixture-model' },
       {
         providerRef: 'npm:@example/fixture-runtime',
