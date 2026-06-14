@@ -298,8 +298,8 @@ stdio shim does not read Feishu secrets. It forwards Feishu action tool calls to
 the serve process over the admin socket, and the serve process owns the Feishu
 client sessions plus process-local received-reaction cleanup state. Channel
 binding is not a generic Channel MCP surface: it lives on the Team MCP as
-`bind_channel({ team_name, channel_id?, meta })` and
-`transfer_back({ channel_id?, meta })`.
+`bind_channel({ team_name, channel_id, meta })` and
+`transfer_back({ channel_id, meta })`.
 
 The model-facing tools include:
 

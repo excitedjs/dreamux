@@ -372,17 +372,17 @@ no separate generic "channel" MCP surface for this epic. The Team MCP gains two
 channel-binding tools alongside its lifecycle tools (`create` / `list` /
 `status` / `history` / `dissolve`):
 
-- `bind_channel({ team_name, channel_id?, meta })` — hand a configured channel
+- `bind_channel({ team_name, channel_id, meta })` — hand a configured channel
   target to a Team so inbound from that target routes to the Team's TeamLeader;
-- `transfer_back({ channel_id?, meta })` — return a bound target to the
+- `transfer_back({ channel_id, meta })` — return a bound target to the
   dispatcher, deactivating the binding.
 
 `channel_id` identifies the configured channel (`dispatchers[].channels[].id`);
-it is optional and defaults to the dispatcher's sole configured channel (an
-explicit value must match it). `meta` is the provider-specific selector, opaque
-to core (for Feishu, `{ chat_id: '<group chat id>' }`); core hands it to the
-channel's `resolveTarget(meta)`, which infers/validates the target — binding is
-group-only and `chat_type` is not required on the surface. Binding state, target
+the final public contract requires agents to pass it explicitly. `meta` is the
+provider-specific selector, opaque to core (for Feishu,
+`{ chat_id: '<group chat id>' }`); core hands it to the channel's
+`resolveTarget(meta)`, which infers/validates the target — binding is group-only
+and `chat_type` is not required on the surface. Binding state, target
 normalization, routing, P2P denial, and TeamLeader authorization stay core-owned;
 the channel provider only normalizes the selector and does platform I/O.
 
@@ -838,11 +838,10 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   `channel_id` is the dispatcher-local `dispatchers[].channels[].id`. For inbound
   it is the channel the message arrived through (the originating live session tags
   it — see "Live multi-channel routing" below); for the bind path it is the
-  `channel_id` arg (a single-channel dispatcher defaults to its sole channel). The
+  required `channel_id` arg. The
   `bind_channel` / `transfer_back` tools (on the **Team MCP** — see the reversal
-  below) take a provider selector `meta` (Feishu: `{ chat_id }`) and an optional
-  `channel_id` (defaults to the sole configured channel; required when more than
-  one is configured; an explicit id must name a configured channel). A pre-v2
+  below) take a provider selector `meta` (Feishu: `{ chat_id }`) and an explicit
+  `channel_id` that must name a configured channel. A pre-v2
   store fails loud at `dreamux serve` / `dreamux doctor` (and on access) with
   rebuild guidance — Dreamux 0.x does not migrate it.
 - **Final hardening (package-boundary guards) — satisfied now:** the
@@ -865,9 +864,9 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   Team capability, so the interim generic `channel` MCP surface (the `channel-mcp`
   shim, `channelMcpServerDescriptor`, `mcp.channel.*`, and the `channel-mcp` CLI
   command) was removed, and the binding verbs live on the **Team MCP** as
-  `bind_channel({ team_name, channel_id?, meta })` /
-  `transfer_back({ channel_id?, meta })`. `channel_id` selects the configured
-  channel (optional, defaults to the sole channel); `meta` is the opaque provider
+  `bind_channel({ team_name, channel_id, meta })` /
+  `transfer_back({ channel_id, meta })`. `channel_id` selects the configured
+  channel; `meta` is the opaque provider
   selector (Feishu: `{ chat_id }`) core hands to `resolveTarget(meta)`, which
   infers/validates the group target (no `chat_type` required). Binding state,
   normalization, routing, P2P denial, and TeamLeader authorization remain

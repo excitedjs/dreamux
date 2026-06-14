@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Docs-only cleanup for the final issue #209 package split contract: align existing change notes and docs with Team MCP `bind_channel` / `transfer_back`, live Feishu multi-channel routing, the final package map, and runtime skill injection wording. No runtime behavior or public API changes.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}
