@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Restore the public root type-only surface of @excitedjs/dreamux-types (issue #209 final review). The package root again re-exports `AgentRuntimeDiagnosticContext`, `AgentRuntimeResumeCapability`, `AgentRuntimeResumeCheckpoint`, and `ChannelSender`, so a provider author can import these public type names directly from `@excitedjs/dreamux-types`. Each is a parameter or property type of an interface a provider already implements (the `AgentRuntimeDiagnostic` methods, `AgentRuntimeCapabilities.resume` / `AgentRuntimeResumeInput.checkpoint`, and `ChannelInboundEnvelope.sender`); a declaration-only package gains nothing by hiding a public type behind transitive resolution. The root now aggregates every public type declared in the source modules, and a guard test pins the root export set to that full set in both directions (no casual widening, no casual hiding). The package stays strictly type-only: every re-export is `export type`, no runtime values are exported, and the manifest is unchanged.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux-types"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-types",
+  "email": "053700@gmail.com"
+}
