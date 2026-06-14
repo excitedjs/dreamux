@@ -11,12 +11,13 @@ import { dirname, join } from 'node:path';
 
 import { describe, it, expect } from 'vitest';
 
-import { CodexRuntime } from '../src/runtime.js';
+import { CodexRuntime, isUnsupportedRpcMethodError } from '../src/runtime.js';
 import type {
   AgentRuntimeIdentity,
   AgentRuntimePathContext,
   AgentRuntimeSkillSource,
   AgentRuntimeStateCallbacks,
+  DreamuxLogger,
 } from '@excitedjs/dreamux-types';
 
 const SKILL_LAYOUT = 'skill-dir';
@@ -29,6 +30,8 @@ class FakeClient {
   readonly methods: string[] = [];
   readonly extraRootsCalls: string[][] = [];
   failExtraRoots = false;
+  /** When set, `skills/extraRoots/set` rejects with this error instead. */
+  extraRootsError: Error | null = null;
 
   onClose(): void {}
   onNotification(): void {}
@@ -49,6 +52,9 @@ class FakeClient {
     }
     if (method === 'skills/extraRoots/set') {
       this.extraRootsCalls.push((params as { extraRoots: string[] }).extraRoots);
+      if (this.extraRootsError !== null) {
+        throw this.extraRootsError;
+      }
       if (this.failExtraRoots) {
         throw new Error('codex rejected skills/extraRoots/set');
       }
@@ -59,6 +65,29 @@ class FakeClient {
     }
     throw new Error(`unexpected method ${method}`);
   }
+}
+
+interface CapturedLog {
+  level: 'info' | 'warn' | 'error' | 'debug' | 'trace';
+  msg: string;
+}
+
+/** A DreamuxLogger that records every line so a test can assert the warning. */
+function capturingLogger(sink: CapturedLog[]): DreamuxLogger {
+  const record =
+    (level: CapturedLog['level']) =>
+    (msg: string): void => {
+      sink.push({ level, msg });
+    };
+  const logger = {
+    info: record('info'),
+    warn: record('warn'),
+    error: record('error'),
+    debug: record('debug'),
+    trace: record('trace'),
+    child: () => logger,
+  };
+  return logger as unknown as DreamuxLogger;
 }
 
 class FakeProcess {
@@ -84,6 +113,7 @@ function noopState(): AgentRuntimeStateCallbacks {
 function buildRuntime(
   client: FakeClient,
   skillSources: AgentRuntimeSkillSource[],
+  logger?: DreamuxLogger,
 ): CodexRuntime {
   const identity: AgentRuntimeIdentity = { runtime_id: 'flow', checkpoint_id: null };
   return new CodexRuntime(identity, {
@@ -94,6 +124,7 @@ function buildRuntime(
     skillSources,
     codexProcessFactory: () => new FakeProcess() as never,
     codexClientFactory: () => client as never,
+    ...(logger !== undefined ? { logger } : {}),
   });
 }
 
@@ -137,5 +168,73 @@ describe('codex skills/extraRoots/set injection', () => {
     await expect(runtime.start()).rejects.toThrow(/extraRoots/);
     // The failure happens before any thread is started.
     expect(client.methods).not.toContain('thread/start');
+  });
+
+  it('fails open (warns, continues) when the app-server does not implement the RPC', async () => {
+    // A codex backend that predates `skills/extraRoots/set` answers with a serde
+    // enum-deserialization failure of the request `method` field. That is a
+    // capability/version gap, not a real failure — startup must continue
+    // skill-blind instead of bricking the dispatcher (issue #209 slice 6 repair).
+    const client = new FakeClient();
+    client.extraRootsError = new Error(
+      'Invalid request: unknown variant `skills/extraRoots/set`, expected one of `initialize`, `thread/start`, `skills/list`, `skills/config/write`, `memory/dream`',
+    );
+    const logs: CapturedLog[] = [];
+    const runtime = buildRuntime(
+      client,
+      [skillSource('/pkg/skills/dispatcher')],
+      capturingLogger(logs),
+    );
+
+    await expect(runtime.start()).resolves.toBeUndefined();
+    await runtime.stop();
+
+    // The RPC was attempted, then downgraded to a warning, and thread/start
+    // still ran — the dispatcher comes up, just without the extra roots.
+    expect(client.extraRootsCalls).toEqual([[dirname('/pkg/skills/dispatcher')]]);
+    expect(client.methods).toContain('thread/start');
+    const warn = logs.find((l) => l.level === 'warn');
+    expect(warn?.msg).toMatch(/unsupported by this app-server; continuing skill-blind/);
+    // No error was logged for a capability gap.
+    expect(logs.some((l) => l.level === 'error')).toBe(false);
+  });
+
+  it('still fails loud for a real error from an existing RPC (not swallowed)', async () => {
+    // The method exists but applying the roots genuinely failed (e.g. a bad
+    // path / permission). This must NOT be mistaken for a capability gap.
+    const client = new FakeClient();
+    client.extraRootsError = new Error('failed to register extra root: permission denied');
+    const runtime = buildRuntime(client, [skillSource('/pkg/skills/dispatcher')]);
+
+    await expect(runtime.start()).rejects.toThrow(/permission denied/);
+    expect(client.methods).not.toContain('thread/start');
+  });
+});
+
+describe('isUnsupportedRpcMethodError', () => {
+  it('classifies capability/version-gap rejections as unsupported', () => {
+    for (const msg of [
+      'Invalid request: unknown variant `skills/extraRoots/set`, expected one of `initialize`',
+      'Method not found',
+      'unknown method skills/extraRoots/set',
+      'no such method',
+      'unsupported method: skills/extraRoots/set',
+    ]) {
+      expect(isUnsupportedRpcMethodError(new Error(msg))).toBe(true);
+    }
+  });
+
+  it('does not classify real errors from an existing method as unsupported', () => {
+    for (const msg of [
+      'failed to register extra root: permission denied',
+      'codex rejected skills/extraRoots/set',
+      'invalid root path',
+      'internal error',
+    ]) {
+      expect(isUnsupportedRpcMethodError(new Error(msg))).toBe(false);
+    }
+    // Non-Error inputs degrade to their string form, never throwing.
+    expect(isUnsupportedRpcMethodError('method not found')).toBe(true);
+    expect(isUnsupportedRpcMethodError(null)).toBe(false);
   });
 });

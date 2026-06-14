@@ -55,11 +55,29 @@ class FakeRuntime implements AgentRuntime {
   private turns = 0;
   private activeTurnId: string | null = null;
   readonly delivered: CompletionEnvelope[] = [];
+  /** Optional barrier so a test can hold a settle-capture in flight. */
+  private getLastGate: Promise<void> | null = null;
 
   constructor(
     private readonly context: AgentRuntimeCreateContext,
     private readonly instanceId: number,
   ) {}
+
+  /**
+   * Arm a one-shot barrier inside `getLast()`. The next settle-capture that
+   * reaches `getLast` parks until the returned release fn is called — letting a
+   * test prove `stopAll()` drains an in-flight capture rather than racing it.
+   */
+  gateGetLast(): () => void {
+    let release: () => void = () => undefined;
+    this.getLastGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return () => {
+      this.getLastGate = null;
+      release();
+    };
+  }
 
   async start(): Promise<void> {
     this.status = 'ready';
@@ -113,6 +131,7 @@ class FakeRuntime implements AgentRuntime {
   }
 
   async getLast(): Promise<AgentRuntimeLastResult> {
+    if (this.getLastGate !== null) await this.getLastGate;
     return this.activeTurnId === null
       ? { text: 'reviewer final answer' }
       : { text: null };
@@ -442,6 +461,51 @@ describe('reverse delivery end-to-end (Seam ①→②→③ through the facade)'
     );
 
     await facade.shutdown();
+  });
+
+  it('shutdown() drains an in-flight settled-turn capture (deterministic; ENOTEMPTY guard)', async () => {
+    // The macOS CI flake was a best-effort settled-turn capture (atomic
+    // temp+rename into teammate/records|turns) still in flight when teardown ran.
+    // shutdown() now drains those captures; prove that on any OS by holding one
+    // capture open (gate getLast) and asserting shutdown() does NOT resolve until
+    // the capture is released — without weakening the behavior assertions above.
+    const descriptor = createBuiltinProviderRegistry().resolve('builtin:codex');
+    const provider = new FakeProvider(descriptor);
+    const facade = buildFacade(provider, adminSocketPath);
+
+    await facade.startDispatcher('flow');
+    const spawned = await facade.spawnTeamMate({
+      dispatcherId: 'flow',
+      name: 'reviewer',
+      intent: 'work',
+      prompt: 'Review the change.',
+      cwd: workspace(root),
+    });
+
+    const teammateRuntime = provider.runtimes[1]!;
+    const turnId =
+      spawned.turn.status === 'submitted' ? spawned.turn.turn_id : 'unreachable';
+
+    // Arm the barrier, then fire a settle: the capture parks inside getLast, so
+    // its durable record/turns write has NOT happened yet.
+    const releaseCapture = teammateRuntime.gateGetLast();
+    teammateRuntime.settle('completed', turnId);
+    await flush();
+
+    // shutdown() must block on the in-flight capture rather than racing it.
+    let shutdownResolved = false;
+    const shutdownPromise = facade.shutdown().then(() => {
+      shutdownResolved = true;
+    });
+    // Give shutdown ample time to stop the runtimes and reach the drain; while
+    // the capture is gated it can never resolve, so this stays false.
+    await sleep(50);
+    expect(shutdownResolved).toBe(false);
+
+    // Releasing the capture lets it finish its write; shutdown then resolves.
+    releaseCapture();
+    await shutdownPromise;
+    expect(shutdownResolved).toBe(true);
   });
 
   it('reverse-delivers one completion for multiple sends steered into the current turn', async () => {
