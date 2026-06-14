@@ -707,17 +707,19 @@ export function dispatcherFeishuConfig(
 }
 
 /**
- * Best-effort Feishu bot app id for a dispatcher's state row. Returns the sole
- * Feishu channel's `app_id`, or `''` when the dispatcher has an ambiguous (≠1)
- * Feishu channel count. Such a dispatcher is not runnable (the dispatcher
- * service launch guard rejects it), so this placeholder is never used for live
- * routing; it keeps store seeding fail-soft so the unrunnable shape fails at the
- * one intended runtime boundary instead of during state construction.
+ * The Feishu bot app id for a dispatcher's state row: its PRIMARY (first) Feishu
+ * channel's `app_id`, or `''` when the dispatcher declares no Feishu channel.
+ * With live multi-channel routing each channel connects as its own bot, so the
+ * row's single identity is the primary one; the cross-dispatcher uniqueness check
+ * (`assertUniqueFeishuAppIds`) and the store's per-row uniqueness guard both key
+ * on this primary id (a secondary channel's bot identity is out of scope for that
+ * uniqueness check). For a single-channel dispatcher this is the sole channel,
+ * unchanged.
  */
 export function dispatcherFeishuAppId(
   dispatcher: Pick<DispatcherConfig, 'channels'>,
 ): string {
-  return soleFeishuConfigFromChannels(dispatcher.channels)?.app_id ?? '';
+  return dispatcherFeishuChannels(dispatcher)[0]?.config.app_id ?? '';
 }
 
 /**
@@ -737,6 +739,29 @@ export function dispatcherChannelId(
     (item) => item.provider === BUILTIN_FEISHU_PROVIDER_REF,
   );
   return feishuChannels.length === 1 ? feishuChannels[0]!.id : null;
+}
+
+/**
+ * Every Feishu channel a dispatcher declares, as `(channel_id, { app_id,
+ * app_secret })` (issue #209 live multi-channel routing). Each channel carries
+ * its own bot identity in its config block — the provider's `readConfig`
+ * validated `app_id` / `app_secret` are non-empty at load — so a dispatcher can
+ * run more than one Feishu bot at once, each keyed by its dispatcher-local
+ * `channels[].id`. For a single-channel dispatcher this is the same sole channel
+ * {@link dispatcherChannelId} / {@link dispatcherFeishuAppId} resolve, so legacy
+ * routing is unchanged. Order follows declaration order; the first is the
+ * dispatcher's primary channel (the default egress channel and the bot identity
+ * the state row seeds).
+ */
+export function dispatcherFeishuChannels(
+  dispatcher: Pick<DispatcherConfig, 'channels'>,
+): Array<{ channelId: string; config: DispatcherFeishuConfig }> {
+  return dispatcher.channels
+    .filter((item) => item.provider === BUILTIN_FEISHU_PROVIDER_REF)
+    .map((item) => ({
+      channelId: item.id,
+      config: item.config as unknown as DispatcherFeishuConfig,
+    }));
 }
 
 /**

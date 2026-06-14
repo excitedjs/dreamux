@@ -21,6 +21,7 @@ import {
 } from '../../channel/feishu/feishu-mcp-surface.js';
 import {
   BUILTIN_CODEX_PROVIDER_REF,
+  dispatcherFeishuChannels,
   type DreamuxConfig,
 } from '../../config/config.js';
 import { assertRunnableChannelShape } from './runnable-channel.js';
@@ -54,6 +55,7 @@ export interface DispatcherAgentServiceOptions {
   log: DreamuxLogger;
   routeChannelInput?: (
     dispatcherId: string,
+    channelId: string,
     input: import('../../agent-runtime/turn.js').InboundTurnInput,
     envelope: FeishuInboundEnvelope,
     hooks?: import('../../agent-runtime/turn.js').InboundDeliveryHooks,
@@ -63,7 +65,13 @@ export interface DispatcherAgentServiceOptions {
 export interface DispatcherAgentSlot {
   row: DispatcherRow;
   runtime: AgentRuntime;
-  channel: FeishuChannelSession;
+  /**
+   * Live channel sessions keyed by dispatcher-local `channel_id` (issue #209
+   * live multi-channel routing). A single-channel dispatcher holds one entry;
+   * iteration order follows channel declaration order, so the first is the
+   * primary (default egress) channel.
+   */
+  channels: Map<string, FeishuChannelSession>;
   log: DreamuxLogger;
 }
 
@@ -79,6 +87,13 @@ export interface FeishuChannelToolCall {
   dispatcherId: string;
   toolName: FeishuMcpToolName;
   arguments: unknown;
+  /**
+   * Which channel's bot the egress (reply/react) leaves through (issue #209 live
+   * multi-channel routing). Omitted → the dispatcher's primary (first) channel,
+   * so a single-channel dispatcher is unchanged. A TeamLeader's reply carries the
+   * channel resolved from its active binding so it always egresses the bound bot.
+   */
+  channelId?: string;
 }
 
 const COMPLETION_DELIVERY_CACHE_LIMIT = 512;
@@ -119,10 +134,15 @@ export class DispatcherAgentService {
   async stopDispatcher(id: string): Promise<void> {
     const slot = this.slots.get(id);
     if (slot === undefined) return;
-    try {
-      await slot.channel.close();
-    } catch (err) {
-      slot.log.error({ dispatcher_id: id, err: errInfo(err) }, 'error closing bot');
+    for (const [channelId, session] of slot.channels) {
+      try {
+        await session.close();
+      } catch (err) {
+        slot.log.error(
+          { dispatcher_id: id, channel_id: channelId, err: errInfo(err) },
+          'error closing bot',
+        );
+      }
     }
     try {
       await slot.runtime.stop();
@@ -248,7 +268,10 @@ export class DispatcherAgentService {
       return handleFeishuListChatBots(input.dispatcherId, input.arguments);
     }
     const slot = this.mustRunningSlot(input.dispatcherId);
-    return slot.channel.handleMcpTool(input.toolName, input.arguments);
+    return this.sessionFor(slot, input.channelId).handleMcpTool(
+      input.toolName,
+      input.arguments,
+    );
   }
 
   feishuMessageBelongsToChat(
@@ -257,18 +280,61 @@ export class DispatcherAgentService {
     chatId: string,
   ): boolean {
     const slot = this.slots.get(dispatcherId);
-    return slot?.channel.messageBelongsToChat(messageId, chatId) ?? false;
+    if (slot === undefined) return false;
+    // A message belongs to the chat if ANY live channel session observed it; a
+    // dispatcher's bots see disjoint chats, so this stays unambiguous.
+    for (const session of slot.channels.values()) {
+      if (session.messageBelongsToChat(messageId, chatId)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Pick the channel session egress/target resolution runs through. A known
+   * `channelId` selects that channel's bot; otherwise the primary (first) channel
+   * — so single-channel dispatchers are unchanged. Fails loud if a requested
+   * channel is not live.
+   */
+  private sessionFor(
+    slot: DispatcherAgentSlot,
+    channelId?: string,
+  ): FeishuChannelSession {
+    if (channelId !== undefined) {
+      const session = slot.channels.get(channelId);
+      if (session === undefined) {
+        throw new Error(
+          `dispatcher '${slot.row.dispatcher_id}' has no live channel '${channelId}'`,
+        );
+      }
+      return session;
+    }
+    const first = slot.channels.values().next().value;
+    if (first === undefined) {
+      throw new Error(
+        `dispatcher '${slot.row.dispatcher_id}' has no live channel session`,
+      );
+    }
+    return first;
   }
 
   /**
    * Resolve a provider selector to a neutral `ChannelTarget` via the live channel
    * session (issue #209 binding store v2). Target resolution is provider-owned;
    * core calls it here for both binding and inbound routing so `target_key` stays
-   * opaque to core. Requires a running dispatcher — both call paths (the bind
-   * tool, the inbound router) run only while the channel session is live.
+   * opaque to core. The originating/selected `channelId` picks the session (live
+   * multi-channel); omitted resolves through the primary channel. Requires a
+   * running dispatcher — both call paths (the bind tool, the inbound router) run
+   * only while a channel session is live.
    */
-  resolveChannelTarget(dispatcherId: string, meta: unknown): ChannelTarget {
-    return this.mustRunningSlot(dispatcherId).channel.resolveTarget(meta);
+  resolveChannelTarget(
+    dispatcherId: string,
+    meta: unknown,
+    channelId?: string,
+  ): ChannelTarget {
+    return this.sessionFor(
+      this.mustRunningSlot(dispatcherId),
+      channelId,
+    ).resolveTarget(meta);
   }
 
   async shutdown(): Promise<void> {
@@ -285,11 +351,11 @@ export class DispatcherAgentService {
     const dispatcherConfig = this.opts.config.dispatchers.find(
       (dispatcher) => dispatcher.id === id,
     );
-    // Config accepts the general multi-channel shape (issue #209), but live
-    // routing is a follow-up slice: fail loud here — the one intended runtime
-    // boundary — for any not-yet-runnable shape rather than silently wiring only
-    // the first channel. State seeding stays fail-soft so this is the only place
-    // that rejects it.
+    // Config accepts the general multi-channel shape (issue #209). Live routing
+    // now runs one Feishu session per channel; this guard stays the single
+    // runtime boundary that fails loud on a not-yet-runnable shape (a channel
+    // naming an unwired provider). State seeding stays fail-soft so this is the
+    // only place that rejects it.
     if (dispatcherConfig !== undefined) {
       assertRunnableChannelShape(dispatcherConfig);
     }
@@ -303,18 +369,6 @@ export class DispatcherAgentService {
     // and keeps the launch path self-validating.
     const cwd = await ensureDispatcherWorkspace(this.opts.config, id);
     const channelLog = this.opts.channelLoggerFactory(id);
-    const channel = createFeishuChannelSession({
-      dispatcherId: id,
-      row,
-      config: this.opts.config,
-      log: channelLog,
-      ...(this.opts.botFactory !== undefined
-        ? { botFactory: this.opts.botFactory }
-        : {}),
-      ...(this.opts.skipBotSecret !== undefined
-        ? { skipBotSecret: this.opts.skipBotSecret }
-        : {}),
-    });
     // The dispatcher prompt is runtime-injected via the runtime's systemPrompt
     // capability. 'replace' runtimes (codex) consume the full prompt as their
     // base instructions; 'append' runtimes (claude-code) receive a focused
@@ -335,18 +389,63 @@ export class DispatcherAgentService {
       log: loggerToLevelFn(channelLog),
     });
 
+    // One live session per configured Feishu channel, each connecting as its own
+    // bot (issue #209 live multi-channel routing). A single-channel dispatcher
+    // gets one session, identical to before. The defensive no-config path keeps
+    // the legacy single row-bot session under the conventional 'primary' id.
+    const channelSpecs =
+      dispatcherConfig !== undefined
+        ? dispatcherFeishuChannels(dispatcherConfig)
+        : [];
+    const specs =
+      channelSpecs.length > 0
+        ? channelSpecs
+        : [{ channelId: 'primary', config: undefined }];
+    const channels = new Map<string, FeishuChannelSession>();
+
     try {
       await runtime.start();
-      await channel.start({
-        submitTurn: (turn, envelope, hooks) =>
-          this.opts.routeChannelInput?.(id, turn, envelope, hooks) ??
-          runtime.channelInput(turn, hooks),
-      });
+      for (const spec of specs) {
+        const session = createFeishuChannelSession({
+          dispatcherId: id,
+          row,
+          config: this.opts.config,
+          log: channelLog,
+          ...(spec.config !== undefined
+            ? {
+                channel: {
+                  appId: spec.config.app_id,
+                  appSecret: spec.config.app_secret,
+                },
+              }
+            : {}),
+          ...(this.opts.botFactory !== undefined
+            ? { botFactory: this.opts.botFactory }
+            : {}),
+          ...(this.opts.skipBotSecret !== undefined
+            ? { skipBotSecret: this.opts.skipBotSecret }
+            : {}),
+        });
+        const channelId = spec.channelId;
+        // Register before start so a session whose start() throws is still
+        // closed by the catch below (it would otherwise leak — not yet mapped).
+        channels.set(channelId, session);
+        // Each session tags its own channel_id onto every inbound turn it
+        // delivers, so the router keys on the channel the message actually
+        // arrived through rather than re-deriving a single channel from config.
+        await session.start({
+          submitTurn: (turn, envelope, hooks) =>
+            this.opts.routeChannelInput?.(id, channelId, turn, envelope, hooks) ??
+            runtime.channelInput(turn, hooks),
+        });
+      }
     } catch (err) {
-      try {
-        await channel.close();
-      } catch {
-        /* best effort */
+      for (const session of channels.values()) {
+        try {
+          await session.close();
+        } catch {
+          /* best effort */
+        }
       }
       try {
         await runtime.stop();
@@ -359,7 +458,7 @@ export class DispatcherAgentService {
     this.slots.set(id, {
       row,
       runtime,
-      channel,
+      channels,
       log: channelLog,
     });
     this.opts.log.info(

@@ -30,9 +30,11 @@ the implementation is still mostly host-local:
   `dispatchers[].channels[]` envelope. Since the multi-channel config slice
   (#209) it accepts multiple channels with unique dispatcher-local ids and
   delegates provider-specific validation to each channel provider's `readConfig`
-  (no Feishu-specific checks in core). Live multi-channel routing is still a
-  follow-up: a runnable dispatcher must declare exactly one `builtin:feishu`
-  channel (fail-loud at server start otherwise).
+  (no Feishu-specific checks in core). Live multi-channel routing has landed: a
+  runnable dispatcher MAY declare more than one `builtin:feishu` channel — the
+  dispatcher service runs one live session per channel, each connecting as its
+  own bot — and only a channel naming an unwired (non-feishu) provider fails loud
+  at server start. See "Live multi-channel routing" below.
 - `/packages/dreamux/src/dispatcher-service/channel-binding/store.ts` stores
   version 1 rows keyed by `(provider, chat_id)`, which cannot distinguish
   multiple channel instances or non-chat channel targets.
@@ -796,15 +798,13 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   phase, like agent runtimes). External `npm:` channel providers are not loaded at
   config time yet (`readConfigFile` loads only external agent-runtime refs); an
   `npm:` channel ref fails loud as an unloaded external provider until a generic
-  channel loader lands. This is the config-layer half of the channel work: **live
-  multi-channel routing is deferred** — a runnable dispatcher must declare exactly
-  one `builtin:feishu` channel, enforced fail-loud at the **dispatcher runtime
-  boundary** (`assertRunnableChannelShape` in the dispatcher service launch guard
-  rejects more than one channel or a non-feishu channel; state seeding stays
-  fail-soft so this is the one intended place that rejects an unrunnable shape)
-  rather than at config load, so config can express the general shape while the
-  runtime catches up. Binding store v2 and target-key routing remain later
-  slices; the Channel MCP *surface* move landed in the next slice (below).
+  channel loader lands. This is the config-layer half of the channel work; **live
+  multi-channel routing has since landed** (see "Live multi-channel routing"
+  below). The dispatcher runtime boundary (`assertRunnableChannelShape`) now only
+  rejects a channel naming an unwired (non-feishu) provider; state seeding stays
+  fail-soft so this is the one intended place that rejects an unrunnable shape.
+  Binding store v2 and target-key routing remain later slices; the Channel MCP
+  *surface* move landed in the next slice (below).
 - **Channel MCP surface move — SUPERSEDED by the owner scope correction below.**
   An interim slice moved the binding verbs off Team MCP onto a separate
   core-hosted generic `channel` MCP server (the `channel-mcp` shim,
@@ -833,15 +833,16 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   target routes to its TeamLeader; an unbound bindable target and any non-bindable
   (P2P) target route to the dispatcher; a P2P target short-circuits to the
   dispatcher BEFORE any binding lookup and can never be bound to a TeamLeader.
-  `channel_id` is the dispatcher-local `dispatchers[].channels[].id`, resolved
-  once by `dispatcherChannelId(config)` — the single source of truth shared by the
-  bind path and the router so a stored binding and an inbound message resolve to
-  the same key. The `bind_channel` / `transfer_back` tools (on the **Team MCP** —
-  see the reversal below) take a provider selector `meta` (Feishu: `{ chat_id }`)
-  and an optional `channel_id` (defaults to the sole configured channel; an
-  explicit id must match it). A pre-v2 store fails loud at `dreamux serve` /
-  `dreamux doctor` (and on access) with rebuild guidance — Dreamux 0.x does not
-  migrate it.
+  `channel_id` is the dispatcher-local `dispatchers[].channels[].id`. For inbound
+  it is the channel the message arrived through (the originating live session tags
+  it — see "Live multi-channel routing" below); for the bind path it is the
+  `channel_id` arg (a single-channel dispatcher defaults to its sole channel). The
+  `bind_channel` / `transfer_back` tools (on the **Team MCP** — see the reversal
+  below) take a provider selector `meta` (Feishu: `{ chat_id }`) and an optional
+  `channel_id` (defaults to the sole configured channel; required when more than
+  one is configured; an explicit id must name a configured channel). A pre-v2
+  store fails loud at `dreamux serve` / `dreamux doctor` (and on access) with
+  rebuild guidance — Dreamux 0.x does not migrate it.
 - **Final hardening (package-boundary guards) — satisfied now:** the
   remaining §Validation Guards that were only "currently true" by inspection now
   have repo-wide regression tests (`packages/dreamux/tests/package-boundary-guards.test.ts`):
@@ -888,14 +889,28 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   engines read the same physical skills; ordinary teammate/team_member roles still
   receive none; no workspace mutation and no symlink/copy model. Runtime packages
   still depend on `@excitedjs/dreamux-types` only.
-- **Deferred — accepted follow-up (NOT part of this epic's shipped scope): live
-  multi-channel runtime routing.** Config validation already accepts N channels
-  with unique ids and provider-owned `readConfig`, but the *runtime* runs exactly
-  one `builtin:feishu` channel per dispatcher and fails loud on any other shape at
-  the dispatcher launch guard (`assertRunnableChannelShape`). Running N sessions
-  and routing inbound across them by `channel_id` is a multi-session feature
-  accepted by the owner as a follow-up; the config-layer task is done. Where this
-  is currently unsupported it fails loud rather than silently degrading.
+- **Live multi-channel routing — satisfied now:** a dispatcher may declare more
+  than one `builtin:feishu` channel and the dispatcher service runs one live
+  session per channel, each connecting as its OWN bot from that channel's config
+  `{ app_id, app_secret }` (the state row keeps the PRIMARY/first channel's bot
+  identity; per-channel state/access dirs stay shared per-dispatcher). The slot
+  holds `channels: Map<channel_id, session>`. Each session tags its own
+  `channel_id` onto every inbound turn it delivers, so `routeChannelInput` keys the
+  `(channel_id, target_key)` binding lookup on the channel the message ACTUALLY
+  arrived through — not a single config-derived channel. Egress (the Feishu
+  `reply` / `react` MCP tools) dispatches to a session by `channel_id`: a
+  TeamLeader's reply egresses the bot of the channel its OWN active binding names
+  (resolved by `TeamService.resolveLeaderChannel` by `target_key` across the
+  dispatcher's channels), and a dispatcher reply omits it to use the primary
+  channel. `assertRunnableChannelShape` now rejects only an unwired (non-feishu)
+  channel; `bind_channel` requires an explicit `channel_id` when more than one is
+  configured. Legacy single-channel dispatchers are unchanged (the sole channel
+  resolves exactly as before). **Deferred edges (documented, not shipped):** a
+  dispatcher-initiated reply to a NON-primary channel needs an explicit
+  `channel_id` (the dispatcher prompt teaching it is a follow-up); cross-dispatcher
+  Feishu `bot_app_id` uniqueness covers only the primary channel; and a second
+  channel provider kind (beyond `builtin:feishu`) is still not wired (the generic
+  channel loader / ACP adapter remain out of scope).
 
 ## Alternatives Considered
 

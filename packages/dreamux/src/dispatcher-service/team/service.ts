@@ -267,23 +267,32 @@ export class TeamService {
     return binding;
   }
 
-  async teamLeaderCanUseChannel(input: {
+  /**
+   * The dispatcher-local `channel_id` a TeamLeader is bound to for a target, or
+   * null when it has no active binding there (issue #209 live multi-channel
+   * routing). Searches the dispatcher's bindings by `target_key` across ALL
+   * channels — the leader does not declare which channel it is on — and confirms
+   * the active row belongs to this `(teamId, leaderName)` and an open Team. The
+   * caller uses the returned channel to authorize and to egress the bound bot.
+   */
+  async resolveLeaderChannel(input: {
     dispatcherId: string;
     teamId: string;
     leaderName: string;
-    channelId: string;
     targetKey: string;
-  }): Promise<boolean> {
-    const binding = await this.bindings.resolve({
-      dispatcherId: input.dispatcherId,
-      channelId: input.channelId,
-      targetKey: input.targetKey,
-    });
-    return (
-      binding !== null &&
-      binding.team_name === input.teamId &&
-      binding.leader_name === input.leaderName
+  }): Promise<string | null> {
+    const bindings = await this.bindings.list(input.dispatcherId);
+    const match = bindings.find(
+      (binding) =>
+        binding.active &&
+        binding.target_key === input.targetKey &&
+        binding.team_name === input.teamId &&
+        binding.leader_name === input.leaderName,
     );
+    if (match === undefined) return null;
+    const team = await this.store.get(input.dispatcherId, match.team_name);
+    if (team === null || team.status === 'closed') return null;
+    return match.channel_id;
   }
 
   async deliverToLeader(input: {
