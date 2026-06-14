@@ -9,15 +9,16 @@
  * and no runtime dependencies. See
  * `.agents/decisions/npm-package-split-and-channel-targets.md`.
  *
- * Root-export policy (issue #209 overexposure audit): the names below are the
- * intentional public surface an external provider author names directly. Helper
- * shapes that a provider only reaches *contextually* — through a property of one
- * of these interfaces or an implemented method's parameter — are intentionally
- * NOT re-exported here even though they remain `export`ed from their source
- * module (so the emitted `.d.ts` still resolves them transitively). The
- * `exports` map publishes only this root, so an un-re-exported name is genuinely
- * unnameable by consumers. `tests/root-exports.test.ts` locks this allowlist so
- * future slices grow the surface deliberately, not by accident.
+ * Root-export policy (issue #209): the root aggregates every public contract
+ * type so an external provider author can name any of them directly. A type
+ * being reached only *contextually* today — through a property of one of these
+ * interfaces or an implemented method's parameter — is not a reason to hide it:
+ * the package is type-only, so re-exporting a public type costs nothing at
+ * runtime and keeps the surface honest (a provider author can name a shape they
+ * legitimately depend on). The `exports` map publishes only this root, so this
+ * list IS the public API. `tests/root-exports.test.ts` locks the surface to the
+ * full set of public types in the source modules so future slices grow it
+ * deliberately, not by accident.
  */
 export type { DreamuxLogger } from './logger.js';
 export type {
@@ -48,6 +49,7 @@ export type {
   AgentRuntimeContextSnapshot,
   AgentRuntimeCreateContext,
   AgentRuntimeDiagnostic,
+  AgentRuntimeDiagnosticContext,
   AgentRuntimeDiagnosticRunner,
   AgentRuntimeDoctorResult,
   AgentRuntimeIdentity,
@@ -57,6 +59,8 @@ export type {
   AgentRuntimeProvider,
   AgentRuntimeProviderConfigReadContext,
   AgentRuntimeProviderFactory,
+  AgentRuntimeResumeCapability,
+  AgentRuntimeResumeCheckpoint,
   AgentRuntimeResumeInput,
   AgentRuntimeRole,
   AgentRuntimeSkillSource,
@@ -77,6 +81,7 @@ export type {
   ChannelReactInput,
   ChannelReplyInput,
   ChannelRoutes,
+  ChannelSender,
   ChannelSession,
   ChannelSessionCreateContext,
   ChannelTarget,

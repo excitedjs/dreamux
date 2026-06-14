@@ -5,23 +5,21 @@
  * exposes `.` → `dist/index.d.ts` and nothing deeper). So the set of names
  * re-exported by `src/index.ts` IS the public API an external provider author
  * can name. This test pins that set to an explicit allowlist so a later slice
- * cannot casually widen the surface — adding a root export now requires updating
- * this list, which is the deliberate review checkpoint.
+ * cannot casually change the surface — adding or removing a root export now
+ * requires updating this list, which is the deliberate review checkpoint.
  *
- * Helper shapes a provider only reaches contextually (e.g.
- * `AgentRuntimeDiagnosticContext` — a param of the *required* `AgentRuntimeDiagnostic`
- * methods, contextually inferred — `ChannelSender`, and the vestigial
- * `AgentRuntimeResumeCapability` / `AgentRuntimeResumeCheckpoint`) stay
- * `export`ed from their source module — the emitted `.d.ts` resolves them
- * transitively — but are intentionally absent here. The expanded
- * `tests/fixtures/external-provider.ts` proves this allowlist is *sufficient*:
- * it implements the full provider surface (incl. diagnostics, the factory
- * contract, and the optional channel tool/reply/react methods) importing from
- * the root only. Note: params of *optional* interface methods (e.g.
- * `ChannelToolCall` on `handleTool?`) are NOT contextually inferred under
- * `strict`, so those stay root-exported.
+ * Contract: the root aggregates EVERY public type from the source modules, so
+ * the allowlist below equals the full set of `export interface`/`export type`
+ * names under `src/`. The package is type-only, so a type reached only
+ * contextually today (e.g. `AgentRuntimeDiagnosticContext` as a param of the
+ * `AgentRuntimeDiagnostic` methods, `ChannelSender` on `ChannelInboundEnvelope`,
+ * `AgentRuntimeResumeCapability` / `AgentRuntimeResumeCheckpoint` on the
+ * capability/resume shapes) is still re-exported so a provider author can name
+ * a shape they legitimately depend on — hiding it buys nothing at runtime. The
+ * expanded `tests/fixtures/external-provider.ts` separately proves the surface
+ * is *sufficient* to author a full provider importing from the root only.
  */
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -38,6 +36,7 @@ const ALLOWLIST = [
   'AgentRuntimeContextSnapshot',
   'AgentRuntimeCreateContext',
   'AgentRuntimeDiagnostic',
+  'AgentRuntimeDiagnosticContext',
   'AgentRuntimeDiagnosticRunner',
   'AgentRuntimeDoctorResult',
   'AgentRuntimeIdentity',
@@ -48,6 +47,8 @@ const ALLOWLIST = [
   'AgentRuntimeProviderConfigReadContext',
   'AgentRuntimeProviderDescriptor',
   'AgentRuntimeProviderFactory',
+  'AgentRuntimeResumeCapability',
+  'AgentRuntimeResumeCheckpoint',
   'AgentRuntimeResumeInput',
   'AgentRuntimeRole',
   'AgentRuntimeSkillSource',
@@ -65,6 +66,7 @@ const ALLOWLIST = [
   'ChannelReactInput',
   'ChannelReplyInput',
   'ChannelRoutes',
+  'ChannelSender',
   'ChannelSession',
   'ChannelSessionCreateContext',
   'ChannelTarget',
@@ -107,9 +109,31 @@ function rootExportNames(): string[] {
   return [...names].sort();
 }
 
+/** Every `export interface`/`export type` name declared across the source modules. */
+function sourceModulePublicTypeNames(): string[] {
+  const srcDir = join(here, '..', 'src');
+  const names = new Set<string>();
+  const decl = /export\s+(?:interface|type)\s+([A-Za-z0-9_]+)/g;
+  for (const file of readdirSync(srcDir)) {
+    if (!file.endsWith('.ts') || file === 'index.ts') continue;
+    const source = readFileSync(join(srcDir, file), 'utf8');
+    let match: RegExpExecArray | null;
+    while ((match = decl.exec(source)) !== null) names.add(match[1]);
+  }
+  return [...names].sort();
+}
+
 describe('dreamux-types root export surface', () => {
-  it('matches the reviewed allowlist exactly (no casual widening)', () => {
+  it('matches the reviewed allowlist exactly (no casual change)', () => {
     expect(rootExportNames()).toEqual([...ALLOWLIST].sort());
+  });
+
+  it('aggregates every public type from the source modules (hides nothing)', () => {
+    // The contract (issue #209 final review): being type-only is not a reason to
+    // hide a public type behind transitive resolution. The root must name every
+    // public type declared under src/, so a provider author can import any shape
+    // they depend on. A new public type is therefore a deliberate root export.
+    expect(rootExportNames()).toEqual(sourceModulePublicTypeNames());
   });
 
   it('re-exports only types (declaration-only: no value exports)', () => {
