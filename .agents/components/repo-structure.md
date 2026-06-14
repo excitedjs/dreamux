@@ -1,19 +1,24 @@
 # Component: repo structure
 
-Rush + pnpm monorepo since issue #4. Four packages today, all wired
-through pnpm `workspace:*` and installed via the rush path only (see
+Rush + pnpm monorepo since issue #4. Publishable packages are wired through
+pnpm `workspace:*` and installed via the rush path only (see
 [the install-model decision](../decisions/install-model.md)):
 
 | Package | Folder | Role |
 |---|---|---|
+| `@excitedjs/dreamux-types` | `/packages/dreamux-types/` | declaration-only provider-authoring contracts; imported by external providers and builtin provider packages |
 | `@excitedjs/dreamux` | `/packages/dreamux/` | the host server |
+| `@excitedjs/agent-runtime-codex` | `/packages/agent-runtime/codex/` | built-in Codex Agent Runtime provider behind `builtin:codex`; depends on `@excitedjs/dreamux-types`, not on the host |
+| `@excitedjs/agent-runtime-claude-code` | `/packages/agent-runtime/claude-code/` | built-in Claude Code Agent Runtime provider behind `builtin:claude-code`; depends on `@excitedjs/dreamux-types`, not on the host |
 | `@excitedjs/feishu-transport` | `/packages/channel/feishu-transport/` | platform-I/O core; **sole** importer of `@larksuiteoapi/node-sdk` |
-| `@excitedjs/feishu-channel` | `/packages/channel/feishu-channel/` | per-host channel layer (placeholder today) |
+| `@excitedjs/feishu-channel` | `/packages/channel/feishu-channel/` | built-in Feishu Channel provider behind `builtin:feishu`; owns live Feishu channel sessions, access/trust, inbound normalization, target resolution, and Feishu MCP actions |
 | `@excitedjs/eslint-config` | `/packages/eslint-config/` | private (unpublished) shared ESLint flat config; single source of the synchronous-blocking-IO ban (see [the no-sync-io decision](../decisions/no-sync-io-lint-gate.md)) |
 
-The channel refactor (#4) extracted the Feishu platform I/O out of the
-dreamux host into `@excitedjs/feishu-transport`, so the host and the
-sibling claudemux repo import one implementation instead of drifting copies.
+The channel refactor (#4) extracted the Feishu platform I/O out of the dreamux
+host into `@excitedjs/feishu-transport`, and issue #209 completed the package
+split: provider authoring types live in `@excitedjs/dreamux-types`, runtime
+engines live in their provider packages, and the built-in Feishu channel is a
+real provider package over the shared transport.
 
 ## Top-level
 
@@ -23,7 +28,13 @@ sibling claudemux repo import one implementation instead of drifting copies.
 | `/common/config/rush/` | Rush command definitions (`command-line.json`), pnpm `.npmrc`, version policies, generated `pnpm-lock.yaml` |
 | `/common/scripts/install-run-rush.js` | Bootstrap that shells out to `npx @microsoft/rush@<version>` (see [the Rush + pnpm decision](../decisions/rush-pnpm-monorepo.md)) |
 | `/common/temp/` | Rush working dir (gitignored) |
+| `/packages/dreamux-types/` | The `@excitedjs/dreamux-types` provider-authoring contracts package |
 | `/packages/dreamux/` | The `@excitedjs/dreamux` package |
+| `/packages/agent-runtime/codex/` | The `@excitedjs/agent-runtime-codex` provider package |
+| `/packages/agent-runtime/claude-code/` | The `@excitedjs/agent-runtime-claude-code` provider package |
+| `/packages/channel/feishu-transport/` | The `@excitedjs/feishu-transport` platform-I/O package |
+| `/packages/channel/feishu-channel/` | The `@excitedjs/feishu-channel` Channel provider package |
+| `/packages/eslint-config/` | The private shared ESLint config package |
 | `/bin/` | Source-checkout `dreamux` shim that forwards to `/packages/dreamux/bin/dreamux` |
 | `/.agents/` | This knowledge base |
 | `/.github/workflows/` | CI |
@@ -37,14 +48,14 @@ verbatim through the move):
 | Path | Concern |
 |---|---|
 | `src/admin/` | Unix socket admin protocol + method handlers |
-| `src/channel/` | Host-side Feishu gate, access state, outbound target mapping, and received-reaction ownership |
+| `src/channel/` | Host-side Channel provider adapters, Feishu MCP surface wiring, access state, outbound target mapping, and received-reaction ownership |
 | `src/cli/` | Entry-point CLIs: `dreamux.ts` (single public command tree), `server.ts` and `server-ctl.ts` as internal delegated modules |
-| `src/agent-runtime/` | AgentRuntime providers and builtin runtime implementations (`CodexRuntime`, `ClaudeCodeRuntime`) |
-| `src/claude-code/` | Claude Code resident transport: supervisor, stream-json RPC, protocol model, MCP config |
-| `src/codex/` | Codex transport: app-server supervisor, WS+Unix JSON-RPC client, init handshake, MCP CLI config |
+| `src/agent-runtime/` | Host-side AgentRuntime catalog, provider loading, bundled skill source selection, and thin builtin adapters over the runtime packages |
+| `src/claude-code/` | Compatibility re-export paths for the Claude Code runtime package |
+| `src/codex/` | Compatibility re-export paths for the Codex runtime package |
 | `src/db/` | Legacy SQLite schema + repository; targeted for removal by [top-level-design](../decisions/top-level-design.md) |
 | `src/dispatcher/` | Dispatcher base prompt, TurnManager, fail-fast approval handler |
-| `src/feishu/` | Thin bot adapter over `@excitedjs/feishu-transport` (`createFeishuTransport` + `parseInbound`); the drifted in-tree `content`/`render`/`types` copies were deleted by #4 |
+| `src/feishu/` | Compatibility/adapter paths over the built-in Feishu channel and transport packages |
 | `src/runtime/` | Path builders, env-only secrets, codex-args parser |
 | `src/server.ts` | Top-level `Server` class wiring everything together |
 | `db/migrations/0001_init.sql` | Legacy SQLite schema; targeted for removal by [top-level-design](../decisions/top-level-design.md) |

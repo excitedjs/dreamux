@@ -756,10 +756,12 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   a directory whose immediate children are skill dirs — verified against codex
   0.137's generated app-server schema and a live `skills/list` probe); the bundled
   Dreamux skills share one parent, so one deduped root is set. Empty
-  `skillSources` skips the RPC. An RPC error fails the start loud (a
-  dispatcher/leader must not run skill-blind). Support is gated by the existing
-  codex `>= 0.137` version floor (`MIN_CODEX_VERSION`) — `skills/extraRoots/set`
-  is present from 0.137, so no second gate is added. **Claude Code** translates
+  `skillSources` skips the RPC. Unsupported or method-missing capability gaps
+  warn and continue skill-blind instead of bricking the dispatcher, matching the
+  provider's explicit fallback path for app-servers that cannot accept extra
+  roots. Real root-application errors after the method is accepted still fail the
+  start loud. Support is still covered by the existing codex `>= 0.137` version
+  floor (`MIN_CODEX_VERSION`), so no separate version gate is added. **Claude Code** translates
   add-dir-compatible sources into startup `--add-dir <dir>` flags (pointing at
   directories that contain `.claude/skills`), present on both start and re-spawn.
   (Claude Code's end-to-end bundled-skill injection was completed later — see the

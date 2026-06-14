@@ -7,14 +7,16 @@ when you need the *why* behind a piece of code or a decision history.
 ## What dreamux is
 
 A long-running Node process that hosts N **Dispatchers**. Each Dispatcher binds
-one built-in Feishu bidirectional channel (`builtin:feishu`), one Agent Runtime
-provider (`builtin:codex`, `builtin:claude-code`, or an installed `npm:`
-Agent Runtime provider), and Dreamux-owned MCP surfaces for channel reply and
-TeamMate scheduling/retrieval. All inbound chats for a dispatcher enter that
-dispatcher's runtime context; channel outbound is sent only when the runtime
-calls the dispatcher-bound channel MCP server owned by the Feishu channel
-module. The current architecture is split between the original local-runtime
-baseline and the issue #135 realigned provider surfaces:
+one or more Feishu channels (`builtin:feishu`), one Agent Runtime provider
+(`builtin:codex`, `builtin:claude-code`, or an installed `npm:` Agent Runtime
+provider), and Dreamux-owned MCP surfaces for Feishu actions, Team channel
+binding, and TeamMate scheduling/retrieval. All inbound chats for a dispatcher
+enter that dispatcher's runtime context; a Team can take over a bound channel
+target through the Team MCP `bind_channel` / `transfer_back` tools, while
+Feishu-specific actions (`reply`, `react`, `list_chat_bots`) stay on the Feishu
+MCP server owned by the Feishu channel package. The current architecture is
+split between the original local-runtime baseline and the issue #135 realigned
+provider surfaces:
 
 - [Top-level design](decisions/top-level-design.md) — original MVP baseline;
   still authoritative for unchanged local state/log ownership, Feishu access,
@@ -50,18 +52,26 @@ Background and older issue context:
 ├── rush.json                      rush + pnpm config
 ├── common/                        rush scaffolding (config + bootstrap)
 ├── packages/
+│   ├── dreamux-types/             @excitedjs/dreamux-types — declaration-only
+│   │                              provider-authoring contracts
+│   ├── agent-runtime/
+│   │   ├── codex/                 @excitedjs/agent-runtime-codex — builtin
+│   │   │                          Codex Agent Runtime provider
+│   │   └── claude-code/           @excitedjs/agent-runtime-claude-code —
+│   │                              builtin Claude Code Agent Runtime provider
 │   ├── dreamux/                   @excitedjs/dreamux — the host server
 │   │   ├── bin/                   dreamux and tm launchers
-│   │   ├── skills/                bundled dispatcher Codex skill
-│   │   ├── src/                   admin, cli, codex, dispatcher, feishu, runtime, legacy db
-│   │   ├── tests/                 vitest (smoke + live-codex + bin-launcher + onboard)
+│   │   ├── skills/                bundled Dreamux skills injected by role
+│   │   ├── src/                   admin, cli, dispatcher service, channel,
+│   │   │                          runtime adapters, platform, legacy db
+│   │   ├── tests/                 vitest coverage
 │   │   └── db/migrations/         legacy SQLite migrations targeted for removal
 │   ├── channel/
 │   │   ├── feishu-transport/      @excitedjs/feishu-transport — platform-I/O core
 │   │   │                          (sole @larksuiteoapi/node-sdk importer)
-│   │   └── feishu-channel/        @excitedjs/feishu-channel — Feishu channel
-│   │                              layer staging package; not a dreamux
-│   │                              runtime dependency after issue #97
+│   │   └── feishu-channel/        @excitedjs/feishu-channel — builtin Feishu
+│   │                              Channel provider, live sessions, target
+│   │                              resolution, and Feishu MCP actions
 │   └── eslint-config/             @excitedjs/eslint-config — shared lint config
 │                                  (private; no-sync-IO gate, issue #85)
 ├── bin/                           thin redirectors → packages/dreamux/bin/

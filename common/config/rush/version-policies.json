@@ -1,5 +1,6 @@
 /**
- * Version policies are unused at MVP scale (single package).
- * Add an entry here when a release group emerges across multiple packages.
+ * Version policies are unused today.
+ * Add an entry here if the monorepo needs Rush-managed lockstep or policy
+ * versioning across a release group.
  */
 []

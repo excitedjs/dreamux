@@ -133,9 +133,8 @@ export class TeamService {
     });
     team = await this.store.update(team, { status: 'running' });
     // A freshly created Team has no bound channel: binding is done after create
-    // via the core Channel MCP `bind_channel` tool (issue #209 slice 8 removed
-    // the create-time `bind_group` convenience). `binding` is therefore null
-    // here — honestly "no active bound group yet", not a placeholder.
+    // via the Team MCP `bind_channel` tool (issue #209 removed the create-time
+    // `bind_group` convenience). `binding` is therefore null here.
     return {
       team: teamView(team),
       leader: leader.teammate,

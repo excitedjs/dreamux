@@ -39,10 +39,11 @@ Design background:
 
 - **One Node process, many Dispatchers.** `dispatchers[].channels[]` accepts
   multiple channels with unique dispatcher-local ids, and each channel provider
-  validates its own config (issue #209 multi-channel config). Live multi-channel
-  routing is a follow-up, so a runnable dispatcher must still declare exactly one
-  `builtin:feishu` channel — more than one channel (or a non-feishu channel)
-  fails loud at server start.
+  validates its own config (issue #209 multi-channel config). A runnable
+  dispatcher may declare multiple `builtin:feishu` channels; the server starts
+  one live Feishu session per channel and routes inbound and egress by
+  `channel_id`. Non-Feishu channel providers are still reserved syntax and fail
+  loud at server start.
 - **Provider refs are explicit.** Wired builtin refs are `builtin:feishu`,
   `builtin:codex`, and `builtin:claude-code`. Npm package refs and package
   export refs are reserved syntax only in Phase 1; dreamux parses and rejects
@@ -60,8 +61,8 @@ Design background:
   received reactions behind.
 - **Outbound is MCP reply-only.** Assistant text emitted by Codex is never
   forwarded to Feishu automatically. The model must call the dispatcher-scoped
-  channel MCP tools such as `reply` or `react`, and those tools exist only when
-  the Channel provider exposes the capability.
+  Feishu MCP tools such as `reply` or `react`, and those tools exist only when
+  the Channel provider exposes the corresponding capability.
 - **TeamMate is server-hosted.** Scheduling accepts a task and returns a task id
   immediately. Completion is delivered later through the selected Agent Runtime
   provider; if push delivery fails repeatedly, the final result remains
@@ -72,8 +73,8 @@ Design background:
 
 Explicitly **not** in Phase 1: per-chat threads, durable inbound buffers,
 automatic assistant-text outbound, HTTP MCP listeners by default, reaction
-ledgers, streaming outbound, external npm provider loading, multi-channel
-routing, cross-machine coordination, and a web UI.
+ledgers, streaming outbound, external npm provider loading, non-Feishu live
+channel providers, cross-machine coordination, and a web UI.
 
 ## Install / build / test
 
@@ -125,8 +126,9 @@ config and global Codex auth survive.
 ## Configure dispatchers
 
 For normal installs, run `dreamux onboard`. It writes `~/.dreamux/config.json`
-with mode `0600`, creates state/log directories, installs the workspace skill,
-and registers a user-level service when supported.
+with mode `0600`, creates state/log directories, and registers a user-level
+service when supported. Bundled skills are injected by the selected runtime at
+agent start; onboard does not install workspace skills.
 
 Dispatcher declarations live in `config.json`:
 
@@ -291,15 +293,19 @@ Each dispatcher injects Dreamux-owned MCP stdio servers into its selected Agent
 Runtime provider. Codex receives runtime-specific `mcp_servers.*` arguments;
 Claude Code receives a runtime-owned MCP config file.
 
-The Channel provider contributes its channel MCP server. For `builtin:feishu`,
-the stdio shim does not read Feishu secrets. It forwards outbound tool calls to
+The `builtin:feishu` Channel provider contributes the Feishu MCP server. Its
+stdio shim does not read Feishu secrets. It forwards Feishu action tool calls to
 the serve process over the admin socket, and the serve process owns the Feishu
-client plus process-local received-reaction cleanup state.
+client sessions plus process-local received-reaction cleanup state. Channel
+binding is not a generic Channel MCP surface: it lives on the Team MCP as
+`bind_channel({ team_name, channel_id?, meta })` and
+`transfer_back({ channel_id?, meta })`.
 
 The model-facing tools include:
 
 - `reply`: send a Feishu reply to a target message or chat.
 - `react`: add a model-owned reaction to a Feishu message.
+- `list_chat_bots`: list bot members visible in a Feishu chat.
 
 If the model only emits assistant text, nothing is sent to Feishu.
 
@@ -347,8 +353,7 @@ node common/scripts/install-run-rush.js test
 - `tests/bin-launcher.test.ts` — real launcher and repo-root shim behavior from
   arbitrary cwd and through symlinks.
 - `tests/doctor.test.ts` — standalone doctor checks for config, Codex home,
-  services, provider-owned runtime binaries, and dispatcher workspace skill
-  state.
+  services, provider-owned runtime binaries, and dispatcher cwd state.
 - `tests/agent-runtime-provider.test.ts`, `tests/channel-provider.test.ts`,
   `tests/registry.test.ts`, and `tests/provider-ref.test.ts` — provider ref,
   registry, Channel provider, and Agent Runtime provider coverage.

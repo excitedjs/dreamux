@@ -46,9 +46,8 @@ agent session; how it talks to its engine is the engine's business.
     package so existing core/test import paths stay stable. The package must
     never import `@excitedjs/dreamux`. Claude Code is stdio-based: no socket, no
     app-server home. It translates add-dir-compatible role-gated `skillSources`
-    into startup `--add-dir` flags (#209 slice 6); the bundled Dreamux skills use
-    the `skill-dir` layout, which is not add-dir-compatible, so claude-code still
-    injects none of them today.
+    into startup `--add-dir` flags (#209 slice 6), including the bundled Dreamux
+    add-dir parent selected for Dispatcher and TeamLeader roles.
 
 ## Invariants (why it's shaped this way)
 
