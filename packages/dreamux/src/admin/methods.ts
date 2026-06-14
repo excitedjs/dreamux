@@ -90,12 +90,13 @@ export const adminMethods: Record<string, AdminHandler> = {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     mustRunningDispatcher(server, id);
-    await assertFeishuScope(server, id, params);
+    const channelId = await assertFeishuScope(server, id, params);
     try {
       return await server.dispatcherService.callFeishuMcpTool({
         dispatcherId: id,
         toolName: 'reply',
         arguments: params ?? {},
+        ...(channelId !== undefined ? { channelId } : {}),
       });
     } catch (err) {
       throw new AdminError('OUTBOUND_FAILED', parseMessage(err));
@@ -106,12 +107,13 @@ export const adminMethods: Record<string, AdminHandler> = {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     mustRunningDispatcher(server, id);
-    await assertFeishuScope(server, id, params);
+    const channelId = await assertFeishuScope(server, id, params);
     try {
       return await server.dispatcherService.callFeishuMcpTool({
         dispatcherId: id,
         toolName: 'react',
         arguments: params ?? {},
+        ...(channelId !== undefined ? { channelId } : {}),
       });
     } catch (err) {
       throw new AdminError('REACTION_FAILED', parseMessage(err));
@@ -382,13 +384,21 @@ export const adminMethods: Record<string, AdminHandler> = {
   },
 };
 
+/**
+ * Authorize a Feishu egress (reply/react) and resolve which channel it leaves
+ * through. A dispatcher caller egresses the primary channel (returns undefined →
+ * the default). A TeamLeader may only act on a chat it is bound to, and its reply
+ * egresses the bound channel's bot — resolved here from the leader's own active
+ * binding (issue #209 live multi-channel routing) and returned so the tool call
+ * targets that channel.
+ */
 async function assertFeishuScope(
   server: Server,
   dispatcherId: string,
   params: Record<string, unknown> | undefined,
-): Promise<void> {
+): Promise<string | undefined> {
   const caller = callerPrincipal(dispatcherId, params);
-  if (caller.kind !== 'team_leader') return;
+  if (caller.kind !== 'team_leader') return undefined;
   const chatId = optionalString(params, 'chat_id');
   if (chatId === null) {
     throw new AdminError(
@@ -410,18 +420,20 @@ async function assertFeishuScope(
       'TeamLeader may react/reply only to messages observed in bound team channels',
     );
   }
-  const allowed = await server.dispatcherService.teamLeaderCanUseChannel({
-    dispatcherId,
-    teamId: caller.teamId,
-    leaderName: caller.leaderName,
-    chatId,
-  });
+  const { allowed, channelId } =
+    await server.dispatcherService.teamLeaderCanUseChannel({
+      dispatcherId,
+      teamId: caller.teamId,
+      leaderName: caller.leaderName,
+      chatId,
+    });
   if (!allowed) {
     throw new AdminError(
       'CHANNEL_SCOPE_DENIED',
       'TeamLeader may use Feishu only for bound team channels',
     );
   }
+  return channelId ?? undefined;
 }
 
 function callerPrincipal(

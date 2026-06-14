@@ -91,9 +91,9 @@ describe('routeChannelInput keys by (channel_id, target_key) (#209 binding store
       .spyOn(service.teams, 'deliverToLeader')
       .mockResolvedValue({ status: 'submitted' });
 
-    const result = await service.routeChannelInput('flow', INPUT, envelope('group'));
+    const result = await service.routeChannelInput('flow', 'primary', INPUT, envelope('group'));
 
-    // The router derives channel_id from config ('primary') — the SAME id the
+    // The originating session tags the channel_id ('primary') — the SAME id the
     // bind path stores — so the stored binding and the inbound message match.
     expect(resolveSpy).toHaveBeenCalledWith({
       dispatcherId: 'flow',
@@ -119,7 +119,7 @@ describe('routeChannelInput keys by (channel_id, target_key) (#209 binding store
     vi.spyOn(service.teams, 'resolveChannel').mockResolvedValue(null);
     const deliverSpy = vi.spyOn(service.teams, 'deliverToLeader');
 
-    await service.routeChannelInput('flow', INPUT, envelope('group'));
+    await service.routeChannelInput('flow', 'primary', INPUT, envelope('group'));
 
     expect(deliverSpy).not.toHaveBeenCalled();
     expect(dispatcherRuntime.channelInput).toHaveBeenCalledTimes(1);
@@ -137,7 +137,7 @@ describe('routeChannelInput keys by (channel_id, target_key) (#209 binding store
     const resolveSpy = vi.spyOn(service.teams, 'resolveChannel');
     const deliverSpy = vi.spyOn(service.teams, 'deliverToLeader');
 
-    await service.routeChannelInput('flow', INPUT, envelope('p2p'));
+    await service.routeChannelInput('flow', 'primary', INPUT, envelope('p2p'));
 
     // A non-bindable target short-circuits to the dispatcher BEFORE any binding
     // lookup — P2P can never be bound to a TeamLeader.
@@ -196,7 +196,7 @@ describe('resolveChannelId guards the explicit channel_id on bind (#209 binding 
     expect(bindSpy).not.toHaveBeenCalled();
   });
 
-  it('rejects a dispatcher with no single resolvable channel', () => {
+  it('rejects a dispatcher with no resolvable Feishu channel', () => {
     const service = buildService();
     expect(() =>
       service.bindTeamChannel({
@@ -204,6 +204,6 @@ describe('resolveChannelId guards the explicit channel_id on bind (#209 binding 
         teamId: 'alpha',
         meta: { chat_id: 'chat-x' },
       }),
-    ).toThrow(/no single resolvable channel/);
+    ).toThrow(/no resolvable Feishu channel/);
   });
 });

@@ -576,6 +576,60 @@ describe('TeamService', () => {
     });
   });
 
+  it('resolves the egress channel a TeamLeader is bound to (#209 live multi-channel)', async () => {
+    // A TeamLeader's reply must egress the bot of the channel its active binding
+    // names — not the dispatcher's primary. resolveLeaderChannel returns that
+    // channel for the bound (target, team, leader), and null for any mismatch.
+    const repo = await initGitRepo(join(root, 'leader-egress-repo'));
+    const { teams } = buildServices();
+
+    const created = await teams.create({
+      dispatcherId: 'flow',
+      name: 'delta',
+      intent: 'work',
+      repoCwd: repo,
+      leaderAgentRuntime: 'flow',
+    });
+    const leaderName = created.team.leader_name;
+
+    await teams.bindChannel({
+      dispatcherId: 'flow',
+      teamId: 'delta',
+      channelId: 'secondary',
+      provider: 'builtin:feishu',
+      target: feishuGroupTarget('chat-delta'),
+    });
+
+    // Bound leader → the channel its binding names (the egress bot selector).
+    await expect(
+      teams.resolveLeaderChannel({
+        dispatcherId: 'flow',
+        teamId: 'delta',
+        leaderName,
+        targetKey: 'chat-delta',
+      }),
+    ).resolves.toBe('secondary');
+
+    // A different target / leader / team has no active binding here → null, so a
+    // leader can never egress through a channel it is not actually bound to.
+    await expect(
+      teams.resolveLeaderChannel({
+        dispatcherId: 'flow',
+        teamId: 'delta',
+        leaderName,
+        targetKey: 'chat-other',
+      }),
+    ).resolves.toBeNull();
+    await expect(
+      teams.resolveLeaderChannel({
+        dispatcherId: 'flow',
+        teamId: 'delta',
+        leaderName: 'tl-someone-else',
+        targetKey: 'chat-delta',
+      }),
+    ).resolves.toBeNull();
+  });
+
   it('history paginates by cursor and rejects an invalid cursor (#182 PR-7 P2)', async () => {
     const repo = await initGitRepo(join(root, 'history-page-repo'));
     const { teams } = buildServices();

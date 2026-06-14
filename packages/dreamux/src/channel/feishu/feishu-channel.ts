@@ -53,24 +53,36 @@ export interface CreateFeishuChannelSessionHostOptions {
   log: DreamuxLogger;
   botFactory?: (row: DispatcherRow, secret: string) => FeishuBot;
   skipBotSecret?: boolean;
+  /**
+   * Per-channel bot identity (issue #209 live multi-channel routing). When set,
+   * the session connects as THIS channel's bot instead of the dispatcher row's
+   * single bot, so a dispatcher can run one session per configured Feishu
+   * channel. Omitted for the legacy single-channel path, where the row's
+   * `bot_app_id` / `bot_secret_ref` (which the sole channel seeds) is identical.
+   */
+  channel?: { appId: string; appSecret: string };
 }
 
 /**
  * Construct the package Feishu session from host inputs: resolve the bot secret
- * + app id from the dispatcher row/config, and supply the host state/cache dirs.
- * The `(row, secret)` bot-factory test seam is wrapped into the package's neutral
- * `() => FeishuBot` factory.
+ * + app id from the per-channel config (live multi-channel) or the dispatcher
+ * row/config (legacy single-channel), and supply the host state/cache dirs. The
+ * `(row, secret)` bot-factory test seam is wrapped into the package's neutral
+ * `() => FeishuBot` factory. State and attachment-cache dirs stay per-dispatcher
+ * (one trust/access policy per dispatcher), shared across its channels.
  */
 export function createFeishuChannelSession(
   opts: CreateFeishuChannelSessionHostOptions,
 ): FeishuChannelSession {
+  const appId = opts.channel?.appId ?? opts.row.bot_app_id;
   const secret =
     opts.skipBotSecret === true
       ? ''
-      : resolveBotSecret(opts.row.bot_secret_ref, opts.config);
+      : (opts.channel?.appSecret ??
+        resolveBotSecret(opts.row.bot_secret_ref, opts.config));
   return new FeishuChannelSession({
     dispatcherId: opts.dispatcherId,
-    appId: opts.row.bot_app_id,
+    appId,
     appSecret: secret,
     stateDir: dispatcherDir(opts.dispatcherId),
     attachmentCacheDir: dispatcherFeishuAttachmentCacheDir(opts.dispatcherId),

@@ -6,7 +6,7 @@ import type {
 } from '../agent-runtime/index.js';
 import type { InboundDeliveryHooks, InboundTurnInput } from '../agent-runtime/turn.js';
 import type { FeishuInboundEnvelope } from '../channel/feishu/feishu-channel.js';
-import { dispatcherChannelId, type DreamuxConfig } from '../config/config.js';
+import { dispatcherFeishuChannels, type DreamuxConfig } from '../config/config.js';
 import type { DispatcherStore } from '../state/dispatcher-store.js';
 import type { DreamuxLogger } from '../platform/logger.js';
 import type { FeishuBot } from '../channel/feishu/bot.js';
@@ -75,8 +75,8 @@ export class DispatcherService {
       ...(opts.skipBotSecret !== undefined
         ? { skipBotSecret: opts.skipBotSecret }
         : {}),
-      routeChannelInput: (id, turn, envelope, hooks) =>
-        this.routeChannelInput(id, turn, envelope, hooks),
+      routeChannelInput: (id, channelId, turn, envelope, hooks) =>
+        this.routeChannelInput(id, channelId, turn, envelope, hooks),
     });
     this.teammates = new TeamMateAgentService({
       config: opts.config,
@@ -157,33 +157,56 @@ export class DispatcherService {
     const dispatcher = this.config.dispatchers.find(
       (entry) => entry.id === dispatcherId,
     );
-    const channelId = dispatcher ? dispatcherChannelId(dispatcher) : null;
-    if (channelId === null) {
+    const ids = dispatcher
+      ? dispatcherFeishuChannels(dispatcher).map((channel) => channel.channelId)
+      : [];
+    if (requested !== undefined) {
+      if (!ids.includes(requested)) {
+        throw new Error(
+          `unknown channel_id '${requested}' for dispatcher '${dispatcherId}'; ` +
+            `its configured channels are ${
+              ids.length > 0 ? ids.map((id) => `'${id}'`).join(', ') : '(none)'
+            }`,
+        );
+      }
+      return requested;
+    }
+    // No explicit channel: a single-channel dispatcher resolves unambiguously
+    // (legacy). With more than one channel the caller MUST name one, since
+    // binding/egress under the wrong channel would key the wrong target.
+    if (ids.length === 0) {
       throw new Error(
-        `dispatcher '${dispatcherId}' has no single resolvable channel`,
+        `dispatcher '${dispatcherId}' has no resolvable Feishu channel`,
       );
     }
-    if (requested !== undefined && requested !== channelId) {
+    if (ids.length > 1) {
       throw new Error(
-        `unknown channel_id '${requested}' for dispatcher '${dispatcherId}'; ` +
-          `its configured channel is '${channelId}'`,
+        `dispatcher '${dispatcherId}' has ${ids.length} channels; ` +
+          'channel_id is required to select one',
       );
     }
-    return channelId;
+    return ids[0]!;
   }
 
   async routeChannelInput(
     dispatcherId: string,
+    channelId: string,
     input: InboundTurnInput,
     envelope: FeishuInboundEnvelope,
     hooks?: InboundDeliveryHooks,
   ): Promise<AgentRuntimeTurnResult> {
-    const channelId = this.resolveChannelId(dispatcherId);
+    // `channelId` is the channel the message actually arrived through (the
+    // originating live session tags it), so a multi-channel dispatcher keys on
+    // the right channel rather than re-deriving a single one from config.
     // The channel owns target resolution; core routes by (channel_id, target_key).
-    const target = this.dispatchers.resolveChannelTarget(dispatcherId, {
-      chat_id: envelope.chatId,
-      chat_type: envelope.chatType,
-    });
+    const target = this.dispatchers.resolveChannelTarget(
+      dispatcherId,
+      {
+        chat_id: envelope.chatId,
+        chat_type: envelope.chatType,
+      },
+      channelId,
+    );
     // Only a bindable target (a group) can carry an active Team binding; a P2P
     // (non-bindable) target always routes to the dispatcher, never a TeamLeader.
     if (target.bindable) {
@@ -307,6 +330,7 @@ export class DispatcherService {
     const target = this.dispatchers.resolveChannelTarget(
       input.dispatcherId,
       input.meta,
+      channelId,
     );
     return this.teams.bindChannel({
       dispatcherId: input.dispatcherId,
@@ -326,6 +350,7 @@ export class DispatcherService {
     const target = this.dispatchers.resolveChannelTarget(
       input.dispatcherId,
       input.meta,
+      channelId,
     );
     return this.teams.transferChannelBack({
       dispatcherId: input.dispatcherId,
@@ -334,24 +359,34 @@ export class DispatcherService {
     });
   }
 
-  teamLeaderCanUseChannel(input: {
+  /**
+   * Whether a TeamLeader may use a chat for Feishu egress, and through which
+   * channel (issue #209 live multi-channel routing). The leader's egress channel
+   * is resolved from its OWN active binding for the chat — not a single
+   * config-derived channel — so a leader bound on a secondary channel replies
+   * through that channel's bot. Returns the resolved `channelId` (null when the
+   * leader has no active binding for the chat) so the reply/react path egresses
+   * the bound bot.
+   */
+  async teamLeaderCanUseChannel(input: {
     dispatcherId: string;
     teamId: string;
     leaderName: string;
     chatId: string;
-  }) {
-    const channelId = this.resolveChannelId(input.dispatcherId);
+  }): Promise<{ allowed: boolean; channelId: string | null }> {
+    // Feishu target resolution is channel-agnostic (target_key === chat_id), so
+    // resolving via the primary session yields the same key every channel would.
     const target = this.dispatchers.resolveChannelTarget(input.dispatcherId, {
       chat_id: input.chatId,
       chat_type: 'group',
     });
-    return this.teams.teamLeaderCanUseChannel({
+    const channelId = await this.teams.resolveLeaderChannel({
       dispatcherId: input.dispatcherId,
       teamId: input.teamId,
       leaderName: input.leaderName,
-      channelId,
       targetKey: target.target_key,
     });
+    return { allowed: channelId !== null, channelId };
   }
 
   async shutdown(): Promise<void> {

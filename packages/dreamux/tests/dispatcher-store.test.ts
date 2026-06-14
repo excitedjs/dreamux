@@ -219,13 +219,11 @@ describe('dispatcher store feishu channel resolution (multi-channel config)', ()
     expect(store.get('flow')?.bot_app_id).toBe('app-flow');
   });
 
-  it('stays fail-soft (no throw, empty bot app id) on an ambiguous >1 feishu channel count', () => {
-    // The store is state construction, not a runtime boundary: a dispatcher with
-    // an ambiguous (≠1) feishu channel count is unrunnable, but that fail-loud
-    // belongs at the dispatcher service launch guard (assertRunnableChannelShape),
-    // not here. Store seeding must tolerate the shape with a best-effort empty bot
-    // app id so the failure surfaces at the one intended boundary (issue #209
-    // review).
+  it('seeds the PRIMARY (first) channel bot app id on a multi-feishu dispatcher (#209 live multi-channel)', () => {
+    // Live multi-channel routing runs one bot per channel; the state row carries
+    // the dispatcher's primary (first) channel identity, and the store's per-row
+    // bot_app_id uniqueness keys on that primary id. A secondary channel's bot is
+    // out of scope for that uniqueness check.
     let store: DispatcherStore | undefined;
     expect(() => {
       store = new DispatcherStore({
@@ -248,6 +246,6 @@ describe('dispatcher store feishu channel resolution (multi-channel config)', ()
         ],
       });
     }).not.toThrow();
-    expect(store?.get('flow')?.bot_app_id).toBe('');
+    expect(store?.get('flow')?.bot_app_id).toBe('app-a');
   });
 });

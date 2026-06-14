@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Live multi-channel runtime routing (issue #209). A dispatcher may now declare more than one builtin:feishu channel; the dispatcher service runs one live session per channel, each connecting as its own bot from that channel's config {app_id, app_secret}. Inbound events route by the originating channel's channel_id plus the provider-resolved target — `(channel_id, target_key)` — so a message arriving on a secondary channel keys its binding under that channel. Outbound reply/react dispatch to a session by channel_id: a TeamLeader's reply egresses the bot of the channel its active binding names; a dispatcher reply uses the primary (first) channel. The dispatcher launch guard (assertRunnableChannelShape) now rejects only a channel naming an unwired (non-feishu) provider, not a >1 channel count; `bind_channel` requires an explicit channel_id when more than one channel is configured. The state row keeps the PRIMARY channel's bot identity. Single-channel dispatchers are unchanged. No config/state schema or path change and no operator action required. Not covered this slice: a dispatcher-initiated reply to a non-primary channel needs an explicit channel_id; cross-dispatcher bot_app_id uniqueness covers only the primary channel; non-feishu channel providers remain unwired.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

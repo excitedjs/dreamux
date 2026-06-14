@@ -2,9 +2,11 @@
  * The runnable-channel-shape guard (issue #209 multi-channel config).
  *
  * Config accepts the general multi-channel shape (`dispatchers[].channels[]` may
- * hold more than one channel, and a channel may name any registered provider),
- * but live multi-channel routing is a follow-up slice. A *runnable* dispatcher
- * must therefore declare exactly one channel and it must be `builtin:feishu`.
+ * hold more than one channel, and a channel may name any registered provider).
+ * Live multi-channel routing now runs one Feishu session per channel, so a
+ * runnable dispatcher MAY declare more than one channel — but every channel must
+ * be `builtin:feishu`, the only provider wired into the dispatcher service in
+ * this phase. A channel naming any other (not-yet-wired) provider fails loud here.
  *
  * This guard is the single intended runtime boundary where every "accepted by
  * config, not yet runnable" shape fails loud — state construction (the dispatcher
@@ -20,15 +22,12 @@ export function assertRunnableChannelShape(dispatcher: {
   channels: DispatcherChannelConfig[];
 }): void {
   const { id, channels } = dispatcher;
-  if (channels.length > 1) {
+  const unwired = channels.find(
+    (channel) => channel.provider !== BUILTIN_FEISHU_PROVIDER_REF,
+  );
+  if (unwired !== undefined) {
     throw new Error(
-      `dispatcher '${id}' declares ${channels.length} channels; live multi-channel routing is a follow-up slice, so a runnable dispatcher must declare exactly one ${BUILTIN_FEISHU_PROVIDER_REF} channel`,
-    );
-  }
-  const channelRef = channels[0]?.provider ?? BUILTIN_FEISHU_PROVIDER_REF;
-  if (channelRef !== BUILTIN_FEISHU_PROVIDER_REF) {
-    throw new Error(
-      `dispatcher '${id}' channel ${JSON.stringify(channelRef)} is not wired; only ${BUILTIN_FEISHU_PROVIDER_REF} is built in this phase`,
+      `dispatcher '${id}' channel ${JSON.stringify(unwired.provider)} is not wired; only ${BUILTIN_FEISHU_PROVIDER_REF} is built in this phase`,
     );
   }
 }
