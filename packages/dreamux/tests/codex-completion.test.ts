@@ -14,7 +14,6 @@ import {
   CodexWsClient,
 } from '@excitedjs/agent-runtime-codex';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
-import { hostStateCallbacks } from '../src/agent-runtime/host-context.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 import { startFakeCodex, type FakeCodex } from './fake-codex.js';
@@ -77,7 +76,7 @@ describe('codex teammate completion delivery (native inject + trigger)', () => {
       config: dispatcherCodexConfig(dispatcher),
       cwd: tmp,
       mcpServers: [],
-      state: hostStateCallbacks(store),
+      state: store,
       paths,
     });
     runtimes.push(runtime);

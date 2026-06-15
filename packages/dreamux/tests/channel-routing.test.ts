@@ -21,7 +21,7 @@ import { AgentRuntimeProviderCatalog } from '../src/agent-runtime/index.js';
 import { DispatcherService } from '../src/dispatcher-service/service.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
-import type { DreamuxLogger } from '../src/platform/logger.js';
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import { resetRuntimeConfig } from '../src/platform/paths.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 import { stubChannelCatalog } from './helpers/fake-channel.js';

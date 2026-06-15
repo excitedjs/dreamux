@@ -22,10 +22,8 @@ import {
   adminSocketPath,
   setRuntimeConfig,
 } from './platform/paths.js';
-import {
-  createLogger,
-  type DreamuxLogger,
-} from './platform/logger.js';
+import { createLogger } from './platform/logger.js';
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import {
   assertNoLegacyAdminServer,
   createAdminSocketServer,
@@ -188,20 +186,18 @@ export class Server {
       this.opts.adminSocketPath ?? adminSocketPath(),
     );
     await this.admin.start();
-    this.log.info(
-      { admin_socket: this.admin.socketPath },
-      'admin socket listening',
-    );
+    this.log.info('admin socket listening', {
+      admin_socket: this.admin.socketPath,
+    });
 
     if (this.opts.runtimeSocketSweep !== undefined) {
       try {
         const swept = await this.opts.runtimeSocketSweep();
-        this.log.info({ dirs: swept }, 'swept volatile runtime-socket dirs');
+        this.log.info('swept volatile runtime-socket dirs', { dirs: swept });
       } catch (err) {
-        this.log.warn(
-          { err: errInfo(err) },
-          'runtime-socket sweep failed; continuing startup',
-        );
+        this.log.warn('runtime-socket sweep failed; continuing startup', {
+          err: errInfo(err),
+        });
       }
     }
 
@@ -210,10 +206,10 @@ export class Server {
       try {
         await this.dispatcherService.startDispatcher(row.dispatcher_id);
       } catch (err) {
-        this.log.error(
-          { dispatcher_id: row.dispatcher_id, err: errInfo(err) },
-          'dispatcher failed to start',
-        );
+        this.log.error('dispatcher failed to start', {
+          dispatcher_id: row.dispatcher_id,
+          err: errInfo(err),
+        });
       }
     }
   }

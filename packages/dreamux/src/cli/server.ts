@@ -64,7 +64,7 @@ async function main(): Promise<void> {
   // (tests) gets stderr-only defaults. Both stream to stderr too, so a
   // foreground `serve` stays visible.
   const logger = createLogger({ name: 'server', filePath: serverLogPath() });
-  logger.info({ config_file: configFile }, 'loaded global config');
+  logger.info('loaded global config', { config_file: configFile });
 
   const server = new Server({
     config,
@@ -76,10 +76,10 @@ async function main(): Promise<void> {
     legacyAdminLockPath: `${legacyAdminSocketPath()}.lock`,
   });
   await server.start();
-  logger.info({ admin_socket: adminSocketPath() }, 'server up');
+  logger.info('server up', { admin_socket: adminSocketPath() });
 
   const shutdown = async (signal: string): Promise<void> => {
-    logger.info({ signal }, 'received signal');
+    logger.info('received signal', { signal });
     await server.shutdown();
     process.exit(0);
   };

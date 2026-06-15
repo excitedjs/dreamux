@@ -1,6 +1,8 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
+import type { AgentRuntimeStateCallbacks } from '@excitedjs/dreamux-types';
+
 import {
   type DispatcherConfig,
   type DreamuxConfig,
@@ -63,7 +65,7 @@ interface DispatcherStatusFile {
   last_lost_thread_id: string | null;
 }
 
-export class DispatcherStore {
+export class DispatcherStore implements AgentRuntimeStateCallbacks {
   private readonly rows = new Map<string, DispatcherRow>();
   private readonly seedDispatchers: readonly DispatcherConfig[];
 

@@ -15,7 +15,7 @@ import {
   teamServicePrincipal,
 } from '../src/dispatcher-service/teammate/types.js';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
-import type { DreamuxLogger } from '../src/platform/logger.js';
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import { resetRuntimeConfig } from '../src/platform/paths.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';

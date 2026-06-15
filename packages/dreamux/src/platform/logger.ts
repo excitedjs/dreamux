@@ -38,13 +38,37 @@
 
 import { chmod } from 'node:fs/promises';
 
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import pino, {
   type DestinationStream,
   type Logger,
   type LoggerOptions,
 } from 'pino';
 
-export type DreamuxLogger = Logger;
+/**
+ * Wrap a pino logger as the neutral `@excitedjs/dreamux-types` `DreamuxLogger`
+ * (message-first: `info(msg, fields?)`) — the SINGLE logger contract across core
+ * and provider packages. pino is fields-first (`info(obj, msg)`), so the flip
+ * happens once here, at logger construction, instead of at every core→provider
+ * handoff. There is no separate host logger type and no boundary adapter: core
+ * holds and injects this neutral logger directly.
+ */
+function wrapPino(p: Logger): DreamuxLogger {
+  const forward =
+    (lvl: 'error' | 'warn' | 'info' | 'debug' | 'trace') =>
+    (msg: string, fields?: Record<string, unknown>): void => {
+      if (fields !== undefined) p[lvl](fields, msg);
+      else p[lvl](msg);
+    };
+  return {
+    error: forward('error'),
+    warn: forward('warn'),
+    info: forward('info'),
+    debug: forward('debug'),
+    trace: forward('trace'),
+    child: (fields) => wrapPino(p.child(fields)),
+  };
+}
 
 export interface CreateLoggerOptions {
   /**
@@ -134,7 +158,7 @@ export function createLogger(opts: CreateLoggerOptions = {}): DreamuxLogger {
   };
 
   if (opts.destination !== undefined) {
-    return pino(base, opts.destination);
+    return wrapPino(pino(base, opts.destination));
   }
 
   const streams: pino.StreamEntry[] = [];
@@ -145,7 +169,7 @@ export function createLogger(opts: CreateLoggerOptions = {}): DreamuxLogger {
     streams.push({ level, stream: pino.destination({ fd: 2, sync: true }) });
   }
 
-  return pino(base, pino.multistream(streams, { dedupe: false }));
+  return wrapPino(pino(base, pino.multistream(streams, { dedupe: false })));
 }
 
 /**
@@ -157,7 +181,7 @@ export function loggerToLevelFn(
   logger: DreamuxLogger,
 ): (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void {
   return (level, msg, err) => {
-    if (err !== undefined) logger[level]({ err: serializeErr(err) }, msg);
+    if (err !== undefined) logger[level](msg, { err: serializeErr(err) });
     else logger[level](msg);
   };
 }

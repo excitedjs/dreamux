@@ -11,7 +11,7 @@ import type {
 import type { ChannelProviderCatalog } from '../channel/catalog.js';
 import { type DreamuxConfig } from '../config/config.js';
 import type { DispatcherStore } from '../state/dispatcher-store.js';
-import type { DreamuxLogger } from '../platform/logger.js';
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import type { RestartIntentConsumer } from '../daemon/restart-intent.js';
 import { adminSocketPath as defaultAdminSocketPath } from '../platform/paths.js';
 import {

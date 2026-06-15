@@ -30,10 +30,6 @@ import {
   dispatcherDir,
   teamMateCompletionOutputPath,
 } from '../src/platform/paths.js';
-import {
-  hostStateCallbacks,
-  loggerFromHostLog,
-} from '../src/agent-runtime/host-context.js';
 import { dispatcherHostPaths } from '../src/agent-runtime/host-paths.js';
 import { defaultDispatcherClaudeCodeConfig } from '../src/config/config.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
@@ -385,7 +381,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       config: dispatcherClaudeCodeConfig(dispatcher),
       cwd: defaultDispatcherCwd('flow'),
       mcpServers: [FEISHU_MCP],
-      state: hostStateCallbacks(store),
+      state: store,
       paths: dispatcherHostPaths,
       ...(opts.skillSources !== undefined
         ? { skillSources: opts.skillSources }
@@ -470,11 +466,15 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       config: dispatcherClaudeCodeConfig(dispatcher),
       cwd: defaultDispatcherCwd('flow'),
       mcpServers: [],
-      state: hostStateCallbacks(store),
+      state: store,
       paths: dispatcherHostPaths,
-      logger: loggerFromHostLog((_level, msg) => {
-        logs.push(msg);
-      }),
+      logger: {
+        error: (msg) => void logs.push(msg),
+        warn: (msg) => void logs.push(msg),
+        info: (msg) => void logs.push(msg),
+        debug: (msg) => void logs.push(msg),
+        trace: (msg) => void logs.push(msg),
+      },
     });
     await runtime.start();
 
@@ -915,7 +915,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       config: dispatcherClaudeCodeConfig(dispatcher),
       cwd: defaultDispatcherCwd('flow'),
       mcpServers: [],
-      state: hostStateCallbacks(store),
+      state: store,
       paths: dispatcherHostPaths,
     });
     await runtime.start();
@@ -1034,7 +1034,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       config: dispatcherClaudeCodeConfig(dispatcher),
       cwd: defaultDispatcherCwd('flow'),
       mcpServers: [],
-      state: hostStateCallbacks(store),
+      state: store,
       paths: dispatcherHostPaths,
       onTurnSettled: (s) => settled.push(s),
     });

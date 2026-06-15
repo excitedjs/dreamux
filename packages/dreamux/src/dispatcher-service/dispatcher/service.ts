@@ -13,8 +13,6 @@ import type {
 import {
   bundledSkillSourcesForRole,
   dispatcherHostPaths,
-  hostStateCallbacks,
-  neutralLoggerFromHostLogger,
   HOST_INJECT_ENV,
   type AgentRuntimeProviderCatalog,
 } from '../../agent-runtime/index.js';
@@ -42,7 +40,7 @@ import {
   dispatcherDir,
 } from '../../platform/paths.js';
 import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
-import type { DreamuxLogger } from '../../platform/logger.js';
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import { teammateMcpServerDescriptor } from '../teammate/mcp-config.js';
 import { teamMcpServerDescriptor } from '../team/mcp-config.js';
 import {
@@ -148,19 +146,20 @@ export class DispatcherAgentService {
       try {
         await session.close();
       } catch (err) {
-        slot.log.error(
-          { dispatcher_id: id, channel_id: channelId, err: errInfo(err) },
-          'error closing bot',
-        );
+        slot.log.error('error closing bot', {
+          dispatcher_id: id,
+          channel_id: channelId,
+          err: errInfo(err),
+        });
       }
     }
     try {
       await slot.runtime.stop();
     } catch (err) {
-      slot.log.error(
-        { dispatcher_id: id, err: errInfo(err) },
-        'error stopping dispatcher',
-      );
+      slot.log.error('error stopping dispatcher', {
+        dispatcher_id: id,
+        err: errInfo(err),
+      });
     }
     this.slots.delete(id);
   }
@@ -204,18 +203,18 @@ export class DispatcherAgentService {
   ): Promise<void> {
     const slot = this.slots.get(dispatcherId);
     if (slot === undefined) {
-      this.opts.log.warn(
-        { dispatcher_id: dispatcherId, source: completion.source },
-        'dropping teammate completion: dispatcher not running',
-      );
+      this.opts.log.warn('dropping teammate completion: dispatcher not running', {
+        dispatcher_id: dispatcherId,
+        source: completion.source,
+      });
       return;
     }
     const deliver = slot.runtime.completionInput;
     if (deliver === undefined) {
-      slot.log.warn(
-        { dispatcher_id: dispatcherId, source: completion.source },
-        'dropping teammate completion: runtime has no completion delivery',
-      );
+      slot.log.warn('dropping teammate completion: runtime has no completion delivery', {
+        dispatcher_id: dispatcherId,
+        source: completion.source,
+      });
       return;
     }
     const maxAttempts = 3;
@@ -224,10 +223,11 @@ export class DispatcherAgentService {
       try {
         outcome = await deliver.call(slot.runtime, completion);
       } catch (err) {
-        slot.log.warn(
-          { dispatcher_id: dispatcherId, source: completion.source, err: errInfo(err) },
-          'teammate completion delivery threw',
-        );
+        slot.log.warn('teammate completion delivery threw', {
+          dispatcher_id: dispatcherId,
+          source: completion.source,
+          err: errInfo(err),
+        });
         return;
       }
       if (outcome.status === 'accepted') {
@@ -235,27 +235,26 @@ export class DispatcherAgentService {
         return;
       }
       if (outcome.status === 'unsupported') {
-        slot.log.warn(
-          { dispatcher_id: dispatcherId, source: completion.source, reason: outcome.reason },
-          'dropping teammate completion: runtime delivery unsupported',
-        );
-        return;
-      }
-      slot.log.warn(
-        {
+        slot.log.warn('dropping teammate completion: runtime delivery unsupported', {
           dispatcher_id: dispatcherId,
           source: completion.source,
-          attempt,
-          max_attempts: maxAttempts,
-          err: errInfo(outcome.error),
-        },
-        'teammate completion delivery failed',
-      );
+          reason: outcome.reason,
+        });
+        return;
+      }
+      slot.log.warn('teammate completion delivery failed', {
+        dispatcher_id: dispatcherId,
+        source: completion.source,
+        attempt,
+        max_attempts: maxAttempts,
+        err: errInfo(outcome.error),
+      });
     }
-    slot.log.warn(
-      { dispatcher_id: dispatcherId, source: completion.source, max_attempts: maxAttempts },
-      'teammate completion delivery exhausted retries; dropping',
-    );
+    slot.log.warn('teammate completion delivery exhausted retries; dropping', {
+      dispatcher_id: dispatcherId,
+      source: completion.source,
+      max_attempts: maxAttempts,
+    });
   }
 
   summarize(): DispatcherSummary[] {
@@ -329,9 +328,7 @@ export class DispatcherAgentService {
       {
         dispatcher_id: dispatcherId,
         state_root: dispatcherDir(dispatcherId),
-        logger: neutralLoggerFromHostLogger(
-          this.opts.channelLoggerFactory(dispatcherId),
-        ),
+        logger: this.opts.channelLoggerFactory(dispatcherId),
       },
     );
   }
@@ -458,11 +455,9 @@ export class DispatcherAgentService {
     // misconfigured dispatcher never reaches launch; the call here is idempotent
     // and keeps the launch path self-validating.
     const cwd = await ensureDispatcherWorkspace(this.opts.config, id);
-    const channelLog = this.opts.channelLoggerFactory(id);
-    // The neutral, message-first logger handed to providers (runtime + channel),
-    // bridging core's fields-first pino logger to the dreamux-types contract so a
-    // provider's structured fields survive onto the host log line.
-    const neutralLog = neutralLoggerFromHostLogger(channelLog);
+    // The neutral logger handed to providers (runtime + channel). Core's logger
+    // IS the dreamux-types `DreamuxLogger`, so it is injected directly.
+    const neutralLog = this.opts.channelLoggerFactory(id);
     // The dispatcher prompt is runtime-injected via the runtime's systemPrompt
     // capability. 'replace' runtimes (codex) consume the full prompt as their
     // base instructions; 'append' runtimes (claude-code) receive a focused
@@ -509,7 +504,7 @@ export class DispatcherAgentService {
       systemPromptContent,
       mcpServers: this.dreamuxMcpServerDescriptors(id, channels),
       skillSources: bundledSkillSourcesForRole('dispatcher'),
-      state: hostStateCallbacks(this.opts.dispatchers),
+      state: this.opts.dispatchers,
       paths: dispatcherHostPaths,
       logger: neutralLog,
       injectEnv: HOST_INJECT_ENV,
@@ -525,7 +520,7 @@ export class DispatcherAgentService {
         row,
         runtime,
         channels,
-        log: channelLog,
+        log: neutralLog,
       });
       for (const [channelId, session] of channels) {
         // Each session tags its own channel_id onto every inbound turn it
@@ -565,15 +560,12 @@ export class DispatcherAgentService {
       throw err;
     }
 
-    this.opts.log.info(
-      {
-        dispatcher_id: id,
-        channel_identity: row.channel_identity,
-        cwd,
-      },
-      'dispatcher ready',
-    );
-    await this.injectRestartNoticeIfNeeded(id, runtime, channelLog);
+    this.opts.log.info('dispatcher ready', {
+      dispatcher_id: id,
+      channel_identity: row.channel_identity,
+      cwd,
+    });
+    await this.injectRestartNoticeIfNeeded(id, runtime, neutralLog);
   }
 
   private dreamuxMcpServerDescriptors(
@@ -651,7 +643,7 @@ export class DispatcherAgentService {
    */
   private async buildChannelSessions(
     dispatcherId: string,
-    neutralLog: ReturnType<typeof neutralLoggerFromHostLogger>,
+    neutralLog: DreamuxLogger,
   ): Promise<Map<string, ChannelSession>> {
     const dispatcherConfig = this.opts.config.dispatchers.find(
       (dispatcher) => dispatcher.id === dispatcherId,
@@ -709,16 +701,16 @@ export class DispatcherAgentService {
         reason: 'restart-notice',
       });
       if (result.status === 'failed') {
-        log.warn(
-          { dispatcher_id: dispatcherId, err: errInfo(result.error) },
-          'restart notice injection failed',
-        );
+        log.warn('restart notice injection failed', {
+          dispatcher_id: dispatcherId,
+          err: errInfo(result.error),
+        });
       }
     } catch (err) {
-      log.warn(
-        { dispatcher_id: dispatcherId, err: errInfo(err) },
-        'restart notice injection errored',
-      );
+      log.warn('restart notice injection errored', {
+        dispatcher_id: dispatcherId,
+        err: errInfo(err),
+      });
     }
   }
 

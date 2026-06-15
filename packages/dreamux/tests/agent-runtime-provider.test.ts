@@ -16,7 +16,6 @@ import {
 } from '@excitedjs/agent-runtime-codex';
 import { createClaudeCodeAgentRuntimeProvider } from '@excitedjs/agent-runtime-claude-code';
 import { codexAgentRuntimeCatalog } from './helpers/fake-agent-runtime.js';
-import { hostStateCallbacks } from '../src/agent-runtime/host-context.js';
 import { dispatcherHostPaths } from '../src/agent-runtime/host-paths.js';
 import { asAgentRuntimeDescriptor } from './helpers/provider.js';
 import type {
@@ -156,7 +155,7 @@ describe('AgentRuntimeProviderCatalog', () => {
       config: dispatcherCodexConfig(dispatcher),
       cwd: '/tmp/dreamux-test-cwd',
       mcpServers: [],
-      state: hostStateCallbacks(store),
+      state: store,
       paths: dispatcherHostPaths,
     });
 
@@ -253,7 +252,7 @@ describe('AgentRuntimeProviderCatalog', () => {
       config: {},
       cwd: '/tmp/dreamux-test-cwd',
       mcpServers: [],
-      state: hostStateCallbacks(store),
+      state: store,
       paths: dispatcherHostPaths,
     });
 

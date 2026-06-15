@@ -23,7 +23,7 @@ import {
   resetRuntimeConfig,
 } from '../src/platform/paths.js';
 import { Server } from '../src/server.js';
-import type { DreamuxLogger } from '../src/platform/logger.js';
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 import { codexAgentRuntimeCatalog } from './helpers/fake-agent-runtime.js';
 

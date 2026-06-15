@@ -4,7 +4,6 @@ import { createHash } from 'node:crypto';
 import {
   bundledSkillSourcesForRole,
   teammateHostPaths,
-  neutralLoggerFromHostLogger,
   HOST_INJECT_ENV,
   type AgentRuntimeProviderCatalog,
 } from '../../agent-runtime/index.js';
@@ -23,7 +22,7 @@ import {
   type ResolvedAgentConfig,
 } from '../../config/config.js';
 import type { DispatcherStore } from '../../state/dispatcher-store.js';
-import type { DreamuxLogger } from '../../platform/logger.js';
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import { validateDispatcherId } from '../../state/dispatcher-id.js';
 import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
 import { TeamMateIdentityStore } from './identity-store.js';
@@ -164,10 +163,10 @@ export class TeamMateAgentService {
 
   constructor(private readonly opts: TeamMateAgentServiceOptions) {
     this.identities = new TeamMateIdentityStore({
-      warn: (message, fields) => opts.log.warn(fields ?? {}, message),
+      warn: (message, fields) => opts.log.warn(message, fields),
     });
     this.turnsStore = new TeamMateTurnsStore({
-      warn: (message, fields) => opts.log.warn(fields ?? {}, message),
+      warn: (message, fields) => opts.log.warn(message, fields),
     });
   }
 
@@ -934,17 +933,16 @@ export class TeamMateAgentService {
             },
           }
         : {}),
-      // Bind the per-teammate context once via the host logger's own `child`,
-      // then adapt to the neutral message-first contract preserving the full
-      // structured-field set — the same full-fidelity bridge the dispatcher path
-      // uses, so a teammate runtime's `logger.info('x', { id })` keeps `id` on
-      // the host log line (the old callback adapter dropped every field but err).
-      logger: neutralLoggerFromHostLogger(
-        this.opts.log.child({
+      // Bind the per-teammate context once via the neutral logger's own `child`,
+      // so a teammate runtime's `logger.info('x', { id })` keeps `id` on the host
+      // log line alongside the bound dispatcher/teammate fields. `child` is an
+      // optional contract member; core's logger always provides it, but fall back
+      // to the unbound logger if a future logger omits it.
+      logger:
+        this.opts.log.child?.({
           dispatcher_id: dispatcherId,
           teammate: identity.name,
-        }),
-      ),
+        }) ?? this.opts.log,
     });
     liveRuntime = runtime;
     // #199 Slice 3: rebuild the resume checkpoint from the persisted
@@ -1007,14 +1005,11 @@ export class TeamMateAgentService {
   ): Promise<void> {
     try {
       if (settled.turnId === null) {
-        this.opts.log.warn(
-          {
-            dispatcher_id: dispatcherId,
-            teammate: name,
-            status: settled.status,
-          },
-          'dropping teammate completion: settled turn has no turn id',
-        );
+        this.opts.log.warn('dropping teammate completion: settled turn has no turn id', {
+          dispatcher_id: dispatcherId,
+          teammate: name,
+          status: settled.status,
+        });
         return;
       }
       let result = '';
@@ -1022,10 +1017,11 @@ export class TeamMateAgentService {
         const last = await runtime.getLast();
         result = last?.text ?? '';
       } catch (err) {
-        this.opts.log.warn(
-          { dispatcher_id: dispatcherId, teammate: name, err: errInfo(err) },
-          'teammate completion getLast failed',
-        );
+        this.opts.log.warn('teammate completion getLast failed', {
+          dispatcher_id: dispatcherId,
+          teammate: name,
+          err: errInfo(err),
+        });
       }
       const envelope: CompletionEnvelope = {
         source: name,
@@ -1048,10 +1044,11 @@ export class TeamMateAgentService {
           turnOrigins.get(settled.turnId) ?? null,
         );
       } catch (err) {
-        this.opts.log.warn(
-          { dispatcher_id: dispatcherId, teammate: name, err: errInfo(err) },
-          'teammate completion delivery failed',
-        );
+        this.opts.log.warn('teammate completion delivery failed', {
+          dispatcher_id: dispatcherId,
+          teammate: name,
+          err: errInfo(err),
+        });
       }
       // Capture the settled turn in the per-name turns archive AFTER the
       // delivery attempt — regardless of its outcome — so capture never perturbs
@@ -1063,10 +1060,11 @@ export class TeamMateAgentService {
         settleStatus: settled.status,
       });
     } catch (err) {
-      this.opts.log.warn(
-        { dispatcher_id: dispatcherId, teammate: name, err: errInfo(err) },
-        'teammate settled-turn capture failed',
-      );
+      this.opts.log.warn('teammate settled-turn capture failed', {
+        dispatcher_id: dispatcherId,
+        teammate: name,
+        err: errInfo(err),
+      });
     }
   }
 

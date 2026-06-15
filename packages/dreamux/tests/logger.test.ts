@@ -66,7 +66,7 @@ describe('logger factory', () => {
   it('redacts credential fields by default', () => {
     const { sink, text } = captureSink();
     const logger = createLogger({ destination: sink });
-    logger.info({ app_secret: 'top-secret-value', feishu: { app_secret: 'nested' } }, 'cfg');
+    logger.info('cfg', { app_secret: 'top-secret-value', feishu: { app_secret: 'nested' } });
     const out = text();
     expect(out).not.toContain('top-secret-value');
     expect(out).not.toContain('nested');
@@ -77,7 +77,7 @@ describe('logger factory', () => {
     const { sink, text } = captureSink();
     const logger = createLogger({ destination: sink });
     // The server logs ids only; a body would only appear if a caller passed it.
-    logger.info({ chat_id: 'chat-a', message_id: 'm1', reason: 'bot not mentioned' }, 'drop');
+    logger.info('drop', { chat_id: 'chat-a', message_id: 'm1', reason: 'bot not mentioned' });
     const out = text();
     expect(out).toContain('chat-a');
     expect(out).not.toContain('the actual message body text');
@@ -135,7 +135,7 @@ describe('logger factory', () => {
 
     // The generic, provider-agnostic redact policy censors any app_secret a
     // field path carries — core names no provider's secret field.
-    logger.warn({ app_secret: 'fake-not-a-real-secret' }, 'diagnostic');
+    logger.warn('diagnostic', { app_secret: 'fake-not-a-real-secret' });
 
     expect(text()).not.toContain('fake-not-a-real-secret');
     expect(text()).toContain('[REDACTED]');

@@ -24,7 +24,6 @@ import {
   dispatcherClaudeCodeConfig,
   type ClaudeCodeAgentRuntimeProviderOptions,
 } from '@excitedjs/agent-runtime-claude-code';
-import { hostStateCallbacks } from '../src/agent-runtime/host-context.js';
 import { dispatcherHostPaths } from '../src/agent-runtime/host-paths.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
@@ -118,7 +117,7 @@ describe('claude-code live integration (opt-in)', () => {
       config: dispatcherClaudeCodeConfig(dispatcher),
       cwd: home,
       mcpServers: [],
-      state: hostStateCallbacks(store),
+      state: store,
       paths: dispatcherHostPaths,
     });
 

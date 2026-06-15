@@ -63,7 +63,7 @@ import {
   dispatcherPrincipal,
   teamLeaderPrincipal,
 } from '../src/dispatcher-service/teammate/types.js';
-import type { DreamuxLogger } from '../src/platform/logger.js';
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import {
   BUILTIN_FEISHU_PROVIDER_REF,
   BUILTIN_CODEX_PROVIDER_REF,

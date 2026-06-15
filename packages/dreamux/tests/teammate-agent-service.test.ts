@@ -22,7 +22,7 @@ import type {
   ProviderDescriptor,
   TurnSettledSignal,
 } from '@excitedjs/dreamux-types';
-import type { DreamuxLogger } from '../src/platform/logger.js';
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import { asAgentRuntimeDescriptor } from './helpers/provider.js';
 import { TeamMateAgentService } from '../src/dispatcher-service/teammate/service.js';
 import { teamServicePrincipal } from '../src/dispatcher-service/teammate/types.js';
