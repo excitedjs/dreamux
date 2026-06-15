@@ -598,12 +598,21 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     status: AgentRuntimeStatus,
     err?: unknown,
   ): Promise<void> {
+    // The in-memory status is authoritative (getStatus reads it). Persisting it is
+    // best-effort recovery state (#98): a write failure (e.g. the host state dir is
+    // momentarily unavailable) must not crash the runtime or surface as an
+    // unhandled rejection on the shared event loop (#85) — especially from the
+    // fire-and-forget turn-failure / child-exit paths. Log and continue.
     this.status = status;
-    await this.deps.state.setStatus(
-      this.dispatcherId,
-      status,
-      err !== undefined ? { last_error: errMessage(err) } : {},
-    );
+    try {
+      await this.deps.state.setStatus(
+        this.dispatcherId,
+        status,
+        err !== undefined ? { last_error: errMessage(err) } : {},
+      );
+    } catch (persistErr) {
+      this.log('warn', 'failed to persist runtime status', persistErr);
+    }
   }
 
   private log(
