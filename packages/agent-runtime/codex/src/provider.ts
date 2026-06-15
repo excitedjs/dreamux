@@ -9,6 +9,7 @@ import {
   type CodexRuntimeDeps,
 } from './runtime.js';
 import {
+  DEFAULT_CODEX_BIN,
   dispatcherCodexConfig,
   readDispatcherCodexConfig,
   type DispatcherCodexConfig,
@@ -113,6 +114,16 @@ export function createCodexAgentRuntimeProvider(
         : asAgentRuntimeDescriptor(options.descriptor),
     getCapabilities: () => CODEX_AGENT_RUNTIME_CAPABILITIES,
     diagnostic: codexAgentRuntimeDiagnostic,
+    onboard: {
+      async collect(_context, prompts): Promise<Record<string, unknown>> {
+        const bin = await prompts.text({
+          message: 'Codex CLI binary',
+          initialValue: DEFAULT_CODEX_BIN,
+          required: true,
+        });
+        return { bin };
+      },
+    },
     readConfig(rawConfig, context) {
       return readDispatcherCodexConfig(rawConfig, context.file, context.prefix);
     },

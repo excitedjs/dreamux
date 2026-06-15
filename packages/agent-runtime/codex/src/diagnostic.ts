@@ -1,9 +1,9 @@
 /**
- * The `builtin:codex` self-reported doctor surface (issue #146 fold; relocated
+ * The `builtin:codex` self-reported diagnostic surface (issue #146 fold; relocated
  * into the owning package by the issue #209 cleanup).
  *
- * Declares the codex bin check (deduped + executed by Dreamux core's doctor) and
- * runs the codex-home validation plus the codex version gate (#147) itself,
+ * Declares the codex bin check (deduped + executed by Dreamux core) and runs
+ * the codex-home validation plus the codex version gate (#147) itself,
  * entirely against the neutral `@excitedjs/dreamux-types` diagnostic context. The
  * representative app-server socket sample is derived from the neutral path
  * context's `runtimeSocketDirs()`, so the package never names `~/.dreamux`.
@@ -13,7 +13,7 @@ import type {
   AgentRuntimeDiagnostic,
   AgentRuntimeDiagnosticContext,
   AgentRuntimeDiagnosticRunner,
-  AgentRuntimeDoctorResult,
+  AgentRuntimeDiagnosticResult,
 } from '@excitedjs/dreamux-types';
 
 import { codexArgsFromConfig, codexArgsToCli } from './args.js';
@@ -62,7 +62,7 @@ export const codexAgentRuntimeDiagnostic: AgentRuntimeDiagnostic<DispatcherCodex
         },
       ];
     },
-    async runDiagnostic(context, runner): Promise<AgentRuntimeDoctorResult> {
+    async runDiagnostic(context, runner): Promise<AgentRuntimeDiagnosticResult> {
       const cliArgs = codexArgsToCli(codexArgsFromConfig(context.config));
       const socketDirs = context.paths?.runtimeSocketDirs() ?? [];
       const homeContext = dispatcherCodexHomeDoctorContext(context.runtime_id, {

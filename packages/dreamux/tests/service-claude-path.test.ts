@@ -1,10 +1,10 @@
 /**
- * Managed-service PATH includes provider-declared runtime binary dirs.
+ * Managed-service PATH includes provider-declared binary check dirs.
  *
- * Runtime packages declare their binary checks through the neutral diagnostic
- * seam. The service unit only receives the resolved binary paths as opaque
- * `runtimeBins`; it must not know whether they came from Codex, Claude Code, or
- * any future provider.
+ * Providers declare their binary checks through the diagnostic seam. The service
+ * unit receives those checks as opaque provider-owned descriptors; it must not
+ * know whether they came from Codex, Claude Code, a channel, or any future
+ * provider.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -18,12 +18,12 @@ import {
 import type { CommandRunner } from '../src/onboard/types.js';
 
 class ServiceRunner implements CommandRunner {
-  readonly checks: string[] = [];
+  readonly checks: Array<{ command: string; args: string[] }> = [];
 
   async run(): Promise<void> {}
 
-  async check(command: string): Promise<boolean> {
-    this.checks.push(command);
+  async check(command: string, args: string[]): Promise<boolean> {
+    this.checks.push({ command, args });
     return true;
   }
 
@@ -37,7 +37,13 @@ function answers(
 ): ServiceInstallAnswers {
   return {
     configDir: '/home/op/.dreamux',
-    runtimeBins: ['/opt/runtime-a/bin/runtime-a'],
+    providerBinChecks: [
+      {
+        name: 'runtime-a',
+        bin: '/opt/runtime-a/bin/runtime-a',
+        args: ['probe'],
+      },
+    ],
     dreamuxBin: '/opt/dreamux/bin/dreamux',
     nodeBin: '/usr/bin/node',
     startService: false,
@@ -46,10 +52,23 @@ function answers(
   };
 }
 
-describe('managed service runtime PATH', () => {
-  it('includes provider-declared runtime binary directories', () => {
+describe('managed service provider PATH', () => {
+  it('includes provider-declared binary directories', () => {
     const env = managedServiceEnvironment(
-      answers({ runtimeBins: ['/opt/runtime-a/bin/runtime-a', '/home/op/.local/bin/runtime-b'] }),
+      answers({
+        providerBinChecks: [
+          {
+            name: 'runtime-a',
+            bin: '/opt/runtime-a/bin/runtime-a',
+            args: ['probe'],
+          },
+          {
+            name: 'runtime-b',
+            bin: '/home/op/.local/bin/runtime-b',
+            args: ['probe'],
+          },
+        ],
+      }),
     );
     const dirs = env['PATH'].split(delimiter);
     expect(dirs).toContain('/home/op/.local/bin');
@@ -57,18 +76,32 @@ describe('managed service runtime PATH', () => {
   });
 
   it('omits runtime dirs when no provider declares a binary', () => {
-    const env = managedServiceEnvironment(answers({ runtimeBins: [] }));
+    const env = managedServiceEnvironment(answers({ providerBinChecks: [] }));
     const dirs = env['PATH'].split(delimiter);
     expect(dirs).not.toContain('/home/op/.local/bin');
     expect(dirs).not.toContain('/opt/runtime-a/bin');
   });
 
-  it('validates only the declared runtime binaries', async () => {
+  it('validates only the declared provider binary checks', async () => {
     const runner = new ServiceRunner();
 
     await expect(
-      validateManagedServiceLaunch(answers({ runtimeBins: [] }), runner),
+      validateManagedServiceLaunch(answers({ providerBinChecks: [] }), runner),
     ).resolves.toMatchObject({ ok: true });
-    expect(runner.checks).toEqual(['/opt/dreamux/bin/dreamux']);
+    expect(runner.checks).toEqual([
+      { command: '/opt/dreamux/bin/dreamux', args: ['--help'] },
+    ]);
+  });
+
+  it('validates provider-declared args instead of assuming --help', async () => {
+    const runner = new ServiceRunner();
+
+    await expect(
+      validateManagedServiceLaunch(answers(), runner),
+    ).resolves.toMatchObject({ ok: true });
+    expect(runner.checks).toContainEqual({
+      command: '/opt/runtime-a/bin/runtime-a',
+      args: ['probe'],
+    });
   });
 });

@@ -104,7 +104,7 @@ function targetChatId(target: ChannelTarget): string {
     : target.target_key;
 }
 
-function inboundEnvelopeToNeutral(
+function inboundEnvelopeToChannelEnvelope(
   channelId: string,
   envelope: FeishuInboundEnvelope,
 ): ChannelInboundEnvelope {
@@ -121,8 +121,8 @@ function inboundEnvelopeToNeutral(
   };
 }
 
-/** The neutral `ChannelSession` wrapper over the package's Feishu session. */
-class NeutralFeishuChannelSession implements ChannelSession {
+/** The `ChannelSession` adapter over the package's Feishu session. */
+class FeishuChannelSessionAdapter implements ChannelSession {
   readonly provider = BUILTIN_FEISHU_PROVIDER_REF;
 
   constructor(
@@ -133,13 +133,13 @@ class NeutralFeishuChannelSession implements ChannelSession {
   async start(routes: ChannelRoutes): Promise<void> {
     await this.session.start({
       // The session normalized the turn into `input`; forward it plus the
-      // neutral routing envelope and the accept hooks to core, and return core's
+      // channel routing envelope and the accept hooks to core, and return core's
       // REAL delivery result (status + turnId) so the session's reaction ledger
       // keys off the actually-submitted turn — not a fabricated id.
       submitTurn: (input, envelope, hooks) =>
         routes.deliver(
           input,
-          inboundEnvelopeToNeutral(this.channel_id, envelope),
+          inboundEnvelopeToChannelEnvelope(this.channel_id, envelope),
           hooks,
         ),
     });
@@ -148,8 +148,8 @@ class NeutralFeishuChannelSession implements ChannelSession {
   mcpServerDescriptor(
     context: ChannelMcpDescriptorContext,
   ): AgentRuntimeMcpServer | null {
-    // Build the generic `channel-mcp` stdio descriptor from the host's neutral
-    // bin command + admin socket. Feishu always exposes its MCP surface, so this
+    // Build the generic `channel-mcp` stdio descriptor from the host bin command
+    // + admin socket. Feishu always exposes its MCP surface, so this
     // never returns null. Core owns the bin path and the generic shim; the
     // package only shapes args. The provider + channel id are routed back through
     // the shim so a multi-channel dispatcher reaches the same live session whose
@@ -268,6 +268,34 @@ export function createFeishuChannelProvider(
       // and displays it without ever naming a Feishu config field.
       return config.appId;
     },
+    onboard: {
+      async collect(_context, prompts): Promise<Record<string, unknown>> {
+        const appId = await prompts.text({
+          message: 'Feishu bot app id',
+          required: true,
+        });
+        const appSecret = await prompts.secret({
+          message: 'Feishu bot app secret',
+          required: true,
+        });
+        return {
+          app_id: appId,
+          app_secret: appSecret,
+        };
+      },
+    },
+    diagnostic: {
+      binChecks() {
+        return [];
+      },
+      async runDiagnostic() {
+        return {
+          ok: true,
+          detail: 'Feishu channel has no host-managed diagnostics',
+          errors: [],
+        };
+      },
+    },
     async handleSessionlessTool(
       name: string,
       args: Record<string, unknown>,
@@ -331,7 +359,7 @@ export function createFeishuChannelProvider(
         appId: context.config.appId,
         appSecret: context.config.appSecret,
         stateDir,
-        // The channel owns its cache-subdir layout; core supplies only a neutral
+        // The channel owns its cache-subdir layout; core supplies only a
         // per-dispatcher cache root (issue #209 de-leak — core no longer names a
         // `feishu-attachments` dir). Effective path is unchanged.
         attachmentCacheDir: join(cacheRoot, 'feishu-attachments'),
@@ -340,7 +368,7 @@ export function createFeishuChannelProvider(
           ? { botFactory: (): FeishuBot => options.botFactory!(context.config) }
           : {}),
       });
-      return new NeutralFeishuChannelSession(context.channel_id, session);
+      return new FeishuChannelSessionAdapter(context.channel_id, session);
     },
   };
 }

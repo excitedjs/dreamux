@@ -103,6 +103,11 @@ function assertExternalAgentRuntimeProvider(
   if (typeof candidate.createRuntime !== 'function') {
     context.fail('provider.createRuntime must be a function');
   }
+  if (candidate.readConfig !== undefined && typeof candidate.readConfig !== 'function') {
+    context.fail('provider.readConfig must be a function when present');
+  }
+  assertOptionalOnboard(candidate.onboard, context);
+  assertOptionalDiagnostic(candidate.diagnostic, context);
   let capabilities: AgentRuntimeCapabilities;
   try {
     capabilities = candidate.getCapabilities!();
@@ -110,6 +115,32 @@ function assertExternalAgentRuntimeProvider(
     context.fail(`provider.getCapabilities threw: ${errMessage(err)}`);
   }
   assertCapabilities(capabilities, context);
+}
+
+function assertOptionalOnboard(
+  value: unknown,
+  context: ProviderContractContext,
+): void {
+  if (value === undefined) return;
+  if (!isRecord(value) || typeof value['collect'] !== 'function') {
+    context.fail('provider.onboard.collect must be a function when onboard is present');
+  }
+}
+
+function assertOptionalDiagnostic(
+  value: unknown,
+  context: ProviderContractContext,
+): void {
+  if (value === undefined) return;
+  if (
+    !isRecord(value) ||
+    typeof value['binChecks'] !== 'function' ||
+    typeof value['runDiagnostic'] !== 'function'
+  ) {
+    context.fail(
+      'provider.diagnostic must expose binChecks and runDiagnostic functions when present',
+    );
+  }
 }
 
 function assertCapabilities(

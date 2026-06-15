@@ -1,11 +1,13 @@
 import { pathExists } from '../platform/fs-errors.js';
 
-import type { AgentRuntimeDoctorResult } from '@excitedjs/dreamux-types';
+import type { ProviderBinCheck } from '@excitedjs/dreamux-types';
 import {
   assertNoLegacyTomlOnly,
   globalConfigFile,
   loadConfig,
   stringifyConfig,
+  type DreamuxConfig,
+  type LoadConfigResult,
 } from '../config/config.js';
 import {
   dispatcherDir,
@@ -14,7 +16,13 @@ import {
   stateRoot,
 } from '../platform/paths.js';
 import { AgentRuntimeProviderCatalog } from '../agent-runtime/catalog.js';
-import { dispatcherHostPaths } from '../agent-runtime/host-paths.js';
+import { ChannelProviderCatalog } from '../channel/catalog.js';
+import {
+  providerBinChecksForConfig,
+  runDispatcherProviderDiagnostics,
+  type ProviderDiagnosticCatalogs,
+  type ProviderDiagnosticReport,
+} from '../provider-diagnostics.js';
 import { ExecaCommandRunner } from './commands.js';
 import { dreamuxConfigFromAnswers } from './config-files.js';
 import {
@@ -33,13 +41,14 @@ import {
 import type {
   CommandRunner,
   OnboardAnswers,
+  OnboardDoctorResult,
   OnboardFileLedger,
   OnboardRunResult,
 } from './types.js';
 
 type EffectiveOnboardAnswers = OnboardAnswers & {
   nodeBin: string;
-  runtimeBins: string[];
+  providerBinChecks: ProviderBinCheck[];
 };
 
 export interface RunOnboardOptions {
@@ -63,12 +72,6 @@ export async function runOnboard(
   const configPath = globalConfigFile({ configDir: answers.configDir });
   const existingConfig = await readExistingDreamuxConfig(answers.configDir);
   const dreamuxConfig = dreamuxConfigFromAnswers(answers, existingConfig);
-  // The default bootstrap persists the selected runtime binary in the
-  // provider-owned agents[].config block and seeds the managed-service PATH with
-  // that binary. Provider diagnostics perform the actual runtime-specific checks.
-  const serviceRuntimeBin = answers.registerService && !answers.dryRun
-    ? await resolveServiceExecutable(answers.codexBin, env)
-    : answers.codexBin;
   const serviceNodeBin = answers.registerService && !answers.dryRun
     ? await selectServiceNodeBin({
         platform: options.platform ?? process.platform,
@@ -77,11 +80,6 @@ export async function runOnboard(
         probe: options.nodeProbe,
       })
     : process.execPath;
-  const effectiveAnswers = {
-    ...answers,
-    nodeBin: serviceNodeBin,
-    runtimeBins: [serviceRuntimeBin],
-  };
   setRuntimeConfig(dreamuxConfig);
 
   await ensureDirectory(answers.configDir, ledger, 'dreamux config directory', {
@@ -108,7 +106,7 @@ export async function runOnboard(
     { dryRun: answers.dryRun },
   );
   await ensureDirectory(
-    effectiveAnswers.dispatcherCwd,
+    answers.dispatcherCwd,
     ledger,
     'dispatcher cwd',
     { dryRun: answers.dryRun },
@@ -120,7 +118,28 @@ export async function runOnboard(
   // symlinks are left untouched; `dreamux uninstall` reports but does not remove
   // them.
 
-  const doctor = await runDispatcherDoctor(effectiveAnswers, env, runner);
+  const loaded = answers.dryRun
+    ? null
+    : await loadConfig({ configDir: answers.configDir });
+  if (loaded !== null) setRuntimeConfig(loaded.config);
+  const catalogs = loaded === null ? null : catalogsFromLoadedConfig(loaded);
+  const providerBinChecks =
+    answers.registerService && !answers.dryRun && loaded !== null && catalogs !== null
+      ? await resolveProviderBinChecks(loaded.config, catalogs, env)
+      : [];
+  const effectiveAnswers = {
+    ...answers,
+    nodeBin: serviceNodeBin,
+    providerBinChecks,
+  };
+
+  const doctor = await runDispatcherDoctor(
+    effectiveAnswers,
+    loaded,
+    catalogs,
+    env,
+    runner,
+  );
   if (!effectiveAnswers.dryRun && !doctor.ok) {
     throw new Error(formatDoctorFailure(effectiveAnswers, doctor));
   }
@@ -167,20 +186,61 @@ async function readExistingDreamuxConfig(configDir: string) {
   return (await loadConfig({ configDir })).config;
 }
 
+function catalogsFromLoadedConfig(
+  loaded: LoadConfigResult,
+): ProviderDiagnosticCatalogs {
+  return {
+    agentRuntime: new AgentRuntimeProviderCatalog({
+      registry: loaded.providerRegistry,
+    }),
+    channel: new ChannelProviderCatalog({
+      registry: loaded.providerRegistry,
+    }),
+  };
+}
+
+async function resolveProviderBinChecks(
+  config: DreamuxConfig,
+  catalogs: ProviderDiagnosticCatalogs,
+  env: NodeJS.ProcessEnv,
+): Promise<ProviderBinCheck[]> {
+  const checks = providerBinChecksForConfig({
+    config,
+    catalogs,
+    env,
+    scope: 'managedService',
+  });
+  return await Promise.all(
+    checks.map(async (check) => ({
+      ...check,
+      bin: await resolveServiceExecutable(check.bin, env),
+    })),
+  );
+}
+
 async function runDispatcherDoctor(
   answers: EffectiveOnboardAnswers,
+  loaded: LoadConfigResult | null,
+  catalogs: ProviderDiagnosticCatalogs | null,
   env: NodeJS.ProcessEnv,
   runner: CommandRunner,
-): Promise<AgentRuntimeDoctorResult> {
+): Promise<OnboardDoctorResult> {
   if (answers.dryRun) {
     return {
       ok: true,
       errors: [],
       detail: 'dry run',
+      reports: [],
     };
   }
-  const loaded = await loadConfig({ configDir: answers.configDir });
-  setRuntimeConfig(loaded.config);
+  if (loaded === null || catalogs === null) {
+    return {
+      ok: false,
+      detail: answers.dispatcherId,
+      errors: ['onboard config was not loaded after writing'],
+      reports: [],
+    };
+  }
   const dispatcher = loaded.config.dispatchers.find(
     (entry) => entry.id === answers.dispatcherId,
   );
@@ -189,40 +249,46 @@ async function runDispatcherDoctor(
       ok: false,
       detail: answers.dispatcherId,
       errors: [`onboarded dispatcher '${answers.dispatcherId}' was not found in config`],
-    };
-  }
-  const catalog = new AgentRuntimeProviderCatalog({
-    registry: loaded.providerRegistry,
-  });
-  const diagnostic = catalog.resolve(dispatcher.runtime.provider).diagnostic;
-  if (diagnostic === undefined) {
-    return {
-      ok: true,
-      detail: `${dispatcher.runtime.provider} has no runtime diagnostic`,
-      errors: [],
+      reports: [],
     };
   }
   const doctorEnv = answers.registerService
     ? managedServiceEnvironment(answers)
     : env;
-  return await diagnostic.runDiagnostic(
+  const reports = await runDispatcherProviderDiagnostics(
     {
-      runtime_id: dispatcher.id,
-      config: dispatcher.runtime.config,
+      dispatcher,
+      catalogs,
+      runner,
       env: doctorEnv,
       scope: answers.registerService ? 'managedService' : 'foreground',
-      paths: dispatcherHostPaths,
     },
-    runner,
   );
+  const errors = providerDiagnosticErrors(reports);
+  return {
+    ok: errors.length === 0,
+    detail: `${reports.length} provider diagnostic(s)`,
+    errors,
+    reports,
+  };
+}
+
+function providerDiagnosticErrors(reports: ProviderDiagnosticReport[]): string[] {
+  return reports.flatMap((report) => {
+    const prefix = `${report.kind} ${report.id} (${report.provider})`;
+    if (report.result.errors.length > 0) {
+      return report.result.errors.map((error) => `${prefix}: ${error}`);
+    }
+    return report.result.ok ? [] : [`${prefix}: ${report.result.detail}`];
+  });
 }
 
 function formatDoctorFailure(
   answers: EffectiveOnboardAnswers,
-  doctor: AgentRuntimeDoctorResult,
+  doctor: OnboardDoctorResult,
 ): string {
   const lines = [
-    `dispatcher '${answers.dispatcherId}' runtime is not ready`,
+    `dispatcher '${answers.dispatcherId}' providers are not ready`,
     ...doctor.errors.map((error) => `- ${error}`),
   ];
   if (

@@ -69,6 +69,92 @@ export type SubscribeChannelProviderDescriptor = ProviderDescriptor & {
  */
 export type DreamuxEnvironment = Record<string, string | undefined>;
 
+/** Shared diagnostic scope for checks run in the current shell vs service env. */
+export type ProviderDiagnosticScope = 'foreground' | 'managedService';
+
+/**
+ * A provider-owned binary launch descriptor. Pure data: providers
+ * declare it, Dreamux core deduplicates and executes it with its own runner.
+ */
+export interface ProviderBinCheck {
+  name: string;
+  bin: string;
+  args: string[];
+}
+
+/**
+ * The result of a provider's own diagnostic pass. `detail` is a one-line
+ * summary; `errors` are per-problem lines.
+ */
+export interface ProviderDiagnosticResult {
+  ok: boolean;
+  detail: string;
+  errors: string[];
+}
+
+/**
+ * The minimal command runner a provider diagnostic needs. A structural subset
+ * of the host's command runner so providers never import host CLI modules.
+ */
+export interface ProviderDiagnosticRunner {
+  check(
+    command: string,
+    args: string[],
+    options?: { env?: DreamuxEnvironment },
+  ): Promise<boolean>;
+  capture(
+    command: string,
+    args: string[],
+    options?: { env?: DreamuxEnvironment },
+  ): Promise<string>;
+}
+
+export interface ProviderOnboardTextPrompt {
+  message: string;
+  initialValue?: string;
+  required?: boolean;
+}
+
+export interface ProviderOnboardSecretPrompt {
+  message: string;
+  initialValue?: string;
+  required?: boolean;
+}
+
+export interface ProviderOnboardConfirmPrompt {
+  message: string;
+  initialValue: boolean;
+}
+
+/**
+ * Host-owned prompt functions exposed to provider onboarding. Providers decide
+ * which fields to ask for; core owns the concrete CLI UI and file writes.
+ */
+export interface ProviderOnboardPromptHost {
+  text(input: ProviderOnboardTextPrompt): Promise<string>;
+  secret(input: ProviderOnboardSecretPrompt): Promise<string>;
+  confirm(input: ProviderOnboardConfirmPrompt): Promise<boolean>;
+}
+
+export interface ProviderOnboardContext {
+  providerRef: string;
+  providerId: string;
+  env: DreamuxEnvironment;
+  interactive: boolean;
+}
+
+/**
+ * Optional provider-owned onboarding. It returns the raw config block Dreamux
+ * should write; config validation still goes through the provider's `readConfig`
+ * during normal config load.
+ */
+export interface ProviderOnboard<TConfig = unknown> {
+  collect(
+    context: ProviderOnboardContext,
+    prompts: ProviderOnboardPromptHost,
+  ): TConfig | Promise<TConfig>;
+}
+
 /**
  * The context Dreamux core hands a provider package's factory export. Mirrors the
  * core loader's call exactly — the canonical `ref` and the seed `descriptor` the

@@ -4,10 +4,6 @@ import {
   type DispatcherProviderConfig,
   stringifyConfig,
 } from '../config/config.js';
-import {
-  BUILTIN_CODEX_PROVIDER_REF,
-  BUILTIN_FEISHU_PROVIDER_REF,
-} from '../registry/index.js';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
 import type { OnboardAnswers } from './types.js';
 
@@ -25,16 +21,14 @@ export function dreamuxConfigFromAnswers(
     .filter((dispatcher) => dispatcher.id !== answers.dispatcherId)
     .map(cloneDispatcherConfig);
   dispatchers.push(dispatcherConfigFromAnswers(answers));
-  // Config lands only in agents[]. Onboard uses one agent per dispatcher with
-  // agent id == dispatcher id (dispatcher ids are unique and an agent id has no
-  // path-safety constraint), so a per-dispatcher codex bin is preserved and the
-  // shape round-trips with no dedup logic.
+  // Runtime config lands only in agents[]. Onboard creates or updates the
+  // selected agent id, preserving provider-owned raw config so the file
+  // round-trips after provider parsers normalize defaults.
   //
   // Seed from the existing agents map FIRST, then overwrite/add the
   // dispatcher-owned entries. agents[] is the global runtime-config map, so an
-  // entry referenced only by a TeamMate (e.g. a `claude` agent used via
-  // teammate.spawn under a Codex dispatcher) is valid even though no dispatcher
-  // names it; re-running onboard must not silently delete it.
+  // entry referenced only by a TeamMate is valid even though no dispatcher names
+  // it; re-running onboard must not silently delete it.
   const agents: DreamuxConfig['agents'] = {};
   for (const [id, agent] of Object.entries(base.agents)) {
     const rawConfig = cloneOptionalProviderConfig(agent.rawConfig);
@@ -56,32 +50,22 @@ export function dreamuxConfigFromAnswers(
   return next;
 }
 
-export function dispatcherBotSecretRef(dispatcherId: string): string {
-  return `config:${dispatcherId}`;
-}
-
 function dispatcherConfigFromAnswers(answers: OnboardAnswers): DispatcherConfig {
   return {
     id: answers.dispatcherId,
     cwd: answers.dispatcherCwd,
     enabled: true,
-    channels: [
-      {
-        id: 'primary',
-        provider: BUILTIN_FEISHU_PROVIDER_REF,
-        config: {
-          app_id: answers.botAppId,
-          app_secret: answers.botAppSecret,
-        },
-      },
-    ],
-    // One agent per dispatcher; agent id == dispatcher id.
-    agentRuntime: answers.dispatcherId,
+    channels: answers.channels.map((channel) => ({
+      id: channel.id,
+      provider: channel.provider,
+      config: cloneProviderConfig(channel.config),
+      rawConfig: cloneProviderConfig(channel.config),
+    })),
+    agentRuntime: answers.agentRuntime.id,
     runtime: {
-      provider: BUILTIN_CODEX_PROVIDER_REF,
-      config: {
-        bin: answers.codexBin,
-      },
+      provider: answers.agentRuntime.provider,
+      config: cloneProviderConfig(answers.agentRuntime.config),
+      rawConfig: cloneProviderConfig(answers.agentRuntime.config),
     },
   };
 }

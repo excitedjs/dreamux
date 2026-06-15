@@ -3,6 +3,7 @@ import {
   type ClaudeCodeRuntimeDeps,
 } from './runtime.js';
 import {
+  DEFAULT_CLAUDE_CODE_BIN,
   dispatcherClaudeCodeConfig,
   readDispatcherClaudeCodeConfig,
   type DispatcherClaudeCodeConfig,
@@ -105,6 +106,16 @@ export function createClaudeCodeAgentRuntimeProvider(
         : asAgentRuntimeDescriptor(options.descriptor),
     getCapabilities: () => CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES,
     diagnostic: claudeCodeAgentRuntimeDiagnostic,
+    onboard: {
+      async collect(_context, prompts): Promise<Record<string, unknown>> {
+        const bin = await prompts.text({
+          message: 'Claude Code CLI binary',
+          initialValue: DEFAULT_CLAUDE_CODE_BIN,
+          required: true,
+        });
+        return { bin };
+      },
+    },
     readConfig(rawConfig, context) {
       return readDispatcherClaudeCodeConfig(
         rawConfig,

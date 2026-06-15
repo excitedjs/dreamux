@@ -23,7 +23,7 @@ import type {
   AgentRuntimeContextSnapshot,
   AgentRuntimeCreateContext,
   AgentRuntimeDiagnostic,
-  AgentRuntimeDoctorResult,
+  AgentRuntimeDiagnosticResult,
   AgentRuntimeLastResult,
   AgentRuntimeProvider,
   AgentRuntimeProviderConfigReadContext,
@@ -148,14 +148,14 @@ const runtimeDescriptor: AgentRuntimeProviderDescriptor = {
 };
 
 /**
- * An optional diagnostic the host's doctor pass drives. The host supplies the
+ * An optional diagnostic driven by Dreamux core. The host supplies the
  * command runner; the fixture only declares bin checks and runs its own check.
  */
 const fixtureRuntimeDiagnostic: AgentRuntimeDiagnostic<FixtureRuntimeConfig> = {
   binChecks(): AgentRuntimeBinCheck[] {
     return [{ name: 'fixture', bin: 'fixture-cli', args: ['--version'] }];
   },
-  async runDiagnostic(context, runner): Promise<AgentRuntimeDoctorResult> {
+  async runDiagnostic(context, runner): Promise<AgentRuntimeDiagnosticResult> {
     const ok = await runner.check('fixture-cli', ['--version'], {
       env: context.env,
     });

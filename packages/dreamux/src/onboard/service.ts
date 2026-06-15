@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 
 import { build as buildPlist } from 'plist';
+import type { ProviderBinCheck } from '@excitedjs/dreamux-types';
 import { expandHome } from '../config/config.js';
 import { logsRoot, stateRoot } from '../platform/paths.js';
 
@@ -27,11 +28,10 @@ export const SERVICE_PATH_DEFAULTS = ['/usr/local/bin', '/usr/bin', '/bin'];
 export interface ServiceInstallAnswers {
   configDir: string;
   /**
-   * Runtime binaries the managed-service PATH must resolve. Derived from provider
-   * diagnostics for daemon installs; onboard's default bootstrap may seed it from
-   * the selected runtime binary.
+   * Provider-owned binary checks the managed-service PATH must resolve. Derived
+   * from provider diagnostics for daemon installs and onboard.
    */
-  runtimeBins?: string[];
+  providerBinChecks?: ProviderBinCheck[];
   dreamuxBin: string;
   nodeBin: string;
   startService: boolean;
@@ -184,7 +184,7 @@ WantedBy=default.target
 export function managedServiceEnvironment(
   answers: ServiceInstallAnswers,
 ): Record<string, string> {
-  // Runtime binary paths come from provider diagnostics. The unit PATH includes
+  // Provider binary paths come from provider diagnostics. The unit PATH includes
   // their directories (see managedServicePath) so provider-owned bare commands
   // resolve under the service's minimal environment without core naming them.
   const env: Record<string, string> = {
@@ -227,10 +227,10 @@ export async function validateManagedServiceLaunch(
     );
   }
 
-  for (const bin of serviceRuntimeBins(answers)) {
-    if (!(await runner.check(bin, ['--help'], { env }))) {
+  for (const check of serviceProviderBinChecks(answers)) {
+    if (!(await runner.check(check.bin, check.args, { env }))) {
       errors.push(
-        `managed service cannot execute runtime binary at ${bin}`,
+        `managed service cannot execute provider binary '${check.name}' at ${check.bin}`,
       );
     }
   }
@@ -468,15 +468,21 @@ export async function stabilizeHomebrewCellarNode(
 function managedServicePath(answers: ServiceInstallAnswers): string {
   const dirs = [
     dirname(answers.nodeBin),
-    ...serviceRuntimeBins(answers).flatMap(absoluteDir),
+    ...serviceProviderBinChecks(answers).flatMap((check) => absoluteDir(check.bin)),
     ...absoluteDir(answers.dreamuxBin),
     ...SERVICE_PATH_DEFAULTS,
   ];
   return uniqueNonEmpty(dirs).join(delimiter);
 }
 
-function serviceRuntimeBins(answers: ServiceInstallAnswers): string[] {
-  return [...new Set(answers.runtimeBins ?? [])];
+function serviceProviderBinChecks(
+  answers: ServiceInstallAnswers,
+): ProviderBinCheck[] {
+  const checks = new Map<string, ProviderBinCheck>();
+  for (const check of answers.providerBinChecks ?? []) {
+    checks.set(`${check.name}\0${check.bin}\0${check.args.join('\0')}`, check);
+  }
+  return [...checks.values()];
 }
 
 function absoluteDir(path: string): string[] {

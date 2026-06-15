@@ -1,5 +1,5 @@
 /**
- * The `builtin:claude-code` self-reported doctor surface (issue #146 fold;
+ * The `builtin:claude-code` self-reported diagnostic surface (issue #146 fold;
  * relocated into the owning package by the issue #209 cleanup).
  *
  * Claude Code has no host-managed home/auth/version state Dreamux owns, so it
@@ -10,7 +10,7 @@ import type {
   AgentRuntimeBinCheck,
   AgentRuntimeDiagnostic,
   AgentRuntimeDiagnosticContext,
-  AgentRuntimeDoctorResult,
+  AgentRuntimeDiagnosticResult,
 } from '@excitedjs/dreamux-types';
 
 import {
@@ -38,7 +38,7 @@ export const claudeCodeAgentRuntimeDiagnostic: AgentRuntimeDiagnostic<Dispatcher
         },
       ];
     },
-    async runDiagnostic(): Promise<AgentRuntimeDoctorResult> {
+    async runDiagnostic(): Promise<AgentRuntimeDiagnosticResult> {
       return {
         ok: true,
         detail: 'Claude Code runtime has no host-managed home state',

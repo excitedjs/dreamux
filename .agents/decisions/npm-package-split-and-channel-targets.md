@@ -354,8 +354,8 @@ types must not constrain the tool schemas provider packages expose.
 
 `channel_id` is the dispatcher-local channel instance id from
 `dispatchers[].channels[].id`, not the provider ref. A dispatcher may configure
-multiple channels, including multiple instances of the same provider, as long as
-their ids are unique.
+multiple channels, but each channel must use a distinct provider ref and a
+distinct dispatcher-local id.
 
 Feishu is implemented as `@excitedjs/feishu-channel`, a built-in
 `ChannelProvider` package that depends on `@excitedjs/feishu-transport`. The
@@ -975,6 +975,23 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   - **Diagnostics + codex-home into packages.** `cli/doctor.ts` iterates providers
     and calls each provider's own neutral `diagnostic` (zero codex/claude
     branching); `codex-home` and the per-engine diagnostics live in their packages.
+  - **Provider-owned onboard + doctor closeout (PR #229 follow-up).** Core now
+    owns only the host envelope for onboarding: config dir, dispatcher id/cwd,
+    selected agent runtime ref, selected channel refs, service choices, file
+    ledger, and service unit installation. Provider-specific prompts and raw
+    config shaping live behind optional `ProviderOnboard.collect`; builtins use
+    that capability for Codex/Claude binary prompts and Feishu app credentials.
+    The public type package exposes shared provider diagnostic aliases
+    (`ProviderBinCheck`, `ProviderDiagnosticRunner`,
+    `ProviderDiagnosticResult`) plus
+    `ChannelProvider.diagnostic`; runtime-specific diagnostic names remain type
+    aliases for compatibility. `dreamux doctor`, `dreamux onboard`, and
+    `dreamux daemon install` all derive provider binary checks from the same
+    provider diagnostics helper, covering both agent runtime and channel
+    providers. The old core-owned `--codex-bin`, `--bot-app-id`, and
+    `--bot-app-secret` onboard path is retired; non-interactive callers pass
+    provider raw config through `--agent-config-json` and
+    `--channel-config-json`.
   - **`tm` packaging DEFERRED (not removed this PR).** decision #6's default was to
     retire the `@excitedjs/tm` dependency + `bin/tm`, but the dispatcher base
     prompt still actively instructs bare-`tm` usage and the operational `tm` manual

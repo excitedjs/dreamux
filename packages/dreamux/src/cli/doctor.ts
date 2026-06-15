@@ -5,20 +5,24 @@ import { parse as parsePlist, type PlistValue } from 'plist';
 
 import {
   BUILT_IN_DEFAULTS,
-  type DispatcherConfig,
   globalConfigDir,
   globalConfigFile,
   loadConfig,
   type DreamuxConfig,
 } from '../config/config.js';
 import { AgentRuntimeProviderCatalog } from '../agent-runtime/catalog.js';
-import { createBuiltinProviderRegistry } from '../registry/index.js';
-import type {
-  AgentRuntimeBinCheck,
-  AgentRuntimeDiagnosticContext,
-  AgentRuntimeDoctorResult,
-} from '@excitedjs/dreamux-types';
-import { dispatcherHostPaths } from '../agent-runtime/host-paths.js';
+import { ChannelProviderCatalog } from '../channel/catalog.js';
+import {
+  createBuiltinProviderRegistry,
+  type ProviderRegistry,
+} from '../registry/index.js';
+import type { ProviderBinCheck } from '@excitedjs/dreamux-types';
+import {
+  providerBinChecksForConfig,
+  runDispatcherProviderDiagnostics,
+  type ProviderDiagnosticCatalogs,
+  type ProviderDiagnosticReport,
+} from '../provider-diagnostics.js';
 import { pathExists } from '../platform/fs-errors.js';
 import {
   setRuntimeConfig,
@@ -79,9 +83,7 @@ export interface DoctorCheck {
 
 export interface DispatcherDoctorReport {
   id: string;
-  runtimeProvider: string;
-  foreground: AgentRuntimeDoctorResult;
-  managedService: AgentRuntimeDoctorResult | null;
+  providers: ProviderDiagnosticReport[];
 }
 
 export interface DreamuxDoctorResult {
@@ -93,7 +95,7 @@ export interface DreamuxDoctorResult {
   dispatchers: DispatcherDoctorReport[];
 }
 
-type RuntimeBinaryCheck = AgentRuntimeBinCheck;
+type ProviderBinaryCheck = ProviderBinCheck;
 
 export async function runDreamuxDoctor(
   options: DoctorOptions = {},
@@ -101,7 +103,7 @@ export async function runDreamuxDoctor(
   const runner = options.runner ?? new ExecaCommandRunner();
   const checks: DoctorCheck[] = [];
   const configDir = globalConfigDir();
-  const { config, configFile, catalog } = await readConfigForDoctor(
+  const { config, configFile, catalogs } = await readConfigForDoctor(
     configDir,
     checks,
   );
@@ -113,13 +115,13 @@ export async function runDreamuxDoctor(
     detail: stateRoot(),
   });
 
-  // Runtime binaries are provider-owned: each provider self-declares its bin
+  // Provider binaries are provider-owned: each provider self-declares its bin
   // checks via its diagnostic capability; doctor dedups + executes them.
   const doctorEnv = options.env ?? process.env;
-  for (const check of runtimeBinaryChecks(catalog, config.dispatchers, doctorEnv)) {
+  for (const check of providerBinaryChecks(catalogs, config, doctorEnv, false)) {
     checks.push({
       name: check.name,
-      ok: await runner.check(check.bin, check.args),
+      ok: await runner.check(check.bin, check.args, { env: doctorEnv }),
       detail: check.bin,
     });
   }
@@ -190,12 +192,12 @@ export async function runDreamuxDoctor(
     service,
     runner,
     options.nodeProbe ?? defaultServiceNodeProbe,
-    catalog,
-    config.dispatchers,
+    catalogs,
+    config,
   );
 
   const dispatchers = await readDispatchers(
-    catalog,
+    catalogs,
     config,
     runner,
     options.env ?? process.env,
@@ -212,8 +214,7 @@ export async function runDreamuxDoctor(
   const ok =
     checks.every((check) => check.ok) &&
     dispatchers.every((dispatcher) =>
-      dispatcher.foreground.ok &&
-      (dispatcher.managedService === null || dispatcher.managedService.ok),
+      dispatcher.providers.every((report) => report.result.ok),
     );
   return {
     ok,
@@ -248,7 +249,7 @@ async function readConfigForDoctor(
 ): Promise<{
   config: DreamuxConfig;
   configFile: string;
-  catalog: AgentRuntimeProviderCatalog;
+  catalogs: ProviderDiagnosticCatalogs;
 }> {
   try {
     const loaded = await loadConfig({ configDir });
@@ -260,9 +261,7 @@ async function readConfigForDoctor(
     return {
       config: loaded.config,
       configFile: loaded.configFile,
-      catalog: new AgentRuntimeProviderCatalog({
-        registry: loaded.providerRegistry,
-      }),
+      catalogs: catalogsFromRegistry(loaded.providerRegistry),
     };
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
@@ -274,15 +273,22 @@ async function readConfigForDoctor(
     return {
       config: BUILT_IN_DEFAULTS,
       configFile: globalConfigFile({ configDir }),
-      catalog: new AgentRuntimeProviderCatalog({
-        registry: createBuiltinProviderRegistry(),
-      }),
+      catalogs: catalogsFromRegistry(createBuiltinProviderRegistry()),
     };
   }
 }
 
+function catalogsFromRegistry(
+  registry: ProviderRegistry,
+): ProviderDiagnosticCatalogs {
+  return {
+    agentRuntime: new AgentRuntimeProviderCatalog({ registry }),
+    channel: new ChannelProviderCatalog({ registry }),
+  };
+}
+
 async function readDispatchers(
-  catalog: AgentRuntimeProviderCatalog,
+  catalogs: ProviderDiagnosticCatalogs,
   config: DreamuxConfig,
   runner: CommandRunner,
   env: NodeJS.ProcessEnv,
@@ -290,51 +296,28 @@ async function readDispatchers(
 ): Promise<DispatcherDoctorReport[]> {
   return Promise.all(
     config.dispatchers.map(async (dispatcher) => {
-      const provider = catalog.resolve(dispatcher.runtime.provider);
-      const diagnostic = provider.diagnostic;
-      const foreground = diagnostic
-        ? await diagnostic.runDiagnostic(
-            {
-              runtime_id: dispatcher.id,
-              config: dispatcher.runtime.config,
-              env,
-              scope: 'foreground',
-              paths: dispatcherHostPaths,
-            },
+      const foreground = await runDispatcherProviderDiagnostics({
+        dispatcher,
+        catalogs,
+        runner,
+        env,
+        scope: 'foreground',
+      });
+      const managedService = service.installed
+        ? await runDispatcherProviderDiagnostics({
+            dispatcher,
+            catalogs,
             runner,
-          )
-        : neutralRuntimeDoctor(dispatcher.runtime.provider);
-      const managedService = !service.installed
-        ? null
-        : diagnostic
-          ? await diagnostic.runDiagnostic(
-              {
-                runtime_id: dispatcher.id,
-                config: dispatcher.runtime.config,
-                env: service.environment ?? {},
-                scope: 'managedService',
-                paths: dispatcherHostPaths,
-              },
-              runner,
-            )
-          : neutralRuntimeDoctor(dispatcher.runtime.provider);
+            env: service.environment ?? {},
+            scope: 'managedService',
+          })
+        : [];
       return {
         id: dispatcher.id,
-        runtimeProvider: dispatcher.runtime.provider,
-        foreground,
-        managedService,
+        providers: [...foreground, ...managedService],
       };
     }),
   );
-}
-
-/** Neutral result for a provider that declares no diagnostic surface. */
-function neutralRuntimeDoctor(provider: string): AgentRuntimeDoctorResult {
-  return {
-    ok: true,
-    detail: `runtime provider ${provider} reports no host-managed diagnostics`,
-    errors: [],
-  };
 }
 
 async function getServiceStatus(options: DoctorOptions): Promise<ServiceStatus> {
@@ -457,8 +440,8 @@ async function addManagedServiceLaunchChecks(
   service: ServiceStatus,
   runner: CommandRunner,
   probe: ServiceNodeProbe,
-  catalog: AgentRuntimeProviderCatalog,
-  dispatchers: DispatcherConfig[],
+  catalogs: ProviderDiagnosticCatalogs,
+  config: DreamuxConfig,
 ): Promise<void> {
   if (!service.installed) return;
   const env = service.environment;
@@ -466,8 +449,8 @@ async function addManagedServiceLaunchChecks(
   if (env === null) {
     missing.push('managed service environment');
   } else {
-    // Runtime binaries are dispatcher-local and resolved off the unit PATH at
-    // runtime; provider packages declare the concrete bin checks below.
+    // Provider binaries are resolved off the unit PATH at runtime; provider
+    // packages declare the concrete bin checks below.
     for (const key of ['PATH', 'DREAMUX_NODE_BIN']) {
       if (env[key] === undefined || env[key]?.trim() === '') missing.push(key);
     }
@@ -510,10 +493,10 @@ async function addManagedServiceLaunchChecks(
     ),
   );
 
-  // Each dispatcher's provider-owned runtime binary must launch under the
-  // unit's PATH. The provider declares the binary and arguments; doctor only
-  // executes that neutral descriptor.
-  for (const check of runtimeBinaryChecks(catalog, dispatchers, serviceEnv, true)) {
+  // Every provider-owned binary must launch under the unit's PATH. Providers
+  // declare the binary and arguments; doctor only executes that provider-owned
+  // descriptor.
+  for (const check of providerBinaryChecks(catalogs, config, serviceEnv, true)) {
     checks.push(
       await checkHelpLaunch(
         check.name,
@@ -521,42 +504,24 @@ async function addManagedServiceLaunchChecks(
         check.args,
         serviceEnv,
         runner,
-        'runtime binary is not set; check the agents[] entry the dispatcher references',
+        'provider binary is not set; check the provider config entry',
       ),
     );
   }
 }
 
-function runtimeBinaryChecks(
-  catalog: AgentRuntimeProviderCatalog,
-  dispatchers: DispatcherConfig[],
+function providerBinaryChecks(
+  catalogs: ProviderDiagnosticCatalogs,
+  config: DreamuxConfig,
   env: NodeJS.ProcessEnv,
   managedService = false,
-): RuntimeBinaryCheck[] {
-  const checks = new Map<string, RuntimeBinaryCheck>();
-  const add = (check: RuntimeBinaryCheck): void => {
-    checks.set(`${check.name}\0${check.bin}\0${check.args.join('\0')}`, check);
-  };
-
-  if (dispatchers.length === 0) return [];
-
-  const scope: AgentRuntimeDiagnosticContext['scope'] = managedService
-    ? 'managedService'
-    : 'foreground';
-  for (const dispatcher of dispatchers) {
-    const diagnostic = catalog.resolve(dispatcher.runtime.provider).diagnostic;
-    if (diagnostic === undefined) continue;
-    for (const check of diagnostic.binChecks({
-      runtime_id: dispatcher.id,
-      config: dispatcher.runtime.config,
-      env,
-      scope,
-      paths: dispatcherHostPaths,
-    })) {
-      add(check);
-    }
-  }
-  return [...checks.values()];
+): ProviderBinaryCheck[] {
+  return providerBinChecksForConfig({
+    config,
+    catalogs,
+    env,
+    scope: managedService ? 'managedService' : 'foreground',
+  });
 }
 
 async function checkNodeLaunch(
@@ -787,19 +752,19 @@ function parsePositiveInt(value: string | undefined): number | null {
 }
 
 function printDispatcherDoctor(dispatcher: DispatcherDoctorReport): void {
-  printRuntimeDoctor(`dispatcher ${dispatcher.id} foreground`, dispatcher.foreground);
-  if (dispatcher.managedService !== null) {
-    printRuntimeDoctor(
-      `dispatcher ${dispatcher.id} managed-service`,
-      dispatcher.managedService,
-    );
+  for (const report of dispatcher.providers) {
+    printProviderDoctor(dispatcher.id, report);
   }
 }
 
-function printRuntimeDoctor(
-  name: string,
-  result: AgentRuntimeDoctorResult,
+function printProviderDoctor(
+  dispatcherId: string,
+  report: ProviderDiagnosticReport,
 ): void {
+  const result = report.result;
+  const name =
+    `dispatcher ${dispatcherId} ${report.scope} ` +
+    `${report.kind} ${report.id} (${report.provider})`;
   console.log(`${result.ok ? 'ok' : 'fail'}\t${name}\t${result.detail}`);
   for (const error of result.errors) {
     console.log(`fail\t${name}\t${error}`);

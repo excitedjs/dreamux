@@ -74,9 +74,9 @@ export {
 
 export { BUILTIN_CODEX_PROVIDER_REF } from './provider-ref.js';
 
-// The codex doctor surface now lives in this package (issue #209 cleanup): the
-// neutral diagnostic, the Codex home/auth validation, and the Codex home/config
-// path resolvers. Core's doctor + onboard consume these directly.
+// The Codex diagnostic surface now lives in this package (issue #209 cleanup):
+// the provider diagnostic, the Codex home/auth validation, and the Codex
+// home/config path resolvers. Core's doctor + onboard consume these directly.
 export { codexAgentRuntimeDiagnostic } from './diagnostic.js';
 
 export {

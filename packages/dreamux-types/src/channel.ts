@@ -15,7 +15,13 @@ import type { AgentRuntimeMcpServer } from './agent-runtime.js';
 import type { DreamuxLogger } from './logger.js';
 import type {
   ChannelProviderDescriptor,
+  DreamuxEnvironment,
+  ProviderBinCheck,
+  ProviderDiagnosticRunner,
+  ProviderDiagnosticScope,
+  ProviderDiagnosticResult,
   ProviderFactory,
+  ProviderOnboard,
 } from './provider.js';
 import type {
   InboundDeliveryHooks,
@@ -202,6 +208,38 @@ export interface ChannelSession {
   ): AgentRuntimeMcpServer | null;
 }
 
+/** Channel-specific alias of the shared provider binary check. */
+export type ChannelBinCheck = ProviderBinCheck;
+
+/** Channel-specific alias of the shared provider diagnostic result. */
+export type ChannelDiagnosticResult = ProviderDiagnosticResult;
+
+/** Channel-specific alias of the shared provider diagnostic runner. */
+export type ChannelDiagnosticRunner = ProviderDiagnosticRunner;
+
+export interface ChannelDiagnosticContext<TConfig = unknown> {
+  dispatcher_id: string;
+  channel_id: string;
+  provider: string;
+  config: TConfig;
+  env: DreamuxEnvironment;
+  scope: ProviderDiagnosticScope;
+  state_root?: string;
+  cache_root?: string;
+}
+
+/**
+ * Optional channel diagnostics. A provider that needs no host-visible checks may
+ * omit it; core treats absence as a passing provider report.
+ */
+export interface ChannelDiagnostic<TConfig = unknown> {
+  binChecks(context: ChannelDiagnosticContext<TConfig>): ChannelBinCheck[];
+  runDiagnostic(
+    context: ChannelDiagnosticContext<TConfig>,
+    runner: ChannelDiagnosticRunner,
+  ): Promise<ChannelDiagnosticResult>;
+}
+
 export interface ChannelProvider<TConfig = unknown> {
   readonly ref: string;
   readonly descriptor: ChannelProviderDescriptor;
@@ -217,6 +255,13 @@ export interface ChannelProvider<TConfig = unknown> {
    * stable identity to report.
    */
   getIdentity?(config: TConfig): string;
+  /**
+   * Provider-owned onboarding. Core asks only for host envelope fields and
+   * delegates provider-specific raw config collection to this capability.
+   */
+  onboard?: ProviderOnboard<Record<string, unknown>>;
+  /** Self-reported provider diagnostics. */
+  diagnostic?: ChannelDiagnostic<TConfig>;
   /**
    * Handle a tool call that has no live {@link ChannelSession} (e.g. a discovery
    * tool used before any binding exists). Omit when the channel exposes no

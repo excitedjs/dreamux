@@ -1,4 +1,5 @@
-import type { AgentRuntimeDoctorResult } from '@excitedjs/dreamux-types';
+import type { ProviderDiagnosticResult } from '@excitedjs/dreamux-types';
+import type { ProviderDiagnosticReport } from '../provider-diagnostics.js';
 
 export type OnboardFileStatus = 'created' | 'modified' | 'unchanged' | 'skipped';
 
@@ -15,22 +16,37 @@ export interface OnboardFileLedger {
 
 export type ServicePlatform = 'launchd' | 'systemd';
 
+export interface OnboardAgentRuntimeConfig {
+  id: string;
+  provider: string;
+  config: Record<string, unknown>;
+}
+
+export interface OnboardChannelConfig {
+  id: string;
+  provider: string;
+  config: Record<string, unknown>;
+}
+
 export interface OnboardAnswers {
   configDir: string;
   dispatcherId: string;
   dispatcherCwd: string;
-  codexBin: string;
-  botAppId: string;
-  botAppSecret: string;
+  agentRuntime: OnboardAgentRuntimeConfig;
+  channels: OnboardChannelConfig[];
   registerService: boolean;
   startService: boolean;
   dreamuxBin: string;
   dryRun: boolean;
 }
 
+export interface OnboardDoctorResult extends ProviderDiagnosticResult {
+  reports: ProviderDiagnosticReport[];
+}
+
 export interface OnboardRunResult {
   files: OnboardFileLedgerEntry[];
-  doctor: AgentRuntimeDoctorResult;
+  doctor: OnboardDoctorResult;
   service:
     | {
         platform: ServicePlatform;

@@ -170,8 +170,11 @@ Dispatcher declarations live in `config.json`:
 }
 ```
 
-`dreamux onboard` currently writes the default `builtin:feishu` +
-`builtin:codex` shape. Operator-owned config is never silently rewritten: old
+`dreamux onboard` is provider-ref driven. Its interactive default selects
+`builtin:codex` and `builtin:feishu`, but provider-specific config prompts are
+owned by those provider packages. Non-interactive runs pass provider raw config
+with `--agent-config-json` and `--channel-config-json`. Operator-owned config is
+never silently rewritten: old
 `dispatchers[].feishu` / `dispatchers[].codex` shapes fail loudly with rebuild
 guidance, following issue #98.
 
@@ -290,11 +293,11 @@ Codex's last-write-wins behavior. Per-dispatcher `extra_env` is merged over the
 server process environment before spawning that dispatcher app-server; dreamux
 still removes `CODEX_HOME` so Codex keeps using its global default home.
 
-The managed-service unit does **not** pin `CODEX_HOST_CODEX_BIN`; it adds the
-onboarded Codex binary's directory to the unit `PATH` so the selected
-`agents[].config.bin` resolves. Existing units installed before this change may
-still carry the env var — there it keeps acting as the override and nothing
-breaks.
+The managed-service unit does **not** pin `CODEX_HOST_CODEX_BIN`; it adds
+provider-declared binary directories from provider diagnostics to the unit
+`PATH`, so selected provider config such as `agents[].config.bin` resolves.
+Existing units installed before this change may still carry the env var — there
+it keeps acting as the override and nothing breaks.
 
 ## MCP surfaces
 
@@ -331,7 +334,7 @@ schedule more TeamMates.
 
 ## Verification Path
 
-1. `dreamux onboard --dispatcher-id flow --dispatcher-cwd <WORKSPACE> --bot-app-id <APP_ID> --bot-app-secret <APP_SECRET>`
+1. `dreamux onboard --dispatcher-id flow --dispatcher-cwd <WORKSPACE> --agent flow=builtin:codex --agent-config-json flow='{"bin":"codex"}' --channel primary=builtin:feishu --channel-config-json primary='{"app_id":"<APP_ID>","app_secret":"<APP_SECRET>"}'`
 2. `dreamux serve` starts dispatcher `flow`.
 3. Invite the bot to a Feishu group, send a mention that passes the access gate.
 4. The selected runtime assembles the inbound into a `<channel source="feishu" …>` block (the channel layer hands it neutral structured pieces; #164).

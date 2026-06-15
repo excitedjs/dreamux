@@ -4,7 +4,7 @@
  * exists only on codex >= 0.137. Doctor surfaces this loudly rather than letting
  * a teammate completion silently RPC-fail at runtime.
  *
- * Pure version logic lives here in the package; the host-coupled doctor surface
+ * Pure version logic lives here in the package; the host-coupled diagnostic surface
  * (codex home + path validation) lives in Dreamux core and imports these.
  */
 

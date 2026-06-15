@@ -167,17 +167,27 @@ function buildOnboardCommand(y: Argv): Argv {
       type: 'string',
       describe: 'Working directory used when starting the dispatcher runtime',
     })
-    .option('codex-bin', {
+    .option('agent', {
       type: 'string',
-      describe: 'Codex CLI binary or absolute path',
+      describe:
+        'Agent runtime provider ref, optionally id=provider-ref (default: builtin:codex)',
     })
-    .option('bot-app-id', {
+    .option('agent-config-json', {
       type: 'string',
-      describe: 'Channel bot app id',
+      array: true,
+      describe:
+        'Raw agent runtime config JSON, optionally id={...}',
     })
-    .option('bot-app-secret', {
+    .option('channel', {
       type: 'string',
-      describe: 'Channel bot app secret written to dreamux config',
+      array: true,
+      describe:
+        'Channel provider ref, optionally id=provider-ref (default: builtin:feishu)',
+    })
+    .option('channel-config-json', {
+      type: 'string',
+      array: true,
+      describe: 'Raw channel config JSON, optionally id={...}',
     })
     .option('register-service', {
       type: 'boolean',

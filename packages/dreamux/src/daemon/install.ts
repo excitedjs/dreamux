@@ -23,13 +23,18 @@ import {
 } from '../onboard/service.js';
 import { TransparentFileLedger } from '../onboard/ledger.js';
 import type { CommandRunner, OnboardFileLedgerEntry } from '../onboard/types.js';
+import type { ProviderBinCheck } from '@excitedjs/dreamux-types';
 import {
   type DreamuxConfig,
   globalConfigDir,
   loadConfig,
 } from '../config/config.js';
 import { AgentRuntimeProviderCatalog } from '../agent-runtime/catalog.js';
-import { dispatcherHostPaths } from '../agent-runtime/host-paths.js';
+import { ChannelProviderCatalog } from '../channel/catalog.js';
+import {
+  providerBinChecksForConfig,
+  type ProviderDiagnosticCatalogs,
+} from '../provider-diagnostics.js';
 import { dreamuxBinPath } from '../platform/package-bin.js';
 import { setRuntimeConfig } from '../platform/paths.js';
 
@@ -50,26 +55,17 @@ export interface DaemonInstallResult {
   files: OnboardFileLedgerEntry[];
 }
 
-function serviceRuntimeBinChecks(
+function serviceProviderBinChecks(
   config: DreamuxConfig,
   env: NodeJS.ProcessEnv,
-  catalog: AgentRuntimeProviderCatalog,
-): string[] {
-  const bins: string[] = [];
-  for (const [agentId, agent] of Object.entries(config.agents)) {
-    const diagnostic = catalog.resolve(agent.provider).diagnostic;
-    if (diagnostic === undefined) continue;
-    for (const check of diagnostic.binChecks({
-      runtime_id: agentId,
-      config: agent.config,
-      env,
-      scope: 'managedService',
-      paths: dispatcherHostPaths,
-    })) {
-      bins.push(check.bin);
-    }
-  }
-  return [...new Set(bins)];
+  catalogs: ProviderDiagnosticCatalogs,
+): ProviderBinCheck[] {
+  return providerBinChecksForConfig({
+    config,
+    catalogs,
+    env,
+    scope: 'managedService',
+  });
 }
 
 export async function runDaemonInstall(
@@ -84,15 +80,21 @@ export async function runDaemonInstall(
   // re-registers an existing setup, it does not create one.
   const loaded = await loadConfig({ configDir: globalConfigDir() });
   const { config } = loaded;
-  const catalog = new AgentRuntimeProviderCatalog({
-    registry: loaded.providerRegistry,
-  });
+  const catalogs = {
+    agentRuntime: new AgentRuntimeProviderCatalog({
+      registry: loaded.providerRegistry,
+    }),
+    channel: new ChannelProviderCatalog({
+      registry: loaded.providerRegistry,
+    }),
+  };
   setRuntimeConfig(config);
 
-  const runtimeBins = await Promise.all(
-    serviceRuntimeBinChecks(config, env, catalog).map((bin) =>
-      dryRun ? bin : resolveServiceExecutable(bin, env),
-    ),
+  const providerBinChecks = await Promise.all(
+    serviceProviderBinChecks(config, env, catalogs).map(async (check) => ({
+      ...check,
+      bin: dryRun ? check.bin : await resolveServiceExecutable(check.bin, env),
+    })),
   );
   // Pin the managed service to a stable system Node (issue #83) rather than the
   // current process Node — otherwise running `daemon install` from a
@@ -109,7 +111,7 @@ export async function runDaemonInstall(
     configDir: globalConfigDir(),
     dreamuxBin: dreamuxBinPath(env),
     nodeBin,
-    runtimeBins,
+    providerBinChecks,
     startService,
     dryRun,
   };
