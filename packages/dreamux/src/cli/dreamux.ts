@@ -472,6 +472,7 @@ function buildChannelMcpCommand(
   teamId?: string;
   leaderName?: string;
   adminSocket?: string;
+  channelToolsB64?: string;
 }> {
   return y
     .option('dispatcher', {
@@ -501,6 +502,11 @@ function buildChannelMcpCommand(
     .option('leader-name', {
       type: 'string',
       describe: 'Leader TeamMate identity name for team_leader caller scope',
+    })
+    .option('channel-tools-b64', {
+      type: 'string',
+      describe:
+        "Base64 JSON of the channel's static MCP tool descriptors (provider-supplied; the shim serves tools/list from it)",
     }) as Argv<{
       dispatcher: string;
       provider?: string;
@@ -508,7 +514,23 @@ function buildChannelMcpCommand(
       teamId?: string;
       leaderName?: string;
       adminSocket?: string;
+      channelToolsB64?: string;
     }>;
+}
+
+/**
+ * Decode the provider-supplied base64 JSON of static MCP tool descriptors the
+ * channel shim serves at `tools/list`. Fail-soft to an empty list: a malformed
+ * blob degrades tool discovery (no tools advertised) rather than crashing the
+ * shim. Core never inspects the descriptors — they pass through verbatim.
+ */
+function decodeChannelTools(b64: string): readonly unknown[] {
+  try {
+    const parsed: unknown = JSON.parse(Buffer.from(b64, 'base64').toString('utf8'));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
 }
 
 function buildTeamMateMcpCommand(
@@ -642,6 +664,9 @@ async function main(): Promise<void> {
           teamId: argv.teamId,
           leaderName: argv.leaderName,
           adminSocketPath: argv.adminSocket,
+          ...(argv.channelToolsB64 !== undefined
+            ? { tools: decodeChannelTools(argv.channelToolsB64) }
+            : {}),
           log: (message) => log.info(message),
         });
       },

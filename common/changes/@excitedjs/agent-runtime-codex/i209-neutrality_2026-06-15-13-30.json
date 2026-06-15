@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "#209 core-neutrality cleanup for the built-in Codex Agent Runtime: the package owns its own Codex-specific concerns end-to-end (codex-home resolution + doctor, the neutral diagnostic, bin resolution, socket allocation from the host's neutral runtime-socket dirs) and ships a default provider-factory export so `builtin:codex` loads through the host's single dynamic provider loader exactly like an npm: provider. Env injection flows through the neutral AgentRuntimeCreateContext. No config/state/path change for operators.",
+      "type": "minor",
+      "packageName": "@excitedjs/agent-runtime-codex"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-codex",
+  "email": "053700@gmail.com"
+}

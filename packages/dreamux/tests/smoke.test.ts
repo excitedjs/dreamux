@@ -884,9 +884,15 @@ describe('dreamux MVP smoke', () => {
     expect(teammateIdx).toBeGreaterThan(operatorIdx);
     expect(teamIdx).toBeGreaterThan(operatorIdx);
     expect(dreamuxBinPath()).toMatch(/\/dreamux$/);
-    expect(args).toContain(
-      `mcp_servers.feishu.args=["channel-mcp", "--provider", "builtin:feishu", "--dispatcher", "flow", "--caller", "dispatcher", "--admin-socket", "${join(runtimeDir, 'admin.sock')}"]`,
+    // The feishu channel descriptor carries the static tool specs (base64) so the
+    // generic channel-mcp shim serves tools/list without an admin round-trip; assert
+    // the structural tokens + the tools arg + the admin socket, not the b64 blob.
+    const feishuArgs = args.find((a) => a.startsWith('mcp_servers.feishu.args='));
+    expect(feishuArgs).toContain(
+      '"channel-mcp", "--provider", "builtin:feishu", "--dispatcher", "flow", "--caller", "dispatcher"',
     );
+    expect(feishuArgs).toContain('"--channel-tools-b64"');
+    expect(feishuArgs).toContain(`"--admin-socket", "${join(runtimeDir, 'admin.sock')}"`);
     expect(args).toContain(
       `mcp_servers.teammate.args=["teammate-mcp", "--dispatcher", "flow", "--caller", "dispatcher", "--admin-socket", "${join(runtimeDir, 'admin.sock')}"]`,
     );

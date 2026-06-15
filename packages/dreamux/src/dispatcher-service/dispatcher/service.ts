@@ -5,7 +5,6 @@ import type {
   ChannelProvider,
   ChannelSession,
   ChannelTarget,
-  ChannelToolDescriptor,
   InboundDeliveryResult,
   InboundDeliveryHooks,
   InboundTurnInput,
@@ -354,50 +353,6 @@ export class DispatcherAgentService {
       );
     }
     return this.opts.channelProviders.resolve(channelConfig.provider);
-  }
-
-  /**
-   * The neutral channel tool list for a dispatcher (the blind MCP conduit's
-   * `tools/list`). Prefers the live sessions' own `tools()`; before they connect
-   * (the dispatcher's own MCP shim lists tools during runtime start) it builds
-   * un-started sessions from config to enumerate them, then closes them. Tools
-   * are deduped by name across channels.
-   */
-  async listChannelTools(dispatcherId: string): Promise<ChannelToolDescriptor[]> {
-    const slot = this.slots.get(dispatcherId);
-    const created = slot === undefined || slot.channels.size === 0;
-    const channels = created
-      ? await this.buildChannelSessions(
-          dispatcherId,
-          neutralLoggerFromHostLogger(this.opts.channelLoggerFactory(dispatcherId)),
-        )
-      : slot.channels;
-    try {
-      const out: ChannelToolDescriptor[] = [];
-      const seen = new Set<string>();
-      for (const session of channels.values()) {
-        if (session.tools === undefined) continue;
-        for (const tool of session.tools({
-          dispatcher_id: dispatcherId,
-          channel_id: session.channel_id,
-        })) {
-          if (seen.has(tool.name)) continue;
-          seen.add(tool.name);
-          out.push(tool);
-        }
-      }
-      return out;
-    } finally {
-      if (created) {
-        for (const session of channels.values()) {
-          try {
-            await session.close();
-          } catch {
-            /* best effort: these sessions were never started */
-          }
-        }
-      }
-    }
   }
 
   /**

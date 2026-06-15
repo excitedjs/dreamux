@@ -186,9 +186,6 @@ export class DispatcherService {
     });
   }
 
-  listChannelTools(dispatcherId: string) {
-    return this.dispatchers.listChannelTools(dispatcherId);
-  }
 
   /**
    * Authorize a TeamLeader channel egress and resolve which channel it leaves

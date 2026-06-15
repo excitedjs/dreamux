@@ -115,16 +115,6 @@ export const adminMethods: Record<string, AdminHandler> = {
     }
   },
 
-  // List the dispatcher's provider-owned channel tools (the conduit's
-  // `tools/list`). Core returns the neutral descriptor blob verbatim; it does
-  // not require a running slot — the provider's tools are listable before its
-  // sessions connect.
-  'channel.list_tools': async (server, params) => {
-    const id = mustDispatcherId(params);
-    mustExistingDispatcher(server, id);
-    return { tools: await server.dispatcherService.listChannelTools(id) };
-  },
-
   'mcp.teammate.spawn': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);

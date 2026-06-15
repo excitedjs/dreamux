@@ -19,6 +19,14 @@ export interface ChannelMcpOptions {
    * shim never branches on it; it is carried for diagnostics/clarity.
    */
   providerRef?: string;
+  /**
+   * The channel's static MCP tool descriptors (`{ name, description, inputSchema }`),
+   * supplied by the provider's descriptor. `tools/list` is static metadata, so the
+   * shim serves it from here verbatim — no admin round-trip, no live session
+   * needed. The shim never authors or interprets a tool; `tools/call` still routes
+   * to the live session via `channel.invoke_tool`.
+   */
+  tools?: readonly unknown[];
   adminSocketPath?: string;
   input?: Readable;
   output?: Writable;
@@ -69,6 +77,7 @@ export async function runChannelMcp(opts: ChannelMcpOptions): Promise<void> {
         callerKind,
         teamId: opts.teamId,
         leaderName: opts.leaderName,
+        tools: opts.tools ?? [],
         socketPath,
         output,
       });
@@ -88,6 +97,7 @@ async function handleRequest(
     callerKind: 'dispatcher' | 'team_leader';
     teamId?: string;
     leaderName?: string;
+    tools: readonly unknown[];
     socketPath: string;
     output: Writable;
   },
@@ -113,7 +123,8 @@ async function handleRequest(
       return;
     case 'tools/list':
       if (request.id !== undefined) {
-        write(ctx.output, okResponse(request.id, await listTools(ctx)));
+        // Static provider metadata carried by the descriptor — no admin round-trip.
+        write(ctx.output, okResponse(request.id, { tools: ctx.tools }));
       }
       return;
     case 'tools/call':
@@ -149,31 +160,6 @@ function initializeResult(params: unknown): Record<string, unknown> {
       version: '0.2.0',
     },
   };
-}
-
-/**
- * List the channel's provider-owned tools by forwarding to the generic
- * `channel.list_tools` admin method. Core (the channel provider) is the single
- * source of the tool descriptors — the shim never hardcodes a tool name or
- * schema. Returns the `{ tools }` blob verbatim for the MCP `tools/list` reply.
- */
-async function listTools(ctx: {
-  dispatcherId: string;
-  callerKind: 'dispatcher' | 'team_leader';
-  teamId?: string;
-  leaderName?: string;
-  socketPath: string;
-}): Promise<unknown> {
-  return sendAdminRequest(
-    'channel.list_tools',
-    {
-      dispatcher_id: ctx.dispatcherId,
-      caller_kind: ctx.callerKind,
-      ...(ctx.teamId !== undefined ? { team_id: ctx.teamId } : {}),
-      ...(ctx.leaderName !== undefined ? { leader_name: ctx.leaderName } : {}),
-    },
-    { socketPath: ctx.socketPath },
-  );
 }
 
 async function callTool(

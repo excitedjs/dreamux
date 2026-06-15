@@ -140,7 +140,13 @@ class NeutralFeishuChannelSession implements ChannelSession {
     // never returns null. Core owns the bin path and the generic shim; the
     // package only shapes args. `--provider` is advisory (the shim resolves the
     // live channel session from the dispatcher id) but names which channel this
-    // descriptor serves.
+    // descriptor serves. The tool LIST is static provider metadata, so it travels
+    // with the descriptor (base64 JSON — robust through the runtime's arg layer)
+    // and the generic shim serves `tools/list` from it WITHOUT an admin round-trip;
+    // only `tools/call` reaches the live session.
+    const toolsB64 = Buffer.from(JSON.stringify(feishuMcpTools()), 'utf8').toString(
+      'base64',
+    );
     return {
       name: FEISHU_MCP_SERVER_NAME,
       command: context.command,
@@ -157,6 +163,8 @@ class NeutralFeishuChannelSession implements ChannelSession {
         ...(context.leader_name !== undefined
           ? ['--leader-name', context.leader_name]
           : []),
+        '--channel-tools-b64',
+        toolsB64,
         '--admin-socket',
         context.adminSocketPath,
       ],

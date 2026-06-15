@@ -2,9 +2,10 @@
  * Unit tests for the blind-conduit channel MCP architecture (issue #209 cleanup).
  *
  * Four concerns:
- *  1. The `channel-mcp` stdio shim forwards `tools/list` → `channel.list_tools`
- *     and `tools/call` → `channel.invoke_tool` carrying raw `{name, arguments}`.
- *     The shim NEVER names a Feishu tool, method, or selector — it is a pure
+ *  1. The `channel-mcp` stdio shim serves `tools/list` from the static tool
+ *     specs the provider's descriptor carries (no admin round-trip) and forwards
+ *     `tools/call` → `channel.invoke_tool` carrying raw `{name, arguments}`. The
+ *     shim NEVER names a Feishu tool, method, or selector — it is a pure
  *     JSON-RPC ↔ admin-socket bridge.
  *  2. `DispatcherAgentService.invokeChannelTool` routing:
  *     - a live slot → `session.handleTool` (generic neutral call);
@@ -126,48 +127,42 @@ async function withFakeAdminSocket(
 // ---------------------------------------------------------------------------
 
 describe('channel-mcp shim is a blind conduit (issue #209 Q1)', () => {
-  it('tools/list → channel.list_tools carrying caller scope, no tool names in shim', async () => {
+  it('tools/list is served statically from the descriptor-supplied tools (no admin round-trip)', async () => {
+    // The tool LIST is static provider metadata carried by the descriptor; the
+    // shim serves it verbatim WITHOUT contacting the admin socket and never
+    // hardcodes a tool name or schema. Only tools/call reaches the live session.
     const toolList = [
       { name: 'reply', description: 'send a reply', inputSchema: {} },
       { name: 'react', description: 'add a reaction', inputSchema: {} },
     ];
-    const received: Array<{ method: string; params: unknown }> = [];
-
-    await withFakeAdminSocket(
-      [
-        // initialize is handled locally by the shim (never forwarded to admin socket)
-        { ok: true, result: { tools: toolList } }, // channel.list_tools
-      ],
-      async (socketPath) => {
-        const input = new PassThrough();
-        const output = new PassThrough();
-        const lines: string[] = [];
-        output.on('data', (chunk: Buffer) => lines.push(...(chunk.toString().split('\n').filter(Boolean))));
-
-        const run = runChannelMcp({
-          dispatcherId: 'flow',
-          callerKind: 'dispatcher',
-          adminSocketPath: socketPath,
-          input,
-          output,
-        });
-
-        // Handshake
-        input.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18' } }) + '\n');
-        // tools/list
-        input.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }) + '\n');
-        input.end();
-        await run;
-
-        // The list response carries the provider's tool descriptors verbatim
-        const listResponse = JSON.parse(lines.find((l) => JSON.parse(l)?.['id'] === 2) ?? '{}') as Record<string, unknown>;
-        expect(listResponse?.['result']).toMatchObject({ tools: toolList });
-      },
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const lines: string[] = [];
+    output.on('data', (chunk: Buffer) =>
+      lines.push(...chunk.toString().split('\n').filter(Boolean)),
     );
 
-    // The shim never hardcodes a tool name — the single forwarded admin request
-    // is channel.list_tools, not mcp.reply / mcp.react / etc.
-    void received; // collected by the fake server above via closure
+    const run = runChannelMcp({
+      dispatcherId: 'flow',
+      callerKind: 'dispatcher',
+      tools: toolList,
+      // Never contacted for tools/list — proves there is no admin round-trip.
+      adminSocketPath: '/dev/null/nonexistent-admin.sock',
+      input,
+      output,
+    });
+
+    input.write(
+      JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18' } }) + '\n',
+    );
+    input.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }) + '\n');
+    input.end();
+    await run;
+
+    const listResponse = JSON.parse(
+      lines.find((l) => JSON.parse(l)?.['id'] === 2) ?? '{}',
+    ) as Record<string, unknown>;
+    expect(listResponse?.['result']).toMatchObject({ tools: toolList });
   });
 
   it('tools/call → channel.invoke_tool with raw {name, arguments}, no Feishu vocab in shim', async () => {
