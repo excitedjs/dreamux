@@ -1,14 +1,18 @@
 import {
-  BUILTIN_CODEX_PROVIDER_REF,
-  BUILTIN_FEISHU_PROVIDER_REF,
+  type DispatcherConfig,
+  type DreamuxConfig,
+} from '../../src/config/config.js';
+import {
   DEFAULT_APPROVAL_POLICY,
   DEFAULT_CODEX_BIN,
   DEFAULT_CODEX_TURN_TIMEOUT_MS,
   DEFAULT_INITIALIZE_TIMEOUT_MS,
   DEFAULT_SANDBOX_MODE,
-  type DispatcherConfig,
-  type DreamuxConfig,
-} from '../../src/config/config.js';
+} from '@excitedjs/agent-runtime-codex';
+import {
+  BUILTIN_CODEX_PROVIDER_REF,
+  BUILTIN_FEISHU_PROVIDER_REF,
+} from '../../src/registry/index.js';
 
 interface TestDispatcherOptions {
   id?: string;

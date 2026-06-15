@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+import { unixSocketPathFitsBudget } from '@excitedjs/dreamux-utils';
 import {
   allocateRuntimeSocketPath,
   isSharedTmpPath,
@@ -13,7 +14,6 @@ import {
   resetRuntimeConfig,
   runRoot,
   stateRoot,
-  unixSocketPathFitsBudget,
 } from '../src/platform/paths.js';
 
 describe('runtime socket allocation', () => {

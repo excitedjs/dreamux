@@ -1,5 +1,7 @@
 import { readFile, readdir } from 'node:fs/promises';
 
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
+
 import { writeFileAtomic } from '../../platform/atomic-write.js';
 import { isNotFound } from '../../platform/fs-errors.js';
 import {
@@ -16,9 +18,8 @@ import {
   type TeamMateWorktreeIdentity,
 } from './types.js';
 
-export interface TeamMateIdentityStoreLog {
-  warn(message: string, fields?: Record<string, unknown>): void;
-}
+/** Reuse the neutral logger's `warn` — no forked, message-first shape. */
+export type TeamMateIdentityStoreLog = Pick<DreamuxLogger, 'warn'>;
 
 export interface TeamMateIdentityCreateInput {
   dispatcherId: string;
@@ -97,11 +98,14 @@ export class TeamMateIdentityStore {
         // list/history read paths too (scopedList → here), never silently skip.
         // A genuinely corrupt/unreadable record is still tolerated with a warn.
         if (err instanceof LegacyStateError) throw err;
-        this.log.warn('skipping unreadable TeamMate identity', {
-          dispatcher_id: dispatcherId,
-          name,
-          error: err instanceof Error ? err.message : String(err),
-        });
+        this.log.warn(
+          {
+            dispatcher_id: dispatcherId,
+            name,
+            error: err instanceof Error ? err.message : String(err),
+          },
+          'skipping unreadable TeamMate identity',
+        );
       }
     }
     return identities;

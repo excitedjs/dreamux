@@ -162,12 +162,10 @@ export class TeamMateAgentService {
   private readonly inFlightSettleCaptures = new Set<Promise<void>>();
 
   constructor(private readonly opts: TeamMateAgentServiceOptions) {
-    this.identities = new TeamMateIdentityStore({
-      warn: (message, fields) => opts.log.warn(message, fields),
-    });
-    this.turnsStore = new TeamMateTurnsStore({
-      warn: (message, fields) => opts.log.warn(message, fields),
-    });
+    // The stores' log option is the neutral logger's `warn` (fields-first), so
+    // the host logger is handed through directly — no shape adapter.
+    this.identities = new TeamMateIdentityStore({ warn: opts.log.warn.bind(opts.log) });
+    this.turnsStore = new TeamMateTurnsStore({ warn: opts.log.warn.bind(opts.log) });
   }
 
   /**
@@ -934,7 +932,7 @@ export class TeamMateAgentService {
           }
         : {}),
       // Bind the per-teammate context once via the neutral logger's own `child`,
-      // so a teammate runtime's `logger.info('x', { id })` keeps `id` on the host
+      // so a teammate runtime's `logger.info({ id }, 'x')` keeps `id` on the host
       // log line alongside the bound dispatcher/teammate fields. `child` is an
       // optional contract member; core's logger always provides it, but fall back
       // to the unbound logger if a future logger omits it.
@@ -1005,11 +1003,14 @@ export class TeamMateAgentService {
   ): Promise<void> {
     try {
       if (settled.turnId === null) {
-        this.opts.log.warn('dropping teammate completion: settled turn has no turn id', {
-          dispatcher_id: dispatcherId,
-          teammate: name,
-          status: settled.status,
-        });
+        this.opts.log.warn(
+          {
+            dispatcher_id: dispatcherId,
+            teammate: name,
+            status: settled.status,
+          },
+          'dropping teammate completion: settled turn has no turn id',
+        );
         return;
       }
       let result = '';
@@ -1017,11 +1018,14 @@ export class TeamMateAgentService {
         const last = await runtime.getLast();
         result = last?.text ?? '';
       } catch (err) {
-        this.opts.log.warn('teammate completion getLast failed', {
-          dispatcher_id: dispatcherId,
-          teammate: name,
-          err: errInfo(err),
-        });
+        this.opts.log.warn(
+          {
+            dispatcher_id: dispatcherId,
+            teammate: name,
+            err: errInfo(err),
+          },
+          'teammate completion getLast failed',
+        );
       }
       const envelope: CompletionEnvelope = {
         source: name,
@@ -1044,11 +1048,14 @@ export class TeamMateAgentService {
           turnOrigins.get(settled.turnId) ?? null,
         );
       } catch (err) {
-        this.opts.log.warn('teammate completion delivery failed', {
-          dispatcher_id: dispatcherId,
-          teammate: name,
-          err: errInfo(err),
-        });
+        this.opts.log.warn(
+          {
+            dispatcher_id: dispatcherId,
+            teammate: name,
+            err: errInfo(err),
+          },
+          'teammate completion delivery failed',
+        );
       }
       // Capture the settled turn in the per-name turns archive AFTER the
       // delivery attempt — regardless of its outcome — so capture never perturbs
@@ -1060,11 +1067,14 @@ export class TeamMateAgentService {
         settleStatus: settled.status,
       });
     } catch (err) {
-      this.opts.log.warn('teammate settled-turn capture failed', {
-        dispatcher_id: dispatcherId,
-        teammate: name,
-        err: errInfo(err),
-      });
+      this.opts.log.warn(
+        {
+          dispatcher_id: dispatcherId,
+          teammate: name,
+          err: errInfo(err),
+        },
+        'teammate settled-turn capture failed',
+      );
     }
   }
 

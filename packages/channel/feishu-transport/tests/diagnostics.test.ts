@@ -27,10 +27,13 @@ function spyLogger() {
     message: string
     fields: Record<string, unknown> | undefined
   }> = []
+  // `TransportLogger` is pino-shaped (fields-first): fields are the 1st arg,
+  // the message the 2nd. The capture is still recorded as `{level, message,
+  // fields}` so the assertions below read unchanged.
   const make =
     (level: keyof TransportLogger) =>
-    (message: string, fields?: Record<string, unknown>) => {
-      calls.push({ level, message, fields })
+    (fields: Record<string, unknown>, message?: string) => {
+      calls.push({ level, message: message ?? '', fields })
     }
   const logger: TransportLogger = {
     error: make('error'),

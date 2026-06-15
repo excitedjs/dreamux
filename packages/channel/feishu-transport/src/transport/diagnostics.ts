@@ -38,17 +38,18 @@
 /**
  * A minimal, structured logger a host can inject so the transport's own
  * diagnostics join the host's per-component log. Defined inside this package so
- * the transport never reverse-depends on a host's logger (dreamux's pino, etc.);
- * a host adapts its logger to this shape. Every method takes a message and
- * optional structured `fields`; a pino-style `(fields, msg)` logger adapts in
- * one line.
+ * the transport never reverse-depends on a host's logger (dreamux's pino, etc.)
+ * or on any host's types. The shape is deliberately pino-compatible
+ * (fields-first: `error(fields, message)`), so a host's pino logger — or
+ * Dreamux's neutral `DreamuxLogger`, which is itself pino-shaped — satisfies it
+ * structurally and is injected AS-IS, with no per-boundary adapter.
  */
 export interface TransportLogger {
-  error(message: string, fields?: Record<string, unknown>): void
-  warn(message: string, fields?: Record<string, unknown>): void
-  info(message: string, fields?: Record<string, unknown>): void
-  debug(message: string, fields?: Record<string, unknown>): void
-  trace(message: string, fields?: Record<string, unknown>): void
+  error(fields: Record<string, unknown>, message?: string): void
+  warn(fields: Record<string, unknown>, message?: string): void
+  info(fields: Record<string, unknown>, message?: string): void
+  debug(fields: Record<string, unknown>, message?: string): void
+  trace(fields: Record<string, unknown>, message?: string): void
 }
 
 /**
@@ -124,7 +125,7 @@ export function createTransportDiagnostics(logger?: TransportLogger): TransportD
   const sdkLevel =
     (level: keyof TransportLogger) =>
     (...msg: unknown[]) =>
-      logger[level](formatSdkArgs(sanitizeSdkArgs(msg)), { source: SDK_SOURCE })
+      logger[level]({ source: SDK_SOURCE }, formatSdkArgs(sanitizeSdkArgs(msg)))
 
   return {
     sdkLogger: {
@@ -135,14 +136,14 @@ export function createTransportDiagnostics(logger?: TransportLogger): TransportD
       trace: sdkLevel('trace'),
     },
     connection: (line, level = 'info') => {
-      logger[level](line, { source: CONNECTION_SOURCE })
+      logger[level]({ source: CONNECTION_SOURCE }, line)
     },
     diagnostic: (message, err) => {
       logger.warn(
-        message,
         err !== undefined
           ? { source: DIAGNOSTIC_SOURCE, err: serializeErr(err) }
           : { source: DIAGNOSTIC_SOURCE },
+        message,
       )
     },
   }

@@ -1,8 +1,9 @@
 # @excitedjs/dreamux
 
 The dreamux host server package. One long-running Node process hosts N
-**Dispatchers**; each Dispatcher binds a Channel provider, an Agent Runtime
-provider, and Dreamux-owned MCP surfaces for channel replies and TeamMate work.
+**Dispatchers**; each Dispatcher binds one or more Channel providers, one Agent
+Runtime provider selected through `agents[]`, and Dreamux-owned MCP surfaces for
+channel replies, Teams, and TeamMate work.
 
 This file is the **package-level** quick start. For the monorepo layout and
 knowledge base, see the top-level [`README.md`](../../README.md) and
@@ -28,25 +29,24 @@ Design background:
   and the runtime applies them to its engine (Codex `skills/extraRoots/set`,
   Claude Code `--add-dir`). `dreamux onboard` no longer writes
   `<dispatcher cwd>/.codex/skills`.
-- Providerized dispatcher declarations, a process-local Capability Registry,
+- Providerized dispatcher declarations, a process-local provider registry,
   server-owned state/log paths, the `builtin:feishu` Channel provider, the
   `builtin:codex` and `builtin:claude-code` Agent Runtime providers, and
   dispatcher-scoped MCP shims for channel replies and TeamMate scheduling.
 - A server-hosted TeamMate ledger with asynchronous scheduling, completion
   delivery, bounded retry, and read-only result retrieval.
 
-## Phase 1 contract
+## Current Contract
 
 - **One Node process, many Dispatchers.** `dispatchers[].channels[]` accepts
-  multiple channels with unique dispatcher-local ids, and each channel provider
-  validates its own config (issue #209 multi-channel config). Live multi-channel
-  routing is a follow-up, so a runnable dispatcher must still declare exactly one
-  `builtin:feishu` channel — more than one channel (or a non-feishu channel)
-  fails loud at server start.
+  multiple channels with unique dispatcher-local ids. A dispatcher may declare at
+  most one channel per provider ref, and each channel provider validates its own
+  config (issue #209 multi-channel config). Live routing runs one session per
+  declared channel and routes inbound/egress by `(channel_id, target_key)`.
 - **Provider refs are explicit.** Wired builtin refs are `builtin:feishu`,
-  `builtin:codex`, and `builtin:claude-code`. Npm package refs and package
-  export refs are reserved syntax only in Phase 1; dreamux parses and rejects
-  them clearly instead of loading or executing external code.
+  `builtin:codex`, and `builtin:claude-code`. External `npm:` refs are loaded
+  through the same provider package loader when the package is installed and
+  implements the selected provider kind.
 - **One dispatcher is one trust domain.** A bot may receive multiple chats, but
   all accepted messages share one dispatcher runtime context. Do not bind
   unrelated private chats to the same dispatcher.
@@ -58,22 +58,22 @@ Design background:
   queues, message dedupe, coalescing state, and received-reaction ownership.
   Restarting the server drops unprocessed inbound messages and may leave
   received reactions behind.
-- **Outbound is MCP reply-only.** Assistant text emitted by Codex is never
-  forwarded to Feishu automatically. The model must call the dispatcher-scoped
+- **Outbound is MCP reply-only.** Assistant text emitted by a runtime is never
+  forwarded to a channel automatically. The model must call the dispatcher-scoped
   channel MCP tools such as `reply` or `react`, and those tools exist only when
   the Channel provider exposes the capability.
 - **TeamMate is server-hosted.** Scheduling accepts a task and returns a task id
   immediately. Completion is delivered later through the selected Agent Runtime
   provider; if push delivery fails repeatedly, the final result remains
   pull-able from the dispatcher-scoped TeamMate MCP tools.
-- **No webhook surface in Phase 1.** Feishu inbound uses the SDK long-connection
+- **No webhook surface in the current contract.** Feishu inbound uses the SDK long-connection
   WebSocket path. Webhook-only verification/encryption fields are not part of
   the config schema.
 
-Explicitly **not** in Phase 1: per-chat threads, durable inbound buffers,
-automatic assistant-text outbound, HTTP MCP listeners by default, reaction
-ledgers, streaming outbound, external npm provider loading, multi-channel
-routing, cross-machine coordination, and a web UI.
+Explicitly **not** in the current contract: runnable subscription-channel
+lifecycles, per-chat threads, durable inbound buffers, automatic assistant-text
+outbound, HTTP MCP listeners by default, reaction ledgers, streaming outbound,
+cross-machine coordination, and a web UI.
 
 ## Install / build / test
 
@@ -103,7 +103,7 @@ logs:
 
 | Path | Purpose | Source of truth |
 |---|---|---|
-| `~/.dreamux/config.json` | User-editable config and Feishu bot secrets, created by `dreamux onboard`; edit and restart to apply | the operator |
+| `~/.dreamux/config.json` | User-editable provider config and local channel credentials, created by `dreamux onboard`; edit and restart to apply | the operator |
 | `~/.dreamux/run/admin.sock` | Admin Unix socket (+ `admin.sock.lock`); volatile run file | the server |
 | `~/.dreamux/run/restart-intent.json` | One-shot daemon restart marker; volatile run file | the server |
 | `~/.dreamux/run/sockets/` | Fallback root for ephemeral Codex app-server rendezvous sockets (preferred root: `$XDG_RUNTIME_DIR/dreamux/sockets/`); random per start, never persisted | the server |
@@ -112,9 +112,9 @@ logs:
 | `~/.dreamux/state/<id>/claude-code-mcp.json` | Claude Code MCP config generated from Dreamux-owned descriptors | the server |
 | `~/.dreamux/state/<id>/teammate/` | TeamMate task ledger, results, and delivery retry state | the server |
 | `~/.dreamux/cache/<id>/spill/` | Over-budget teammate completion spill files; rebuildable cache, only the path is inlined into a dispatcher turn | the server |
-| `~/.dreamux/cache/<id>/feishu-attachments/` | Feishu inbound attachment cache; re-fetchable, safe to delete | the server |
+| `~/.dreamux/cache/<id>/` | Per-dispatcher provider cache root; providers own subdirectories such as Feishu attachment cache | the server |
 | `~/.dreamux/logs/codex-app-server/<id>.log` | Codex app-server stdout/stderr | the server |
-| `~/.dreamux/logs/feishu-channel/<id>.log` | Feishu channel logs | the server |
+| `~/.dreamux/logs/channel/<id>.log` | Per-dispatcher channel logs | the server |
 | `~/.dreamux/logs/teammate-mcp/<id>.log` | TeamMate MCP shim diagnostics | the server |
 | `~/.codex/` | Codex global default home: auth, memory, and config | the operator / Codex |
 
@@ -125,13 +125,30 @@ config and global Codex auth survive.
 ## Configure dispatchers
 
 For normal installs, run `dreamux onboard`. It writes `~/.dreamux/config.json`
-with mode `0600`, creates state/log directories, installs the workspace skill,
-and registers a user-level service when supported.
+with mode `0600`, creates state/log directories, and registers a user-level
+service when supported. Bundled Dreamux skills are injected at runtime by role,
+not written into the workspace.
 
 Dispatcher declarations live in `config.json`:
 
 ```json
 {
+  "agents": [
+    {
+      "id": "flow",
+      "provider": "builtin:codex",
+      "config": {
+        "bin": "codex",
+        "approval_policy": "never",
+        "sandbox_mode": "workspace-write",
+        "extra_args": [],
+        "extra_env": {
+          "EXAMPLE_FLAG": "1"
+        },
+        "initialize_timeout_ms": 10000
+      }
+    }
+  ],
   "dispatchers": [
     {
       "id": "flow",
@@ -147,19 +164,7 @@ Dispatcher declarations live in `config.json`:
           }
         }
       ],
-      "runtime": {
-        "provider": "builtin:codex",
-        "config": {
-          "bin": "codex",
-          "approval_policy": "never",
-          "sandbox_mode": "workspace-write",
-          "extra_args": [],
-          "extra_env": {
-            "EXAMPLE_FLAG": "1"
-          },
-          "initialize_timeout_ms": 10000
-        }
-      }
+      "agentRuntime": "flow"
     }
   ]
 }
@@ -170,9 +175,10 @@ Dispatcher declarations live in `config.json`:
 `dispatchers[].feishu` / `dispatchers[].codex` shapes fail loudly with rebuild
 guidance, following issue #98.
 
-There is no top-level `codex` block. Codex settings are per-dispatcher under
-`dispatchers[].runtime.config` when `runtime.provider` is `builtin:codex`.
-Every field defaults, so any field in it can be omitted:
+There is no top-level `codex` block and no inline `dispatchers[].runtime` block.
+Runtime settings live in named `agents[]` entries and a dispatcher selects one
+with `dispatchers[].agentRuntime`. For `builtin:codex`, every config field
+defaults, so any field can be omitted:
 
 - `bin` → `"codex"` (resolved on `PATH`)
 - `approval_policy` → `"never"`
@@ -184,24 +190,27 @@ Every field defaults, so any field in it can be omitted:
 Most operators never touch `bin` or `initialize_timeout_ms`. The optional
 `CODEX_HOST_CODEX_BIN` environment variable is a host-level override of the
 codex binary across **every** dispatcher (e.g. CI or a non-PATH install); when
-unset, each dispatcher's `runtime.config.bin` is used.
+unset, the selected `agents[].config.bin` is used.
 
-Claude Code dispatchers use a different runtime-owned config shape:
+Claude Code agents use a different runtime-owned config shape:
 
 ```json
 {
-  "runtime": {
-    "provider": "builtin:claude-code",
-    "config": {
-      "bin": "claude",
-      "model": null,
-      "permission_mode": null,
-      "remote_control": false,
-      "extra_args": [],
-      "extra_env": {},
-      "turn_timeout_ms": 600000
+  "agents": [
+    {
+      "id": "claude",
+      "provider": "builtin:claude-code",
+      "config": {
+        "bin": "claude",
+        "model": null,
+        "permission_mode": null,
+        "remote_control": false,
+        "extra_args": [],
+        "extra_env": {},
+        "turn_timeout_ms": 600000
+      }
     }
-  }
+  ]
 }
 ```
 
@@ -220,15 +229,16 @@ It does not use Codex app-server, Codex handshake, or Codex home diagnostics.
 
 Provider refs reserved for future external providers look like npm package refs
 or package export refs, for example `npm:@example/dreamux-provider` and
-`npm:@example/dreamux-provider#channel`. They are not runnable in Phase 1:
-dreamux does not install, import, or execute them.
+`npm:@example/dreamux-provider#channel`. Dreamux does not install packages for
+you; if the package is already resolvable, config load imports it and validates
+the provider contract before starting dispatchers.
 
 Edit and restart `dreamux serve` to apply dispatcher declaration changes.
-Channel ids must be unique within a dispatcher, and the Feishu `app_id` must be
-unique across all declared dispatchers (including disabled ones) — two
-dispatchers cannot share one bot identity, and config load fails loud on a
-duplicate. Dispatcher ids use a path-safe character set so they map one-to-one
-to state directories.
+Channel ids must be unique within a dispatcher, and each dispatcher may declare
+at most one channel per provider ref. Feishu `app_id` uniqueness is not enforced
+by core; sharing one bot identity across dispatchers is an operator choice.
+Dispatcher ids use a path-safe character set so they map one-to-one to state
+directories.
 
 Access-gate allowlists are not part of `config.json`. Configure them in
 `~/.dreamux/state/<id>/access.json`:
@@ -261,18 +271,19 @@ The server reads `access.json` directly at runtime and preserves runtime
 observations and warnings in the same file.
 
 `dreamux config show`, `dreamux status`, `dreamux doctor`, and logs redact
-`app_secret`. There is no CLI raw mode for printing the unredacted local file.
+secret-like config keys generically. There is no CLI raw mode for printing the
+unredacted local file.
 
 ## Codex configuration precedence
 
 The codex binary path resolves in this order, highest first:
 
 1. `CODEX_HOST_CODEX_BIN` environment variable (optional host-level override).
-2. The dispatcher's `dispatchers[].runtime.config.bin` (default `"codex"`).
+2. The selected `agents[].config.bin` (default `"codex"`).
 
-All other Codex values come from that dispatcher's `runtime.config` field when
-`runtime.provider` is `builtin:codex`, falling back to the built-in defaults in
-`src/runtime/config.ts`. There is no global `codex` layer. A dispatcher's
+All other Codex values come from the selected `agents[].config` field when
+`agents[].provider` is `builtin:codex`, falling back to the built-in Codex
+provider defaults. There is no global `codex` layer. A dispatcher's
 `extra_args` are its only source of `-c key=value` options; dreamux appends its
 own Channel provider MCP and TeamMate MCP `-c` args after them, relying on
 Codex's last-write-wins behavior. Per-dispatcher `extra_env` is merged over the
@@ -280,8 +291,8 @@ server process environment before spawning that dispatcher app-server; dreamux
 still removes `CODEX_HOME` so Codex keeps using its global default home.
 
 The managed-service unit does **not** pin `CODEX_HOST_CODEX_BIN`; it adds the
-onboarded codex binary's directory to the unit `PATH` so each dispatcher's
-`runtime.config.bin` resolves. Existing units installed before this change may
+onboarded Codex binary's directory to the unit `PATH` so the selected
+`agents[].config.bin` resolves. Existing units installed before this change may
 still carry the env var — there it keeps acting as the override and nothing
 breaks.
 
@@ -318,7 +329,7 @@ server/admin seam for future worker/operator paths, so a dispatcher model cannot
 fake a TeamMate completion. TeamMate callers marked as `teammate` cannot
 schedule more TeamMates.
 
-## Phase 1 verification path
+## Verification Path
 
 1. `dreamux onboard --dispatcher-id flow --dispatcher-cwd <WORKSPACE> --bot-app-id <APP_ID> --bot-app-secret <APP_SECRET>`
 2. `dreamux serve` starts dispatcher `flow`.

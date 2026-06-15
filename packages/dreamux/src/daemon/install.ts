@@ -14,9 +14,7 @@ import {
   installUserService,
   removeUserService,
   resolveServiceExecutable,
-  selectServiceClaudeBin,
   selectServiceNodeBin,
-  tryResolveServiceExecutable,
   validateManagedServiceLaunch,
   type ServiceInstallAnswers,
   type ServiceInstallResult,
@@ -26,13 +24,12 @@ import {
 import { TransparentFileLedger } from '../onboard/ledger.js';
 import type { CommandRunner, OnboardFileLedgerEntry } from '../onboard/types.js';
 import {
-  BUILTIN_CODEX_PROVIDER_REF,
-  DEFAULT_CODEX_BIN,
-  dispatcherCodexConfig,
   type DreamuxConfig,
   globalConfigDir,
   loadConfig,
 } from '../config/config.js';
+import { AgentRuntimeProviderCatalog } from '../agent-runtime/catalog.js';
+import { dispatcherHostPaths } from '../agent-runtime/host-paths.js';
 import { dreamuxBinPath } from '../platform/package-bin.js';
 import { setRuntimeConfig } from '../platform/paths.js';
 
@@ -53,39 +50,26 @@ export interface DaemonInstallResult {
   files: OnboardFileLedgerEntry[];
 }
 
-/**
- * Pick the one codex binary that seeds the managed-service unit PATH. The env
- * override wins; otherwise enabled builtin:codex dispatchers' `runtime.config.bin`
- * values are used. External-runtime-only configs do not need a Codex PATH seed.
- * The single host unit cannot encode per-dispatcher bins, so when they differ
- * the first is used and a warning names the rest instead of silently dropping
- * them — the server still resolves each dispatcher's own bin at runtime.
- */
-function selectServiceCodexBin(
+function serviceRuntimeBinChecks(
   config: DreamuxConfig,
   env: NodeJS.ProcessEnv,
-): string | null {
-  const override = env['CODEX_HOST_CODEX_BIN'];
-  if (override !== undefined && override.trim() !== '') return override;
-  const bins = [
-    ...new Set(
-      config.dispatchers
-        .filter(
-          (d) => d.enabled && d.runtime.provider === BUILTIN_CODEX_PROVIDER_REF,
-        )
-        .map((d) => dispatcherCodexConfig(d).bin),
-    ),
-  ];
-  if (bins.length === 0) return null;
-  if (bins.length > 1) {
-    console.warn(
-      `dreamux daemon install: enabled dispatchers declare ${bins.length} ` +
-        `different runtime.config.bin values (${bins.join(', ')}); the single managed ` +
-        `service unit seeds its PATH from '${bins[0]}'. Set CODEX_HOST_CODEX_BIN ` +
-        `to force one binary, or ensure every runtime.config.bin resolves on PATH.`,
-    );
+  catalog: AgentRuntimeProviderCatalog,
+): string[] {
+  const bins: string[] = [];
+  for (const [agentId, agent] of Object.entries(config.agents)) {
+    const diagnostic = catalog.resolve(agent.provider).diagnostic;
+    if (diagnostic === undefined) continue;
+    for (const check of diagnostic.binChecks({
+      runtime_id: agentId,
+      config: agent.config,
+      env,
+      scope: 'managedService',
+      paths: dispatcherHostPaths,
+    })) {
+      bins.push(check.bin);
+    }
   }
-  return bins[0] ?? DEFAULT_CODEX_BIN;
+  return [...new Set(bins)];
 }
 
 export async function runDaemonInstall(
@@ -98,34 +82,18 @@ export async function runDaemonInstall(
 
   // Fail loudly when the operator has not run onboard yet — daemon install
   // re-registers an existing setup, it does not create one.
-  const { config } = await loadConfig({ configDir: globalConfigDir() });
+  const loaded = await loadConfig({ configDir: globalConfigDir() });
+  const { config } = loaded;
+  const catalog = new AgentRuntimeProviderCatalog({
+    registry: loaded.providerRegistry,
+  });
   setRuntimeConfig(config);
 
-  // Seed the service PATH with Codex only when a host override or an enabled
-  // builtin:codex dispatcher needs it. External runtime-only configs do not
-  // get blocked by the old Codex CLI launch check.
-  const codexBinSource = selectServiceCodexBin(config, env);
-  const codexBin =
-    codexBinSource === null
-      ? null
-      : dryRun
-        ? codexBinSource
-        : await resolveServiceExecutable(codexBinSource, env);
-  // Best-effort: locate Claude Code so the unit PATH resolves `claude` for
-  // server-hosted builtin:claude-code workers. Absent install → omit, warn,
-  // and keep the codex-only daemon install working (issue #126 PR8).
-  const claudeBinSource = selectServiceClaudeBin(env);
-  const claudeBin = dryRun
-    ? null
-    : await tryResolveServiceExecutable(claudeBinSource, env);
-  if (!dryRun && claudeBin === null) {
-    console.warn(
-      `dreamux daemon install: Claude Code binary '${claudeBinSource}' was not ` +
-        'found on PATH; server-hosted builtin:claude-code TeamMate workers will ' +
-        'be unavailable. Install Claude Code (or set DREAMUX_CLAUDE_BIN) and ' +
-        'rerun dreamux daemon install to enable them.',
-    );
-  }
+  const runtimeBins = await Promise.all(
+    serviceRuntimeBinChecks(config, env, catalog).map((bin) =>
+      dryRun ? bin : resolveServiceExecutable(bin, env),
+    ),
+  );
   // Pin the managed service to a stable system Node (issue #83) rather than the
   // current process Node — otherwise running `daemon install` from a
   // version-manager Node would re-pin the service to that unstable Node.
@@ -141,8 +109,7 @@ export async function runDaemonInstall(
     configDir: globalConfigDir(),
     dreamuxBin: dreamuxBinPath(env),
     nodeBin,
-    ...(codexBin !== null ? { codexBin } : {}),
-    ...(claudeBin !== null ? { claudeBin } : {}),
+    runtimeBins,
     startService,
     dryRun,
   };
@@ -154,7 +121,7 @@ export async function runDaemonInstall(
         [
           'dreamux managed service launch environment is not ready',
           ...launch.errors.map((error) => `- ${error}`),
-          '- rerun dreamux onboard from the desired Node/Codex install',
+          '- rerun dreamux onboard from the desired Node/runtime install',
         ].join('\n'),
       );
     }

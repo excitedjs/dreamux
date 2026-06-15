@@ -98,11 +98,6 @@ function requiredDispatcherId(value: unknown): string {
   return validateDispatcherId(requiredString(value, 'id'));
 }
 
-function optionalString(value: unknown): string | null {
-  if (typeof value !== 'string' || value === '') return null;
-  return value;
-}
-
 function withRequiredDispatcherId<T>(y: Argv<T>): Argv<T & { id: string }> {
   return y.option('id', {
     type: 'string',
@@ -122,48 +117,14 @@ function buildDispatcherCommands(y: Argv): Argv {
     .command(
       'add',
       'Add a dispatcher',
-      (yy) =>
-        yy
-          .option('id', {
-            type: 'string',
-            demandOption: true,
-            describe: 'Dispatcher id',
-          })
-          .option('bot-app-id', {
-            type: 'string',
-            demandOption: true,
-            describe: 'Channel bot app id',
-          })
-          .option('bot-secret-ref', {
-            type: 'string',
-            demandOption: true,
-            describe: 'Secret reference, usually config:<dispatcher-id>',
-          })
-          .option('codex-args-json', {
-            type: 'string',
-            describe: 'Dispatcher-specific Codex argument JSON',
-          })
-          .option('codex-cwd', {
-            type: 'string',
-            describe: 'Override dispatcher app-server cwd',
-          }),
+      withRequiredDispatcherId,
       async (argv) => {
         const args = [
           'dispatcher',
           'add',
           '--id',
           requiredDispatcherId(argv.id),
-          '--bot-app-id',
-          requiredString(argv.botAppId, 'bot-app-id'),
-          '--bot-secret-ref',
-          requiredString(argv.botSecretRef, 'bot-secret-ref'),
         ];
-        const codexArgsJson = optionalString(argv.codexArgsJson);
-        if (codexArgsJson !== null) {
-          args.push('--codex-args-json', codexArgsJson);
-        }
-        const codexCwd = optionalString(argv.codexCwd);
-        if (codexCwd !== null) args.push('--codex-cwd', codexCwd);
         await execEntry(SERVER_CTL_ENTRY, args, adminEnv());
       },
     )
@@ -204,7 +165,7 @@ function buildOnboardCommand(y: Argv): Argv {
     })
     .option('dispatcher-cwd', {
       type: 'string',
-      describe: 'Working directory used when starting the dispatcher Codex app-server',
+      describe: 'Working directory used when starting the dispatcher runtime',
     })
     .option('codex-bin', {
       type: 'string',
@@ -468,6 +429,8 @@ function buildChannelMcpCommand(
 ): Argv<{
   dispatcher: string;
   provider?: string;
+  channelId?: string;
+  channel?: string;
   caller?: 'dispatcher' | 'team_leader';
   teamId?: string;
   leaderName?: string;
@@ -483,7 +446,12 @@ function buildChannelMcpCommand(
     .option('provider', {
       type: 'string',
       describe:
-        'Channel provider ref this shim serves (advisory; the dispatcher id selects the live channel session)',
+        'Channel provider ref this shim serves',
+    })
+    .option('channel-id', {
+      type: 'string',
+      alias: 'channel',
+      describe: 'Dispatcher-local channel id this shim serves',
     })
     .option('admin-socket', {
       type: 'string',
@@ -510,6 +478,8 @@ function buildChannelMcpCommand(
     }) as Argv<{
       dispatcher: string;
       provider?: string;
+      channelId?: string;
+      channel?: string;
       caller?: 'dispatcher' | 'team_leader';
       teamId?: string;
       leaderName?: string;
@@ -660,6 +630,7 @@ async function main(): Promise<void> {
         await runChannelMcp({
           dispatcherId,
           providerRef: argv.provider,
+          channelId: argv.channelId ?? argv.channel,
           callerKind: argv.caller,
           teamId: argv.teamId,
           leaderName: argv.leaderName,

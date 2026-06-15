@@ -1,10 +1,8 @@
-import {
-  isBotSenderType,
-  type TransportLogger,
-} from '@excitedjs/feishu-transport';
+import { isBotSenderType } from '@excitedjs/feishu-transport';
 import type {
   AgentRuntimeTurnResult,
   ChannelTarget,
+  DreamuxLogger,
   InboundDeliveryHooks,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
@@ -47,32 +45,6 @@ import {
   type FeishuMcpReplyInput,
   type FeishuMcpToolName,
 } from './feishu-mcp-tools.js';
-
-/**
- * Fields-first structured logger the session writes to (pino-compatible:
- * `error(fields, message)`). Dreamux core passes its own pino logger, which
- * satisfies this shape; the neutral `ChannelProvider` facade adapts the
- * message-first `DreamuxLogger` from `@excitedjs/dreamux-types` onto it. The
- * package does not depend on pino or `@excitedjs/dreamux`.
- */
-export interface FeishuChannelLogger {
-  error(fields: Record<string, unknown>, message: string): void;
-  warn(fields: Record<string, unknown>, message: string): void;
-  info(fields: Record<string, unknown>, message: string): void;
-  debug(fields: Record<string, unknown>, message: string): void;
-  trace(fields: Record<string, unknown>, message: string): void;
-}
-
-/** Bridge the fields-first channel logger to the transport's message-first logger. */
-function channelLoggerToTransport(logger: FeishuChannelLogger): TransportLogger {
-  return {
-    error: (message, fields) => logger.error(fields ?? {}, message),
-    warn: (message, fields) => logger.warn(fields ?? {}, message),
-    info: (message, fields) => logger.info(fields ?? {}, message),
-    debug: (message, fields) => logger.debug(fields ?? {}, message),
-    trace: (message, fields) => logger.trace(fields ?? {}, message),
-  };
-}
 
 export const RECEIVED_REACTION_EMOJI = 'Get';
 export const IN_PROGRESS_REACTION_EMOJI = 'OnIt';
@@ -118,7 +90,12 @@ export interface FeishuChannelSessionOptions {
   stateDir: string;
   /** The dispatcher's inbound-attachment cache directory (host-supplied). */
   attachmentCacheDir: string;
-  log: FeishuChannelLogger;
+  /**
+   * The host's neutral logger (`DreamuxLogger`, pino-shaped fields-first). It is
+   * used as-is by the session and handed straight to the transport — both are
+   * pino-compatible, so there is no per-boundary adapter.
+   */
+  log: DreamuxLogger;
   /** Inject a fake bot (tests). Host wraps its `(row, secret)` seam into this. */
   botFactory?: () => FeishuBot;
 }
@@ -162,7 +139,9 @@ export class FeishuChannelSession {
       : createFeishuBot({
           appId: opts.appId,
           appSecret: opts.appSecret,
-          logger: channelLoggerToTransport(opts.log),
+          // DreamuxLogger is pino-shaped; the transport's `TransportLogger` is
+          // the same fields-first shape, so it passes through directly.
+          logger: opts.log,
         } satisfies CreateBotOptions);
   }
 

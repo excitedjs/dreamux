@@ -5,6 +5,9 @@ import { join } from 'node:path';
 
 import {
   DREAMUX_UNIX_SOCKET_PATH_MAX_BYTES,
+  unixSocketPathFitsBudget,
+} from '@excitedjs/dreamux-utils';
+import {
   BUNDLED_SKILL_NAMES,
   adminSocketPath,
   cacheRoot,
@@ -30,7 +33,6 @@ import {
   runRoot,
   serverLogPath,
   stateRoot,
-  unixSocketPathFitsBudget,
 } from '../src/platform/paths.js';
 import {
   dispatcherWorkspaceCodexSkillsDir,

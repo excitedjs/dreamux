@@ -99,12 +99,16 @@ export const adminMethods: Record<string, AdminHandler> = {
     mustExistingDispatcher(server, id);
     const name = mustString(params, 'name');
     const caller = callerPrincipal(id, params);
+    const channelId = optionalString(params, 'channel_id');
+    const providerRef = optionalString(params, 'provider_ref');
     try {
       return await server.dispatcherService.invokeChannelTool({
         dispatcherId: id,
         name,
         arguments: mustToolArguments(params),
         caller,
+        ...(channelId !== null ? { channelId } : {}),
+        ...(providerRef !== null ? { providerRef } : {}),
       });
     } catch (err) {
       if (err instanceof ChannelToolAuthorizationError) {

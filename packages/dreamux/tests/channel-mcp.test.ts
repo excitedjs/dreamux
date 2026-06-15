@@ -64,11 +64,11 @@ import {
   teamLeaderPrincipal,
 } from '../src/dispatcher-service/teammate/types.js';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
+import type { DispatcherChannelConfig } from '../src/config/config.js';
 import {
-  BUILTIN_FEISHU_PROVIDER_REF,
   BUILTIN_CODEX_PROVIDER_REF,
-  type DispatcherChannelConfig,
-} from '../src/config/config.js';
+  BUILTIN_FEISHU_PROVIDER_REF,
+} from '../src/registry/index.js';
 import { resetRuntimeConfig } from '../src/platform/paths.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 import { asAgentRuntimeDescriptor } from './helpers/provider.js';
@@ -581,7 +581,7 @@ describe('channel MCP descriptor is provider-owned (session.mcpServerDescriptor)
     const CUSTOM_DESCRIPTOR = {
       name: 'feishu',
       command: '/bin/dreamux',
-      args: ['channel-mcp', '--provider', BUILTIN_FEISHU_PROVIDER_REF, '--dispatcher', 'flow', '--admin-socket', '/tmp/stub.sock'],
+      args: ['channel-mcp', '--provider', BUILTIN_FEISHU_PROVIDER_REF, '--channel-id', 'primary', '--dispatcher', 'flow', '--admin-socket', '/tmp/stub.sock'],
     };
     const mcpServerDescriptor = vi.fn(() => CUSTOM_DESCRIPTOR);
     const session: ChannelSession = {
@@ -624,7 +624,13 @@ describe('channel MCP descriptor is provider-owned (session.mcpServerDescriptor)
     // Validate the feishu provider's descriptor format matches the new neutral conduit.
     // Build a minimal descriptor context and call the feishu session wrapper directly
     // (via the fake-channel helper) to confirm the args shape is channel-mcp.
-    const expectedArgs = expect.arrayContaining(['channel-mcp', '--provider', BUILTIN_FEISHU_PROVIDER_REF]);
+    const expectedArgs = expect.arrayContaining([
+      'channel-mcp',
+      '--provider',
+      BUILTIN_FEISHU_PROVIDER_REF,
+      '--channel-id',
+      'primary',
+    ]);
 
     // The feishu session descriptor is tested in feishu-channel package tests;
     // here we only assert that core's DispatcherAgentService never constructs
@@ -632,7 +638,7 @@ describe('channel MCP descriptor is provider-owned (session.mcpServerDescriptor)
     // in DispatcherAgentService is called via `dreamuxMcpServerDescriptors`
     // (started at boot) and `channelMcpServerDescriptorsForCaller`
     // (TeamLeader path), both documented in the service's JSDoc.
-    expect(expectedArgs.asymmetricMatch(['channel-mcp', '--provider', BUILTIN_FEISHU_PROVIDER_REF, '--dispatcher', 'd'])).toBe(true);
+    expect(expectedArgs.asymmetricMatch(['channel-mcp', '--provider', BUILTIN_FEISHU_PROVIDER_REF, '--channel-id', 'primary', '--dispatcher', 'd'])).toBe(true);
     expect(['feishu-mcp']).not.toContain('channel-mcp'); // sanity: old name is gone
   });
 });

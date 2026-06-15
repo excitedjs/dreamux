@@ -52,11 +52,11 @@ import {
   type FakeFeishuBot,
   type FeishuInboundEvent,
 } from '@excitedjs/feishu-channel';
+import type { DispatcherChannelConfig } from '../src/config/config.js';
 import {
   BUILTIN_FEISHU_PROVIDER_REF,
-  type DispatcherChannelConfig,
-} from '../src/config/config.js';
-import { createBuiltinProviderRegistry } from '../src/registry/index.js';
+  createBuiltinProviderRegistry,
+} from '../src/registry/index.js';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import { dispatcherDir, resetRuntimeConfig } from '../src/platform/paths.js';

@@ -20,10 +20,13 @@ the implementation is still mostly host-local:
 - Built-in runtimes still live under
   `/packages/dreamux/src/agent-runtime/builtin/` and are directly imported by
   the host catalog.
-- `/packages/dreamux/src/channel/plugin.ts` is an interface-only subscription
-  channel reservation. The live Feishu session, MCP surface, access gate,
-  introduce/trusted-peer behavior, and message ownership tracking live under
-  `/packages/dreamux/src/channel/feishu/`.
+- `@excitedjs/dreamux-types` includes an interface-only reservation for future
+  one-way subscription channels such as GitHub/Jira issue or PR feeds
+  (`SubscribeChannelProvider`, kind `subscribeChannel`). Core has no runnable
+  subscription loader/catalog yet. The live bidirectional Feishu session, MCP
+  surface, access gate, introduce/trusted-peer behavior, and message ownership
+  tracking have been extracted into `@excitedjs/feishu-channel` as a
+  `ChannelProvider`.
 - `/packages/channel/feishu-channel` exists but is scaffold-level and is not
   publishable in `rush.json`.
 - `/packages/dreamux/src/config/config.ts` accepts a
@@ -34,13 +37,13 @@ the implementation is still mostly host-local:
   config load now caps a dispatcher at **one channel per provider ref**, so two
   `builtin:feishu` channels on one dispatcher no longer load (config error: "each
   provider may appear at most once per dispatcher"). The runtime session loop
-  still runs one live session per declared channel, and only a channel naming an
-  unwired (non-feishu) provider fails loud at server start. See "Live
-  multi-channel routing" below.
+  still runs one live session per declared channel, and only a channel whose
+  provider package cannot be loaded or does not implement the channel contract
+  fails loud. See "Live multi-channel routing" below.
 - `/packages/dreamux/src/dispatcher-service/channel-binding/store.ts` stores
   version 1 rows keyed by `(provider, chat_id)`, which cannot distinguish
   multiple channel instances or non-chat channel targets.
-- Team MCP exposes Feishu-specific binding tools:
+- Team MCP previously exposed Feishu-specific binding tools:
   `create.bind_group`, `bind_group`, and `transfer_channel_back`.
 - Bundled skills were installed through workspace symlinks by onboarding and
   Codex runtime startup, and Claude Code had no bundled-skill injection path
@@ -117,6 +120,8 @@ flowchart TD
   turn/result shapes, and completion delivery shapes;
 - Channel provider/session contracts, target shapes, inbound envelope shapes,
   tool descriptor/call shapes, and config/session contexts;
+- One-way subscription channel contracts (`SubscribeChannelProvider`) reserved
+  for future event-feed channels such as GitHub/Jira issue or PR subscriptions;
 - a minimal public logger type.
 
 It must not export runtime implementations, default loggers, loader logic,
@@ -791,20 +796,17 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   dispatchers MAY now declare the same Feishu `app_id` (sharing one bot identity
   is an operator choice, not a config error). The new core-owned config concern is
   instead per-dispatcher provider-ref uniqueness (one channel per provider ref,
-  above). Field validation remains provider-owned. Config stores the **raw**
-  channel config — the production Feishu
-  adapter consumes `{ app_id, app_secret }`; wiring channels through
-  `createSession` with the parsed config is the channel-routing slice, so the
-  parsed `readConfig` result is validated-and-discarded this slice. A channel
-  provider whose `readConfig` is async is rejected at config load (sync only this
-  phase, like agent runtimes). External `npm:` channel providers are not loaded at
-  config time yet (`readConfigFile` loads only external agent-runtime refs); an
-  `npm:` channel ref fails loud as an unloaded external provider until a generic
-  channel loader lands. This is the config-layer half of the channel work; **live
-  multi-channel routing has since landed** (see "Live multi-channel routing"
-  below). The dispatcher runtime boundary (`assertRunnableChannelShape`) now only
-  rejects a channel naming an unwired (non-feishu) provider; state seeding stays
-  fail-soft so this is the one intended place that rejects an unrunnable shape.
+  above). Field validation remains provider-owned. Config stores the
+  provider-parsed channel config for runtime/session creation and keeps the raw
+  on-disk block only for `stringifyConfig` round-tripping. `readConfig` may be
+  sync or async for both runtime and channel providers. `readConfigFile` loads
+  builtin and external `npm:` providers for both `agentRuntime` and `channel`
+  refs before validation; an unloaded or contract-invalid provider fails loud.
+  This is the config-layer half of the channel work; **live multi-channel routing
+  has since landed** (see "Live multi-channel routing" below). The dispatcher
+  runtime boundary (`assertRunnableChannelShape`) now only rejects an unloaded or
+  non-runnable channel provider; state seeding stays fail-soft so this is the one
+  intended place that rejects an unrunnable shape.
   Binding store v2 and target-key routing remain later slices; the Channel MCP
   *surface* move landed in the next slice (below).
 - **Channel MCP surface move — SUPERSEDED by the owner scope correction below.**
@@ -910,14 +912,15 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   TeamLeader's reply egresses the bot of the channel its OWN active binding names
   (resolved by `TeamService.resolveLeaderChannel` by `target_key` across the
   dispatcher's channels), and a dispatcher reply omits it to use the primary
-  channel. `assertRunnableChannelShape` now rejects only an unwired (non-feishu)
-  channel; `bind_channel` requires an explicit `channel_id` when more than one is
-  configured. Legacy single-channel dispatchers are unchanged (the sole channel
-  resolves exactly as before). **Deferred edges (documented, not shipped):** a
-  dispatcher-initiated reply to a NON-primary channel needs an explicit
-  `channel_id` (the dispatcher prompt teaching it is a follow-up); and a second
-  channel provider kind (beyond `builtin:feishu`) is still not wired (the generic
-  channel loader / ACP adapter remain out of scope).
+  channel. `assertRunnableChannelShape` now rejects only an unloaded/non-runnable
+  channel provider; `bind_channel` requires an explicit `channel_id` when more
+  than one channel is configured. Legacy single-channel dispatchers are unchanged
+  (the sole channel resolves exactly as before). **Deferred edges (documented,
+  not shipped):** a dispatcher-initiated reply to a NON-primary channel needs an
+  explicit `channel_id` (the dispatcher prompt teaching it is a follow-up); and
+  Dreamux ships no second built-in conversational channel beyond
+  `builtin:feishu` yet (an ACP/Slack/Telegram adapter remains provider-package
+  work, loaded through the same generic channel loader when it exists).
 - **Final cleanup — core provider neutrality (PR #223) — satisfied now.** This
   is the convergence the slice 3/4/5 statuses repeatedly deferred ("converging
   core's launcher onto the neutral context … and retire the adapter is

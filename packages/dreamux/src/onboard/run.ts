@@ -1,14 +1,6 @@
 import { pathExists } from '../platform/fs-errors.js';
 
-// eslint-disable-next-line no-restricted-imports -- Q3 de-leak: onboard is codex-aware; redesign deferred (tracked in .agents/wip/i209-cleanup/plan-q1q2-neutrality.md)
-import {
-  codexArgsToCli,
-  parseCodexArgs,
-  dispatcherCodexHome,
-  dispatcherCodexHomeDoctorContext,
-  validateDispatcherCodexHome,
-  type DispatcherCodexHomeDoctorResult,
-} from '@excitedjs/agent-runtime-codex';
+import type { AgentRuntimeDoctorResult } from '@excitedjs/dreamux-types';
 import {
   assertNoLegacyTomlOnly,
   globalConfigFile,
@@ -21,11 +13,10 @@ import {
   setRuntimeConfig,
   stateRoot,
 } from '../platform/paths.js';
+import { AgentRuntimeProviderCatalog } from '../agent-runtime/catalog.js';
+import { dispatcherHostPaths } from '../agent-runtime/host-paths.js';
 import { ExecaCommandRunner } from './commands.js';
-import {
-  dispatcherCodexArgsJson,
-  dreamuxConfigFromAnswers,
-} from './config-files.js';
+import { dreamuxConfigFromAnswers } from './config-files.js';
 import {
   ensureDirectory,
   TransparentFileLedger,
@@ -35,9 +26,7 @@ import {
   installUserService,
   managedServiceEnvironment,
   resolveServiceExecutable,
-  selectServiceClaudeBin,
   selectServiceNodeBin,
-  tryResolveServiceExecutable,
   type ServiceNodeProbe,
   validateManagedServiceLaunch,
 } from './service.js';
@@ -48,7 +37,10 @@ import type {
   OnboardRunResult,
 } from './types.js';
 
-type EffectiveOnboardAnswers = OnboardAnswers & { nodeBin: string };
+type EffectiveOnboardAnswers = OnboardAnswers & {
+  nodeBin: string;
+  runtimeBins: string[];
+};
 
 export interface RunOnboardOptions {
   answers: OnboardAnswers;
@@ -71,11 +63,10 @@ export async function runOnboard(
   const configPath = globalConfigFile({ configDir: answers.configDir });
   const existingConfig = await readExistingDreamuxConfig(answers.configDir);
   const dreamuxConfig = dreamuxConfigFromAnswers(answers, existingConfig);
-  // answers.codexBin (onboard prompt / --codex-bin) is persisted into the
-  // dispatcher's referenced agents[] entry (agents[].config.bin) and used to
-  // seed the managed-service PATH so the unit can resolve codex; it is not
-  // pinned as an env override.
-  const serviceCodexBin = answers.registerService && !answers.dryRun
+  // The default bootstrap persists the selected runtime binary in the
+  // provider-owned agents[].config block and seeds the managed-service PATH with
+  // that binary. Provider diagnostics perform the actual runtime-specific checks.
+  const serviceRuntimeBin = answers.registerService && !answers.dryRun
     ? await resolveServiceExecutable(answers.codexBin, env)
     : answers.codexBin;
   const serviceNodeBin = answers.registerService && !answers.dryRun
@@ -86,18 +77,10 @@ export async function runOnboard(
         probe: options.nodeProbe,
       })
     : process.execPath;
-  // Best-effort: locate Claude Code so the unit PATH resolves `claude` for
-  // server-hosted builtin:claude-code workers (issue #126 PR8). Absent install
-  // → omit; onboard still completes for codex-only setups.
-  const serviceClaudeBin =
-    answers.registerService && !answers.dryRun
-      ? await tryResolveServiceExecutable(selectServiceClaudeBin(env), env)
-      : null;
   const effectiveAnswers = {
     ...answers,
-    codexBin: serviceCodexBin,
     nodeBin: serviceNodeBin,
-    ...(serviceClaudeBin !== null ? { claudeBin: serviceClaudeBin } : {}),
+    runtimeBins: [serviceRuntimeBin],
   };
   setRuntimeConfig(dreamuxConfig);
 
@@ -118,10 +101,6 @@ export async function runOnboard(
     { mode: 0o600, dryRun: answers.dryRun },
   );
 
-  const codexHome = dispatcherCodexHome(answers.dispatcherId);
-  await ensureDirectory(codexHome, ledger, 'global Codex home', {
-    dryRun: answers.dryRun,
-  });
   await ensureDirectory(
     dispatcherDir(answers.dispatcherId),
     ledger,
@@ -137,11 +116,11 @@ export async function runOnboard(
   // Bundled Dreamux skills are no longer symlinked into the workspace
   // (`<cwd>/.codex/skills`) at onboard time (issue #209 slice 6). Core now
   // injects them at runtime by role via the create context's `skillSources`
-  // (codex `skills/extraRoots/set`), so onboarding creates no skill dir or
-  // symlinks. Pre-existing old symlinks are left untouched; `dreamux uninstall`
-  // reports but does not remove them.
+  // capability, so onboarding creates no skill dir or symlinks. Pre-existing old
+  // symlinks are left untouched; `dreamux uninstall` reports but does not remove
+  // them.
 
-  const doctor = await runDispatcherDoctor(effectiveAnswers, env);
+  const doctor = await runDispatcherDoctor(effectiveAnswers, env, runner);
   if (!effectiveAnswers.dryRun && !doctor.ok) {
     throw new Error(formatDoctorFailure(effectiveAnswers, doctor));
   }
@@ -177,7 +156,7 @@ function formatServiceLaunchFailure(errors: string[]): string {
   return [
     'dreamux managed service launch environment is not ready',
     ...errors.map((error) => `- ${error}`),
-    '- rerun dreamux onboard from the desired Node/Codex install, or pass explicit --dreamux-bin / --codex-bin values',
+    '- rerun dreamux onboard from the desired Node/runtime install, or pass explicit binary paths',
   ].join('\n');
 }
 
@@ -191,47 +170,68 @@ async function readExistingDreamuxConfig(configDir: string) {
 async function runDispatcherDoctor(
   answers: EffectiveOnboardAnswers,
   env: NodeJS.ProcessEnv,
-): Promise<DispatcherCodexHomeDoctorResult> {
-  // The onboarded dispatcher is created with default codex settings, which
-  // dispatcherCodexArgsJson() already encodes — there is no global-default
-  // layer to merge anymore.
-  const codexArgs = parseCodexArgs(dispatcherCodexArgsJson());
-  const codexCliArgs = codexArgsToCli(codexArgs);
-  const context = dispatcherCodexHomeDoctorContext(answers.dispatcherId, {
-    codexCliArgs,
-    dispatcherCwd: answers.dispatcherCwd,
-  });
+  runner: CommandRunner,
+): Promise<AgentRuntimeDoctorResult> {
   if (answers.dryRun) {
     return {
       ok: true,
       errors: [],
-      context,
+      detail: 'dry run',
+    };
+  }
+  const loaded = await loadConfig({ configDir: answers.configDir });
+  setRuntimeConfig(loaded.config);
+  const dispatcher = loaded.config.dispatchers.find(
+    (entry) => entry.id === answers.dispatcherId,
+  );
+  if (dispatcher === undefined) {
+    return {
+      ok: false,
+      detail: answers.dispatcherId,
+      errors: [`onboarded dispatcher '${answers.dispatcherId}' was not found in config`],
+    };
+  }
+  const catalog = new AgentRuntimeProviderCatalog({
+    registry: loaded.providerRegistry,
+  });
+  const diagnostic = catalog.resolve(dispatcher.runtime.provider).diagnostic;
+  if (diagnostic === undefined) {
+    return {
+      ok: true,
+      detail: `${dispatcher.runtime.provider} has no runtime diagnostic`,
+      errors: [],
     };
   }
   const doctorEnv = answers.registerService
     ? managedServiceEnvironment(answers)
     : env;
-  return await validateDispatcherCodexHome(context, {
-    env: doctorEnv,
-    codexCliArgs,
-  });
+  return await diagnostic.runDiagnostic(
+    {
+      runtime_id: dispatcher.id,
+      config: dispatcher.runtime.config,
+      env: doctorEnv,
+      scope: answers.registerService ? 'managedService' : 'foreground',
+      paths: dispatcherHostPaths,
+    },
+    runner,
+  );
 }
 
 function formatDoctorFailure(
   answers: EffectiveOnboardAnswers,
-  doctor: DispatcherCodexHomeDoctorResult,
+  doctor: AgentRuntimeDoctorResult,
 ): string {
   const lines = [
-    `dispatcher '${answers.dispatcherId}' Codex home is not ready`,
+    `dispatcher '${answers.dispatcherId}' runtime is not ready`,
     ...doctor.errors.map((error) => `- ${error}`),
   ];
   if (
     answers.registerService &&
-    doctor.errors.some((error) => error.includes('missing Codex auth state'))
+    doctor.errors.some((error) => /auth/i.test(error))
   ) {
     lines.push(
       '- managed service environments do not inherit your interactive shell auth token',
-      `- authenticate the global Codex home before registering the service: ${answers.codexBin} login`,
+      '- authenticate the selected runtime before registering the service',
     );
   }
   return lines.join('\n');

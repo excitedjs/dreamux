@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   createClaudeCodeAgentRuntimeProvider,
+  defaultDispatcherClaudeCodeConfig,
   type ClaudeCodeAgentRuntimeProviderOptions,
 } from '@excitedjs/agent-runtime-claude-code';
 import {
@@ -28,12 +29,13 @@ import {
   defaultDispatcherCwd,
   dispatcherCompletionSpillDir,
   dispatcherDir,
-  teamMateCompletionOutputPath,
 } from '../src/platform/paths.js';
 import { dispatcherHostPaths } from '../src/agent-runtime/host-paths.js';
-import { defaultDispatcherClaudeCodeConfig } from '../src/config/config.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
-import { renderChannelInput } from '@excitedjs/dreamux-utils';
+import {
+  renderChannelInput,
+  teamMateCompletionOutputPath,
+} from '@excitedjs/dreamux-utils';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 import { CLAUDE_SKILLS_PARENT_LAYOUT } from '@excitedjs/agent-runtime-claude-code';
 import type {
@@ -47,7 +49,7 @@ import type {
 const FEISHU_MCP: AgentRuntimeMcpServer = {
   name: 'feishu',
   command: '/pkg/bin/dreamux',
-  args: ['channel-mcp', '--provider', 'builtin:feishu', '--dispatcher', 'flow', '--admin-socket', '/tmp/a.sock'],
+  args: ['channel-mcp', '--provider', 'builtin:feishu', '--channel-id', 'primary', '--dispatcher', 'flow', '--admin-socket', '/tmp/a.sock'],
 };
 
 function claudeCodeProvider(
@@ -245,7 +247,7 @@ describe('claude-code pure translation (not Codex renamed)', () => {
       mcpServers: {
         feishu: {
           command: '/pkg/bin/dreamux',
-          args: ['channel-mcp', '--provider', 'builtin:feishu', '--dispatcher', 'flow', '--admin-socket', '/tmp/a.sock'],
+          args: ['channel-mcp', '--provider', 'builtin:feishu', '--channel-id', 'primary', '--dispatcher', 'flow', '--admin-socket', '/tmp/a.sock'],
         },
       },
     });
@@ -469,11 +471,18 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       state: store,
       paths: dispatcherHostPaths,
       logger: {
-        error: (msg) => void logs.push(msg),
-        warn: (msg) => void logs.push(msg),
-        info: (msg) => void logs.push(msg),
-        debug: (msg) => void logs.push(msg),
-        trace: (msg) => void logs.push(msg),
+        // Pino-shaped fields-first: the message is the 2nd arg (or the 1st when
+        // called bare). Capture whichever carries the message string.
+        error: (fields, msg) =>
+          void logs.push(typeof fields === 'string' ? fields : (msg ?? '')),
+        warn: (fields, msg) =>
+          void logs.push(typeof fields === 'string' ? fields : (msg ?? '')),
+        info: (fields, msg) =>
+          void logs.push(typeof fields === 'string' ? fields : (msg ?? '')),
+        debug: (fields, msg) =>
+          void logs.push(typeof fields === 'string' ? fields : (msg ?? '')),
+        trace: (fields, msg) =>
+          void logs.push(typeof fields === 'string' ? fields : (msg ?? '')),
       },
     });
     await runtime.start();

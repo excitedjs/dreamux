@@ -14,11 +14,17 @@ export interface ChannelMcpOptions {
   teamId?: string;
   leaderName?: string;
   /**
-   * The channel provider ref this shim serves (e.g. `builtin:feishu`). Advisory
-   * only — core resolves the live channel session from the dispatcher id, so the
-   * shim never branches on it; it is carried for diagnostics/clarity.
+   * The channel provider ref this shim serves (e.g. `builtin:feishu`). Forwarded
+   * to the admin conduit so core can fail loud if the descriptor is wired to the
+   * wrong live session.
    */
   providerRef?: string;
+  /**
+   * Dispatcher-local channel id this shim serves. Forwarded with tool calls so a
+   * dispatcher with multiple channel providers never falls back to the primary
+   * session by accident.
+   */
+  channelId?: string;
   /**
    * The channel's static MCP tool descriptors (`{ name, description, inputSchema }`),
    * supplied by the provider's descriptor. `tools/list` is static metadata, so the
@@ -75,6 +81,8 @@ export async function runChannelMcp(opts: ChannelMcpOptions): Promise<void> {
       await handleRequest(request, {
         dispatcherId,
         callerKind,
+        providerRef: opts.providerRef,
+        channelId: opts.channelId,
         teamId: opts.teamId,
         leaderName: opts.leaderName,
         tools: opts.tools ?? [],
@@ -95,6 +103,8 @@ async function handleRequest(
   ctx: {
     dispatcherId: string;
     callerKind: 'dispatcher' | 'team_leader';
+    providerRef?: string;
+    channelId?: string;
     teamId?: string;
     leaderName?: string;
     tools: readonly unknown[];
@@ -167,6 +177,8 @@ async function callTool(
   ctx: {
     dispatcherId: string;
     callerKind: 'dispatcher' | 'team_leader';
+    providerRef?: string;
+    channelId?: string;
     teamId?: string;
     leaderName?: string;
     socketPath: string;
@@ -184,6 +196,8 @@ async function callTool(
         dispatcher_id: ctx.dispatcherId,
         name: call.name,
         arguments: call.arguments,
+        ...(ctx.providerRef !== undefined ? { provider_ref: ctx.providerRef } : {}),
+        ...(ctx.channelId !== undefined ? { channel_id: ctx.channelId } : {}),
         caller_kind: ctx.callerKind,
         ...(ctx.teamId !== undefined ? { team_id: ctx.teamId } : {}),
         ...(ctx.leaderName !== undefined ? { leader_name: ctx.leaderName } : {}),

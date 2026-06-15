@@ -2,7 +2,6 @@ import type {
   AgentRuntimeTurnResult,
   ChannelInboundEnvelope,
   ChannelMcpDescriptorContext,
-  ChannelProvider,
   ChannelSession,
   ChannelTarget,
   InboundDeliveryResult,
@@ -23,10 +22,9 @@ import type {
 } from '@excitedjs/dreamux-types';
 import type { ChannelProviderCatalog } from '../../channel/catalog.js';
 import { dreamuxBinPath } from '../../platform/package-bin.js';
-import {
-  BUILTIN_CODEX_PROVIDER_REF,
-  type DispatcherChannelConfig,
-  type DreamuxConfig,
+import type {
+  DispatcherChannelConfig,
+  DreamuxConfig,
 } from '../../config/config.js';
 import { assertRunnableChannelShape } from './runnable-channel.js';
 import {
@@ -91,6 +89,8 @@ export interface DispatcherSummary {
 
 export interface ChannelToolInvocation {
   dispatcherId: string;
+  /** Provider ref carried by the channel MCP descriptor. Used to select/verify the session. */
+  providerRef?: string;
   /** Provider-owned tool name, forwarded opaquely (core never enumerates it). */
   name: string;
   /** Raw provider-owned tool arguments, forwarded opaquely to the session. */
@@ -146,20 +146,26 @@ export class DispatcherAgentService {
       try {
         await session.close();
       } catch (err) {
-        slot.log.error('error closing bot', {
-          dispatcher_id: id,
-          channel_id: channelId,
-          err: errInfo(err),
-        });
+        slot.log.error(
+          {
+            dispatcher_id: id,
+            channel_id: channelId,
+            err: errInfo(err),
+          },
+          'error closing bot',
+        );
       }
     }
     try {
       await slot.runtime.stop();
     } catch (err) {
-      slot.log.error('error stopping dispatcher', {
-        dispatcher_id: id,
-        err: errInfo(err),
-      });
+      slot.log.error(
+        {
+          dispatcher_id: id,
+          err: errInfo(err),
+        },
+        'error stopping dispatcher',
+      );
     }
     this.slots.delete(id);
   }
@@ -203,18 +209,24 @@ export class DispatcherAgentService {
   ): Promise<void> {
     const slot = this.slots.get(dispatcherId);
     if (slot === undefined) {
-      this.opts.log.warn('dropping teammate completion: dispatcher not running', {
-        dispatcher_id: dispatcherId,
-        source: completion.source,
-      });
+      this.opts.log.warn(
+        {
+          dispatcher_id: dispatcherId,
+          source: completion.source,
+        },
+        'dropping teammate completion: dispatcher not running',
+      );
       return;
     }
     const deliver = slot.runtime.completionInput;
     if (deliver === undefined) {
-      slot.log.warn('dropping teammate completion: runtime has no completion delivery', {
-        dispatcher_id: dispatcherId,
-        source: completion.source,
-      });
+      slot.log.warn(
+        {
+          dispatcher_id: dispatcherId,
+          source: completion.source,
+        },
+        'dropping teammate completion: runtime has no completion delivery',
+      );
       return;
     }
     const maxAttempts = 3;
@@ -223,11 +235,14 @@ export class DispatcherAgentService {
       try {
         outcome = await deliver.call(slot.runtime, completion);
       } catch (err) {
-        slot.log.warn('teammate completion delivery threw', {
-          dispatcher_id: dispatcherId,
-          source: completion.source,
-          err: errInfo(err),
-        });
+        slot.log.warn(
+          {
+            dispatcher_id: dispatcherId,
+            source: completion.source,
+            err: errInfo(err),
+          },
+          'teammate completion delivery threw',
+        );
         return;
       }
       if (outcome.status === 'accepted') {
@@ -235,26 +250,35 @@ export class DispatcherAgentService {
         return;
       }
       if (outcome.status === 'unsupported') {
-        slot.log.warn('dropping teammate completion: runtime delivery unsupported', {
-          dispatcher_id: dispatcherId,
-          source: completion.source,
-          reason: outcome.reason,
-        });
+        slot.log.warn(
+          {
+            dispatcher_id: dispatcherId,
+            source: completion.source,
+            reason: outcome.reason,
+          },
+          'dropping teammate completion: runtime delivery unsupported',
+        );
         return;
       }
-      slot.log.warn('teammate completion delivery failed', {
+      slot.log.warn(
+        {
+          dispatcher_id: dispatcherId,
+          source: completion.source,
+          attempt,
+          max_attempts: maxAttempts,
+          err: errInfo(outcome.error),
+        },
+        'teammate completion delivery failed',
+      );
+    }
+    slot.log.warn(
+      {
         dispatcher_id: dispatcherId,
         source: completion.source,
-        attempt,
         max_attempts: maxAttempts,
-        err: errInfo(outcome.error),
-      });
-    }
-    slot.log.warn('teammate completion delivery exhausted retries; dropping', {
-      dispatcher_id: dispatcherId,
-      source: completion.source,
-      max_attempts: maxAttempts,
-    });
+      },
+      'teammate completion delivery exhausted retries; dropping',
+    );
   }
 
   summarize(): DispatcherSummary[] {
@@ -276,19 +300,22 @@ export class DispatcherAgentService {
    * tool). A live channel session handles it via `session.handleTool`; with no
    * live session the configured provider's `handleSessionlessTool` is tried
    * instead (the provider feature-detects and throws for an unknown sessionless
-   * tool). `channelId` selects which live session egresses (the caller resolves
-   * the bound channel for a TeamLeader); omitted → the primary channel.
+   * tool). `channelId` / `providerRef` select and verify the live session the
+   * channel MCP descriptor was built for; omitted keeps the legacy primary
+   * fallback for direct/internal callers.
    */
   async invokeChannelTool(input: ChannelToolInvocation): Promise<unknown> {
     const slot = this.slots.get(input.dispatcherId);
     if (slot === undefined || slot.channels.size === 0) {
       return this.invokeSessionlessChannelTool(
         input.dispatcherId,
+        input.providerRef,
+        input.channelId,
         input.name,
         input.arguments,
       );
     }
-    const session = this.sessionFor(slot, input.channelId);
+    const session = this.sessionFor(slot, input.channelId, input.providerRef);
     if (session.handleTool === undefined) {
       throw new Error(
         `channel '${session.channel_id}' exposes no provider tool surface`,
@@ -305,18 +332,24 @@ export class DispatcherAgentService {
 
   /**
    * Service a channel tool that has no live session (e.g. `list_chat_bots`
-   * before a dispatcher's sessions connect) through the configured provider's
-   * `handleSessionlessTool`. Core resolves the provider from the dispatcher's
-   * first configured channel and hands it neutral host locators (state root +
-   * logger); the provider owns tool-name feature detection and throws for an
-   * unknown sessionless tool.
+   * before a dispatcher's sessions connect) through the selected configured
+   * provider's `handleSessionlessTool`. Core hands it neutral host locators
+   * (state root + logger); the provider owns tool-name feature detection and
+   * throws for an unknown sessionless tool.
    */
   private async invokeSessionlessChannelTool(
     dispatcherId: string,
+    providerRef: string | undefined,
+    channelId: string | undefined,
     name: string,
     args: unknown,
   ): Promise<unknown> {
-    const provider = this.sessionlessChannelProvider(dispatcherId);
+    const channelConfig = this.channelConfigFor(
+      dispatcherId,
+      providerRef,
+      channelId,
+    );
+    const provider = this.opts.channelProviders.resolve(channelConfig.provider);
     if (provider.handleSessionlessTool === undefined) {
       throw new Error(
         `channel provider '${provider.ref}' exposes no sessionless tool surface`,
@@ -327,6 +360,7 @@ export class DispatcherAgentService {
       (args ?? {}) as Record<string, unknown>,
       {
         dispatcher_id: dispatcherId,
+        channel_id: channelConfig.id,
         state_root: dispatcherDir(dispatcherId),
         logger: this.opts.channelLoggerFactory(dispatcherId),
       },
@@ -335,21 +369,49 @@ export class DispatcherAgentService {
 
   /**
    * Resolve the channel provider that backs a dispatcher's sessionless tool
-   * calls. Uses the dispatcher's first configured channel (the primary), so a
-   * single-channel dispatcher resolves unambiguously; fails loud when the
-   * dispatcher declares no channel.
+   * calls. A channel MCP descriptor should carry the channel id/provider ref it
+   * was built for; old callers may omit both and keep the primary fallback.
    */
-  private sessionlessChannelProvider(dispatcherId: string): ChannelProvider {
+  private channelConfigFor(
+    dispatcherId: string,
+    providerRef?: string,
+    channelId?: string,
+  ): DispatcherChannelConfig {
     const dispatcherConfig = this.opts.config.dispatchers.find(
       (dispatcher) => dispatcher.id === dispatcherId,
     );
-    const channelConfig = dispatcherConfig?.channels[0];
-    if (channelConfig === undefined) {
+    const channels = dispatcherConfig?.channels ?? [];
+    let channelConfig: DispatcherChannelConfig | undefined;
+
+    if (channelId !== undefined) {
+      channelConfig = channels.find((channel) => channel.id === channelId);
+      if (channelConfig === undefined) {
+        throw new Error(
+          `dispatcher '${dispatcherId}' has no configured channel '${channelId}'`,
+        );
+      }
+    } else if (providerRef !== undefined) {
+      channelConfig = channels.find((channel) => channel.provider === providerRef);
+      if (channelConfig === undefined) {
+        throw new Error(
+          `dispatcher '${dispatcherId}' has no configured channel for provider '${providerRef}'`,
+        );
+      }
+    } else {
+      channelConfig = channels[0];
+      if (channelConfig === undefined) {
+        throw new Error(
+          `dispatcher '${dispatcherId}' has no configured channel`,
+        );
+      }
+    }
+
+    if (providerRef !== undefined && channelConfig.provider !== providerRef) {
       throw new Error(
-        `dispatcher '${dispatcherId}' has no configured channel`,
+        `dispatcher '${dispatcherId}' channel '${channelConfig.id}' is provider '${channelConfig.provider}', not '${providerRef}'`,
       );
     }
-    return this.opts.channelProviders.resolve(channelConfig.provider);
+    return channelConfig;
   }
 
   /**
@@ -363,10 +425,15 @@ export class DispatcherAgentService {
     dispatcherId: string,
     target: ChannelTarget,
     messageId: string,
+    channelId?: string,
   ): Promise<boolean> {
     const slot = this.slots.get(dispatcherId);
     if (slot === undefined) return false;
-    for (const session of slot.channels.values()) {
+    const sessions =
+      channelId === undefined
+        ? slot.channels.values()
+        : [this.sessionFor(slot, channelId)].values();
+    for (const session of sessions) {
       const decide = session.messageBelongsToTarget;
       if (decide === undefined) continue;
       if (await decide.call(session, { target, message_id: messageId })) {
@@ -378,30 +445,48 @@ export class DispatcherAgentService {
 
   /**
    * Pick the channel session egress/target resolution runs through. A known
-   * `channelId` selects that channel's bot; otherwise the primary (first) channel
-   * — so single-channel dispatchers are unchanged. Fails loud if a requested
-   * channel is not live.
+   * `channelId` selects that channel's bot; otherwise `providerRef` selects the
+   * one configured channel for that provider; otherwise the primary (first)
+   * channel keeps direct/internal callers unchanged. Fails loud when the
+   * descriptor's provider/channel identity does not match a live session.
    */
   private sessionFor(
     slot: DispatcherAgentSlot,
     channelId?: string,
+    providerRef?: string,
   ): ChannelSession {
+    let session: ChannelSession | undefined;
     if (channelId !== undefined) {
-      const session = slot.channels.get(channelId);
+      session = slot.channels.get(channelId);
       if (session === undefined) {
         throw new Error(
           `dispatcher '${slot.row.dispatcher_id}' has no live channel '${channelId}'`,
         );
       }
-      return session;
+    } else if (providerRef !== undefined) {
+      session = Array.from(slot.channels.values()).find(
+        (candidate) => candidate.provider === providerRef,
+      );
+      if (session === undefined) {
+        throw new Error(
+          `dispatcher '${slot.row.dispatcher_id}' has no live channel for provider '${providerRef}'`,
+        );
+      }
+    } else {
+      session = slot.channels.values().next().value;
+      if (session === undefined) {
+        throw new Error(
+          `dispatcher '${slot.row.dispatcher_id}' has no live channel session`,
+        );
+      }
     }
-    const first = slot.channels.values().next().value;
-    if (first === undefined) {
+
+    if (providerRef !== undefined && session.provider !== providerRef) {
       throw new Error(
-        `dispatcher '${slot.row.dispatcher_id}' has no live channel session`,
+        `dispatcher '${slot.row.dispatcher_id}' channel '${session.channel_id}' is provider '${session.provider}', not '${providerRef}'`,
       );
     }
-    return first;
+    return session;
   }
 
   /**
@@ -417,10 +502,12 @@ export class DispatcherAgentService {
     dispatcherId: string,
     meta: unknown,
     channelId?: string,
+    providerRef?: string,
   ): Promise<ChannelTarget> {
     return this.sessionFor(
       this.mustRunningSlot(dispatcherId),
       channelId,
+      providerRef,
     ).resolveTarget(meta);
   }
 
@@ -447,8 +534,11 @@ export class DispatcherAgentService {
       assertRunnableChannelShape(dispatcherConfig, this.opts.channelProviders);
     }
 
+    if (dispatcherConfig === undefined) {
+      throw new Error(`dispatcher '${id}' has no config entry`);
+    }
     const runtimeProvider = this.opts.agentRuntimeProviders.resolve(
-      dispatcherConfig?.runtime.provider ?? BUILTIN_CODEX_PROVIDER_REF,
+      dispatcherConfig.runtime.provider,
     );
     // The dispatcher agent runs in its validated workspace (issue #182 PR-4):
     // no fallback to a Dreamux state dir. Server startup pre-flights this, so a
@@ -470,18 +560,7 @@ export class DispatcherAgentService {
     // entry; the defensive no-config path (a state row with no live config
     // entry) derives the provider's OWN defaults by parsing an empty raw block,
     // so core never names a builtin's default-config function.
-    const runtimeConfig =
-      dispatcherConfig !== undefined
-        ? dispatcherConfig.runtime.config
-        : ((await runtimeProvider.readConfig?.(
-            {},
-            {
-              providerRef: runtimeProvider.ref,
-              agentId: id,
-              file: '<defaults>',
-              prefix: '',
-            },
-          )) ?? {});
+    const runtimeConfig = dispatcherConfig.runtime.config;
     // Build the (un-started) neutral channel sessions BEFORE the runtime so the
     // runtime's MCP descriptors are derived from each session's own
     // `mcpServerDescriptor` (a pure call) — core never names the channel's MCP
@@ -560,11 +639,14 @@ export class DispatcherAgentService {
       throw err;
     }
 
-    this.opts.log.info('dispatcher ready', {
-      dispatcher_id: id,
-      channel_identity: row.channel_identity,
-      cwd,
-    });
+    this.opts.log.info(
+      {
+        dispatcher_id: id,
+        channel_identity: row.channel_identity,
+        cwd,
+      },
+      'dispatcher ready',
+    );
     await this.injectRestartNoticeIfNeeded(id, runtime, neutralLog);
   }
 
@@ -617,16 +699,18 @@ export class DispatcherAgentService {
       leader_name?: string;
     },
   ): AgentRuntimeMcpServer[] {
-    const context: ChannelMcpDescriptorContext = {
-      command: dreamuxBinPath(),
-      adminSocketPath: this.opts.adminSocketPath ?? defaultAdminSocketPath(),
-      dispatcher_id: scope.dispatcher_id,
-      ...(scope.callerKind !== undefined ? { callerKind: scope.callerKind } : {}),
-      ...(scope.team_id !== undefined ? { team_id: scope.team_id } : {}),
-      ...(scope.leader_name !== undefined ? { leader_name: scope.leader_name } : {}),
-    };
     const out: AgentRuntimeMcpServer[] = [];
     for (const session of channels.values()) {
+      const context: ChannelMcpDescriptorContext = {
+        command: dreamuxBinPath(),
+        adminSocketPath: this.opts.adminSocketPath ?? defaultAdminSocketPath(),
+        dispatcher_id: scope.dispatcher_id,
+        provider: session.provider,
+        channel_id: session.channel_id,
+        ...(scope.callerKind !== undefined ? { callerKind: scope.callerKind } : {}),
+        ...(scope.team_id !== undefined ? { team_id: scope.team_id } : {}),
+        ...(scope.leader_name !== undefined ? { leader_name: scope.leader_name } : {}),
+      };
       const descriptor = session.mcpServerDescriptor?.(context);
       if (descriptor != null) out.push(descriptor);
     }
@@ -653,20 +737,13 @@ export class DispatcherAgentService {
     try {
       for (const channelConfig of channelConfigs) {
         const provider = this.opts.channelProviders.resolve(channelConfig.provider);
-        const channelProviderConfig = provider.readConfig
-          ? await provider.readConfig(channelConfig.config, {
-              dispatcher_id: dispatcherId,
-              channel_id: channelConfig.id,
-              provider: channelConfig.provider,
-            })
-          : channelConfig.config;
         channels.set(
           channelConfig.id,
           provider.createSession({
             dispatcher_id: dispatcherId,
             channel_id: channelConfig.id,
             provider: channelConfig.provider,
-            config: channelProviderConfig,
+            config: channelConfig.config,
             logger: neutralLog,
             state_root: dispatcherDir(dispatcherId),
             cache_root: dispatcherCacheDir(dispatcherId),
@@ -701,16 +778,22 @@ export class DispatcherAgentService {
         reason: 'restart-notice',
       });
       if (result.status === 'failed') {
-        log.warn('restart notice injection failed', {
-          dispatcher_id: dispatcherId,
-          err: errInfo(result.error),
-        });
+        log.warn(
+          {
+            dispatcher_id: dispatcherId,
+            err: errInfo(result.error),
+          },
+          'restart notice injection failed',
+        );
       }
     } catch (err) {
-      log.warn('restart notice injection errored', {
-        dispatcher_id: dispatcherId,
-        err: errInfo(err),
-      });
+      log.warn(
+        {
+          dispatcher_id: dispatcherId,
+          err: errInfo(err),
+        },
+        'restart notice injection errored',
+      );
     }
   }
 

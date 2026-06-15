@@ -20,6 +20,12 @@
  *       dreamux-server.log
  *       codex-app-server/
  *         <dispatcher-id>.log
+ *       channel/
+ *         <dispatcher-id>.log
+ *     cache/                  rebuildable provider/cache artifacts
+ *       <dispatcher-id>/
+ *         spill/
+ *         <provider-owned subdirs>
  *
  * `stateRoot()` is the single root for dreamux-owned durable state; `runRoot()`
  * is the single root for dreamux-owned volatile run files. The old
@@ -32,9 +38,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  DREAMUX_UNIX_SOCKET_PATH_MAX_BYTES,
   assertUnixSocketPathBudget,
-  unixSocketPathFitsBudget,
 } from '@excitedjs/dreamux-utils';
 
 import {
@@ -43,16 +47,6 @@ import {
 } from '../config/config.js';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
 
-// The Unix-domain socket path-budget primitives are owned by
-// `@excitedjs/dreamux-utils` — the single cross-package source, so the budget
-// never drifts between core's host socket allocation and a provider package's
-// own rendezvous socket. Re-exported here so existing `platform/paths.js` import
-// sites are unchanged.
-export {
-  DREAMUX_UNIX_SOCKET_PATH_MAX_BYTES,
-  assertUnixSocketPathBudget,
-  unixSocketPathFitsBudget,
-};
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = dirname(dirname(HERE));
 
@@ -375,18 +369,6 @@ export function dispatcherChannelBindingsPath(id: string): string {
 export function teamMateNameSegment(name: string): string {
   return name.replace(/[^A-Za-z0-9._-]/g, '_');
 }
-
-/**
- * Spill file for a teammate completion result that overflows the inline budget.
- * The implementation now lives in `@excitedjs/dreamux-utils` (shared with the
- * provider packages); it is re-exported here so existing in-repo imports from
- * `platform/paths.js` stay stable. `spillDir` is the owning dispatcher's
- * `dispatcherCompletionSpillDir`, supplied by the runtime's path context so a
- * teammate runtime spills under its operator dispatcher, not its composite
- * runtime id. The same filename shape (`teammate-<source>-<id>.output`, both
- * segments sanitized) is produced by the dreamux-utils helper.
- */
-export { teamMateCompletionOutputPath } from '@excitedjs/dreamux-utils';
 
 /**
  * Per-dispatcher peer-bot awareness/trust store. One file per dispatcher,

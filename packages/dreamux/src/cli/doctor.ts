@@ -3,13 +3,8 @@ import { homedir, userInfo } from 'node:os';
 
 import { parse as parsePlist, type PlistValue } from 'plist';
 
-// eslint-disable-next-line no-restricted-imports -- Q3 de-leak: doctor still resolves the codex bin (tracked in .agents/wip/i209-cleanup/plan-q1q2-neutrality.md)
-import { resolveCodexBinPath } from '@excitedjs/agent-runtime-codex';
 import {
   BUILT_IN_DEFAULTS,
-  BUILTIN_CLAUDE_CODE_PROVIDER_REF,
-  BUILTIN_CODEX_PROVIDER_REF,
-  DEFAULT_CODEX_BIN,
   type DispatcherConfig,
   globalConfigDir,
   globalConfigFile,
@@ -17,7 +12,6 @@ import {
   type DreamuxConfig,
 } from '../config/config.js';
 import { AgentRuntimeProviderCatalog } from '../agent-runtime/catalog.js';
-import { loadAgentRuntimeProviders } from '../agent-runtime/external-provider.js';
 import { createBuiltinProviderRegistry } from '../registry/index.js';
 import type {
   AgentRuntimeBinCheck,
@@ -280,25 +274,11 @@ async function readConfigForDoctor(
     return {
       config: BUILT_IN_DEFAULTS,
       configFile: globalConfigFile({ configDir }),
-      catalog: await builtinDoctorCatalog(),
+      catalog: new AgentRuntimeProviderCatalog({
+        registry: createBuiltinProviderRegistry(),
+      }),
     };
   }
-}
-
-/**
- * A catalog over a fresh builtin registry, used when config failed to load (so
- * the empty-dispatchers default-codex bin check still resolves its provider).
- * Builtins load through the same dynamic loader as npm refs — there is no static
- * builtin-registration path — so the codex/claude implementations are pulled in
- * by resolving their `builtin:*` refs to packages before the catalog is built.
- */
-async function builtinDoctorCatalog(): Promise<AgentRuntimeProviderCatalog> {
-  const registry = createBuiltinProviderRegistry();
-  await loadAgentRuntimeProviders({
-    registry,
-    refs: [BUILTIN_CODEX_PROVIDER_REF, BUILTIN_CLAUDE_CODE_PROVIDER_REF],
-  });
-  return new AgentRuntimeProviderCatalog({ registry });
 }
 
 async function readDispatchers(
@@ -486,8 +466,8 @@ async function addManagedServiceLaunchChecks(
   if (env === null) {
     missing.push('managed service environment');
   } else {
-    // CODEX_HOST_CODEX_BIN is no longer required in the unit — the codex binary
-    // is dispatcher-local and resolved off the unit PATH at runtime.
+    // Runtime binaries are dispatcher-local and resolved off the unit PATH at
+    // runtime; provider packages declare the concrete bin checks below.
     for (const key of ['PATH', 'DREAMUX_NODE_BIN']) {
       if (env[key] === undefined || env[key]?.trim() === '') missing.push(key);
     }
@@ -531,8 +511,8 @@ async function addManagedServiceLaunchChecks(
   );
 
   // Each dispatcher's provider-owned runtime binary must launch under the
-  // unit's PATH. CODEX_HOST_CODEX_BIN, when present, still overrides every
-  // Codex bin to preserve older units that pinned it.
+  // unit's PATH. The provider declares the binary and arguments; doctor only
+  // executes that neutral descriptor.
   for (const check of runtimeBinaryChecks(catalog, dispatchers, serviceEnv, true)) {
     checks.push(
       await checkHelpLaunch(
@@ -558,18 +538,7 @@ function runtimeBinaryChecks(
     checks.set(`${check.name}\0${check.bin}\0${check.args.join('\0')}`, check);
   };
 
-  if (dispatchers.length === 0) {
-    // Residual: with no dispatcher there is no agents[] entry to drive a provider
-    // diagnostic, so the default codex bin check is constructed directly here.
-    // This is the one codex-specific edge in core doctor (near-zero, not zero):
-    // de-leaking it would require a "default provider for empty config" concept.
-    add({
-      name: managedService ? 'managed service Codex binary' : 'codex binary',
-      bin: resolveCodexBinPath(DEFAULT_CODEX_BIN, env),
-      args: ['--help'],
-    });
-    return [...checks.values()];
-  }
+  if (dispatchers.length === 0) return [];
 
   const scope: AgentRuntimeDiagnosticContext['scope'] = managedService
     ? 'managedService'

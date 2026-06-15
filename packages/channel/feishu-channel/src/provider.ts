@@ -38,7 +38,6 @@ import type {
 import {
   FeishuChannelSession,
   toWireChatBot,
-  type FeishuChannelLogger,
   type FeishuInboundEnvelope,
 } from './feishu-channel.js';
 import type { FeishuBot } from './bot.js';
@@ -66,21 +65,35 @@ const DEFAULT_FEISHU_DESCRIPTOR: ChannelProviderDescriptor = {
   ref: { source: 'builtin', id: 'feishu', raw: BUILTIN_FEISHU_PROVIDER_REF },
 };
 
-/** Adapt the neutral message-first logger to the session's fields-first logger. */
-function channelLoggerFromNeutral(
-  logger: DreamuxLogger | undefined,
-): FeishuChannelLogger {
+/**
+ * Minimal `console.error`-backed logger the channel falls back to when the host
+ * injects none (the standalone / generic-loader path; core always injects its
+ * pino logger). Pino-shaped (fields-first) like the neutral `DreamuxLogger`, so
+ * the session and transport consume it with no adapter. Owned here as
+ * implementation code — never in the declaration-only `@excitedjs/dreamux-types`.
+ */
+function consoleFallbackLogger(dispatcherId: string): DreamuxLogger {
   const sink =
-    (level: 'error' | 'warn' | 'info' | 'debug' | 'trace') =>
-    (fields: Record<string, unknown>, message: string): void => {
-      logger?.[level](message, fields);
+    (level: string) =>
+    (fields: Record<string, unknown> | string, message?: string): void => {
+      const prefix = `[feishu ${dispatcherId}] ${level}`;
+      if (typeof fields === 'string') {
+        console.error(prefix, fields);
+        return;
+      }
+      // Never dump the whole fields bag — it can carry credentials and this
+      // fallback has no `redact` policy (core's injected pino does). Surface
+      // only `err`, matching the runtime packages' console fallbacks.
+      const err = fields['err'];
+      if (err !== undefined) console.error(prefix, message ?? '', err);
+      else console.error(prefix, message ?? '');
     };
   return {
     error: sink('error'),
     warn: sink('warn'),
     info: sink('info'),
-    debug: sink('debug'),
-    trace: sink('trace'),
+    debug: () => {},
+    trace: () => {},
   };
 }
 
@@ -138,12 +151,12 @@ class NeutralFeishuChannelSession implements ChannelSession {
     // Build the generic `channel-mcp` stdio descriptor from the host's neutral
     // bin command + admin socket. Feishu always exposes its MCP surface, so this
     // never returns null. Core owns the bin path and the generic shim; the
-    // package only shapes args. `--provider` is advisory (the shim resolves the
-    // live channel session from the dispatcher id) but names which channel this
-    // descriptor serves. The tool LIST is static provider metadata, so it travels
-    // with the descriptor (base64 JSON — robust through the runtime's arg layer)
-    // and the generic shim serves `tools/list` from it WITHOUT an admin round-trip;
-    // only `tools/call` reaches the live session.
+    // package only shapes args. The provider + channel id are routed back through
+    // the shim so a multi-channel dispatcher reaches the same live session whose
+    // descriptor was injected. The tool LIST is static provider metadata, so it
+    // travels with the descriptor (base64 JSON — robust through the runtime's arg
+    // layer) and the generic shim serves `tools/list` from it WITHOUT an admin
+    // round-trip; only `tools/call` reaches the live session.
     const toolsB64 = Buffer.from(JSON.stringify(feishuMcpTools()), 'utf8').toString(
       'base64',
     );
@@ -153,7 +166,9 @@ class NeutralFeishuChannelSession implements ChannelSession {
       args: [
         'channel-mcp',
         '--provider',
-        BUILTIN_FEISHU_PROVIDER_REF,
+        context.provider,
+        '--channel-id',
+        context.channel_id,
         '--dispatcher',
         context.dispatcher_id,
         ...(context.callerKind !== undefined
@@ -320,7 +335,7 @@ export function createFeishuChannelProvider(
         // per-dispatcher cache root (issue #209 de-leak — core no longer names a
         // `feishu-attachments` dir). Effective path is unchanged.
         attachmentCacheDir: join(cacheRoot, 'feishu-attachments'),
-        log: channelLoggerFromNeutral(context.logger),
+        log: context.logger ?? consoleFallbackLogger(context.dispatcher_id),
         ...(options.botFactory !== undefined
           ? { botFactory: (): FeishuBot => options.botFactory!(context.config) }
           : {}),

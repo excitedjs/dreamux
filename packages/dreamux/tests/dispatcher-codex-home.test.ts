@@ -10,13 +10,13 @@ import {
   validateDispatcherCodexHome,
   dispatcherCodexHome,
 } from '@excitedjs/agent-runtime-codex';
+import { unixSocketPathFitsBudget } from '@excitedjs/dreamux-utils';
 import { BUILT_IN_DEFAULTS } from '../src/config/config.js';
 import {
   resetRuntimeConfig,
   runRoot,
   setRuntimeConfig,
   stateRoot,
-  unixSocketPathFitsBudget,
 } from '../src/platform/paths.js';
 import { allocateRuntimeSocketPath } from '../src/platform/runtime-sockets.js';
 

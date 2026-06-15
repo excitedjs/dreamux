@@ -33,6 +33,7 @@ export type {
   ProviderKind,
   ProviderRef,
   ProviderRefSource,
+  SubscribeChannelProviderDescriptor,
 } from './provider.js';
 export type {
   InboundAttachment,
@@ -92,3 +93,13 @@ export type {
   ChannelToolDescriptor,
   ChannelToolListContext,
 } from './channel.js';
+export type {
+  SubscribeChannelConfigContext,
+  SubscribeChannelEvent,
+  SubscribeChannelMcpDescriptorContext,
+  SubscribeChannelProvider,
+  SubscribeChannelProviderFactory,
+  SubscribeChannelRoutes,
+  SubscribeChannelSession,
+  SubscribeChannelSessionCreateContext,
+} from './subscribe-channel.js';

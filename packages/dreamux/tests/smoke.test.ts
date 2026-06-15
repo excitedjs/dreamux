@@ -46,13 +46,13 @@ import {
 } from '@excitedjs/feishu-channel';
 import { dispatcherPrincipal } from '../src/dispatcher-service/teammate/types.js';
 import type { DreamuxConfig } from '../src/config/config.js';
+import { unixSocketPathFitsBudget } from '@excitedjs/dreamux-utils';
 import {
   defaultDispatcherCwd,
   dispatcherDir,
   dispatcherStatusPath,
   restartIntentPath,
   stateRoot,
-  unixSocketPathFitsBudget,
 } from '../src/platform/paths.js';
 import { dispatcherCodexHome } from '@excitedjs/agent-runtime-codex';
 import { dispatcherWorkspaceCodexSkillsDir } from '../src/onboard/legacy-codex-skills.js';
@@ -890,7 +890,7 @@ describe('dreamux MVP smoke', () => {
     // the structural tokens + the tools arg + the admin socket, not the b64 blob.
     const feishuArgs = args.find((a) => a.startsWith('mcp_servers.feishu.args='));
     expect(feishuArgs).toContain(
-      '"channel-mcp", "--provider", "builtin:feishu", "--dispatcher", "flow", "--caller", "dispatcher"',
+      '"channel-mcp", "--provider", "builtin:feishu", "--channel-id", "primary", "--dispatcher", "flow", "--caller", "dispatcher"',
     );
     expect(feishuArgs).toContain('"--channel-tools-b64"');
     expect(feishuArgs).toContain(`"--admin-socket", "${join(runtimeDir, 'admin.sock')}"`);

@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest';
 
 import { createFeishuChannelProvider, createFakeFeishuBot } from '@excitedjs/feishu-channel';
 import type {
-  SubscriptionChannelPlugin,
-} from '../src/channel/plugin.js';
-import type { DreamuxLogger } from '@excitedjs/dreamux-types';
-import { BUILTIN_FEISHU_PROVIDER_REF } from '../src/config/config.js';
+  DreamuxLogger,
+  SubscribeChannelProvider,
+} from '@excitedjs/dreamux-types';
 import { dispatcherDir } from '../src/platform/paths.js';
-import { createBuiltinProviderRegistry } from '../src/registry/index.js';
+import {
+  BUILTIN_FEISHU_PROVIDER_REF,
+  createBuiltinProviderRegistry,
+} from '../src/registry/index.js';
 
 const log = ((): DreamuxLogger => {
   const noop = {
@@ -91,22 +93,26 @@ describe('subscription channel plugin interface', () => {
   });
 
   it('reserves the shape future subscription plugins must implement', () => {
-    const plugin: SubscriptionChannelPlugin = {
+    const plugin: SubscribeChannelProvider = {
       ref: 'builtin:example-subscription',
       descriptor: {
         id: 'example-subscription',
-        kind: 'channel',
+        kind: 'subscribeChannel',
         ref: {
           source: 'builtin',
           id: 'example-subscription',
           raw: 'builtin:example-subscription',
         },
       },
-      mcpServerDescriptors: () => [],
-      start: async ({ publish }) => {
-        await publish({ id: 'event-1', text: 'subscribed event' });
-      },
-      stop: async () => undefined,
+      createSession: () => ({
+        provider: 'builtin:example-subscription',
+        subscription_id: 'issues',
+        start: async ({ publish }) => {
+          await publish({ id: 'event-1', text: 'subscribed event' });
+        },
+        close: async () => undefined,
+        mcpServerDescriptors: () => [],
+      }),
     };
     expect(plugin.ref).toBe('builtin:example-subscription');
   });

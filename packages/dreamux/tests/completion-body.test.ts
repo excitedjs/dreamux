@@ -10,8 +10,8 @@ import {
   COMPLETION_INLINE_BUDGET_MAX,
   completionInlineBudget,
   resolveCompletionBody,
+  teamMateCompletionOutputPath,
 } from '@excitedjs/dreamux-utils';
-import { teamMateCompletionOutputPath } from '../src/platform/paths.js';
 import type { CompletionEnvelope } from '@excitedjs/dreamux-types';
 
 const SOURCE = 'reviewer';

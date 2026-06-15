@@ -210,7 +210,7 @@ export class CodexRuntime implements AgentRuntime {
     this.log =
       logger !== undefined
         ? (lvl, msg, err) =>
-            logger[lvl](msg, err !== undefined ? { err } : undefined)
+            logger[lvl](err !== undefined ? { err } : {}, msg)
         : (lvl, msg, err) => {
             const prefix = `[dispatcher ${identity.runtime_id}] ${lvl}`;
             if (err !== undefined) console.error(prefix, msg, err);

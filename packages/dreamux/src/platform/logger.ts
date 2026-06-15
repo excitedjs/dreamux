@@ -28,9 +28,9 @@
  *     stays synchronous (the `Server` constructor builds loggers synchronously)
  *     while our own code holds no `fs.*Sync` calls. Matches the `0600` posture
  *     of `config.json` / state files.
- *   - Credentials are removed declaratively via pino `redact`. Message *bodies*
- *     are NOT redacted — they are simply never passed to the logger (callers
- *     log ids, never turn `text` / `rawContent` / reply text).
+ *   - Credentials are removed by a provider-agnostic recursive key sanitizer.
+ *     Message *bodies* are NOT redacted — they are simply never passed to the
+ *     logger (callers log ids, never turn `text` / `rawContent` / reply text).
  *   - The factory takes an explicit destination. `paths.ts` `dreamuxRoot()`
  *     hardcodes `homedir()` and does not honor `DREAMUX_CONFIG_DIR`, so tests
  *     inject a tmp `filePath`; they must not expect an env var to move logs.
@@ -41,34 +41,20 @@ import { chmod } from 'node:fs/promises';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import pino, {
   type DestinationStream,
-  type Logger,
   type LoggerOptions,
 } from 'pino';
 
 /**
- * Wrap a pino logger as the neutral `@excitedjs/dreamux-types` `DreamuxLogger`
- * (message-first: `info(msg, fields?)`) — the SINGLE logger contract across core
- * and provider packages. pino is fields-first (`info(obj, msg)`), so the flip
- * happens once here, at logger construction, instead of at every core→provider
- * handoff. There is no separate host logger type and no boundary adapter: core
- * holds and injects this neutral logger directly.
+ * The neutral `DreamuxLogger` contract is pino-compatible (fields-first), so a
+ * pino logger satisfies it structurally. This compile-time probe is the
+ * load-bearing assertion of the whole logging design: core constructs a full
+ * pino logger and injects it AS-IS into every provider package — no wrapper, no
+ * boundary adapter, no fields/message flip anywhere. If pino ever drifts from
+ * the contract this line fails to compile, which is the signal to fix the
+ * `@excitedjs/dreamux-types` shape rather than re-introduce a converter.
  */
-function wrapPino(p: Logger): DreamuxLogger {
-  const forward =
-    (lvl: 'error' | 'warn' | 'info' | 'debug' | 'trace') =>
-    (msg: string, fields?: Record<string, unknown>): void => {
-      if (fields !== undefined) p[lvl](fields, msg);
-      else p[lvl](msg);
-    };
-  return {
-    error: forward('error'),
-    warn: forward('warn'),
-    info: forward('info'),
-    debug: forward('debug'),
-    trace: forward('trace'),
-    child: (fields) => wrapPino(p.child(fields)),
-  };
-}
+const _pinoSatisfiesContract: DreamuxLogger = pino();
+void _pinoSatisfiesContract;
 
 export interface CreateLoggerOptions {
   /**
@@ -98,21 +84,8 @@ export interface CreateLoggerOptions {
   destination?: DestinationStream;
 }
 
-/**
- * Paths whose values are redacted from every log line. A generic,
- * provider-agnostic secret policy: any `app_secret` / `secret` key wherever it
- * is nested (config snapshot, dispatcher row, a provider credentials object).
- * Core names no provider here — a channel's `app_secret` is caught by the
- * generic `*.app_secret` / `*.secret` patterns.
- */
-const REDACT_PATHS = [
-  'app_secret',
-  '*.app_secret',
-  'appSecret',
-  '*.appSecret',
-  'secret',
-  '*.secret',
-] as const;
+const REDACTED_VALUE = '[REDACTED]';
+const SECRET_KEY_RE = /(secret|password|passwd|token|authorization|cookie|credential)/i;
 
 function resolveLevel(level?: pino.Level): pino.Level {
   if (level !== undefined) return level;
@@ -154,11 +127,15 @@ export function createLogger(opts: CreateLoggerOptions = {}): DreamuxLogger {
   const base: LoggerOptions = {
     level,
     base: opts.name !== undefined ? { name: opts.name } : {},
-    redact: { paths: [...REDACT_PATHS], censor: '[REDACTED]' },
+    formatters: {
+      log(object) {
+        return redactLogValue(object) as Record<string, unknown>;
+      },
+    },
   };
 
   if (opts.destination !== undefined) {
-    return wrapPino(pino(base, opts.destination));
+    return pino(base, opts.destination);
   }
 
   const streams: pino.StreamEntry[] = [];
@@ -169,7 +146,29 @@ export function createLogger(opts: CreateLoggerOptions = {}): DreamuxLogger {
     streams.push({ level, stream: pino.destination({ fd: 2, sync: true }) });
   }
 
-  return wrapPino(pino(base, pino.multistream(streams, { dedupe: false })));
+  return pino(base, pino.multistream(streams, { dedupe: false }));
+}
+
+function redactLogValue(value: unknown, seen = new WeakSet<object>()): unknown {
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactLogValue(entry, seen));
+  }
+  if (!isPlainLogObject(value)) return value;
+  if (seen.has(value)) return '[Circular]';
+  seen.add(value);
+  const out: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    out[key] = SECRET_KEY_RE.test(key)
+      ? REDACTED_VALUE
+      : redactLogValue(entry, seen);
+  }
+  return out;
+}
+
+function isPlainLogObject(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== 'object') return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
 }
 
 /**
@@ -181,7 +180,7 @@ export function loggerToLevelFn(
   logger: DreamuxLogger,
 ): (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void {
   return (level, msg, err) => {
-    if (err !== undefined) logger[level](msg, { err: serializeErr(err) });
+    if (err !== undefined) logger[level]({ err: serializeErr(err) }, msg);
     else logger[level](msg);
   };
 }
@@ -194,4 +193,3 @@ function serializeErr(err: unknown): { message: string; stack?: string } {
   }
   return { message: String(err) };
 }
-

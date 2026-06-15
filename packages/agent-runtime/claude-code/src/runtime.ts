@@ -620,7 +620,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     msg: string,
     err?: unknown,
   ): void {
-    this.logger[level](msg, err !== undefined ? { err } : undefined);
+    this.logger[level](err !== undefined ? { err } : {}, msg);
   }
 }
 
@@ -632,11 +632,15 @@ export class ClaudeCodeRuntime implements AgentRuntime {
 function consoleFallbackLogger(dispatcherId: string): DreamuxLogger {
   const sink =
     (level: string) =>
-    (message: string, fields?: Record<string, unknown>): void => {
+    (fields: Record<string, unknown> | string, message?: string): void => {
       const prefix = `[claude-code ${dispatcherId}] ${level}`;
-      const err = fields?.['err'];
-      if (err !== undefined) console.error(prefix, message, err);
-      else console.error(prefix, message);
+      if (typeof fields === 'string') {
+        console.error(prefix, fields);
+        return;
+      }
+      const err = fields['err'];
+      if (err !== undefined) console.error(prefix, message ?? '', err);
+      else console.error(prefix, message ?? '');
     };
   return {
     error: sink('error'),

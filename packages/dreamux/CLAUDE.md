@@ -35,10 +35,10 @@ Two settled shape rules govern where code lives:
 | `dispatcher-service/` | the Dispatcher Service entity — see [`dispatcher-service/CLAUDE.md`](src/dispatcher-service/CLAUDE.md) | holds the dispatcher agent + orchestrates teammates |
 | `dispatcher-service/dispatcher/` | `DispatcherAgentService` (slots / start / resume / stop / restart-notice / channel session / role MCP injection) + dispatcher base prompt | dispatcher agent lifecycle is tied to the server |
 | `dispatcher-service/teammate/` | `TeamMateAgentService` + identity-store + runtime-state + types + teammate MCP descriptor | agent-centric teammates (no `task`): spawn/send/close + forward-only history (send reopens a closed teammate; no separate `resume` verb, #155) |
-| `channel/` | the ChannelProvider seam, all neutral: `catalog.ts` (`ChannelProviderCatalog`), `external-channel-provider.ts` loader, `plugin.ts` | the channel engine (session/bot/gate/message/tool-parsing/identity) lives in the provider package and never imports core; core is a blind channel-MCP conduit — the generic `channel.invoke_tool` / `channel.list_tools` admin methods routed to the neutral `ChannelSession` / `ChannelProvider` seam — plus neutral routing/binding/auth |
-| `channel/plugin.ts` | TS interface reservation for future subscription-style channel plugins (github/jira) | interface-only this phase; not loaded or run |
-| `registry/` | provider registry/loader + provider-ref grammar | resolves `builtin:` / `npm:` refs; exactly two kinds: `channel`, `agentRuntime` |
-| `mcp/` | stdio MCP shim processes (`channel-mcp`, `teammate-mcp`, `team-mcp`) — the generic `channel-mcp` shim is a blind conduit to `channel.invoke_tool` / `channel.list_tools`; channel binding (`bind_channel` / `transfer_back`) is a core Team capability on the Team MCP, #209 | thin JSON-RPC bridges that forward to the admin socket |
+| `channel/` | the bidirectional conversational ChannelProvider seam, all neutral: `catalog.ts` (`ChannelProviderCatalog`) and `external-channel-provider.ts` loader | the channel engine (session/bot/gate/message/tool-parsing/identity) lives in the provider package and never imports core; core is a blind channel-MCP conduit — the generic `channel.invoke_tool` admin method routed to the neutral `ChannelSession` / `ChannelProvider` seam — plus neutral routing/binding/auth |
+| `@excitedjs/dreamux-types` `SubscribeChannelProvider` | public TS contract reservation for future one-way subscription channels (GitHub/Jira issue or PR feeds) | type-only this phase; core has no runnable loader/catalog yet. Subscription channels do not have `chat_id`, Team binding, reply/react, or conversational target ownership |
+| `registry/` | provider registry/loader + provider-ref grammar | resolves `builtin:` / `npm:` refs; runnable catalogs currently cover `channel` and `agentRuntime`; `subscribeChannel` is a type-level reservation until a subscription loader/lifecycle exists |
+| `mcp/` | stdio MCP shim processes (`channel-mcp`, `teammate-mcp`, `team-mcp`) — the generic `channel-mcp` shim serves provider-supplied `tools/list` metadata locally and forwards `tools/call` to `channel.invoke_tool`; channel binding (`bind_channel` / `transfer_back`) is a core Team capability on the Team MCP, #209 | thin JSON-RPC bridges that forward to the admin socket |
 | `admin/` | admin Unix-socket server + protocol + methods | cross-process control; methods are thin and delegate to the Dispatcher Service |
 | `config/` | operator config schema / parse / validate (`config.ts`) | the only operator-editable config source |
 | `platform/` | runtime-neutral infrastructure: `paths.ts` (sole neutral path builder), `runtime-sockets` (volatile socket allocation), `logger`, `package-bin`, `atomic-write`, `fs-errors` | shared and runtime-agnostic; per-runtime path derivation lives in each provider package |
@@ -81,9 +81,10 @@ Two settled shape rules govern where code lives:
   the built-in Feishu channel package (`@excitedjs/feishu-channel`) owns its
   session, tool backing, MCP server descriptor, and reply/react wire mapping
   end-to-end (the server does not carry `*FromMcp` handlers). Core keeps only the
-  generic, channel-agnostic MCP conduit: the `channel-mcp` stdio shim and the
-  neutral `channel.invoke_tool` / `channel.list_tools` admin methods that route
-  to the provider's `ChannelSession` / `ChannelProvider` seam.
+  generic, channel-agnostic MCP conduit: the `channel-mcp` stdio shim serves
+  provider-supplied `tools/list` metadata locally and forwards `tools/call` to
+  the neutral `channel.invoke_tool` admin method, which routes to the provider's
+  `ChannelSession` / `ChannelProvider` seam.
 - Do not reintroduce a `task` abstraction in the teammate layer; teammates are
   named, resumable agents.
 - Do not create dispatcher-private `CODEX_HOME` directories for the MVP.

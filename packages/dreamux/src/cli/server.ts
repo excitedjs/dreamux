@@ -10,8 +10,6 @@
  *     channel secrets; each dispatcher's channel lives under
  *     dispatchers[].channels[] and its runtime is a named agents[] entry
  *     referenced via dispatchers[].agentRuntime
- *   - CODEX_HOST_CODEX_BIN — optional host-level override of the codex binary
- *     for every dispatcher; most operators never set it
  *   - built-in defaults compiled into the binary
  *
  * Per-dispatcher channel secrets live in the dreamux JSON config.
@@ -64,7 +62,7 @@ async function main(): Promise<void> {
   // (tests) gets stderr-only defaults. Both stream to stderr too, so a
   // foreground `serve` stays visible.
   const logger = createLogger({ name: 'server', filePath: serverLogPath() });
-  logger.info('loaded global config', { config_file: configFile });
+  logger.info({ config_file: configFile }, 'loaded global config');
 
   const server = new Server({
     config,
@@ -76,10 +74,10 @@ async function main(): Promise<void> {
     legacyAdminLockPath: `${legacyAdminSocketPath()}.lock`,
   });
   await server.start();
-  logger.info('server up', { admin_socket: adminSocketPath() });
+  logger.info({ admin_socket: adminSocketPath() }, 'server up');
 
   const shutdown = async (signal: string): Promise<void> => {
-    logger.info('received signal', { signal });
+    logger.info({ signal }, 'received signal');
     await server.shutdown();
     process.exit(0);
   };
@@ -106,21 +104,16 @@ Runtime data:
                             Safe to clear while no server is running.
   ~/.dreamux/state/         durable server state: per-dispatcher status/access
                             files and TeamMate records.
-  ~/.dreamux/logs/          server, channel, Codex app-server, and MCP
+  ~/.dreamux/logs/          server, channel, agent runtime, and MCP
                             shim logs.
 
 Environment overrides:
-  CODEX_HOST_CODEX_BIN      Optional host-level override of the codex binary for
-                            every dispatcher (normally unset; each agent's
-                            agents[].config.bin is used, default "codex")
   DREAMUX_CONFIG_DIR        Overrides ~/.dreamux (where config.json lives)
 
 Dispatcher declarations:
   Edit ~/.dreamux/config.json dispatchers[] and restart dreamux serve.
-  Built-in Feishu channel: builtin:feishu.
-  AgentRuntime providers: builtin:codex, builtin:claude-code, or installed npm:<package>[#export].
-  Npm agentRuntime refs load through the same provider registry before config validation.
-  Subscription channel plugins are an interface-only reservation.
+  Provider refs load through the registry before config validation.
+  Built-in refs are resolved through the same provider loading path as npm:<package>[#export].
 `);
 }
 

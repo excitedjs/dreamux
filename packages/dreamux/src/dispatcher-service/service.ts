@@ -157,23 +157,34 @@ export class DispatcherService {
    * neutral channel seam and never names a tool. A TeamLeader caller is gated +
    * retargeted here: its egress is authorized against its OWN active channel
    * binding and routed through that bound channel's bot. A dispatcher/teammate
-   * caller egresses the primary channel (or the sessionless provider path).
+   * caller egresses through the channel/provider identity carried by the channel
+   * MCP descriptor, falling back to the primary channel only for legacy direct
+   * callers that omit both.
    */
   async invokeChannelTool(input: {
     dispatcherId: string;
+    providerRef?: string;
+    channelId?: string;
     name: string;
     arguments: Record<string, unknown>;
     caller: TeamMateCallerPrincipal;
   }): Promise<unknown> {
+    const channelId = this.resolveToolChannelId(
+      input.dispatcherId,
+      input.channelId,
+      input.providerRef,
+    );
     if (input.caller.kind === 'team_leader') {
-      const channelId = await this.authorizeTeamLeaderChannelEgress({
+      await this.authorizeTeamLeaderChannelEgress({
         dispatcherId: input.dispatcherId,
+        channelId,
         teamId: input.caller.teamId,
         leaderName: input.caller.leaderName,
         arguments: input.arguments,
       });
       return this.dispatchers.invokeChannelTool({
         dispatcherId: input.dispatcherId,
+        providerRef: input.providerRef,
         name: input.name,
         arguments: input.arguments,
         channelId,
@@ -181,8 +192,10 @@ export class DispatcherService {
     }
     return this.dispatchers.invokeChannelTool({
       dispatcherId: input.dispatcherId,
+      providerRef: input.providerRef,
       name: input.name,
       arguments: input.arguments,
+      channelId,
     });
   }
 
@@ -202,15 +215,17 @@ export class DispatcherService {
    */
   private async authorizeTeamLeaderChannelEgress(input: {
     dispatcherId: string;
+    channelId: string;
     teamId: string;
     leaderName: string;
     arguments: Record<string, unknown>;
-  }): Promise<string> {
+  }): Promise<void> {
     let target: ChannelTarget;
     try {
       target = await this.dispatchers.resolveChannelTarget(
         input.dispatcherId,
         input.arguments,
+        input.channelId,
       );
     } catch {
       throw new ChannelToolAuthorizationError(
@@ -225,6 +240,7 @@ export class DispatcherService {
         input.dispatcherId,
         target,
         messageId,
+        input.channelId,
       ))
     ) {
       throw new ChannelToolAuthorizationError(
@@ -244,7 +260,58 @@ export class DispatcherService {
         'TeamLeader may use channels only for bound team channels',
       );
     }
-    return channelId;
+    if (channelId !== input.channelId) {
+      throw new ChannelToolAuthorizationError(
+        'CHANNEL_SCOPE_DENIED',
+        'TeamLeader may use only the channel MCP server bound to the target',
+      );
+    }
+  }
+
+  /**
+   * Resolve the channel MCP descriptor's opaque identity to one concrete
+   * dispatcher-local channel. Generated descriptors carry both `channel_id` and
+   * `provider_ref`; direct legacy callers may omit both only when the dispatcher
+   * has a single channel.
+   */
+  private resolveToolChannelId(
+    dispatcherId: string,
+    requested?: string,
+    providerRef?: string,
+  ): string {
+    if (providerRef === undefined) {
+      return this.resolveChannelId(dispatcherId, requested);
+    }
+    if (requested !== undefined) {
+      const channelId = this.resolveChannelId(dispatcherId, requested);
+      const actualProvider = this.channelProviderRef(dispatcherId, channelId);
+      if (actualProvider !== providerRef) {
+        throw new ChannelToolAuthorizationError(
+          'BAD_REQUEST',
+          `channel '${channelId}' for dispatcher '${dispatcherId}' uses provider '${actualProvider}', not '${providerRef}'`,
+        );
+      }
+      return channelId;
+    }
+    const dispatcher = this.config.dispatchers.find(
+      (entry) => entry.id === dispatcherId,
+    );
+    const matches =
+      dispatcher?.channels.filter((channel) => channel.provider === providerRef) ??
+      [];
+    if (matches.length === 0) {
+      throw new ChannelToolAuthorizationError(
+        'BAD_REQUEST',
+        `dispatcher '${dispatcherId}' has no configured channel for provider '${providerRef}'`,
+      );
+    }
+    if (matches.length > 1) {
+      throw new ChannelToolAuthorizationError(
+        'BAD_REQUEST',
+        `dispatcher '${dispatcherId}' has ${matches.length} channels for provider '${providerRef}'; channel_id is required`,
+      );
+    }
+    return matches[0]!.id;
   }
 
   /**
@@ -452,7 +519,7 @@ export class DispatcherService {
       teamId: input.teamId,
       channelId,
       // The bound channel's own configured provider ref — core never hardcodes a
-      // provider (issue #209 de-leak): a non-feishu channel binds under its ref.
+      // provider (issue #209 de-leak): every channel binds under its own ref.
       provider: this.channelProviderRef(input.dispatcherId, channelId),
       target,
     });

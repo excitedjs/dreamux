@@ -131,7 +131,7 @@ export interface CreateBotOptions {
    * Forwarded verbatim to `createFeishuTransport`. Omit to keep the transport's
    * historical stderr behavior. The server injects the dispatcher's
    * per-dispatcher channel logger here so connection/SDK lines land in
-   * `logs/feishu-channel/<id>.log` alongside the host's own channel decisions.
+   * `logs/channel/<id>.log` alongside the host's own channel decisions.
    */
   logger?: TransportLogger;
 }

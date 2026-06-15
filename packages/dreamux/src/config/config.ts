@@ -39,46 +39,7 @@ import {
   rejectUnknownKeys,
   requireNonEmptyString,
 } from '@excitedjs/dreamux-utils';
-// eslint-disable-next-line no-restricted-imports -- Q3 de-leak: core still names codex config (tracked in .agents/wip/i209-cleanup/plan-q1q2-neutrality.md)
-import type { DispatcherCodexConfig } from '@excitedjs/agent-runtime-codex';
-// eslint-disable-next-line no-restricted-imports -- Q3 de-leak: core still names claude config (tracked in .agents/wip/i209-cleanup/plan-q1q2-neutrality.md)
-import type { DispatcherClaudeCodeConfig } from '@excitedjs/agent-runtime-claude-code';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
-
-// Re-export the relocated builtin runtime config + provider-ref symbols so the
-// non-builtin callers (doctor, daemon, dispatcher-service, onboard,
-// feishu-channel, tests) keep their existing `config/config.js` import paths.
-// The builtins themselves import these from `registry/` / their own
-// `config.ts` directly, never via this re-export, so the cycle stays severed.
-export {
-  BUILTIN_CLAUDE_CODE_PROVIDER_REF,
-  BUILTIN_CODEX_PROVIDER_REF,
-  BUILTIN_FEISHU_PROVIDER_REF,
-} from '../registry/index.js';
-// eslint-disable-next-line no-restricted-imports -- Q3 de-leak: core re-exports codex config helpers (tracked in .agents/wip/i209-cleanup/plan-q1q2-neutrality.md)
-export {
-  ALLOWED_APPROVAL_POLICIES,
-  ALLOWED_SANDBOX_MODES,
-  DEFAULT_APPROVAL_POLICY,
-  DEFAULT_CODEX_BIN,
-  DEFAULT_CODEX_TURN_TIMEOUT_MS,
-  DEFAULT_INITIALIZE_TIMEOUT_MS,
-  DEFAULT_SANDBOX_MODE,
-  defaultDispatcherCodexConfig,
-  dispatcherCodexConfig,
-} from '@excitedjs/agent-runtime-codex';
-// eslint-disable-next-line no-restricted-imports -- Q3 de-leak: core re-exports codex config type (tracked in .agents/wip/i209-cleanup/plan-q1q2-neutrality.md)
-export type { DispatcherCodexConfig } from '@excitedjs/agent-runtime-codex';
-// eslint-disable-next-line no-restricted-imports -- Q3 de-leak: core re-exports claude config helpers (tracked in .agents/wip/i209-cleanup/plan-q1q2-neutrality.md)
-export {
-  ALLOWED_CLAUDE_CODE_PERMISSION_MODES,
-  DEFAULT_CLAUDE_CODE_BIN,
-  DEFAULT_CLAUDE_CODE_TURN_TIMEOUT_MS,
-  defaultDispatcherClaudeCodeConfig,
-  dispatcherClaudeCodeConfig,
-} from '@excitedjs/agent-runtime-claude-code';
-// eslint-disable-next-line no-restricted-imports -- Q3 de-leak: core re-exports claude config type (tracked in .agents/wip/i209-cleanup/plan-q1q2-neutrality.md)
-export type { DispatcherClaudeCodeConfig } from '@excitedjs/agent-runtime-claude-code';
 
 export interface DreamuxConfig {
   /**
@@ -100,7 +61,18 @@ export interface DreamuxConfig {
  */
 export interface ResolvedAgentConfig {
   provider: string;
-  config: DispatcherProviderConfig | DispatcherCodexConfig | DispatcherClaudeCodeConfig;
+  /**
+   * The provider-parsed runtime config, validated by the agent runtime
+   * provider's `readConfig` at load. Core holds it opaquely and passes it back
+   * to the same provider when creating a runtime.
+   */
+  config: DispatcherProviderConfig;
+  /**
+   * The original on-disk config block. Kept only so `stringifyConfig` can
+   * preserve the authored file shape even when a provider parser normalizes
+   * defaults.
+   */
+  rawConfig?: DispatcherProviderConfig;
 }
 
 export interface DispatcherConfig {
@@ -127,12 +99,16 @@ export interface DispatcherChannelConfig {
   id: string;
   provider: string;
   /**
-   * The raw provider-specific channel config, validated by the channel
-   * provider's `readConfig` at load (issue #209 multi-channel). Kept raw and
-   * opaque: core never interprets a channel provider's config fields — the
-   * provider re-parses this block when core opens its session.
+   * The provider-parsed channel config, validated by the channel provider's
+   * `readConfig` at load (issue #209 multi-channel). Core holds it opaquely and
+   * passes it back to the same provider when opening the session.
    */
   config: DispatcherProviderConfig;
+  /**
+   * The original on-disk config block. Kept only so `stringifyConfig` can preserve
+   * the authored file shape even when a provider parser normalizes defaults.
+   */
+  rawConfig?: DispatcherProviderConfig;
   /**
    * The channel's neutral, provider-reported identity (the channel provider's
    * `getIdentity`), derived at config-load and in-memory only — never written
@@ -146,7 +122,14 @@ export interface DispatcherChannelConfig {
 
 export interface DispatcherRuntimeConfig {
   provider: string;
-  config: DispatcherProviderConfig | DispatcherCodexConfig | DispatcherClaudeCodeConfig;
+  /**
+   * Provider-parsed runtime config; runtime/session creation uses this value.
+   */
+  config: DispatcherProviderConfig;
+  /**
+   * Original on-disk provider config for config-file round-tripping only.
+   */
+  rawConfig?: DispatcherProviderConfig;
 }
 
 export type DispatcherProviderConfig = Record<string, unknown>;
@@ -236,7 +219,7 @@ export function stringifyConfig(config: DreamuxConfig): string {
     agents: Object.entries(config.agents).map(([id, agent]) => ({
       id,
       provider: agent.provider,
-      config: agent.config,
+      config: agent.rawConfig ?? agent.config,
     })),
     dispatchers: config.dispatchers.map((dispatcher) => ({
       id: dispatcher.id,
@@ -248,7 +231,7 @@ export function stringifyConfig(config: DreamuxConfig): string {
       channels: dispatcher.channels.map((channel) => ({
         id: channel.id,
         provider: channel.provider,
-        config: channel.config,
+        config: channel.rawConfig ?? channel.config,
       })),
       agentRuntime: dispatcher.agentRuntime,
     })),
@@ -380,15 +363,14 @@ async function mergeWithDefaults(
   const agents = await readAgents(raw['agents'], file, providerRegistry);
   return {
     agents,
-    dispatchers: readDispatchers(raw['dispatchers'], file, agents, providerRegistry),
+    dispatchers: await readDispatchers(raw['dispatchers'], file, agents, providerRegistry),
   };
 }
 
 /**
- * The top-level `codex` block was removed: runtime settings live in a named
- * `agents[]` entry (`agents[].config`), referenced by each dispatcher via
- * `dispatchers[].agentRuntime`. The binary path comes from
- * `CODEX_HOST_CODEX_BIN`.
+ * The legacy top-level `codex` block was removed: runtime settings live in a
+ * named `agents[]` entry (`agents[].config`), referenced by each dispatcher via
+ * `dispatchers[].agentRuntime`.
  * A leftover top-level block is rejected loudly with migration guidance rather
  * than silently ignored, so an operator's intent is never dropped.
  */
@@ -396,12 +378,9 @@ function rejectTopLevelCodex(raw: Record<string, unknown>, file: string): void {
   if (!('codex' in raw)) return;
   throw new Error(
     `dreamux config error in ${file}: a top-level "codex" block is no longer ` +
-      'supported. Declare a named agent under agents[] with provider ' +
-      '"builtin:codex" and a config block (bin, approval_policy, sandbox_mode, ' +
-      'extra_args, extra_env, initialize_timeout_ms), then reference it from each ' +
-      'dispatcher via dispatchers[].agentRuntime. For a host-level binary ' +
-      'override across all dispatchers, set the CODEX_HOST_CODEX_BIN ' +
-      'environment variable.',
+      'supported. Declare a named agent under agents[] with the selected runtime ' +
+      'provider and a provider-owned config block, then reference it from each ' +
+      'dispatcher via dispatchers[].agentRuntime.',
   );
 }
 
@@ -422,7 +401,7 @@ async function readAgents(
     throw new Error(
       `dreamux config error in ${file}: agents must be an array (got ${describeType(rawAgents)}).\n` +
         'Declare named runtimes as agents[] entries, each with an id, a provider ' +
-        '(e.g. "builtin:codex"), and a config block.',
+        '(for example "builtin:<id>" or "npm:<package>"), and a provider-owned config block.',
     );
   }
   const out: Record<string, ResolvedAgentConfig> = {};
@@ -481,17 +460,18 @@ async function readAgents(
     out[id] = {
       provider: provider.ref,
       config: parsedConfig,
+      rawConfig,
     };
   }
   return out;
 }
 
-function readDispatchers(
+async function readDispatchers(
   rawDispatchers: unknown,
   file: string,
   agents: Record<string, ResolvedAgentConfig>,
   providerRegistry: ProviderRegistry,
-): DispatcherConfig[] {
+): Promise<DispatcherConfig[]> {
   if (rawDispatchers === undefined) return [];
   if (!Array.isArray(rawDispatchers)) {
     throw new Error(
@@ -536,7 +516,7 @@ function readDispatchers(
     }
     ids.add(id);
 
-    const channels = readDispatcherChannels(
+    const channels = await readDispatcherChannels(
       raw['channels'],
       file,
       prefix,
@@ -546,6 +526,7 @@ function readDispatchers(
 
     const cwd = readOptionalString(raw, 'cwd', file, prefix);
     const agentRuntimeId = resolveAgentRuntime(raw, prefix, file, agents);
+    const agent = agents[agentRuntimeId]!;
     out.push({
       id,
       cwd: cwd === null ? null : expandHome(cwd),
@@ -553,8 +534,9 @@ function readDispatchers(
       channels,
       agentRuntime: agentRuntimeId,
       runtime: {
-        provider: agents[agentRuntimeId]!.provider,
-        config: agents[agentRuntimeId]!.config,
+        provider: agent.provider,
+        config: agent.config,
+        ...(agent.rawConfig === undefined ? {} : { rawConfig: agent.rawConfig }),
       },
     });
   }
@@ -599,23 +581,23 @@ function resolveAgentRuntime(
  * Parse `dispatchers[].channels[]` (issue #209 multi-channel config). The
  * envelope accepts one or more channels with unique dispatcher-local ids and at
  * most one channel per provider ref (Decision #4: a dispatcher may not declare
- * two channels backed by the same provider, e.g. two `builtin:feishu` channels).
+ * two channels backed by the same provider).
  * Each channel's provider-specific config is validated by the selected channel
  * provider's own `readConfig`. Core no longer validates provider-specific channel
  * fields (app id/secret, unknown keys) — the channel provider owns them.
  */
-function readDispatcherChannels(
+async function readDispatcherChannels(
   rawChannels: unknown,
   file: string,
   dispatcherPrefix: string,
   dispatcherId: string,
   providerRegistry: ProviderRegistry,
-): DispatcherChannelConfig[] {
+): Promise<DispatcherChannelConfig[]> {
   const prefix = `${dispatcherPrefix}channels`;
   if (!Array.isArray(rawChannels)) {
     throw new Error(
       `dreamux config error in ${file}: ${prefix} must be an array (got ${describeType(rawChannels)}).\n` +
-        'Use providerized config v2: dispatchers[].channels[] with provider "builtin:feishu".',
+        'Use providerized config v2: dispatchers[].channels[] with a channel provider ref and provider-owned config.',
     );
   }
   if (rawChannels.length === 0) {
@@ -674,20 +656,14 @@ function readDispatcherChannels(
       );
     }
     // Provider-owned validation, fail-loud at config-load. The parsed result is
-    // consumed below to derive the neutral channel `identity` (via `getIdentity`);
-    // the live session re-parses the raw config when core opens it. A channel
-    // provider whose `readConfig` is async is not supported at config-load time
-    // in this phase.
-    const parsed = channelProvider.readConfig?.(rawConfig, {
-      dispatcher_id: dispatcherId,
-      channel_id: id,
-      provider: provider.ref,
-    });
-    if (parsed !== undefined && typeof (parsed as { then?: unknown }).then === 'function') {
-      throw new Error(
-        `dreamux config error in ${file}: ${channelPrefix}provider='${provider.ref}' readConfig returned a Promise; channel config validation must be synchronous in this phase.`,
-      );
-    }
+    // stored opaquely and handed back to the same provider at session creation.
+    // Awaiting here matches the public ChannelProvider contract.
+    const parsed =
+      ((await channelProvider.readConfig?.(rawConfig, {
+        dispatcher_id: dispatcherId,
+        channel_id: id,
+        provider: provider.ref,
+      })) as DispatcherProviderConfig | undefined) ?? rawConfig;
     // Neutral, provider-reported identity for status display (issue #209
     // de-leak): the dispatcher's bot identity comes from the channel provider's
     // own `getIdentity`, so core never names a provider config field. Fail-soft —
@@ -698,7 +674,13 @@ function readDispatcherChannels(
     } catch {
       identity = '';
     }
-    out.push({ id, provider: provider.ref, config: rawConfig, identity });
+    out.push({
+      id,
+      provider: provider.ref,
+      config: parsed,
+      rawConfig,
+      identity,
+    });
   }
   return out;
 }
@@ -840,12 +822,18 @@ function redactConfigSecrets(value: unknown): void {
   }
   if (!isPlainObject(value)) return;
   for (const [key, child] of Object.entries(value)) {
-    if (key === 'app_secret' && typeof child === 'string') {
+    if (isSecretConfigKey(key)) {
       value[key] = '<redacted>';
       continue;
     }
     redactConfigSecrets(child);
   }
+}
+
+function isSecretConfigKey(key: string): boolean {
+  return /(?:secret|password|passwd|token|authorization|cookie|credential|api[_-]?key|private[_-]?key|client[_-]?secret)/i.test(
+    key,
+  );
 }
 
 export function expandHome(path: string): string {

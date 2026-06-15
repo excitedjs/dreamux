@@ -1,15 +1,13 @@
 import type { DreamuxConfig } from '../config/config.js';
 import {
-  BUILTIN_CODEX_PROVIDER_REF,
-  BUILTIN_FEISHU_PROVIDER_REF,
-  DEFAULT_APPROVAL_POLICY,
-  DEFAULT_CODEX_TURN_TIMEOUT_MS,
-  DEFAULT_INITIALIZE_TIMEOUT_MS,
-  DEFAULT_SANDBOX_MODE,
   type DispatcherConfig,
   type DispatcherProviderConfig,
   stringifyConfig,
 } from '../config/config.js';
+import {
+  BUILTIN_CODEX_PROVIDER_REF,
+  BUILTIN_FEISHU_PROVIDER_REF,
+} from '../registry/index.js';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
 import type { OnboardAnswers } from './types.js';
 
@@ -39,15 +37,19 @@ export function dreamuxConfigFromAnswers(
   // names it; re-running onboard must not silently delete it.
   const agents: DreamuxConfig['agents'] = {};
   for (const [id, agent] of Object.entries(base.agents)) {
+    const rawConfig = cloneOptionalProviderConfig(agent.rawConfig);
     agents[id] = {
       provider: agent.provider,
       config: cloneProviderConfig(agent.config),
+      ...(rawConfig === undefined ? {} : { rawConfig }),
     };
   }
   for (const dispatcher of dispatchers) {
+    const rawConfig = cloneOptionalProviderConfig(dispatcher.runtime.rawConfig);
     agents[dispatcher.agentRuntime] = {
       provider: dispatcher.runtime.provider,
       config: cloneProviderConfig(dispatcher.runtime.config),
+      ...(rawConfig === undefined ? {} : { rawConfig }),
     };
   }
   const next: DreamuxConfig = { agents, dispatchers };
@@ -56,14 +58,6 @@ export function dreamuxConfigFromAnswers(
 
 export function dispatcherBotSecretRef(dispatcherId: string): string {
   return `config:${dispatcherId}`;
-}
-
-export function dispatcherCodexArgsJson(): string {
-  return JSON.stringify({
-    approvalPolicy: DEFAULT_APPROVAL_POLICY,
-    sandboxMode: DEFAULT_SANDBOX_MODE,
-    extraArgs: [],
-  });
 }
 
 function dispatcherConfigFromAnswers(answers: OnboardAnswers): DispatcherConfig {
@@ -87,12 +81,6 @@ function dispatcherConfigFromAnswers(answers: OnboardAnswers): DispatcherConfig 
       provider: BUILTIN_CODEX_PROVIDER_REF,
       config: {
         bin: answers.codexBin,
-        approval_policy: DEFAULT_APPROVAL_POLICY,
-        sandbox_mode: DEFAULT_SANDBOX_MODE,
-        extra_args: [],
-        extra_env: {},
-        initialize_timeout_ms: DEFAULT_INITIALIZE_TIMEOUT_MS,
-        turn_timeout_ms: DEFAULT_CODEX_TURN_TIMEOUT_MS,
       },
     },
   };
@@ -107,15 +95,28 @@ function cloneDispatcherConfig(dispatcher: DispatcherConfig): DispatcherConfig {
       id: channel.id,
       provider: channel.provider,
       config: cloneProviderConfig(channel.config),
+      ...(channel.rawConfig === undefined
+        ? {}
+        : { rawConfig: cloneProviderConfig(channel.rawConfig) }),
     })),
     agentRuntime: dispatcher.agentRuntime,
     runtime: {
       provider: dispatcher.runtime.provider,
       config: cloneProviderConfig(dispatcher.runtime.config),
+      ...(dispatcher.runtime.rawConfig === undefined
+        ? {}
+        : { rawConfig: cloneProviderConfig(dispatcher.runtime.rawConfig) }),
     },
   };
 }
 
 function cloneProviderConfig(config: unknown): DispatcherProviderConfig {
   return structuredClone(config) as DispatcherProviderConfig;
+}
+
+function cloneOptionalProviderConfig(
+  config: DispatcherProviderConfig | undefined,
+): DispatcherProviderConfig | undefined {
+  if (config === undefined) return undefined;
+  return cloneProviderConfig(config);
 }

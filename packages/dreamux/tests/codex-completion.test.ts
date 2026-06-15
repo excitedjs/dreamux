@@ -4,7 +4,7 @@ import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { teamMateCompletionOutputPath } from '../src/platform/paths.js';
+import { teamMateCompletionOutputPath } from '@excitedjs/dreamux-utils';
 
 import {
   createCodexAgentRuntimeProvider,

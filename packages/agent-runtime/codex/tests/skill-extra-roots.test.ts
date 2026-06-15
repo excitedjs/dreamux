@@ -74,10 +74,11 @@ interface CapturedLog {
 
 /** A DreamuxLogger that records every line so a test can assert the warning. */
 function capturingLogger(sink: CapturedLog[]): DreamuxLogger {
+  // Pino-shaped fields-first: the message is the 2nd arg (or the 1st when bare).
   const record =
     (level: CapturedLog['level']) =>
-    (msg: string): void => {
-      sink.push({ level, msg });
+    (fields: Record<string, unknown> | string, msg?: string): void => {
+      sink.push({ level, msg: typeof fields === 'string' ? fields : (msg ?? '') });
     };
   const logger = {
     info: record('info'),

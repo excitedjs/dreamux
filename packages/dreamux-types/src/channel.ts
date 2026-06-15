@@ -140,6 +140,10 @@ export interface ChannelMcpDescriptorContext {
   /** The admin Unix-socket path the shim forwards tool calls to. */
   adminSocketPath: string;
   dispatcher_id: string;
+  /** Canonical provider ref for the channel whose MCP descriptor is being built. */
+  provider: string;
+  /** Dispatcher-local channel id for the channel whose MCP descriptor is being built. */
+  channel_id: string;
   /** Which agent role hosts the MCP server (scopes the shim's admin calls). */
   callerKind?: 'dispatcher' | 'team_leader';
   team_id?: string;
@@ -154,6 +158,8 @@ export interface ChannelMcpDescriptorContext {
  */
 export interface ChannelSessionlessToolContext {
   dispatcher_id: string;
+  /** Dispatcher-local channel id whose provider owns the sessionless call. */
+  channel_id: string;
   /** The per-dispatcher state root the provider may read credentials/state from. */
   state_root?: string;
   logger?: DreamuxLogger;
