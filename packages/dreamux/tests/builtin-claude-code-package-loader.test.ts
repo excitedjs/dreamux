@@ -28,7 +28,7 @@ import type {
 import type { DispatcherClaudeCodeConfig } from '@excitedjs/agent-runtime-claude-code';
 
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
-import { loadExternalAgentRuntimeProviders } from '../src/agent-runtime/external-provider.js';
+import { loadAgentRuntimeProviders } from '../src/agent-runtime/external-provider.js';
 
 const tmpDirs: string[] = [];
 const runtimes: AgentRuntime[] = [];
@@ -43,7 +43,7 @@ async function loadRealClaudeCodeProvider(): Promise<
 > {
   const registry = createBuiltinProviderRegistry();
   // Default importer => real `import('@excitedjs/agent-runtime-claude-code')`.
-  await loadExternalAgentRuntimeProviders({
+  await loadAgentRuntimeProviders({
     registry,
     refs: ['builtin:claude-code'],
   });

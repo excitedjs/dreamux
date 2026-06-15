@@ -9,6 +9,7 @@
 import type { Server } from '../server.js';
 import { AdminError } from './protocol.js';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
+import { ChannelToolAuthorizationError } from '../dispatcher-service/service.js';
 import {
   teamLeaderPrincipal,
   type TeamMateCallerPrincipal,
@@ -86,52 +87,42 @@ export const adminMethods: Record<string, AdminHandler> = {
     return { dispatcher_id: id, status: 'stopped' };
   },
 
-  'mcp.reply': async (server, params) => {
+  // Generic channel-tool conduit (issue #209 cleanup): core forwards the raw
+  // provider-owned `{ name, arguments }` to the neutral channel seam and never
+  // names a tool, method, or selector. The TeamLeader egress gate lives in the
+  // service layer (it has the channel session); its deny codes (BAD_REQUEST /
+  // CHANNEL_SCOPE_DENIED) are mapped back here, and every other failure becomes
+  // a generic CHANNEL_TOOL_FAILED. A tool with no live session is serviced by
+  // the provider's sessionless path inside the service.
+  'channel.invoke_tool': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    mustRunningDispatcher(server, id);
-    const channelId = await assertFeishuScope(server, id, params);
+    const name = mustString(params, 'name');
+    const caller = callerPrincipal(id, params);
     try {
-      return await server.dispatcherService.callFeishuMcpTool({
+      return await server.dispatcherService.invokeChannelTool({
         dispatcherId: id,
-        toolName: 'reply',
-        arguments: params ?? {},
-        ...(channelId !== undefined ? { channelId } : {}),
+        name,
+        arguments: mustToolArguments(params),
+        caller,
       });
     } catch (err) {
-      throw new AdminError('OUTBOUND_FAILED', parseMessage(err));
+      if (err instanceof ChannelToolAuthorizationError) {
+        throw new AdminError(err.code, err.message);
+      }
+      if (err instanceof AdminError) throw err;
+      throw new AdminError('CHANNEL_TOOL_FAILED', parseMessage(err));
     }
   },
 
-  'mcp.react': async (server, params) => {
+  // List the dispatcher's provider-owned channel tools (the conduit's
+  // `tools/list`). Core returns the neutral descriptor blob verbatim; it does
+  // not require a running slot — the provider's tools are listable before its
+  // sessions connect.
+  'channel.list_tools': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    mustRunningDispatcher(server, id);
-    const channelId = await assertFeishuScope(server, id, params);
-    try {
-      return await server.dispatcherService.callFeishuMcpTool({
-        dispatcherId: id,
-        toolName: 'react',
-        arguments: params ?? {},
-        ...(channelId !== undefined ? { channelId } : {}),
-      });
-    } catch (err) {
-      throw new AdminError('REACTION_FAILED', parseMessage(err));
-    }
-  },
-
-  // Read-only: lists a chat's known + trusted peer bots (issue #69). Reads the
-  // per-dispatcher chat-bots store, so it does not require a running slot — only
-  // a declared dispatcher.
-  'mcp.list_chat_bots': async (server, params) => {
-    const id = mustDispatcherId(params);
-    mustExistingDispatcher(server, id);
-    await assertFeishuScope(server, id, params);
-    return server.dispatcherService.callFeishuMcpTool({
-      dispatcherId: id,
-      toolName: 'list_chat_bots',
-      arguments: params ?? {},
-    });
+    return { tools: await server.dispatcherService.listChannelTools(id) };
   },
 
   'mcp.teammate.spawn': async (server, params) => {
@@ -343,7 +334,7 @@ export const adminMethods: Record<string, AdminHandler> = {
   // TeamLeader authorization stay core-owned and resolve the provider target at
   // the facade edge. `channel_id` selects the configured channel (optional;
   // defaults to the dispatcher's sole channel). `meta` is the provider-specific
-  // selector (Feishu: `{ chat_id }`), passed opaquely to `resolveTarget(meta)`,
+  // selector (e.g. a chat channel: `{ chat_id }`), passed opaquely to `resolveTarget(meta)`,
   // which infers/validates the target (group-only — chat_type is not required).
   'mcp.team.bind_channel': async (server, params) => {
     const id = mustDispatcherId(params);
@@ -385,55 +376,19 @@ export const adminMethods: Record<string, AdminHandler> = {
 };
 
 /**
- * Authorize a Feishu egress (reply/react) and resolve which channel it leaves
- * through. A dispatcher caller egresses the primary channel (returns undefined →
- * the default). A TeamLeader may only act on a chat it is bound to, and its reply
- * egresses the bound channel's bot — resolved here from the leader's own active
- * binding (issue #209 live multi-channel routing) and returned so the tool call
- * targets that channel.
+ * Read the opaque tool `arguments` object the channel conduit forwards. Core
+ * does not interpret the contents — it hands them to the provider's tool
+ * handler. Absent → an empty object (a tool may take no arguments).
  */
-async function assertFeishuScope(
-  server: Server,
-  dispatcherId: string,
+function mustToolArguments(
   params: Record<string, unknown> | undefined,
-): Promise<string | undefined> {
-  const caller = callerPrincipal(dispatcherId, params);
-  if (caller.kind !== 'team_leader') return undefined;
-  const chatId = optionalString(params, 'chat_id');
-  if (chatId === null) {
-    throw new AdminError(
-      'BAD_REQUEST',
-      "param 'chat_id' is required for TeamLeader Feishu tools",
-    );
+): Record<string, unknown> {
+  const value = params?.['arguments'];
+  if (value === undefined || value === null) return {};
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new AdminError('BAD_REQUEST', "param 'arguments' must be an object");
   }
-  const messageId = optionalString(params, 'message_id');
-  if (
-    messageId !== null &&
-    !(await server.dispatcherService.feishuMessageBelongsToChat(
-      dispatcherId,
-      messageId,
-      chatId,
-    ))
-  ) {
-    throw new AdminError(
-      'CHANNEL_SCOPE_DENIED',
-      'TeamLeader may react/reply only to messages observed in bound team channels',
-    );
-  }
-  const { allowed, channelId } =
-    await server.dispatcherService.teamLeaderCanUseChannel({
-      dispatcherId,
-      teamId: caller.teamId,
-      leaderName: caller.leaderName,
-      chatId,
-    });
-  if (!allowed) {
-    throw new AdminError(
-      'CHANNEL_SCOPE_DENIED',
-      'TeamLeader may use Feishu only for bound team channels',
-    );
-  }
-  return channelId ?? undefined;
+  return value as Record<string, unknown>;
 }
 
 function callerPrincipal(
@@ -655,15 +610,6 @@ function mustExistingDispatcher(server: Server, id: string): void {
   const row = server.repos.dispatchers.get(id);
   if (row === null) {
     throw new AdminError('DISPATCHER_NOT_FOUND', `no dispatcher with id '${id}'`);
-  }
-}
-
-function mustRunningDispatcher(server: Server, id: string): void {
-  if (server.dispatcherService.getRuntime(id) === null) {
-    throw new AdminError(
-      'DISPATCHER_NOT_RUNNING',
-      `dispatcher '${id}' is not running`,
-    );
   }
 }
 

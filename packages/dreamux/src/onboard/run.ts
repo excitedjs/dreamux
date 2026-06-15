@@ -1,5 +1,6 @@
 import { pathExists } from '../platform/fs-errors.js';
 
+// eslint-disable-next-line no-restricted-imports -- Q3 de-leak: onboard is codex-aware; redesign deferred (tracked in .agents/wip/i209-cleanup/plan-q1q2-neutrality.md)
 import {
   codexArgsToCli,
   parseCodexArgs,
@@ -11,9 +12,9 @@ import {
 import {
   assertNoLegacyTomlOnly,
   globalConfigFile,
+  loadConfig,
   stringifyConfig,
 } from '../config/config.js';
-import { loadConfigWithBuiltins } from '../agent-runtime/load-config.js';
 import {
   dispatcherDir,
   logsRoot,
@@ -184,7 +185,7 @@ async function readExistingDreamuxConfig(configDir: string) {
   const configPath = globalConfigFile({ configDir });
   await assertNoLegacyTomlOnly({ configDir });
   if (!(await pathExists(configPath))) return undefined;
-  return (await loadConfigWithBuiltins({ configDir })).config;
+  return (await loadConfig({ configDir })).config;
 }
 
 async function runDispatcherDoctor(

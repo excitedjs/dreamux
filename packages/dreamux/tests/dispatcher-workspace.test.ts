@@ -25,6 +25,7 @@ import {
 import { Server } from '../src/server.js';
 import type { DreamuxLogger } from '../src/platform/logger.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
+import { codexAgentRuntimeCatalog } from './helpers/fake-agent-runtime.js';
 
 const NO_CWD_MESSAGE = /no configured `cwd`/;
 
@@ -149,6 +150,8 @@ describe('dispatcher workspace cwd contract (issue #182 PR-4)', () => {
         adminSocketPath: join(root, 'admin.sock'),
         logger: noopLog(),
         channelLoggerFactory: () => noopLog(),
+        // Q2: provider implementations live in the catalog, not Server seams.
+        agentRuntimeProviderCatalog: codexAgentRuntimeCatalog(),
       });
       await expect(server.start()).rejects.toThrow(
         /dispatcher workspace cwd contract failed[\s\S]*flow[\s\S]*no configured `cwd`/,
@@ -172,6 +175,8 @@ describe('dispatcher workspace cwd contract (issue #182 PR-4)', () => {
         adminSocketPath: join(root, 'admin.sock'),
         logger: noopLog(),
         channelLoggerFactory: () => noopLog(),
+        // Q2: provider implementations live in the catalog, not Server seams.
+        agentRuntimeProviderCatalog: codexAgentRuntimeCatalog(),
       });
       const error = await server.start().then(
         () => null,

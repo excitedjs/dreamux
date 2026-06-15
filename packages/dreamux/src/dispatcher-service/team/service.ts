@@ -391,7 +391,7 @@ export class TeamService {
     });
   }
 
-  /** The active bound Feishu group for a Team, or null when none is bound. */
+  /** The active bound group for a Team, or null when none is bound. */
   private async activeGroupBinding(
     team: TeamRecord,
   ): Promise<TeamChannelBindingSummary | null> {
@@ -400,9 +400,9 @@ export class TeamService {
       (binding) => binding.active && binding.team_name === team.team_id,
     );
     if (active === undefined) return null;
-    // The read-tool summary keeps the `{ provider, chat_id }` shape; the Feishu
+    // The read-tool summary keeps the neutral `{ provider, chat_id }` shape; the
     // chat id is the provider selector stored in `meta` (v2 keeps chat_id out of
-    // the core top-level columns).
+    // the core top-level columns), falling back to the opaque target_key.
     const chatId = active.meta['chat_id'];
     return {
       provider: active.provider,

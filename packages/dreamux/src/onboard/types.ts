@@ -1,3 +1,4 @@
+// eslint-disable-next-line no-restricted-imports -- Q3 de-leak: onboard is codex-aware; redesign deferred (tracked in .agents/wip/i209-cleanup/plan-q1q2-neutrality.md)
 import type { DispatcherCodexHomeDoctorResult } from '@excitedjs/agent-runtime-codex';
 
 export type OnboardFileStatus = 'created' | 'modified' | 'unchanged' | 'skipped';

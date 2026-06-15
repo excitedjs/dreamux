@@ -16,7 +16,6 @@ import { Writable } from 'node:stream';
 import {
   createLogger,
   loggerToLevelFn,
-  pinoToTransportLogger,
 } from '../src/platform/logger.js';
 
 function captureSink(): { sink: Writable; text: () => string } {
@@ -130,42 +129,13 @@ describe('logger factory', () => {
     expect((line['err'] as { message: string }).message).toBe('boom');
   });
 
-  it('adapts to the feishu-transport TransportLogger seam (#74)', () => {
+  it('redacts an app_secret reaching a log field (generic secret policy)', () => {
     const { sink, text } = captureSink();
     const logger = createLogger({ destination: sink });
-    const transportLogger = pinoToTransportLogger(logger);
 
-    // The transport seam emits (message, fields?); pino takes (mergingObject,
-    // message). The adapter flips the order and supplies {} when no fields.
-    transportLogger.info('connection ready', { source: 'feishu-transport-connection' });
-    transportLogger.error('sdk failure', { source: 'feishu-sdk' });
-    transportLogger.warn('best-effort failure');
-
-    const lines = text()
-      .trim()
-      .split('\n')
-      .map((l) => JSON.parse(l) as Record<string, unknown>);
-    expect(lines[0]).toMatchObject({
-      msg: 'connection ready',
-      level: 30,
-      source: 'feishu-transport-connection',
-    });
-    expect(lines[1]).toMatchObject({
-      msg: 'sdk failure',
-      level: 50,
-      source: 'feishu-sdk',
-    });
-    expect(lines[2]).toMatchObject({ msg: 'best-effort failure', level: 40 });
-  });
-
-  it('redacts an app_secret a transport diagnostic field might carry', () => {
-    const { sink, text } = captureSink();
-    const logger = createLogger({ destination: sink });
-    const transportLogger = pinoToTransportLogger(logger);
-
-    // The transport never logs the secret, but the host's redact config is the
-    // backstop — assert it still censors an app_secret reaching the field path.
-    transportLogger.warn('diagnostic', { app_secret: 'fake-not-a-real-secret' });
+    // The generic, provider-agnostic redact policy censors any app_secret a
+    // field path carries — core names no provider's secret field.
+    logger.warn({ app_secret: 'fake-not-a-real-secret' }, 'diagnostic');
 
     expect(text()).not.toContain('fake-not-a-real-secret');
     expect(text()).toContain('[REDACTED]');

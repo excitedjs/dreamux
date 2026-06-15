@@ -33,23 +33,22 @@ import { isAbsolute, join } from 'node:path';
 import { CodexProcess } from '@excitedjs/agent-runtime-codex';
 import { CodexWsClient, type CodexWsClientOptions } from '@excitedjs/agent-runtime-codex';
 import { performInitializeHandshake } from '@excitedjs/agent-runtime-codex';
-import { feishuMcpServerDescriptor } from '../src/channel/feishu-mcp-surface.js';
 import {
   codexArgsToCli,
   codexMcpServerArgs,
   parseCodexArgs,
 } from '@excitedjs/agent-runtime-codex';
 import { dreamuxBinPath } from '../src/platform/package-bin.js';
+import { Server } from '../src/server.js';
 import {
   IN_PROGRESS_REACTION_EMOJI,
   RECEIVED_REACTION_EMOJI,
-  Server,
-} from '../src/server.js';
-import {
   createFakeFeishuBot,
+  createFeishuChannelProvider,
   type FeishuInboundEvent,
 } from '@excitedjs/feishu-channel';
 import { feishuChannelCatalog } from './helpers/fake-channel.js';
+import { codexAgentRuntimeCatalog } from './helpers/fake-agent-runtime.js';
 import { saveDispatcherAccess } from '@excitedjs/feishu-channel';
 import { dispatcherDir } from '../src/platform/paths.js';
 import type { DreamuxConfig } from '../src/config/config.js';
@@ -379,13 +378,28 @@ describe('codex live integration', () => {
         ...codexArgsToCli(
           parseCodexArgs('{"sandboxMode":"danger-full-access"}'),
         ),
-        ...codexMcpServerArgs([
-          feishuMcpServerDescriptor({
-            dispatcherId: 'dispatcher-a',
-            adminSocketPath: join(dir, 'admin.sock'),
+        // Build the channel MCP descriptor via the feishu provider's own
+        // session so the test does not hard-code core's neutral conduit shape.
+        ...(() => {
+          const provider = createFeishuChannelProvider({
+            botFactory: () => createFakeFeishuBot('stub'),
+          });
+          const session = provider.createSession({
+            dispatcher_id: 'dispatcher-a',
+            channel_id: 'primary',
+            provider: 'builtin:feishu',
+            config: { appId: 'stub', appSecret: 'stub' } as never,
+            logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {}, child: () => ({} as never) } as never,
+            state_root: dir,
+            cache_root: dir,
+          });
+          const descriptor = session.mcpServerDescriptor?.({
             command: dreamuxBin,
-          }),
-        ]),
+            adminSocketPath: join(dir, 'admin.sock'),
+            dispatcher_id: 'dispatcher-a',
+          });
+          return descriptor != null ? codexMcpServerArgs([descriptor]) : [];
+        })(),
       ];
 
       const proc = new CodexProcess({
@@ -469,13 +483,18 @@ describe('codex live integration', () => {
           config: liveConfig(dispatcherCwd, operatorHome),
           adminSocketPath: adminSocket,
           channelProviderCatalog: feishuChannelCatalog(() => bot),
-          codexClientFactory: (socketPath) => {
-            client = new RecordingCodexWsClient({ socketPath });
-            return client;
-          },
-          codexHomeDoctor: () => {
-            /* real Codex auth is supplied through CODEX_HOME above */
-          },
+          // Codex seams live on the provider implementation now; injected via the
+          // AgentRuntime catalog. No process factory is given, so the real codex
+          // process is spawned (this is the live-codex path).
+          agentRuntimeProviderCatalog: codexAgentRuntimeCatalog({
+            codexClientFactory: (socketPath) => {
+              client = new RecordingCodexWsClient({ socketPath });
+              return client;
+            },
+            codexHomeDoctor: () => {
+              /* real Codex auth is supplied through CODEX_HOME above */
+            },
+          }),
         });
         await server.start();
         expect(client).not.toBeNull();

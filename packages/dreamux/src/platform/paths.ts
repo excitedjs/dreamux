@@ -261,25 +261,25 @@ export function serverLogPath(): string {
   return join(logsRoot(), 'dreamux-server.log');
 }
 
-export function feishuChannelLogDir(): string {
-  return join(logsRoot(), 'feishu-channel');
+export function channelLogDir(): string {
+  return join(logsRoot(), 'channel');
 }
 
 /** Per-dispatcher channel log: gate decisions, inbound, outbound, introduce. */
-export function feishuChannelLogPath(id: string): string {
-  return join(feishuChannelLogDir(), `${dispatcherPathSegment(id)}.log`);
+export function channelLogPath(id: string): string {
+  return join(channelLogDir(), `${dispatcherPathSegment(id)}.log`);
 }
 
-export function feishuMcpLogDir(): string {
-  return join(logsRoot(), 'feishu-mcp');
+export function channelMcpLogDir(): string {
+  return join(logsRoot(), 'channel-mcp');
 }
 
 /**
- * Per-dispatcher Feishu MCP stdio shim log. The shim's stdout is the JSON-RPC
+ * Per-dispatcher channel MCP stdio shim log. The shim's stdout is the JSON-RPC
  * transport, so its diagnostics persist here (and to stderr) — never stdout.
  */
-export function feishuMcpLogPath(id: string): string {
-  return join(feishuMcpLogDir(), `${dispatcherPathSegment(id)}.log`);
+export function channelMcpLogPath(id: string): string {
+  return join(channelMcpLogDir(), `${dispatcherPathSegment(id)}.log`);
 }
 
 export function teammateMcpLogDir(): string {
@@ -398,14 +398,6 @@ export function dispatcherChatBotsPath(id: string): string {
   return join(dispatcherDir(id), 'chat-bots.json');
 }
 
-/**
- * Per-dispatcher Feishu inbound attachment cache, owned by the server. Cache,
- * not durable state (issue #182 PR-2 moved it out of `state/<id>/` into
- * `cache/<id>/`): inbound attachments are re-fetchable and safe to delete.
- */
-export function dispatcherFeishuAttachmentCacheDir(id: string): string {
-  return join(dispatcherCacheDir(id), 'feishu-attachments');
-}
 
 export function dispatcherPathSegment(id: string): string {
   return validateDispatcherId(id);

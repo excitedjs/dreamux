@@ -51,7 +51,7 @@ import type {
 const FEISHU_MCP: AgentRuntimeMcpServer = {
   name: 'feishu',
   command: '/pkg/bin/dreamux',
-  args: ['feishu-mcp', '--dispatcher', 'flow', '--admin-socket', '/tmp/a.sock'],
+  args: ['channel-mcp', '--provider', 'builtin:feishu', '--dispatcher', 'flow', '--admin-socket', '/tmp/a.sock'],
 };
 
 function claudeCodeProvider(
@@ -249,7 +249,7 @@ describe('claude-code pure translation (not Codex renamed)', () => {
       mcpServers: {
         feishu: {
           command: '/pkg/bin/dreamux',
-          args: ['feishu-mcp', '--dispatcher', 'flow', '--admin-socket', '/tmp/a.sock'],
+          args: ['channel-mcp', '--provider', 'builtin:feishu', '--dispatcher', 'flow', '--admin-socket', '/tmp/a.sock'],
         },
       },
     });

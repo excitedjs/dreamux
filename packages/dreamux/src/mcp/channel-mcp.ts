@@ -5,23 +5,20 @@ import {
   AdminClientError,
   sendAdminRequest,
 } from '../admin/client.js';
-import {
-  feishuMcpAdminLabel,
-  feishuMcpAdminMethod,
-  feishuMcpAdminParams,
-} from '../channel/feishu-mcp-surface.js';
-import {
-  feishuMcpTools,
-  parseFeishuMcpToolInput,
-} from '@excitedjs/feishu-channel';
 import { adminSocketPath as defaultAdminSocketPath } from '../platform/paths.js';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
 
-export interface FeishuMcpOptions {
+export interface ChannelMcpOptions {
   dispatcherId: string;
   callerKind?: 'dispatcher' | 'team_leader';
   teamId?: string;
   leaderName?: string;
+  /**
+   * The channel provider ref this shim serves (e.g. `builtin:feishu`). Advisory
+   * only — core resolves the live channel session from the dispatcher id, so the
+   * shim never branches on it; it is carried for diagnostics/clarity.
+   */
+  providerRef?: string;
   adminSocketPath?: string;
   input?: Readable;
   output?: Writable;
@@ -43,13 +40,17 @@ const SUPPORTED_MCP_PROTOCOL_VERSIONS = new Set([
   '2024-11-05',
 ]);
 
-export async function runFeishuMcp(opts: FeishuMcpOptions): Promise<void> {
+export async function runChannelMcp(opts: ChannelMcpOptions): Promise<void> {
   const dispatcherId = validateDispatcherId(opts.dispatcherId);
   const callerKind = opts.callerKind ?? 'dispatcher';
   const socketPath = opts.adminSocketPath ?? defaultAdminSocketPath();
   const input = opts.input ?? process.stdin;
   const output = opts.output ?? process.stdout;
   const log = opts.log ?? ((message) => console.error(message));
+  const logLabel =
+    opts.providerRef !== undefined && opts.providerRef !== ''
+      ? `channel-mcp[${opts.providerRef}]`
+      : 'channel-mcp';
   const lines = createInterface({ input, crlfDelay: Infinity });
 
   for await (const line of lines) {
@@ -72,7 +73,7 @@ export async function runFeishuMcp(opts: FeishuMcpOptions): Promise<void> {
         output,
       });
     } catch (err) {
-      log(`feishu-mcp: ${parseMessage(err)}`);
+      log(`${logLabel}: ${parseMessage(err)}`);
       if (request.id !== undefined) {
         write(output, errorResponse(request.id, -32603, parseMessage(err)));
       }
@@ -112,7 +113,7 @@ async function handleRequest(
       return;
     case 'tools/list':
       if (request.id !== undefined) {
-        write(ctx.output, okResponse(request.id, { tools: feishuMcpTools() }));
+        write(ctx.output, okResponse(request.id, await listTools(ctx)));
       }
       return;
     case 'tools/call':
@@ -144,10 +145,35 @@ function initializeResult(params: unknown): Record<string, unknown> {
       tools: {},
     },
     serverInfo: {
-      name: 'dreamux-feishu',
+      name: 'dreamux-channel',
       version: '0.2.0',
     },
   };
+}
+
+/**
+ * List the channel's provider-owned tools by forwarding to the generic
+ * `channel.list_tools` admin method. Core (the channel provider) is the single
+ * source of the tool descriptors — the shim never hardcodes a tool name or
+ * schema. Returns the `{ tools }` blob verbatim for the MCP `tools/list` reply.
+ */
+async function listTools(ctx: {
+  dispatcherId: string;
+  callerKind: 'dispatcher' | 'team_leader';
+  teamId?: string;
+  leaderName?: string;
+  socketPath: string;
+}): Promise<unknown> {
+  return sendAdminRequest(
+    'channel.list_tools',
+    {
+      dispatcher_id: ctx.dispatcherId,
+      caller_kind: ctx.callerKind,
+      ...(ctx.teamId !== undefined ? { team_id: ctx.teamId } : {}),
+      ...(ctx.leaderName !== undefined ? { leader_name: ctx.leaderName } : {}),
+    },
+    { socketPath: ctx.socketPath },
+  );
 }
 
 async function callTool(
@@ -162,17 +188,22 @@ async function callTool(
 ): Promise<Record<string, unknown>> {
   try {
     const call = asToolCallParams(params);
-    const parsed = parseFeishuMcpToolInput(call.name, call.arguments);
+    // The shim is a blind conduit: forward the raw provider-owned
+    // `{ name, arguments }` to the generic `channel.invoke_tool` admin method
+    // along with the caller scope. Core resolves the live session vs sessionless
+    // path and the TeamLeader egress gate — the shim names no tool or selector.
     return forwardToolCall(
-      feishuMcpAdminMethod(parsed.toolName),
+      'channel.invoke_tool',
       {
-        ...feishuMcpAdminParams(ctx.dispatcherId, parsed),
+        dispatcher_id: ctx.dispatcherId,
+        name: call.name,
+        arguments: call.arguments,
         caller_kind: ctx.callerKind,
         ...(ctx.teamId !== undefined ? { team_id: ctx.teamId } : {}),
         ...(ctx.leaderName !== undefined ? { leader_name: ctx.leaderName } : {}),
       },
       ctx.socketPath,
-      feishuMcpAdminLabel(parsed.toolName),
+      call.name,
     );
   } catch (err) {
     return toolError(parseMessage(err));

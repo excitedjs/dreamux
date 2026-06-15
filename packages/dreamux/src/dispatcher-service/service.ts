@@ -3,6 +3,7 @@ import type {
   AgentRuntime,
   AgentRuntimeTurnResult,
   ChannelInboundEnvelope,
+  ChannelTarget,
   CompletionEnvelope,
   InboundDeliveryHooks,
   InboundTurnInput,
@@ -16,12 +17,11 @@ import { adminSocketPath as defaultAdminSocketPath } from '../platform/paths.js'
 import {
   DispatcherAgentService,
   type DispatcherSummary,
-  type FeishuChannelToolCall,
 } from './dispatcher/service.js';
 import { TeamService } from './team/service.js';
 import { TeamMateAgentService } from './teammate/service.js';
 import { teammateMcpServerDescriptor } from './teammate/mcp-config.js';
-import { feishuMcpServerDescriptor } from '../channel/feishu-mcp-surface.js';
+import type { TeamMateCallerPrincipal } from './teammate/types.js';
 import type {
   CloseTeamMateInput,
   TeamMateHistoryQuery,
@@ -35,6 +35,23 @@ import type {
   TeamDissolveInput,
   TeamHistoryQuery,
 } from './team/types.js';
+
+/**
+ * A channel-tool authorization failure raised by the service layer (the
+ * TeamLeader egress gate). It carries the admin error CODE so the admin layer
+ * can map the deny to the same wire code the former in-admin channel-egress
+ * scope check produced (`BAD_REQUEST` / `CHANNEL_SCOPE_DENIED`) without the service layer
+ * depending on the admin protocol module.
+ */
+export class ChannelToolAuthorizationError extends Error {
+  constructor(
+    readonly code: 'BAD_REQUEST' | 'CHANNEL_SCOPE_DENIED',
+    message: string,
+  ) {
+    super(message);
+    this.name = 'ChannelToolAuthorizationError';
+  }
+}
 
 export interface DispatcherServiceOptions {
   config: DreamuxConfig;
@@ -88,13 +105,18 @@ export class DispatcherService {
                 leaderName: identity.name,
                 adminSocketPath: opts.adminSocketPath ?? defaultAdminSocketPath(),
               }),
-              feishuMcpServerDescriptor({
+              // The TeamLeader's channel MCP descriptor(s) come from the live
+              // channel sessions' own neutral `mcpServerDescriptor` — core never
+              // names a channel's MCP shape. The dispatcher is running when a
+              // TeamLeader is created/resumed, so its sessions are live.
+              ...this.dispatchers.channelMcpServerDescriptorsForCaller(
                 dispatcherId,
-                callerKind: 'team_leader',
-                teamId: identity.team_id ?? '',
-                leaderName: identity.name,
-                adminSocketPath: opts.adminSocketPath ?? defaultAdminSocketPath(),
-              }),
+                {
+                  callerKind: 'team_leader',
+                  team_id: identity.team_id ?? '',
+                  leader_name: identity.name,
+                },
+              ),
             ]
           : [],
       // Reverse delivery (issue #147): a settled teammate turn bridges here to
@@ -129,16 +151,103 @@ export class DispatcherService {
     return this.dispatchers.summarize();
   }
 
-  callFeishuMcpTool(input: FeishuChannelToolCall) {
-    return this.dispatchers.callFeishuMcpTool(input);
+  /**
+   * Invoke a provider-owned channel tool on behalf of a caller (the blind MCP
+   * conduit's `tools/call`). Core forwards the raw `{name, arguments}` to the
+   * neutral channel seam and never names a tool. A TeamLeader caller is gated +
+   * retargeted here: its egress is authorized against its OWN active channel
+   * binding and routed through that bound channel's bot. A dispatcher/teammate
+   * caller egresses the primary channel (or the sessionless provider path).
+   */
+  async invokeChannelTool(input: {
+    dispatcherId: string;
+    name: string;
+    arguments: Record<string, unknown>;
+    caller: TeamMateCallerPrincipal;
+  }): Promise<unknown> {
+    if (input.caller.kind === 'team_leader') {
+      const channelId = await this.authorizeTeamLeaderChannelEgress({
+        dispatcherId: input.dispatcherId,
+        teamId: input.caller.teamId,
+        leaderName: input.caller.leaderName,
+        arguments: input.arguments,
+      });
+      return this.dispatchers.invokeChannelTool({
+        dispatcherId: input.dispatcherId,
+        name: input.name,
+        arguments: input.arguments,
+        channelId,
+      });
+    }
+    return this.dispatchers.invokeChannelTool({
+      dispatcherId: input.dispatcherId,
+      name: input.name,
+      arguments: input.arguments,
+    });
   }
 
-  feishuMessageBelongsToChat(
-    dispatcherId: string,
-    messageId: string,
-    chatId: string,
-  ) {
-    return this.dispatchers.feishuMessageBelongsToChat(dispatcherId, messageId, chatId);
+  listChannelTools(dispatcherId: string) {
+    return this.dispatchers.listChannelTools(dispatcherId);
+  }
+
+  /**
+   * Authorize a TeamLeader channel egress and resolve which channel it leaves
+   * through (issue #209 live multi-channel routing). The egress channel is the
+   * leader's OWN active binding for the resolved target. Three deny paths are
+   * preserved byte-for-behavior from the former admin-layer channel-egress scope check:
+   *   - no resolvable target in the call → BAD_REQUEST;
+   *   - the referenced message was not observed in a bound channel →
+   *     CHANNEL_SCOPE_DENIED;
+   *   - the target is not bound to this leader → CHANNEL_SCOPE_DENIED.
+   * The neutral target is provider-resolved (`session.resolveTarget`), so core
+   * never reads a channel selector field by name; `message_id` is the neutral
+   * channel field the ownership check keys off.
+   */
+  private async authorizeTeamLeaderChannelEgress(input: {
+    dispatcherId: string;
+    teamId: string;
+    leaderName: string;
+    arguments: Record<string, unknown>;
+  }): Promise<string> {
+    let target: ChannelTarget;
+    try {
+      target = await this.dispatchers.resolveChannelTarget(
+        input.dispatcherId,
+        input.arguments,
+      );
+    } catch {
+      throw new ChannelToolAuthorizationError(
+        'BAD_REQUEST',
+        'TeamLeader channel tools require a resolvable target',
+      );
+    }
+    const messageId = input.arguments['message_id'];
+    if (
+      typeof messageId === 'string' &&
+      !(await this.dispatchers.messageBelongsToTarget(
+        input.dispatcherId,
+        target,
+        messageId,
+      ))
+    ) {
+      throw new ChannelToolAuthorizationError(
+        'CHANNEL_SCOPE_DENIED',
+        'TeamLeader may act only on messages observed in bound team channels',
+      );
+    }
+    const { allowed, channelId } = await this.teamLeaderCanUseChannel({
+      dispatcherId: input.dispatcherId,
+      teamId: input.teamId,
+      leaderName: input.leaderName,
+      targetKey: target.target_key,
+    });
+    if (!allowed || channelId === null) {
+      throw new ChannelToolAuthorizationError(
+        'CHANNEL_SCOPE_DENIED',
+        'TeamLeader may use channels only for bound team channels',
+      );
+    }
+    return channelId;
   }
 
   /**
@@ -182,6 +291,24 @@ export class DispatcherService {
       );
     }
     return ids[0]!;
+  }
+
+  /**
+   * The configured provider ref for a dispatcher's channel. Core reads it from
+   * config (never hardcodes a provider) so a binding records the actual bound
+   * channel's provider — feishu or any future channel provider.
+   */
+  private channelProviderRef(dispatcherId: string, channelId: string): string {
+    const dispatcher = this.config.dispatchers.find(
+      (entry) => entry.id === dispatcherId,
+    );
+    const channel = dispatcher?.channels.find((entry) => entry.id === channelId);
+    if (channel === undefined) {
+      throw new Error(
+        `unknown channel_id '${channelId}' for dispatcher '${dispatcherId}'`,
+      );
+    }
+    return channel.provider;
   }
 
   async routeChannelInput(
@@ -307,7 +434,7 @@ export class DispatcherService {
    * Team MCP). Core resolves `channel_id` and runs the channel's `resolveTarget`
    * (provider-owned) over the caller's `meta` selector at this edge, then passes
    * the resolved `(channel_id, target)` down to the Team service / store. `meta`
-   * is opaque to core (Feishu: `{ chat_id }`); the provider infers/validates the
+   * is opaque to core (e.g. a chat channel: `{ chat_id }`); the provider infers/validates the
    * target (group-only). A non-bindable (P2P) target is rejected fail-loud by the
    * store.
    */
@@ -327,7 +454,9 @@ export class DispatcherService {
       dispatcherId: input.dispatcherId,
       teamId: input.teamId,
       channelId,
-      provider: 'builtin:feishu',
+      // The bound channel's own configured provider ref — core never hardcodes a
+      // provider (issue #209 de-leak): a non-feishu channel binds under its ref.
+      provider: this.channelProviderRef(input.dispatcherId, channelId),
       target,
     });
   }
@@ -351,34 +480,26 @@ export class DispatcherService {
   }
 
   /**
-   * Whether a TeamLeader may use a chat for Feishu egress, and through which
+   * Whether a TeamLeader may use a channel target for egress, and through which
    * channel (issue #209 live multi-channel routing). The leader's egress channel
-   * is resolved from its OWN active binding for the chat — not a single
-   * config-derived channel — so a leader bound on a secondary channel replies
-   * through that channel's bot. Returns the resolved `channelId` (null when the
-   * leader has no active binding for the chat) so the reply/react path egresses
-   * the bound bot.
+   * is resolved from its OWN active binding for the neutral `targetKey` — not a
+   * single config-derived channel — so a leader bound on a secondary channel
+   * replies through that channel's bot. Returns the resolved `channelId` (null
+   * when the leader has no active binding for the target) so the egress path uses
+   * the bound bot. The caller resolves `targetKey` via the channel session, so
+   * core never names a provider selector here.
    */
   async teamLeaderCanUseChannel(input: {
     dispatcherId: string;
     teamId: string;
     leaderName: string;
-    chatId: string;
+    targetKey: string;
   }): Promise<{ allowed: boolean; channelId: string | null }> {
-    // Feishu target resolution is channel-agnostic (target_key === chat_id), so
-    // resolving via the primary session yields the same key every channel would.
-    const target = await this.dispatchers.resolveChannelTarget(
-      input.dispatcherId,
-      {
-        chat_id: input.chatId,
-        chat_type: 'group',
-      },
-    );
     const channelId = await this.teams.resolveLeaderChannel({
       dispatcherId: input.dispatcherId,
       teamId: input.teamId,
       leaderName: input.leaderName,
-      targetKey: target.target_key,
+      targetKey: input.targetKey,
     });
     return { allowed: channelId !== null, channelId };
   }

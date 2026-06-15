@@ -11,16 +11,15 @@ import {
   dispatcherAccessPath,
   dispatcherCompletionSpillDir,
   dispatcherDir,
-  dispatcherFeishuAttachmentCacheDir,
   dispatcherTeamMateDir,
   dispatcherTeamMateRecordsDir,
   dispatcherTeamMateRecordPath,
   dispatcherTeamMateTurnsPath,
   dispatcherTeamMateRuntimeDir,
-  feishuChannelLogDir,
-  feishuChannelLogPath,
-  feishuMcpLogDir,
-  feishuMcpLogPath,
+  channelLogDir,
+  channelLogPath,
+  channelMcpLogDir,
+  channelMcpLogPath,
   teammateMcpLogDir,
   teammateMcpLogPath,
   dispatcherStatusPath,
@@ -86,10 +85,9 @@ describe('runtime paths', () => {
     expect(dispatcherAccessPath('dispatcher-a')).toBe(
       join(stateRoot(), 'dispatcher-a', 'access.json'),
     );
-    // Cache, not durable state (issue #182 PR-2).
-    expect(dispatcherFeishuAttachmentCacheDir('dispatcher-a')).toBe(
-      join(cacheRoot(), 'dispatcher-a', 'feishu-attachments'),
-    );
+    // Cache, not durable state (issue #182 PR-2). The per-channel attachment
+    // cache subdir is the channel package's concern now (issue #209 de-leak);
+    // core only exposes the neutral dispatcher cache root.
     expect(dispatcherCompletionSpillDir('dispatcher-a')).toBe(
       join(cacheRoot(), 'dispatcher-a', 'spill'),
     );
@@ -130,7 +128,6 @@ describe('runtime paths', () => {
     expect(cacheRoot()).toBe(join(dreamuxRoot(), 'cache'));
     for (const cachePath of [
       dispatcherCompletionSpillDir('dispatcher-a'),
-      dispatcherFeishuAttachmentCacheDir('dispatcher-a'),
     ]) {
       expect(cachePath.startsWith(cacheRoot())).toBe(true);
       expect(cachePath.startsWith(stateRoot())).toBe(false);
@@ -139,13 +136,13 @@ describe('runtime paths', () => {
 
   it('places logs under component log directories', () => {
     expect(serverLogPath()).toBe(join(logsRoot(), 'dreamux-server.log'));
-    expect(feishuChannelLogDir()).toBe(join(logsRoot(), 'feishu-channel'));
-    expect(feishuChannelLogPath('dispatcher-a')).toBe(
-      join(logsRoot(), 'feishu-channel', 'dispatcher-a.log'),
+    expect(channelLogDir()).toBe(join(logsRoot(), 'channel'));
+    expect(channelLogPath('dispatcher-a')).toBe(
+      join(logsRoot(), 'channel', 'dispatcher-a.log'),
     );
-    expect(feishuMcpLogDir()).toBe(join(logsRoot(), 'feishu-mcp'));
-    expect(feishuMcpLogPath('dispatcher-a')).toBe(
-      join(logsRoot(), 'feishu-mcp', 'dispatcher-a.log'),
+    expect(channelMcpLogDir()).toBe(join(logsRoot(), 'channel-mcp'));
+    expect(channelMcpLogPath('dispatcher-a')).toBe(
+      join(logsRoot(), 'channel-mcp', 'dispatcher-a.log'),
     );
     expect(teammateMcpLogDir()).toBe(join(logsRoot(), 'teammate-mcp'));
     expect(teammateMcpLogPath('dispatcher-a')).toBe(

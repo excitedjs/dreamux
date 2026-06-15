@@ -4,9 +4,9 @@
  * The channel-kind twin of `agent-runtime/catalog.ts`: a registry-backed lookup
  * that resolves a `dispatchers[].channels[].provider` ref to its neutral
  * `ChannelProvider`. Core drives every channel session through this one neutral
- * seam — it never names a concrete channel class (e.g. the Feishu session) and
- * is unaware of which package implements `builtin:feishu` vs an external
- * `npm:` channel provider.
+ * seam — it never names a concrete channel class (e.g. a provider's own session)
+ * and is unaware of which package implements a `builtin:` vs an external `npm:`
+ * channel provider.
  */
 import {
   formatProviderRef,
@@ -14,7 +14,6 @@ import {
   type ProviderDescriptor,
   type ProviderRegistry,
 } from '../registry/index.js';
-import { registerBuiltinChannelProviders } from './builtin-channel-providers.js';
 import type { ChannelProvider } from '@excitedjs/dreamux-types';
 
 export class UnsupportedChannelProviderError extends Error {
@@ -84,17 +83,6 @@ export class ChannelProviderCatalog {
   ): ChannelProvider | null {
     return asChannelProvider(this.registry.getImplementation(descriptor.id));
   }
-}
-
-export interface BuiltinChannelProviderCatalogOptions {
-  registry: ProviderRegistry;
-}
-
-export function createBuiltinChannelProviderCatalog(
-  options: BuiltinChannelProviderCatalogOptions,
-): ChannelProviderCatalog {
-  registerBuiltinChannelProviders({ registry: options.registry });
-  return new ChannelProviderCatalog({ registry: options.registry });
 }
 
 export function asChannelProvider(value: unknown): ChannelProvider | null {

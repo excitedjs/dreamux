@@ -390,17 +390,17 @@ describe('multiple channel sessions are live, one bot per channel (#209)', () =>
 
     // Egress dispatches to a live channel; an unknown channel fails loud.
     await expect(
-      service.callFeishuMcpTool({
+      service.dispatchers.invokeChannelTool({
         dispatcherId: 'flow',
-        toolName: 'reply',
+        name: 'reply',
         arguments: { chat_id: 'chat-b', text: 'hi' },
         channelId: 'secondary',
       }),
     ).resolves.toBeDefined();
     await expect(
-      service.callFeishuMcpTool({
+      service.dispatchers.invokeChannelTool({
         dispatcherId: 'flow',
-        toolName: 'reply',
+        name: 'reply',
         arguments: { chat_id: 'chat-b', text: 'hi' },
         channelId: 'nope',
       }),

@@ -24,11 +24,7 @@ import {
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import {
-  IN_PROGRESS_REACTION_EMOJI,
-  RECEIVED_REACTION_EMOJI,
-  Server,
-} from '../src/server.js';
+import { Server } from '../src/server.js';
 import {
   CodexProcess,
   type CodexProcessExit,
@@ -41,11 +37,14 @@ import { feishuChannelCatalog } from './helpers/fake-channel.js';
 import { createAdminSocketServer } from '../src/admin/socket.js';
 import { sendAdminRequest } from '../src/admin/client.js';
 import {
+  IN_PROGRESS_REACTION_EMOJI,
+  RECEIVED_REACTION_EMOJI,
   TRUST_DOMAIN_WARNING,
   loadDispatcherAccess,
   saveDispatcherAccess,
   loadChatBots,
 } from '@excitedjs/feishu-channel';
+import { dispatcherPrincipal } from '../src/dispatcher-service/teammate/types.js';
 import type { DreamuxConfig } from '../src/config/config.js';
 import {
   defaultDispatcherCwd,
@@ -66,9 +65,10 @@ import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 import { asAgentRuntimeDescriptor } from './helpers/provider.js';
 import { Writable } from 'node:stream';
 import {
-  loadExternalAgentRuntimeProviders,
+  loadAgentRuntimeProviders,
   type ExternalAgentRuntimeProviderFactory,
 } from '../src/agent-runtime/index.js';
+import { codexAgentRuntimeCatalog } from './helpers/fake-agent-runtime.js';
 import type {
   AgentRuntime,
   AgentRuntimeCapabilities,
@@ -146,7 +146,6 @@ function buildServer(opts: {
     // Tests that register the row via the store use `upsert` to stay idempotent
     // against this seed.
     config: opts.config ?? configWithDispatcher(),
-    providerRegistry: opts.providerRegistry,
     adminSocketPath: join(opts.runtimeDir, 'admin.sock'),
     channelProviderCatalog: feishuChannelCatalog((config) => {
       opts.capturedBotSecrets?.push(config.appSecret);
@@ -158,21 +157,38 @@ function buildServer(opts: {
     ...(opts.channelLoggerFactory !== undefined
       ? { channelLoggerFactory: opts.channelLoggerFactory }
       : {}),
-    codexProcessFactory: (o) => {
-      if (opts.spawnCounter !== undefined) opts.spawnCounter.count++;
-      opts.capturedCodexOptions?.push(o);
-      return opts.codexProcessFactory?.(o) ?? new NoopCodexProcess(o);
-    },
-    codexClientFactory: () =>
-      opts.codexClientFactory?.() ?? new CodexWsClient({ url: opts.fake.url }),
-    codexRestartBackoffBaseMs: opts.codexRestartBackoffBaseMs,
-    codexRestartBackoffMaxMs: opts.codexRestartBackoffMaxMs,
-    ...(opts.useDefaultCodexHomeDoctor === true
-      ? {}
-          : {
-          codexHomeDoctor: () => {
-            /* fake codex tests do not require a real global Codex home */
-          },
+    // The Codex construction seams are no longer Server-level — they belong to
+    // the codex provider implementation, injected via the AgentRuntime catalog
+    // (mirrors how the channel bot is injected via the channel catalog). When a
+    // test supplies its own providerRegistry (the external npm-runtime cases),
+    // hand it through so the Server builds the catalog from it and runs the
+    // implementation-loaded assertion, instead of shadowing it with an injected
+    // codex catalog.
+    ...(opts.providerRegistry !== undefined
+      ? { providerRegistry: opts.providerRegistry }
+      : {
+          agentRuntimeProviderCatalog: codexAgentRuntimeCatalog({
+            codexProcessFactory: (o) => {
+              if (opts.spawnCounter !== undefined) opts.spawnCounter.count++;
+              opts.capturedCodexOptions?.push(o);
+              return opts.codexProcessFactory?.(o) ?? new NoopCodexProcess(o);
+            },
+            codexClientFactory: () =>
+              opts.codexClientFactory?.() ?? new CodexWsClient({ url: opts.fake.url }),
+            ...(opts.codexRestartBackoffBaseMs !== undefined
+              ? { restartBackoffBaseMs: opts.codexRestartBackoffBaseMs }
+              : {}),
+            ...(opts.codexRestartBackoffMaxMs !== undefined
+              ? { restartBackoffMaxMs: opts.codexRestartBackoffMaxMs }
+              : {}),
+            ...(opts.useDefaultCodexHomeDoctor === true
+              ? {}
+              : {
+                  codexHomeDoctor: () => {
+                    /* fake codex tests do not require a real global Codex home */
+                  },
+                }),
+          }),
         }),
   });
 }
@@ -512,10 +528,11 @@ describe('dreamux MVP smoke', () => {
     );
 
     // list_chat_bots exposes trusted as { open_id, name? }; missing name omitted.
-    const listing = await server.dispatcherService.callFeishuMcpTool({
+    const listing = await server.dispatcherService.invokeChannelTool({
       dispatcherId: 'flow',
-      toolName: 'list_chat_bots',
+      name: 'list_chat_bots',
       arguments: { chat_id: 'chat-group-a' },
+      caller: dispatcherPrincipal('flow'),
     }) as {
       chat_id: string;
       trusted: Array<{ open_id: string; name?: string }>;
@@ -626,7 +643,7 @@ describe('dreamux MVP smoke', () => {
     const providerRef = 'npm:@example/dreamux-runtime#provider';
     const registry = createBuiltinProviderRegistry();
     const contexts: AgentRuntimeCreateContext[] = [];
-    await loadExternalAgentRuntimeProviders({
+    await loadAgentRuntimeProviders({
       registry,
       refs: [providerRef],
       importModule: async (packageName) => {
@@ -678,6 +695,12 @@ describe('dreamux MVP smoke', () => {
         runtimeDir,
         fake,
         bot,
+        // A registry seeded only with the builtin descriptors (no external impl
+        // loaded) drives the Server's implementation-loaded assertion: the npm
+        // ref resolves to no implementation, so construction fails loud. Passing
+        // a registry routes buildServer through the registry path instead of an
+        // injected codex catalog (which would skip the assertion).
+        providerRegistry: createBuiltinProviderRegistry(),
         config: {
           agents: {},
           dispatchers: [
@@ -708,7 +731,7 @@ describe('dreamux MVP smoke', () => {
       DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
     );
     expect(DREAMUX_DISPATCHER_BASE_INSTRUCTIONS).toContain(
-      'Feishu MCP reply tool',
+      'channel reply tool',
     );
     expect(DREAMUX_DISPATCHER_BASE_INSTRUCTIONS).toContain(
       'Delegate repository exploration',
@@ -862,7 +885,7 @@ describe('dreamux MVP smoke', () => {
     expect(teamIdx).toBeGreaterThan(operatorIdx);
     expect(dreamuxBinPath()).toMatch(/\/dreamux$/);
     expect(args).toContain(
-      `mcp_servers.feishu.args=["feishu-mcp", "--dispatcher", "flow", "--admin-socket", "${join(runtimeDir, 'admin.sock')}"]`,
+      `mcp_servers.feishu.args=["channel-mcp", "--provider", "builtin:feishu", "--dispatcher", "flow", "--caller", "dispatcher", "--admin-socket", "${join(runtimeDir, 'admin.sock')}"]`,
     );
     expect(args).toContain(
       `mcp_servers.teammate.args=["teammate-mcp", "--dispatcher", "flow", "--caller", "dispatcher", "--admin-socket", "${join(runtimeDir, 'admin.sock')}"]`,
@@ -909,34 +932,40 @@ describe('dreamux MVP smoke', () => {
     expect(codexInputs.some((input) => input.includes('team hello'))).toBe(true);
     await expect(
       sendAdminRequest(
-        'mcp.react',
+        'channel.invoke_tool',
         {
           dispatcher_id: 'flow',
           caller_kind: 'team_leader',
           team_id: 'alpha',
           leader_name: leaderName,
-          chat_id: 'chat-team',
-          message_id: 'msg-team',
-          emoji: 'THUMBSUP',
+          name: 'react',
+          arguments: {
+            chat_id: 'chat-team',
+            message_id: 'msg-team',
+            emoji: 'THUMBSUP',
+          },
         },
         { socketPath: join(runtimeDir, 'admin.sock') },
       ),
     ).resolves.toMatchObject({ reaction_id: expect.any(String) });
     await expect(
       sendAdminRequest(
-        'mcp.react',
+        'channel.invoke_tool',
         {
           dispatcher_id: 'flow',
           caller_kind: 'team_leader',
           team_id: 'alpha',
           leader_name: leaderName,
-          chat_id: 'chat-team',
-          message_id: 'msg-unknown',
-          emoji: 'THUMBSUP',
+          name: 'react',
+          arguments: {
+            chat_id: 'chat-team',
+            message_id: 'msg-unknown',
+            emoji: 'THUMBSUP',
+          },
         },
         { socketPath: join(runtimeDir, 'admin.sock') },
       ),
-    ).rejects.toThrow(/TeamLeader may react\/reply only to messages observed/);
+    ).rejects.toThrow(/TeamLeader may act only on messages observed/);
     codexInputs.length = 0;
 
     await server.dispatcherService.transferTeamChannelBack({
@@ -1028,13 +1057,16 @@ describe('dreamux MVP smoke', () => {
     await waitFor(() => bot.reactions.length === 2);
 
     const result = await sendAdminRequest(
-      'mcp.reply',
+      'channel.invoke_tool',
       {
         dispatcher_id: 'flow',
-        chat_id: 'chat-group-a',
-        message_id: 'msg-mcp-reply',
-        text: 'manual mcp reply',
-        mention_user_ids: ['sender-test'],
+        name: 'reply',
+        arguments: {
+          chat_id: 'chat-group-a',
+          message_id: 'msg-mcp-reply',
+          text: 'manual mcp reply',
+          mention_user_ids: ['sender-test'],
+        },
       },
       { socketPath: join(runtimeDir, 'admin.sock') },
     ) as { message_ids: string[] };
@@ -1100,12 +1132,15 @@ describe('dreamux MVP smoke', () => {
     await reactionStarted;
 
     const result = await sendAdminRequest(
-      'mcp.reply',
+      'channel.invoke_tool',
       {
         dispatcher_id: 'flow',
-        chat_id: 'chat-group-a',
-        message_id: 'msg-race-reaction',
-        text: 'manual race reply',
+        name: 'reply',
+        arguments: {
+          chat_id: 'chat-group-a',
+          message_id: 'msg-race-reaction',
+          text: 'manual race reply',
+        },
       },
       { socketPath: join(runtimeDir, 'admin.sock') },
     ) as { message_ids: string[] };
@@ -1196,12 +1231,15 @@ describe('dreamux MVP smoke', () => {
     await waitFor(() => bot.reactions.length === 1);
 
     await sendAdminRequest(
-      'mcp.reply',
+      'channel.invoke_tool',
       {
         dispatcher_id: 'flow',
-        chat_id: 'chat-group-a',
-        message_id: 'msg-replace-race',
-        text: 'manual reply mid-transition',
+        name: 'reply',
+        arguments: {
+          chat_id: 'chat-group-a',
+          message_id: 'msg-replace-race',
+          text: 'manual reply mid-transition',
+        },
       },
       { socketPath: join(runtimeDir, 'admin.sock') },
     );
@@ -1242,12 +1280,15 @@ describe('dreamux MVP smoke', () => {
     await server.start();
 
     const result = await sendAdminRequest(
-      'mcp.react',
+      'channel.invoke_tool',
       {
         dispatcher_id: 'flow',
-        chat_id: 'chat-group-a',
-        message_id: 'msg-model-react',
-        emoji: 'THUMBSUP',
+        name: 'react',
+        arguments: {
+          chat_id: 'chat-group-a',
+          message_id: 'msg-model-react',
+          emoji: 'THUMBSUP',
+        },
       },
       { socketPath: join(runtimeDir, 'admin.sock') },
     ) as { reaction_id: string };
@@ -1800,8 +1841,12 @@ describe('dreamux MVP smoke', () => {
     await sleep(40);
 
     const result = (await sendAdminRequest(
-      'mcp.list_chat_bots',
-      { dispatcher_id: 'flow', chat_id: 'chat-group-a' },
+      'channel.invoke_tool',
+      {
+        dispatcher_id: 'flow',
+        name: 'list_chat_bots',
+        arguments: { chat_id: 'chat-group-a' },
+      },
       { socketPath: join(runtimeDir, 'admin.sock') },
     )) as {
       chat_id: string;
@@ -2191,14 +2236,15 @@ describe('dreamux MVP smoke', () => {
     });
     await server.start();
 
-    const result = await server.dispatcherService.callFeishuMcpTool({
+    const result = await server.dispatcherService.invokeChannelTool({
       dispatcherId: 'flow',
-      toolName: 'reply',
+      name: 'reply',
       arguments: {
         chat_id: 'chat-group-a',
         message_id: 'msg-reply',
         text: REPLY_BODY,
       },
+      caller: dispatcherPrincipal('flow'),
     }) as { message_ids: string[] };
     expect(result.message_ids).toEqual(['message-fake-1']);
 
@@ -2231,14 +2277,15 @@ describe('dreamux MVP smoke', () => {
     await server.start();
 
     await expect(
-      server.dispatcherService.callFeishuMcpTool({
+      server.dispatcherService.invokeChannelTool({
         dispatcherId: 'flow',
-        toolName: 'reply',
+        name: 'reply',
         arguments: {
           chat_id: 'chat-group-a',
           message_id: 'msg-reply-fail',
           text: REPLY_BODY,
         },
+        caller: dispatcherPrincipal('flow'),
       }),
     ).rejects.toThrow('feishu send boom');
 
@@ -2270,13 +2317,14 @@ describe('dreamux MVP smoke', () => {
     });
     await server.start();
 
-    const ok = await server.dispatcherService.callFeishuMcpTool({
+    const ok = await server.dispatcherService.invokeChannelTool({
       dispatcherId: 'flow',
-      toolName: 'react',
+      name: 'react',
       arguments: {
         message_id: 'msg-react',
         emoji: 'THUMBSUP',
       },
+      caller: dispatcherPrincipal('flow'),
     }) as { reaction_id: string };
     expect(ok.reaction_id).toBe('reaction-fake-1');
     const sent = capture
@@ -2291,13 +2339,14 @@ describe('dreamux MVP smoke', () => {
 
     bot.setReactionError(new Error('feishu react boom'));
     await expect(
-      server.dispatcherService.callFeishuMcpTool({
+      server.dispatcherService.invokeChannelTool({
         dispatcherId: 'flow',
-        toolName: 'react',
+        name: 'react',
         arguments: {
           message_id: 'msg-react-fail',
           emoji: 'EYES',
         },
+        caller: dispatcherPrincipal('flow'),
       }),
     ).rejects.toThrow('feishu react boom');
     const failed = capture

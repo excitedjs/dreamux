@@ -3,20 +3,21 @@ import { homedir, userInfo } from 'node:os';
 
 import { parse as parsePlist, type PlistValue } from 'plist';
 
+// eslint-disable-next-line no-restricted-imports -- Q3 de-leak: doctor still resolves the codex bin (tracked in .agents/wip/i209-cleanup/plan-q1q2-neutrality.md)
 import { resolveCodexBinPath } from '@excitedjs/agent-runtime-codex';
 import {
   BUILT_IN_DEFAULTS,
+  BUILTIN_CLAUDE_CODE_PROVIDER_REF,
+  BUILTIN_CODEX_PROVIDER_REF,
   DEFAULT_CODEX_BIN,
   type DispatcherConfig,
   globalConfigDir,
   globalConfigFile,
+  loadConfig,
   type DreamuxConfig,
 } from '../config/config.js';
-import { loadConfigWithBuiltins } from '../agent-runtime/load-config.js';
-import {
-  AgentRuntimeProviderCatalog,
-  registerBuiltinAgentRuntimeProviders,
-} from '../agent-runtime/catalog.js';
+import { AgentRuntimeProviderCatalog } from '../agent-runtime/catalog.js';
+import { loadAgentRuntimeProviders } from '../agent-runtime/external-provider.js';
 import { createBuiltinProviderRegistry } from '../registry/index.js';
 import type {
   AgentRuntimeBinCheck,
@@ -256,7 +257,7 @@ async function readConfigForDoctor(
   catalog: AgentRuntimeProviderCatalog;
 }> {
   try {
-    const loaded = await loadConfigWithBuiltins({ configDir });
+    const loaded = await loadConfig({ configDir });
     checks.push({
       name: 'config',
       ok: true,
@@ -279,7 +280,7 @@ async function readConfigForDoctor(
     return {
       config: BUILT_IN_DEFAULTS,
       configFile: globalConfigFile({ configDir }),
-      catalog: builtinDoctorCatalog(),
+      catalog: await builtinDoctorCatalog(),
     };
   }
 }
@@ -287,10 +288,16 @@ async function readConfigForDoctor(
 /**
  * A catalog over a fresh builtin registry, used when config failed to load (so
  * the empty-dispatchers default-codex bin check still resolves its provider).
+ * Builtins load through the same dynamic loader as npm refs — there is no static
+ * builtin-registration path — so the codex/claude implementations are pulled in
+ * by resolving their `builtin:*` refs to packages before the catalog is built.
  */
-function builtinDoctorCatalog(): AgentRuntimeProviderCatalog {
+async function builtinDoctorCatalog(): Promise<AgentRuntimeProviderCatalog> {
   const registry = createBuiltinProviderRegistry();
-  registerBuiltinAgentRuntimeProviders({ registry });
+  await loadAgentRuntimeProviders({
+    registry,
+    refs: [BUILTIN_CODEX_PROVIDER_REF, BUILTIN_CLAUDE_CODE_PROVIDER_REF],
+  });
   return new AgentRuntimeProviderCatalog({ registry });
 }
 

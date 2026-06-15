@@ -43,7 +43,6 @@
     "@excitedjs/dreamux-types": "workspace:*",
     "@excitedjs/dreamux-utils": "workspace:*",
     "@excitedjs/feishu-channel": "workspace:*",
-    "@excitedjs/feishu-transport": "workspace:*",
     "@excitedjs/tm": "2.4.1",
     "smol-toml": "^1.6.1",
     "yargs": "^17.7.2",

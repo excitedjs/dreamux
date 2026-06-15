@@ -2,59 +2,74 @@
  * Dispatcher runtime-boundary guard (issue #209 live multi-channel routing).
  *
  * `assertRunnableChannelShape` is the single intended place where a config that
- * is *accepted* but *not yet runnable* fails loud. Live routing now runs one
- * Feishu session per channel, so MORE THAN ONE Feishu channel is runnable; only
- * a channel naming an unwired (non-feishu) provider is rejected. These tests pin
- * the boundary so it cannot regress: state seeding stays fail-soft, this guard
- * does the rejecting.
+ * is *accepted* but *not yet runnable* fails loud. A channel is runnable when its
+ * provider resolves to a loaded implementation in the channel catalog — core
+ * names no concrete provider, so any builtin/npm channel that loaded is runnable;
+ * only a channel whose provider has no loaded implementation is rejected. State
+ * seeding stays fail-soft; this guard does the rejecting.
  */
 import { describe, expect, it } from 'vitest';
 
 import type { DispatcherChannelConfig } from '../src/config/config.js';
-import { assertRunnableChannelShape } from '../src/dispatcher-service/dispatcher/runnable-channel.js';
+import {
+  assertRunnableChannelShape,
+  type ChannelProviderResolver,
+} from '../src/dispatcher-service/dispatcher/runnable-channel.js';
 
-function feishu(id: string, appId: string): DispatcherChannelConfig {
+function channel(id: string, provider: string): DispatcherChannelConfig {
+  return { id, provider, config: {} as never };
+}
+
+/** A fake catalog: resolves the given loaded refs, throws (unloaded) otherwise. */
+function resolverWith(...loaded: string[]): ChannelProviderResolver {
+  const set = new Set(loaded);
   return {
-    id,
-    provider: 'builtin:feishu',
-    config: { app_id: appId, app_secret: 'secret' } as never,
+    resolve(ref: string): unknown {
+      if (!set.has(ref)) {
+        throw new Error(`channel provider ${JSON.stringify(ref)} is not supported`);
+      }
+      return {};
+    },
   };
 }
 
-function nonFeishu(id: string): DispatcherChannelConfig {
-  return { id, provider: 'npm:@example/dreamux-other#channel', config: {} };
-}
-
 describe('assertRunnableChannelShape', () => {
-  it('accepts a single builtin:feishu channel', () => {
+  it('accepts a single channel whose provider resolves', () => {
     expect(() =>
-      assertRunnableChannelShape({ id: 'flow', channels: [feishu('primary', 'app-flow')] }),
+      assertRunnableChannelShape(
+        { id: 'flow', channels: [channel('primary', 'builtin:feishu')] },
+        resolverWith('builtin:feishu'),
+      ),
     ).not.toThrow();
   });
 
-  it('accepts more than one builtin:feishu channel (live multi-channel routing)', () => {
+  it('accepts more than one channel when each provider resolves (any provider, not just feishu)', () => {
     expect(() =>
-      assertRunnableChannelShape({
-        id: 'flow',
-        channels: [feishu('primary', 'app-a'), feishu('secondary', 'app-b')],
-      }),
+      assertRunnableChannelShape(
+        {
+          id: 'flow',
+          channels: [
+            channel('primary', 'builtin:feishu'),
+            channel('secondary', 'npm:@example/dreamux-slack#channel'),
+          ],
+        },
+        resolverWith('builtin:feishu', 'npm:@example/dreamux-slack#channel'),
+      ),
     ).not.toThrow();
   });
 
-  it('rejects a mixed multi-channel dispatcher (an unwired non-feishu channel)', () => {
-    // A feishu channel runs fine, but the non-feishu channel names a provider the
-    // dispatcher service does not wire in this phase, so the whole shape fails loud.
+  it('rejects a channel whose provider has no loaded implementation', () => {
     expect(() =>
-      assertRunnableChannelShape({
-        id: 'flow',
-        channels: [feishu('primary', 'app-flow'), nonFeishu('secondary')],
-      }),
-    ).toThrow(/is not wired; only builtin:feishu is built in this phase/);
-  });
-
-  it('rejects a single non-feishu channel as not wired', () => {
-    expect(() =>
-      assertRunnableChannelShape({ id: 'flow', channels: [nonFeishu('primary')] }),
-    ).toThrow(/is not wired; only builtin:feishu is built in this phase/);
+      assertRunnableChannelShape(
+        {
+          id: 'flow',
+          channels: [
+            channel('primary', 'builtin:feishu'),
+            channel('secondary', 'npm:@example/dreamux-other#channel'),
+          ],
+        },
+        resolverWith('builtin:feishu'),
+      ),
+    ).toThrow(/channel "npm:@example\/dreamux-other#channel" is not runnable/);
   });
 });

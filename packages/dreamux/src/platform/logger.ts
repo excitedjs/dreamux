@@ -9,7 +9,7 @@
  *
  * Design (settled in the issue #70 decision record):
  *   - `pino` with `pino.multistream`, never the worker-thread transport: robust
- *     for the short-lived `feishu-mcp` stdio shim and for vitest.
+ *     for the short-lived `channel-mcp` stdio shim and for vitest.
  *   - Dual output. When `filePath` is given we write JSON to BOTH the file and
  *     stderr, so a foreground `serve` never goes dark. Format is structured on
  *     both streams (a deliberate v1 UX choice — no `pino-pretty`, no fragile
@@ -21,7 +21,7 @@
  *     synchronous-blocking-IO lint gate, and switching to an async destination
  *     would force a `flushSync()` in a `process.on('exit')` handler — re-adding
  *     unavoidable sync IO in the one truly sync-only context, plus a log-tail
- *     loss risk in the short-lived `feishu-mcp` shim.
+ *     loss risk in the short-lived `channel-mcp` shim.
  *   - Files are created `0o600` and their parent directory `mkdir`-ed by
  *     `pino.destination` itself (`{ mkdir: true, mode: 0o600 }`). That open is
  *     internal to pino/SonicBoom, not application sync IO, so `createLogger`
@@ -38,7 +38,6 @@
 
 import { chmod } from 'node:fs/promises';
 
-import type { TransportLogger } from '@excitedjs/feishu-transport';
 import pino, {
   type DestinationStream,
   type Logger,
@@ -50,7 +49,7 @@ export type DreamuxLogger = Logger;
 export interface CreateLoggerOptions {
   /**
    * Component name stamped on every line (`server`, `channel/<id>`,
-   * `feishu-mcp/<id>`). Surfaces in the structured output and the stderr line.
+   * `channel-mcp/<id>`). Surfaces in the structured output and the stderr line.
    */
   name?: string;
   /**
@@ -76,9 +75,11 @@ export interface CreateLoggerOptions {
 }
 
 /**
- * Paths whose values are redacted from every log line. Covers the Feishu
- * `app_secret` wherever it might be nested (config snapshot, dispatcher row,
- * credentials object) plus a generic `*.secret` catch.
+ * Paths whose values are redacted from every log line. A generic,
+ * provider-agnostic secret policy: any `app_secret` / `secret` key wherever it
+ * is nested (config snapshot, dispatcher row, a provider credentials object).
+ * Core names no provider here — a channel's `app_secret` is caught by the
+ * generic `*.app_secret` / `*.secret` patterns.
  */
 const REDACT_PATHS = [
   'app_secret',
@@ -87,8 +88,6 @@ const REDACT_PATHS = [
   '*.appSecret',
   'secret',
   '*.secret',
-  'feishu.app_secret',
-  '*.feishu.app_secret',
 ] as const;
 
 function resolveLevel(level?: pino.Level): pino.Level {
@@ -172,25 +171,3 @@ function serializeErr(err: unknown): { message: string; stack?: string } {
   return { message: String(err) };
 }
 
-/**
- * Adapt a `DreamuxLogger` (pino) to the `@excitedjs/feishu-transport`
- * `TransportLogger` seam, so the transport's own SDK / connection diagnostics
- * fold into the same per-dispatcher channel log as the host's channel
- * decisions. pino takes `(mergingObject, message)`, the transport seam emits
- * `(message, fields?)` — this flips the argument order and supplies an empty
- * object when the transport carried no fields.
- *
- * The transport only ever passes its own diagnostic source fields (an SDK/
- * connection `source` tag and a serialized `err`); it never hands message
- * bodies or credentials to the logger, so this adapter forwards `fields`
- * verbatim without re-redacting (the pino `redact` config still applies).
- */
-export function pinoToTransportLogger(logger: DreamuxLogger): TransportLogger {
-  return {
-    error: (message, fields) => logger.error(fields ?? {}, message),
-    warn: (message, fields) => logger.warn(fields ?? {}, message),
-    info: (message, fields) => logger.info(fields ?? {}, message),
-    debug: (message, fields) => logger.debug(fields ?? {}, message),
-    trace: (message, fields) => logger.trace(fields ?? {}, message),
-  };
-}

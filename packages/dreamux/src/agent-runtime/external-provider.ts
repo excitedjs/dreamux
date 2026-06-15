@@ -3,8 +3,8 @@
  *
  * This is the `agentRuntime` specialization of the generic provider package
  * loader (`../registry/provider-loader.ts`). It keeps the public surface in-repo
- * callers and tests import (`loadExternalAgentRuntimeProviders`, the factory
- * type, and the two error classes) while delegating the kind-agnostic mechanics
+ * callers and tests import (`loadAgentRuntimeProviders`, the factory type, and
+ * the two error classes) while delegating the kind-agnostic mechanics
  * — dynamic import, export selection, factory invocation, duplicate handling,
  * descriptor registration, and fail-loud formatting — to the shared skeleton.
  *
@@ -69,7 +69,7 @@ export class ExternalAgentRuntimeProviderContractError extends Error {
   }
 }
 
-export interface LoadExternalAgentRuntimeProvidersOptions {
+export interface LoadAgentRuntimeProvidersOptions {
   registry: ProviderRegistry;
   refs: Iterable<string>;
   importModule?: ExternalAgentRuntimeModuleImporter;
@@ -84,8 +84,8 @@ const AGENT_RUNTIME_LOADER_SPEC: ProviderPackageLoaderSpec<AgentRuntimeProvider>
   assertProvider: assertExternalAgentRuntimeProvider,
 };
 
-export async function loadExternalAgentRuntimeProviders(
-  options: LoadExternalAgentRuntimeProvidersOptions,
+export async function loadAgentRuntimeProviders(
+  options: LoadAgentRuntimeProvidersOptions,
 ): Promise<void> {
   await loadProviderPackages(options, AGENT_RUNTIME_LOADER_SPEC);
 }

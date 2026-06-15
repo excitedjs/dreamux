@@ -15,6 +15,8 @@
  * package never imports `@excitedjs/dreamux` and stays a first-class, loader-real
  * `ChannelProvider` for the generic channel loader and external embedders.
  */
+import { join } from 'node:path';
+
 import type {
   AgentRuntimeMcpServer,
   ChannelInboundEnvelope,
@@ -35,6 +37,7 @@ import type {
 } from '@excitedjs/dreamux-types';
 import {
   FeishuChannelSession,
+  toWireChatBot,
   type FeishuChannelLogger,
   type FeishuInboundEnvelope,
 } from './feishu-channel.js';
@@ -44,9 +47,9 @@ import { feishuMcpTools, parseFeishuMcpToolInput } from './feishu-mcp-tools.js';
 import { BUILTIN_FEISHU_PROVIDER_REF } from './provider-ref.js';
 
 /**
- * The Feishu MCP server name (this channel's MCP tool namespace). Core owns the
- * host-side `feishu-mcp` stdio shim and admin-method routing; the package only
- * needs the server name to shape the descriptor it returns from
+ * The Feishu MCP server name (this channel's MCP tool namespace). Core ships a
+ * generic `channel-mcp` stdio shim and neutral admin-method routing; the package
+ * only needs the server name to shape the descriptor it returns from
  * `mcpServerDescriptor` below.
  */
 const FEISHU_MCP_SERVER_NAME = 'feishu';
@@ -132,14 +135,19 @@ class NeutralFeishuChannelSession implements ChannelSession {
   mcpServerDescriptor(
     context: ChannelMcpDescriptorContext,
   ): AgentRuntimeMcpServer | null {
-    // Build the `feishu-mcp` stdio descriptor from the host's neutral bin
-    // command + admin socket. Feishu always exposes its MCP surface, so this
-    // never returns null. Core owns the bin path; the package only shapes args.
+    // Build the generic `channel-mcp` stdio descriptor from the host's neutral
+    // bin command + admin socket. Feishu always exposes its MCP surface, so this
+    // never returns null. Core owns the bin path and the generic shim; the
+    // package only shapes args. `--provider` is advisory (the shim resolves the
+    // live channel session from the dispatcher id) but names which channel this
+    // descriptor serves.
     return {
       name: FEISHU_MCP_SERVER_NAME,
       command: context.command,
       args: [
-        'feishu-mcp',
+        'channel-mcp',
+        '--provider',
+        BUILTIN_FEISHU_PROVIDER_REF,
         '--dispatcher',
         context.dispatcher_id,
         ...(context.callerKind !== undefined
@@ -253,7 +261,16 @@ export function createFeishuChannelProvider(
       if (parsed.toolName !== 'list_chat_bots') {
         throw new Error('feishu sessionless tool parse mismatch');
       }
-      return listChatBots(context.state_root ?? '.', parsed.input.chatId);
+      // Project to the same wire shape the live `handleTool` path returns
+      // (`{ chat_id, known, trusted }` with `WireChatBot` open_ids), so a
+      // sessionless `list_chat_bots` (no live session) is byte-identical to the
+      // live one — core routes either way by session presence.
+      const listing = await listChatBots(context.state_root ?? '.', parsed.input.chatId);
+      return {
+        chat_id: parsed.input.chatId,
+        known: listing.known.map(toWireChatBot),
+        trusted: listing.trusted.map(toWireChatBot),
+      };
     },
     readConfig(raw): FeishuChannelConfig {
       const obj = (raw ?? {}) as Record<string, unknown>;
@@ -291,7 +308,10 @@ export function createFeishuChannelProvider(
         appId: context.config.appId,
         appSecret: context.config.appSecret,
         stateDir,
-        attachmentCacheDir: cacheRoot,
+        // The channel owns its cache-subdir layout; core supplies only a neutral
+        // per-dispatcher cache root (issue #209 de-leak — core no longer names a
+        // `feishu-attachments` dir). Effective path is unchanged.
+        attachmentCacheDir: join(cacheRoot, 'feishu-attachments'),
         log: channelLoggerFromNeutral(context.logger),
         ...(options.botFactory !== undefined
           ? { botFactory: (): FeishuBot => options.botFactory!(context.config) }

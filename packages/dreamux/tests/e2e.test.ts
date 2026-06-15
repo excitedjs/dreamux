@@ -9,11 +9,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 
+import { Server } from '../src/server.js';
 import {
   IN_PROGRESS_REACTION_EMOJI,
   RECEIVED_REACTION_EMOJI,
-  Server,
-} from '../src/server.js';
+} from '@excitedjs/feishu-channel';
 import { sendAdminRequest } from '../src/admin/client.js';
 import {
   loadDispatcherAccess,
@@ -30,7 +30,8 @@ import {
   type FeishuInboundEvent,
 } from '@excitedjs/feishu-channel';
 import { feishuChannelCatalog } from './helpers/fake-channel.js';
-import { runFeishuMcp } from '../src/mcp/feishu-mcp.js';
+import { codexAgentRuntimeCatalog } from './helpers/fake-agent-runtime.js';
+import { runChannelMcp } from '../src/mcp/channel-mcp.js';
 import { BUILT_IN_DEFAULTS, type DreamuxConfig } from '../src/config/config.js';
 import { defaultDispatcherCwd, dispatcherDir } from '../src/platform/paths.js';
 import { dispatcherCodexHome } from '@excitedjs/agent-runtime-codex';
@@ -124,11 +125,15 @@ function buildServer(opts: {
     config: configWithDispatcher(),
     adminSocketPath: join(opts.runtimeDir, 'admin.sock'),
     channelProviderCatalog: feishuChannelCatalog(() => opts.bot),
-    codexProcessFactory: (o) => new NoopCodexProcess(o),
-    codexClientFactory: () => new CodexWsClient({ url: opts.fake.url }),
-    codexHomeDoctor: () => {
-      /* fake Codex tests do not require real operator Codex auth */
-    },
+    // Codex construction seams live on the provider implementation now, injected
+    // via the AgentRuntime catalog rather than as Server options.
+    agentRuntimeProviderCatalog: codexAgentRuntimeCatalog({
+      codexProcessFactory: (o) => new NoopCodexProcess(o),
+      codexClientFactory: () => new CodexWsClient({ url: opts.fake.url }),
+      codexHomeDoctor: () => {
+        /* fake Codex tests do not require real operator Codex auth */
+      },
+    }),
   });
 }
 
@@ -173,7 +178,7 @@ async function callFeishuMcpTool(
   const input = new PassThrough();
   const output = new PassThrough();
   const reader = new JsonLineReader(output);
-  const run = runFeishuMcp({
+  const run = runChannelMcp({
     dispatcherId: 'flow',
     adminSocketPath: join(runtimeDir, 'admin.sock'),
     input,

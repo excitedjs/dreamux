@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "The channel MCP plumbing is fully neutralized: the `feishu-mcp` CLI subcommand + MCP server descriptor args[0] are renamed to the generic `channel-mcp`, and the admin protocol's feishu-specific channel methods (`mcp.reply` / `mcp.react` / `mcp.list_chat_bots`) are replaced by two neutral methods, `channel.invoke_tool { dispatcher_id, name, arguments, caller }` and `channel.list_tools { dispatcher_id, caller }` (issue #209 cleanup, Q1). Core is now a blind channel-MCP conduit: the `channel-mcp` stdio shim forwards raw `{name,arguments}` to those admin methods, which route to the live `ChannelSession` (`handleTool` / `tools`) or, with no live session, to `ChannelProvider.handleSessionlessTool` — core names no channel tool, method, or selector. The channel provider's descriptor now emits `channel-mcp --provider <ref> --dispatcher <id> ...` (the `--provider` ref is advisory; the dispatcher id selects the live session). The per-dispatcher shim log directory moves from `~/.dreamux/logs/feishu-mcp/` to `~/.dreamux/logs/channel-mcp/`. Rebuild: none required for stored state. MCP server descriptors are rendered into Codex `-c mcp_servers.*` spawn args at every dispatcher boot (never persisted and read back), and the admin methods are same-release shim<->server IPC, so the change applies on `daemon restart`. The old `~/.dreamux/logs/feishu-mcp/` directory is left orphaned (rebuildable logs; safe to delete). Any saved automation invoking `dreamux feishu-mcp` directly must switch to `dreamux channel-mcp`.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

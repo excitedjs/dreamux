@@ -65,7 +65,7 @@ two-paths consequence of `.agents/decisions/rush-pnpm-monorepo.md`).
 The user-facing CLI is the single global bin `dreamux`. Current command tree:
 `onboard`, `uninstall`, `serve`, `status`, `doctor`,
 `daemon install|uninstall|start|stop|restart`,
-`dispatcher add|remove|list|status|start|stop`, `feishu-mcp`, `teammate-mcp`,
+`dispatcher add|remove|list|status|start|stop`, `channel-mcp`, `teammate-mcp`,
 `team-mcp`, `config path|show`, and `changelog [--json]`. `dreamux changelog` prints the
 installed package's rush-generated `CHANGELOG.md` (or `CHANGELOG.json` with
 `--json`) — an offline read of the installed version, the upgrade-time
@@ -141,7 +141,7 @@ That record wins over older runtime-dir / SQLite decisions.
   `state/<dispatcher-id>/`.
 - `~/.dreamux/logs/` — server-owned logs, split by component; Codex
   app-server logs use `~/.dreamux/logs/codex-app-server/<dispatcher>.log`, and
-  MCP shim diagnostics use component directories such as `feishu-mcp/` and
+  MCP shim diagnostics use component directories such as `channel-mcp/` and
   `teammate-mcp/`.
 - `~/.codex/` — Codex's own global home for auth, config, and memory.
   Dispatcher app-server processes follow Codex here; dreamux must not create

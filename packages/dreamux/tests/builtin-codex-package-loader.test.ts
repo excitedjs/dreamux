@@ -28,7 +28,7 @@ import type {
 import type { DispatcherCodexConfig } from '@excitedjs/agent-runtime-codex';
 
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
-import { loadExternalAgentRuntimeProviders } from '../src/agent-runtime/external-provider.js';
+import { loadAgentRuntimeProviders } from '../src/agent-runtime/external-provider.js';
 
 const tmpDirs: string[] = [];
 const runtimes: AgentRuntime[] = [];
@@ -43,7 +43,7 @@ async function loadRealCodexProvider(): Promise<
 > {
   const registry = createBuiltinProviderRegistry();
   // Default importer => real `import('@excitedjs/agent-runtime-codex')`.
-  await loadExternalAgentRuntimeProviders({ registry, refs: ['builtin:codex'] });
+  await loadAgentRuntimeProviders({ registry, refs: ['builtin:codex'] });
   const descriptor = registry.resolve('builtin:codex');
   const impl = registry.getImplementation(descriptor.id);
   return impl as AgentRuntimeProvider<DispatcherCodexConfig>;

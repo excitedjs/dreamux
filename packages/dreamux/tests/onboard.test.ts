@@ -19,7 +19,7 @@ import {
 } from '../src/onboard/wizard.js';
 import type { CommandRunner, OnboardAnswers } from '../src/onboard/types.js';
 import type { ServiceNodeProbe } from '../src/onboard/service.js';
-import { loadConfigWithBuiltins } from '../src/agent-runtime/load-config.js';
+import { loadConfig } from '../src/config/config.js';
 import {
   logsRoot,
   resetRuntimeConfig,
@@ -766,7 +766,7 @@ describe('dreamux onboard', () => {
     });
 
     // Now load the written config through the same parser.
-    const { config } = await loadConfigWithBuiltins({ configDir });
+    const { config } = await loadConfig({ configDir });
 
     // agents map must be populated with the 'flow' agent.
     expect(Object.keys(config.agents)).toEqual(['flow']);

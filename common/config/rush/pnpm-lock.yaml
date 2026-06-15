@@ -142,9 +142,6 @@ importers:
       '@excitedjs/feishu-channel':
         specifier: workspace:*
         version: link:../channel/feishu-channel
-      '@excitedjs/feishu-transport':
-        specifier: workspace:*
-        version: link:../channel/feishu-transport
       '@excitedjs/tm':
         specifier: 2.4.1
         version: 2.4.1

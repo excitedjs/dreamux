@@ -9,7 +9,6 @@ export interface TeamMateMcpServerDescriptorOptions {
   callerKind: 'dispatcher' | 'team_leader' | 'teammate';
   teamId?: string;
   leaderName?: string;
-  feishuScope?: 'team';
   command?: string;
   env?: NodeJS.ProcessEnv;
 }
@@ -29,7 +28,6 @@ export function teammateMcpServerDescriptor(
       opts.callerKind,
       ...(opts.teamId !== undefined ? ['--team-id', opts.teamId] : []),
       ...(opts.leaderName !== undefined ? ['--leader-name', opts.leaderName] : []),
-      ...(opts.feishuScope !== undefined ? ['--feishu-scope', opts.feishuScope] : []),
       '--admin-socket',
       opts.adminSocketPath,
     ],

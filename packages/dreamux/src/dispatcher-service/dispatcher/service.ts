@@ -1,8 +1,11 @@
 import type {
   AgentRuntimeTurnResult,
   ChannelInboundEnvelope,
+  ChannelMcpDescriptorContext,
+  ChannelProvider,
   ChannelSession,
   ChannelTarget,
+  ChannelToolDescriptor,
   InboundDeliveryResult,
   InboundDeliveryHooks,
   InboundTurnInput,
@@ -22,16 +25,10 @@ import type {
   CompletionEnvelope,
 } from '@excitedjs/dreamux-types';
 import type { ChannelProviderCatalog } from '../../channel/catalog.js';
-import {
-  feishuMcpServerDescriptor,
-  handleFeishuListChatBots,
-} from '../../channel/feishu-mcp-surface.js';
-import type {
-  FeishuMcpListChatBotsResult,
-  FeishuMcpToolName,
-} from '@excitedjs/feishu-channel';
+import { dreamuxBinPath } from '../../platform/package-bin.js';
 import {
   BUILTIN_CODEX_PROVIDER_REF,
+  type DispatcherChannelConfig,
   type DreamuxConfig,
 } from '../../config/config.js';
 import { assertRunnableChannelShape } from './runnable-channel.js';
@@ -42,8 +39,8 @@ import {
 } from '../../state/dispatcher-store.js';
 import {
   adminSocketPath as defaultAdminSocketPath,
+  dispatcherCacheDir,
   dispatcherDir,
-  dispatcherFeishuAttachmentCacheDir,
 } from '../../platform/paths.js';
 import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
 import type { DreamuxLogger } from '../../platform/logger.js';
@@ -78,8 +75,8 @@ export interface DispatcherAgentSlot {
   runtime: AgentRuntime;
   /**
    * Live channel sessions keyed by dispatcher-local `channel_id`. Decision #4
-   * (issue #209) caps a dispatcher at one channel per provider ref, so with only
-   * `builtin:feishu` wired a dispatcher holds a single session; iteration order
+   * (issue #209) caps a dispatcher at one channel per provider ref, so a
+   * single-channel dispatcher holds a single session; iteration order
    * follows channel declaration order, the first being the primary (default
    * egress) channel.
    */
@@ -95,14 +92,16 @@ export interface DispatcherSummary {
   enabled: boolean;
 }
 
-export interface FeishuChannelToolCall {
+export interface ChannelToolInvocation {
   dispatcherId: string;
-  toolName: FeishuMcpToolName;
+  /** Provider-owned tool name, forwarded opaquely (core never enumerates it). */
+  name: string;
+  /** Raw provider-owned tool arguments, forwarded opaquely to the session. */
   arguments: unknown;
   /**
-   * Which channel's bot the egress (reply/react) leaves through (issue #209 live
-   * multi-channel routing). Omitted → the dispatcher's primary (first) channel,
-   * so a single-channel dispatcher is unchanged. A TeamLeader's reply carries the
+   * Which channel's bot the egress leaves through (issue #209 live multi-channel
+   * routing). Omitted → the dispatcher's primary (first) channel, so a
+   * single-channel dispatcher is unchanged. A TeamLeader's tool call carries the
    * channel resolved from its active binding so it always egresses the bound bot.
    */
   channelId?: string;
@@ -111,7 +110,7 @@ export interface FeishuChannelToolCall {
 const COMPLETION_DELIVERY_CACHE_LIMIT = 512;
 
 /**
- * Owns live dispatcher agents and their built-in Feishu channel sessions.
+ * Owns live dispatcher agents and their built-in channel sessions.
  *
  * Server bootstraps this service and admin/MCP layers route into it; the service
  * owns runtime creation, channel connection lifecycle, restart-notice delivery,
@@ -273,46 +272,148 @@ export class DispatcherAgentService {
     });
   }
 
-  async callFeishuMcpTool(
-    input: FeishuChannelToolCall,
-  ): Promise<Record<string, unknown> | FeishuMcpListChatBotsResult> {
-    if (input.toolName === 'list_chat_bots') {
-      return handleFeishuListChatBots(input.dispatcherId, input.arguments);
+  /**
+   * Invoke a provider-owned channel tool, forwarding the raw `{name, arguments}`
+   * to the neutral channel seam (core is a blind MCP conduit — it never names a
+   * tool). A live channel session handles it via `session.handleTool`; with no
+   * live session the configured provider's `handleSessionlessTool` is tried
+   * instead (the provider feature-detects and throws for an unknown sessionless
+   * tool). `channelId` selects which live session egresses (the caller resolves
+   * the bound channel for a TeamLeader); omitted → the primary channel.
+   */
+  async invokeChannelTool(input: ChannelToolInvocation): Promise<unknown> {
+    const slot = this.slots.get(input.dispatcherId);
+    if (slot === undefined || slot.channels.size === 0) {
+      return this.invokeSessionlessChannelTool(
+        input.dispatcherId,
+        input.name,
+        input.arguments,
+      );
     }
-    const slot = this.mustRunningSlot(input.dispatcherId);
     const session = this.sessionFor(slot, input.channelId);
     if (session.handleTool === undefined) {
       throw new Error(
         `channel '${session.channel_id}' exposes no provider tool surface`,
       );
     }
-    const result = await session.handleTool(
+    return session.handleTool(
       {
-        name: input.toolName,
+        name: input.name,
         arguments: (input.arguments ?? {}) as Record<string, unknown>,
       },
       { dispatcher_id: input.dispatcherId, channel_id: session.channel_id },
     );
-    return result as Record<string, unknown>;
   }
 
-  async feishuMessageBelongsToChat(
+  /**
+   * Service a channel tool that has no live session (e.g. `list_chat_bots`
+   * before a dispatcher's sessions connect) through the configured provider's
+   * `handleSessionlessTool`. Core resolves the provider from the dispatcher's
+   * first configured channel and hands it neutral host locators (state root +
+   * logger); the provider owns tool-name feature detection and throws for an
+   * unknown sessionless tool.
+   */
+  private async invokeSessionlessChannelTool(
     dispatcherId: string,
+    name: string,
+    args: unknown,
+  ): Promise<unknown> {
+    const provider = this.sessionlessChannelProvider(dispatcherId);
+    if (provider.handleSessionlessTool === undefined) {
+      throw new Error(
+        `channel provider '${provider.ref}' exposes no sessionless tool surface`,
+      );
+    }
+    return provider.handleSessionlessTool(
+      name,
+      (args ?? {}) as Record<string, unknown>,
+      {
+        dispatcher_id: dispatcherId,
+        state_root: dispatcherDir(dispatcherId),
+        logger: neutralLoggerFromHostLogger(
+          this.opts.channelLoggerFactory(dispatcherId),
+        ),
+      },
+    );
+  }
+
+  /**
+   * Resolve the channel provider that backs a dispatcher's sessionless tool
+   * calls. Uses the dispatcher's first configured channel (the primary), so a
+   * single-channel dispatcher resolves unambiguously; fails loud when the
+   * dispatcher declares no channel.
+   */
+  private sessionlessChannelProvider(dispatcherId: string): ChannelProvider {
+    const dispatcherConfig = this.opts.config.dispatchers.find(
+      (dispatcher) => dispatcher.id === dispatcherId,
+    );
+    const channelConfig = dispatcherConfig?.channels[0];
+    if (channelConfig === undefined) {
+      throw new Error(
+        `dispatcher '${dispatcherId}' has no configured channel`,
+      );
+    }
+    return this.opts.channelProviders.resolve(channelConfig.provider);
+  }
+
+  /**
+   * The neutral channel tool list for a dispatcher (the blind MCP conduit's
+   * `tools/list`). Prefers the live sessions' own `tools()`; before they connect
+   * (the dispatcher's own MCP shim lists tools during runtime start) it builds
+   * un-started sessions from config to enumerate them, then closes them. Tools
+   * are deduped by name across channels.
+   */
+  async listChannelTools(dispatcherId: string): Promise<ChannelToolDescriptor[]> {
+    const slot = this.slots.get(dispatcherId);
+    const created = slot === undefined || slot.channels.size === 0;
+    const channels = created
+      ? await this.buildChannelSessions(
+          dispatcherId,
+          neutralLoggerFromHostLogger(this.opts.channelLoggerFactory(dispatcherId)),
+        )
+      : slot.channels;
+    try {
+      const out: ChannelToolDescriptor[] = [];
+      const seen = new Set<string>();
+      for (const session of channels.values()) {
+        if (session.tools === undefined) continue;
+        for (const tool of session.tools({
+          dispatcher_id: dispatcherId,
+          channel_id: session.channel_id,
+        })) {
+          if (seen.has(tool.name)) continue;
+          seen.add(tool.name);
+          out.push(tool);
+        }
+      }
+      return out;
+    } finally {
+      if (created) {
+        for (const session of channels.values()) {
+          try {
+            await session.close();
+          } catch {
+            /* best effort: these sessions were never started */
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Whether a live channel session observed a message for a target — the routing
+   * ownership fact the TeamLeader egress gate keys off. A message belongs to the
+   * target if ANY live channel session observed it (a dispatcher's bots see
+   * disjoint targets, so this stays unambiguous); a session that cannot decide is
+   * skipped. The target is provider-resolved; core never names a channel field.
+   */
+  async messageBelongsToTarget(
+    dispatcherId: string,
+    target: ChannelTarget,
     messageId: string,
-    chatId: string,
   ): Promise<boolean> {
     const slot = this.slots.get(dispatcherId);
     if (slot === undefined) return false;
-    // A message belongs to the chat if ANY live channel session observed it; a
-    // dispatcher's bots see disjoint chats, so this stays unambiguous. Core asks
-    // the neutral session via a minimal target carrying the chat id (the channel
-    // owns the ownership decision); a session that cannot decide is skipped.
-    const target: ChannelTarget = {
-      target_type: 'group',
-      target_key: chatId,
-      bindable: true,
-      meta: { chat_id: chatId },
-    };
     for (const session of slot.channels.values()) {
       const decide = session.messageBelongsToTarget;
       if (decide === undefined) continue;
@@ -385,13 +486,13 @@ export class DispatcherAgentService {
     const dispatcherConfig = this.opts.config.dispatchers.find(
       (dispatcher) => dispatcher.id === id,
     );
-    // Config accepts the general multi-channel shape (issue #209). Live routing
-    // now runs one Feishu session per channel; this guard stays the single
-    // runtime boundary that fails loud on a not-yet-runnable shape (a channel
-    // naming an unwired provider). State seeding stays fail-soft so this is the
-    // only place that rejects it.
+    // Config accepts the general multi-channel shape (issue #209). This guard is
+    // the single runtime boundary that fails loud on a not-yet-runnable shape (a
+    // channel whose provider has no loaded implementation in the channel
+    // catalog). State seeding stays fail-soft so this is the only place that
+    // rejects it; core names no concrete provider here.
     if (dispatcherConfig !== undefined) {
-      assertRunnableChannelShape(dispatcherConfig);
+      assertRunnableChannelShape(dispatcherConfig, this.opts.channelProviders);
     }
 
     const runtimeProvider = this.opts.agentRuntimeProviders.resolve(
@@ -431,13 +532,27 @@ export class DispatcherAgentService {
               prefix: '',
             },
           )) ?? {});
+    // Build the (un-started) neutral channel sessions BEFORE the runtime so the
+    // runtime's MCP descriptors are derived from each session's own
+    // `mcpServerDescriptor` (a pure call) — core never names the channel's MCP
+    // shape. Each session is created through its own `ChannelProvider`: core
+    // resolves the provider from the catalog, hands it the provider-validated
+    // config plus host state/cache dirs, and drives the returned neutral
+    // `ChannelSession`. Decision #4 (issue #209) caps a dispatcher at one channel
+    // per provider ref, so a single-channel dispatcher resolves to a
+    // single session. The defensive no-config path (a state row with no live
+    // config entry) yields no channel session — a dispatcher with no configured
+    // channel has no bot identity to connect as. Sessions connect only in the
+    // start loop below.
+    const channels = await this.buildChannelSessions(id, neutralLog);
+
     const runtime = runtimeProvider.createRuntime({
       identity: { runtime_id: id, checkpoint_id: row.thread_id },
       role: 'dispatcher',
       config: runtimeConfig,
       cwd,
       systemPromptContent,
-      mcpServers: this.dreamuxMcpServerDescriptors(id),
+      mcpServers: this.dreamuxMcpServerDescriptors(id, channels),
       skillSources: bundledSkillSourcesForRole('dispatcher'),
       state: hostStateCallbacks(this.opts.dispatchers),
       paths: dispatcherHostPaths,
@@ -445,59 +560,19 @@ export class DispatcherAgentService {
       injectEnv: HOST_INJECT_ENV,
     });
 
-    // One live neutral channel session per configured channel, each created
-    // through its own `ChannelProvider` and connecting as its own bot. Core never
-    // names a concrete channel class: it resolves the provider from the catalog,
-    // hands the provider-validated config plus host state/cache dirs to
-    // `createSession`, and drives the returned neutral `ChannelSession`. Decision
-    // #4 (issue #209) caps a dispatcher at one channel per provider ref, so with
-    // only `builtin:feishu` wired this resolves to a single session; the loop
-    // iterates all declared channels in declaration order. The defensive no-config
-    // path (a state row with no live config entry) yields no channel session — a
-    // dispatcher with no configured channel has no bot identity to connect as.
-    const channelConfigs = dispatcherConfig?.channels ?? [];
-    const channels = new Map<string, ChannelSession>();
-
     try {
       await runtime.start();
       // Register the slot before starting any channel session so an inbound
       // arriving during session.start() resolves a running slot instead of
-      // throwing 'not running' (issue #209 fix #7). The `channels` Map is
-      // mutated by reference inside the loop below, so the pre-registered slot
-      // observes each session as it is added.
+      // throwing 'not running' (issue #209 fix #7). The slot holds the same
+      // `channels` map built above, so each session is observable as it starts.
       this.slots.set(id, {
         row,
         runtime,
         channels,
         log: channelLog,
       });
-      for (const channelConfig of channelConfigs) {
-        const channelId = channelConfig.id;
-        const provider = this.opts.channelProviders.resolve(
-          channelConfig.provider,
-        );
-        // The channel provider owns its config shape; re-run its `readConfig`
-        // (already validated at config-load) to get the provider's neutral
-        // config view, then build the session through the neutral create context.
-        const channelProviderConfig = provider.readConfig
-          ? await provider.readConfig(channelConfig.config, {
-              dispatcher_id: id,
-              channel_id: channelId,
-              provider: channelConfig.provider,
-            })
-          : channelConfig.config;
-        const session = provider.createSession({
-          dispatcher_id: id,
-          channel_id: channelId,
-          provider: channelConfig.provider,
-          config: channelProviderConfig,
-          logger: neutralLog,
-          state_root: dispatcherDir(id),
-          cache_root: dispatcherFeishuAttachmentCacheDir(id),
-        });
-        // Register before start so a session whose start() throws is still
-        // closed by the catch below (it would otherwise leak — not yet mapped).
-        channels.set(channelId, session);
+      for (const [channelId, session] of channels) {
         // Each session tags its own channel_id onto every inbound turn it
         // delivers, so the router keys on the channel the message actually
         // arrived through rather than re-deriving a single channel from config.
@@ -548,19 +623,120 @@ export class DispatcherAgentService {
 
   private dreamuxMcpServerDescriptors(
     dispatcherId: string,
+    channels: Map<string, ChannelSession>,
   ): AgentRuntimeMcpServer[] {
     const context = {
       dispatcherId,
       adminSocketPath: this.opts.adminSocketPath ?? defaultAdminSocketPath(),
     };
     return [
-      feishuMcpServerDescriptor(context),
+      ...this.channelMcpServerDescriptors(channels, {
+        dispatcher_id: dispatcherId,
+        callerKind: 'dispatcher',
+      }),
       teamMcpServerDescriptor(context),
       teammateMcpServerDescriptor({
         ...context,
         callerKind: 'dispatcher',
       }),
     ];
+  }
+
+  /**
+   * Build the channel MCP server descriptors for a caller, derived from each
+   * live channel session's own neutral `mcpServerDescriptor` (a pure call). Core
+   * supplies only the neutral pieces (host bin command + admin socket + caller
+   * scope); the provider shapes its own stdio descriptor. Used for a TeamLeader,
+   * whose dispatcher is already running.
+   */
+  channelMcpServerDescriptorsForCaller(
+    dispatcherId: string,
+    scope: { callerKind?: 'dispatcher' | 'team_leader'; team_id?: string; leader_name?: string },
+  ): AgentRuntimeMcpServer[] {
+    const slot = this.slots.get(dispatcherId);
+    if (slot === undefined) return [];
+    return this.channelMcpServerDescriptors(slot.channels, {
+      dispatcher_id: dispatcherId,
+      ...scope,
+    });
+  }
+
+  private channelMcpServerDescriptors(
+    channels: Map<string, ChannelSession>,
+    scope: {
+      dispatcher_id: string;
+      callerKind?: 'dispatcher' | 'team_leader';
+      team_id?: string;
+      leader_name?: string;
+    },
+  ): AgentRuntimeMcpServer[] {
+    const context: ChannelMcpDescriptorContext = {
+      command: dreamuxBinPath(),
+      adminSocketPath: this.opts.adminSocketPath ?? defaultAdminSocketPath(),
+      dispatcher_id: scope.dispatcher_id,
+      ...(scope.callerKind !== undefined ? { callerKind: scope.callerKind } : {}),
+      ...(scope.team_id !== undefined ? { team_id: scope.team_id } : {}),
+      ...(scope.leader_name !== undefined ? { leader_name: scope.leader_name } : {}),
+    };
+    const out: AgentRuntimeMcpServer[] = [];
+    for (const session of channels.values()) {
+      const descriptor = session.mcpServerDescriptor?.(context);
+      if (descriptor != null) out.push(descriptor);
+    }
+    return out;
+  }
+
+  /**
+   * Build the (un-started) neutral channel sessions for a dispatcher from its
+   * configured channels. Each provider's `readConfig` (already validated at
+   * config-load) yields the neutral config view, then `createSession` builds the
+   * session through the neutral create context (host state/cache roots + logger).
+   * Sessions are NOT connected here — the caller starts them. On partial failure
+   * the already-built sessions are closed.
+   */
+  private async buildChannelSessions(
+    dispatcherId: string,
+    neutralLog: ReturnType<typeof neutralLoggerFromHostLogger>,
+  ): Promise<Map<string, ChannelSession>> {
+    const dispatcherConfig = this.opts.config.dispatchers.find(
+      (dispatcher) => dispatcher.id === dispatcherId,
+    );
+    const channelConfigs: DispatcherChannelConfig[] = dispatcherConfig?.channels ?? [];
+    const channels = new Map<string, ChannelSession>();
+    try {
+      for (const channelConfig of channelConfigs) {
+        const provider = this.opts.channelProviders.resolve(channelConfig.provider);
+        const channelProviderConfig = provider.readConfig
+          ? await provider.readConfig(channelConfig.config, {
+              dispatcher_id: dispatcherId,
+              channel_id: channelConfig.id,
+              provider: channelConfig.provider,
+            })
+          : channelConfig.config;
+        channels.set(
+          channelConfig.id,
+          provider.createSession({
+            dispatcher_id: dispatcherId,
+            channel_id: channelConfig.id,
+            provider: channelConfig.provider,
+            config: channelProviderConfig,
+            logger: neutralLog,
+            state_root: dispatcherDir(dispatcherId),
+            cache_root: dispatcherCacheDir(dispatcherId),
+          }),
+        );
+      }
+    } catch (err) {
+      for (const session of channels.values()) {
+        try {
+          await session.close();
+        } catch {
+          /* best effort: these sessions were never started */
+        }
+      }
+      throw err;
+    }
+    return channels;
   }
 
   private async injectRestartNoticeIfNeeded(

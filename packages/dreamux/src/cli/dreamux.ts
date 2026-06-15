@@ -47,12 +47,12 @@ import {
 import { ExecaCommandRunner } from '../onboard/commands.js';
 import { readPackagedChangelog } from './changelog.js';
 import { printDoctorResult, runDreamuxDoctor } from './doctor.js';
-import { runFeishuMcp } from '../mcp/feishu-mcp.js';
+import { runChannelMcp } from '../mcp/channel-mcp.js';
 import { runTeamMateMcp } from '../mcp/teammate-mcp.js';
 import { runTeamMcp } from '../mcp/team-mcp.js';
 import { createLogger } from '../platform/logger.js';
 import {
-  feishuMcpLogPath,
+  channelMcpLogPath,
   teammateMcpLogPath,
 } from '../platform/paths.js';
 
@@ -463,10 +463,11 @@ function buildConfigCommands(y: Argv): Argv {
     .strict();
 }
 
-function buildFeishuMcpCommand(
+function buildChannelMcpCommand(
   y: Argv,
 ): Argv<{
   dispatcher: string;
+  provider?: string;
   caller?: 'dispatcher' | 'team_leader';
   teamId?: string;
   leaderName?: string;
@@ -477,6 +478,11 @@ function buildFeishuMcpCommand(
       type: 'string',
       demandOption: true,
       describe: 'Dispatcher id this MCP shim is scoped to',
+    })
+    .option('provider', {
+      type: 'string',
+      describe:
+        'Channel provider ref this shim serves (advisory; the dispatcher id selects the live channel session)',
     })
     .option('admin-socket', {
       type: 'string',
@@ -497,6 +503,7 @@ function buildFeishuMcpCommand(
       describe: 'Leader TeamMate identity name for team_leader caller scope',
     }) as Argv<{
       dispatcher: string;
+      provider?: string;
       caller?: 'dispatcher' | 'team_leader';
       teamId?: string;
       leaderName?: string;
@@ -617,19 +624,20 @@ async function main(): Promise<void> {
       buildDispatcherCommands,
     )
     .command(
-      'feishu-mcp',
-      'Run the dispatcher-scoped Feishu MCP stdio shim',
-      buildFeishuMcpCommand,
+      'channel-mcp',
+      'Run the dispatcher-scoped channel MCP stdio shim',
+      buildChannelMcpCommand,
       async (argv) => {
         const dispatcherId = validateDispatcherId(argv.dispatcher);
         // stdout is the JSON-RPC transport — the shim's diagnostics persist to
-        // logs/feishu-mcp/<id>.log and stderr, never stdout.
+        // logs/channel-mcp/<id>.log and stderr, never stdout.
         const log = createLogger({
-          name: `feishu-mcp/${dispatcherId}`,
-          filePath: feishuMcpLogPath(dispatcherId),
+          name: `channel-mcp/${dispatcherId}`,
+          filePath: channelMcpLogPath(dispatcherId),
         });
-        await runFeishuMcp({
+        await runChannelMcp({
           dispatcherId,
+          providerRef: argv.provider,
           callerKind: argv.caller,
           teamId: argv.teamId,
           leaderName: argv.leaderName,

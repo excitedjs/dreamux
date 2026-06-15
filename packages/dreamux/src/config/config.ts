@@ -12,9 +12,13 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { mkdir, open, readFile, stat } from 'node:fs/promises';
 import {
-  loadExternalAgentRuntimeProviders,
+  loadAgentRuntimeProviders,
   type ExternalAgentRuntimeModuleImporter,
 } from '../agent-runtime/external-provider.js';
+import {
+  loadChannelProviders,
+  type ExternalChannelModuleImporter,
+} from '../channel/external-channel-provider.js';
 import type { AgentRuntimeProvider } from '@excitedjs/dreamux-types';
 import type { ChannelProvider } from '@excitedjs/dreamux-types';
 import {
@@ -35,7 +39,9 @@ import {
   rejectUnknownKeys,
   requireNonEmptyString,
 } from '@excitedjs/dreamux-utils';
+// eslint-disable-next-line no-restricted-imports -- Q3 de-leak: core still names codex config (tracked in .agents/wip/i209-cleanup/plan-q1q2-neutrality.md)
 import type { DispatcherCodexConfig } from '@excitedjs/agent-runtime-codex';
+// eslint-disable-next-line no-restricted-imports -- Q3 de-leak: core still names claude config (tracked in .agents/wip/i209-cleanup/plan-q1q2-neutrality.md)
 import type { DispatcherClaudeCodeConfig } from '@excitedjs/agent-runtime-claude-code';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
 
@@ -49,6 +55,7 @@ export {
   BUILTIN_CODEX_PROVIDER_REF,
   BUILTIN_FEISHU_PROVIDER_REF,
 } from '../registry/index.js';
+// eslint-disable-next-line no-restricted-imports -- Q3 de-leak: core re-exports codex config helpers (tracked in .agents/wip/i209-cleanup/plan-q1q2-neutrality.md)
 export {
   ALLOWED_APPROVAL_POLICIES,
   ALLOWED_SANDBOX_MODES,
@@ -60,7 +67,9 @@ export {
   defaultDispatcherCodexConfig,
   dispatcherCodexConfig,
 } from '@excitedjs/agent-runtime-codex';
+// eslint-disable-next-line no-restricted-imports -- Q3 de-leak: core re-exports codex config type (tracked in .agents/wip/i209-cleanup/plan-q1q2-neutrality.md)
 export type { DispatcherCodexConfig } from '@excitedjs/agent-runtime-codex';
+// eslint-disable-next-line no-restricted-imports -- Q3 de-leak: core re-exports claude config helpers (tracked in .agents/wip/i209-cleanup/plan-q1q2-neutrality.md)
 export {
   ALLOWED_CLAUDE_CODE_PERMISSION_MODES,
   DEFAULT_CLAUDE_CODE_BIN,
@@ -68,6 +77,7 @@ export {
   defaultDispatcherClaudeCodeConfig,
   dispatcherClaudeCodeConfig,
 } from '@excitedjs/agent-runtime-claude-code';
+// eslint-disable-next-line no-restricted-imports -- Q3 de-leak: core re-exports claude config type (tracked in .agents/wip/i209-cleanup/plan-q1q2-neutrality.md)
 export type { DispatcherClaudeCodeConfig } from '@excitedjs/agent-runtime-claude-code';
 
 export interface DreamuxConfig {
@@ -156,8 +166,10 @@ export interface ConfigPathOverrides {
   configDir?: string;
   /** Provider registry used to validate config provider refs. */
   providerRegistry?: ProviderRegistry;
-  /** Test seam for external `npm:` agentRuntime provider loading. */
+  /** Test seam for agentRuntime provider package loading (builtin + npm). */
   externalAgentRuntimeModuleImporter?: ExternalAgentRuntimeModuleImporter;
+  /** Test seam for channel provider package loading (builtin + npm). */
+  externalChannelModuleImporter?: ExternalChannelModuleImporter;
 }
 
 export interface LoadConfigResult {
@@ -255,7 +267,7 @@ export function redactConfigForDisplay(raw: string, file: string): string {
         'Fix the JSON syntax before running `dreamux config show`.',
     );
   }
-  redactFeishuSecrets(parsed);
+  redactConfigSecrets(parsed);
   return `${JSON.stringify(parsed, null, 2)}\n`;
 }
 
@@ -282,20 +294,27 @@ async function readConfigFile(
         `Fix the JSON syntax in ${file}, then restart. Run \`dreamux onboard\` if you need to recreate the config.`,
     );
   }
-  // Each agent's config is parsed through its provider's `readConfig`, so the
-  // provider implementations must already be registered in `providerRegistry`.
-  // config does not register the builtins itself — that would invert the layering
-  // (a schema/parse leaf reaching up into the runtime catalog and dragging the
-  // whole builtin stack into its module-init, which is the cycle that crashed
-  // #148). The caller composes: `cli/server.ts` hands in a factory-bearing
-  // registry, and the leaf entry points (doctor/daemon/onboard) go through
-  // `loadConfigWithBuiltins`. A builtin agent parsed against a registry with no
-  // implementation fails loud in `readAgents`. External `npm:` providers still
-  // load here because that is a config-file-driven, dynamic-import concern.
-  await loadExternalAgentRuntimeProviders({
+  // Load every provider implementation the config references — builtin AND npm,
+  // both kinds — through the single dynamic loader before parsing agents/channels
+  // (each entry's config is parsed through its provider's `readConfig`, so the
+  // implementation must be present first). `builtin:*` is just an alias the loader
+  // resolves to a package name; it imports the package the same way it imports an
+  // `npm:` ref. There is no separate static builtin-registration path.
+  //
+  // This stays a config-file-driven, dynamic-`import()` concern, so it does NOT
+  // re-form the #148 cycle: config never statically imports a provider package or
+  // the runtime catalog. The registry handed in only needs the builtin
+  // *descriptors* (`createBuiltinProviderRegistry` seeds them); the loader fills in
+  // the implementations. An agent/channel whose impl fails to load fails loud here.
+  await loadAgentRuntimeProviders({
     registry: providerRegistry,
     refs: agentProviderRefs(parsed),
     importModule: overrides.externalAgentRuntimeModuleImporter,
+  });
+  await loadChannelProviders({
+    registry: providerRegistry,
+    refs: channelProviderRefs(parsed),
+    importModule: overrides.externalChannelModuleImporter,
   });
   return await mergeWithDefaults(parsed, file, providerRegistry);
 }
@@ -438,10 +457,10 @@ async function readAgents(
     if (runtimeProvider === null) {
       throw new Error(
         `dreamux config error in ${file}: ${prefix}provider='${provider.ref}' is registered but not runnable.\n` +
-          'Builtin runtimes are wired by the caller: load config through ' +
-          '`loadConfigWithBuiltins` (or pass a providerRegistry that already has the ' +
-          'builtin implementations). External runtimes must load and register an ' +
-          'agentRuntime provider before config validation.',
+          'Its provider package did not yield a runnable agentRuntime ' +
+          'implementation. Pass a providerRegistry seeded with the builtin ' +
+          'descriptors (the default) so the loader can resolve the package, or ' +
+          'register a valid implementation before config validation.',
       );
     }
     // A provider's `readConfig` may be sync or async (parity with
@@ -582,7 +601,7 @@ function resolveAgentRuntime(
  * most one channel per provider ref (Decision #4: a dispatcher may not declare
  * two channels backed by the same provider, e.g. two `builtin:feishu` channels).
  * Each channel's provider-specific config is validated by the selected channel
- * provider's own `readConfig`. Core no longer validates Feishu-specific channel
+ * provider's own `readConfig`. Core no longer validates provider-specific channel
  * fields (app id/secret, unknown keys) — the channel provider owns them.
  */
 function readDispatcherChannels(
@@ -648,10 +667,10 @@ function readDispatcherChannels(
     if (channelProvider === null) {
       throw new Error(
         `dreamux config error in ${file}: ${channelPrefix}provider='${provider.ref}' is registered but has no channel implementation.\n` +
-          'Builtin channels are wired by the caller: load config through ' +
-          '`loadConfigWithBuiltins` (or pass a providerRegistry that already has ' +
-          'the builtin implementations). External channels must load and register ' +
-          'a channel provider before config validation.',
+          'Its provider package did not yield a usable channel implementation. ' +
+          'Pass a providerRegistry seeded with the builtin descriptors (the ' +
+          'default) so the loader can resolve the package, or register a valid ' +
+          'implementation before config validation.',
       );
     }
     // Provider-owned validation, fail-loud at config-load. The parsed result is
@@ -720,18 +739,51 @@ function resolveConfigProvider(
   }
 }
 
+/**
+ * Every well-formed `agents[].provider` ref the loader should resolve — builtin
+ * and npm alike, since both load through the same dynamic path. Malformed refs
+ * are dropped silently here; the normal config validation path
+ * (`resolveConfigProvider`) reports them with full context.
+ */
 function agentProviderRefs(raw: unknown): string[] {
   if (!isPlainObject(raw)) return [];
-  const agents = raw['agents'];
-  if (!Array.isArray(agents)) return [];
+  return providerRefsFrom(raw['agents'], (agent) => agent['provider']);
+}
+
+/**
+ * Every well-formed `dispatchers[].channels[].provider` ref the loader should
+ * resolve (builtin + npm). Mirrors {@link agentProviderRefs}.
+ */
+function channelProviderRefs(raw: unknown): string[] {
+  if (!isPlainObject(raw)) return [];
+  const dispatchers = raw['dispatchers'];
+  if (!Array.isArray(dispatchers)) return [];
   const out: string[] = [];
-  for (const agent of agents) {
-    if (!isPlainObject(agent)) continue;
-    const provider = agent['provider'];
+  for (const dispatcher of dispatchers) {
+    if (!isPlainObject(dispatcher)) continue;
+    out.push(
+      ...providerRefsFrom(dispatcher['channels'], (channel) => channel['provider']),
+    );
+  }
+  return out;
+}
+
+/**
+ * Collect the well-formed provider refs out of an array of config entries,
+ * reading each entry's ref via `pick`. Shared by the agent + channel ref walks.
+ */
+function providerRefsFrom(
+  entries: unknown,
+  pick: (entry: Record<string, unknown>) => unknown,
+): string[] {
+  if (!Array.isArray(entries)) return [];
+  const out: string[] = [];
+  for (const entry of entries) {
+    if (!isPlainObject(entry)) continue;
+    const provider = pick(entry);
     if (typeof provider !== 'string') continue;
     try {
-      const parsed = parseProviderRef(provider);
-      if (parsed.source === 'npm') out.push(parsed.raw);
+      out.push(parseProviderRef(provider).raw);
     } catch {
       // The normal config validation path reports malformed refs with context.
     }
@@ -781,9 +833,9 @@ function readOptionalBoolean(
   );
 }
 
-function redactFeishuSecrets(value: unknown): void {
+function redactConfigSecrets(value: unknown): void {
   if (Array.isArray(value)) {
-    for (const item of value) redactFeishuSecrets(item);
+    for (const item of value) redactConfigSecrets(item);
     return;
   }
   if (!isPlainObject(value)) return;
@@ -792,7 +844,7 @@ function redactFeishuSecrets(value: unknown): void {
       value[key] = '<redacted>';
       continue;
     }
-    redactFeishuSecrets(child);
+    redactConfigSecrets(child);
   }
 }
 

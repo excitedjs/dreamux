@@ -35,10 +35,10 @@ Two settled shape rules govern where code lives:
 | `dispatcher-service/` | the Dispatcher Service entity — see [`dispatcher-service/CLAUDE.md`](src/dispatcher-service/CLAUDE.md) | holds the dispatcher agent + orchestrates teammates |
 | `dispatcher-service/dispatcher/` | `DispatcherAgentService` (slots / start / resume / stop / restart-notice / channel session / role MCP injection) + dispatcher base prompt | dispatcher agent lifecycle is tied to the server |
 | `dispatcher-service/teammate/` | `TeamMateAgentService` + identity-store + runtime-state + types + teammate MCP descriptor | agent-centric teammates (no `task`): spawn/send/close + forward-only history (send reopens a closed teammate; no separate `resume` verb, #155) |
-| `channel/` | the ChannelProvider seam, all neutral: `catalog.ts` (`ChannelProviderCatalog`), `builtin-channel-providers.ts` (builtin registration — only `builtin:feishu` today, the `@excitedjs/feishu-channel` package), `external-channel-provider.ts` loader, `feishu-mcp-surface.ts` (host-owned Feishu MCP server descriptor + admin-method routing + the sessionless `list_chat_bots` host helper), `plugin.ts` | the feishu engine (session/bot/gate/message/tool-parsing/identity) lives in the package and never imports core; core keeps neutral routing/binding/auth + the host MCP shim |
+| `channel/` | the ChannelProvider seam, all neutral: `catalog.ts` (`ChannelProviderCatalog`), `external-channel-provider.ts` loader, `plugin.ts` | the channel engine (session/bot/gate/message/tool-parsing/identity) lives in the provider package and never imports core; core is a blind channel-MCP conduit — the generic `channel.invoke_tool` / `channel.list_tools` admin methods routed to the neutral `ChannelSession` / `ChannelProvider` seam — plus neutral routing/binding/auth |
 | `channel/plugin.ts` | TS interface reservation for future subscription-style channel plugins (github/jira) | interface-only this phase; not loaded or run |
 | `registry/` | provider registry/loader + provider-ref grammar | resolves `builtin:` / `npm:` refs; exactly two kinds: `channel`, `agentRuntime` |
-| `mcp/` | stdio MCP shim processes (`feishu-mcp`, `teammate-mcp`, `team-mcp`) — channel binding (`bind_channel` / `transfer_back`) is a core Team capability on the Team MCP, #209 | thin JSON-RPC bridges that forward to the admin socket |
+| `mcp/` | stdio MCP shim processes (`channel-mcp`, `teammate-mcp`, `team-mcp`) — the generic `channel-mcp` shim is a blind conduit to `channel.invoke_tool` / `channel.list_tools`; channel binding (`bind_channel` / `transfer_back`) is a core Team capability on the Team MCP, #209 | thin JSON-RPC bridges that forward to the admin socket |
 | `admin/` | admin Unix-socket server + protocol + methods | cross-process control; methods are thin and delegate to the Dispatcher Service |
 | `config/` | operator config schema / parse / validate (`config.ts`) | the only operator-editable config source |
 | `platform/` | runtime-neutral infrastructure: `paths.ts` (sole neutral path builder), `runtime-sockets` (volatile socket allocation), `logger`, `package-bin`, `atomic-write`, `fs-errors` | shared and runtime-agnostic; per-runtime path derivation lives in each provider package |
@@ -79,9 +79,11 @@ Two settled shape rules govern where code lives:
   [`.agents/decisions/channel-input-runtime-assembly.md`](../../.agents/decisions/channel-input-runtime-assembly.md).
 - Direct Lark SDK / Feishu JSAPI calls belong in `@excitedjs/feishu-transport`;
   the built-in Feishu channel package (`@excitedjs/feishu-channel`) owns its
-  session, tool backing, and reply/react wire mapping end-to-end (the server does
-  not carry `*FromMcp` handlers). Core keeps only the host-owned MCP server
-  descriptor + admin-method routing in `channel/feishu-mcp-surface.ts`.
+  session, tool backing, MCP server descriptor, and reply/react wire mapping
+  end-to-end (the server does not carry `*FromMcp` handlers). Core keeps only the
+  generic, channel-agnostic MCP conduit: the `channel-mcp` stdio shim and the
+  neutral `channel.invoke_tool` / `channel.list_tools` admin methods that route
+  to the provider's `ChannelSession` / `ChannelProvider` seam.
 - Do not reintroduce a `task` abstraction in the teammate layer; teammates are
   named, resumable agents.
 - Do not create dispatcher-private `CODEX_HOME` directories for the MVP.

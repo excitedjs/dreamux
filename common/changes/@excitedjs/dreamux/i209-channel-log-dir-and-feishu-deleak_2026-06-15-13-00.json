@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Core feishu-name de-leak (issue #209): core no longer names the Feishu provider in its paths, log redaction, or dependency graph. The per-dispatcher channel log directory moves from `~/.dreamux/logs/feishu-channel/` to the neutral `~/.dreamux/logs/channel/` (path builders `feishuChannelLogDir`/`feishuChannelLogPath` -> `channelLogDir`/`channelLogPath`). The inbound-attachment cache is unchanged on disk (`~/.dreamux/cache/<id>/feishu-attachments/`) but core now passes only the neutral per-dispatcher cache root and the feishu-channel package owns the `feishu-attachments` subdir. Core drops its direct `@excitedjs/feishu-transport` dependency and the dead `pinoToTransportLogger` adapter (the channel package owns Feishu transport end-to-end); an ESLint guardrail now forbids core from importing the provider / Feishu-transport packages. Log redaction is a generic provider-agnostic secret policy (no `feishu.app_secret` by name). The dispatcher base prompt + team bind_channel tool descriptions are channel-generic (the `<channel source=...>` value carries the concrete provider). Rebuild: none required for state. The old `~/.dreamux/logs/feishu-channel/` directory is left orphaned (rebuildable logs; safe to delete); new channel logs land under `~/.dreamux/logs/channel/` on `daemon restart`.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}
