@@ -29,6 +29,11 @@ export function testDispatcherConfig(
   options: TestDispatcherOptions = {},
 ): DispatcherConfig {
   const id = options.id ?? 'flow';
+  const defaultChannelConfig = {
+    app_id: `app-${id}`,
+    app_secret: `secret-${id}`,
+    ...(options.feishu ?? {}),
+  };
   return {
     id,
     cwd: options.cwd ?? null,
@@ -39,11 +44,12 @@ export function testDispatcherConfig(
         {
           id: options.channelId ?? 'primary',
           provider: options.channelProvider ?? BUILTIN_FEISHU_PROVIDER_REF,
-          config: {
-            app_id: `app-${id}`,
-            app_secret: `secret-${id}`,
-            ...(options.feishu ?? {}),
-          },
+          config: defaultChannelConfig,
+          // Mirror the feishu provider's getIdentity (`config.app_id`) so a store
+          // built directly from this fixture seeds the same `channel_identity`
+          // production would: config-load runs getIdentity, this hand-built path
+          // does not (issue #209 de-leak).
+          identity: String(defaultChannelConfig.app_id ?? ''),
         },
       ],
     agentRuntime: options.agentRuntime ?? id,

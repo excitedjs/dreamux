@@ -11,17 +11,20 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { ChannelTarget } from '@excitedjs/dreamux-types';
+import type {
+  ChannelInboundEnvelope,
+  ChannelTarget,
+  InboundTurnInput,
+} from '@excitedjs/dreamux-types';
 
 import { AgentRuntimeProviderCatalog } from '../src/agent-runtime/index.js';
-import type { InboundTurnInput } from '../src/agent-runtime/turn.js';
 import { DispatcherService } from '../src/dispatcher-service/service.js';
-import type { FeishuInboundEnvelope } from '../src/channel/feishu/feishu-channel.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
 import type { DreamuxLogger } from '../src/platform/logger.js';
 import { resetRuntimeConfig } from '../src/platform/paths.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
+import { stubChannelCatalog } from './helpers/fake-channel.js';
 
 function noopLog(): DreamuxLogger {
   const log = {
@@ -44,12 +47,12 @@ function feishuTarget(chatType: 'group' | 'p2p'): ChannelTarget {
   };
 }
 
-function envelope(chatType: 'group' | 'p2p'): FeishuInboundEnvelope {
+function envelope(chatType: 'group' | 'p2p'): ChannelInboundEnvelope {
   return {
     provider: 'builtin:feishu',
-    chatId: 'chat-x',
-    chatType,
-    messageId: 'm1',
+    channel_id: 'primary',
+    target: feishuTarget(chatType),
+    message_id: 'm1',
   };
 }
 
@@ -63,6 +66,7 @@ function buildService(): DispatcherService {
     config,
     dispatchers: new DispatcherStore(config),
     agentRuntimeProviders: new AgentRuntimeProviderCatalog({ registry }),
+    channelProviders: stubChannelCatalog(),
     channelLoggerFactory: () => noopLog(),
     log: noopLog(),
   });
@@ -77,9 +81,8 @@ describe('routeChannelInput keys by (channel_id, target_key) (#209 binding store
 
   it('routes a bound group to the TeamLeader, keyed by the configured channel id', async () => {
     const service = buildService();
-    vi.spyOn(service.dispatchers, 'resolveChannelTarget').mockImplementation(
-      (_id, meta) => feishuTarget((meta as { chat_type: 'group' | 'p2p' }).chat_type),
-    );
+    // routeChannelInput reads the channel-resolved target straight off the
+    // neutral envelope, so no resolveChannelTarget stub is needed here.
     const dispatcherRuntime = { channelInput: vi.fn(async () => ({ status: 'submitted' })) };
     vi.spyOn(service.dispatchers, 'getRuntime').mockReturnValue(
       dispatcherRuntime as never,
@@ -89,7 +92,7 @@ describe('routeChannelInput keys by (channel_id, target_key) (#209 binding store
       .mockResolvedValue({ team_name: 'alpha' } as never);
     const deliverSpy = vi
       .spyOn(service.teams, 'deliverToLeader')
-      .mockResolvedValue({ status: 'submitted' });
+      .mockResolvedValue({ status: 'submitted', turnId: 'turn-channel' });
 
     const result = await service.routeChannelInput('flow', 'primary', INPUT, envelope('group'));
 
@@ -109,9 +112,6 @@ describe('routeChannelInput keys by (channel_id, target_key) (#209 binding store
 
   it('routes an unbound group to the dispatcher', async () => {
     const service = buildService();
-    vi.spyOn(service.dispatchers, 'resolveChannelTarget').mockImplementation(
-      (_id, meta) => feishuTarget((meta as { chat_type: 'group' | 'p2p' }).chat_type),
-    );
     const dispatcherRuntime = { channelInput: vi.fn(async () => ({ status: 'submitted' })) };
     vi.spyOn(service.dispatchers, 'getRuntime').mockReturnValue(
       dispatcherRuntime as never,
@@ -127,9 +127,6 @@ describe('routeChannelInput keys by (channel_id, target_key) (#209 binding store
 
   it('routes a P2P target to the dispatcher with no binding lookup (never a TeamLeader)', async () => {
     const service = buildService();
-    vi.spyOn(service.dispatchers, 'resolveChannelTarget').mockImplementation(
-      (_id, meta) => feishuTarget((meta as { chat_type: 'group' | 'p2p' }).chat_type),
-    );
     const dispatcherRuntime = { channelInput: vi.fn(async () => ({ status: 'submitted' })) };
     vi.spyOn(service.dispatchers, 'getRuntime').mockReturnValue(
       dispatcherRuntime as never,
@@ -156,7 +153,7 @@ describe('resolveChannelId guards the explicit channel_id on bind (#209 binding 
 
   it('passes an explicit channel_id that matches the configured channel through to the store', async () => {
     const service = buildService();
-    vi.spyOn(service.dispatchers, 'resolveChannelTarget').mockReturnValue(
+    vi.spyOn(service.dispatchers, 'resolveChannelTarget').mockResolvedValue(
       feishuTarget('group'),
     );
     const bindSpy = vi
@@ -181,29 +178,29 @@ describe('resolveChannelId guards the explicit channel_id on bind (#209 binding 
     );
   });
 
-  it('rejects an explicit channel_id that does not match the configured channel (fail-loud, no store write)', () => {
+  it('rejects an explicit channel_id that does not match the configured channel (fail-loud, no store write)', async () => {
     const service = buildService();
     const bindSpy = vi.spyOn(service.teams, 'bindChannel');
 
-    expect(() =>
+    await expect(
       service.bindTeamChannel({
         dispatcherId: 'flow',
         teamId: 'alpha',
         channelId: 'wrong',
         meta: { chat_id: 'chat-x' },
       }),
-    ).toThrow(/unknown channel_id 'wrong'/);
+    ).rejects.toThrow(/unknown channel_id 'wrong'/);
     expect(bindSpy).not.toHaveBeenCalled();
   });
 
-  it('rejects a dispatcher with no resolvable Feishu channel', () => {
+  it('rejects a dispatcher with no resolvable channel', async () => {
     const service = buildService();
-    expect(() =>
+    await expect(
       service.bindTeamChannel({
         dispatcherId: 'ghost',
         teamId: 'alpha',
         meta: { chat_id: 'chat-x' },
       }),
-    ).toThrow(/no resolvable Feishu channel/);
+    ).rejects.toThrow(/no resolvable channel/);
   });
 });

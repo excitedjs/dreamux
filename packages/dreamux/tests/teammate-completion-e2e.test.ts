@@ -6,21 +6,25 @@ import { execa } from 'execa';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import {
-  AgentRuntimeProviderCatalog,
-  type AgentRuntime,
-  type AgentRuntimeCapabilities,
-  type AgentRuntimeCreateContext,
-  type AgentRuntimeLastResult,
-  type AgentRuntimeProvider,
-  type AgentRuntimeResumeInput,
-  type AgentRuntimeSystemInput,
-  type AgentRuntimeTurnResult,
-  type CompletionEnvelope,
-  type TeamMateCompletionDeliveryResult,
-} from '../src/agent-runtime/index.js';
-import type { InboundTurnInput, TurnSettledSignal } from '../src/agent-runtime/turn.js';
-import { createFakeFeishuBot } from '../src/channel/feishu/bot.js';
+import { AgentRuntimeProviderCatalog } from '../src/agent-runtime/index.js';
+import type {
+  AgentRuntime,
+  AgentRuntimeCapabilities,
+  AgentRuntimeCreateContext,
+  AgentRuntimeLastResult,
+  AgentRuntimeProvider,
+  AgentRuntimeProviderDescriptor,
+  AgentRuntimeResumeInput,
+  AgentRuntimeSystemInput,
+  AgentRuntimeTurnResult,
+  CompletionEnvelope,
+  InboundTurnInput,
+  ProviderDescriptor,
+  TeamMateCompletionDeliveryResult,
+  TurnSettledSignal,
+} from '@excitedjs/dreamux-types';
+import { stubChannelCatalog } from './helpers/fake-channel.js';
+import { asAgentRuntimeDescriptor } from './helpers/provider.js';
 import { DispatcherService } from '../src/dispatcher-service/service.js';
 import { teamLeaderPrincipal } from '../src/dispatcher-service/teammate/types.js';
 import { resetRuntimeConfig } from '../src/platform/paths.js';
@@ -81,21 +85,21 @@ class FakeRuntime implements AgentRuntime {
 
   async start(): Promise<void> {
     this.status = 'ready';
-    this.threadId = `${this.context.row.dispatcher_id}-thread`;
-    await this.context.state?.setThreadId(this.context.row.dispatcher_id, this.threadId);
-    await this.context.state?.setStatus(this.context.row.dispatcher_id, 'ready');
+    this.threadId = `${this.context.identity.runtime_id}-thread`;
+    await this.context.state?.setThreadId(this.context.identity.runtime_id, this.threadId);
+    await this.context.state?.setStatus(this.context.identity.runtime_id, 'ready');
   }
 
   async resume(input: AgentRuntimeResumeInput = {}): Promise<void> {
     this.resumed = true;
     this.status = 'ready';
     this.threadId = input.checkpoint?.id ?? null;
-    await this.context.state?.setStatus(this.context.row.dispatcher_id, 'ready');
+    await this.context.state?.setStatus(this.context.identity.runtime_id, 'ready');
   }
 
   async stop(): Promise<void> {
     this.status = 'stopped';
-    await this.context.state?.setStatus(this.context.row.dispatcher_id, 'stopped');
+    await this.context.state?.setStatus(this.context.identity.runtime_id, 'stopped');
   }
 
   async channelInput(_input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
@@ -151,17 +155,24 @@ class FakeRuntime implements AgentRuntime {
   }
 
   /** Simulate the runtime firing a terminal turn-settled signal. */
-  settle(status: TurnSettledSignal['status'], turnId: string | null): void {
-    if (turnId !== null && this.activeTurnId === turnId) this.activeTurnId = null;
-    this.context.onTurnSettled?.({ turnId, status });
+  settle(
+    status: TurnSettledSignal['status'],
+    turnId: string | null | undefined,
+  ): void {
+    const id = turnId ?? null;
+    if (id !== null && this.activeTurnId === id) this.activeTurnId = null;
+    this.context.onTurnSettled?.({ turnId: id, status });
   }
 }
 
 class FakeProvider implements AgentRuntimeProvider {
   readonly ref = 'builtin:codex';
   readonly runtimes: FakeRuntime[] = [];
+  readonly descriptor: AgentRuntimeProviderDescriptor;
 
-  constructor(readonly descriptor: AgentRuntimeProvider['descriptor']) {}
+  constructor(descriptor: ProviderDescriptor) {
+    this.descriptor = asAgentRuntimeDescriptor(descriptor);
+  }
 
   getCapabilities(): AgentRuntimeCapabilities {
     return FAKE_CAPABILITIES;
@@ -193,10 +204,9 @@ function buildFacade(
     config,
     dispatchers: new DispatcherStore(config),
     agentRuntimeProviders: new AgentRuntimeProviderCatalog({ registry }),
+    channelProviders: stubChannelCatalog(),
     adminSocketPath,
     channelLoggerFactory: () => noopLog() as never,
-    botFactory: () => createFakeFeishuBot('app-flow'),
-    skipBotSecret: true,
     log: noopLog() as never,
   });
 }
@@ -732,12 +742,19 @@ function noopLog(): {
   info: () => undefined;
   warn: () => undefined;
   error: () => undefined;
+  debug: () => undefined;
+  trace: () => undefined;
+  child: () => unknown;
 } {
-  return {
+  const log = {
     info: () => undefined,
     warn: () => undefined,
     error: () => undefined,
+    debug: () => undefined,
+    trace: () => undefined,
+    child: () => log,
   };
+  return log;
 }
 
 /** Drain the macrotask the void-ed settle handler runs on. */

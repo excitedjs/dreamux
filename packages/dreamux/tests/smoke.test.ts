@@ -34,9 +34,10 @@ import {
   type CodexProcessExit,
   type CodexProcessExitHandler,
   type CodexProcessOptions,
-} from '../src/agent-runtime/builtin/codex/supervisor.js';
-import { CodexWsClient } from '../src/agent-runtime/builtin/codex/rpc.js';
-import { createFakeFeishuBot, type FakeFeishuBot, type FeishuInboundEvent } from '../src/channel/feishu/bot.js';
+} from '@excitedjs/agent-runtime-codex';
+import { CodexWsClient } from '@excitedjs/agent-runtime-codex';
+import { createFakeFeishuBot, type FakeFeishuBot, type FeishuInboundEvent } from '@excitedjs/feishu-channel';
+import { feishuChannelCatalog } from './helpers/fake-channel.js';
 import { createAdminSocketServer } from '../src/admin/socket.js';
 import { sendAdminRequest } from '../src/admin/client.js';
 import {
@@ -45,10 +46,7 @@ import {
   saveDispatcherAccess,
   loadChatBots,
 } from '@excitedjs/feishu-channel';
-import {
-  BUILT_IN_DEFAULTS,
-  type DreamuxConfig,
-} from '../src/config/config.js';
+import type { DreamuxConfig } from '../src/config/config.js';
 import {
   defaultDispatcherCwd,
   dispatcherDir,
@@ -57,30 +55,30 @@ import {
   stateRoot,
   unixSocketPathFitsBudget,
 } from '../src/platform/paths.js';
-import {
-  dispatcherCodexHome,
-  dispatcherWorkspaceCodexSkillsDir,
-} from '../src/agent-runtime/builtin/codex/paths.js';
+import { dispatcherCodexHome } from '@excitedjs/agent-runtime-codex';
+import { dispatcherWorkspaceCodexSkillsDir } from '../src/onboard/legacy-codex-skills.js';
 import { writeRestartIntent } from '../src/daemon/restart-intent.js';
 import { dreamuxBinPath } from '../src/platform/package-bin.js';
 import { createLogger, type DreamuxLogger } from '../src/platform/logger.js';
 import { DREAMUX_DISPATCHER_BASE_INSTRUCTIONS } from '../src/dispatcher-service/dispatcher/base-prompt.js';
-import { TeamMateIdentityStore } from '../src/dispatcher-service/teammate/identity-store.js';
 import { startFakeCodex, type FakeCodex } from './fake-codex.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
+import { asAgentRuntimeDescriptor } from './helpers/provider.js';
 import { Writable } from 'node:stream';
 import {
   loadExternalAgentRuntimeProviders,
-  type AgentRuntime,
-  type AgentRuntimeCapabilities,
-  type AgentRuntimeCreateContext,
-  type AgentRuntimeLastResult,
-  type AgentRuntimeProvider,
-  type AgentRuntimeSystemInput,
-  type AgentRuntimeTurnResult,
   type ExternalAgentRuntimeProviderFactory,
 } from '../src/agent-runtime/index.js';
-import type { InboundTurnInput } from '../src/agent-runtime/turn.js';
+import type {
+  AgentRuntime,
+  AgentRuntimeCapabilities,
+  AgentRuntimeCreateContext,
+  AgentRuntimeLastResult,
+  AgentRuntimeProvider,
+  AgentRuntimeSystemInput,
+  AgentRuntimeTurnResult,
+  InboundTurnInput,
+} from '@excitedjs/dreamux-types';
 import {
   createBuiltinProviderRegistry,
   type ProviderRegistry,
@@ -129,7 +127,6 @@ function buildServer(opts: {
   fake: FakeCodex;
   bot: FakeFeishuBot;
   config?: DreamuxConfig;
-  skipBotSecret?: boolean;
   capturedBotSecrets?: string[];
   /** Optional spawn counter — bumped each time a NoopCodexProcess is built. */
   spawnCounter?: { count: number };
@@ -151,17 +148,16 @@ function buildServer(opts: {
     config: opts.config ?? configWithDispatcher(),
     providerRegistry: opts.providerRegistry,
     adminSocketPath: join(opts.runtimeDir, 'admin.sock'),
-    skipBotSecret: opts.skipBotSecret ?? true,
+    channelProviderCatalog: feishuChannelCatalog((config) => {
+      opts.capturedBotSecrets?.push(config.appSecret);
+      return opts.bot;
+    }),
     ...(opts.runtimeSocketSweep !== undefined
       ? { runtimeSocketSweep: opts.runtimeSocketSweep }
       : {}),
     ...(opts.channelLoggerFactory !== undefined
       ? { channelLoggerFactory: opts.channelLoggerFactory }
       : {}),
-    botFactory: (_row, secret) => {
-      opts.capturedBotSecrets?.push(secret);
-      return opts.bot;
-    },
     codexProcessFactory: (o) => {
       if (opts.spawnCounter !== undefined) opts.spawnCounter.count++;
       opts.capturedCodexOptions?.push(o);
@@ -201,8 +197,8 @@ class SmokeExternalRuntime implements AgentRuntime {
 
   async start(): Promise<void> {
     this.status = 'ready';
-    await this.context.dispatchers.setStatus(
-      this.context.row.dispatcher_id,
+    await this.context.state?.setStatus(
+      this.context.identity.runtime_id,
       'ready',
     );
   }
@@ -258,7 +254,7 @@ function smokeExternalFactory(
   return ({ ref, descriptor }) => {
     const provider: AgentRuntimeProvider = {
       ref,
-      descriptor,
+      descriptor: asAgentRuntimeDescriptor(descriptor),
       getCapabilities: () => EXTERNAL_RUNTIME_CAPABILITIES,
       createRuntime(context) {
         contexts.push(context);
@@ -270,7 +266,7 @@ function smokeExternalFactory(
 }
 
 class ControllableCodexProcess extends CodexProcess {
-  readonly exitHandlers: CodexProcessExitHandler[] = [];
+  readonly capturedExitHandlers: CodexProcessExitHandler[] = [];
   startCount = 0;
   reapCount = 0;
 
@@ -283,11 +279,11 @@ class ControllableCodexProcess extends CodexProcess {
   }
 
   override onExit(handler: CodexProcessExitHandler): void {
-    this.exitHandlers.push(handler);
+    this.capturedExitHandlers.push(handler);
   }
 
   emitExit(exit: CodexProcessExit = { code: 1, signal: null }): void {
-    for (const handler of this.exitHandlers) handler(exit);
+    for (const handler of this.capturedExitHandlers) handler(exit);
   }
 }
 
@@ -453,8 +449,7 @@ describe('dreamux MVP smoke', () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.start();
 
@@ -499,8 +494,7 @@ describe('dreamux MVP smoke', () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.start();
 
@@ -569,8 +563,7 @@ describe('dreamux MVP smoke', () => {
     server = buildServer({ runtimeDir, fake, bot, capturedCodexOptions });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
 
     await server.start();
@@ -649,6 +642,7 @@ describe('dreamux MVP smoke', () => {
       providerRegistry: registry,
       spawnCounter,
       config: {
+        agents: {},
         dispatchers: [
           testDispatcherConfig({
             id: 'flow',
@@ -667,7 +661,9 @@ describe('dreamux MVP smoke', () => {
     await server.start();
 
     expect(contexts).toHaveLength(1);
-    expect(contexts[0]?.dispatcher?.runtime.provider).toBe(providerRef);
+    // The external dispatcher's runtime.config flows verbatim into the neutral
+    // create-context; provider routing is asserted via the live runtime below.
+    expect(contexts[0]?.config).toEqual({ external_option: true });
     expect(server.dispatcherService.getRuntime('flow')?.providerRef).toBe(
       providerRef,
     );
@@ -683,6 +679,7 @@ describe('dreamux MVP smoke', () => {
         fake,
         bot,
         config: {
+          agents: {},
           dispatchers: [
             testDispatcherConfig({
               id: 'flow',
@@ -701,8 +698,7 @@ describe('dreamux MVP smoke', () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
 
     await server.start();
@@ -757,8 +753,7 @@ describe('dreamux MVP smoke', () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.repos.dispatchers.setThreadId('flow', 'thread_seed');
 
@@ -811,7 +806,6 @@ describe('dreamux MVP smoke', () => {
       runtimeDir,
       fake,
       bot,
-      skipBotSecret: false,
       capturedBotSecrets,
       capturedCodexOptions,
       config: configWithDispatcher({
@@ -1026,8 +1020,7 @@ describe('dreamux MVP smoke', () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.start();
 
@@ -1097,8 +1090,7 @@ describe('dreamux MVP smoke', () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.start();
 
@@ -1143,8 +1135,7 @@ describe('dreamux MVP smoke', () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.start();
 
@@ -1193,8 +1184,7 @@ describe('dreamux MVP smoke', () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.start();
 
@@ -1247,8 +1237,7 @@ describe('dreamux MVP smoke', () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.start();
 
@@ -1302,8 +1291,7 @@ describe('dreamux MVP smoke', () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.start();
 
@@ -1322,8 +1310,7 @@ describe('dreamux MVP smoke', () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.start();
 
@@ -1343,8 +1330,7 @@ describe('dreamux MVP smoke', () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.start();
 
@@ -1375,8 +1361,7 @@ describe('dreamux MVP smoke', () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.start();
 
@@ -1418,8 +1403,7 @@ describe('dreamux MVP smoke', () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.start();
 
@@ -1470,8 +1454,7 @@ describe('dreamux MVP smoke', () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.start();
 
@@ -1517,8 +1500,7 @@ describe('dreamux MVP smoke', () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.start();
 
@@ -1575,8 +1557,7 @@ describe('dreamux MVP smoke', () => {
     });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.start();
 
@@ -1627,8 +1608,7 @@ describe('dreamux MVP smoke', () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.start();
 
@@ -1674,8 +1654,7 @@ describe('dreamux MVP smoke', () => {
     });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.start();
 
@@ -1720,8 +1699,7 @@ describe('dreamux MVP smoke', () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.start();
 
@@ -1759,8 +1737,7 @@ describe('dreamux MVP smoke', () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.start();
 
@@ -1803,8 +1780,7 @@ describe('dreamux MVP smoke', () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.start();
 
@@ -1865,8 +1841,7 @@ describe('dreamux MVP smoke', () => {
     });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.start();
 
@@ -1941,8 +1916,7 @@ describe('dreamux MVP smoke', () => {
     });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.start();
 
@@ -1995,8 +1969,7 @@ describe('dreamux MVP smoke', () => {
     });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.start();
 
@@ -2043,8 +2016,7 @@ describe('dreamux MVP smoke', () => {
     });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.start();
 
@@ -2091,8 +2063,7 @@ describe('dreamux MVP smoke', () => {
     });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.start();
 
@@ -2116,8 +2087,7 @@ describe('dreamux MVP smoke', () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.start();
 
@@ -2150,8 +2120,7 @@ describe('dreamux MVP smoke', () => {
     });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.start();
 
@@ -2187,8 +2156,7 @@ describe('dreamux MVP smoke', () => {
     });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.start();
 
@@ -2219,8 +2187,7 @@ describe('dreamux MVP smoke', () => {
     });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.start();
 
@@ -2259,8 +2226,7 @@ describe('dreamux MVP smoke', () => {
     });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.start();
 
@@ -2300,8 +2266,7 @@ describe('dreamux MVP smoke', () => {
     });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.start();
 
@@ -2361,8 +2326,7 @@ describe('dreamux MVP smoke', () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.start();
 
@@ -2387,8 +2351,7 @@ describe('dreamux MVP smoke', () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.start();
 
@@ -2485,8 +2448,7 @@ describe('dreamux MVP smoke', () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.start();
 
@@ -2508,8 +2470,7 @@ describe('dreamux MVP smoke', () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.start();
 
@@ -2533,8 +2494,7 @@ describe('dreamux MVP smoke', () => {
     server = buildServer({ runtimeDir, fake, bot });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.start();
     expect(fake.initializedAt).not.toBeNull();
@@ -2550,7 +2510,7 @@ describe('dreamux MVP smoke', () => {
   // refuse — confirms our handshake-enforcement assertion above isn't vacuous.
   it('fake codex refuses non-initialize RPC pre-handshake', async () => {
     // Use a raw client (no handshake) against the same fake.
-    const { CodexWsClient } = await import('../src/agent-runtime/builtin/codex/rpc.js');
+    const { CodexWsClient } = await import('@excitedjs/agent-runtime-codex');
     const raw = new CodexWsClient({ url: fake.url });
     await raw.ready();
     await expect(
@@ -2564,9 +2524,9 @@ describe('dreamux MVP smoke', () => {
   it('handshake times out if codex accepts the WS but never replies', async () => {
     await fake.close();
     fake = await startFakeCodex({ swallowInitialize: true });
-    const { CodexWsClient } = await import('../src/agent-runtime/builtin/codex/rpc.js');
+    const { CodexWsClient } = await import('@excitedjs/agent-runtime-codex');
     const { performInitializeHandshake } = await import(
-      '../src/agent-runtime/builtin/codex/handshake.js'
+      '@excitedjs/agent-runtime-codex'
     );
     const raw = new CodexWsClient({ url: fake.url });
     try {
@@ -2585,8 +2545,7 @@ describe('dreamux MVP smoke', () => {
     server = buildServer({ runtimeDir, fake, bot, spawnCounter: counter });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     // Don't call server.start() (which would auto-start); race two explicit
     // startDispatcher calls instead.
@@ -2615,8 +2574,7 @@ describe('dreamux MVP smoke', () => {
     });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.start();
     const firstThreadId = server.repos.dispatchers.get('flow')?.thread_id;
@@ -2651,8 +2609,7 @@ describe('dreamux MVP smoke', () => {
     });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.start();
     const firstThreadId = server.repos.dispatchers.get('flow')?.thread_id;
@@ -2689,8 +2646,7 @@ describe('dreamux MVP smoke', () => {
     });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.start();
     const firstThreadId = server.repos.dispatchers.get('flow')?.thread_id;
@@ -2733,8 +2689,7 @@ describe('dreamux MVP smoke', () => {
     });
     server.repos.dispatchers.upsert({
       dispatcher_id: 'flow',
-      bot_app_id: 'app-smoke',
-      bot_secret_ref: 'env:UNUSED',
+      channel_identity: 'app-smoke',
     });
     await server.start();
 

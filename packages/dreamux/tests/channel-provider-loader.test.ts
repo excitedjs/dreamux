@@ -16,6 +16,7 @@ import type {
   ChannelProvider,
   ChannelSession,
 } from '@excitedjs/dreamux-types';
+import { asChannelDescriptor } from './helpers/provider.js';
 
 function fakeSession(channelId: string): ChannelSession {
   return {
@@ -39,7 +40,7 @@ function channelFactory(options: {
   return ({ ref, descriptor }) => {
     const provider: ChannelProvider = {
       ref,
-      descriptor,
+      descriptor: asChannelDescriptor(descriptor),
       readConfig(raw) {
         return raw;
       },

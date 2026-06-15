@@ -9,7 +9,7 @@ import {
 import { basename, resolve } from 'node:path';
 import type { Readable } from 'node:stream';
 
-import { ensureOwnerOnlyDir } from './internal/os.js';
+import { ensureOwnerOnlyDir } from '@excitedjs/dreamux-utils';
 
 import type {
   FeishuMessageResourceFetcher,

@@ -34,15 +34,10 @@ import {
   unixSocketPathFitsBudget,
 } from '../src/platform/paths.js';
 import {
-  codexAppServerLogDir,
-  dispatcherCodexAppServerErrorLogPath,
-  dispatcherCodexAppServerLogPath,
   dispatcherWorkspaceCodexSkillsDir,
   dispatcherWorkspaceSkillDirs,
   dispatcherWorkspaceSkillPath,
-  teammateCodexAppServerErrorLogPath,
-  teammateCodexAppServerLogPath,
-} from '../src/agent-runtime/builtin/codex/paths.js';
+} from '../src/onboard/legacy-codex-skills.js';
 
 describe('runtime paths', () => {
   let root: string;
@@ -114,24 +109,9 @@ describe('runtime paths', () => {
     expect(dispatcherTeamMateRuntimeDir('dispatcher-a', 'reviewer-1')).toBe(
       join(stateRoot(), 'dispatcher-a', 'teammate', 'runtime', 'reviewer-1'),
     );
-    expect(teammateCodexAppServerLogPath('dispatcher-a', 'reviewer-1')).toBe(
-      join(
-        logsRoot(),
-        'codex-app-server',
-        'teammate',
-        'dispatcher-a',
-        'reviewer-1.log',
-      ),
-    );
-    expect(teammateCodexAppServerErrorLogPath('dispatcher-a', 'reviewer-1')).toBe(
-      join(
-        logsRoot(),
-        'codex-app-server',
-        'teammate',
-        'dispatcher-a',
-        'reviewer-1.stderr.log',
-      ),
-    );
+    // Per-runtime app-server log paths are no longer core path builders: each
+    // runtime package composes a flat `<logsDir>/<engine>/<runtime_id>.log`
+    // keyed by its own runtime_id (issue #209). Core owns only logsRoot().
     const workspace = join(root, 'workspace');
     expect(dispatcherWorkspaceCodexSkillsDir(workspace)).toBe(
       join(workspace, '.codex', 'skills'),
@@ -159,15 +139,6 @@ describe('runtime paths', () => {
 
   it('places logs under component log directories', () => {
     expect(serverLogPath()).toBe(join(logsRoot(), 'dreamux-server.log'));
-    expect(codexAppServerLogDir()).toBe(
-      join(logsRoot(), 'codex-app-server'),
-    );
-    expect(dispatcherCodexAppServerLogPath('dispatcher-a')).toBe(
-      join(logsRoot(), 'codex-app-server', 'dispatcher-a.log'),
-    );
-    expect(dispatcherCodexAppServerErrorLogPath('dispatcher-a')).toBe(
-      join(logsRoot(), 'codex-app-server', 'dispatcher-a.stderr.log'),
-    );
     expect(feishuChannelLogDir()).toBe(join(logsRoot(), 'feishu-channel'));
     expect(feishuChannelLogPath('dispatcher-a')).toBe(
       join(logsRoot(), 'feishu-channel', 'dispatcher-a.log'),

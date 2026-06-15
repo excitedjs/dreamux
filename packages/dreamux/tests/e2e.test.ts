@@ -19,20 +19,21 @@ import {
   loadDispatcherAccess,
   saveDispatcherAccess,
 } from '@excitedjs/feishu-channel';
-import { CodexWsClient } from '../src/agent-runtime/builtin/codex/rpc.js';
+import { CodexWsClient } from '@excitedjs/agent-runtime-codex';
 import {
   CodexProcess,
   type CodexProcessOptions,
-} from '../src/agent-runtime/builtin/codex/supervisor.js';
+} from '@excitedjs/agent-runtime-codex';
 import {
   createFakeFeishuBot,
   type FakeFeishuBot,
   type FeishuInboundEvent,
-} from '../src/channel/feishu/bot.js';
+} from '@excitedjs/feishu-channel';
+import { feishuChannelCatalog } from './helpers/fake-channel.js';
 import { runFeishuMcp } from '../src/mcp/feishu-mcp.js';
 import { BUILT_IN_DEFAULTS, type DreamuxConfig } from '../src/config/config.js';
 import { defaultDispatcherCwd, dispatcherDir } from '../src/platform/paths.js';
-import { dispatcherCodexHome } from '../src/agent-runtime/builtin/codex/paths.js';
+import { dispatcherCodexHome } from '@excitedjs/agent-runtime-codex';
 import { startFakeCodex, type FakeCodex } from './fake-codex.js';
 import { testDispatcherConfig } from './helpers/config.js';
 
@@ -122,8 +123,7 @@ function buildServer(opts: {
   return new Server({
     config: configWithDispatcher(),
     adminSocketPath: join(opts.runtimeDir, 'admin.sock'),
-    skipBotSecret: true,
-    botFactory: () => opts.bot,
+    channelProviderCatalog: feishuChannelCatalog(() => opts.bot),
     codexProcessFactory: (o) => new NoopCodexProcess(o),
     codexClientFactory: () => new CodexWsClient({ url: opts.fake.url }),
     codexHomeDoctor: () => {

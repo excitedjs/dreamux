@@ -19,7 +19,7 @@ import {
   resetRuntimeConfig,
   stateRoot,
 } from '../src/platform/paths.js';
-import { dispatcherWorkspaceSkillDirs } from '../src/agent-runtime/builtin/codex/paths.js';
+import { dispatcherWorkspaceSkillDirs } from '../src/onboard/legacy-codex-skills.js';
 import { testSingleDispatcherFileObject } from './helpers/config.js';
 
 class FakeRunner implements CommandRunner {

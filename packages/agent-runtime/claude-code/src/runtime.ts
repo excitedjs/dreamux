@@ -69,8 +69,7 @@ import {
   type TurnOutcome,
   type TurnSubmitOptions,
 } from './supervisor.js';
-import { renderChannelInput } from './internal/turn-render.js';
-import { resolveCompletionBody } from './internal/completion-body.js';
+import { renderChannelInput, resolveCompletionBody } from '@excitedjs/dreamux-utils';
 import { CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES } from './provider.js';
 import type {
   AgentRuntimeCapabilities,
@@ -116,11 +115,11 @@ export interface ClaudeCodeRuntimeDeps {
   /** Host-level bin resolver (default: identity on the config bin). */
   resolveBinPath: (bin: string) => string;
   /**
-   * Build the base process env for the resident child (host seeds `PATH` with
-   * the Dreamux package bins). When omitted, the package falls back to
-   * `process.env` so a loader-constructed / standalone runtime still spawns.
+   * The host's neutral env-injection entries from the create context, merged
+   * into the resident child env before this provider's own `extra_env`.
+   * Empty/omitted means inject nothing (the common case).
    */
-  baseProcessEnv?: (extraEnv: Record<string, string>) => NodeJS.ProcessEnv;
+  injectEnv?: Record<string, string>;
   /**
    * Launcher-supplied role/system-prompt content, applied as an APPEND via
    * `--append-system-prompt`. Omitted for launches that supply none (teammates).
@@ -227,7 +226,14 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       'mcp.json',
     );
     this.mcpConfigDoc = stringifyClaudeCodeMcpConfig(deps.mcpServers);
-    this.stderrLogPath = deps.paths.stderrLogPath(this.dispatcherId);
+    // Compose the resident stream-json child's stderr log under the neutral
+    // central logs root (B2): core no longer names a per-runtime log file. The
+    // host supplies a unique, filesystem-safe `runtime_id`.
+    this.stderrLogPath = join(
+      deps.paths.logsDir(),
+      'claude-code',
+      `${this.dispatcherId}.stderr.log`,
+    );
     this.completionSpillDir = deps.paths.completionSpillDir(this.dispatcherId);
     this.threadId = identity.checkpoint_id ?? null;
     this.resumed = (identity.checkpoint_id ?? null) !== null;
@@ -578,9 +584,14 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   private buildProcessEnv(
     extraEnv: Record<string, string>,
   ): NodeJS.ProcessEnv {
-    return this.deps.baseProcessEnv !== undefined
-      ? this.deps.baseProcessEnv(extraEnv)
-      : { ...globalThis.process.env, ...extraEnv };
+    // Neutral env boundary: { ...process.env, ...injectEnv, ...extra_env }.
+    // `injectEnv` is the host's optional injection seam (empty today); `extraEnv`
+    // is this provider's own `config.extra_env`, merged last so it can override.
+    return {
+      ...globalThis.process.env,
+      ...(this.deps.injectEnv ?? {}),
+      ...extraEnv,
+    };
   }
 
   private async setStatus(

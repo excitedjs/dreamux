@@ -15,7 +15,7 @@ import {
   type TurnCollector,
 } from './events.js';
 import type { CodexWsClient } from './rpc.js';
-import { DEFAULT_MESSAGE_ID_DEDUPE_WINDOW } from './internal/turn-render.js';
+import { DEFAULT_MESSAGE_ID_DEDUPE_WINDOW } from '@excitedjs/dreamux-utils';
 import type {
   InboundTurnInput,
   InboundDeliveryResult,

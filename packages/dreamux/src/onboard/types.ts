@@ -1,4 +1,4 @@
-import type { DispatcherCodexHomeDoctorResult } from '../agent-runtime/builtin/codex/codex-home.js';
+import type { DispatcherCodexHomeDoctorResult } from '@excitedjs/agent-runtime-codex';
 
 export type OnboardFileStatus = 'created' | 'modified' | 'unchanged' | 'skipped';
 

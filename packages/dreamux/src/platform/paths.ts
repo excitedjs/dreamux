@@ -32,12 +32,27 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  DREAMUX_UNIX_SOCKET_PATH_MAX_BYTES,
+  assertUnixSocketPathBudget,
+  unixSocketPathFitsBudget,
+} from '@excitedjs/dreamux-utils';
+
+import {
   BUILT_IN_DEFAULTS,
   type DreamuxConfig,
 } from '../config/config.js';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
 
-export const DREAMUX_UNIX_SOCKET_PATH_MAX_BYTES = 103;
+// The Unix-domain socket path-budget primitives are owned by
+// `@excitedjs/dreamux-utils` — the single cross-package source, so the budget
+// never drifts between core's host socket allocation and a provider package's
+// own rendezvous socket. Re-exported here so existing `platform/paths.js` import
+// sites are unchanged.
+export {
+  DREAMUX_UNIX_SOCKET_PATH_MAX_BYTES,
+  assertUnixSocketPathBudget,
+  unixSocketPathFitsBudget,
+};
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = dirname(dirname(HERE));
 
@@ -362,30 +377,16 @@ export function teamMateNameSegment(name: string): string {
 }
 
 /**
- * Spill file for a teammate completion result that overflows the inline budget
- * (see `agent-runtime/completion-body.ts`). Both runtimes write the full result
- * here and inline only this path into the dispatcher turn, so a large result
- * never floods the dispatcher's context. Neutral: a completion is a
- * runtime-agnostic concept, so no runtime specifics appear here.
- *
- * Lives under the dispatcher's cache spill dir (issue #182 PR-2 moved it out of
- * shared `/tmp`, which is not a good long-term contract for a path surfaced in
- * dispatcher-visible text). `spillDir` is the owning dispatcher's
+ * Spill file for a teammate completion result that overflows the inline budget.
+ * The implementation now lives in `@excitedjs/dreamux-utils` (shared with the
+ * provider packages); it is re-exported here so existing in-repo imports from
+ * `platform/paths.js` stay stable. `spillDir` is the owning dispatcher's
  * `dispatcherCompletionSpillDir`, supplied by the runtime's path context so a
  * teammate runtime spills under its operator dispatcher, not its composite
- * runtime id. `source` and `id` are sanitized for filename safety; the id is
- * unique per completion (teammate name + turn id).
+ * runtime id. The same filename shape (`teammate-<source>-<id>.output`, both
+ * segments sanitized) is produced by the dreamux-utils helper.
  */
-export function teamMateCompletionOutputPath(
-  spillDir: string,
-  source: string,
-  id: string,
-): string {
-  return join(
-    spillDir,
-    `teammate-${teamMateNameSegment(source)}-${teamMateNameSegment(id)}.output`,
-  );
-}
+export { teamMateCompletionOutputPath } from '@excitedjs/dreamux-utils';
 
 /**
  * Per-dispatcher peer-bot awareness/trust store. One file per dispatcher,
@@ -404,18 +405,6 @@ export function dispatcherChatBotsPath(id: string): string {
  */
 export function dispatcherFeishuAttachmentCacheDir(id: string): string {
   return join(dispatcherCacheDir(id), 'feishu-attachments');
-}
-
-export function unixSocketPathFitsBudget(path: string): boolean {
-  return Buffer.byteLength(path, 'utf8') <= DREAMUX_UNIX_SOCKET_PATH_MAX_BYTES;
-}
-
-export function assertUnixSocketPathBudget(path: string, label: string): string {
-  if (unixSocketPathFitsBudget(path)) return path;
-  const bytes = Buffer.byteLength(path, 'utf8');
-  throw new Error(
-    `${label} is too long for Unix sockets (${bytes} bytes > ${DREAMUX_UNIX_SOCKET_PATH_MAX_BYTES} safe bytes): ${path}`,
-  );
 }
 
 export function dispatcherPathSegment(id: string): string {

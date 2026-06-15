@@ -9,7 +9,9 @@ is wiring only — all per-dispatcher orchestration lives here.
 - **`service.ts`** — the facade that assembles the dispatcher-agent service and
   the teammate service.
 - **`dispatcher/`** — `DispatcherAgentService`: owns live dispatcher slots,
-  start / resume / stop, restart-notice injection, the Feishu channel session,
+  start / resume / stop, restart-notice injection, the neutral channel
+  session(s) (`Map<channel_id, ChannelSession>`, driven through the
+  `@excitedjs/dreamux-types` `ChannelProvider` seam — `builtin:feishu` today),
   and the **role-based MCP descriptor builder**. The dispatcher agent's lifecycle
   is tied to the server (started at boot, resumed on restart). Also holds the
   dispatcher base prompt.

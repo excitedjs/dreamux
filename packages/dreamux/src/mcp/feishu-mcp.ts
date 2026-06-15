@@ -9,9 +9,11 @@ import {
   feishuMcpAdminLabel,
   feishuMcpAdminMethod,
   feishuMcpAdminParams,
+} from '../channel/feishu-mcp-surface.js';
+import {
   feishuMcpTools,
   parseFeishuMcpToolInput,
-} from '../channel/feishu/feishu-mcp-surface.js';
+} from '@excitedjs/feishu-channel';
 import { adminSocketPath as defaultAdminSocketPath } from '../platform/paths.js';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
 

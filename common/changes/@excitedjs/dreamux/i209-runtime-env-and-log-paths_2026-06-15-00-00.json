@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Runtime spawn env + log-path cleanup (issue #209 env-boundary decision). The agent-runtime spawn env is now the clean merge `{ ...process.env, ...injectEnv, ...extra_env }` (`injectEnv` is core's neutral, currently-empty host seam; `extra_env` is the provider's own config). Two operator-visible consequences: (1) the Codex app-server child no longer has `CODEX_HOME` stripped — it INHERITS the operator's ambient `CODEX_HOME` like vanilla codex, consistent with the 'dispatcher follows ~/.codex' invariant; an operator who set `CODEX_HOME` in their environment will now have codex use it. (2) core no longer prepends the dreamux package bin dir to the runtime PATH, so the model's bare `tm` invocation relies on the dreamux bins being on the ambient PATH (true for a global `npm install -g @excitedjs/dreamux`, which links `dreamux` and `tm`); the feishu/team/teammate MCP shims are unaffected (they spawn via an absolute path). Also relocates a TeamMate's app-server log to a flat `~/.dreamux/logs/codex-app-server/<runtime_id>.log` (and Claude Code stderr flat under `logs/claude-code/`); dispatcher log paths are byte-identical. Logs are rebuildable — old teammate logs simply remain at their old path. No operator action required.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

@@ -59,7 +59,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     const runtime = server.dispatcherService.getRuntime(id);
     return {
       dispatcher_id: row.dispatcher_id,
-      bot_app_id: row.bot_app_id,
+      channel_identity: row.channel_identity,
       status: runtime?.getStatus() ?? row.status,
       thread_id: runtime?.getThreadId() ?? row.thread_id,
       last_lost_thread_id: row.last_lost_thread_id,
@@ -409,11 +409,11 @@ async function assertFeishuScope(
   const messageId = optionalString(params, 'message_id');
   if (
     messageId !== null &&
-    !server.dispatcherService.feishuMessageBelongsToChat(
+    !(await server.dispatcherService.feishuMessageBelongsToChat(
       dispatcherId,
       messageId,
       chatId,
-    )
+    ))
   ) {
     throw new AdminError(
       'CHANNEL_SCOPE_DENIED',

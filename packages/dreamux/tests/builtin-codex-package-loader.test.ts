@@ -58,8 +58,10 @@ describe('builtin:codex loads the real @excitedjs/agent-runtime-codex package', 
     expect(provider.descriptor.ref.raw).toBe('builtin:codex');
 
     const capabilities = provider.getCapabilities();
-    expect(capabilities.resume.supported).toBe(true);
-    expect(capabilities.resume.checkpoint).toBe('codexThread');
+    expect(capabilities.resume).toEqual({
+      supported: true,
+      checkpoint: 'codexThread',
+    });
     expect(capabilities.teammateCompletion.map((s) => s.kind)).toEqual([
       'codexInboxTurn',
     ]);
@@ -68,7 +70,7 @@ describe('builtin:codex loads the real @excitedjs/agent-runtime-codex package', 
   it('parses real Codex runtime config via the loaded provider readConfig', async () => {
     const provider = await loadRealCodexProvider();
 
-    const config = provider.readConfig!(
+    const config = await provider.readConfig!(
       { approval_policy: 'never', sandbox_mode: 'read-only' },
       { providerRef: 'builtin:codex', agentId: 'flow', file: 'config.json', prefix: '' },
     );
@@ -79,7 +81,7 @@ describe('builtin:codex loads the real @excitedjs/agent-runtime-codex package', 
 
   it('constructs a runtime from the neutral context without throwing on absent host hooks', async () => {
     const provider = await loadRealCodexProvider();
-    const config = provider.readConfig!(
+    const config = await provider.readConfig!(
       {},
       { providerRef: 'builtin:codex', agentId: 'flow', file: 'config.json', prefix: '' },
     );
@@ -88,9 +90,9 @@ describe('builtin:codex loads the real @excitedjs/agent-runtime-codex package', 
     tmpDirs.push(tmp);
     const paths: AgentRuntimePathContext = {
       dispatcherDir: () => tmp,
-      stdoutLogPath: () => join(tmp, 'out.log'),
-      stderrLogPath: () => join(tmp, 'err.log'),
+      logsDir: () => tmp,
       completionSpillDir: () => join(tmp, 'spill'),
+      runtimeSocketDirs: () => [join(tmp, 'sockets')],
     };
     const state: AgentRuntimeStateCallbacks = {
       setStatus: async () => {},

@@ -298,8 +298,8 @@ export class TeamService {
   async deliverToLeader(input: {
     dispatcherId: string;
     teamId: string;
-    turn: import('../../agent-runtime/turn.js').InboundTurnInput;
-  }): Promise<import('../../agent-runtime/types.js').AgentRuntimeTurnResult> {
+    turn: import('@excitedjs/dreamux-types').InboundTurnInput;
+  }): Promise<import('@excitedjs/dreamux-types').AgentRuntimeTurnResult> {
     const team = await this.mustTeam(input.dispatcherId, input.teamId);
     if (team.status === 'closed') return { status: 'stopped' };
     return this.opts.teammates.channelInputScoped(

@@ -25,7 +25,7 @@ import {
   isProcessAlive,
   killProcessGroup,
   removeEmptyLogFile,
-} from './internal/os.js';
+} from '@excitedjs/dreamux-utils';
 
 export interface CodexProcessOptions {
   /** Unix socket path the daemon should listen on. */

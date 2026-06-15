@@ -10,9 +10,9 @@ import {
   COMPLETION_INLINE_BUDGET_MAX,
   completionInlineBudget,
   resolveCompletionBody,
-} from '../src/agent-runtime/completion-body.js';
+} from '@excitedjs/dreamux-utils';
 import { teamMateCompletionOutputPath } from '../src/platform/paths.js';
-import type { CompletionEnvelope } from '../src/agent-runtime/types.js';
+import type { CompletionEnvelope } from '@excitedjs/dreamux-types';
 
 const SOURCE = 'reviewer';
 const ID = 'reviewer:turn-7';

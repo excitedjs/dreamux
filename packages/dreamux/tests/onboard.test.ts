@@ -24,12 +24,12 @@ import {
   logsRoot,
   resetRuntimeConfig,
 } from '../src/platform/paths.js';
+import { dispatcherCodexHome } from '@excitedjs/agent-runtime-codex';
 import {
-  dispatcherCodexHome,
   dispatcherWorkspaceSkillDir,
   dispatcherWorkspaceSkillDirs,
   dispatcherWorkspaceSkillPath,
-} from '../src/agent-runtime/builtin/codex/paths.js';
+} from '../src/onboard/legacy-codex-skills.js';
 import { testSingleDispatcherFileObject } from './helpers/config.js';
 
 class FakeRunner implements CommandRunner {
@@ -112,7 +112,7 @@ class FakeRunner implements CommandRunner {
 // DREAMUX_NODE_BIN hermetic regardless of what the test host has installed.
 const noSystemNodeProbe: ServiceNodeProbe = {
   realpath: async (path) => path,
-  isExecutable: () => false,
+  isExecutable: async () => false,
 };
 
 function writeGlobalCodexAuth(answers: OnboardAnswers): void {
@@ -308,7 +308,7 @@ describe('dreamux onboard', () => {
     // minimum version, so it wins over process.execPath.
     const stableNodeProbe: ServiceNodeProbe = {
       realpath: async (path) => path,
-      isExecutable: (path) => path === '/usr/local/bin/node',
+      isExecutable: async (path) => path === '/usr/local/bin/node',
     };
 
     await runOnboard({
@@ -344,7 +344,7 @@ describe('dreamux onboard', () => {
         path === '/usr/local/bin/node'
           ? `${join(root, 'home')}/.nvm/versions/node/v22.7.0/bin/node`
           : path,
-      isExecutable: (path) => path === '/usr/local/bin/node',
+      isExecutable: async (path) => path === '/usr/local/bin/node',
     };
 
     await runOnboard({
@@ -684,7 +684,11 @@ describe('dreamux onboard', () => {
     expect(claudeHelper?.provider).toBe('builtin:claude-code');
   });
 
-  it('rejects a new dispatcher that reuses an existing Feishu app_id', async () => {
+  it('allows a new dispatcher that reuses an existing Feishu app_id (#209 Decision #4: cross-dispatcher uniqueness relaxed)', async () => {
+    // Decision #4 (issue #209): cross-dispatcher Feishu app_id uniqueness is no
+    // longer enforced. Two dispatchers sharing one bot identity is an operator
+    // choice, not a config error — onboard adds the second dispatcher and
+    // rewrites the config instead of failing loud + rolling back.
     const runner = new FakeRunner();
     const configDir = join(root, 'config');
     const existingConfig = JSON.stringify(
@@ -709,25 +713,31 @@ describe('dreamux onboard', () => {
       mode: 0o600,
     });
 
-    await expect(
-      runOnboard({
-        answers: testAnswers({
-          configDir,
-          dispatcherId: 'docs',
-          botAppId: 'app-shared',
-          botAppSecret: 'secret-docs',
-          registerService: false,
-        }),
-        runner,
-        platform: 'linux',
-        homeDir: join(root, 'home'),
-        env: {},
+    await runOnboard({
+      answers: testAnswers({
+        configDir,
+        dispatcherId: 'docs',
+        dispatcherCwd: join(root, 'docs-cwd'),
+        botAppId: 'app-shared',
+        botAppSecret: 'secret-docs',
+        registerService: false,
       }),
-    ).rejects.toThrow(/duplicates dispatcher 'flow'/);
+      runner,
+      platform: 'linux',
+      homeDir: join(root, 'home'),
+      env: { CODEX_ACCESS_TOKEN: 'interactive-token-test' },
+    });
 
-    expect(readFileSync(join(configDir, 'config.json'), 'utf8')).toBe(
-      existingConfig,
+    const saved = JSON.parse(
+      readFileSync(join(configDir, 'config.json'), 'utf8'),
+    ) as Record<string, any>;
+    expect(
+      (saved['dispatchers'] as Array<{ id: string }>).map((d) => d.id),
+    ).toEqual(expect.arrayContaining(['flow', 'docs']));
+    const appIds = (saved['dispatchers'] as Array<any>).map(
+      (d) => d.channels[0].config.app_id,
     );
+    expect(appIds).toEqual(['app-shared', 'app-shared']);
   });
 
   it('onboard output round-trips through loadConfig (#148)', async () => {

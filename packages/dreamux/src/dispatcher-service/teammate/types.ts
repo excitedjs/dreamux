@@ -1,4 +1,4 @@
-import type { AgentRuntimeCapabilities } from '../../agent-runtime/index.js';
+import type { AgentRuntimeCapabilities } from '@excitedjs/dreamux-types';
 import type { DispatcherStatus } from '../../state/dispatcher-store.js';
 
 export const TEAMMATE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;

@@ -31,7 +31,7 @@ import type {
   AgentRuntimeCapabilities,
   AgentRuntimeProvider,
   CompletionDeliveryShape,
-} from './types.js';
+} from '@excitedjs/dreamux-types';
 
 export interface ExternalAgentRuntimeProviderFactoryContext {
   /** Canonical provider ref from config, for example `npm:some-runtime#provider`. */

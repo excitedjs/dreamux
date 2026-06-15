@@ -15,7 +15,7 @@ import {
 } from '../config/config.js';
 import { loadConfigWithBuiltins } from '../agent-runtime/load-config.js';
 import { cacheRoot, logsRoot, runRoot, stateRoot } from '../platform/paths.js';
-import { dispatcherWorkspaceSkillDirs } from '../agent-runtime/builtin/codex/paths.js';
+import { dispatcherWorkspaceSkillDirs } from './legacy-codex-skills.js';
 
 export type UninstallStatus = 'removed' | 'missing' | 'skipped';
 

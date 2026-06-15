@@ -5,21 +5,20 @@
  * `ChannelSession` contract on top of the package's own {@link FeishuChannelSession}
  * (the platform-I/O + access/trust + inbound-normalization + tool-backing engine).
  *
- * Production note: Dreamux core does NOT drive this neutral path today. Core's
- * dispatcher wiring still uses the package's richer host-shaped session API (a
- * result-returning inbound submitter that the reaction ledger keys off, the
- * core-owned MCP server descriptor, and admin-routed tool dispatch). Converging
- * core onto `start(routes)` / `tools()` / `handleTool()` is the deferred Channel
- * MCP migration. This neutral facade is genuine and self-contained — `reply`,
- * `react`, `resolveTarget`, `tools`, `handleTool`, and `messageBelongsToTarget`
- * are wired to the real session logic; only `start(routes)` is real-but-not-the-
- * production-path (its `routes.deliver` is void, so it cannot carry the submit
- * delivery result the production reaction ledger needs). It keeps the package a
- * first-class, loader-real `ChannelProvider` for the generic channel loader and
- * for external embedders.
+ * The neutral seam is now fully load-bearing (issue #209 cleanup): `start(routes)`
+ * forwards the normalized turn input + routing envelope to `routes.deliver` and
+ * returns core's REAL `InboundDeliveryResult` (status + turnId), which the
+ * session's reaction ledger keys off; `mcpServerDescriptor`, `handleSessionlessTool`,
+ * `getIdentity`, `reply`, `react`, `resolveTarget`, `tools`, `handleTool`, and
+ * `messageBelongsToTarget` are all wired to the real session logic. Core converges
+ * its dispatcher wiring onto this neutral `ChannelSession` in the same cleanup; the
+ * package never imports `@excitedjs/dreamux` and stays a first-class, loader-real
+ * `ChannelProvider` for the generic channel loader and external embedders.
  */
 import type {
+  AgentRuntimeMcpServer,
   ChannelInboundEnvelope,
+  ChannelMcpDescriptorContext,
   ChannelProvider,
   ChannelProviderDescriptor,
   ChannelProviderFactory,
@@ -28,6 +27,7 @@ import type {
   ChannelRoutes,
   ChannelSession,
   ChannelSessionCreateContext,
+  ChannelSessionlessToolContext,
   ChannelTarget,
   ChannelToolCall,
   ChannelToolDescriptor,
@@ -38,8 +38,18 @@ import {
   type FeishuChannelLogger,
   type FeishuInboundEnvelope,
 } from './feishu-channel.js';
-import { feishuMcpTools } from './feishu-mcp-tools.js';
+import type { FeishuBot } from './bot.js';
+import { listChatBots } from './chat-bots-store.js';
+import { feishuMcpTools, parseFeishuMcpToolInput } from './feishu-mcp-tools.js';
 import { BUILTIN_FEISHU_PROVIDER_REF } from './provider-ref.js';
+
+/**
+ * The Feishu MCP server name (this channel's MCP tool namespace). Core owns the
+ * host-side `feishu-mcp` stdio shim and admin-method routing; the package only
+ * needs the server name to shape the descriptor it returns from
+ * `mcpServerDescriptor` below.
+ */
+const FEISHU_MCP_SERVER_NAME = 'feishu';
 
 /** Validated Feishu channel config the neutral session is constructed from. */
 export interface FeishuChannelConfig {
@@ -106,11 +116,43 @@ class NeutralFeishuChannelSession implements ChannelSession {
 
   async start(routes: ChannelRoutes): Promise<void> {
     await this.session.start({
-      submitTurn: async (_input, envelope) => {
-        await routes.deliver(inboundEnvelopeToNeutral(this.channel_id, envelope));
-        return { status: 'submitted', turnId: envelope.messageId };
-      },
+      // The session normalized the turn into `input`; forward it plus the
+      // neutral routing envelope and the accept hooks to core, and return core's
+      // REAL delivery result (status + turnId) so the session's reaction ledger
+      // keys off the actually-submitted turn — not a fabricated id.
+      submitTurn: (input, envelope, hooks) =>
+        routes.deliver(
+          input,
+          inboundEnvelopeToNeutral(this.channel_id, envelope),
+          hooks,
+        ),
     });
+  }
+
+  mcpServerDescriptor(
+    context: ChannelMcpDescriptorContext,
+  ): AgentRuntimeMcpServer | null {
+    // Build the `feishu-mcp` stdio descriptor from the host's neutral bin
+    // command + admin socket. Feishu always exposes its MCP surface, so this
+    // never returns null. Core owns the bin path; the package only shapes args.
+    return {
+      name: FEISHU_MCP_SERVER_NAME,
+      command: context.command,
+      args: [
+        'feishu-mcp',
+        '--dispatcher',
+        context.dispatcher_id,
+        ...(context.callerKind !== undefined
+          ? ['--caller', context.callerKind]
+          : []),
+        ...(context.team_id !== undefined ? ['--team-id', context.team_id] : []),
+        ...(context.leader_name !== undefined
+          ? ['--leader-name', context.leader_name]
+          : []),
+        '--admin-socket',
+        context.adminSocketPath,
+      ],
+    };
   }
 
   async close(): Promise<void> {
@@ -167,16 +209,52 @@ class NeutralFeishuChannelSession implements ChannelSession {
   }
 }
 
+/** Options for {@link createFeishuChannelProvider}. */
+export interface CreateFeishuChannelProviderOptions {
+  /**
+   * Test seam: build the underlying `FeishuBot` instead of opening a real Lark
+   * connection. Mirrors the agent-runtime provider factories' process/session
+   * seams. Receives the validated channel config so a test can key a bot by its
+   * app identity (e.g. per-channel multi-bot routing). Omitted in production.
+   */
+  botFactory?: (config: FeishuChannelConfig) => FeishuBot;
+}
+
 /**
  * Create the built-in Feishu `ChannelProvider`. `readConfig` validates the
  * `{ app_id, app_secret }` block; `createSession` builds the package's Feishu
  * session from the neutral create context (state/cache roots, logger) and wraps
  * it in the neutral `ChannelSession` adapter.
  */
-export function createFeishuChannelProvider(): ChannelProvider<FeishuChannelConfig> {
+export function createFeishuChannelProvider(
+  options: CreateFeishuChannelProviderOptions = {},
+): ChannelProvider<FeishuChannelConfig> {
   return {
     ref: BUILTIN_FEISHU_PROVIDER_REF,
     descriptor: DEFAULT_FEISHU_DESCRIPTOR,
+    getIdentity(config: FeishuChannelConfig): string {
+      // Self-report the opaque channel identity (the bot app id). Core stores
+      // and displays it without ever naming a Feishu config field.
+      return config.appId;
+    },
+    async handleSessionlessTool(
+      name: string,
+      args: Record<string, unknown>,
+      context: ChannelSessionlessToolContext,
+    ): Promise<unknown> {
+      // The only sessionless Feishu tool: list the bots in a chat before any
+      // live session/binding exists. Reads the per-dispatcher state root.
+      if (name !== 'list_chat_bots') {
+        throw new Error(
+          `${BUILTIN_FEISHU_PROVIDER_REF} has no sessionless tool ${JSON.stringify(name)}`,
+        );
+      }
+      const parsed = parseFeishuMcpToolInput('list_chat_bots', args);
+      if (parsed.toolName !== 'list_chat_bots') {
+        throw new Error('feishu sessionless tool parse mismatch');
+      }
+      return listChatBots(context.state_root ?? '.', parsed.input.chatId);
+    },
     readConfig(raw): FeishuChannelConfig {
       const obj = (raw ?? {}) as Record<string, unknown>;
       // The Feishu channel owns its config validation (issue #209 multi-channel
@@ -215,6 +293,9 @@ export function createFeishuChannelProvider(): ChannelProvider<FeishuChannelConf
         stateDir,
         attachmentCacheDir: cacheRoot,
         log: channelLoggerFromNeutral(context.logger),
+        ...(options.botFactory !== undefined
+          ? { botFactory: (): FeishuBot => options.botFactory!(context.config) }
+          : {}),
       });
       return new NeutralFeishuChannelSession(context.channel_id, session);
     },

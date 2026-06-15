@@ -3,33 +3,27 @@ import { createHash } from 'node:crypto';
 
 import {
   bundledSkillSourcesForRole,
-  type AgentRuntime,
-  type AgentRuntimeCapabilities,
-  type AgentRuntimeMcpServer,
-  type AgentRuntimePathContext,
-  type AgentRuntimeProvider,
+  teammateHostPaths,
+  neutralLoggerFromHostLogger,
+  HOST_INJECT_ENV,
   type AgentRuntimeProviderCatalog,
-  type AgentRuntimeTurnResult,
-  type CompletionEnvelope,
 } from '../../agent-runtime/index.js';
-import type { TurnSettledSignal } from '../../agent-runtime/turn.js';
+import type {
+  AgentRuntime,
+  AgentRuntimeCapabilities,
+  AgentRuntimeMcpServer,
+  AgentRuntimeProvider,
+  AgentRuntimeTurnResult,
+  CompletionEnvelope,
+  TurnSettledSignal,
+} from '@excitedjs/dreamux-types';
 import {
-  BUILTIN_CLAUDE_CODE_PROVIDER_REF,
   type DispatcherConfig,
   type DreamuxConfig,
   type ResolvedAgentConfig,
 } from '../../config/config.js';
-import type { DispatcherStore, DispatcherRow } from '../../state/dispatcher-store.js';
+import type { DispatcherStore } from '../../state/dispatcher-store.js';
 import type { DreamuxLogger } from '../../platform/logger.js';
-import { teammateClaudeCodeStreamLogPath } from '../../agent-runtime/builtin/claude-code/paths.js';
-import {
-  teammateCodexAppServerErrorLogPath,
-  teammateCodexAppServerLogPath,
-} from '../../agent-runtime/builtin/codex/paths.js';
-import {
-  dispatcherCompletionSpillDir,
-  dispatcherTeamMateRuntimeDir,
-} from '../../platform/paths.js';
 import { validateDispatcherId } from '../../state/dispatcher-id.js';
 import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
 import { TeamMateIdentityStore } from './identity-store.js';
@@ -668,7 +662,7 @@ export class TeamMateAgentService {
   async channelInputScoped(
     principal: TeamMateCallerPrincipal,
     name: string,
-    input: import('../../agent-runtime/turn.js').InboundTurnInput,
+    input: import('@excitedjs/dreamux-types').InboundTurnInput,
   ): Promise<AgentRuntimeTurnResult> {
     const dispatcherId = principalDispatcherId(principal);
     const live = await this.ensureRuntime(dispatcherId, name, {
@@ -873,7 +867,6 @@ export class TeamMateAgentService {
   ): Promise<LiveTeamMate> {
     const resumeCapability = provider.getCapabilities().resume;
     const state = new TeamMateRuntimeStateStore(this.identities, identity);
-    const row = this.runtimeRow(identity);
     const onTeamMateCompletion = this.opts.onTeamMateCompletion;
     // Bound late so the settle handler closes over the runtime instance directly
     // rather than re-reading the live map: close() deletes the live entry right
@@ -881,33 +874,31 @@ export class TeamMateAgentService {
     // race the lookup. The origin map is closed over for the same reason.
     let liveRuntime: AgentRuntime | null = null;
     const turnOrigins = new Map<string, TeamMateTurnOrigin>();
+    // The runtime instance id is the globally-unique, filesystem-safe composite
+    // the host mints from the operator dispatcher + the teammate's runtime name
+    // (`<dispatcher>.tm.<hash>`). It groups the teammate's state/log/spill paths
+    // and never collides across dispatchers or with a dispatcher's own id.
+    const runtimeName = runtimeIdentityName(identity);
     // The teammate's runtime config comes from its own resolved agent (the
-    // agents[].id it was spawned with), never inherited from the dispatcher.
-    // Hand the provider a create-context dispatcher whose `runtime` is the
-    // resolved agent's { provider, config }: a teammate on a different provider
-    // than its dispatcher (e.g. a claude teammate under a codex dispatcher) gets
-    // its OWN typed config, which structurally removes the cross-provider
-    // "is not wired to ..." mismatch. Other dispatcher fields (id, cwd, channels)
-    // come from the real dispatcher config when present.
-    const dispatcherCfg = this.dispatcherConfig(dispatcherId);
-    const createContextDispatcher: DispatcherConfig = {
-      ...(dispatcherCfg ?? syntheticDispatcherConfig(dispatcherId)),
-      agentRuntime: identity.agent_runtime,
-      runtime: { provider: agent.provider, config: agent.config },
-    };
+    // agents[].id it was spawned with), never inherited from the dispatcher: a
+    // teammate on a different provider than its dispatcher (e.g. a claude
+    // teammate under a codex dispatcher) carries its OWN typed config.
     const runtime = provider.createRuntime({
-      row,
-      dispatcher: createContextDispatcher,
-      dispatchers: this.opts.dispatchers,
+      identity: {
+        runtime_id: runtimeId(identity.dispatcher_id, runtimeName),
+        checkpoint_id: identity.session_id,
+      },
       // The teammate identity's role drives bundled-skill gating (issue #209
       // slice 6): only a `team_leader` receives bundled Dreamux skills; ordinary
       // `teammate` / `team_member` launches receive none. `TeamMateRole` is a
       // subset of `AgentRuntimeRole`, so it maps through directly.
       role: identity.role,
-      skillSources: bundledSkillSourcesForRole(identity.role),
+      config: agent.config,
       cwd: identity.cwd,
+      skillSources: bundledSkillSourcesForRole(identity.role),
       state,
-      paths: this.runtimePaths(identity, provider.ref),
+      paths: teammateHostPaths(identity.dispatcher_id, runtimeName),
+      injectEnv: HOST_INJECT_ENV,
       mcpServers: [
         ...(this.opts.mcpServersForTeamMate?.({
           dispatcherId,
@@ -943,15 +934,17 @@ export class TeamMateAgentService {
             },
           }
         : {}),
-      log: (level, message, err) =>
-        this.opts.log[level](
-          {
-            dispatcher_id: dispatcherId,
-            teammate: identity.name,
-            ...(err !== undefined ? { err: errInfo(err) } : {}),
-          },
-          message,
-        ),
+      // Bind the per-teammate context once via the host logger's own `child`,
+      // then adapt to the neutral message-first contract preserving the full
+      // structured-field set — the same full-fidelity bridge the dispatcher path
+      // uses, so a teammate runtime's `logger.info('x', { id })` keeps `id` on
+      // the host log line (the old callback adapter dropped every field but err).
+      logger: neutralLoggerFromHostLogger(
+        this.opts.log.child({
+          dispatcher_id: dispatcherId,
+          teammate: identity.name,
+        }),
+      ),
     });
     liveRuntime = runtime;
     // #199 Slice 3: rebuild the resume checkpoint from the persisted
@@ -1103,73 +1096,6 @@ export class TeamMateAgentService {
   ): void {
     if (principalCanAccess(principal, identity)) return;
     throw new Error(`TeamMate ${JSON.stringify(identity.name)} does not exist`);
-  }
-
-  private runtimeRow(identity: TeamMateIdentity): DispatcherRow {
-    const runtimeIdentity = runtimeIdentityName(identity);
-    return {
-      dispatcher_id: runtimeId(identity.dispatcher_id, runtimeIdentity),
-      bot_app_id: `teammate-${runtimeIdentity}`,
-      bot_secret_ref: '',
-      thread_id: identity.session_id,
-      status: 'declared',
-      enabled: 1,
-      created_at: identity.created_at,
-      updated_at: identity.updated_at,
-      last_started_at: null,
-      last_ready_at: null,
-      last_error: identity.last_error,
-      last_lost_thread_id: null,
-    };
-  }
-
-  /**
-   * Per-teammate path context. The teammate runtime dir is the neutral root a
-   * runtime derives its state files from (Claude Code `mcp.json`; Codex keeps
-   * no per-teammate state files — its rendezvous socket is allocated per start
-   * under the private runtime-socket root, issue #182); only the central-tree
-   * log files vary by runtime, so the launcher selects them from the resolved
-   * provider ref.
-   */
-  private runtimePaths(
-    identity: TeamMateIdentity,
-    providerRef: string,
-  ): AgentRuntimePathContext {
-    const runtimeIdentity = runtimeIdentityName(identity);
-    const dispatcherDir = (): string =>
-      dispatcherTeamMateRuntimeDir(identity.dispatcher_id, runtimeIdentity);
-    // Completion spill belongs to the OPERATOR dispatcher's cache, not the
-    // teammate's composite runtime id, so it groups with the rest of that
-    // dispatcher's ephemera (issue #182 PR-2).
-    const completionSpillDir = (): string =>
-      dispatcherCompletionSpillDir(identity.dispatcher_id);
-    if (providerRef === BUILTIN_CLAUDE_CODE_PROVIDER_REF) {
-      const streamLog = (): string =>
-        teammateClaudeCodeStreamLogPath(
-          identity.dispatcher_id,
-          runtimeIdentity,
-        );
-      return {
-        dispatcherDir,
-        stdoutLogPath: streamLog,
-        stderrLogPath: streamLog,
-        completionSpillDir,
-      };
-    }
-    return {
-      dispatcherDir,
-      stdoutLogPath: () =>
-        teammateCodexAppServerLogPath(
-          identity.dispatcher_id,
-          runtimeIdentity,
-        ),
-      stderrLogPath: () =>
-        teammateCodexAppServerErrorLogPath(
-          identity.dispatcher_id,
-          runtimeIdentity,
-        ),
-      completionSpillDir,
-    };
   }
 
   /**
@@ -1373,23 +1299,6 @@ export class TeamMateAgentService {
       unsupported_reason: unsupportedReason,
     };
   }
-}
-
-/**
- * A minimal {@link DispatcherConfig} skeleton for the create-context when no
- * matching dispatcher config exists (the teammate was spawned for an id with no
- * declared dispatcher). The runtime block is overwritten by the caller with the
- * teammate's resolved agent; only the neutral fields matter here.
- */
-function syntheticDispatcherConfig(dispatcherId: string): DispatcherConfig {
-  return {
-    id: dispatcherId,
-    cwd: null,
-    enabled: true,
-    channels: [],
-    agentRuntime: '',
-    runtime: { provider: '', config: {} },
-  };
 }
 
 function toTurnResult(result: AgentRuntimeTurnResult): TeamMateTurnResult {

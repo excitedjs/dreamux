@@ -162,7 +162,7 @@ async function loadOneProviderPackage<
   if (existing === undefined) {
     registry.register(provider.descriptor);
   }
-  registry.registerImplementation(seedDescriptor.id, provider);
+  registry.registerImplementation(provider.descriptor.id, provider);
 }
 
 function resolvePackageName<

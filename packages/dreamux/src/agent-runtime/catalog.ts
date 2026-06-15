@@ -4,11 +4,15 @@ import {
   type ProviderDescriptor,
   type ProviderRegistry,
 } from '../registry/index.js';
-import { createCodexAgentRuntimeProvider } from './builtin/codex/provider.js';
-import type { CodexAgentRuntimeProviderOptions } from './builtin/codex/provider.js';
-import { createClaudeCodeAgentRuntimeProvider } from './builtin/claude-code/provider.js';
-import type { ClaudeCodeAgentRuntimeProviderOptions } from './builtin/claude-code/provider.js';
-import type { AgentRuntimeProvider } from './types.js';
+import {
+  createCodexAgentRuntimeProvider,
+  type CodexAgentRuntimeProviderOptions,
+} from '@excitedjs/agent-runtime-codex';
+import {
+  createClaudeCodeAgentRuntimeProvider,
+  type ClaudeCodeAgentRuntimeProviderOptions,
+} from '@excitedjs/agent-runtime-claude-code';
+import type { AgentRuntimeProvider } from '@excitedjs/dreamux-types';
 
 export class UnsupportedAgentRuntimeProviderError extends Error {
   constructor(

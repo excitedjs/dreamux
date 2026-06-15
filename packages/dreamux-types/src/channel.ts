@@ -11,11 +11,17 @@
  * here because external channel packages must compile against
  * `@excitedjs/dreamux-types` only and must not import `@excitedjs/dreamux`.
  */
+import type { AgentRuntimeMcpServer } from './agent-runtime.js';
 import type { DreamuxLogger } from './logger.js';
 import type {
   ChannelProviderDescriptor,
   ProviderFactory,
 } from './provider.js';
+import type {
+  InboundDeliveryHooks,
+  InboundDeliveryResult,
+  InboundTurnInput,
+} from './turn.js';
 
 export interface ChannelTarget {
   target_type: string;
@@ -103,7 +109,54 @@ export interface ChannelMessageTargetCheck {
 }
 
 export interface ChannelRoutes {
-  deliver(envelope: ChannelInboundEnvelope): Promise<void>;
+  /**
+   * Deliver a normalized inbound to Dreamux core. The channel session supplies
+   * the neutral turn {@link InboundTurnInput} (text/body/attrs/attachments it
+   * normalized) plus the routing/identity {@link ChannelInboundEnvelope}; core
+   * dedupes (on `input.sourceId`), submits the turn, and returns the neutral
+   * {@link InboundDeliveryResult} — the channel session keys its own
+   * reaction/ack ledger off the `submitted` turn id. `hooks.onAccepted` (if
+   * given) fires after dedupe accepts and before submit, so the channel can mark
+   * the message received. A channel inbound never yields `'skipped'` (that is a
+   * notice-only state), so the union is exactly the inbound-delivery one.
+   */
+  deliver(
+    input: InboundTurnInput,
+    envelope: ChannelInboundEnvelope,
+    hooks?: InboundDeliveryHooks,
+  ): Promise<InboundDeliveryResult>;
+}
+
+/**
+ * The context core passes to {@link ChannelSession.mcpServerDescriptor}. Carries
+ * the host bin command + admin-socket path the channel's stdio MCP shim forwards
+ * to, plus the caller identity so the descriptor can scope its tool calls. The
+ * provider builds its own stdio descriptor from these neutral pieces; core never
+ * names the channel's tool transport.
+ */
+export interface ChannelMcpDescriptorContext {
+  /** The Dreamux bin command the channel's MCP shim is spawned as. */
+  command: string;
+  /** The admin Unix-socket path the shim forwards tool calls to. */
+  adminSocketPath: string;
+  dispatcher_id: string;
+  /** Which agent role hosts the MCP server (scopes the shim's admin calls). */
+  callerKind?: 'dispatcher' | 'team_leader';
+  team_id?: string;
+  leader_name?: string;
+}
+
+/**
+ * The context core passes to {@link ChannelProvider.handleSessionlessTool}. A
+ * sessionless tool runs without a live {@link ChannelSession} (e.g. listing the
+ * bots in a chat before any binding exists), so it gets only neutral host
+ * locators, never a session handle.
+ */
+export interface ChannelSessionlessToolContext {
+  dispatcher_id: string;
+  /** The per-dispatcher state root the provider may read credentials/state from. */
+  state_root?: string;
+  logger?: DreamuxLogger;
 }
 
 export interface ChannelSession {
@@ -131,6 +184,16 @@ export interface ChannelSession {
   messageBelongsToTarget?(
     input: ChannelMessageTargetCheck,
   ): boolean | Promise<boolean>;
+  /**
+   * Build the stdio MCP server descriptor that backs this channel's
+   * provider-specific tools for a runtime. Returns `null` when the channel
+   * exposes no MCP surface for the given caller. Omit entirely if the channel
+   * never exposes one. The descriptor is an {@link AgentRuntimeMcpServer} so a
+   * runtime can launch it through the same neutral MCP-server seam as any other.
+   */
+  mcpServerDescriptor?(
+    context: ChannelMcpDescriptorContext,
+  ): AgentRuntimeMcpServer | null;
 }
 
 export interface ChannelProvider<TConfig = unknown> {
@@ -141,6 +204,23 @@ export interface ChannelProvider<TConfig = unknown> {
     context: ChannelConfigContext,
   ): TConfig | Promise<TConfig>;
   createSession(context: ChannelSessionCreateContext<TConfig>): ChannelSession;
+  /**
+   * Self-report a neutral, opaque channel identity for this config (e.g. the
+   * bot app id). Core stores and displays the string but never interprets it,
+   * so it never has to name a provider config field. Omit if the channel has no
+   * stable identity to report.
+   */
+  getIdentity?(config: TConfig): string;
+  /**
+   * Handle a tool call that has no live {@link ChannelSession} (e.g. a discovery
+   * tool used before any binding exists). Omit when the channel exposes no
+   * sessionless tools. Feature-detected by presence.
+   */
+  handleSessionlessTool?(
+    name: string,
+    args: Record<string, unknown>,
+    context: ChannelSessionlessToolContext,
+  ): Promise<unknown>;
 }
 
 /**

@@ -173,10 +173,19 @@ export class ChannelBindingStore {
       );
     }
     for (const row of value['bindings'] as Record<string, unknown>[]) {
-      if (typeof row !== 'object' || row === null) continue;
+      if (typeof row !== 'object' || row === null) {
+        throw new LegacyStateError(
+          `channel binding store for dispatcher ${dispatcherId} has a non-object ` +
+            'binding row (issue #209 binding store v2). Dreamux 0.x does not ' +
+            `migrate old binding state — delete ${path} and re-bind the ` +
+            'channel(s) to rebuild it.',
+        );
+      }
       const hasV2Keys =
-        Object.prototype.hasOwnProperty.call(row, 'channel_id') &&
-        Object.prototype.hasOwnProperty.call(row, 'target_key');
+        typeof row['channel_id'] === 'string' &&
+        row['channel_id'] !== '' &&
+        typeof row['target_key'] === 'string' &&
+        row['target_key'] !== '';
       if (!hasV2Keys) {
         throw new LegacyStateError(
           `channel binding store for dispatcher ${dispatcherId} has a pre-v2 row ` +

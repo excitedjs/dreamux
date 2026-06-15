@@ -29,6 +29,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:tests": "tsc -p tsconfig.tests.json",
     "lint": "eslint .",
     "smoke-built-cli": "node ./scripts/smoke-built-cli.mjs",
     "test": "vitest run",
@@ -40,6 +41,7 @@
     "@excitedjs/agent-runtime-claude-code": "workspace:*",
     "@excitedjs/agent-runtime-codex": "workspace:*",
     "@excitedjs/dreamux-types": "workspace:*",
+    "@excitedjs/dreamux-utils": "workspace:*",
     "@excitedjs/feishu-channel": "workspace:*",
     "@excitedjs/feishu-transport": "workspace:*",
     "@excitedjs/tm": "2.4.1",

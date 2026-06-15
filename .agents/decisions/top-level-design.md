@@ -187,20 +187,17 @@ an agent's `config` object can be omitted entirely:
 | `extra_env` | `{}` | merged over the dispatcher's process env |
 | `initialize_timeout_ms` | `10000` | handshake timeout (positive integer) |
 
-`channels[].config.app_id` for `builtin:feishu` is a unique dispatcher
-identity. Across all declared dispatchers, including disabled ones, an app id
-must map to exactly one dispatcher: two dispatchers sharing one app id would
-connect as the same bot. The multi-channel config slice (#209) moved
-provider-specific *field* validation (non-empty `app_id`/`app_secret`,
-unknown-key rejection) into the channel provider's `readConfig`, but
-cross-dispatcher uniqueness stays a **core** concern — a per-channel `readConfig`
-cannot see other dispatchers, while core holds them all — so config load runs a
-post-parse pass that fails loud on a duplicate. `dreamux serve`, `doctor`, and
-`onboard` therefore tell the same story: a duplicate app id is a blocking error.
-Dispatchers with an ambiguous (≠1) Feishu channel count are skipped by this pass
-(they are unrunnable and fail loud at the dispatcher runtime boundary instead).
-Channel ids, by contrast, must be unique within a single dispatcher (enforced at
-config load).
+The multi-channel config slice (#209) moved provider-specific *field* validation
+(non-empty `app_id`/`app_secret`, unknown-key rejection) for `builtin:feishu`
+into the channel provider's `readConfig`. **Cross-dispatcher `app_id` uniqueness
+is no longer enforced (Decision #4, PR #223):** two dispatchers MAY declare the
+same Feishu `app_id` — sharing one bot identity is an operator choice, not a
+config error. Core never re-derives a provider's config fields; a dispatcher's
+display identity is the channel provider's self-reported `getIdentity` (surfaced
+as the neutral `channel_identity`). Channel ids, by contrast, must be unique
+within a single dispatcher, and a provider ref may appear at most once per
+dispatcher (both enforced at config load). A dispatcher with an unrunnable
+channel shape fails loud at the dispatcher runtime boundary, not at config load.
 
 Rules:
 

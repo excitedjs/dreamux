@@ -28,23 +28,30 @@ import type {
   AgentRuntimeContextSnapshot,
   AgentRuntimeLastResult,
   AgentRuntimeProvider,
+  AgentRuntimeProviderDescriptor,
   AgentRuntimeStatus,
   AgentRuntimeSystemInput,
   AgentRuntimeTurnResult,
+  ChannelInboundEnvelope,
   ChannelTarget,
   InboundTurnInput,
+  ProviderDescriptor,
 } from '@excitedjs/dreamux-types';
+import { asAgentRuntimeDescriptor } from './helpers/provider.js';
+import {
+  feishuChannelCatalog,
+  stubChannelCatalog,
+} from './helpers/fake-channel.js';
 
 import { AgentRuntimeProviderCatalog } from '../src/agent-runtime/index.js';
 import { DispatcherService } from '../src/dispatcher-service/service.js';
-import type { FeishuInboundEnvelope } from '../src/channel/feishu/feishu-channel.js';
 import {
   createFakeFeishuBot,
+  feishuMcpTools,
+  saveDispatcherAccess,
   type FakeFeishuBot,
   type FeishuInboundEvent,
-} from '../src/channel/feishu/bot.js';
-import { feishuMcpTools } from '../src/channel/feishu/feishu-mcp-surface.js';
-import { saveDispatcherAccess } from '@excitedjs/feishu-channel';
+} from '@excitedjs/feishu-channel';
 import {
   BUILTIN_FEISHU_PROVIDER_REF,
   type DispatcherChannelConfig,
@@ -97,8 +104,17 @@ function p2pTarget(chatId: string): ChannelTarget {
   };
 }
 
-function envelope(chatId: string, chatType: 'group' | 'p2p'): FeishuInboundEnvelope {
-  return { provider: BUILTIN_FEISHU_PROVIDER_REF, chatId, chatType, messageId: 'm1' };
+function envelope(
+  channelId: string,
+  chatId: string,
+  chatType: 'group' | 'p2p',
+): ChannelInboundEnvelope {
+  return {
+    provider: BUILTIN_FEISHU_PROVIDER_REF,
+    channel_id: channelId,
+    target: chatType === 'group' ? groupTarget(chatId) : p2pTarget(chatId),
+    message_id: 'm1',
+  };
 }
 
 const INPUT = { kind: 'channel', text: 'hi', dedupeId: 'm1' } as unknown as InboundTurnInput;
@@ -117,6 +133,7 @@ function buildService(channels: DispatcherChannelConfig[]): DispatcherService {
     config,
     dispatchers: new DispatcherStore(config),
     agentRuntimeProviders: new AgentRuntimeProviderCatalog({ registry }),
+    channelProviders: stubChannelCatalog(),
     channelLoggerFactory: () => noopLog(),
     log: noopLog(),
   });
@@ -131,15 +148,14 @@ describe('inbound routes by the originating channel_id (#209 live multi-channel)
 
   it('keys the binding lookup on the channel the message arrived through', async () => {
     const service = buildService(TWO_CHANNELS);
-    vi.spyOn(service.dispatchers, 'resolveChannelTarget').mockImplementation(
-      (_id, meta) => groupTarget((meta as { chat_id: string }).chat_id),
-    );
+    // routeChannelInput reads the channel-resolved target off the neutral
+    // envelope, so no resolveChannelTarget stub is needed here.
     const dispatcherRuntime = { channelInput: vi.fn(async () => ({ status: 'submitted' })) };
     vi.spyOn(service.dispatchers, 'getRuntime').mockReturnValue(dispatcherRuntime as never);
     const resolveSpy = vi.spyOn(service.teams, 'resolveChannel').mockResolvedValue(null);
 
-    await service.routeChannelInput('flow', 'secondary', INPUT, envelope('chat-b', 'group'));
-    await service.routeChannelInput('flow', 'primary', INPUT, envelope('chat-a', 'group'));
+    await service.routeChannelInput('flow', 'secondary', INPUT, envelope('secondary', 'chat-b', 'group'));
+    await service.routeChannelInput('flow', 'primary', INPUT, envelope('primary', 'chat-a', 'group'));
 
     expect(resolveSpy).toHaveBeenNthCalledWith(1, {
       dispatcherId: 'flow',
@@ -155,9 +171,6 @@ describe('inbound routes by the originating channel_id (#209 live multi-channel)
 
   it('delivers a message on a secondary channel to that channel-bound TeamLeader', async () => {
     const service = buildService(TWO_CHANNELS);
-    vi.spyOn(service.dispatchers, 'resolveChannelTarget').mockImplementation(
-      (_id, meta) => groupTarget((meta as { chat_id: string }).chat_id),
-    );
     vi.spyOn(service.teams, 'resolveChannel').mockImplementation(async (input) =>
       input.channelId === 'secondary'
         ? ({ team_name: 'beta' } as never)
@@ -165,11 +178,11 @@ describe('inbound routes by the originating channel_id (#209 live multi-channel)
     );
     const deliverSpy = vi
       .spyOn(service.teams, 'deliverToLeader')
-      .mockResolvedValue({ status: 'submitted' });
+      .mockResolvedValue({ status: 'submitted', turnId: 'turn-multi' });
     const dispatcherRuntime = { channelInput: vi.fn(async () => ({ status: 'submitted' })) };
     vi.spyOn(service.dispatchers, 'getRuntime').mockReturnValue(dispatcherRuntime as never);
 
-    await service.routeChannelInput('flow', 'secondary', INPUT, envelope('chat-b', 'group'));
+    await service.routeChannelInput('flow', 'secondary', INPUT, envelope('secondary', 'chat-b', 'group'));
 
     expect(deliverSpy).toHaveBeenCalledWith(
       expect.objectContaining({ dispatcherId: 'flow', teamId: 'beta' }),
@@ -179,14 +192,11 @@ describe('inbound routes by the originating channel_id (#209 live multi-channel)
 
   it('still short-circuits a P2P target to the dispatcher on a multi-channel dispatcher', async () => {
     const service = buildService(TWO_CHANNELS);
-    vi.spyOn(service.dispatchers, 'resolveChannelTarget').mockImplementation(
-      (_id, meta) => p2pTarget((meta as { chat_id: string }).chat_id),
-    );
     const dispatcherRuntime = { channelInput: vi.fn(async () => ({ status: 'submitted' })) };
     vi.spyOn(service.dispatchers, 'getRuntime').mockReturnValue(dispatcherRuntime as never);
     const resolveSpy = vi.spyOn(service.teams, 'resolveChannel');
 
-    await service.routeChannelInput('flow', 'secondary', INPUT, envelope('dm-1', 'p2p'));
+    await service.routeChannelInput('flow', 'secondary', INPUT, envelope('secondary', 'dm-1', 'p2p'));
 
     expect(resolveSpy).not.toHaveBeenCalled();
     expect(dispatcherRuntime.channelInput).toHaveBeenCalledTimes(1);
@@ -200,18 +210,18 @@ describe('binding requires an explicit channel on a multi-channel dispatcher (#2
     resetRuntimeConfig();
   });
 
-  it('rejects a bind with no channel_id when more than one channel is configured', () => {
+  it('rejects a bind with no channel_id when more than one channel is configured', async () => {
     const service = buildService(TWO_CHANNELS);
     const bindSpy = vi.spyOn(service.teams, 'bindChannel');
-    expect(() =>
+    await expect(
       service.bindTeamChannel({ dispatcherId: 'flow', teamId: 'beta', meta: { chat_id: 'chat-b' } }),
-    ).toThrow(/has 2 channels; channel_id is required/);
+    ).rejects.toThrow(/has 2 channels; channel_id is required/);
     expect(bindSpy).not.toHaveBeenCalled();
   });
 
   it('binds under the named channel', async () => {
     const service = buildService(TWO_CHANNELS);
-    vi.spyOn(service.dispatchers, 'resolveChannelTarget').mockReturnValue(groupTarget('chat-b'));
+    vi.spyOn(service.dispatchers, 'resolveChannelTarget').mockResolvedValue(groupTarget('chat-b'));
     const bindSpy = vi
       .spyOn(service.teams, 'bindChannel')
       .mockResolvedValue({ team_name: 'beta' } as never);
@@ -230,7 +240,7 @@ describe('binding requires an explicit channel on a multi-channel dispatcher (#2
 
   it('a single-channel dispatcher still binds without an explicit channel_id (legacy)', async () => {
     const service = buildService([feishuChannel('primary', 'app-a', 'secret-a')]);
-    vi.spyOn(service.dispatchers, 'resolveChannelTarget').mockReturnValue(groupTarget('chat-a'));
+    vi.spyOn(service.dispatchers, 'resolveChannelTarget').mockResolvedValue(groupTarget('chat-a'));
     const bindSpy = vi
       .spyOn(service.teams, 'bindChannel')
       .mockResolvedValue({ team_name: 'alpha' } as never);
@@ -290,7 +300,10 @@ class FakeRuntime implements AgentRuntime {
 
 class FakeProvider implements AgentRuntimeProvider {
   readonly ref = 'builtin:codex';
-  constructor(readonly descriptor: AgentRuntimeProvider['descriptor']) {}
+  readonly descriptor: AgentRuntimeProviderDescriptor;
+  constructor(descriptor: ProviderDescriptor) {
+    this.descriptor = asAgentRuntimeDescriptor(descriptor);
+  }
   getCapabilities(): AgentRuntimeCapabilities {
     return FAKE_CAPABILITIES;
   }
@@ -334,16 +347,17 @@ describe('multiple channel sessions are live, one bot per channel (#209)', () =>
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: new AgentRuntimeProviderCatalog({ registry }),
-      channelLoggerFactory: () => noopLog(),
-      // One bot per channel; the per-channel secret flows in here, so the
-      // recorded list proves a distinct session was built for each channel and
-      // the bots map lets a test drive inbound through a specific channel's bot.
-      botFactory: (_row, secret) => {
-        secrets.push(secret);
-        const bot = createFakeFeishuBot(`bot-${secret}`);
-        bots.set(secret, bot);
+      // One bot per channel; the per-channel app secret flows in via the
+      // provider's validated config, so the recorded list proves a distinct
+      // session was built for each channel and the bots map lets a test drive
+      // inbound through a specific channel's bot.
+      channelProviders: feishuChannelCatalog((config) => {
+        secrets.push(config.appSecret);
+        const bot = createFakeFeishuBot(`bot-${config.appSecret}`);
+        bots.set(config.appSecret, bot);
         return bot;
-      },
+      }),
+      channelLoggerFactory: () => noopLog(),
       log: noopLog(),
     });
     return { service, secrets, bots };
@@ -437,6 +451,66 @@ describe('multiple channel sessions are live, one bot per channel (#209)', () =>
     ]);
     await service.startDispatcher('flow');
     expect(secrets).toEqual(['secret-a']);
+    await service.stopDispatcher('flow');
+  });
+
+  it('routes an inbound that arrives during session.start() instead of throwing "not running" (#209 fix #7)', async () => {
+    // The bot fires an inbound from inside its own start() — i.e. while
+    // doStartDispatcher is still in the channel-start loop, before the call
+    // returns. Routing that inbound runs resolveChannelTarget ->
+    // mustRunningSlot; the slot must already be registered (fix #7), or the
+    // start aborts with "dispatcher 'flow' is not running".
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        cwd: join(root, 'workspace'),
+        channels: [feishuChannel('primary', 'app-a', 'secret-a')],
+      }),
+    ]);
+    const registry = createBuiltinProviderRegistry();
+    const descriptor = registry.resolve('builtin:codex');
+    registry.registerImplementation(descriptor.id, new FakeProvider(descriptor));
+    const service = new DispatcherService({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: new AgentRuntimeProviderCatalog({ registry }),
+      channelProviders: feishuChannelCatalog(() => {
+        const bot = createFakeFeishuBot('bot-a');
+        const baseStart = bot.start.bind(bot);
+        bot.start = async (r) => {
+          await baseStart(r);
+          await bot.inject(inboundEvent('chat-a', 'hi', 'm-start-1'));
+        };
+        return bot;
+      }),
+      channelLoggerFactory: () => noopLog(),
+      log: noopLog(),
+    });
+
+    // Allowlist the chat so the inbound clears the gate and reaches submitTurn.
+    await saveDispatcherAccess(dispatcherDir('flow'), {
+      version: 2,
+      allow_users: [],
+      group: { policy: 'allowlist', allow_chats: ['chat-a'], require_mention: false },
+      observed_chats: [],
+      warnings: [],
+      last_gate: null,
+    } as never);
+
+    // Return null so routing falls through to the dispatcher runtime; the spy
+    // also proves the inbound reached routing (the slot resolved) during start.
+    const resolveSpy = vi
+      .spyOn(service.teams, 'resolveChannel')
+      .mockResolvedValue(null);
+
+    // Before fix #7 this rejects with 'dispatcher \'flow\' is not running'.
+    await service.startDispatcher('flow');
+
+    expect(resolveSpy).toHaveBeenCalledWith({
+      dispatcherId: 'flow',
+      channelId: 'primary',
+      targetKey: 'chat-a',
+    });
+
     await service.stopDispatcher('flow');
   });
 });

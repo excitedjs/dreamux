@@ -11,9 +11,16 @@ import {
   createBuiltinAgentRuntimeProviderCatalog,
   type AgentRuntimeProviderCatalog,
 } from './agent-runtime/index.js';
-import type { CodexProcess, CodexProcessOptions } from './agent-runtime/builtin/codex/supervisor.js';
-import type { CodexWsClient } from './agent-runtime/builtin/codex/rpc.js';
-import type { FeishuBot } from './channel/feishu/bot.js';
+import type {
+  CodexAgentRuntimeProviderOptions,
+  CodexProcess,
+  CodexProcessOptions,
+  CodexWsClient,
+} from '@excitedjs/agent-runtime-codex';
+import {
+  createBuiltinChannelProviderCatalog,
+  type ChannelProviderCatalog,
+} from './channel/catalog.js';
 import {
   createBuiltinProviderRegistry,
   parseProviderRef,
@@ -23,11 +30,7 @@ import {
   BUILT_IN_DEFAULTS,
   type DreamuxConfig,
 } from './config/config.js';
-import {
-  DispatcherStore,
-  type DispatcherRow,
-} from './state/dispatcher-store.js';
-import type { DispatcherCodexHomeDoctor } from './agent-runtime/builtin/codex/codex-home.js';
+import { DispatcherStore } from './state/dispatcher-store.js';
 import {
   adminSocketPath,
   setRuntimeConfig,
@@ -42,7 +45,7 @@ import {
   type AdminSocketServer,
 } from './admin/socket.js';
 import { RestartIntentConsumer } from './daemon/restart-intent.js';
-import type { ClaudeCodeSessionFactory } from './agent-runtime/builtin/claude-code/supervisor.js';
+import type { ClaudeCodeSessionFactory } from '@excitedjs/agent-runtime-claude-code';
 import { DispatcherService } from './dispatcher-service/service.js';
 import { ensureDispatcherWorkspace } from './dispatcher-service/dispatcher-workspace.js';
 import {
@@ -53,7 +56,7 @@ import { detectLegacyChannelBindingStore } from './dispatcher-service/channel-bi
 export {
   IN_PROGRESS_REACTION_EMOJI,
   RECEIVED_REACTION_EMOJI,
-} from './channel/feishu/feishu-channel.js';
+} from '@excitedjs/feishu-channel';
 
 export interface ServerOptions {
   /**
@@ -65,8 +68,6 @@ export interface ServerOptions {
   config?: DreamuxConfig;
   /** Override admin socket path (tests). */
   adminSocketPath?: string;
-  /** Inject a custom bot factory (tests use this to plug in a fake). */
-  botFactory?: (row: DispatcherRow, secret: string) => FeishuBot;
   /**
    * Provider registry used by runtime composition. When config contains
    * external npm Agent Runtime refs, this must be the registry returned by
@@ -78,17 +79,21 @@ export interface ServerOptions {
   /** Inject a CodexWsClient factory (tests). */
   codexClientFactory?: (socketPath: string) => CodexWsClient;
   /** Inject a Codex home doctor (tests). */
-  codexHomeDoctor?: DispatcherCodexHomeDoctor;
+  codexHomeDoctor?: CodexAgentRuntimeProviderOptions['codexHomeDoctor'];
   /** Inject a Claude Code resident-session factory for tests. */
   claudeCodeWorkerSessionFactory?: ClaudeCodeSessionFactory;
-  /** Skip resolving bot secret (tests with fake bot). */
-  skipBotSecret?: boolean;
   /** Codex child/WS restart backoff base override (tests). */
   codexRestartBackoffBaseMs?: number;
   /** Codex child/WS restart backoff cap override (tests). */
   codexRestartBackoffMaxMs?: number;
   /** Override runtime provider catalog (tests / future provider composition). */
   agentRuntimeProviderCatalog?: AgentRuntimeProviderCatalog;
+  /**
+   * Override channel provider catalog (tests inject a fake `ChannelProvider`;
+   * future provider composition). When omitted, the built-in channel catalog is
+   * built from the provider registry.
+   */
+  channelProviderCatalog?: ChannelProviderCatalog;
   /**
    * Server-level logger (admin socket, dispatcher supervision, shutdown). When
    * omitted, a stderr-only logger is used — the CLI entry point injects a
@@ -133,6 +138,7 @@ export class Server {
   private readonly log: DreamuxLogger;
   private readonly providerRegistry: ProviderRegistry;
   private readonly agentRuntimeProviders: AgentRuntimeProviderCatalog;
+  private readonly channelProviders: ChannelProviderCatalog;
 
   constructor(opts: ServerOptions = {}) {
     this.opts = opts;
@@ -176,6 +182,9 @@ export class Server {
           ? { claudeCode: { sessionFactory: opts.claudeCodeWorkerSessionFactory } }
           : {}),
       });
+    this.channelProviders =
+      opts.channelProviderCatalog ??
+      createBuiltinChannelProviderCatalog({ registry: this.providerRegistry });
     this.repos = {
       dispatchers: new DispatcherStore(config),
     };
@@ -183,9 +192,8 @@ export class Server {
       config,
       dispatchers: this.repos.dispatchers,
       agentRuntimeProviders: this.agentRuntimeProviders,
+      channelProviders: this.channelProviders,
       adminSocketPath: opts.adminSocketPath ?? adminSocketPath(),
-      botFactory: opts.botFactory,
-      skipBotSecret: opts.skipBotSecret,
       channelLoggerFactory,
       log: this.log,
     });

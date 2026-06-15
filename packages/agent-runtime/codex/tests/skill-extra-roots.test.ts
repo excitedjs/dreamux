@@ -98,9 +98,9 @@ class FakeProcess {
 
 const PATHS: AgentRuntimePathContext = {
   dispatcherDir: (id) => join('/fake/state', id),
-  stdoutLogPath: (id) => join('/fake/logs', `${id}.out.log`),
-  stderrLogPath: (id) => join('/fake/logs', `${id}.err.log`),
+  logsDir: () => '/fake/logs',
   completionSpillDir: (id) => join('/fake/cache', id, 'spill'),
+  runtimeSocketDirs: () => ['/fake/run/sockets'],
 };
 
 function noopState(): AgentRuntimeStateCallbacks {

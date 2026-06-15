@@ -6,20 +6,24 @@ import { execa } from 'execa';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import {
-  AgentRuntimeProviderCatalog,
-  type AgentRuntime,
-  type AgentRuntimeCapabilities,
-  type AgentRuntimeCreateContext,
-  type AgentRuntimeLastResult,
-  type AgentRuntimeProvider,
-  type AgentRuntimeResumeInput,
-  type AgentRuntimeSystemInput,
-  type AgentRuntimeTurnResult,
-  type CompletionEnvelope,
-} from '../src/agent-runtime/index.js';
-import type { TurnSettledSignal } from '../src/agent-runtime/turn.js';
-import type { InboundTurnInput } from '../src/agent-runtime/turn.js';
+import { AgentRuntimeProviderCatalog } from '../src/agent-runtime/index.js';
+import type {
+  AgentRuntime,
+  AgentRuntimeCapabilities,
+  AgentRuntimeCreateContext,
+  AgentRuntimeLastResult,
+  AgentRuntimeProvider,
+  AgentRuntimeResumeInput,
+  AgentRuntimeProviderDescriptor,
+  AgentRuntimeSystemInput,
+  AgentRuntimeTurnResult,
+  CompletionEnvelope,
+  InboundTurnInput,
+  ProviderDescriptor,
+  TurnSettledSignal,
+} from '@excitedjs/dreamux-types';
+import type { DreamuxLogger } from '../src/platform/logger.js';
+import { asAgentRuntimeDescriptor } from './helpers/provider.js';
 import { TeamMateAgentService } from '../src/dispatcher-service/teammate/service.js';
 import { teamServicePrincipal } from '../src/dispatcher-service/teammate/types.js';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
@@ -58,24 +62,24 @@ class FakeRuntime implements AgentRuntime {
 
   async start(): Promise<void> {
     this.status = 'ready';
-    this.threadId = `${this.context.row.dispatcher_id}-thread`;
+    this.threadId = `${this.context.identity.runtime_id}-thread`;
     await this.context.state?.setThreadId(
-      this.context.row.dispatcher_id,
+      this.context.identity.runtime_id,
       this.threadId,
     );
-    await this.context.state?.setStatus(this.context.row.dispatcher_id, 'ready');
+    await this.context.state?.setStatus(this.context.identity.runtime_id, 'ready');
   }
 
   async resume(input: AgentRuntimeResumeInput = {}): Promise<void> {
     this.resumed = true;
     this.status = 'ready';
     this.threadId = input.checkpoint?.id ?? null;
-    await this.context.state?.setStatus(this.context.row.dispatcher_id, 'ready');
+    await this.context.state?.setStatus(this.context.identity.runtime_id, 'ready');
   }
 
   async stop(): Promise<void> {
     this.status = 'stopped';
-    await this.context.state?.setStatus(this.context.row.dispatcher_id, 'stopped');
+    await this.context.state?.setStatus(this.context.identity.runtime_id, 'stopped');
   }
 
   async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
@@ -129,10 +133,13 @@ class FakeProvider implements AgentRuntimeProvider {
   /** Every create context this provider was asked to build, for assertions. */
   readonly contexts: AgentRuntimeCreateContext[] = [];
 
+  readonly descriptor: AgentRuntimeProviderDescriptor;
+
   constructor(
-    readonly descriptor: AgentRuntimeProvider['descriptor'],
+    descriptor: ProviderDescriptor,
     ref: string = 'builtin:codex',
   ) {
+    this.descriptor = asAgentRuntimeDescriptor(descriptor);
     this.ref = ref;
   }
 
@@ -179,11 +186,7 @@ function buildService(provider: AgentRuntimeProvider): TeamMateAgentService {
     config,
     dispatchers,
     agentRuntimeProviders: new AgentRuntimeProviderCatalog({ registry }),
-    log: {
-      info: () => undefined,
-      warn: () => undefined,
-      error: () => undefined,
-    },
+    log: noopLog(),
   });
 }
 
@@ -241,11 +244,7 @@ describe('TeamMateAgentService', () => {
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: new AgentRuntimeProviderCatalog({ registry }),
-      log: {
-        info: () => undefined,
-        warn: () => undefined,
-        error: () => undefined,
-      },
+      log: noopLog(),
     });
 
     await service.spawn({
@@ -257,12 +256,13 @@ describe('TeamMateAgentService', () => {
       cwd: root,
     });
     expect(claudeProvider.contexts).toHaveLength(1);
-    // The teammate's create-context carries the claude agent's resolved runtime,
-    // taken from agents['claude'] — never the dispatcher's codex runtime.
-    expect(claudeProvider.contexts[0]?.dispatcher).not.toBeNull();
-    expect(claudeProvider.contexts[0]?.dispatcher?.runtime.provider).toBe(
-      'builtin:claude-code',
-    );
+    // The teammate's create-context carries the claude agent's resolved config,
+    // taken from agents['claude'] — never the dispatcher's codex runtime. That
+    // the claude (not codex) provider captured the context proves the routing;
+    // the captured config proves the right agent entry flowed through.
+    expect(claudeProvider.contexts[0]?.config).toEqual({
+      permission_mode: 'default',
+    });
 
     // A teammate omitting agentRuntime falls back to the dispatcher's own agent.
     await service.spawn({
@@ -273,10 +273,7 @@ describe('TeamMateAgentService', () => {
       cwd: root,
     });
     expect(codexProvider.contexts).toHaveLength(1);
-    expect(codexProvider.contexts[0]?.dispatcher).not.toBeNull();
-    expect(codexProvider.contexts[0]?.dispatcher?.runtime.provider).toBe(
-      'builtin:codex',
-    );
+    expect(codexProvider.contexts[0]?.config).toEqual(dispatcher.runtime.config);
 
     // Issue #182 PR-2: a teammate runtime spills under its OPERATOR dispatcher
     // id ('flow'), NOT its composite runtime id — for both runtime kinds. The
@@ -331,12 +328,11 @@ describe('TeamMateAgentService', () => {
       cwd: root,
     });
     expect(provider.contexts).toHaveLength(1);
-    const teammateDispatcher = provider.contexts[0]?.dispatcher;
-    expect(teammateDispatcher).not.toBeNull();
-    // The teammate's dispatcher.runtime must deep-equal the dispatcher's own
-    // resolved runtime — both came from agents['shared'].
-    expect(teammateDispatcher?.runtime).toEqual(sharedRuntime);
-    expect(teammateDispatcher?.runtime.provider).toBe('builtin:codex');
+    // The teammate's create-context config must deep-equal the shared agent's
+    // resolved config — both the dispatcher and the teammate walked
+    // agents['shared']. Routing to the codex provider is proven by the codex
+    // FakeProvider being the one that captured the context.
+    expect(provider.contexts[0]?.config).toEqual(sharedRuntime.config);
   });
 
   it('getCapabilities advertises spawnable agents[].id values, not provider refs', async () => {
@@ -386,7 +382,10 @@ describe('TeamMateAgentService', () => {
       prompt: 'go',
       cwd: root,
     });
-    expect(provider.contexts[0]?.dispatcher?.agentRuntime).toBe('codex-yolo');
+    // The spawned teammate's create-context carries the codex-yolo agent's
+    // resolved config (distinguished by its danger-full-access sandbox), proving
+    // the named agent id — not the dispatcher's default — was resolved.
+    expect(provider.contexts[0]?.config).toEqual(config.agents['codex-yolo'].config);
   });
 
   it('spawns a named resumable teammate and records raw history events', async () => {
@@ -396,11 +395,7 @@ describe('TeamMateAgentService', () => {
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: catalog,
-      log: {
-        info: () => undefined,
-        warn: () => undefined,
-        error: () => undefined,
-      },
+      log: noopLog(),
     });
 
     const spawned = await service.spawn({
@@ -701,11 +696,7 @@ describe('TeamMateAgentService', () => {
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: catalog,
-      log: {
-        info: () => undefined,
-        warn: () => undefined,
-        error: () => undefined,
-      },
+      log: noopLog(),
     });
 
     const closer = (
@@ -2091,16 +2082,16 @@ async function collectJsonl(dir: string): Promise<string[]> {
   return out;
 }
 
-function noopLog(): {
-  info: () => undefined;
-  warn: () => undefined;
-  error: () => undefined;
-} {
-  return {
+function noopLog(): DreamuxLogger {
+  const log = {
     info: () => undefined,
     warn: () => undefined,
     error: () => undefined,
+    debug: () => undefined,
+    trace: () => undefined,
+    child: () => log,
   };
+  return log as unknown as DreamuxLogger;
 }
 
 /** Drain the microtask/macrotask the void-ed settle handler runs on. */

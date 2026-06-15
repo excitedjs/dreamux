@@ -149,12 +149,24 @@ export interface AgentRuntimePathContext {
    * rendezvous sockets do NOT live here.
    */
   dispatcherDir(id: string): string;
-  /** The runtime's primary-process stdout log file in the central logs tree. */
-  stdoutLogPath(id: string): string;
-  /** The runtime's primary-process stderr/diagnostic log file in the central logs tree. */
-  stderrLogPath(id: string): string;
+  /**
+   * The central logs root. The runtime composes its OWN log subpaths under this
+   * directory (e.g. `<logsDir>/<engine>/<id>.log`), so core never has to name a
+   * per-runtime log file. Neutral: a runtime that logs differently lays out its
+   * own tree here.
+   */
+  logsDir(): string;
   /** The owning dispatcher's completion-spill directory in the cache tree. */
   completionSpillDir(id: string): string;
+  /**
+   * Candidate directories for volatile rendezvous sockets, in host preference
+   * order. A runtime that needs a Unix-domain socket allocates a fresh random
+   * short name inside the first candidate whose full path fits the platform
+   * socket-path budget (see `@excitedjs/dreamux-utils` `unixSocketPathFitsBudget`).
+   * Neutral: a runtime that needs no socket (e.g. a stdio engine) ignores it.
+   * Sockets are never persisted and never live under {@link dispatcherDir}.
+   */
+  runtimeSocketDirs(): readonly string[];
 }
 
 export interface AgentRuntimeProviderConfigReadContext {
@@ -296,6 +308,16 @@ export interface AgentRuntimeCreateContext<TConfig = unknown> {
   paths?: AgentRuntimePathContext;
   state?: AgentRuntimeStateCallbacks;
   /**
+   * Neutral process-env injection seam. Core merges these entries into the
+   * runtime's spawn environment AFTER `process.env` and BEFORE the provider's
+   * own `config.extra_env`, i.e. spawn env =
+   * `{ ...process.env, ...injectEnv, ...config.extra_env }`. Core owns what (if
+   * anything) it injects; `config.extra_env` is the provider's own config and is
+   * NOT routed through here. Empty/omitted means "inject nothing" — the common
+   * case today.
+   */
+  injectEnv?: Record<string, string>;
+  /**
    * Fired each time a delivered turn reaches a terminal state. Capability-
    * neutral; the launcher opts in.
    */
@@ -355,6 +377,14 @@ export interface AgentRuntimeDiagnosticContext<TConfig = unknown> {
   config: TConfig;
   env: DreamuxEnvironment;
   scope: 'foreground' | 'managedService';
+  /**
+   * The same neutral path context the create context carries, supplied by
+   * doctor so a provider diagnostic can pre-check placement-sensitive paths
+   * (e.g. validate that a runtime socket would fit the platform budget via
+   * {@link AgentRuntimePathContext.runtimeSocketDirs}). Optional: a provider
+   * with no path-dependent checks ignores it.
+   */
+  paths?: AgentRuntimePathContext;
 }
 
 /**

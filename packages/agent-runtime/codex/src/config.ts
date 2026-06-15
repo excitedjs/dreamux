@@ -3,9 +3,10 @@
  * the typed accessor.
  *
  * Codex runtime config is owned by this package (the `builtin:codex` provider),
- * not by the Dreamux host config module. It depends only on vendored neutral
- * validation primitives and the package-local provider ref, never on
- * `@excitedjs/dreamux` core. The Dreamux host config module re-exports these so
+ * not by the Dreamux host config module. It depends only on the shared neutral
+ * validation primitives (`@excitedjs/dreamux-utils`) and the package-local
+ * provider ref, never on `@excitedjs/dreamux` core. The Dreamux host config
+ * module re-exports these so
  * the non-builtin callers (doctor, daemon, tests) keep their import paths.
  */
 
@@ -16,7 +17,7 @@ import {
   requirePositiveInt,
   requireStringArray,
   requireStringRecord,
-} from './internal/config-validate.js';
+} from '@excitedjs/dreamux-utils';
 
 /**
  * Builtin Codex runtime settings under a named `agents[].config` entry (provider

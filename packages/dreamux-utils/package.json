@@ -1,0 +1,49 @@
+{
+  "name": "@excitedjs/dreamux-utils",
+  "version": "0.1.0",
+  "description": "Pure shared utilities for Dreamux providers and host: neutral config-validation primitives, OS/filesystem helpers, completion-body resolution, and inbound-turn render helpers. Depends on @excitedjs/dreamux-types only, never on @excitedjs/dreamux core (issue excitedjs/dreamux#209).",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/excitedjs/dreamux.git",
+    "directory": "packages/dreamux-utils"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "engines": {
+    "node": ">=22.7"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:tests": "tsc -p tsconfig.tests.json",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@excitedjs/dreamux-types": "workspace:*"
+  },
+  "devDependencies": {
+    "@excitedjs/eslint-config": "workspace:*",
+    "@types/node": "^22.10.0",
+    "eslint": "^9.39.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  }
+}

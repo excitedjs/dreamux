@@ -12,6 +12,7 @@ import {
   type ClaudeCodeSessionFactory,
 } from './supervisor.js';
 import { BUILTIN_CLAUDE_CODE_PROVIDER_REF } from './provider-ref.js';
+import { claudeCodeAgentRuntimeDiagnostic } from './diagnostic.js';
 import type {
   AgentRuntimeCapabilities,
   AgentRuntime,
@@ -24,11 +25,11 @@ import type {
 } from '@excitedjs/dreamux-types';
 
 /**
- * Host-supplied options for the built-in Claude Code provider. The base process
- * env (the host seeds `PATH` with the Dreamux package bins) is a Dreamux host
- * contract injected here by core or an external embedder, so the package
- * reconstructs none of it. The `descriptor` and the session factory let core and
- * tests wire the resident-process seam without changing the provider.
+ * Construction options for the built-in Claude Code provider. Env injection now
+ * arrives on the NEUTRAL create context (`context.injectEnv`), not as a factory
+ * hook. What remains here is the `descriptor` and the test/host seams (the
+ * resident-session factory, an optional host bin resolver) that let core and
+ * tests wire behavior without changing the provider.
  */
 export interface ClaudeCodeAgentRuntimeProviderOptions {
   /**
@@ -42,8 +43,6 @@ export interface ClaudeCodeAgentRuntimeProviderOptions {
   resolveBinPath?: (bin: string) => string;
   /** Override the resident-session factory (tests inject a fake). */
   sessionFactory?: ClaudeCodeSessionFactory;
-  /** Build the base process env (host seeds `PATH` with the Dreamux package bins). */
-  baseProcessEnv?: (extraEnv: Record<string, string>) => NodeJS.ProcessEnv;
 }
 
 export const CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = {
@@ -105,6 +104,7 @@ export function createClaudeCodeAgentRuntimeProvider(
         ? DEFAULT_CLAUDE_CODE_DESCRIPTOR
         : asAgentRuntimeDescriptor(options.descriptor),
     getCapabilities: () => CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES,
+    diagnostic: claudeCodeAgentRuntimeDiagnostic,
     readConfig(rawConfig, context) {
       return readDispatcherClaudeCodeConfig(
         rawConfig,
@@ -133,8 +133,8 @@ export function createClaudeCodeAgentRuntimeProvider(
         mcpServers: context.mcpServers,
         sessionFactory,
         resolveBinPath,
-        ...(options.baseProcessEnv !== undefined
-          ? { baseProcessEnv: options.baseProcessEnv }
+        ...(context.injectEnv !== undefined
+          ? { injectEnv: context.injectEnv }
           : {}),
         ...(context.skillSources !== undefined
           ? { skillSources: context.skillSources }

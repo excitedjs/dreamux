@@ -15,20 +15,24 @@ import {
   teamServicePrincipal,
 } from '../src/dispatcher-service/teammate/types.js';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
+import type { DreamuxLogger } from '../src/platform/logger.js';
 import { resetRuntimeConfig } from '../src/platform/paths.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
+import { asAgentRuntimeDescriptor } from './helpers/provider.js';
 import type {
   AgentRuntime,
   AgentRuntimeCapabilities,
   AgentRuntimeCreateContext,
   AgentRuntimeLastResult,
   AgentRuntimeProvider,
+  AgentRuntimeProviderDescriptor,
   AgentRuntimeResumeInput,
   AgentRuntimeSystemInput,
   AgentRuntimeTurnResult,
-} from '../src/agent-runtime/index.js';
-import type { InboundTurnInput } from '../src/agent-runtime/turn.js';
+  InboundTurnInput,
+  ProviderDescriptor,
+} from '@excitedjs/dreamux-types';
 
 const FAKE_CAPABILITIES: AgentRuntimeCapabilities = {
   resume: { supported: true, checkpoint: 'codexThread' },
@@ -51,9 +55,9 @@ class FakeRuntime implements AgentRuntime {
 
   async start(): Promise<void> {
     this.status = 'ready';
-    this.threadId = `${this.context.row.dispatcher_id}-thread`;
-    await this.context.state?.setThreadId(this.context.row.dispatcher_id, this.threadId);
-    await this.context.state?.setStatus(this.context.row.dispatcher_id, 'ready');
+    this.threadId = `${this.context.identity.runtime_id}-thread`;
+    await this.context.state?.setThreadId(this.context.identity.runtime_id, this.threadId);
+    await this.context.state?.setStatus(this.context.identity.runtime_id, 'ready');
   }
 
   async resume(input: AgentRuntimeResumeInput = {}): Promise<void> {
@@ -63,7 +67,7 @@ class FakeRuntime implements AgentRuntime {
 
   async stop(): Promise<void> {
     this.status = 'stopped';
-    await this.context.state?.setStatus(this.context.row.dispatcher_id, 'stopped');
+    await this.context.state?.setStatus(this.context.identity.runtime_id, 'stopped');
   }
 
   async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
@@ -104,8 +108,11 @@ class FakeRuntime implements AgentRuntime {
 class FakeProvider implements AgentRuntimeProvider {
   readonly ref = 'builtin:codex';
   readonly contexts: AgentRuntimeCreateContext[] = [];
+  readonly descriptor: AgentRuntimeProviderDescriptor;
 
-  constructor(readonly descriptor: AgentRuntimeProvider['descriptor']) {}
+  constructor(descriptor: ProviderDescriptor) {
+    this.descriptor = asAgentRuntimeDescriptor(descriptor);
+  }
 
   getCapabilities(): AgentRuntimeCapabilities {
     return FAKE_CAPABILITIES;
@@ -385,7 +392,7 @@ describe('TeamService', () => {
     // identity now that the Dreamux-minted session id is gone, #199 Slice 3).
     expect(secondLeader).toMatch(/^tl-alpha-[a-z0-9]{8}$/);
     expect(secondLeader).not.toBe(firstLeader);
-    expect(second.leader.name).toBe(secondLeader);
+    expect(second.leader!.name).toBe(secondLeader);
 
     // The Team record (reloaded) routes/statuses on the NEW concrete leader name.
     const reloaded = new TeamService({ teammates });
@@ -740,16 +747,16 @@ describe('TeamService', () => {
   });
 });
 
-function noopLog(): {
-  info: () => undefined;
-  warn: () => undefined;
-  error: () => undefined;
-} {
-  return {
+function noopLog(): DreamuxLogger {
+  const log = {
     info: () => undefined,
     warn: () => undefined,
     error: () => undefined,
+    debug: () => undefined,
+    trace: () => undefined,
+    child: () => log,
   };
+  return log as unknown as DreamuxLogger;
 }
 
 async function initGitRepo(path: string): Promise<string> {

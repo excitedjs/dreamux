@@ -1,38 +1,47 @@
 # @excitedjs/dreamux
 
 The Dreamux host: the long-running server that hosts N dispatchers, plus the
-CLI, onboarding, and daemon tooling. After the issue #135 realignment and the
-issue #143 directory reorg, `src/` maps 1:1 onto the architecture's seams — keep
+CLI, onboarding, and daemon tooling. After the issue #135 realignment, the
+issue #143 directory reorg, and the issue #209 package split (runtimes and the
+Feishu channel extracted to their own packages; core left holding only the
+neutral provider seams), `src/` maps 1:1 onto the architecture's seams — keep
 this map true.
 
 ## Directory layout (`src/`)
 
 Two settled shape rules govern where code lives:
 
-1. **Each builtin Agent Runtime owns its whole stack** under
-   `agent-runtime/builtin/<name>/` (transport + runtime + provider + args +
-   paths). The two builtins must not import each other.
+1. **Core holds no builtin implementations (#209 cleanup).** Pluginization is
+   polymorphism: core calls only the two neutral interfaces published in
+   `@excitedjs/dreamux-types` (`AgentRuntimeProvider`, `ChannelProvider`) and is
+   unaware of which class implements them. `builtin:codex` / `builtin:claude-code`
+   / `builtin:feishu` are providers indistinguishable from npm providers — only
+   the ref→package-name resolution differs. Every provider-specific concept
+   (codex thread/home/bin, claude stream, feishu chat_id/app_id) lives in the
+   owning **package** (`@excitedjs/agent-runtime-codex`, `-claude-code`,
+   `@excitedjs/feishu-channel`), never in core. The packages depend on
+   `@excitedjs/dreamux-types` only and never import core. There is no
+   `agent-runtime/builtin/` or `channel/feishu/` directory in core.
 2. **Runtime- and channel-specific concepts never leak into shared/core layers.**
-   The services layer drives any runtime through one neutral interface; per-runtime
-   specifics (codex thread/home/bin, claude stream, feishu chat_id/sender_id)
-   stay behind the providing module.
+   The services layer drives any provider through its neutral interface; core
+   never names a provider's config fields, paths, or transport. A dispatcher's
+   display identity is the channel provider's self-reported `getIdentity`
+   (surfaced as the neutral `channel_identity`), not an `app_id` core reads.
 
 | Path | What lives here | Why |
 |---|---|---|
 | `server.ts` | process entry + wiring only | builds registry/catalog/store/services, opens the admin socket, starts dispatchers; owns no teammate/channel/runtime orchestration |
-| `agent-runtime/` | the AgentRuntime seam: contract (`types.ts`, `turn.ts`), `catalog.ts`, `external-provider.ts` loader, `load-config.ts` (caller-composed builtin registration), `index.ts` barrel | one runtime abstraction for every agent role — see [`agent-runtime/CLAUDE.md`](src/agent-runtime/CLAUDE.md) |
-| `agent-runtime/builtin/codex/` | the core-owned `builtin:codex` **adapter** over the published `@excitedjs/agent-runtime-codex` package (#209 slice 3): `provider.ts` (host→neutral adapter), `paths.ts`/`codex-home.ts`/`diagnostic.ts`/`runtime-support.ts` (host contracts), and re-export shims; the engine itself (supervisor/rpc/handshake/turn-manager/events/runtime/args/config) lives in the package | codex specifics close over here or in the package; nothing codex-named leaks out, and the package never imports core |
-| `agent-runtime/builtin/claude-code/` | the core-owned `builtin:claude-code` **adapter** over the published `@excitedjs/agent-runtime-claude-code` package (#209 slice 4): `provider.ts` (host→neutral adapter), `paths.ts`/`diagnostic.ts`/`runtime-support.ts` (host contracts), and re-export shims; the engine itself (supervisor/rpc/stream/runtime/args/config/mcp-config) lives in the package | claude specifics close over here or in the package; nothing claude-named leaks out, and the package never imports core |
+| `agent-runtime/` | the AgentRuntime seam, all neutral: `catalog.ts` (registry-backed `AgentRuntimeProviderCatalog` + builtin registration), `external-provider.ts` loader, `load-config.ts` (composes builtin agentRuntime + channel registration), `host-context.ts` / `host-paths.ts` (host adapters that bridge core's store/logger/path layout onto the neutral `@excitedjs/dreamux-types` create context), `bundled-skill-sources.ts`, `index.ts` barrel. Contract types live in `@excitedjs/dreamux-types` — core imports them directly (no in-core `types.ts` / `turn.ts`) | one neutral abstraction for every agent role; core never names a concrete runtime |
 | `dispatcher-service/` | the Dispatcher Service entity — see [`dispatcher-service/CLAUDE.md`](src/dispatcher-service/CLAUDE.md) | holds the dispatcher agent + orchestrates teammates |
 | `dispatcher-service/dispatcher/` | `DispatcherAgentService` (slots / start / resume / stop / restart-notice / channel session / role MCP injection) + dispatcher base prompt | dispatcher agent lifecycle is tied to the server |
 | `dispatcher-service/teammate/` | `TeamMateAgentService` + identity-store + runtime-state + types + teammate MCP descriptor | agent-centric teammates (no `task`): spawn/send/close + forward-only history (send reopens a closed teammate; no separate `resume` verb, #155) |
-| `channel/feishu/` | the core-owned `builtin:feishu` **adapter** over the published `@excitedjs/feishu-channel` package (#209 slice 5): `feishu-channel.ts` (host→package adapter: resolves bot secret/app id + state/cache dirs, plus the sessionless `list_chat_bots` host helper), `feishu-mcp-surface.ts` (host-owned MCP server descriptor + admin-method routing; re-exports the package tool parser), `bot.ts` (re-export shim); the engine (session/bot/gate/message/chat-bots/introduce/tool-parsing) lives in the package | the package owns Feishu platform I/O + tool backing and never imports core; core keeps routing/binding/auth/the MCP shim |
+| `channel/` | the ChannelProvider seam, all neutral: `catalog.ts` (`ChannelProviderCatalog`), `builtin-channel-providers.ts` (builtin registration — only `builtin:feishu` today, the `@excitedjs/feishu-channel` package), `external-channel-provider.ts` loader, `feishu-mcp-surface.ts` (host-owned Feishu MCP server descriptor + admin-method routing + the sessionless `list_chat_bots` host helper), `plugin.ts` | the feishu engine (session/bot/gate/message/tool-parsing/identity) lives in the package and never imports core; core keeps neutral routing/binding/auth + the host MCP shim |
 | `channel/plugin.ts` | TS interface reservation for future subscription-style channel plugins (github/jira) | interface-only this phase; not loaded or run |
 | `registry/` | provider registry/loader + provider-ref grammar | resolves `builtin:` / `npm:` refs; exactly two kinds: `channel`, `agentRuntime` |
 | `mcp/` | stdio MCP shim processes (`feishu-mcp`, `teammate-mcp`, `team-mcp`) — channel binding (`bind_channel` / `transfer_back`) is a core Team capability on the Team MCP, #209 | thin JSON-RPC bridges that forward to the admin socket |
 | `admin/` | admin Unix-socket server + protocol + methods | cross-process control; methods are thin and delegate to the Dispatcher Service |
 | `config/` | operator config schema / parse / validate (`config.ts`) | the only operator-editable config source |
-| `platform/` | runtime-neutral infrastructure: `paths.ts` (sole neutral path builder), `runtime-sockets` (volatile socket allocation), `owner-only-dir` (owner-only run/socket dir enforcement), `logger`, `secrets`, `package-bin`, `process` | shared and runtime-agnostic; per-runtime paths live in each builtin's `paths.ts` |
+| `platform/` | runtime-neutral infrastructure: `paths.ts` (sole neutral path builder), `runtime-sockets` (volatile socket allocation), `logger`, `package-bin`, `atomic-write`, `fs-errors` | shared and runtime-agnostic; per-runtime path derivation lives in each provider package |
 | `state/` | server-owned dispatcher state: `dispatcher-store`, `dispatcher-id` | `status.json` etc. — rebuildable recovery state (#98) |
 | `cli/` `onboard/` `daemon/` | operator-facing surfaces | CLI command tree, onboarding, native user-level service manager |
 
@@ -52,9 +61,10 @@ Two settled shape rules govern where code lives:
 ## Boundaries
 
 - **Do not leak runtime specifics into shared/core layers.** codex/claude
-  thread/home/bin/socket/stream concepts stay inside
-  `agent-runtime/builtin/<name>/`. The shared contract, `state/`, `platform/`,
-  `server.ts`, and the Dispatcher Service stay runtime-neutral.
+  thread/home/bin/socket/stream concepts stay inside their provider package
+  (`@excitedjs/agent-runtime-codex` / `-claude-code`). The shared contract,
+  `state/`, `platform/`, `server.ts`, and the Dispatcher Service stay
+  runtime-neutral, and core never names a provider's config fields.
 - **Do not leak channel *routing* into the runtime contract.** Routing/identity
   *decisions* — which chat to reply to, who the sender is, message threading —
   belong to the channel layer; a runtime must never branch or reply-target on
@@ -68,8 +78,10 @@ Two settled shape rules govern where code lives:
   channel layer no longer pre-renders the message XML. See
   [`.agents/decisions/channel-input-runtime-assembly.md`](../../.agents/decisions/channel-input-runtime-assembly.md).
 - Direct Lark SDK / Feishu JSAPI calls belong in `@excitedjs/feishu-transport`;
-  the built-in Feishu channel under `channel/feishu/` owns its MCP surface and
-  handlers end-to-end (the server does not carry `*FromMcp` handlers).
+  the built-in Feishu channel package (`@excitedjs/feishu-channel`) owns its
+  session, tool backing, and reply/react wire mapping end-to-end (the server does
+  not carry `*FromMcp` handlers). Core keeps only the host-owned MCP server
+  descriptor + admin-method routing in `channel/feishu-mcp-surface.ts`.
 - Do not reintroduce a `task` abstraction in the teammate layer; teammates are
   named, resumable agents.
 - Do not create dispatcher-private `CODEX_HOME` directories for the MVP.
@@ -80,6 +92,6 @@ Two settled shape rules govern where code lives:
 
 - Assert that the Dispatcher Service drives any runtime through the neutral
   AgentRuntime interface; runtime-specific behavior is tested inside each
-  builtin.
+  provider package.
 - Keep fixtures public-safe: placeholder chat, message, user, app, and resource
   identifiers.

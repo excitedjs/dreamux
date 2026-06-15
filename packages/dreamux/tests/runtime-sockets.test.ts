@@ -15,7 +15,6 @@ import {
   stateRoot,
   unixSocketPathFitsBudget,
 } from '../src/platform/paths.js';
-import { allocateCodexSocketPath } from '../src/agent-runtime/builtin/codex/paths.js';
 
 describe('runtime socket allocation', () => {
   let root: string;
@@ -131,10 +130,6 @@ describe('runtime socket allocation', () => {
     // candidate rescues an over-budget run root here.
     expect(() => allocateRuntimeSocketPath('test socket', {})).toThrow(
       /test socket is too long for Unix sockets/,
-    );
-    // The codex wrapper names the owning dispatcher in the failure.
-    expect(() => allocateCodexSocketPath('flow')).toThrow(
-      /dispatcher 'flow' Codex socket path is too long/,
     );
   });
 

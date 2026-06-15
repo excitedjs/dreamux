@@ -3,7 +3,7 @@ import { homedir, userInfo } from 'node:os';
 
 import { parse as parsePlist, type PlistValue } from 'plist';
 
-import { resolveCodexBinPath } from '../agent-runtime/builtin/codex/provider.js';
+import { resolveCodexBinPath } from '@excitedjs/agent-runtime-codex';
 import {
   BUILT_IN_DEFAULTS,
   DEFAULT_CODEX_BIN,
@@ -22,7 +22,8 @@ import type {
   AgentRuntimeBinCheck,
   AgentRuntimeDiagnosticContext,
   AgentRuntimeDoctorResult,
-} from '../agent-runtime/types.js';
+} from '@excitedjs/dreamux-types';
+import { dispatcherHostPaths } from '../agent-runtime/host-paths.js';
 import { pathExists } from '../platform/fs-errors.js';
 import {
   setRuntimeConfig,
@@ -306,7 +307,13 @@ async function readDispatchers(
       const diagnostic = provider.diagnostic;
       const foreground = diagnostic
         ? await diagnostic.runDiagnostic(
-            { dispatcher, env, scope: 'foreground' },
+            {
+              runtime_id: dispatcher.id,
+              config: dispatcher.runtime.config,
+              env,
+              scope: 'foreground',
+              paths: dispatcherHostPaths,
+            },
             runner,
           )
         : neutralRuntimeDoctor(dispatcher.runtime.provider);
@@ -315,9 +322,11 @@ async function readDispatchers(
         : diagnostic
           ? await diagnostic.runDiagnostic(
               {
-                dispatcher,
+                runtime_id: dispatcher.id,
+                config: dispatcher.runtime.config,
                 env: service.environment ?? {},
                 scope: 'managedService',
+                paths: dispatcherHostPaths,
               },
               runner,
             )
@@ -561,7 +570,13 @@ function runtimeBinaryChecks(
   for (const dispatcher of dispatchers) {
     const diagnostic = catalog.resolve(dispatcher.runtime.provider).diagnostic;
     if (diagnostic === undefined) continue;
-    for (const check of diagnostic.binChecks({ dispatcher, env, scope })) {
+    for (const check of diagnostic.binChecks({
+      runtime_id: dispatcher.id,
+      config: dispatcher.runtime.config,
+      env,
+      scope,
+      paths: dispatcherHostPaths,
+    })) {
       add(check);
     }
   }

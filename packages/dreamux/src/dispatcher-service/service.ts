@@ -1,16 +1,16 @@
+import type { AgentRuntimeProviderCatalog } from '../agent-runtime/index.js';
 import type {
-  AgentRuntimeProviderCatalog,
   AgentRuntime,
   AgentRuntimeTurnResult,
+  ChannelInboundEnvelope,
   CompletionEnvelope,
-} from '../agent-runtime/index.js';
-import type { InboundDeliveryHooks, InboundTurnInput } from '../agent-runtime/turn.js';
-import type { FeishuInboundEnvelope } from '../channel/feishu/feishu-channel.js';
-import { dispatcherFeishuChannels, type DreamuxConfig } from '../config/config.js';
+  InboundDeliveryHooks,
+  InboundTurnInput,
+} from '@excitedjs/dreamux-types';
+import type { ChannelProviderCatalog } from '../channel/catalog.js';
+import { type DreamuxConfig } from '../config/config.js';
 import type { DispatcherStore } from '../state/dispatcher-store.js';
 import type { DreamuxLogger } from '../platform/logger.js';
-import type { FeishuBot } from '../channel/feishu/bot.js';
-import type { DispatcherRow } from '../state/dispatcher-store.js';
 import type { RestartIntentConsumer } from '../daemon/restart-intent.js';
 import { adminSocketPath as defaultAdminSocketPath } from '../platform/paths.js';
 import {
@@ -21,7 +21,7 @@ import {
 import { TeamService } from './team/service.js';
 import { TeamMateAgentService } from './teammate/service.js';
 import { teammateMcpServerDescriptor } from './teammate/mcp-config.js';
-import { feishuMcpServerDescriptor } from '../channel/feishu/feishu-mcp-surface.js';
+import { feishuMcpServerDescriptor } from '../channel/feishu-mcp-surface.js';
 import type {
   CloseTeamMateInput,
   TeamMateHistoryQuery,
@@ -40,9 +40,8 @@ export interface DispatcherServiceOptions {
   config: DreamuxConfig;
   dispatchers: DispatcherStore;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
+  channelProviders: ChannelProviderCatalog;
   adminSocketPath?: string;
-  botFactory?: (row: DispatcherRow, secret: string) => FeishuBot;
-  skipBotSecret?: boolean;
   channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
   log: DreamuxLogger;
 }
@@ -66,14 +65,11 @@ export class DispatcherService {
       config: opts.config,
       dispatchers: opts.dispatchers,
       agentRuntimeProviders: opts.agentRuntimeProviders,
+      channelProviders: opts.channelProviders,
       log: opts.log,
       channelLoggerFactory: opts.channelLoggerFactory,
       ...(opts.adminSocketPath !== undefined
         ? { adminSocketPath: opts.adminSocketPath }
-        : {}),
-      ...(opts.botFactory !== undefined ? { botFactory: opts.botFactory } : {}),
-      ...(opts.skipBotSecret !== undefined
-        ? { skipBotSecret: opts.skipBotSecret }
         : {}),
       routeChannelInput: (id, channelId, turn, envelope, hooks) =>
         this.routeChannelInput(id, channelId, turn, envelope, hooks),
@@ -158,7 +154,7 @@ export class DispatcherService {
       (entry) => entry.id === dispatcherId,
     );
     const ids = dispatcher
-      ? dispatcherFeishuChannels(dispatcher).map((channel) => channel.channelId)
+      ? dispatcher.channels.map((channel) => channel.id)
       : [];
     if (requested !== undefined) {
       if (!ids.includes(requested)) {
@@ -176,7 +172,7 @@ export class DispatcherService {
     // binding/egress under the wrong channel would key the wrong target.
     if (ids.length === 0) {
       throw new Error(
-        `dispatcher '${dispatcherId}' has no resolvable Feishu channel`,
+        `dispatcher '${dispatcherId}' has no resolvable channel`,
       );
     }
     if (ids.length > 1) {
@@ -192,21 +188,16 @@ export class DispatcherService {
     dispatcherId: string,
     channelId: string,
     input: InboundTurnInput,
-    envelope: FeishuInboundEnvelope,
+    envelope: ChannelInboundEnvelope,
     hooks?: InboundDeliveryHooks,
   ): Promise<AgentRuntimeTurnResult> {
     // `channelId` is the channel the message actually arrived through (the
     // originating live session tags it), so a multi-channel dispatcher keys on
-    // the right channel rather than re-deriving a single one from config.
-    // The channel owns target resolution; core routes by (channel_id, target_key).
-    const target = this.dispatchers.resolveChannelTarget(
-      dispatcherId,
-      {
-        chat_id: envelope.chatId,
-        chat_type: envelope.chatType,
-      },
-      channelId,
-    );
+    // the right channel rather than re-deriving a single one from config. The
+    // neutral inbound envelope already carries the channel-resolved
+    // `ChannelTarget`; core routes by (channel_id, target_key) without naming any
+    // provider selector.
+    const target = envelope.target;
     // Only a bindable target (a group) can carry an active Team binding; a P2P
     // (non-bindable) target always routes to the dispatcher, never a TeamLeader.
     if (target.bindable) {
@@ -320,14 +311,14 @@ export class DispatcherService {
    * target (group-only). A non-bindable (P2P) target is rejected fail-loud by the
    * store.
    */
-  bindTeamChannel(input: {
+  async bindTeamChannel(input: {
     dispatcherId: string;
     teamId: string;
     channelId?: string;
     meta: Record<string, unknown>;
   }) {
     const channelId = this.resolveChannelId(input.dispatcherId, input.channelId);
-    const target = this.dispatchers.resolveChannelTarget(
+    const target = await this.dispatchers.resolveChannelTarget(
       input.dispatcherId,
       input.meta,
       channelId,
@@ -341,13 +332,13 @@ export class DispatcherService {
     });
   }
 
-  transferTeamChannelBack(input: {
+  async transferTeamChannelBack(input: {
     dispatcherId: string;
     channelId?: string;
     meta: Record<string, unknown>;
   }) {
     const channelId = this.resolveChannelId(input.dispatcherId, input.channelId);
-    const target = this.dispatchers.resolveChannelTarget(
+    const target = await this.dispatchers.resolveChannelTarget(
       input.dispatcherId,
       input.meta,
       channelId,
@@ -376,10 +367,13 @@ export class DispatcherService {
   }): Promise<{ allowed: boolean; channelId: string | null }> {
     // Feishu target resolution is channel-agnostic (target_key === chat_id), so
     // resolving via the primary session yields the same key every channel would.
-    const target = this.dispatchers.resolveChannelTarget(input.dispatcherId, {
-      chat_id: input.chatId,
-      chat_type: 'group',
-    });
+    const target = await this.dispatchers.resolveChannelTarget(
+      input.dispatcherId,
+      {
+        chat_id: input.chatId,
+        chat_type: 'group',
+      },
+    );
     const channelId = await this.teams.resolveLeaderChannel({
       dispatcherId: input.dispatcherId,
       teamId: input.teamId,

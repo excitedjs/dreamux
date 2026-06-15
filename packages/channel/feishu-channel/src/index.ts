@@ -10,6 +10,7 @@
 export {
   default,
   createFeishuChannelProvider,
+  type CreateFeishuChannelProviderOptions,
   type FeishuChannelConfig,
 } from './provider.js';
 

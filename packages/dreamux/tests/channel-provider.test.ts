@@ -1,41 +1,43 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  createFeishuChannelSession,
-} from '../src/channel/feishu/feishu-channel.js';
-import { feishuMcpServerDescriptor } from '../src/channel/feishu/feishu-mcp-surface.js';
+import { createFeishuChannelProvider, createFakeFeishuBot } from '@excitedjs/feishu-channel';
+import { feishuMcpServerDescriptor } from '../src/channel/feishu-mcp-surface.js';
 import type {
   SubscriptionChannelPlugin,
 } from '../src/channel/plugin.js';
-import { createFakeFeishuBot } from '../src/channel/feishu/bot.js';
-import { DispatcherStore } from '../src/state/dispatcher-store.js';
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
+import { BUILTIN_FEISHU_PROVIDER_REF } from '../src/config/config.js';
+import { dispatcherDir } from '../src/platform/paths.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
-import { testDreamuxConfig } from './helpers/config.js';
 
-const log = {
-  info: () => undefined,
-  warn: () => undefined,
-  error: () => undefined,
-  child: () => log,
-};
-
-function feishuSession() {
-  const config = testDreamuxConfig();
-  const store = new DispatcherStore(config);
-  const row = store.get('flow');
-  expect(row).not.toBeNull();
-  const bot = createFakeFeishuBot('app-test');
-  return {
-    bot,
-    session: createFeishuChannelSession({
-      dispatcherId: 'flow',
-      row: row!,
-      config,
-      log,
-      skipBotSecret: true,
-      botFactory: () => bot,
-    }),
+const log = ((): DreamuxLogger => {
+  const noop = {
+    info: () => undefined,
+    warn: () => undefined,
+    error: () => undefined,
+    debug: () => undefined,
+    trace: () => undefined,
+    child: () => noop,
   };
+  return noop as unknown as DreamuxLogger;
+})();
+
+// Build the REAL package Feishu session over a fake bot through the neutral
+// provider seam — the same path production drives. The package's `botFactory`
+// test option swaps the live Lark connection for the fake bot; egress flows
+// through the real reply/react wire mapping.
+function feishuSession() {
+  const bot = createFakeFeishuBot('app-test');
+  const provider = createFeishuChannelProvider({ botFactory: () => bot });
+  const session = provider.createSession({
+    dispatcher_id: 'flow',
+    channel_id: 'primary',
+    provider: BUILTIN_FEISHU_PROVIDER_REF,
+    config: { appId: 'app-test', appSecret: 'secret-test' },
+    logger: log,
+    state_root: dispatcherDir('flow'),
+  });
+  return { bot, session };
 }
 
 describe('built-in Feishu channel', () => {
@@ -53,12 +55,18 @@ describe('built-in Feishu channel', () => {
 
   it('handles reply MCP calls inside the channel module', async () => {
     const { bot, session } = feishuSession();
-    const result = await session.handleMcpTool('reply', {
-      chat_id: 'chat-1',
-      text: 'hello',
-      message_id: 'msg-1',
-      mention_user_ids: ['user-1'],
-    });
+    const result = await session.handleTool!(
+      {
+        name: 'reply',
+        arguments: {
+          chat_id: 'chat-1',
+          text: 'hello',
+          message_id: 'msg-1',
+          mention_user_ids: ['user-1'],
+        },
+      },
+      { dispatcher_id: 'flow', channel_id: 'primary' },
+    );
 
     expect(result).toEqual({ message_ids: ['message-fake-1'] });
     expect(bot.sentMessages).toHaveLength(1);
@@ -72,10 +80,10 @@ describe('built-in Feishu channel', () => {
 
   it('handles react MCP calls inside the channel module', async () => {
     const { bot, session } = feishuSession();
-    const result = await session.handleMcpTool('react', {
-      message_id: 'msg-1',
-      emoji: 'OK',
-    });
+    const result = await session.handleTool!(
+      { name: 'react', arguments: { message_id: 'msg-1', emoji: 'OK' } },
+      { dispatcher_id: 'flow', channel_id: 'primary' },
+    );
 
     expect(result).toEqual({ reaction_id: 'reaction-fake-1' });
     expect(bot.reactions).toEqual([

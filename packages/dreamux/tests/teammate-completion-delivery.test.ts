@@ -4,16 +4,19 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import {
-  AgentRuntimeProviderCatalog,
-  type AgentRuntime,
-  type AgentRuntimeCapabilities,
-  type AgentRuntimeCreateContext,
-  type AgentRuntimeProvider,
-  type CompletionEnvelope,
-  type TeamMateCompletionDeliveryResult,
-} from '../src/agent-runtime/index.js';
-import { createFakeFeishuBot } from '../src/channel/feishu/bot.js';
+import { AgentRuntimeProviderCatalog } from '../src/agent-runtime/index.js';
+import type {
+  AgentRuntime,
+  AgentRuntimeCapabilities,
+  AgentRuntimeCreateContext,
+  AgentRuntimeProvider,
+  AgentRuntimeProviderDescriptor,
+  CompletionEnvelope,
+  ProviderDescriptor,
+  TeamMateCompletionDeliveryResult,
+} from '@excitedjs/dreamux-types';
+import { stubChannelCatalog } from './helpers/fake-channel.js';
+import { asAgentRuntimeDescriptor } from './helpers/provider.js';
 import { DispatcherAgentService } from '../src/dispatcher-service/dispatcher/service.js';
 import { defaultDispatcherCwd, resetRuntimeConfig } from '../src/platform/paths.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
@@ -83,11 +86,14 @@ function makeRuntime(behavior: DeliveryBehavior): AgentRuntime {
 
 class ScriptedProvider implements AgentRuntimeProvider {
   readonly ref = 'builtin:codex';
+  readonly descriptor: AgentRuntimeProviderDescriptor;
 
   constructor(
-    readonly descriptor: AgentRuntimeProvider['descriptor'],
+    descriptor: ProviderDescriptor,
     private readonly behavior: DeliveryBehavior,
-  ) {}
+  ) {
+    this.descriptor = asAgentRuntimeDescriptor(descriptor);
+  }
 
   getCapabilities(): AgentRuntimeCapabilities {
     return CAPABILITIES;
@@ -113,10 +119,9 @@ function buildService(
     config,
     dispatchers: new DispatcherStore(config),
     agentRuntimeProviders: new AgentRuntimeProviderCatalog({ registry }),
+    channelProviders: stubChannelCatalog(),
     adminSocketPath,
     channelLoggerFactory: () => noopLog() as never,
-    botFactory: () => createFakeFeishuBot('app-flow'),
-    skipBotSecret: true,
     log: noopLog() as never,
   });
 }
@@ -296,10 +301,17 @@ function noopLog(): {
   info: () => undefined;
   warn: () => undefined;
   error: () => undefined;
+  debug: () => undefined;
+  trace: () => undefined;
+  child: () => unknown;
 } {
-  return {
+  const log = {
     info: () => undefined,
     warn: () => undefined,
     error: () => undefined,
+    debug: () => undefined,
+    trace: () => undefined,
+    child: () => log,
   };
+  return log;
 }

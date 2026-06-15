@@ -30,11 +30,15 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 
-import { CodexProcess } from '../src/agent-runtime/builtin/codex/supervisor.js';
-import { CodexWsClient, type CodexWsClientOptions } from '../src/agent-runtime/builtin/codex/rpc.js';
-import { performInitializeHandshake } from '../src/agent-runtime/builtin/codex/handshake.js';
-import { feishuMcpCodexArgs } from '../src/agent-runtime/builtin/codex/mcp-config.js';
-import { codexArgsToCli, parseCodexArgs } from '../src/agent-runtime/builtin/codex/args.js';
+import { CodexProcess } from '@excitedjs/agent-runtime-codex';
+import { CodexWsClient, type CodexWsClientOptions } from '@excitedjs/agent-runtime-codex';
+import { performInitializeHandshake } from '@excitedjs/agent-runtime-codex';
+import { feishuMcpServerDescriptor } from '../src/channel/feishu-mcp-surface.js';
+import {
+  codexArgsToCli,
+  codexMcpServerArgs,
+  parseCodexArgs,
+} from '@excitedjs/agent-runtime-codex';
 import { dreamuxBinPath } from '../src/platform/package-bin.js';
 import {
   IN_PROGRESS_REACTION_EMOJI,
@@ -43,16 +47,16 @@ import {
 } from '../src/server.js';
 import {
   createFakeFeishuBot,
-  type FakeFeishuBot,
   type FeishuInboundEvent,
-} from '../src/channel/feishu/bot.js';
+} from '@excitedjs/feishu-channel';
+import { feishuChannelCatalog } from './helpers/fake-channel.js';
 import { saveDispatcherAccess } from '@excitedjs/feishu-channel';
 import { dispatcherDir } from '../src/platform/paths.js';
 import type { DreamuxConfig } from '../src/config/config.js';
 import type {
   ServerNotification,
   ThreadStartResponse,
-} from '../src/agent-runtime/builtin/codex/types.js';
+} from '@excitedjs/agent-runtime-codex';
 import { testDispatcherConfig } from './helpers/config.js';
 
 export const SKIP_ENV = 'DREAMUX_SKIP_LIVE_CODEX';
@@ -192,6 +196,7 @@ function fakeInbound(
 
 function liveConfig(dispatcherCwd: string, codexHomeEnv: string): DreamuxConfig {
   return {
+    agents: {},
     dispatchers: [
       testDispatcherConfig({
         id: 'live',
@@ -374,11 +379,13 @@ describe('codex live integration', () => {
         ...codexArgsToCli(
           parseCodexArgs('{"sandboxMode":"danger-full-access"}'),
         ),
-        ...feishuMcpCodexArgs({
-          dispatcherId: 'dispatcher-a',
-          adminSocketPath: join(dir, 'admin.sock'),
-          command: dreamuxBin,
-        }),
+        ...codexMcpServerArgs([
+          feishuMcpServerDescriptor({
+            dispatcherId: 'dispatcher-a',
+            adminSocketPath: join(dir, 'admin.sock'),
+            command: dreamuxBin,
+          }),
+        ]),
       ];
 
       const proc = new CodexProcess({
@@ -461,8 +468,7 @@ describe('codex live integration', () => {
         server = new Server({
           config: liveConfig(dispatcherCwd, operatorHome),
           adminSocketPath: adminSocket,
-          skipBotSecret: true,
-          botFactory: () => bot,
+          channelProviderCatalog: feishuChannelCatalog(() => bot),
           codexClientFactory: (socketPath) => {
             client = new RecordingCodexWsClient({ socketPath });
             return client;

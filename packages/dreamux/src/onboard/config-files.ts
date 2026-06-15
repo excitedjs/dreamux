@@ -6,7 +6,6 @@ import {
   DEFAULT_CODEX_TURN_TIMEOUT_MS,
   DEFAULT_INITIALIZE_TIMEOUT_MS,
   DEFAULT_SANDBOX_MODE,
-  dispatcherFeishuConfig,
   type DispatcherConfig,
   type DispatcherProviderConfig,
   stringifyConfig,
@@ -52,7 +51,6 @@ export function dreamuxConfigFromAnswers(
     };
   }
   const next: DreamuxConfig = { agents, dispatchers };
-  assertUniqueFeishuAppIds(next);
   return next;
 }
 
@@ -66,20 +64,6 @@ export function dispatcherCodexArgsJson(): string {
     sandboxMode: DEFAULT_SANDBOX_MODE,
     extraArgs: [],
   });
-}
-
-function assertUniqueFeishuAppIds(config: DreamuxConfig): void {
-  const seen = new Map<string, string>();
-  for (const dispatcher of config.dispatchers) {
-    const feishu = dispatcherFeishuConfig(dispatcher);
-    const existing = seen.get(feishu.app_id);
-    if (existing !== undefined && existing !== dispatcher.id) {
-      throw new Error(
-        `Feishu app_id for dispatcher '${dispatcher.id}' duplicates dispatcher '${existing}'`,
-      );
-    }
-    seen.set(feishu.app_id, dispatcher.id);
-  }
 }
 
 function dispatcherConfigFromAnswers(answers: OnboardAnswers): DispatcherConfig {

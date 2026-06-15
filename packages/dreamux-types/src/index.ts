@@ -75,6 +75,7 @@ export type {
 export type {
   ChannelConfigContext,
   ChannelInboundEnvelope,
+  ChannelMcpDescriptorContext,
   ChannelMessageTargetCheck,
   ChannelProvider,
   ChannelProviderFactory,
@@ -84,6 +85,7 @@ export type {
   ChannelSender,
   ChannelSession,
   ChannelSessionCreateContext,
+  ChannelSessionlessToolContext,
   ChannelTarget,
   ChannelToolCall,
   ChannelToolContext,

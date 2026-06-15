@@ -7,7 +7,7 @@
  * contribute MCP tools and push subscribed events to dispatcher/team agents.
  */
 
-import type { AgentRuntimeMcpServer } from '../agent-runtime/types.js';
+import type { AgentRuntimeMcpServer } from '@excitedjs/dreamux-types';
 import type { ProviderDescriptor } from '../registry/index.js';
 
 export interface SubscriptionChannelMcpContext {

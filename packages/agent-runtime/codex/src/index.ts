@@ -8,13 +8,14 @@
 export {
   default,
   createCodexAgentRuntimeProvider,
-  resolveCodexBinPath,
   codexRuntimeArgsForMcpServers,
   dispatcherCodexConfig,
   CODEX_AGENT_RUNTIME_CAPABILITIES,
   type CodexAgentRuntimeProviderOptions,
   type CodexProviderFactoryContext,
 } from './provider.js';
+
+export { resolveCodexBinPath } from './bin.js';
 
 export {
   CodexRuntime,
@@ -25,6 +26,7 @@ export {
   CodexProcess,
   type CodexProcessOptions,
   type CodexProcessExit,
+  type CodexProcessExitHandler,
 } from './supervisor.js';
 
 export {
@@ -71,3 +73,25 @@ export {
 } from './version.js';
 
 export { BUILTIN_CODEX_PROVIDER_REF } from './provider-ref.js';
+
+// The codex doctor surface now lives in this package (issue #209 cleanup): the
+// neutral diagnostic, the Codex home/auth validation, and the Codex home/config
+// path resolvers. Core's doctor + onboard consume these directly.
+export { codexAgentRuntimeDiagnostic } from './diagnostic.js';
+
+export {
+  DISPATCHER_APP_SERVER_SOCKET_PATH_MAX_BYTES,
+  dispatcherCodexHomeDoctorContext,
+  validateDispatcherCodexHome,
+  assertDispatcherCodexHomeReady,
+  formatDispatcherCodexHomeErrors,
+  type DispatcherCodexHomeDoctor,
+  type DispatcherCodexHomeDoctorContext,
+  type DispatcherCodexHomeDoctorResult,
+} from './codex-home.js';
+
+export {
+  operatorCodexHome,
+  dispatcherCodexHome,
+  dispatcherCodexConfigPath,
+} from './paths.js';

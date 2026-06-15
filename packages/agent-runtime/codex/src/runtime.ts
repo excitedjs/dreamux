@@ -16,7 +16,7 @@
  *     and post a visible warning to the next source chat.
  */
 
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import {
   CodexProcess,
@@ -35,7 +35,7 @@ import {
   TurnManager,
 } from './turn-manager.js';
 import { injectThreadItems, type CollectedTurn } from './events.js';
-import { renderChannelInput } from './internal/turn-render.js';
+import { renderChannelInput } from '@excitedjs/dreamux-utils';
 import { createFailFastApprovalHandler } from './approval.js';
 import type {
   AgentRuntime,
@@ -104,10 +104,11 @@ export interface CodexRuntimeDeps {
    */
   skillSources?: readonly AgentRuntimeSkillSource[];
   /**
-   * Build the base process env for the codex child (host seeds `PATH` with the
-   * Dreamux package bins). Optional: standalone use falls back to the live env.
+   * The host's neutral env-injection entries from the create context, merged
+   * into the child env before this provider's own `extraEnv`. Empty/omitted
+   * means inject nothing (the common case).
    */
-  baseProcessEnv?: (extraEnv: Record<string, string>) => NodeJS.ProcessEnv;
+  injectEnv?: Record<string, string>;
   /** Optional bin path override for tests. */
   codexBinPath?: string;
   /** Override process construction for tests. */
@@ -316,15 +317,20 @@ export class CodexRuntime implements AgentRuntime {
       await this.deps.codexHomeDoctor({ runtimeId: this.dispatcherId, cwd });
     }
 
+    // Compose the codex app-server log subpaths under the neutral central logs
+    // root (B2): core no longer names a per-runtime log file. The host supplies
+    // a unique, filesystem-safe `runtime_id`, so `<logsDir>/codex-app-server/
+    // <id>.log` is collision-free across dispatchers and teammates.
+    const codexLogDir = join(this.paths.logsDir(), 'codex-app-server');
     const factory = this.deps.codexProcessFactory ?? ((o) => new CodexProcess(o));
     const process = factory({
       socketPath,
       cwd,
-      stdoutLogPath: this.paths.stdoutLogPath(this.dispatcherId),
-      stderrLogPath: this.paths.stderrLogPath(this.dispatcherId),
+      stdoutLogPath: join(codexLogDir, `${this.dispatcherId}.log`),
+      stderrLogPath: join(codexLogDir, `${this.dispatcherId}.stderr.log`),
       binPath: this.deps.codexBinPath,
       extraArgs,
-      env: codexProcessEnv(this.deps.baseProcessEnv, this.deps.extraEnv ?? {}),
+      env: codexProcessEnv(this.deps.injectEnv, this.deps.extraEnv),
     });
     this.process = process;
     process.onExit((exit) => {

@@ -11,7 +11,7 @@ import { chmod, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import type { Server } from '../server.js';
-import { ensureOwnerOnlyDir } from '../platform/owner-only-dir.js';
+import { ensureOwnerOnlyDir } from '@excitedjs/dreamux-utils';
 import {
   AdminError,
   type AdminRequest,

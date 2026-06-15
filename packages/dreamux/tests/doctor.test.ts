@@ -18,10 +18,8 @@ import {
   resetRuntimeConfig,
   stateRoot,
 } from '../src/platform/paths.js';
-import {
-  dispatcherCodexHome,
-  dispatcherWorkspaceSkillPath,
-} from '../src/agent-runtime/builtin/codex/paths.js';
+import { dispatcherCodexHome } from '@excitedjs/agent-runtime-codex';
+import { dispatcherWorkspaceSkillPath } from '../src/onboard/legacy-codex-skills.js';
 import {
   testConfigFileObject,
   testSingleDispatcherFileObject,
@@ -469,7 +467,7 @@ describe('dreamux doctor command', () => {
     );
     runner.nodeVersions.set('/usr/local/bin/node', 'v22.7.0');
     const shimProbe: ServiceNodeProbe = {
-      isExecutable: () => true,
+      isExecutable: async () => true,
       realpath: async (path) =>
         path === '/usr/local/bin/node'
           ? '/Users/u/Library/Application Support/fnm/node-versions/v22/installation/bin/node'
@@ -511,7 +509,7 @@ describe('dreamux doctor command', () => {
     );
     runner.nodeVersions.set('/usr/local/bin/node', 'v22.7.0');
     const stableProbe: ServiceNodeProbe = {
-      isExecutable: () => true,
+      isExecutable: async () => true,
       realpath: async (path) => path,
     };
 

@@ -15,7 +15,7 @@ import {
   isProcessAlive,
   killProcessGroup,
   removeEmptyLogFile,
-} from './internal/os.js';
+} from '@excitedjs/dreamux-utils';
 import { ClaudeCodeStreamRpc } from './rpc.js';
 import type {
   ClaudeCodeSession,

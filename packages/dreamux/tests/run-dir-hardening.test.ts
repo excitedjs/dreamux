@@ -11,7 +11,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { ensureOwnerOnlyDir } from '../src/platform/owner-only-dir.js';
+import { ensureOwnerOnlyDir } from '@excitedjs/dreamux-utils';
 import { assertNoLegacyAdminServer } from '../src/admin/socket.js';
 
 describe('ensureOwnerOnlyDir', () => {

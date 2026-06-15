@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import {
   createClaudeCodeAgentRuntimeProvider,
   type ClaudeCodeAgentRuntimeProviderOptions,
-} from '../src/agent-runtime/builtin/claude-code/provider.js';
+} from '@excitedjs/agent-runtime-claude-code';
 import {
   createDefaultClaudeCodeSession,
   type ClaudeCodeSession,
@@ -18,20 +18,26 @@ import {
   type ClaudeCodeSessionSpec,
   type TurnOutcome,
   type TurnSubmitOptions,
-} from '../src/agent-runtime/builtin/claude-code/supervisor.js';
-import { claudeCodeMcpConfig } from '../src/agent-runtime/builtin/claude-code/mcp-config.js';
-import { claudeCodeResidentArgs } from '../src/agent-runtime/builtin/claude-code/args.js';
-import { codexMcpServerArgs } from '../src/agent-runtime/builtin/codex/mcp-config.js';
+} from '@excitedjs/agent-runtime-claude-code';
+import { claudeCodeMcpConfig } from '@excitedjs/agent-runtime-claude-code';
+import { claudeCodeResidentArgs } from '@excitedjs/agent-runtime-claude-code';
+import { dispatcherClaudeCodeConfig } from '@excitedjs/agent-runtime-claude-code';
+import { codexMcpServerArgs } from '@excitedjs/agent-runtime-codex';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
 import {
   defaultDispatcherCwd,
   dispatcherCompletionSpillDir,
+  dispatcherDir,
   teamMateCompletionOutputPath,
 } from '../src/platform/paths.js';
-import { dispatcherClaudeCodeMcpConfigPath } from '../src/agent-runtime/builtin/claude-code/paths.js';
+import {
+  hostStateCallbacks,
+  loggerFromHostLog,
+} from '../src/agent-runtime/host-context.js';
+import { dispatcherHostPaths } from '../src/agent-runtime/host-paths.js';
 import { defaultDispatcherClaudeCodeConfig } from '../src/config/config.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
-import { renderChannelInput } from '../src/agent-runtime/turn.js';
+import { renderChannelInput } from '@excitedjs/dreamux-utils';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 import { CLAUDE_SKILLS_PARENT_LAYOUT } from '@excitedjs/agent-runtime-claude-code';
 import type {
@@ -39,8 +45,8 @@ import type {
   AgentRuntimeMcpServer,
   AgentRuntimeRole,
   AgentRuntimeSkillSource,
-} from '../src/agent-runtime/types.js';
-import type { TurnSettledSignal } from '../src/agent-runtime/turn.js';
+  TurnSettledSignal,
+} from '@excitedjs/dreamux-types';
 
 const FEISHU_MCP: AgentRuntimeMcpServer = {
   name: 'feishu',
@@ -374,21 +380,19 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     const runtime = claudeCodeProvider({
       sessionFactory: fleet.factory,
     }).createRuntime({
-      row: row!,
-      dispatcher,
-      dispatchers: store,
+      identity: { runtime_id: 'flow', checkpoint_id: row!.thread_id },
       role: opts.role ?? 'dispatcher',
+      config: dispatcherClaudeCodeConfig(dispatcher),
       cwd: defaultDispatcherCwd('flow'),
       mcpServers: [FEISHU_MCP],
+      state: hostStateCallbacks(store),
+      paths: dispatcherHostPaths,
       ...(opts.skillSources !== undefined
         ? { skillSources: opts.skillSources }
         : {}),
       ...(opts.onTurnSettled !== undefined
         ? { onTurnSettled: opts.onTurnSettled }
         : {}),
-      log: () => {
-        /* test sink */
-      },
     });
     return { runtime, store, fleet };
   }
@@ -443,7 +447,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     expect(fleet.sessions[0]?.spec.args).toContain('stream-json');
     expect(fleet.sessions[0]?.spec.remoteControl).toBe(false);
 
-    const mcpPath = dispatcherClaudeCodeMcpConfigPath('flow');
+    const mcpPath = join(dispatcherDir('flow'), 'mcp.json');
     const written = JSON.parse(readFileSync(mcpPath, 'utf8')) as unknown;
     expect(written).toEqual({
       mcpServers: {
@@ -461,14 +465,16 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     const runtime = claudeCodeProvider({
       sessionFactory: fleet.factory,
     }).createRuntime({
-      row: row!,
-      dispatcher,
-      dispatchers: store,
+      identity: { runtime_id: 'flow', checkpoint_id: row!.thread_id },
+      role: 'dispatcher',
+      config: dispatcherClaudeCodeConfig(dispatcher),
       cwd: defaultDispatcherCwd('flow'),
       mcpServers: [],
-      log: (_level, msg) => {
+      state: hostStateCallbacks(store),
+      paths: dispatcherHostPaths,
+      logger: loggerFromHostLog((_level, msg) => {
         logs.push(msg);
-      },
+      }),
     });
     await runtime.start();
 
@@ -904,14 +910,13 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     const runtime = claudeCodeProvider({
       sessionFactory: stallFactory,
     }).createRuntime({
-      row: row!,
-      dispatcher,
-      dispatchers: store,
+      identity: { runtime_id: 'flow', checkpoint_id: row!.thread_id },
+      role: 'dispatcher',
+      config: dispatcherClaudeCodeConfig(dispatcher),
       cwd: defaultDispatcherCwd('flow'),
       mcpServers: [],
-      log: () => {
-        /* test sink */
-      },
+      state: hostStateCallbacks(store),
+      paths: dispatcherHostPaths,
     });
     await runtime.start();
 
@@ -1024,15 +1029,14 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     const runtime = claudeCodeProvider({
       sessionFactory: blockingFactory,
     }).createRuntime({
-      row: row!,
-      dispatcher,
-      dispatchers: store,
+      identity: { runtime_id: 'flow', checkpoint_id: row!.thread_id },
+      role: 'dispatcher',
+      config: dispatcherClaudeCodeConfig(dispatcher),
       cwd: defaultDispatcherCwd('flow'),
       mcpServers: [],
+      state: hostStateCallbacks(store),
+      paths: dispatcherHostPaths,
       onTurnSettled: (s) => settled.push(s),
-      log: () => {
-        /* test sink */
-      },
     });
     await runtime.start();
     await runtime.channelInput({ sourceId: 'm1', text: 'go' });

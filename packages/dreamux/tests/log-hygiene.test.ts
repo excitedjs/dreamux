@@ -5,7 +5,7 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { removeEmptyLogFile } from '../src/platform/logs.js';
+import { removeEmptyLogFile } from '@excitedjs/dreamux-utils';
 
 /**
  * Empty child-log cleanup (issue #182 logs stage): supervisors call

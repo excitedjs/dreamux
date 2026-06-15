@@ -92,8 +92,6 @@ function resolveMethod(obj: string | undefined, verb: string | undefined): strin
 
 const FLAG_TO_PARAM: Record<string, string> = {
   id: 'dispatcher_id',
-  'bot-app-id': 'bot_app_id',
-  'bot-secret-ref': 'bot_secret_ref',
 };
 
 function flagsToParams(

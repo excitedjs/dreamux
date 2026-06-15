@@ -30,11 +30,13 @@ the implementation is still mostly host-local:
   `dispatchers[].channels[]` envelope. Since the multi-channel config slice
   (#209) it accepts multiple channels with unique dispatcher-local ids and
   delegates provider-specific validation to each channel provider's `readConfig`
-  (no Feishu-specific checks in core). Live multi-channel routing has landed: a
-  runnable dispatcher MAY declare more than one `builtin:feishu` channel — the
-  dispatcher service runs one live session per channel, each connecting as its
-  own bot — and only a channel naming an unwired (non-feishu) provider fails loud
-  at server start. See "Live multi-channel routing" below.
+  (no Feishu-specific checks in core). **SUPERSEDED by Decision #4 (PR #223):**
+  config load now caps a dispatcher at **one channel per provider ref**, so two
+  `builtin:feishu` channels on one dispatcher no longer load (config error: "each
+  provider may appear at most once per dispatcher"). The runtime session loop
+  still runs one live session per declared channel, and only a channel naming an
+  unwired (non-feishu) provider fails loud at server start. See "Live
+  multi-channel routing" below.
 - `/packages/dreamux/src/dispatcher-service/channel-binding/store.ts` stores
   version 1 rows keyed by `(provider, chat_id)`, which cannot distinguish
   multiple channel instances or non-chat channel targets.
@@ -783,14 +785,14 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   registry descriptor). Core moved its Feishu-specific channel *field* checks —
   the app id/secret non-empty checks and the unknown-key check — into the Feishu
   provider's `readConfig` (and, since the bot secret is config-sourced, that keeps
-  the non-empty `app_secret` fail-loud at config load). The cross-dispatcher
-  `app_id` uniqueness check stays in **core**, not the provider: bot-identity
-  uniqueness across dispatchers is a core concern (a per-channel `readConfig`
-  cannot see other dispatchers, but core holds them all), so config load runs a
-  post-parse pass that fails loud when two dispatchers — enabled or not — declare
-  the same Feishu `app_id`, the same story `dreamux serve` / `doctor` / `onboard`
-  tell. Field validation is provider-owned; cross-dispatcher identity is
-  core-owned. Config now stores the **raw** channel config — the production Feishu
+  the non-empty `app_secret` fail-loud at config load). **SUPERSEDED by Decision
+  #4 (PR #223): the cross-dispatcher `app_id` uniqueness check was REMOVED** —
+  from config load (`assertUniqueFeishuAppIds`) and from `onboard` — so two
+  dispatchers MAY now declare the same Feishu `app_id` (sharing one bot identity
+  is an operator choice, not a config error). The new core-owned config concern is
+  instead per-dispatcher provider-ref uniqueness (one channel per provider ref,
+  above). Field validation remains provider-owned. Config stores the **raw**
+  channel config — the production Feishu
   adapter consumes `{ app_id, app_secret }`; wiring channels through
   `createSession` with the parsed config is the channel-routing slice, so the
   parsed `readConfig` result is validated-and-discarded this slice. A channel
@@ -889,8 +891,14 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   engines read the same physical skills; ordinary teammate/team_member roles still
   receive none; no workspace mutation and no symlink/copy model. Runtime packages
   still depend on `@excitedjs/dreamux-types` only.
-- **Live multi-channel routing — satisfied now:** a dispatcher may declare more
-  than one `builtin:feishu` channel and the dispatcher service runs one live
+- **Live multi-channel routing — PARTIALLY SUPERSEDED by Decision #4 (PR #223):**
+  the config-layer capability "a dispatcher may declare more than one
+  `builtin:feishu` channel" is REVERSED — config now caps a dispatcher at one
+  channel per provider ref, so with only `builtin:feishu` wired a dispatcher holds
+  a single session. The runtime session loop and routing/egress mechanics
+  described below are intact and stay accurate for the multi-**provider** case
+  (e.g. feishu + a future second channel kind) and for directly-constructed test
+  configs: the dispatcher service runs one live
   session per channel, each connecting as its OWN bot from that channel's config
   `{ app_id, app_secret }` (the state row keeps the PRIMARY/first channel's bot
   identity; per-channel state/access dirs stay shared per-dispatcher). The slot
@@ -907,10 +915,70 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   configured. Legacy single-channel dispatchers are unchanged (the sole channel
   resolves exactly as before). **Deferred edges (documented, not shipped):** a
   dispatcher-initiated reply to a NON-primary channel needs an explicit
-  `channel_id` (the dispatcher prompt teaching it is a follow-up); cross-dispatcher
-  Feishu `bot_app_id` uniqueness covers only the primary channel; and a second
+  `channel_id` (the dispatcher prompt teaching it is a follow-up); and a second
   channel provider kind (beyond `builtin:feishu`) is still not wired (the generic
   channel loader / ACP adapter remain out of scope).
+- **Final cleanup — core provider neutrality (PR #223) — satisfied now.** This
+  is the convergence the slice 3/4/5 statuses repeatedly deferred ("converging
+  core's launcher onto the neutral context … and retire the adapter is
+  later-slice work"). It **SUPERSEDES** every description above of a "core-owned
+  adapter", a `builtin/<name>/provider.ts`, a `channel/feishu/*` adapter, "re-export
+  shims kept so existing import paths stay stable", the "host-shaped create
+  context", and the "package-bin `PATH` seed". The north star: pluginization is
+  polymorphism — core calls **only** the two neutral `@excitedjs/dreamux-types`
+  interfaces (`AgentRuntimeProvider`, `ChannelProvider`) and is unaware of which
+  class implements them; `builtin:*` providers are indistinguishable from `npm:*`
+  providers (only ref→package resolution differs). Concretely:
+  - **No builtin implementations in core.** `packages/dreamux/src/agent-runtime/builtin/`
+    is **deleted entirely**; `channel/feishu/` is **dissolved**. The two runtimes
+    and the Feishu channel live only in their packages
+    (`@excitedjs/agent-runtime-codex` / `-claude-code` / `@excitedjs/feishu-channel`),
+    which depend on `@excitedjs/dreamux-types` only and never import core.
+  - **Core imports the contracts directly.** `agent-runtime/types.ts` and
+    `turn.ts` are **deleted** (no in-core contract, no re-export shim); core
+    imports the neutral types from `@excitedjs/dreamux-types`. The launcher builds
+    the neutral `AgentRuntimeCreateContext` **once** via host adapters
+    (`agent-runtime/host-context.ts` — store→state sink, pino→neutral
+    field-preserving logger; `agent-runtime/host-paths.ts` — neutral path context),
+    with **zero** per-builtin glue. The channel start loop resolves
+    `provider.createSession(neutral ctx)` polymorphically; the dispatcher slot
+    holds a neutral `Map<channel_id, ChannelSession>` (not a concrete Feishu
+    session) and calls `session.start({ deliver })` (a neutral result, narrowed
+    from the runtime turn union). The host-owned Feishu MCP server descriptor +
+    admin-method routing + the sessionless `list_chat_bots` helper relocated to
+    `channel/feishu-mcp-surface.ts`; the package gained a `createFeishuChannelProvider({ botFactory })`
+    test seam (mirrors the codex/claude factory seams).
+  - **Core names no provider config field (de-leak).** The Feishu-specific config
+    helpers (`dispatcherFeishuConfig` / `dispatcherFeishuChannels` /
+    `dispatcherChannelId`), the `DispatcherFeishuConfig` type, and the dead
+    `resolveBotSecret` / `DispatcherRow.bot_secret_ref` bot-secret-resolution path
+    (orphaned by the session convergence — config now carries `{ app_id, app_secret }`
+    straight to the package's `readConfig`/`createSession`) are **removed**. A
+    dispatcher's identity is the channel provider's self-reported `getIdentity`
+    (neutral, opaque): `DispatcherChannelConfig.identity` is derived at config-load
+    and seeds `DispatcherRow.channel_identity` (renamed from `bot_app_id`); the
+    admin `dispatcher.status` response field is renamed to `channel_identity`
+    accordingly. `identity` is in-memory only — `stringifyConfig` emits just
+    `{ id, provider, config }` so it never round-trips into the config file, and
+    `status.json` never carried it (no state-file migration).
+  - **Env boundary (decision #6).** The spawn env is the clean merge
+    `{ ...process.env, ...injectEnv, ...extra_env }`: `injectEnv` is core's
+    neutral, currently-empty host seam on `AgentRuntimeCreateContext`; `extra_env`
+    is the provider's OWN config (core never sees it). The Codex child no longer
+    has `CODEX_HOME` stripped (it inherits ambient like vanilla codex), and core's
+    package-bin `PATH` seed (`dispatcherProcessEnv`) is removed as dead tm-era
+    cruft (bare `tm` relies on the ambient PATH of a global install; the MCP shims
+    use the absolute `dreamuxBinPath`).
+  - **Diagnostics + codex-home into packages.** `cli/doctor.ts` iterates providers
+    and calls each provider's own neutral `diagnostic` (zero codex/claude
+    branching); `codex-home` and the per-engine diagnostics live in their packages.
+  - **`tm` packaging DEFERRED (not removed this PR).** decision #6's default was to
+    retire the `@excitedjs/tm` dependency + `bin/tm`, but the dispatcher base
+    prompt still actively instructs bare-`tm` usage and the operational `tm` manual
+    is the maintainer-owned dispatcher skill. Removing the bin while the prompt/skill
+    still teach `tm` would be incoherent, so the dep + bin + base-prompt tm prose
+    stay; their removal rides with the maintainer's tm-skill/prose PR. See
+    [dispatcher-tm-packaging](dispatcher-tm-packaging.md).
 
 ## Alternatives Considered
 

@@ -7,19 +7,28 @@ import {
   UnsupportedAgentRuntimeProviderError,
   WrongProviderKindError,
   createBuiltinAgentRuntimeProviderCatalog,
-  createCodexAgentRuntimeProvider,
   loadExternalAgentRuntimeProviders,
-  type AgentRuntime,
-  type AgentRuntimeCapabilities,
-  type AgentRuntimeCreateContext,
-  type AgentRuntimeLastResult,
-  type AgentRuntimeProvider,
-  type AgentRuntimeProviderConfigReadContext,
-  type AgentRuntimeSystemInput,
-  type AgentRuntimeTurnResult,
   type ExternalAgentRuntimeProviderFactory,
+  type ExternalAgentRuntimeProviderFactoryContext,
 } from '../src/agent-runtime/index.js';
-import type { InboundTurnInput } from '../src/agent-runtime/turn.js';
+import {
+  createCodexAgentRuntimeProvider,
+  dispatcherCodexConfig,
+} from '@excitedjs/agent-runtime-codex';
+import { hostStateCallbacks } from '../src/agent-runtime/host-context.js';
+import { dispatcherHostPaths } from '../src/agent-runtime/host-paths.js';
+import { asAgentRuntimeDescriptor } from './helpers/provider.js';
+import type {
+  AgentRuntime,
+  AgentRuntimeCapabilities,
+  AgentRuntimeCreateContext,
+  AgentRuntimeLastResult,
+  AgentRuntimeProvider,
+  AgentRuntimeProviderConfigReadContext,
+  AgentRuntimeSystemInput,
+  AgentRuntimeTurnResult,
+  InboundTurnInput,
+} from '@excitedjs/dreamux-types';
 import {
   UnknownBuiltinProviderError,
   createBuiltinProviderRegistry,
@@ -103,7 +112,7 @@ function externalFactory(options: {
   return ({ ref, descriptor }) => {
     const provider: AgentRuntimeProvider = {
       ref,
-      descriptor,
+      descriptor: asAgentRuntimeDescriptor(descriptor),
       getCapabilities: () => EXTERNAL_CAPABILITIES,
       readConfig(rawConfig, context) {
         options.configs?.push(context);
@@ -141,14 +150,13 @@ describe('AgentRuntimeProviderCatalog', () => {
     expect(row).not.toBeNull();
 
     const runtime = builtinCatalog().resolve('builtin:codex').createRuntime({
-      row: row!,
-      dispatcher,
-      dispatchers: store,
+      identity: { runtime_id: 'flow', checkpoint_id: row!.thread_id },
+      role: 'dispatcher',
+      config: dispatcherCodexConfig(dispatcher),
       cwd: '/tmp/dreamux-test-cwd',
       mcpServers: [],
-      log: () => {
-        /* test sink */
-      },
+      state: hostStateCallbacks(store),
+      paths: dispatcherHostPaths,
     });
 
     expect(runtime.providerRef).toBe('builtin:codex');
@@ -229,12 +237,13 @@ describe('AgentRuntimeProviderCatalog', () => {
     const dispatcher = testDispatcherConfig({ id: 'flow' });
     const store = new DispatcherStore(testDreamuxConfig([dispatcher]));
     const runtime = provider.createRuntime({
-      row: store.get('flow')!,
-      dispatcher,
-      dispatchers: store,
+      identity: { runtime_id: 'flow', checkpoint_id: store.get('flow')!.thread_id },
+      role: 'dispatcher',
+      config: {},
       cwd: '/tmp/dreamux-test-cwd',
       mcpServers: [],
-      log: () => undefined,
+      state: hostStateCallbacks(store),
+      paths: dispatcherHostPaths,
     });
 
     expect(runtime.providerRef).toBe('npm:@example/dreamux-runtime#named');
@@ -318,7 +327,10 @@ describe('AgentRuntimeProviderCatalog', () => {
         registry: createBuiltinProviderRegistry(),
         refs: ['npm:@example/dreamux-runtime'],
         importModule: async () => ({
-          default: ({ ref, descriptor }) => ({
+          default: ({
+            ref,
+            descriptor,
+          }: ExternalAgentRuntimeProviderFactoryContext) => ({
             ref,
             descriptor,
             getCapabilities: () => ({

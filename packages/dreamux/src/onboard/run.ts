@@ -1,6 +1,13 @@
 import { pathExists } from '../platform/fs-errors.js';
 
-import { codexArgsToCli, parseCodexArgs } from '../agent-runtime/builtin/codex/args.js';
+import {
+  codexArgsToCli,
+  parseCodexArgs,
+  dispatcherCodexHome,
+  dispatcherCodexHomeDoctorContext,
+  validateDispatcherCodexHome,
+  type DispatcherCodexHomeDoctorResult,
+} from '@excitedjs/agent-runtime-codex';
 import {
   assertNoLegacyTomlOnly,
   globalConfigFile,
@@ -13,12 +20,6 @@ import {
   setRuntimeConfig,
   stateRoot,
 } from '../platform/paths.js';
-import { dispatcherCodexHome } from '../agent-runtime/builtin/codex/paths.js';
-import {
-  dispatcherCodexHomeDoctorContext,
-  validateDispatcherCodexHome,
-  type DispatcherCodexHomeDoctorResult,
-} from '../agent-runtime/builtin/codex/codex-home.js';
 import { ExecaCommandRunner } from './commands.js';
 import {
   dispatcherCodexArgsJson,

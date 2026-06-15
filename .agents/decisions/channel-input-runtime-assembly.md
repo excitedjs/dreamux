@@ -2,13 +2,13 @@
 
 - **Status:** Accepted
 - **Date:** 2026-06-09
-- **Affects:** the runtime contract
-  [`/packages/dreamux/src/agent-runtime/turn.ts`](/packages/dreamux/src/agent-runtime/turn.ts),
+- **Affects:** the runtime turn contract
+  [`/packages/dreamux-types/src/turn.ts`](/packages/dreamux-types/src/turn.ts)
+  (since #209 the contract lives in `@excitedjs/dreamux-types`, not core),
   both builtins' `channelInput`, the Feishu channel message layer
   [`/packages/channel/feishu-channel/src/feishu-message.ts`](/packages/channel/feishu-channel/src/feishu-message.ts),
-  the no-leak boundary in
-  [`/packages/dreamux/CLAUDE.md`](/packages/dreamux/CLAUDE.md) and
-  [`/packages/dreamux/src/agent-runtime/CLAUDE.md`](/packages/dreamux/src/agent-runtime/CLAUDE.md)
+  and the no-leak boundary in
+  [`/packages/dreamux/CLAUDE.md`](/packages/dreamux/CLAUDE.md)
 - **PR / Issue:** [#164](https://github.com/excitedjs/dreamux/issues/164)
 
 ## Context
