@@ -1,8 +1,8 @@
 /**
  * Live multi-channel runtime routing (issue #209).
  *
- * A dispatcher may now declare more than one `builtin:feishu` channel and run a
- * live session per channel, each connecting as its own bot. These tests prove:
+ * A dispatcher may now declare more than one channel as long as each channel
+ * uses a distinct provider. These tests prove:
  *  - inbound routes by the ORIGINATING channel_id (+ provider-resolved target),
  *    so a message arriving on a secondary channel keys its binding under that
  *    channel — not a single config-derived channel;
@@ -10,8 +10,8 @@
  *    a single-channel dispatcher still resolves its sole channel (legacy);
  *  - a P2P (non-bindable) target still short-circuits to the dispatcher, never a
  *    TeamLeader, regardless of channel count;
- *  - multiple channel sessions are actually live (one bot per channel), and
- *    egress (reply/react) dispatches to the selected channel's bot;
+ *  - multiple channel sessions are actually live, and Feishu egress
+ *    (reply/react) dispatches to the selected Feishu bot;
  *  - no generic Channel MCP / `list_peers` surface is introduced — egress stays
  *    on the Feishu MCP tools, channel_id-scoped.
  */
@@ -33,20 +33,23 @@ import type {
   AgentRuntimeSystemInput,
   AgentRuntimeTurnResult,
   ChannelInboundEnvelope,
+  ChannelProvider,
+  ChannelProviderDescriptor,
+  ChannelRoutes,
+  ChannelSession,
   ChannelTarget,
   InboundTurnInput,
   ProviderDescriptor,
 } from '@excitedjs/dreamux-types';
 import { asAgentRuntimeDescriptor } from './helpers/provider.js';
-import {
-  feishuChannelCatalog,
-  stubChannelCatalog,
-} from './helpers/fake-channel.js';
+import { stubChannelCatalog } from './helpers/fake-channel.js';
 
 import { AgentRuntimeProviderCatalog } from '../src/agent-runtime/index.js';
+import { ChannelProviderCatalog } from '../src/channel/catalog.js';
 import { DispatcherService } from '../src/dispatcher-service/service.js';
 import {
   createFakeFeishuBot,
+  createFeishuChannelProvider,
   feishuMcpTools,
   saveDispatcherAccess,
   type FakeFeishuBot,
@@ -56,6 +59,7 @@ import type { DispatcherChannelConfig } from '../src/config/config.js';
 import {
   BUILTIN_FEISHU_PROVIDER_REF,
   createBuiltinProviderRegistry,
+  parseProviderRef,
 } from '../src/registry/index.js';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
@@ -82,7 +86,20 @@ function feishuChannel(
   return {
     id,
     provider: BUILTIN_FEISHU_PROVIDER_REF,
-    config: { app_id: appId, app_secret: appSecret } as never,
+    config: { appId, appSecret } as never,
+    rawConfig: { app_id: appId, app_secret: appSecret },
+    identity: appId,
+  };
+}
+
+const TEST_SLACK_PROVIDER_REF = 'npm:@test/dreamux-channel-slack#provider';
+
+function slackChannel(id: string): DispatcherChannelConfig {
+  return {
+    id,
+    provider: TEST_SLACK_PROVIDER_REF,
+    config: {},
+    identity: 'test-slack',
   };
 }
 
@@ -106,11 +123,12 @@ function p2pTarget(chatId: string): ChannelTarget {
 
 function envelope(
   channelId: string,
+  provider: string,
   chatId: string,
   chatType: 'group' | 'p2p',
 ): ChannelInboundEnvelope {
   return {
-    provider: BUILTIN_FEISHU_PROVIDER_REF,
+    provider,
     channel_id: channelId,
     target: chatType === 'group' ? groupTarget(chatId) : p2pTarget(chatId),
     message_id: 'm1',
@@ -121,7 +139,7 @@ const INPUT = { kind: 'channel', text: 'hi', dedupeId: 'm1' } as unknown as Inbo
 
 const TWO_CHANNELS = [
   feishuChannel('primary', 'app-a', 'secret-a'),
-  feishuChannel('secondary', 'app-b', 'secret-b'),
+  slackChannel('secondary'),
 ];
 
 function buildService(channels: DispatcherChannelConfig[]): DispatcherService {
@@ -154,8 +172,18 @@ describe('inbound routes by the originating channel_id (#209 live multi-channel)
     vi.spyOn(service.dispatchers, 'getRuntime').mockReturnValue(dispatcherRuntime as never);
     const resolveSpy = vi.spyOn(service.teams, 'resolveChannel').mockResolvedValue(null);
 
-    await service.routeChannelInput('flow', 'secondary', INPUT, envelope('secondary', 'chat-b', 'group'));
-    await service.routeChannelInput('flow', 'primary', INPUT, envelope('primary', 'chat-a', 'group'));
+    await service.routeChannelInput(
+      'flow',
+      'secondary',
+      INPUT,
+      envelope('secondary', TEST_SLACK_PROVIDER_REF, 'chat-b', 'group'),
+    );
+    await service.routeChannelInput(
+      'flow',
+      'primary',
+      INPUT,
+      envelope('primary', BUILTIN_FEISHU_PROVIDER_REF, 'chat-a', 'group'),
+    );
 
     expect(resolveSpy).toHaveBeenNthCalledWith(1, {
       dispatcherId: 'flow',
@@ -182,7 +210,12 @@ describe('inbound routes by the originating channel_id (#209 live multi-channel)
     const dispatcherRuntime = { channelInput: vi.fn(async () => ({ status: 'submitted' })) };
     vi.spyOn(service.dispatchers, 'getRuntime').mockReturnValue(dispatcherRuntime as never);
 
-    await service.routeChannelInput('flow', 'secondary', INPUT, envelope('secondary', 'chat-b', 'group'));
+    await service.routeChannelInput(
+      'flow',
+      'secondary',
+      INPUT,
+      envelope('secondary', TEST_SLACK_PROVIDER_REF, 'chat-b', 'group'),
+    );
 
     expect(deliverSpy).toHaveBeenCalledWith(
       expect.objectContaining({ dispatcherId: 'flow', teamId: 'beta' }),
@@ -196,7 +229,12 @@ describe('inbound routes by the originating channel_id (#209 live multi-channel)
     vi.spyOn(service.dispatchers, 'getRuntime').mockReturnValue(dispatcherRuntime as never);
     const resolveSpy = vi.spyOn(service.teams, 'resolveChannel');
 
-    await service.routeChannelInput('flow', 'secondary', INPUT, envelope('secondary', 'dm-1', 'p2p'));
+    await service.routeChannelInput(
+      'flow',
+      'secondary',
+      INPUT,
+      envelope('secondary', TEST_SLACK_PROVIDER_REF, 'dm-1', 'p2p'),
+    );
 
     expect(resolveSpy).not.toHaveBeenCalled();
     expect(dispatcherRuntime.channelInput).toHaveBeenCalledTimes(1);
@@ -234,7 +272,10 @@ describe('binding requires an explicit channel on a multi-channel dispatcher (#2
     });
 
     expect(bindSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ channelId: 'secondary', provider: 'builtin:feishu' }),
+      expect.objectContaining({
+        channelId: 'secondary',
+        provider: TEST_SLACK_PROVIDER_REF,
+      }),
     );
   });
 
@@ -312,7 +353,105 @@ class FakeProvider implements AgentRuntimeProvider {
   }
 }
 
-describe('multiple channel sessions are live, one bot per channel (#209)', () => {
+class FakeSlackSession implements ChannelSession {
+  readonly provider = TEST_SLACK_PROVIDER_REF;
+  private routes: ChannelRoutes | null = null;
+
+  constructor(
+    readonly channel_id: string,
+    private readonly startedChannels: string[],
+  ) {}
+
+  async start(routes: ChannelRoutes): Promise<void> {
+    this.routes = routes;
+    this.startedChannels.push(this.channel_id);
+  }
+
+  async close(): Promise<void> {
+    this.routes = null;
+  }
+
+  async resolveTarget(meta: unknown): Promise<ChannelTarget> {
+    const chatId =
+      typeof (meta as { chat_id?: unknown })?.chat_id === 'string'
+        ? (meta as { chat_id: string }).chat_id
+        : 'chat-slack';
+    return groupTarget(chatId);
+  }
+
+  async inject(chatId: string, text: string, msgId: string): Promise<void> {
+    if (this.routes === null) throw new Error('fake slack session is not running');
+    await this.routes.deliver(
+      { kind: 'channel', text, dedupeId: msgId } as unknown as InboundTurnInput,
+      {
+        provider: TEST_SLACK_PROVIDER_REF,
+        channel_id: this.channel_id,
+        target: groupTarget(chatId),
+        message_id: msgId,
+      },
+    );
+  }
+}
+
+function mixedChannelCatalog(options: {
+  botFactory: Parameters<typeof createFeishuChannelProvider>[0]['botFactory'];
+  slackSessions: Map<string, FakeSlackSession>;
+  startedChannels: string[];
+}): ChannelProviderCatalog {
+  const registry = createBuiltinProviderRegistry();
+  const feishu = registry.resolve(BUILTIN_FEISHU_PROVIDER_REF);
+  registry.registerImplementation(
+    feishu.id,
+    createFeishuChannelProvider({ botFactory: options.botFactory }),
+  );
+  const slackDescriptor: ChannelProviderDescriptor = {
+    id: 'test-slack',
+    kind: 'channel',
+    ref: parseProviderRef(TEST_SLACK_PROVIDER_REF),
+  };
+  registry.register(slackDescriptor);
+  registry.registerImplementation(
+    slackDescriptor.id,
+    fakeSlackProvider(slackDescriptor, options.slackSessions, options.startedChannels),
+  );
+  return new ChannelProviderCatalog({ registry });
+}
+
+function feishuOnlyCatalog(
+  botFactory: Parameters<typeof createFeishuChannelProvider>[0]['botFactory'],
+): ChannelProviderCatalog {
+  const registry = createBuiltinProviderRegistry();
+  const feishu = registry.resolve(BUILTIN_FEISHU_PROVIDER_REF);
+  registry.registerImplementation(
+    feishu.id,
+    createFeishuChannelProvider({ botFactory }),
+  );
+  return new ChannelProviderCatalog({ registry });
+}
+
+function fakeSlackProvider(
+  descriptor: ChannelProviderDescriptor,
+  sessions: Map<string, FakeSlackSession>,
+  startedChannels: string[],
+): ChannelProvider {
+  return {
+    ref: TEST_SLACK_PROVIDER_REF,
+    descriptor,
+    readConfig(raw) {
+      return raw ?? {};
+    },
+    getIdentity() {
+      return 'test-slack';
+    },
+    createSession(context) {
+      const session = new FakeSlackSession(context.channel_id, startedChannels);
+      sessions.set(context.channel_id, session);
+      return session;
+    },
+  };
+}
+
+describe('multiple distinct-provider channel sessions are live (#209)', () => {
   let root: string;
   let previousHome: string | undefined;
 
@@ -334,6 +473,8 @@ describe('multiple channel sessions are live, one bot per channel (#209)', () =>
     service: DispatcherService;
     secrets: string[];
     bots: Map<string, FakeFeishuBot>;
+    slackSessions: Map<string, FakeSlackSession>;
+    startedChannels: string[];
   } {
     const config = testDreamuxConfig([
       testDispatcherConfig({ cwd: join(root, 'workspace'), channels }),
@@ -343,24 +484,26 @@ describe('multiple channel sessions are live, one bot per channel (#209)', () =>
     registry.registerImplementation(descriptor.id, new FakeProvider(descriptor));
     const secrets: string[] = [];
     const bots = new Map<string, FakeFeishuBot>();
+    const slackSessions = new Map<string, FakeSlackSession>();
+    const startedChannels: string[] = [];
     const service = new DispatcherService({
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: new AgentRuntimeProviderCatalog({ registry }),
-      // One bot per channel; the per-channel app secret flows in via the
-      // provider's validated config, so the recorded list proves a distinct
-      // session was built for each channel and the bots map lets a test drive
-      // inbound through a specific channel's bot.
-      channelProviders: feishuChannelCatalog((config) => {
-        secrets.push(config.appSecret);
-        const bot = createFakeFeishuBot(`bot-${config.appSecret}`);
-        bots.set(config.appSecret, bot);
-        return bot;
+      channelProviders: mixedChannelCatalog({
+        botFactory: (config) => {
+          secrets.push(config.appSecret);
+          const bot = createFakeFeishuBot(`bot-${config.appSecret}`);
+          bots.set(config.appSecret, bot);
+          return bot;
+        },
+        slackSessions,
+        startedChannels,
       }),
       channelLoggerFactory: () => noopLog(),
       log: noopLog(),
     });
-    return { service, secrets, bots };
+    return { service, secrets, bots, slackSessions, startedChannels };
   }
 
   function inboundEvent(chatId: string, text: string, msgId: string): FeishuInboundEvent {
@@ -380,21 +523,22 @@ describe('multiple channel sessions are live, one bot per channel (#209)', () =>
     } as unknown as FeishuInboundEvent;
   }
 
-  it('starts one session per channel with its own bot identity, and egress targets a channel', async () => {
-    const { service, secrets } = buildStartableService(TWO_CHANNELS);
+  it('starts one session per distinct-provider channel, and Feishu egress targets a channel', async () => {
+    const { service, secrets, startedChannels } = buildStartableService(TWO_CHANNELS);
 
     await service.startDispatcher('flow');
 
-    // One bot per channel, each with its OWN per-channel secret.
-    expect(secrets.sort()).toEqual(['secret-a', 'secret-b']);
+    expect(startedChannels).toEqual(['secondary']);
+    expect(secrets).toEqual(['secret-a']);
 
-    // Egress dispatches to a live channel; an unknown channel fails loud.
+    // Feishu egress dispatches to the live Feishu channel; an unknown channel
+    // still fails loud before any provider-specific tool handling.
     await expect(
       service.dispatchers.invokeChannelTool({
         dispatcherId: 'flow',
         name: 'reply',
-        arguments: { chat_id: 'chat-b', text: 'hi' },
-        channelId: 'secondary',
+        arguments: { chat_id: 'chat-a', text: 'hi' },
+        channelId: 'primary',
       }),
     ).resolves.toBeDefined();
     await expect(
@@ -409,8 +553,8 @@ describe('multiple channel sessions are live, one bot per channel (#209)', () =>
     await service.stopDispatcher('flow');
   });
 
-  it('routes inbound from a live secondary bot under that channel_id (#209)', async () => {
-    const { service, bots } = buildStartableService(TWO_CHANNELS);
+  it('routes inbound from a live secondary provider session under that channel_id (#209)', async () => {
+    const { service, slackSessions } = buildStartableService(TWO_CHANNELS);
 
     // Allowlist the secondary chat so the gate delivers without a mention. The
     // access policy is per-dispatcher, shared across its channels.
@@ -430,10 +574,10 @@ describe('multiple channel sessions are live, one bot per channel (#209)', () =>
     // a hand-fed argument. Return null so it falls through to the dispatcher.
     const resolveSpy = vi.spyOn(service.teams, 'resolveChannel').mockResolvedValue(null);
 
-    // Drive a real inbound message through the SECONDARY channel's live bot.
-    const secondaryBot = bots.get('secret-b');
-    expect(secondaryBot).toBeDefined();
-    await secondaryBot!.inject(inboundEvent('chat-b', 'hi', 'm-sec-1'));
+    // Drive a real inbound message through the SECONDARY provider session.
+    const secondary = slackSessions.get('secondary');
+    expect(secondary).toBeDefined();
+    await secondary!.inject('chat-b', 'hi', 'm-sec-1');
 
     await vi.waitFor(() => expect(resolveSpy).toHaveBeenCalled());
     expect(resolveSpy).toHaveBeenCalledWith({
@@ -473,7 +617,7 @@ describe('multiple channel sessions are live, one bot per channel (#209)', () =>
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: new AgentRuntimeProviderCatalog({ registry }),
-      channelProviders: feishuChannelCatalog(() => {
+      channelProviders: feishuOnlyCatalog(() => {
         const bot = createFakeFeishuBot('bot-a');
         const baseStart = bot.start.bind(bot);
         bot.start = async (r) => {

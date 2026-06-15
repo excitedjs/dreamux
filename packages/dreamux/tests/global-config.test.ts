@@ -198,6 +198,10 @@ describe('global config (~/.dreamux/config.json)', () => {
           id: 'primary',
           provider: 'builtin:feishu',
           config: {
+            appId: 'app-test',
+            appSecret: 'secret-test',
+          },
+          rawConfig: {
             app_id: 'app-test',
             app_secret: 'secret-test',
           },
@@ -311,7 +315,7 @@ describe('global config (~/.dreamux/config.json)', () => {
       /top-level "codex" block is no longer supported/,
     );
     await expect(loadOrInitConfig({ configDir })).rejects.toThrow(
-      /agents\[\] with provider "builtin:codex"/,
+      /agents\[\] with the selected runtime provider/,
     );
   });
 
@@ -652,8 +656,8 @@ describe('global config (~/.dreamux/config.json)', () => {
       runtime: { provider: 'builtin:codex' },
     });
     expect(firstFeishu).toEqual({
-      app_id: 'app-a',
-      app_secret: 'secret-a',
+      appId: 'app-a',
+      appSecret: 'secret-a',
     });
     // The channel provider's `getIdentity` is invoked at config-load and its
     // neutral result stored on the channel (issue #209 de-leak) — for feishu the
@@ -677,8 +681,8 @@ describe('global config (~/.dreamux/config.json)', () => {
       runtime: { provider: 'builtin:codex' },
     });
     expect(config.dispatchers[1]!.channels[0]!.config).toEqual({
-      app_id: 'app-b',
-      app_secret: 'secret-b',
+      appId: 'app-b',
+      appSecret: 'secret-b',
     });
   });
 
@@ -770,12 +774,18 @@ describe('global config (~/.dreamux/config.json)', () => {
         provider_option: 'kept',
         parsed_by_provider: true,
       },
+      rawConfig: {
+        provider_option: 'kept',
+      },
     });
     expect(config.dispatchers[0]?.runtime).toEqual({
       provider: providerRef,
       config: {
         provider_option: 'kept',
         parsed_by_provider: true,
+      },
+      rawConfig: {
+        provider_option: 'kept',
       },
     });
     expect(providerRegistry.resolve(providerRef).kind).toBe('agentRuntime');
@@ -819,6 +829,7 @@ describe('global config (~/.dreamux/config.json)', () => {
     expect(config.agents['flow']).toEqual({
       provider: providerRef,
       config: { provider_option: 'kept', parsed_async: true },
+      rawConfig: { provider_option: 'kept' },
     });
   });
 

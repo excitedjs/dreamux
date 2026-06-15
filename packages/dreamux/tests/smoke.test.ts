@@ -393,28 +393,45 @@ interface ConfigDispatcherOverrides {
 }
 
 function configWithDispatcher(overrides: ConfigDispatcherOverrides = {}): DreamuxConfig {
-  return testDreamuxConfig([
-    testDispatcherConfig({
-      id: overrides.id ?? 'flow',
-      // The dispatcher workspace cwd contract (issue #182 PR-4) requires an
-      // explicit cwd. The smoke flow runs no managed worktree, so the legacy
-      // per-dispatcher dir is a fine, already-provisioned workspace here.
-      cwd: overrides.cwd ?? defaultDispatcherCwd(overrides.id ?? 'flow'),
-      enabled: overrides.enabled ?? true,
-      feishu: overrides.feishu ?? {
-        app_id: 'app-smoke',
-        app_secret: 'secret-server-only',
-      },
-      codex: overrides.codex ?? {
-        bin: 'codex',
-        approval_policy: 'never',
-        sandbox_mode: 'workspace-write',
-        extra_args: [],
-        extra_env: {},
-        initialize_timeout_ms: 10000,
-      },
-    }),
-  ]);
+  const rawFeishu = overrides.feishu ?? {
+    app_id: 'app-smoke',
+    app_secret: 'secret-server-only',
+  };
+  const parsedFeishu = parsedFeishuTestConfig(rawFeishu);
+  const dispatcher = testDispatcherConfig({
+    id: overrides.id ?? 'flow',
+    // The dispatcher workspace cwd contract (issue #182 PR-4) requires an
+    // explicit cwd. The smoke flow runs no managed worktree, so the legacy
+    // per-dispatcher dir is a fine, already-provisioned workspace here.
+    cwd: overrides.cwd ?? defaultDispatcherCwd(overrides.id ?? 'flow'),
+    enabled: overrides.enabled ?? true,
+    feishu: rawFeishu,
+    codex: overrides.codex ?? {
+      bin: 'codex',
+      approval_policy: 'never',
+      sandbox_mode: 'workspace-write',
+      extra_args: [],
+      extra_env: {},
+      initialize_timeout_ms: 10000,
+    },
+  });
+  dispatcher.channels = dispatcher.channels.map((channel) => ({
+    ...channel,
+    config: parsedFeishu,
+    rawConfig: rawFeishu,
+    identity: parsedFeishu.appId,
+  }));
+  return testDreamuxConfig([dispatcher]);
+}
+
+function parsedFeishuTestConfig(raw: Record<string, unknown>): {
+  appId: string;
+  appSecret: string;
+} {
+  return {
+    appId: String(raw['appId'] ?? raw['app_id'] ?? ''),
+    appSecret: String(raw['appSecret'] ?? raw['app_secret'] ?? ''),
+  };
 }
 
 describe('dreamux MVP smoke', () => {

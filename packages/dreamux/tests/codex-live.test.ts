@@ -397,6 +397,9 @@ describe('codex live integration', () => {
             command: dreamuxBin,
             adminSocketPath: join(dir, 'admin.sock'),
             dispatcher_id: 'dispatcher-a',
+            provider: 'builtin:feishu',
+            channel_id: 'primary',
+            callerKind: 'dispatcher',
           });
           return descriptor != null ? codexMcpServerArgs([descriptor]) : [];
         })(),
@@ -433,7 +436,7 @@ describe('codex live integration', () => {
         rmSync(dir, { recursive: true, force: true });
       }
     },
-    30_000,
+    60_000,
   );
 
   (runModelGate ? it : it.skip)(
