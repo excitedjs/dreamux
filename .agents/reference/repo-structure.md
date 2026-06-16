@@ -1,4 +1,4 @@
-# Component: repo structure
+# Reference: repo structure
 
 Rush + pnpm monorepo since issue #4. Packages are wired through pnpm
 `workspace:*` and installed via the rush path only (see
@@ -134,23 +134,15 @@ multi-package release notes precise while still using Rush as the validator.
 
 ## Runtime and Codex state
 
-| Path | Purpose | Source of truth |
-|---|---|---|
-| `~/.dreamux/config.json` | User-editable dreamux config, dispatcher declarations, and local Feishu credentials. Created by `dreamux onboard`; `dreamux serve` fails loudly if it is missing. | The operator |
-| `~/.dreamux/run/` | Volatile run files: `admin.sock` (+ lock), `restart-intent.json`, and the `sockets/` fallback root for ephemeral Codex sockets. Safe to clear while no server runs (issue #182). | The server |
-| `~/.dreamux/state/` | Durable server-owned state: per-dispatcher status/access files and `teammate/` ledgers. | The server |
-| `~/.dreamux/state/<id>/status.json` | Dispatcher runtime status and saved Codex `thread_id`. | The server |
-| `~/.dreamux/state/<id>/access.json` | Dispatcher-local Feishu access gate state. | The server / operator tools |
-| `~/.dreamux/cache/<id>/` | Rebuildable cache: completion `spill/` files and `feishu-attachments/`. Not durable state; safe to clear while no server runs (issue #182 PR-2). | The server |
-| `~/.dreamux/logs/` | Server and per-dispatcher logs, including Codex app-server logs. | The server |
-| `~/.codex/` | Codex global default home: auth, memory, and config used by dispatcher app-server processes. | The operator / Codex |
+The current config, workspace, state, run, cache, log, and external-home
+ownership map lives in [State and paths](state-and-paths.md). Keep detailed
+path semantics there so the repo-structure page stays focused on package and
+install shape.
 
-The split is load-bearing: a
-`rm -rf ~/.dreamux/run ~/.dreamux/cache ~/.dreamux/state ~/.dreamux/logs`
-recovery (only while no server is running) never loses user-edited dreamux
-settings or global Codex auth.
-Dispatcher app-server processes do not set `CODEX_HOME`; they use Codex's
-global default home for auth, memory, and config. Bundled skills are injected at
-runtime by role (#209 slice 6), not written into the workspace. See
-[top-level-design](../decisions/top-level-design.md) and
+At a high level, Dreamux owns `~/.dreamux/` for config/run/state/cache/logs, and
+Codex owns `~/.codex/` for its auth, memory, and config. Dispatcher app-server
+processes do not set `CODEX_HOME`; they use Codex's global default home.
+Bundled skills are injected at runtime by role (#209 slice 6), not written into
+the workspace. See [State and paths](state-and-paths.md),
+[top-level-design](../decisions/top-level-design.md), and
 [dispatcher-tm-packaging](../decisions/dispatcher-tm-packaging.md).

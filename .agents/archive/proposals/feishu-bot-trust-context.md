@@ -1,8 +1,9 @@
 # Feishu trusted-bot context + list-chat-bots query + add-then-cancel reactions
 
-- **Status:** Implemented (issue #69 review accepted; the settled behavior now
-  lives in the domain/decision docs linked under Disposition — this proposal is
-  kept as the design-rationale + open-question record)
+- **Status:** Archived historical proposal. Issue #69 was implemented; the
+  settled behavior now lives in the domain/decision docs linked under
+  Disposition. This file is preserved only for design rationale and old open
+  questions.
 - **Date:** 2026-06-05
 - **Affects:** `/packages/dreamux/src/channel/chat-bots-store.ts`,
   `/packages/dreamux/src/channel/feishu-message.ts`,
@@ -14,11 +15,15 @@
   [#62](https://github.com/excitedjs/dreamux/issues/62), first increment #68;
   design review on the issue is accepted with the constraints below)
 
+Archive note: source paths and some implementation names below predate the
+provider/package split. Do not use this proposal as current implementation
+guidance; start with the linked domain and reference docs instead.
+
 ## Context
 
 #68 shipped the typed event-route seam, the `/introduce` hard contract, and the
 `known` / `trusted` peer-bot store (see
-[`domains/feishu-introduce.md`](../domains/feishu-introduce.md)). Two Phase 4
+[`domains/feishu-introduce.md`](../../domains/feishu-introduce.md)). Two Phase 4
 items from #62 were deferred — one-shot discovery context and a list-known-bots
 capability — and a separate channel-behavior tweak (reaction ordering) is folded
 into the same focused change.

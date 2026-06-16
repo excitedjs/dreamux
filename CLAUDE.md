@@ -1,254 +1,107 @@
-# dreamux — repository operating rules
+# dreamux repository operating rules
 
-Always loaded. On-demand context lives in [`.agents/`](.agents/root.md);
-read it when you need the *why* behind a decision or a component.
+Always loaded. Keep this file to guardrails that must be present in every
+agent context. On-demand architecture and reference material lives in
+[`.agents/root.md`](.agents/root.md).
 
-When CLAUDE.md and the KB disagree, CLAUDE.md is authoritative — the KB
-is an on-demand reference, not a binding rule. If you find a contradiction,
-fix it in the same PR.
+When this file and `.agents/` disagree, this file is authoritative for operating
+rules. For architecture facts, read the current source first, then the linked
+KB entry.
 
 ## Communication
 
 - Reply to the user in **Chinese**.
-- Write all repo docs (README, `.agents/`, code comments, commit messages,
-  PR descriptions) in **English**, regardless of conversation language.
+- Write all repo docs, `.agents/` docs, code comments, commit messages, and PR
+  descriptions in **English**.
 
-## Repository shape
+## Current Source Of Truth
 
-`excitedjs/dreamux` is a **Rush + pnpm monorepo** since issue #4.
+- Current architecture entry point: [`.agents/reference/current-architecture.md`](.agents/reference/current-architecture.md).
+- Repository/package layout: [`.agents/reference/repo-structure.md`](.agents/reference/repo-structure.md).
+- State/cache/run/log paths: [`.agents/reference/state-and-paths.md`](.agents/reference/state-and-paths.md).
+- Channel/Feishu runtime: [`.agents/reference/channel-runtime.md`](.agents/reference/channel-runtime.md).
+- Task routing and KB index: [`.agents/root.md`](.agents/root.md).
+- KB writing rules: [`.agents/CONTRIBUTING.md`](.agents/CONTRIBUTING.md).
 
-- `/packages/<name>/` holds packages. Publishable today: `@excitedjs/dreamux`
-  (the host), `@excitedjs/dreamux-types` (declaration-only provider-authoring
-  contracts, #209 slice 1), `@excitedjs/agent-runtime-codex` (the built-in Codex
-  Agent Runtime behind `builtin:codex`, #209 slice 3 — depends on
-  `@excitedjs/dreamux-types` only, never on core),
-  `@excitedjs/agent-runtime-claude-code` (the built-in Claude Code Agent Runtime
-  behind `builtin:claude-code`, #209 slice 4 — depends on
-  `@excitedjs/dreamux-types` only, never on core), `@excitedjs/feishu-transport`
-  (the platform-I/O core, sole owner of the `@larksuiteoapi/node-sdk` import),
-  and `@excitedjs/feishu-channel` (the built-in Feishu `ChannelProvider` behind
-  `builtin:feishu`, #209 slice 5 — the live Feishu channel session, access/trust,
-  inbound normalization, and MCP tool backing; depends on
-  `@excitedjs/dreamux-types` + `@excitedjs/feishu-transport` only, never on core) —
-  see the channel refactor (#4). Private (unpublished):
-  `@excitedjs/eslint-config`, the shared ESLint flat config that is the single
-  source of the synchronous-blocking-IO ban (#85).
-- `/rush.json`, `/common/config/rush/`, `/common/scripts/install-run-rush.js`
-  are the rush + pnpm scaffolding.
-- `/bin/dreamux` is a source-checkout convenience shim that forwards to
-  `/packages/dreamux/bin/dreamux`; the package also includes a `tm` wrapper
-  used by dispatcher skills — see
-  `.agents/decisions/dispatcher-tm-packaging.md`.
-- `/.agents/` is the on-demand knowledge base. Start at `.agents/root.md`.
+Before answering architecture/domain questions, verify against source code. The
+KB explains intent and history; code is the current behavior.
 
-**One install path — the monorepo path.** Build and test through rush:
+## Build And Test
 
-```
-node common/scripts/install-run-rush.js update   # then build / test
+`excitedjs/dreamux` is a Rush + pnpm monorepo. Use the monorepo path only:
+
+```bash
+node common/scripts/install-run-rush.js update
 node common/scripts/install-run-rush.js build
 node common/scripts/install-run-rush.js test
 ```
 
-The per-package npm path (`cd packages/dreamux && npm install`) is **retired**:
-`@excitedjs/dreamux` depends on `@excitedjs/feishu-transport` via the pnpm
-`workspace:*` protocol, which `npm` cannot resolve. The release workflow
-publishes a pnpm-packed tarball, where pnpm rewrites `workspace:*` to real
-registry versions before npm uploads it, so external
-`npm install @excitedjs/dreamux` is unaffected — only the in-repo per-package
-path is gone. There is no committed per-package `package-lock.json`.
+Do not use per-package `npm install`; workspace dependencies use `workspace:*`.
 
-Reasoning: `.agents/decisions/install-model.md` (which retires the
-two-paths consequence of `.agents/decisions/rush-pnpm-monorepo.md`).
+## Always-Binding Rules
 
-## CLI surface
+- **Public repo red line:** never commit internal identifiers, secrets, private
+  registry URLs, internal hostnames, or real Feishu ids/tokens. `.gitleaks.toml`
+  and `.npmrc` are shared canonical guardrails with the sibling repo; if a
+  guardrail false-positives, stop and ask rather than editing a local allowlist.
+- **No synchronous blocking IO in package source:** `/packages/*/src/**` must
+  use async fs/process APIs. `rush lint` enforces the shared
+  `@excitedjs/eslint-config` no-sync-IO gate.
+- **No runtime dependencies on dev tools:** bin launchers execute compiled
+  `dist/` with plain `node`; do not reintroduce `tsx`.
+- **Launcher path handling:** new bin launchers must follow the
+  `/packages/dreamux/bin/dreamux` symlink-walk shape.
+- **Path contracts:** host-owned path builders belong in
+  `/packages/dreamux/src/platform/paths.ts`; volatile runtime socket allocation
+  belongs in `/packages/dreamux/src/platform/runtime-sockets.ts`; runtime-owned
+  path derivation belongs in the runtime package that uses it (for example
+  `/packages/agent-runtime/codex/src/paths.ts`).
+- **No legacy architecture rollback:** do not reintroduce `runtime_dir`,
+  SQLite-backed dispatcher state, `~/.codex-host/`, legacy global CLI aliases,
+  or workspace `.codex/skills` installation unless a new decision record
+  explicitly supersedes the current architecture.
+- **Codex protocol bumps:** update the
+  `@excitedjs/agent-runtime-codex` package first. Core must stay behind the
+  neutral `AgentRuntimeProvider` interface.
+- **Teammate reverse delivery:** Codex completion delivery depends on codex
+  0.137+ `thread/inject_items`; older versions fail loudly instead of silently
+  dropping completion.
+- **Live Codex tests:** tests that require a real Codex install fail loudly when
+  Codex is missing. Use `DREAMUX_SKIP_LIVE_CODEX=1` only when the environment
+  intentionally lacks Codex.
 
-The user-facing CLI is the single global bin `dreamux`. Current command tree:
-`onboard`, `uninstall`, `serve`, `status`, `doctor`,
-`daemon install|uninstall|start|stop|restart`,
-`dispatcher add|remove|list|status|start|stop`, `channel-mcp`, `teammate-mcp`,
-`team-mcp`, `config path|show`, and `changelog [--json]`. `dreamux changelog` prints the
-installed package's rush-generated `CHANGELOG.md` (or `CHANGELOG.json` with
-`--json`) — an offline read of the installed version, the upgrade-time
-information entry point for the 0.x fail-loud + rebuild policy (issue #98).
-`dreamux serve` is the foreground server entry point. The
-`daemon` group wraps the native user-level service manager (Linux
-`systemctl --user`, macOS `launchctl`); `daemon uninstall` removes only the
-service unit, whereas top-level `dreamux uninstall` removes
-config/run/cache/state/logs too. `daemon restart --notify-resumed --dispatcher <id>` drops a one-shot
-restart marker before restarting, so a resumed dispatcher gets a
-`Restart completed.` turn injected — see issue #78. Do not reintroduce
-global aliases such as `dreamux-server` or `server-ctl`; issue #18 explicitly
-removed the legacy global-bin transition period.
-
-## Knowledge-delta protocol
+## Knowledge Delta
 
 Before finishing a non-trivial PR, ask:
 
-> Did this move a package boundary, a CLI surface, a settled design
-> decision, a Codex / Feishu protocol contract, or a cross-process invariant?
+> Did this move a package boundary, CLI surface, settled design decision,
+> Codex / Feishu protocol contract, state/config format, or cross-process
+> invariant?
 
-If yes → update `.agents/` in the same PR. The full protocol and document
-kinds are in [`.agents/CONTRIBUTING.md`](.agents/CONTRIBUTING.md).
+If yes, update `.agents/` in the same PR and run:
 
-Run `.agents/scripts/check.sh` before committing KB changes; CI rejects
-what the script rejects.
+```bash
+.agents/scripts/check.sh
+```
 
-## Config, state, and logs (top-level design)
+## Changelog Responsibility
 
-Current architecture is documented in
-[`.agents/decisions/top-level-design.md`](.agents/decisions/top-level-design.md).
-That record wins over older runtime-dir / SQLite decisions.
+Dreamux 0.x handles incompatible config/state changes by fail-loud plus manual
+rebuild. Any change that can block or break a user's upgrade needs a Rush change
+file. Use `rush change`; never hand-edit generated changelogs.
 
-- `~/.dreamux/config.json` — the only dreamux operator-editable config
-  source. It holds dispatcher declarations and local Feishu credentials.
-  `dreamux serve` must fail loudly when it is missing and tell the operator
-  to run `dreamux onboard`. Each dispatcher MUST declare an explicit `cwd`
-  (issue #182 PR-4): `dreamux serve` fails loud at startup if any enabled
-  dispatcher has no `cwd` — there is no fallback to a state directory. A
-  missing `cwd` directory is created (mkdir -p); an unusable one fails loud.
-  `dreamux doctor` diagnoses the same per-dispatcher contract.
-- `<dispatcher cwd>/.workspace/worktree/<repo-slug>/<slug>/` — Dreamux-managed
-  TeamMate/Team Git worktrees (issue #182 PR-4), relocated out of
-  `~/.dreamux/state/<id>/teammate/worktrees/`. They live in the dispatcher's
-  own workspace, never under `~/.dreamux`; `.workspace/` self-ignores (a `*`
-  .gitignore) so they never become repo content. `<repo-slug>` is
-  `<sanitized-basename>-<sha256(repo-root):12>`, disambiguating same-named repos
-  across Team/TeamMate usage. Managed worktree creation fails loud if the
-  workspace resolves under `~/.dreamux`. Legacy identity records pointing at the
-  old under-state path are read verbatim (no rewrite, no deletion).
-- `<dispatcher cwd>/.workspace/work/<name>/` — the **default** TeamMate/Team work
-  directory (issue #199), used when `teammate.spawn` / `team.create` omits
-  `repo`. A plain `mkdir -p` directory, NOT a git worktree, so the dispatcher cwd
-  need not be a git repo (no git command runs; `source_repo` is reported `null`).
-  It shares the self-ignored `.workspace/` boundary and the under-`~/.dreamux`
-  fail-loud guard. Only an explicit `repo: { mode: 'managed' }` creates a git
-  worktree under `.workspace/worktree/`; `repo: { mode: 'reuse-cwd' }` runs in the
-  given path.
-- `~/.dreamux/state/` — durable server-owned state: per-dispatcher
-  `status.json`, `access.json`, and `teammate/` task ledgers. Safe to remove
-  when the operator intentionally wants to discard server state.
-- `~/.dreamux/run/` — volatile run files (issue #182): `admin.sock` (+ lock),
-  `restart-intent.json`, and the `sockets/` fallback root for runtime
-  rendezvous sockets (preferred root is `$XDG_RUNTIME_DIR/dreamux/sockets/`).
-  Runtime socket paths are random per start, live only in process memory, and
-  are never persisted to durable state. Safe to clear while no server runs;
-  see `.agents/decisions/runtime-run-root.md`.
-- `~/.dreamux/cache/<dispatcher-id>/` — rebuildable cache (issue #182 PR-2):
-  `spill/` for over-budget teammate completion results (only the path is
-  inlined into a dispatcher turn) and `feishu-attachments/` for inbound
-  attachment downloads. Not durable state; safe to delete while no server runs.
-  Completion spill was relocated out of shared `/tmp`, attachments out of
-  `state/<dispatcher-id>/`.
-- `~/.dreamux/logs/` — server-owned logs, split by component; Codex
-  app-server logs use `~/.dreamux/logs/codex-app-server/<dispatcher>.log`, and
-  MCP shim diagnostics use component directories such as `channel-mcp/` and
-  `teammate-mcp/`.
-- `~/.codex/` — Codex's own global home for auth, config, and memory.
-  Dispatcher app-server processes follow Codex here; dreamux must not create
-  dispatcher-private `CODEX_HOME` directories for the MVP.
-- Bundled Dreamux skills are injected at runtime by role (issue #209 slice 6),
-  not symlinked into the workspace. `dreamux onboard` and runtime startup no
-  longer write `<dispatcher cwd>/.codex/skills`; core selects the bundled
-  `skillSources` for the Dispatcher and TeamLeader roles only and the runtime
-  package applies them (Codex `skills/extraRoots/set`, Claude Code `--add-dir`).
-  Pre-existing old `.codex/skills` symlinks are left untouched (codex lists the
-  skill twice but does not fail); operators may delete that directory.
+Typical upgrade blockers include config/state/cache/run/log path semantics,
+persisted file formats, onboard/daemon behavior, bundled skills, dispatcher
+cwd/work directory contracts, and any manual rebuild requirement.
 
-Do not reintroduce `runtime_dir`, SQLite-backed dispatcher state, or
-`~/.codex-host/` as dreamux runtime state unless a new decision record
-explicitly supersedes the top-level design.
-
-## Always-binding engineering rules
-
-- **Public repo — never commit company-internal content. (Red line.)**
-  `excitedjs/dreamux` is a public open-source repo. Feishu identifiers
-  (`ou_`/`oc_`/`cli_`), internal tokens/secrets, private-mirror registry URLs,
-  internal hostnames — none of it ever goes in a commit; a leaked commit is
-  public and permanent. The anti-leak guardrail enforces this: the committed
-  `.gitleaks.toml`, the `gitleaks protect --staged` pre-commit hook
-  (`common/git-hooks/pre-commit`), and a full-history `gitleaks detect`
-  CI gate. `.gitleaks.toml` and `.npmrc` are a **shared canonical kept
-  byte-identical with the claudemux repo** — do not edit them in only one repo;
-  if gitleaks false-positives, stop and ask rather than adding a local
-  allowlist, and sync any config change across both repos.
-- **No synchronous blocking IO in package source. (#85.)** dreamux is one
-  event loop hosting N dispatchers; a `*Sync` fs/`child_process` call stalls
-  every dispatcher. `n/no-sync` (plus import / syntax backstops, shared via
-  `@excitedjs/eslint-config`) makes `/packages/*/src/**` a hard error; use
-  `node:fs/promises` and the async `child_process` API. `tests/**` allows sync
-  `fs` fixtures but still bans sync `child_process` (two audited exemptions
-  carry reasoned `eslint-disable`s). `runtime/logger.ts` keeps
-  `pino.destination({ sync: true })` deliberately — a config flag, not a `*Sync`
-  call. Enforced by `rush lint` (CI + pre-commit). The config is pure-syntactic,
-  so `no-floating-promises` is unavailable: audit a newly-`async` function's
-  callers by hand. See `.agents/decisions/no-sync-io-lint-gate.md`.
-- **No new runtime dependencies on dev tools.** PR #6 removed `tsx`; do
-  not reintroduce it for bin launchers. The launchers exec `node` on
-  compiled `dist/` output.
-- **Bin launchers resolve their own location through symlinks** so they
-  work from any cwd and via `~/bin/<x>` shortcuts. The POSIX symlink-walk
-  loop in `/packages/dreamux/bin/dreamux` is the reference shape; reuse it
-  verbatim for any new launcher.
-- **Neutral path builders go in `src/platform/paths.ts` only (volatile
-  runtime-socket allocation in `src/platform/runtime-sockets.ts`); per-runtime
-  path derivation lives in each builtin's
-  `src/agent-runtime/builtin/<name>/paths.ts`.**
-  Cross-process file contracts (the admin socket path, dispatcher state files,
-  logs) drift silently if any other file constructs them by raw string
-  concatenation.
-- **Codex protocol bumps run through the `@excitedjs/agent-runtime-codex` package's
-  `src/handshake.ts` first** (the in-core
-  `packages/dreamux/src/agent-runtime/builtin/codex/handshake.ts` is now a
-  re-export shim — #209 slice 3). Any RPC before `initialize` is rejected with
-  `Not initialized` on codex 0.134+ — confirmed end-to-end in
-  `tests/codex-0135-live.test.ts`.
-- **Teammate reverse-delivery requires codex 0.137+.** `completionInput`
-  delivers a finished teammate's result to the dispatcher via
-  `thread/inject_items` (codex 0.137+; see issue #147), then triggers a turn.
-  Older codex versions lack that RPC, so completion delivery fails loudly with a
-  0.137 hint rather than silently dropping. The proactive doctor/version gate for
-  this lives with the per-runtime `diagnostic` capability (issue #148).
-- **Tests that depend on a real codex install fail loudly when codex is
-  missing**, not silent skip. Opt-in skip via `DREAMUX_SKIP_LIVE_CODEX=1`
-  (see `tests/codex-0135-live.test.ts`'s docstring).
-
-## Changelog responsibility (user-visible upgrade blockers)
-
-In 0.x dreamux does **not** ship automatic schema migrations: incompatible
-config/state is handled by fail-loud + an explicit rebuild (issue #98). The
-changelog is the only upgrade-time information channel, so any change that can
-block or break a user's upgrade **must** ship a rush change file describing it.
-
-A change is an upgrade blocker if it touches any of:
-
-- config file schema or field semantics;
-- user directory structure or runtime/state/cache paths;
-- `access` / `state` / `status` / `restart-intent` (and similar) persisted file
-  formats;
-- `onboard` / `daemon` / service-unit behavior;
-- bundled skills, dispatcher working directory, or `.codex/skills` structure;
-- anything a user or an LLM must manually rebuild, delete, or migrate across the
-  upgrade.
-
-Rules:
-
-- Write the note via `rush change` (it feeds the rush-generated
-  `packages/dreamux/CHANGELOG.md` / `CHANGELOG.json`). Never hand-edit the
-  generated changelog files — a release regenerates them and the edit is lost.
-- In the change comment, lead breaking notes with a `BREAKING:` line and, when
-  the user must act, a `Rebuild:` line naming the exact file/path to recreate,
-  so a model reading `dreamux changelog --json` can parse the required action.
-- The matching read path is the bundled `dreamux-maintenance` skill's
-  "Upgrade Flow": install new package → `dreamux changelog` → handle
-  breaking/rebuild notes → `daemon restart` / `onboard`.
+For breaking notes, lead with `BREAKING:` and include `Rebuild:` when the user
+must recreate a file/path.
 
 ## Commits
 
-- Use real author identity. If `git commit` complains about an
-  auto-detected email (whoami@hostname), set `user.email` / `user.name`
-  explicitly per-commit via `git -c user.email=... -c user.name=...`.
-- Commit messages: short subject (50 chars), body wrapped, explain *why*.
-  Reference the issue / PR when relevant.
-- Co-author trailer: add `Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>`
-  to commits authored with this agent (matches the trailer used in
-  PR #3, #5, #6).
+- Use real author identity. If git reports an auto-detected email, set
+  `user.email` / `user.name` explicitly for the commit.
+- Commit messages: short subject, wrapped body, explain why, reference issues or
+  PRs when relevant.
+- Co-author trailer for this agent:
+  `Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>`.

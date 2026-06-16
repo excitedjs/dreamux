@@ -1,6 +1,6 @@
 # Post-MVP hardening: bounded state, restart reconciliation, access surface
 
-- **Status:** Proposed
+- **Status:** Archived historical proposal
 - **Date:** 2026-06-04
 - **Affects:** dispatcher runtime, turn queue, Feishu access gate, server
   startup, message formatting, CLI/admin surface, diagnostics
@@ -8,6 +8,12 @@
   issue #36 epic review (#42, #44, #46, #49, #53, #55) plus pre-existing
   #22 / #24, and the ultracode review of #58 (bug_001–bug_007). Excludes
   #6 (blocked on the public npm publish of the shared feishu-transport core).
+
+Archive note: this proposal predates the provider/package split and
+non-blocking inbound follow-up work. It preserves the original hardening
+analysis, but many source paths and some implementation assumptions are
+historical. Before implementing any item here, write or update a current
+post-#209 proposal/reference against the present source tree.
 
 ## Context
 

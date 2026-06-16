@@ -65,7 +65,7 @@ now exist, so retiring path 1 is the natural close-out, not a new constraint.
 - **Guards:** the `rush` CI job is the authoritative
   install/typecheck/build/test gate; PRs also run `rush change --verify` against
   the base branch so release-surface changes declare Rush change files.
-  `CLAUDE.md`, `README.md`, and `components/repo-structure.md` all describe the
+  `CLAUDE.md`, `README.md`, and `reference/repo-structure.md` all describe the
   single path; this record supersedes the "two paths" consequence of
   [the Rush + pnpm decision](rush-pnpm-monorepo.md).
 

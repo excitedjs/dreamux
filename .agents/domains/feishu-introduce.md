@@ -4,15 +4,17 @@
   rich attachments are deferred to follow-up PRs — see Deferred below.
 - **Source:** https://github.com/excitedjs/dreamux/issues/62,
   https://github.com/excitedjs/dreamux/issues/87
-- **Affects:** `packages/dreamux/src/feishu/bot.ts`,
-  `packages/dreamux/src/channel/introduce.ts`,
-  `packages/dreamux/src/channel/chat-bots-store.ts`,
-  `packages/dreamux/src/channel/feishu-gate.ts`,
-  `packages/dreamux/src/channel/feishu-message.ts`,
-  `packages/dreamux/src/mcp/feishu-mcp.ts`,
-  `packages/dreamux/src/admin/methods.ts`,
-  `packages/dreamux/src/server.ts`,
-  `packages/dreamux/src/runtime/paths.ts`
+- **Affects:** `/packages/channel/feishu-channel/src/bot.ts`,
+  `/packages/channel/feishu-channel/src/introduce.ts`,
+  `/packages/channel/feishu-channel/src/chat-bots-store.ts`,
+  `/packages/channel/feishu-channel/src/feishu-gate.ts`,
+  `/packages/channel/feishu-channel/src/feishu-message.ts`,
+  `/packages/channel/feishu-channel/src/feishu-channel.ts`,
+  `/packages/channel/feishu-channel/src/feishu-mcp-tools.ts`,
+  `/packages/dreamux/src/mcp/channel-mcp.ts`,
+  `/packages/dreamux/src/admin/methods.ts`,
+  `/packages/dreamux/src/platform/paths.ts`,
+  `/packages/channel/feishu-channel/tests/feishu-introduce.test.ts`
 
 ## Event-route seam (Phase 1)
 
@@ -35,9 +37,9 @@ authorized to run it under the group's policy**. No `@`-mention of our bot is
 required, and the group's `require_mention` setting is ignored on this path.
 
 Authorization (`introduceDenyReason` / `canRunIntroduce` in
-`channel/introduce.ts`) **mirrors the delivery gate `dreamuxFeishuGate` for the
-same `group.policy`**, minus the `@`-mention requirement introduce deliberately
-waives:
+`/packages/channel/feishu-channel/src/introduce.ts`) **mirrors the delivery
+gate `dreamuxFeishuGate` for the same `group.policy`**, minus the `@`-mention
+requirement introduce deliberately waives:
 
 - `block` → never authorized (`group_blocked`); the gate drops every group
   message, and a trust-changing command is no exception.
@@ -68,10 +70,11 @@ introduce.
 > in a brand-new `follow-user` group (after `@`-mentioning the bot) but could
 > never `/introduce` there — it was diagnosed as `chat_not_allowlisted`. Issues
 > #77 and #87 then built on the frozen behavior without revisiting it. The
-> awareness path in `server.ts` (`observeKnownBot`, gated on
-> `allow_chats.includes`) is the *same* hardcoded-`allow_chats` shape one layer
-> up — out of scope here (it tracks `known` bots, not trust), but a candidate
-> for the same follow-user alignment.
+> awareness path now lives in
+> `/packages/channel/feishu-channel/src/feishu-channel.ts` (`observeKnownBot`,
+> gated on `allow_chats.includes`). It is the *same*
+> hardcoded-`allow_chats` shape one layer up — out of scope here (it tracks
+> `known` bots, not trust), but a candidate for the same follow-user alignment.
 
 Detection (`detectIntroduce`) is text-only and strips leading Feishu mention
 placeholder tokens before matching `^/introduce`, so an `@`-prefixed
@@ -109,20 +112,20 @@ A `/introduce` whose sender is not authorized is **not** consumed: it falls
 through to `dreamuxFeishuGate` and is dropped like any other group message —
 most misleadingly as `bot not mentioned`, because the introduce path waives the
 mention requirement that the gate still enforces. To keep this one-glance
-diagnosable, `introduceDenyReason` (`channel/introduce.ts`) is the discriminated
+diagnosable, `introduceDenyReason`
+(`/packages/channel/feishu-channel/src/introduce.ts`) is the discriminated
 source of truth — `canRunIntroduce` is its boolean projection — returning a
 stable, grep-able code: `non_group`, `empty_sender_id`, `group_blocked`,
 `chat_not_allowlisted`, `sender_not_followed`. `group_blocked` is the `block`
 policy; `chat_not_allowlisted` is the `allowlist` policy only (under
 `follow-user` the chat allowlist is ignored, so an off-allowlist sender there is
 `sender_not_followed`, never `chat_not_allowlisted`). When `detectIntroduce`
-matches but the reason is
-non-null, `server.ts` emits one channel log `introduce detected but not
-authorized` carrying only `chat_id`/`sender_id`/`message_id`/`reason` (never the
-message body, mentioned peer open_ids, or mention names), then continues into
-the **unchanged** gate. This is observability only: gate decisions, trust
-writes, baseline arming, and authorized-introduce consume behavior are
-unchanged.
+matches but the reason is non-null, `FeishuChannelSession` emits one channel log
+`introduce detected but not authorized` carrying only
+`chat_id`/`sender_id`/`message_id`/`reason` (never the message body, mentioned
+peer open_ids, or mention names), then continues into the **unchanged** gate.
+This is observability only: gate decisions, trust writes, baseline arming, and
+authorized-introduce consume behavior are unchanged.
 
 ## Awareness vs trust
 
@@ -157,27 +160,30 @@ entity" after a drop, and is never consulted by the gate.
 
 When `/introduce` newly trusts a bot — or the bot is added to a chat — the chat
 is flagged `needsBaseline` and its `baselineGeneration` is bumped
-(`chat-bots-store.ts`). On the next **delivered** group message,
-`formatFeishuMessageForCodex` appends a one-shot `<group_bots>` block listing the
-chat's **trusted** bots (name + open_id), so the model can map a peer bot's
-open_id to a name. Passive `known` bots are deliberately not pushed here; they
-are queried on demand via `list_chat_bots`.
+(`/packages/channel/feishu-channel/src/chat-bots-store.ts`). On the next
+**delivered** group message, `formatFeishuMessageForRuntime` appends a one-shot
+`<group_bots>` block listing the chat's **trusted** bots (name + open_id), so
+the model can map a peer bot's open_id to a name. Passive `known` bots are
+deliberately not pushed here; they are queried on demand via `list_chat_bots`.
 
 The clear is **commit-after-notify and generation-safe**: the deliver path
 snapshots the generation before enqueue and clears `needsBaseline` only after
-`enqueueInbound` returns `submitted`, and only via `clearBaselineIfCurrent`,
-which no-ops if a newer `/introduce` / bot-added bumped the generation
-mid-enqueue. `duplicate` / `stopped` / `failed` leave the context pending.
+the Channel delivery route returns `submitted`, and only via
+`clearBaselineIfCurrent`, which no-ops if a newer `/introduce` / bot-added
+bumped the generation mid-delivery. `duplicate` / `stopped` / `failed` leave
+the context pending.
 
 ## `list_chat_bots` query tool
 
 A model-facing Feishu MCP tool returns a chat's `known` and `trusted` peer bots
 as two separated arrays of `{ open_id, name? }`, for context recovery after
-compaction. The Feishu channel module owns the tool definition and handler. The
-stdio MCP shim forwards `mcp.list_chat_bots` over the 0600 admin socket, and
-the Dispatcher Service routes it to the channel handler, which reads the
-`chat-bots-store` directly (no running slot required). Same transport shape as
-`reply` / `react`; no operator CLI surface.
+compaction. The Feishu channel package owns the tool definition and handler in
+`/packages/channel/feishu-channel/src/feishu-mcp-tools.ts` and
+`/packages/channel/feishu-channel/src/provider.ts`. The generic `channel-mcp`
+stdio shim forwards the provider tool call over the 0600 admin socket, and the
+Dispatcher Service routes it to the channel handler, which reads
+`chat-bots-store` directly when no live session is required. Same transport
+shape as `reply` / `react`; no operator CLI surface.
 
 ## Deferred to follow-up PRs
 

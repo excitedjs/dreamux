@@ -1,7 +1,7 @@
-# Component: dispatcher skill
+# Reference: dispatcher skill
 
-`/packages/dreamux/skills/` contains the bundled Codex skills that Dreamux
-ships in the npm package:
+`/packages/dreamux/skills/` contains the bundled Dreamux skills that Dreamux
+ships in the npm package for supported agent runtimes:
 
 - `dispatcher` teaches dispatcher app-server sessions how to delegate product
   work to TeamMates. The default interface is the server-hosted TeamMate MCP:
@@ -50,12 +50,16 @@ ships in the npm package:
   `team_id` / machine-local cwd/worktree rows are gone in #199 Slice 1), and
   `dissolve` a Team. The `create_group` (create-a-new-group) and raw `ledger`
   verbs were retired.
-- `channel` MCP is injected for dispatcher-only channel binding (core-hosted,
-  #209 slice 8): `bind_channel` hands an existing Feishu group chat to a Team by
-  `team_name` + `chat_id`, and `transfer_back` returns a bound group (by
-  `chat_id`) to the dispatcher. This replaces the removed `team.bind_group` /
-  `team.transfer_channel_back` / `team.create.bind_group` surfaces (no aliases).
-  TeamLeader member work still uses the caller-scoped TeamMate MCP.
+- Channel binding is on the **Team MCP**, not on the provider channel MCP:
+  `bind_channel({ team_name, channel_id?, meta })` hands an existing channel
+  target to a Team, and `transfer_back({ channel_id?, meta })` returns a bound
+  target to the dispatcher. `channel_id` selects a configured dispatcher channel
+  and defaults to the sole channel when unambiguous; `meta` is the provider
+  selector (for Feishu group chats, `{ "chat_id": "..." }`). The removed
+  `team.bind_group` / `team.transfer_channel_back` /
+  `team.create.bind_group` surfaces have no aliases. Provider-owned tools such
+  as Feishu `reply`, `react`, and `list_chat_bots` remain behind the `channel`
+  MCP shim.
 - `dreamux-maintenance` covers installed Dreamux diagnosis and safe operation.
 
 They are not installed through Codex plugin marketplaces. Core injects them at
@@ -78,7 +82,7 @@ and [the npm package split record](../decisions/npm-package-split-and-channel-ta
 
 | Path | Role |
 |---|---|
-| `/packages/dreamux/skills/<skill-name>/` | Bundled skill directory shipped in the npm package, injected at runtime by role |
+| `/packages/dreamux/skills/.claude/skills/<skill-name>/` | Bundled skill directory shipped in the npm package, injected at runtime by role |
 | `/packages/dreamux/bin/tm` | Public wrapper that forwards to the package-local `@excitedjs/tm` executable |
 
 ## Runtime Boundary
@@ -134,8 +138,9 @@ workspace:
   parent roots via `skills/extraRoots/set` after initialize and before thread
   start/resume, reapplying after every app-server restart; Claude Code emits
   `--add-dir` for add-dir-compatible sources
-- a Codex `skills/extraRoots/set` failure fails the start loud — a
-  dispatcher/leader must not run skill-blind
+- a Codex `skills/extraRoots/set` unsupported/method-missing response warns and
+  continues skill-blind for older app-servers; real root-application errors
+  still fail the start loud
 - an old `<dispatcher cwd>/.codex/skills` symlink dir from a prior version is
   left untouched (Codex lists the skill twice but does not fail) and is safe to
   delete; startup neither creates nor recreates it

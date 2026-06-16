@@ -2,10 +2,11 @@
 # Validate the .agents/ knowledge base.
 #
 # Checks:
-#   1. every repo-root-absolute link target (`/foo/bar`) inside .agents/
-#      resolves to a file or directory that exists
+#   1. every internal Markdown link inside .agents/ resolves to a file or
+#      directory that exists
 #   2. every .md file under .agents/ is reachable from .agents/root.md
 #      (link graph; flags orphans)
+#   3. every decision record is listed in .agents/decisions/README.md
 #
 # Exits 0 on success, non-zero with a noisy list of failures otherwise.
 # Run before committing KB changes, and from CI.
@@ -17,20 +18,25 @@ REPO_ROOT="$(cd -- "$KB_ROOT/.." &> /dev/null && pwd)"
 
 errors=0
 
-# ---------- 1) repo-root-absolute links resolve ----------
-# Match `](/...)` style links — the convention CONTRIBUTING.md mandates.
-while IFS= read -r line; do
-  file="${line%%:*}"
-  link="${line#*:}"
-  # Strip line-number prefix and the surrounding `](...)`.
-  target="$(echo "$link" | sed -E 's/.*\]\((\/[^)#]+)(#[^)]*)?\).*/\1/')"
+# ---------- 1) internal Markdown links resolve ----------
+# Match each Markdown inline link target. External URLs and same-page anchors are
+# skipped; repo-root-absolute and relative links must resolve.
+while IFS= read -r entry; do
+  file="${entry%%:*}"
+  target="${entry#*:}"
+  target="${target%%#*}"
   [ -z "$target" ] && continue
-  full="$REPO_ROOT$target"
+  case "$target" in
+    http://*|https://*|mailto:*|\#*) continue ;;
+    /*) full="$REPO_ROOT$target" ;;
+    *) full="$(cd -- "$(dirname -- "$file")" 2>/dev/null && realpath -m -- "$target")" ;;
+  esac
   if [ ! -e "$full" ]; then
-    echo "broken link in $file -> $target (resolved to $full)" >&2
+    rel_file="${file#"$REPO_ROOT"/}"
+    echo "broken markdown link in $rel_file -> $target (resolved to $full)" >&2
     errors=$((errors + 1))
   fi
-done < <(grep -rEn --include='*.md' ']\(/[^)]+\)' "$KB_ROOT" 2>/dev/null || true)
+done < <(find "$KB_ROOT" -type f -name '*.md' -print0 | xargs -0 perl -ne 'while (/\]\(([^)]+)\)/g) { print "$ARGV:$1\n" }' 2>/dev/null || true)
 
 # ---------- 2) orphan detection ----------
 # Build the set of every .md file under .agents/, minus root.md itself.
@@ -53,9 +59,9 @@ while [ ${#queue[@]} -gt 0 ]; do
   queue=("${queue[@]:1}")
   curfile="$KB_ROOT/$cur"
   [ -f "$curfile" ] || continue
-  while IFS= read -r raw; do
-    # Match either `](foo.md)` or `](foo/)` or absolute /.agents/foo.md.
-    target="$(echo "$raw" | sed -E 's/.*\]\(([^)#]+)(#[^)]*)?\).*/\1/')"
+  while IFS= read -r target; do
+    # Match either `](foo.md)` or absolute `](/.agents/foo.md)`.
+    target="${target%%#*}"
     [ -z "$target" ] && continue
     case "$target" in
       http*|mailto:*) continue ;;
@@ -83,7 +89,7 @@ while [ ${#queue[@]} -gt 0 ]; do
       seen["$next"]=1
       queue+=("$next")
     fi
-  done < <(grep -E ']\([^)]+\)' "$curfile" 2>/dev/null || true)
+  done < <(perl -ne 'while (/\]\(([^)]+)\)/g) { print "$1\n" }' "$curfile" 2>/dev/null || true)
 done
 
 for rel in "${!all[@]}"; do
@@ -92,6 +98,25 @@ for rel in "${!all[@]}"; do
     errors=$((errors + 1))
   fi
 done
+
+# ---------- 3) decision index completeness ----------
+decision_index="$KB_ROOT/decisions/README.md"
+decision_index_entries="$(
+  awk '
+    /^## Alphabetical Index$/ { in_index = 1; next }
+    /^## / && in_index { exit }
+    in_index { print }
+  ' "$decision_index"
+)"
+while IFS= read -r f; do
+  slug="$(basename "$f" .md)"
+  [ "$slug" = "README" ] && continue
+  expected="- [$slug]($slug.md)"
+  if ! printf '%s\n' "$decision_index_entries" | grep -Fxq -- "$expected"; then
+    echo "decision missing from alphabetical index: .agents/decisions/$slug.md" >&2
+    errors=$((errors + 1))
+  fi
+done < <(find "$KB_ROOT/decisions" -maxdepth 1 -type f -name '*.md' | sort)
 
 if [ "$errors" -gt 0 ]; then
   echo "" >&2

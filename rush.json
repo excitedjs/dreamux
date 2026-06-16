@@ -7,9 +7,10 @@
  *   - Node >= 22.7.0: matches the runtime requirement of the dreamux server
  *     (per @excitedjs/dreamux package.json's engines.node field).
  *
- * Projects today (@excitedjs/dreamux-types declaration-only contracts,
- * @excitedjs/dreamux host, @excitedjs/feishu-transport core,
- * @excitedjs/feishu-channel placeholder), wired with pnpm workspace:*.
+ * Projects today include @excitedjs/dreamux, @excitedjs/dreamux-types,
+ * @excitedjs/dreamux-utils, the built-in agent-runtime packages, the Feishu
+ * channel/transport packages, and the unpublished shared ESLint config, wired
+ * with pnpm workspace:*.
  * More packages go under packages/<name>/ and get registered in the
  * `projects` array below.
  *

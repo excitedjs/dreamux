@@ -1,5 +1,10 @@
 # Top-level design
 
+> **Historical baseline.** This decision records the original MVP shape. Large
+> sections below intentionally preserve superseded Feishu/Codex-specific
+> wording; do not use a deep-linked section as current implementation guidance
+> until you have checked the current reference pages and source code.
+
 - **Status:** Accepted for the original MVP; superseded for issue #110
   providerized surfaces by [issue-110-epic-closure](issue-110-epic-closure.md),
   [channel-provider](channel-provider.md), [agent-runtime-provider](agent-runtime-provider.md),
@@ -11,6 +16,20 @@
 - **Date:** 2026-06-03
 - **Affects:** server runtime, dispatcher lifecycle, Feishu channel, Codex MCP, admin/outbound IPC, global config, state files, logs, CLI admin surface, workspace-local bundled skill ownership
 - **PR / Issue:** Local architecture clarification on 2026-06-03; supersedes the persistence and automatic-outbound parts of issue #2, the runtime-dir parts of `global-config-dir`, and loopback HTTP MCP as the default Feishu MCP transport
+
+## Current Reading Note
+
+This file preserves the original MVP baseline and still-current rationale for
+local config, state, access, and log ownership. It is not the shortest current
+architecture map. For current behavior, read these reference pages first:
+
+- [Current architecture](../reference/current-architecture.md)
+- [State and paths](../reference/state-and-paths.md)
+- [Channel runtime](../reference/channel-runtime.md)
+- [Dispatcher skill reference](../reference/dispatcher-skill.md)
+
+Then return here only for the decisions and supersession history behind those
+current facts.
 
 ## Context
 
@@ -350,8 +369,9 @@ deliver/drop, inbound submit, outbound, `/introduce`), and dispatcher lifecycle
 write structured `pino` JSON to these files (and mirror to stderr so a
 foreground `serve` stays visible). Neutral path builders live in
 `src/platform/paths.ts` (with volatile runtime-socket allocation in
-`src/platform/runtime-sockets.ts` and per-runtime log/socket paths in each
-builtin's `src/agent-runtime/builtin/<name>/paths.ts`); logger construction
+`src/platform/runtime-sockets.ts`; runtime-owned log/socket paths live in the
+runtime package that uses them, for example
+`packages/agent-runtime/codex/src/paths.ts`); logger construction
 lives in `src/platform/logger.ts`. Message bodies are never logged; `app_secret`
 is redacted. See [the logging decision](logging.md).
 
@@ -432,8 +452,11 @@ an authorized chat — awareness only) and a `trusted` set (bots introduced by a
 allowlisted `/introduce` — the only set the gate consults to let a peer bot's
 group message through). The two sets must never be conflated: observation never
 grants trust. It also records bot-added baseline bookkeeping (`needsBaseline`,
-`seenEventIds` for idempotent `im.chat.member.bot.added_v1` handling). It is
-server-owned discovery state, safe to delete; it holds no credentials.
+`seenEventIds` for idempotent `im.chat.member.bot.added_v1` handling). The file
+is persisted under the server state root, but the current implementation and
+schema ownership live in the Feishu Channel package
+(`/packages/channel/feishu-channel/src/chat-bots-store.ts`). It is safe to
+delete and holds no credentials.
 
 A Codex app-server runtime listens on a WebSocket-over-Unix-socket endpoint
 (`codex app-server --listen unix://<path>`, connected via `ws+unix://<path>`).
