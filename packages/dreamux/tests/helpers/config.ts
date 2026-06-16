@@ -1,14 +1,18 @@
 import {
-  BUILTIN_CODEX_PROVIDER_REF,
-  BUILTIN_FEISHU_PROVIDER_REF,
+  type DispatcherConfig,
+  type DreamuxConfig,
+} from '../../src/config/config.js';
+import {
   DEFAULT_APPROVAL_POLICY,
   DEFAULT_CODEX_BIN,
   DEFAULT_CODEX_TURN_TIMEOUT_MS,
   DEFAULT_INITIALIZE_TIMEOUT_MS,
   DEFAULT_SANDBOX_MODE,
-  type DispatcherConfig,
-  type DreamuxConfig,
-} from '../../src/config/config.js';
+} from '@excitedjs/agent-runtime-codex';
+import {
+  BUILTIN_CODEX_PROVIDER_REF,
+  BUILTIN_FEISHU_PROVIDER_REF,
+} from '../../src/registry/index.js';
 
 interface TestDispatcherOptions {
   id?: string;
@@ -29,6 +33,11 @@ export function testDispatcherConfig(
   options: TestDispatcherOptions = {},
 ): DispatcherConfig {
   const id = options.id ?? 'flow';
+  const defaultChannelConfig = {
+    app_id: `app-${id}`,
+    app_secret: `secret-${id}`,
+    ...(options.feishu ?? {}),
+  };
   return {
     id,
     cwd: options.cwd ?? null,
@@ -39,11 +48,12 @@ export function testDispatcherConfig(
         {
           id: options.channelId ?? 'primary',
           provider: options.channelProvider ?? BUILTIN_FEISHU_PROVIDER_REF,
-          config: {
-            app_id: `app-${id}`,
-            app_secret: `secret-${id}`,
-            ...(options.feishu ?? {}),
-          },
+          config: defaultChannelConfig,
+          // Mirror the feishu provider's getIdentity (`config.app_id`) so a store
+          // built directly from this fixture seeds the same `channel_identity`
+          // production would: config-load runs getIdentity, this hand-built path
+          // does not (issue #209 de-leak).
+          identity: String(defaultChannelConfig.app_id ?? ''),
         },
       ],
     agentRuntime: options.agentRuntime ?? id,

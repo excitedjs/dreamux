@@ -9,7 +9,7 @@
  *
  * Design (settled in the issue #70 decision record):
  *   - `pino` with `pino.multistream`, never the worker-thread transport: robust
- *     for the short-lived `feishu-mcp` stdio shim and for vitest.
+ *     for the short-lived `channel-mcp` stdio shim and for vitest.
  *   - Dual output. When `filePath` is given we write JSON to BOTH the file and
  *     stderr, so a foreground `serve` never goes dark. Format is structured on
  *     both streams (a deliberate v1 UX choice — no `pino-pretty`, no fragile
@@ -21,16 +21,16 @@
  *     synchronous-blocking-IO lint gate, and switching to an async destination
  *     would force a `flushSync()` in a `process.on('exit')` handler — re-adding
  *     unavoidable sync IO in the one truly sync-only context, plus a log-tail
- *     loss risk in the short-lived `feishu-mcp` shim.
+ *     loss risk in the short-lived `channel-mcp` shim.
  *   - Files are created `0o600` and their parent directory `mkdir`-ed by
  *     `pino.destination` itself (`{ mkdir: true, mode: 0o600 }`). That open is
  *     internal to pino/SonicBoom, not application sync IO, so `createLogger`
  *     stays synchronous (the `Server` constructor builds loggers synchronously)
  *     while our own code holds no `fs.*Sync` calls. Matches the `0600` posture
  *     of `config.json` / state files.
- *   - Credentials are removed declaratively via pino `redact`. Message *bodies*
- *     are NOT redacted — they are simply never passed to the logger (callers
- *     log ids, never turn `text` / `rawContent` / reply text).
+ *   - Credentials are removed by a provider-agnostic recursive key sanitizer.
+ *     Message *bodies* are NOT redacted — they are simply never passed to the
+ *     logger (callers log ids, never turn `text` / `rawContent` / reply text).
  *   - The factory takes an explicit destination. `paths.ts` `dreamuxRoot()`
  *     hardcodes `homedir()` and does not honor `DREAMUX_CONFIG_DIR`, so tests
  *     inject a tmp `filePath`; they must not expect an env var to move logs.
@@ -38,19 +38,28 @@
 
 import { chmod } from 'node:fs/promises';
 
-import type { TransportLogger } from '@excitedjs/feishu-transport';
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import pino, {
   type DestinationStream,
-  type Logger,
   type LoggerOptions,
 } from 'pino';
 
-export type DreamuxLogger = Logger;
+/**
+ * The neutral `DreamuxLogger` contract is pino-compatible (fields-first), so a
+ * pino logger satisfies it structurally. This compile-time probe is the
+ * load-bearing assertion of the whole logging design: core constructs a full
+ * pino logger and injects it AS-IS into every provider package — no wrapper, no
+ * boundary adapter, no fields/message flip anywhere. If pino ever drifts from
+ * the contract this line fails to compile, which is the signal to fix the
+ * `@excitedjs/dreamux-types` shape rather than re-introduce a converter.
+ */
+const _pinoSatisfiesContract: DreamuxLogger = pino();
+void _pinoSatisfiesContract;
 
 export interface CreateLoggerOptions {
   /**
    * Component name stamped on every line (`server`, `channel/<id>`,
-   * `feishu-mcp/<id>`). Surfaces in the structured output and the stderr line.
+   * `channel-mcp/<id>`). Surfaces in the structured output and the stderr line.
    */
   name?: string;
   /**
@@ -75,21 +84,8 @@ export interface CreateLoggerOptions {
   destination?: DestinationStream;
 }
 
-/**
- * Paths whose values are redacted from every log line. Covers the Feishu
- * `app_secret` wherever it might be nested (config snapshot, dispatcher row,
- * credentials object) plus a generic `*.secret` catch.
- */
-const REDACT_PATHS = [
-  'app_secret',
-  '*.app_secret',
-  'appSecret',
-  '*.appSecret',
-  'secret',
-  '*.secret',
-  'feishu.app_secret',
-  '*.feishu.app_secret',
-] as const;
+const REDACTED_VALUE = '[REDACTED]';
+const SECRET_KEY_RE = /(secret|password|passwd|token|authorization|cookie|credential)/i;
 
 function resolveLevel(level?: pino.Level): pino.Level {
   if (level !== undefined) return level;
@@ -131,7 +127,11 @@ export function createLogger(opts: CreateLoggerOptions = {}): DreamuxLogger {
   const base: LoggerOptions = {
     level,
     base: opts.name !== undefined ? { name: opts.name } : {},
-    redact: { paths: [...REDACT_PATHS], censor: '[REDACTED]' },
+    formatters: {
+      log(object) {
+        return redactLogValue(object) as Record<string, unknown>;
+      },
+    },
   };
 
   if (opts.destination !== undefined) {
@@ -147,6 +147,28 @@ export function createLogger(opts: CreateLoggerOptions = {}): DreamuxLogger {
   }
 
   return pino(base, pino.multistream(streams, { dedupe: false }));
+}
+
+function redactLogValue(value: unknown, seen = new WeakSet<object>()): unknown {
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactLogValue(entry, seen));
+  }
+  if (!isPlainLogObject(value)) return value;
+  if (seen.has(value)) return '[Circular]';
+  seen.add(value);
+  const out: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    out[key] = SECRET_KEY_RE.test(key)
+      ? REDACTED_VALUE
+      : redactLogValue(entry, seen);
+  }
+  return out;
+}
+
+function isPlainLogObject(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== 'object') return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
 }
 
 /**
@@ -170,27 +192,4 @@ function serializeErr(err: unknown): { message: string; stack?: string } {
       : { message: err.message };
   }
   return { message: String(err) };
-}
-
-/**
- * Adapt a `DreamuxLogger` (pino) to the `@excitedjs/feishu-transport`
- * `TransportLogger` seam, so the transport's own SDK / connection diagnostics
- * fold into the same per-dispatcher channel log as the host's channel
- * decisions. pino takes `(mergingObject, message)`, the transport seam emits
- * `(message, fields?)` — this flips the argument order and supplies an empty
- * object when the transport carried no fields.
- *
- * The transport only ever passes its own diagnostic source fields (an SDK/
- * connection `source` tag and a serialized `err`); it never hands message
- * bodies or credentials to the logger, so this adapter forwards `fields`
- * verbatim without re-redacting (the pino `redact` config still applies).
- */
-export function pinoToTransportLogger(logger: DreamuxLogger): TransportLogger {
-  return {
-    error: (message, fields) => logger.error(fields ?? {}, message),
-    warn: (message, fields) => logger.warn(fields ?? {}, message),
-    info: (message, fields) => logger.info(fields ?? {}, message),
-    debug: (message, fields) => logger.debug(fields ?? {}, message),
-    trace: (message, fields) => logger.trace(fields ?? {}, message),
-  };
 }

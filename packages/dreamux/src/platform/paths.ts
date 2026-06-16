@@ -20,6 +20,12 @@
  *       dreamux-server.log
  *       codex-app-server/
  *         <dispatcher-id>.log
+ *       channel/
+ *         <dispatcher-id>.log
+ *     cache/                  rebuildable provider/cache artifacts
+ *       <dispatcher-id>/
+ *         spill/
+ *         <provider-owned subdirs>
  *
  * `stateRoot()` is the single root for dreamux-owned durable state; `runRoot()`
  * is the single root for dreamux-owned volatile run files. The old
@@ -32,12 +38,15 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  assertUnixSocketPathBudget,
+} from '@excitedjs/dreamux-utils';
+
+import {
   BUILT_IN_DEFAULTS,
   type DreamuxConfig,
 } from '../config/config.js';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
 
-export const DREAMUX_UNIX_SOCKET_PATH_MAX_BYTES = 103;
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = dirname(dirname(HERE));
 
@@ -246,25 +255,25 @@ export function serverLogPath(): string {
   return join(logsRoot(), 'dreamux-server.log');
 }
 
-export function feishuChannelLogDir(): string {
-  return join(logsRoot(), 'feishu-channel');
+export function channelLogDir(): string {
+  return join(logsRoot(), 'channel');
 }
 
 /** Per-dispatcher channel log: gate decisions, inbound, outbound, introduce. */
-export function feishuChannelLogPath(id: string): string {
-  return join(feishuChannelLogDir(), `${dispatcherPathSegment(id)}.log`);
+export function channelLogPath(id: string): string {
+  return join(channelLogDir(), `${dispatcherPathSegment(id)}.log`);
 }
 
-export function feishuMcpLogDir(): string {
-  return join(logsRoot(), 'feishu-mcp');
+export function channelMcpLogDir(): string {
+  return join(logsRoot(), 'channel-mcp');
 }
 
 /**
- * Per-dispatcher Feishu MCP stdio shim log. The shim's stdout is the JSON-RPC
+ * Per-dispatcher channel MCP stdio shim log. The shim's stdout is the JSON-RPC
  * transport, so its diagnostics persist here (and to stderr) — never stdout.
  */
-export function feishuMcpLogPath(id: string): string {
-  return join(feishuMcpLogDir(), `${dispatcherPathSegment(id)}.log`);
+export function channelMcpLogPath(id: string): string {
+  return join(channelMcpLogDir(), `${dispatcherPathSegment(id)}.log`);
 }
 
 export function teammateMcpLogDir(): string {
@@ -362,32 +371,6 @@ export function teamMateNameSegment(name: string): string {
 }
 
 /**
- * Spill file for a teammate completion result that overflows the inline budget
- * (see `agent-runtime/completion-body.ts`). Both runtimes write the full result
- * here and inline only this path into the dispatcher turn, so a large result
- * never floods the dispatcher's context. Neutral: a completion is a
- * runtime-agnostic concept, so no runtime specifics appear here.
- *
- * Lives under the dispatcher's cache spill dir (issue #182 PR-2 moved it out of
- * shared `/tmp`, which is not a good long-term contract for a path surfaced in
- * dispatcher-visible text). `spillDir` is the owning dispatcher's
- * `dispatcherCompletionSpillDir`, supplied by the runtime's path context so a
- * teammate runtime spills under its operator dispatcher, not its composite
- * runtime id. `source` and `id` are sanitized for filename safety; the id is
- * unique per completion (teammate name + turn id).
- */
-export function teamMateCompletionOutputPath(
-  spillDir: string,
-  source: string,
-  id: string,
-): string {
-  return join(
-    spillDir,
-    `teammate-${teamMateNameSegment(source)}-${teamMateNameSegment(id)}.output`,
-  );
-}
-
-/**
  * Per-dispatcher peer-bot awareness/trust store. One file per dispatcher,
  * keyed internally by chat_id, holds the *known* (passively observed) and
  * *trusted* (introduced via an allowlisted `/introduce`) peer-bot open_ids
@@ -397,26 +380,6 @@ export function dispatcherChatBotsPath(id: string): string {
   return join(dispatcherDir(id), 'chat-bots.json');
 }
 
-/**
- * Per-dispatcher Feishu inbound attachment cache, owned by the server. Cache,
- * not durable state (issue #182 PR-2 moved it out of `state/<id>/` into
- * `cache/<id>/`): inbound attachments are re-fetchable and safe to delete.
- */
-export function dispatcherFeishuAttachmentCacheDir(id: string): string {
-  return join(dispatcherCacheDir(id), 'feishu-attachments');
-}
-
-export function unixSocketPathFitsBudget(path: string): boolean {
-  return Buffer.byteLength(path, 'utf8') <= DREAMUX_UNIX_SOCKET_PATH_MAX_BYTES;
-}
-
-export function assertUnixSocketPathBudget(path: string, label: string): string {
-  if (unixSocketPathFitsBudget(path)) return path;
-  const bytes = Buffer.byteLength(path, 'utf8');
-  throw new Error(
-    `${label} is too long for Unix sockets (${bytes} bytes > ${DREAMUX_UNIX_SOCKET_PATH_MAX_BYTES} safe bytes): ${path}`,
-  );
-}
 
 export function dispatcherPathSegment(id: string): string {
   return validateDispatcherId(id);

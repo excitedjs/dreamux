@@ -39,8 +39,10 @@ import { join, normalize, sep } from 'node:path';
 
 import {
   assertUnixSocketPathBudget,
-  runRoot,
   unixSocketPathFitsBudget,
+} from '@excitedjs/dreamux-utils';
+import {
+  runRoot,
 } from './paths.js';
 
 /**

@@ -23,7 +23,7 @@ import type {
   AgentRuntimeContextSnapshot,
   AgentRuntimeCreateContext,
   AgentRuntimeDiagnostic,
-  AgentRuntimeDoctorResult,
+  AgentRuntimeDiagnosticResult,
   AgentRuntimeLastResult,
   AgentRuntimeProvider,
   AgentRuntimeProviderConfigReadContext,
@@ -131,7 +131,7 @@ class FixtureRuntime implements AgentRuntime {
   async completionInput(
     completion: CompletionEnvelope,
   ): Promise<TeamMateCompletionDeliveryResult> {
-    this.logger?.info('fixture completion', { id: completion.id });
+    this.logger?.info({ id: completion.id }, 'fixture completion');
     return { status: 'accepted' };
   }
 }
@@ -148,14 +148,14 @@ const runtimeDescriptor: AgentRuntimeProviderDescriptor = {
 };
 
 /**
- * An optional diagnostic the host's doctor pass drives. The host supplies the
+ * An optional diagnostic driven by Dreamux core. The host supplies the
  * command runner; the fixture only declares bin checks and runs its own check.
  */
 const fixtureRuntimeDiagnostic: AgentRuntimeDiagnostic<FixtureRuntimeConfig> = {
   binChecks(): AgentRuntimeBinCheck[] {
     return [{ name: 'fixture', bin: 'fixture-cli', args: ['--version'] }];
   },
-  async runDiagnostic(context, runner): Promise<AgentRuntimeDoctorResult> {
+  async runDiagnostic(context, runner): Promise<AgentRuntimeDiagnosticResult> {
     const ok = await runner.check('fixture-cli', ['--version'], {
       env: context.env,
     });
@@ -198,13 +198,19 @@ class FixtureChannelSession implements ChannelSession {
   }
 
   async start(routes: ChannelRoutes): Promise<void> {
-    this.logger?.info('fixture channel started', { channel_id: this.channel_id });
+    this.logger?.info(
+      { channel_id: this.channel_id },
+      'fixture channel started',
+    );
     const envelope: ChannelInboundEnvelope = {
       provider: this.provider,
       channel_id: this.channel_id,
       target: { target_type: 'group', target_key: 'demo', bindable: true },
     };
-    await routes.deliver(envelope);
+    await routes.deliver(
+      { text: 'fixture event', sourceId: 'fixture-event-1' },
+      envelope,
+    );
   }
 
   async close(): Promise<void> {}
@@ -220,7 +226,7 @@ class FixtureChannelSession implements ChannelSession {
   }
 
   async reply(input: ChannelReplyInput): Promise<unknown> {
-    this.logger?.info('reply', { key: input.target.target_key });
+    this.logger?.info({ key: input.target.target_key }, 'reply');
     return { delivered: true };
   }
 

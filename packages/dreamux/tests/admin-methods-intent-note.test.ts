@@ -4,25 +4,19 @@ import { adminMethods } from '../src/admin/methods.js';
 import { AdminError } from '../src/admin/protocol.js';
 import type { Server } from '../src/server.js';
 
-/**
- * Issue #182 PR-3: the admin layer (mustNonEmptyString) is the last of three
- * enforcement layers for required intent/note. These tests drive the admin
- * handlers directly with a minimal stub server so a regression from
- * mustNonEmptyString back to mustString/optionalString is caught — the shim
- * reject tests (teammate-mcp/team-mcp) never reach this layer.
- *
- * The handlers read+reject intent/note before touching `dispatcherService`, so
- * the stub only needs a dispatcher row for `mustExistingDispatcher`.
- */
 const stubServer = {
   repos: { dispatchers: { get: () => ({ dispatcher_id: 'flow' }) } },
-  // Lifecycle calls reject on the intent/note guard before the service is ever
-  // reached; the stub service methods just assert they are not invoked.
-  dispatcherService: {
+  getDispatcher: () => ({
+    team: () => {
+      throw new Error('team must not be reached on a rejected request');
+    },
+    closeTeamMate: () => {
+      throw new Error('closeTeamMate must not be reached on a rejected request');
+    },
     createTeam: () => {
       throw new Error('createTeam must not be reached on a rejected request');
     },
-  },
+  }),
 } as unknown as Server;
 
 async function expectBadRequest(
@@ -42,9 +36,6 @@ describe('admin layer enforces required non-empty intent/note (#182 PR-3)', () =
   });
 
   it('rejects teammate.spawn with missing or empty intent', async () => {
-    // #199 Slice 1/2: spawn takes name_prefix and no required cwd. intent is
-    // validated before any work-directory resolution, so the stub server here
-    // never needs a dispatcherWorkspace.
     const base = { dispatcher_id: 'flow', name_prefix: 'a', prompt: 'go' };
     await expectBadRequest('mcp.teammate.spawn', base);
     await expectBadRequest('mcp.teammate.spawn', { ...base, intent: '' });
@@ -57,7 +48,6 @@ describe('admin layer enforces required non-empty intent/note (#182 PR-3)', () =
   });
 
   it('rejects team.create with missing or empty intent', async () => {
-    // #199 Slice 1/2: create takes team_name and an optional repo (no repo_cwd).
     const base = {
       dispatcher_id: 'flow',
       team_name: 'alpha',
@@ -68,7 +58,6 @@ describe('admin layer enforces required non-empty intent/note (#182 PR-3)', () =
   });
 
   it('rejects team.dissolve with missing or empty note', async () => {
-    // #199 Slice 1: Team lifecycle is addressed by `team_name`.
     const base = { dispatcher_id: 'flow', team_name: 'alpha' };
     await expectBadRequest('mcp.team.dissolve', base);
     await expectBadRequest('mcp.team.dissolve', { ...base, note: '' });
@@ -77,30 +66,23 @@ describe('admin layer enforces required non-empty intent/note (#182 PR-3)', () =
 
 describe('Channel MCP admin methods replace the Team binding methods (#209 slice 8)', () => {
   it('removes the old Feishu binding methods without aliases', () => {
-    // No silent alias survives: the old method keys are gone entirely, so a shim
-    // calling them gets an unknown-method error at the admin socket.
     expect(adminMethods['mcp.team.bind_group']).toBeUndefined();
     expect(adminMethods['mcp.team.transfer_channel_back']).toBeUndefined();
   });
 
   it('registers the Team MCP channel-binding methods (and no generic channel.* aliases)', () => {
-    // Channel binding is a core-owned Team capability → it lives under mcp.team.*.
     expect(typeof adminMethods['mcp.team.bind_channel']).toBe('function');
     expect(typeof adminMethods['mcp.team.transfer_back']).toBe('function');
-    // The generic Channel MCP surface was removed; no channel.* method survives.
     expect(adminMethods['mcp.channel.bind_channel']).toBeUndefined();
     expect(adminMethods['mcp.channel.transfer_back']).toBeUndefined();
   });
 
   it('bind_channel and transfer_back share one return envelope (the binding, not wrapped) and pass meta through', async () => {
-    // The two sibling Team binding methods must return the same shape — the
-    // binding summary directly — so a caller does not unwrap one and not the
-    // other. They forward the provider selector `meta` opaquely to the facade.
     const binding = { provider: 'builtin:feishu', target_key: 'chat-demo' };
     const seen: Array<Record<string, unknown>> = [];
     const channelStub = {
       repos: { dispatchers: { get: () => ({ dispatcher_id: 'flow' }) } },
-      dispatcherService: {
+      getDispatcher: () => ({
         bindTeamChannel: async (input: Record<string, unknown>) => {
           seen.push(input);
           return binding;
@@ -109,7 +91,7 @@ describe('Channel MCP admin methods replace the Team binding methods (#209 slice
           seen.push(input);
           return binding;
         },
-      },
+      }),
     } as unknown as Server;
 
     const bound = await adminMethods['mcp.team.bind_channel']!(channelStub, {
@@ -124,7 +106,6 @@ describe('Channel MCP admin methods replace the Team binding methods (#209 slice
     expect(bound).toEqual(binding);
     expect(transferred).toEqual(binding);
     expect(transferred).not.toHaveProperty('binding');
-    // meta reached the facade verbatim on both methods.
     expect(seen[0]).toMatchObject({ teamId: 'alpha', meta: { chat_id: 'chat-demo' } });
     expect(seen[1]).toMatchObject({ meta: { chat_id: 'chat-demo' } });
   });
@@ -132,7 +113,7 @@ describe('Channel MCP admin methods replace the Team binding methods (#209 slice
   it('rejects a bind_channel call whose meta is missing or not an object', async () => {
     const channelStub = {
       repos: { dispatchers: { get: () => ({ dispatcher_id: 'flow' }) } },
-      dispatcherService: { bindTeamChannel: async () => ({}) },
+      getDispatcher: () => ({ bindTeamChannel: async () => ({}) }),
     } as unknown as Server;
     await expect(
       adminMethods['mcp.team.bind_channel']!(channelStub, {

@@ -59,7 +59,7 @@ dreamux config show
    - `codex-app-server/<dispatcher-id>.log`
    - `codex-app-server/<dispatcher-id>.stderr.log`
    - `feishu-channel/<dispatcher-id>.log`
-   - `feishu-mcp/<dispatcher-id>.log`
+   - `channel-mcp/<dispatcher-id>.log`
    - `teammate-mcp/<dispatcher-id>.log`
 
 ## Common Symptoms

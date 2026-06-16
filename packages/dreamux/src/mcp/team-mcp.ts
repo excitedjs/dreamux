@@ -100,7 +100,7 @@ async function handleRequest(
 
 function teamTools(): Array<Record<string, unknown>> {
   return [
-    tool('create', 'Create a Team and start its TeamLeader. team_name is the concrete Team key used by all later status/history/dissolve calls. intent is required: it is the durable recovery subject for the Team. repo is optional: omit it to run the TeamLeader and members in a plain shared work directory under the dispatcher workspace (.workspace/work/<team_name>/ — the dispatcher cwd need not be a git repo), or pass { mode: reuse-cwd | managed, path?, base_ref?, branch?, slug?, cleanup? } — managed creates a git worktree. To hand a Feishu group chat to the Team, bind it after create with the team bind_channel tool.', {
+    tool('create', 'Create a Team and start its TeamLeader. team_name is the concrete Team key used by all later status/history/dissolve calls. intent is required: it is the durable recovery subject for the Team. repo is optional: omit it to run the TeamLeader and members in a plain shared work directory under the dispatcher workspace (.workspace/work/<team_name>/ — the dispatcher cwd need not be a git repo), or pass { mode: reuse-cwd | managed, path?, base_ref?, branch?, slug?, cleanup? } — managed creates a git worktree. To hand a group chat to the Team, bind it after create with the team bind_channel tool.', {
       team_name: { type: 'string', minLength: 1, maxLength: 64 },
       repo: repoInputSchema(),
       leader_agent_runtime: { type: 'string', minLength: 1, maxLength: 128 },
@@ -125,12 +125,12 @@ function teamTools(): Array<Record<string, unknown>> {
       team_name: { type: 'string', minLength: 1, maxLength: 64 },
       note: { type: 'string', minLength: 1, maxLength: 2000 },
     }, ['team_name', 'note']),
-    tool('bind_channel', 'Bind a configured channel target to a Team by team_name so inbound from that target routes to the Team\'s TeamLeader (a core-owned Team capability). channel_id selects the configured channel (optional; defaults to the dispatcher\'s sole channel). meta carries the provider-specific selector — for Feishu, { "chat_id": "<group chat id>" } (group chats only; chat_type is inferred). Binding state, routing, and authorization are core-owned.', {
+    tool('bind_channel', 'Bind a configured channel target to a Team by team_name so inbound from that target routes to the Team\'s TeamLeader (a core-owned Team capability). channel_id selects the configured channel (optional; defaults to the dispatcher\'s sole channel). meta carries the channel\'s provider-specific selector — e.g. { "chat_id": "<group chat id>" } for a chat channel (group chats only; chat_type is inferred). Binding state, routing, and authorization are core-owned.', {
       team_name: { type: 'string', minLength: 1, maxLength: 64 },
       channel_id: { type: 'string', minLength: 1, maxLength: 64 },
       meta: { type: 'object' },
     }, ['team_name', 'meta']),
-    tool('transfer_back', 'Return a bound channel target to the dispatcher, deactivating the Team binding. channel_id selects the configured channel (optional; defaults to the sole channel). meta carries the provider selector — for Feishu, { "chat_id": "<group chat id>" }.', {
+    tool('transfer_back', 'Return a bound channel target to the dispatcher, deactivating the Team binding. channel_id selects the configured channel (optional; defaults to the sole channel). meta carries the channel\'s provider selector — e.g. { "chat_id": "<group chat id>" } for a chat channel.', {
       channel_id: { type: 'string', minLength: 1, maxLength: 64 },
       meta: { type: 'object' },
     }, ['meta']),
@@ -248,8 +248,8 @@ function dissolveArgs(value: unknown): Record<string, unknown> {
 
 function bindChannelArgs(value: unknown): Record<string, unknown> {
   const obj = asRecord(value, 'bind_channel arguments');
-  // Group-only bind by team_name + a provider selector `meta` (Feishu:
-  // `{ chat_id }`). channel_id is optional (defaults to the sole configured
+  // Group-only bind by team_name + a provider selector `meta` (e.g. a chat
+  // channel: `{ chat_id }`). channel_id is optional (defaults to the sole configured
   // channel); core resolves the (channel_id, target_key) v2 binding key via the
   // channel's resolveTarget(meta).
   return {

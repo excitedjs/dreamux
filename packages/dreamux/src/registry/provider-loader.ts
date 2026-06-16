@@ -162,7 +162,7 @@ async function loadOneProviderPackage<
   if (existing === undefined) {
     registry.register(provider.descriptor);
   }
-  registry.registerImplementation(seedDescriptor.id, provider);
+  registry.registerImplementation(provider.descriptor.id, provider);
 }
 
 function resolvePackageName<
@@ -250,7 +250,7 @@ export function assertLoadedProviderObject(
 
 /**
  * Shared structural check for `provider.descriptor`: present, correct kind,
- * non-empty id, and a ref matching the requested ref.
+ * seed id, and a ref matching the requested ref.
  */
 export function assertProviderDescriptorShape(
   descriptor: unknown,
@@ -266,8 +266,10 @@ export function assertProviderDescriptorShape(
       `provider.descriptor.kind must be ${JSON.stringify(expectedKind)} (got ${JSON.stringify(candidate.kind)})`,
     );
   }
-  if (typeof candidate.id !== 'string' || candidate.id.trim() === '') {
-    context.fail('provider.descriptor.id must be a non-empty string');
+  if (candidate.id !== context.descriptor.id) {
+    context.fail(
+      `provider.descriptor.id must be ${JSON.stringify(context.descriptor.id)}`,
+    );
   }
   if (candidate.ref?.raw !== context.ref) {
     context.fail(`provider.descriptor.ref must be ${JSON.stringify(context.ref)}`);

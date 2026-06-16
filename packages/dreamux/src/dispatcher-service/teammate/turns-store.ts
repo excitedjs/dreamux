@@ -3,13 +3,14 @@ import { appendFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { createInterface } from 'node:readline';
 
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
+
 import { isNotFound } from '../../platform/fs-errors.js';
 import { dispatcherTeamMateTurnsPath } from '../../platform/paths.js';
 import type { TeamMateTurnRecord } from './types.js';
 
-export interface TeamMateTurnsStoreLog {
-  warn(message: string, fields?: Record<string, unknown>): void;
-}
+/** Reuse the neutral logger's `warn` — no forked, message-first shape. */
+export type TeamMateTurnsStoreLog = Pick<DreamuxLogger, 'warn'>;
 
 const PREVIEW_MAX = 500;
 const PREVIEW_HEAD = 497;
@@ -117,11 +118,14 @@ export class TeamMateTurnsStore {
       }
     } catch (err) {
       if (!isNotFound(err)) {
-        this.log.warn('TeamMate turns archive read failed', {
-          dispatcher_id: dispatcherId,
-          name,
-          error: err instanceof Error ? err.message : String(err),
-        });
+        this.log.warn(
+          {
+            dispatcher_id: dispatcherId,
+            name,
+            error: err instanceof Error ? err.message : String(err),
+          },
+          'TeamMate turns archive read failed',
+        );
       }
     } finally {
       lines.close();
@@ -138,12 +142,15 @@ export class TeamMateTurnsStore {
       await mkdir(dirname(path), { recursive: true });
       await appendFile(path, `${JSON.stringify(row)}\n`, { mode: 0o600 });
     } catch (err) {
-      this.log.warn('TeamMate turns archive append failed', {
-        dispatcher_id: dispatcherId,
-        name,
-        type: row.type,
-        error: err instanceof Error ? err.message : String(err),
-      });
+      this.log.warn(
+        {
+          dispatcher_id: dispatcherId,
+          name,
+          type: row.type,
+          error: err instanceof Error ? err.message : String(err),
+        },
+        'TeamMate turns archive append failed',
+      );
     }
   }
 }

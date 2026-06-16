@@ -20,7 +20,12 @@ import type { DreamuxLogger } from './logger.js';
 import type {
   AgentRuntimeProviderDescriptor,
   DreamuxEnvironment,
+  ProviderBinCheck,
+  ProviderDiagnosticRunner,
+  ProviderDiagnosticScope,
+  ProviderDiagnosticResult,
   ProviderFactory,
+  ProviderOnboard,
 } from './provider.js';
 import type {
   InboundDeliveryHooks,
@@ -149,12 +154,24 @@ export interface AgentRuntimePathContext {
    * rendezvous sockets do NOT live here.
    */
   dispatcherDir(id: string): string;
-  /** The runtime's primary-process stdout log file in the central logs tree. */
-  stdoutLogPath(id: string): string;
-  /** The runtime's primary-process stderr/diagnostic log file in the central logs tree. */
-  stderrLogPath(id: string): string;
+  /**
+   * The central logs root. The runtime composes its OWN log subpaths under this
+   * directory (e.g. `<logsDir>/<engine>/<id>.log`), so core never has to name a
+   * per-runtime log file. Neutral: a runtime that logs differently lays out its
+   * own tree here.
+   */
+  logsDir(): string;
   /** The owning dispatcher's completion-spill directory in the cache tree. */
   completionSpillDir(id: string): string;
+  /**
+   * Candidate directories for volatile rendezvous sockets, in host preference
+   * order. A runtime that needs a Unix-domain socket allocates a fresh random
+   * short name inside the first candidate whose full path fits the platform
+   * socket-path budget (see `@excitedjs/dreamux-utils` `unixSocketPathFitsBudget`).
+   * Neutral: a runtime that needs no socket (e.g. a stdio engine) ignores it.
+   * Sockets are never persisted and never live under {@link dispatcherDir}.
+   */
+  runtimeSocketDirs(): readonly string[];
 }
 
 export interface AgentRuntimeProviderConfigReadContext {
@@ -168,42 +185,14 @@ export interface AgentRuntimeProviderConfigReadContext {
   prefix: string;
 }
 
-/**
- * A neutral runtime-binary launch descriptor a provider declares for doctor.
- * Pure data — the provider never runs it itself.
- */
-export interface AgentRuntimeBinCheck {
-  name: string;
-  bin: string;
-  args: string[];
-}
+/** Runtime-specific alias of the shared provider binary check. */
+export type AgentRuntimeBinCheck = ProviderBinCheck;
 
-/**
- * The neutral result of a provider's own (non-bin) diagnostic pass. `detail` is
- * a one-line summary; `errors` are per-problem lines.
- */
-export interface AgentRuntimeDoctorResult {
-  ok: boolean;
-  detail: string;
-  errors: string[];
-}
+/** Runtime-specific alias of the shared provider diagnostic result. */
+export type AgentRuntimeDiagnosticResult = ProviderDiagnosticResult;
 
-/**
- * The minimal command runner a provider's diagnostic needs. A structural subset
- * of the CLI's command runner so the provider never imports host CLI modules.
- */
-export interface AgentRuntimeDiagnosticRunner {
-  check(
-    command: string,
-    args: string[],
-    options?: { env?: DreamuxEnvironment },
-  ): Promise<boolean>;
-  capture(
-    command: string,
-    args: string[],
-    options?: { env?: DreamuxEnvironment },
-  ): Promise<string>;
-}
+/** Runtime-specific alias of the shared provider diagnostic runner. */
+export type AgentRuntimeDiagnosticRunner = ProviderDiagnosticRunner;
 
 /**
  * Neutral runtime status. Mirrors the host's dispatcher lifecycle states without
@@ -296,6 +285,16 @@ export interface AgentRuntimeCreateContext<TConfig = unknown> {
   paths?: AgentRuntimePathContext;
   state?: AgentRuntimeStateCallbacks;
   /**
+   * Neutral process-env injection seam. Core merges these entries into the
+   * runtime's spawn environment AFTER `process.env` and BEFORE the provider's
+   * own `config.extra_env`, i.e. spawn env =
+   * `{ ...process.env, ...injectEnv, ...config.extra_env }`. Core owns what (if
+   * anything) it injects; `config.extra_env` is the provider's own config and is
+   * NOT routed through here. Empty/omitted means "inject nothing" — the common
+   * case today.
+   */
+  injectEnv?: Record<string, string>;
+  /**
    * Fired each time a delivered turn reaches a terminal state. Capability-
    * neutral; the launcher opts in.
    */
@@ -347,20 +346,29 @@ export interface AgentRuntime {
 
 /**
  * Per-runtime diagnostic context. Neutral: it carries the runtime instance id,
- * the provider-parsed config, the resolved env, and the doctor pass `scope`,
+ * the provider-parsed config, the resolved env, and the diagnostic `scope`,
  * rather than a host `DispatcherConfig`.
  */
 export interface AgentRuntimeDiagnosticContext<TConfig = unknown> {
   runtime_id: string;
   config: TConfig;
   env: DreamuxEnvironment;
-  scope: 'foreground' | 'managedService';
+  scope: ProviderDiagnosticScope;
+  /**
+   * The same neutral path context the create context carries, supplied by
+   * doctor so a provider diagnostic can pre-check placement-sensitive paths
+   * (e.g. validate that a runtime socket would fit the platform budget via
+   * {@link AgentRuntimePathContext.runtimeSocketDirs}). Optional: a provider
+   * with no path-dependent checks ignores it.
+   */
+  paths?: AgentRuntimePathContext;
 }
 
 /**
- * A provider's self-reported diagnostics: it DECLARES the bin checks doctor
- * should dedup + execute, and RUNS its own non-bin internal checks. Doctor
- * iterates providers and calls these instead of branching on a builtin ref.
+ * A provider's self-reported diagnostics: it DECLARES the bin checks Dreamux
+ * core should dedup + execute, and RUNS its own non-bin internal checks. The
+ * core doctor command iterates providers and calls these instead of branching
+ * on a builtin ref.
  *
  * Optional on {@link AgentRuntimeProvider}: a provider with no diagnostic surface
  * omits it. The host supplies the {@link AgentRuntimeDiagnosticRunner} to
@@ -371,7 +379,7 @@ export interface AgentRuntimeDiagnostic<TConfig = unknown> {
   runDiagnostic(
     context: AgentRuntimeDiagnosticContext<TConfig>,
     runner: AgentRuntimeDiagnosticRunner,
-  ): Promise<AgentRuntimeDoctorResult>;
+  ): Promise<AgentRuntimeDiagnosticResult>;
 }
 
 /**
@@ -393,10 +401,15 @@ export interface AgentRuntimeProvider<TConfig = unknown> {
     context: AgentRuntimeProviderConfigReadContext,
   ): TConfig | Promise<TConfig>;
   /**
-   * Self-reported doctor diagnostics. Optional: a provider with no diagnostic
+   * Self-reported diagnostics. Optional: a provider with no diagnostic
    * surface may omit it.
    */
   diagnostic?: AgentRuntimeDiagnostic<TConfig>;
+  /**
+   * Provider-owned onboarding. Core asks only for host envelope fields and
+   * delegates provider-specific raw config collection to this capability.
+   */
+  onboard?: ProviderOnboard<Record<string, unknown>>;
   createRuntime(context: AgentRuntimeCreateContext<TConfig>): AgentRuntime;
 }
 

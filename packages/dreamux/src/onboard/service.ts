@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 
 import { build as buildPlist } from 'plist';
+import type { ProviderBinCheck } from '@excitedjs/dreamux-types';
 import { expandHome } from '../config/config.js';
 import { logsRoot, stateRoot } from '../platform/paths.js';
 
@@ -27,20 +28,12 @@ export const SERVICE_PATH_DEFAULTS = ['/usr/local/bin', '/usr/bin', '/bin'];
 export interface ServiceInstallAnswers {
   configDir: string;
   /**
-   * Optional Codex binary. Present when enabled builtin:codex dispatchers need
-   * the managed-service PATH to resolve `codex`; omitted for
-   * external-runtime-only installs.
+   * Provider-owned binary checks the managed-service PATH must resolve. Derived
+   * from provider diagnostics for daemon installs and onboard.
    */
-  codexBin?: string;
+  providerBinChecks?: ProviderBinCheck[];
   dreamuxBin: string;
   nodeBin: string;
-  /**
-   * Optional Claude Code binary, so the managed-service unit PATH also resolves
-   * `claude` for server-hosted `builtin:claude-code` TeamMate workers (issue
-   * #126 PR8). Absent when Claude Code is not installed — codex-only setups
-   * install unchanged; the claude-code worker simply stays unavailable.
-   */
-  claudeBin?: string;
   startService: boolean;
   dryRun: boolean;
 }
@@ -191,12 +184,9 @@ WantedBy=default.target
 export function managedServiceEnvironment(
   answers: ServiceInstallAnswers,
 ): Record<string, string> {
-  // The codex binary path comes from the referenced agents[] entry's config
-  // (agents[].config.bin), so the unit no longer pins
-  // CODEX_HOST_CODEX_BIN — that env stays a deliberate host-level override
-  // only. The unit PATH still includes the codex binary's directory (see
-  // managedServicePath) so a bare "codex" resolves under the service's minimal
-  // environment.
+  // Provider binary paths come from provider diagnostics. The unit PATH includes
+  // their directories (see managedServicePath) so provider-owned bare commands
+  // resolve under the service's minimal environment without core naming them.
   const env: Record<string, string> = {
     DREAMUX_CONFIG_DIR: answers.configDir,
     HOME: homedir(),
@@ -237,10 +227,10 @@ export async function validateManagedServiceLaunch(
     );
   }
 
-  if (answers.codexBin !== undefined) {
-    if (!(await runner.check(answers.codexBin, ['--help'], { env }))) {
+  for (const check of serviceProviderBinChecks(answers)) {
+    if (!(await runner.check(check.bin, check.args, { env }))) {
       errors.push(
-        `managed service cannot execute Codex CLI at ${answers.codexBin}`,
+        `managed service cannot execute provider binary '${check.name}' at ${check.bin}`,
       );
     }
   }
@@ -274,39 +264,6 @@ export async function resolveServiceExecutable(
   throw new Error(
     `managed service cannot resolve executable '${command}' from PATH; pass an absolute path and rerun dreamux onboard`,
   );
-}
-
-/**
- * Best-effort variant of {@link resolveServiceExecutable}: returns the resolved
- * absolute path, or `null` instead of throwing when the command is not found.
- * Used for optional binaries (e.g. Claude Code) that must not fail a codex-only
- * daemon install when absent (issue #126 PR8).
- */
-export async function tryResolveServiceExecutable(
-  command: string,
-  env: NodeJS.ProcessEnv = process.env,
-): Promise<string | null> {
-  try {
-    return await resolveServiceExecutable(command, env);
-  } catch {
-    return null;
-  }
-}
-
-/** Default Claude Code binary name seeded into the managed-service unit PATH. */
-const DEFAULT_SERVICE_CLAUDE_BIN = 'claude';
-
-/**
- * Pick the Claude Code binary whose directory seeds the managed-service unit
- * PATH so server-hosted `builtin:claude-code` workers can resolve `claude`
- * (issue #126 PR8). The `DREAMUX_CLAUDE_BIN` env override wins; otherwise the
- * default `claude` is located on the operator's PATH at install time. Shared by
- * both `dreamux onboard` and `dreamux daemon install`.
- */
-export function selectServiceClaudeBin(env: NodeJS.ProcessEnv): string {
-  const override = env['DREAMUX_CLAUDE_BIN'];
-  if (override !== undefined && override.trim() !== '') return override.trim();
-  return DEFAULT_SERVICE_CLAUDE_BIN;
 }
 
 export function nodeVersionSatisfies(raw: string): boolean {
@@ -511,14 +468,21 @@ export async function stabilizeHomebrewCellarNode(
 function managedServicePath(answers: ServiceInstallAnswers): string {
   const dirs = [
     dirname(answers.nodeBin),
-    ...(answers.codexBin !== undefined ? absoluteDir(answers.codexBin) : []),
-    // The Claude Code install dir, when present, so server-hosted
-    // builtin:claude-code workers can resolve `claude` (issue #126 PR8).
-    ...(answers.claudeBin !== undefined ? absoluteDir(answers.claudeBin) : []),
+    ...serviceProviderBinChecks(answers).flatMap((check) => absoluteDir(check.bin)),
     ...absoluteDir(answers.dreamuxBin),
     ...SERVICE_PATH_DEFAULTS,
   ];
   return uniqueNonEmpty(dirs).join(delimiter);
+}
+
+function serviceProviderBinChecks(
+  answers: ServiceInstallAnswers,
+): ProviderBinCheck[] {
+  const checks = new Map<string, ProviderBinCheck>();
+  for (const check of answers.providerBinChecks ?? []) {
+    checks.set(`${check.name}\0${check.bin}\0${check.args.join('\0')}`, check);
+  }
+  return [...checks.values()];
 }
 
 function absoluteDir(path: string): string[] {

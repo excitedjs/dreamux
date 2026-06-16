@@ -14,8 +14,8 @@ import { Readable } from 'node:stream';
 import {
   renderChannelBlock,
   renderChannelInput,
-  type InboundTurnInput,
-} from '../src/agent-runtime/turn.js';
+} from '@excitedjs/dreamux-utils';
+import type { InboundTurnInput } from '@excitedjs/dreamux-types';
 import { formatFeishuMessageForRuntime } from '@excitedjs/feishu-channel';
 import type { FeishuInboundEvent } from '@excitedjs/feishu-channel';
 

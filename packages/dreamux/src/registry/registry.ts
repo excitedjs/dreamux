@@ -3,8 +3,8 @@
  *
  * The registry is process-local and server-owned. It validates provider refs and
  * resolves them to provider descriptors; executable providers own their runtime
- * capabilities directly. External `npm:` agentRuntime refs are registered by
- * the async loader before config validation resolves them.
+ * capabilities directly. External `npm:` refs are registered by the async
+ * provider loaders before config validation resolves them.
  */
 
 import {
@@ -56,14 +56,14 @@ export class UnknownBuiltinProviderError extends Error {
 }
 
 /**
- * Thrown when an external (`npm:`) ref is selected before the async
- * agentRuntime loader has registered it.
+ * Thrown when an external (`npm:`) ref is selected before the async provider
+ * loader for that kind has registered it.
  */
 export class ReservedExternalProviderError extends Error {
   constructor(readonly ref: string) {
     super(
       `external provider ref ${JSON.stringify(ref)} is not loaded; load the ` +
-        'agentRuntime provider before resolving config',
+        'provider package before resolving config',
     );
     this.name = 'ReservedExternalProviderError';
   }
@@ -133,9 +133,8 @@ export class ProviderRegistry {
    *
    * - `builtin:<id>` resolves to the registered descriptor, or throws
    *   {@link UnknownBuiltinProviderError} if absent.
-   * - `npm:` refs resolve only after the async agentRuntime loader registers
-   *   their descriptor; otherwise they throw
-   *   {@link ReservedExternalProviderError}.
+   * - `npm:` refs resolve only after the async provider loader registers their
+   *   descriptor; otherwise they throw {@link ReservedExternalProviderError}.
    *
    * A malformed string ref throws `InvalidProviderRefError` from
    * {@link parseProviderRef}.

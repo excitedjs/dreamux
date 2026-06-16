@@ -15,7 +15,7 @@
  * (`onboard/bundled-skills.ts`), which wrote the skills into each runtime's
  * working directory; nothing here mutates the filesystem.
  */
-import type { AgentRuntimeRole, AgentRuntimeSkillSource } from './types.js';
+import type { AgentRuntimeRole, AgentRuntimeSkillSource } from '@excitedjs/dreamux-types';
 import {
   BUNDLED_SKILL_NAMES,
   bundledSkillDir,

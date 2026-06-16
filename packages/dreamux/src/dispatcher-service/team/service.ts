@@ -2,10 +2,7 @@ import { Buffer } from 'node:buffer';
 
 import { WorktreeManager } from '../teammate/worktree-manager.js';
 import type { TeamMateAgentService, TeamMateSharedWorkspace } from '../teammate/service.js';
-import {
-  requireLifecycleText,
-  teamServicePrincipal,
-} from '../teammate/types.js';
+import { requireLifecycleText } from '../teammate/types.js';
 import { ChannelBindingStore } from '../channel-binding/store.js';
 import type { ChannelBinding } from '../channel-binding/store.js';
 import { TeamStore } from './store.js';
@@ -30,20 +27,18 @@ import type {
   TeamMateRuntimeStatus,
 } from '../teammate/types.js';
 
-export interface TeamServiceOptions {
+export interface TeamManagerOptions {
   teammates: TeamMateAgentService;
 }
 
-export class TeamService {
+export class TeamManager {
   private readonly store = new TeamStore();
   private readonly worktrees = new WorktreeManager();
   private readonly bindings = new ChannelBindingStore();
 
-  constructor(private readonly opts: TeamServiceOptions) {}
+  constructor(private readonly opts: TeamManagerOptions) {}
 
   async create(input: TeamCreateInput): Promise<TeamCreateResult> {
-    // Required recovery subject — enforced for in-process callers too
-    // (issue #182 PR-3).
     requireLifecycleText(input.intent, 'Team create intent');
     const teamId = validateTeamId(input.name);
     const existing = await this.store.get(input.dispatcherId, teamId);
@@ -53,13 +48,6 @@ export class TeamService {
     const dispatcherWorkspace = await this.opts.teammates.dispatcherWorkspace(
       input.dispatcherId,
     );
-    // #199: no `repo` (no explicit cwd, no worktree request) → a plain
-    // `<dispatcher cwd>/.workspace/work/<team_name>/` directory shared by the
-    // TeamLeader and every member, NOT a git worktree, so the dispatcher cwd
-    // need not be a git repo. An explicit `repo` keeps the prior semantics:
-    // reuse-cwd runs in the given cwd; managed (also the in-process default when
-    // a repoCwd is supplied) creates a git worktree under the dispatcher
-    // workspace.
     const workspace =
       input.worktree === undefined && input.repoCwd === undefined
         ? await this.worktrees.prepareDefaultWorkspace({
@@ -77,14 +65,6 @@ export class TeamService {
               cleanup: 'keep',
             },
           });
-    // The TeamLeader address is a concrete, never-reused name (issue #188), not
-    // a reconstructed `${teamId}-leader`. ALWAYS allocate a fresh one — including
-    // when recreating a closed Team: `createTeamLeader` mints a new session and
-    // clears the checkpoint (it does not truly resume the old leader), so reusing
-    // the old closed `tl-` name would map one concrete name to multiple sessions
-    // and break the name↔session invariant. The old closed leader identity stays
-    // untouched. Routing/status/dissolve read the stored leader_name, never
-    // recompute it. `${teamId}-leader` survives only as the display label.
     const leaderName = await this.opts.teammates.allocateLeaderName(
       input.dispatcherId,
       teamId,
@@ -111,11 +91,7 @@ export class TeamService {
       closedAt: null,
       closeNote: null,
       worktree: workspace.worktree,
-      // Always write the required intent, so a reused closed Team record adopts
-      // the new create.intent instead of keeping its old value (issue #182 PR-3).
       intent: input.intent,
-      // Adopt the freshly allocated concrete leader name (#188) so a recreated
-      // closed Team routes/statuses/dissolves on the new leader, not the old one.
       leaderName,
     });
     const prompt = input.prompt ?? teamLeaderPrompt(team);
@@ -132,10 +108,6 @@ export class TeamService {
       intent: input.intent,
     });
     team = await this.store.update(team, { status: 'running' });
-    // A freshly created Team has no bound channel: binding is done after create
-    // via the core Channel MCP `bind_channel` tool (issue #209 slice 8 removed
-    // the create-time `bind_group` convenience). `binding` is therefore null
-    // here — honestly "no active bound group yet", not a placeholder.
     return {
       team: teamView(team),
       leader: leader.teammate,
@@ -157,14 +129,7 @@ export class TeamService {
     return this.summary(team);
   }
 
-  /**
-   * Filterable Team recovery search (issue #182 PR-7) — the Team-side mirror of
-   * the TeamMate `history` surface. Reads the compact recovery rows straight
-   * from the `team/records/<team_name>.json` JSON records (closed included),
-   * sorted most-recent first, with a cursor. There is no team event/audit
-   * archive to fold (issue #199 Slice 3 removed it).
-   */
-  async history(input: TeamHistoryQuery): Promise<TeamHistoryResult> {
+    async history(input: TeamHistoryQuery): Promise<TeamHistoryResult> {
     const teams = await this.store.list(input.dispatcherId);
     const rows: TeamHistoryRow[] = [];
     for (const team of teams) {
@@ -188,8 +153,6 @@ export class TeamService {
   }
 
   async dissolve(input: TeamDissolveInput): Promise<TeamSummary> {
-    // Required dissolve reason — enforced for in-process callers too (issue
-    // #182 PR-3); it also feeds the member/leader closes.
     requireLifecycleText(input.note, 'Team dissolve note');
     const team = await this.mustTeam(input.dispatcherId, input.teamId);
     for (const binding of await this.bindings.list(input.dispatcherId)) {
@@ -201,20 +164,18 @@ export class TeamService {
         });
       }
     }
-    const principal = this.teamPrincipal(team);
     const members = await this.members(team);
-    // dissolve note is required (issue #182 PR-3), so the member/leader close
-    // calls carry the operator's real reason — no synthetic 'team dissolved'
-    // fallback. Internal/system dissolves pass an explicit system-authored note.
     for (const member of members) {
-      await this.opts.teammates.closeScoped({
-        principal,
+      await this.opts.teammates.close({
+        dispatcherId: team.dispatcher_id,
+        teamId: team.team_id,
         name: member.name,
         note: input.note,
       });
     }
-    await this.opts.teammates.closeScoped({
-      principal,
+    await this.opts.teammates.close({
+      dispatcherId: team.dispatcher_id,
+      teamId: team.team_id,
       name: team.leader_name,
       note: input.note,
     });
@@ -236,9 +197,6 @@ export class TeamService {
     if (team.status === 'closed') {
       throw new Error(`Team ${JSON.stringify(input.teamId)} is closed`);
     }
-    // The caller resolved `target` via the channel session; core derives the
-    // leader identity from the active Team record (never trusts a caller-supplied
-    // leader). The store enforces target bindability (P2P is rejected).
     return this.bindings.bind({
       dispatcherId: input.dispatcherId,
       channelId: input.channelId,
@@ -267,15 +225,7 @@ export class TeamService {
     return binding;
   }
 
-  /**
-   * The dispatcher-local `channel_id` a TeamLeader is bound to for a target, or
-   * null when it has no active binding there (issue #209 live multi-channel
-   * routing). Searches the dispatcher's bindings by `target_key` across ALL
-   * channels — the leader does not declare which channel it is on — and confirms
-   * the active row belongs to this `(teamId, leaderName)` and an open Team. The
-   * caller uses the returned channel to authorize and to egress the bound bot.
-   */
-  async resolveLeaderChannel(input: {
+    async resolveLeaderChannel(input: {
     dispatcherId: string;
     teamId: string;
     leaderName: string;
@@ -298,12 +248,13 @@ export class TeamService {
   async deliverToLeader(input: {
     dispatcherId: string;
     teamId: string;
-    turn: import('../../agent-runtime/turn.js').InboundTurnInput;
-  }): Promise<import('../../agent-runtime/types.js').AgentRuntimeTurnResult> {
+    turn: import('@excitedjs/dreamux-types').InboundTurnInput;
+  }): Promise<import('@excitedjs/dreamux-types').AgentRuntimeTurnResult> {
     const team = await this.mustTeam(input.dispatcherId, input.teamId);
     if (team.status === 'closed') return { status: 'stopped' };
-    return this.opts.teammates.channelInputScoped(
-      this.teamPrincipal(team),
+    return this.opts.teammates.channelInput(
+      team.dispatcher_id,
+      team.team_id,
       team.leader_name,
       input.turn,
     );
@@ -323,10 +274,8 @@ export class TeamService {
   }
 
   private async summary(team: TeamRecord): Promise<TeamSummary> {
-    // #199 Slice 4: the leader is read with the internal Team-service authority —
-    // a TeamLeader is not visible on the dispatcher `teammate.*` surface.
     const leader = await this.opts.teammates
-      .statusScoped(this.teamPrincipal(team), team.leader_name)
+      .status(team.dispatcher_id, team.leader_name, team.team_id)
       .catch(() => null);
     return {
       team: teamView(team),
@@ -372,27 +321,16 @@ export class TeamService {
     };
   }
 
-  /** The leader's current identity state (cheap read), or null if unreadable. */
-  private async leaderState(
+    private async leaderState(
     team: TeamRecord,
   ): Promise<TeamMateIdentityStatus | null> {
     const leader = await this.opts.teammates
-      .statusScoped(this.teamPrincipal(team), team.leader_name)
+      .status(team.dispatcher_id, team.leader_name, team.team_id)
       .catch(() => null);
     return leader?.status ?? null;
   }
 
-  /** The internal Team-service authority over this Team (issue #199 Slice 4). */
-  private teamPrincipal(team: TeamRecord) {
-    return teamServicePrincipal({
-      dispatcherId: team.dispatcher_id,
-      teamId: team.team_id,
-      leaderName: team.leader_name,
-    });
-  }
-
-  /** The active bound Feishu group for a Team, or null when none is bound. */
-  private async activeGroupBinding(
+    private async activeGroupBinding(
     team: TeamRecord,
   ): Promise<TeamChannelBindingSummary | null> {
     const bindings = await this.bindings.list(team.dispatcher_id);
@@ -400,9 +338,6 @@ export class TeamService {
       (binding) => binding.active && binding.team_name === team.team_id,
     );
     if (active === undefined) return null;
-    // The read-tool summary keeps the `{ provider, chat_id }` shape; the Feishu
-    // chat id is the provider selector stored in `meta` (v2 keeps chat_id out of
-    // the core top-level columns).
     const chatId = active.meta['chat_id'];
     return {
       provider: active.provider,
@@ -414,15 +349,10 @@ export class TeamService {
     return (await this.members(team)).length;
   }
 
-  /**
-   * The Team's members only (issue #199 Slice 4): the internal Team-service
-   * authority can see both the leader and the members, so the leader (known by
-   * its concrete name) is filtered out of member listings.
-   */
-  private async members(team: TeamRecord): Promise<TeamMateRuntimeStatus[]> {
-    return (await this.opts.teammates.listScoped(this.teamPrincipal(team))).filter(
-      (member) => member.name !== team.leader_name,
-    );
+    private async members(team: TeamRecord): Promise<TeamMateRuntimeStatus[]> {
+    return (
+      await this.opts.teammates.list(team.dispatcher_id, team.team_id)
+    ).filter((member) => member.name !== team.leader_name);
   }
 
   private async mustTeam(dispatcherId: string, teamId: string): Promise<TeamRecord> {
@@ -432,11 +362,6 @@ export class TeamService {
   }
 }
 
-/**
- * Project the persisted {@link TeamRecord} into the public {@link TeamView}
- * (issue #199 Slice 2): concrete `team_name`, no duplicate `name`/`team_id`, no
- * machine-local `repo_cwd`/`runtime_cwd`/`worktree`.
- */
 function teamView(team: TeamRecord): TeamView {
   return {
     team_name: team.team_id,
@@ -515,7 +440,6 @@ function decodeTeamCursor(cursor: string): number {
       return parsed.offset;
     }
   } catch {
-    // fall through to the loud error below
   }
   throw new Error('invalid history cursor');
 }

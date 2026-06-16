@@ -8,13 +8,13 @@ import {
 import { adminSocketPath as defaultAdminSocketPath } from '../platform/paths.js';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
 import { validateTeamId } from '../dispatcher-service/team/types.js';
-import { validateTeamMateName } from '../dispatcher-service/teammate/types.js';
+
+export type TeamMateMcpCallerKind = 'dispatcher' | 'team_leader';
 
 export interface TeamMateMcpOptions {
   dispatcherId: string;
-  callerKind: 'dispatcher' | 'team_leader' | 'teammate';
+  callerKind: TeamMateMcpCallerKind;
   teamId?: string;
-  leaderName?: string;
   adminSocketPath?: string;
   input?: Readable;
   output?: Writable;
@@ -45,9 +45,6 @@ export async function runTeamMateMcp(opts: TeamMateMcpOptions): Promise<void> {
   const dispatcherId = validateDispatcherId(opts.dispatcherId);
   const callerKind = validateCallerKind(opts.callerKind);
   const teamId = callerKind === 'team_leader' ? validateRequiredTeamId(opts.teamId) : undefined;
-  const leaderName = callerKind === 'team_leader'
-    ? validateTeamMateName(opts.leaderName ?? '')
-    : undefined;
   const socketPath = opts.adminSocketPath ?? defaultAdminSocketPath();
   const input = opts.input ?? process.stdin;
   const output = opts.output ?? process.stdout;
@@ -69,7 +66,6 @@ export async function runTeamMateMcp(opts: TeamMateMcpOptions): Promise<void> {
         dispatcherId,
         callerKind,
         ...(teamId !== undefined ? { teamId } : {}),
-        ...(leaderName !== undefined ? { leaderName } : {}),
         socketPath,
         output,
       });
@@ -86,9 +82,8 @@ async function handleRequest(
   request: JsonRpcRequest,
   ctx: {
     dispatcherId: string;
-    callerKind: 'dispatcher' | 'team_leader' | 'teammate';
+    callerKind: TeamMateMcpCallerKind;
     teamId?: string;
-    leaderName?: string;
     socketPath: string;
     output: Writable;
   },
@@ -137,11 +132,9 @@ function initializeResult(params: unknown): Record<string, unknown> {
   };
 }
 
-function teammateTools(
-  callerKind: 'dispatcher' | 'team_leader' | 'teammate',
-): Array<Record<string, unknown>> {
+function teammateTools(callerKind: TeamMateMcpCallerKind): Array<Record<string, unknown>> {
   const readTools = [
-    tool('history', 'Search this scope\'s TeamMate records for recovery (closed included). A compact recovery list keyed by concrete name, not a raw event timeline. Returns { items, next_cursor }.', {
+    tool('history', 'Search this TeamMate set for recovery (closed included). A compact recovery list keyed by concrete name, not a raw event timeline. Returns { items, next_cursor }.', {
       name: { type: 'string', minLength: 1, maxLength: 64 },
       status: {
         type: 'string',
@@ -155,17 +148,16 @@ function teammateTools(
       limit: { type: 'integer', minimum: 1, maximum: 100 },
       cursor: { type: 'string', minLength: 1, maxLength: 1000 },
     }, []),
-    tool('list', 'List this scope\'s TeamMate identities (compact rows: concrete name, owner, status, agent runtime, intent essentials).', {}, []),
+    tool('list', 'List this TeamMate set (compact rows: concrete name, status, agent runtime, intent essentials).', {}, []),
     tool('status', 'Read one TeamMate identity and live runtime status by its concrete name.', {
       name: { type: 'string', minLength: 1, maxLength: 64 },
     }, ['name']),
-    tool('last', 'Read a TeamMate\'s most recent settled turn(s) by concrete name. Reads the TeamMate record first (existence / scope / common fields), then folds the recent settled turns from its per-name turns archive; it never starts or resumes a runtime, so it works for a closed/stopped TeamMate. This is the fallback when a completion was not delivered. turns defaults to 1 (range 1..5); the newest turn is last.', {
+    tool('last', 'Read a TeamMate\'s most recent settled turn(s) by concrete name. Reads the TeamMate record first, then folds the recent settled turns from its per-name turns archive; it never starts or resumes a runtime, so it works for a closed/stopped TeamMate. This is the fallback when a completion was not delivered. turns defaults to 1 (range 1..5); the newest turn is last.', {
       name: { type: 'string', minLength: 1, maxLength: 64 },
       turns: { type: 'integer', minimum: 1, maximum: 5 },
     }, ['name']),
     tool('get_capabilities', 'List TeamMate verbs and spawnable agent runtime ids.', {}, []),
   ];
-  if (callerKind === 'teammate') return readTools;
   const spawnProperties: Record<string, unknown> = {
     name_prefix: { type: 'string', minLength: 1, maxLength: 64 },
     prompt: { type: 'string', minLength: 1, maxLength: 20000 },
@@ -221,17 +213,13 @@ async function callTool(
   params: unknown,
   ctx: {
     dispatcherId: string;
-    callerKind: 'dispatcher' | 'team_leader' | 'teammate';
+    callerKind: TeamMateMcpCallerKind;
     teamId?: string;
-    leaderName?: string;
     socketPath: string;
   },
 ): Promise<Record<string, unknown>> {
   try {
     const call = asToolCallParams(params);
-    if (ctx.callerKind === 'teammate' && isLifecycleTool(call.name)) {
-      return toolError(`TeamMate tool '${call.name}' is not available to teammates`);
-    }
     const mapped = mapToolCall(call, ctx.callerKind);
     return forwardToolCall(
       mapped.method,
@@ -240,7 +228,6 @@ async function callTool(
         ...mapped.params,
         caller_kind: ctx.callerKind,
         ...(ctx.teamId !== undefined ? { team_id: ctx.teamId } : {}),
-        ...(ctx.leaderName !== undefined ? { leader_name: ctx.leaderName } : {}),
       },
       ctx.socketPath,
       call.name,
@@ -252,7 +239,7 @@ async function callTool(
 
 function mapToolCall(
   call: ToolCall,
-  callerKind: 'dispatcher' | 'team_leader' | 'teammate',
+  callerKind: TeamMateMcpCallerKind,
 ): {
   method: string;
   params: Record<string, unknown>;
@@ -277,10 +264,6 @@ function mapToolCall(
     default:
       throw new Error(`unknown TeamMate tool '${String(call.name)}'`);
   }
-}
-
-function isLifecycleTool(name: string): boolean {
-  return name === 'spawn' || name === 'send' || name === 'close';
 }
 
 function negotiateProtocolVersion(params: unknown): string {
@@ -326,11 +309,10 @@ function asToolCallParams(params: unknown): ToolCall {
 
 function spawnArgs(
   value: unknown,
-  callerKind: 'dispatcher' | 'team_leader' | 'teammate',
+  callerKind: TeamMateMcpCallerKind,
 ): Record<string, unknown> {
   const obj = asRecord(value, 'spawn arguments');
   const agentRuntime = optionalString(obj, 'agent_runtime');
-  // Required recovery subject (issue #182 PR-3).
   const intent = requireString(obj, 'intent');
   if (callerKind === 'team_leader') {
     return {
@@ -340,9 +322,6 @@ function spawnArgs(
       ...(agentRuntime !== null ? { agent_runtime: agentRuntime } : {}),
     };
   }
-  // #199 Slice 2: the public work-directory input is a single optional `repo`
-  // object (replacing the old required `cwd` + `worktree`). Omitted → the server
-  // creates a plain per-name work dir (.workspace/work/<name>/, issue #199).
   const repo = optionalRepoInput(obj, 'repo');
   return {
     name_prefix: requireString(obj, 'name_prefix'),
@@ -361,13 +340,6 @@ function optionalProp(
   return value === null ? {} : { [key]: value };
 }
 
-/**
- * Public `repo` input schema (issue #199 Slice 2), shared by `teammate.spawn`
- * and `team.create`: omit it for a plain per-name work dir under the dispatcher
- * workspace (`.workspace/work/<name>/`, no git repo required), or choose a
- * repository work mode (`reuse-cwd` runs in `path`; `managed` creates a git
- * worktree).
- */
 export function repoInputSchema(): Record<string, unknown> {
   return {
     type: 'object',
@@ -384,11 +356,6 @@ export function repoInputSchema(): Record<string, unknown> {
   };
 }
 
-/**
- * Validate and normalize the optional `repo` input object, returned verbatim for
- * the admin layer to map onto the internal cwd + worktree request. `managed`
- * worktree fields are ignored for `reuse-cwd`.
- */
 export function optionalRepoInput(
   obj: Record<string, unknown>,
   key: string,
@@ -416,8 +383,6 @@ export function optionalRepoInput(
 
 function sendArgs(value: unknown): Record<string, unknown> {
   const obj = asRecord(value, 'send arguments');
-  // Optional updated recovery subject (issue #182 PR-3). An empty string is
-  // treated as absent so it never wipes the recorded subject.
   const intent = optionalString(obj, 'intent');
   return {
     name: requireString(obj, 'name'),
@@ -428,7 +393,6 @@ function sendArgs(value: unknown): Record<string, unknown> {
 
 function closeArgs(value: unknown): Record<string, unknown> {
   const obj = asRecord(value, 'close arguments');
-  // Required close reason (issue #182 PR-3).
   return {
     name: requireString(obj, 'name'),
     note: requireString(obj, 'note'),
@@ -545,9 +509,9 @@ function write(output: Writable, line: string): void {
   output.write(line);
 }
 
-function validateCallerKind(value: string): 'dispatcher' | 'team_leader' | 'teammate' {
-  if (value === 'dispatcher' || value === 'team_leader' || value === 'teammate') return value;
-  throw new Error("caller kind must be 'dispatcher', 'team_leader', or 'teammate'");
+function validateCallerKind(value: string): TeamMateMcpCallerKind {
+  if (value === 'dispatcher' || value === 'team_leader') return value;
+  throw new Error("caller kind must be 'dispatcher' or 'team_leader'");
 }
 
 function validateRequiredTeamId(value: string | undefined): string {

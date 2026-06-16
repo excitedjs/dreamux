@@ -19,12 +19,13 @@ import {
   DREAMUX_SKILL_DIR_LAYOUT,
   bundledSkillSourcesForRole,
 } from '../src/agent-runtime/bundled-skill-sources.js';
-import type { AgentRuntimeRole } from '../src/agent-runtime/types.js';
+import type { AgentRuntimeRole } from '@excitedjs/dreamux-types';
 import {
   BUNDLED_SKILL_NAMES,
   bundledSkillContainerDir,
   bundledSkillDir,
   bundledSkillsDir,
+  type BundledSkillName,
 } from '../src/platform/paths.js';
 import {
   CLAUDE_SKILLS_PARENT_LAYOUT,
@@ -47,7 +48,7 @@ describe('bundledSkillSourcesForRole', () => {
       expect(codex.map((s) => s.name)).toEqual([...BUNDLED_SKILL_NAMES]);
       for (const source of codex) {
         expect(source.source).toBe('dreamux-core');
-        expect(source.path).toBe(bundledSkillDir(source.name));
+        expect(source.path).toBe(bundledSkillDir(source.name as BundledSkillName));
       }
       // The bundled skills share one parent dir — the single codex extra root —
       // which is the `.claude/skills` container.

@@ -41,7 +41,8 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@excitedjs/dreamux-types": "workspace:*"
+    "@excitedjs/dreamux-types": "workspace:*",
+    "@excitedjs/dreamux-utils": "workspace:*"
   },
   "devDependencies": {
     "@excitedjs/eslint-config": "workspace:*",

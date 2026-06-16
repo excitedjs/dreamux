@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { bundledSkillDir } from '../src/platform/paths.js';
+import { bundledSkillDir, type BundledSkillName } from '../src/platform/paths.js';
 import {
   DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS,
   DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
@@ -34,7 +34,7 @@ const TEAMMATE_MCP_TOOLS = [
   'get_capabilities',
 ];
 
-function readBundledSkill(name: string): string {
+function readBundledSkill(name: BundledSkillName): string {
   return readFileSync(join(bundledSkillDir(name), 'SKILL.md'), 'utf8');
 }
 

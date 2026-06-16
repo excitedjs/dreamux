@@ -61,7 +61,8 @@ export interface TeamBindChannelInput {
   teamId: string;
   /** Dispatcher-local channel id (`dispatchers[].channels[].id`). */
   channelId: string;
-  provider: 'builtin:feishu';
+  /** The bound channel's provider ref (e.g. `builtin:feishu`). */
+  provider: string;
   /** Provider-resolved target (the caller already ran `resolveTarget`). */
   target: ChannelTarget;
 }
@@ -69,16 +70,18 @@ export interface TeamBindChannelInput {
 export interface TeamTransferChannelBackInput {
   dispatcherId: string;
   channelId: string;
-  /** Provider-owned routing key (Feishu: the chat id). */
+  /** Provider-owned routing key (e.g. a chat channel: the chat id). */
   targetKey: string;
 }
 
 /**
  * Active group binding marker surfaced by the Team read tools (issue #182 PR-7).
- * Bindings are always Feishu group chats, so only the chat id varies.
+ * Bound targets are group chats on a conversational channel; `chat_id` is the
+ * neutral selector (issue #209 — `chat_id` is a provider-local chat id, not a
+ * provider-specific field) and `provider` is the bound channel's ref.
  */
 export interface TeamChannelBindingSummary {
-  provider: 'builtin:feishu';
+  provider: string;
   chat_id: string;
 }
 

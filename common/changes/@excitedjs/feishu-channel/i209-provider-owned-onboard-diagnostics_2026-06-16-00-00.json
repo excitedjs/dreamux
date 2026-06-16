@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "The built-in Feishu Channel provider now owns onboarding prompts for bot app id and app secret and exposes a provider diagnostic capability. Dreamux core records the returned raw config and drives the channel through the shared provider diagnostic contract instead of hardcoding Feishu fields in onboard or doctor.",
+      "type": "minor",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "053700@gmail.com"
+}

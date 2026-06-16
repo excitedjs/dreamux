@@ -7,14 +7,16 @@ when you need the *why* behind a piece of code or a decision history.
 ## What dreamux is
 
 A long-running Node process that hosts N **Dispatchers**. Each Dispatcher binds
-one built-in Feishu bidirectional channel (`builtin:feishu`), one Agent Runtime
-provider (`builtin:codex`, `builtin:claude-code`, or an installed `npm:`
-Agent Runtime provider), and Dreamux-owned MCP surfaces for channel reply and
-TeamMate scheduling/retrieval. All inbound chats for a dispatcher enter that
-dispatcher's runtime context; channel outbound is sent only when the runtime
-calls the dispatcher-bound channel MCP server owned by the Feishu channel
-module. The current architecture is split between the original local-runtime
-baseline and the issue #135 realigned provider surfaces:
+one or more Channel providers (built-in `builtin:feishu` today, at most one
+channel per provider ref), one Agent Runtime provider (`builtin:codex`,
+`builtin:claude-code`, or an installed `npm:` Agent Runtime provider), and
+Dreamux-owned MCP surfaces for Teams and TeamMate scheduling/retrieval. All
+inbound chats for a dispatcher enter that dispatcher's runtime context; channel
+outbound is sent only when the runtime calls a provider-specific channel MCP
+tool exposed by that Channel provider. Channel binding/transfer-back is not a
+generic Channel MCP capability: it lives on the core-owned Team MCP as
+`bind_channel` / `transfer_back`. The current architecture is split between the
+original local-runtime baseline and the issue #209 provider package split:
 
 - [Top-level design](decisions/top-level-design.md) — original MVP baseline;
   still authoritative for unchanged local state/log ownership, Feishu access,
@@ -53,15 +55,15 @@ Background and older issue context:
 │   ├── dreamux/                   @excitedjs/dreamux — the host server
 │   │   ├── bin/                   dreamux and tm launchers
 │   │   ├── skills/                bundled dispatcher Codex skill
-│   │   ├── src/                   admin, cli, codex, dispatcher, feishu, runtime, legacy db
+│   │   ├── src/                   admin, cli, dispatcher, provider catalogs,
+│   │   │                          platform paths, and MCP shims
 │   │   ├── tests/                 vitest (smoke + live-codex + bin-launcher + onboard)
 │   │   └── db/migrations/         legacy SQLite migrations targeted for removal
 │   ├── channel/
 │   │   ├── feishu-transport/      @excitedjs/feishu-transport — platform-I/O core
 │   │   │                          (sole @larksuiteoapi/node-sdk importer)
 │   │   └── feishu-channel/        @excitedjs/feishu-channel — Feishu channel
-│   │                              layer staging package; not a dreamux
-│   │                              runtime dependency after issue #97
+│   │                              provider package behind `builtin:feishu`
 │   └── eslint-config/             @excitedjs/eslint-config — shared lint config
 │                                  (private; no-sync-IO gate, issue #85)
 ├── bin/                           thin redirectors → packages/dreamux/bin/

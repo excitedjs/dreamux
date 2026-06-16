@@ -1,29 +1,30 @@
 import { pathExists } from '../platform/fs-errors.js';
 
-import { codexArgsToCli, parseCodexArgs } from '../agent-runtime/builtin/codex/args.js';
+import type { ProviderBinCheck } from '@excitedjs/dreamux-types';
 import {
   assertNoLegacyTomlOnly,
   globalConfigFile,
+  loadConfig,
   stringifyConfig,
+  type DreamuxConfig,
+  type LoadConfigResult,
 } from '../config/config.js';
-import { loadConfigWithBuiltins } from '../agent-runtime/load-config.js';
 import {
   dispatcherDir,
   logsRoot,
   setRuntimeConfig,
   stateRoot,
 } from '../platform/paths.js';
-import { dispatcherCodexHome } from '../agent-runtime/builtin/codex/paths.js';
+import { AgentRuntimeProviderCatalog } from '../agent-runtime/catalog.js';
+import { ChannelProviderCatalog } from '../channel/catalog.js';
 import {
-  dispatcherCodexHomeDoctorContext,
-  validateDispatcherCodexHome,
-  type DispatcherCodexHomeDoctorResult,
-} from '../agent-runtime/builtin/codex/codex-home.js';
+  providerBinChecksForConfig,
+  runDispatcherProviderDiagnostics,
+  type ProviderDiagnosticCatalogs,
+  type ProviderDiagnosticReport,
+} from '../provider-diagnostics.js';
 import { ExecaCommandRunner } from './commands.js';
-import {
-  dispatcherCodexArgsJson,
-  dreamuxConfigFromAnswers,
-} from './config-files.js';
+import { dreamuxConfigFromAnswers } from './config-files.js';
 import {
   ensureDirectory,
   TransparentFileLedger,
@@ -33,20 +34,22 @@ import {
   installUserService,
   managedServiceEnvironment,
   resolveServiceExecutable,
-  selectServiceClaudeBin,
   selectServiceNodeBin,
-  tryResolveServiceExecutable,
   type ServiceNodeProbe,
   validateManagedServiceLaunch,
 } from './service.js';
 import type {
   CommandRunner,
   OnboardAnswers,
+  OnboardDoctorResult,
   OnboardFileLedger,
   OnboardRunResult,
 } from './types.js';
 
-type EffectiveOnboardAnswers = OnboardAnswers & { nodeBin: string };
+type EffectiveOnboardAnswers = OnboardAnswers & {
+  nodeBin: string;
+  providerBinChecks: ProviderBinCheck[];
+};
 
 export interface RunOnboardOptions {
   answers: OnboardAnswers;
@@ -69,13 +72,6 @@ export async function runOnboard(
   const configPath = globalConfigFile({ configDir: answers.configDir });
   const existingConfig = await readExistingDreamuxConfig(answers.configDir);
   const dreamuxConfig = dreamuxConfigFromAnswers(answers, existingConfig);
-  // answers.codexBin (onboard prompt / --codex-bin) is persisted into the
-  // dispatcher's referenced agents[] entry (agents[].config.bin) and used to
-  // seed the managed-service PATH so the unit can resolve codex; it is not
-  // pinned as an env override.
-  const serviceCodexBin = answers.registerService && !answers.dryRun
-    ? await resolveServiceExecutable(answers.codexBin, env)
-    : answers.codexBin;
   const serviceNodeBin = answers.registerService && !answers.dryRun
     ? await selectServiceNodeBin({
         platform: options.platform ?? process.platform,
@@ -84,19 +80,6 @@ export async function runOnboard(
         probe: options.nodeProbe,
       })
     : process.execPath;
-  // Best-effort: locate Claude Code so the unit PATH resolves `claude` for
-  // server-hosted builtin:claude-code workers (issue #126 PR8). Absent install
-  // → omit; onboard still completes for codex-only setups.
-  const serviceClaudeBin =
-    answers.registerService && !answers.dryRun
-      ? await tryResolveServiceExecutable(selectServiceClaudeBin(env), env)
-      : null;
-  const effectiveAnswers = {
-    ...answers,
-    codexBin: serviceCodexBin,
-    nodeBin: serviceNodeBin,
-    ...(serviceClaudeBin !== null ? { claudeBin: serviceClaudeBin } : {}),
-  };
   setRuntimeConfig(dreamuxConfig);
 
   await ensureDirectory(answers.configDir, ledger, 'dreamux config directory', {
@@ -116,10 +99,6 @@ export async function runOnboard(
     { mode: 0o600, dryRun: answers.dryRun },
   );
 
-  const codexHome = dispatcherCodexHome(answers.dispatcherId);
-  await ensureDirectory(codexHome, ledger, 'global Codex home', {
-    dryRun: answers.dryRun,
-  });
   await ensureDirectory(
     dispatcherDir(answers.dispatcherId),
     ledger,
@@ -127,7 +106,7 @@ export async function runOnboard(
     { dryRun: answers.dryRun },
   );
   await ensureDirectory(
-    effectiveAnswers.dispatcherCwd,
+    answers.dispatcherCwd,
     ledger,
     'dispatcher cwd',
     { dryRun: answers.dryRun },
@@ -135,11 +114,32 @@ export async function runOnboard(
   // Bundled Dreamux skills are no longer symlinked into the workspace
   // (`<cwd>/.codex/skills`) at onboard time (issue #209 slice 6). Core now
   // injects them at runtime by role via the create context's `skillSources`
-  // (codex `skills/extraRoots/set`), so onboarding creates no skill dir or
-  // symlinks. Pre-existing old symlinks are left untouched; `dreamux uninstall`
-  // reports but does not remove them.
+  // capability, so onboarding creates no skill dir or symlinks. Pre-existing old
+  // symlinks are left untouched; `dreamux uninstall` reports but does not remove
+  // them.
 
-  const doctor = await runDispatcherDoctor(effectiveAnswers, env);
+  const loaded = answers.dryRun
+    ? null
+    : await loadConfig({ configDir: answers.configDir });
+  if (loaded !== null) setRuntimeConfig(loaded.config);
+  const catalogs = loaded === null ? null : catalogsFromLoadedConfig(loaded);
+  const providerBinChecks =
+    answers.registerService && !answers.dryRun && loaded !== null && catalogs !== null
+      ? await resolveProviderBinChecks(loaded.config, catalogs, env)
+      : [];
+  const effectiveAnswers = {
+    ...answers,
+    nodeBin: serviceNodeBin,
+    providerBinChecks,
+  };
+
+  const doctor = await runDispatcherDoctor(
+    effectiveAnswers,
+    loaded,
+    catalogs,
+    env,
+    runner,
+  );
   if (!effectiveAnswers.dryRun && !doctor.ok) {
     throw new Error(formatDoctorFailure(effectiveAnswers, doctor));
   }
@@ -175,7 +175,7 @@ function formatServiceLaunchFailure(errors: string[]): string {
   return [
     'dreamux managed service launch environment is not ready',
     ...errors.map((error) => `- ${error}`),
-    '- rerun dreamux onboard from the desired Node/Codex install, or pass explicit --dreamux-bin / --codex-bin values',
+    '- rerun dreamux onboard from the desired Node/runtime install, or pass explicit binary paths',
   ].join('\n');
 }
 
@@ -183,53 +183,121 @@ async function readExistingDreamuxConfig(configDir: string) {
   const configPath = globalConfigFile({ configDir });
   await assertNoLegacyTomlOnly({ configDir });
   if (!(await pathExists(configPath))) return undefined;
-  return (await loadConfigWithBuiltins({ configDir })).config;
+  return (await loadConfig({ configDir })).config;
+}
+
+function catalogsFromLoadedConfig(
+  loaded: LoadConfigResult,
+): ProviderDiagnosticCatalogs {
+  return {
+    agentRuntime: new AgentRuntimeProviderCatalog({
+      registry: loaded.providerRegistry,
+    }),
+    channel: new ChannelProviderCatalog({
+      registry: loaded.providerRegistry,
+    }),
+  };
+}
+
+async function resolveProviderBinChecks(
+  config: DreamuxConfig,
+  catalogs: ProviderDiagnosticCatalogs,
+  env: NodeJS.ProcessEnv,
+): Promise<ProviderBinCheck[]> {
+  const checks = providerBinChecksForConfig({
+    config,
+    catalogs,
+    env,
+    scope: 'managedService',
+  });
+  return await Promise.all(
+    checks.map(async (check) => ({
+      ...check,
+      bin: await resolveServiceExecutable(check.bin, env),
+    })),
+  );
 }
 
 async function runDispatcherDoctor(
   answers: EffectiveOnboardAnswers,
+  loaded: LoadConfigResult | null,
+  catalogs: ProviderDiagnosticCatalogs | null,
   env: NodeJS.ProcessEnv,
-): Promise<DispatcherCodexHomeDoctorResult> {
-  // The onboarded dispatcher is created with default codex settings, which
-  // dispatcherCodexArgsJson() already encodes — there is no global-default
-  // layer to merge anymore.
-  const codexArgs = parseCodexArgs(dispatcherCodexArgsJson());
-  const codexCliArgs = codexArgsToCli(codexArgs);
-  const context = dispatcherCodexHomeDoctorContext(answers.dispatcherId, {
-    codexCliArgs,
-    dispatcherCwd: answers.dispatcherCwd,
-  });
+  runner: CommandRunner,
+): Promise<OnboardDoctorResult> {
   if (answers.dryRun) {
     return {
       ok: true,
       errors: [],
-      context,
+      detail: 'dry run',
+      reports: [],
+    };
+  }
+  if (loaded === null || catalogs === null) {
+    return {
+      ok: false,
+      detail: answers.dispatcherId,
+      errors: ['onboard config was not loaded after writing'],
+      reports: [],
+    };
+  }
+  const dispatcher = loaded.config.dispatchers.find(
+    (entry) => entry.id === answers.dispatcherId,
+  );
+  if (dispatcher === undefined) {
+    return {
+      ok: false,
+      detail: answers.dispatcherId,
+      errors: [`onboarded dispatcher '${answers.dispatcherId}' was not found in config`],
+      reports: [],
     };
   }
   const doctorEnv = answers.registerService
     ? managedServiceEnvironment(answers)
     : env;
-  return await validateDispatcherCodexHome(context, {
-    env: doctorEnv,
-    codexCliArgs,
+  const reports = await runDispatcherProviderDiagnostics(
+    {
+      dispatcher,
+      catalogs,
+      runner,
+      env: doctorEnv,
+      scope: answers.registerService ? 'managedService' : 'foreground',
+    },
+  );
+  const errors = providerDiagnosticErrors(reports);
+  return {
+    ok: errors.length === 0,
+    detail: `${reports.length} provider diagnostic(s)`,
+    errors,
+    reports,
+  };
+}
+
+function providerDiagnosticErrors(reports: ProviderDiagnosticReport[]): string[] {
+  return reports.flatMap((report) => {
+    const prefix = `${report.kind} ${report.id} (${report.provider})`;
+    if (report.result.errors.length > 0) {
+      return report.result.errors.map((error) => `${prefix}: ${error}`);
+    }
+    return report.result.ok ? [] : [`${prefix}: ${report.result.detail}`];
   });
 }
 
 function formatDoctorFailure(
   answers: EffectiveOnboardAnswers,
-  doctor: DispatcherCodexHomeDoctorResult,
+  doctor: OnboardDoctorResult,
 ): string {
   const lines = [
-    `dispatcher '${answers.dispatcherId}' Codex home is not ready`,
+    `dispatcher '${answers.dispatcherId}' providers are not ready`,
     ...doctor.errors.map((error) => `- ${error}`),
   ];
   if (
     answers.registerService &&
-    doctor.errors.some((error) => error.includes('missing Codex auth state'))
+    doctor.errors.some((error) => /auth/i.test(error))
   ) {
     lines.push(
       '- managed service environments do not inherit your interactive shell auth token',
-      `- authenticate the global Codex home before registering the service: ${answers.codexBin} login`,
+      '- authenticate the selected runtime before registering the service',
     );
   }
   return lines.join('\n');

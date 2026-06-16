@@ -1,8 +1,9 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
+import type { AgentRuntimeStateCallbacks } from '@excitedjs/dreamux-types';
+
 import {
-  dispatcherFeishuAppId,
   type DispatcherConfig,
   type DreamuxConfig,
 } from '../config/config.js';
@@ -28,8 +29,13 @@ export type DispatcherStatus =
 
 export interface DispatcherRow {
   dispatcher_id: string;
-  bot_app_id: string;
-  bot_secret_ref: string;
+  /**
+   * The dispatcher's neutral, provider-reported channel identity (issue #209
+   * de-leak) — the primary channel's `getIdentity`, surfaced for status display.
+   * Core never interprets it and never names the channel provider's config
+   * fields. Empty string when the primary channel reports no identity.
+   */
+  channel_identity: string;
   thread_id: string | null;
   status: DispatcherStatus;
   enabled: 0 | 1;
@@ -43,8 +49,7 @@ export interface DispatcherRow {
 
 export interface DispatcherCreateInput {
   dispatcher_id: string;
-  bot_app_id: string;
-  bot_secret_ref?: string;
+  channel_identity: string;
   enabled?: 0 | 1 | boolean;
 }
 
@@ -60,7 +65,7 @@ interface DispatcherStatusFile {
   last_lost_thread_id: string | null;
 }
 
-export class DispatcherStore {
+export class DispatcherStore implements AgentRuntimeStateCallbacks {
   private readonly rows = new Map<string, DispatcherRow>();
   private readonly seedDispatchers: readonly DispatcherConfig[];
 
@@ -91,19 +96,10 @@ export class DispatcherStore {
     if (this.rows.has(input.dispatcher_id)) {
       throw new Error(`dispatcher '${input.dispatcher_id}' already exists`);
     }
-    const duplicateApp = this.list().find(
-      (row) => row.bot_app_id === input.bot_app_id,
-    );
-    if (duplicateApp !== undefined) {
-      throw new Error(
-        `bot_app_id '${input.bot_app_id}' is already used by dispatcher '${duplicateApp.dispatcher_id}'`,
-      );
-    }
     const now = Date.now();
     const row: DispatcherRow = {
       dispatcher_id: input.dispatcher_id,
-      bot_app_id: input.bot_app_id,
-      bot_secret_ref: input.bot_secret_ref ?? `config:${input.dispatcher_id}`,
+      channel_identity: input.channel_identity,
       thread_id: null,
       status: 'declared',
       enabled: normalizeEnabled(input.enabled ?? 1),
@@ -123,8 +119,7 @@ export class DispatcherStore {
     if (existing === undefined) return this.create(input);
     const row: DispatcherRow = {
       ...existing,
-      bot_app_id: input.bot_app_id,
-      bot_secret_ref: input.bot_secret_ref ?? existing.bot_secret_ref,
+      channel_identity: input.channel_identity,
       enabled: normalizeEnabled(input.enabled ?? existing.enabled),
       updated_at: Date.now(),
     };
@@ -226,14 +221,14 @@ export class DispatcherStore {
 
 /** Config-only row (no persisted status); used before `hydrate()` runs. */
 function rowDefaults(config: DispatcherConfig, now: number): DispatcherRow {
-  // Best-effort bot identity: a dispatcher with an ambiguous (≠1) Feishu channel
-  // count is not runnable, so store seeding stays fail-soft and the unrunnable
-  // shape fails loud at the dispatcher service launch guard (the one intended
-  // runtime boundary), not here during state construction (issue #209 review).
+  // Best-effort identity: seed the dispatcher's primary (first) channel's
+  // neutral, provider-reported identity (issue #209 de-leak). Core never reaches
+  // into a channel provider's config fields — the identity is what that channel's
+  // `getIdentity` reported at config-load. Fail-soft: an unrunnable shape fails
+  // loud at the dispatcher service launch guard, not here during construction.
   return {
     dispatcher_id: config.id,
-    bot_app_id: dispatcherFeishuAppId(config),
-    bot_secret_ref: `config:${config.id}`,
+    channel_identity: config.channels[0]?.identity ?? '',
     thread_id: null,
     status: 'declared',
     enabled: config.enabled ? 1 : 0,

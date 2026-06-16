@@ -8,19 +8,17 @@ import {
   formatDispatcherCodexHomeErrors,
   dispatcherCodexHomeDoctorContext,
   validateDispatcherCodexHome,
-} from '../src/agent-runtime/builtin/codex/codex-home.js';
+  dispatcherCodexHome,
+} from '@excitedjs/agent-runtime-codex';
+import { unixSocketPathFitsBudget } from '@excitedjs/dreamux-utils';
 import { BUILT_IN_DEFAULTS } from '../src/config/config.js';
 import {
   resetRuntimeConfig,
   runRoot,
   setRuntimeConfig,
   stateRoot,
-  unixSocketPathFitsBudget,
 } from '../src/platform/paths.js';
-import {
-  allocateCodexSocketPath,
-  dispatcherCodexHome,
-} from '../src/agent-runtime/builtin/codex/paths.js';
+import { allocateRuntimeSocketPath } from '../src/platform/runtime-sockets.js';
 
 describe('global Codex home doctor', () => {
   let runtimeDir: string;
@@ -44,16 +42,16 @@ describe('global Codex home doctor', () => {
     const previousXdg = process.env['XDG_RUNTIME_DIR'];
     delete process.env['XDG_RUNTIME_DIR'];
     try {
-      const socket = allocateCodexSocketPath('flow');
+      const socket = allocateRuntimeSocketPath('codex app-server socket');
       expect(socket.startsWith(join(runRoot(), 'sockets'))).toBe(true);
       expect(socket.endsWith('.sock')).toBe(true);
       expect(socket.startsWith(stateRoot())).toBe(false);
       expect(socket).not.toMatch(/^\/tmp(?:\/|$)/);
       expect(
-        Buffer.byteLength(allocateCodexSocketPath('frontend-service'), 'utf8'),
+        Buffer.byteLength(allocateRuntimeSocketPath('codex app-server socket'), 'utf8'),
       ).toBeLessThanOrEqual(DISPATCHER_APP_SERVER_SOCKET_PATH_MAX_BYTES);
       // Random rendezvous endpoint: a fresh start never reuses a path.
-      expect(allocateCodexSocketPath('flow')).not.toBe(socket);
+      expect(allocateRuntimeSocketPath('codex app-server socket')).not.toBe(socket);
     } finally {
       if (previousXdg === undefined) delete process.env['XDG_RUNTIME_DIR'];
       else process.env['XDG_RUNTIME_DIR'] = previousXdg;
@@ -111,28 +109,31 @@ describe('global Codex home doctor', () => {
     expect(result.ok).toBe(true);
   });
 
-  it('rejects too-long app-server socket paths when no private root fits the budget', async () => {
-    const previousXdg = process.env['XDG_RUNTIME_DIR'];
-    const previousTmpdir = process.env['TMPDIR'];
-    // A pathological $HOME blows the budget for the dreamux-owned fallback. To
-    // assert the fail-loud path deterministically across platforms, also remove
-    // the other private candidates: no XDG root, and a shared-tmp TMPDIR so the
-    // private-OS-temp candidate is rejected too (on macOS the real $TMPDIR is a
-    // short private root that would otherwise fit; issue #182 final gate).
-    process.env['HOME'] = join(runtimeDir, 'h'.repeat(120));
-    delete process.env['XDG_RUNTIME_DIR'];
-    process.env['TMPDIR'] = '/tmp';
+  it('reports a host-supplied app-server socket path that exceeds the sun_path budget', async () => {
+    // Socket allocation now belongs to the host (`allocateRuntimeSocketPath`),
+    // not the doctor: the host passes a representative socket sample into the
+    // doctor context. A path that blows the sun_path budget surfaces as a
+    // fail-loud entry in `result.errors` — `validateDispatcherCodexHome` returns
+    // the result and never rejects (only `assertDispatcherCodexHomeReady`
+    // throws). The neutral allocator's own over-budget fail-loud is covered in
+    // runtime-sockets.test.ts; here we assert the codex doctor's reporting.
+    const longSocketPath = join(
+      runtimeDir,
+      'h'.repeat(120),
+      'sockets',
+      `${'x'.repeat(40)}.sock`,
+    );
+    expect(unixSocketPathFitsBudget(longSocketPath)).toBe(false);
 
-    try {
-      await expect(
-        validateDispatcherCodexHome('dispatcher-with-long-id', { env: {} }),
-      ).rejects.toThrow(/Codex socket path is too long/);
-    } finally {
-      if (previousXdg === undefined) delete process.env['XDG_RUNTIME_DIR'];
-      else process.env['XDG_RUNTIME_DIR'] = previousXdg;
-      if (previousTmpdir === undefined) delete process.env['TMPDIR'];
-      else process.env['TMPDIR'] = previousTmpdir;
-    }
+    const context = dispatcherCodexHomeDoctorContext('dispatcher-with-long-id', {
+      socketPath: longSocketPath,
+    });
+    const result = await validateDispatcherCodexHome(context, { env: {} });
+
+    expect(result.ok).toBe(false);
+    expect(result.errors.join('\n')).toMatch(
+      /app-server socket path is too long for Unix sockets/,
+    );
   });
 
   it('uses the private OS temp dir for deep home dirs when XDG is absent (#182 macOS gate)', async () => {
@@ -145,7 +146,7 @@ describe('global Codex home doctor', () => {
     process.env['TMPDIR'] = join(runtimeDir, 't');
 
     try {
-      const socket = allocateCodexSocketPath('dispatcher-with-long-id');
+      const socket = allocateRuntimeSocketPath('codex app-server socket');
       expect(socket.startsWith(join(runtimeDir, 't', 'dreamux', 'sockets'))).toBe(true);
       expect(unixSocketPathFitsBudget(socket)).toBe(true);
     } finally {
@@ -162,7 +163,7 @@ describe('global Codex home doctor', () => {
     process.env['XDG_RUNTIME_DIR'] = join(runtimeDir, 'xdg');
 
     try {
-      const socket = allocateCodexSocketPath('dispatcher-with-long-id');
+      const socket = allocateRuntimeSocketPath('codex app-server socket');
       expect(
         socket.startsWith(join(runtimeDir, 'xdg', 'dreamux', 'sockets')),
       ).toBe(true);

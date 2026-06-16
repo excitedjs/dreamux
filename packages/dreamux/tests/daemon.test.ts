@@ -205,7 +205,7 @@ describe('daemon install (stable service Node, issue #83)', () => {
     // stable system Node, so it must win and be persisted into the unit.
     const stableNodeProbe: ServiceNodeProbe = {
       realpath: async (path) => path,
-      isExecutable: (path) => path === '/usr/local/bin/node',
+      isExecutable: async (path) => path === '/usr/local/bin/node',
     };
 
     await runDaemonInstall({
@@ -224,7 +224,7 @@ describe('daemon install (stable service Node, issue #83)', () => {
     const runner = new InstallRunner();
     const noSystemNodeProbe: ServiceNodeProbe = {
       realpath: async (path) => path,
-      isExecutable: () => false,
+      isExecutable: async () => false,
     };
 
     await runDaemonInstall({

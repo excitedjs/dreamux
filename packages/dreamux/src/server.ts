@@ -3,57 +3,43 @@
  * services.
  *
  * Server loads process config, owns the admin socket, and boots the
- * DispatcherService. Dispatcher agent lifecycle, Feishu channel sessions, and
- * TeamMate agents live under DispatcherService.
+ * Dispatchers. Dispatcher agent lifecycle, channel sessions, Teams, and
+ * teammates live under dispatcher-local services.
  */
 
-import {
-  createBuiltinAgentRuntimeProviderCatalog,
-  type AgentRuntimeProviderCatalog,
-} from './agent-runtime/index.js';
-import type { CodexProcess, CodexProcessOptions } from './agent-runtime/builtin/codex/supervisor.js';
-import type { CodexWsClient } from './agent-runtime/builtin/codex/rpc.js';
-import type { FeishuBot } from './channel/feishu/bot.js';
+import { AgentRuntimeProviderCatalog } from './agent-runtime/index.js';
+import { ChannelProviderCatalog } from './channel/catalog.js';
 import {
   createBuiltinProviderRegistry,
-  parseProviderRef,
   type ProviderRegistry,
 } from './registry/index.js';
 import {
   BUILT_IN_DEFAULTS,
   type DreamuxConfig,
 } from './config/config.js';
-import {
-  DispatcherStore,
-  type DispatcherRow,
-} from './state/dispatcher-store.js';
-import type { DispatcherCodexHomeDoctor } from './agent-runtime/builtin/codex/codex-home.js';
+import { DispatcherStore } from './state/dispatcher-store.js';
 import {
   adminSocketPath,
   setRuntimeConfig,
 } from './platform/paths.js';
-import {
-  createLogger,
-  type DreamuxLogger,
-} from './platform/logger.js';
+import { createLogger } from './platform/logger.js';
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import {
   assertNoLegacyAdminServer,
   createAdminSocketServer,
   type AdminSocketServer,
 } from './admin/socket.js';
 import { RestartIntentConsumer } from './daemon/restart-intent.js';
-import type { ClaudeCodeSessionFactory } from './agent-runtime/builtin/claude-code/supervisor.js';
-import { DispatcherService } from './dispatcher-service/service.js';
+import {
+  Dispatchers,
+  type DispatcherService,
+} from './dispatcher-service/service.js';
 import { ensureDispatcherWorkspace } from './dispatcher-service/dispatcher-workspace.js';
 import {
   detectLegacyDispatcherState,
   legacyDispatcherStateMessage,
 } from './dispatcher-service/legacy-state.js';
 import { detectLegacyChannelBindingStore } from './dispatcher-service/channel-binding/store.js';
-export {
-  IN_PROGRESS_REACTION_EMOJI,
-  RECEIVED_REACTION_EMOJI,
-} from './channel/feishu/feishu-channel.js';
 
 export interface ServerOptions {
   /**
@@ -65,30 +51,24 @@ export interface ServerOptions {
   config?: DreamuxConfig;
   /** Override admin socket path (tests). */
   adminSocketPath?: string;
-  /** Inject a custom bot factory (tests use this to plug in a fake). */
-  botFactory?: (row: DispatcherRow, secret: string) => FeishuBot;
   /**
-   * Provider registry used by runtime composition. When config contains
-   * external npm Agent Runtime refs, this must be the registry returned by
-   * loadConfig() after external provider loading.
+   * Provider registry whose implementations back the runtime + channel catalogs.
+   * Production hands in the registry returned by loadConfig() (every referenced
+   * builtin/npm provider already loaded); tests either inject the catalogs below
+   * or pre-load this registry. Provider-specific construction seams (codex
+   * process/client factories, etc.) belong to the provider package and are
+   * injected by pre-loading the registry, never by Server — core names no
+   * provider's internals.
    */
   providerRegistry?: ProviderRegistry;
-  /** Inject a CodexProcess factory (tests). */
-  codexProcessFactory?: (opts: CodexProcessOptions) => CodexProcess;
-  /** Inject a CodexWsClient factory (tests). */
-  codexClientFactory?: (socketPath: string) => CodexWsClient;
-  /** Inject a Codex home doctor (tests). */
-  codexHomeDoctor?: DispatcherCodexHomeDoctor;
-  /** Inject a Claude Code resident-session factory for tests. */
-  claudeCodeWorkerSessionFactory?: ClaudeCodeSessionFactory;
-  /** Skip resolving bot secret (tests with fake bot). */
-  skipBotSecret?: boolean;
-  /** Codex child/WS restart backoff base override (tests). */
-  codexRestartBackoffBaseMs?: number;
-  /** Codex child/WS restart backoff cap override (tests). */
-  codexRestartBackoffMaxMs?: number;
   /** Override runtime provider catalog (tests / future provider composition). */
   agentRuntimeProviderCatalog?: AgentRuntimeProviderCatalog;
+  /**
+   * Override channel provider catalog (tests inject a fake `ChannelProvider`;
+   * future provider composition). When omitted, the built-in channel catalog is
+   * built from the provider registry.
+   */
+  channelProviderCatalog?: ChannelProviderCatalog;
   /**
    * Server-level logger (admin socket, dispatcher supervision, shutdown). When
    * omitted, a stderr-only logger is used — the CLI entry point injects a
@@ -98,7 +78,7 @@ export interface ServerOptions {
   /**
    * Per-dispatcher channel logger factory (gate, inbound, outbound, introduce,
    * dispatcher lifecycle). Defaults to a stderr-only logger per dispatcher; the
-   * CLI injects a factory that writes `logs/feishu-channel/<id>.log`.
+   * CLI injects a factory that writes `logs/channel/<id>.log`.
    */
   channelLoggerFactory?: (dispatcherId: string) => DreamuxLogger;
   /**
@@ -126,66 +106,47 @@ export interface Repos {
 
 export class Server {
   readonly repos: Repos;
-  readonly dispatcherService: DispatcherService;
+  readonly dispatchers: Dispatchers;
   private admin: AdminSocketServer | null = null;
   private shuttingDown = false;
   private readonly opts: ServerOptions;
   private readonly log: DreamuxLogger;
   private readonly providerRegistry: ProviderRegistry;
   private readonly agentRuntimeProviders: AgentRuntimeProviderCatalog;
+  private readonly channelProviders: ChannelProviderCatalog;
 
   constructor(opts: ServerOptions = {}) {
     this.opts = opts;
     this.providerRegistry =
       opts.providerRegistry ?? createBuiltinProviderRegistry();
     const config = opts.config ?? BUILT_IN_DEFAULTS;
-    if (
-      opts.providerRegistry === undefined &&
-      opts.agentRuntimeProviderCatalog === undefined
-    ) {
-      assertNoExternalRuntimeConfigWithoutRegistry(config);
+    // The catalogs below are pure registry lookups, so when no runtime catalog is
+    // injected every referenced provider implementation must already be loaded
+    // (production: the loadConfig registry; tests: an injected catalog or a
+    // pre-loaded registry). Fail loud at construction, not at dispatcher start.
+    if (opts.agentRuntimeProviderCatalog === undefined) {
+      assertRuntimeImplementationsLoaded(config, this.providerRegistry);
     }
     setRuntimeConfig(config);
     this.log = opts.logger ?? createLogger({ name: 'server' });
     const channelLoggerFactory =
       opts.channelLoggerFactory ??
       ((id: string) => createLogger({ name: `channel/${id}` }));
-    const codexProviderOptions = {
-      ...(opts.codexProcessFactory !== undefined
-        ? { codexProcessFactory: opts.codexProcessFactory }
-        : {}),
-      ...(opts.codexClientFactory !== undefined
-        ? { codexClientFactory: opts.codexClientFactory }
-        : {}),
-      ...(opts.codexHomeDoctor !== undefined
-        ? { codexHomeDoctor: opts.codexHomeDoctor }
-        : {}),
-      ...(opts.codexRestartBackoffBaseMs !== undefined
-        ? { restartBackoffBaseMs: opts.codexRestartBackoffBaseMs }
-        : {}),
-      ...(opts.codexRestartBackoffMaxMs !== undefined
-        ? { restartBackoffMaxMs: opts.codexRestartBackoffMaxMs }
-        : {}),
-    };
     this.agentRuntimeProviders =
       opts.agentRuntimeProviderCatalog ??
-      createBuiltinAgentRuntimeProviderCatalog({
-        registry: this.providerRegistry,
-        codex: codexProviderOptions,
-        ...(opts.claudeCodeWorkerSessionFactory !== undefined
-          ? { claudeCode: { sessionFactory: opts.claudeCodeWorkerSessionFactory } }
-          : {}),
-      });
+      new AgentRuntimeProviderCatalog({ registry: this.providerRegistry });
+    this.channelProviders =
+      opts.channelProviderCatalog ??
+      new ChannelProviderCatalog({ registry: this.providerRegistry });
     this.repos = {
       dispatchers: new DispatcherStore(config),
     };
-    this.dispatcherService = new DispatcherService({
+    this.dispatchers = new Dispatchers({
       config,
       dispatchers: this.repos.dispatchers,
       agentRuntimeProviders: this.agentRuntimeProviders,
+      channelProviders: this.channelProviders,
       adminSocketPath: opts.adminSocketPath ?? adminSocketPath(),
-      botFactory: opts.botFactory,
-      skipBotSecret: opts.skipBotSecret,
       channelLoggerFactory,
       log: this.log,
     });
@@ -194,7 +155,7 @@ export class Server {
   /** Bring up admin socket + all enabled dispatchers. */
   async start(): Promise<void> {
     await this.repos.dispatchers.hydrate((message) => this.log.warn(message));
-    this.dispatcherService.setRestartIntent(
+    this.dispatchers.setRestartIntent(
       await RestartIntentConsumer.load({
         now: Date.now(),
         warn: (message) => this.log.warn(message),
@@ -229,7 +190,9 @@ export class Server {
     );
     await this.admin.start();
     this.log.info(
-      { admin_socket: this.admin.socketPath },
+      {
+        admin_socket: this.admin.socketPath,
+      },
       'admin socket listening',
     );
 
@@ -239,7 +202,9 @@ export class Server {
         this.log.info({ dirs: swept }, 'swept volatile runtime-socket dirs');
       } catch (err) {
         this.log.warn(
-          { err: errInfo(err) },
+          {
+            err: errInfo(err),
+          },
           'runtime-socket sweep failed; continuing startup',
         );
       }
@@ -248,10 +213,13 @@ export class Server {
     const rows = this.repos.dispatchers.listEnabled();
     for (const row of rows) {
       try {
-        await this.dispatcherService.startDispatcher(row.dispatcher_id);
+        await this.getDispatcher(row.dispatcher_id).start();
       } catch (err) {
         this.log.error(
-          { dispatcher_id: row.dispatcher_id, err: errInfo(err) },
+          {
+            dispatcher_id: row.dispatcher_id,
+            err: errInfo(err),
+          },
           'dispatcher failed to start',
         );
       }
@@ -309,7 +277,11 @@ export class Server {
   }
 
   summarize() {
-    return this.dispatcherService.summarize();
+    return this.dispatchers.summarize();
+  }
+
+  getDispatcher(id: string): DispatcherService {
+    return this.dispatchers.get(id);
   }
 
   /** Graceful shutdown — drain dispatchers and close the admin socket. */
@@ -317,7 +289,7 @@ export class Server {
     if (this.shuttingDown) return;
     this.shuttingDown = true;
     this.log.info('shutting down');
-    await this.dispatcherService.shutdown();
+    await this.dispatchers.shutdown();
     if (this.admin !== null) {
       await this.admin.close();
       this.admin = null;
@@ -325,16 +297,32 @@ export class Server {
   }
 }
 
-function assertNoExternalRuntimeConfigWithoutRegistry(config: DreamuxConfig): void {
-  const dispatcher = config.dispatchers.find(
-    (item) => parseProviderRef(item.runtime.provider).source === 'npm',
-  );
-  if (dispatcher === undefined) return;
-  throw new Error(
-    `dispatcher '${dispatcher.id}' uses external AgentRuntime provider ` +
-      `${JSON.stringify(dispatcher.runtime.provider)}, but Server was not ` +
-      'constructed with the providerRegistry returned by loadConfig()',
-  );
+/**
+ * Every dispatcher's runtime provider must already have a loaded implementation
+ * in `registry` (builtin and npm alike load through loadConfig's single dynamic
+ * path). A descriptor without an implementation — or a ref that does not resolve
+ * at all — means the registry was not the one loadConfig returned. Fail loud.
+ */
+function assertRuntimeImplementationsLoaded(
+  config: DreamuxConfig,
+  registry: ProviderRegistry,
+): void {
+  for (const dispatcher of config.dispatchers) {
+    const ref = dispatcher.runtime.provider;
+    let loaded = false;
+    try {
+      loaded = registry.getImplementation(registry.resolve(ref).id) !== undefined;
+    } catch {
+      loaded = false;
+    }
+    if (loaded) continue;
+    throw new Error(
+      `dispatcher '${dispatcher.id}' uses AgentRuntime provider ` +
+        `${JSON.stringify(ref)} whose implementation is not loaded; Server was ` +
+        'not constructed with the providerRegistry returned by loadConfig() ' +
+        '(or an injected agentRuntimeProviderCatalog).',
+    );
+  }
 }
 
 function errInfo(err: unknown): { message: string; stack?: string } {

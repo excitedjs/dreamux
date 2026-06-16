@@ -5,6 +5,7 @@
  * through this package's `eslint.config.js`) against in-memory fixtures so the
  * gate's behaviour is pinned, not just assumed:
  *   - `src/**` is a hard error on any `*Sync` IO (`n/no-sync`);
+ *   - `src/**` files over 700 physical lines are a hard error (`max-lines`);
  *   - `tests/**` exempts `n/no-sync` (sync `fs` fixtures are allowed) but still
  *     bans synchronous `child_process` via `no-restricted-imports`;
  *   - an `eslint-disable` without a reason is itself an error
@@ -47,6 +48,23 @@ describe('no-sync-io lint gate (issue #85)', () => {
     );
     expect(ruleIds(results)).toContain('n/no-sync');
     expect(results[0]?.errorCount ?? 0).toBeGreaterThan(0);
+  });
+
+  it('flags source files over 700 physical lines', async () => {
+    const results = await lint(
+      'src/__large_source_fixture__.ts',
+      Array.from({ length: 701 }, (_, i) => `// line ${i + 1}`).join('\n'),
+    );
+    expect(ruleIds(results)).toContain('max-lines');
+    expect(results[0]?.errorCount ?? 0).toBeGreaterThan(0);
+  });
+
+  it('does not apply the source line-count gate to tests/**', async () => {
+    const results = await lint(
+      'tests/__large_test_fixture__.ts',
+      Array.from({ length: 701 }, (_, i) => `// line ${i + 1}`).join('\n'),
+    );
+    expect(ruleIds(results)).not.toContain('max-lines');
   });
 
   it('import backstop fires on a renamed *Sync import that n/no-sync misses', async () => {

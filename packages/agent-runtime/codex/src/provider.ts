@@ -9,13 +9,16 @@ import {
   type CodexRuntimeDeps,
 } from './runtime.js';
 import {
+  DEFAULT_CODEX_BIN,
   dispatcherCodexConfig,
   readDispatcherCodexConfig,
   type DispatcherCodexConfig,
 } from './config.js';
 import { codexArgsFromConfig, codexArgsToCli } from './args.js';
 import { BUILTIN_CODEX_PROVIDER_REF } from './provider-ref.js';
-import { defaultVolatileSocketPath } from './internal/socket.js';
+import { resolveCodexBinPath } from './bin.js';
+import { codexAgentRuntimeDiagnostic } from './diagnostic.js';
+import { allocateCodexSocketPath } from './internal/socket.js';
 import type {
   AgentRuntimeCapabilities,
   AgentRuntime,
@@ -29,13 +32,14 @@ import type {
 } from '@excitedjs/dreamux-types';
 
 /**
- * Host-supplied hooks for the built-in Codex provider. Everything that is a
- * Dreamux host contract — the volatile socket root, the package-bin `PATH`, the
- * Codex home/auth pre-start check — is injected here by Dreamux core (or by an
- * external embedder), so this package reconstructs none of it. Role-gated
- * bundled skills arrive on the create context as neutral `skillSources` (not a
- * host hook). The `descriptor` and the test factories let core and tests wire
- * process/WS/home seams without changing the provider.
+ * Construction options for the built-in Codex provider. The runtime's host
+ * contracts now arrive on the NEUTRAL create context, not as factory hooks:
+ * volatile socket placement comes from `context.paths.runtimeSocketDirs()` (this
+ * package owns the allocation policy), and env injection comes from
+ * `context.injectEnv`. Role-gated bundled skills arrive as neutral
+ * `skillSources`. What remains here is the `descriptor` and the test/host seams
+ * (process/WS factories, the optional Codex home pre-start check, restart
+ * backoff) that let core and tests wire behavior without changing the provider.
  */
 export interface CodexAgentRuntimeProviderOptions {
   /**
@@ -45,16 +49,7 @@ export interface CodexAgentRuntimeProviderOptions {
    * `agentRuntime` descriptor.
    */
   descriptor?: ProviderDescriptor;
-  /**
-   * Allocate a fresh volatile rendezvous socket path per app-server start. The
-   * Dreamux host injects its own shared runtime-socket root here; when omitted
-   * the package falls back to {@link defaultVolatileSocketPath} so a
-   * loader-constructed / standalone runtime is still runnable.
-   */
-  allocateSocketPath?: (id: string) => string;
-  /** Build the base process env (host seeds `PATH` with the Dreamux package bins). */
-  baseProcessEnv?: (extraEnv: Record<string, string>) => NodeJS.ProcessEnv;
-  /** Host-owned Codex home/auth pre-start check, invoked with the runtime id and cwd. */
+  /** Optional Codex home/auth pre-start check, invoked with the runtime id and cwd. */
   codexHomeDoctor?: (info: {
     runtimeId: string;
     cwd: string;
@@ -63,23 +58,6 @@ export interface CodexAgentRuntimeProviderOptions {
   codexClientFactory?: (socketPath: string) => CodexWsClient;
   restartBackoffBaseMs?: number;
   restartBackoffMaxMs?: number;
-}
-
-/**
- * Final codex binary path for one runtime. The `CODEX_HOST_CODEX_BIN`
- * environment variable is a deliberate host-level override that takes precedence
- * over the configured `runtime.config.bin`; otherwise the configured bin
- * (default `"codex"`) is used. `env` defaults to the live process environment
- * for the runtime spawn path; doctor passes the installed service unit's
- * environment so it checks what the service will run.
- */
-export function resolveCodexBinPath(
-  configBin: string,
-  env: NodeJS.ProcessEnv = process.env,
-): string {
-  const fromEnv = env['CODEX_HOST_CODEX_BIN'];
-  if (fromEnv !== undefined && fromEnv.trim() !== '') return fromEnv;
-  return configBin;
 }
 
 export const CODEX_AGENT_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = {
@@ -135,6 +113,17 @@ export function createCodexAgentRuntimeProvider(
         ? DEFAULT_CODEX_DESCRIPTOR
         : asAgentRuntimeDescriptor(options.descriptor),
     getCapabilities: () => CODEX_AGENT_RUNTIME_CAPABILITIES,
+    diagnostic: codexAgentRuntimeDiagnostic,
+    onboard: {
+      async collect(_context, prompts): Promise<Record<string, unknown>> {
+        const bin = await prompts.text({
+          message: 'Codex CLI binary',
+          initialValue: DEFAULT_CODEX_BIN,
+          required: true,
+        });
+        return { bin };
+      },
+    },
     readConfig(rawConfig, context) {
       return readDispatcherCodexConfig(rawConfig, context.file, context.prefix);
     },
@@ -151,15 +140,22 @@ export function createCodexAgentRuntimeProvider(
         ...codexArgsToCli(codexArgs),
         ...codexMcpServerArgs(context.mcpServers),
       ];
+      const paths = context.paths;
       const deps: CodexRuntimeDeps = {
         cwd: context.cwd,
         state: context.state,
-        paths: context.paths,
-        allocateSocketPath: options.allocateSocketPath ?? defaultVolatileSocketPath,
+        paths,
+        // The package owns socket allocation: pick a fresh name in the first of
+        // the host's preference-ordered candidate dirs that fits the budget.
+        allocateSocketPath: (id) =>
+          allocateCodexSocketPath(paths.runtimeSocketDirs(), id),
         codexBinPath: resolveCodexBinPath(codexConfig.bin),
         resolveExtraArgs: () => runtimeArgs,
         handshakeTimeoutMs: codexConfig.initialize_timeout_ms,
         extraEnv: codexConfig.extra_env,
+        ...(context.injectEnv !== undefined
+          ? { injectEnv: context.injectEnv }
+          : {}),
         ...(context.skillSources !== undefined
           ? { skillSources: context.skillSources }
           : {}),
@@ -170,9 +166,6 @@ export function createCodexAgentRuntimeProvider(
           ? { onTurnSettled: context.onTurnSettled }
           : {}),
         ...(context.logger !== undefined ? { logger: context.logger } : {}),
-        ...(options.baseProcessEnv !== undefined
-          ? { baseProcessEnv: options.baseProcessEnv }
-          : {}),
         ...(options.codexHomeDoctor !== undefined
           ? { codexHomeDoctor: options.codexHomeDoctor }
           : {}),

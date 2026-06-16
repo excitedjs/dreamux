@@ -6,20 +6,29 @@ is wiring only — all per-dispatcher orchestration lives here.
 
 ## What goes where
 
-- **`service.ts`** — the facade that assembles the dispatcher-agent service and
-  the teammate service.
-- **`dispatcher/`** — `DispatcherAgentService`: owns live dispatcher slots,
-  start / resume / stop, restart-notice injection, the Feishu channel session,
-  and the **role-based MCP descriptor builder**. The dispatcher agent's lifecycle
-  is tied to the server (started at boot, resumed on restart). Also holds the
-  dispatcher base prompt.
+- **`service.ts`** — the `Dispatchers` collection. It owns configured
+  dispatcher aggregates and process-wide shutdown/restart hooks only; it must
+  not grow teammate/team/channel forwarding methods.
+- **`dispatcher-instance.ts`** — one dispatcher-local aggregate. It owns that
+  dispatcher's runtime/channel operations, direct teammate roster, and Team
+  services.
+- **`team/service.ts`** — `TeamManager`, the internal backing manager for Team
+  records, channel bindings, and TeamLeader delivery. The domain `TeamService`
+  class lives in `dispatcher-instance.ts`.
+- **`dispatcher/`** — `DispatcherRuntimeService`: owns one live dispatcher runtime,
+  start / resume / stop, restart-notice injection, the channel session(s)
+  (`Map<channel_id, ChannelSession>`, driven through the
+  `@excitedjs/dreamux-types` `ChannelProvider` seam — `builtin:feishu` today),
+  and the **role-based MCP descriptor builder**. A `DispatcherService` composes
+  exactly one `DispatcherRuntimeService`; there is no process-wide runtime slots
+  manager. Also holds the dispatcher base prompt.
 - **`teammate/`** — `TeamMateAgentService` + identity-store + runtime-state +
   types + the teammate MCP descriptor. Agent-centric teammates: **no `task`** —
   a teammate is a named, resumable agent.
 
 ## Invariants (why it's shaped this way)
 
-- **Drive every runtime through the neutral AgentRuntime interface.** The service
+- **Drive every runtime through the published AgentRuntime interface.** The service
   resolves a provider from the registry-backed catalog and calls the same
   contract for codex/claude/external; it knows no runtime specifics.
 - **Same creation path for dispatcher and teammate agents.** Both go through

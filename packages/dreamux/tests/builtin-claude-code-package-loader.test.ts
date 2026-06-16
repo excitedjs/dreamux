@@ -28,7 +28,7 @@ import type {
 import type { DispatcherClaudeCodeConfig } from '@excitedjs/agent-runtime-claude-code';
 
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
-import { loadExternalAgentRuntimeProviders } from '../src/agent-runtime/external-provider.js';
+import { loadAgentRuntimeProviders } from '../src/agent-runtime/external-provider.js';
 
 const tmpDirs: string[] = [];
 const runtimes: AgentRuntime[] = [];
@@ -43,7 +43,7 @@ async function loadRealClaudeCodeProvider(): Promise<
 > {
   const registry = createBuiltinProviderRegistry();
   // Default importer => real `import('@excitedjs/agent-runtime-claude-code')`.
-  await loadExternalAgentRuntimeProviders({
+  await loadAgentRuntimeProviders({
     registry,
     refs: ['builtin:claude-code'],
   });
@@ -61,8 +61,10 @@ describe('builtin:claude-code loads the real @excitedjs/agent-runtime-claude-cod
     expect(provider.descriptor.ref.raw).toBe('builtin:claude-code');
 
     const capabilities = provider.getCapabilities();
-    expect(capabilities.resume.supported).toBe(true);
-    expect(capabilities.resume.checkpoint).toBe('claudeCodeSession');
+    expect(capabilities.resume).toEqual({
+      supported: true,
+      checkpoint: 'claudeCodeSession',
+    });
     expect(capabilities.systemPrompt.mode).toBe('append');
     expect(capabilities.events.kind).toBe('synthesized');
     expect(capabilities.teammateCompletion.map((s) => s.kind)).toEqual([
@@ -73,7 +75,7 @@ describe('builtin:claude-code loads the real @excitedjs/agent-runtime-claude-cod
   it('parses real Claude Code runtime config via the loaded provider readConfig', async () => {
     const provider = await loadRealClaudeCodeProvider();
 
-    const config = provider.readConfig!(
+    const config = await provider.readConfig!(
       { model: 'sonnet', permission_mode: 'plan' },
       {
         providerRef: 'builtin:claude-code',
@@ -89,7 +91,7 @@ describe('builtin:claude-code loads the real @excitedjs/agent-runtime-claude-cod
 
   it('constructs a runtime from the neutral context without throwing on absent host hooks', async () => {
     const provider = await loadRealClaudeCodeProvider();
-    const config = provider.readConfig!(
+    const config = await provider.readConfig!(
       {},
       {
         providerRef: 'builtin:claude-code',
@@ -103,9 +105,9 @@ describe('builtin:claude-code loads the real @excitedjs/agent-runtime-claude-cod
     tmpDirs.push(tmp);
     const paths: AgentRuntimePathContext = {
       dispatcherDir: () => tmp,
-      stdoutLogPath: () => join(tmp, 'out.log'),
-      stderrLogPath: () => join(tmp, 'err.log'),
+      logsDir: () => tmp,
       completionSpillDir: () => join(tmp, 'spill'),
+      runtimeSocketDirs: () => [join(tmp, 'sockets')],
     };
     const state: AgentRuntimeStateCallbacks = {
       setStatus: async () => {},

@@ -6,20 +6,29 @@ import {
   ExternalAgentRuntimeProviderLoadError,
   UnsupportedAgentRuntimeProviderError,
   WrongProviderKindError,
-  createBuiltinAgentRuntimeProviderCatalog,
-  createCodexAgentRuntimeProvider,
-  loadExternalAgentRuntimeProviders,
-  type AgentRuntime,
-  type AgentRuntimeCapabilities,
-  type AgentRuntimeCreateContext,
-  type AgentRuntimeLastResult,
-  type AgentRuntimeProvider,
-  type AgentRuntimeProviderConfigReadContext,
-  type AgentRuntimeSystemInput,
-  type AgentRuntimeTurnResult,
+  loadAgentRuntimeProviders,
   type ExternalAgentRuntimeProviderFactory,
+  type ExternalAgentRuntimeProviderFactoryContext,
 } from '../src/agent-runtime/index.js';
-import type { InboundTurnInput } from '../src/agent-runtime/turn.js';
+import {
+  createCodexAgentRuntimeProvider,
+  dispatcherCodexConfig,
+} from '@excitedjs/agent-runtime-codex';
+import { createClaudeCodeAgentRuntimeProvider } from '@excitedjs/agent-runtime-claude-code';
+import { codexAgentRuntimeCatalog } from './helpers/fake-agent-runtime.js';
+import { dispatcherHostPaths } from '../src/agent-runtime/host-paths.js';
+import { asAgentRuntimeDescriptor } from './helpers/provider.js';
+import type {
+  AgentRuntime,
+  AgentRuntimeCapabilities,
+  AgentRuntimeCreateContext,
+  AgentRuntimeLastResult,
+  AgentRuntimeProvider,
+  AgentRuntimeProviderConfigReadContext,
+  AgentRuntimeSystemInput,
+  AgentRuntimeTurnResult,
+  InboundTurnInput,
+} from '@excitedjs/dreamux-types';
 import {
   UnknownBuiltinProviderError,
   createBuiltinProviderRegistry,
@@ -38,10 +47,10 @@ const EXTERNAL_CAPABILITIES: AgentRuntimeCapabilities = {
 };
 
 function builtinCatalog(): AgentRuntimeProviderCatalog {
-  return createBuiltinAgentRuntimeProviderCatalog({
-    registry: createBuiltinProviderRegistry(),
-    codex: {},
-  });
+  // The builtins flow through the same dynamic loader as npm refs; the test
+  // helper seeds a fresh registry with the codex + claude-code implementations
+  // and returns the catalog over it (mirrors `feishuChannelCatalog`).
+  return codexAgentRuntimeCatalog();
 }
 
 class FakeExternalRuntime implements AgentRuntime {
@@ -103,7 +112,7 @@ function externalFactory(options: {
   return ({ ref, descriptor }) => {
     const provider: AgentRuntimeProvider = {
       ref,
-      descriptor,
+      descriptor: asAgentRuntimeDescriptor(descriptor),
       getCapabilities: () => EXTERNAL_CAPABILITIES,
       readConfig(rawConfig, context) {
         options.configs?.push(context);
@@ -141,14 +150,13 @@ describe('AgentRuntimeProviderCatalog', () => {
     expect(row).not.toBeNull();
 
     const runtime = builtinCatalog().resolve('builtin:codex').createRuntime({
-      row: row!,
-      dispatcher,
-      dispatchers: store,
+      identity: { runtime_id: 'flow', checkpoint_id: row!.thread_id },
+      role: 'dispatcher',
+      config: dispatcherCodexConfig(dispatcher),
       cwd: '/tmp/dreamux-test-cwd',
       mcpServers: [],
-      log: () => {
-        /* test sink */
-      },
+      state: store,
+      paths: dispatcherHostPaths,
     });
 
     expect(runtime.providerRef).toBe('builtin:codex');
@@ -198,7 +206,7 @@ describe('AgentRuntimeProviderCatalog', () => {
     const registry = createBuiltinProviderRegistry();
     const created: AgentRuntimeCreateContext[] = [];
     const factory = externalFactory({ created });
-    await loadExternalAgentRuntimeProviders({
+    await loadAgentRuntimeProviders({
       registry,
       refs: [
         'npm:@example/dreamux-runtime',
@@ -210,10 +218,20 @@ describe('AgentRuntimeProviderCatalog', () => {
       },
     });
 
-    const catalog = createBuiltinAgentRuntimeProviderCatalog({
-      registry,
-      codex: {},
-    });
+    // Register the builtin codex + claude-code implementations into the SAME
+    // registry the npm providers were just loaded into, then build the catalog
+    // over it — the builtins are providers indistinguishable from the npm ones.
+    const codexDescriptor = registry.resolve('builtin:codex');
+    registry.registerImplementation(
+      codexDescriptor.id,
+      createCodexAgentRuntimeProvider({ descriptor: codexDescriptor }),
+    );
+    const claudeDescriptor = registry.resolve('builtin:claude-code');
+    registry.registerImplementation(
+      claudeDescriptor.id,
+      createClaudeCodeAgentRuntimeProvider({ descriptor: claudeDescriptor }),
+    );
+    const catalog = new AgentRuntimeProviderCatalog({ registry });
     expect(catalog.list().map((provider) => provider.ref).sort()).toEqual([
       'builtin:claude-code',
       'builtin:codex',
@@ -229,12 +247,13 @@ describe('AgentRuntimeProviderCatalog', () => {
     const dispatcher = testDispatcherConfig({ id: 'flow' });
     const store = new DispatcherStore(testDreamuxConfig([dispatcher]));
     const runtime = provider.createRuntime({
-      row: store.get('flow')!,
-      dispatcher,
-      dispatchers: store,
+      identity: { runtime_id: 'flow', checkpoint_id: store.get('flow')!.thread_id },
+      role: 'dispatcher',
+      config: {},
       cwd: '/tmp/dreamux-test-cwd',
       mcpServers: [],
-      log: () => undefined,
+      state: store,
+      paths: dispatcherHostPaths,
     });
 
     expect(runtime.providerRef).toBe('npm:@example/dreamux-runtime#named');
@@ -253,7 +272,7 @@ describe('AgentRuntimeProviderCatalog', () => {
     expect(registry.getImplementation(codexDescriptor.id)).toBeUndefined();
 
     let importCount = 0;
-    await loadExternalAgentRuntimeProviders({
+    await loadAgentRuntimeProviders({
       registry,
       refs: ['builtin:codex'],
       importModule: async (packageName) => {
@@ -270,7 +289,7 @@ describe('AgentRuntimeProviderCatalog', () => {
     expect(registry.getImplementation(codexDescriptor.id)).toBeDefined();
 
     // A second load is a true no-op now that the implementation exists.
-    await loadExternalAgentRuntimeProviders({
+    await loadAgentRuntimeProviders({
       registry,
       refs: ['builtin:codex'],
       importModule: async () => {
@@ -283,7 +302,7 @@ describe('AgentRuntimeProviderCatalog', () => {
 
   it('reports external package import failures with the provider ref', async () => {
     await expect(
-      loadExternalAgentRuntimeProviders({
+      loadAgentRuntimeProviders({
         registry: createBuiltinProviderRegistry(),
         refs: ['npm:@example/missing-runtime'],
         importModule: async () => {
@@ -292,7 +311,7 @@ describe('AgentRuntimeProviderCatalog', () => {
       }),
     ).rejects.toThrow(ExternalAgentRuntimeProviderLoadError);
     await expect(
-      loadExternalAgentRuntimeProviders({
+      loadAgentRuntimeProviders({
         registry: createBuiltinProviderRegistry(),
         refs: ['npm:@example/missing-runtime'],
         importModule: async () => {
@@ -304,7 +323,7 @@ describe('AgentRuntimeProviderCatalog', () => {
 
   it('rejects external modules that do not export a provider factory', async () => {
     await expect(
-      loadExternalAgentRuntimeProviders({
+      loadAgentRuntimeProviders({
         registry: createBuiltinProviderRegistry(),
         refs: ['npm:@example/dreamux-runtime#missing'],
         importModule: async () => ({ default: externalFactory() }),
@@ -314,11 +333,14 @@ describe('AgentRuntimeProviderCatalog', () => {
 
   it('rejects external providers with incomplete capabilities', async () => {
     await expect(
-      loadExternalAgentRuntimeProviders({
+      loadAgentRuntimeProviders({
         registry: createBuiltinProviderRegistry(),
         refs: ['npm:@example/dreamux-runtime'],
         importModule: async () => ({
-          default: ({ ref, descriptor }) => ({
+          default: ({
+            ref,
+            descriptor,
+          }: ExternalAgentRuntimeProviderFactoryContext) => ({
             ref,
             descriptor,
             getCapabilities: () => ({
@@ -329,6 +351,49 @@ describe('AgentRuntimeProviderCatalog', () => {
         }),
       }),
     ).rejects.toThrow(/capabilities\.steer\.supported/);
+  });
+
+  it('rejects external providers without a systemPrompt capability', async () => {
+    await expect(
+      loadAgentRuntimeProviders({
+        registry: createBuiltinProviderRegistry(),
+        refs: ['npm:@example/dreamux-runtime'],
+        importModule: async () => ({
+          default: ({
+            ref,
+            descriptor,
+          }: ExternalAgentRuntimeProviderFactoryContext) => ({
+            ref,
+            descriptor,
+            getCapabilities: () => ({
+              ...EXTERNAL_CAPABILITIES,
+              systemPrompt: undefined,
+            }),
+            createRuntime: () => new FakeExternalRuntime(ref),
+          }),
+        }),
+      }),
+    ).rejects.toThrow(/capabilities\.systemPrompt must be an object/);
+  });
+
+  it('rejects providers that do not echo the seed descriptor id', async () => {
+    await expect(
+      loadAgentRuntimeProviders({
+        registry: createBuiltinProviderRegistry(),
+        refs: ['builtin:codex'],
+        importModule: async () => ({
+          default: ({
+            ref,
+            descriptor,
+          }: ExternalAgentRuntimeProviderFactoryContext) => ({
+            ref,
+            descriptor: { ...descriptor, id: 'wrong-id' },
+            getCapabilities: () => EXTERNAL_CAPABILITIES,
+            createRuntime: () => new FakeExternalRuntime(ref),
+          }),
+        }),
+      }),
+    ).rejects.toThrow(/provider\.descriptor\.id must be "codex"/);
   });
 
   it('supports registry injection for future provider composition tests', () => {

@@ -17,19 +17,23 @@ import {
   answersFromOptions,
   type OnboardCliOptions,
 } from '../src/onboard/wizard.js';
-import type { CommandRunner, OnboardAnswers } from '../src/onboard/types.js';
+import type {
+  CommandRunner,
+  OnboardAnswers,
+  OnboardChannelConfig,
+} from '../src/onboard/types.js';
 import type { ServiceNodeProbe } from '../src/onboard/service.js';
-import { loadConfigWithBuiltins } from '../src/agent-runtime/load-config.js';
+import { loadConfig } from '../src/config/config.js';
 import {
   logsRoot,
   resetRuntimeConfig,
 } from '../src/platform/paths.js';
+import { dispatcherCodexHome } from '@excitedjs/agent-runtime-codex';
 import {
-  dispatcherCodexHome,
   dispatcherWorkspaceSkillDir,
   dispatcherWorkspaceSkillDirs,
   dispatcherWorkspaceSkillPath,
-} from '../src/agent-runtime/builtin/codex/paths.js';
+} from '../src/onboard/legacy-codex-skills.js';
 import { testSingleDispatcherFileObject } from './helpers/config.js';
 
 class FakeRunner implements CommandRunner {
@@ -112,7 +116,7 @@ class FakeRunner implements CommandRunner {
 // DREAMUX_NODE_BIN hermetic regardless of what the test host has installed.
 const noSystemNodeProbe: ServiceNodeProbe = {
   realpath: async (path) => path,
-  isExecutable: () => false,
+  isExecutable: async () => false,
 };
 
 function writeGlobalCodexAuth(answers: OnboardAnswers): void {
@@ -152,9 +156,8 @@ describe('dreamux onboard', () => {
   it('writes dispatcher state, records subprocess files, and passes the serve doctor', async () => {
     const runner = new FakeRunner();
     const answers = testAnswers({
-      configDir: join(root, 'config'),      dreamuxBin: '/usr/local/bin/dreamux',
-      botAppId: 'app-test',
-      botAppSecret: 'secret-test',
+      configDir: join(root, 'config'),
+      dreamuxBin: '/usr/local/bin/dreamux',
     });
     writeGlobalCodexAuth(answers);
 
@@ -301,14 +304,15 @@ describe('dreamux onboard', () => {
   it('pins the service to a stable system Node and leads PATH with its directory', async () => {
     const runner = new FakeRunner();
     const answers = testAnswers({
-      configDir: join(root, 'config'),      dreamuxBin: '/usr/local/bin/dreamux',
+      configDir: join(root, 'config'),
+      dreamuxBin: '/usr/local/bin/dreamux',
     });
     writeGlobalCodexAuth(answers);
     // /usr/local/bin/node exists, is not version-manager-bound, satisfies the
     // minimum version, so it wins over process.execPath.
     const stableNodeProbe: ServiceNodeProbe = {
       realpath: async (path) => path,
-      isExecutable: (path) => path === '/usr/local/bin/node',
+      isExecutable: async (path) => path === '/usr/local/bin/node',
     };
 
     await runOnboard({
@@ -334,7 +338,8 @@ describe('dreamux onboard', () => {
   it('excludes a version-manager-bound candidate and falls back to the current Node', async () => {
     const runner = new FakeRunner();
     const answers = testAnswers({
-      configDir: join(root, 'config'),      dreamuxBin: '/usr/local/bin/dreamux',
+      configDir: join(root, 'config'),
+      dreamuxBin: '/usr/local/bin/dreamux',
     });
     writeGlobalCodexAuth(answers);
     // /usr/local/bin/node is executable but realpaths into an nvm install, so
@@ -344,7 +349,7 @@ describe('dreamux onboard', () => {
         path === '/usr/local/bin/node'
           ? `${join(root, 'home')}/.nvm/versions/node/v22.7.0/bin/node`
           : path,
-      isExecutable: (path) => path === '/usr/local/bin/node',
+      isExecutable: async (path) => path === '/usr/local/bin/node',
     };
 
     await runOnboard({
@@ -372,7 +377,8 @@ describe('dreamux onboard', () => {
     const runner = new FakeRunner();
     runner.lingerEnableOk = false;
     const answers = testAnswers({
-      configDir: join(root, 'config'),      registerService: true,
+      configDir: join(root, 'config'),
+      registerService: true,
     });
     writeGlobalCodexAuth(answers);
 
@@ -401,7 +407,8 @@ describe('dreamux onboard', () => {
   it('does not let an interactive shell token satisfy the managed service doctor', async () => {
     const runner = new FakeRunner();
     const answers = testAnswers({
-      configDir: join(root, 'config'),      registerService: true,
+      configDir: join(root, 'config'),
+      registerService: true,
     });
 
     await expect(
@@ -420,7 +427,8 @@ describe('dreamux onboard', () => {
   it('fails before systemd registration when the service cannot execute the launcher', async () => {
     const runner = new FakeRunner();
     const answers = testAnswers({
-      configDir: join(root, 'config'),      registerService: true,
+      configDir: join(root, 'config'),
+      registerService: true,
       dreamuxBin: '/usr/local/bin/dreamux',
     });
     writeGlobalCodexAuth(answers);
@@ -443,7 +451,8 @@ describe('dreamux onboard', () => {
   it('rewrites workspace dispatcher skills and skips already-loaded launchd services on rerun', async () => {
     const runner = new FakeRunner();
     const answers = testAnswers({
-      configDir: join(root, 'config'),      registerService: true,
+      configDir: join(root, 'config'),
+      registerService: true,
       startService: true,
     });
     writeGlobalCodexAuth(answers);
@@ -525,9 +534,9 @@ describe('dreamux onboard', () => {
       dispatcherId: 'docs',
       dispatcherCwd: join(root, 'docs-cwd'),
       registerService: false,
-      botAppId: 'app-docs',
-      botAppSecret: 'secret-docs',
+      channels: [feishuOnboardChannel('app-docs', 'secret-docs')],
     });
+    writeGlobalCodexAuth(answers);
 
     await runOnboard({
       answers,
@@ -557,7 +566,6 @@ describe('dreamux onboard', () => {
           extra_args: ['--model', 'local-default'],
           extra_env: {},
           initialize_timeout_ms: 25000,
-          turn_timeout_ms: 600000,
         },
       },
       {
@@ -658,15 +666,17 @@ describe('dreamux onboard', () => {
       mode: 0o600,
     });
 
+    const answers = testAnswers({
+      configDir,
+      dispatcherId: 'docs',
+      dispatcherCwd: join(root, 'docs-cwd'),
+      registerService: false,
+      channels: [feishuOnboardChannel('app-docs', 'secret-docs')],
+    });
+    writeGlobalCodexAuth(answers);
+
     await runOnboard({
-      answers: testAnswers({
-        configDir,
-        dispatcherId: 'docs',
-        dispatcherCwd: join(root, 'docs-cwd'),
-        registerService: false,
-        botAppId: 'app-docs',
-        botAppSecret: 'secret-docs',
-      }),
+      answers,
       runner,
       platform: 'linux',
       homeDir: join(root, 'home'),
@@ -684,7 +694,11 @@ describe('dreamux onboard', () => {
     expect(claudeHelper?.provider).toBe('builtin:claude-code');
   });
 
-  it('rejects a new dispatcher that reuses an existing Feishu app_id', async () => {
+  it('allows a new dispatcher that reuses an existing Feishu app_id (#209 Decision #4: cross-dispatcher uniqueness relaxed)', async () => {
+    // Decision #4 (issue #209): cross-dispatcher Feishu app_id uniqueness is no
+    // longer enforced. Two dispatchers sharing one bot identity is an operator
+    // choice, not a config error — onboard adds the second dispatcher and
+    // rewrites the config instead of failing loud + rolling back.
     const runner = new FakeRunner();
     const configDir = join(root, 'config');
     const existingConfig = JSON.stringify(
@@ -709,25 +723,33 @@ describe('dreamux onboard', () => {
       mode: 0o600,
     });
 
-    await expect(
-      runOnboard({
-        answers: testAnswers({
-          configDir,
-          dispatcherId: 'docs',
-          botAppId: 'app-shared',
-          botAppSecret: 'secret-docs',
-          registerService: false,
-        }),
-        runner,
-        platform: 'linux',
-        homeDir: join(root, 'home'),
-        env: {},
-      }),
-    ).rejects.toThrow(/duplicates dispatcher 'flow'/);
+    const answers = testAnswers({
+      configDir,
+      dispatcherId: 'docs',
+      dispatcherCwd: join(root, 'docs-cwd'),
+      channels: [feishuOnboardChannel('app-shared', 'secret-docs')],
+      registerService: false,
+    });
+    writeGlobalCodexAuth(answers);
 
-    expect(readFileSync(join(configDir, 'config.json'), 'utf8')).toBe(
-      existingConfig,
+    await runOnboard({
+      answers,
+      runner,
+      platform: 'linux',
+      homeDir: join(root, 'home'),
+      env: { CODEX_ACCESS_TOKEN: 'interactive-token-test' },
+    });
+
+    const saved = JSON.parse(
+      readFileSync(join(configDir, 'config.json'), 'utf8'),
+    ) as Record<string, any>;
+    expect(
+      (saved['dispatchers'] as Array<{ id: string }>).map((d) => d.id),
+    ).toEqual(expect.arrayContaining(['flow', 'docs']));
+    const appIds = (saved['dispatchers'] as Array<any>).map(
+      (d) => d.channels[0].config.app_id,
     );
+    expect(appIds).toEqual(['app-shared', 'app-shared']);
   });
 
   it('onboard output round-trips through loadConfig (#148)', async () => {
@@ -742,8 +764,7 @@ describe('dreamux onboard', () => {
       configDir,
       dispatcherId: 'flow',
       registerService: false,
-      botAppId: 'app-roundtrip',
-      botAppSecret: 'secret-roundtrip',
+      channels: [feishuOnboardChannel('app-roundtrip', 'secret-roundtrip')],
     });
     writeGlobalCodexAuth(answers);
 
@@ -756,7 +777,7 @@ describe('dreamux onboard', () => {
     });
 
     // Now load the written config through the same parser.
-    const { config } = await loadConfigWithBuiltins({ configDir });
+    const { config } = await loadConfig({ configDir });
 
     // agents map must be populated with the 'flow' agent.
     expect(Object.keys(config.agents)).toEqual(['flow']);
@@ -777,22 +798,26 @@ describe('dreamux onboard', () => {
     expect(config.dispatchers[0]?.runtime).toEqual(config.agents['flow']);
   });
 
-  it('fails non-interactive setup when required channel inputs are missing', () => {
+  it('fails non-interactive setup when required channel inputs are missing', async () => {
     const options: OnboardCliOptions = {
       yes: true,
-      configDir: join(root, 'config'),    };
+      configDir: join(root, 'config'),
+    };
 
-    expect(() => answersFromOptions(options, false)).toThrow(
-      'non-interactive onboard requires --bot-app-id',
+    await expect(answersFromOptions(options, false)).rejects.toThrow(
+      "provider onboard prompt 'Feishu bot app id' requires interactive input",
     );
   });
 
-  it('defaults non-interactive dispatcher cwd to the current working directory', () => {
-    const answers = answersFromOptions(
+  it('defaults non-interactive dispatcher cwd to the current working directory', async () => {
+    const answers = await answersFromOptions(
       {
         yes: true,
-        configDir: join(root, 'config'),        botAppId: 'app-test',
-        botAppSecret: 'secret-test',
+        configDir: join(root, 'config'),
+        channelConfigJson: JSON.stringify({
+          app_id: 'app-test',
+          app_secret: 'secret-test',
+        }),
       },
       false,
     );
@@ -806,14 +831,39 @@ function testAnswers(overrides: Partial<OnboardAnswers>): OnboardAnswers {
     configDir: join(rootForTest(overrides), 'config'),
     dispatcherId: 'flow',
     dispatcherCwd: join(rootForTest(overrides), 'dispatcher-cwd'),
-    codexBin: process.execPath,
-    botAppId: 'app-test',
-    botAppSecret: 'secret-test',
+    agentRuntime: {
+      id: overrides.dispatcherId ?? 'flow',
+      provider: 'builtin:codex',
+      config: {
+        bin: process.execPath,
+        approval_policy: 'never',
+        sandbox_mode: 'workspace-write',
+        extra_args: [],
+        extra_env: {},
+        initialize_timeout_ms: 10000,
+        turn_timeout_ms: 600000,
+      },
+    },
+    channels: [feishuOnboardChannel('app-test', 'secret-test')],
     registerService: true,
     startService: true,
     dreamuxBin: '/usr/local/bin/dreamux',
     dryRun: false,
     ...overrides,
+  };
+}
+
+function feishuOnboardChannel(
+  appId: string,
+  appSecret: string,
+): OnboardChannelConfig {
+  return {
+    id: 'primary',
+    provider: 'builtin:feishu',
+    config: {
+      app_id: appId,
+      app_secret: appSecret,
+    },
   };
 }
 

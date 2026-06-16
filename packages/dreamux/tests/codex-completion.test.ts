@@ -4,14 +4,15 @@ import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { teamMateCompletionOutputPath } from '../src/platform/paths.js';
+import { teamMateCompletionOutputPath } from '@excitedjs/dreamux-utils';
 
-import { createCodexAgentRuntimeProvider } from '../src/agent-runtime/builtin/codex/provider.js';
 import {
+  createCodexAgentRuntimeProvider,
+  dispatcherCodexConfig,
   CodexProcess,
   type CodexProcessOptions,
-} from '../src/agent-runtime/builtin/codex/supervisor.js';
-import { CodexWsClient } from '../src/agent-runtime/builtin/codex/rpc.js';
+  CodexWsClient,
+} from '@excitedjs/agent-runtime-codex';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
@@ -19,7 +20,7 @@ import { startFakeCodex, type FakeCodex } from './fake-codex.js';
 import type {
   AgentRuntime,
   AgentRuntimePathContext,
-} from '../src/agent-runtime/types.js';
+} from '@excitedjs/dreamux-types';
 
 /** A codex app-server child stub: the runtime talks to the fake over WS instead. */
 class NoopCodexProcess extends CodexProcess {
@@ -57,9 +58,9 @@ describe('codex teammate completion delivery (native inject + trigger)', () => {
     const spillDir = join(tmp, 'spill');
     const paths: AgentRuntimePathContext = {
       dispatcherDir: () => tmp,
-      stdoutLogPath: () => join(tmp, 'out.log'),
-      stderrLogPath: () => join(tmp, 'err.log'),
+      logsDir: () => tmp,
       completionSpillDir: () => spillDir,
+      runtimeSocketDirs: () => [join(tmp, 'sockets')],
     };
     const provider = createCodexAgentRuntimeProvider({
       descriptor: createBuiltinProviderRegistry().resolve('builtin:codex'),
@@ -70,15 +71,13 @@ describe('codex teammate completion delivery (native inject + trigger)', () => {
       },
     });
     const runtime = provider.createRuntime({
-      row: row!,
-      dispatcher,
-      dispatchers: store,
+      identity: { runtime_id: 'flow', checkpoint_id: row!.thread_id },
+      role: 'dispatcher',
+      config: dispatcherCodexConfig(dispatcher),
       cwd: tmp,
       mcpServers: [],
+      state: store,
       paths,
-      log: () => {
-        /* test sink */
-      },
     });
     runtimes.push(runtime);
     await runtime.start();

@@ -6,10 +6,13 @@ monorepo's **synchronous-blocking-IO lint gate** (issue #85).
 dreamux is one Node process driving N dispatchers off a single event loop, so a
 `fs.*Sync` / `child_process.execSync|spawnSync` call in runtime code stalls every
 concurrent session. This config makes such calls a hard error in source.
+It also caps package source files at 700 physical lines so large modules are
+split before they become review and architecture bottlenecks.
 
 ## What it enforces
 
 - **`n/no-sync`** (primary) — flags any callee whose name ends in `Sync`.
+- **`max-lines`** — flags `src/**/*.ts` files over 700 physical lines.
 - **`no-restricted-imports`** (backstop) — bans `Sync$` named imports from
   `fs` / `child_process`, closing the renamed-import bypass.
 - **`no-restricted-syntax`** (backstop) — bans `const { readFileSync: x } = fs`
@@ -25,7 +28,7 @@ and pure-syntactic (the typescript-eslint parser runs without
 
 | Glob | `n/no-sync` | Notes |
 | --- | --- | --- |
-| `src/**/*.ts` | error | runtime / CLI — no synchronous blocking IO |
+| `src/**/*.ts` | error | runtime / CLI source — no synchronous blocking IO; max 700 physical lines |
 | `tests/**/*.ts` | off | synchronous fs fixtures allowed; sync `child_process` still banned |
 
 Tightening tests further (converting fixture IO to async) is deliberately

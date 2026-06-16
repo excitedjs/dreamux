@@ -21,8 +21,10 @@ import { promisify } from 'node:util';
 
 import {
   createClaudeCodeAgentRuntimeProvider,
+  dispatcherClaudeCodeConfig,
   type ClaudeCodeAgentRuntimeProviderOptions,
-} from '../src/agent-runtime/builtin/claude-code/provider.js';
+} from '@excitedjs/agent-runtime-claude-code';
+import { dispatcherHostPaths } from '../src/agent-runtime/host-paths.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
@@ -110,14 +112,13 @@ describe('claude-code live integration (opt-in)', () => {
     expect(row).not.toBeNull();
 
     const runtime = claudeCodeProvider().createRuntime({
-      row: row!,
-      dispatcher,
-      dispatchers: store,
+      identity: { runtime_id: 'live', checkpoint_id: row!.thread_id },
+      role: 'dispatcher',
+      config: dispatcherClaudeCodeConfig(dispatcher),
       cwd: home,
       mcpServers: [],
-      log: () => {
-        /* live test sink */
-      },
+      state: store,
+      paths: dispatcherHostPaths,
     });
 
     await runtime.start();

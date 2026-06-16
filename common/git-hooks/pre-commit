@@ -1,17 +1,19 @@
 #!/bin/sh
-# Local pre-commit pre-flight. Two fast, non-authoritative gates that shorten
-# the feedback loop before CI:
+# Local pre-commit pre-flight. Two fast gates that shorten the feedback loop
+# before CI:
 #
-#   1. no-sync-io (issue #85) — lint staged TypeScript against each package's
-#      ESLint flat config (the n/no-sync ban + import / syntax backstops). src/**
-#      is a hard error on any *Sync IO; tests/** is audited via reasoned disables.
+#   1. staged-eslint — lint staged package TypeScript against each package's
+#      ESLint flat config. This enforces the source max-lines cap, the issue #85
+#      n/no-sync ban, import / syntax backstops, and package-specific guards.
 #   2. anti-leak — scan the *staged* changes with gitleaks. dreamux is a PUBLIC
 #      repo: company-internal content (Feishu ids, tokens, private-mirror
 #      registry URLs, secrets) must never be committed.
 #
-# Both gates warn-and-pass when their tool isn't installed: the GitHub Actions
-# jobs (`rush lint`; `gitleaks detect` over the full history) are the real,
-# non-bypassable gates. This hook only shortens the loop.
+# The ESLint gate fails if package dependencies are missing because Rush only
+# installs this hook after `rush install` / `rush update`, which should also
+# install the package-local eslint binaries. The gitleaks gate still warns and
+# passes when the external binary is not installed; CI runs the full-history
+# non-bypassable scan.
 #
 # Rush installs this script into .git/hooks on `rush install` / `rush update`.
 # If your hooks aren't wired up yet, point git at this directory manually:
@@ -19,9 +21,11 @@
 
 repo_root=$(git rev-parse --show-toplevel)
 
-# --- 1. no-sync-io gate (issue #85) ------------------------------------------
-# Lint only the staged .ts files, each against its owning package's flat config.
-staged_ts=$(git diff --cached --name-only --diff-filter=ACM -- '*.ts')
+# --- 1. staged ESLint gate ---------------------------------------------------
+# Lint only staged package src/tests .ts files, each against its owning package's
+# flat config. This keeps the hook fast while exercising the same rules as
+# `rush lint` for files that are about to be committed.
+staged_ts=$(git diff --cached --name-only --diff-filter=ACMR -- '*.ts')
 if [ -n "$staged_ts" ]; then
   eslint_failed=0
   eslint_missing=0
@@ -42,12 +46,16 @@ if [ -n "$staged_ts" ]; then
       d=$(dirname "$d")
     done
     [ -n "$pkg" ] || continue
+    rel=${f#"$pkg"/}
+    case "$rel" in
+      src/*.ts|tests/*.ts) ;;
+      *) continue ;;
+    esac
     eslint_bin="$repo_root/$pkg/node_modules/.bin/eslint"
     if [ ! -x "$eslint_bin" ]; then
       eslint_missing=1
       continue
     fi
-    rel=${f#"$pkg"/}
     if ! (
       cd "$repo_root/$pkg" || exit 1
       "$eslint_bin" "$rel"
@@ -58,12 +66,15 @@ if [ -n "$staged_ts" ]; then
   set +f
   IFS=$oldifs
   if [ "$eslint_failed" = 1 ]; then
-    echo "[no-sync-io] ESLint flagged staged TypeScript (issue #85 sync-IO gate)." >&2
-    echo "[no-sync-io] Fix it before committing — CI runs the same rule." >&2
+    echo "[staged-eslint] ESLint flagged staged package TypeScript." >&2
+    echo "[staged-eslint] Fix it before committing — CI runs the same rules." >&2
     exit 1
   fi
   if [ "$eslint_missing" = 1 ]; then
-    echo "[no-sync-io] eslint not installed in a package — skipped there; CI will enforce." >&2
+    echo "[staged-eslint] eslint is missing in at least one package." >&2
+    echo "[staged-eslint] Run: node common/scripts/install-run-rush.js update" >&2
+    echo "[staged-eslint] Then retry the commit." >&2
+    exit 1
   fi
 fi
 

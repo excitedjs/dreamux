@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "Move the built-in Feishu channel implementation into the publishable @excitedjs/feishu-channel package and depend on it by default (issue #209 slice 5). channel/feishu/ becomes a thin core-owned adapter that resolves the host contracts the package must not reconstruct (bot secret/app id from the dispatcher row+config, the per-dispatcher state dir for access.json/chat-bots.json, the attachment cache dir) and constructs the package session; the Channel MCP server descriptor and admin-method routing stay in core, and bot/feishu-mcp-surface become re-export shims so existing import paths are stable. Routing, binding state, authorization, and Team lifecycle stay core-owned. The builtin:feishu alias and current operator/runtime behavior are unchanged; no operator action required on upgrade.",
+      "comment": "Move the built-in Feishu channel implementation into the publishable @excitedjs/feishu-channel package and depend on it by default (issue #209 slice 5). Core resolves `builtin:feishu` through the Channel provider loader/catalog and passes the provider-validated config plus neutral host state/cache roots into `ChannelProvider.createSession`; there is no core-owned Feishu adapter path. The Feishu package owns the live session, target resolution, MCP descriptor, `reply` / `react` / `list_chat_bots` tool handlers, inbound normalization, access/trust behavior, and platform I/O. Routing, binding state, authorization, Team lifecycle, and the generic `channel.invoke_tool` conduit stay core-owned. No operator action required on upgrade.",
       "type": "patch",
       "packageName": "@excitedjs/dreamux"
     }

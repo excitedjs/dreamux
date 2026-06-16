@@ -19,10 +19,8 @@ interface BuiltinSpec {
 
 /**
  * Canonical provider refs Dreamux ships. These live next to the builtin ids so
- * builtin modules can import them without depending on `config/config.ts`
- * (which would form an import cycle once config registers builtins through the
- * agent-runtime catalog). `config/config.ts` re-exports them for the
- * non-builtin callers that already import them from there.
+ * core modules can import the stable refs from the registry layer instead of a
+ * config-module shim.
  *
  * `builtin:feishu` is the built-in channel ref. Since the multi-channel config
  * slice (#209) it IS a registry descriptor (kind `channel`), so config loading

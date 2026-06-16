@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Provider-specific channel tool plumbing is neutralized: the old `feishu-mcp` CLI subcommand is replaced by the generic `channel-mcp` stdio shim, while binding stays on the Team MCP. A Channel provider's `mcpServerDescriptor` supplies static `tools/list` metadata plus the shim args (`channel-mcp --provider <ref> --channel-id <id> --dispatcher <id> ...`); `tools/call` forwards raw `{ name, arguments }` through the single neutral admin method `channel.invoke_tool`, which routes to the live `ChannelSession.handleTool` or `ChannelProvider.handleSessionlessTool`. Core names no provider tool or selector. The per-dispatcher shim log directory moves from `~/.dreamux/logs/feishu-mcp/` to `~/.dreamux/logs/channel-mcp/`. Rebuild: none required for stored state. MCP server descriptors are rendered at every dispatcher boot and same-release shim/server IPC is regenerated on `daemon restart`. The old `~/.dreamux/logs/feishu-mcp/` directory is rebuildable and safe to delete. Any saved automation invoking `dreamux feishu-mcp` directly must switch to `dreamux channel-mcp`; any binding automation must use the Team MCP `bind_channel` / `transfer_back` tools, not the channel-tool shim.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

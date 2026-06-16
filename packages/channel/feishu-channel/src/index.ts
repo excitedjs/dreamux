@@ -10,6 +10,7 @@
 export {
   default,
   createFeishuChannelProvider,
+  type CreateFeishuChannelProviderOptions,
   type FeishuChannelConfig,
 } from './provider.js';
 
@@ -20,7 +21,6 @@ export {
   IN_PROGRESS_REACTION_EMOJI,
   toWireChatBot,
   type FeishuChannelSessionOptions,
-  type FeishuChannelLogger,
   type FeishuInboundSubmitter,
   type FeishuInboundEnvelope,
   type FeishuMcpListChatBotsResult,

@@ -68,7 +68,7 @@ describe('builtin:feishu loads the real @excitedjs/feishu-channel package', () =
 
   it('builds a functional neutral session from the create context', async () => {
     const provider = await loadRealFeishuProvider();
-    const config = provider.readConfig!(
+    const config = await provider.readConfig!(
       { app_id: 'app-x', app_secret: 'secret-x' },
       { dispatcher_id: 'flow', channel_id: 'feishu', provider: 'builtin:feishu' },
     );

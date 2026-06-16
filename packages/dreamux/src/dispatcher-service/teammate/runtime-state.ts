@@ -1,4 +1,4 @@
-import type { AgentRuntimeStateStore } from '../../agent-runtime/index.js';
+import type { AgentRuntimeStateCallbacks } from '@excitedjs/dreamux-types';
 import type { DispatcherStatus } from '../../state/dispatcher-store.js';
 import type { TeamMateIdentityStore } from './identity-store.js';
 import {
@@ -7,7 +7,7 @@ import {
 } from './types.js';
 import { preview } from './turns-store.js';
 
-export class TeamMateRuntimeStateStore implements AgentRuntimeStateStore {
+export class TeamMateRuntimeStateStore implements AgentRuntimeStateCallbacks {
   constructor(
     private readonly store: TeamMateIdentityStore,
     private identity: TeamMateIdentity,

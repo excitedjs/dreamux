@@ -3,8 +3,8 @@
  * and the typed accessor.
  *
  * Owned by the `@excitedjs/agent-runtime-claude-code` package (issue #209). It
- * depends only on vendored neutral validation primitives
- * (`./internal/config-validate`) and the package's own provider ref
+ * depends only on the shared neutral validation primitives
+ * (`@excitedjs/dreamux-utils`) and the package's own provider ref
  * (`./provider-ref`); it never imports `@excitedjs/dreamux` core. Core re-exports
  * these symbols through its `config/config.ts` (via the package's light
  * `./config` subpath) so the non-builtin callers (doctor, tests) keep their
@@ -19,7 +19,7 @@ import {
   requirePositiveInt,
   requireStringArray,
   requireStringRecord,
-} from './internal/config-validate.js';
+} from '@excitedjs/dreamux-utils';
 
 /**
  * Builtin Claude Code runtime settings under a named `agents[].config` entry

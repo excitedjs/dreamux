@@ -2,12 +2,13 @@
  * Feishu Channel MCP tool surface: the tool names, input shapes, JSON-schema
  * tool descriptors, and the raw-argument parser the Feishu channel session backs.
  *
- * This is the channel-owned half of the old `feishu-mcp-surface`: pure
- * platform-specific tool parsing/validation with no host dependency. The
- * host-owned half — the MCP *server descriptor* (which points at the Dreamux bin
- * + admin socket + the core `feishu-mcp` shim) and the admin-method routing —
- * stays in `@excitedjs/dreamux` core. Core re-exports these symbols so the shim
- * and existing importers keep stable paths (issue #209 slice 5).
+ * Pure platform-specific tool parsing/validation with no host dependency. The
+ * channel's own `mcpServerDescriptor` (in `provider.ts`) shapes the MCP *server
+ * descriptor* that points at the Dreamux bin + admin socket + the core's generic
+ * `channel-mcp` shim; that shim is a blind conduit that forwards `tools/list`
+ * and `tools/call` to the neutral `channel.list_tools` / `channel.invoke_tool`
+ * admin methods, so core no longer names these tool symbols (issue #209
+ * cleanup).
  */
 
 export type FeishuMcpToolName = 'reply' | 'react' | 'list_chat_bots';

@@ -1,0 +1,64 @@
+import type { AgentRuntimeTurnResult } from '@excitedjs/dreamux-types';
+
+import type { LiveTeamMate } from './live-runtime.js';
+import type { TeamMateRuntimeStateStore } from './runtime-state.js';
+import type { TeamMateTurnsStore } from './turns-store.js';
+import type {
+  TeamMateTurnOrigin,
+  TeamMateTurnResult,
+} from './types.js';
+
+export async function recordSubmittedTurn(
+  turnsStore: TeamMateTurnsStore,
+  dispatcherId: string,
+  live: LiveTeamMate,
+  input: {
+    turnId: string | null;
+    turnOrigin: TeamMateTurnOrigin | null;
+    prompt: string;
+  },
+): Promise<void> {
+  const current = live.state.current();
+  await turnsStore.appendSubmit(dispatcherId, current.name, {
+    turnId: input.turnId,
+    turnOrigin: input.turnOrigin,
+    prompt: input.prompt,
+    intent: current.intent,
+  });
+  await live.state.recordSubmittedTurn(input.prompt);
+}
+
+export async function recordSettledTurn(
+  turnsStore: TeamMateTurnsStore,
+  dispatcherId: string,
+  name: string,
+  state: TeamMateRuntimeStateStore,
+  input: {
+    turnId: string | null;
+    assistant: string | null;
+    settleStatus: 'completed' | 'failed' | 'stopped' | null;
+  },
+): Promise<void> {
+  await turnsStore.appendSettled(dispatcherId, name, {
+    turnId: input.turnId,
+    assistant: input.assistant,
+    settleStatus: input.settleStatus,
+  });
+  await state.recordSettledTurn(input.assistant);
+}
+
+export function toTurnResult(
+  result: AgentRuntimeTurnResult,
+): TeamMateTurnResult {
+  switch (result.status) {
+    case 'submitted':
+      return { status: 'submitted', turn_id: result.turnId };
+    case 'duplicate':
+    case 'stopped':
+      return { status: result.status };
+    case 'failed':
+      return { status: 'failed', error: result.error.message };
+    case 'skipped':
+      return { status: 'stopped', error: 'turn skipped' };
+  }
+}

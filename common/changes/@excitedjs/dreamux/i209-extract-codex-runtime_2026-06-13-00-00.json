@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "Extract the built-in Codex runtime into the publishable @excitedjs/agent-runtime-codex package and depend on it by default (issue #209 slice 3). builtin/codex/ becomes a thin core-owned adapter that maps the host create context onto the neutral @excitedjs/dreamux-types contract and supplies the host path/socket/log/state/skill contracts the package must not reconstruct; the codex-home doctor, diagnostic, host paths, and re-export shims stay in core so existing import paths are stable. The builtin:codex alias, runtime semantics, config, paths, and state are unchanged; no operator action required on upgrade.",
+      "comment": "Extract the built-in Codex runtime into the publishable @excitedjs/agent-runtime-codex package and depend on it by default (issue #209 slice 3). `builtin:codex` loads through the provider package loader/catalog and implements the neutral @excitedjs/dreamux-types AgentRuntimeProvider contract; core supplies only the neutral create-context values (identity, role, cwd, MCP descriptors, skill sources, state callbacks, path context, logger, and env injection seam). Codex-specific process, socket, handshake, diagnostics, config, and completion-delivery logic live in the runtime package. The builtin:codex alias, runtime semantics, config, paths, and state are unchanged; no operator action required on upgrade.",
       "type": "patch",
       "packageName": "@excitedjs/dreamux"
     }

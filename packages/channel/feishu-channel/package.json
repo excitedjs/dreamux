@@ -1,6 +1,11 @@
 {
   "name": "@excitedjs/feishu-channel",
   "version": "0.1.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/excitedjs/dreamux.git",
+    "directory": "packages/channel/feishu-channel"
+  },
   "description": "Built-in Feishu ChannelProvider package for Dreamux (alias builtin:feishu). Owns Feishu channel session logic, inbound normalization, access/trust, and MCP tool backing on top of @excitedjs/feishu-transport; depends on @excitedjs/dreamux-types + @excitedjs/feishu-transport only, never on @excitedjs/dreamux core (issue excitedjs/dreamux#209).",
   "license": "MIT",
   "type": "module",
@@ -32,6 +37,7 @@
   },
   "dependencies": {
     "@excitedjs/dreamux-types": "workspace:*",
+    "@excitedjs/dreamux-utils": "workspace:*",
     "@excitedjs/feishu-transport": "workspace:*"
   },
   "devDependencies": {

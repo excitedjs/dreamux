@@ -16,20 +16,6 @@ export function dreamuxBinPath(
     : DREAMUX_BIN;
 }
 
-export function dispatcherProcessEnv(
-  baseEnv: NodeJS.ProcessEnv = process.env,
-  extraEnv: Record<string, string> = {},
-): NodeJS.ProcessEnv {
-  const mergedEnv: NodeJS.ProcessEnv = {
-    ...baseEnv,
-    ...extraEnv,
-  };
-  return {
-    ...mergedEnv,
-    PATH: prependPath(packageBinDirs(mergedEnv), mergedEnv['PATH']),
-  };
-}
-
 /**
  * Resolve an executable to an absolute path the same way a shell would, using
  * the supplied `PATH` — async (the `n/no-sync` gate bans the sync `fs` calls a
@@ -61,21 +47,4 @@ export async function resolveExecutableOnPath(
     }
   }
   return null;
-}
-
-function packageBinDirs(env: NodeJS.ProcessEnv): string[] {
-  const dirs = [PACKAGE_BIN_DIR];
-  dirs.push(dirname(dreamuxBinPath(env)));
-  return dirs;
-}
-
-function prependPath(prefixes: string[], existing: string | undefined): string {
-  const parts: string[] = [];
-  const seen = new Set<string>();
-  for (const part of [...prefixes, ...(existing ?? '').split(':')]) {
-    if (part === '' || seen.has(part)) continue;
-    seen.add(part);
-    parts.push(part);
-  }
-  return parts.join(':');
 }

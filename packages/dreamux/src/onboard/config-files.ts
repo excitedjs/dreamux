@@ -1,12 +1,5 @@
 import type { DreamuxConfig } from '../config/config.js';
 import {
-  BUILTIN_CODEX_PROVIDER_REF,
-  BUILTIN_FEISHU_PROVIDER_REF,
-  DEFAULT_APPROVAL_POLICY,
-  DEFAULT_CODEX_TURN_TIMEOUT_MS,
-  DEFAULT_INITIALIZE_TIMEOUT_MS,
-  DEFAULT_SANDBOX_MODE,
-  dispatcherFeishuConfig,
   type DispatcherConfig,
   type DispatcherProviderConfig,
   stringifyConfig,
@@ -28,58 +21,33 @@ export function dreamuxConfigFromAnswers(
     .filter((dispatcher) => dispatcher.id !== answers.dispatcherId)
     .map(cloneDispatcherConfig);
   dispatchers.push(dispatcherConfigFromAnswers(answers));
-  // Config lands only in agents[]. Onboard uses one agent per dispatcher with
-  // agent id == dispatcher id (dispatcher ids are unique and an agent id has no
-  // path-safety constraint), so a per-dispatcher codex bin is preserved and the
-  // shape round-trips with no dedup logic.
+  // Runtime config lands only in agents[]. Onboard creates or updates the
+  // selected agent id, preserving provider-owned raw config so the file
+  // round-trips after provider parsers normalize defaults.
   //
   // Seed from the existing agents map FIRST, then overwrite/add the
   // dispatcher-owned entries. agents[] is the global runtime-config map, so an
-  // entry referenced only by a TeamMate (e.g. a `claude` agent used via
-  // teammate.spawn under a Codex dispatcher) is valid even though no dispatcher
-  // names it; re-running onboard must not silently delete it.
+  // entry referenced only by a TeamMate is valid even though no dispatcher names
+  // it; re-running onboard must not silently delete it.
   const agents: DreamuxConfig['agents'] = {};
   for (const [id, agent] of Object.entries(base.agents)) {
+    const rawConfig = cloneOptionalProviderConfig(agent.rawConfig);
     agents[id] = {
       provider: agent.provider,
       config: cloneProviderConfig(agent.config),
+      ...(rawConfig === undefined ? {} : { rawConfig }),
     };
   }
   for (const dispatcher of dispatchers) {
+    const rawConfig = cloneOptionalProviderConfig(dispatcher.runtime.rawConfig);
     agents[dispatcher.agentRuntime] = {
       provider: dispatcher.runtime.provider,
       config: cloneProviderConfig(dispatcher.runtime.config),
+      ...(rawConfig === undefined ? {} : { rawConfig }),
     };
   }
   const next: DreamuxConfig = { agents, dispatchers };
-  assertUniqueFeishuAppIds(next);
   return next;
-}
-
-export function dispatcherBotSecretRef(dispatcherId: string): string {
-  return `config:${dispatcherId}`;
-}
-
-export function dispatcherCodexArgsJson(): string {
-  return JSON.stringify({
-    approvalPolicy: DEFAULT_APPROVAL_POLICY,
-    sandboxMode: DEFAULT_SANDBOX_MODE,
-    extraArgs: [],
-  });
-}
-
-function assertUniqueFeishuAppIds(config: DreamuxConfig): void {
-  const seen = new Map<string, string>();
-  for (const dispatcher of config.dispatchers) {
-    const feishu = dispatcherFeishuConfig(dispatcher);
-    const existing = seen.get(feishu.app_id);
-    if (existing !== undefined && existing !== dispatcher.id) {
-      throw new Error(
-        `Feishu app_id for dispatcher '${dispatcher.id}' duplicates dispatcher '${existing}'`,
-      );
-    }
-    seen.set(feishu.app_id, dispatcher.id);
-  }
 }
 
 function dispatcherConfigFromAnswers(answers: OnboardAnswers): DispatcherConfig {
@@ -87,29 +55,17 @@ function dispatcherConfigFromAnswers(answers: OnboardAnswers): DispatcherConfig 
     id: answers.dispatcherId,
     cwd: answers.dispatcherCwd,
     enabled: true,
-    channels: [
-      {
-        id: 'primary',
-        provider: BUILTIN_FEISHU_PROVIDER_REF,
-        config: {
-          app_id: answers.botAppId,
-          app_secret: answers.botAppSecret,
-        },
-      },
-    ],
-    // One agent per dispatcher; agent id == dispatcher id.
-    agentRuntime: answers.dispatcherId,
+    channels: answers.channels.map((channel) => ({
+      id: channel.id,
+      provider: channel.provider,
+      config: cloneProviderConfig(channel.config),
+      rawConfig: cloneProviderConfig(channel.config),
+    })),
+    agentRuntime: answers.agentRuntime.id,
     runtime: {
-      provider: BUILTIN_CODEX_PROVIDER_REF,
-      config: {
-        bin: answers.codexBin,
-        approval_policy: DEFAULT_APPROVAL_POLICY,
-        sandbox_mode: DEFAULT_SANDBOX_MODE,
-        extra_args: [],
-        extra_env: {},
-        initialize_timeout_ms: DEFAULT_INITIALIZE_TIMEOUT_MS,
-        turn_timeout_ms: DEFAULT_CODEX_TURN_TIMEOUT_MS,
-      },
+      provider: answers.agentRuntime.provider,
+      config: cloneProviderConfig(answers.agentRuntime.config),
+      rawConfig: cloneProviderConfig(answers.agentRuntime.config),
     },
   };
 }
@@ -123,15 +79,28 @@ function cloneDispatcherConfig(dispatcher: DispatcherConfig): DispatcherConfig {
       id: channel.id,
       provider: channel.provider,
       config: cloneProviderConfig(channel.config),
+      ...(channel.rawConfig === undefined
+        ? {}
+        : { rawConfig: cloneProviderConfig(channel.rawConfig) }),
     })),
     agentRuntime: dispatcher.agentRuntime,
     runtime: {
       provider: dispatcher.runtime.provider,
       config: cloneProviderConfig(dispatcher.runtime.config),
+      ...(dispatcher.runtime.rawConfig === undefined
+        ? {}
+        : { rawConfig: cloneProviderConfig(dispatcher.runtime.rawConfig) }),
     },
   };
 }
 
 function cloneProviderConfig(config: unknown): DispatcherProviderConfig {
   return structuredClone(config) as DispatcherProviderConfig;
+}
+
+function cloneOptionalProviderConfig(
+  config: DispatcherProviderConfig | undefined,
+): DispatcherProviderConfig | undefined {
+  if (config === undefined) return undefined;
+  return cloneProviderConfig(config);
 }

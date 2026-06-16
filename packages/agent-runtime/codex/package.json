@@ -42,6 +42,7 @@
   },
   "dependencies": {
     "@excitedjs/dreamux-types": "workspace:*",
+    "@excitedjs/dreamux-utils": "workspace:*",
     "smol-toml": "^1.6.1",
     "ws": "^8.18.0"
   },

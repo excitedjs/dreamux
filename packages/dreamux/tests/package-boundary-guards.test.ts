@@ -19,7 +19,7 @@
  * They read `rush.json` + manifests and scan package `src/` on disk rather than
  * importing, so a boundary regression fails loud at the manifest/import layer.
  */
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -78,6 +78,10 @@ function walkTs(dir: string): string[] {
 }
 
 const LARK_SDK_IMPORT = /from\s+['"]@larksuiteoapi\//;
+const CORE_PROVIDER_PACKAGE_IMPORT =
+  /from\s+['"]@excitedjs\/(?:agent-runtime-codex|agent-runtime-claude-code|feishu-channel|feishu-transport)(?:['"/]|$)|import\s*\(\s*['"]@excitedjs\/(?:agent-runtime-codex|agent-runtime-claude-code|feishu-channel|feishu-transport)(?:['"/]|$)/;
+const CORE_PROVIDER_FACTORY_CALL =
+  /\b(?:createCodexAgentRuntimeProvider|createClaudeCodeAgentRuntimeProvider|createFeishuChannelProvider)\s*\(|\bnew\s+(?:CodexRuntime|ClaudeCodeRuntime|FeishuChannelSession)\b/;
 const projects = rushProjects();
 
 describe('epic #209 package-boundary guards', () => {
@@ -143,6 +147,38 @@ describe('epic #209 package-boundary guards', () => {
           `${name} must not list @excitedjs/dreamux in ${field}`,
         ).toBe(false);
       }
+    }
+  });
+
+  it('core source does not import built-in provider implementation packages', () => {
+    const coreSrc = join(repoRoot, 'packages/dreamux/src');
+    const offenders = walkTs(coreSrc).filter((file) =>
+      CORE_PROVIDER_PACKAGE_IMPORT.test(readFileSync(file, 'utf8')),
+    );
+    expect(
+      offenders.map((file) => file.slice(repoRoot.length + 1)),
+    ).toEqual([]);
+  });
+
+  it('core source does not call provider-specific factories or classes directly', () => {
+    const coreSrc = join(repoRoot, 'packages/dreamux/src');
+    const offenders = walkTs(coreSrc).filter((file) =>
+      CORE_PROVIDER_FACTORY_CALL.test(readFileSync(file, 'utf8')),
+    );
+    expect(
+      offenders.map((file) => file.slice(repoRoot.length + 1)),
+    ).toEqual([]);
+  });
+
+  it('core has no provider-specific runtime/channel adapter source tree', () => {
+    for (const removedPath of [
+      'packages/dreamux/src/agent-runtime/builtin',
+      'packages/dreamux/src/channel/feishu',
+      'packages/dreamux/src/channel/feishu-channel.ts',
+      'packages/dreamux/src/channel/feishu-mcp-surface.ts',
+      'packages/dreamux/src/channel/bot.ts',
+    ]) {
+      expect(existsSync(join(repoRoot, removedPath)), removedPath).toBe(false);
     }
   });
 });

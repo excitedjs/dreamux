@@ -73,3 +73,6 @@ export {
 } from './config.js';
 
 export { BUILTIN_CLAUDE_CODE_PROVIDER_REF } from './provider-ref.js';
+
+// The claude-code diagnostic surface now lives in this package (issue #209 cleanup).
+export { claudeCodeAgentRuntimeDiagnostic } from './diagnostic.js';

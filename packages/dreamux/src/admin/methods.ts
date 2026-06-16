@@ -1,21 +1,17 @@
-/**
- * Admin method handlers.
- *
- * Each handler takes typed params and returns the `result` payload to put on
- * the wire. Throws `AdminError` for user-actionable failures (the protocol
- * layer formats those as `error` responses).
- */
 
 import type { Server } from '../server.js';
+import type {
+  ChannelToolCaller,
+  DispatcherService,
+  TeamService,
+} from '../dispatcher-service/dispatcher-instance.js';
 import { AdminError } from './protocol.js';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
+import { ChannelToolAuthorizationError } from '../dispatcher-service/errors.js';
 import {
-  teamLeaderPrincipal,
-  type TeamMateCallerPrincipal,
   type TeamMateHistoryQuery,
   type TeamMateIdentityStatus,
   type TeamMateWorktreeRequest,
-  dispatcherPrincipal,
 } from '../dispatcher-service/teammate/types.js';
 
 export type AdminHandler = (
@@ -56,12 +52,12 @@ export const adminMethods: Record<string, AdminHandler> = {
     if (row === null) {
       throw new AdminError('DISPATCHER_NOT_FOUND', `no dispatcher with id '${id}'`);
     }
-    const runtime = server.dispatcherService.getRuntime(id);
+    const runtime = server.getDispatcher(id).runtimeStatus();
     return {
       dispatcher_id: row.dispatcher_id,
-      bot_app_id: row.bot_app_id,
-      status: runtime?.getStatus() ?? row.status,
-      thread_id: runtime?.getThreadId() ?? row.thread_id,
+      channel_identity: row.channel_identity,
+      status: runtime.status ?? row.status,
+      thread_id: runtime.threadId ?? row.thread_id,
       last_lost_thread_id: row.last_lost_thread_id,
       last_error: row.last_error,
     };
@@ -73,102 +69,69 @@ export const adminMethods: Record<string, AdminHandler> = {
     if (row === null) {
       throw new AdminError('DISPATCHER_NOT_FOUND', `no dispatcher with id '${id}'`);
     }
-    await server.dispatcherService.startDispatcher(id);
+    const dispatcher = server.getDispatcher(id);
+    await dispatcher.start();
     return {
       dispatcher_id: id,
-      status: server.dispatcherService.getRuntime(id)?.getStatus(),
+      status: dispatcher.runtimeStatus().status,
     };
   },
 
   'dispatcher.stop': async (server, params) => {
     const id = mustDispatcherId(params);
-    await server.dispatcherService.stopDispatcher(id);
+    await server.getDispatcher(id).stop();
     return { dispatcher_id: id, status: 'stopped' };
   },
-
-  'mcp.reply': async (server, params) => {
+  'channel.invoke_tool': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    mustRunningDispatcher(server, id);
-    const channelId = await assertFeishuScope(server, id, params);
+    const name = mustString(params, 'name');
+    const caller = channelToolCaller(params);
+    const channelId = optionalString(params, 'channel_id');
+    const providerRef = optionalString(params, 'provider_ref');
     try {
-      return await server.dispatcherService.callFeishuMcpTool({
-        dispatcherId: id,
-        toolName: 'reply',
-        arguments: params ?? {},
-        ...(channelId !== undefined ? { channelId } : {}),
+      return await server.getDispatcher(id).invokeChannelTool({
+        name,
+        arguments: mustToolArguments(params),
+        caller,
+        ...(channelId !== null ? { channelId } : {}),
+        ...(providerRef !== null ? { providerRef } : {}),
       });
     } catch (err) {
-      throw new AdminError('OUTBOUND_FAILED', parseMessage(err));
+      if (err instanceof ChannelToolAuthorizationError) {
+        throw new AdminError(err.code, err.message);
+      }
+      if (err instanceof AdminError) throw err;
+      throw new AdminError('CHANNEL_TOOL_FAILED', parseMessage(err));
     }
-  },
-
-  'mcp.react': async (server, params) => {
-    const id = mustDispatcherId(params);
-    mustExistingDispatcher(server, id);
-    mustRunningDispatcher(server, id);
-    const channelId = await assertFeishuScope(server, id, params);
-    try {
-      return await server.dispatcherService.callFeishuMcpTool({
-        dispatcherId: id,
-        toolName: 'react',
-        arguments: params ?? {},
-        ...(channelId !== undefined ? { channelId } : {}),
-      });
-    } catch (err) {
-      throw new AdminError('REACTION_FAILED', parseMessage(err));
-    }
-  },
-
-  // Read-only: lists a chat's known + trusted peer bots (issue #69). Reads the
-  // per-dispatcher chat-bots store, so it does not require a running slot — only
-  // a declared dispatcher.
-  'mcp.list_chat_bots': async (server, params) => {
-    const id = mustDispatcherId(params);
-    mustExistingDispatcher(server, id);
-    await assertFeishuScope(server, id, params);
-    return server.dispatcherService.callFeishuMcpTool({
-      dispatcherId: id,
-      toolName: 'list_chat_bots',
-      arguments: params ?? {},
-    });
   },
 
   'mcp.teammate.spawn': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    const caller = callerPrincipal(id, params);
     const name = mustString(params, 'name_prefix');
     const prompt = mustString(params, 'prompt');
-    // Required recovery subject (issue #182 PR-3) — validated before any
-    // work-directory resolution so a malformed request fails fast.
     const intent = mustNonEmptyString(params, 'intent');
     const agentRuntime = optionalString(params, 'agent_runtime');
-    if (caller.kind === 'team_leader' && params?.['owner'] !== undefined) {
-      throw new AdminError('BAD_REQUEST', 'TeamMate owner and team_id are server-derived for team_leader callers');
+    const dispatcher = server.getDispatcher(id);
+    const target = teammateTargetFor(dispatcher, params);
+    if (target.callerKind === 'team_leader' && params?.['repo'] !== undefined) {
+      throw new AdminError(
+        'BAD_REQUEST',
+        'Team TeamMate spawn uses the Team shared workspace; repo is only accepted for dispatcher callers',
+      );
     }
-    // #199: dispatcher callers pass an optional `repo` object; a team_leader
-    // member always inherits the shared team workspace and takes no repo input.
-    // Omitted `repo` → leave cwd unset so the service creates the default
-    // per-name work dir (`.workspace/work/<name>/`). An explicit `repo` resolves
-    // to its `path`, or the dispatcher workspace when the repo gives no path.
-    const repo = caller.kind === 'team_leader' ? null : repoRequest(params, 'repo');
+    const repo = target.callerKind === 'team_leader' ? null : repoRequest(params, 'repo');
     const cwd =
-      caller.kind === 'team_leader' || repo === null
+      target.callerKind === 'team_leader' || repo === null
         ? null
-        : repo.cwd ?? (await server.dispatcherService.teammates.dispatcherWorkspace(id));
-    const worktree = caller.kind === 'team_leader' ? null : repo?.worktree ?? null;
-    const sharedWorkspace =
-      caller.kind === 'team_leader'
-        ? await server.dispatcherService.teams.sharedWorkspace(id, caller.teamId)
-        : undefined;
+        : repo.cwd ?? (await dispatcher.workspace());
+    const worktree = target.callerKind === 'team_leader' ? null : repo?.worktree ?? null;
     try {
-      return await server.dispatcherService.teammates.spawnScoped({
-        principal: caller,
+      return await target.service.spawnTeamMate({
         name,
         prompt,
         intent,
-        ...(sharedWorkspace !== undefined ? { sharedWorkspace } : {}),
         ...(cwd !== null ? { cwd } : {}),
         ...(agentRuntime !== null ? { agentRuntime } : {}),
         ...(worktree !== null ? { worktree } : {}),
@@ -181,15 +144,12 @@ export const adminMethods: Record<string, AdminHandler> = {
   'mcp.teammate.send': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    const caller = callerPrincipal(id, params);
+    const target = teammateTargetFor(server.getDispatcher(id), params);
     const name = mustString(params, 'name');
     const prompt = mustString(params, 'prompt');
-    // Optional: when supplied, updates the recorded recovery subject before the
-    // turn (issue #182 PR-3).
     const intent = optionalString(params, 'intent');
     try {
-      return await server.dispatcherService.teammates.sendScoped({
-        principal: caller,
+      return await target.service.sendTeamMate({
         name,
         prompt,
         ...(intent !== null ? { intent } : {}),
@@ -202,13 +162,11 @@ export const adminMethods: Record<string, AdminHandler> = {
   'mcp.teammate.close': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    const caller = callerPrincipal(id, params);
+    const target = teammateTargetFor(server.getDispatcher(id), params);
     const name = mustString(params, 'name');
-    // Required close reason (issue #182 PR-3).
     const note = mustNonEmptyString(params, 'note');
     try {
-      return await server.dispatcherService.teammates.closeScoped({
-        principal: caller,
+      return await target.service.closeTeamMate({
         name,
         note,
       });
@@ -220,20 +178,17 @@ export const adminMethods: Record<string, AdminHandler> = {
   'mcp.teammate.history': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    return server.dispatcherService.getTeamMateHistory({
-      dispatcherId: id,
-      principal: callerPrincipal(id, params),
-      ...historyQuery(params),
-    });
+    return teammateTargetFor(server.getDispatcher(id), params).service.getTeamMateHistory(
+      historyQuery(params),
+    );
   },
 
   'mcp.teammate.list': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     return {
-      teammates: await server.dispatcherService.teammates.listScoped(
-        callerPrincipal(id, params),
-      ),
+      teammates: await teammateTargetFor(server.getDispatcher(id), params)
+        .service.listTeamMates(),
     };
   },
 
@@ -242,10 +197,8 @@ export const adminMethods: Record<string, AdminHandler> = {
     mustExistingDispatcher(server, id);
     const name = mustString(params, 'name');
     return {
-      teammate: await server.dispatcherService.teammates.statusScoped(
-        callerPrincipal(id, params),
-        name,
-      ),
+      teammate: await teammateTargetFor(server.getDispatcher(id), params)
+        .service.getTeamMateStatus(name),
     };
   },
 
@@ -254,39 +207,35 @@ export const adminMethods: Record<string, AdminHandler> = {
     mustExistingDispatcher(server, id);
     const name = mustString(params, 'name');
     const turns = optionalInteger(params, 'turns');
-    return server.dispatcherService.teammates.lastScoped(
-      callerPrincipal(id, params),
+    return teammateTargetFor(server.getDispatcher(id), params).service.getTeamMateLast(
       name,
       turns ?? undefined,
     );
   },
 
-  'mcp.teammate.capabilities': (server) =>
-    server.dispatcherService.getTeamMateCapabilities(),
+  'mcp.teammate.capabilities': (server, params) => {
+    const id = mustDispatcherId(params);
+    mustExistingDispatcher(server, id);
+    return teammateTargetFor(server.getDispatcher(id), params)
+      .service.getTeamMateCapabilities();
+  },
 
   'mcp.team.create': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     const name = mustString(params, 'team_name');
     const leaderAgentRuntime = mustString(params, 'leader_agent_runtime');
-    // Required recovery subject (issue #182 PR-3) — validated before any
-    // work-directory resolution so a malformed request fails fast.
     const intent = mustNonEmptyString(params, 'intent');
-    // #199: optional `repo` object replaces the required `repo_cwd`. Omitted →
-    // leave repoCwd unset so the Team runs in the default
-    // `.workspace/work/<team_name>/` dir (no git worktree). An explicit `repo`
-    // resolves to its `path`, or the dispatcher workspace when the repo gives no
-    // path; `repo: { mode: 'managed' }` creates a git worktree.
     const repo = repoRequest(params, 'repo');
+    const dispatcher = server.getDispatcher(id);
     const repoCwd =
       repo === null
         ? null
-        : repo.cwd ?? (await server.dispatcherService.teammates.dispatcherWorkspace(id));
+        : repo.cwd ?? (await dispatcher.workspace());
     const worktree = repo?.worktree ?? null;
     const prompt = optionalString(params, 'prompt');
     try {
-      return await server.dispatcherService.createTeam({
-        dispatcherId: id,
+      return await dispatcher.createTeam({
         name,
         ...(repoCwd !== null ? { repoCwd } : {}),
         leaderAgentRuntime,
@@ -302,15 +251,14 @@ export const adminMethods: Record<string, AdminHandler> = {
   'mcp.team.list': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    return { teams: await server.dispatcherService.listTeams(id) };
+    return { teams: await server.getDispatcher(id).listTeams() };
   },
 
   'mcp.team.status': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    // #182 PR-7: public addressing is by `team_name` (== team_id storage key).
     const name = mustString(params, 'team_name');
-    return server.dispatcherService.getTeamStatus(id, name);
+    return server.getDispatcher(id).getTeamStatus(name);
   },
 
   'mcp.team.history': async (server, params) => {
@@ -324,8 +272,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     const until = optionalInteger(params, 'until');
     const limit = optionalInteger(params, 'limit');
     const cursor = optionalString(params, 'cursor');
-    return server.dispatcherService.getTeamHistory({
-      dispatcherId: id,
+    return server.getDispatcher(id).getTeamHistory({
       ...(name !== null ? { name } : {}),
       ...(status !== null ? { status } : {}),
       ...(repo !== null ? { repo } : {}),
@@ -336,21 +283,11 @@ export const adminMethods: Record<string, AdminHandler> = {
       ...(cursor !== null ? { cursor } : {}),
     });
   },
-
-  // Team MCP channel binding (issue #209): binding a configured channel target
-  // to a Team/TeamLeader is a Dreamux core Team capability, so it lives on the
-  // Team MCP. Binding state, target normalization, routing, P2P denial, and
-  // TeamLeader authorization stay core-owned and resolve the provider target at
-  // the facade edge. `channel_id` selects the configured channel (optional;
-  // defaults to the dispatcher's sole channel). `meta` is the provider-specific
-  // selector (Feishu: `{ chat_id }`), passed opaquely to `resolveTarget(meta)`,
-  // which infers/validates the target (group-only — chat_type is not required).
   'mcp.team.bind_channel': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     const channelId = optionalString(params, 'channel_id');
-    return server.dispatcherService.bindTeamChannel({
-      dispatcherId: id,
+    return server.getDispatcher(id).bindTeamChannel({
       teamId: mustString(params, 'team_name'),
       ...(channelId !== null ? { channelId } : {}),
       meta: mustRecord(params, 'meta'),
@@ -360,11 +297,8 @@ export const adminMethods: Record<string, AdminHandler> = {
   'mcp.team.transfer_back': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    // Return the deactivated binding (or null when nothing was bound) directly,
-    // matching `bind_channel` so the two sibling tools share one envelope.
     const channelId = optionalString(params, 'channel_id');
-    return server.dispatcherService.transferTeamChannelBack({
-      dispatcherId: id,
+    return server.getDispatcher(id).transferTeamChannelBack({
       ...(channelId !== null ? { channelId } : {}),
       meta: mustRecord(params, 'meta'),
     });
@@ -374,83 +308,60 @@ export const adminMethods: Record<string, AdminHandler> = {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     const name = mustString(params, 'team_name');
-    // Required dissolve reason (issue #182 PR-3).
     const note = mustNonEmptyString(params, 'note');
-    return server.dispatcherService.dissolveTeam({
-      dispatcherId: id,
+    return server.getDispatcher(id).dissolveTeam({
       teamId: name,
       note,
     });
   },
 };
 
-/**
- * Authorize a Feishu egress (reply/react) and resolve which channel it leaves
- * through. A dispatcher caller egresses the primary channel (returns undefined →
- * the default). A TeamLeader may only act on a chat it is bound to, and its reply
- * egresses the bound channel's bot — resolved here from the leader's own active
- * binding (issue #209 live multi-channel routing) and returned so the tool call
- * targets that channel.
- */
-async function assertFeishuScope(
-  server: Server,
-  dispatcherId: string,
+function mustToolArguments(
   params: Record<string, unknown> | undefined,
-): Promise<string | undefined> {
-  const caller = callerPrincipal(dispatcherId, params);
-  if (caller.kind !== 'team_leader') return undefined;
-  const chatId = optionalString(params, 'chat_id');
-  if (chatId === null) {
-    throw new AdminError(
-      'BAD_REQUEST',
-      "param 'chat_id' is required for TeamLeader Feishu tools",
-    );
+): Record<string, unknown> {
+  const value = params?.['arguments'];
+  if (value === undefined || value === null) return {};
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new AdminError('BAD_REQUEST', "param 'arguments' must be an object");
   }
-  const messageId = optionalString(params, 'message_id');
-  if (
-    messageId !== null &&
-    !server.dispatcherService.feishuMessageBelongsToChat(
-      dispatcherId,
-      messageId,
-      chatId,
-    )
-  ) {
-    throw new AdminError(
-      'CHANNEL_SCOPE_DENIED',
-      'TeamLeader may react/reply only to messages observed in bound team channels',
-    );
-  }
-  const { allowed, channelId } =
-    await server.dispatcherService.teamLeaderCanUseChannel({
-      dispatcherId,
-      teamId: caller.teamId,
-      leaderName: caller.leaderName,
-      chatId,
-    });
-  if (!allowed) {
-    throw new AdminError(
-      'CHANNEL_SCOPE_DENIED',
-      'TeamLeader may use Feishu only for bound team channels',
-    );
-  }
-  return channelId ?? undefined;
+  return value as Record<string, unknown>;
 }
 
-function callerPrincipal(
-  dispatcherId: string,
+function channelToolCaller(
   params: Record<string, unknown> | undefined,
-): TeamMateCallerPrincipal {
+): ChannelToolCaller {
   const kind = optionalString(params, 'caller_kind') ?? 'dispatcher';
-  if (kind === 'dispatcher') return dispatcherPrincipal(dispatcherId);
+  if (kind === 'dispatcher') return { kind };
   if (kind === 'team_leader') {
     const teamId = mustString(params, 'team_id');
     const leaderName = mustString(params, 'leader_name');
-    return teamLeaderPrincipal({ dispatcherId, teamId, leaderName });
+    return { kind, teamId, leaderName };
   }
-  if (kind === 'teammate') return { kind: 'teammate', dispatcherId };
   throw new AdminError(
     'BAD_REQUEST',
-    "param 'caller_kind' must be dispatcher, team_leader, or teammate",
+    "param 'caller_kind' must be dispatcher or team_leader",
+  );
+}
+
+function teammateTargetFor(
+  dispatcher: DispatcherService,
+  params: Record<string, unknown> | undefined,
+):
+  | { callerKind: 'dispatcher'; service: DispatcherService }
+  | { callerKind: 'team_leader'; service: TeamService } {
+  const callerKind = optionalString(params, 'caller_kind') ?? 'dispatcher';
+  if (callerKind === 'dispatcher') {
+    return { callerKind, service: dispatcher };
+  }
+  if (callerKind === 'team_leader') {
+    return {
+      callerKind,
+      service: dispatcher.team(mustString(params, 'team_id')),
+    };
+  }
+  throw new AdminError(
+    'BAD_REQUEST',
+    "param 'caller_kind' must be dispatcher or team_leader",
   );
 }
 
@@ -464,12 +375,6 @@ function mustString(
   return params[key] as string;
 }
 
-/**
- * Like `mustString` but rejects the empty string too — the admin-layer guard
- * for required, meaningful fields (issue #182 PR-3 intent/note). Matches the
- * shim's `requireString` so an empty required field is rejected at every layer,
- * including a direct admin caller that bypasses the shim.
- */
 function mustNonEmptyString(
   params: Record<string, unknown> | undefined,
   key: string,
@@ -481,11 +386,6 @@ function mustNonEmptyString(
   return value;
 }
 
-/**
- * A required object param, returned opaquely. Used for the channel-binding
- * `meta` selector: core does not interpret it — it hands it to the channel
- * provider's `resolveTarget(meta)`, which owns selector validation.
- */
 function mustRecord(
   params: Record<string, unknown> | undefined,
   key: string,
@@ -522,14 +422,6 @@ function optionalString(
   return v;
 }
 
-/**
- * Map the public `repo` input object (issue #199 Slice 2) onto the internal
- * cwd + worktree request. Returns null when no `repo` was supplied so the caller
- * applies the surface's own default (dispatcher workspace, and reuse-cwd for a
- * teammate / managed for a Team). The worktree mode is always explicit when a
- * `repo` is supplied, so a `reuse-cwd` request is never reinterpreted as the
- * Team's managed default.
- */
 function repoRequest(
   params: Record<string, unknown> | undefined,
   key: string,
@@ -655,15 +547,6 @@ function mustExistingDispatcher(server: Server, id: string): void {
   const row = server.repos.dispatchers.get(id);
   if (row === null) {
     throw new AdminError('DISPATCHER_NOT_FOUND', `no dispatcher with id '${id}'`);
-  }
-}
-
-function mustRunningDispatcher(server: Server, id: string): void {
-  if (server.dispatcherService.getRuntime(id) === null) {
-    throw new AdminError(
-      'DISPATCHER_NOT_RUNNING',
-      `dispatcher '${id}' is not running`,
-    );
   }
 }
 

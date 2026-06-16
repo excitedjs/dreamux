@@ -1,28 +1,26 @@
 import { readFile } from 'node:fs/promises';
 import { homedir, userInfo } from 'node:os';
 
-import { parse as parsePlist, type PlistValue } from 'plist';
-
-import { resolveCodexBinPath } from '../agent-runtime/builtin/codex/provider.js';
 import {
   BUILT_IN_DEFAULTS,
-  DEFAULT_CODEX_BIN,
-  type DispatcherConfig,
   globalConfigDir,
   globalConfigFile,
+  loadConfig,
   type DreamuxConfig,
 } from '../config/config.js';
-import { loadConfigWithBuiltins } from '../agent-runtime/load-config.js';
+import { AgentRuntimeProviderCatalog } from '../agent-runtime/catalog.js';
+import { ChannelProviderCatalog } from '../channel/catalog.js';
 import {
-  AgentRuntimeProviderCatalog,
-  registerBuiltinAgentRuntimeProviders,
-} from '../agent-runtime/catalog.js';
-import { createBuiltinProviderRegistry } from '../registry/index.js';
-import type {
-  AgentRuntimeBinCheck,
-  AgentRuntimeDiagnosticContext,
-  AgentRuntimeDoctorResult,
-} from '../agent-runtime/types.js';
+  createBuiltinProviderRegistry,
+  type ProviderRegistry,
+} from '../registry/index.js';
+import type { ProviderBinCheck } from '@excitedjs/dreamux-types';
+import {
+  providerBinChecksForConfig,
+  runDispatcherProviderDiagnostics,
+  type ProviderDiagnosticCatalogs,
+  type ProviderDiagnosticReport,
+} from '../provider-diagnostics.js';
 import { pathExists } from '../platform/fs-errors.js';
 import {
   setRuntimeConfig,
@@ -38,7 +36,6 @@ import { ExecaCommandRunner } from '../onboard/commands.js';
 import {
   defaultServiceNodeProbe,
   detectServiceNodeVersionManager,
-  LAUNCHD_LABEL,
   MIN_SERVICE_NODE_VERSION,
   nodeVersionSatisfies,
   type ServiceNodeProbe,
@@ -46,6 +43,16 @@ import {
   SYSTEMD_UNIT,
 } from '../onboard/service.js';
 import type { CommandRunner } from '../onboard/types.js';
+import {
+  launchdTarget,
+  parseLaunchdDetail,
+  parseLaunchdPid,
+  parseLaunchdPlist,
+  parsePositiveInt,
+  parseSystemdProperties,
+  parseSystemdUnit,
+  systemdDetail,
+} from './service-status-parse.js';
 
 export interface DoctorOptions {
   env?: NodeJS.ProcessEnv;
@@ -54,8 +61,7 @@ export interface DoctorOptions {
   homeDir?: string;
   uid?: number;
   nodeProbe?: ServiceNodeProbe;
-  /** Override the user checked for systemd lingering (tests). */
-  userName?: string;
+    userName?: string;
 }
 
 export interface ServiceStatus {
@@ -75,17 +81,12 @@ export interface DoctorCheck {
   name: string;
   ok: boolean;
   detail: string;
-  // Advisory severity for an `ok: true` check that still warrants attention
-  // (e.g. a version-manager-bound Node that runs today but is fragile). A
-  // `warn` never flips `result.ok` or the CLI exit code; it stays visible.
   severity?: 'warn';
 }
 
 export interface DispatcherDoctorReport {
   id: string;
-  runtimeProvider: string;
-  foreground: AgentRuntimeDoctorResult;
-  managedService: AgentRuntimeDoctorResult | null;
+  providers: ProviderDiagnosticReport[];
 }
 
 export interface DreamuxDoctorResult {
@@ -97,7 +98,7 @@ export interface DreamuxDoctorResult {
   dispatchers: DispatcherDoctorReport[];
 }
 
-type RuntimeBinaryCheck = AgentRuntimeBinCheck;
+type ProviderBinaryCheck = ProviderBinCheck;
 
 export async function runDreamuxDoctor(
   options: DoctorOptions = {},
@@ -105,7 +106,7 @@ export async function runDreamuxDoctor(
   const runner = options.runner ?? new ExecaCommandRunner();
   const checks: DoctorCheck[] = [];
   const configDir = globalConfigDir();
-  const { config, configFile, catalog } = await readConfigForDoctor(
+  const { config, configFile, catalogs } = await readConfigForDoctor(
     configDir,
     checks,
   );
@@ -116,24 +117,14 @@ export async function runDreamuxDoctor(
     ok: await pathExists(stateRoot()),
     detail: stateRoot(),
   });
-
-  // Runtime binaries are provider-owned: each provider self-declares its bin
-  // checks via its diagnostic capability; doctor dedups + executes them.
   const doctorEnv = options.env ?? process.env;
-  for (const check of runtimeBinaryChecks(catalog, config.dispatchers, doctorEnv)) {
+  for (const check of providerBinaryChecks(catalogs, config, doctorEnv, false)) {
     checks.push({
       name: check.name,
-      ok: await runner.check(check.bin, check.args),
+      ok: await runner.check(check.bin, check.args, { env: doctorEnv }),
       detail: check.bin,
     });
   }
-
-  // Dispatcher workspace cwd contract (issue #182 PR-4): each ENABLED dispatcher
-  // must declare an explicit, usable `cwd` — no state-dir fallback. This mirrors
-  // `Server.assertDispatcherWorkspaces`, which enforces the contract only for
-  // enabled dispatchers (PR #186 review P3): a disabled dispatcher is never
-  // started, so its cwd is reported as a non-blocking diagnostic instead of a
-  // failure, keeping doctor and `dreamux serve` on the same contract.
   for (const dispatcher of config.dispatchers) {
     if (dispatcher.enabled === false) {
       checks.push({
@@ -149,9 +140,6 @@ export async function runDreamuxDoctor(
       ok: diagnosis.ok,
       detail: diagnosis.detail,
     });
-    // Pre-#199 local state (issue #199 Slice 5): mirror the `dreamux serve`
-    // fail-loud as a diagnostic so the operator sees the same rebuild guidance
-    // without first failing a start.
     const legacy = await detectLegacyDispatcherState(dispatcher.id);
     checks.push({
       name: `dispatcher ${dispatcher.id} legacy state`,
@@ -161,8 +149,6 @@ export async function runDreamuxDoctor(
           ? 'no pre-#199 state paths found'
           : legacyDispatcherStateMessage(dispatcher.id, legacy),
     });
-    // Issue #209 binding store v2: a pre-v2 channel-binding store is the same
-    // fail-loud rebuild signal, surfaced here before a start fails.
     const bindingLegacy = await detectLegacyChannelBindingStore(dispatcher.id);
     checks.push({
       name: `dispatcher ${dispatcher.id} channel bindings`,
@@ -194,12 +180,12 @@ export async function runDreamuxDoctor(
     service,
     runner,
     options.nodeProbe ?? defaultServiceNodeProbe,
-    catalog,
-    config.dispatchers,
+    catalogs,
+    config,
   );
 
   const dispatchers = await readDispatchers(
-    catalog,
+    catalogs,
     config,
     runner,
     options.env ?? process.env,
@@ -216,8 +202,7 @@ export async function runDreamuxDoctor(
   const ok =
     checks.every((check) => check.ok) &&
     dispatchers.every((dispatcher) =>
-      dispatcher.foreground.ok &&
-      (dispatcher.managedService === null || dispatcher.managedService.ok),
+      dispatcher.providers.every((report) => report.result.ok),
     );
   return {
     ok,
@@ -252,10 +237,10 @@ async function readConfigForDoctor(
 ): Promise<{
   config: DreamuxConfig;
   configFile: string;
-  catalog: AgentRuntimeProviderCatalog;
+  catalogs: ProviderDiagnosticCatalogs;
 }> {
   try {
-    const loaded = await loadConfigWithBuiltins({ configDir });
+    const loaded = await loadConfig({ configDir });
     checks.push({
       name: 'config',
       ok: true,
@@ -264,9 +249,7 @@ async function readConfigForDoctor(
     return {
       config: loaded.config,
       configFile: loaded.configFile,
-      catalog: new AgentRuntimeProviderCatalog({
-        registry: loaded.providerRegistry,
-      }),
+      catalogs: catalogsFromRegistry(loaded.providerRegistry),
     };
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
@@ -278,23 +261,22 @@ async function readConfigForDoctor(
     return {
       config: BUILT_IN_DEFAULTS,
       configFile: globalConfigFile({ configDir }),
-      catalog: builtinDoctorCatalog(),
+      catalogs: catalogsFromRegistry(createBuiltinProviderRegistry()),
     };
   }
 }
 
-/**
- * A catalog over a fresh builtin registry, used when config failed to load (so
- * the empty-dispatchers default-codex bin check still resolves its provider).
- */
-function builtinDoctorCatalog(): AgentRuntimeProviderCatalog {
-  const registry = createBuiltinProviderRegistry();
-  registerBuiltinAgentRuntimeProviders({ registry });
-  return new AgentRuntimeProviderCatalog({ registry });
+function catalogsFromRegistry(
+  registry: ProviderRegistry,
+): ProviderDiagnosticCatalogs {
+  return {
+    agentRuntime: new AgentRuntimeProviderCatalog({ registry }),
+    channel: new ChannelProviderCatalog({ registry }),
+  };
 }
 
 async function readDispatchers(
-  catalog: AgentRuntimeProviderCatalog,
+  catalogs: ProviderDiagnosticCatalogs,
   config: DreamuxConfig,
   runner: CommandRunner,
   env: NodeJS.ProcessEnv,
@@ -302,43 +284,28 @@ async function readDispatchers(
 ): Promise<DispatcherDoctorReport[]> {
   return Promise.all(
     config.dispatchers.map(async (dispatcher) => {
-      const provider = catalog.resolve(dispatcher.runtime.provider);
-      const diagnostic = provider.diagnostic;
-      const foreground = diagnostic
-        ? await diagnostic.runDiagnostic(
-            { dispatcher, env, scope: 'foreground' },
+      const foreground = await runDispatcherProviderDiagnostics({
+        dispatcher,
+        catalogs,
+        runner,
+        env,
+        scope: 'foreground',
+      });
+      const managedService = service.installed
+        ? await runDispatcherProviderDiagnostics({
+            dispatcher,
+            catalogs,
             runner,
-          )
-        : neutralRuntimeDoctor(dispatcher.runtime.provider);
-      const managedService = !service.installed
-        ? null
-        : diagnostic
-          ? await diagnostic.runDiagnostic(
-              {
-                dispatcher,
-                env: service.environment ?? {},
-                scope: 'managedService',
-              },
-              runner,
-            )
-          : neutralRuntimeDoctor(dispatcher.runtime.provider);
+            env: service.environment ?? {},
+            scope: 'managedService',
+          })
+        : [];
       return {
         id: dispatcher.id,
-        runtimeProvider: dispatcher.runtime.provider,
-        foreground,
-        managedService,
+        providers: [...foreground, ...managedService],
       };
     }),
   );
-}
-
-/** Neutral result for a provider that declares no diagnostic surface. */
-function neutralRuntimeDoctor(provider: string): AgentRuntimeDoctorResult {
-  return {
-    ok: true,
-    detail: `runtime provider ${provider} reports no host-managed diagnostics`,
-    errors: [],
-  };
 }
 
 async function getServiceStatus(options: DoctorOptions): Promise<ServiceStatus> {
@@ -461,8 +428,8 @@ async function addManagedServiceLaunchChecks(
   service: ServiceStatus,
   runner: CommandRunner,
   probe: ServiceNodeProbe,
-  catalog: AgentRuntimeProviderCatalog,
-  dispatchers: DispatcherConfig[],
+  catalogs: ProviderDiagnosticCatalogs,
+  config: DreamuxConfig,
 ): Promise<void> {
   if (!service.installed) return;
   const env = service.environment;
@@ -470,8 +437,6 @@ async function addManagedServiceLaunchChecks(
   if (env === null) {
     missing.push('managed service environment');
   } else {
-    // CODEX_HOST_CODEX_BIN is no longer required in the unit — the codex binary
-    // is dispatcher-local and resolved off the unit PATH at runtime.
     for (const key of ['PATH', 'DREAMUX_NODE_BIN']) {
       if (env[key] === undefined || env[key]?.trim() === '') missing.push(key);
     }
@@ -488,10 +453,6 @@ async function addManagedServiceLaunchChecks(
   const serviceEnv = env as Record<string, string>;
   const nodeBin = serviceEnv['DREAMUX_NODE_BIN'];
   checks.push(await checkNodeLaunch(nodeBin, serviceEnv, runner));
-
-  // Drift advisory: the service Node runs today but is bound to a version
-  // manager, so a version switch/cleanup will break it. Surface it visibly
-  // without failing — reuses the same predicate selection uses.
   const manager = await detectServiceNodeVersionManager(nodeBin, probe);
   if (manager !== null) {
     checks.push({
@@ -513,11 +474,7 @@ async function addManagedServiceLaunchChecks(
       'ExecStart is missing in the installed service; rerun dreamux onboard',
     ),
   );
-
-  // Each dispatcher's provider-owned runtime binary must launch under the
-  // unit's PATH. CODEX_HOST_CODEX_BIN, when present, still overrides every
-  // Codex bin to preserve older units that pinned it.
-  for (const check of runtimeBinaryChecks(catalog, dispatchers, serviceEnv, true)) {
+  for (const check of providerBinaryChecks(catalogs, config, serviceEnv, true)) {
     checks.push(
       await checkHelpLaunch(
         check.name,
@@ -525,47 +482,24 @@ async function addManagedServiceLaunchChecks(
         check.args,
         serviceEnv,
         runner,
-        'runtime binary is not set; check the agents[] entry the dispatcher references',
+        'provider binary is not set; check the provider config entry',
       ),
     );
   }
 }
 
-function runtimeBinaryChecks(
-  catalog: AgentRuntimeProviderCatalog,
-  dispatchers: DispatcherConfig[],
+function providerBinaryChecks(
+  catalogs: ProviderDiagnosticCatalogs,
+  config: DreamuxConfig,
   env: NodeJS.ProcessEnv,
   managedService = false,
-): RuntimeBinaryCheck[] {
-  const checks = new Map<string, RuntimeBinaryCheck>();
-  const add = (check: RuntimeBinaryCheck): void => {
-    checks.set(`${check.name}\0${check.bin}\0${check.args.join('\0')}`, check);
-  };
-
-  if (dispatchers.length === 0) {
-    // Residual: with no dispatcher there is no agents[] entry to drive a provider
-    // diagnostic, so the default codex bin check is constructed directly here.
-    // This is the one codex-specific edge in core doctor (near-zero, not zero):
-    // de-leaking it would require a "default provider for empty config" concept.
-    add({
-      name: managedService ? 'managed service Codex binary' : 'codex binary',
-      bin: resolveCodexBinPath(DEFAULT_CODEX_BIN, env),
-      args: ['--help'],
-    });
-    return [...checks.values()];
-  }
-
-  const scope: AgentRuntimeDiagnosticContext['scope'] = managedService
-    ? 'managedService'
-    : 'foreground';
-  for (const dispatcher of dispatchers) {
-    const diagnostic = catalog.resolve(dispatcher.runtime.provider).diagnostic;
-    if (diagnostic === undefined) continue;
-    for (const check of diagnostic.binChecks({ dispatcher, env, scope })) {
-      add(check);
-    }
-  }
-  return [...checks.values()];
+): ProviderBinaryCheck[] {
+  return providerBinChecksForConfig({
+    config,
+    catalogs,
+    env,
+    scope: managedService ? 'managedService' : 'foreground',
+  });
 }
 
 async function checkNodeLaunch(
@@ -611,204 +545,20 @@ async function checkHelpLaunch(
   };
 }
 
-function parseSystemdUnit(content: string): {
-  environment: Record<string, string> | null;
-  execStart: string[] | null;
-} {
-  const environment: Record<string, string> = {};
-  let execStart: string[] | null = null;
-  for (const rawLine of content.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (line.startsWith('Environment=')) {
-      const assignment = line.slice('Environment='.length);
-      const eq = assignment.indexOf('=');
-      if (eq > 0) {
-        environment[assignment.slice(0, eq)] = systemdUnescapeEnv(
-          assignment.slice(eq + 1),
-        );
-      }
-    } else if (line.startsWith('ExecStart=')) {
-      execStart = splitSystemdCommand(line.slice('ExecStart='.length));
-    }
-  }
-  return {
-    environment: Object.keys(environment).length > 0 ? environment : null,
-    execStart,
-  };
-}
-
-function systemdUnescapeEnv(value: string): string {
-  let out = '';
-  for (let index = 0; index < value.length; index += 1) {
-    const ch = value[index];
-    if (ch !== '\\') {
-      out += ch;
-      continue;
-    }
-    if (value.slice(index, index + 4) === '\\x20') {
-      out += ' ';
-      index += 3;
-      continue;
-    }
-    const next = value[index + 1];
-    if (next === '\\') {
-      out += '\\';
-      index += 1;
-      continue;
-    }
-    if (next === '"') {
-      out += '"';
-      index += 1;
-      continue;
-    }
-    out += ch;
-  }
-  return out;
-}
-
-function splitSystemdCommand(value: string): string[] {
-  const args: string[] = [];
-  let current = '';
-  let quoted = false;
-  let escaped = false;
-  for (const ch of value) {
-    if (escaped) {
-      current += ch;
-      escaped = false;
-      continue;
-    }
-    if (ch === '\\') {
-      escaped = true;
-      continue;
-    }
-    if (ch === '"') {
-      quoted = !quoted;
-      continue;
-    }
-    if (!quoted && /\s/.test(ch)) {
-      if (current !== '') {
-        args.push(current);
-        current = '';
-      }
-      continue;
-    }
-    current += ch;
-  }
-  if (current !== '') args.push(current);
-  return args;
-}
-
-function parseLaunchdPlist(content: string): {
-  environment: Record<string, string> | null;
-  execStart: string[] | null;
-} {
-  let parsed: PlistValue;
-  try {
-    parsed = parsePlist(content);
-  } catch {
-    return { environment: null, execStart: null };
-  }
-  if (!isPlistRecord(parsed)) {
-    return { environment: null, execStart: null };
-  }
-  return {
-    environment: parseLaunchdEnvironment(parsed['EnvironmentVariables']),
-    execStart: parseLaunchdProgramArguments(parsed['ProgramArguments']),
-  };
-}
-
-function parseLaunchdEnvironment(
-  value: PlistValue | undefined,
-): Record<string, string> | null {
-  if (!isPlistRecord(value)) return null;
-  const environment: Record<string, string> = {};
-  for (const [key, raw] of Object.entries(value)) {
-    if (typeof raw === 'string') environment[key] = raw;
-  }
-  return Object.keys(environment).length > 0 ? environment : null;
-}
-
-function parseLaunchdProgramArguments(
-  value: PlistValue | undefined,
-): string[] | null {
-  if (!Array.isArray(value)) return null;
-  if (!value.every((item): item is string => typeof item === 'string')) {
-    return null;
-  }
-  return value.length > 0 ? value : null;
-}
-
-function isPlistRecord(
-  value: PlistValue | undefined,
-): value is Record<string, PlistValue> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-function launchdTarget(uid?: number): string {
-  const actualUid = uid ?? process.getuid?.();
-  if (actualUid === undefined) {
-    throw new Error('launchd user service diagnostics require a numeric uid');
-  }
-  return `gui/${actualUid}/${LAUNCHD_LABEL}`;
-}
-
-function parseLaunchdPid(raw: string): number | null {
-  const match = raw.match(/\bpid = (\d+)/);
-  if (match === null) return null;
-  return parsePositiveInt(match[1]);
-}
-
-function parseLaunchdDetail(raw: string): string | null {
-  const state = raw.match(/\bstate = ([^\n]+)/)?.[1]?.trim();
-  const reason = raw.match(/\breason = ([^\n]+)/)?.[1]?.trim();
-  return [state, reason]
-    .filter((value) => value !== undefined && value !== '')
-    .join(', ') || null;
-}
-
-function parseSystemdProperties(raw: string): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const line of raw.split(/\r?\n/)) {
-    const eq = line.indexOf('=');
-    if (eq <= 0) continue;
-    result[line.slice(0, eq)] = line.slice(eq + 1);
-  }
-  return result;
-}
-
-function systemdDetail(props: Record<string, string>): string | null {
-  const parts = [
-    props['LoadState'],
-    props['ActiveState'],
-    props['SubState'],
-    props['Result'] !== undefined && props['Result'] !== 'success'
-      ? `result=${props['Result']}`
-      : undefined,
-  ].filter((part) => part !== undefined && part !== '');
-  return parts.join(', ') || null;
-}
-
-function parsePositiveInt(value: string | undefined): number | null {
-  if (value === undefined) return null;
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed <= 0) return null;
-  return parsed;
-}
-
 function printDispatcherDoctor(dispatcher: DispatcherDoctorReport): void {
-  printRuntimeDoctor(`dispatcher ${dispatcher.id} foreground`, dispatcher.foreground);
-  if (dispatcher.managedService !== null) {
-    printRuntimeDoctor(
-      `dispatcher ${dispatcher.id} managed-service`,
-      dispatcher.managedService,
-    );
+  for (const report of dispatcher.providers) {
+    printProviderDoctor(dispatcher.id, report);
   }
 }
 
-function printRuntimeDoctor(
-  name: string,
-  result: AgentRuntimeDoctorResult,
+function printProviderDoctor(
+  dispatcherId: string,
+  report: ProviderDiagnosticReport,
 ): void {
+  const result = report.result;
+  const name =
+    `dispatcher ${dispatcherId} ${report.scope} ` +
+    `${report.kind} ${report.id} (${report.provider})`;
   console.log(`${result.ok ? 'ok' : 'fail'}\t${name}\t${result.detail}`);
   for (const error of result.errors) {
     console.log(`fail\t${name}\t${error}`);

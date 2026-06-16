@@ -10,18 +10,23 @@ import { dirname, join } from 'node:path';
 
 import { build as buildPlist } from 'plist';
 
-import { runDreamuxDoctor } from '../src/cli/doctor.js';
+import {
+  runDreamuxDoctor,
+  type DreamuxDoctorResult,
+} from '../src/cli/doctor.js';
 import type { CommandRunner } from '../src/onboard/types.js';
 import type { ServiceNodeProbe } from '../src/onboard/service.js';
+import type {
+  ProviderDiagnosticKind,
+  ProviderDiagnosticReport,
+} from '../src/provider-diagnostics.js';
 import {
   defaultDispatcherCwd,
   resetRuntimeConfig,
   stateRoot,
 } from '../src/platform/paths.js';
-import {
-  dispatcherCodexHome,
-  dispatcherWorkspaceSkillPath,
-} from '../src/agent-runtime/builtin/codex/paths.js';
+import { dispatcherCodexHome } from '@excitedjs/agent-runtime-codex';
+import { dispatcherWorkspaceSkillPath } from '../src/onboard/legacy-codex-skills.js';
 import {
   testConfigFileObject,
   testSingleDispatcherFileObject,
@@ -139,10 +144,15 @@ describe('dreamux doctor command', () => {
       ok: true,
     });
     expect(
-      result.dispatchers[0]?.foreground.ok,
+      runtimeProviderReport(result, 'flow', 'builtin:codex', 'foreground')
+        ?.result.ok,
       JSON.stringify(result, null, 2),
     ).toBe(true);
-    expect(result.dispatchers[0]?.managedService).toBeNull();
+    expect(
+      result.dispatchers[0]?.providers.some(
+        (report) => report.scope === 'managedService',
+      ),
+    ).toBe(false);
   });
 
   it('fails loud when the Codex binary is below the 0.137 floor', async () => {
@@ -159,8 +169,14 @@ describe('dreamux doctor command', () => {
     });
 
     expect(result.ok).toBe(false);
-    expect(result.dispatchers[0]?.foreground.ok).toBe(false);
-    expect(result.dispatchers[0]?.foreground.errors.join('\n')).toContain(
+    const foreground = runtimeProviderReport(
+      result,
+      'flow',
+      'builtin:codex',
+      'foreground',
+    );
+    expect(foreground?.result.ok).toBe(false);
+    expect(foreground?.result.errors.join('\n')).toContain(
       'requires codex >= 0.137.0',
     );
   });
@@ -279,15 +295,22 @@ describe('dreamux doctor command', () => {
       detail: 'claude',
     });
     expect(result.checks.find((check) => check.name === 'codex binary')).toBeUndefined();
-    expect(result.dispatchers[0]).toMatchObject({
-      id: 'flow',
-      runtimeProvider: 'builtin:claude-code',
-      foreground: {
-        ok: true,
-        detail: expect.stringContaining('no host-managed home state'),
-      },
-      managedService: null,
+    expect(result.dispatchers[0]?.id).toBe('flow');
+    const foreground = runtimeProviderReport(
+      result,
+      'flow',
+      'builtin:claude-code',
+      'foreground',
+    );
+    expect(foreground?.result).toMatchObject({
+      ok: true,
+      detail: expect.stringContaining('no host-managed home state'),
     });
+    expect(
+      result.dispatchers[0]?.providers.some(
+        (report) => report.scope === 'managedService',
+      ),
+    ).toBe(false);
     expect(runner.calls).toContainEqual({ command: 'claude', args: ['--help'] });
     expect(runner.calls).not.toContainEqual({ command: 'codex', args: ['--help'] });
   });
@@ -308,9 +331,18 @@ describe('dreamux doctor command', () => {
     });
 
     expect(result.ok).toBe(false);
-    expect(result.dispatchers[0]?.foreground.ok).toBe(true);
-    expect(result.dispatchers[0]?.managedService?.ok).toBe(false);
-    expect(result.dispatchers[0]?.managedService?.errors.join('\n')).toContain(
+    expect(
+      runtimeProviderReport(result, 'flow', 'builtin:codex', 'foreground')
+        ?.result.ok,
+    ).toBe(true);
+    const managed = runtimeProviderReport(
+      result,
+      'flow',
+      'builtin:codex',
+      'managedService',
+    );
+    expect(managed?.result.ok).toBe(false);
+    expect(managed?.result.errors.join('\n')).toContain(
       'missing Codex auth state',
     );
   });
@@ -469,7 +501,7 @@ describe('dreamux doctor command', () => {
     );
     runner.nodeVersions.set('/usr/local/bin/node', 'v22.7.0');
     const shimProbe: ServiceNodeProbe = {
-      isExecutable: () => true,
+      isExecutable: async () => true,
       realpath: async (path) =>
         path === '/usr/local/bin/node'
           ? '/Users/u/Library/Application Support/fnm/node-versions/v22/installation/bin/node'
@@ -511,7 +543,7 @@ describe('dreamux doctor command', () => {
     );
     runner.nodeVersions.set('/usr/local/bin/node', 'v22.7.0');
     const stableProbe: ServiceNodeProbe = {
-      isExecutable: () => true,
+      isExecutable: async () => true,
       realpath: async (path) => path,
     };
 
@@ -718,18 +750,26 @@ describe('dreamux doctor command', () => {
     });
 
     // The codex dispatcher must have a per-dispatcher report with the codex provider.
-    const codexReport = result.dispatchers.find((d) => d.id === 'flow');
+    const codexReport = runtimeProviderReport(
+      result,
+      'flow',
+      'builtin:codex',
+      'foreground',
+    );
     expect(codexReport).toBeDefined();
-    expect(codexReport?.runtimeProvider).toBe('builtin:codex');
-    expect(codexReport?.foreground.ok).toBe(true);
+    expect(codexReport?.result.ok).toBe(true);
 
     // The claude dispatcher must have a per-dispatcher report with the claude provider.
-    const claudeReport = result.dispatchers.find((d) => d.id === 'docs');
+    const claudeReport = runtimeProviderReport(
+      result,
+      'docs',
+      'builtin:claude-code',
+      'foreground',
+    );
     expect(claudeReport).toBeDefined();
-    expect(claudeReport?.runtimeProvider).toBe('builtin:claude-code');
     // claude-code diagnostic: no home state requirement, just bin check.
-    expect(claudeReport?.foreground.ok).toBe(true);
-    expect(claudeReport?.foreground.detail).toContain('no host-managed');
+    expect(claudeReport?.result.ok).toBe(true);
+    expect(claudeReport?.result.detail).toContain('no host-managed');
 
     // Global binary checks must include BOTH codex and claude bins (deduplicated).
     expect(runner.calls).toContainEqual({ command: 'codex', args: ['--help'] });
@@ -831,4 +871,30 @@ function restoreEnv(name: string, value: string | undefined): void {
   } else {
     process.env[name] = value;
   }
+}
+
+function runtimeProviderReport(
+  result: DreamuxDoctorResult,
+  dispatcherId: string,
+  provider: string,
+  scope: ProviderDiagnosticReport['scope'],
+): ProviderDiagnosticReport | undefined {
+  return providerReport(result, dispatcherId, 'agentRuntime', provider, scope);
+}
+
+function providerReport(
+  result: DreamuxDoctorResult,
+  dispatcherId: string,
+  kind: ProviderDiagnosticKind,
+  provider: string,
+  scope: ProviderDiagnosticReport['scope'],
+): ProviderDiagnosticReport | undefined {
+  return result.dispatchers
+    .find((dispatcher) => dispatcher.id === dispatcherId)
+    ?.providers.find(
+      (report) =>
+        report.kind === kind &&
+        report.provider === provider &&
+        report.scope === scope,
+    );
 }

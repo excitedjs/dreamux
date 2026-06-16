@@ -9,30 +9,32 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 
+import { Server } from '../src/server.js';
 import {
   IN_PROGRESS_REACTION_EMOJI,
   RECEIVED_REACTION_EMOJI,
-  Server,
-} from '../src/server.js';
+} from '@excitedjs/feishu-channel';
 import { sendAdminRequest } from '../src/admin/client.js';
 import {
   loadDispatcherAccess,
   saveDispatcherAccess,
 } from '@excitedjs/feishu-channel';
-import { CodexWsClient } from '../src/agent-runtime/builtin/codex/rpc.js';
+import { CodexWsClient } from '@excitedjs/agent-runtime-codex';
 import {
   CodexProcess,
   type CodexProcessOptions,
-} from '../src/agent-runtime/builtin/codex/supervisor.js';
+} from '@excitedjs/agent-runtime-codex';
 import {
   createFakeFeishuBot,
   type FakeFeishuBot,
   type FeishuInboundEvent,
-} from '../src/channel/feishu/bot.js';
-import { runFeishuMcp } from '../src/mcp/feishu-mcp.js';
+} from '@excitedjs/feishu-channel';
+import { feishuChannelCatalog } from './helpers/fake-channel.js';
+import { codexAgentRuntimeCatalog } from './helpers/fake-agent-runtime.js';
+import { runChannelMcp } from '../src/mcp/channel-mcp.js';
 import { BUILT_IN_DEFAULTS, type DreamuxConfig } from '../src/config/config.js';
 import { defaultDispatcherCwd, dispatcherDir } from '../src/platform/paths.js';
-import { dispatcherCodexHome } from '../src/agent-runtime/builtin/codex/paths.js';
+import { dispatcherCodexHome } from '@excitedjs/agent-runtime-codex';
 import { startFakeCodex, type FakeCodex } from './fake-codex.js';
 import { testDispatcherConfig } from './helpers/config.js';
 
@@ -122,13 +124,16 @@ function buildServer(opts: {
   return new Server({
     config: configWithDispatcher(),
     adminSocketPath: join(opts.runtimeDir, 'admin.sock'),
-    skipBotSecret: true,
-    botFactory: () => opts.bot,
-    codexProcessFactory: (o) => new NoopCodexProcess(o),
-    codexClientFactory: () => new CodexWsClient({ url: opts.fake.url }),
-    codexHomeDoctor: () => {
-      /* fake Codex tests do not require real operator Codex auth */
-    },
+    channelProviderCatalog: feishuChannelCatalog(() => opts.bot),
+    // Codex construction seams live on the provider implementation now, injected
+    // via the AgentRuntime catalog rather than as Server options.
+    agentRuntimeProviderCatalog: codexAgentRuntimeCatalog({
+      codexProcessFactory: (o) => new NoopCodexProcess(o),
+      codexClientFactory: () => new CodexWsClient({ url: opts.fake.url }),
+      codexHomeDoctor: () => {
+        /* fake Codex tests do not require real operator Codex auth */
+      },
+    }),
   });
 }
 
@@ -173,7 +178,7 @@ async function callFeishuMcpTool(
   const input = new PassThrough();
   const output = new PassThrough();
   const reader = new JsonLineReader(output);
-  const run = runFeishuMcp({
+  const run = runChannelMcp({
     dispatcherId: 'flow',
     adminSocketPath: join(runtimeDir, 'admin.sock'),
     input,

@@ -1,30 +1,29 @@
 /**
- * Managed-service PATH includes the Claude Code install dir (issue #126 PR8).
+ * Managed-service PATH includes provider-declared binary check dirs.
  *
- * beta.52 could not route TeamMate work to builtin:claude-code because the
- * daemon service PATH resolved `codex` but not `claude`. The fix seeds the unit
- * PATH with the claude binary's directory when Claude Code is installed, while
- * keeping codex-only installs working (claudeBin omitted).
+ * Providers declare their binary checks through the diagnostic seam. The service
+ * unit receives those checks as opaque provider-owned descriptors; it must not
+ * know whether they came from Codex, Claude Code, a channel, or any future
+ * provider.
  */
 
 import { describe, expect, it } from 'vitest';
-import { delimiter, dirname } from 'node:path';
+import { delimiter } from 'node:path';
 
 import {
   managedServiceEnvironment,
-  selectServiceClaudeBin,
   validateManagedServiceLaunch,
   type ServiceInstallAnswers,
 } from '../src/onboard/service.js';
 import type { CommandRunner } from '../src/onboard/types.js';
 
 class ServiceRunner implements CommandRunner {
-  readonly checks: string[] = [];
+  readonly checks: Array<{ command: string; args: string[] }> = [];
 
   async run(): Promise<void> {}
 
-  async check(command: string): Promise<boolean> {
-    this.checks.push(command);
+  async check(command: string, args: string[]): Promise<boolean> {
+    this.checks.push({ command, args });
     return true;
   }
 
@@ -38,7 +37,13 @@ function answers(
 ): ServiceInstallAnswers {
   return {
     configDir: '/home/op/.dreamux',
-    codexBin: '/opt/codex/bin/codex',
+    providerBinChecks: [
+      {
+        name: 'runtime-a',
+        bin: '/opt/runtime-a/bin/runtime-a',
+        args: ['probe'],
+      },
+    ],
     dreamuxBin: '/opt/dreamux/bin/dreamux',
     nodeBin: '/usr/bin/node',
     startService: false,
@@ -47,40 +52,56 @@ function answers(
   };
 }
 
-describe('managed service Claude Code PATH (issue #126 PR8)', () => {
-  it('includes the claude binary directory when Claude Code is installed', () => {
+describe('managed service provider PATH', () => {
+  it('includes provider-declared binary directories', () => {
     const env = managedServiceEnvironment(
-      answers({ claudeBin: '/home/op/.local/bin/claude' }),
+      answers({
+        providerBinChecks: [
+          {
+            name: 'runtime-a',
+            bin: '/opt/runtime-a/bin/runtime-a',
+            args: ['probe'],
+          },
+          {
+            name: 'runtime-b',
+            bin: '/home/op/.local/bin/runtime-b',
+            args: ['probe'],
+          },
+        ],
+      }),
     );
     const dirs = env['PATH'].split(delimiter);
     expect(dirs).toContain('/home/op/.local/bin');
-    expect(dirs).toContain(dirname('/opt/codex/bin/codex'));
+    expect(dirs).toContain('/opt/runtime-a/bin');
   });
 
-  it('omits a claude directory for a codex-only install', () => {
-    const env = managedServiceEnvironment(answers());
+  it('omits runtime dirs when no provider declares a binary', () => {
+    const env = managedServiceEnvironment(answers({ providerBinChecks: [] }));
     const dirs = env['PATH'].split(delimiter);
     expect(dirs).not.toContain('/home/op/.local/bin');
-    // Codex still seeds the PATH so the codex worker keeps resolving.
-    expect(dirs).toContain('/opt/codex/bin');
+    expect(dirs).not.toContain('/opt/runtime-a/bin');
   });
 
-  it('does not require Codex for external-runtime-only service installs', async () => {
+  it('validates only the declared provider binary checks', async () => {
     const runner = new ServiceRunner();
-    const env = managedServiceEnvironment(answers({ codexBin: undefined }));
-    const dirs = env['PATH'].split(delimiter);
 
-    expect(dirs).not.toContain('/opt/codex/bin');
     await expect(
-      validateManagedServiceLaunch(answers({ codexBin: undefined }), runner),
+      validateManagedServiceLaunch(answers({ providerBinChecks: [] }), runner),
     ).resolves.toMatchObject({ ok: true });
-    expect(runner.checks).toEqual(['/opt/dreamux/bin/dreamux']);
+    expect(runner.checks).toEqual([
+      { command: '/opt/dreamux/bin/dreamux', args: ['--help'] },
+    ]);
   });
 
-  it('honours the DREAMUX_CLAUDE_BIN override and defaults to claude', () => {
-    expect(selectServiceClaudeBin({ DREAMUX_CLAUDE_BIN: '/custom/claude' })).toBe(
-      '/custom/claude',
-    );
-    expect(selectServiceClaudeBin({})).toBe('claude');
+  it('validates provider-declared args instead of assuming --help', async () => {
+    const runner = new ServiceRunner();
+
+    await expect(
+      validateManagedServiceLaunch(answers(), runner),
+    ).resolves.toMatchObject({ ok: true });
+    expect(runner.checks).toContainEqual({
+      command: '/opt/runtime-a/bin/runtime-a',
+      args: ['probe'],
+    });
   });
 });

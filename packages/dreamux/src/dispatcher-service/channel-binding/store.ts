@@ -7,25 +7,27 @@ import { isNotFound } from '../../platform/fs-errors.js';
 import { dispatcherChannelBindingsPath } from '../../platform/paths.js';
 import { LegacyStateError } from '../legacy-state.js';
 
-export type ChannelProvider = 'builtin:feishu';
+/** A channel provider ref (e.g. `builtin:feishu`); core never narrows to one. */
+export type ChannelProviderRef = string;
 
 /**
  * A flat channel-binding row (issue #209 binding store v2). The durable routing
  * key is `(channel_id, target_key)`; `target_key` is provider-owned and opaque
- * to core. Provider-specific selectors (Feishu `chat_id` / `chat_type`) live in
- * `meta`, never as core top-level columns, so the store stays channel-neutral.
+ * to core. Provider-specific selectors (e.g. a chat channel's `chat_id` /
+ * `chat_type`) live in `meta`, never as core top-level columns, so the store
+ * stays channel-neutral.
  */
 export interface ChannelBinding {
   /** Dispatcher-local channel id (`dispatchers[].channels[].id`). */
   channel_id: string;
-  provider: ChannelProvider;
-  /** Provider target type (e.g. Feishu `group`). */
+  provider: ChannelProviderRef;
+  /** Provider target type (e.g. a chat channel's `group`). */
   target_type: string;
-  /** Provider-owned stable routing key (Feishu: the chat id). */
+  /** Provider-owned stable routing key (e.g. a chat channel's chat id). */
   target_key: string;
   display: string | null;
   canonical_url: string | null;
-  /** Provider-specific selector data (Feishu `{ chat_id, chat_type }`). */
+  /** Provider-specific selector data (e.g. `{ chat_id, chat_type }`). */
   meta: Record<string, unknown>;
   /** The concrete Team key the target is bound to (issue #199 Slice 4). */
   team_name: string;
@@ -46,7 +48,7 @@ interface ChannelBindingFile {
 export interface BindChannelInput {
   dispatcherId: string;
   channelId: string;
-  provider: ChannelProvider;
+  provider: ChannelProviderRef;
   target: ChannelTarget;
   teamName: string;
   leaderName: string;
@@ -173,10 +175,19 @@ export class ChannelBindingStore {
       );
     }
     for (const row of value['bindings'] as Record<string, unknown>[]) {
-      if (typeof row !== 'object' || row === null) continue;
+      if (typeof row !== 'object' || row === null) {
+        throw new LegacyStateError(
+          `channel binding store for dispatcher ${dispatcherId} has a non-object ` +
+            'binding row (issue #209 binding store v2). Dreamux 0.x does not ' +
+            `migrate old binding state — delete ${path} and re-bind the ` +
+            'channel(s) to rebuild it.',
+        );
+      }
       const hasV2Keys =
-        Object.prototype.hasOwnProperty.call(row, 'channel_id') &&
-        Object.prototype.hasOwnProperty.call(row, 'target_key');
+        typeof row['channel_id'] === 'string' &&
+        row['channel_id'] !== '' &&
+        typeof row['target_key'] === 'string' &&
+        row['target_key'] !== '';
       if (!hasV2Keys) {
         throw new LegacyStateError(
           `channel binding store for dispatcher ${dispatcherId} has a pre-v2 row ` +

@@ -3,29 +3,20 @@ import { describe, expect, it } from 'vitest';
 import { adminMethods } from '../src/admin/methods.js';
 import type { Server } from '../src/server.js';
 
-/**
- * Issue #199: the admin layer routes a spawn/create that omits `repo` to the
- * default per-name work dir by leaving cwd/repoCwd UNSET (the service then
- * creates `.workspace/work/<name>/`). An explicit `repo` resolves to its path.
- * These drive the handlers directly with a stub server that captures the args
- * the admin layer forwards to the service.
- */
 function spawnStub(capture: (input: unknown) => void): Server {
   return {
     repos: { dispatchers: { get: () => ({ dispatcher_id: 'flow' }) } },
-    dispatcherService: {
-      teammates: {
-        spawnScoped: (input: unknown) => {
-          capture(input);
-          return { teammate: { name: 'solo' }, turn: {} };
-        },
-        dispatcherWorkspace: () => {
-          throw new Error(
-            'dispatcherWorkspace must not be resolved when cwd is given or repo omitted',
-          );
-        },
+    getDispatcher: () => ({
+      spawnTeamMate: (input: unknown) => {
+        capture(input);
+        return { teammate: { name: 'solo' }, turn: {} };
       },
-    },
+      workspace: () => {
+        throw new Error(
+          'workspace must not be resolved when cwd is given or repo omitted',
+        );
+      },
+    }),
   } as unknown as Server;
 }
 
@@ -65,17 +56,15 @@ describe('admin no-repo spawn/create → default work dir (#199)', () => {
     let captured: Record<string, unknown> = {};
     const server = {
       repos: { dispatchers: { get: () => ({ dispatcher_id: 'flow' }) } },
-      dispatcherService: {
+      getDispatcher: () => ({
         createTeam: (input: unknown) => {
           captured = input as Record<string, unknown>;
           return {};
         },
-        teammates: {
-          dispatcherWorkspace: () => {
-            throw new Error('dispatcherWorkspace must not be resolved for a no-repo team');
-          },
+        workspace: () => {
+          throw new Error('workspace must not be resolved for a no-repo team');
         },
-      },
+      }),
     } as unknown as Server;
     await adminMethods['mcp.team.create']!(server, {
       dispatcher_id: 'flow',

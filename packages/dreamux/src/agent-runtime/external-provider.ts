@@ -3,8 +3,8 @@
  *
  * This is the `agentRuntime` specialization of the generic provider package
  * loader (`../registry/provider-loader.ts`). It keeps the public surface in-repo
- * callers and tests import (`loadExternalAgentRuntimeProviders`, the factory
- * type, and the two error classes) while delegating the kind-agnostic mechanics
+ * callers and tests import (`loadAgentRuntimeProviders`, the factory type, and
+ * the two error classes) while delegating the kind-agnostic mechanics
  * — dynamic import, export selection, factory invocation, duplicate handling,
  * descriptor registration, and fail-loud formatting — to the shared skeleton.
  *
@@ -31,7 +31,7 @@ import type {
   AgentRuntimeCapabilities,
   AgentRuntimeProvider,
   CompletionDeliveryShape,
-} from './types.js';
+} from '@excitedjs/dreamux-types';
 
 export interface ExternalAgentRuntimeProviderFactoryContext {
   /** Canonical provider ref from config, for example `npm:some-runtime#provider`. */
@@ -69,7 +69,7 @@ export class ExternalAgentRuntimeProviderContractError extends Error {
   }
 }
 
-export interface LoadExternalAgentRuntimeProvidersOptions {
+export interface LoadAgentRuntimeProvidersOptions {
   registry: ProviderRegistry;
   refs: Iterable<string>;
   importModule?: ExternalAgentRuntimeModuleImporter;
@@ -84,8 +84,8 @@ const AGENT_RUNTIME_LOADER_SPEC: ProviderPackageLoaderSpec<AgentRuntimeProvider>
   assertProvider: assertExternalAgentRuntimeProvider,
 };
 
-export async function loadExternalAgentRuntimeProviders(
-  options: LoadExternalAgentRuntimeProvidersOptions,
+export async function loadAgentRuntimeProviders(
+  options: LoadAgentRuntimeProvidersOptions,
 ): Promise<void> {
   await loadProviderPackages(options, AGENT_RUNTIME_LOADER_SPEC);
 }
@@ -103,6 +103,11 @@ function assertExternalAgentRuntimeProvider(
   if (typeof candidate.createRuntime !== 'function') {
     context.fail('provider.createRuntime must be a function');
   }
+  if (candidate.readConfig !== undefined && typeof candidate.readConfig !== 'function') {
+    context.fail('provider.readConfig must be a function when present');
+  }
+  assertOptionalOnboard(candidate.onboard, context);
+  assertOptionalDiagnostic(candidate.diagnostic, context);
   let capabilities: AgentRuntimeCapabilities;
   try {
     capabilities = candidate.getCapabilities!();
@@ -110,6 +115,32 @@ function assertExternalAgentRuntimeProvider(
     context.fail(`provider.getCapabilities threw: ${errMessage(err)}`);
   }
   assertCapabilities(capabilities, context);
+}
+
+function assertOptionalOnboard(
+  value: unknown,
+  context: ProviderContractContext,
+): void {
+  if (value === undefined) return;
+  if (!isRecord(value) || typeof value['collect'] !== 'function') {
+    context.fail('provider.onboard.collect must be a function when onboard is present');
+  }
+}
+
+function assertOptionalDiagnostic(
+  value: unknown,
+  context: ProviderContractContext,
+): void {
+  if (value === undefined) return;
+  if (
+    !isRecord(value) ||
+    typeof value['binChecks'] !== 'function' ||
+    typeof value['runDiagnostic'] !== 'function'
+  ) {
+    context.fail(
+      'provider.diagnostic must expose binChecks and runDiagnostic functions when present',
+    );
+  }
 }
 
 function assertCapabilities(
@@ -127,6 +158,7 @@ function assertCapabilities(
   }
   assertSupportedBoolean('last', capabilities.last, context);
   assertSupportedBoolean('context', capabilities.context, context);
+  assertSystemPromptCapability(capabilities.systemPrompt, context);
   if (!Array.isArray(capabilities.teammateCompletion)) {
     context.fail('capabilities.teammateCompletion must be an array');
   }
@@ -159,6 +191,19 @@ function assertSupportedBoolean(
 ): void {
   if (!isRecord(value) || typeof value['supported'] !== 'boolean') {
     context.fail(`capabilities.${name}.supported must be a boolean`);
+  }
+}
+
+function assertSystemPromptCapability(
+  value: unknown,
+  context: ProviderContractContext,
+): void {
+  if (!isRecord(value)) {
+    context.fail('capabilities.systemPrompt must be an object');
+  }
+  const mode = value['mode'];
+  if (mode !== 'replace' && mode !== 'append') {
+    context.fail('capabilities.systemPrompt.mode must be "replace" or "append"');
   }
 }
 

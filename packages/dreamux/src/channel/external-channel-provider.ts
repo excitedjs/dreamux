@@ -19,6 +19,7 @@ import {
 import {
   assertLoadedProviderObject,
   assertProviderDescriptorShape,
+  isRecord,
   loadProviderPackages,
   type ProviderContractContext,
   type ProviderFactory,
@@ -95,5 +96,33 @@ function assertChannelProvider(
   }
   if (typeof candidate.createSession !== 'function') {
     context.fail('provider.createSession must be a function');
+  }
+  assertOptionalOnboard(candidate.onboard, context);
+  assertOptionalDiagnostic(candidate.diagnostic, context);
+}
+
+function assertOptionalOnboard(
+  value: unknown,
+  context: ProviderContractContext,
+): void {
+  if (value === undefined) return;
+  if (!isRecord(value) || typeof value['collect'] !== 'function') {
+    context.fail('provider.onboard.collect must be a function when onboard is present');
+  }
+}
+
+function assertOptionalDiagnostic(
+  value: unknown,
+  context: ProviderContractContext,
+): void {
+  if (value === undefined) return;
+  if (
+    !isRecord(value) ||
+    typeof value['binChecks'] !== 'function' ||
+    typeof value['runDiagnostic'] !== 'function'
+  ) {
+    context.fail(
+      'provider.diagnostic must expose binChecks and runDiagnostic functions when present',
+    );
   }
 }

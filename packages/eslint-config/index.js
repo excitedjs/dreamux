@@ -17,6 +17,10 @@
  *                        (bin-launcher / codex-live) carry such disables.
  *
  * Rule set (issue #85 convergence — primary + backstops):
+ *   - max-lines .................. source files over 700 physical lines are a
+ *                                  hard error. Large files hide architectural
+ *                                  boundaries and make review/debug cycles
+ *                                  slower, so they must be split.
  *   - n/no-sync .................. primary. Matches any callee whose name ends
  *                                  in `Sync` (the Node convention), so it
  *                                  catches `readFileSync()`, `fs.mkdirSync()`,
@@ -122,6 +126,10 @@ export default [
       reportUnusedDisableDirectives: 'error',
     },
     rules: {
+      'max-lines': [
+        'error',
+        { max: 700, skipBlankLines: false, skipComments: false },
+      ],
       'n/no-sync': ['error', { allowAtRootLevel: false }],
       'no-restricted-imports': bannedSyncImports(
         FS_AND_CHILD_PROCESS,

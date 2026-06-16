@@ -1,7 +1,7 @@
 {
   "name": "@excitedjs/dreamux",
   "version": "0.15.0",
-  "description": "Codex-host server — single-session MVP. One node process hosts N dispatchers, each binding 1 Feishu bot + 1 Codex thread.",
+  "description": "Dreamux core host for multi-dispatcher agent orchestration through provider interfaces.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -29,6 +29,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:tests": "tsc -p tsconfig.tests.json",
     "lint": "eslint .",
     "smoke-built-cli": "node ./scripts/smoke-built-cli.mjs",
     "test": "vitest run",
@@ -40,8 +41,8 @@
     "@excitedjs/agent-runtime-claude-code": "workspace:*",
     "@excitedjs/agent-runtime-codex": "workspace:*",
     "@excitedjs/dreamux-types": "workspace:*",
+    "@excitedjs/dreamux-utils": "workspace:*",
     "@excitedjs/feishu-channel": "workspace:*",
-    "@excitedjs/feishu-transport": "workspace:*",
     "@excitedjs/tm": "2.4.1",
     "smol-toml": "^1.6.1",
     "yargs": "^17.7.2",

@@ -11,7 +11,8 @@ import { dirname, join } from 'node:path';
 
 import { describe, it, expect } from 'vitest';
 
-import { CodexRuntime, isUnsupportedRpcMethodError } from '../src/runtime.js';
+import { CodexRuntime } from '../src/runtime.js';
+import { isUnsupportedRpcMethodError } from '../src/skill-roots.js';
 import type {
   AgentRuntimeIdentity,
   AgentRuntimePathContext,
@@ -74,10 +75,11 @@ interface CapturedLog {
 
 /** A DreamuxLogger that records every line so a test can assert the warning. */
 function capturingLogger(sink: CapturedLog[]): DreamuxLogger {
+  // Pino-shaped fields-first: the message is the 2nd arg (or the 1st when bare).
   const record =
     (level: CapturedLog['level']) =>
-    (msg: string): void => {
-      sink.push({ level, msg });
+    (fields: Record<string, unknown> | string, msg?: string): void => {
+      sink.push({ level, msg: typeof fields === 'string' ? fields : (msg ?? '') });
     };
   const logger = {
     info: record('info'),
@@ -98,9 +100,9 @@ class FakeProcess {
 
 const PATHS: AgentRuntimePathContext = {
   dispatcherDir: (id) => join('/fake/state', id),
-  stdoutLogPath: (id) => join('/fake/logs', `${id}.out.log`),
-  stderrLogPath: (id) => join('/fake/logs', `${id}.err.log`),
+  logsDir: () => '/fake/logs',
   completionSpillDir: (id) => join('/fake/cache', id, 'spill'),
+  runtimeSocketDirs: () => ['/fake/run/sockets'],
 };
 
 function noopState(): AgentRuntimeStateCallbacks {

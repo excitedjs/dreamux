@@ -1,7 +1,7 @@
 {
   "name": "@excitedjs/eslint-config",
   "version": "0.0.0",
-  "description": "Shared ESLint flat config for the dreamux monorepo. Single source of the synchronous-blocking-IO ban: n/no-sync as the primary rule, with no-restricted-imports / no-restricted-syntax backstops against alias and destructure bypass, disable-comment reason enforcement, and reportUnusedDisableDirectives.",
+  "description": "Shared ESLint flat config for the dreamux monorepo. Single source of the synchronous-blocking-IO ban plus the src file line-count cap.",
   "license": "MIT",
   "type": "module",
   "main": "./index.js",

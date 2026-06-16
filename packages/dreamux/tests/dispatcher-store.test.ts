@@ -10,6 +10,7 @@ import { testDispatcherConfig } from './helpers/config.js';
 
 function configWith(id = 'flow'): DreamuxConfig {
   return {
+    agents: {},
     dispatchers: [
       testDispatcherConfig({
         id,
@@ -206,9 +207,10 @@ describe('dispatcher status hydration (issue #98: warn + rebuild)', () => {
   });
 });
 
-describe('dispatcher store feishu channel resolution (multi-channel config)', () => {
-  it('populates the bot app id from the single feishu channel (builtin:feishu alias stable)', () => {
+describe('dispatcher store channel identity resolution (multi-channel config)', () => {
+  it('populates channel_identity from the single channel\'s provider-reported identity', () => {
     const store = new DispatcherStore({
+      agents: {},
       dispatchers: [
         testDispatcherConfig({
           id: 'flow',
@@ -216,17 +218,21 @@ describe('dispatcher store feishu channel resolution (multi-channel config)', ()
         }),
       ],
     });
-    expect(store.get('flow')?.bot_app_id).toBe('app-flow');
+    expect(store.get('flow')?.channel_identity).toBe('app-flow');
   });
 
-  it('seeds the PRIMARY (first) channel bot app id on a multi-feishu dispatcher (#209 live multi-channel)', () => {
-    // Live multi-channel routing runs one bot per channel; the state row carries
-    // the dispatcher's primary (first) channel identity, and the store's per-row
-    // bot_app_id uniqueness keys on that primary id. A secondary channel's bot is
-    // out of scope for that uniqueness check.
+  it('seeds the PRIMARY (first) channel identity from a multi-channel config (rowDefaults takes the first)', () => {
+    // The state row seeds the dispatcher's primary (first) channel's neutral,
+    // provider-reported identity (issue #209 de-leak). Config load now rejects
+    // more than one channel per provider ref (Decision #4, issue #209), but the
+    // store seeds whatever config it is handed: a directly-constructed
+    // multi-channel config still produces a row, and `rowDefaults`
+    // deterministically takes the first channel's `identity`. Store seeding never
+    // throws on the identity — there is no per-row uniqueness guard.
     let store: DispatcherStore | undefined;
     expect(() => {
       store = new DispatcherStore({
+        agents: {},
         dispatchers: [
           testDispatcherConfig({
             id: 'flow',
@@ -235,17 +241,19 @@ describe('dispatcher store feishu channel resolution (multi-channel config)', ()
                 id: 'primary',
                 provider: 'builtin:feishu',
                 config: { app_id: 'app-a', app_secret: 'secret-a' },
+                identity: 'app-a',
               },
               {
                 id: 'secondary',
                 provider: 'builtin:feishu',
                 config: { app_id: 'app-b', app_secret: 'secret-b' },
+                identity: 'app-b',
               },
             ],
           }),
         ],
       });
     }).not.toThrow();
-    expect(store?.get('flow')?.bot_app_id).toBe('app-a');
+    expect(store?.get('flow')?.channel_identity).toBe('app-a');
   });
 });

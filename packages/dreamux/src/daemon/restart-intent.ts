@@ -24,7 +24,7 @@ import { readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import { restartIntentPath } from '../platform/paths.js';
-import { ensureOwnerOnlyDir } from '../platform/owner-only-dir.js';
+import { ensureOwnerOnlyDir } from '@excitedjs/dreamux-utils';
 
 /** Default English notice injected into a resumed dispatcher after restart. */
 export const DEFAULT_RESTART_ANNOUNCE = 'Restart completed.';

@@ -40,7 +40,7 @@ function probeFrom(options: {
   const executables = new Set(options.executables);
   const links = options.links ?? {};
   return {
-    isExecutable: (path) => executables.has(path),
+    isExecutable: async (path) => executables.has(path),
     realpath: async (path) => {
       if (path in links) return links[path];
       if (executables.has(path)) return path;

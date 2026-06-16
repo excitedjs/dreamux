@@ -66,10 +66,11 @@ import type { TransportLogger } from '../src/transport/diagnostics'
 /** Records connection-level routing so a test can assert what the logger saw. */
 function spyLogger() {
   const calls: Array<{ level: keyof TransportLogger; message: string }> = []
+  // `TransportLogger` is pino-shaped (fields-first): fields 1st, message 2nd.
   const make =
     (level: keyof TransportLogger) =>
-    (message: string) => {
-      calls.push({ level, message })
+    (_fields: Record<string, unknown>, message?: string) => {
+      calls.push({ level, message: message ?? '' })
     }
   const logger: TransportLogger = {
     error: make('error'),

@@ -3,30 +3,24 @@ import type { CompletionEnvelope } from '@excitedjs/dreamux-types';
 import {
   resolveCompletionBody,
   type ResolvedCompletionBody,
-} from './internal/completion-body.js';
+} from '@excitedjs/dreamux-utils';
 
 /**
- * Build the process env for a Codex app-server child. `buildBaseEnv` is supplied
- * by the host (it seeds `PATH` with the Dreamux package bins so the child can
- * reach the bundled MCP shims — a host packaging contract this package must not
- * reconstruct). This wrapper then strips `CODEX_HOME` so the child follows the
- * operator's global `~/.codex` instead of any inherited override — a
- * Codex-specific concern that must not live in the host's runtime-neutral env
- * builder (issue #143 de-leak). When no host builder is supplied (standalone /
- * tests) it falls back to the live process env.
+ * Build the process env for a Codex app-server child. The neutral env boundary
+ * (issue #209 cleanup) is `{ ...process.env, ...injectEnv, ...extraEnv }`:
+ *   - `injectEnv` is the host's optional neutral env-injection seam from the
+ *     create context (empty today); core owns what it injects.
+ *   - `extraEnv` is THIS provider's own `config.extra_env`, merged last so a
+ *     dispatcher can override an injected value.
+ * The child inherits the operator's ambient `CODEX_HOME` like a vanilla
+ * `codex` invocation — Dreamux creates no dispatcher-private Codex home (MVP),
+ * so there is nothing to strip.
  */
 export function codexProcessEnv(
-  buildBaseEnv:
-    | ((extraEnv: Record<string, string>) => NodeJS.ProcessEnv)
-    | undefined,
+  injectEnv: Record<string, string> = {},
   extraEnv: Record<string, string> = {},
 ): NodeJS.ProcessEnv {
-  const env =
-    buildBaseEnv !== undefined
-      ? buildBaseEnv(extraEnv)
-      : { ...globalThis.process.env, ...extraEnv };
-  delete env['CODEX_HOME'];
-  return env;
+  return { ...globalThis.process.env, ...injectEnv, ...extraEnv };
 }
 
 /**

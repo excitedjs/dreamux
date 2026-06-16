@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "Extract the built-in Claude Code runtime into the publishable @excitedjs/agent-runtime-claude-code package and depend on it by default (issue #209 slice 4). builtin/claude-code/ becomes a thin core-owned adapter that maps the host create context onto the neutral @excitedjs/dreamux-types contract and supplies the host path/log/state contracts and the package-bin PATH the package must not reconstruct; the Claude Code diagnostic, host paths, and re-export shims stay in core so existing import paths are stable. The builtin:claude-code alias, runtime semantics, config, paths, and state are unchanged; no operator action required on upgrade.",
+      "comment": "Extract the built-in Claude Code runtime into the publishable @excitedjs/agent-runtime-claude-code package and depend on it by default (issue #209 slice 4). `builtin:claude-code` loads through the provider package loader/catalog and implements the neutral @excitedjs/dreamux-types AgentRuntimeProvider contract; core supplies only the neutral create-context values (identity, role, cwd, MCP descriptors, skill sources, state callbacks, path context, logger, and env injection seam). Claude Code-specific resident process, MCP config, diagnostics, config, and completion-delivery logic live in the runtime package. The builtin:claude-code alias, runtime semantics, config, paths, and state are unchanged; no operator action required on upgrade.",
       "type": "patch",
       "packageName": "@excitedjs/dreamux"
     }
