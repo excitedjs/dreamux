@@ -40,21 +40,21 @@
 # future stricter protection rule must grant github-actions[bot] a bypass.
 #
 # Prerelease channels reuse this same file (and therefore the same npm
-# trusted-publisher entry, Workflow: release.yml). Manual dispatch against
-# `next` publishes `beta`; dispatch against any other non-main branch publishes
-# `alpha`. Stable version/publish jobs are gated to main and never run on
-# prerelease branches. Prerelease publishes never move `latest`. They are
-# ephemeral: an in-tree prerelease version is applied, built, packed, audited,
-# and published, but commits and pushes NOTHING back. Prerelease apply does NOT
-# delete pending Rush change files, so a later stable release still consumes
-# them. Beta uses `beta.<github.run_number>`; alpha uses `alpha.<short_sha>` so
-# branch builds are tied to source.
+# trusted-publisher entry, Workflow: release.yml). Pushes to `next` publish
+# `beta`; manual dispatch against `next` also publishes `beta`; dispatch against
+# any other non-main branch publishes `alpha`. Stable version/publish jobs are
+# gated to main and never run on prerelease branches. Prerelease publishes never
+# move `latest`. They are ephemeral: an in-tree prerelease version is applied,
+# built, packed, audited, and published, but commits and pushes NOTHING back.
+# Prerelease apply does NOT delete pending Rush change files, so a later stable
+# release still consumes them. Beta uses `beta.<github.run_number>`; alpha uses
+# `alpha.<short_sha>` so branch builds are tied to source.
 
 name: release
 
 on:
   push:
-    branches: [main]
+    branches: [main, next]
   workflow_dispatch:
 
 concurrency:
@@ -186,12 +186,12 @@ jobs:
 
   prerelease:
     name: publish prerelease to npm beta/alpha dist-tag (OIDC)
-    # This job is reachable solely via workflow_dispatch, because `on.push`
-    # listens only to main. Dispatching against main runs stable jobs and skips
-    # this one. Dispatching against next publishes beta. Dispatching against any
-    # other branch publishes alpha. Gate on full refs so a tag named next/main
-    # can never satisfy the branch policy.
-    if: github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/heads/') && github.ref != 'refs/heads/main'
+    # Pushes to next publish beta automatically. Dispatching against main runs
+    # stable jobs and skips this one. Dispatching against next publishes beta.
+    # Dispatching against any other branch publishes alpha. Gate on full refs so
+    # a tag named next/main can never satisfy the branch policy, and keep alpha
+    # publish manual-only even if push triggers are broadened later.
+    if: startsWith(github.ref, 'refs/heads/') && github.ref != 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/next')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:

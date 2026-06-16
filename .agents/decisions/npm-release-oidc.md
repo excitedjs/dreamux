@@ -1,7 +1,7 @@
 # npm release via OIDC trusted publishing
 
 - **Status:** Accepted
-- **Date:** 2026-05-30 (next beta channel added 2026-06-07)
+- **Date:** 2026-05-30 (next beta channel added 2026-06-07; automatic next beta pushes added 2026-06-16)
 - **Affects:** npm publishing of every `shouldPublish` package, `/.github/workflows/`, the rush version mechanism
 - **PR / Issue:** infra/feishu-transport-release; next beta channel — issue #122
 
@@ -42,7 +42,7 @@ Three hard constraints shaped the design:
 
 ## Decision
 
-One workflow, `push: [main]` plus manual dispatch:
+One workflow, `push: [main, next]` plus manual dispatch:
 
 - **`/.github/workflows/release.yml`** — the single release pipeline and the
   workflow every publishable package registers as its trusted publisher. On a
@@ -57,9 +57,9 @@ One workflow, `push: [main]` plus manual dispatch:
   public npm registry. Rush compares every publishable package against npm and
   invokes pnpm publish only for versions that are not already present.
   `id-token: write`, `npm install -g npm@11.5.1`,
-  `NPM_CONFIG_PROVENANCE=true`, no `NODE_AUTH_TOKEN`. Manual dispatch is a
-  retry hook for `main` only; packages are never published from feature
-  branches.
+  `NPM_CONFIG_PROVENANCE=true`, no `NODE_AUTH_TOKEN`. Manual dispatch against
+  `main` is a stable retry hook; stable packages are never published from
+  feature branches.
 
 So **Rush owns versioning and publish orchestration, pnpm owns the registry
 manifest rewrite, npm owns the OIDC/provenance upload**, and all halves are
@@ -77,13 +77,14 @@ npm trusted-publisher entry** (Workflow: `release.yml`) — rather than adding a
 second workflow that would need its own npm registration and reintroduce a
 default-branch dispatch dance:
 
-- A prerelease job is gated to `workflow_dispatch` on branch refs other than
-  `main`. Dispatching `release.yml` against `next` publishes `beta`; dispatching
-  against any other non-main branch publishes `alpha`. `push` fires on main only,
-  and the stable `version`/`publish` jobs are gated to `refs/heads/main`, so
-  feature branch pushes do not publish and tags cannot satisfy the prerelease
-  gate. `concurrency: release-${{ github.ref_name }}` already namespaces branch
-  runs.
+- A prerelease job is gated to branch refs other than `main`, and it runs for
+  either a `push` to `next` or a manual dispatch on any non-main branch. Pushes
+  to `next` publish `beta`; dispatching `release.yml` against `next` also
+  publishes `beta`; dispatching against any other non-main branch publishes
+  `alpha`. The stable `version`/`publish` jobs are gated to `refs/heads/main`,
+  so `main` keeps the stable path, feature branch pushes do not publish, and
+  tags cannot satisfy the prerelease gate. The `release-${{ github.ref_name }}`
+  concurrency group already namespaces branch runs.
 - The dispatch works because `release.yml` already lives on the default branch
   (main) with `workflow_dispatch`, which is what makes the workflow
   dispatchable at all; `workflow_dispatch` then **executes the copy of the file
@@ -149,10 +150,11 @@ default-branch dispatch dance:
   is the one external item to confirm before the first beta dispatch. If a
   package's entry were ever restricted to a specific environment or ref, the
   beta job would need a matching entry.
-- **How to cut and verify prereleases.** For beta, dispatch the `release`
-  workflow (Actions → release → Run workflow) selecting branch `next`; the job
-  publishes `0.12.x-beta.<run_number>` to the `beta` tag. For alpha, dispatch
-  the same workflow selecting a feature branch; the job publishes
+- **How to cut and verify prereleases.** For beta, push or merge to `next`; the
+  `release` workflow automatically publishes `0.12.x-beta.<run_number>` to the
+  `beta` tag. Manual dispatch of the same workflow selecting branch `next`
+  remains a beta retry hook with a fresh run number. For alpha, dispatch the
+  workflow selecting a feature branch; the job publishes
   `0.12.x-alpha.g<short_sha>` to the `alpha` tag. Install-verify with
   `npm install @excitedjs/dreamux@beta` or `npm install @excitedjs/dreamux@alpha`;
   inspect tags with `npm dist-tag ls @excitedjs/dreamux` and confirm `latest`
