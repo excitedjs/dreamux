@@ -158,6 +158,7 @@ function assertCapabilities(
   }
   assertSupportedBoolean('last', capabilities.last, context);
   assertSupportedBoolean('context', capabilities.context, context);
+  assertSystemPromptCapability(capabilities.systemPrompt, context);
   if (!Array.isArray(capabilities.teammateCompletion)) {
     context.fail('capabilities.teammateCompletion must be an array');
   }
@@ -190,6 +191,19 @@ function assertSupportedBoolean(
 ): void {
   if (!isRecord(value) || typeof value['supported'] !== 'boolean') {
     context.fail(`capabilities.${name}.supported must be a boolean`);
+  }
+}
+
+function assertSystemPromptCapability(
+  value: unknown,
+  context: ProviderContractContext,
+): void {
+  if (!isRecord(value)) {
+    context.fail('capabilities.systemPrompt must be an object');
+  }
+  const mode = value['mode'];
+  if (mode !== 'replace' && mode !== 'append') {
+    context.fail('capabilities.systemPrompt.mode must be "replace" or "append"');
   }
 }
 

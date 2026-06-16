@@ -27,8 +27,8 @@ the implementation is still mostly host-local:
   surface, access gate, introduce/trusted-peer behavior, and message ownership
   tracking have been extracted into `@excitedjs/feishu-channel` as a
   `ChannelProvider`.
-- `/packages/channel/feishu-channel` exists but is scaffold-level and is not
-  publishable in `rush.json`.
+- `@excitedjs/feishu-channel` is the publishable built-in Feishu Channel provider
+  package behind `builtin:feishu`.
 - `/packages/dreamux/src/config/config.ts` accepts a
   `dispatchers[].channels[]` envelope. Since the multi-channel config slice
   (#209) it accepts multiple channels with unique dispatcher-local ids and
@@ -399,6 +399,21 @@ Provider-specific channel tools (for Feishu, `reply` / `react` /
 `list_chat_bots`) stay on the provider-owned `feishu` MCP server; this epic does
 not introduce a generic standard tool set or a `list_peers` capability.
 
+## Bidirectional vs subscription channels
+
+`ChannelProvider` is the bidirectional/chat-channel contract. Feishu, Slack, and
+Telegram-style channels have provider-local chat ids, message ids, reply/react
+surfaces, `ChannelTarget`, Team binding, and TeamLeader authorization. Core owns
+the binding state and asks the provider only to normalize opaque `meta` into a
+target and to handle provider-owned tools.
+
+`SubscribeChannelProvider` is the one-way subscription contract. GitHub/Jira
+issue or PR feeds publish subscribed events into Dreamux; they do not expose
+`chat_id`, `message_id`, `reply`, `react`, `ChannelTarget`, Team binding, or
+transfer-back semantics. They may contribute provider-specific MCP descriptors,
+but those tools are not chat reply tools and cannot bind a Team. This separation
+keeps one-way event feeds from inheriting Feishu/Slack chat assumptions.
+
 ## Channel Targets and Binding
 
 `bind_channel` is a core-owned **Team MCP** capability. It writes core binding
@@ -557,10 +572,11 @@ for this epic.
   `@excitedjs/dreamux-types` without depending on the Dreamux host package.
 - Dreamux core stays the only owner of Team routing and binding authorization,
   even when platform packages provide rich MCP tools.
-- Chat channels and subscription channels share the same target model. Feishu,
-  Slack, and Telegram can resolve chat targets; GitHub, Jira, and similar
-  providers can later resolve issue, pull request, or other durable platform
-  targets.
+- Bidirectional chat channels and one-way subscription channels do **not** share
+  one target model. Feishu, Slack, and Telegram resolve `ChannelTarget`s for
+  chat routing/binding; GitHub, Jira, and similar providers use the separate
+  `SubscribeChannelProvider` event contract and do not inherit chat ids,
+  reply/react, or Team binding.
 - Runtime packages own runtime-specific skill mechanics while Dreamux core owns
   role selection and bundled skill source selection.
 - The old workspace symlink skill model is removed, eliminating managed
@@ -651,23 +667,11 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   parse, and throw-free construction — replacing the slice-2 fake-module
   placeholder as the proof.
 
-  Production does **not** use that bare-loader path, because core's launcher still
-  drives the host-shaped create context (`row`/`store`/host logger). So core keeps
-  a thin **core-owned adapter** (`agent-runtime/builtin/codex/provider.ts`) that
-  maps the host context onto the neutral one and injects the Dreamux host
-  contracts the bare `{ ref, descriptor }` factory cannot deliver — per-dispatcher
-  path context, the shared volatile rendezvous-socket root, the package-bin `PATH`
-  seed, the dispatcher-store-backed state sink, the Codex home/auth doctor, and
-  the bundled-skill install. Both paths construct the same package provider;
-  converging core's launcher onto the neutral context so it can drive the
-  loaded provider directly (and retire the adapter) is later-slice work. The
-  package vendors only generic OS/validation/turn/socket-fallback helpers (never
-  the Dreamux host layout/path/socket/log contracts) and owns its own `~/.codex`
-  config parsing and the Codex version gate. The remaining `builtin/codex/*` core
-  files are the adapter plus host codex paths, the codex-home doctor, the
-  diagnostic, and re-export shims kept so existing core/test import paths stay
-  stable. Runtime semantics, the `builtin:codex` alias, config, paths, state, and
-  the server/test factory seams are unchanged (full repo test suite green).
+  An intermediate implementation kept a non-neutral adapter path for production
+  launcher context. That path is no longer current: the final #209
+  closeout below loads and drives the package provider directly through the
+  neutral `AgentRuntimeProvider.createRuntime` context, with no builtin runtime
+  implementation under core.
 - **Slice 4 (`@excitedjs/agent-runtime-claude-code` extraction) — satisfied now:**
   the built-in Claude Code engine lives in the publishable
   `@excitedjs/agent-runtime-claude-code` package (`packages/agent-runtime/claude-code`,
@@ -683,18 +687,11 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   Claude Code is stdio-based with no socket, no app-server home, and no bundled
   skills in the runtime path); a core test
   (`builtin-claude-code-package-loader.test.ts`) exercises this against the real
-  package. Production wires Claude Code through a thin **core-owned adapter**
-  (`agent-runtime/builtin/claude-code/provider.ts`) that maps the host context
-  onto the neutral one and injects the host contracts the bare factory cannot
-  deliver — the per-dispatcher path context, the dispatcher-store-backed state
-  sink, and the package-bin `PATH` seed. The package vendors only generic
-  OS/validation/turn helpers (never the Dreamux host layout/path/log contracts)
-  and owns its own Claude Code config parsing. The remaining `builtin/claude-code/*`
-  core files are the adapter plus host claude-code paths, the diagnostic,
-  `runtime-support.ts`, and re-export shims kept so existing core/test import paths
-  stay stable. Runtime semantics, the `builtin:claude-code` alias, config, paths,
-  state, and the server/test session-factory seam are unchanged (full repo test
-  suite green).
+  package. An intermediate implementation kept a non-neutral adapter path for
+  production launcher context. That path is no longer current: the final
+  #209 closeout below loads and drives the package provider directly through the
+  neutral `AgentRuntimeProvider.createRuntime` context, with no builtin runtime
+  implementation under core.
 - **Slice 5 (`@excitedjs/feishu-channel` promotion) — satisfied now:** the live
   Feishu channel session — platform I/O, access/trust behavior, inbound
   normalization, attachment handling, and MCP tool backing — moved out of core
@@ -713,36 +710,15 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   test (`builtin-feishu-package-loader.test.ts`) exercises this against the real
   package.
 
-  Production does **not** drive that neutral path: core's dispatcher wiring keeps
-  the package's richer host-shaped session API — a **result-returning inbound
-  submitter** (the reaction ledger keys off `submitted`/`failed`, which the
-  neutral void `routes.deliver` cannot carry, so neutral `start(routes)` is
-  real-but-not-the-production-path), plus the core-owned Channel **MCP server
-  descriptor** (Dreamux bin + admin socket + the `feishu-mcp` shim) and admin-method
-  routing. A thin **core-owned adapter** (`channel/feishu/feishu-channel.ts`)
-  resolves the host contracts the package must not reconstruct — the bot secret /
-  app id from the dispatcher row+config, the per-dispatcher state dir
-  (`access.json` / `chat-bots.json`, byte-identical via `dispatcherDir(id)`) and
-  the attachment cache dir — and constructs the package session; `bot.ts` and
-  `feishu-mcp-surface.ts` become re-export shims (the latter keeping the host
-  descriptor + admin routing and re-exporting the package's tool parser). Routing,
-  binding state, authorization, Team lifecycle, and P2P/group ownership stay
-  core-owned — meaning this slice did **not** move any of them into the package,
-  **not** that the generalized channel-target model described above is in place.
-  Core still runs the **pre-slice-5 binding/routing model**: `ChannelBindingStore`
-  is still **version 1**, keyed by top-level `provider + chat_id` with no
-  `channel_id` / `target_key` / `target_type` / provider `meta` columns, and
-  `TeamService.resolveChannel` still resolves by `{ provider, chatId, chatType }`.
-  Current `builtin:feishu` operator/runtime behavior is unchanged (full repo test
-  suite green). The accepted generalizations in this record — **binding store v2**
-  (the `version: 2` / `target_key` / `meta` schema and its fail-loud migration),
-  **target-key routing** (resolving inbound on `(channel_id, target_key)` instead
-  of `{ provider, chatId, chatType }`), and the **generalized `bind_channel`
-  binding model** (`channel_id` + `meta`, on the Team MCP) — are **not**
-  implemented by this slice and landed later (see the binding-store-v2 and
-  owner-scope-correction statuses below). (**Multi-channel config validation** was
-  deferred from this slice too; it has since landed — see the multi-channel config
-  slice below.)
+  An intermediate implementation kept a non-neutral Feishu adapter and a
+  host-specific session API. That design is no longer current. The final #209
+  closeout below drives the package through the neutral `ChannelProvider` /
+  `ChannelSession` path in production: the Feishu package owns
+  `mcpServerDescriptor`, `reply`/`react`/`list_chat_bots`, target resolution,
+  message ownership, and platform I/O; core owns only routing, binding state,
+  authorization, and the generic `channel-mcp` admin conduit. Binding store v2,
+  target-key routing, and the generalized Team MCP `bind_channel` /
+  `transfer_back` model have all since landed.
 - **Slice 6 (role-gated skill injection) — satisfied now:** the workspace-symlink
   bundled-skill model is removed from onboarding and runtime startup, replaced by
   role-gated `AgentRuntimeCreateContext.skillSources` injection. Core owns the
@@ -861,12 +837,12 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   sole-owner guard captures.) The per-package `import-boundary.test.ts` files
   already guard each provider's own `src/`; these add the reciprocal repo-wide and
   manifest-level assertions.
-- **Channel MCP reversal + Claude Code bundled skills + `list_peers` removal
-  (owner scope correction) — satisfied now:** three owner decisions land here.
-  (1) **No generic Channel MCP.** Binding a channel to a Team/TeamLeader is a core
-  Team capability, so the interim generic `channel` MCP surface (the `channel-mcp`
-  shim, `channelMcpServerDescriptor`, `mcp.channel.*`, and the `channel-mcp` CLI
-  command) was removed, and the binding verbs live on the **Team MCP** as
+- **Channel-binding MCP reversal + Claude Code bundled skills + `list_peers`
+  removal (owner scope correction) — satisfied now:** three owner decisions land
+  here. (1) **No generic Channel MCP for binding.** Binding a channel to a
+  Team/TeamLeader is a core Team capability, so the interim binding-specific
+  `mcp.channel.*` admin surface was removed, and the binding verbs live on the
+  **Team MCP** as
   `bind_channel({ team_name, channel_id?, meta })` /
   `transfer_back({ channel_id?, meta })`. `channel_id` selects the configured
   channel (optional, defaults to the sole channel); `meta` is the opaque provider
@@ -874,7 +850,10 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   infers/validates the group target (no `chat_type` required). Binding state,
   normalization, routing, P2P denial, and TeamLeader authorization remain
   core-owned; the binding-store-v2 schema and `(channel_id, target_key)` routing
-  are unchanged. (2) **`list_peers` removed** from `@excitedjs/dreamux-types`
+  are unchanged. The generic `channel-mcp` CLI still exists as the provider-tool
+  shim for `ChannelSession.tools` / `handleTool` surfaces such as Feishu
+  `reply`, `react`, and `list_chat_bots`; it does not own binding. (2)
+  **`list_peers` removed** from `@excitedjs/dreamux-types`
   (`ChannelSession.listPeers?` + `ChannelListPeersInput`) and from all docs/tests
   — it was never an owner-designed capability, acceptance item, or follow-up.
   (3) **Claude Code bundled-skill injection now works end-to-end** — see below.
@@ -939,18 +918,19 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
     which depend on `@excitedjs/dreamux-types` only and never import core.
   - **Core imports the contracts directly.** `agent-runtime/types.ts` and
     `turn.ts` are **deleted** (no in-core contract, no re-export shim); core
-    imports the neutral types from `@excitedjs/dreamux-types`. The launcher builds
-    the neutral `AgentRuntimeCreateContext` **once** via host adapters
-    (`agent-runtime/host-context.ts` — store→state sink, pino→neutral
-    field-preserving logger; `agent-runtime/host-paths.ts` — neutral path context),
-    with **zero** per-builtin glue. The channel start loop resolves
+    imports the neutral types from `@excitedjs/dreamux-types`. The dispatcher
+    launcher builds the neutral `AgentRuntimeCreateContext` with **zero**
+    per-builtin glue: the dispatcher store and logger already satisfy the neutral
+    contracts, `agent-runtime/host-context.ts` contains only the empty host env
+    injection seam, and `agent-runtime/host-paths.ts` supplies the neutral path
+    context. The channel start loop resolves
     `provider.createSession(neutral ctx)` polymorphically; the dispatcher slot
     holds a neutral `Map<channel_id, ChannelSession>` (not a concrete Feishu
-    session) and calls `session.start({ deliver })` (a neutral result, narrowed
-    from the runtime turn union). The host-owned Feishu MCP server descriptor +
-    admin-method routing + the sessionless `list_chat_bots` helper relocated to
-    `channel/feishu-mcp-surface.ts`; the package gained a `createFeishuChannelProvider({ botFactory })`
-    test seam (mirrors the codex/claude factory seams).
+    session) and calls `session.start({ deliver })` with the real
+    result-returning neutral route. The Feishu package owns
+    `mcpServerDescriptor`, `reply`/`react`/`list_chat_bots`, and the
+    `createFeishuChannelProvider({ botFactory })` test seam; core owns only the
+    generic `channel-mcp` shim and `channel.invoke_tool` admin conduit.
   - **Core names no provider config field (de-leak).** The Feishu-specific config
     helpers (`dispatcherFeishuConfig` / `dispatcherFeishuChannels` /
     `dispatcherChannelId`), the `DispatcherFeishuConfig` type, and the dead

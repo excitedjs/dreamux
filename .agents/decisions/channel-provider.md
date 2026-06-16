@@ -1,7 +1,7 @@
 # Channel plugin seam and built-in Feishu channel
 
-- **Status:** Superseded/refined by
-  [provider-architecture-realignment](provider-architecture-realignment.md)
+- **Status:** Historical; superseded by
+  [npm-package-split-and-channel-targets](npm-package-split-and-channel-targets.md)
 - **Date:** 2026-06-06
 - **Affects:** channel lifecycle, Feishu channel integration, channel-owned MCP,
   reply capability, dispatcher config
@@ -20,37 +20,39 @@ as issue or repository subscription channels, may not share those semantics.
 
 ## Decision
 
-Issue #135 refines the decision: `builtin:feishu` is not a provider-registry
-channel implementation. It is a built-in bidirectional conversational channel
-owned by Dreamux core. Its lifecycle, inbound normalization, access/trust rules,
-MCP descriptor, and MCP tool handlers live in the channel module, not in
-`server.ts` and not in the provider registry.
+This record is preserved as historical issue #110/#135 context. The current
+accepted design is issue #209:
 
-The external `channel` seam remains interface-only for future
-subscription-style channels. It reserves the TypeScript contract for channels
-that can inject MCP descriptors and push subscribed events, but this phase does
-not load, resolve, import, or run channel plugins.
-
-The target config shape still uses `dispatchers[].channels[]`; the selected
-Feishu channel is recognized directly by config validation as the built-in
-`builtin:feishu` channel. The provider registry is reserved for
-`agentRuntime` providers in the current implementation.
+- `builtin:feishu` is a Channel provider package
+  (`@excitedjs/feishu-channel`) loaded through the same provider loader/catalog
+  shape as external `npm:` channel providers.
+- Dreamux core owns Team routing, authorization, and binding state. Binding a
+  channel target to a Team is a Team MCP capability (`bind_channel` /
+  `transfer_back`), not a generic Channel MCP capability.
+- Channel providers own platform I/O, inbound normalization, target resolution,
+  message ownership facts, and provider-specific tools (`reply`, `react`,
+  `list_chat_bots` for Feishu). Their MCP descriptors expose those tools through
+  the generic `channel-mcp` shim, which forwards tool calls to the live session.
+- Subscription channels are a separate reserved contract. They publish one-way
+  events and do not reuse chat ids, channel targets, Team binding, or reply/react
+  ownership.
 
 ## Consequences
 
-- The server stops constructing or handling Feishu MCP tools. The Feishu channel
-  module owns the tool definitions and handlers end to end.
+- The server never constructs provider-specific tool implementations. The
+  selected Channel provider/session owns the tool definitions and handlers; core
+  forwards calls and enforces TeamLeader egress authorization.
 - Feishu access rules stay Feishu-owned; core channel code must not copy them
   into a generic access model.
 - Future subscription channels can expose their own MCP and event model through
   the reserved interface once loading is designed.
-- Channel-owned MCP descriptors become the stable interface consumed by Agent
-  Runtime providers.
+- Channel-owned MCP descriptors become the stable provider-tool interface
+  consumed by Agent Runtime providers. Team binding stays on the Team MCP.
 
 ## Alternatives considered
 
 - **Keep Feishu handlers in `server.ts`:** rejected because it preserves the
-  old god-object boundary and makes channel MCP a core concern.
+  old god-object boundary and makes provider-specific tools a core concern.
 - **Add a core one-way/two-way channel enum:** rejected because reply is a
   provider capability, not a universal channel class.
 - **Put access policy in core:** rejected because Feishu access semantics do not

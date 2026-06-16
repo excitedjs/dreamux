@@ -30,13 +30,13 @@ describe('external provider fixture', () => {
     expect(fixtureChannelProvider.descriptor.kind).toBe('channel');
   });
 
-  it('factories echo the seed descriptor from the loader context (P1)', () => {
-    const runtime = fixtureRuntimeFactory({
+  it('factories echo the seed descriptor from the loader context (P1)', async () => {
+    const runtime = await fixtureRuntimeFactory({
       ref: 'npm:@example/fixture-runtime',
       descriptor: fixtureRuntimeProvider.descriptor,
     });
     expect(runtime.descriptor.kind).toBe('agentRuntime');
-    const channel = fixtureChannelFactory({
+    const channel = await fixtureChannelFactory({
       ref: 'npm:@example/fixture-channel',
       descriptor: fixtureChannelProvider.descriptor,
     });

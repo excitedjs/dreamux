@@ -59,9 +59,12 @@ Design background:
   Restarting the server drops unprocessed inbound messages and may leave
   received reactions behind.
 - **Outbound is MCP reply-only.** Assistant text emitted by a runtime is never
-  forwarded to a channel automatically. The model must call the dispatcher-scoped
+  forwarded to a channel automatically. The model must call provider-specific
   channel MCP tools such as `reply` or `react`, and those tools exist only when
   the Channel provider exposes the capability.
+- **Team binding is a Team MCP capability.** `bind_channel` and `transfer_back`
+  live on the Dreamux-owned Team MCP. The channel MCP shim never owns binding;
+  it only forwards provider-owned tools for the selected channel.
 - **TeamMate is server-hosted.** Scheduling accepts a task and returns a task id
   immediately. Completion is delivered later through the selected Agent Runtime
   provider; if push delivery fails repeatedly, the final result remains
@@ -305,15 +308,19 @@ Each dispatcher injects Dreamux-owned MCP stdio servers into its selected Agent
 Runtime provider. Codex receives runtime-specific `mcp_servers.*` arguments;
 Claude Code receives a runtime-owned MCP config file.
 
-The Channel provider contributes its channel MCP server. For `builtin:feishu`,
-the stdio shim does not read Feishu secrets. It forwards outbound tool calls to
-the serve process over the admin socket, and the serve process owns the Feishu
-client plus process-local received-reaction cleanup state.
+The Channel provider contributes its provider-specific MCP server. For
+`builtin:feishu`, the stdio shim does not read Feishu secrets. It serves the
+provider's static `tools/list` metadata and forwards `tools/call` to the serve
+process over the admin socket, where the live channel session handles the tool.
+This MCP surface is not the binding surface; Team handoff stays on the Team MCP
+as `bind_channel` / `transfer_back`.
 
 The model-facing tools include:
 
 - `reply`: send a Feishu reply to a target message or chat.
 - `react`: add a model-owned reaction to a Feishu message.
+- `list_chat_bots`: list known bots in a Feishu chat when the Feishu provider
+  exposes that helper.
 
 If the model only emits assistant text, nothing is sent to Feishu.
 
@@ -338,7 +345,7 @@ schedule more TeamMates.
 2. `dreamux serve` starts dispatcher `flow`.
 3. Invite the bot to a Feishu group, send a mention that passes the access gate.
 4. The selected runtime assembles the inbound into a `<channel source="feishu" …>` block (the channel layer hands it neutral structured pieces; #164).
-5. The runtime calls the Feishu MCP `reply` tool; the reply is delivered to Feishu.
+5. The runtime calls the Feishu channel MCP `reply` tool; the reply is delivered to Feishu.
 6. Send another accepted message from a different chat in the same trust
    domain; it enters the same dispatcher runtime context.
 7. Ask the dispatcher to schedule TeamMate work through the `teammate` MCP

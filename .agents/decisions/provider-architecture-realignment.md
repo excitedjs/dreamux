@@ -155,14 +155,14 @@ see its `verbs/` (spawn/resume/history), `persistence/history-index.ts` and
   `/packages/dreamux/src/teammate/worker-logs.ts`, and
   `/packages/dreamux/src/teammate/worker/`. There is no parallel
   `TeamMateWorkerProvider` tree or `task_id` API after this cut.
-- PR E removes the runnable ChannelProvider path. Feishu is wired as the
-  built-in bidirectional channel through
-  `/packages/dreamux/src/channel/feishu-channel.ts` and
-  `/packages/dreamux/src/channel/feishu-mcp-surface.ts`; the deleted
-  `/packages/dreamux/src/channel/channel-providers.ts` and
-  `/packages/dreamux/src/channel/feishu-provider.ts` paths are not replaced by
-  another provider map. The remaining `/packages/dreamux/src/channel/provider.ts`
-  file is a TypeScript reservation for future subscription channel plugins only.
+- PR E's original "Feishu wired in core" direction is **superseded by issue
+  #209**. The current implementation loads `builtin:feishu` through the Channel
+  provider loader/catalog from `@excitedjs/feishu-channel`; the removed
+  `/packages/dreamux/src/channel/feishu-channel.ts`,
+  `/packages/dreamux/src/channel/feishu-mcp-surface.ts`, and
+  `/packages/dreamux/src/channel/feishu-provider.ts` paths must not be
+  reintroduced. Core owns Team routing/binding and the generic provider-tool MCP
+  conduit only.
 - PR E also closes the dispatcher-agent ownership debt: `DispatcherService`
   delegates dispatcher runtime/channel lifecycle to
   `/packages/dreamux/src/dispatcher-service/dispatcher/service.ts`, which owns

@@ -131,7 +131,7 @@ class FixtureRuntime implements AgentRuntime {
   async completionInput(
     completion: CompletionEnvelope,
   ): Promise<TeamMateCompletionDeliveryResult> {
-    this.logger?.info('fixture completion', { id: completion.id });
+    this.logger?.info({ id: completion.id }, 'fixture completion');
     return { status: 'accepted' };
   }
 }
@@ -198,13 +198,19 @@ class FixtureChannelSession implements ChannelSession {
   }
 
   async start(routes: ChannelRoutes): Promise<void> {
-    this.logger?.info('fixture channel started', { channel_id: this.channel_id });
+    this.logger?.info(
+      { channel_id: this.channel_id },
+      'fixture channel started',
+    );
     const envelope: ChannelInboundEnvelope = {
       provider: this.provider,
       channel_id: this.channel_id,
       target: { target_type: 'group', target_key: 'demo', bindable: true },
     };
-    await routes.deliver(envelope);
+    await routes.deliver(
+      { text: 'fixture event', sourceId: 'fixture-event-1' },
+      envelope,
+    );
   }
 
   async close(): Promise<void> {}
@@ -220,7 +226,7 @@ class FixtureChannelSession implements ChannelSession {
   }
 
   async reply(input: ChannelReplyInput): Promise<unknown> {
-    this.logger?.info('reply', { key: input.target.target_key });
+    this.logger?.info({ key: input.target.target_key }, 'reply');
     return { delivered: true };
   }
 

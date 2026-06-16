@@ -353,6 +353,49 @@ describe('AgentRuntimeProviderCatalog', () => {
     ).rejects.toThrow(/capabilities\.steer\.supported/);
   });
 
+  it('rejects external providers without a systemPrompt capability', async () => {
+    await expect(
+      loadAgentRuntimeProviders({
+        registry: createBuiltinProviderRegistry(),
+        refs: ['npm:@example/dreamux-runtime'],
+        importModule: async () => ({
+          default: ({
+            ref,
+            descriptor,
+          }: ExternalAgentRuntimeProviderFactoryContext) => ({
+            ref,
+            descriptor,
+            getCapabilities: () => ({
+              ...EXTERNAL_CAPABILITIES,
+              systemPrompt: undefined,
+            }),
+            createRuntime: () => new FakeExternalRuntime(ref),
+          }),
+        }),
+      }),
+    ).rejects.toThrow(/capabilities\.systemPrompt must be an object/);
+  });
+
+  it('rejects providers that do not echo the seed descriptor id', async () => {
+    await expect(
+      loadAgentRuntimeProviders({
+        registry: createBuiltinProviderRegistry(),
+        refs: ['builtin:codex'],
+        importModule: async () => ({
+          default: ({
+            ref,
+            descriptor,
+          }: ExternalAgentRuntimeProviderFactoryContext) => ({
+            ref,
+            descriptor: { ...descriptor, id: 'wrong-id' },
+            getCapabilities: () => EXTERNAL_CAPABILITIES,
+            createRuntime: () => new FakeExternalRuntime(ref),
+          }),
+        }),
+      }),
+    ).rejects.toThrow(/provider\.descriptor\.id must be "codex"/);
+  });
+
   it('supports registry injection for future provider composition tests', () => {
     const registry = createBuiltinProviderRegistry();
     const descriptor = registry.resolve('builtin:codex');

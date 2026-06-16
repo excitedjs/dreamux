@@ -1,14 +1,18 @@
 # Component: repo structure
 
-Rush + pnpm monorepo since issue #4. Four packages today, all wired
-through pnpm `workspace:*` and installed via the rush path only (see
+Rush + pnpm monorepo since issue #4. Packages are wired through pnpm
+`workspace:*` and installed via the rush path only (see
 [the install-model decision](../decisions/install-model.md)):
 
 | Package | Folder | Role |
 |---|---|---|
 | `@excitedjs/dreamux` | `/packages/dreamux/` | the host server |
+| `@excitedjs/dreamux-types` | `/packages/dreamux-types/` | declaration-only provider-authoring contracts |
+| `@excitedjs/dreamux-utils` | `/packages/dreamux-utils/` | shared provider/runtime utility helpers |
+| `@excitedjs/agent-runtime-codex` | `/packages/agent-runtime/codex/` | built-in Codex Agent Runtime provider behind `builtin:codex` |
+| `@excitedjs/agent-runtime-claude-code` | `/packages/agent-runtime/claude-code/` | built-in Claude Code Agent Runtime provider behind `builtin:claude-code` |
 | `@excitedjs/feishu-transport` | `/packages/channel/feishu-transport/` | platform-I/O core; **sole** importer of `@larksuiteoapi/node-sdk` |
-| `@excitedjs/feishu-channel` | `/packages/channel/feishu-channel/` | per-host channel layer (placeholder today) |
+| `@excitedjs/feishu-channel` | `/packages/channel/feishu-channel/` | built-in Feishu Channel provider behind `builtin:feishu`; owns Feishu session, target resolution, provider tools, and transport usage |
 | `@excitedjs/eslint-config` | `/packages/eslint-config/` | private (unpublished) shared ESLint flat config; single source of the synchronous-blocking-IO ban (see [the no-sync-io decision](../decisions/no-sync-io-lint-gate.md)) |
 
 The channel refactor (#4) extracted the Feishu platform I/O out of the
@@ -37,17 +41,14 @@ verbatim through the move):
 | Path | Concern |
 |---|---|
 | `src/admin/` | Unix socket admin protocol + method handlers |
-| `src/channel/` | Host-side Feishu gate, access state, outbound target mapping, and received-reaction ownership |
+| `src/channel/` | Generic Channel provider catalog/loader; provider-specific implementations live in provider packages |
 | `src/cli/` | Entry-point CLIs: `dreamux.ts` (single public command tree), `server.ts` and `server-ctl.ts` as internal delegated modules |
-| `src/agent-runtime/` | AgentRuntime providers and builtin runtime implementations (`CodexRuntime`, `ClaudeCodeRuntime`) |
-| `src/claude-code/` | Claude Code resident transport: supervisor, stream-json RPC, protocol model, MCP config |
-| `src/codex/` | Codex transport: app-server supervisor, WS+Unix JSON-RPC client, init handshake, MCP CLI config |
-| `src/db/` | Legacy SQLite schema + repository; targeted for removal by [top-level-design](../decisions/top-level-design.md) |
-| `src/dispatcher/` | Dispatcher base prompt, TurnManager, fail-fast approval handler |
-| `src/feishu/` | Thin bot adapter over `@excitedjs/feishu-transport` (`createFeishuTransport` + `parseInbound`); the drifted in-tree `content`/`render`/`types` copies were deleted by #4 |
-| `src/runtime/` | Path builders, env-only secrets, codex-args parser |
+| `src/agent-runtime/` | Generic AgentRuntime provider catalog/loader, host create-context seams, and bundled skill source selection |
+| `src/config/` | Operator config loading, provider ref validation, and provider-owned raw config parsing |
+| `src/dispatcher-service/` | Dispatcher lifecycle, Team/TeamMate services, Team binding/routing, and runtime/channel session orchestration |
+| `src/mcp/` | Dreamux-owned MCP shims: Team, TeamMate, and provider-tool channel shim |
+| `src/platform/` | Centralized paths, logging, runtime sockets, and process helpers |
 | `src/server.ts` | Top-level `Server` class wiring everything together |
-| `db/migrations/0001_init.sql` | Legacy SQLite schema; targeted for removal by [top-level-design](../decisions/top-level-design.md) |
 | `bin/dreamux` | Public CLI launcher (`dreamux serve`, `dreamux dispatcher ...`) |
 | `bin/tm` | Public wrapper that forwards to the package-local `@excitedjs/tm` executable |
 | `skills/` | Bundled Dreamux skills injected at runtime by role (#209 slice 6): core hands them to Dispatcher/TeamLeader runtimes as `skillSources` and the runtime applies them (Codex `skills/extraRoots/set`, Claude Code `--add-dir`) — no longer symlinked into the workspace |

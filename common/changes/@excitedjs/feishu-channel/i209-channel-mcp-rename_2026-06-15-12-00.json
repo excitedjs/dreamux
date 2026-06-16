@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "The provider's `mcpServerDescriptor` now targets Dreamux core's generic, channel-agnostic MCP shim: the descriptor args change from `feishu-mcp ...` to `channel-mcp --provider builtin:feishu --dispatcher <id> ...` (issue #209 cleanup, Q1). The MCP server name (`feishu`) and the tool surface (`reply` / `react` / `list_chat_bots`) are unchanged; only the host shim subcommand the descriptor points at is renamed, and a `--provider` ref is added (advisory — core resolves the live channel session from the dispatcher id). Core's old `feishu-mcp` shim and feishu-specific admin methods are gone; the shim is a blind conduit to the neutral `channel.invoke_tool` / `channel.list_tools` admin methods. Rebuild: none required — descriptors are regenerated at every dispatcher boot, never persisted.",
+      "comment": "The Feishu provider's `mcpServerDescriptor` now targets Dreamux core's generic channel-tool shim: descriptor args change from `feishu-mcp ...` to `channel-mcp --provider builtin:feishu --channel-id <id> --dispatcher <id> ...`. The MCP server name (`feishu`) and provider tool surface (`reply` / `react` / `list_chat_bots`) are unchanged. The shim serves the provider's static `tools/list` metadata and forwards `tools/call` to the neutral `channel.invoke_tool` admin method; binding remains on the Team MCP and is not a channel-tool responsibility. Rebuild: none required — descriptors are regenerated at every dispatcher boot, never persisted.",
       "type": "patch",
       "packageName": "@excitedjs/feishu-channel"
     }
