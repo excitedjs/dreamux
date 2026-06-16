@@ -9,7 +9,7 @@
 import type { Server } from '../server.js';
 import { AdminError } from './protocol.js';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
-import { ChannelToolAuthorizationError } from '../dispatcher-service/service.js';
+import { ChannelToolAuthorizationError } from '../dispatcher-service/errors.js';
 import {
   teamLeaderPrincipal,
   type TeamMateCallerPrincipal,
@@ -57,12 +57,12 @@ export const adminMethods: Record<string, AdminHandler> = {
     if (row === null) {
       throw new AdminError('DISPATCHER_NOT_FOUND', `no dispatcher with id '${id}'`);
     }
-    const runtime = server.dispatcherService.getRuntime(id);
+    const runtime = server.getDispatcher(id).runtimeStatus();
     return {
       dispatcher_id: row.dispatcher_id,
       channel_identity: row.channel_identity,
-      status: runtime?.getStatus() ?? row.status,
-      thread_id: runtime?.getThreadId() ?? row.thread_id,
+      status: runtime.status ?? row.status,
+      thread_id: runtime.threadId ?? row.thread_id,
       last_lost_thread_id: row.last_lost_thread_id,
       last_error: row.last_error,
     };
@@ -74,16 +74,17 @@ export const adminMethods: Record<string, AdminHandler> = {
     if (row === null) {
       throw new AdminError('DISPATCHER_NOT_FOUND', `no dispatcher with id '${id}'`);
     }
-    await server.dispatcherService.startDispatcher(id);
+    const dispatcher = server.getDispatcher(id);
+    await dispatcher.start();
     return {
       dispatcher_id: id,
-      status: server.dispatcherService.getRuntime(id)?.getStatus(),
+      status: dispatcher.runtimeStatus().status,
     };
   },
 
   'dispatcher.stop': async (server, params) => {
     const id = mustDispatcherId(params);
-    await server.dispatcherService.stopDispatcher(id);
+    await server.getDispatcher(id).stop();
     return { dispatcher_id: id, status: 'stopped' };
   },
 
@@ -102,8 +103,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     const channelId = optionalString(params, 'channel_id');
     const providerRef = optionalString(params, 'provider_ref');
     try {
-      return await server.dispatcherService.invokeChannelTool({
-        dispatcherId: id,
+      return await server.getDispatcher(id).invokeChannelTool({
         name,
         arguments: mustToolArguments(params),
         caller,
@@ -132,6 +132,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     if (caller.kind === 'team_leader' && params?.['owner'] !== undefined) {
       throw new AdminError('BAD_REQUEST', 'TeamMate owner and team_id are server-derived for team_leader callers');
     }
+    const dispatcher = server.getDispatcher(id);
     // #199: dispatcher callers pass an optional `repo` object; a team_leader
     // member always inherits the shared team workspace and takes no repo input.
     // Omitted `repo` → leave cwd unset so the service creates the default
@@ -141,15 +142,14 @@ export const adminMethods: Record<string, AdminHandler> = {
     const cwd =
       caller.kind === 'team_leader' || repo === null
         ? null
-        : repo.cwd ?? (await server.dispatcherService.teammates.dispatcherWorkspace(id));
+        : repo.cwd ?? (await dispatcher.workspace());
     const worktree = caller.kind === 'team_leader' ? null : repo?.worktree ?? null;
     const sharedWorkspace =
       caller.kind === 'team_leader'
-        ? await server.dispatcherService.teams.sharedWorkspace(id, caller.teamId)
+        ? await dispatcher.sharedTeamWorkspace(caller.teamId)
         : undefined;
     try {
-      return await server.dispatcherService.teammates.spawnScoped({
-        principal: caller,
+      return await dispatcher.teammatesFor(caller).spawn({
         name,
         prompt,
         intent,
@@ -173,8 +173,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     // turn (issue #182 PR-3).
     const intent = optionalString(params, 'intent');
     try {
-      return await server.dispatcherService.teammates.sendScoped({
-        principal: caller,
+      return await server.getDispatcher(id).teammatesFor(caller).send({
         name,
         prompt,
         ...(intent !== null ? { intent } : {}),
@@ -192,8 +191,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     // Required close reason (issue #182 PR-3).
     const note = mustNonEmptyString(params, 'note');
     try {
-      return await server.dispatcherService.teammates.closeScoped({
-        principal: caller,
+      return await server.getDispatcher(id).teammatesFor(caller).close({
         name,
         note,
       });
@@ -205,20 +203,20 @@ export const adminMethods: Record<string, AdminHandler> = {
   'mcp.teammate.history': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    return server.dispatcherService.getTeamMateHistory({
-      dispatcherId: id,
-      principal: callerPrincipal(id, params),
-      ...historyQuery(params),
-    });
+    return server
+      .getDispatcher(id)
+      .teammatesFor(callerPrincipal(id, params))
+      .history(historyQuery(params));
   },
 
   'mcp.teammate.list': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     return {
-      teammates: await server.dispatcherService.teammates.listScoped(
-        callerPrincipal(id, params),
-      ),
+      teammates: await server
+        .getDispatcher(id)
+        .teammatesFor(callerPrincipal(id, params))
+        .list(),
     };
   },
 
@@ -227,10 +225,10 @@ export const adminMethods: Record<string, AdminHandler> = {
     mustExistingDispatcher(server, id);
     const name = mustString(params, 'name');
     return {
-      teammate: await server.dispatcherService.teammates.statusScoped(
-        callerPrincipal(id, params),
-        name,
-      ),
+      teammate: await server
+        .getDispatcher(id)
+        .teammatesFor(callerPrincipal(id, params))
+        .status(name),
     };
   },
 
@@ -239,15 +237,17 @@ export const adminMethods: Record<string, AdminHandler> = {
     mustExistingDispatcher(server, id);
     const name = mustString(params, 'name');
     const turns = optionalInteger(params, 'turns');
-    return server.dispatcherService.teammates.lastScoped(
-      callerPrincipal(id, params),
-      name,
-      turns ?? undefined,
-    );
+    return server
+      .getDispatcher(id)
+      .teammatesFor(callerPrincipal(id, params))
+      .last(name, turns ?? undefined);
   },
 
-  'mcp.teammate.capabilities': (server) =>
-    server.dispatcherService.getTeamMateCapabilities(),
+  'mcp.teammate.capabilities': (server, params) => {
+    const id = mustDispatcherId(params);
+    mustExistingDispatcher(server, id);
+    return server.getDispatcher(id).teammates.capabilities();
+  },
 
   'mcp.team.create': async (server, params) => {
     const id = mustDispatcherId(params);
@@ -263,15 +263,15 @@ export const adminMethods: Record<string, AdminHandler> = {
     // resolves to its `path`, or the dispatcher workspace when the repo gives no
     // path; `repo: { mode: 'managed' }` creates a git worktree.
     const repo = repoRequest(params, 'repo');
+    const dispatcher = server.getDispatcher(id);
     const repoCwd =
       repo === null
         ? null
-        : repo.cwd ?? (await server.dispatcherService.teammates.dispatcherWorkspace(id));
+        : repo.cwd ?? (await dispatcher.workspace());
     const worktree = repo?.worktree ?? null;
     const prompt = optionalString(params, 'prompt');
     try {
-      return await server.dispatcherService.createTeam({
-        dispatcherId: id,
+      return await dispatcher.createTeam({
         name,
         ...(repoCwd !== null ? { repoCwd } : {}),
         leaderAgentRuntime,
@@ -287,7 +287,7 @@ export const adminMethods: Record<string, AdminHandler> = {
   'mcp.team.list': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    return { teams: await server.dispatcherService.listTeams(id) };
+    return { teams: await server.getDispatcher(id).listTeams() };
   },
 
   'mcp.team.status': async (server, params) => {
@@ -295,7 +295,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     mustExistingDispatcher(server, id);
     // #182 PR-7: public addressing is by `team_name` (== team_id storage key).
     const name = mustString(params, 'team_name');
-    return server.dispatcherService.getTeamStatus(id, name);
+    return server.getDispatcher(id).getTeamStatus(name);
   },
 
   'mcp.team.history': async (server, params) => {
@@ -309,8 +309,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     const until = optionalInteger(params, 'until');
     const limit = optionalInteger(params, 'limit');
     const cursor = optionalString(params, 'cursor');
-    return server.dispatcherService.getTeamHistory({
-      dispatcherId: id,
+    return server.getDispatcher(id).getTeamHistory({
       ...(name !== null ? { name } : {}),
       ...(status !== null ? { status } : {}),
       ...(repo !== null ? { repo } : {}),
@@ -326,7 +325,7 @@ export const adminMethods: Record<string, AdminHandler> = {
   // to a Team/TeamLeader is a Dreamux core Team capability, so it lives on the
   // Team MCP. Binding state, target normalization, routing, P2P denial, and
   // TeamLeader authorization stay core-owned and resolve the provider target at
-  // the facade edge. `channel_id` selects the configured channel (optional;
+  // the dispatcher aggregate edge. `channel_id` selects the configured channel (optional;
   // defaults to the dispatcher's sole channel). `meta` is the provider-specific
   // selector (e.g. a chat channel: `{ chat_id }`), passed opaquely to `resolveTarget(meta)`,
   // which infers/validates the target (group-only — chat_type is not required).
@@ -334,8 +333,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     const channelId = optionalString(params, 'channel_id');
-    return server.dispatcherService.bindTeamChannel({
-      dispatcherId: id,
+    return server.getDispatcher(id).bindTeamChannel({
       teamId: mustString(params, 'team_name'),
       ...(channelId !== null ? { channelId } : {}),
       meta: mustRecord(params, 'meta'),
@@ -348,8 +346,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     // Return the deactivated binding (or null when nothing was bound) directly,
     // matching `bind_channel` so the two sibling tools share one envelope.
     const channelId = optionalString(params, 'channel_id');
-    return server.dispatcherService.transferTeamChannelBack({
-      dispatcherId: id,
+    return server.getDispatcher(id).transferTeamChannelBack({
       ...(channelId !== null ? { channelId } : {}),
       meta: mustRecord(params, 'meta'),
     });
@@ -361,8 +358,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     const name = mustString(params, 'team_name');
     // Required dissolve reason (issue #182 PR-3).
     const note = mustNonEmptyString(params, 'note');
-    return server.dispatcherService.dissolveTeam({
-      dispatcherId: id,
+    return server.getDispatcher(id).dissolveTeam({
       teamId: name,
       note,
     });

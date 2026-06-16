@@ -1,7 +1,7 @@
 # No synchronous blocking IO in package source
 
 - **Status:** Accepted
-- **Date:** 2026-06-05
+- **Date:** 2026-06-05 (source line-count cap added 2026-06-16)
 - **Affects:** all `/packages/*/src/`, the new `@excitedjs/eslint-config`
   package, CI, the pre-commit hook
 - **PR / Issue:** [#85](https://github.com/excitedjs/dreamux/issues/85)
@@ -18,7 +18,9 @@ one-time cleanup and a permanent guard so new sync IO cannot regress in.
 
 ## Decision
 
-Ban synchronous blocking IO in package source and enforce it with ESLint.
+Ban synchronous blocking IO in package source and enforce it with ESLint. Also
+cap source files at 700 physical lines so oversized modules are split before
+they become review and architecture bottlenecks.
 
 - All `/packages/*/src/**/*.ts` is converted to the async APIs
   (`node:fs/promises`, async `child_process`). The async ripple is threaded
@@ -36,6 +38,9 @@ Ban synchronous blocking IO in package source and enforce it with ESLint.
 - Scope by glob: `src/**` is a hard `error`; `tests/**` turns `n/no-sync`
   **off** (sync `fs` fixtures are allowed) but still bans synchronous
   `child_process` to discourage new usage.
+- Source line count: `/packages/*/src/**/*.ts` is capped at 700 physical lines
+  via ESLint `max-lines`. This deliberately does **not** apply to tests,
+  generated `dist/`, `.agents/`, lockfiles, or other non-source files.
 - `eslint-plugin-n` is pinned to exactly `17.18.0` — the last release before
   `n/no-sync` began requiring TypeScript type information (17.19.0+), which
   would force `parserOptions.project` and break the pure-syntactic config.
@@ -44,11 +49,18 @@ Ban synchronous blocking IO in package source and enforce it with ESLint.
 
 - **Enforcement:** `rush lint` (a Rush bulk command) runs `eslint .` per
   package; the CI `rush` job runs it after typecheck; the committed
-  `common/git-hooks/pre-commit` lints staged `.ts` against each package's flat
-  config (warn-and-pass when eslint isn't installed — CI is the real gate).
+  `common/git-hooks/pre-commit` lints staged package `src/**/*.ts` and
+  `tests/**/*.ts` against each package's flat config. The local hook fails loud
+  when a package-local `eslint` binary is missing, because Rush installs the
+  hook only after `rush install` / `rush update` and those commands should also
+  install package dependencies.
+  The `lint` bulk command sets `ignoreDependencyOrder: true` so one package's
+  lint failure does not block downstream packages from reporting their own
+  source-local violations.
   `/packages/dreamux/tests/no-sync-io-gate.test.ts` is an executable contract
-  for the rule behaviour (src errors, tests exempt, child_process still banned,
-  reason-less disable rejected).
+  for the rule behaviour (src sync IO errors, src line-count errors, tests
+  exempt where intended, child_process still banned, reason-less disable
+  rejected).
 - **`createLogger` stays synchronous.** The `Server` constructor builds loggers
   synchronously, so `runtime/logger.ts` lets `pino.destination({ mkdir, mode,
   sync: true })` own the file open (a config flag, not a `*Sync` call, so it is

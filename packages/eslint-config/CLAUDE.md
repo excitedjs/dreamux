@@ -8,6 +8,7 @@ Dreamux monorepo.
 - Own the repository-wide lint rules that packages consume through thin
   `eslint.config.js` files.
 - Keep the synchronous blocking IO ban centralized.
+- Keep the source-file line-count cap centralized.
 - Enforce reasoned inline disables and report stale disable comments.
 - Stay dependency-light and runtime-free: this package configures linting only.
 

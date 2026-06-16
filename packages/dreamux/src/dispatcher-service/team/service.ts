@@ -30,16 +30,16 @@ import type {
   TeamMateRuntimeStatus,
 } from '../teammate/types.js';
 
-export interface TeamServiceOptions {
+export interface TeamManagerOptions {
   teammates: TeamMateAgentService;
 }
 
-export class TeamService {
+export class TeamManager {
   private readonly store = new TeamStore();
   private readonly worktrees = new WorktreeManager();
   private readonly bindings = new ChannelBindingStore();
 
-  constructor(private readonly opts: TeamServiceOptions) {}
+  constructor(private readonly opts: TeamManagerOptions) {}
 
   async create(input: TeamCreateInput): Promise<TeamCreateResult> {
     // Required recovery subject — enforced for in-process callers too

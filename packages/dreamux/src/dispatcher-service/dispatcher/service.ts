@@ -1,14 +1,12 @@
 import type {
   AgentRuntimeTurnResult,
   ChannelInboundEnvelope,
-  ChannelMcpDescriptorContext,
   ChannelSession,
   ChannelTarget,
   InboundDeliveryResult,
   InboundDeliveryHooks,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
-
 import {
   bundledSkillSourcesForRole,
   dispatcherHostPaths,
@@ -21,7 +19,6 @@ import type {
   CompletionEnvelope,
 } from '@excitedjs/dreamux-types';
 import type { ChannelProviderCatalog } from '../../channel/catalog.js';
-import { dreamuxBinPath } from '../../platform/package-bin.js';
 import type {
   DispatcherChannelConfig,
   DreamuxConfig,
@@ -33,31 +30,34 @@ import {
   type DispatcherStatus,
 } from '../../state/dispatcher-store.js';
 import {
-  adminSocketPath as defaultAdminSocketPath,
   dispatcherCacheDir,
   dispatcherDir,
 } from '../../platform/paths.js';
 import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
-import { teammateMcpServerDescriptor } from '../teammate/mcp-config.js';
-import { teamMcpServerDescriptor } from '../team/mcp-config.js';
 import {
   DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS,
   DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
 } from './base-prompt.js';
 import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
+import { DispatcherCompletionDelivery } from './completion-delivery.js';
+import {
+  channelMcpServerDescriptorsForCaller,
+  dispatcherMcpServerDescriptors,
+  type ChannelMcpCallerScope,
+} from './mcp-descriptors.js';
 
-export interface DispatcherAgentServiceOptions {
+export interface DispatcherRuntimeServiceOptions {
+  id: string;
   config: DreamuxConfig;
   dispatchers: DispatcherStore;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
-  /** Channel-provider catalog: core resolves each channel's neutral provider. */
+  /** Channel-provider catalog: core resolves each channel's provider. */
   channelProviders: ChannelProviderCatalog;
   adminSocketPath?: string;
   channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
   log: DreamuxLogger;
   routeChannelInput?: (
-    dispatcherId: string,
     channelId: string,
     input: InboundTurnInput,
     envelope: ChannelInboundEnvelope,
@@ -65,7 +65,7 @@ export interface DispatcherAgentServiceOptions {
   ) => Promise<AgentRuntimeTurnResult>;
 }
 
-export interface DispatcherAgentSlot {
+export interface DispatcherRuntimeSlot {
   row: DispatcherRow;
   runtime: AgentRuntime;
   /**
@@ -88,7 +88,6 @@ export interface DispatcherSummary {
 }
 
 export interface ChannelToolInvocation {
-  dispatcherId: string;
   /** Provider ref carried by the channel MCP descriptor. Used to select/verify the session. */
   providerRef?: string;
   /** Provider-owned tool name, forwarded opaquely (core never enumerates it). */
@@ -104,44 +103,46 @@ export interface ChannelToolInvocation {
   channelId?: string;
 }
 
-const COMPLETION_DELIVERY_CACHE_LIMIT = 512;
-
 /**
- * Owns live dispatcher agents and their built-in channel sessions.
+ * Owns one live dispatcher runtime and its built-in channel sessions.
  *
- * Server bootstraps this service and admin/MCP layers route into it; the service
- * owns runtime creation, channel connection lifecycle, restart-notice delivery,
- * and per-dispatcher channel tool dispatch.
+ * DispatcherService composes this service directly; runtime creation, channel
+ * connection lifecycle, restart-notice delivery, and channel tool dispatch stay
+ * local to that dispatcher.
  */
-export class DispatcherAgentService {
-  private readonly slots = new Map<string, DispatcherAgentSlot>();
-  private readonly starting = new Map<string, Promise<void>>();
-  private readonly inFlightCompletionDeliveries = new Map<string, Promise<void>>();
-  private readonly deliveredCompletionIds = new Set<string>();
-  private readonly deliveredCompletionOrder: string[] = [];
+export class DispatcherRuntimeService {
+  private slot: DispatcherRuntimeSlot | null = null;
+  private starting: Promise<void> | null = null;
+  private readonly completionDelivery: DispatcherCompletionDelivery;
   private restartIntent: RestartIntentConsumer | null = null;
 
-  constructor(private readonly opts: DispatcherAgentServiceOptions) {}
+  constructor(private readonly opts: DispatcherRuntimeServiceOptions) {
+    this.completionDelivery = new DispatcherCompletionDelivery({
+      dispatcherId: opts.id,
+      slot: () => this.slot,
+      log: opts.log,
+    });
+  }
 
   setRestartIntent(consumer: RestartIntentConsumer | null): void {
     this.restartIntent = consumer;
   }
 
-  async startDispatcher(id: string): Promise<void> {
-    if (this.slots.has(id)) return;
-    const inflight = this.starting.get(id);
-    if (inflight !== undefined) return inflight;
+  async start(): Promise<void> {
+    if (this.slot !== null) return;
+    if (this.starting !== null) return this.starting;
 
-    const promise = this.doStartDispatcher(id).finally(() => {
-      this.starting.delete(id);
+    const promise = this.doStart().finally(() => {
+      this.starting = null;
     });
-    this.starting.set(id, promise);
+    this.starting = promise;
     return promise;
   }
 
-  async stopDispatcher(id: string): Promise<void> {
-    const slot = this.slots.get(id);
-    if (slot === undefined) return;
+  async stop(): Promise<void> {
+    const slot = this.slot;
+    if (slot === null) return;
+    const id = this.opts.id;
     for (const [channelId, session] of slot.channels) {
       try {
         await session.close();
@@ -167,11 +168,11 @@ export class DispatcherAgentService {
         'error stopping dispatcher',
       );
     }
-    this.slots.delete(id);
+    this.slot = null;
   }
 
-  getRuntime(id: string): AgentRuntime | null {
-    return this.slots.get(id)?.runtime ?? null;
+  getRuntime(): AgentRuntime | null {
+    return this.slot?.runtime ?? null;
   }
 
   /**
@@ -184,119 +185,24 @@ export class DispatcherAgentService {
    * a runtime without completion delivery, an `unsupported` result (runtime
    * stopped), a thrown call, or exhausted retries all log and return.
    */
-  async deliverCompletion(
-    dispatcherId: string,
-    completion: CompletionEnvelope,
-  ): Promise<void> {
-    const completionKey = completionDeliveryKey(dispatcherId, completion.id);
-    if (this.deliveredCompletionIds.has(completionKey)) return;
-    const inFlight = this.inFlightCompletionDeliveries.get(completionKey);
-    if (inFlight !== undefined) return inFlight;
-
-    const delivery = this.doDeliverCompletion(dispatcherId, completion, completionKey);
-    this.inFlightCompletionDeliveries.set(completionKey, delivery);
-    try {
-      await delivery;
-    } finally {
-      this.inFlightCompletionDeliveries.delete(completionKey);
-    }
+  async deliverCompletion(completion: CompletionEnvelope): Promise<void> {
+    return this.completionDelivery.deliver(completion);
   }
 
-  private async doDeliverCompletion(
-    dispatcherId: string,
-    completion: CompletionEnvelope,
-    completionKey: string,
-  ): Promise<void> {
-    const slot = this.slots.get(dispatcherId);
-    if (slot === undefined) {
-      this.opts.log.warn(
-        {
-          dispatcher_id: dispatcherId,
-          source: completion.source,
-        },
-        'dropping teammate completion: dispatcher not running',
-      );
-      return;
-    }
-    const deliver = slot.runtime.completionInput;
-    if (deliver === undefined) {
-      slot.log.warn(
-        {
-          dispatcher_id: dispatcherId,
-          source: completion.source,
-        },
-        'dropping teammate completion: runtime has no completion delivery',
-      );
-      return;
-    }
-    const maxAttempts = 3;
-    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-      let outcome;
-      try {
-        outcome = await deliver.call(slot.runtime, completion);
-      } catch (err) {
-        slot.log.warn(
-          {
-            dispatcher_id: dispatcherId,
-            source: completion.source,
-            err: errInfo(err),
-          },
-          'teammate completion delivery threw',
-        );
-        return;
-      }
-      if (outcome.status === 'accepted') {
-        this.rememberDeliveredCompletion(completionKey);
-        return;
-      }
-      if (outcome.status === 'unsupported') {
-        slot.log.warn(
-          {
-            dispatcher_id: dispatcherId,
-            source: completion.source,
-            reason: outcome.reason,
-          },
-          'dropping teammate completion: runtime delivery unsupported',
-        );
-        return;
-      }
-      slot.log.warn(
-        {
-          dispatcher_id: dispatcherId,
-          source: completion.source,
-          attempt,
-          max_attempts: maxAttempts,
-          err: errInfo(outcome.error),
-        },
-        'teammate completion delivery failed',
-      );
-    }
-    slot.log.warn(
-      {
-        dispatcher_id: dispatcherId,
-        source: completion.source,
-        max_attempts: maxAttempts,
-      },
-      'teammate completion delivery exhausted retries; dropping',
-    );
-  }
-
-  summarize(): DispatcherSummary[] {
-    return this.opts.dispatchers.list().map((row) => {
-      const runtime = this.slots.get(row.dispatcher_id)?.runtime;
-      return {
-        dispatcher_id: row.dispatcher_id,
-        channel_identity: row.channel_identity,
-        status: runtime?.getStatus() ?? row.status,
-        thread_id: runtime?.getThreadId() ?? row.thread_id,
-        enabled: row.enabled === 1,
-      };
-    });
+  summary(row: DispatcherRow): DispatcherSummary {
+    const runtime = this.slot?.runtime;
+    return {
+      dispatcher_id: row.dispatcher_id,
+      channel_identity: row.channel_identity,
+      status: runtime?.getStatus() ?? row.status,
+      thread_id: runtime?.getThreadId() ?? row.thread_id,
+      enabled: row.enabled === 1,
+    };
   }
 
   /**
    * Invoke a provider-owned channel tool, forwarding the raw `{name, arguments}`
-   * to the neutral channel seam (core is a blind MCP conduit — it never names a
+   * to the channel provider seam (core is a blind MCP conduit; it never names a
    * tool). A live channel session handles it via `session.handleTool`; with no
    * live session the configured provider's `handleSessionlessTool` is tried
    * instead (the provider feature-detects and throws for an unknown sessionless
@@ -305,10 +211,9 @@ export class DispatcherAgentService {
    * fallback for direct/internal callers.
    */
   async invokeChannelTool(input: ChannelToolInvocation): Promise<unknown> {
-    const slot = this.slots.get(input.dispatcherId);
-    if (slot === undefined || slot.channels.size === 0) {
+    const slot = this.slot;
+    if (slot === null || slot.channels.size === 0) {
       return this.invokeSessionlessChannelTool(
-        input.dispatcherId,
         input.providerRef,
         input.channelId,
         input.name,
@@ -326,29 +231,24 @@ export class DispatcherAgentService {
         name: input.name,
         arguments: (input.arguments ?? {}) as Record<string, unknown>,
       },
-      { dispatcher_id: input.dispatcherId, channel_id: session.channel_id },
+      { dispatcher_id: this.opts.id, channel_id: session.channel_id },
     );
   }
 
   /**
    * Service a channel tool that has no live session (e.g. `list_chat_bots`
    * before a dispatcher's sessions connect) through the selected configured
-   * provider's `handleSessionlessTool`. Core hands it neutral host locators
+   * provider's `handleSessionlessTool`. Core hands it host locators
    * (state root + logger); the provider owns tool-name feature detection and
    * throws for an unknown sessionless tool.
    */
   private async invokeSessionlessChannelTool(
-    dispatcherId: string,
     providerRef: string | undefined,
     channelId: string | undefined,
     name: string,
     args: unknown,
   ): Promise<unknown> {
-    const channelConfig = this.channelConfigFor(
-      dispatcherId,
-      providerRef,
-      channelId,
-    );
+    const channelConfig = this.channelConfigFor(providerRef, channelId);
     const provider = this.opts.channelProviders.resolve(channelConfig.provider);
     if (provider.handleSessionlessTool === undefined) {
       throw new Error(
@@ -359,10 +259,10 @@ export class DispatcherAgentService {
       name,
       (args ?? {}) as Record<string, unknown>,
       {
-        dispatcher_id: dispatcherId,
+        dispatcher_id: this.opts.id,
         channel_id: channelConfig.id,
-        state_root: dispatcherDir(dispatcherId),
-        logger: this.opts.channelLoggerFactory(dispatcherId),
+        state_root: dispatcherDir(this.opts.id),
+        logger: this.opts.channelLoggerFactory(this.opts.id),
       },
     );
   }
@@ -373,10 +273,10 @@ export class DispatcherAgentService {
    * was built for; old callers may omit both and keep the primary fallback.
    */
   private channelConfigFor(
-    dispatcherId: string,
     providerRef?: string,
     channelId?: string,
   ): DispatcherChannelConfig {
+    const dispatcherId = this.opts.id;
     const dispatcherConfig = this.opts.config.dispatchers.find(
       (dispatcher) => dispatcher.id === dispatcherId,
     );
@@ -422,13 +322,12 @@ export class DispatcherAgentService {
    * skipped. The target is provider-resolved; core never names a channel field.
    */
   async messageBelongsToTarget(
-    dispatcherId: string,
     target: ChannelTarget,
     messageId: string,
     channelId?: string,
   ): Promise<boolean> {
-    const slot = this.slots.get(dispatcherId);
-    if (slot === undefined) return false;
+    const slot = this.slot;
+    if (slot === null) return false;
     const sessions =
       channelId === undefined
         ? slot.channels.values()
@@ -451,7 +350,7 @@ export class DispatcherAgentService {
    * descriptor's provider/channel identity does not match a live session.
    */
   private sessionFor(
-    slot: DispatcherAgentSlot,
+    slot: DispatcherRuntimeSlot,
     channelId?: string,
     providerRef?: string,
   ): ChannelSession {
@@ -490,7 +389,7 @@ export class DispatcherAgentService {
   }
 
   /**
-   * Resolve a provider selector to a neutral `ChannelTarget` via the live channel
+   * Resolve a provider selector to a `ChannelTarget` via the live channel
    * session (issue #209 binding store v2). Target resolution is provider-owned;
    * core calls it here for both binding and inbound routing so `target_key` stays
    * opaque to core. The originating/selected `channelId` picks the session (live
@@ -499,28 +398,26 @@ export class DispatcherAgentService {
    * only while a channel session is live.
    */
   async resolveChannelTarget(
-    dispatcherId: string,
     meta: unknown,
     channelId?: string,
     providerRef?: string,
   ): Promise<ChannelTarget> {
     return this.sessionFor(
-      this.mustRunningSlot(dispatcherId),
+      this.mustRunningSlot(),
       channelId,
       providerRef,
     ).resolveTarget(meta);
   }
 
   async shutdown(): Promise<void> {
-    for (const id of Array.from(this.slots.keys())) {
-      await this.stopDispatcher(id);
-    }
+    await this.stop();
   }
 
-  private async doStartDispatcher(id: string): Promise<void> {
+  private async doStart(): Promise<void> {
+    const id = this.opts.id;
     const row = this.opts.dispatchers.get(id);
     if (row === null) throw new Error(`no dispatcher '${id}'`);
-    if (this.slots.has(id)) return;
+    if (this.slot !== null) return;
 
     const dispatcherConfig = this.opts.config.dispatchers.find(
       (dispatcher) => dispatcher.id === id,
@@ -545,9 +442,9 @@ export class DispatcherAgentService {
     // misconfigured dispatcher never reaches launch; the call here is idempotent
     // and keeps the launch path self-validating.
     const cwd = await ensureDispatcherWorkspace(this.opts.config, id);
-    // The neutral logger handed to providers (runtime + channel). Core's logger
+    // The logger handed to providers (runtime + channel). Core's logger
     // IS the dreamux-types `DreamuxLogger`, so it is injected directly.
-    const neutralLog = this.opts.channelLoggerFactory(id);
+    const providerLog = this.opts.channelLoggerFactory(id);
     // The dispatcher prompt is runtime-injected via the runtime's systemPrompt
     // capability. 'replace' runtimes (codex) consume the full prompt as their
     // base instructions; 'append' runtimes (claude-code) receive a focused
@@ -561,19 +458,19 @@ export class DispatcherAgentService {
     // entry) derives the provider's OWN defaults by parsing an empty raw block,
     // so core never names a builtin's default-config function.
     const runtimeConfig = dispatcherConfig.runtime.config;
-    // Build the (un-started) neutral channel sessions BEFORE the runtime so the
+    // Build the un-started channel sessions BEFORE the runtime so the
     // runtime's MCP descriptors are derived from each session's own
     // `mcpServerDescriptor` (a pure call) — core never names the channel's MCP
     // shape. Each session is created through its own `ChannelProvider`: core
     // resolves the provider from the catalog, hands it the provider-validated
-    // config plus host state/cache dirs, and drives the returned neutral
+    // config plus host state/cache dirs, and drives the returned
     // `ChannelSession`. Decision #4 (issue #209) caps a dispatcher at one channel
     // per provider ref, so a single-channel dispatcher resolves to a
     // single session. The defensive no-config path (a state row with no live
     // config entry) yields no channel session — a dispatcher with no configured
     // channel has no bot identity to connect as. Sessions connect only in the
     // start loop below.
-    const channels = await this.buildChannelSessions(id, neutralLog);
+    const channels = await this.buildChannelSessions(id, providerLog);
 
     const runtime = runtimeProvider.createRuntime({
       identity: { runtime_id: id, checkpoint_id: row.thread_id },
@@ -581,11 +478,15 @@ export class DispatcherAgentService {
       config: runtimeConfig,
       cwd,
       systemPromptContent,
-      mcpServers: this.dreamuxMcpServerDescriptors(id, channels),
+      mcpServers: dispatcherMcpServerDescriptors({
+        dispatcherId: id,
+        channels,
+        adminSocketPath: this.opts.adminSocketPath,
+      }),
       skillSources: bundledSkillSourcesForRole('dispatcher'),
       state: this.opts.dispatchers,
       paths: dispatcherHostPaths,
-      logger: neutralLog,
+      logger: providerLog,
       injectEnv: HOST_INJECT_ENV,
     });
 
@@ -595,12 +496,12 @@ export class DispatcherAgentService {
       // arriving during session.start() resolves a running slot instead of
       // throwing 'not running' (issue #209 fix #7). The slot holds the same
       // `channels` map built above, so each session is observable as it starts.
-      this.slots.set(id, {
+      this.slot = {
         row,
         runtime,
         channels,
-        log: neutralLog,
-      });
+        log: providerLog,
+      };
       for (const [channelId, session] of channels) {
         // Each session tags its own channel_id onto every inbound turn it
         // delivers, so the router keys on the channel the message actually
@@ -609,7 +510,6 @@ export class DispatcherAgentService {
           deliver: async (turn, envelope, hooks) =>
             asInboundDeliveryResult(
               (await this.opts.routeChannelInput?.(
-                id,
                 channelId,
                 turn,
                 envelope,
@@ -623,7 +523,7 @@ export class DispatcherAgentService {
       // never leaves a half-built slot resolvable (issue #209 fix #7). Iterate
       // the local `channels` variable, not a slot lookup, so a session created
       // before the failure is still closed.
-      this.slots.delete(id);
+      this.slot = null;
       for (const session of channels.values()) {
         try {
           await session.close();
@@ -647,87 +547,40 @@ export class DispatcherAgentService {
       },
       'dispatcher ready',
     );
-    await this.injectRestartNoticeIfNeeded(id, runtime, neutralLog);
-  }
-
-  private dreamuxMcpServerDescriptors(
-    dispatcherId: string,
-    channels: Map<string, ChannelSession>,
-  ): AgentRuntimeMcpServer[] {
-    const context = {
-      dispatcherId,
-      adminSocketPath: this.opts.adminSocketPath ?? defaultAdminSocketPath(),
-    };
-    return [
-      ...this.channelMcpServerDescriptors(channels, {
-        dispatcher_id: dispatcherId,
-        callerKind: 'dispatcher',
-      }),
-      teamMcpServerDescriptor(context),
-      teammateMcpServerDescriptor({
-        ...context,
-        callerKind: 'dispatcher',
-      }),
-    ];
+    await this.injectRestartNoticeIfNeeded(id, runtime, providerLog);
   }
 
   /**
    * Build the channel MCP server descriptors for a caller, derived from each
-   * live channel session's own neutral `mcpServerDescriptor` (a pure call). Core
-   * supplies only the neutral pieces (host bin command + admin socket + caller
+   * live channel session's own `mcpServerDescriptor` (a pure call). Core
+   * supplies only host pieces (bin command + admin socket + caller
    * scope); the provider shapes its own stdio descriptor. Used for a TeamLeader,
    * whose dispatcher is already running.
    */
   channelMcpServerDescriptorsForCaller(
-    dispatcherId: string,
-    scope: { callerKind?: 'dispatcher' | 'team_leader'; team_id?: string; leader_name?: string },
+    scope: ChannelMcpCallerScope,
   ): AgentRuntimeMcpServer[] {
-    const slot = this.slots.get(dispatcherId);
-    if (slot === undefined) return [];
-    return this.channelMcpServerDescriptors(slot.channels, {
-      dispatcher_id: dispatcherId,
-      ...scope,
+    const slot = this.slot;
+    if (slot === null) return [];
+    return channelMcpServerDescriptorsForCaller({
+      dispatcherId: this.opts.id,
+      channels: slot.channels,
+      adminSocketPath: this.opts.adminSocketPath,
+      scope,
     });
   }
 
-  private channelMcpServerDescriptors(
-    channels: Map<string, ChannelSession>,
-    scope: {
-      dispatcher_id: string;
-      callerKind?: 'dispatcher' | 'team_leader';
-      team_id?: string;
-      leader_name?: string;
-    },
-  ): AgentRuntimeMcpServer[] {
-    const out: AgentRuntimeMcpServer[] = [];
-    for (const session of channels.values()) {
-      const context: ChannelMcpDescriptorContext = {
-        command: dreamuxBinPath(),
-        adminSocketPath: this.opts.adminSocketPath ?? defaultAdminSocketPath(),
-        dispatcher_id: scope.dispatcher_id,
-        provider: session.provider,
-        channel_id: session.channel_id,
-        ...(scope.callerKind !== undefined ? { callerKind: scope.callerKind } : {}),
-        ...(scope.team_id !== undefined ? { team_id: scope.team_id } : {}),
-        ...(scope.leader_name !== undefined ? { leader_name: scope.leader_name } : {}),
-      };
-      const descriptor = session.mcpServerDescriptor?.(context);
-      if (descriptor != null) out.push(descriptor);
-    }
-    return out;
-  }
-
   /**
-   * Build the (un-started) neutral channel sessions for a dispatcher from its
+   * Build the un-started channel sessions for a dispatcher from its
    * configured channels. Each provider's `readConfig` (already validated at
-   * config-load) yields the neutral config view, then `createSession` builds the
-   * session through the neutral create context (host state/cache roots + logger).
+   * config-load) yields the provider config view, then `createSession` builds the
+   * session through the create context (host state/cache roots + logger).
    * Sessions are NOT connected here — the caller starts them. On partial failure
    * the already-built sessions are closed.
    */
   private async buildChannelSessions(
     dispatcherId: string,
-    neutralLog: DreamuxLogger,
+    providerLog: DreamuxLogger,
   ): Promise<Map<string, ChannelSession>> {
     const dispatcherConfig = this.opts.config.dispatchers.find(
       (dispatcher) => dispatcher.id === dispatcherId,
@@ -744,7 +597,7 @@ export class DispatcherAgentService {
             channel_id: channelConfig.id,
             provider: channelConfig.provider,
             config: channelConfig.config,
-            logger: neutralLog,
+            logger: providerLog,
             state_root: dispatcherDir(dispatcherId),
             cache_root: dispatcherCacheDir(dispatcherId),
           }),
@@ -797,32 +650,19 @@ export class DispatcherAgentService {
     }
   }
 
-  private mustRunningSlot(id: string): DispatcherAgentSlot {
-    const slot = this.slots.get(id);
-    if (slot === undefined) {
-      throw new Error(`dispatcher '${id}' is not running`);
+  private mustRunningSlot(): DispatcherRuntimeSlot {
+    const slot = this.slot;
+    if (slot === null) {
+      throw new Error(`dispatcher '${this.opts.id}' is not running`);
     }
     return slot;
   }
 
-  private rememberDeliveredCompletion(key: string): void {
-    if (this.deliveredCompletionIds.has(key)) return;
-    this.deliveredCompletionIds.add(key);
-    this.deliveredCompletionOrder.push(key);
-    while (this.deliveredCompletionOrder.length > COMPLETION_DELIVERY_CACHE_LIMIT) {
-      const evicted = this.deliveredCompletionOrder.shift();
-      if (evicted !== undefined) this.deliveredCompletionIds.delete(evicted);
-    }
-  }
-}
-
-function completionDeliveryKey(dispatcherId: string, completionId: string): string {
-  return JSON.stringify([dispatcherId, completionId]);
 }
 
 /**
  * Narrow the wider {@link AgentRuntimeTurnResult} union to the
- * {@link InboundDeliveryResult} the neutral `ChannelRoutes.deliver` contract
+ * {@link InboundDeliveryResult} the `ChannelRoutes.deliver` contract
  * requires. `channelInput` / `deliverToLeader` never yield the notice-only
  * `'skipped'` state (that is a restart-notice signal, not an inbound result), so
  * the conversion only ever passes the inbound variants through; the unreachable

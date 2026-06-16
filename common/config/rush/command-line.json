@@ -1,10 +1,13 @@
 /**
  * Custom rush commands beyond the built-ins (build, rebuild, install, update).
  *
- * `test` and `typecheck` are bulk commands that fan out to every project's
- * own `npm run <name>` script. enableParallelism=true lets independent
+ * `test`, `typecheck`, and `lint` are bulk commands that fan out to every
+ * project's own `npm run <name>` script. enableParallelism=true lets independent
  * projects run in parallel; ignoreMissingScript=true keeps a future
- * "docs-only" package from breaking the bulk run.
+ * "docs-only" package from breaking the bulk run. `lint` additionally ignores
+ * dependency order because ESLint is source-local and should report every
+ * package's violations in one run instead of blocking downstream packages after
+ * the first upstream failure.
  */
 {
   "$schema": "https://developer.microsoft.com/json-schemas/rush/v5/command-line.schema.json",
@@ -38,6 +41,7 @@
       "summary": "Run each project's `npm run lint` (eslint).",
       "description": "Bulk-runs ESLint across every package that declares a `lint` script. Enforces the synchronous-blocking-IO ban (issue #85) via @excitedjs/eslint-config. Pure-syntactic — needs no prior build.",
       "enableParallelism": true,
+      "ignoreDependencyOrder": true,
       "ignoreMissingScript": true,
       "incremental": false
     },

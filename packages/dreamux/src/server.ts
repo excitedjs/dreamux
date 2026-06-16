@@ -3,8 +3,8 @@
  * services.
  *
  * Server loads process config, owns the admin socket, and boots the
- * DispatcherService. Dispatcher agent lifecycle, channel sessions, and
- * TeamMate agents live under DispatcherService.
+ * Dispatchers. Dispatcher agent lifecycle, channel sessions, Teams, and
+ * teammates live under dispatcher-local services.
  */
 
 import { AgentRuntimeProviderCatalog } from './agent-runtime/index.js';
@@ -30,7 +30,10 @@ import {
   type AdminSocketServer,
 } from './admin/socket.js';
 import { RestartIntentConsumer } from './daemon/restart-intent.js';
-import { DispatcherService } from './dispatcher-service/service.js';
+import {
+  Dispatchers,
+  type DispatcherService,
+} from './dispatcher-service/service.js';
 import { ensureDispatcherWorkspace } from './dispatcher-service/dispatcher-workspace.js';
 import {
   detectLegacyDispatcherState,
@@ -103,7 +106,7 @@ export interface Repos {
 
 export class Server {
   readonly repos: Repos;
-  readonly dispatcherService: DispatcherService;
+  readonly dispatchers: Dispatchers;
   private admin: AdminSocketServer | null = null;
   private shuttingDown = false;
   private readonly opts: ServerOptions;
@@ -138,7 +141,7 @@ export class Server {
     this.repos = {
       dispatchers: new DispatcherStore(config),
     };
-    this.dispatcherService = new DispatcherService({
+    this.dispatchers = new Dispatchers({
       config,
       dispatchers: this.repos.dispatchers,
       agentRuntimeProviders: this.agentRuntimeProviders,
@@ -152,7 +155,7 @@ export class Server {
   /** Bring up admin socket + all enabled dispatchers. */
   async start(): Promise<void> {
     await this.repos.dispatchers.hydrate((message) => this.log.warn(message));
-    this.dispatcherService.setRestartIntent(
+    this.dispatchers.setRestartIntent(
       await RestartIntentConsumer.load({
         now: Date.now(),
         warn: (message) => this.log.warn(message),
@@ -210,7 +213,7 @@ export class Server {
     const rows = this.repos.dispatchers.listEnabled();
     for (const row of rows) {
       try {
-        await this.dispatcherService.startDispatcher(row.dispatcher_id);
+        await this.getDispatcher(row.dispatcher_id).start();
       } catch (err) {
         this.log.error(
           {
@@ -274,7 +277,11 @@ export class Server {
   }
 
   summarize() {
-    return this.dispatcherService.summarize();
+    return this.dispatchers.summarize();
+  }
+
+  getDispatcher(id: string): DispatcherService {
+    return this.dispatchers.get(id);
   }
 
   /** Graceful shutdown — drain dispatchers and close the admin socket. */
@@ -282,7 +289,7 @@ export class Server {
     if (this.shuttingDown) return;
     this.shuttingDown = true;
     this.log.info('shutting down');
-    await this.dispatcherService.shutdown();
+    await this.dispatchers.shutdown();
     if (this.admin !== null) {
       await this.admin.close();
       this.admin = null;

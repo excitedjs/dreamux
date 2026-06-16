@@ -210,7 +210,7 @@ export interface TeamMateDispatcherOwner {
  * pull-only, while a `dispatcher`-initiated turn returns to the
  * dispatcher runtime as a completion. A settle whose turn id was never
  * recorded (e.g. submitted before a server restart) resolves to `null` and
- * the facade picks the safe default for the role.
+ * dispatcher completion routing picks the safe default for the role.
  */
 export type TeamMateTurnOrigin = 'channel' | 'dispatcher' | 'team_leader';
 

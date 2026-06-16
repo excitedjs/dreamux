@@ -1,35 +1,43 @@
-import { Buffer } from 'node:buffer';
-import { createHash } from 'node:crypto';
-
-import {
-  bundledSkillSourcesForRole,
-  teammateHostPaths,
-  HOST_INJECT_ENV,
-  type AgentRuntimeProviderCatalog,
-} from '../../agent-runtime/index.js';
+import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type {
   AgentRuntime,
-  AgentRuntimeCapabilities,
-  AgentRuntimeMcpServer,
-  AgentRuntimeProvider,
   AgentRuntimeTurnResult,
+  AgentRuntimeMcpServer,
   CompletionEnvelope,
-  TurnSettledSignal,
 } from '@excitedjs/dreamux-types';
-import {
-  type DispatcherConfig,
-  type DreamuxConfig,
-  type ResolvedAgentConfig,
-} from '../../config/config.js';
+import type { DreamuxConfig } from '../../config/config.js';
 import type { DispatcherStore } from '../../state/dispatcher-store.js';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
-import { validateDispatcherId } from '../../state/dispatcher-id.js';
-import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
+import { ownerForPrincipal } from './access.js';
+import {
+  agentRuntimeCapability,
+  defaultAgentRuntime,
+  resolveAgent,
+} from './agent-config.js';
+import { deliverTeamMateTurnSettled } from './completion-delivery.js';
 import { TeamMateIdentityStore } from './identity-store.js';
-import { TeamMateRuntimeStateStore } from './runtime-state.js';
+import {
+  type LiveTeamMate,
+  type LiveTeamMateSettledInput,
+  LiveTeamMateRegistry,
+  recordTurnOrigin,
+} from './live-runtime.js';
+import { TeammateReadModel } from './read-model.js';
 import { TeamMateTurnsStore } from './turns-store.js';
 import { allocateConcreteName, type SuffixGenerator } from './name-allocator.js';
-import { WorktreeManager, type PreparedTeamMateWorkspace } from './worktree-manager.js';
+import {
+  principalTurnOrigin,
+  recordSettledTurn,
+  recordSubmittedTurn,
+  toTurnResult,
+} from './turn-recording.js';
+import {
+  assertManagedWorktreeAvailable,
+  dispatcherWorkspace,
+  reprepareDeletedManagedWorktree,
+  resolveSpawnWorkspace,
+} from './workspaces.js';
+import { WorktreeManager } from './worktree-manager.js';
 import {
   requireLifecycleText,
   validateTeamMateName,
@@ -43,11 +51,8 @@ import {
   type TeamMateHistoryQuery,
   type TeamMateHistoryResult,
   type TeamMateIdentity,
-  type TeamMateRecordRow,
   type TeamMateLastResult,
-  type TeamMateLastTurn,
   type TeamMateRole,
-  type TeamMateAgentRuntimeCapability,
   type TeamMateRuntimeStatus,
   type TeamMateSendResult,
   type TeamMateSpawnResult,
@@ -60,21 +65,6 @@ import {
   teamServicePrincipal,
 } from './types.js';
 
-interface LiveTeamMate {
-  runtime: AgentRuntime;
-  state: TeamMateRuntimeStateStore;
-  /**
-   * Per-turn submission origin, keyed by runtime turn id. First-writer-wins:
-   * a later input steered into an already-active turn never re-targets that
-   * turn's completion. Bounded FIFO (see {@link TURN_ORIGIN_CACHE_LIMIT});
-   * entries are kept after settle so duplicate settles of the same turn route
-   * consistently.
-   */
-  turnOrigins: Map<string, TeamMateTurnOrigin>;
-}
-
-const TURN_ORIGIN_CACHE_LIMIT = 256;
-
 export interface TeamMateAgentServiceOptions {
   config: DreamuxConfig;
   dispatchers: DispatcherStore;
@@ -84,22 +74,12 @@ export interface TeamMateAgentServiceOptions {
     name: string;
     identity: TeamMateIdentity;
   }) => readonly AgentRuntimeMcpServer[];
-  /**
-   * Reverse-delivery sink: invoked when a teammate turn reaches a terminal state
-   * (success, failure, or stop). The facade bridges it to the dispatcher
-   * runtime's `completionInput`, turning a finished teammate into a fresh
-   * dispatcher turn (issue #147). A teammate runtime is launched with
-   * `onTurnSettled` only when this sink is present, so settlement never delivers
-   * into a void.
-   */
+  /** Reverse-delivery sink for terminal teammate turns (issue #147). */
   onTeamMateCompletion?: (
     dispatcherId: string,
     identity: TeamMateIdentity,
     completion: CompletionEnvelope,
-    /**
-     * The settled turn's submission origin, or `null` when the turn id was
-     * never recorded by this process (the sink picks the role's safe default).
-     */
+    /** Submission origin, or `null` when this process never recorded the turn id. */
     origin: TeamMateTurnOrigin | null,
   ) => void | Promise<void>;
   /**
@@ -148,8 +128,9 @@ export interface ScopedCloseTeamMateInput {
 export class TeamMateAgentService {
   private readonly identities: TeamMateIdentityStore;
   private readonly turnsStore: TeamMateTurnsStore;
+  private readonly readModel: TeammateReadModel;
+  private readonly runtimes: LiveTeamMateRegistry;
   private readonly worktrees = new WorktreeManager();
-  private readonly live = new Map<string, LiveTeamMate>();
   private submissionSeq = 0;
   /**
    * In-flight best-effort settled-turn captures (issue #209 slice 6 repair). The
@@ -163,9 +144,22 @@ export class TeamMateAgentService {
 
   constructor(private readonly opts: TeamMateAgentServiceOptions) {
     // The stores' log option is the neutral logger's `warn` (fields-first), so
-    // the host logger is handed through directly — no shape adapter.
+    // the host logger is handed through directly.
     this.identities = new TeamMateIdentityStore({ warn: opts.log.warn.bind(opts.log) });
     this.turnsStore = new TeamMateTurnsStore({ warn: opts.log.warn.bind(opts.log) });
+    this.runtimes = new LiveTeamMateRegistry({
+      identities: this.identities,
+      log: opts.log,
+      ...(opts.mcpServersForTeamMate !== undefined
+        ? { mcpServersForTeamMate: opts.mcpServersForTeamMate }
+        : {}),
+    });
+    this.readModel = new TeammateReadModel({
+      identities: this.identities,
+      turnsStore: this.turnsStore,
+      runtimeFor: (dispatcherId, name) =>
+        this.runtimes.getRuntime(dispatcherId, name),
+    });
   }
 
   /**
@@ -245,12 +239,23 @@ export class TeamMateAgentService {
     // the `tm-` rule). Checked against all persisted identities, never reused.
     const name = await this.allocateName(dispatcherId, role, requestedName);
     const agentRuntimeId =
-      input.agentRuntime ?? this.defaultAgentRuntime(dispatcherId);
-    const agent = this.resolveAgent(dispatcherId, agentRuntimeId);
+      input.agentRuntime ?? defaultAgentRuntime(this.opts.config, dispatcherId);
+    const agent = resolveAgent(this.opts.config, dispatcherId, agentRuntimeId);
     const provider = this.opts.agentRuntimeProviders.resolve(agent.provider);
-    const workspace = await this.resolveSpawnWorkspace(dispatcherId, name, input);
+    const workspace = await resolveSpawnWorkspace({
+      config: this.opts.config,
+      worktrees: this.worktrees,
+      dispatcherId,
+      name,
+      request: input,
+    });
     if (input.sharedWorkspace === undefined) {
-      await this.assertManagedWorktreeAvailable(dispatcherId, name, workspace.worktree);
+      await assertManagedWorktreeAvailable({
+        identities: this.identities,
+        dispatcherId,
+        name,
+        worktree: workspace.worktree,
+      });
     }
     // #199 Slice 3: no Dreamux-minted session id — session_id is the
     // runtime-native thread id, set when the runtime reports one. The concrete
@@ -270,59 +275,29 @@ export class TeamMateAgentService {
       intent: input.intent,
       status: 'starting',
     });
-    this.assertPrincipalCanAccess(input.principal, identity);
-    const live = await this.startRuntime(dispatcherId, identity, provider, agent);
+    this.readModel.assertPrincipalCanAccess(input.principal, identity);
+    const live = await this.runtimes.start({
+      dispatcherId,
+      identity,
+      provider,
+      agent,
+      ...(this.opts.onTeamMateCompletion !== undefined
+        ? {
+            onTurnSettled: (settled) =>
+              this.captureSettledTurn(dispatcherId, identity, settled),
+          }
+        : {}),
+    });
     identity = live.state.current();
     const turn = await this.submitPrompt(dispatcherId, name, input.prompt, {
       principal: input.principal,
     });
-    await this.recordSubmittedTurn(dispatcherId, live, {
+    await recordSubmittedTurn(this.turnsStore, dispatcherId, live, {
       turnId: turn.turn_id ?? null,
       turnOrigin: principalTurnOrigin(input.principal),
       prompt: input.prompt,
     });
-    return { teammate: this.toStatus(live.state.current(), live.runtime), turn };
-  }
-
-  /**
-   * Resolve a spawn's workspace (issue #199). Three cases, in order:
-   *   - a Team member inherits the Team's shared workspace verbatim;
-   *   - no `repo` and no explicit cwd → a plain per-name work directory under
-   *     the dispatcher workspace (`.workspace/work/<name>/`), NOT a git worktree,
-   *     so the dispatcher cwd need not be a git repo;
-   *   - an explicit cwd and/or `repo` mode → reuse-cwd runs in the given cwd;
-   *     managed creates a git worktree under the dispatcher workspace (only
-   *     managed forces the dispatcher cwd contract — issue #182 PR-4).
-   */
-  private async resolveSpawnWorkspace(
-    dispatcherId: string,
-    name: string,
-    input: ScopedSpawnTeamMateInput,
-  ): Promise<PreparedTeamMateWorkspace | TeamMateSharedWorkspace> {
-    if (input.sharedWorkspace !== undefined) return input.sharedWorkspace;
-    if (
-      input.worktree === undefined &&
-      (input.cwd === undefined || input.cwd.trim() === '')
-    ) {
-      return this.worktrees.prepareDefaultWorkspace({
-        dispatcherWorkspace: await this.dispatcherWorkspace(dispatcherId),
-        slug: name,
-      });
-    }
-    const cwd = input.cwd;
-    if (typeof cwd !== 'string' || cwd.trim() === '') {
-      throw new Error('TeamMate spawn requires cwd');
-    }
-    const managedMode = (input.worktree?.mode ?? 'reuse-cwd') === 'managed';
-    return this.worktrees.prepare({
-      dispatcherId,
-      teammateName: name,
-      cwd,
-      ...(managedMode
-        ? { dispatcherWorkspace: await this.dispatcherWorkspace(dispatcherId) }
-        : {}),
-      request: input.worktree,
-    });
+    return { teammate: this.readModel.toStatus(live.state.current(), live.runtime), turn };
   }
 
   async send(input: SendTeamMateInput): Promise<TeamMateSendResult> {
@@ -354,12 +329,12 @@ export class TeamMateAgentService {
     const turn = await this.submitPrompt(dispatcherId, input.name, input.prompt, {
       principal: input.principal,
     });
-    await this.recordSubmittedTurn(dispatcherId, live, {
+    await recordSubmittedTurn(this.turnsStore, dispatcherId, live, {
       turnId: turn.turn_id ?? null,
       turnOrigin: principalTurnOrigin(input.principal),
       prompt: input.prompt,
     });
-    return { teammate: this.toStatus(live.state.current(), live.runtime), turn };
+    return { teammate: this.readModel.toStatus(live.state.current(), live.runtime), turn };
   }
 
   async close(input: CloseTeamMateInput): Promise<TeamMateCloseResult> {
@@ -373,16 +348,19 @@ export class TeamMateAgentService {
   async closeScoped(input: ScopedCloseTeamMateInput): Promise<TeamMateCloseResult> {
     const dispatcherId = principalDispatcherId(input.principal);
     const name = validateTeamMateName(input.name);
-    const identity = await this.mustIdentity(dispatcherId, name, input.principal);
+    const identity = await this.readModel.mustIdentity(
+      dispatcherId,
+      name,
+      input.principal,
+    );
     // Required close reason — enforced for in-process callers too (issue #182
     // PR-3); the Team dissolve path supplies an explicit note. Checked after the
     // existence/access lookup so an inaccessible teammate reports that first.
     requireLifecycleText(input.note, 'TeamMate close note');
-    const key = liveKey(dispatcherId, name);
-    const live = this.live.get(key);
+    const live = this.runtimes.get(dispatcherId, name);
     if (live !== undefined) {
       await live.runtime.stop();
-      this.live.delete(key);
+      this.runtimes.delete(dispatcherId, name);
     }
     // #199 Slice 3: the close note and updated_at land on the record; history
     // reads the record directly (no separate close event), and the record stays
@@ -394,74 +372,15 @@ export class TeamMateAgentService {
       lastSeenAt: Date.now(),
       worktree: await this.worktrees.cleanup(identity),
     });
-    return { teammate: this.toStatus(closed, null) };
-  }
-
-  /**
-   * Capture a submitted turn (issue #199 Slice 3): append a compact `submit`
-   * row to the per-name turns archive and bump the record's rolling summary
-   * (turn_count / last_seen / last_prompt_preview). The summary update is routed
-   * through the live state so its `current()` snapshot stays canonical.
-   */
-  private async recordSubmittedTurn(
-    dispatcherId: string,
-    live: LiveTeamMate,
-    input: { turnId: string | null; turnOrigin: TeamMateTurnOrigin | null; prompt: string },
-  ): Promise<void> {
-    const current = live.state.current();
-    await this.turnsStore.appendSubmit(dispatcherId, current.name, {
-      turnId: input.turnId,
-      turnOrigin: input.turnOrigin,
-      prompt: input.prompt,
-      intent: current.intent,
-    });
-    await live.state.recordSubmittedTurn(input.prompt);
-  }
-
-  /**
-   * Capture a settled turn: append a `settled` row (final assistant output up to
-   * the durable hard cap) and record the latest assistant preview on the record.
-   */
-  private async recordSettledTurn(
-    dispatcherId: string,
-    name: string,
-    state: TeamMateRuntimeStateStore,
-    input: {
-      turnId: string | null;
-      assistant: string | null;
-      settleStatus: 'completed' | 'failed' | 'stopped' | null;
-    },
-  ): Promise<void> {
-    await this.turnsStore.appendSettled(dispatcherId, name, {
-      turnId: input.turnId,
-      assistant: input.assistant,
-      settleStatus: input.settleStatus,
-    });
-    await state.recordSettledTurn(input.assistant);
+    return { teammate: this.readModel.toStatus(closed, null) };
   }
 
   async list(dispatcherId: string): Promise<TeamMateRuntimeStatus[]> {
-    return this.listScoped(dispatcherPrincipal(dispatcherId));
+    return this.readModel.list(dispatcherId);
   }
 
   async listScoped(principal: TeamMateCallerPrincipal): Promise<TeamMateRuntimeStatus[]> {
-    const dispatcherId = principalDispatcherId(principal);
-    return (await this.scopedList(principal)).map((identity) =>
-      this.toStatus(identity, this.live.get(liveKey(dispatcherId, identity.name))?.runtime ?? null),
-    );
-  }
-
-  /**
-   * The scoped LIST chokepoint (issue #199 Slice 4): the only place a list of
-   * records is read for the `teammate.*` surface. Reads every record for the
-   * principal's dispatcher and keeps just the ones {@link principalCanAccess}
-   * admits, so list/history can never widen visibility independently.
-   */
-  private async scopedList(
-    principal: TeamMateCallerPrincipal,
-  ): Promise<TeamMateIdentity[]> {
-    const identities = await this.identities.list(principalDispatcherId(principal));
-    return identities.filter((identity) => principalCanAccess(principal, identity));
+    return this.readModel.listScoped(principal);
   }
 
   async status(
@@ -475,23 +394,11 @@ export class TeamMateAgentService {
     principal: TeamMateCallerPrincipal,
     name: string,
   ): Promise<TeamMateRuntimeStatus> {
-    const dispatcherId = principalDispatcherId(principal);
-    const identity = await this.mustIdentity(
-      dispatcherId,
-      validateTeamMateName(name),
-      principal,
-    );
-    return this.toStatus(
-      identity,
-      this.live.get(liveKey(dispatcherId, identity.name))?.runtime ?? null,
-    );
+    return this.readModel.statusScoped(principal, name);
   }
 
   async history(input: TeamMateHistoryQuery): Promise<TeamMateHistoryResult> {
-    return this.historyScoped({
-      ...input,
-      principal: input.principal ?? dispatcherPrincipal(input.dispatcherId),
-    });
+    return this.readModel.history(input);
   }
 
   async historyScoped(
@@ -499,32 +406,7 @@ export class TeamMateAgentService {
       principal: TeamMateCallerPrincipal;
     },
   ): Promise<TeamMateHistoryResult> {
-    // #199 Slice 3: `history` reads the per-name RECORDS only — each record
-    // carries the rolling recovery summary (turn count, last-seen, previews), so
-    // there is no turn/event fold here. Closed teammates keep their record and
-    // stay searchable; live-only facts (runtime status) come from the live map.
-    // #199 Slice 4: visibility is enforced by the same scoped-list chokepoint as
-    // `list`, so `history` can never surface a record `list` would hide.
-    const rows: TeamMateRecordRow[] = [];
-    for (const identity of await this.scopedList(input.principal)) {
-      const row = this.toRecordRow(identity);
-      if (this.matchesRecordQuery(row, input)) {
-        rows.push(row);
-      }
-    }
-    rows.sort((a, b) =>
-      b.last_seen_at - a.last_seen_at ||
-      b.updated_at - a.updated_at ||
-      a.name.localeCompare(b.name),
-    );
-    const start = input.cursor !== undefined ? decodeCursor(input.cursor) : 0;
-    const limit = clampHistoryLimit(input.limit);
-    const items = rows.slice(start, start + limit);
-    const next = start + items.length;
-    return {
-      items,
-      next_cursor: next < rows.length ? encodeCursor(next) : null,
-    };
+    return this.readModel.historyScoped(input);
   }
 
   async last(
@@ -550,110 +432,7 @@ export class TeamMateAgentService {
     name: string,
     turns?: number,
   ): Promise<TeamMateLastResult> {
-    const requestedTurns = validateLastTurns(turns);
-    const dispatcherId = principalDispatcherId(principal);
-    const identity = await this.mustIdentity(
-      dispatcherId,
-      validateTeamMateName(name),
-      principal,
-    );
-    const teammate = this.toStatus(
-      identity,
-      this.live.get(liveKey(dispatcherId, identity.name))?.runtime ?? null,
-    );
-    // Fold the turns archive in file APPEND ORDER — the only correct turn
-    // ordering, since `timestamp` is `Date.now()` (a wall clock that can collide
-    // within a millisecond or move backwards on an NTP step) and must NOT be used
-    // to order or pick the latest turn. The fold is
-    // BOUNDED: only the most recent `requestedTurns` settled turns retain their
-    // (possibly 160k-char) assistant text, so memory does not grow with session
-    // length. `firstSeq` records each turn's first-seen (submit) order so a turn
-    // is ranked by when it STARTED, not by when a (possibly duplicate) settle was
-    // written; it holds only short turn ids, never assistant text.
-    let nextSeq = 0;
-    const firstSeq = new Map<string, number>();
-    const seqOf = (turnId: string): number => {
-      const existing = firstSeq.get(turnId);
-      if (existing !== undefined) return existing;
-      const seq = nextSeq;
-      nextSeq += 1;
-      firstSeq.set(turnId, seq);
-      return seq;
-    };
-    // Submit metadata (prompt/intent/origin) for turns not yet paired with a
-    // settle; dropped once paired, so it stays small.
-    const submitMeta = new Map<
-      string,
-      Pick<TeamMateLastTurn, 'turn_origin' | 'prompt_preview' | 'intent' | 'submitted_at'>
-    >();
-    // The bounded window of settled turns, keyed by turn id; size <= requestedTurns.
-    const recent = new Map<string, TeamMateLastTurn>();
-    for await (const event of this.turnsStore.stream(dispatcherId, identity.name)) {
-      const turnId = event.turn_id;
-      if (turnId === null) continue;
-      seqOf(turnId);
-      if (event.type === 'submit') {
-        submitMeta.set(turnId, {
-          turn_origin: event.turn_origin,
-          prompt_preview: event.prompt_preview,
-          intent: event.intent,
-          submitted_at: event.timestamp,
-        });
-        continue;
-      }
-      if (event.type !== 'settled') continue;
-      const present = recent.get(turnId);
-      if (present !== undefined) {
-        // Duplicate/re-settle of a turn still in the window: override the settle
-        // fields in append order, keeping its already-paired submit fields.
-        present.settle_status = event.settle_status;
-        present.assistant = event.assistant;
-        present.assistant_preview = event.assistant_preview;
-        present.assistant_truncated = event.assistant_truncated;
-        present.settled_at = event.timestamp;
-        continue;
-      }
-      const submit = submitMeta.get(turnId);
-      submitMeta.delete(turnId);
-      recent.set(turnId, {
-        turn_id: turnId,
-        turn_origin: submit?.turn_origin ?? null,
-        prompt_preview: submit?.prompt_preview ?? null,
-        intent: submit?.intent ?? null,
-        submitted_at: submit?.submitted_at ?? null,
-        settled_at: event.timestamp,
-        settle_status: event.settle_status,
-        assistant: event.assistant,
-        assistant_preview: event.assistant_preview,
-        assistant_truncated: event.assistant_truncated,
-      });
-      if (recent.size > requestedTurns) {
-        // Evict the oldest-by-first-seen turn so the window holds the most recent
-        // `requestedTurns` turns by START order (a late re-settle of an already
-        // evicted, older turn is evicted again here rather than resurfacing).
-        let evictId: string | undefined;
-        let evictSeq = Infinity;
-        for (const id of recent.keys()) {
-          const seq = firstSeq.get(id) ?? Infinity;
-          if (seq < evictSeq) {
-            evictSeq = seq;
-            evictId = id;
-          }
-        }
-        if (evictId !== undefined) recent.delete(evictId);
-      }
-    }
-    // `last` is the completion fallback, so it returns SETTLED turns (those with
-    // a durable assistant output), ordered oldest-first by start order.
-    const lastTurns = [...recent.values()].sort(
-      (a, b) => (firstSeq.get(a.turn_id) ?? 0) - (firstSeq.get(b.turn_id) ?? 0),
-    );
-    return {
-      teammate,
-      requested_turns: requestedTurns,
-      returned_turns: lastTurns.length,
-      turns: lastTurns,
-    };
+    return this.readModel.lastScoped(principal, name, turns);
   }
 
   async channelInputScoped(
@@ -672,7 +451,7 @@ export class TeamMateAgentService {
       // Capture the channel-origin turn (issue #182 PR-5, PR #187 review P1): a
       // TeamLeader's normal user turns arrive through a bound Team channel here,
       // not via send, and would otherwise be missing from the turns archive.
-      await this.recordSubmittedTurn(dispatcherId, live, {
+      await recordSubmittedTurn(this.turnsStore, dispatcherId, live, {
         turnId: result.turnId,
         turnOrigin: 'channel',
         prompt: input.text,
@@ -692,7 +471,11 @@ export class TeamMateAgentService {
     if (existing !== null) {
       throw new Error(`TeamLeader ${JSON.stringify(name)} already exists`);
     }
-    const agent = this.resolveAgent(input.dispatcherId, input.agentRuntime);
+    const agent = resolveAgent(
+      this.opts.config,
+      input.dispatcherId,
+      input.agentRuntime,
+    );
     const provider = this.opts.agentRuntimeProviders.resolve(agent.provider);
     const owner: TeamMateIdentity['owner'] = {
       kind: 'dispatcher',
@@ -715,7 +498,18 @@ export class TeamMateAgentService {
       intent: input.intent ?? null,
       status: 'starting',
     });
-    const live = await this.startRuntime(input.dispatcherId, identity, provider, agent);
+    const live = await this.runtimes.start({
+      dispatcherId: input.dispatcherId,
+      identity,
+      provider,
+      agent,
+      ...(this.opts.onTeamMateCompletion !== undefined
+        ? {
+            onTurnSettled: (settled) =>
+              this.captureSettledTurn(input.dispatcherId, identity, settled),
+          }
+        : {}),
+    });
     identity = live.state.current();
     // The TeamLeader is not reachable through the public dispatcher principal
     // (issue #199 Slice 4); the bootstrap turn submits under the internal
@@ -727,12 +521,12 @@ export class TeamMateAgentService {
         leaderName: name,
       }),
     });
-    await this.recordSubmittedTurn(input.dispatcherId, live, {
+    await recordSubmittedTurn(this.turnsStore, input.dispatcherId, live, {
       turnId: turn.turn_id ?? null,
       turnOrigin: 'dispatcher',
       prompt: input.prompt,
     });
-    return { teammate: this.toStatus(live.state.current(), live.runtime), turn };
+    return { teammate: this.readModel.toStatus(live.state.current(), live.runtime), turn };
   }
 
   getCapabilities(): TeamMateCapabilities {
@@ -749,16 +543,17 @@ export class TeamMateAgentService {
       ],
       agent_runtimes: Object.entries(this.opts.config.agents).map(
         ([agentRuntimeId, agent]) =>
-          this.agentRuntimeCapability(agentRuntimeId, agent),
+          agentRuntimeCapability(
+            this.opts.agentRuntimeProviders,
+            agentRuntimeId,
+            agent,
+          ),
       ),
     };
   }
 
   async stopAll(): Promise<void> {
-    for (const [key, live] of this.live) {
-      await live.runtime.stop();
-      this.live.delete(key);
-    }
+    await this.runtimes.stopAll();
     // Drain any best-effort settled-turn captures dispatched before/at stop so a
     // caller awaiting shutdown sees no still-pending durable writes racing
     // teardown (issue #209 slice 6 repair). A capture may enqueue another while
@@ -770,7 +565,7 @@ export class TeamMateAgentService {
   }
 
   getLiveRuntime(dispatcherId: string, name: string): AgentRuntime | null {
-    return this.live.get(liveKey(dispatcherId, validateTeamMateName(name)))?.runtime ?? null;
+    return this.runtimes.getRuntime(dispatcherId, validateTeamMateName(name));
   }
 
   private async ensureRuntime(
@@ -779,16 +574,15 @@ export class TeamMateAgentService {
     opts: { principal?: TeamMateCallerPrincipal; reopenClosed?: boolean } = {},
   ): Promise<LiveTeamMate> {
     const teammateName = validateTeamMateName(name);
-    const key = liveKey(dispatcherId, teammateName);
-    const existing = this.live.get(key);
+    const existing = this.runtimes.get(dispatcherId, teammateName);
     if (existing !== undefined) {
-      this.assertPrincipalCanAccess(
+      this.readModel.assertPrincipalCanAccess(
         opts.principal ?? dispatcherPrincipal(dispatcherId),
         existing.state.current(),
       );
       return existing;
     }
-    let identity = await this.mustIdentity(
+    let identity = await this.readModel.mustIdentity(
       dispatcherId,
       teammateName,
       opts.principal ?? dispatcherPrincipal(dispatcherId),
@@ -802,7 +596,12 @@ export class TeamMateAgentService {
       if (opts.reopenClosed !== true) {
         throw new Error(`TeamMate ${JSON.stringify(teammateName)} is closed`);
       }
-      identity = await this.reprepareDeletedManagedWorktree(identity);
+      identity = await reprepareDeletedManagedWorktree({
+        config: this.opts.config,
+        identities: this.identities,
+        worktrees: this.worktrees,
+        identity,
+      });
       identity = await this.identities.update(identity, {
         status: 'starting',
         closedAt: null,
@@ -813,149 +612,55 @@ export class TeamMateAgentService {
     // Re-resolve the persisted agent id against the live agents map: an agent
     // removed from config since spawn fails loud here rather than silently
     // defaulting to some other runtime.
-    const agent = this.resolveAgent(dispatcherId, identity.agent_runtime);
-    const provider = this.opts.agentRuntimeProviders.resolve(agent.provider);
-    return this.startRuntime(dispatcherId, identity, provider, agent);
-  }
-
-  private async reprepareDeletedManagedWorktree(
-    identity: TeamMateIdentity,
-  ): Promise<TeamMateIdentity> {
-    if (
-      identity.worktree.mode !== 'managed' ||
-      identity.worktree.cleanup_state !== 'deleted'
-    ) {
-      return identity;
-    }
-    const workspace = await this.worktrees.prepare({
-      dispatcherId: identity.dispatcher_id,
-      teammateName: identity.name,
-      cwd: identity.source_cwd,
-      dispatcherWorkspace: await this.dispatcherWorkspace(identity.dispatcher_id),
-      request: {
-        mode: 'managed',
-        ...(identity.worktree.slug !== null ? { slug: identity.worktree.slug } : {}),
-        ...(identity.worktree.base_ref !== null
-          ? { base_ref: identity.worktree.base_ref }
-          : {}),
-        ...(identity.worktree.branch !== null ? { branch: identity.worktree.branch } : {}),
-        cleanup: identity.worktree.cleanup,
-      },
-    });
-    await this.assertManagedWorktreeAvailable(
-      identity.dispatcher_id,
-      identity.name,
-      workspace.worktree,
+    const agent = resolveAgent(
+      this.opts.config,
+      dispatcherId,
+      identity.agent_runtime,
     );
-    return this.identities.update(identity, {
-      sourceCwd: workspace.sourceCwd,
-      sourceRepo: workspace.sourceRepo,
-      cwd: workspace.runtimeCwd,
-      runtimeCwd: workspace.runtimeCwd,
-      worktree: workspace.worktree,
-    });
-  }
-
-  private async startRuntime(
-    dispatcherId: string,
-    identity: TeamMateIdentity,
-    provider: AgentRuntimeProvider,
-    agent: ResolvedAgentConfig,
-  ): Promise<LiveTeamMate> {
-    const resumeCapability = provider.getCapabilities().resume;
-    const state = new TeamMateRuntimeStateStore(this.identities, identity);
-    const onTeamMateCompletion = this.opts.onTeamMateCompletion;
-    // Bound late so the settle handler closes over the runtime instance directly
-    // rather than re-reading the live map: close() deletes the live entry right
-    // after stop() fires its terminal `stopped` settles, which would otherwise
-    // race the lookup. The origin map is closed over for the same reason.
-    let liveRuntime: AgentRuntime | null = null;
-    const turnOrigins = new Map<string, TeamMateTurnOrigin>();
-    // The runtime instance id is the globally-unique, filesystem-safe composite
-    // the host mints from the operator dispatcher + the teammate's runtime name
-    // (`<dispatcher>.tm.<hash>`). It groups the teammate's state/log/spill paths
-    // and never collides across dispatchers or with a dispatcher's own id.
-    const runtimeName = runtimeIdentityName(identity);
-    // The teammate's runtime config comes from its own resolved agent (the
-    // agents[].id it was spawned with), never inherited from the dispatcher: a
-    // teammate on a different provider than its dispatcher (e.g. a claude
-    // teammate under a codex dispatcher) carries its OWN typed config.
-    const runtime = provider.createRuntime({
-      identity: {
-        runtime_id: runtimeId(identity.dispatcher_id, runtimeName),
-        checkpoint_id: identity.session_id,
-      },
-      // The teammate identity's role drives bundled-skill gating (issue #209
-      // slice 6): only a `team_leader` receives bundled Dreamux skills; ordinary
-      // `teammate` / `team_member` launches receive none. `TeamMateRole` is a
-      // subset of `AgentRuntimeRole`, so it maps through directly.
-      role: identity.role,
-      config: agent.config,
-      cwd: identity.cwd,
-      skillSources: bundledSkillSourcesForRole(identity.role),
-      state,
-      paths: teammateHostPaths(identity.dispatcher_id, runtimeName),
-      injectEnv: HOST_INJECT_ENV,
-      mcpServers: [
-        ...(this.opts.mcpServersForTeamMate?.({
-          dispatcherId,
-          name: identity.name,
-          identity,
-        }) ?? []),
-      ],
-      // Attach the settle hook only when a sink is wired (the dispatcher's own
-      // runtime never gets one, so it cannot self-deliver). The handler runs off
-      // the synchronous callback and isolates every error so a delivery failure
-      // can never crash the teammate runtime or the settle path.
-      ...(onTeamMateCompletion !== undefined
+    const provider = this.opts.agentRuntimeProviders.resolve(agent.provider);
+    return this.runtimes.start({
+      dispatcherId,
+      identity,
+      provider,
+      agent,
+      ...(this.opts.onTeamMateCompletion !== undefined
         ? {
-            onTurnSettled: (settled: TurnSettledSignal): void => {
-              const settledRuntime = liveRuntime;
-              if (settledRuntime === null) return;
-              // Track the fire-and-forget capture so shutdown can drain it; the
-              // promise self-isolates all errors, so this never rejects.
-              const capture = this.deliverTurnSettled(
-                dispatcherId,
-                identity.name,
-                identity,
-                state,
-                settledRuntime,
-                settled,
-                turnOrigins,
-                onTeamMateCompletion,
-              );
-              this.inFlightSettleCaptures.add(capture);
-              void capture.finally(() => {
-                this.inFlightSettleCaptures.delete(capture);
-              });
-            },
+            onTurnSettled: (settled) =>
+              this.captureSettledTurn(dispatcherId, identity, settled),
           }
         : {}),
-      // Bind the per-teammate context once via the neutral logger's own `child`,
-      // so a teammate runtime's `logger.info({ id }, 'x')` keeps `id` on the host
-      // log line alongside the bound dispatcher/teammate fields. `child` is an
-      // optional contract member; core's logger always provides it, but fall back
-      // to the unbound logger if a future logger omits it.
-      logger:
-        this.opts.log.child?.({
-          dispatcher_id: dispatcherId,
-          teammate: identity.name,
-        }) ?? this.opts.log,
     });
-    liveRuntime = runtime;
-    // #199 Slice 3: rebuild the resume checkpoint from the persisted
-    // runtime-native session_id (thread id) plus the runtime's OWN declared
-    // checkpoint kind — the kind is never persisted as a durable concept.
-    if (identity.session_id !== null && resumeCapability.supported) {
-      await runtime.resume({
-        checkpoint: { kind: resumeCapability.checkpoint, id: identity.session_id },
-      });
-    } else {
-      await runtime.start();
-    }
-    const live = { runtime, state, turnOrigins };
-    this.live.set(liveKey(dispatcherId, identity.name), live);
-    return live;
+  }
+
+  private captureSettledTurn(
+    dispatcherId: string,
+    identity: TeamMateIdentity,
+    settled: LiveTeamMateSettledInput,
+  ): void {
+    const sink = this.opts.onTeamMateCompletion;
+    if (sink === undefined) return;
+    const capture = deliverTeamMateTurnSettled({
+      dispatcherId,
+      name: identity.name,
+      identity,
+      runtime: settled.runtime,
+      settled: settled.settled,
+      turnOrigins: settled.turnOrigins,
+      sink,
+      log: this.opts.log,
+      recordSettledTurn: (input) =>
+        recordSettledTurn(
+          this.turnsStore,
+          dispatcherId,
+          identity.name,
+          settled.state,
+          input,
+        ),
+    });
+    this.inFlightSettleCaptures.add(capture);
+    void capture.finally(() => {
+      this.inFlightSettleCaptures.delete(capture);
+    });
   }
 
   private async submitPrompt(
@@ -977,187 +682,6 @@ export class TeamMateAgentService {
   }
 
   /**
-   * Seam ② of the reverse-delivery path (issue #147): turn a settled teammate
-   * turn into a {@link CompletionEnvelope} and hand it to the sink. Reads the
-   * teammate's final assistant-visible result via `getLast`. The settle status
-   * (completed/failed/stopped) passes through to the envelope verbatim, so a
-   * torn-down teammate surfaces with its real status, never silently vanishing
-   * and never mislabeled. Reverse
-   * delivery requires a stable non-null turn id because the completion id is the
-   * idempotency key; builtin runtimes only settle accepted turns after they have
-   * a turn id. The settled turn's recorded submission origin rides along so the
-   * sink can route per turn (channel-origin TeamLeader turns stay pull-only).
-   * Every step is error-isolated: this runs `void`-ed off the
-   * synchronous settle callback, so any escape would become an unhandled
-   * rejection.
-   */
-  private async deliverTurnSettled(
-    dispatcherId: string,
-    name: string,
-    identity: TeamMateIdentity,
-    state: TeamMateRuntimeStateStore,
-    runtime: AgentRuntime,
-    settled: TurnSettledSignal,
-    turnOrigins: ReadonlyMap<string, TeamMateTurnOrigin>,
-    sink: NonNullable<TeamMateAgentServiceOptions['onTeamMateCompletion']>,
-  ): Promise<void> {
-    try {
-      if (settled.turnId === null) {
-        this.opts.log.warn(
-          {
-            dispatcher_id: dispatcherId,
-            teammate: name,
-            status: settled.status,
-          },
-          'dropping teammate completion: settled turn has no turn id',
-        );
-        return;
-      }
-      let result = '';
-      try {
-        const last = await runtime.getLast();
-        result = last?.text ?? '';
-      } catch (err) {
-        this.opts.log.warn(
-          {
-            dispatcher_id: dispatcherId,
-            teammate: name,
-            err: errInfo(err),
-          },
-          'teammate completion getLast failed',
-        );
-      }
-      const envelope: CompletionEnvelope = {
-        source: name,
-        id: `${name}:${settled.turnId}`,
-        // Pass the settle status through verbatim — completed/failed/stopped are
-        // the CompletionEnvelope statuses too. (Previously stopped was folded
-        // into failed; the runtimes now render a distinct "was stopped" line.)
-        status: settled.status,
-        result,
-      };
-      // Attempt reverse delivery first (unchanged timing), but isolate its
-      // failure so it never skips the durable settled-turn capture below — a
-      // failed delivery is exactly when the recovery metadata matters most
-      // (issue #182 PR-5, PR #187 review P2).
-      try {
-        await sink(
-          dispatcherId,
-          identity,
-          envelope,
-          turnOrigins.get(settled.turnId) ?? null,
-        );
-      } catch (err) {
-        this.opts.log.warn(
-          {
-            dispatcher_id: dispatcherId,
-            teammate: name,
-            err: errInfo(err),
-          },
-          'teammate completion delivery failed',
-        );
-      }
-      // Capture the settled turn in the per-name turns archive AFTER the
-      // delivery attempt — regardless of its outcome — so capture never perturbs
-      // reverse-delivery timing. The record's rolling summary is bumped through
-      // the live state so its snapshot stays canonical (issue #199 Slice 3).
-      await this.recordSettledTurn(dispatcherId, name, state, {
-        turnId: settled.turnId,
-        assistant: result,
-        settleStatus: settled.status,
-      });
-    } catch (err) {
-      this.opts.log.warn(
-        {
-          dispatcher_id: dispatcherId,
-          teammate: name,
-          err: errInfo(err),
-        },
-        'teammate settled-turn capture failed',
-      );
-    }
-  }
-
-  /**
-   * The scoped single-read chokepoint (issue #199 Slice 4): the only place a
-   * record is read by name for the `teammate.*` surface (status / last / send /
-   * close all resolve their target here). An out-of-scope record reports the
-   * same "does not exist" as a missing one, so visibility never leaks through an
-   * existence oracle.
-   */
-  private async mustIdentity(
-    dispatcherId: string,
-    name: string,
-    principal: TeamMateCallerPrincipal = dispatcherPrincipal(dispatcherId),
-  ): Promise<TeamMateIdentity> {
-    const identity = await this.identities.get(dispatcherId, name);
-    if (identity === null) {
-      throw new Error(`TeamMate ${JSON.stringify(name)} does not exist`);
-    }
-    this.assertPrincipalCanAccess(principal, identity);
-    return identity;
-  }
-
-  private assertPrincipalCanAccess(
-    principal: TeamMateCallerPrincipal,
-    identity: TeamMateIdentity,
-  ): void {
-    if (principalCanAccess(principal, identity)) return;
-    throw new Error(`TeamMate ${JSON.stringify(identity.name)} does not exist`);
-  }
-
-  /**
-   * The agents[].id a teammate inherits when `spawn` names none: the
-   * dispatcher's own `agentRuntime`. There is no provider-ref fallback — a
-   * teammate always resolves to a named agent, never a bare provider.
-   */
-  private defaultAgentRuntime(dispatcherId: string): string {
-    const dispatcherCfg = this.dispatcherConfig(dispatcherId);
-    if (dispatcherCfg === null) {
-      throw new Error(
-        `cannot spawn a teammate for unknown dispatcher '${dispatcherId}': ` +
-          'no dispatcher config to resolve a default agentRuntime from. Pass an ' +
-          'explicit agentRuntime (an agents[].id).',
-      );
-    }
-    return dispatcherCfg.agentRuntime;
-  }
-
-  /**
-   * Resolve an agents[].id against the live agents map into its
-   * { provider, config }. #98 fail-loud: an id with no matching agents[] entry
-   * (e.g. removed from config since the teammate was spawned) throws with
-   * rebuild guidance rather than silently defaulting a runtime.
-   */
-  private resolveAgent(
-    dispatcherId: string,
-    agentRuntimeId: string,
-  ): ResolvedAgentConfig {
-    const agent = this.opts.config.agents[agentRuntimeId];
-    if (agent === undefined) {
-      const known = Object.keys(this.opts.config.agents);
-      const knownHint =
-        known.length > 0
-          ? `Known agents: ${known.map((id) => `'${id}'`).join(', ')}.`
-          : 'No agents are declared.';
-      throw new Error(
-        `teammate for dispatcher '${dispatcherId}' references agentRuntime ` +
-          `'${agentRuntimeId}', which matches no agents[].id. ${knownHint} ` +
-          'Add the agent to config and rebuild, or respawn the teammate with a ' +
-          'known agent id.',
-      );
-    }
-    return agent;
-  }
-
-  private dispatcherConfig(dispatcherId: string): DispatcherConfig | null {
-    return (
-      this.opts.config.dispatchers.find((entry) => entry.id === dispatcherId) ??
-      null
-    );
-  }
-
-  /**
    * Resolve and validate the dispatcher workspace cwd (issue #182 PR-4): the
    * root under which managed worktrees are placed. Fails loud when the
    * dispatcher declares no explicit `cwd` — there is no state-dir fallback.
@@ -1165,340 +689,6 @@ export class TeamMateAgentService {
    * the same workspace.
    */
   async dispatcherWorkspace(dispatcherId: string): Promise<string> {
-    return ensureDispatcherWorkspace(this.opts.config, dispatcherId);
+    return dispatcherWorkspace(this.opts.config, dispatcherId);
   }
-
-  private toStatus(
-    identity: TeamMateIdentity,
-    runtime: AgentRuntime | null,
-  ): TeamMateRuntimeStatus {
-    return {
-      name: identity.name,
-      // #199 Slice 3: session_id is the runtime-native thread id, persisted
-      // directly. Null until the runtime reports one.
-      session_id: identity.session_id,
-      owner: identity.owner,
-      agent_runtime: identity.agent_runtime,
-      repo: {
-        mode: identity.worktree.mode,
-        path: identity.runtime_cwd,
-        source_repo: identity.source_repo,
-        branch: identity.worktree.branch,
-        base_ref: identity.worktree.base_ref,
-        cleanup: identity.worktree.cleanup,
-        cleanup_state: identity.worktree.cleanup_state,
-      },
-      intent: identity.intent,
-      status: identity.status,
-      runtime_status: runtime?.getStatus() ?? null,
-      last_error: identity.last_error,
-      closed_at: identity.closed_at,
-      close_note: identity.close_note,
-    };
-  }
-
-  /**
-   * Build one recovery row for a teammate (issue #199 Slice 3). All recovery
-   * facts — turn count, last-seen, prompt/assistant previews — are read from the
-   * per-name RECORD's rolling summary; `history` no longer folds the turns
-   * archive. Live-only facts (runtime status) come from the live map.
-   */
-  private toRecordRow(identity: TeamMateIdentity): TeamMateRecordRow {
-    const runtime = this.live.get(liveKey(identity.dispatcher_id, identity.name))?.runtime ?? null;
-    return {
-      name: identity.name,
-      turn_count: identity.turn_count,
-      owner: identity.owner,
-      agent_runtime: identity.agent_runtime,
-      source_repo: identity.source_repo,
-      created_at: identity.created_at,
-      updated_at: identity.updated_at,
-      last_seen_at: identity.last_seen_at,
-      status: identity.status,
-      runtime_status: runtime?.getStatus() ?? null,
-      intent: identity.intent,
-      closed_at: identity.closed_at,
-      close_note: identity.close_note,
-      close_note_preview:
-        identity.close_note !== null ? previewText(identity.close_note) : null,
-      last_prompt_preview: identity.last_prompt_preview,
-      last_assistant_preview: identity.last_assistant_preview,
-      cleanup_state: identity.worktree.cleanup_state,
-      // A teammate is reopenable while open, or once it has a runtime-native
-      // session id to resume from after close.
-      resume:
-        identity.closed_at === null || identity.session_id !== null
-          ? { tool: 'send', name: identity.name }
-          : null,
-    };
-  }
-
-  private matchesRecordQuery(
-    row: TeamMateRecordRow,
-    input: Omit<TeamMateHistoryQuery, 'dispatcherId' | 'principal'>,
-  ): boolean {
-    if (input.name !== undefined && row.name !== validateTeamMateName(input.name)) {
-      return false;
-    }
-    if (input.status !== undefined && row.status !== input.status) return false;
-    if (
-      input.agentRuntime !== undefined &&
-      row.agent_runtime !== input.agentRuntime
-    ) {
-      return false;
-    }
-    if (input.repo !== undefined) {
-      const needle = input.repo.toLowerCase();
-      const hit =
-        row.source_repo !== null && row.source_repo.toLowerCase().includes(needle);
-      if (!hit) return false;
-    }
-    if (input.grep !== undefined && !recordRowMatchesText(row, input.grep)) {
-      return false;
-    }
-    if (input.since !== undefined && row.last_seen_at < input.since) return false;
-    if (input.until !== undefined && row.last_seen_at > input.until) return false;
-    return true;
-  }
-
-  private async assertManagedWorktreeAvailable(
-    dispatcherId: string,
-    name: string,
-    worktree: TeamMateIdentity['worktree'],
-  ): Promise<void> {
-    if (worktree.mode !== 'managed') return;
-    const identities = await this.identities.list(dispatcherId);
-    const collision = identities.find(
-      (identity) =>
-        identity.name !== name &&
-        identity.worktree.mode === 'managed' &&
-        identity.worktree.path === worktree.path,
-    );
-    if (collision !== undefined) {
-      throw new Error(
-        `managed worktree path ${JSON.stringify(worktree.path)} is already ` +
-          `owned by TeamMate ${JSON.stringify(collision.name)}`,
-      );
-    }
-  }
-
-  private agentRuntimeCapability(
-    agentRuntimeId: string,
-    agent: ResolvedAgentConfig,
-  ): TeamMateAgentRuntimeCapability {
-    let capabilities: AgentRuntimeCapabilities | null = null;
-    let unsupportedReason: string | null = null;
-    try {
-      capabilities = this.opts.agentRuntimeProviders
-        .resolve(agent.provider)
-        .getCapabilities();
-    } catch (err) {
-      unsupportedReason = err instanceof Error ? err.message : String(err);
-    }
-    return {
-      id: agentRuntimeId,
-      spawn: { agent_runtime: agentRuntimeId },
-      runtime_available: capabilities !== null,
-      resume: capabilities?.resume ?? { supported: false },
-      steer: capabilities?.steer ?? { supported: false },
-      events: capabilities?.events ?? { kind: 'synthesized' },
-      last: capabilities?.last ?? { supported: false },
-      context: capabilities?.context ?? { supported: false },
-      unsupported_reason: unsupportedReason,
-    };
-  }
-}
-
-function toTurnResult(result: AgentRuntimeTurnResult): TeamMateTurnResult {
-  switch (result.status) {
-    case 'submitted':
-      return { status: 'submitted', turn_id: result.turnId };
-    case 'duplicate':
-    case 'stopped':
-      return { status: result.status };
-    case 'failed':
-      return { status: 'failed', error: result.error.message };
-    case 'skipped':
-      return { status: 'stopped', error: 'turn skipped' };
-  }
-}
-
-/**
- * The completion origin a submitting principal implies: a TeamLeader-submitted
- * turn (member spawn/send) answers to that leader; everything else — including
- * the principal-less `createTeamLeader` bootstrap prompt — answers to the
- * dispatcher. Channel-delivered turns never come through here; they are
- * recorded as `channel` at the `channelInputScoped` seam.
- */
-function principalTurnOrigin(
-  principal: TeamMateCallerPrincipal | undefined,
-): TeamMateTurnOrigin {
-  return principal?.kind === 'team_leader' ? 'team_leader' : 'dispatcher';
-}
-
-function recordTurnOrigin(
-  live: LiveTeamMate,
-  turnId: string,
-  origin: TeamMateTurnOrigin,
-): void {
-  // First-writer-wins: a send steered into an already-active turn must not
-  // re-target the completion of the turn that absorbed it.
-  if (live.turnOrigins.has(turnId)) return;
-  live.turnOrigins.set(turnId, origin);
-  while (live.turnOrigins.size > TURN_ORIGIN_CACHE_LIMIT) {
-    const oldest = live.turnOrigins.keys().next().value;
-    if (oldest === undefined) break;
-    live.turnOrigins.delete(oldest);
-  }
-}
-
-function ownerForPrincipal(principal: TeamMateCallerPrincipal): TeamMateIdentity['owner'] {
-  if (principal.kind === 'team_leader') {
-    return {
-      kind: 'team',
-      dispatcher_id: principal.dispatcherId,
-      team_id: principal.teamId,
-      leader_name: principal.leaderName,
-    };
-  }
-  return { kind: 'dispatcher', dispatcher_id: principal.dispatcherId };
-}
-
-/**
- * The single visibility predicate for the `teammate.*` surface (issue #199
- * Slice 4). Every scoped read enforces it through exactly one of two
- * chokepoints — {@link TeamMateAgentService.scopedList} for list reads and
- * {@link TeamMateAgentService.mustIdentity} for single reads — so the rules
- * below are applied consistently and cannot be bypassed by a new read site.
- *
- * - A dispatcher sees only the ordinary TeamMates it directly spawned: a
- *   dispatcher-owned record with `role === 'teammate'`. A TeamLeader is also
- *   dispatcher-owned (its `owner.kind` is `dispatcher`), so `role` is what
- *   keeps a leader — and every Team member — out of the dispatcher's view; the
- *   dispatcher inspects Teams through the `team.*` surface instead.
- * - A TeamLeader sees only the members of its own Team.
- * - An ordinary TeamMate sees nothing (it cannot read peers).
- */
-function principalCanAccess(
-  principal: TeamMateCallerPrincipal,
-  identity: TeamMateIdentity,
-): boolean {
-  if (principal.kind === 'dispatcher') {
-    return (
-      identity.dispatcher_id === principal.dispatcherId &&
-      identity.owner.kind === 'dispatcher' &&
-      identity.role === 'teammate'
-    );
-  }
-  if (principal.kind === 'team_leader') {
-    return (
-      identity.dispatcher_id === principal.dispatcherId &&
-      identity.owner.kind === 'team' &&
-      identity.owner.team_id === principal.teamId &&
-      identity.role === 'team_member'
-    );
-  }
-  if (principal.kind === 'team_service') {
-    // Internal Team-service authority: its own TeamLeader (by concrete name) plus
-    // the members of its Team. Never derived from a public caller.
-    if (identity.dispatcher_id !== principal.dispatcherId) return false;
-    if (identity.role === 'team_leader') return identity.name === principal.leaderName;
-    return (
-      identity.owner.kind === 'team' &&
-      identity.owner.team_id === principal.teamId &&
-      identity.role === 'team_member'
-    );
-  }
-  return false;
-}
-
-function clampHistoryLimit(input: number | undefined): number {
-  if (input === undefined) return 20;
-  if (!Number.isInteger(input) || input < 1) {
-    throw new Error('history limit must be a positive integer');
-  }
-  return Math.min(input, 100);
-}
-
-const LAST_TURNS_DEFAULT = 1;
-const LAST_TURNS_MAX = 5;
-
-/**
- * Validate the `last` turn count (issue #188): default 1, integer in 1..5.
- * Out-of-range is rejected (fail loud) rather than silently clamped, so a
- * caller asking for 10 turns learns its request was invalid.
- */
-function validateLastTurns(input: number | undefined): number {
-  if (input === undefined) return LAST_TURNS_DEFAULT;
-  if (!Number.isInteger(input) || input < 1 || input > LAST_TURNS_MAX) {
-    throw new Error(`last turns must be an integer in 1..${LAST_TURNS_MAX}`);
-  }
-  return input;
-}
-
-function encodeCursor(offset: number): string {
-  return Buffer.from(JSON.stringify({ offset }), 'utf8').toString('base64url');
-}
-
-function decodeCursor(cursor: string): number {
-  try {
-    const parsed = JSON.parse(
-      Buffer.from(cursor, 'base64url').toString('utf8'),
-    ) as Record<string, unknown>;
-    if (
-      typeof parsed['offset'] === 'number' &&
-      Number.isInteger(parsed['offset']) &&
-      parsed['offset'] >= 0
-    ) {
-      return parsed['offset'];
-    }
-  } catch {
-    // fall through
-  }
-  throw new Error('invalid history cursor');
-}
-
-function recordRowMatchesText(row: TeamMateRecordRow, grep: string): boolean {
-  const needle = grep.trim().toLowerCase();
-  if (needle === '') return true;
-  return [
-    row.name,
-    row.agent_runtime,
-    row.source_repo,
-    row.intent,
-    row.close_note,
-    row.last_prompt_preview,
-    row.last_assistant_preview,
-  ].some((value) => value !== null && value.toLowerCase().includes(needle));
-}
-
-function previewText(text: string): string {
-  const collapsed = text.replace(/\s+/g, ' ').trim();
-  return collapsed.length <= 500 ? collapsed : `${collapsed.slice(0, 497)}...`;
-}
-
-function liveKey(dispatcherId: string, name: string): string {
-  return `${dispatcherId}\u0000${name}`;
-}
-
-function runtimeId(dispatcherId: string, name: string): string {
-  const suffix = createHash('sha256')
-    .update(`${dispatcherId}\u0000${name}`)
-    .digest('hex')
-    .slice(0, 12);
-  const prefix = dispatcherId.slice(0, 40);
-  return validateDispatcherId(`${prefix}.tm.${suffix}`, 'teammate runtime id');
-}
-
-function runtimeIdentityName(identity: TeamMateIdentity): string {
-  return identity.owner.kind === 'team'
-    ? `${identity.owner.team_id}.${identity.name}`
-    : identity.name;
-}
-
-function errInfo(err: unknown): Record<string, unknown> {
-  if (err instanceof Error) {
-    return { type: err.name, message: err.message, stack: err.stack };
-  }
-  return { value: String(err) };
 }
