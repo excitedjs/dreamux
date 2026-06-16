@@ -1,140 +1,98 @@
 # dreamux knowledge base
 
 This is the on-demand knowledge base for the `excitedjs/dreamux` repo.
-Always-loaded rules live in [`/CLAUDE.md`](../CLAUDE.md); navigate to here
-when you need the *why* behind a piece of code or a decision history.
+Always-loaded operating rules live in [`/CLAUDE.md`](../CLAUDE.md).
 
-## What dreamux is
+Use this KB for current reference, architecture intent, and decision history.
+For current behavior, read the linked source code too.
 
-A long-running Node process that hosts N **Dispatchers**. Each Dispatcher binds
-one or more Channel providers (built-in `builtin:feishu` today, at most one
-channel per provider ref), one Agent Runtime provider (`builtin:codex`,
-`builtin:claude-code`, or an installed `npm:` Agent Runtime provider), and
-Dreamux-owned MCP surfaces for Teams and TeamMate scheduling/retrieval. All
-inbound chats for a dispatcher enter that dispatcher's runtime context; channel
-outbound is sent only when the runtime calls a provider-specific channel MCP
-tool exposed by that Channel provider. Channel binding/transfer-back is not a
-generic Channel MCP capability: it lives on the core-owned Team MCP as
-`bind_channel` / `transfer_back`. The current architecture is split between the
-original local-runtime baseline and the issue #209 provider package split:
+## Start Here
 
-- [Top-level design](decisions/top-level-design.md) — original MVP baseline;
-  still authoritative for unchanged local state/log ownership, Feishu access,
-  admin IPC, and process-local inbound limitations.
-- [Plugin and provider architecture](proposals/plugin-provider-architecture.md)
-  — issue #110 historical proposal for provider refs, Capability Registry,
-  Channel providers, Agent Runtime providers, and server-hosted TeamMate; the
-  current target is refined by the provider architecture realignment.
-- [Issue #110 Epic closure check](decisions/issue-110-epic-closure.md) —
-  closure checklist for what Phase 1 implemented and what remains deferred.
-- [Provider architecture realignment](decisions/provider-architecture-realignment.md)
-  — issue #135 target that refines #110/#126: one `AgentRuntime` for all roles,
-  Dispatcher Service as a real module, two plugin seams only (`agentRuntime` +
-  `channel`), registry demoted to a provider loader, Feishu pulled out of the
-  plugin seam.
-- [NPM package split and channel targets](decisions/npm-package-split-and-channel-targets.md)
-  — issue #209 package-boundary and target-routing decision: a published
-  type-only contract package, built-in runtime/channel npm packages, core-owned
-  `bind_channel`, channel-owned target resolution, and built-in skill injection
-  without workspace symlinks.
+- [Current architecture](reference/current-architecture.md) — compact current
+  system map with source-code pointers.
+- [Repository structure](reference/repo-structure.md) — package layout,
+  install/build/test path, Rush change files, and public package/bin surface.
+- [State and paths](reference/state-and-paths.md) — current config, workspace,
+  state, run, cache, log, and external-home ownership.
+- [Channel runtime](reference/channel-runtime.md) — Channel provider sessions,
+  Feishu tools, target routing, and binding.
+- [Glossary](glossary.md) — short definitions for overloaded Dreamux terms.
+- [Decision index](decisions/README.md) — ADRs, with current-trail and
+  historical-background sections.
+- [KB contributing guide](CONTRIBUTING.md) — document kinds, link rules, and
+  validation.
 
-Background and older issue context:
-
-- [#1 Proposal](https://github.com/excitedjs/dreamux/issues/1) — original proposal
-- [#2 Engineering plan](https://github.com/excitedjs/dreamux/issues/2) — implementation-ready spec
-- [#4 Monorepo + harness](https://github.com/excitedjs/dreamux/issues/4) — current repo shape
-- [#18 Global bin onboarding](https://github.com/excitedjs/dreamux/issues/18) — `dreamux onboard` / `dreamux serve` design
-
-## Repo layout (monorepo since issue #4)
-
-```
-/                                  rush monorepo root
-├── rush.json                      rush + pnpm config
-├── common/                        rush scaffolding (config + bootstrap)
-├── packages/
-│   ├── dreamux/                   @excitedjs/dreamux — the host server
-│   │   ├── bin/                   dreamux and tm launchers
-│   │   ├── skills/                bundled dispatcher Codex skill
-│   │   ├── src/                   admin, cli, dispatcher, provider catalogs,
-│   │   │                          platform paths, and MCP shims
-│   │   ├── tests/                 vitest (smoke + live-codex + bin-launcher + onboard)
-│   │   └── db/migrations/         legacy SQLite migrations targeted for removal
-│   ├── channel/
-│   │   ├── feishu-transport/      @excitedjs/feishu-transport — platform-I/O core
-│   │   │                          (sole @larksuiteoapi/node-sdk importer)
-│   │   └── feishu-channel/        @excitedjs/feishu-channel — Feishu channel
-│   │                              provider package behind `builtin:feishu`
-│   └── eslint-config/             @excitedjs/eslint-config — shared lint config
-│                                  (private; no-sync-IO gate, issue #85)
-├── bin/                           thin redirectors → packages/dreamux/bin/
-├── .agents/                       this knowledge base
-├── .github/workflows/             CI
-└── CLAUDE.md                      always-loaded operating rules (AGENTS.md is a symlink)
-```
-
-## Navigation
-
-- [`components/`](components/) — one doc per piece (repo-structure and
-  dispatcher-skill today; server / codex-client / feishu-bot / cli to be
-  added as they stabilize).
-- [`decisions/top-level-design.md`](decisions/top-level-design.md) — current
-  top-level design; read this before runtime, Feishu, MCP, config, state, or
-  dispatcher-lifecycle work.
-- [`decisions/README.md`](decisions/README.md) — accepted decision records,
-  indexed by topic slug. Do not prefix new records with sequence numbers.
-- [`proposals/global-bin-onboard-serve.md`](proposals/global-bin-onboard-serve.md)
-  — superseded issue #18 proposal; accepted behavior lives in
-  [`decisions/global-bin-onboard-serve.md`](decisions/global-bin-onboard-serve.md).
-- [`proposals/post-mvp-hardening.md`](proposals/post-mvp-hardening.md) —
-  consolidated post-MVP hardening proposal (bounded state, restart/startup
-  reconciliation, access surface, message-format, CLI/diagnostic robustness);
-  groups the deferred epic follow-ups + the #58 ultracode findings into the next
-  workstream.
-- [`proposals/plugin-provider-architecture.md`](proposals/plugin-provider-architecture.md)
-  — issue #110 proposal for plugin/provider architecture. Its settled boundary
-  is recorded in the provider, channel, runtime, TeamMate, and compatibility
-  decisions.
-- [`proposals/feishu-bot-trust-context.md`](proposals/feishu-bot-trust-context.md)
-  — issue #69 follow-up to #62: trusted-bot next-message context, a
-  `list_chat_bots` query tool, and add-then-cancel reaction ordering
-  (implemented; settled behavior in `domains/feishu-introduce.md` +
-  `domains/non-blocking-dispatcher-inbound.md`).
-- [`domains/non-blocking-dispatcher-inbound.md`](domains/non-blocking-dispatcher-inbound.md)
-  — final issue #63 runtime model for accepted Feishu inbound: every accepted
-  deduped message submits `turn/start`, and reactions move through the
-  received / in-progress / cleared states.
-- [`domains/feishu-introduce.md`](domains/feishu-introduce.md)
-  — issue #62 first increment: the Feishu typed event-route seam, and the group
-  `/introduce` hard contract (no `@`-mention required; the sender must be
-  allowlisted; awareness never grants trust).
-- `proposals/`, `research/`, `rules/` — add here when material grows past a
-  single file's worth.
-- [`CONTRIBUTING.md`](CONTRIBUTING.md) — when to update this KB, how to
-  format docs, the knowledge-delta protocol.
-- [`scripts/check.sh`](scripts/check.sh) — link / orphan checker. Run
-  before any KB-touching commit.
-
-## When to read which
+## Task Routes
 
 | You're about to ... | Read first |
 |---|---|
-| add/change the dispatcher Codex skill or `tm` wrapper | [`components/dispatcher-skill.md`](components/dispatcher-skill.md) |
-| change dispatcher `tm` packaging, PATH injection, or skill install location | [`decisions/dispatcher-tm-packaging.md`](decisions/dispatcher-tm-packaging.md) |
-| add/change a package, move source between packages | [`components/repo-structure.md`](components/repo-structure.md) |
-| modify runtime state, dispatcher lifecycle, Feishu MCP, access gating, or config shape | [`decisions/top-level-design.md`](decisions/top-level-design.md) |
-| move sockets / run files, or touch the `~/.dreamux/run` vs `state` split | [`decisions/runtime-run-root.md`](decisions/runtime-run-root.md) |
-| verify issue #110 closure or provider Epic boundaries | [`decisions/issue-110-epic-closure.md`](decisions/issue-110-epic-closure.md) |
-| change Feishu inbound attachment downloads, cache, or Codex-facing message body | [`decisions/feishu-inbound-attachments.md`](decisions/feishu-inbound-attachments.md) |
-| browse decisions by topic | [`decisions/README.md`](decisions/README.md) |
-| understand why rush + pnpm | [`decisions/rush-pnpm-monorepo.md`](decisions/rush-pnpm-monorepo.md) |
-| install / build / test the repo, or wonder why `npm ci` is gone | [`decisions/install-model.md`](decisions/install-model.md) |
-| rename or restructure the public CLI / package | [`decisions/cli-and-package-naming.md`](decisions/cli-and-package-naming.md) |
-| implement issue #18 global bin / onboard / serve | [`proposals/global-bin-onboard-serve.md`](proposals/global-bin-onboard-serve.md) + [`decisions/global-bin-onboard-serve.md`](decisions/global-bin-onboard-serve.md) |
-| add / change a config key (`~/.dreamux/config.json`) | [`decisions/top-level-design.md`](decisions/top-level-design.md) first, then historical context in [`decisions/global-config-dir.md`](decisions/global-config-dir.md) |
-| change provider refs, Agent Runtime providers, channel plugin reservations, channel target bindings, or server-hosted TeamMate | [`decisions/provider-architecture-realignment.md`](decisions/provider-architecture-realignment.md) + [`decisions/provider-references-and-capability-registry.md`](decisions/provider-references-and-capability-registry.md) + [`decisions/npm-package-split-and-channel-targets.md`](decisions/npm-package-split-and-channel-targets.md) |
-| touch the anti-leak guardrail (`.gitleaks.toml`, `.npmrc`, CI / hook) | [`decisions/anti-leak-guardrail.md`](decisions/anti-leak-guardrail.md) |
-| touch npm publishing / the release workflows | [`decisions/npm-release-oidc.md`](decisions/npm-release-oidc.md) |
-| change dispatcher inbound delivery, turn submission, or received-reaction timing | [`domains/non-blocking-dispatcher-inbound.md`](domains/non-blocking-dispatcher-inbound.md) + [`decisions/top-level-design.md`](decisions/top-level-design.md) + read the source |
-| add or verify Rush change files | [`components/repo-structure.md#rush-change-files`](components/repo-structure.md#rush-change-files) |
-| write a new decision record / new component doc | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
-| modify the server runtime / Codex protocol handling | [`decisions/top-level-design.md`](decisions/top-level-design.md) + read the source |
+| answer "how is Dreamux shaped now?" | [Current architecture](reference/current-architecture.md), then source |
+| add/change a package or move source between packages | [Repository structure](reference/repo-structure.md) |
+| install/build/test the repo or debug workspace install issues | [Repository structure](reference/repo-structure.md), [install model](decisions/install-model.md) |
+| add or verify Rush change files | [Repository structure: Rush change files](reference/repo-structure.md#rush-change-files) |
+| modify config loading, `agents[]`, `dispatchers[]`, provider refs, or config compatibility | [Current architecture](reference/current-architecture.md), [agents config normalization](decisions/agents-config-normalization.md), [providerized config compatibility](decisions/providerized-config-state-compatibility.md) |
+| modify state/cache/run/log paths | [State and paths](reference/state-and-paths.md), [runtime run root](decisions/runtime-run-root.md), [top-level design](decisions/top-level-design.md) |
+| modify provider loading, Agent Runtime providers, Channel providers, or capabilities | [Current architecture](reference/current-architecture.md), [Channel runtime](reference/channel-runtime.md), [Provider architecture realignment](decisions/provider-architecture-realignment.md), [provider refs and registry](decisions/provider-references-and-capability-registry.md), [NPM package split and channel targets](decisions/npm-package-split-and-channel-targets.md) |
+| modify dispatcher runtime lifecycle or MCP injection | [Current architecture](reference/current-architecture.md), [dispatcher local aggregate](decisions/dispatcher-local-aggregate.md), source |
+| modify TeamMate / Team lifecycle, read surfaces, or bundled dispatcher skills | [Dispatcher skill reference](reference/dispatcher-skill.md), [provider architecture realignment](decisions/provider-architecture-realignment.md), [top-level design](decisions/top-level-design.md) |
+| modify channel binding or channel target routing | [Channel runtime](reference/channel-runtime.md), [NPM package split and channel targets](decisions/npm-package-split-and-channel-targets.md), source |
+| modify Feishu inbound, `/introduce`, trusted bot context, or reaction timing | [Channel runtime](reference/channel-runtime.md), [Feishu introduce](domains/feishu-introduce.md), [non-blocking dispatcher inbound](domains/non-blocking-dispatcher-inbound.md), source |
+| modify Feishu attachment download/cache behavior | [Feishu inbound attachments](decisions/feishu-inbound-attachments.md) |
+| modify onboard, daemon, uninstall, or public CLI names | [Global bin/onboard/serve](decisions/global-bin-onboard-serve.md), [CLI and package naming](decisions/cli-and-package-naming.md) |
+| modify the anti-leak guardrail, `.gitleaks.toml`, `.npmrc`, CI, or hooks | [Anti-leak guardrail](decisions/anti-leak-guardrail.md) |
+| modify npm publishing or release workflows | [NPM release OIDC](decisions/npm-release-oidc.md) |
+| inspect historical hardening backlog | [Archived Post-MVP hardening](archive/proposals/post-mvp-hardening.md) |
+| write or move KB content | [KB contributing guide](CONTRIBUTING.md) |
+
+## Document Kinds
+
+- `reference/` — current behavior and operational mental models. Prefer this
+  for "what exists now".
+- `decisions/` — accepted, superseded, or historical ADRs. Prefer this for
+  "why was this chosen".
+- `domains/` — current cross-cutting runtime contracts that span multiple
+  reference pages, such as Feishu gate, trust, and inbound timing contracts.
+- `proposals/` — active design proposals only.
+- `archive/` — preserved historical material. It is intentionally reachable but
+  not part of the default task path.
+
+## Current Reference
+
+- [Current architecture](reference/current-architecture.md)
+- [Repository structure](reference/repo-structure.md)
+- [State and paths](reference/state-and-paths.md)
+- [Channel runtime](reference/channel-runtime.md)
+- [Dispatcher skill and TeamMate workflow](reference/dispatcher-skill.md)
+- [Glossary](glossary.md)
+
+## Decisions
+
+Start with [decisions/README.md](decisions/README.md). Decision files preserve
+history and rationale; when you need current behavior, pair them with
+[Current architecture](reference/current-architecture.md) and source.
+
+## Domains
+
+- [Feishu introduce](domains/feishu-introduce.md)
+- [Non-blocking dispatcher inbound](domains/non-blocking-dispatcher-inbound.md)
+
+## Active Proposals
+
+There are no active proposals in this snapshot.
+
+Move an active proposal out of `proposals/` once it is implemented,
+superseded, or abandoned; preserve the old text under `archive/` when the
+history still matters.
+
+## Archive
+
+- [Archive index](archive/README.md)
+- [Archived proposals](archive/proposals/README.md)
+
+## Validation
+
+Run before any KB-touching commit:
+
+```bash
+.agents/scripts/check.sh
+```

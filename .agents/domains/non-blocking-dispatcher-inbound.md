@@ -2,7 +2,14 @@
 
 - **Status:** Implemented runtime contract for issue #63
 - **Source:** https://github.com/excitedjs/dreamux/issues/63
-- **Affects:** `/packages/dreamux/src/dispatcher/turn-manager.ts`, `/packages/dreamux/src/agent-runtime/codex-runtime.ts`, `/packages/dreamux/src/codex/events.ts`, `/packages/dreamux/src/server.ts`, `/packages/dreamux/tests/fake-codex.ts`, `/packages/dreamux/tests/codex-live.test.ts`
+- **Affects:** `/packages/agent-runtime/codex/src/turn-manager.ts`,
+  `/packages/agent-runtime/codex/src/events.ts`,
+  `/packages/channel/feishu-channel/src/feishu-channel.ts`,
+  `/packages/channel/feishu-channel/src/feishu-message.ts`,
+  `/packages/dreamux/src/dispatcher-service/dispatcher/service.ts`,
+  `/packages/dreamux/tests/fake-codex.ts`,
+  `/packages/dreamux/tests/codex-live.test.ts`,
+  `/packages/agent-runtime/codex/tests/turn-manager.test.ts`
 
 ## Locked Scope
 
@@ -17,7 +24,8 @@ the current synchronous operation returns and the ReAct loop advances.
 
 Do not add a dreamux submission mutex. Do not add a production turn observer.
 Do not call `turn/steer` for normal Feishu inbound. Do not maintain a local
-`activeTurnId`. Do not aggregate messages until turn completion.
+`activeTurnId` as the delivery routing authority. Do not aggregate messages
+until turn completion.
 
 ## Codex Contract
 
@@ -38,8 +46,11 @@ The source path is:
 - only `NoActiveTurn` falls through to spawning a new regular turn.
 
 This dissolves the v2 stale-state gap. Since dreamux never calls `turn/steer`
-and never keeps an `activeTurnId`, there is no stale-id path that can produce
-`NoActiveTurn` and drop an accepted message.
+for normal inbound and never decides delivery from a locally cached active turn
+id, there is no stale-id path that can produce `NoActiveTurn` and drop an
+accepted message. The Codex runtime may still keep internal turn ids for
+completion collection, interrupts, and teardown bookkeeping; those ids are not
+the inbound routing authority.
 
 ## Pre-Issue #63 Artifact
 
@@ -61,7 +72,7 @@ flowchart LR
 messages from reaching Codex.
 
 The channel added one `RECEIVED_REACTION_EMOJI` after the old Codex runtime
-`enqueueInbound()` path returned true. Issue #63 replaced this
+`enqueueInbound()` path returned true. Issue #63 replaced this historical path
 with a three-state channel-owned reaction flow.
 
 ## Runtime Model
@@ -83,7 +94,7 @@ inbound.
 
 ## Code Changes
 
-`packages/dreamux/src/dispatcher/turn-manager.ts`
+`/packages/agent-runtime/codex/src/turn-manager.ts`
 
 - Remove same-chat coalescing and the completion-gated `drainLoop()` /
   `processBatch()` queue as the inbound submission gate.
@@ -93,17 +104,19 @@ inbound.
   `turn/start` immediately.
 - Return a delivery result to the runtime/server so the channel can switch the
   reaction to in-progress at the `turn/start` acceptance point.
-- Do not track active turn ids. Do not call `turn/steer`.
+- Do not use active turn ids as inbound routing state. Do not call `turn/steer`
+  for normal inbound.
 
-`packages/dreamux/src/agent-runtime/codex-runtime.ts`
+`/packages/dreamux/src/dispatcher-service/dispatcher/service.ts`
 
-- Keep owning the Codex client and thread id.
-- Replace the synchronous boolean `enqueueInbound()` result with an async
-  delivery result from `TurnManager.enqueue()`, including duplicate/submitted
-  information and submission errors.
-- Do not introduce a mutex, observer, or active/idle branch.
+- Keep the Dispatcher Service as the neutral runtime/channel bridge.
+- Forward each Channel provider delivery request to the selected Agent Runtime
+  and return the real `InboundDeliveryResult`, including
+  duplicate/submitted/failed information.
+- Do not introduce a dispatcher-level mutex, production observer, or
+  active/idle branch.
 
-`packages/dreamux/src/codex/events.ts`
+`/packages/agent-runtime/codex/src/events.ts`
 
 - Split the current `runTurn()` shape so production inbound can call a
   `submitTurnStart()`-style helper that sends `turn/start` and resolves on the
@@ -113,13 +126,13 @@ inbound.
   helper if still useful.
 - Do not add a `turn/steer` helper for normal Feishu inbound.
 
-`packages/dreamux/src/channel/feishu-channel.ts`
+`/packages/channel/feishu-channel/src/feishu-channel.ts`
 
 - In `FeishuChannelSession`'s inbound message handler, add the received emoji
   immediately after the access gate passes and `message_id` dedupe reports a
   miss. Do not react to dropped messages or duplicate redeliveries.
-- After `runtime.enqueueInbound()` reports `turn/start` acceptance, replace the
-  received reaction with the in-progress emoji.
+- After the Channel delivery route returns a submitted `InboundDeliveryResult`,
+  replace the received reaction with the in-progress emoji.
 - In the channel-owned `reply` MCP handler, keep clearing the channel-owned
   reaction for `input.messageId` after the model reply is sent.
 - Replace the single `receivedReactions` map with a channel-owned inbound
@@ -133,7 +146,7 @@ inbound.
   removes the just-added reaction and does not store it; the previous reaction is
   already taken by `clearInboundReaction`, which read the ledger before any store.
 
-`packages/dreamux/src/channel/feishu-message.ts`
+`/packages/channel/feishu-channel/src/feishu-message.ts`
 
 - Keep the existing discrete `<feishu_message>` envelope and routing metadata
   (`chat_id`, `message_id`, `sender_id`, `sender_name`, `create_time`) so the
