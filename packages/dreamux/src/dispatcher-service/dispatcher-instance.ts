@@ -18,17 +18,15 @@ import type { ChannelMcpCallerScope } from './dispatcher/mcp-descriptors.js';
 import { ChannelToolAuthorizationError } from './errors.js';
 import type { DispatcherRow } from '../state/dispatcher-store.js';
 import type {
-  ScopedCloseTeamMateInput,
-  ScopedSendTeamMateInput,
-  ScopedSpawnTeamMateInput,
+  SpawnTeamMateRequest,
   TeamMateAgentService,
 } from './teammate/service.js';
 import {
-  dispatcherPrincipal,
-  teamLeaderPrincipal,
-  type TeamMateCallerPrincipal,
+  type CloseTeamMateInput,
+  type SendTeamMateInput,
   type TeamMateHistoryQuery,
   type TeamMateIdentity,
+  type TeamMateRuntimeStatus,
   type TeamMateTurnOrigin,
 } from './teammate/types.js';
 import type { TeamManager } from './team/service.js';
@@ -47,125 +45,11 @@ export interface DispatcherServiceOptions {
   teamManager: TeamManager;
 }
 
-export class TeammateRoster {
-  constructor(
-    private readonly teammateAgents: TeamMateAgentService,
-    private readonly principal: TeamMateCallerPrincipal,
-  ) {}
-
-  spawn(input: Omit<ScopedSpawnTeamMateInput, 'principal'>) {
-    return this.teammateAgents.spawnScoped({
-      principal: this.principal,
-      ...input,
-    });
-  }
-
-  send(input: Omit<ScopedSendTeamMateInput, 'principal'>) {
-    return this.teammateAgents.sendScoped({
-      principal: this.principal,
-      ...input,
-    });
-  }
-
-  close(input: Omit<ScopedCloseTeamMateInput, 'principal'>) {
-    return this.teammateAgents.closeScoped({
-      principal: this.principal,
-      ...input,
-    });
-  }
-
-  list() {
-    return this.teammateAgents.listScoped(this.principal);
-  }
-
-  status(name: string) {
-    return this.teammateAgents.statusScoped(this.principal, name);
-  }
-
-  history(input: Omit<TeamMateHistoryQuery, 'dispatcherId' | 'principal'>) {
-    return this.teammateAgents.historyScoped({
-      principal: this.principal,
-      ...input,
-    });
-  }
-
-  last(name: string, turns?: number) {
-    return this.teammateAgents.lastScoped(this.principal, name, turns);
-  }
-
-  capabilities() {
-    return this.teammateAgents.getCapabilities();
-  }
-}
-
-export class TeamTeammateRoster {
-  constructor(
-    private readonly teammateAgents: TeamMateAgentService,
-    private readonly teamManager: TeamManager,
-    private readonly dispatcherId: string,
-    private readonly teamId: string,
-  ) {}
-
-  async spawn(input: Omit<ScopedSpawnTeamMateInput, 'principal'>) {
-    return this.teammateAgents.spawnScoped({
-      principal: await this.principal(),
-      ...input,
-      sharedWorkspace: await this.teamManager.sharedWorkspace(
-        this.dispatcherId,
-        this.teamId,
-      ),
-    });
-  }
-
-  async send(input: Omit<ScopedSendTeamMateInput, 'principal'>) {
-    return this.teammateAgents.sendScoped({
-      principal: await this.principal(),
-      ...input,
-    });
-  }
-
-  async close(input: Omit<ScopedCloseTeamMateInput, 'principal'>) {
-    return this.teammateAgents.closeScoped({
-      principal: await this.principal(),
-      ...input,
-    });
-  }
-
-  async list() {
-    return this.teammateAgents.listScoped(await this.principal());
-  }
-
-  async status(name: string) {
-    return this.teammateAgents.statusScoped(await this.principal(), name);
-  }
-
-  async history(input: Omit<TeamMateHistoryQuery, 'dispatcherId' | 'principal'>) {
-    return this.teammateAgents.historyScoped({
-      principal: await this.principal(),
-      ...input,
-    });
-  }
-
-  async last(name: string, turns?: number) {
-    return this.teammateAgents.lastScoped(await this.principal(), name, turns);
-  }
-
-  capabilities() {
-    return this.teammateAgents.getCapabilities();
-  }
-
-  private async principal(): Promise<TeamMateCallerPrincipal> {
-    const summary = await this.teamManager.status(this.dispatcherId, this.teamId);
-    return teamLeaderPrincipal({
-      dispatcherId: this.dispatcherId,
-      teamId: this.teamId,
-      leaderName: summary.team.leader_name,
-    });
-  }
-}
+export type ChannelToolCaller =
+  | { kind: 'dispatcher' }
+  | { kind: 'team_leader'; teamId: string; leaderName: string };
 
 export class DispatcherService {
-  readonly teammates: TeammateRoster;
   readonly id: string;
   private readonly config: DreamuxConfig;
   private readonly dispatcherRuntime: DispatcherRuntimeService;
@@ -179,14 +63,6 @@ export class DispatcherService {
     this.dispatcherRuntime = opts.dispatcherRuntime;
     this.teammateAgents = opts.teammateAgents;
     this.teamManager = opts.teamManager;
-    this.teammates = new TeammateRoster(
-      this.teammateAgents,
-      dispatcherPrincipal(this.id),
-    );
-  }
-
-  teammatesFor(principal: TeamMateCallerPrincipal): TeammateRoster {
-    return new TeammateRoster(this.teammateAgents, principal);
   }
 
   team(teamId: string): TeamService {
@@ -245,7 +121,7 @@ export class DispatcherService {
     channelId?: string;
     name: string;
     arguments: Record<string, unknown>;
-    caller: TeamMateCallerPrincipal;
+    caller: ChannelToolCaller;
   }): Promise<unknown> {
     const channelId = this.resolveToolChannelId(
       input.channelId,
@@ -271,8 +147,50 @@ export class DispatcherService {
     return this.teammateAgents.dispatcherWorkspace(this.id);
   }
 
-  sharedTeamWorkspace(teamId: string) {
-    return this.team(teamId).sharedWorkspace();
+  spawnTeamMate(
+    input: Omit<SpawnTeamMateRequest, 'dispatcherId' | 'teamId' | 'sharedWorkspace'>,
+  ) {
+    return this.teammateAgents.spawn({
+      dispatcherId: this.id,
+      ...input,
+    });
+  }
+
+  sendTeamMate(input: Omit<SendTeamMateInput, 'dispatcherId' | 'teamId'>) {
+    return this.teammateAgents.send({
+      dispatcherId: this.id,
+      ...input,
+    });
+  }
+
+  closeTeamMate(input: Omit<CloseTeamMateInput, 'dispatcherId' | 'teamId'>) {
+    return this.teammateAgents.close({
+      dispatcherId: this.id,
+      ...input,
+    });
+  }
+
+  listTeamMates(): Promise<TeamMateRuntimeStatus[]> {
+    return this.teammateAgents.list(this.id);
+  }
+
+  getTeamMateStatus(name: string) {
+    return this.teammateAgents.status(this.id, name);
+  }
+
+  getTeamMateHistory(input: Omit<TeamMateHistoryQuery, 'dispatcherId' | 'teamId'>) {
+    return this.teammateAgents.history({
+      dispatcherId: this.id,
+      ...input,
+    });
+  }
+
+  getTeamMateLast(name: string, turns?: number) {
+    return this.teammateAgents.last(this.id, name, turns);
+  }
+
+  getTeamMateCapabilities() {
+    return this.teammateAgents.getCapabilities();
   }
 
   createTeam(input: Omit<TeamCreateInput, 'dispatcherId'>) {
@@ -349,14 +267,19 @@ export class DispatcherService {
     origin: TeamMateTurnOrigin | null = null,
   ): Promise<void> {
     if (identity.role === 'team_leader' && origin !== 'dispatcher') return;
-    if (identity.owner.kind === 'team' && identity.role === 'team_member') {
-      const leader = this.teammateAgents.getLiveRuntime(
-        this.id,
-        identity.owner.leader_name,
-      );
-      if (leader?.completionInput !== undefined) {
-        const result = await leader.completionInput(completion);
-        if (result.status === 'accepted') return;
+    if (identity.role === 'team_member' && identity.team_id !== null) {
+      const summary = await this.teamManager
+        .status(this.id, identity.team_id)
+        .catch(() => null);
+      if (summary !== null) {
+        const leader = this.teammateAgents.getLiveRuntime(
+          this.id,
+          summary.team.leader_name,
+        );
+        if (leader?.completionInput !== undefined) {
+          const result = await leader.completionInput(completion);
+          if (result.status === 'accepted') return;
+        }
       }
     }
     await this.dispatcherRuntime.deliverCompletion(completion);
@@ -512,19 +435,12 @@ export interface TeamServiceOptions {
 }
 
 export class TeamService {
-  readonly teammates: TeamTeammateRoster;
   private readonly dispatcherId: string;
   readonly id: string;
 
   constructor(private readonly opts: TeamServiceOptions) {
     this.dispatcherId = opts.dispatcherId;
     this.id = opts.teamId;
-    this.teammates = new TeamTeammateRoster(
-      opts.teammateAgents,
-      opts.teamManager,
-      opts.dispatcherId,
-      opts.teamId,
-    );
   }
 
   create(input: Omit<TeamCreateInput, 'dispatcherId'>) {
@@ -536,6 +452,62 @@ export class TeamService {
 
   status() {
     return this.opts.teamManager.status(this.dispatcherId, this.id);
+  }
+
+  async spawnTeamMate(
+    input: Omit<SpawnTeamMateRequest, 'dispatcherId' | 'teamId' | 'sharedWorkspace'>,
+  ) {
+    return this.opts.teammateAgents.spawn({
+      dispatcherId: this.dispatcherId,
+      teamId: this.id,
+      ...input,
+      sharedWorkspace: await this.sharedWorkspace(),
+    });
+  }
+
+  sendTeamMate(input: Omit<SendTeamMateInput, 'dispatcherId' | 'teamId'>) {
+    return this.opts.teammateAgents.send({
+      dispatcherId: this.dispatcherId,
+      teamId: this.id,
+      ...input,
+    });
+  }
+
+  closeTeamMate(input: Omit<CloseTeamMateInput, 'dispatcherId' | 'teamId'>) {
+    return this.opts.teammateAgents.close({
+      dispatcherId: this.dispatcherId,
+      teamId: this.id,
+      ...input,
+    });
+  }
+
+  listTeamMates(): Promise<TeamMateRuntimeStatus[]> {
+    return this.opts.teammateAgents.list(this.dispatcherId, this.id);
+  }
+
+  getTeamMateStatus(name: string) {
+    return this.opts.teammateAgents.status(this.dispatcherId, name, this.id);
+  }
+
+  getTeamMateHistory(input: Omit<TeamMateHistoryQuery, 'dispatcherId' | 'teamId'>) {
+    return this.opts.teammateAgents.history({
+      dispatcherId: this.dispatcherId,
+      teamId: this.id,
+      ...input,
+    });
+  }
+
+  getTeamMateLast(name: string, turns?: number) {
+    return this.opts.teammateAgents.last(
+      this.dispatcherId,
+      name,
+      turns,
+      this.id,
+    );
+  }
+
+  getTeamMateCapabilities() {
+    return this.opts.teammateAgents.getCapabilities();
   }
 
   dissolve(input: Omit<TeamDissolveInput, 'dispatcherId'>) {

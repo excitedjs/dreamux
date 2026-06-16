@@ -2,7 +2,7 @@ import type { DreamuxConfig } from '../../config/config.js';
 import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
 import type { TeamMateIdentityStore } from './identity-store.js';
 import type {
-  ScopedSpawnTeamMateInput,
+  SpawnTeamMateRequest,
   TeamMateSharedWorkspace,
 } from './service.js';
 import type { TeamMateIdentity } from './types.js';
@@ -16,7 +16,7 @@ export async function resolveSpawnWorkspace(input: {
   worktrees: WorktreeManager;
   dispatcherId: string;
   name: string;
-  request: ScopedSpawnTeamMateInput;
+  request: SpawnTeamMateRequest;
 }): Promise<PreparedTeamMateWorkspace | TeamMateSharedWorkspace> {
   if (input.request.sharedWorkspace !== undefined) {
     return input.request.sharedWorkspace;

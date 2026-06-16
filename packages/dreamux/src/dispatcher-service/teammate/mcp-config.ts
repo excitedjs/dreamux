@@ -1,14 +1,14 @@
 import { dreamuxBinPath } from '../../platform/package-bin.js';
 import type { AgentRuntimeMcpServer } from '@excitedjs/dreamux-types';
+import type { TeamMateMcpCallerKind } from '../../mcp/teammate-mcp.js';
 
 export const TEAMMATE_MCP_SERVER_NAME = 'teammate';
 
 export interface TeamMateMcpServerDescriptorOptions {
   dispatcherId: string;
   adminSocketPath: string;
-  callerKind: 'dispatcher' | 'team_leader' | 'teammate';
+  callerKind: TeamMateMcpCallerKind;
   teamId?: string;
-  leaderName?: string;
   command?: string;
   env?: NodeJS.ProcessEnv;
 }
@@ -27,7 +27,6 @@ export function teammateMcpServerDescriptor(
       '--caller',
       opts.callerKind,
       ...(opts.teamId !== undefined ? ['--team-id', opts.teamId] : []),
-      ...(opts.leaderName !== undefined ? ['--leader-name', opts.leaderName] : []),
       '--admin-socket',
       opts.adminSocketPath,
     ],

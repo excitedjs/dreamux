@@ -4,7 +4,6 @@ import type { LiveTeamMate } from './live-runtime.js';
 import type { TeamMateRuntimeStateStore } from './runtime-state.js';
 import type { TeamMateTurnsStore } from './turns-store.js';
 import type {
-  TeamMateCallerPrincipal,
   TeamMateTurnOrigin,
   TeamMateTurnResult,
 } from './types.js';
@@ -46,12 +45,6 @@ export async function recordSettledTurn(
     settleStatus: input.settleStatus,
   });
   await state.recordSettledTurn(input.assistant);
-}
-
-export function principalTurnOrigin(
-  principal: TeamMateCallerPrincipal | undefined,
-): TeamMateTurnOrigin {
-  return principal?.kind === 'team_leader' ? 'team_leader' : 'dispatcher';
 }
 
 export function toTurnResult(

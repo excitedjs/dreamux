@@ -1,22 +1,5 @@
-/**
- * CodexRuntime — one running Codex-backed AgentRuntime instance.
- *
- * Owns:
- *   - CodexProcess (child app-server)
- *   - CodexWsClient (WS connection)
- *   - thread_id (lazily created via thread/start or resumed)
- *   - TurnManager (FIFO worker for this dispatcher)
- *
- * Lifecycle: declared → starting → ready → (degraded) → stopping → stopped.
- *
- * Current MVP:
- *   - accepted inbound work is process-local and is dropped on restart;
- *   - thread/resume failure does not degrade the whole dispatcher; we
- *     start a fresh thread, record the lost one in last_lost_thread_id,
- *     and post a visible warning to the next source chat.
- */
 
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 
 import {
   CodexProcess,
@@ -63,87 +46,33 @@ import {
   CODEX_COMPLETION_TRIGGER_TEXT,
   codexProcessEnv,
 } from './runtime-support.js';
-
-/**
- * The skill-source `layout` this runtime knows how to apply. `path` is one
- * skill's own directory (containing `SKILL.md`); codex's `skills/extraRoots/set`
- * takes the *parent* of such a dir as a skills root (a root whose immediate
- * children are skill dirs — verified against codex 0.137's app-server schema).
- * Sources with any other layout are ignored by the codex mapping.
- */
-const CODEX_SKILL_DIR_LAYOUT = 'skill-dir';
+import { applyCodexSkillExtraRoots } from './skill-roots.js';
 
 const DEFAULT_RESTART_BACKOFF_BASE_MS = 1000;
 const DEFAULT_RESTART_BACKOFF_MAX_MS = 30_000;
 
 export interface CodexRuntimeDeps {
-  /** Working directory the codex app-server runs in (required launch param). */
-  cwd: string;
-  /**
-   * Launcher-supplied system-prompt content used as codex `baseInstructions`
-   * (codex applies it as a REPLACE per its `systemPrompt` capability). Omitted
-   * for launches that supply none (e.g. teammates).
-   */
-  systemPromptContent?: string;
-  /** Neutral state sink the host adapts from its dispatcher store. */
-  state: AgentRuntimeStateCallbacks;
-  /** Host-supplied per-dispatcher path context (logs/spill live in the host tree). */
-  paths: AgentRuntimePathContext;
-  /**
-   * Allocate a fresh volatile rendezvous socket path for one app-server start.
-   * Host-supplied: the socket root is a Dreamux runtime contract this package
-   * must not reconstruct.
-   */
-  allocateSocketPath: (id: string) => string;
-  /**
-   * Role-gated bundled skill sources core selected for this runtime (issue #209
-   * slice 6). Applied via the app-server `skills/extraRoots/set` RPC after
-   * initialize and before thread start/resume, and reapplied after every
-   * app-server restart. Empty/omitted means no roots are set (the default for
-   * teammates and any role core does not gate skills for).
-   */
-  skillSources?: readonly AgentRuntimeSkillSource[];
-  /**
-   * The host's neutral env-injection entries from the create context, merged
-   * into the child env before this provider's own `extraEnv`. Empty/omitted
-   * means inject nothing (the common case).
-   */
-  injectEnv?: Record<string, string>;
-  /** Optional bin path override for tests. */
-  codexBinPath?: string;
-  /** Override process construction for tests. */
-  codexProcessFactory?: (opts: CodexProcessOptions) => CodexProcess;
-  /** Override WS client factory for tests. */
-  codexClientFactory?: (socketPath: string) => CodexWsClient;
-  /**
-   * Optional host-owned Codex home/auth pre-start check, invoked before the
-   * child spawns with the runtime id and cwd. The host owns its path/socket
-   * inputs and builds its own validation context from these.
-   */
-  codexHomeDoctor?: (info: {
+    cwd: string;
+    systemPromptContent?: string;
+    state: AgentRuntimeStateCallbacks;
+    paths: AgentRuntimePathContext;
+    allocateSocketPath: (id: string) => string;
+    skillSources?: readonly AgentRuntimeSkillSource[];
+    injectEnv?: Record<string, string>;
+    codexBinPath?: string;
+    codexProcessFactory?: (opts: CodexProcessOptions) => CodexProcess;
+    codexClientFactory?: (socketPath: string) => CodexWsClient;
+    codexHomeDoctor?: (info: {
     runtimeId: string;
     cwd: string;
   }) => void | Promise<void>;
-  /** Codex extraArgs (parsed from dispatcher.codex_args_json). */
-  resolveExtraArgs?: () => string[];
-  /**
-   * Codex initialize handshake timeout (ms). From this dispatcher's
-   * `dispatchers[].runtime.config.initialize_timeout_ms` (default 10000).
-   */
-  handshakeTimeoutMs?: number;
-  /** Per-dispatcher environment overrides from config. */
-  extraEnv?: Record<string, string>;
-  /** Codex child/WS restart backoff base (tests may override). */
-  restartBackoffBaseMs?: number;
-  /** Codex child/WS restart backoff cap (tests may override). */
-  restartBackoffMaxMs?: number;
-  /**
-   * Fired each time a delivered turn reaches a terminal state. Supplied by the
-   * launcher (teammate service) and omitted for dispatcher launches.
-   */
-  onTurnSettled?: (settled: TurnSettledSignal) => void;
-  /** Neutral logger the host passes in; a console fallback is used when absent. */
-  logger?: DreamuxLogger;
+    resolveExtraArgs?: () => string[];
+    handshakeTimeoutMs?: number;
+    extraEnv?: Record<string, string>;
+    restartBackoffBaseMs?: number;
+    restartBackoffMaxMs?: number;
+    onTurnSettled?: (settled: TurnSettledSignal) => void;
+    logger?: DreamuxLogger;
 }
 
 const COMPLETION_ID_CACHE_LIMIT = 256;
@@ -155,39 +84,16 @@ export class CodexRuntime implements AgentRuntime {
   private client: CodexWsClient | null = null;
   private turnManager: TurnManager | null = null;
   private threadId: string | null = null;
-  /**
-   * Whether the most recent thread resolution resumed an existing Codex thread
-   * (true) rather than starting a fresh one or recovering from a failed resume.
-   * Consulted by the server right after the slot is ready to decide whether a
-   * `daemon restart` notice should be injected (issue #78).
-   */
-  private threadResumed = false;
+    private threadResumed = false;
   private status: AgentRuntimeStatus = 'declared';
-  /** Monotonic per-attempt suffix for TeamMate delivery turn dedup ids (#110 PR8). */
-  private teammateDeliverySeq = 0;
-  /**
-   * Completion deliveries currently being processed. Duplicate settled events can
-   * race into `completionInput`; coalescing by completion id keeps one logical
-   * completion from injecting or triggering more than once concurrently.
-   */
-  private readonly inFlightCompletionDeliveries = new Map<
+    private teammateDeliverySeq = 0;
+    private readonly inFlightCompletionDeliveries = new Map<
     string,
     Promise<TeamMateCompletionDeliveryResult>
   >();
-  /**
-   * Completion ids whose trigger turn has already been accepted. A later replay
-   * of the same settled teammate turn is an idempotent success, not a new wake-up.
-   */
-  private readonly acceptedCompletionIds = new Set<string>();
+    private readonly acceptedCompletionIds = new Set<string>();
   private readonly acceptedCompletionOrder: string[] = [];
-  /**
-   * Completion ids whose item has already been injected into the thread. The
-   * Dispatcher Service retries `completionInput` on `failed`; if the inject
-   * succeeded but the trigger turn failed, the retry must NOT re-inject the same
-   * item (that would persist a duplicate completion to the rollout). Bounded so
-   * a long-lived dispatcher does not grow this set without limit.
-   */
-  private readonly injectedCompletionIds = new Set<string>();
+    private readonly injectedCompletionIds = new Set<string>();
   private readonly injectedCompletionOrder: string[] = [];
   private readonly log: (
     level: 'info' | 'warn' | 'error',
@@ -237,8 +143,7 @@ export class CodexRuntime implements AgentRuntime {
     return this.threadId;
   }
 
-  /** True when the live thread was resumed (not freshly started/recovered). */
-  wasThreadResumed(): boolean {
+    wasThreadResumed(): boolean {
     return this.threadResumed;
   }
 
@@ -273,16 +178,7 @@ export class CodexRuntime implements AgentRuntime {
     return result;
   }
 
-  /**
-   * Bring the dispatcher up. Order:
-   *  1. spawn codex app-server child
-   *  2. open WS client
-   *  3. install fail-fast approval handler
-   *  4. thread/start (new) or thread/resume (existing)
-   *  5. install turn manager
-   *  6. status = ready
-   */
-  async start(): Promise<void> {
+    async start(): Promise<void> {
     this.stopping = false;
     this.restarting = false;
     this.clearRestartTimer();
@@ -309,18 +205,11 @@ export class CodexRuntime implements AgentRuntime {
 
   private async startCodexRuntime(): Promise<void> {
     const cwd = this.deps.cwd;
-    // Fresh random rendezvous socket per start (issue #182): held in memory
-    // only — never persisted to durable state, never derived from state paths.
     const socketPath = this.deps.allocateSocketPath(this.dispatcherId);
     const extraArgs = this.deps.resolveExtraArgs?.() ?? [];
     if (this.deps.codexHomeDoctor !== undefined) {
       await this.deps.codexHomeDoctor({ runtimeId: this.dispatcherId, cwd });
     }
-
-    // Compose the codex app-server log subpaths under the neutral central logs
-    // root (B2): core no longer names a per-runtime log file. The host supplies
-    // a unique, filesystem-safe `runtime_id`, so `<logsDir>/codex-app-server/
-    // <id>.log` is collision-free across dispatchers and teammates.
     const codexLogDir = join(this.paths.logsDir(), 'codex-app-server');
     const factory = this.deps.codexProcessFactory ?? ((o) => new CodexProcess(o));
     const process = factory({
@@ -358,10 +247,6 @@ export class CodexRuntime implements AgentRuntime {
       },
     });
     this.client.setServerRequestHandler(approvalHandler);
-
-    // codex 0.134+ LSP-style handshake — must precede thread/start or
-    // any other RPC, otherwise codex answers everything with
-    // `Not initialized` (see src/codex/handshake.ts).
     const initResponse = await performInitializeHandshake(this.client, {
       ...(this.deps.handshakeTimeoutMs !== undefined
         ? { timeoutMs: this.deps.handshakeTimeoutMs }
@@ -371,10 +256,6 @@ export class CodexRuntime implements AgentRuntime {
       'info',
       `codex initialized: ${initResponse.userAgent} (home=${initResponse.codexHome}, ${initResponse.platformOs})`,
     );
-
-    // Role-gated bundled skills (issue #209 slice 6): set the extra skill roots
-    // AFTER initialize and BEFORE thread start/resume, and on every restart this
-    // method runs again so the roots are reapplied to the fresh app-server.
     await this.applySkillExtraRoots();
 
     await this.resolveThread();
@@ -389,62 +270,20 @@ export class CodexRuntime implements AgentRuntime {
     });
   }
 
-  /**
-   * Apply the role-gated bundled skill sources to the live app-server via
-   * `skills/extraRoots/set`. Codex treats each extra root as a directory whose
-   * immediate children are skill dirs, so a `skill-dir` source maps to the
-   * *parent* of its own directory; roots are deduped (the bundled Dreamux skills
-   * share one parent). Empty input skips the RPC entirely (a fresh per-runtime
-   * app-server starts with no extra roots, so nothing to clear).
-   *
-   * Error handling distinguishes two failure modes (issue #209 slice 6 repair):
-   *   1. The app-server does not implement `skills/extraRoots/set` at all — a
-   *      capability/version skew against an older codex backend (it answers with
-   *      an `unknown variant`/method-not-found error). This is NOT a real
-   *      failure: fail open, warn, and continue skill-blind rather than bricking
-   *      startup against every backend that predates the RPC.
-   *   2. The RPC exists but applying the given roots genuinely failed — fail
-   *      loud, exactly as before, so real misconfiguration is not masked.
-   */
   private async applySkillExtraRoots(): Promise<void> {
     if (this.client === null) throw new Error('client not initialized');
-    const sources = this.deps.skillSources ?? [];
-    if (sources.length === 0) return;
-    const extraRoots = [
-      ...new Set(
-        sources
-          .filter((s) => s.layout === CODEX_SKILL_DIR_LAYOUT)
-          .map((s) => dirname(s.path)),
-      ),
-    ];
-    if (extraRoots.length === 0) return;
-    try {
-      await this.client.request('skills/extraRoots/set', { extraRoots });
-    } catch (err) {
-      if (isUnsupportedRpcMethodError(err)) {
-        this.log(
-          'warn',
-          `skills/extraRoots/set unsupported by this app-server; continuing skill-blind (${extraRoots.length} extra root(s) not applied)`,
-          err,
-        );
-        return;
-      }
-      throw err;
-    }
-    this.log(
-      'info',
-      `applied ${extraRoots.length} skill extra root(s): ${extraRoots.join(', ')}`,
-    );
+    await applyCodexSkillExtraRoots({
+      client: this.client,
+      sources: this.deps.skillSources ?? [],
+      log: this.log,
+    });
   }
 
   private async resolveThread(): Promise<void> {
     if (this.client === null) throw new Error('client not initialized');
-    // Each resolution recomputes whether we resumed; a fresh start or a
-    // resume-failure recovery must not look like a resume to the notice gate.
     this.threadResumed = false;
     const existing = this.threadId ?? this.identity.checkpoint_id ?? null;
     if (existing === null) {
-      // Fresh thread.
       const params: ThreadStartParams = {
         baseInstructions: this.deps.systemPromptContent,
       };
@@ -467,7 +306,6 @@ export class CodexRuntime implements AgentRuntime {
       this.threadResumed = true;
       this.log('info', `resumed thread ${this.threadId}`);
     } catch (err) {
-      // Visible degradation (issue #2 Q11): start a fresh thread, record loss.
       const msg = err instanceof Error ? err.message : String(err);
       this.log(
         'warn',
@@ -491,57 +329,27 @@ export class CodexRuntime implements AgentRuntime {
           last_error: `thread/resume failed: ${msg}`,
         });
       }
-      // Park a warning to be delivered with the next outbound — best-effort
-      // queue note. For MVP we just log; full user-visible delivery on next
-      // inbound is a follow-up (see PR review).
     }
   }
 
-  /**
-   * Submit any accepted inbound message arriving for this dispatcher. Called by
-   * the Feishu inbound layer.
-   */
-  async channelInput(
+    async channelInput(
     input: InboundTurnInput,
     hooks: InboundDeliveryHooks = {},
   ): Promise<AgentRuntimeTurnResult> {
     if (this.turnManager === null) {
       return { status: 'failed', error: new Error('turn manager not initialized') };
     }
-    // This runtime owns wrapping the channel input into its delivery shape: a
-    // structured channel turn becomes the native `<channel source="…">` block
-    // (same envelope claude renders); a plain turn (e.g. the completion trigger)
-    // passes through unchanged.
     return this.turnManager.enqueue(
       { ...input, text: renderChannelInput(input) },
       hooks,
     );
   }
 
-  /** Inject a system-originated notice (e.g. a restart notice). */
-  async systemInput(notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult> {
+    async systemInput(notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult> {
     return this.submitRestartNotice(notice.text);
   }
 
-  /**
-   * Codex TeamMate completion delivery — the native inbox-then-trigger idiom.
-   *
-   * Two steps, in order:
-   *  1. `thread/inject_items` appends the completion to the dispatcher thread's
-   *     model-visible history as a developer-role message (no fake user turn).
-   *     codex folds the item onto the active turn when one is running and never
-   *     rejects on a busy thread, so a failure here is a genuine RPC error.
-   *  2. a minimal trigger turn through the public `channelInput` seam wakes the
-   *     idle dispatcher so it reads the just-injected notification and acts.
-   *
-   * The trigger turn uses a fresh, non-routable source id per attempt. The turn
-   * manager commits its dedup id before `turn/start` and does not roll it back
-   * on failure, so a retry that reused one id would come back `duplicate` and be
-   * mis-counted as delivered when nothing was submitted. The Dispatcher Service
-   * only retries on `failed` (definitely not submitted), so a unique id per
-   * attempt re-submits the trigger safely.
-   */
-  async completionInput(
+    async completionInput(
     completion: CompletionEnvelope,
   ): Promise<TeamMateCompletionDeliveryResult> {
     if (this.acceptedCompletionIds.has(completion.id)) {
@@ -576,9 +384,6 @@ export class CodexRuntime implements AgentRuntime {
         error: new Error('teammate completion delivery has no thread id'),
       };
     }
-    // Inject the completion item at most once per completion id. On a retry
-    // (trigger turn failed last time) the item is already in the thread, so we
-    // skip straight to re-triggering instead of persisting a duplicate.
     if (!this.injectedCompletionIds.has(completion.id)) {
       try {
         await injectThreadItems(this.client, threadId, [
@@ -589,9 +394,6 @@ export class CodexRuntime implements AgentRuntime {
         ]);
       } catch (err) {
         const cause = err instanceof Error ? err.message : String(err);
-        // `thread/inject_items` exists only on codex 0.137+. On an older codex
-        // it RPC-fails here, so surface the version requirement loudly rather
-        // than letting the dispatcher silently never see the completion.
         return {
           status: 'failed',
           error: new Error(
@@ -614,8 +416,6 @@ export class CodexRuntime implements AgentRuntime {
       case 'failed':
         return { status: 'failed', error: delivery.error };
       case 'duplicate':
-        // Unreachable with the per-attempt id above; if it ever happens, the
-        // turn was NOT freshly submitted, so do not report it as delivered.
         return {
           status: 'failed',
           error: new Error('teammate completion trigger unexpectedly deduplicated'),
@@ -628,8 +428,7 @@ export class CodexRuntime implements AgentRuntime {
     }
   }
 
-  /** Graceful stop: stop accepting work, reap codex child. */
-  async stop(): Promise<void> {
+    async stop(): Promise<void> {
     this.stopping = true;
     this.clearRestartTimer();
     this.setStatus('stopping');
@@ -689,11 +488,6 @@ export class CodexRuntime implements AgentRuntime {
     const delay = this.restartDelayMs(attempt);
     this.log('warn', `${reason}; restarting in ${delay}ms`);
     this.setStatus('degraded');
-    // scheduleRestart runs from synchronous event handlers (ws close, child
-    // exit); the durable status write is best-effort here — persist it without
-    // blocking, logging (never throwing) on failure. The restart timer's later
-    // 'starting'/'ready' writes are awaited, so they cannot be reordered behind
-    // this one within the backoff delay.
     void this.state
       .setStatus(this.dispatcherId, 'degraded', { last_error: reason })
       .catch((err) =>
@@ -771,14 +565,10 @@ export class CodexRuntime implements AgentRuntime {
     if (typeof last?.text === 'string' && last.text.length > 0) {
       this.lastResult = { text: last.text };
     }
-    // A turn reaching `turn/completed` is the `completed` terminal state. The
-    // `stopped` settlement for interrupted turns is emitted by the turn manager
-    // on `stop()`.
     this.deps.onTurnSettled?.({ turnId: turn.turnId, status: 'completed' });
   }
 
-  /** Record a completion id as injected, evicting the oldest past a small cap. */
-  private rememberInjectedCompletion(id: string): void {
+    private rememberInjectedCompletion(id: string): void {
     if (this.injectedCompletionIds.has(id)) return;
     this.injectedCompletionIds.add(id);
     this.injectedCompletionOrder.push(id);
@@ -788,8 +578,7 @@ export class CodexRuntime implements AgentRuntime {
     }
   }
 
-  /** Record a completion id as fully accepted, evicting the oldest past a cap. */
-  private rememberAcceptedCompletion(id: string): void {
+    private rememberAcceptedCompletion(id: string): void {
     if (this.acceptedCompletionIds.has(id)) return;
     this.acceptedCompletionIds.add(id);
     this.acceptedCompletionOrder.push(id);
@@ -802,39 +591,4 @@ export class CodexRuntime implements AgentRuntime {
   private setStatus(s: AgentRuntimeStatus): void {
     this.status = s;
   }
-}
-
-/**
- * Classify an RPC rejection as a capability/version gap — the app-server does
- * not implement the requested method at all — rather than a genuine failure of
- * an existing method.
- *
- * The rpc layer collapses codex's structured error to `Error(message)` (it
- * drops the JSON-RPC error code), so the *message* is all we have. codex
- * surfaces an unimplemented method as a serde enum-deserialization failure of
- * the request's `method` field — `unknown variant \`<method>\`, expected one of
- * …` — while a spec-compliant JSON-RPC peer answers method-not-found (-32601).
- * We match those canonical phrasings only; the test stays deliberately narrow
- * so a real error from an *existing* method (a bad root path, a permission
- * failure) is NOT swallowed and still fails loud.
- *
- * The match is message-based by necessity: the rpc layer drops the structured
- * JSON-RPC error code, so the message is all we have. The one residual
- * false-positive is a server that *implements* the method but rejects a bad
- * *param value* with an "unknown variant `<value>`" serde error. That is safe
- * for our sole caller — `skills/extraRoots/set` takes a `string[]` of paths,
- * which codex never enum-rejects — but a future caller passing an enum-typed
- * param should not reuse this classifier blindly.
- */
-export function isUnsupportedRpcMethodError(err: unknown): boolean {
-  const message = (
-    err instanceof Error ? err.message : String(err)
-  ).toLowerCase();
-  return (
-    message.includes('unknown variant') ||
-    message.includes('method not found') ||
-    message.includes('unknown method') ||
-    message.includes('no such method') ||
-    message.includes('unsupported method')
-  );
 }

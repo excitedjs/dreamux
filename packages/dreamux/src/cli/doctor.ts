@@ -1,8 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { homedir, userInfo } from 'node:os';
 
-import { parse as parsePlist, type PlistValue } from 'plist';
-
 import {
   BUILT_IN_DEFAULTS,
   globalConfigDir,
@@ -38,7 +36,6 @@ import { ExecaCommandRunner } from '../onboard/commands.js';
 import {
   defaultServiceNodeProbe,
   detectServiceNodeVersionManager,
-  LAUNCHD_LABEL,
   MIN_SERVICE_NODE_VERSION,
   nodeVersionSatisfies,
   type ServiceNodeProbe,
@@ -46,6 +43,16 @@ import {
   SYSTEMD_UNIT,
 } from '../onboard/service.js';
 import type { CommandRunner } from '../onboard/types.js';
+import {
+  launchdTarget,
+  parseLaunchdDetail,
+  parseLaunchdPid,
+  parseLaunchdPlist,
+  parsePositiveInt,
+  parseSystemdProperties,
+  parseSystemdUnit,
+  systemdDetail,
+} from './service-status-parse.js';
 
 export interface DoctorOptions {
   env?: NodeJS.ProcessEnv;
@@ -54,8 +61,7 @@ export interface DoctorOptions {
   homeDir?: string;
   uid?: number;
   nodeProbe?: ServiceNodeProbe;
-  /** Override the user checked for systemd lingering (tests). */
-  userName?: string;
+    userName?: string;
 }
 
 export interface ServiceStatus {
@@ -75,9 +81,6 @@ export interface DoctorCheck {
   name: string;
   ok: boolean;
   detail: string;
-  // Advisory severity for an `ok: true` check that still warrants attention
-  // (e.g. a version-manager-bound Node that runs today but is fragile). A
-  // `warn` never flips `result.ok` or the CLI exit code; it stays visible.
   severity?: 'warn';
 }
 
@@ -114,9 +117,6 @@ export async function runDreamuxDoctor(
     ok: await pathExists(stateRoot()),
     detail: stateRoot(),
   });
-
-  // Provider binaries are provider-owned: each provider self-declares its bin
-  // checks via its diagnostic capability; doctor dedups + executes them.
   const doctorEnv = options.env ?? process.env;
   for (const check of providerBinaryChecks(catalogs, config, doctorEnv, false)) {
     checks.push({
@@ -125,13 +125,6 @@ export async function runDreamuxDoctor(
       detail: check.bin,
     });
   }
-
-  // Dispatcher workspace cwd contract (issue #182 PR-4): each ENABLED dispatcher
-  // must declare an explicit, usable `cwd` — no state-dir fallback. This mirrors
-  // `Server.assertDispatcherWorkspaces`, which enforces the contract only for
-  // enabled dispatchers (PR #186 review P3): a disabled dispatcher is never
-  // started, so its cwd is reported as a non-blocking diagnostic instead of a
-  // failure, keeping doctor and `dreamux serve` on the same contract.
   for (const dispatcher of config.dispatchers) {
     if (dispatcher.enabled === false) {
       checks.push({
@@ -147,9 +140,6 @@ export async function runDreamuxDoctor(
       ok: diagnosis.ok,
       detail: diagnosis.detail,
     });
-    // Pre-#199 local state (issue #199 Slice 5): mirror the `dreamux serve`
-    // fail-loud as a diagnostic so the operator sees the same rebuild guidance
-    // without first failing a start.
     const legacy = await detectLegacyDispatcherState(dispatcher.id);
     checks.push({
       name: `dispatcher ${dispatcher.id} legacy state`,
@@ -159,8 +149,6 @@ export async function runDreamuxDoctor(
           ? 'no pre-#199 state paths found'
           : legacyDispatcherStateMessage(dispatcher.id, legacy),
     });
-    // Issue #209 binding store v2: a pre-v2 channel-binding store is the same
-    // fail-loud rebuild signal, surfaced here before a start fails.
     const bindingLegacy = await detectLegacyChannelBindingStore(dispatcher.id);
     checks.push({
       name: `dispatcher ${dispatcher.id} channel bindings`,
@@ -449,8 +437,6 @@ async function addManagedServiceLaunchChecks(
   if (env === null) {
     missing.push('managed service environment');
   } else {
-    // Provider binaries are resolved off the unit PATH at runtime; provider
-    // packages declare the concrete bin checks below.
     for (const key of ['PATH', 'DREAMUX_NODE_BIN']) {
       if (env[key] === undefined || env[key]?.trim() === '') missing.push(key);
     }
@@ -467,10 +453,6 @@ async function addManagedServiceLaunchChecks(
   const serviceEnv = env as Record<string, string>;
   const nodeBin = serviceEnv['DREAMUX_NODE_BIN'];
   checks.push(await checkNodeLaunch(nodeBin, serviceEnv, runner));
-
-  // Drift advisory: the service Node runs today but is bound to a version
-  // manager, so a version switch/cleanup will break it. Surface it visibly
-  // without failing — reuses the same predicate selection uses.
   const manager = await detectServiceNodeVersionManager(nodeBin, probe);
   if (manager !== null) {
     checks.push({
@@ -492,10 +474,6 @@ async function addManagedServiceLaunchChecks(
       'ExecStart is missing in the installed service; rerun dreamux onboard',
     ),
   );
-
-  // Every provider-owned binary must launch under the unit's PATH. Providers
-  // declare the binary and arguments; doctor only executes that provider-owned
-  // descriptor.
   for (const check of providerBinaryChecks(catalogs, config, serviceEnv, true)) {
     checks.push(
       await checkHelpLaunch(
@@ -565,190 +543,6 @@ async function checkHelpLaunch(
     ok,
     detail: ok ? command : `${command} failed under installed service environment; rerun dreamux onboard`,
   };
-}
-
-function parseSystemdUnit(content: string): {
-  environment: Record<string, string> | null;
-  execStart: string[] | null;
-} {
-  const environment: Record<string, string> = {};
-  let execStart: string[] | null = null;
-  for (const rawLine of content.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (line.startsWith('Environment=')) {
-      const assignment = line.slice('Environment='.length);
-      const eq = assignment.indexOf('=');
-      if (eq > 0) {
-        environment[assignment.slice(0, eq)] = systemdUnescapeEnv(
-          assignment.slice(eq + 1),
-        );
-      }
-    } else if (line.startsWith('ExecStart=')) {
-      execStart = splitSystemdCommand(line.slice('ExecStart='.length));
-    }
-  }
-  return {
-    environment: Object.keys(environment).length > 0 ? environment : null,
-    execStart,
-  };
-}
-
-function systemdUnescapeEnv(value: string): string {
-  let out = '';
-  for (let index = 0; index < value.length; index += 1) {
-    const ch = value[index];
-    if (ch !== '\\') {
-      out += ch;
-      continue;
-    }
-    if (value.slice(index, index + 4) === '\\x20') {
-      out += ' ';
-      index += 3;
-      continue;
-    }
-    const next = value[index + 1];
-    if (next === '\\') {
-      out += '\\';
-      index += 1;
-      continue;
-    }
-    if (next === '"') {
-      out += '"';
-      index += 1;
-      continue;
-    }
-    out += ch;
-  }
-  return out;
-}
-
-function splitSystemdCommand(value: string): string[] {
-  const args: string[] = [];
-  let current = '';
-  let quoted = false;
-  let escaped = false;
-  for (const ch of value) {
-    if (escaped) {
-      current += ch;
-      escaped = false;
-      continue;
-    }
-    if (ch === '\\') {
-      escaped = true;
-      continue;
-    }
-    if (ch === '"') {
-      quoted = !quoted;
-      continue;
-    }
-    if (!quoted && /\s/.test(ch)) {
-      if (current !== '') {
-        args.push(current);
-        current = '';
-      }
-      continue;
-    }
-    current += ch;
-  }
-  if (current !== '') args.push(current);
-  return args;
-}
-
-function parseLaunchdPlist(content: string): {
-  environment: Record<string, string> | null;
-  execStart: string[] | null;
-} {
-  let parsed: PlistValue;
-  try {
-    parsed = parsePlist(content);
-  } catch {
-    return { environment: null, execStart: null };
-  }
-  if (!isPlistRecord(parsed)) {
-    return { environment: null, execStart: null };
-  }
-  return {
-    environment: parseLaunchdEnvironment(parsed['EnvironmentVariables']),
-    execStart: parseLaunchdProgramArguments(parsed['ProgramArguments']),
-  };
-}
-
-function parseLaunchdEnvironment(
-  value: PlistValue | undefined,
-): Record<string, string> | null {
-  if (!isPlistRecord(value)) return null;
-  const environment: Record<string, string> = {};
-  for (const [key, raw] of Object.entries(value)) {
-    if (typeof raw === 'string') environment[key] = raw;
-  }
-  return Object.keys(environment).length > 0 ? environment : null;
-}
-
-function parseLaunchdProgramArguments(
-  value: PlistValue | undefined,
-): string[] | null {
-  if (!Array.isArray(value)) return null;
-  if (!value.every((item): item is string => typeof item === 'string')) {
-    return null;
-  }
-  return value.length > 0 ? value : null;
-}
-
-function isPlistRecord(
-  value: PlistValue | undefined,
-): value is Record<string, PlistValue> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-function launchdTarget(uid?: number): string {
-  const actualUid = uid ?? process.getuid?.();
-  if (actualUid === undefined) {
-    throw new Error('launchd user service diagnostics require a numeric uid');
-  }
-  return `gui/${actualUid}/${LAUNCHD_LABEL}`;
-}
-
-function parseLaunchdPid(raw: string): number | null {
-  const match = raw.match(/\bpid = (\d+)/);
-  if (match === null) return null;
-  return parsePositiveInt(match[1]);
-}
-
-function parseLaunchdDetail(raw: string): string | null {
-  const state = raw.match(/\bstate = ([^\n]+)/)?.[1]?.trim();
-  const reason = raw.match(/\breason = ([^\n]+)/)?.[1]?.trim();
-  return [state, reason]
-    .filter((value) => value !== undefined && value !== '')
-    .join(', ') || null;
-}
-
-function parseSystemdProperties(raw: string): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const line of raw.split(/\r?\n/)) {
-    const eq = line.indexOf('=');
-    if (eq <= 0) continue;
-    result[line.slice(0, eq)] = line.slice(eq + 1);
-  }
-  return result;
-}
-
-function systemdDetail(props: Record<string, string>): string | null {
-  const parts = [
-    props['LoadState'],
-    props['ActiveState'],
-    props['SubState'],
-    props['Result'] !== undefined && props['Result'] !== 'success'
-      ? `result=${props['Result']}`
-      : undefined,
-  ].filter((part) => part !== undefined && part !== '');
-  return parts.join(', ') || null;
-}
-
-function parsePositiveInt(value: string | undefined): number | null {
-  if (value === undefined) return null;
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed <= 0) return null;
-  return parsed;
 }
 
 function printDispatcherDoctor(dispatcher: DispatcherDoctorReport): void {

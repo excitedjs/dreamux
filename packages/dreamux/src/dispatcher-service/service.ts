@@ -12,7 +12,6 @@ import {
 export {
   DispatcherService,
   TeamService,
-  TeammateRoster,
 } from './dispatcher-instance.js';
 import {
   DispatcherRuntimeService,
@@ -65,7 +64,6 @@ export class Dispatchers {
                 dispatcherId,
                 callerKind: 'team_leader',
                 teamId: identity.team_id ?? '',
-                leaderName: identity.name,
                 adminSocketPath: opts.adminSocketPath ?? defaultAdminSocketPath(),
               }),
               ...this.get(dispatcherId).channelMcpServerDescriptorsForCaller({

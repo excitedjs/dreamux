@@ -11,7 +11,8 @@ import { dirname, join } from 'node:path';
 
 import { describe, it, expect } from 'vitest';
 
-import { CodexRuntime, isUnsupportedRpcMethodError } from '../src/runtime.js';
+import { CodexRuntime } from '../src/runtime.js';
+import { isUnsupportedRpcMethodError } from '../src/skill-roots.js';
 import type {
   AgentRuntimeIdentity,
   AgentRuntimePathContext,

@@ -197,7 +197,7 @@ function runtimeId(dispatcherId: string, name: string): string {
 }
 
 function runtimeIdentityName(identity: TeamMateIdentity): string {
-  return identity.owner.kind === 'team'
-    ? `${identity.owner.team_id}.${identity.name}`
+  return identity.team_id !== null
+    ? `${identity.team_id}.${identity.name}`
     : identity.name;
 }

@@ -25,7 +25,6 @@ import type {
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import { asAgentRuntimeDescriptor } from './helpers/provider.js';
 import { TeamMateAgentService } from '../src/dispatcher-service/teammate/service.js';
-import { teamServicePrincipal } from '../src/dispatcher-service/teammate/types.js';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
 import {
   dispatcherCompletionSpillDir,
@@ -406,16 +405,10 @@ describe('TeamMateAgentService', () => {
       cwd: root,
     });
     expect(spawned.turn).toEqual({ status: 'submitted', turn_id: 'turn-1' });
-    // #188: spawn allocates a concrete name and returns it; the requested label
-    // is kept as display_name. All later calls use the returned concrete name.
     const reviewer = spawned.teammate.name;
     expect(reviewer).toMatch(/^reviewer-[a-z0-9]{8}$/);
-    // #199 Slice 2: the collapsed status exposes owner (no public role/team_id),
-    // a compact `repo` view (no source_cwd/cwd/worktree), and the runtime-native
-    // session_id (the checkpoint id); display_name and checkpoint are gone.
     expect(spawned.teammate).toMatchObject({
       name: reviewer,
-      owner: { kind: 'dispatcher', dispatcher_id: 'flow' },
       agent_runtime: 'flow',
       repo: {
         mode: 'reuse-cwd',
@@ -435,6 +428,7 @@ describe('TeamMateAgentService', () => {
       'cwd',
       'runtime_cwd',
       'worktree',
+      'owner',
     ]) {
       expect(spawned.teammate).not.toHaveProperty(removed);
     }
@@ -958,7 +952,7 @@ describe('TeamMateAgentService', () => {
     ).rejects.toThrow(/cwd/);
   });
 
-  it('reads old identities without owner as dispatcher-owned until mutated', async () => {
+  it('reads old identities without owner without rewriting them', async () => {
     const { catalog } = providerCatalog();
     const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
     const service = new TeamMateAgentService({
@@ -996,14 +990,8 @@ describe('TeamMateAgentService', () => {
       { mode: 0o600 },
     );
 
-    expect((await service.status('flow', 'oldie')).owner).toEqual({
-      kind: 'dispatcher',
-      dispatcher_id: 'flow',
-    });
+    expect(await service.status('flow', 'oldie')).not.toHaveProperty('owner');
     const history = await service.history({ dispatcherId: 'flow', name: 'oldie' });
-    // #199 Slice 1: a pre-#188 record still reads back without migration; the
-    // trimmed history row keys on the concrete name and a reuse-cwd record
-    // surfaces a 'not-managed' cleanup state.
     expect(history.items[0]).toMatchObject({
       name: 'oldie',
       intent: null,
@@ -1572,7 +1560,6 @@ describe('TeamMateAgentService', () => {
         version: 1,
         dispatcher_id: 'flow',
         name: 'legacy-mate',
-        owner: { kind: 'dispatcher', dispatcher_id: 'flow' },
         role: 'teammate',
         team_id: null,
         agent_runtime: 'flow',
@@ -2025,17 +2012,9 @@ describe('TeamMateAgentService', () => {
       intent: 'work',
     };
     await service.createTeamLeader(leaderInput);
-    // The public service seam must not rebind a concrete name to a new session —
-    // not even for a CLOSED leader. #188: concrete names are never reused, and
-    // the duplicate check includes closed identities. #199 Slice 4: a TeamLeader
-    // is closed through the internal Team-service authority — it is not visible
-    // on the dispatcher `teammate.*` surface.
-    await service.closeScoped({
-      principal: teamServicePrincipal({
-        dispatcherId: 'flow',
-        teamId: 'alpha',
-        leaderName: 'tl-alpha-fixedaaa',
-      }),
+    await service.close({
+      dispatcherId: 'flow',
+      teamId: 'alpha',
       name: 'tl-alpha-fixedaaa',
       note: 'done',
     });

@@ -2,14 +2,10 @@ import { Buffer } from 'node:buffer';
 
 import type { AgentRuntime } from '@excitedjs/dreamux-types';
 
-import { principalCanAccess } from './access.js';
 import { TeamMateIdentityStore } from './identity-store.js';
 import { TeamMateTurnsStore } from './turns-store.js';
 import {
-  dispatcherPrincipal,
-  principalDispatcherId,
   validateTeamMateName,
-  type TeamMateCallerPrincipal,
   type TeamMateHistoryQuery,
   type TeamMateHistoryResult,
   type TeamMateIdentity,
@@ -28,15 +24,11 @@ export interface TeammateReadModelOptions {
 export class TeammateReadModel {
   constructor(private readonly opts: TeammateReadModelOptions) {}
 
-  async list(dispatcherId: string): Promise<TeamMateRuntimeStatus[]> {
-    return this.listScoped(dispatcherPrincipal(dispatcherId));
-  }
-
-  async listScoped(
-    principal: TeamMateCallerPrincipal,
+  async list(
+    dispatcherId: string,
+    teamId?: string,
   ): Promise<TeamMateRuntimeStatus[]> {
-    const dispatcherId = principalDispatcherId(principal);
-    return (await this.scopedList(principal)).map((identity) =>
+    return (await this.rosterList(dispatcherId, teamId)).map((identity) =>
       this.toStatus(
         identity,
         this.opts.runtimeFor(dispatcherId, identity.name),
@@ -47,19 +39,12 @@ export class TeammateReadModel {
   async status(
     dispatcherId: string,
     name: string,
+    teamId?: string,
   ): Promise<TeamMateRuntimeStatus> {
-    return this.statusScoped(dispatcherPrincipal(dispatcherId), name);
-  }
-
-  async statusScoped(
-    principal: TeamMateCallerPrincipal,
-    name: string,
-  ): Promise<TeamMateRuntimeStatus> {
-    const dispatcherId = principalDispatcherId(principal);
     const identity = await this.mustIdentity(
       dispatcherId,
       validateTeamMateName(name),
-      principal,
+      teamId,
     );
     return this.toStatus(
       identity,
@@ -68,19 +53,8 @@ export class TeammateReadModel {
   }
 
   async history(input: TeamMateHistoryQuery): Promise<TeamMateHistoryResult> {
-    return this.historyScoped({
-      ...input,
-      principal: input.principal ?? dispatcherPrincipal(input.dispatcherId),
-    });
-  }
-
-  async historyScoped(
-    input: Omit<TeamMateHistoryQuery, 'dispatcherId' | 'principal'> & {
-      principal: TeamMateCallerPrincipal;
-    },
-  ): Promise<TeamMateHistoryResult> {
     const rows: TeamMateRecordRow[] = [];
-    for (const identity of await this.scopedList(input.principal)) {
+    for (const identity of await this.rosterList(input.dispatcherId, input.teamId)) {
       const row = this.toRecordRow(identity);
       if (matchesRecordQuery(row, input)) {
         rows.push(row);
@@ -105,21 +79,13 @@ export class TeammateReadModel {
     dispatcherId: string,
     name: string,
     turns?: number,
-  ): Promise<TeamMateLastResult> {
-    return this.lastScoped(dispatcherPrincipal(dispatcherId), name, turns);
-  }
-
-  async lastScoped(
-    principal: TeamMateCallerPrincipal,
-    name: string,
-    turns?: number,
+    teamId?: string,
   ): Promise<TeamMateLastResult> {
     const requestedTurns = validateLastTurns(turns);
-    const dispatcherId = principalDispatcherId(principal);
     const identity = await this.mustIdentity(
       dispatcherId,
       validateTeamMateName(name),
-      principal,
+      teamId,
     );
     const teammate = this.toStatus(
       identity,
@@ -207,21 +173,22 @@ export class TeammateReadModel {
   async mustIdentity(
     dispatcherId: string,
     name: string,
-    principal: TeamMateCallerPrincipal = dispatcherPrincipal(dispatcherId),
+    teamId?: string,
   ): Promise<TeamMateIdentity> {
     const identity = await this.opts.identities.get(dispatcherId, name);
     if (identity === null) {
       throw new Error(`TeamMate ${JSON.stringify(name)} does not exist`);
     }
-    this.assertPrincipalCanAccess(principal, identity);
+    this.assertInRoster(identity, dispatcherId, teamId);
     return identity;
   }
 
-  assertPrincipalCanAccess(
-    principal: TeamMateCallerPrincipal,
+  assertInRoster(
     identity: TeamMateIdentity,
+    dispatcherId: string,
+    teamId?: string,
   ): void {
-    if (principalCanAccess(principal, identity)) return;
+    if (this.identityInRoster(identity, dispatcherId, teamId)) return;
     throw new Error(`TeamMate ${JSON.stringify(identity.name)} does not exist`);
   }
 
@@ -232,7 +199,6 @@ export class TeammateReadModel {
     return {
       name: identity.name,
       session_id: identity.session_id,
-      owner: identity.owner,
       agent_runtime: identity.agent_runtime,
       repo: {
         mode: identity.worktree.mode,
@@ -252,13 +218,32 @@ export class TeammateReadModel {
     };
   }
 
-  private async scopedList(
-    principal: TeamMateCallerPrincipal,
+  private async rosterList(
+    dispatcherId: string,
+    teamId?: string,
   ): Promise<TeamMateIdentity[]> {
-    const identities = await this.opts.identities.list(
-      principalDispatcherId(principal),
+    const identities = await this.opts.identities.list(dispatcherId);
+    return identities.filter((identity) =>
+      this.identityInRoster(identity, dispatcherId, teamId),
     );
-    return identities.filter((identity) => principalCanAccess(principal, identity));
+  }
+
+  private identityInRoster(
+    identity: TeamMateIdentity,
+    dispatcherId: string,
+    teamId?: string,
+  ): boolean {
+    if (identity.dispatcher_id !== dispatcherId) return false;
+    if (teamId === undefined) {
+      return (
+        identity.team_id === null &&
+        identity.role === 'teammate'
+      );
+    }
+    return (
+      identity.team_id === teamId &&
+      (identity.role === 'team_leader' || identity.role === 'team_member')
+    );
   }
 
   private toRecordRow(identity: TeamMateIdentity): TeamMateRecordRow {
@@ -266,7 +251,6 @@ export class TeammateReadModel {
     return {
       name: identity.name,
       turn_count: identity.turn_count,
-      owner: identity.owner,
       agent_runtime: identity.agent_runtime,
       source_repo: identity.source_repo,
       created_at: identity.created_at,
@@ -292,7 +276,7 @@ export class TeammateReadModel {
 
 function matchesRecordQuery(
   row: TeamMateRecordRow,
-  input: Omit<TeamMateHistoryQuery, 'dispatcherId' | 'principal'>,
+  input: Omit<TeamMateHistoryQuery, 'dispatcherId'>,
 ): boolean {
   if (input.name !== undefined && row.name !== validateTeamMateName(input.name)) {
     return false;
@@ -354,7 +338,6 @@ function decodeCursor(cursor: string): number {
       return parsed['offset'];
     }
   } catch {
-    // fall through
   }
   throw new Error('invalid history cursor');
 }

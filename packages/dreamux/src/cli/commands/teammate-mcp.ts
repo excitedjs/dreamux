@@ -1,17 +1,15 @@
 import type { Argv, CommandModule } from 'yargs';
 
 import { runTeamMateMcp } from '../../mcp/teammate-mcp.js';
+import type { TeamMateMcpCallerKind } from '../../mcp/teammate-mcp.js';
 import { createLogger } from '../../platform/logger.js';
 import { teammateMcpLogPath } from '../../platform/paths.js';
 import { validateDispatcherId } from '../../state/dispatcher-id.js';
-
-type TeamMateMcpCallerKind = 'dispatcher' | 'team_leader' | 'teammate';
 
 interface TeamMateMcpArgv {
   dispatcher: string;
   caller: TeamMateMcpCallerKind;
   teamId?: string;
-  leaderName?: string;
   adminSocket?: string;
 }
 
@@ -33,17 +31,13 @@ function buildTeamMateMcpOptions(y: Argv): Argv<TeamMateMcpArgv> {
     })
     .option('caller', {
       type: 'string',
-      choices: ['dispatcher', 'team_leader', 'teammate'] as const,
+      choices: ['dispatcher', 'team_leader'] as const,
       default: 'dispatcher' as const,
       describe: 'Dreamux-controlled caller kind for nested-dispatch enforcement',
     })
     .option('team-id', {
       type: 'string',
       describe: 'Team id for team_leader caller scope',
-    })
-    .option('leader-name', {
-      type: 'string',
-      describe: 'Leader TeamMate identity name for team_leader caller scope',
     })
     .option('admin-socket', {
       type: 'string',
@@ -61,7 +55,6 @@ async function handleTeamMateMcp(argv: TeamMateMcpArgv): Promise<void> {
     dispatcherId,
     callerKind: argv.caller,
     teamId: argv.teamId,
-    leaderName: argv.leaderName,
     adminSocketPath: argv.adminSocket,
     log: (message) => log.info(message),
   });
