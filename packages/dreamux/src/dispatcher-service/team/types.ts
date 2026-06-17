@@ -33,7 +33,6 @@ export interface TeamRecord {
 }
 
 export interface TeamCreateInput {
-  dispatcherId: string;
   name: string;
   /**
    * Explicit repository cwd for the Team workspace (issue #199). Omitted when
@@ -51,7 +50,6 @@ export interface TeamCreateInput {
 }
 
 export interface TeamDissolveInput {
-  dispatcherId: string;
   teamId: string;
   /** Required dissolve reason recorded on the team record (issue #182 PR-3). */
   note: string;
@@ -69,7 +67,6 @@ export interface TeamBindChannelInput {
 }
 
 export interface TeamTransferChannelBackInput {
-  dispatcherId: string;
   channelId: string;
   /** Provider-owned routing key (e.g. a chat channel: the chat id). */
   targetKey: string;
@@ -140,7 +137,6 @@ export interface TeamListRow {
  * team's raw lifecycle event timeline (which no longer exists).
  */
 export interface TeamHistoryQuery {
-  dispatcherId: string;
   name?: string;
   /** Lifecycle status filter (the retired `close_status` is gone). */
   status?: TeamStatus;

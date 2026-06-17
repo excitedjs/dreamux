@@ -2,14 +2,14 @@ import { Buffer } from 'node:buffer';
 
 import type { ChannelTarget, InboundTurnInput } from '@excitedjs/dreamux-types';
 
-import { WorktreeManager } from '../teammate/worktree-manager.js';
+import type { WorktreeManager } from '../teammate/worktree-manager.js';
 import type {
   SpawnTeamMateRequest,
   TeammateCollection,
   TeamMateSharedWorkspace,
 } from '../teammate/service.js';
 import { requireLifecycleText } from '../teammate/types.js';
-import { ChannelBindingStore } from '../channel-binding/store.js';
+import type { ChannelBindingStore } from '../channel-binding/store.js';
 import type { ChannelBinding } from '../channel-binding/store.js';
 import { TeamStore } from './store.js';
 import type {
@@ -48,33 +48,45 @@ export interface TeamChannelContext {
 }
 
 export interface TeamCollectionOptions {
+  /** The dispatcher this collection belongs to (issue #233 ownership sinking). */
+  dispatcherId: string;
   teammates: TeammateCollection;
+  /** The per-dispatcher worktree manager, shared with the teammate collection. */
+  worktrees: WorktreeManager;
+  /** The per-dispatcher channel-binding store, owned by `DispatcherService`. */
+  bindings: ChannelBindingStore;
 }
 
 /**
- * The dispatcher's team collection (issue #233): owns the team store, channel
- * bindings, and the worktree manager, and exposes `create` / `list` / `history`
- * plus channel resolution that runs before a team is known (`resolveChannel` /
- * `transferChannelBack`). Per-team domain operations live on {@link TeamService},
- * returned fresh from `get` so a held record never goes stale after a dissolve.
+ * The dispatcher's team collection (issue #233): one instance per dispatcher,
+ * owned by `DispatcherService`. It owns the team store and holds the
+ * per-dispatcher channel-binding store and worktree manager, and exposes
+ * `create` / `list` / `history` plus channel resolution that runs before a team
+ * is known (`resolveChannel` / `transferChannelBack`). Per-team domain operations
+ * live on {@link TeamService}, returned fresh from `get` so a held record never
+ * goes stale after a dissolve. The dispatcher id is baked in, not threaded per
+ * call.
  */
 export class TeamCollection {
+  private readonly dispatcherId: string;
   private readonly store = new TeamStore();
-  private readonly worktrees = new WorktreeManager();
-  private readonly bindings = new ChannelBindingStore();
+  private readonly worktrees: WorktreeManager;
+  private readonly bindings: ChannelBindingStore;
 
-  constructor(private readonly opts: TeamCollectionOptions) {}
+  constructor(private readonly opts: TeamCollectionOptions) {
+    this.dispatcherId = opts.dispatcherId;
+    this.worktrees = opts.worktrees;
+    this.bindings = opts.bindings;
+  }
 
   async create(input: TeamCreateInput): Promise<TeamCreateResult> {
     requireLifecycleText(input.intent, 'Team create intent');
     const teamId = validateTeamId(input.name);
-    const existing = await this.store.get(input.dispatcherId, teamId);
+    const existing = await this.store.get(this.dispatcherId, teamId);
     if (existing !== null && existing.status !== 'closed') {
       throw new Error(`Team ${JSON.stringify(teamId)} already exists`);
     }
-    const dispatcherWorkspace = await this.opts.teammates.dispatcherWorkspace(
-      input.dispatcherId,
-    );
+    const dispatcherWorkspace = await this.opts.teammates.dispatcherWorkspace();
     const workspace =
       input.worktree === undefined && input.repoCwd === undefined
         ? await this.worktrees.prepareDefaultWorkspace({
@@ -82,7 +94,7 @@ export class TeamCollection {
             slug: teamId,
           })
         : await this.worktrees.prepare({
-            dispatcherId: input.dispatcherId,
+            dispatcherId: this.dispatcherId,
             teammateName: `team-${teamId}`,
             cwd: input.repoCwd ?? dispatcherWorkspace,
             dispatcherWorkspace,
@@ -92,14 +104,11 @@ export class TeamCollection {
               cleanup: 'keep',
             },
           });
-    const leaderName = await this.opts.teammates.allocateLeaderName(
-      input.dispatcherId,
-      teamId,
-    );
+    const leaderName = await this.opts.teammates.allocateLeaderName(teamId);
     let team =
       existing ??
       (await this.store.create({
-        dispatcher_id: input.dispatcherId,
+        dispatcher_id: this.dispatcherId,
         team_id: teamId,
         name: input.name,
         repo_cwd: workspace.sourceCwd,
@@ -123,7 +132,6 @@ export class TeamCollection {
     });
     const prompt = input.prompt ?? teamLeaderPrompt(team);
     const leader = await this.opts.teammates.createTeamLeader({
-      dispatcherId: input.dispatcherId,
       teamId,
       name: leaderName,
       prompt,
@@ -144,15 +152,15 @@ export class TeamCollection {
     };
   }
 
-  async list(dispatcherId: string): Promise<TeamListRow[]> {
-    const teams = await this.store.list(dispatcherId);
+  async list(): Promise<TeamListRow[]> {
+    const teams = await this.store.list(this.dispatcherId);
     const out: TeamListRow[] = [];
     for (const team of teams) out.push(await this.listRow(team));
     return out;
   }
 
   async history(input: TeamHistoryQuery): Promise<TeamHistoryResult> {
-    const teams = await this.store.list(input.dispatcherId);
+    const teams = await this.store.list(this.dispatcherId);
     const rows: TeamHistoryRow[] = [];
     for (const team of teams) {
       const row = await this.historyRow(team);
@@ -175,19 +183,22 @@ export class TeamCollection {
   }
 
   /** Load a team's record and return its single-entity service, or throw. */
-  async get(dispatcherId: string, teamId: string): Promise<TeamService> {
-    const record = await this.mustTeam(dispatcherId, teamId);
+  async get(teamId: string): Promise<TeamService> {
+    const record = await this.mustTeam(teamId);
     return this.serviceFor(record);
   }
 
   async resolveChannel(input: {
-    dispatcherId: string;
     channelId: string;
     targetKey: string;
   }): Promise<ChannelBinding | null> {
-    const binding = await this.bindings.resolve(input);
+    const binding = await this.bindings.resolve({
+      dispatcherId: this.dispatcherId,
+      channelId: input.channelId,
+      targetKey: input.targetKey,
+    });
     if (binding === null) return null;
-    const team = await this.store.get(input.dispatcherId, binding.team_name);
+    const team = await this.store.get(this.dispatcherId, binding.team_name);
     if (team === null || team.status === 'closed') return null;
     return binding;
   }
@@ -195,7 +206,11 @@ export class TeamCollection {
   async transferChannelBack(
     input: TeamTransferChannelBackInput,
   ): Promise<ChannelBinding | null> {
-    return this.bindings.transferBack(input);
+    return this.bindings.transferBack({
+      dispatcherId: this.dispatcherId,
+      channelId: input.channelId,
+      targetKey: input.targetKey,
+    });
   }
 
   private serviceFor(record: TeamRecord): TeamService {
@@ -248,7 +263,7 @@ export class TeamCollection {
     team: TeamRecord,
   ): Promise<TeamMateIdentityStatus | null> {
     const leader = await this.opts.teammates
-      .status(team.dispatcher_id, team.leader_name, team.team_id)
+      .status(team.leader_name, team.team_id)
       .catch(() => null);
     return leader?.status ?? null;
   }
@@ -256,7 +271,7 @@ export class TeamCollection {
   private async activeGroupBinding(
     team: TeamRecord,
   ): Promise<TeamChannelBindingSummary | null> {
-    const bindings = await this.bindings.list(team.dispatcher_id);
+    const bindings = await this.bindings.list(this.dispatcherId);
     const active = bindings.find(
       (binding) => binding.active && binding.team_name === team.team_id,
     );
@@ -270,17 +285,14 @@ export class TeamCollection {
 
   private async memberCount(team: TeamRecord): Promise<number> {
     return (
-      (await this.opts.teammates.list(team.dispatcher_id, team.team_id)).filter(
+      (await this.opts.teammates.list(team.team_id)).filter(
         (member) => member.name !== team.leader_name,
       )
     ).length;
   }
 
-  private async mustTeam(
-    dispatcherId: string,
-    teamId: string,
-  ): Promise<TeamRecord> {
-    const team = await this.store.get(dispatcherId, validateTeamId(teamId));
+  private async mustTeam(teamId: string): Promise<TeamRecord> {
+    const team = await this.store.get(this.dispatcherId, validateTeamId(teamId));
     if (team === null) {
       throw new Error(`Team ${JSON.stringify(teamId)} does not exist`);
     }
@@ -322,7 +334,7 @@ export class TeamService {
 
   async status(): Promise<TeamSummary> {
     const leader = await this.opts.teammates
-      .status(this.dispatcherId, this.record.leader_name, this.id)
+      .status(this.record.leader_name, this.id)
       .catch(() => null);
     return {
       team: teamView(this.record),
@@ -332,7 +344,7 @@ export class TeamService {
     };
   }
 
-  async dissolve(input: Omit<TeamDissolveInput, 'dispatcherId'>): Promise<TeamSummary> {
+  async dissolve(input: TeamDissolveInput): Promise<TeamSummary> {
     requireLifecycleText(input.note, 'Team dissolve note');
     for (const binding of await this.opts.bindings.list(this.dispatcherId)) {
       if (binding.active && binding.team_name === this.id) {
@@ -345,14 +357,12 @@ export class TeamService {
     }
     for (const member of await this.members()) {
       await this.opts.teammates.close({
-        dispatcherId: this.dispatcherId,
         teamId: this.id,
         name: member.name,
         note: input.note,
       });
     }
     await this.opts.teammates.close({
-      dispatcherId: this.dispatcherId,
       teamId: this.id,
       name: this.record.leader_name,
       note: input.note,
@@ -411,7 +421,6 @@ export class TeamService {
   ): Promise<import('@excitedjs/dreamux-types').AgentRuntimeTurnResult> {
     if (this.record.status === 'closed') return { status: 'stopped' };
     return this.opts.teammates.channelInput(
-      this.dispatcherId,
       this.id,
       this.record.leader_name,
       turn,
@@ -428,50 +437,46 @@ export class TeamService {
   }
 
   async spawnTeamMate(
-    input: Omit<SpawnTeamMateRequest, 'dispatcherId' | 'teamId' | 'sharedWorkspace'>,
+    input: Omit<SpawnTeamMateRequest, 'teamId' | 'sharedWorkspace'>,
   ) {
     return this.opts.teammates.spawn({
-      dispatcherId: this.dispatcherId,
       teamId: this.id,
       ...input,
       sharedWorkspace: this.sharedWorkspace(),
     });
   }
 
-  sendTeamMate(input: Omit<SendTeamMateInput, 'dispatcherId' | 'teamId'>) {
+  sendTeamMate(input: Omit<SendTeamMateInput, 'teamId'>) {
     return this.opts.teammates.send({
-      dispatcherId: this.dispatcherId,
       teamId: this.id,
       ...input,
     });
   }
 
-  closeTeamMate(input: Omit<CloseTeamMateInput, 'dispatcherId' | 'teamId'>) {
+  closeTeamMate(input: Omit<CloseTeamMateInput, 'teamId'>) {
     return this.opts.teammates.close({
-      dispatcherId: this.dispatcherId,
       teamId: this.id,
       ...input,
     });
   }
 
   listTeamMates(): Promise<TeamMateRuntimeStatus[]> {
-    return this.opts.teammates.list(this.dispatcherId, this.id);
+    return this.opts.teammates.list(this.id);
   }
 
   getTeamMateStatus(name: string) {
-    return this.opts.teammates.status(this.dispatcherId, name, this.id);
+    return this.opts.teammates.status(name, this.id);
   }
 
-  getTeamMateHistory(input: Omit<TeamMateHistoryQuery, 'dispatcherId' | 'teamId'>) {
+  getTeamMateHistory(input: Omit<TeamMateHistoryQuery, 'teamId'>) {
     return this.opts.teammates.history({
-      dispatcherId: this.dispatcherId,
       teamId: this.id,
       ...input,
     });
   }
 
   getTeamMateLast(name: string, turns?: number) {
-    return this.opts.teammates.last(this.dispatcherId, name, turns, this.id);
+    return this.opts.teammates.last(name, turns, this.id);
   }
 
   getTeamMateCapabilities() {
@@ -479,9 +484,9 @@ export class TeamService {
   }
 
   private async members(): Promise<TeamMateRuntimeStatus[]> {
-    return (
-      await this.opts.teammates.list(this.dispatcherId, this.id)
-    ).filter((member) => member.name !== this.record.leader_name);
+    return (await this.opts.teammates.list(this.id)).filter(
+      (member) => member.name !== this.record.leader_name,
+    );
   }
 
   private async memberCount(): Promise<number> {

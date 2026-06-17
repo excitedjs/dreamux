@@ -108,7 +108,6 @@ export interface TeamMateRuntimeStatus {
 export type TeamMateTurnOrigin = "channel" | "dispatcher" | "team_leader";
 
 export interface SpawnTeamMateInput {
-  dispatcherId: string;
   teamId?: string;
   name: string;
   prompt: string;
@@ -119,7 +118,6 @@ export interface SpawnTeamMateInput {
 }
 
 export interface CreateTeamLeaderInput {
-  dispatcherId: string;
   teamId: string;
   name: string;
   prompt: string;
@@ -163,7 +161,6 @@ export interface TeamMateWorktreeIdentity {
 }
 
 export interface SendTeamMateInput {
-  dispatcherId: string;
   teamId?: string;
   name: string;
   prompt: string;
@@ -171,7 +168,6 @@ export interface SendTeamMateInput {
 }
 
 export interface CloseTeamMateInput {
-  dispatcherId: string;
   teamId?: string;
   name: string;
   note: string;
@@ -198,7 +194,6 @@ export interface TeamMateCloseResult {
 }
 
 export interface TeamMateHistoryQuery {
-  dispatcherId: string;
   teamId?: string;
   name?: string;
   status?: TeamMateIdentityStatus;

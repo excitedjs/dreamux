@@ -84,6 +84,7 @@ export interface TeammateServiceDeps {
  */
 export class TeammateService {
   private runtime: AgentRuntime | null = null;
+  private starting: Promise<void> | null = null;
   private state: TeamMateRuntimeStateStore;
 
   constructor(
@@ -200,11 +201,14 @@ export class TeammateService {
   }
 
   last(turns?: number, teamId?: string): Promise<TeamMateLastResult> {
-    return this.deps.readModel.last(this.dispatcherId, this.name, turns, teamId);
+    return this.deps.readModel.last(this.name, turns, teamId);
   }
 
   /** Stop the live runtime if any; leaves the persisted record intact. */
   async stop(): Promise<void> {
+    // Await any in-flight start first so we never observe `runtime === null`
+    // for a runtime that is about to be assigned (issue #233 concurrency guard).
+    if (this.starting !== null) await this.starting.catch(() => {});
     const runtime = this.runtime;
     if (runtime === null) return;
     await runtime.stop();
@@ -215,23 +219,29 @@ export class TeammateService {
    * Ensure a live runtime, starting or resuming it from the persisted record.
    * Reviving a closed teammate (only when `reopenClosed`) re-prepares a deleted
    * managed worktree and clears the closed markers first.
+   *
+   * Concurrency guard (issue #233): a single `starting` promise serializes
+   * concurrent callers (two `send`/`channelInput`/`spawn` turns that both see
+   * `runtime === null`) so the runtime is created exactly once. The roster check
+   * runs eagerly on every caller — including those that join an in-flight start —
+   * so a wrong-scope caller still fails fast.
    */
   async ensureStarted(
     opts: { reopenClosed?: boolean; teamId?: string } = {},
   ): Promise<void> {
-    if (this.runtime !== null) {
-      this.deps.readModel.assertInRoster(
-        this.current(),
-        this.dispatcherId,
-        opts.teamId,
-      );
-      return;
-    }
-    this.deps.readModel.assertInRoster(
-      this.current(),
-      this.dispatcherId,
-      opts.teamId,
-    );
+    this.deps.readModel.assertInRoster(this.current(), opts.teamId);
+    if (this.runtime !== null) return;
+    if (this.starting !== null) return this.starting;
+    const promise = this.startFromRecord(opts).finally(() => {
+      this.starting = null;
+    });
+    this.starting = promise;
+    return promise;
+  }
+
+  private async startFromRecord(
+    opts: { reopenClosed?: boolean; teamId?: string },
+  ): Promise<void> {
     let identity = this.current();
     if (identity.status === 'closed') {
       if (opts.reopenClosed !== true) {

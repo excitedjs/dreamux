@@ -4,25 +4,36 @@ import type {
   ChannelInboundEnvelope,
   ChannelTarget,
   CompletionEnvelope,
+  DreamuxLogger,
   InboundDeliveryHooks,
   InboundTurnInput,
   TeamMateCompletionDeliveryResult,
 } from '@excitedjs/dreamux-types';
 
+import type { AgentRuntimeProviderCatalog } from '../agent-runtime/index.js';
+import type { ChannelProviderCatalog } from '../channel/catalog.js';
 import type { DreamuxConfig } from '../config/config.js';
 import type { RestartIntentConsumer } from '../daemon/restart-intent.js';
-import type {
+import { adminSocketPath as defaultAdminSocketPath } from '../platform/paths.js';
+import type { DispatcherStore } from '../state/dispatcher-store.js';
+import {
   DispatcherRuntimeService,
-  DispatcherSummary,
+  type DispatcherSummary,
 } from './dispatcher/service.js';
 import type { ChannelMcpCallerScope } from './dispatcher/mcp-descriptors.js';
 import { ChannelToolAuthorizationError } from './errors.js';
 import type { DispatcherRow } from '../state/dispatcher-store.js';
-import type { CompletionInitiator } from './teammate/completion-router.js';
-import type {
-  SpawnTeamMateRequest,
+import {
+  CompletionRouter,
+  type CompletionInitiator,
+} from './teammate/completion-router.js';
+import { teammateMcpServerDescriptor } from './teammate/mcp-config.js';
+import {
+  type SpawnTeamMateRequest,
   TeammateCollection,
 } from './teammate/service.js';
+import { WorktreeManager } from './teammate/worktree-manager.js';
+import { ChannelBindingStore } from './channel-binding/store.js';
 import {
   type CloseTeamMateInput,
   type SendTeamMateInput,
@@ -30,8 +41,7 @@ import {
   type TeamMateIdentity,
   type TeamMateRuntimeStatus,
 } from './teammate/types.js';
-import type { TeamChannelContext } from './team/service.js';
-import type { TeamCollection } from './team/service.js';
+import { type TeamChannelContext, TeamCollection } from './team/service.js';
 import type {
   TeamCreateInput,
   TeamDissolveInput,
@@ -41,28 +51,96 @@ import type {
 export interface DispatcherServiceOptions {
   id: string;
   config: DreamuxConfig;
-  dispatcherRuntime: DispatcherRuntimeService;
-  teammates: TeammateCollection;
-  teams: TeamCollection;
+  dispatchers: DispatcherStore;
+  agentRuntimeProviders: AgentRuntimeProviderCatalog;
+  channelProviders: ChannelProviderCatalog;
+  adminSocketPath?: string;
+  channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
+  log: DreamuxLogger;
 }
 
 export type ChannelToolCaller =
   | { kind: 'dispatcher' }
   | { kind: 'team_leader'; teamId: string; leaderName: string };
 
+/**
+ * One dispatcher-local aggregate (issue #233 ownership sinking). It owns the
+ * whole per-dispatcher object graph — the delivery `CompletionRouter`, the shared
+ * `WorktreeManager` + `ChannelBindingStore`, the `TeammateCollection` and
+ * `TeamCollection`, and the `DispatcherRuntimeService` — built once in the
+ * constructor. None of these are process-wide singletons; each dispatcher holds
+ * its own. The graph is built router-first (topology-free) so the collections can
+ * be wired to `this` methods without a construction cycle.
+ */
 export class DispatcherService implements TeamChannelContext {
   readonly id: string;
   private readonly config: DreamuxConfig;
   private readonly dispatcherRuntime: DispatcherRuntimeService;
+  private readonly router: CompletionRouter;
   private readonly teammates: TeammateCollection;
   private readonly teams: TeamCollection;
+  private shuttingDown = false;
 
   constructor(opts: DispatcherServiceOptions) {
     this.id = opts.id;
     this.config = opts.config;
-    this.dispatcherRuntime = opts.dispatcherRuntime;
-    this.teammates = opts.teammates;
-    this.teams = opts.teams;
+    const adminSocket = opts.adminSocketPath ?? defaultAdminSocketPath();
+
+    this.router = new CompletionRouter({ dispatcherId: opts.id, log: opts.log });
+
+    // One worktree manager + one channel-binding store per dispatcher, shared by
+    // both collections (issue #233): the manager is cwd-constrained to this
+    // dispatcher's `.workspace`, the binding store keyed by this dispatcher id.
+    const worktrees = new WorktreeManager();
+    const bindings = new ChannelBindingStore();
+
+    this.dispatcherRuntime = new DispatcherRuntimeService({
+      id: opts.id,
+      config: opts.config,
+      dispatchers: opts.dispatchers,
+      agentRuntimeProviders: opts.agentRuntimeProviders,
+      channelProviders: opts.channelProviders,
+      log: opts.log,
+      channelLoggerFactory: opts.channelLoggerFactory,
+      ...(opts.adminSocketPath !== undefined
+        ? { adminSocketPath: opts.adminSocketPath }
+        : {}),
+      routeChannelInput: (channelId, turn, envelope, hooks) =>
+        this.routeChannelInput(channelId, turn, envelope, hooks),
+    });
+
+    this.teammates = new TeammateCollection({
+      dispatcherId: opts.id,
+      config: opts.config,
+      agentRuntimeProviders: opts.agentRuntimeProviders,
+      worktrees,
+      mcpServersForTeamMate: ({ dispatcherId, identity }) =>
+        identity.role === 'team_leader'
+          ? [
+              teammateMcpServerDescriptor({
+                dispatcherId,
+                callerKind: 'team_leader',
+                teamId: identity.team_id ?? '',
+                adminSocketPath: adminSocket,
+              }),
+              ...this.channelMcpServerDescriptorsForCaller({
+                callerKind: 'team_leader',
+                team_id: identity.team_id ?? '',
+                leader_name: identity.name,
+              }),
+            ]
+          : [],
+      router: this.router,
+      initiatorFor: (producer) => this.initiatorFor(producer),
+      log: opts.log,
+    });
+
+    this.teams = new TeamCollection({
+      dispatcherId: opts.id,
+      teammates: this.teammates,
+      worktrees,
+      bindings,
+    });
   }
 
   start(): Promise<void> {
@@ -89,8 +167,25 @@ export class DispatcherService implements TeamChannelContext {
     return this.dispatcherRuntime.summary(row);
   }
 
-  shutdown(): Promise<void> {
-    return this.dispatcherRuntime.shutdown();
+  /**
+   * Best-effort dispatcher teardown (issue #233). The `shuttingDown` flag closes
+   * the traversal-window race: it is set first so any concurrent `spawn`/`send` /
+   * team `create`/`send` is rejected before it can lazily start a runtime the
+   * sweep would miss. Then every live teammate runtime (direct + team members +
+   * leaders, all held in the single per-dispatcher `TeammateCollection`) is
+   * stopped, followed by the dispatcher agent runtime. `stopAll` only touches
+   * already-created entities, so it never lazily starts a not-yet-running one.
+   */
+  async shutdown(): Promise<void> {
+    this.shuttingDown = true;
+    await this.teammates.stopAll();
+    await this.dispatcherRuntime.shutdown();
+  }
+
+  private assertNotShuttingDown(): void {
+    if (this.shuttingDown) {
+      throw new Error(`dispatcher '${this.id}' is shutting down`);
+    }
   }
 
   channelMcpServerDescriptorsForCaller(
@@ -127,49 +222,39 @@ export class DispatcherService implements TeamChannelContext {
   }
 
   workspace(): Promise<string> {
-    return this.teammates.dispatcherWorkspace(this.id);
+    return this.teammates.dispatcherWorkspace();
   }
 
   spawnTeamMate(
-    input: Omit<SpawnTeamMateRequest, 'dispatcherId' | 'teamId' | 'sharedWorkspace'>,
+    input: Omit<SpawnTeamMateRequest, 'teamId' | 'sharedWorkspace'>,
   ) {
-    return this.teammates.spawn({
-      dispatcherId: this.id,
-      ...input,
-    });
+    this.assertNotShuttingDown();
+    return this.teammates.spawn(input);
   }
 
-  sendTeamMate(input: Omit<SendTeamMateInput, 'dispatcherId' | 'teamId'>) {
-    return this.teammates.send({
-      dispatcherId: this.id,
-      ...input,
-    });
+  sendTeamMate(input: Omit<SendTeamMateInput, 'teamId'>) {
+    this.assertNotShuttingDown();
+    return this.teammates.send(input);
   }
 
-  closeTeamMate(input: Omit<CloseTeamMateInput, 'dispatcherId' | 'teamId'>) {
-    return this.teammates.close({
-      dispatcherId: this.id,
-      ...input,
-    });
+  closeTeamMate(input: Omit<CloseTeamMateInput, 'teamId'>) {
+    return this.teammates.close(input);
   }
 
   listTeamMates(): Promise<TeamMateRuntimeStatus[]> {
-    return this.teammates.list(this.id);
+    return this.teammates.list();
   }
 
   getTeamMateStatus(name: string) {
-    return this.teammates.status(this.id, name);
+    return this.teammates.status(name);
   }
 
-  getTeamMateHistory(input: Omit<TeamMateHistoryQuery, 'dispatcherId' | 'teamId'>) {
-    return this.teammates.history({
-      dispatcherId: this.id,
-      ...input,
-    });
+  getTeamMateHistory(input: Omit<TeamMateHistoryQuery, 'teamId'>) {
+    return this.teammates.history(input);
   }
 
   getTeamMateLast(name: string, turns?: number) {
-    return this.teammates.last(this.id, name, turns);
+    return this.teammates.last(name, turns);
   }
 
   getTeamMateCapabilities() {
@@ -178,27 +263,28 @@ export class DispatcherService implements TeamChannelContext {
 
   /** The single-entity team service for a team id (admin `team_leader` target). */
   team(teamId: string) {
-    return this.teams.get(this.id, teamId);
+    return this.teams.get(teamId);
   }
 
-  createTeam(input: Omit<TeamCreateInput, 'dispatcherId'>) {
-    return this.teams.create({ dispatcherId: this.id, ...input });
+  createTeam(input: TeamCreateInput) {
+    this.assertNotShuttingDown();
+    return this.teams.create(input);
   }
 
   listTeams() {
-    return this.teams.list(this.id);
+    return this.teams.list();
   }
 
   async getTeamStatus(teamId: string) {
-    return (await this.teams.get(this.id, teamId)).status();
+    return (await this.teams.get(teamId)).status();
   }
 
-  getTeamHistory(input: Omit<TeamHistoryQuery, 'dispatcherId'>) {
-    return this.teams.history({ dispatcherId: this.id, ...input });
+  getTeamHistory(input: TeamHistoryQuery) {
+    return this.teams.history(input);
   }
 
-  async dissolveTeam(input: Omit<TeamDissolveInput, 'dispatcherId'>) {
-    return (await this.teams.get(this.id, input.teamId)).dissolve(input);
+  async dissolveTeam(input: TeamDissolveInput) {
+    return (await this.teams.get(input.teamId)).dissolve(input);
   }
 
   async bindTeamChannel(input: {
@@ -206,7 +292,7 @@ export class DispatcherService implements TeamChannelContext {
     channelId?: string;
     meta: Record<string, unknown>;
   }) {
-    const team = await this.teams.get(this.id, input.teamId);
+    const team = await this.teams.get(input.teamId);
     return team.bindChannel(this, {
       ...(input.channelId !== undefined ? { channelId: input.channelId } : {}),
       meta: input.meta,
@@ -223,7 +309,6 @@ export class DispatcherService implements TeamChannelContext {
       channelId,
     );
     return this.teams.transferChannelBack({
-      dispatcherId: this.id,
       channelId,
       targetKey: target.target_key,
     });
@@ -238,12 +323,11 @@ export class DispatcherService implements TeamChannelContext {
     const target = envelope.target;
     if (target.bindable) {
       const binding = await this.teams.resolveChannel({
-        dispatcherId: this.id,
         channelId,
         targetKey: target.target_key,
       });
       if (binding !== null) {
-        const team = await this.teams.get(this.id, binding.team_name);
+        const team = await this.teams.get(binding.team_name);
         const result = await team.deliverToLeader(input);
         if (result.status === 'submitted') await hooks?.onAccepted?.(input);
         return result;
@@ -265,9 +349,9 @@ export class DispatcherService implements TeamChannelContext {
     producer: TeamMateIdentity,
   ): Promise<CompletionInitiator | null> {
     if (producer.role === 'team_member' && producer.team_id !== null) {
-      const team = await this.teams.get(this.id, producer.team_id).catch(() => null);
+      const team = await this.teams.get(producer.team_id).catch(() => null);
       if (team === null) return this.dispatcherInitiator();
-      const leader = this.teammates.get(this.id, team.leaderName);
+      const leader = this.teammates.get(team.leaderName);
       return leader ?? this.dispatcherInitiator();
     }
     return this.dispatcherInitiator();
@@ -292,7 +376,7 @@ export class DispatcherService implements TeamChannelContext {
     leaderName: string;
     targetKey: string;
   }): Promise<{ allowed: boolean; channelId: string | null }> {
-    const team = await this.teams.get(this.id, input.teamId).catch(() => null);
+    const team = await this.teams.get(input.teamId).catch(() => null);
     const channelId =
       team === null
         ? null

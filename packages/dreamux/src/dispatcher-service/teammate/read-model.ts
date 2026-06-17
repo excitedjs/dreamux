@@ -16,45 +16,33 @@ import {
 } from './types.js';
 
 export interface TeammateReadModelOptions {
+  dispatcherId: string;
   identities: TeamMateIdentityStore;
   turnsStore: TeamMateTurnsStore;
-  runtimeFor: (dispatcherId: string, name: string) => AgentRuntime | null;
+  runtimeFor: (name: string) => AgentRuntime | null;
 }
 
 export class TeammateReadModel {
   constructor(private readonly opts: TeammateReadModelOptions) {}
 
-  async list(
-    dispatcherId: string,
-    teamId?: string,
-  ): Promise<TeamMateRuntimeStatus[]> {
-    return (await this.rosterList(dispatcherId, teamId)).map((identity) =>
-      this.toStatus(
-        identity,
-        this.opts.runtimeFor(dispatcherId, identity.name),
-      ),
+  private get dispatcherId(): string {
+    return this.opts.dispatcherId;
+  }
+
+  async list(teamId?: string): Promise<TeamMateRuntimeStatus[]> {
+    return (await this.rosterList(teamId)).map((identity) =>
+      this.toStatus(identity, this.opts.runtimeFor(identity.name)),
     );
   }
 
-  async status(
-    dispatcherId: string,
-    name: string,
-    teamId?: string,
-  ): Promise<TeamMateRuntimeStatus> {
-    const identity = await this.mustIdentity(
-      dispatcherId,
-      validateTeamMateName(name),
-      teamId,
-    );
-    return this.toStatus(
-      identity,
-      this.opts.runtimeFor(dispatcherId, identity.name),
-    );
+  async status(name: string, teamId?: string): Promise<TeamMateRuntimeStatus> {
+    const identity = await this.mustIdentity(validateTeamMateName(name), teamId);
+    return this.toStatus(identity, this.opts.runtimeFor(identity.name));
   }
 
   async history(input: TeamMateHistoryQuery): Promise<TeamMateHistoryResult> {
     const rows: TeamMateRecordRow[] = [];
-    for (const identity of await this.rosterList(input.dispatcherId, input.teamId)) {
+    for (const identity of await this.rosterList(input.teamId)) {
       const row = this.toRecordRow(identity);
       if (matchesRecordQuery(row, input)) {
         rows.push(row);
@@ -76,21 +64,13 @@ export class TeammateReadModel {
   }
 
   async last(
-    dispatcherId: string,
     name: string,
     turns?: number,
     teamId?: string,
   ): Promise<TeamMateLastResult> {
     const requestedTurns = validateLastTurns(turns);
-    const identity = await this.mustIdentity(
-      dispatcherId,
-      validateTeamMateName(name),
-      teamId,
-    );
-    const teammate = this.toStatus(
-      identity,
-      this.opts.runtimeFor(dispatcherId, identity.name),
-    );
+    const identity = await this.mustIdentity(validateTeamMateName(name), teamId);
+    const teammate = this.toStatus(identity, this.opts.runtimeFor(identity.name));
     let nextSeq = 0;
     const firstSeq = new Map<string, number>();
     const seqOf = (turnId: string): number => {
@@ -168,24 +148,23 @@ export class TeammateReadModel {
   }
 
   async mustIdentity(
-    dispatcherId: string,
     name: string,
     teamId?: string,
   ): Promise<TeamMateIdentity> {
-    const identity = await this.opts.identities.get(dispatcherId, name, teamId);
+    const identity = await this.opts.identities.get(
+      this.dispatcherId,
+      name,
+      teamId,
+    );
     if (identity === null) {
       throw new Error(`TeamMate ${JSON.stringify(name)} does not exist`);
     }
-    this.assertInRoster(identity, dispatcherId, teamId);
+    this.assertInRoster(identity, teamId);
     return identity;
   }
 
-  assertInRoster(
-    identity: TeamMateIdentity,
-    dispatcherId: string,
-    teamId?: string,
-  ): void {
-    if (this.identityInRoster(identity, dispatcherId, teamId)) return;
+  assertInRoster(identity: TeamMateIdentity, teamId?: string): void {
+    if (this.identityInRoster(identity, teamId)) return;
     throw new Error(`TeamMate ${JSON.stringify(identity.name)} does not exist`);
   }
 
@@ -215,22 +194,18 @@ export class TeammateReadModel {
     };
   }
 
-  private async rosterList(
-    dispatcherId: string,
-    teamId?: string,
-  ): Promise<TeamMateIdentity[]> {
+  private async rosterList(teamId?: string): Promise<TeamMateIdentity[]> {
     // Physical scoping is the roster (issue #233): a dispatcher-scope list reads
     // only `teammate/<name>/`, a team-scope list only that team's leader +
     // members. No post-filter is needed.
-    return this.opts.identities.list(dispatcherId, teamId);
+    return this.opts.identities.list(this.dispatcherId, teamId);
   }
 
   private identityInRoster(
     identity: TeamMateIdentity,
-    dispatcherId: string,
     teamId?: string,
   ): boolean {
-    if (identity.dispatcher_id !== dispatcherId) return false;
+    if (identity.dispatcher_id !== this.dispatcherId) return false;
     if (teamId === undefined) {
       return (
         identity.team_id === null &&
@@ -244,7 +219,7 @@ export class TeammateReadModel {
   }
 
   private toRecordRow(identity: TeamMateIdentity): TeamMateRecordRow {
-    const runtime = this.opts.runtimeFor(identity.dispatcher_id, identity.name);
+    const runtime = this.opts.runtimeFor(identity.name);
     return {
       name: identity.name,
       turn_count: identity.turn_count,
