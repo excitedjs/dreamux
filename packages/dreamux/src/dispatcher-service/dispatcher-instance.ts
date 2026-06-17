@@ -166,6 +166,7 @@ export class DispatcherService implements TeamChannelContext {
           : [],
       router: this.router,
       initiatorFor: (producer) => this.initiatorFor(producer),
+      isShuttingDown: () => this.shuttingDown,
       log: opts.log,
     });
 
@@ -362,12 +363,10 @@ export class DispatcherService implements TeamChannelContext {
   spawnTeamMate(
     input: Omit<SpawnTeamMateRequest, 'teamId' | 'sharedWorkspace'>,
   ) {
-    this.assertNotShuttingDown();
     return this.teammates.spawn(input);
   }
 
   sendTeamMate(input: Omit<SendTeamMateInput, 'teamId'>) {
-    this.assertNotShuttingDown();
     return this.teammates.send(input);
   }
 
@@ -451,6 +450,7 @@ export class DispatcherService implements TeamChannelContext {
     envelope: ChannelInboundEnvelope,
     hooks?: InboundDeliveryHooks,
   ): Promise<AgentRuntimeTurnResult> {
+    this.assertNotShuttingDown();
     const target = envelope.target;
     if (target.bindable) {
       const binding = await this.teams.resolveChannel({

@@ -73,6 +73,10 @@ export class TeamCollection {
   private readonly store = new TeamStore();
   private readonly worktrees: WorktreeManager;
   private readonly bindings: ChannelBindingStore;
+  /** In-flight `create` calls keyed by team id, so concurrent same-id creates
+   * share one result instead of double-writing the record / double-spawning the
+   * leader (issue #233; `create` is otherwise a check-then-write). */
+  private readonly creating = new Map<string, Promise<TeamCreateResult>>();
 
   constructor(private readonly opts: TeamCollectionOptions) {
     this.dispatcherId = opts.dispatcherId;
@@ -81,6 +85,17 @@ export class TeamCollection {
   }
 
   async create(input: TeamCreateInput): Promise<TeamCreateResult> {
+    const teamId = validateTeamId(input.name);
+    const inFlight = this.creating.get(teamId);
+    if (inFlight !== undefined) return inFlight;
+    const promise = this.doCreate(input).finally(() => {
+      this.creating.delete(teamId);
+    });
+    this.creating.set(teamId, promise);
+    return promise;
+  }
+
+  private async doCreate(input: TeamCreateInput): Promise<TeamCreateResult> {
     requireLifecycleText(input.intent, 'Team create intent');
     const teamId = validateTeamId(input.name);
     const existing = await this.store.get(this.dispatcherId, teamId);

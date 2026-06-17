@@ -59,10 +59,12 @@ export interface TeamMateTurnSettledInput {
 }
 
 /**
- * Per-name append-only TeamMate turns archive (issue #199 Slice 3). The only
- * JSONL store: one file per concrete teammate name at
- * `teammate/turns/<name>.jsonl`. Capture is forward-only and best-effort — a
- * write failure is logged and swallowed so capturing a turn fact never fails a
+ * Per-entity append-only TeamMate turns archive (issue #199 Slice 3, #233
+ * symmetric layout). The only JSONL store: one `turn.jsonl` inside each agent
+ * entity's own directory, whose path is derived from `role` + `team_id` by the
+ * entity-directory scheme in `platform/paths.ts` — never a flat
+ * dispatcher-global file. Capture is forward-only and best-effort — a write
+ * failure is logged and swallowed so capturing a turn fact never fails a
  * lifecycle verb. Reads stream the file line by line so a long archive (a
  * settled row can carry up to 160k chars of assistant text) is never buffered
  * whole.

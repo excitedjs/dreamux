@@ -72,6 +72,13 @@ export interface TeammateCollectionOptions {
   initiatorFor?: (
     producer: TeamMateIdentity,
   ) => Promise<CompletionInitiator | null>;
+  /**
+   * Reject any new turn while the dispatcher is shutting down (issue #233). The
+   * single gate for every lazy-start path — `spawn`/`send` from a dispatcher
+   * teammate or via the team layer — so a shutdown-window turn cannot start a
+   * runtime the `stopAll` sweep already passed.
+   */
+  isShuttingDown?: () => boolean;
   suffixGenerator?: SuffixGenerator;
   log: DreamuxLogger;
 }
@@ -152,6 +159,8 @@ export class TeammateCollection {
   }
 
   async spawn(input: SpawnTeamMateRequest): Promise<TeamMateSpawnResult> {
+    if (this.opts.isShuttingDown?.())
+      throw new Error(`dispatcher '${this.dispatcherId}' is shutting down`);
     requireLifecycleText(input.name, 'TeamMate spawn name');
     requireLifecycleText(input.intent, 'TeamMate spawn intent');
     if (input.teamId !== undefined && input.sharedWorkspace === undefined) {
@@ -201,6 +210,8 @@ export class TeammateCollection {
   }
 
   async send(input: SendTeamMateInput): Promise<TeamMateSendResult> {
+    if (this.opts.isShuttingDown?.())
+      throw new Error(`dispatcher '${this.dispatcherId}' is shutting down`);
     const entity = await this.mustEntity(input.name, input.teamId);
     const result = await entity.send({
       prompt: input.prompt,
