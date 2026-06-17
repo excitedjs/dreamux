@@ -2,7 +2,7 @@
 
 - **Status:** Accepted (working design) — Epic #233 discussion (2026-06-17); the intended shape, with exact file/store/name details tracking the implementation rather than frozen here
 - **Date:** 2026-06-16 (delivery + reliability model finalized 2026-06-17)
-- **Affects:** `dispatcher-service/` entire module, `platform/paths.ts`, `admin/methods.ts`, state directory layout
+- **Affects:** `dispatcher-service/` entire module (renamed to `service/`), `platform/paths.ts`, `admin/methods.ts`, state directory layout
 - **PR / Issue:** #233
 - **Related:** issue #209 follow-up; refines `dispatcher-local-aggregate.md`
 
@@ -215,13 +215,13 @@ classDiagram
     Server --> DispatcherCollection
     DispatcherCollection --> DispatcherService
     DispatcherService o-- TeammateService : has an agent
-    DispatcherService o-- TeammateCollection : owns teammates
+    DispatcherService o-- TeammateCollection : owns dispatcher-scope teammates
     DispatcherService o-- TeamCollection : owns teams
     DispatcherService o-- ChannelBindingStore
-    TeamCollection o-- TeamService
+    TeamCollection o-- TeamService : get-or-rebuild (cached by team_id)
     TeamCollection o-- TeamStore
     TeamService o-- TeammateService : has a leader
-    TeamService ..> TeammateCollection : members (team-scoped, shared)
+    TeamService o-- TeammateCollection : owns members (team_id scope)
     TeammateCollection o-- TeammateService
     TeammateCollection o-- IdentityStore
     TeammateCollection o-- TurnsStore
@@ -290,18 +290,145 @@ Server (process-level · composition root)
 ```
 
 ```
-TeamCollection (per-dispatcher)
-  └── TeamService (per-team)
-        ├── leader: TeammateService   # team leader
-        └── members ── via the dispatcher's single shared TeammateCollection, scoped by team_id
+TeamCollection (per-dispatcher · get-or-rebuild factory, cached by team_id)
+  └── TeamService (per-team · cached when live, rebuilt from disk otherwise)
+        ├── teammates: TeammateCollection   # the team OWNS its members' collection (team_id scope)
+        │     └── leader + members: TeammateService (live runtime cache)
+        └── record: TeamRecord              # authoritative in-memory; all mutations route through here
 ```
 
-**One shared `TeammateCollection` per dispatcher.** The two hierarchies above are
-conceptual. In the implementation there is a *single* `TeammateCollection` per
-dispatcher; a `TeamService` reaches its leader and members through that shared
-collection scoped by `team_id`, and the read model's directory-scope predicate
-enforces the boundary. A per-team collection would only re-wrap the same stores —
-symmetry is a guideline, not a goal, so the implementation skips that facade.
+**One `TeammateCollection` per scope — per team, plus one for the dispatcher.**
+Each `TeammateCollection` is constructed with a fixed `teamScope: string | null`
+(`null` = the dispatcher's own teammates; a `team_id` = that team's leader +
+members). The scope is baked in, not threaded per call: `spawn` / `send` / `list`
+/ `status` / `history` / `last` / `close` drop their `teamId` parameter and the
+collection supplies its own scope to the (unchanged) stores and read model. This
+is the intended encapsulation — a team *owns* its members, dissolve drops the
+whole collection — and it is what the original design specified; a single shared
+collection discriminated only by a `team_id` argument was an implementation
+deviation and is rejected.
+
+**Ownership / caching — the factory pattern (load-bearing).** `TeamService`
+**owns** its per-team `TeammateCollection`; the collection is constructed by, and
+held on, the `TeamService`. `TeamService` itself is obtained through a
+*get-or-rebuild factory*: `TeamCollection.get(team_id)` returns the cached live
+`TeamService` if one exists, else rebuilds it from the persisted `TeamRecord`
+(its `TeammateCollection` then rebuilds member/leader entities from disk on access,
+each runtime lazily resumed from `session_id` on the next `send` / channel inbound).
+This is the **same factory every other level already uses** — `Dispatchers.get`
+caches `DispatcherService`, `TeammateCollection.entityFor` caches `TeammateService`;
+the former fresh-per-`get` `TeamService` was the odd one out and is conformed to
+the pattern. It is safe because **the live in-memory cache and the host process
+share one lifetime**: every Agent Runtime is a child of the dreamux process tree,
+so a live runtime can never exist without its cache (host down ⇒ children dead),
+and after a restart the whole tree rebuilds lazily from disk — the existing
+revive-on-channel-inbound path for a team leader. This is the **universal
+entity-materialization rule**, with no special-cased level: a `DispatcherService`
+is rebuilt from its `status.json`, a `TeamService` from its team record, a
+`TeammateService` from its `identity.json` — every level is the same
+get-the-live-instance-or-rebuild-from-persisted-state factory, and the live cache
+at each level is purely a within-process performance/identity cache, never the
+source of truth.
+
+What fresh-per-`get` used to buy (a held record never goes stale after dissolve)
+is preserved by two invariants instead: (1) **every `TeamRecord` mutation routes
+through the cached `TeamService`**, so its in-memory record stays authoritative;
+(2) **`dissolve` evicts the team's cache entry** (after stopping its runtimes), so
+a later `get` rebuilds from disk and reads `status: closed`. The dispatcher's own
+(`teamScope: null`) collection is owned by `DispatcherService` the same way.
+
+**Shared per-dispatcher singletons stay shared.** Every `TeammateCollection`
+(dispatcher + per-team) is wired with the *same* per-dispatcher `CompletionRouter`,
+`WorktreeManager`, and `initiatorFor` resolver. `TeamCollection` forwards these
+into each `TeamService` it builds, which hands them to the team's collection. The
+stores
+(`IdentityStore` / `TurnsStore` / `TeammateReadModel`) are stateless path-derivers
+(no in-memory cross-team index), so each collection holds its own instances; the
+physical directory layout already partitions them by scope.
+
+**Names stay dispatcher-global; the router key is unchanged.** `allocateName`
+checks the candidate against `IdentityStore.listAllNames(dispatcherId)` — a blind
+on-disk scan across *all* scopes (dispatcher teammates, every team's leader +
+members) — regardless of which scope's collection allocates it. So
+`producerName` is unique across the whole dispatcher and the `CompletionRouter`
+key stays `producerName:turnId` with **no** `team_id` component. Team-local names
+(which would require a `team_id:producerName:turnId` key) are deliberately **not**
+introduced: no requirement asks for them, and adding scope to the router key is
+complexity the per-team split does not need. This is an explicit decision, not an
+oversight — see the delivery section's dispatcher-global-name invariant.
+
+**Delivery topology stays in one place.** `initiatorFor(producer)` is resolved by
+`DispatcherService` (a `team_member` → its team's leader `TeammateService`; a
+dispatcher teammate or a leader → the dispatcher agent) and injected into every
+collection. The per-team collections do not re-derive topology; they call the
+single injected resolver, so the `CompletionRouter` remains the only topology-free
+delivery chokepoint.
+
+### Module / Directory Layout (`src/service/`)
+
+The top-level `src/dispatcher-service/` directory is **deleted**; the whole module
+moves under `src/service/`. Rule: **one service class per file or directory; a
+file holds at most one service class.** A class with helper functions gets a
+directory whose `index.ts` is the class and whose siblings are its helpers
+(`src/service/team-service/index.ts` = `TeamService`, helpers beside it). Shared
+helpers used by more than one service get their own neutral directory. The
+existing `team/service.ts` (which holds *two* classes, `TeamCollection` +
+`TeamService`) is split.
+
+```
+src/service/
+  index.ts                       # package-internal barrel (Dispatchers, DispatcherService, TeamService, ChannelToolAuthorizationError)
+  dispatchers/
+    index.ts                     # Dispatchers (process-level collection + factory)
+  dispatcher-service/            # the per-dispatcher aggregate + its agent-side parts
+    index.ts                     # DispatcherService
+    agent.ts                     # createDispatcherAgent factory
+    base-prompt.ts
+    channel-sessions.ts          # ChannelSessions
+    channel-tool-auth.ts
+    mcp-descriptors.ts
+    runnable-channel.ts
+    workspace.ts                 # ensureDispatcherWorkspace
+    errors.ts                    # ChannelToolAuthorizationError
+  team-collection/
+    index.ts                     # TeamCollection
+    store.ts                     # TeamStore
+    types.ts
+    mcp-config.ts
+  team-service/
+    index.ts                     # TeamService (+ TeamChannelContext seam + view helpers)
+  teammate-collection/
+    index.ts                     # TeammateCollection
+    identity-store.ts            # IdentityStore   (stores the collection owns)
+    turns-store.ts               # TurnsStore
+    read-model.ts                # TeammateReadModel
+    name-allocator.ts
+    runtime-state.ts
+    agent-config.ts
+    mcp-config.ts
+    types.ts                     # teammate domain types (shared by service + read-model)
+  teammate-service/
+    index.ts                     # TeammateService
+    turn-recording.ts            # settle/turn capture helper
+  completion-router/
+    index.ts                     # CompletionRouter
+  worktree/                      # shared by team-collection + teammate-collection
+    manager.ts                   # WorktreeManager
+    paths.ts
+    workspaces.ts
+  channel-binding/
+    store.ts                     # ChannelBindingStore
+  legacy-state.ts                # shared legacy-state detection (fail-loud)
+```
+
+The names above (`dispatcher-service/`, `team-collection/`, …) follow the user's
+`team-service/index.ts` convention and can be renamed without affecting the
+design; only the one-class-per-file rule and the deletion of the top-level
+`dispatcher-service/` are load-bearing. Cross-cutting helpers (`worktree/`,
+`channel-binding/`, `legacy-state.ts`) live at the `service/` root because no
+single service owns them. The restructure is a **pure mechanical move** (`git mv`
++ import-path fixups + a `tsc` green gate), done as a separate commit *after* the
+per-team semantic change so the two diffs stay reviewable.
 
 ### Lifecycle Management
 
@@ -321,19 +448,23 @@ Admin socket methods and parameters can change freely — all consumers are with
 `LiveTeamMateRegistry` is removed; there is no process-wide flat index of live
 runtimes. Global operations — `stopAll` (server shutdown) and `doctor` — are
 CLI- / server-lifecycle-level capabilities, **not** exposed on the MCP surface,
-so they are infrequent and need no O(1) index. They traverse the two trees on
-demand: `DispatcherService` stops its own `TeammateCollection`, then asks
-`TeamCollection` for all `TeamService`s and stops each team's
-`TeammateCollection` (members) and leader. Stop order is preserved: all teammate
-runtimes (direct + team members + leaders) before the dispatcher agent. A
-per-dispatcher flat live index was rejected — it would force threading the index
-down through every collection's create/close path, which on-demand traversal via
-`TeammateCollection.stopAll()` + `TeamCollection.allTeams()` avoids.
+so they are infrequent and need no O(1) index. They traverse the **live cache**
+on demand: `DispatcherService` stops its own (`teamScope: null`)
+`TeammateCollection`, then asks `TeamCollection` to stop each *currently
+materialized* `TeamService` — each stops its own `TeammateCollection` (members)
+and leader. Only cached `TeamService`s are swept: a team never accessed this
+process run holds no live runtime (live cache ≡ process lifetime), so `stopAll`
+must **not** read the durable store to rebuild-and-stop, and must not lazily start
+a not-yet-running runtime. Stop order is preserved: all teammate runtimes (direct
++ team members + leaders) before the dispatcher agent. A per-dispatcher flat live
+index was rejected — it would force threading the index down through every
+collection's create/close path, which the cache traversal
+(`TeammateCollection.stopAll()` + `TeamCollection.stopAll()` over cached teams)
+avoids.
 
 Shutdown is best-effort and assumes no new `spawn`/`send` during teardown; a
 `shuttingDown` flag on `DispatcherService` that rejects new lifecycle calls
-closes the traversal-window race. `allTeams()` reads the durable team store, and
-`stopAll` must not lazily start a not-yet-running runtime.
+closes the traversal-window race.
 
 ## Consequences
 

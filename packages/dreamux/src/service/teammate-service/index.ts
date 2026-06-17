@@ -21,16 +21,16 @@ import {
 } from '../../agent-runtime/index.js';
 import type { ResolvedAgentConfig } from '../../config/config.js';
 import { validateDispatcherId } from '../../state/dispatcher-id.js';
-import { resolveAgent } from './agent-config.js';
-import type { TeamMateIdentityStore } from './identity-store.js';
-import type { TeammateReadModel } from './read-model.js';
-import { TeamMateRuntimeStateStore } from './runtime-state.js';
+import { resolveAgent } from '../teammate-collection/agent-config.js';
+import type { TeamMateIdentityStore } from '../teammate-collection/identity-store.js';
+import type { TeammateReadModel } from '../teammate-collection/read-model.js';
+import { TeamMateRuntimeStateStore } from '../teammate-collection/runtime-state.js';
 import { recordSettledTurn, recordSubmittedTurn, toTurnResult } from './turn-recording.js';
-import type { TeamMateTurnsStore } from './turns-store.js';
+import type { TeamMateTurnsStore } from '../teammate-collection/turns-store.js';
 import {
   reprepareDeletedManagedWorktree,
-} from './workspaces.js';
-import type { WorktreeManager } from './worktree-manager.js';
+} from '../worktree/workspaces.js';
+import type { WorktreeManager } from '../worktree/manager.js';
 import {
   requireLifecycleText,
   type CloseTeamMateInput,
@@ -41,7 +41,7 @@ import {
   type TeamMateSendResult,
   type TeamMateTurnOrigin,
   type TeamMateTurnResult,
-} from './types.js';
+} from '../teammate-collection/types.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 

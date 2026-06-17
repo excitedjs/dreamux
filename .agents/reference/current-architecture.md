@@ -17,9 +17,9 @@ there is no separate `DispatcherRuntimeService`.
 Key source:
 
 - `/packages/dreamux/src/server.ts`
-- `/packages/dreamux/src/dispatcher-service/service.ts`
-- `/packages/dreamux/src/dispatcher-service/dispatcher-instance.ts`
-- `/packages/dreamux/src/dispatcher-service/dispatcher/agent.ts`
+- `/packages/dreamux/src/service/dispatchers/index.ts`
+- `/packages/dreamux/src/service/dispatcher-service/index.ts`
+- `/packages/dreamux/src/service/dispatcher-service/agent.ts`
 
 ## Configuration
 
@@ -90,8 +90,8 @@ with multiple channel providers can route and egress by `channel_id`; with only
 
 Key source:
 
-- `/packages/dreamux/src/dispatcher-service/dispatcher/service.ts`
-- `/packages/dreamux/src/dispatcher-service/dispatcher/mcp-descriptors.ts`
+- `/packages/dreamux/src/service/dispatcher-service/index.ts`
+- `/packages/dreamux/src/service/dispatcher-service/mcp-descriptors.ts`
 - `/packages/dreamux/src/mcp/channel-mcp.ts`
 - `/packages/dreamux/src/mcp/team-mcp.ts`
 - `/packages/dreamux/src/mcp/teammate-mcp.ts`
@@ -133,9 +133,9 @@ a Feishu group chat.
 
 Key source:
 
-- `/packages/dreamux/src/dispatcher-service/teammate/`
-- `/packages/dreamux/src/dispatcher-service/team/`
-- `/packages/dreamux/src/dispatcher-service/channel-binding/`
+- `/packages/dreamux/src/service/teammate-collection/`
+- `/packages/dreamux/src/service/team-collection/`
+- `/packages/dreamux/src/service/channel-binding/`
 - `/packages/dreamux/src/mcp/team-mcp.ts`
 
 ## State, Cache, Run Files, And Logs

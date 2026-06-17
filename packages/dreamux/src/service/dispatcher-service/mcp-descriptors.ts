@@ -6,8 +6,8 @@ import type {
 
 import { dreamuxBinPath } from '../../platform/package-bin.js';
 import { adminSocketPath as defaultAdminSocketPath } from '../../platform/paths.js';
-import { teamMcpServerDescriptor } from '../team/mcp-config.js';
-import { teammateMcpServerDescriptor } from '../teammate/mcp-config.js';
+import { teamMcpServerDescriptor } from '../team-collection/mcp-config.js';
+import { teammateMcpServerDescriptor } from '../teammate-collection/mcp-config.js';
 
 export interface ChannelMcpCallerScope {
   callerKind?: 'dispatcher' | 'team_leader';

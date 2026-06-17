@@ -3,16 +3,16 @@ import type { Server } from '../server.js';
 import type {
   ChannelToolCaller,
   DispatcherService,
-} from '../dispatcher-service/dispatcher-instance.js';
-import type { TeamService } from '../dispatcher-service/team/service.js';
+} from '../service/dispatcher-service/index.js';
+import type { TeamService } from '../service/team-service/index.js';
 import { AdminError } from './protocol.js';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
-import { ChannelToolAuthorizationError } from '../dispatcher-service/errors.js';
+import { ChannelToolAuthorizationError } from '../service/dispatcher-service/errors.js';
 import {
   type TeamMateHistoryQuery,
   type TeamMateIdentityStatus,
   type TeamMateWorktreeRequest,
-} from '../dispatcher-service/teammate/types.js';
+} from '../service/teammate-collection/types.js';
 
 export type AdminHandler = (
   server: Server,

@@ -11,48 +11,49 @@ import type {
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
 
-import type { AgentRuntimeProviderCatalog } from '../agent-runtime/index.js';
-import type { ChannelProviderCatalog } from '../channel/catalog.js';
-import type { DreamuxConfig } from '../config/config.js';
-import type { RestartIntentConsumer } from '../daemon/restart-intent.js';
-import { adminSocketPath as defaultAdminSocketPath } from '../platform/paths.js';
+import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
+import type { ChannelProviderCatalog } from '../../channel/catalog.js';
+import type { DreamuxConfig } from '../../config/config.js';
+import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
+import { adminSocketPath as defaultAdminSocketPath } from '../../platform/paths.js';
 import type {
   DispatcherRow,
   DispatcherStatus,
   DispatcherStore,
-} from '../state/dispatcher-store.js';
-import { createDispatcherAgent } from './dispatcher/agent.js';
-import { ChannelSessions } from './dispatcher/channel-sessions.js';
-import { authorizeTeamLeaderChannelEgress } from './dispatcher/channel-tool-auth.js';
-import type { ChannelMcpCallerScope } from './dispatcher/mcp-descriptors.js';
-import { assertRunnableChannelShape } from './dispatcher/runnable-channel.js';
-import { ensureDispatcherWorkspace } from './dispatcher-workspace.js';
+} from '../../state/dispatcher-store.js';
+import { createDispatcherAgent } from './agent.js';
+import { ChannelSessions } from './channel-sessions.js';
+import { authorizeTeamLeaderChannelEgress } from './channel-tool-auth.js';
+import type { ChannelMcpCallerScope } from './mcp-descriptors.js';
+import { assertRunnableChannelShape } from './runnable-channel.js';
+import { ensureDispatcherWorkspace } from './workspace.js';
 import { ChannelToolAuthorizationError } from './errors.js';
 import {
   CompletionRouter,
   type CompletionInitiator,
-} from './teammate/completion-router.js';
-import { teammateMcpServerDescriptor } from './teammate/mcp-config.js';
+} from '../completion-router/index.js';
+import { teammateMcpServerDescriptor } from '../teammate-collection/mcp-config.js';
 import {
   type SpawnTeamMateRequest,
   TeammateCollection,
-} from './teammate/service.js';
-import type { TeammateService } from './teammate/teammate-service.js';
-import { WorktreeManager } from './teammate/worktree-manager.js';
-import { ChannelBindingStore } from './channel-binding/store.js';
+} from '../teammate-collection/index.js';
+import type { TeammateService } from '../teammate-service/index.js';
+import { WorktreeManager } from '../worktree/manager.js';
+import { ChannelBindingStore } from '../channel-binding/store.js';
 import {
   type CloseTeamMateInput,
   type SendTeamMateInput,
   type TeamMateHistoryQuery,
   type TeamMateIdentity,
   type TeamMateRuntimeStatus,
-} from './teammate/types.js';
-import { type TeamChannelContext, TeamCollection } from './team/service.js';
+} from '../teammate-collection/types.js';
+import { type TeamChannelContext } from '../team-service/index.js';
+import { TeamCollection } from '../team-collection/index.js';
 import type {
   TeamCreateInput,
   TeamDissolveInput,
   TeamHistoryQuery,
-} from './team/types.js';
+} from '../team-collection/types.js';
 
 export interface DispatcherServiceOptions {
   id: string;
@@ -143,27 +144,38 @@ export class DispatcherService implements TeamChannelContext {
       liveChannels: () => this.channels.live(),
     });
 
+    // The team_leader MCP descriptor builder. Forwarded into every per-team
+    // collection (where the leader actually lives) AND the dispatcher collection;
+    // a dispatcher-owned teammate is never a leader, so it is a no-op there
+    // (issue #233).
+    const mcpServersForTeamMate = (input: {
+      dispatcherId: string;
+      name: string;
+      identity: TeamMateIdentity;
+    }): readonly AgentRuntimeMcpServer[] =>
+      input.identity.role === 'team_leader'
+        ? [
+            teammateMcpServerDescriptor({
+              dispatcherId: input.dispatcherId,
+              callerKind: 'team_leader',
+              teamId: input.identity.team_id ?? '',
+              adminSocketPath: adminSocket,
+            }),
+            ...this.channelMcpServerDescriptorsForCaller({
+              callerKind: 'team_leader',
+              team_id: input.identity.team_id ?? '',
+              leader_name: input.identity.name,
+            }),
+          ]
+        : [];
+
     this.teammates = new TeammateCollection({
       dispatcherId: opts.id,
+      teamScope: null,
       config: opts.config,
       agentRuntimeProviders: opts.agentRuntimeProviders,
       worktrees,
-      mcpServersForTeamMate: ({ dispatcherId, identity }) =>
-        identity.role === 'team_leader'
-          ? [
-              teammateMcpServerDescriptor({
-                dispatcherId,
-                callerKind: 'team_leader',
-                teamId: identity.team_id ?? '',
-                adminSocketPath: adminSocket,
-              }),
-              ...this.channelMcpServerDescriptorsForCaller({
-                callerKind: 'team_leader',
-                team_id: identity.team_id ?? '',
-                leader_name: identity.name,
-              }),
-            ]
-          : [],
+      mcpServersForTeamMate,
       router: this.router,
       initiatorFor: (producer) => this.initiatorFor(producer),
       isShuttingDown: () => this.shuttingDown,
@@ -172,9 +184,15 @@ export class DispatcherService implements TeamChannelContext {
 
     this.teams = new TeamCollection({
       dispatcherId: opts.id,
-      teammates: this.teammates,
+      config: opts.config,
+      agentRuntimeProviders: opts.agentRuntimeProviders,
       worktrees,
       bindings,
+      router: this.router,
+      initiatorFor: (producer) => this.initiatorFor(producer),
+      isShuttingDown: () => this.shuttingDown,
+      mcpServersForTeamMate,
+      log: opts.log,
     });
   }
 
@@ -313,7 +331,11 @@ export class DispatcherService implements TeamChannelContext {
    */
   async shutdown(): Promise<void> {
     this.shuttingDown = true;
+    // Members now live in per-team collections, so the dispatcher-scope `stopAll`
+    // alone would miss them — sweep both (issue #233). Each team's `stopAll`
+    // stops its own members + leader; only materialized teams are swept.
     await this.teammates.stopAll();
+    await this.teams.stopAll();
     await this.stop();
   }
 
@@ -360,17 +382,15 @@ export class DispatcherService implements TeamChannelContext {
     return this.teammates.dispatcherWorkspace();
   }
 
-  spawnTeamMate(
-    input: Omit<SpawnTeamMateRequest, 'teamId' | 'sharedWorkspace'>,
-  ) {
+  spawnTeamMate(input: Omit<SpawnTeamMateRequest, 'sharedWorkspace'>) {
     return this.teammates.spawn(input);
   }
 
-  sendTeamMate(input: Omit<SendTeamMateInput, 'teamId'>) {
+  sendTeamMate(input: SendTeamMateInput) {
     return this.teammates.send(input);
   }
 
-  closeTeamMate(input: Omit<CloseTeamMateInput, 'teamId'>) {
+  closeTeamMate(input: CloseTeamMateInput) {
     return this.teammates.close(input);
   }
 

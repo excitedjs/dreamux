@@ -112,7 +112,6 @@ export interface TeamMateRuntimeStatus {
 export type TeamMateTurnOrigin = "channel" | "dispatcher" | "team_leader";
 
 export interface SpawnTeamMateInput {
-  teamId?: string;
   name: string;
   prompt: string;
   agentRuntime?: string;
@@ -122,7 +121,6 @@ export interface SpawnTeamMateInput {
 }
 
 export interface CreateTeamLeaderInput {
-  teamId: string;
   name: string;
   prompt: string;
   agentRuntime: string;
@@ -165,14 +163,12 @@ export interface TeamMateWorktreeIdentity {
 }
 
 export interface SendTeamMateInput {
-  teamId?: string;
   name: string;
   prompt: string;
   intent?: string;
 }
 
 export interface CloseTeamMateInput {
-  teamId?: string;
   name: string;
   note: string;
 }

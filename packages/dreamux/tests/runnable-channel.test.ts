@@ -14,7 +14,7 @@ import type { DispatcherChannelConfig } from '../src/config/config.js';
 import {
   assertRunnableChannelShape,
   type ChannelProviderResolver,
-} from '../src/dispatcher-service/dispatcher/runnable-channel.js';
+} from '../src/service/dispatcher-service/runnable-channel.js';
 
 function channel(id: string, provider: string): DispatcherChannelConfig {
   return { id, provider, config: {} as never };

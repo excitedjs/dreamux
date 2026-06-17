@@ -1,11 +1,11 @@
 import type { AgentRuntimeTurnResult } from '@excitedjs/dreamux-types';
 
-import type { TeamMateRuntimeStateStore } from './runtime-state.js';
-import { turnsScopeOf, type TeamMateTurnsStore } from './turns-store.js';
+import type { TeamMateRuntimeStateStore } from '../teammate-collection/runtime-state.js';
+import { turnsScopeOf, type TeamMateTurnsStore } from '../teammate-collection/turns-store.js';
 import type {
   TeamMateTurnOrigin,
   TeamMateTurnResult,
-} from './types.js';
+} from '../teammate-collection/types.js';
 
 export async function recordSubmittedTurn(
   turnsStore: TeamMateTurnsStore,

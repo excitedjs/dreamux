@@ -1,15 +1,15 @@
 import type { DreamuxConfig } from '../../config/config.js';
-import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
-import type { TeamMateIdentityStore } from './identity-store.js';
+import { ensureDispatcherWorkspace } from '../dispatcher-service/workspace.js';
+import type { TeamMateIdentityStore } from '../teammate-collection/identity-store.js';
 import type {
   SpawnTeamMateRequest,
   TeamMateSharedWorkspace,
-} from './service.js';
-import type { TeamMateIdentity } from './types.js';
+} from '../teammate-collection/index.js';
+import type { TeamMateIdentity } from '../teammate-collection/types.js';
 import {
   type PreparedTeamMateWorkspace,
   WorktreeManager,
-} from './worktree-manager.js';
+} from './manager.js';
 
 export async function resolveSpawnWorkspace(input: {
   config: DreamuxConfig;

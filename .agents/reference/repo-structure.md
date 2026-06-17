@@ -45,7 +45,7 @@ verbatim through the move):
 | `src/cli/` | Entry-point CLIs: `dreamux.ts` (single public command tree), `server.ts` and `server-ctl.ts` as internal delegated modules |
 | `src/agent-runtime/` | Generic AgentRuntime provider catalog/loader, host create-context seams, and bundled skill source selection |
 | `src/config/` | Operator config loading, provider ref validation, and provider-owned raw config parsing |
-| `src/dispatcher-service/` | Dispatcher lifecycle, Team/TeamMate services, Team binding/routing, and runtime/channel session orchestration |
+| `src/service/` | Dispatcher lifecycle, Team/TeamMate collections + services, Team binding/routing, and runtime/channel session orchestration |
 | `src/mcp/` | Dreamux-owned MCP shims: Team, TeamMate, and provider-tool channel shim |
 | `src/platform/` | Centralized paths, logging, runtime sockets, and process helpers |
 | `src/server.ts` | Top-level `Server` class wiring everything together |

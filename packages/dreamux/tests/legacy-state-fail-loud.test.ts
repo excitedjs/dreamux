@@ -6,12 +6,12 @@ import { dirname, join } from 'node:path';
 import {
   detectLegacyDispatcherState,
   legacyDispatcherStateMessage,
-} from '../src/dispatcher-service/legacy-state.js';
-import { TeamMateIdentityStore } from '../src/dispatcher-service/teammate/identity-store.js';
+} from '../src/service/legacy-state.js';
+import { TeamMateIdentityStore } from '../src/service/teammate-collection/identity-store.js';
 import {
   ChannelBindingStore,
   detectLegacyChannelBindingStore,
-} from '../src/dispatcher-service/channel-binding/store.js';
+} from '../src/service/channel-binding/store.js';
 import {
   dispatcherAgentIdentityPath,
   dispatcherChannelBindingsPath,

@@ -13,12 +13,12 @@ import {
   managedWorkspaceDir,
   managedWorkspaceGitignorePath,
   managedWorktreePath,
-} from './worktree-paths.js';
+} from './paths.js';
 import type {
   TeamMateWorktreeCleanupState,
   TeamMateWorktreeIdentity,
   TeamMateWorktreeRequest,
-} from './types.js';
+} from '../teammate-collection/types.js';
 
 export interface PreparedTeamMateWorkspace {
   sourceCwd: string;

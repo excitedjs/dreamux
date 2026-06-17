@@ -1,6 +1,6 @@
 import type { ChannelTarget } from '@excitedjs/dreamux-types';
 
-import { ChannelToolAuthorizationError } from '../errors.js';
+import { ChannelToolAuthorizationError } from './errors.js';
 
 /**
  * The narrow seams the TeamLeader channel-egress gate needs (issue #233 Phase 5,

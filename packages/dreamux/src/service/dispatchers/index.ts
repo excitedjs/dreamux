@@ -1,17 +1,14 @@
-import type { AgentRuntimeProviderCatalog } from '../agent-runtime/index.js';
-import type { ChannelProviderCatalog } from '../channel/catalog.js';
-import type { DreamuxConfig } from '../config/config.js';
-import type { RestartIntentConsumer } from '../daemon/restart-intent.js';
-import type { DispatcherStore } from '../state/dispatcher-store.js';
+import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
+import type { ChannelProviderCatalog } from '../../channel/catalog.js';
+import type { DreamuxConfig } from '../../config/config.js';
+import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
+import type { DispatcherStore } from '../../state/dispatcher-store.js';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import {
   DispatcherService,
   type DispatcherServiceOptions,
   type DispatcherSummary,
-} from './dispatcher-instance.js';
-export { DispatcherService } from './dispatcher-instance.js';
-export { TeamService } from './team/service.js';
-export { ChannelToolAuthorizationError } from './errors.js';
+} from '../dispatcher-service/index.js';
 
 export interface DispatchersOptions {
   config: DreamuxConfig;

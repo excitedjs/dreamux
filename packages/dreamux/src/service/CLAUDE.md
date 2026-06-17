@@ -1,21 +1,25 @@
-# dispatcher-service/
+# service/
 
-The Dispatcher Service: the real entity (issue #135) that the server launches per
-dispatcher. It holds the dispatcher agent and orchestrates teammates. `server.ts`
-is wiring only — all per-dispatcher orchestration lives here.
+The Dispatcher Service module (issue #135 entity, issue #233 restructure): the
+real entity that the server launches per dispatcher. It holds the dispatcher
+agent and orchestrates teammates. `server.ts` is wiring only — all per-dispatcher
+orchestration lives here. One service class per file/dir; a class with helpers
+gets a directory whose `index.ts` is the class and siblings are its helpers.
+`service/index.ts` is the package-internal barrel (`Dispatchers`,
+`DispatcherService`, `TeamService`, `ChannelToolAuthorizationError`).
 
 ## What goes where
 
-- **`service.ts`** — the `Dispatchers` collection: a thin factory + cache over
+- **`dispatchers/index.ts`** — the `Dispatchers` collection: a thin factory + cache over
   per-dispatcher `DispatcherService` aggregates plus process-wide
   shutdown/restart hooks only. It owns **no** teammate/team/channel/router state —
   each `DispatcherService` builds and owns its own object graph (collections,
   stores, worktree manager, `CompletionRouter`, channel sessions, and the
   dispatcher agent). This collection only keys them by dispatcher id (Phase 3,
   #233).
-- **`dispatcher-instance.ts`** — one dispatcher-local aggregate
+- **`dispatcher-service/index.ts`** — one dispatcher-local aggregate
   (`DispatcherService`). It *has an* agent — a contained `TeammateService` built
-  by `dispatcher/agent.ts` (Phase 5, #233) — that owns the agent runtime
+  by `dispatcher-service/agent.ts` (Phase 5, #233) — that owns the agent runtime
   lifecycle (start/resume/stop). `DispatcherService` keeps the dispatcher-only
   concerns the removed `DispatcherRuntimeService` held: the live `ChannelSessions`,
   restart-notice injection (post-`agent.start()` hook), role MCP descriptor
@@ -25,14 +29,16 @@ is wiring only — all per-dispatcher orchestration lives here.
   member → its leader's `TeammateService`; a dispatcher-owned teammate / leader →
   the dispatcher's own `agent` `TeammateService`, the unified router path) and
   implements `TeamChannelContext` for the team layer's channel ops.
-- **`team/service.ts`** — `TeamCollection` (split out of the old `TeamManager`):
-  owns the team store, channel bindings, and worktrees; does `create` / `list` /
-  `history` / `resolveChannel`, and `get(id) → TeamService`. `TeamService` is the
-  single per-team entity (holds its own `TeamRecord`): `status` / `dissolve` /
-  `bindChannel` / `deliverToLeader` / `sharedWorkspace` plus the teammate forwards
-  the admin `team_leader` target calls. The entity is loaded fresh per `get` (no
-  caching) so a held record never goes stale after a dissolve.
-- **`dispatcher/`** — the dispatcher agent's parts (Phase 5, #233):
+- **`team-collection/index.ts`** — `TeamCollection` (split out of the old
+  `TeamManager`): owns the team store, channel bindings, and worktrees; does
+  `create` / `list` / `history` / `resolveChannel`, and `get(id) → TeamService`.
+  **`team-service/index.ts`** — `TeamService`, the single per-team entity (holds
+  its own `TeamRecord`): `status` / `dissolve` / `bindChannel` / `deliverToLeader`
+  / `sharedWorkspace` plus the teammate forwards the admin `team_leader` target
+  calls, the `TeamChannelContext` seam, and the shared team view helpers
+  (`teamView` / `activeGroupBindingFor`). The two classes were split into separate
+  files for the one-class-per-file rule (issue #233).
+- **`dispatcher-service/` (agent-side parts)** — the dispatcher agent's parts (Phase 5, #233):
   `agent.ts` builds the dispatcher's own agent as a contained `TeammateService`
   (runtime built from the dispatcher config, status/thread persisted to the
   authoritative `status.json` via `DispatcherStore`, a write-only debug
@@ -46,13 +52,16 @@ is wiring only — all per-dispatcher orchestration lives here.
   builder. Plus the dispatcher base prompt and the runnable-channel guard. There
   is **no** `DispatcherRuntimeService`; the at-most-once policy lives in the
   `CompletionRouter`, and `TeammateService.completionInput` is a thin forward.
-- **`teammate/`** — `TeammateCollection` (the collection: stores, worktrees,
-  `spawn` / `list` / `history` / `close`, factory paths, per-turn router
-  registration) + `TeammateService` (the single-entity: holds its identity,
-  lazily started runtime, `send` / `status` / `last` / `channelInput`, and
-  `completionInput` as a delivery target) + `CompletionRouter` (per-dispatcher
-  delivery service, keyed by `producerName:turnId`, terminal-cache at-most-once) +
-  identity-store + runtime-state + types + the teammate MCP descriptor.
+- **`teammate-collection/` + `teammate-service/` + `completion-router/`** —
+  `TeammateCollection` (the collection: stores, worktrees, `spawn` / `list` /
+  `history` / `close`, factory paths, per-turn router registration) +
+  `TeammateService` (the single-entity: holds its identity, lazily started
+  runtime, `send` / `status` / `last` / `channelInput`, and `completionInput` as a
+  delivery target) + `CompletionRouter` (per-dispatcher delivery service, keyed by
+  `producerName:turnId`, terminal-cache at-most-once) + identity-store +
+  runtime-state + types + the teammate MCP descriptor. The cross-cutting helpers
+  `worktree/`, `channel-binding/`, and `legacy-state.ts` live at the `service/`
+  root because no single service owns them.
   Agent-centric teammates: **no `task`** — a teammate is a named, resumable agent.
 
 ## Invariants (why it's shaped this way)
@@ -65,7 +74,7 @@ is wiring only — all per-dispatcher orchestration lives here.
   worker/runtime tree.
 - **cwd is supplied by the launcher.** The dispatcher agent's cwd is its
   validated workspace (`ensureDispatcherWorkspace(config, id)` in
-  `dispatcher-workspace.ts`): every dispatcher MUST declare an explicit `cwd`,
+  `dispatcher-service/workspace.ts`): every dispatcher MUST declare an explicit `cwd`,
   there is no state-dir fallback (issue #182 PR-4). A teammate's cwd is its
   resolved target (`identity.cwd`). Passed as the required `cwd` create-context
   field — never derived inside the runtime. Managed TeamMate/Team git worktrees

@@ -33,13 +33,13 @@ import { RestartIntentConsumer } from './daemon/restart-intent.js';
 import {
   Dispatchers,
   type DispatcherService,
-} from './dispatcher-service/service.js';
-import { ensureDispatcherWorkspace } from './dispatcher-service/dispatcher-workspace.js';
+} from './service/index.js';
+import { ensureDispatcherWorkspace } from './service/dispatcher-service/workspace.js';
 import {
   detectLegacyDispatcherState,
   legacyDispatcherStateMessage,
-} from './dispatcher-service/legacy-state.js';
-import { detectLegacyChannelBindingStore } from './dispatcher-service/channel-binding/store.js';
+} from './service/legacy-state.js';
+import { detectLegacyChannelBindingStore } from './service/channel-binding/store.js';
 
 export interface ServerOptions {
   /**

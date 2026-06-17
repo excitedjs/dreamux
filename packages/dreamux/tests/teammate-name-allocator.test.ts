@@ -7,8 +7,8 @@ import {
   buildConcreteName,
   generateNameSuffix,
   slugifyName,
-} from '../src/dispatcher-service/teammate/name-allocator.js';
-import { TEAMMATE_NAME_PATTERN } from '../src/dispatcher-service/teammate/types.js';
+} from '../src/service/teammate-collection/name-allocator.js';
+import { TEAMMATE_NAME_PATTERN } from '../src/service/teammate-collection/types.js';
 
 /**
  * Unit coverage for the concrete-name allocator (issue #188): role prefixes,

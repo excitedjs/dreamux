@@ -13,18 +13,18 @@ import {
   completionKey,
   type CompletionInitiator,
   type CompletionRouter,
-} from './completion-router.js';
+} from '../completion-router/index.js';
 import { TeamMateIdentityStore } from './identity-store.js';
 import { TeammateReadModel } from './read-model.js';
-import { TeammateService, type TeammateServiceDeps } from './teammate-service.js';
+import { TeammateService, type TeammateServiceDeps } from '../teammate-service/index.js';
 import { TeamMateTurnsStore } from './turns-store.js';
 import { allocateConcreteName, type SuffixGenerator } from './name-allocator.js';
 import {
   assertManagedWorktreeAvailable,
   dispatcherWorkspace,
   resolveSpawnWorkspace,
-} from './workspaces.js';
-import type { WorktreeManager } from './worktree-manager.js';
+} from '../worktree/workspaces.js';
+import type { WorktreeManager } from '../worktree/manager.js';
 import {
   requireLifecycleText,
   validateTeamMateName,
@@ -48,6 +48,16 @@ import {
 export interface TeammateCollectionOptions {
   /** The dispatcher this collection belongs to (issue #233 ownership sinking). */
   dispatcherId: string;
+  /**
+   * The fixed scope this collection serves (issue #233): `null` = the
+   * dispatcher's own teammates (`teammate/<name>/`); a `team_id` = that team's
+   * leader + members (`team/<team>/…`). One `TeammateCollection` per scope; the
+   * scope is baked in, not threaded per call — `spawn` / `send` / `list` /
+   * `status` / `history` / `last` / `close` supply this scope to the (unchanged)
+   * stores and read model. Leader operations (`allocateLeaderName` /
+   * `createTeamLeader` / `leader`) require a non-null scope.
+   */
+  teamScope: string | null;
   config: DreamuxConfig;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   /** The per-dispatcher worktree manager, shared with the team collection. */
@@ -95,17 +105,20 @@ export type SpawnTeamMateRequest = SpawnTeamMateInput & {
 };
 
 /**
- * The dispatcher's teammate collection (issue #233): one instance per dispatcher,
- * owned by `DispatcherService`. It owns the identity/turns stores, holds the
- * per-dispatcher worktree manager, and caches the per-name `TeammateService`
- * entity, and exposes `spawn` / `get` / `list` / `history` / `close` plus the
- * factory paths (`createTeamLeader`, `allocateLeaderName`). Per-entity domain
- * operations (`send` / `status` / `last` / completion delivery) live on
- * `TeammateService`. The dispatcher id is baked into the collection, not threaded
- * per call.
+ * A scoped teammate collection (issue #233): one instance per scope — one for the
+ * dispatcher's own teammates (`teamScope: null`), one per team
+ * (`teamScope: team_id`). The dispatcher-scope collection is owned by
+ * `DispatcherService`; each team-scope collection is owned by its `TeamService`.
+ * It owns the identity/turns stores, holds the per-dispatcher worktree manager,
+ * and caches the per-name `TeammateService` entity, and exposes `spawn` / `get` /
+ * `list` / `history` / `close` plus the factory paths (`createTeamLeader`,
+ * `allocateLeaderName`). Per-entity domain operations (`send` / `status` / `last`
+ * / completion delivery) live on `TeammateService`. Both the dispatcher id and
+ * the scope are baked into the collection, not threaded per call.
  */
 export class TeammateCollection {
   private readonly dispatcherId: string;
+  private readonly teamScope: string | null;
   private readonly identities: TeamMateIdentityStore;
   private readonly turnsStore: TeamMateTurnsStore;
   private readonly readModel: TeammateReadModel;
@@ -116,6 +129,7 @@ export class TeammateCollection {
 
   constructor(private readonly opts: TeammateCollectionOptions) {
     this.dispatcherId = opts.dispatcherId;
+    this.teamScope = opts.teamScope;
     this.worktrees = opts.worktrees;
     this.identities = new TeamMateIdentityStore({ warn: opts.log.warn.bind(opts.log) });
     this.turnsStore = new TeamMateTurnsStore({ warn: opts.log.warn.bind(opts.log) });
@@ -131,8 +145,20 @@ export class TeammateCollection {
     return this.turnsStore;
   }
 
-  async allocateLeaderName(teamId: string): Promise<string> {
+  async allocateLeaderName(): Promise<string> {
+    const teamId = this.mustTeamScope('allocateLeaderName');
     return this.allocateName('team_leader', teamId, teamId);
+  }
+
+  /** The team id this collection is scoped to, or throw for a dispatcher-scope
+   * collection (leader ops only exist within a team scope, issue #233). */
+  private mustTeamScope(op: string): string {
+    if (this.teamScope === null) {
+      throw new Error(
+        `${op} requires a team-scoped collection (this collection is dispatcher-scoped)`,
+      );
+    }
+    return this.teamScope;
   }
 
   /**
@@ -163,11 +189,14 @@ export class TeammateCollection {
       throw new Error(`dispatcher '${this.dispatcherId}' is shutting down`);
     requireLifecycleText(input.name, 'TeamMate spawn name');
     requireLifecycleText(input.intent, 'TeamMate spawn intent');
-    if (input.teamId !== undefined && input.sharedWorkspace === undefined) {
+    // The scope fixes the role: a team-scope collection spawns `team_member`s
+    // (which require a shared team workspace), a dispatcher-scope collection
+    // spawns plain `teammate`s (issue #233).
+    const teamId = this.teamScope ?? undefined;
+    if (teamId !== undefined && input.sharedWorkspace === undefined) {
       throw new Error('Team member spawn requires a shared team workspace');
     }
-    const role: TeamMateRole =
-      input.teamId !== undefined ? 'team_member' : 'teammate';
+    const role: TeamMateRole = teamId !== undefined ? 'team_member' : 'teammate';
     const name = await this.allocateName(role, input.name);
     const agentRuntimeId =
       input.agentRuntime ?? defaultAgentRuntime(this.opts.config, this.dispatcherId);
@@ -190,7 +219,7 @@ export class TeammateCollection {
       dispatcherId: this.dispatcherId,
       name,
       role,
-      teamId: input.teamId ?? null,
+      teamId: teamId ?? null,
       agentRuntime: agentRuntimeId,
       sourceCwd: workspace.sourceCwd,
       sourceRepo: workspace.sourceRepo,
@@ -201,9 +230,9 @@ export class TeammateCollection {
       status: 'starting',
     });
     const entity = this.entityFor(identity);
-    await entity.ensureStarted({ teamId: input.teamId });
+    await entity.ensureStarted({ teamId });
     const turn = await entity.submitInitialPrompt(input.prompt, {
-      ...(input.teamId !== undefined ? { teamId: input.teamId } : {}),
+      ...(teamId !== undefined ? { teamId } : {}),
     });
     await this.registerCompletion(entity, turn.turn_id ?? null);
     return { teammate: entity.status(), turn };
@@ -212,40 +241,40 @@ export class TeammateCollection {
   async send(input: SendTeamMateInput): Promise<TeamMateSendResult> {
     if (this.opts.isShuttingDown?.())
       throw new Error(`dispatcher '${this.dispatcherId}' is shutting down`);
-    const entity = await this.mustEntity(input.name, input.teamId);
+    const teamId = this.teamScope ?? undefined;
+    const entity = await this.mustEntity(input.name);
     const result = await entity.send({
       prompt: input.prompt,
       ...(input.intent !== undefined ? { intent: input.intent } : {}),
-      ...(input.teamId !== undefined ? { teamId: input.teamId } : {}),
+      ...(teamId !== undefined ? { teamId } : {}),
     });
     await this.registerCompletion(entity, result.turn.turn_id ?? null);
     return result;
   }
 
   async close(input: CloseTeamMateInput): Promise<TeamMateCloseResult> {
-    const entity = await this.mustEntity(input.name, input.teamId);
+    const entity = await this.mustEntity(input.name);
     const closed = await entity.close({ note: input.note });
     return closed;
   }
 
-  async list(teamId?: string): Promise<TeamMateRuntimeStatus[]> {
-    return this.readModel.list(teamId);
+  async list(): Promise<TeamMateRuntimeStatus[]> {
+    return this.readModel.list(this.teamScope ?? undefined);
   }
 
-  async status(name: string, teamId?: string): Promise<TeamMateRuntimeStatus> {
-    return this.readModel.status(name, teamId);
+  async status(name: string): Promise<TeamMateRuntimeStatus> {
+    return this.readModel.status(name, this.teamScope ?? undefined);
   }
 
   async history(input: TeamMateHistoryQuery): Promise<TeamMateHistoryResult> {
-    return this.readModel.history(input);
+    return this.readModel.history({
+      ...input,
+      ...(this.teamScope !== null ? { teamId: this.teamScope } : {}),
+    });
   }
 
-  async last(
-    name: string,
-    turns?: number,
-    teamId?: string,
-  ): Promise<TeamMateLastResult> {
-    return this.readModel.last(name, turns, teamId);
+  async last(name: string, turns?: number): Promise<TeamMateLastResult> {
+    return this.readModel.last(name, turns, this.teamScope ?? undefined);
   }
 
   /**
@@ -258,11 +287,12 @@ export class TeammateCollection {
   async createTeamLeader(
     input: CreateTeamLeaderInput,
   ): Promise<{ leader: TeammateService; result: TeamMateSpawnResult }> {
+    const teamId = this.mustTeamScope('createTeamLeader');
     const name = validateTeamMateName(input.name);
     // The leader lives at the team scope root (`team/<team>/identity.json`), so
     // the existence probe must be team-scoped — a dispatcher-scope `get` would
     // miss it and re-create a name that #188 forbids reusing (issue #233).
-    const existing = await this.identities.get(this.dispatcherId, name, input.teamId);
+    const existing = await this.identities.get(this.dispatcherId, name, teamId);
     if (existing !== null) {
       throw new Error(`TeamLeader ${JSON.stringify(name)} already exists`);
     }
@@ -270,7 +300,7 @@ export class TeammateCollection {
       dispatcherId: this.dispatcherId,
       name,
       role: 'team_leader',
-      teamId: input.teamId,
+      teamId,
       agentRuntime: input.agentRuntime,
       sourceCwd: input.sourceCwd,
       sourceRepo: input.sourceRepo,
@@ -281,9 +311,11 @@ export class TeammateCollection {
       status: 'starting',
     });
     const entity = this.entityFor(identity);
-    await entity.ensureStarted({ teamId: input.teamId });
+    await entity.ensureStarted({ teamId });
+    // The dispatcher created this leader, so its first turn is `dispatcher`
+    // origin — not the `team_leader` origin a team_id alone would imply.
     const turn = await entity.submitInitialPrompt(input.prompt, {
-      teamId: input.teamId,
+      teamId,
       turnOrigin: 'dispatcher',
     });
     // A dispatcher->leader create registers `leaderName:turnId -> dispatcher`.
@@ -298,8 +330,9 @@ export class TeammateCollection {
    * after a restart and cached thereafter. The `TeamService` holds the returned
    * entity for the team's lifetime.
    */
-  async leader(teamId: string, leaderName: string): Promise<TeammateService> {
-    return this.mustEntity(leaderName, teamId);
+  async leader(leaderName: string): Promise<TeammateService> {
+    this.mustTeamScope('leader');
+    return this.mustEntity(leaderName);
   }
 
   getCapabilities(): TeamMateCapabilities {
@@ -358,10 +391,8 @@ export class TeammateCollection {
     router.register(completionKey(entity.name, turnId), initiator);
   }
 
-  private async mustEntity(
-    name: string,
-    teamId?: string,
-  ): Promise<TeammateService> {
+  private async mustEntity(name: string): Promise<TeammateService> {
+    const teamId = this.teamScope ?? undefined;
     const teammateName = validateTeamMateName(name);
     const existing = this.entities.get(teammateName);
     if (existing !== undefined) {

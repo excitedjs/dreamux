@@ -7,7 +7,7 @@ import {
   type TeamMateTurnResult,
   type TeamMateWorktreeIdentity,
   type TeamMateWorktreeRequest,
-} from '../teammate/types.js';
+} from '../teammate-collection/types.js';
 
 export const TEAM_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 

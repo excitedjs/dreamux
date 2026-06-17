@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "BREAKING: restructure the dispatcher-service module to src/service/ with per-team TeammateCollection ownership and a symmetric per-agent state directory layout. DispatcherService now owns a teamScope=null TeammateCollection while each TeamService owns its own team-scoped collection (cached by team_id via TeamCollection.get, evicted on dissolve). State moves to a per-agent directory tree (team/<team>/teammate/<name>/ for members, the team leader at team/<team>/, dispatcher-owned teammates at teammate/<name>/); the legacy under-state leaves fail loud at startup with no migration (0.x policy).\nRebuild: delete ~/.dreamux/state and re-onboard the dispatcher.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

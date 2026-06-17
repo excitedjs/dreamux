@@ -26,12 +26,12 @@ import {
   setRuntimeConfig,
   stateRoot,
 } from '../platform/paths.js';
-import { diagnoseDispatcherWorkspace } from '../dispatcher-service/dispatcher-workspace.js';
+import { diagnoseDispatcherWorkspace } from '../service/dispatcher-service/workspace.js';
 import {
   detectLegacyDispatcherState,
   legacyDispatcherStateMessage,
-} from '../dispatcher-service/legacy-state.js';
-import { detectLegacyChannelBindingStore } from '../dispatcher-service/channel-binding/store.js';
+} from '../service/legacy-state.js';
+import { detectLegacyChannelBindingStore } from '../service/channel-binding/store.js';
 import { ExecaCommandRunner } from '../onboard/commands.js';
 import {
   defaultServiceNodeProbe,

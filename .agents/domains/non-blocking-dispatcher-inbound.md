@@ -6,7 +6,7 @@
   `/packages/agent-runtime/codex/src/events.ts`,
   `/packages/channel/feishu-channel/src/feishu-channel.ts`,
   `/packages/channel/feishu-channel/src/feishu-message.ts`,
-  `/packages/dreamux/src/dispatcher-service/dispatcher/service.ts`,
+  `/packages/dreamux/src/service/dispatcher-service/index.ts`,
   `/packages/dreamux/tests/fake-codex.ts`,
   `/packages/dreamux/tests/codex-live.test.ts`,
   `/packages/agent-runtime/codex/tests/turn-manager.test.ts`
@@ -107,7 +107,7 @@ inbound.
 - Do not use active turn ids as inbound routing state. Do not call `turn/steer`
   for normal inbound.
 
-`/packages/dreamux/src/dispatcher-service/dispatcher/service.ts`
+`/packages/dreamux/src/service/dispatcher-service/index.ts`
 
 - Keep the Dispatcher Service as the neutral runtime/channel bridge.
 - Forward each Channel provider delivery request to the selected Agent Runtime

@@ -15,16 +15,16 @@ import type { DispatcherStore } from '../../state/dispatcher-store.js';
 import {
   completionKey,
   type CompletionRouter,
-} from '../teammate/completion-router.js';
-import { TeamMateIdentityStore } from '../teammate/identity-store.js';
-import { TeammateReadModel } from '../teammate/read-model.js';
+} from '../completion-router/index.js';
+import { TeamMateIdentityStore } from '../teammate-collection/identity-store.js';
+import { TeammateReadModel } from '../teammate-collection/read-model.js';
 import {
   TeammateService,
   type RuntimeLaunchSpec,
   type TeammateServiceDeps,
-} from '../teammate/teammate-service.js';
-import { TeamMateTurnsStore } from '../teammate/turns-store.js';
-import type { TeamMateIdentity } from '../teammate/types.js';
+} from '../teammate-service/index.js';
+import { TeamMateTurnsStore } from '../teammate-collection/turns-store.js';
+import type { TeamMateIdentity } from '../teammate-collection/types.js';
 import {
   DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS,
   DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
@@ -120,7 +120,8 @@ export function createDispatcherAgent(deps: DispatcherAgentDeps): TeammateServic
     buildLaunch: () => buildDispatcherLaunch(deps),
     nextSubmissionSeq: () => 0,
     trackSettleCapture: () => {
-      /* dispatcher settle delivery is awaited inline below */
+      /* no-op: the dispatcher agent is never a send-registered producer, so it
+         has no settle capture to track (issue #233 Phase 5). */
     },
     routeSettledCompletion: (producerName, turnId, completion) =>
       routeSettled(deps.router, producerName, turnId, completion),

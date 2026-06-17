@@ -10,7 +10,7 @@ import {
   CompletionRouter,
   completionKey,
   type CompletionInitiator,
-} from '../src/dispatcher-service/teammate/completion-router.js';
+} from '../src/service/completion-router/index.js';
 
 function envelope(name: string, turnId: string): CompletionEnvelope {
   return {

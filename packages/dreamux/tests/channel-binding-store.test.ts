@@ -13,7 +13,7 @@ import { join } from 'node:path';
 
 import type { ChannelTarget } from '@excitedjs/dreamux-types';
 
-import { ChannelBindingStore } from '../src/dispatcher-service/channel-binding/store.js';
+import { ChannelBindingStore } from '../src/service/channel-binding/store.js';
 import {
   dispatcherChannelBindingsPath,
   resetRuntimeConfig,

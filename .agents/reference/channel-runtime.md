@@ -46,7 +46,7 @@ For Feishu, the session owns:
 
 Key source:
 
-- `/packages/dreamux/src/dispatcher-service/dispatcher/service.ts`
+- `/packages/dreamux/src/service/dispatcher-service/index.ts`
 - `/packages/channel/feishu-channel/src/feishu-channel.ts`
 - `/packages/channel/feishu-channel/src/bot.ts`
 - `/packages/channel/feishu-transport/`
@@ -87,7 +87,7 @@ typically `{ "chat_id": "..." }`.
 
 Key source:
 
-- `/packages/dreamux/src/dispatcher-service/channel-binding/`
+- `/packages/dreamux/src/service/channel-binding/`
 - `/packages/dreamux/src/mcp/team-mcp.ts`
 - `/packages/channel/feishu-channel/src/provider.ts`
 
