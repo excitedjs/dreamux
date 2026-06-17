@@ -6,6 +6,7 @@ import type {
   CompletionEnvelope,
   InboundDeliveryHooks,
   InboundTurnInput,
+  TeamMateCompletionDeliveryResult,
 } from '@excitedjs/dreamux-types';
 
 import type { DreamuxConfig } from '../config/config.js';
@@ -17,9 +18,10 @@ import type {
 import type { ChannelMcpCallerScope } from './dispatcher/mcp-descriptors.js';
 import { ChannelToolAuthorizationError } from './errors.js';
 import type { DispatcherRow } from '../state/dispatcher-store.js';
+import type { CompletionInitiator } from './teammate/completion-router.js';
 import type {
   SpawnTeamMateRequest,
-  TeamMateAgentService,
+  TeammateCollection,
 } from './teammate/service.js';
 import {
   type CloseTeamMateInput,
@@ -27,59 +29,40 @@ import {
   type TeamMateHistoryQuery,
   type TeamMateIdentity,
   type TeamMateRuntimeStatus,
-  type TeamMateTurnOrigin,
 } from './teammate/types.js';
-import type { TeamManager } from './team/service.js';
+import type { TeamChannelContext } from './team/service.js';
+import type { TeamCollection } from './team/service.js';
 import type {
   TeamCreateInput,
   TeamDissolveInput,
   TeamHistoryQuery,
 } from './team/types.js';
-import { validateTeamId } from './team/types.js';
 
 export interface DispatcherServiceOptions {
   id: string;
   config: DreamuxConfig;
   dispatcherRuntime: DispatcherRuntimeService;
-  teammateAgents: TeamMateAgentService;
-  teamManager: TeamManager;
+  teammates: TeammateCollection;
+  teams: TeamCollection;
 }
 
 export type ChannelToolCaller =
   | { kind: 'dispatcher' }
   | { kind: 'team_leader'; teamId: string; leaderName: string };
 
-export class DispatcherService {
+export class DispatcherService implements TeamChannelContext {
   readonly id: string;
   private readonly config: DreamuxConfig;
   private readonly dispatcherRuntime: DispatcherRuntimeService;
-  private readonly teammateAgents: TeamMateAgentService;
-  private readonly teamManager: TeamManager;
-  private readonly teams = new Map<string, TeamService>();
+  private readonly teammates: TeammateCollection;
+  private readonly teams: TeamCollection;
 
   constructor(opts: DispatcherServiceOptions) {
     this.id = opts.id;
     this.config = opts.config;
     this.dispatcherRuntime = opts.dispatcherRuntime;
-    this.teammateAgents = opts.teammateAgents;
-    this.teamManager = opts.teamManager;
-  }
-
-  team(teamId: string): TeamService {
-    const id = validateTeamId(teamId);
-    let team = this.teams.get(id);
-    if (team === undefined) {
-      team = new TeamService({
-        dispatcherId: this.id,
-        teamId: id,
-        dispatcher: this,
-        teamManager: this.teamManager,
-        dispatcherRuntime: this.dispatcherRuntime,
-        teammateAgents: this.teammateAgents,
-      });
-      this.teams.set(id, team);
-    }
-    return team;
+    this.teammates = opts.teammates;
+    this.teams = opts.teams;
   }
 
   start(): Promise<void> {
@@ -144,81 +127,90 @@ export class DispatcherService {
   }
 
   workspace(): Promise<string> {
-    return this.teammateAgents.dispatcherWorkspace(this.id);
+    return this.teammates.dispatcherWorkspace(this.id);
   }
 
   spawnTeamMate(
     input: Omit<SpawnTeamMateRequest, 'dispatcherId' | 'teamId' | 'sharedWorkspace'>,
   ) {
-    return this.teammateAgents.spawn({
+    return this.teammates.spawn({
       dispatcherId: this.id,
       ...input,
     });
   }
 
   sendTeamMate(input: Omit<SendTeamMateInput, 'dispatcherId' | 'teamId'>) {
-    return this.teammateAgents.send({
+    return this.teammates.send({
       dispatcherId: this.id,
       ...input,
     });
   }
 
   closeTeamMate(input: Omit<CloseTeamMateInput, 'dispatcherId' | 'teamId'>) {
-    return this.teammateAgents.close({
+    return this.teammates.close({
       dispatcherId: this.id,
       ...input,
     });
   }
 
   listTeamMates(): Promise<TeamMateRuntimeStatus[]> {
-    return this.teammateAgents.list(this.id);
+    return this.teammates.list(this.id);
   }
 
   getTeamMateStatus(name: string) {
-    return this.teammateAgents.status(this.id, name);
+    return this.teammates.status(this.id, name);
   }
 
   getTeamMateHistory(input: Omit<TeamMateHistoryQuery, 'dispatcherId' | 'teamId'>) {
-    return this.teammateAgents.history({
+    return this.teammates.history({
       dispatcherId: this.id,
       ...input,
     });
   }
 
   getTeamMateLast(name: string, turns?: number) {
-    return this.teammateAgents.last(this.id, name, turns);
+    return this.teammates.last(this.id, name, turns);
   }
 
   getTeamMateCapabilities() {
-    return this.teammateAgents.getCapabilities();
+    return this.teammates.getCapabilities();
+  }
+
+  /** The single-entity team service for a team id (admin `team_leader` target). */
+  team(teamId: string) {
+    return this.teams.get(this.id, teamId);
   }
 
   createTeam(input: Omit<TeamCreateInput, 'dispatcherId'>) {
-    return this.team(input.name).create(input);
+    return this.teams.create({ dispatcherId: this.id, ...input });
   }
 
   listTeams() {
-    return this.teamManager.list(this.id);
+    return this.teams.list(this.id);
   }
 
-  getTeamStatus(teamId: string) {
-    return this.team(teamId).status();
+  async getTeamStatus(teamId: string) {
+    return (await this.teams.get(this.id, teamId)).status();
   }
 
   getTeamHistory(input: Omit<TeamHistoryQuery, 'dispatcherId'>) {
-    return this.teamManager.history({ dispatcherId: this.id, ...input });
+    return this.teams.history({ dispatcherId: this.id, ...input });
   }
 
-  dissolveTeam(input: Omit<TeamDissolveInput, 'dispatcherId'>) {
-    return this.team(input.teamId).dissolve(input);
+  async dissolveTeam(input: Omit<TeamDissolveInput, 'dispatcherId'>) {
+    return (await this.teams.get(this.id, input.teamId)).dissolve(input);
   }
 
-  bindTeamChannel(input: {
+  async bindTeamChannel(input: {
     teamId: string;
     channelId?: string;
     meta: Record<string, unknown>;
   }) {
-    return this.team(input.teamId).bindChannel(input);
+    const team = await this.teams.get(this.id, input.teamId);
+    return team.bindChannel(this, {
+      ...(input.channelId !== undefined ? { channelId: input.channelId } : {}),
+      meta: input.meta,
+    });
   }
 
   async transferTeamChannelBack(input: {
@@ -230,7 +222,7 @@ export class DispatcherService {
       input.meta,
       channelId,
     );
-    return this.teamManager.transferChannelBack({
+    return this.teams.transferChannelBack({
       dispatcherId: this.id,
       channelId,
       targetKey: target.target_key,
@@ -245,13 +237,14 @@ export class DispatcherService {
   ): Promise<AgentRuntimeTurnResult> {
     const target = envelope.target;
     if (target.bindable) {
-      const binding = await this.teamManager.resolveChannel({
+      const binding = await this.teams.resolveChannel({
         dispatcherId: this.id,
         channelId,
         targetKey: target.target_key,
       });
       if (binding !== null) {
-        const result = await this.team(binding.team_name).deliverToLeader(input);
+        const team = await this.teams.get(this.id, binding.team_name);
+        const result = await team.deliverToLeader(input);
         if (result.status === 'submitted') await hooks?.onAccepted?.(input);
         return result;
       }
@@ -261,28 +254,37 @@ export class DispatcherService {
     return runtime.channelInput(input, hooks);
   }
 
-  async deliverTeamMateCompletion(
-    identity: TeamMateIdentity,
-    completion: CompletionEnvelope,
-    origin: TeamMateTurnOrigin | null = null,
-  ): Promise<void> {
-    if (identity.role === 'team_leader' && origin !== 'dispatcher') return;
-    if (identity.role === 'team_member' && identity.team_id !== null) {
-      const summary = await this.teamManager
-        .status(this.id, identity.team_id)
-        .catch(() => null);
-      if (summary !== null) {
-        const leader = this.teammateAgents.getLiveRuntime(
-          this.id,
-          summary.team.leader_name,
-        );
-        if (leader?.completionInput !== undefined) {
-          const result = await leader.completionInput(completion);
-          if (result.status === 'accepted') return;
-        }
-      }
+  /**
+   * Resolve the delivery target of a send-initiated turn from its producer's
+   * identity (issue #233). A team member's completion routes to its leader's
+   * `TeammateService`; a dispatcher-owned teammate or a team leader routes to the
+   * dispatcher agent. Topology is fixed by #199 visibility, so the producer's
+   * role + team is enough — no caller principal is threaded.
+   */
+  async initiatorFor(
+    producer: TeamMateIdentity,
+  ): Promise<CompletionInitiator | null> {
+    if (producer.role === 'team_member' && producer.team_id !== null) {
+      const team = await this.teams.get(this.id, producer.team_id).catch(() => null);
+      if (team === null) return this.dispatcherInitiator();
+      const leader = this.teammates.get(this.id, team.leaderName);
+      return leader ?? this.dispatcherInitiator();
     }
-    await this.dispatcherRuntime.deliverCompletion(completion);
+    return this.dispatcherInitiator();
+  }
+
+  /**
+   * The dispatcher agent as a delivery target: a thin adapter over the live
+   * dispatcher runtime's `completionInput`. Until Phase 5 the dispatcher is not a
+   * `TeammateService`, so this adapter — not an entity method — is its initiator.
+   */
+  private dispatcherInitiator(): CompletionInitiator {
+    return {
+      completionInput: (
+        completion: CompletionEnvelope,
+      ): Promise<TeamMateCompletionDeliveryResult> =>
+        this.dispatcherRuntime.deliverCompletion(completion),
+    };
   }
 
   async teamLeaderCanUseChannel(input: {
@@ -290,10 +292,14 @@ export class DispatcherService {
     leaderName: string;
     targetKey: string;
   }): Promise<{ allowed: boolean; channelId: string | null }> {
-    const channelId = await this.team(input.teamId).resolveLeaderChannel({
-      leaderName: input.leaderName,
-      targetKey: input.targetKey,
-    });
+    const team = await this.teams.get(this.id, input.teamId).catch(() => null);
+    const channelId =
+      team === null
+        ? null
+        : await team.resolveLeaderChannel({
+            leaderName: input.leaderName,
+            targetKey: input.targetKey,
+          });
     return { allowed: channelId !== null, channelId };
   }
 
@@ -420,142 +426,11 @@ export class DispatcherService {
     return channel.provider;
   }
 
+  resolveChannelTarget(meta: unknown, channelId?: string): Promise<ChannelTarget> {
+    return this.dispatcherRuntime.resolveChannelTarget(meta, channelId);
+  }
+
   private dispatcherConfig() {
     return this.config.dispatchers.find((entry) => entry.id === this.id);
-  }
-}
-
-export interface TeamServiceOptions {
-  dispatcherId: string;
-  teamId: string;
-  dispatcher: DispatcherService;
-  teamManager: TeamManager;
-  dispatcherRuntime: DispatcherRuntimeService;
-  teammateAgents: TeamMateAgentService;
-}
-
-export class TeamService {
-  private readonly dispatcherId: string;
-  readonly id: string;
-
-  constructor(private readonly opts: TeamServiceOptions) {
-    this.dispatcherId = opts.dispatcherId;
-    this.id = opts.teamId;
-  }
-
-  create(input: Omit<TeamCreateInput, 'dispatcherId'>) {
-    return this.opts.teamManager.create({
-      dispatcherId: this.dispatcherId,
-      ...input,
-    });
-  }
-
-  status() {
-    return this.opts.teamManager.status(this.dispatcherId, this.id);
-  }
-
-  async spawnTeamMate(
-    input: Omit<SpawnTeamMateRequest, 'dispatcherId' | 'teamId' | 'sharedWorkspace'>,
-  ) {
-    return this.opts.teammateAgents.spawn({
-      dispatcherId: this.dispatcherId,
-      teamId: this.id,
-      ...input,
-      sharedWorkspace: await this.sharedWorkspace(),
-    });
-  }
-
-  sendTeamMate(input: Omit<SendTeamMateInput, 'dispatcherId' | 'teamId'>) {
-    return this.opts.teammateAgents.send({
-      dispatcherId: this.dispatcherId,
-      teamId: this.id,
-      ...input,
-    });
-  }
-
-  closeTeamMate(input: Omit<CloseTeamMateInput, 'dispatcherId' | 'teamId'>) {
-    return this.opts.teammateAgents.close({
-      dispatcherId: this.dispatcherId,
-      teamId: this.id,
-      ...input,
-    });
-  }
-
-  listTeamMates(): Promise<TeamMateRuntimeStatus[]> {
-    return this.opts.teammateAgents.list(this.dispatcherId, this.id);
-  }
-
-  getTeamMateStatus(name: string) {
-    return this.opts.teammateAgents.status(this.dispatcherId, name, this.id);
-  }
-
-  getTeamMateHistory(input: Omit<TeamMateHistoryQuery, 'dispatcherId' | 'teamId'>) {
-    return this.opts.teammateAgents.history({
-      dispatcherId: this.dispatcherId,
-      teamId: this.id,
-      ...input,
-    });
-  }
-
-  getTeamMateLast(name: string, turns?: number) {
-    return this.opts.teammateAgents.last(
-      this.dispatcherId,
-      name,
-      turns,
-      this.id,
-    );
-  }
-
-  getTeamMateCapabilities() {
-    return this.opts.teammateAgents.getCapabilities();
-  }
-
-  dissolve(input: Omit<TeamDissolveInput, 'dispatcherId'>) {
-    return this.opts.teamManager.dissolve({
-      dispatcherId: this.dispatcherId,
-      ...input,
-    });
-  }
-
-  async bindChannel(input: {
-    channelId?: string;
-    meta: Record<string, unknown>;
-  }) {
-    const channelId = this.opts.dispatcher.resolveChannelId(input.channelId);
-    const target = await this.opts.dispatcherRuntime.resolveChannelTarget(
-      input.meta,
-      channelId,
-    );
-    return this.opts.teamManager.bindChannel({
-      dispatcherId: this.dispatcherId,
-      teamId: this.id,
-      channelId,
-      provider: this.opts.dispatcher.channelProviderRef(channelId),
-      target,
-    });
-  }
-
-  deliverToLeader(turn: InboundTurnInput) {
-    return this.opts.teamManager.deliverToLeader({
-      dispatcherId: this.dispatcherId,
-      teamId: this.id,
-      turn,
-    });
-  }
-
-  resolveLeaderChannel(input: {
-    leaderName: string;
-    targetKey: string;
-  }) {
-    return this.opts.teamManager.resolveLeaderChannel({
-      dispatcherId: this.dispatcherId,
-      teamId: this.id,
-      leaderName: input.leaderName,
-      targetKey: input.targetKey,
-    });
-  }
-
-  sharedWorkspace() {
-    return this.opts.teamManager.sharedWorkspace(this.dispatcherId, this.id);
   }
 }

@@ -1,6 +1,5 @@
 import type { AgentRuntimeTurnResult } from '@excitedjs/dreamux-types';
 
-import type { LiveTeamMate } from './live-runtime.js';
 import type { TeamMateRuntimeStateStore } from './runtime-state.js';
 import type { TeamMateTurnsStore } from './turns-store.js';
 import type {
@@ -11,7 +10,7 @@ import type {
 export async function recordSubmittedTurn(
   turnsStore: TeamMateTurnsStore,
   dispatcherId: string,
-  live: LiveTeamMate,
+  live: { state: TeamMateRuntimeStateStore },
   input: {
     turnId: string | null;
     turnOrigin: TeamMateTurnOrigin | null;

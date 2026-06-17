@@ -8,23 +8,41 @@ is wiring only — all per-dispatcher orchestration lives here.
 
 - **`service.ts`** — the `Dispatchers` collection. It owns configured
   dispatcher aggregates and process-wide shutdown/restart hooks only; it must
-  not grow teammate/team/channel forwarding methods.
-- **`dispatcher-instance.ts`** — one dispatcher-local aggregate. It owns that
-  dispatcher's runtime/channel operations, direct teammate roster, and Team
-  services.
-- **`team/service.ts`** — `TeamManager`, the internal backing manager for Team
-  records, channel bindings, and TeamLeader delivery. The domain `TeamService`
-  class lives in `dispatcher-instance.ts`.
+  not grow teammate/team/channel forwarding methods. It owns the process-wide
+  `TeammateCollection` + `TeamCollection` (Phase 1 keeps them singletons keyed by
+  dispatcher id) and one per-dispatcher `CompletionRouter`, injected into the
+  collection via `routerFor(id)` / `initiatorFor(id, producer)`.
+- **`dispatcher-instance.ts`** — one dispatcher-local aggregate
+  (`DispatcherService`). It owns that dispatcher's runtime/channel operations and
+  delegates teammate/team work to the collections. It resolves a settled turn's
+  delivery target via `initiatorFor` (a team member → its leader's
+  `TeammateService`; a dispatcher-owned teammate / leader → a thin adapter over
+  the dispatcher runtime's `completionInput`) and implements `TeamChannelContext`
+  for the team layer's channel ops.
+- **`team/service.ts`** — `TeamCollection` (split out of the old `TeamManager`):
+  owns the team store, channel bindings, and worktrees; does `create` / `list` /
+  `history` / `resolveChannel`, and `get(id) → TeamService`. `TeamService` is the
+  single per-team entity (holds its own `TeamRecord`): `status` / `dissolve` /
+  `bindChannel` / `deliverToLeader` / `sharedWorkspace` plus the teammate forwards
+  the admin `team_leader` target calls. The entity is loaded fresh per `get` (no
+  caching) so a held record never goes stale after a dissolve.
 - **`dispatcher/`** — `DispatcherRuntimeService`: owns one live dispatcher runtime,
   start / resume / stop, restart-notice injection, the channel session(s)
   (`Map<channel_id, ChannelSession>`, driven through the
   `@excitedjs/dreamux-types` `ChannelProvider` seam — `builtin:feishu` today),
   and the **role-based MCP descriptor builder**. A `DispatcherService` composes
   exactly one `DispatcherRuntimeService`; there is no process-wide runtime slots
-  manager. Also holds the dispatcher base prompt.
-- **`teammate/`** — `TeamMateAgentService` + identity-store + runtime-state +
-  types + the teammate MCP descriptor. Agent-centric teammates: **no `task`** —
-  a teammate is a named, resumable agent.
+  manager. `deliverCompletion` is a thin forward into the runtime's
+  `completionInput`; the at-most-once policy lives in the `CompletionRouter`, not
+  here. Also holds the dispatcher base prompt.
+- **`teammate/`** — `TeammateCollection` (the collection: stores, worktrees,
+  `spawn` / `list` / `history` / `close`, factory paths, per-turn router
+  registration) + `TeammateService` (the single-entity: holds its identity,
+  lazily started runtime, `send` / `status` / `last` / `channelInput`, and
+  `completionInput` as a delivery target) + `CompletionRouter` (per-dispatcher
+  delivery service, keyed by `producerName:turnId`, terminal-cache at-most-once) +
+  identity-store + runtime-state + types + the teammate MCP descriptor.
+  Agent-centric teammates: **no `task`** — a teammate is a named, resumable agent.
 
 ## Invariants (why it's shaped this way)
 

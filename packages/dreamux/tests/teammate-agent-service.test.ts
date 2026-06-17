@@ -17,14 +17,13 @@ import type {
   AgentRuntimeProviderDescriptor,
   AgentRuntimeSystemInput,
   AgentRuntimeTurnResult,
-  CompletionEnvelope,
   InboundTurnInput,
   ProviderDescriptor,
   TurnSettledSignal,
 } from '@excitedjs/dreamux-types';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import { asAgentRuntimeDescriptor } from './helpers/provider.js';
-import { TeamMateAgentService } from '../src/dispatcher-service/teammate/service.js';
+import { TeammateCollection } from '../src/dispatcher-service/teammate/service.js';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
 import {
   dispatcherCompletionSpillDir,
@@ -115,11 +114,6 @@ class FakeRuntime implements AgentRuntime {
     return FAKE_CAPABILITIES;
   }
 
-  /** True when the launcher wired the reverse-delivery settle hook. */
-  hasSettleHook(): boolean {
-    return this.context.onTurnSettled !== undefined;
-  }
-
   /** Simulate the runtime firing a terminal turn-settled signal. */
   settle(status: TurnSettledSignal['status'], turnId: string | null): void {
     this.context.onTurnSettled?.({ turnId, status });
@@ -175,13 +169,13 @@ function providerCatalog(): {
  */
 let dispatcherCwd: string;
 
-function buildService(provider: AgentRuntimeProvider): TeamMateAgentService {
+function buildService(provider: AgentRuntimeProvider): TeammateCollection {
   const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
   const dispatchers = new DispatcherStore(config);
   const registry = createBuiltinProviderRegistry();
   const descriptor = registry.resolve('builtin:codex');
   registry.registerImplementation(descriptor.id, provider);
-  return new TeamMateAgentService({
+  return new TeammateCollection({
     config,
     dispatchers,
     agentRuntimeProviders: new AgentRuntimeProviderCatalog({ registry }),
@@ -189,7 +183,7 @@ function buildService(provider: AgentRuntimeProvider): TeamMateAgentService {
   });
 }
 
-describe('TeamMateAgentService', () => {
+describe('TeammateCollection', () => {
   let root: string;
   let previousHome: string | undefined;
 
@@ -239,7 +233,7 @@ describe('TeamMateAgentService', () => {
     const claudeProvider = new FakeProvider(claudeDesc, 'builtin:claude-code');
     registry.registerImplementation(codexDesc.id, codexProvider);
     registry.registerImplementation(claudeDesc.id, claudeProvider);
-    const service = new TeamMateAgentService({
+    const service = new TeammateCollection({
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: new AgentRuntimeProviderCatalog({ registry }),
@@ -310,7 +304,7 @@ describe('TeamMateAgentService', () => {
     const codexDesc = registry.resolve('builtin:codex');
     const provider = new FakeProvider(codexDesc, 'builtin:codex');
     registry.registerImplementation(codexDesc.id, provider);
-    const service = new TeamMateAgentService({
+    const service = new TeammateCollection({
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: new AgentRuntimeProviderCatalog({ registry }),
@@ -353,7 +347,7 @@ describe('TeamMateAgentService', () => {
     const codexDesc = registry.resolve('builtin:codex');
     const provider = new FakeProvider(codexDesc, 'builtin:codex');
     registry.registerImplementation(codexDesc.id, provider);
-    const service = new TeamMateAgentService({
+    const service = new TeammateCollection({
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: new AgentRuntimeProviderCatalog({ registry }),
@@ -390,7 +384,7 @@ describe('TeamMateAgentService', () => {
   it('spawns a named resumable teammate and records raw history events', async () => {
     const { catalog, provider } = providerCatalog();
     const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
-    const service = new TeamMateAgentService({
+    const service = new TeammateCollection({
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: catalog,
@@ -468,11 +462,10 @@ describe('TeamMateAgentService', () => {
   it('persists records as JSON + per-name turns as the only JSONL store (#199 Slice 3)', async () => {
     const { catalog, provider } = providerCatalog();
     const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
-    const service = new TeamMateAgentService({
+    const service = new TeammateCollection({
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: catalog,
-      onTeamMateCompletion: () => undefined,
       log: noopLog(),
     });
     const name = (
@@ -583,7 +576,7 @@ describe('TeamMateAgentService', () => {
     const repo = await initGitRepo(join(root, 'ledger-repo'));
     const { catalog } = providerCatalog();
     const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
-    const service = new TeamMateAgentService({
+    const service = new TeammateCollection({
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: catalog,
@@ -669,7 +662,7 @@ describe('TeamMateAgentService', () => {
     const closedByStatus = await service.history({ dispatcherId: 'flow', status: 'closed' });
     expect(closedByStatus.items.map((item) => item.name)).toEqual([alpha]);
 
-    const second = new TeamMateAgentService({
+    const second = new TeammateCollection({
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: catalog,
@@ -686,7 +679,7 @@ describe('TeamMateAgentService', () => {
   it('closes a live teammate without deleting its history', async () => {
     const { catalog, provider } = providerCatalog();
     const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
-    const service = new TeamMateAgentService({
+    const service = new TeammateCollection({
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: catalog,
@@ -741,7 +734,7 @@ describe('TeamMateAgentService', () => {
   it('send reopens a closed teammate from its checkpoint (issue #155)', async () => {
     const { catalog, provider } = providerCatalog();
     const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
-    const service = new TeamMateAgentService({
+    const service = new TeammateCollection({
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: catalog,
@@ -787,7 +780,7 @@ describe('TeamMateAgentService', () => {
   it('send updates the recorded intent when supplied, and leaves it unchanged otherwise (#182 PR-3)', async () => {
     const { catalog } = providerCatalog();
     const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
-    const service = new TeamMateAgentService({
+    const service = new TeammateCollection({
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: catalog,
@@ -836,7 +829,7 @@ describe('TeamMateAgentService', () => {
   it('rejects direct service spawn/close with missing or empty intent/note (#182 PR-3 P1)', async () => {
     const { catalog } = providerCatalog();
     const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
-    const service = new TeamMateAgentService({
+    const service = new TeammateCollection({
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: catalog,
@@ -854,7 +847,7 @@ describe('TeamMateAgentService', () => {
         name: 'a',
         prompt: 'go',
         cwd: root,
-      } as unknown as Parameters<TeamMateAgentService['spawn']>[0]),
+      } as unknown as Parameters<TeammateCollection['spawn']>[0]),
     ).rejects.toThrow(/TeamMate spawn intent must be a non-empty string/);
 
     // close.note required at the service boundary — checked after the teammate
@@ -876,7 +869,7 @@ describe('TeamMateAgentService', () => {
   it('fails loud when spawned with an agentRuntime that matches no agent', async () => {
     const { catalog } = providerCatalog();
     const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
-    const service = new TeamMateAgentService({
+    const service = new TeammateCollection({
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: catalog,
@@ -901,7 +894,7 @@ describe('TeamMateAgentService', () => {
     // (non-git) directory.
     const { catalog } = providerCatalog();
     const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
-    const service = new TeamMateAgentService({
+    const service = new TeammateCollection({
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: catalog,
@@ -912,7 +905,7 @@ describe('TeamMateAgentService', () => {
       name: 'solo',
       intent: 'work',
       prompt: 'go',
-    } as Parameters<TeamMateAgentService['spawn']>[0]);
+    } as Parameters<TeammateCollection['spawn']>[0]);
     const reviewer = spawned.teammate.name;
     expect(spawned.teammate.repo).toMatchObject({
       mode: 'reuse-cwd',
@@ -936,7 +929,7 @@ describe('TeamMateAgentService', () => {
     // nowhere to root the default work dir, so spawn fails loud (issue #182).
     const { catalog } = providerCatalog();
     const config = testDreamuxConfig([testDispatcherConfig({ cwd: null })]);
-    const service = new TeamMateAgentService({
+    const service = new TeammateCollection({
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: catalog,
@@ -948,14 +941,14 @@ describe('TeamMateAgentService', () => {
         name: 'no-cwd',
         intent: 'work',
         prompt: 'go',
-      } as Parameters<TeamMateAgentService['spawn']>[0]),
+      } as Parameters<TeammateCollection['spawn']>[0]),
     ).rejects.toThrow(/cwd/);
   });
 
   it('reads old identities without owner without rewriting them', async () => {
     const { catalog } = providerCatalog();
     const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
-    const service = new TeamMateAgentService({
+    const service = new TeammateCollection({
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: catalog,
@@ -1007,7 +1000,7 @@ describe('TeamMateAgentService', () => {
     const repo = await initGitRepo(join(root, 'repo'));
     const { catalog, provider } = providerCatalog();
     const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
-    const service = new TeamMateAgentService({
+    const service = new TeammateCollection({
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: catalog,
@@ -1059,7 +1052,7 @@ describe('TeamMateAgentService', () => {
     await symlink(repo, linked);
     const { catalog } = providerCatalog();
     const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
-    const service = new TeamMateAgentService({
+    const service = new TeammateCollection({
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: catalog,
@@ -1083,7 +1076,7 @@ describe('TeamMateAgentService', () => {
     const repo = await initGitRepo(join(root, 'reopen-repo'));
     const { catalog, provider } = providerCatalog();
     const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
-    const service = new TeamMateAgentService({
+    const service = new TeammateCollection({
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: catalog,
@@ -1132,7 +1125,7 @@ describe('TeamMateAgentService', () => {
     const repo = await initGitRepo(join(root, 'kept-repo'));
     const { catalog } = providerCatalog();
     const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
-    const service = new TeamMateAgentService({
+    const service = new TeammateCollection({
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: catalog,
@@ -1166,7 +1159,7 @@ describe('TeamMateAgentService', () => {
     const repo = await initGitRepo(join(root, 'dirty-repo'));
     const { catalog } = providerCatalog();
     const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
-    const service = new TeamMateAgentService({
+    const service = new TeammateCollection({
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: catalog,
@@ -1201,7 +1194,7 @@ describe('TeamMateAgentService', () => {
     const repo = await initGitRepo(join(root, 'detached-repo'));
     const { catalog } = providerCatalog();
     const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
-    const service = new TeamMateAgentService({
+    const service = new TeammateCollection({
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: catalog,
@@ -1246,7 +1239,7 @@ describe('TeamMateAgentService', () => {
     const secondRepo = await initGitRepo(join(root, 'slug-b'));
     const { catalog } = providerCatalog();
     const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
-    const service = new TeamMateAgentService({
+    const service = new TeammateCollection({
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: catalog,
@@ -1297,7 +1290,7 @@ describe('TeamMateAgentService', () => {
     const repo = await initGitRepo(join(root, 'boundary-repo'));
     const { catalog } = providerCatalog();
     const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
-    const service = new TeamMateAgentService({
+    const service = new TeammateCollection({
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: catalog,
@@ -1327,7 +1320,7 @@ describe('TeamMateAgentService', () => {
     const repo = await initGitRepo(join(root, 'unsafe-boundary-repo'));
     const { catalog } = providerCatalog();
     const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
-    const service = new TeamMateAgentService({
+    const service = new TeammateCollection({
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: catalog,
@@ -1376,7 +1369,7 @@ describe('TeamMateAgentService', () => {
       testDispatcherConfig({ cwd: symlinkedWorkspace }),
     ]);
     const { catalog } = providerCatalog();
-    const service = new TeamMateAgentService({
+    const service = new TeammateCollection({
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: catalog,
@@ -1409,7 +1402,7 @@ describe('TeamMateAgentService', () => {
     const repo = await initGitRepo(join(root, 'same-slug-repo'));
     const { catalog } = providerCatalog();
     const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
-    const service = new TeamMateAgentService({
+    const service = new TeammateCollection({
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: catalog,
@@ -1450,7 +1443,7 @@ describe('TeamMateAgentService', () => {
   it('fails loud on a legacy provider_ref teammate identity (pre-#148)', async () => {
     const { catalog } = providerCatalog();
     const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
-    const service = new TeamMateAgentService({
+    const service = new TeammateCollection({
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: catalog,
@@ -1495,7 +1488,7 @@ describe('TeamMateAgentService', () => {
   it('fails loud on list/history when a record carries a removed #199 field', async () => {
     const { catalog } = providerCatalog();
     const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
-    const service = new TeamMateAgentService({
+    const service = new TeammateCollection({
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: catalog,
@@ -1537,7 +1530,7 @@ describe('TeamMateAgentService', () => {
     // `.workspace/worktree/...` layout and never delete the old location.
     const { catalog } = providerCatalog();
     const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
-    const service = new TeamMateAgentService({
+    const service = new TeammateCollection({
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: catalog,
@@ -1593,185 +1586,10 @@ describe('TeamMateAgentService', () => {
     expect(status.repo.path).toBe(legacyWorktreePath);
   });
 
-  it('does not wire the settle hook when no completion sink is configured', async () => {
-    const { catalog, provider } = providerCatalog();
-    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
-    const service = new TeamMateAgentService({
-      config,
-      dispatchers: new DispatcherStore(config),
-      agentRuntimeProviders: catalog,
-      log: noopLog(),
-    });
-    await service.spawn({
-      dispatcherId: 'flow',
-      name: 'solo',
-      intent: 'work',
-      prompt: 'Start.',
-      cwd: root,
-    });
-    expect(provider.runtimes[0]?.hasSettleHook()).toBe(false);
-  });
-
-  it('delivers a settled teammate turn upward as a completion envelope', async () => {
-    const { catalog, provider } = providerCatalog();
-    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
-    const received: Array<{ id: string; name: string; env: CompletionEnvelope }> = [];
-    const service = new TeamMateAgentService({
-      config,
-      dispatchers: new DispatcherStore(config),
-      agentRuntimeProviders: catalog,
-      onTeamMateCompletion: (id, identity, env) => {
-        received.push({ id, name: identity.name, env });
-      },
-      log: noopLog(),
-    });
-
-    const reviewer = (
-      await service.spawn({
-        dispatcherId: 'flow',
-        name: 'reviewer',
-        intent: 'work',
-        prompt: 'Review.',
-        cwd: root,
-      })
-    ).teammate.name;
-    expect(provider.runtimes[0]?.hasSettleHook()).toBe(true);
-
-    provider.runtimes[0]?.settle('completed', 'turn-1');
-    await flush();
-
-    // The completion envelope keys on the concrete name (#188).
-    expect(received).toEqual([
-      {
-        id: 'flow',
-        name: reviewer,
-        env: {
-          source: reviewer,
-          id: `${reviewer}:turn-1`,
-          status: 'completed',
-          result: 'last fake result',
-        },
-      },
-    ]);
-  });
-
-  it('delivers terminal failure/stop settlements with their own status', async () => {
-    const { catalog, provider } = providerCatalog();
-    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
-    const received: CompletionEnvelope[] = [];
-    const service = new TeamMateAgentService({
-      config,
-      dispatchers: new DispatcherStore(config),
-      agentRuntimeProviders: catalog,
-      onTeamMateCompletion: (_id, _identity, env) => {
-        received.push(env);
-      },
-      log: noopLog(),
-    });
-
-    const breaker = (
-      await service.spawn({
-        dispatcherId: 'flow',
-        name: 'breaker',
-        intent: 'work',
-        prompt: 'Run.',
-        cwd: root,
-      })
-    ).teammate.name;
-
-    provider.runtimes[0]?.settle('failed', 'turn-7');
-    provider.runtimes[0]?.settle('stopped', 'turn-8');
-    await flush();
-
-    expect(received).toEqual([
-      {
-        source: breaker,
-        id: `${breaker}:turn-7`,
-        status: 'failed',
-        result: 'last fake result',
-      },
-      {
-        source: breaker,
-        id: `${breaker}:turn-8`,
-        status: 'stopped',
-        result: 'last fake result',
-      },
-    ]);
-  });
-
-  it('drops null-turn settlements rather than fabricating a completion id', async () => {
-    const { catalog, provider } = providerCatalog();
-    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
-    const received: CompletionEnvelope[] = [];
-    const service = new TeamMateAgentService({
-      config,
-      dispatchers: new DispatcherStore(config),
-      agentRuntimeProviders: catalog,
-      onTeamMateCompletion: (_id, _identity, env) => {
-        received.push(env);
-      },
-      log: noopLog(),
-    });
-
-    await service.spawn({
-      dispatcherId: 'flow',
-      name: 'breaker',
-      intent: 'work',
-      prompt: 'Run.',
-      cwd: root,
-    });
-
-    provider.runtimes[0]?.settle('stopped', null);
-    await flush();
-
-    expect(received).toEqual([]);
-  });
-
-  it('delivers concurrent teammate completions without dropping any', async () => {
-    const { catalog, provider } = providerCatalog();
-    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
-    const received: CompletionEnvelope[] = [];
-    const service = new TeamMateAgentService({
-      config,
-      dispatchers: new DispatcherStore(config),
-      agentRuntimeProviders: catalog,
-      onTeamMateCompletion: (_id, _identity, env) => {
-        received.push(env);
-      },
-      log: noopLog(),
-    });
-
-    const one = (
-      await service.spawn({
-        dispatcherId: 'flow',
-        name: 'one',
-        intent: 'work',
-        prompt: 'A.',
-        cwd: root,
-      })
-    ).teammate.name;
-    const two = (
-      await service.spawn({
-        dispatcherId: 'flow',
-        name: 'two',
-        intent: 'work',
-        prompt: 'B.',
-        cwd: root,
-      })
-    ).teammate.name;
-
-    provider.runtimes[0]?.settle('completed', 'turn-1');
-    provider.runtimes[1]?.settle('completed', 'turn-1');
-    await flush();
-
-    expect(received.map((env) => env.source).sort()).toEqual([one, two].sort());
-    expect(received).toHaveLength(2);
-  });
-
   it('last(turns): defaults to 1, accepts 1..5, and rejects out-of-range/non-integer (#188)', async () => {
     const { catalog } = providerCatalog();
     const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
-    const service = new TeamMateAgentService({
+    const service = new TeammateCollection({
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: catalog,
@@ -1797,12 +1615,10 @@ describe('TeamMateAgentService', () => {
   it('last reads settled turns from the per-name turns archive with truncation metadata (#188/#199)', async () => {
     const { catalog, provider } = providerCatalog();
     const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
-    const service = new TeamMateAgentService({
+    const service = new TeammateCollection({
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: catalog,
-      // A completion sink wires the settle hook so settled turns are captured.
-      onTeamMateCompletion: () => undefined,
       log: noopLog(),
     });
 
@@ -1859,11 +1675,10 @@ describe('TeamMateAgentService', () => {
   it('last(turns) evicts older turns beyond the window, keeping the most recent by start order (#188 bounded fold)', async () => {
     const { catalog, provider } = providerCatalog();
     const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
-    const service = new TeamMateAgentService({
+    const service = new TeammateCollection({
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: catalog,
-      onTeamMateCompletion: () => undefined,
       log: noopLog(),
     });
 
@@ -1907,11 +1722,10 @@ describe('TeamMateAgentService', () => {
   it('last works on a closed teammate without starting a runtime (#188)', async () => {
     const { catalog, provider } = providerCatalog();
     const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
-    const service = new TeamMateAgentService({
+    const service = new TeammateCollection({
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: catalog,
-      onTeamMateCompletion: () => undefined,
       log: noopLog(),
     });
 
@@ -1944,7 +1758,7 @@ describe('TeamMateAgentService', () => {
   it('concrete names are never reused, even after close (#188)', async () => {
     const { catalog } = providerCatalog();
     const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
-    const service = new TeamMateAgentService({
+    const service = new TeammateCollection({
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: catalog,
@@ -1983,7 +1797,7 @@ describe('TeamMateAgentService', () => {
   it('createTeamLeader fails loud on a reused concrete name, even after close (#188 P1)', async () => {
     const { catalog } = providerCatalog();
     const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
-    const service = new TeamMateAgentService({
+    const service = new TeammateCollection({
       config,
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: catalog,
@@ -2026,7 +1840,7 @@ describe('TeamMateAgentService', () => {
 
 /** Poll the per-name turns archive until it has captured `count` settled turns. */
 async function waitForSettled(
-  service: TeamMateAgentService,
+  service: TeammateCollection,
   name: string,
   count: number,
 ): Promise<void> {
@@ -2071,11 +1885,6 @@ function noopLog(): DreamuxLogger {
     child: () => log,
   };
   return log as unknown as DreamuxLogger;
-}
-
-/** Drain the microtask/macrotask the void-ed settle handler runs on. */
-async function flush(): Promise<void> {
-  await new Promise((resolve) => setImmediate(resolve));
 }
 
 async function initGitRepo(path: string): Promise<string> {

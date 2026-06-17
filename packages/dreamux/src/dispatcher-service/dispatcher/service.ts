@@ -17,6 +17,7 @@ import type {
   AgentRuntime,
   AgentRuntimeMcpServer,
   CompletionEnvelope,
+  TeamMateCompletionDeliveryResult,
 } from '@excitedjs/dreamux-types';
 import type { ChannelProviderCatalog } from '../../channel/catalog.js';
 import type {
@@ -40,7 +41,6 @@ import {
   DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
 } from './base-prompt.js';
 import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
-import { DispatcherCompletionDelivery } from './completion-delivery.js';
 import {
   channelMcpServerDescriptorsForCaller,
   dispatcherMcpServerDescriptors,
@@ -113,16 +113,9 @@ export interface ChannelToolInvocation {
 export class DispatcherRuntimeService {
   private slot: DispatcherRuntimeSlot | null = null;
   private starting: Promise<void> | null = null;
-  private readonly completionDelivery: DispatcherCompletionDelivery;
   private restartIntent: RestartIntentConsumer | null = null;
 
-  constructor(private readonly opts: DispatcherRuntimeServiceOptions) {
-    this.completionDelivery = new DispatcherCompletionDelivery({
-      dispatcherId: opts.id,
-      slot: () => this.slot,
-      log: opts.log,
-    });
-  }
+  constructor(private readonly opts: DispatcherRuntimeServiceOptions) {}
 
   setRestartIntent(consumer: RestartIntentConsumer | null): void {
     this.restartIntent = consumer;
@@ -176,17 +169,29 @@ export class DispatcherRuntimeService {
   }
 
   /**
-   * Seam ③ of the reverse-delivery path (issue #147): deliver a teammate
-   * completion into the live dispatcher runtime, waking it for a fresh turn. The
-   * retry policy lives here — `completionInput` mints a unique sourceId per call,
-   * so re-delivering on a `failed` result (definitely not submitted) is safe.
-   *
-   * Never throws into the teammate settle path: an absent slot/runtime,
-   * a runtime without completion delivery, an `unsupported` result (runtime
-   * stopped), a thrown call, or exhausted retries all log and return.
+   * Seam ③ of the reverse-delivery path (issue #147): forward a teammate
+   * completion into the live dispatcher runtime, waking it for a fresh turn. Thin
+   * by design (issue #233) — the at-most-once idempotency + retry policy lives in
+   * the per-dispatcher `CompletionRouter`, which is the single delivery
+   * chokepoint. Returns `unsupported` when the dispatcher is not running or its
+   * runtime exposes no completion surface, so the router drops cleanly and the
+   * consumer falls back to `last`.
    */
-  async deliverCompletion(completion: CompletionEnvelope): Promise<void> {
-    return this.completionDelivery.deliver(completion);
+  async deliverCompletion(
+    completion: CompletionEnvelope,
+  ): Promise<TeamMateCompletionDeliveryResult> {
+    const slot = this.slot;
+    if (slot === null) {
+      return { status: 'unsupported', reason: 'dispatcher not running' };
+    }
+    const deliver = slot.runtime.completionInput;
+    if (deliver === undefined) {
+      return {
+        status: 'unsupported',
+        reason: 'runtime has no completion delivery',
+      };
+    }
+    return deliver.call(slot.runtime, completion);
   }
 
   summary(row: DispatcherRow): DispatcherSummary {

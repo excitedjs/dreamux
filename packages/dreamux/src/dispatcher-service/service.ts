@@ -9,17 +9,16 @@ import {
   DispatcherService,
   type DispatcherServiceOptions,
 } from './dispatcher-instance.js';
-export {
-  DispatcherService,
-  TeamService,
-} from './dispatcher-instance.js';
+export { DispatcherService } from './dispatcher-instance.js';
+export { TeamService } from './team/service.js';
 import {
   DispatcherRuntimeService,
   type DispatcherSummary,
 } from './dispatcher/service.js';
-import { TeamManager } from './team/service.js';
+import { CompletionRouter } from './teammate/completion-router.js';
+import { TeamCollection } from './team/service.js';
 import { teammateMcpServerDescriptor } from './teammate/mcp-config.js';
-import { TeamMateAgentService } from './teammate/service.js';
+import { TeammateCollection } from './teammate/service.js';
 export { ChannelToolAuthorizationError } from './errors.js';
 
 export interface DispatchersOptions {
@@ -33,9 +32,10 @@ export interface DispatchersOptions {
 }
 
 export class Dispatchers {
-  private readonly teammateAgents: TeamMateAgentService;
-  private readonly teamManager: TeamManager;
+  private readonly teammates: TeammateCollection;
+  private readonly teams: TeamCollection;
   private readonly services = new Map<string, DispatcherService>();
+  private readonly routers = new Map<string, CompletionRouter>();
   private readonly config: DreamuxConfig;
   private readonly dispatcherStore: DispatcherStore;
   private readonly agentRuntimeProviders: AgentRuntimeProviderCatalog;
@@ -53,7 +53,7 @@ export class Dispatchers {
     this.adminSocketPath = opts.adminSocketPath;
     this.channelLoggerFactory = opts.channelLoggerFactory;
     this.log = opts.log;
-    this.teammateAgents = new TeamMateAgentService({
+    this.teammates = new TeammateCollection({
       config: opts.config,
       dispatchers: opts.dispatchers,
       agentRuntimeProviders: opts.agentRuntimeProviders,
@@ -73,12 +73,12 @@ export class Dispatchers {
               }),
             ]
           : [],
-      onTeamMateCompletion: (id, identity, completion, origin) =>
-        this.get(id).deliverTeamMateCompletion(identity, completion, origin),
+      routerFor: (id) => this.routerFor(id),
+      initiatorFor: (id, producer) => this.get(id).initiatorFor(producer),
       log: opts.log,
     });
-    this.teamManager = new TeamManager({
-      teammates: this.teammateAgents,
+    this.teams = new TeamCollection({
+      teammates: this.teammates,
     });
   }
 
@@ -114,10 +114,25 @@ export class Dispatchers {
   }
 
   async shutdown(): Promise<void> {
-    await this.teammateAgents.stopAll();
+    await this.teammates.stopAll();
     for (const service of this.services.values()) {
       await service.shutdown();
     }
+  }
+
+  /**
+   * The per-dispatcher delivery router (issue #233). One instance per dispatcher
+   * id, created lazily; the process-wide `TeammateCollection` reaches it via the
+   * injected `routerFor` callback so it stays a singleton while delivery topology
+   * stays per-dispatcher.
+   */
+  private routerFor(id: string): CompletionRouter {
+    let router = this.routers.get(id);
+    if (router === undefined) {
+      router = new CompletionRouter({ dispatcherId: id, log: this.log });
+      this.routers.set(id, router);
+    }
+    return router;
   }
 
   private dispatcherOptions(id: string): DispatcherServiceOptions {
@@ -140,9 +155,8 @@ export class Dispatchers {
       id,
       config: this.config,
       dispatcherRuntime,
-      teammateAgents: this.teammateAgents,
-      teamManager: this.teamManager,
+      teammates: this.teammates,
+      teams: this.teams,
     };
   }
-
 }

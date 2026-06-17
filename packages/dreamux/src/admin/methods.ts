@@ -3,8 +3,8 @@ import type { Server } from '../server.js';
 import type {
   ChannelToolCaller,
   DispatcherService,
-  TeamService,
 } from '../dispatcher-service/dispatcher-instance.js';
+import type { TeamService } from '../dispatcher-service/team/service.js';
 import { AdminError } from './protocol.js';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
 import { ChannelToolAuthorizationError } from '../dispatcher-service/errors.js';
@@ -114,7 +114,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     const intent = mustNonEmptyString(params, 'intent');
     const agentRuntime = optionalString(params, 'agent_runtime');
     const dispatcher = server.getDispatcher(id);
-    const target = teammateTargetFor(dispatcher, params);
+    const target = await teammateTargetFor(dispatcher, params);
     if (target.callerKind === 'team_leader' && params?.['repo'] !== undefined) {
       throw new AdminError(
         'BAD_REQUEST',
@@ -144,7 +144,7 @@ export const adminMethods: Record<string, AdminHandler> = {
   'mcp.teammate.send': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    const target = teammateTargetFor(server.getDispatcher(id), params);
+    const target = await teammateTargetFor(server.getDispatcher(id), params);
     const name = mustString(params, 'name');
     const prompt = mustString(params, 'prompt');
     const intent = optionalString(params, 'intent');
@@ -162,7 +162,7 @@ export const adminMethods: Record<string, AdminHandler> = {
   'mcp.teammate.close': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    const target = teammateTargetFor(server.getDispatcher(id), params);
+    const target = await teammateTargetFor(server.getDispatcher(id), params);
     const name = mustString(params, 'name');
     const note = mustNonEmptyString(params, 'note');
     try {
@@ -178,17 +178,18 @@ export const adminMethods: Record<string, AdminHandler> = {
   'mcp.teammate.history': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    return teammateTargetFor(server.getDispatcher(id), params).service.getTeamMateHistory(
-      historyQuery(params),
-    );
+    return (
+      await teammateTargetFor(server.getDispatcher(id), params)
+    ).service.getTeamMateHistory(historyQuery(params));
   },
 
   'mcp.teammate.list': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     return {
-      teammates: await teammateTargetFor(server.getDispatcher(id), params)
-        .service.listTeamMates(),
+      teammates: await (
+        await teammateTargetFor(server.getDispatcher(id), params)
+      ).service.listTeamMates(),
     };
   },
 
@@ -197,8 +198,9 @@ export const adminMethods: Record<string, AdminHandler> = {
     mustExistingDispatcher(server, id);
     const name = mustString(params, 'name');
     return {
-      teammate: await teammateTargetFor(server.getDispatcher(id), params)
-        .service.getTeamMateStatus(name),
+      teammate: await (
+        await teammateTargetFor(server.getDispatcher(id), params)
+      ).service.getTeamMateStatus(name),
     };
   },
 
@@ -207,17 +209,17 @@ export const adminMethods: Record<string, AdminHandler> = {
     mustExistingDispatcher(server, id);
     const name = mustString(params, 'name');
     const turns = optionalInteger(params, 'turns');
-    return teammateTargetFor(server.getDispatcher(id), params).service.getTeamMateLast(
-      name,
-      turns ?? undefined,
-    );
+    return (
+      await teammateTargetFor(server.getDispatcher(id), params)
+    ).service.getTeamMateLast(name, turns ?? undefined);
   },
 
-  'mcp.teammate.capabilities': (server, params) => {
+  'mcp.teammate.capabilities': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    return teammateTargetFor(server.getDispatcher(id), params)
-      .service.getTeamMateCapabilities();
+    return (
+      await teammateTargetFor(server.getDispatcher(id), params)
+    ).service.getTeamMateCapabilities();
   },
 
   'mcp.team.create': async (server, params) => {
@@ -343,12 +345,13 @@ function channelToolCaller(
   );
 }
 
-function teammateTargetFor(
+async function teammateTargetFor(
   dispatcher: DispatcherService,
   params: Record<string, unknown> | undefined,
-):
+): Promise<
   | { callerKind: 'dispatcher'; service: DispatcherService }
-  | { callerKind: 'team_leader'; service: TeamService } {
+  | { callerKind: 'team_leader'; service: TeamService }
+> {
   const callerKind = optionalString(params, 'caller_kind') ?? 'dispatcher';
   if (callerKind === 'dispatcher') {
     return { callerKind, service: dispatcher };
@@ -356,7 +359,7 @@ function teammateTargetFor(
   if (callerKind === 'team_leader') {
     return {
       callerKind,
-      service: dispatcher.team(mustString(params, 'team_id')),
+      service: await dispatcher.team(mustString(params, 'team_id')),
     };
   }
   throw new AdminError(

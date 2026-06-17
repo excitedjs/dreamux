@@ -1,13 +1,18 @@
 import { Buffer } from 'node:buffer';
 
+import type { ChannelTarget, InboundTurnInput } from '@excitedjs/dreamux-types';
+
 import { WorktreeManager } from '../teammate/worktree-manager.js';
-import type { TeamMateAgentService, TeamMateSharedWorkspace } from '../teammate/service.js';
+import type {
+  SpawnTeamMateRequest,
+  TeammateCollection,
+  TeamMateSharedWorkspace,
+} from '../teammate/service.js';
 import { requireLifecycleText } from '../teammate/types.js';
 import { ChannelBindingStore } from '../channel-binding/store.js';
 import type { ChannelBinding } from '../channel-binding/store.js';
 import { TeamStore } from './store.js';
 import type {
-  TeamBindChannelInput,
   TeamChannelBindingSummary,
   TeamCreateInput,
   TeamCreateResult,
@@ -23,20 +28,42 @@ import type {
 } from './types.js';
 import { validateTeamId } from './types.js';
 import type {
+  CloseTeamMateInput,
+  SendTeamMateInput,
+  TeamMateHistoryQuery,
   TeamMateIdentityStatus,
   TeamMateRuntimeStatus,
 } from '../teammate/types.js';
 
-export interface TeamManagerOptions {
-  teammates: TeamMateAgentService;
+/**
+ * The narrow dispatcher seam a {@link TeamService} needs for channel-bound
+ * operations, kept as an interface so the Team layer never imports the whole
+ * `DispatcherService` (breaks the construction cycle). `DispatcherService`
+ * implements it.
+ */
+export interface TeamChannelContext {
+  resolveChannelId(requested?: string): string;
+  channelProviderRef(channelId: string): string;
+  resolveChannelTarget(meta: unknown, channelId?: string): Promise<ChannelTarget>;
 }
 
-export class TeamManager {
+export interface TeamCollectionOptions {
+  teammates: TeammateCollection;
+}
+
+/**
+ * The dispatcher's team collection (issue #233): owns the team store, channel
+ * bindings, and the worktree manager, and exposes `create` / `list` / `history`
+ * plus channel resolution that runs before a team is known (`resolveChannel` /
+ * `transferChannelBack`). Per-team domain operations live on {@link TeamService},
+ * returned fresh from `get` so a held record never goes stale after a dissolve.
+ */
+export class TeamCollection {
   private readonly store = new TeamStore();
   private readonly worktrees = new WorktreeManager();
   private readonly bindings = new ChannelBindingStore();
 
-  constructor(private readonly opts: TeamManagerOptions) {}
+  constructor(private readonly opts: TeamCollectionOptions) {}
 
   async create(input: TeamCreateInput): Promise<TeamCreateResult> {
     requireLifecycleText(input.intent, 'Team create intent');
@@ -124,12 +151,7 @@ export class TeamManager {
     return out;
   }
 
-  async status(dispatcherId: string, teamId: string): Promise<TeamSummary> {
-    const team = await this.mustTeam(dispatcherId, teamId);
-    return this.summary(team);
-  }
-
-    async history(input: TeamHistoryQuery): Promise<TeamHistoryResult> {
+  async history(input: TeamHistoryQuery): Promise<TeamHistoryResult> {
     const teams = await this.store.list(input.dispatcherId);
     const rows: TeamHistoryRow[] = [];
     for (const team of teams) {
@@ -152,65 +174,10 @@ export class TeamManager {
     };
   }
 
-  async dissolve(input: TeamDissolveInput): Promise<TeamSummary> {
-    requireLifecycleText(input.note, 'Team dissolve note');
-    const team = await this.mustTeam(input.dispatcherId, input.teamId);
-    for (const binding of await this.bindings.list(input.dispatcherId)) {
-      if (binding.active && binding.team_name === team.team_id) {
-        await this.bindings.transferBack({
-          dispatcherId: input.dispatcherId,
-          channelId: binding.channel_id,
-          targetKey: binding.target_key,
-        });
-      }
-    }
-    const members = await this.members(team);
-    for (const member of members) {
-      await this.opts.teammates.close({
-        dispatcherId: team.dispatcher_id,
-        teamId: team.team_id,
-        name: member.name,
-        note: input.note,
-      });
-    }
-    await this.opts.teammates.close({
-      dispatcherId: team.dispatcher_id,
-      teamId: team.team_id,
-      name: team.leader_name,
-      note: input.note,
-    });
-    const closed = await this.store.update(team, {
-      status: 'closed',
-      closedAt: Date.now(),
-      closeNote: input.note,
-      worktree: await this.worktrees.cleanup({
-        source_cwd: team.repo_cwd,
-        source_repo: team.source_repo,
-        worktree: team.worktree,
-      }),
-    });
-    return this.summary(closed);
-  }
-
-  async bindChannel(input: TeamBindChannelInput): Promise<ChannelBinding> {
-    const team = await this.mustTeam(input.dispatcherId, input.teamId);
-    if (team.status === 'closed') {
-      throw new Error(`Team ${JSON.stringify(input.teamId)} is closed`);
-    }
-    return this.bindings.bind({
-      dispatcherId: input.dispatcherId,
-      channelId: input.channelId,
-      provider: input.provider,
-      target: input.target,
-      teamName: team.team_id,
-      leaderName: team.leader_name,
-    });
-  }
-
-  async transferChannelBack(
-    input: TeamTransferChannelBackInput,
-  ): Promise<ChannelBinding | null> {
-    return this.bindings.transferBack(input);
+  /** Load a team's record and return its single-entity service, or throw. */
+  async get(dispatcherId: string, teamId: string): Promise<TeamService> {
+    const record = await this.mustTeam(dispatcherId, teamId);
+    return this.serviceFor(record);
   }
 
   async resolveChannel(input: {
@@ -225,64 +192,20 @@ export class TeamManager {
     return binding;
   }
 
-    async resolveLeaderChannel(input: {
-    dispatcherId: string;
-    teamId: string;
-    leaderName: string;
-    targetKey: string;
-  }): Promise<string | null> {
-    const bindings = await this.bindings.list(input.dispatcherId);
-    const match = bindings.find(
-      (binding) =>
-        binding.active &&
-        binding.target_key === input.targetKey &&
-        binding.team_name === input.teamId &&
-        binding.leader_name === input.leaderName,
-    );
-    if (match === undefined) return null;
-    const team = await this.store.get(input.dispatcherId, match.team_name);
-    if (team === null || team.status === 'closed') return null;
-    return match.channel_id;
+  async transferChannelBack(
+    input: TeamTransferChannelBackInput,
+  ): Promise<ChannelBinding | null> {
+    return this.bindings.transferBack(input);
   }
 
-  async deliverToLeader(input: {
-    dispatcherId: string;
-    teamId: string;
-    turn: import('@excitedjs/dreamux-types').InboundTurnInput;
-  }): Promise<import('@excitedjs/dreamux-types').AgentRuntimeTurnResult> {
-    const team = await this.mustTeam(input.dispatcherId, input.teamId);
-    if (team.status === 'closed') return { status: 'stopped' };
-    return this.opts.teammates.channelInput(
-      team.dispatcher_id,
-      team.team_id,
-      team.leader_name,
-      input.turn,
-    );
-  }
-
-  async sharedWorkspace(
-    dispatcherId: string,
-    teamId: string,
-  ): Promise<TeamMateSharedWorkspace> {
-    const team = await this.mustTeam(dispatcherId, teamId);
-    return {
-      sourceCwd: team.repo_cwd,
-      sourceRepo: team.source_repo,
-      runtimeCwd: team.runtime_cwd,
-      worktree: team.worktree,
-    };
-  }
-
-  private async summary(team: TeamRecord): Promise<TeamSummary> {
-    const leader = await this.opts.teammates
-      .status(team.dispatcher_id, team.leader_name, team.team_id)
-      .catch(() => null);
-    return {
-      team: teamView(team),
-      leader,
-      member_count: await this.memberCount(team),
-      binding: await this.activeGroupBinding(team),
-    };
+  private serviceFor(record: TeamRecord): TeamService {
+    return new TeamService({
+      record,
+      store: this.store,
+      bindings: this.bindings,
+      worktrees: this.worktrees,
+      teammates: this.opts.teammates,
+    });
   }
 
   private async listRow(team: TeamRecord): Promise<TeamListRow> {
@@ -321,7 +244,7 @@ export class TeamManager {
     };
   }
 
-    private async leaderState(
+  private async leaderState(
     team: TeamRecord,
   ): Promise<TeamMateIdentityStatus | null> {
     const leader = await this.opts.teammates
@@ -330,7 +253,7 @@ export class TeamManager {
     return leader?.status ?? null;
   }
 
-    private async activeGroupBinding(
+  private async activeGroupBinding(
     team: TeamRecord,
   ): Promise<TeamChannelBindingSummary | null> {
     const bindings = await this.bindings.list(team.dispatcher_id);
@@ -346,19 +269,236 @@ export class TeamManager {
   }
 
   private async memberCount(team: TeamRecord): Promise<number> {
-    return (await this.members(team)).length;
-  }
-
-    private async members(team: TeamRecord): Promise<TeamMateRuntimeStatus[]> {
     return (
-      await this.opts.teammates.list(team.dispatcher_id, team.team_id)
-    ).filter((member) => member.name !== team.leader_name);
+      (await this.opts.teammates.list(team.dispatcher_id, team.team_id)).filter(
+        (member) => member.name !== team.leader_name,
+      )
+    ).length;
   }
 
-  private async mustTeam(dispatcherId: string, teamId: string): Promise<TeamRecord> {
+  private async mustTeam(
+    dispatcherId: string,
+    teamId: string,
+  ): Promise<TeamRecord> {
     const team = await this.store.get(dispatcherId, validateTeamId(teamId));
-    if (team === null) throw new Error(`Team ${JSON.stringify(teamId)} does not exist`);
+    if (team === null) {
+      throw new Error(`Team ${JSON.stringify(teamId)} does not exist`);
+    }
     return team;
+  }
+}
+
+export interface TeamServiceOptions {
+  record: TeamRecord;
+  store: TeamStore;
+  bindings: ChannelBindingStore;
+  worktrees: WorktreeManager;
+  teammates: TeammateCollection;
+}
+
+/**
+ * A single team entity (issue #233): holds its own {@link TeamRecord} plus the
+ * dispatcher-owned stores it needs, and exposes the per-team domain operations
+ * (`status` / `dissolve` / `bindChannel` / `deliverToLeader` / `sharedWorkspace`)
+ * and the teammate forwards the admin `team_leader` target calls. Channel-bound
+ * operations run through an injected {@link TeamChannelContext}.
+ */
+export class TeamService {
+  private record: TeamRecord;
+  readonly id: string;
+
+  constructor(private readonly opts: TeamServiceOptions) {
+    this.record = opts.record;
+    this.id = opts.record.team_id;
+  }
+
+  get dispatcherId(): string {
+    return this.record.dispatcher_id;
+  }
+
+  get leaderName(): string {
+    return this.record.leader_name;
+  }
+
+  async status(): Promise<TeamSummary> {
+    const leader = await this.opts.teammates
+      .status(this.dispatcherId, this.record.leader_name, this.id)
+      .catch(() => null);
+    return {
+      team: teamView(this.record),
+      leader,
+      member_count: await this.memberCount(),
+      binding: await this.activeGroupBinding(),
+    };
+  }
+
+  async dissolve(input: Omit<TeamDissolveInput, 'dispatcherId'>): Promise<TeamSummary> {
+    requireLifecycleText(input.note, 'Team dissolve note');
+    for (const binding of await this.opts.bindings.list(this.dispatcherId)) {
+      if (binding.active && binding.team_name === this.id) {
+        await this.opts.bindings.transferBack({
+          dispatcherId: this.dispatcherId,
+          channelId: binding.channel_id,
+          targetKey: binding.target_key,
+        });
+      }
+    }
+    for (const member of await this.members()) {
+      await this.opts.teammates.close({
+        dispatcherId: this.dispatcherId,
+        teamId: this.id,
+        name: member.name,
+        note: input.note,
+      });
+    }
+    await this.opts.teammates.close({
+      dispatcherId: this.dispatcherId,
+      teamId: this.id,
+      name: this.record.leader_name,
+      note: input.note,
+    });
+    this.record = await this.opts.store.update(this.record, {
+      status: 'closed',
+      closedAt: Date.now(),
+      closeNote: input.note,
+      worktree: await this.opts.worktrees.cleanup({
+        source_cwd: this.record.repo_cwd,
+        source_repo: this.record.source_repo,
+        worktree: this.record.worktree,
+      }),
+    });
+    return this.status();
+  }
+
+  async bindChannel(
+    context: TeamChannelContext,
+    input: { channelId?: string; meta: Record<string, unknown> },
+  ): Promise<ChannelBinding> {
+    if (this.record.status === 'closed') {
+      throw new Error(`Team ${JSON.stringify(this.id)} is closed`);
+    }
+    const channelId = context.resolveChannelId(input.channelId);
+    const target = await context.resolveChannelTarget(input.meta, channelId);
+    return this.opts.bindings.bind({
+      dispatcherId: this.dispatcherId,
+      channelId,
+      provider: context.channelProviderRef(channelId),
+      target,
+      teamName: this.id,
+      leaderName: this.record.leader_name,
+    });
+  }
+
+  async resolveLeaderChannel(input: {
+    leaderName: string;
+    targetKey: string;
+  }): Promise<string | null> {
+    const bindings = await this.opts.bindings.list(this.dispatcherId);
+    const match = bindings.find(
+      (binding) =>
+        binding.active &&
+        binding.target_key === input.targetKey &&
+        binding.team_name === this.id &&
+        binding.leader_name === input.leaderName,
+    );
+    if (match === undefined) return null;
+    if (this.record.status === 'closed') return null;
+    return match.channel_id;
+  }
+
+  async deliverToLeader(
+    turn: InboundTurnInput,
+  ): Promise<import('@excitedjs/dreamux-types').AgentRuntimeTurnResult> {
+    if (this.record.status === 'closed') return { status: 'stopped' };
+    return this.opts.teammates.channelInput(
+      this.dispatcherId,
+      this.id,
+      this.record.leader_name,
+      turn,
+    );
+  }
+
+  sharedWorkspace(): TeamMateSharedWorkspace {
+    return {
+      sourceCwd: this.record.repo_cwd,
+      sourceRepo: this.record.source_repo,
+      runtimeCwd: this.record.runtime_cwd,
+      worktree: this.record.worktree,
+    };
+  }
+
+  async spawnTeamMate(
+    input: Omit<SpawnTeamMateRequest, 'dispatcherId' | 'teamId' | 'sharedWorkspace'>,
+  ) {
+    return this.opts.teammates.spawn({
+      dispatcherId: this.dispatcherId,
+      teamId: this.id,
+      ...input,
+      sharedWorkspace: this.sharedWorkspace(),
+    });
+  }
+
+  sendTeamMate(input: Omit<SendTeamMateInput, 'dispatcherId' | 'teamId'>) {
+    return this.opts.teammates.send({
+      dispatcherId: this.dispatcherId,
+      teamId: this.id,
+      ...input,
+    });
+  }
+
+  closeTeamMate(input: Omit<CloseTeamMateInput, 'dispatcherId' | 'teamId'>) {
+    return this.opts.teammates.close({
+      dispatcherId: this.dispatcherId,
+      teamId: this.id,
+      ...input,
+    });
+  }
+
+  listTeamMates(): Promise<TeamMateRuntimeStatus[]> {
+    return this.opts.teammates.list(this.dispatcherId, this.id);
+  }
+
+  getTeamMateStatus(name: string) {
+    return this.opts.teammates.status(this.dispatcherId, name, this.id);
+  }
+
+  getTeamMateHistory(input: Omit<TeamMateHistoryQuery, 'dispatcherId' | 'teamId'>) {
+    return this.opts.teammates.history({
+      dispatcherId: this.dispatcherId,
+      teamId: this.id,
+      ...input,
+    });
+  }
+
+  getTeamMateLast(name: string, turns?: number) {
+    return this.opts.teammates.last(this.dispatcherId, name, turns, this.id);
+  }
+
+  getTeamMateCapabilities() {
+    return this.opts.teammates.getCapabilities();
+  }
+
+  private async members(): Promise<TeamMateRuntimeStatus[]> {
+    return (
+      await this.opts.teammates.list(this.dispatcherId, this.id)
+    ).filter((member) => member.name !== this.record.leader_name);
+  }
+
+  private async memberCount(): Promise<number> {
+    return (await this.members()).length;
+  }
+
+  private async activeGroupBinding(): Promise<TeamChannelBindingSummary | null> {
+    const bindings = await this.opts.bindings.list(this.dispatcherId);
+    const active = bindings.find(
+      (binding) => binding.active && binding.team_name === this.id,
+    );
+    if (active === undefined) return null;
+    const chatId = active.meta['chat_id'];
+    return {
+      provider: active.provider,
+      chat_id: typeof chatId === 'string' ? chatId : active.target_key,
+    };
   }
 }
 
