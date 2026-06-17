@@ -132,10 +132,14 @@ which names the *producer* of the completion (the teammate).
 
 Stores are co-located with their owning collection, not floating as global singletons:
 
-- `IdentityStore` + `TurnsStore` → inside `TeammateCollection`
+- `IdentityStore` + `TurnsStore` → inside each `TeammateCollection` instance (one
+  per scope: the dispatcher-scope collection + each team's collection). They are
+  stateless path-derivers, so per-instance copies share nothing but code.
 - `TeamStore` → inside `TeamCollection`
-- `ChannelBindingStore` → inside `DispatcherService` (dispatcher-level resource)
-- `WorktreeManager` → per-dispatcher instance, constrained to the dispatcher's cwd
+- `ChannelBindingStore` and `WorktreeManager` → **one shared instance per
+  dispatcher**, created by `DispatcherService` and injected into both the
+  `TeamCollection` and every `TeammateCollection` (one store beats two);
+  `WorktreeManager` is constrained to the dispatcher's cwd.
 
 ### Target Class Diagram
 
@@ -479,7 +483,11 @@ closes the traversal-window race.
 - Completion delivery uses a per-dispatcher, per-turn in-memory `CompletionRouter` (register on `send`/`spawn`, deliver to the initiator on settle, then clear), decoupled from the persisted `turn_origin`. No entity references its delivery target, which breaks the construction cycle.
 - State directory layout changes; old layouts fail-loud with a rebuild hint (0.x policy, no migration).
 - Admin method signatures change to match the new service shape.
-- Collections and stores are per-dispatcher, not process-wide singletons.
+- Collections are no longer process-wide singletons: each dispatcher owns one
+  dispatcher-scope `TeammateCollection` plus one `TeammateCollection` per team
+  (owned by that team's `TeamService`), all within the per-dispatcher
+  `DispatcherService` aggregate. The shared stores (`WorktreeManager`,
+  `ChannelBindingStore`) are one-per-dispatcher, injected into both collections.
 
 ## Rollout Plan
 
@@ -519,11 +527,17 @@ Move stores into their collections; reorganize state directories.
 
 Collections go from process-level to per-dispatcher.
 
-- `TeammateCollection` becomes per-dispatcher (no longer a process-wide singleton)
+- `TeammateCollection` becomes per-scope (no longer a process-wide singleton):
+  one dispatcher-scope instance + one per team
 - `TeamCollection` becomes per-dispatcher
 - `WorktreeManager` becomes per-dispatcher (cwd-constrained)
 - `ChannelBindingStore` becomes per-dispatcher
-- Add concurrency guards (startingPromise pattern) on all lazy creation points
+- Add concurrency guards (startingPromise / `dedupe` pattern) on the **async**
+  lazy creation points — those with an `await` between the cache check and the
+  cache set (`DispatcherService.start`, `TeamCollection.get` / `create`).
+  `Dispatchers.get` is **synchronous** (no await between check and set), so the
+  single-threaded event loop cannot interleave two calls and it needs no guard —
+  adding one would be dead code, not a missing invariant.
 
 ### Phase 4: Team leader → TeammateService
 
