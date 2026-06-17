@@ -81,16 +81,19 @@ is wiring only — all per-dispatcher orchestration lives here.
   teammate/team-leader agent is simply not injected the "spawn teammate" tool;
   role differentiation is done by the MCP tool set + system prompt this service
   injects at launch.
-- **`teammate.*` visibility is one predicate at two chokepoints (issue #199
-  Slice 4).** `principalCanAccess` is the sole rule and is applied ONLY in
-  `scopedList` (list reads) and `mustIdentity` (single reads), so no read site
-  can widen visibility. A dispatcher principal sees only the ordinary TeamMates
-  it spawned (`role: 'teammate'`) — never a TeamLeader (dispatcher-owned but
-  `role: 'team_leader'`) or a Team member; a `team_leader` principal sees only
-  its own members; a `teammate` principal sees nothing. The Team service reaches
-  its own leader + members through the INTERNAL `team_service` principal (built
-  only by the Team service, never from a public caller); a dispatcher inspects
-  Teams via `team.*` compact summaries, never `teammate.*`.
+- **`teammate.*` visibility is physical directory scoping plus one roster
+  predicate (issue #199 Slice 4, issue #233).** After the symmetric layout, the
+  scope IS the directory: `TeammateReadModel.rosterList` lists only
+  `teammate/<name>/` for a dispatcher-scope read and only that team's members
+  under `team/<team>/teammate/<name>/` for a team-scope read — the leader lives at
+  the team root and is never a member row, so no post-filter is needed. The single
+  read-by-name chokepoint `mustIdentity` then calls `assertInRoster` (backed by
+  `identityInRoster`) so a wrong-scope name resolves as "does not exist": a
+  dispatcher-scope read sees only `role: 'teammate'` entities with `team_id ===
+  null`, a team-scope read only that team's `team_leader` / `team_member`. The
+  Team service reaches its own leader + members through the team-scoped reads it
+  drives; a dispatcher inspects Teams via `team.*` compact summaries, never
+  `teammate.*`.
 - **State is a symmetric directory per agent entity (issue #233).** Every agent
   is a directory holding `identity.json` (identity + rolling recovery summary:
   turn_count / last_seen_at / last prompt+assistant previews — the single source

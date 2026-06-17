@@ -40,9 +40,8 @@ export interface ChannelSessionsOptions {
 
 /**
  * The dispatcher's live channel sessions (issue #233 Phase 5): the
- * `Map<channel_id, ChannelSession>` the old `DispatcherRuntimeService` held, plus
- * the channel-tool dispatch, target resolution, and MCP descriptor assembly that
- * key off it. `DispatcherService` owns one instance and drives session start/stop
+ * `Map<channel_id, ChannelSession>` together with the channel-tool dispatch,
+ * target resolution, and MCP descriptor assembly that key off it. `DispatcherService` owns one instance and drives session start/stop
  * around the agent runtime's lifecycle so the slot-before-session ordering (issue
  * #209 fix #7) is preserved. Core stays a blind MCP conduit — it never names a
  * provider's tool.

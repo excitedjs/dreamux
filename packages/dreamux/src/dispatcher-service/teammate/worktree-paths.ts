@@ -38,7 +38,7 @@ export function managedWorktreeRoot(dispatcherWorkspace: string): string {
 }
 
 /** `<workspace>/.workspace/work` — root of default (non-git) per-name work dirs. */
-export function managedWorkRoot(dispatcherWorkspace: string): string {
+function managedWorkRoot(dispatcherWorkspace: string): string {
   return join(managedWorkspaceDir(dispatcherWorkspace), WORK_SUBDIR);
 }
 

@@ -88,8 +88,7 @@ export type ChannelToolCaller =
  * agent runtime lifecycle (start/resume/stop), the settle → router capture, and
  * `completionInput` as a delivery target. The dispatcher-only concerns —
  * channel sessions, restart-intent injection, role MCP descriptor assembly, and
- * completion routing — live here, on `DispatcherService` (Phase 5 absorbed the
- * removed `DispatcherRuntimeService`).
+ * completion routing — live here, on `DispatcherService`.
  */
 export class DispatcherService implements TeamChannelContext {
   readonly id: string;
