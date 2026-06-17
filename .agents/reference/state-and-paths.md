@@ -64,7 +64,13 @@ surface.
 Important children:
 
 - `~/.dreamux/state/<dispatcher-id>/status.json`: dispatcher runtime status and
-  saved Agent Runtime thread/session identity.
+  saved Agent Runtime thread/session identity. **Authoritative** for the
+  dispatcher agent's rebuild/recovery (the dispatcher agent is a contained
+  `TeammateService`, Phase 5 / #233).
+- `~/.dreamux/state/<dispatcher-id>/identity.json` + `turn.jsonl`: the dispatcher
+  agent's own write-only **debug** record at the dispatcher *root* (not under
+  `teammate/`), so the `teammate.*` read chokepoints never enumerate it. No
+  consumer; `status.json` is the authoritative state.
 - `~/.dreamux/state/<dispatcher-id>/access.json`: dispatcher-local Feishu access
   gate state.
 - `~/.dreamux/state/<dispatcher-id>/chat-bots.json`: Feishu known/trusted peer

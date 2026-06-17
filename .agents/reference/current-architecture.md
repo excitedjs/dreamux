@@ -8,13 +8,18 @@ source before making changes.
 
 `dreamux serve` runs one local Node process. The server owns admin IPC,
 configuration loading, provider registries, durable state, and one
-`DispatcherRuntimeService` per enabled dispatcher.
+`DispatcherService` per enabled dispatcher. Each `DispatcherService` *has an*
+agent: a contained `TeammateService` that owns the agent runtime lifecycle
+(Phase 5, #233). The dispatcher-only concerns — channel sessions, restart-notice
+injection, role MCP assembly, completion routing — stay on `DispatcherService`;
+there is no separate `DispatcherRuntimeService`.
 
 Key source:
 
 - `/packages/dreamux/src/server.ts`
 - `/packages/dreamux/src/dispatcher-service/service.ts`
-- `/packages/dreamux/src/dispatcher-service/dispatcher/service.ts`
+- `/packages/dreamux/src/dispatcher-service/dispatcher-instance.ts`
+- `/packages/dreamux/src/dispatcher-service/dispatcher/agent.ts`
 
 ## Configuration
 

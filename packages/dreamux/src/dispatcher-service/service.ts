@@ -7,10 +7,10 @@ import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import {
   DispatcherService,
   type DispatcherServiceOptions,
+  type DispatcherSummary,
 } from './dispatcher-instance.js';
 export { DispatcherService } from './dispatcher-instance.js';
 export { TeamService } from './team/service.js';
-import type { DispatcherSummary } from './dispatcher/service.js';
 export { ChannelToolAuthorizationError } from './errors.js';
 
 export interface DispatchersOptions {

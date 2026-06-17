@@ -38,7 +38,11 @@ export type TeamMateIdentityStatus =
   | "closed"
   | "stopped";
 
-export type TeamMateRole = "teammate" | "team_leader" | "team_member";
+export type TeamMateRole =
+  | "dispatcher"
+  | "teammate"
+  | "team_leader"
+  | "team_member";
 
 export interface TeamMateIdentity {
   version: 1;

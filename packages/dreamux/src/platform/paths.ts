@@ -341,8 +341,17 @@ export function dispatcherTeamTeamMateDir(id: string, teamId: string): string {
   return join(dispatcherTeamScopeDir(id, teamId), 'teammate');
 }
 
+export type AgentEntityRole =
+  | 'dispatcher'
+  | 'teammate'
+  | 'team_leader'
+  | 'team_member';
+
 /**
- * The on-disk directory for one agent entity (issue #233 symmetric layout). A
+ * The on-disk directory for one agent entity (issue #233 symmetric layout). The
+ * `dispatcher` agent's pair sits at the dispatcher ROOT (not under `teammate/`),
+ * so it is structurally outside the teammate/team blind-scan collections — the
+ * `teammate.*` read chokepoints never enumerate it (issue #233 Phase 5). A
  * `team_leader` lives at its team root; a `team_member` under that team's
  * `teammate/<name>/`; an ordinary `teammate` under the dispatcher's
  * `teammate/<name>/`. Every entity directory holds `identity.json` + `turn.jsonl`.
@@ -351,8 +360,11 @@ export function dispatcherAgentEntityDir(input: {
   dispatcherId: string;
   name: string;
   teamId: string | null;
-  role: 'teammate' | 'team_leader' | 'team_member';
+  role: AgentEntityRole;
 }): string {
+  if (input.role === 'dispatcher') {
+    return dispatcherDir(input.dispatcherId);
+  }
   if (input.role === 'team_leader' && input.teamId !== null) {
     return dispatcherTeamScopeDir(input.dispatcherId, input.teamId);
   }
@@ -373,7 +385,7 @@ export function dispatcherAgentIdentityPath(input: {
   dispatcherId: string;
   name: string;
   teamId: string | null;
-  role: 'teammate' | 'team_leader' | 'team_member';
+  role: AgentEntityRole;
 }): string {
   return join(dispatcherAgentEntityDir(input), 'identity.json');
 }
@@ -383,7 +395,7 @@ export function dispatcherAgentTurnsPath(input: {
   dispatcherId: string;
   name: string;
   teamId: string | null;
-  role: 'teammate' | 'team_leader' | 'team_member';
+  role: AgentEntityRole;
 }): string {
   return join(dispatcherAgentEntityDir(input), 'turn.jsonl');
 }

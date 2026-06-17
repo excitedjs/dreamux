@@ -2,8 +2,10 @@ import { createHash } from 'node:crypto';
 
 import type {
   AgentRuntime,
+  AgentRuntimeCreateContext,
   AgentRuntimeMcpServer,
   AgentRuntimeProvider,
+  AgentRuntimeStateCallbacks,
   AgentRuntimeTurnResult,
   CompletionEnvelope,
   DreamuxLogger,
@@ -43,19 +45,52 @@ import {
 import type { DreamuxConfig } from '../../config/config.js';
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 
+/**
+ * The provider-construction inputs a {@link TeammateService} needs to build its
+ * runtime, derived per entity (issue #233 Phase 5). It abstracts the one real
+ * divergence between a teammate agent and the dispatcher agent: a teammate
+ * resolves its runtime config from `agents[].id`, runs in its worktree, and
+ * persists state to its identity record; the dispatcher resolves its inline
+ * `dispatchers[].runtime`, runs in its validated workspace, and persists state to
+ * the authoritative `status.json` store. Everything generic (resume-or-start,
+ * `onTurnSettled` → route, `completionInput`) stays in the entity.
+ */
+export interface RuntimeLaunchSpec {
+  provider: AgentRuntimeProvider;
+  /** The full create context minus the generic pieces the entity supplies. */
+  context: Omit<AgentRuntimeCreateContext, 'onTurnSettled' | 'injectEnv'>;
+  /** Runtime-native checkpoint id to resume from, or null for a fresh start. */
+  checkpointId: string | null;
+}
+
 export interface TeammateServiceDeps {
   config: DreamuxConfig;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   identities: TeamMateIdentityStore;
   turnsStore: TeamMateTurnsStore;
   readModel: TeammateReadModel;
-  worktrees: WorktreeManager;
+  /**
+   * The worktree manager backing `close` (cleanup) and a closed-teammate reopen
+   * (reprepare). Omitted only for the dispatcher agent (issue #233 Phase 5),
+   * which never closes or reopens, so it never reaches the manager.
+   */
+  worktrees?: WorktreeManager;
   log: DreamuxLogger;
   mcpServersForTeamMate?: (input: {
     dispatcherId: string;
     name: string;
     identity: TeamMateIdentity;
   }) => readonly AgentRuntimeMcpServer[];
+  /**
+   * Build the provider + create context for this entity's runtime (issue #233
+   * Phase 5). Omitted for an ordinary teammate, which derives its launch from its
+   * own identity record; supplied for the dispatcher agent, whose runtime is
+   * built from the dispatcher config and persists to `status.json`.
+   */
+  buildLaunch?: (
+    identity: TeamMateIdentity,
+    state: AgentRuntimeStateCallbacks,
+  ) => RuntimeLaunchSpec;
   /** Increments per submission across the whole collection so sourceIds stay unique. */
   nextSubmissionSeq: () => number;
   /** Tracks an in-flight settle capture so the collection can drain on shutdown. */
@@ -189,7 +224,7 @@ export class TeammateService {
       closedAt: Date.now(),
       closeNote: input.note,
       lastSeenAt: Date.now(),
-      worktree: await this.deps.worktrees.cleanup(this.current()),
+      worktree: await this.mustWorktrees().cleanup(this.current()),
     });
     this.identity = closed;
     this.state = new TeamMateRuntimeStateStore(this.deps.identities, closed);
@@ -229,7 +264,12 @@ export class TeammateService {
   async ensureStarted(
     opts: { reopenClosed?: boolean; teamId?: string } = {},
   ): Promise<void> {
-    this.deps.readModel.assertInRoster(this.current(), opts.teamId);
+    // The dispatcher agent (injected `buildLaunch`) is not a roster member — it
+    // lives at the dispatcher root, outside the teammate/team collections — so
+    // the roster guard applies only to ordinary teammates (issue #233 Phase 5).
+    if (this.deps.buildLaunch === undefined) {
+      this.deps.readModel.assertInRoster(this.current(), opts.teamId);
+    }
     if (this.runtime !== null) return;
     if (this.starting !== null) return this.starting;
     const promise = this.startFromRecord(opts).finally(() => {
@@ -250,7 +290,7 @@ export class TeammateService {
       identity = await reprepareDeletedManagedWorktree({
         config: this.deps.config,
         identities: this.deps.identities,
-        worktrees: this.deps.worktrees,
+        worktrees: this.mustWorktrees(),
         identity,
       });
       identity = await this.deps.identities.update(identity, {
@@ -266,22 +306,27 @@ export class TeammateService {
   }
 
   private async startRuntime(): Promise<void> {
+    const launch = this.resolveLaunch();
+    await this.createAndStart(launch);
+  }
+
+  /**
+   * Resolve the runtime launch (issue #233 Phase 5). The dispatcher agent injects
+   * a `buildLaunch` that builds from the dispatcher config + `status.json` state;
+   * an ordinary teammate derives it from its own identity record (config resolved
+   * from `agents[].id`, state from its identity store).
+   */
+  private resolveLaunch(): RuntimeLaunchSpec {
     const identity = this.current();
-    const agent = resolveAgent(
+    if (this.deps.buildLaunch !== undefined) {
+      return this.deps.buildLaunch(identity, this.state);
+    }
+    const agent: ResolvedAgentConfig = resolveAgent(
       this.deps.config,
       this.dispatcherId,
       identity.agent_runtime,
     );
     const provider = this.deps.agentRuntimeProviders.resolve(agent.provider);
-    await this.createAndStart(provider, agent);
-  }
-
-  private async createAndStart(
-    provider: AgentRuntimeProvider,
-    agent: ResolvedAgentConfig,
-  ): Promise<void> {
-    const identity = this.current();
-    const resumeCapability = provider.getCapabilities().resume;
     const runtimeName = runtimeIdentityName(identity);
     const mcpServers =
       this.deps.mcpServersForTeamMate?.({
@@ -289,36 +334,47 @@ export class TeammateService {
         name: identity.name,
         identity,
       }) ?? [];
-    let liveRuntime: AgentRuntime | null = null;
-    const runtime = provider.createRuntime({
-      identity: {
-        runtime_id: runtimeId(identity.dispatcher_id, runtimeName),
-        checkpoint_id: identity.session_id,
+    return {
+      provider,
+      checkpointId: identity.session_id,
+      context: {
+        identity: {
+          runtime_id: runtimeId(identity.dispatcher_id, runtimeName),
+          checkpoint_id: identity.session_id,
+        },
+        role: identity.role,
+        config: agent.config,
+        cwd: identity.cwd,
+        skillSources: bundledSkillSourcesForRole(identity.role),
+        state: this.state,
+        paths: teammateHostPaths(identity.dispatcher_id, runtimeName),
+        mcpServers: [...mcpServers],
+        logger:
+          this.deps.log.child?.({
+            dispatcher_id: this.dispatcherId,
+            teammate: identity.name,
+          }) ?? this.deps.log,
       },
-      role: identity.role,
-      config: agent.config,
-      cwd: identity.cwd,
-      skillSources: bundledSkillSourcesForRole(identity.role),
-      state: this.state,
-      paths: teammateHostPaths(identity.dispatcher_id, runtimeName),
+    };
+  }
+
+  private async createAndStart(launch: RuntimeLaunchSpec): Promise<void> {
+    const resumeCapability = launch.provider.getCapabilities().resume;
+    let liveRuntime: AgentRuntime | null = null;
+    const runtime = launch.provider.createRuntime({
+      ...launch.context,
       injectEnv: HOST_INJECT_ENV,
-      mcpServers: [...mcpServers],
       onTurnSettled: (settled: TurnSettledSignal): void => {
         if (liveRuntime === null) return;
         this.captureSettledTurn(liveRuntime, settled);
       },
-      logger:
-        this.deps.log.child?.({
-          dispatcher_id: this.dispatcherId,
-          teammate: identity.name,
-        }) ?? this.deps.log,
     });
     liveRuntime = runtime;
-    if (identity.session_id !== null && resumeCapability.supported) {
+    if (launch.checkpointId !== null && resumeCapability.supported) {
       await runtime.resume({
         checkpoint: {
           kind: resumeCapability.checkpoint,
-          id: identity.session_id,
+          id: launch.checkpointId,
         },
       });
     } else {
@@ -418,6 +474,16 @@ export class TeammateService {
       throw new Error(`TeamMate ${JSON.stringify(this.name)} is not running`);
     }
     return runtime;
+  }
+
+  private mustWorktrees(): WorktreeManager {
+    const worktrees = this.deps.worktrees;
+    if (worktrees === undefined) {
+      throw new Error(
+        `agent ${JSON.stringify(this.name)} has no worktree manager`,
+      );
+    }
+    return worktrees;
   }
 }
 

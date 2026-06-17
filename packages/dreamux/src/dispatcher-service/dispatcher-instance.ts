@@ -1,13 +1,14 @@
 import type {
+  AgentRuntime,
   AgentRuntimeMcpServer,
   AgentRuntimeTurnResult,
   ChannelInboundEnvelope,
+  ChannelSession,
   ChannelTarget,
-  CompletionEnvelope,
   DreamuxLogger,
   InboundDeliveryHooks,
+  InboundDeliveryResult,
   InboundTurnInput,
-  TeamMateCompletionDeliveryResult,
 } from '@excitedjs/dreamux-types';
 
 import type { AgentRuntimeProviderCatalog } from '../agent-runtime/index.js';
@@ -15,14 +16,18 @@ import type { ChannelProviderCatalog } from '../channel/catalog.js';
 import type { DreamuxConfig } from '../config/config.js';
 import type { RestartIntentConsumer } from '../daemon/restart-intent.js';
 import { adminSocketPath as defaultAdminSocketPath } from '../platform/paths.js';
-import type { DispatcherStore } from '../state/dispatcher-store.js';
-import {
-  DispatcherRuntimeService,
-  type DispatcherSummary,
-} from './dispatcher/service.js';
+import type {
+  DispatcherRow,
+  DispatcherStatus,
+  DispatcherStore,
+} from '../state/dispatcher-store.js';
+import { createDispatcherAgent } from './dispatcher/agent.js';
+import { ChannelSessions } from './dispatcher/channel-sessions.js';
+import { authorizeTeamLeaderChannelEgress } from './dispatcher/channel-tool-auth.js';
 import type { ChannelMcpCallerScope } from './dispatcher/mcp-descriptors.js';
+import { assertRunnableChannelShape } from './dispatcher/runnable-channel.js';
+import { ensureDispatcherWorkspace } from './dispatcher-workspace.js';
 import { ChannelToolAuthorizationError } from './errors.js';
-import type { DispatcherRow } from '../state/dispatcher-store.js';
 import {
   CompletionRouter,
   type CompletionInitiator,
@@ -32,6 +37,7 @@ import {
   type SpawnTeamMateRequest,
   TeammateCollection,
 } from './teammate/service.js';
+import type { TeammateService } from './teammate/teammate-service.js';
 import { WorktreeManager } from './teammate/worktree-manager.js';
 import { ChannelBindingStore } from './channel-binding/store.js';
 import {
@@ -59,54 +65,83 @@ export interface DispatcherServiceOptions {
   log: DreamuxLogger;
 }
 
+export interface DispatcherSummary {
+  dispatcher_id: string;
+  channel_identity: string;
+  status: DispatcherStatus;
+  thread_id: string | null;
+  enabled: boolean;
+}
+
 export type ChannelToolCaller =
   | { kind: 'dispatcher' }
   | { kind: 'team_leader'; teamId: string; leaderName: string };
 
 /**
- * One dispatcher-local aggregate (issue #233 ownership sinking). It owns the
- * whole per-dispatcher object graph — the delivery `CompletionRouter`, the shared
- * `WorktreeManager` + `ChannelBindingStore`, the `TeammateCollection` and
- * `TeamCollection`, and the `DispatcherRuntimeService` — built once in the
- * constructor. None of these are process-wide singletons; each dispatcher holds
- * its own. The graph is built router-first (topology-free) so the collections can
- * be wired to `this` methods without a construction cycle.
+ * One dispatcher-local aggregate (issue #233). It owns the whole per-dispatcher
+ * object graph — the delivery `CompletionRouter`, the shared `WorktreeManager` +
+ * `ChannelBindingStore`, the `TeammateCollection` and `TeamCollection`, the live
+ * `ChannelSessions`, and the dispatcher's own agent (a contained
+ * {@link TeammateService}, Phase 5) — built once in the constructor.
+ *
+ * The dispatcher *has an* agent (has-a): the shared `TeammateService` owns the
+ * agent runtime lifecycle (start/resume/stop), the settle → router capture, and
+ * `completionInput` as a delivery target. The dispatcher-only concerns —
+ * channel sessions, restart-intent injection, role MCP descriptor assembly, and
+ * completion routing — live here, on `DispatcherService` (Phase 5 absorbed the
+ * removed `DispatcherRuntimeService`).
  */
 export class DispatcherService implements TeamChannelContext {
   readonly id: string;
   private readonly config: DreamuxConfig;
-  private readonly dispatcherRuntime: DispatcherRuntimeService;
+  private readonly dispatchers: DispatcherStore;
+  private readonly channelProviders: ChannelProviderCatalog;
+  private readonly log: DreamuxLogger;
   private readonly router: CompletionRouter;
   private readonly teammates: TeammateCollection;
   private readonly teams: TeamCollection;
+  private readonly channels: ChannelSessions;
+  private readonly agent: TeammateService;
+  private restartIntent: RestartIntentConsumer | null = null;
+  private starting: Promise<void> | null = null;
+  private workspaceCwd: string | null = null;
   private shuttingDown = false;
 
   constructor(opts: DispatcherServiceOptions) {
     this.id = opts.id;
     this.config = opts.config;
+    this.dispatchers = opts.dispatchers;
+    this.channelProviders = opts.channelProviders;
+    this.log = opts.log;
     const adminSocket = opts.adminSocketPath ?? defaultAdminSocketPath();
 
     this.router = new CompletionRouter({ dispatcherId: opts.id, log: opts.log });
 
     // One worktree manager + one channel-binding store per dispatcher, shared by
-    // both collections (issue #233): the manager is cwd-constrained to this
-    // dispatcher's `.workspace`, the binding store keyed by this dispatcher id.
+    // both collections (issue #233).
     const worktrees = new WorktreeManager();
     const bindings = new ChannelBindingStore();
 
-    this.dispatcherRuntime = new DispatcherRuntimeService({
-      id: opts.id,
+    this.channels = new ChannelSessions({
+      dispatcherId: opts.id,
       config: opts.config,
-      dispatchers: opts.dispatchers,
-      agentRuntimeProviders: opts.agentRuntimeProviders,
       channelProviders: opts.channelProviders,
-      log: opts.log,
       channelLoggerFactory: opts.channelLoggerFactory,
       ...(opts.adminSocketPath !== undefined
         ? { adminSocketPath: opts.adminSocketPath }
         : {}),
-      routeChannelInput: (channelId, turn, envelope, hooks) =>
-        this.routeChannelInput(channelId, turn, envelope, hooks),
+    });
+
+    this.agent = createDispatcherAgent({
+      id: opts.id,
+      config: opts.config,
+      dispatchers: opts.dispatchers,
+      agentRuntimeProviders: opts.agentRuntimeProviders,
+      router: this.router,
+      log: opts.log,
+      adminSocketPath: adminSocket,
+      resolveCwd: () => this.mustWorkspaceCwd(),
+      liveChannels: () => this.channels.live(),
     });
 
     this.teammates = new TeammateCollection({
@@ -143,16 +178,111 @@ export class DispatcherService implements TeamChannelContext {
     });
   }
 
-  start(): Promise<void> {
-    return this.dispatcherRuntime.start();
+  /**
+   * Launch the dispatcher agent runtime, then its channel sessions (issue #233
+   * Phase 5). The order is load-bearing: the agent runtime starts FIRST so an
+   * inbound arriving during `session.start()` resolves a running runtime instead
+   * of throwing (issue #209 fix #7). A single `starting` promise serializes
+   * concurrent callers.
+   */
+  async start(): Promise<void> {
+    if (this.agent.getRuntime() !== null) return;
+    if (this.starting !== null) return this.starting;
+    const promise = this.doStart().finally(() => {
+      this.starting = null;
+    });
+    this.starting = promise;
+    return promise;
   }
 
-  stop(): Promise<void> {
-    return this.dispatcherRuntime.stop();
+  private async doStart(): Promise<void> {
+    const id = this.id;
+    const row = this.dispatchers.get(id);
+    if (row === null) throw new Error(`no dispatcher '${id}'`);
+
+    const dispatcherConfig = this.config.dispatchers.find(
+      (dispatcher) => dispatcher.id === id,
+    );
+    // The single runtime boundary that fails loud on a not-yet-runnable channel
+    // shape (a provider with no loaded implementation). State seeding stays
+    // fail-soft so this is the only place that rejects it.
+    if (dispatcherConfig !== undefined) {
+      assertRunnableChannelShape(dispatcherConfig, this.channelProviders);
+    }
+    if (dispatcherConfig === undefined) {
+      throw new Error(`dispatcher '${id}' has no config entry`);
+    }
+
+    // The dispatcher agent runs in its validated workspace (issue #182 PR-4): no
+    // fallback to a Dreamux state dir. Resolved BEFORE the agent launch so the
+    // agent's launch builder reads it.
+    this.workspaceCwd = await ensureDispatcherWorkspace(this.config, id);
+
+    // Build the un-started channel sessions BEFORE the runtime so the dispatcher
+    // MCP descriptors are derived from each session's own descriptor; the agent
+    // launch reads them via `liveChannels()`. They are adopted as live only after
+    // the runtime starts so the descriptor build sees them.
+    const channels = await this.channels.build();
+    this.channels.adopt(channels);
+
+    let runtime: AgentRuntime;
+    try {
+      await this.agent.ensureStarted();
+      runtime = this.mustRuntime();
+    } catch (err) {
+      this.channels.clear();
+      await closeAllBuilt(channels);
+      throw err;
+    }
+
+    try {
+      // The runtime is up and the sessions are already adopted as the live slot,
+      // so each session is observable as it starts (issue #209 fix #7).
+      for (const [channelId, session] of channels) {
+        await session.start({
+          deliver: async (turn, envelope, hooks) =>
+            asInboundDeliveryResult(
+              await this.routeChannelInput(channelId, turn, envelope, hooks),
+            ),
+        });
+      }
+    } catch (err) {
+      // Undo the slot adoption so a failed start never leaves a half-built slot.
+      this.channels.clear();
+      await closeAllBuilt(channels);
+      try {
+        await this.agent.stop();
+      } catch {
+        /* best effort */
+      }
+      throw err;
+    }
+
+    this.log.info(
+      {
+        dispatcher_id: id,
+        channel_identity: row.channel_identity,
+        cwd: this.workspaceCwd,
+      },
+      'dispatcher ready',
+    );
+    await this.injectRestartNoticeIfNeeded(id, runtime);
+  }
+
+  async stop(): Promise<void> {
+    await this.channels.closeAll(this.log);
+    try {
+      await this.agent.stop();
+    } catch (err) {
+      this.log.error(
+        { dispatcher_id: this.id, err: errInfo(err) },
+        'error stopping dispatcher',
+      );
+    }
   }
 
   runtimeStatus(): { status: string | null; threadId: string | null } {
-    const runtime = this.dispatcherRuntime.getRuntime();
+    const runtime = this.agent.getRuntime();
     return {
       status: runtime?.getStatus() ?? null,
       threadId: runtime?.getThreadId() ?? null,
@@ -160,26 +290,31 @@ export class DispatcherService implements TeamChannelContext {
   }
 
   setRestartIntent(consumer: RestartIntentConsumer | null): void {
-    this.dispatcherRuntime.setRestartIntent(consumer);
+    this.restartIntent = consumer;
   }
 
   summary(row: DispatcherRow): DispatcherSummary {
-    return this.dispatcherRuntime.summary(row);
+    const runtime = this.agent.getRuntime();
+    return {
+      dispatcher_id: row.dispatcher_id,
+      channel_identity: row.channel_identity,
+      status: runtime?.getStatus() ?? row.status,
+      thread_id: runtime?.getThreadId() ?? row.thread_id,
+      enabled: row.enabled === 1,
+    };
   }
 
   /**
    * Best-effort dispatcher teardown (issue #233). The `shuttingDown` flag closes
    * the traversal-window race: it is set first so any concurrent `spawn`/`send` /
    * team `create`/`send` is rejected before it can lazily start a runtime the
-   * sweep would miss. Then every live teammate runtime (direct + team members +
-   * leaders, all held in the single per-dispatcher `TeammateCollection`) is
-   * stopped, followed by the dispatcher agent runtime. `stopAll` only touches
-   * already-created entities, so it never lazily starts a not-yet-running one.
+   * sweep would miss. Then every live teammate runtime is stopped, followed by
+   * the dispatcher agent (channel sessions first, then the agent runtime).
    */
   async shutdown(): Promise<void> {
     this.shuttingDown = true;
     await this.teammates.stopAll();
-    await this.dispatcherRuntime.shutdown();
+    await this.stop();
   }
 
   private assertNotShuttingDown(): void {
@@ -191,7 +326,7 @@ export class DispatcherService implements TeamChannelContext {
   channelMcpServerDescriptorsForCaller(
     scope: ChannelMcpCallerScope,
   ): AgentRuntimeMcpServer[] {
-    return this.dispatcherRuntime.channelMcpServerDescriptorsForCaller(scope);
+    return this.channels.channelMcpServerDescriptorsForCaller(scope);
   }
 
   async invokeChannelTool(input: {
@@ -213,8 +348,8 @@ export class DispatcherService implements TeamChannelContext {
         arguments: input.arguments,
       });
     }
-    return this.dispatcherRuntime.invokeChannelTool({
-      providerRef: input.providerRef,
+    return this.channels.invokeTool({
+      ...(input.providerRef !== undefined ? { providerRef: input.providerRef } : {}),
       name: input.name,
       arguments: input.arguments,
       channelId,
@@ -304,10 +439,7 @@ export class DispatcherService implements TeamChannelContext {
     meta: Record<string, unknown>;
   }) {
     const channelId = this.resolveChannelId(input.channelId);
-    const target = await this.dispatcherRuntime.resolveChannelTarget(
-      input.meta,
-      channelId,
-    );
+    const target = await this.channels.resolveTarget(input.meta, channelId);
     return this.teams.transferChannelBack({
       channelId,
       targetKey: target.target_key,
@@ -333,7 +465,7 @@ export class DispatcherService implements TeamChannelContext {
         return result;
       }
     }
-    const runtime = this.dispatcherRuntime.getRuntime();
+    const runtime = this.agent.getRuntime();
     if (runtime === null) return { status: 'stopped' };
     return runtime.channelInput(input, hooks);
   }
@@ -352,23 +484,12 @@ export class DispatcherService implements TeamChannelContext {
       const team = await this.teams.get(producer.team_id).catch(() => null);
       // The team's leader is its contained `TeammateService` (issue #233 Phase
       // 4); a member's settled turn delivers to it via `completionInput`.
-      return team?.leader ?? this.dispatcherInitiator();
+      return team?.leader ?? this.agent;
     }
-    return this.dispatcherInitiator();
-  }
-
-  /**
-   * The dispatcher agent as a delivery target: a thin adapter over the live
-   * dispatcher runtime's `completionInput`. Until Phase 5 the dispatcher is not a
-   * `TeammateService`, so this adapter — not an entity method — is its initiator.
-   */
-  private dispatcherInitiator(): CompletionInitiator {
-    return {
-      completionInput: (
-        completion: CompletionEnvelope,
-      ): Promise<TeamMateCompletionDeliveryResult> =>
-        this.dispatcherRuntime.deliverCompletion(completion),
-    };
+    // The dispatcher agent itself is the contained `TeammateService` (issue #233
+    // Phase 5) — a dispatcher-owned teammate or leader delivers to it via its own
+    // `completionInput`, the same unified router path as any other target.
+    return this.agent;
   }
 
   async teamLeaderCanUseChannel(input: {
@@ -387,55 +508,22 @@ export class DispatcherService implements TeamChannelContext {
     return { allowed: channelId !== null, channelId };
   }
 
-  private async authorizeTeamLeaderChannelEgress(input: {
+  private authorizeTeamLeaderChannelEgress(input: {
     channelId: string;
     teamId: string;
     leaderName: string;
     arguments: Record<string, unknown>;
   }): Promise<void> {
-    let target: ChannelTarget;
-    try {
-      target = await this.dispatcherRuntime.resolveChannelTarget(
-        input.arguments,
-        input.channelId,
-      );
-    } catch {
-      throw new ChannelToolAuthorizationError(
-        'BAD_REQUEST',
-        'TeamLeader channel tools require a resolvable target',
-      );
-    }
-    const messageId = input.arguments['message_id'];
-    if (
-      typeof messageId === 'string' &&
-      !(await this.dispatcherRuntime.messageBelongsToTarget(
-        target,
-        messageId,
-        input.channelId,
-      ))
-    ) {
-      throw new ChannelToolAuthorizationError(
-        'CHANNEL_SCOPE_DENIED',
-        'TeamLeader may act only on messages observed in bound team channels',
-      );
-    }
-    const { allowed, channelId } = await this.teamLeaderCanUseChannel({
-      teamId: input.teamId,
-      leaderName: input.leaderName,
-      targetKey: target.target_key,
-    });
-    if (!allowed || channelId === null) {
-      throw new ChannelToolAuthorizationError(
-        'CHANNEL_SCOPE_DENIED',
-        'TeamLeader may use channels only for bound team channels',
-      );
-    }
-    if (channelId !== input.channelId) {
-      throw new ChannelToolAuthorizationError(
-        'CHANNEL_SCOPE_DENIED',
-        'TeamLeader may use only the channel MCP server bound to the target',
-      );
-    }
+    return authorizeTeamLeaderChannelEgress(
+      {
+        resolveTarget: (meta, channelId) =>
+          this.channels.resolveTarget(meta, channelId),
+        messageBelongsToTarget: (target, messageId, channelId) =>
+          this.channels.messageBelongsToTarget(target, messageId, channelId),
+        teamLeaderCanUseChannel: (i) => this.teamLeaderCanUseChannel(i),
+      },
+      input,
+    );
   }
 
   private resolveToolChannelId(
@@ -511,10 +599,82 @@ export class DispatcherService implements TeamChannelContext {
   }
 
   resolveChannelTarget(meta: unknown, channelId?: string): Promise<ChannelTarget> {
-    return this.dispatcherRuntime.resolveChannelTarget(meta, channelId);
+    return this.channels.resolveTarget(meta, channelId);
+  }
+
+  private async injectRestartNoticeIfNeeded(
+    dispatcherId: string,
+    runtime: AgentRuntime,
+  ): Promise<void> {
+    if (!runtime.wasThreadResumed()) return;
+    const notice = this.restartIntent?.claim(dispatcherId, Date.now()) ?? null;
+    if (notice === null) return;
+    try {
+      const result = await runtime.systemInput({
+        kind: 'system',
+        text: notice,
+        reason: 'restart-notice',
+      });
+      if (result.status === 'failed') {
+        this.log.warn(
+          { dispatcher_id: dispatcherId, err: errInfo(result.error) },
+          'restart notice injection failed',
+        );
+      }
+    } catch (err) {
+      this.log.warn(
+        { dispatcher_id: dispatcherId, err: errInfo(err) },
+        'restart notice injection errored',
+      );
+    }
+  }
+
+  private mustRuntime(): AgentRuntime {
+    const runtime = this.agent.getRuntime();
+    if (runtime === null) {
+      throw new Error(`dispatcher '${this.id}' agent runtime is not running`);
+    }
+    return runtime;
+  }
+
+  private mustWorkspaceCwd(): string {
+    const cwd = this.workspaceCwd;
+    if (cwd === null) {
+      throw new Error(
+        `dispatcher '${this.id}' workspace cwd is not resolved yet`,
+      );
+    }
+    return cwd;
   }
 
   private dispatcherConfig() {
     return this.config.dispatchers.find((entry) => entry.id === this.id);
   }
+}
+
+function asInboundDeliveryResult(
+  result: AgentRuntimeTurnResult,
+): InboundDeliveryResult {
+  return result.status === 'skipped' ? { status: 'stopped' } : result;
+}
+
+async function closeAllBuilt(
+  channels: Map<string, ChannelSession>,
+): Promise<void> {
+  for (const session of channels.values()) {
+    try {
+      await session.close();
+    } catch {
+      /* best effort */
+    }
+  }
+}
+
+function errInfo(err: unknown): { message: string; stack?: string } {
+  if (err instanceof Error) {
+    return err.stack !== undefined
+      ? { message: err.message, stack: err.stack }
+      : { message: err.message };
+  }
+  return { message: String(err) };
 }
