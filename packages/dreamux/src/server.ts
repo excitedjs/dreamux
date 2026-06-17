@@ -34,7 +34,7 @@ import {
   Dispatchers,
   type DispatcherService,
 } from './service/index.js';
-import { ensureDispatcherWorkspace } from './service/dispatcher-service/workspace.js';
+import { ensureDispatcherWorkspace } from './service/dispatcher-workspace.js';
 import {
   detectLegacyDispatcherState,
   legacyDispatcherStateMessage,

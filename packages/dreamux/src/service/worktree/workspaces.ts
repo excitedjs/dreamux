@@ -1,5 +1,5 @@
 import type { DreamuxConfig } from '../../config/config.js';
-import { ensureDispatcherWorkspace } from '../dispatcher-service/workspace.js';
+import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
 import type { TeamMateIdentityStore } from '../teammate-collection/identity-store.js';
 import type {
   SpawnTeamMateRequest,

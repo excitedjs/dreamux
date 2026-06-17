@@ -378,6 +378,7 @@ existing `team/service.ts` (which holds *two* classes, `TeamCollection` +
 ```
 src/service/
   index.ts                       # package-internal barrel (Dispatchers, DispatcherService, TeamService, ChannelToolAuthorizationError)
+  dispatcher-workspace.ts        # issue #182 dispatcher-cwd policy (shared: server preflight, dispatcher service, doctor, worktree layer)
   dispatchers/
     index.ts                     # Dispatchers (process-level collection + factory)
   dispatcher-service/            # the per-dispatcher aggregate + its agent-side parts
@@ -388,7 +389,6 @@ src/service/
     channel-tool-auth.ts
     mcp-descriptors.ts
     runnable-channel.ts
-    workspace.ts                 # ensureDispatcherWorkspace
     errors.ts                    # ChannelToolAuthorizationError
   team-collection/
     index.ts                     # TeamCollection
@@ -425,8 +425,11 @@ The names above (`dispatcher-service/`, `team-collection/`, …) follow the user
 `team-service/index.ts` convention and can be renamed without affecting the
 design; only the one-class-per-file rule and the deletion of the top-level
 `dispatcher-service/` are load-bearing. Cross-cutting helpers (`worktree/`,
-`channel-binding/`, `legacy-state.ts`) live at the `service/` root because no
-single service owns them. The restructure is a **pure mechanical move** (`git mv`
+`channel-binding/`, `legacy-state.ts`, `dispatcher-workspace.ts`) live at the
+`service/` root because no single service owns them — e.g. the dispatcher-cwd
+policy is consumed by `server.ts` startup, the dispatcher service, `dreamux
+doctor`, and the `worktree/` layer, so the `worktree/` helper must not reach up
+into `dispatcher-service/` for it. The restructure is a **pure mechanical move** (`git mv`
 + import-path fixups + a `tsc` green gate), done as a separate commit *after* the
 per-team semantic change so the two diffs stay reviewable.
 

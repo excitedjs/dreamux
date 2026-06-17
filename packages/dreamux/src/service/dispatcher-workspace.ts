@@ -2,7 +2,7 @@ import { constants } from 'node:fs';
 import { access, mkdir, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
-import type { DreamuxConfig } from '../../config/config.js';
+import type { DreamuxConfig } from '../config/config.js';
 
 /**
  * Dispatcher workspace cwd policy (issue #182 PR-4).

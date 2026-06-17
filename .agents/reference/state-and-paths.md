@@ -50,7 +50,7 @@ would live under `~/.dreamux`.
 
 Key source:
 
-- `/packages/dreamux/src/service/dispatcher-service/workspace.ts`
+- `/packages/dreamux/src/service/dispatcher-workspace.ts`
 - `/packages/dreamux/src/service/worktree/workspaces.ts`
 - `/packages/dreamux/src/service/worktree/manager.ts`
 - `/packages/dreamux/src/service/worktree/paths.ts`

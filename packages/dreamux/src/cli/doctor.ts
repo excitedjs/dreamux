@@ -26,7 +26,7 @@ import {
   setRuntimeConfig,
   stateRoot,
 } from '../platform/paths.js';
-import { diagnoseDispatcherWorkspace } from '../service/dispatcher-service/workspace.js';
+import { diagnoseDispatcherWorkspace } from '../service/dispatcher-workspace.js';
 import {
   detectLegacyDispatcherState,
   legacyDispatcherStateMessage,

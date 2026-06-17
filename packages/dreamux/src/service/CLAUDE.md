@@ -60,8 +60,10 @@ gets a directory whose `index.ts` is the class and siblings are its helpers.
   delivery target) + `CompletionRouter` (per-dispatcher delivery service, keyed by
   `producerName:turnId`, terminal-cache at-most-once) + identity-store +
   runtime-state + types + the teammate MCP descriptor. The cross-cutting helpers
-  `worktree/`, `channel-binding/`, and `legacy-state.ts` live at the `service/`
-  root because no single service owns them.
+  `worktree/`, `channel-binding/`, `legacy-state.ts`, and `dispatcher-workspace.ts`
+  (the issue #182 dispatcher-cwd policy used by `server.ts` startup, the dispatcher
+  service, `dreamux doctor`, and the `worktree/` layer) live at the `service/` root
+  because no single service owns them.
   Agent-centric teammates: **no `task`** — a teammate is a named, resumable agent.
 
 ## Invariants (why it's shaped this way)
@@ -74,7 +76,7 @@ gets a directory whose `index.ts` is the class and siblings are its helpers.
   worker/runtime tree.
 - **cwd is supplied by the launcher.** The dispatcher agent's cwd is its
   validated workspace (`ensureDispatcherWorkspace(config, id)` in
-  `dispatcher-service/workspace.ts`): every dispatcher MUST declare an explicit `cwd`,
+  `dispatcher-workspace.ts`): every dispatcher MUST declare an explicit `cwd`,
   there is no state-dir fallback (issue #182 PR-4). A teammate's cwd is its
   resolved target (`identity.cwd`). Passed as the required `cwd` create-context
   field — never derived inside the runtime. Managed TeamMate/Team git worktrees

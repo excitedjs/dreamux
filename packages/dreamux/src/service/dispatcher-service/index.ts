@@ -26,7 +26,7 @@ import { ChannelSessions } from './channel-sessions.js';
 import { authorizeTeamLeaderChannelEgress } from './channel-tool-auth.js';
 import type { ChannelMcpCallerScope } from './mcp-descriptors.js';
 import { assertRunnableChannelShape } from './runnable-channel.js';
-import { ensureDispatcherWorkspace } from './workspace.js';
+import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
 import { ChannelToolAuthorizationError } from './errors.js';
 import {
   CompletionRouter,
