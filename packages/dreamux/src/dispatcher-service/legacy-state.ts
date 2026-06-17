@@ -5,12 +5,25 @@ import { isNotFound } from '../platform/fs-errors.js';
 import { dispatcherTeamDir, dispatcherTeamMateDir } from '../platform/paths.js';
 
 /**
- * Fail-loud detection of pre-#199 local state (issue #199 Slice 5). Dreamux 0.x
- * does not migrate state automatically (issue #98): a leftover from a server
- * that ran an earlier layout is a hard upgrade blocker the operator resolves by
- * deleting the named path and letting the current records + per-name turns
- * layout rebuild. Like `assertNoLegacyAdminServer`, this is detection only — the
- * legacy paths are probed, never read for migration, rewritten, or removed.
+ * Fail-loud detection of pre-#233 local state (issue #199 Slice 5, extended by
+ * issue #233). Dreamux 0.x does not migrate state automatically (issue #98): a
+ * leftover from a server that ran an earlier layout is a hard upgrade blocker the
+ * operator resolves by deleting the named path and letting the current symmetric
+ * directory-per-entity layout rebuild. Like `assertNoLegacyAdminServer`, this is
+ * detection only — the legacy paths are probed, never read for migration,
+ * rewritten, or removed.
+ *
+ * #233 replaced the flat per-name files with a directory per entity:
+ *   teammate/records/<name>.json + teammate/turns/<name>.jsonl
+ *     → teammate/<name>/{identity.json, turn.jsonl}
+ *   team/records/<team>.json
+ *     → team/<team>/record.json (+ leader identity.json/turn.jsonl + members)
+ *   team/channel-bindings.json
+ *     → channel-bindings.json at the dispatcher root
+ * The `teammate/` and `team/` directories themselves stay valid (they now hold
+ * the per-entity dirs), so detection probes the specific removed leaves, not the
+ * parents. The reserved-name guard (`assertNotReservedAgentName`) keeps a real
+ * entity dir from recreating one of these leaf names.
  */
 
 export interface LegacyStateFinding {
@@ -35,9 +48,11 @@ export class LegacyStateError extends Error {
 }
 
 /**
- * State paths the #199 Epic removed or renamed, anchored on the canonical
- * per-dispatcher state-dir builders so the leaf names are the only historical
- * constants here (the live builders for these were deleted with the Epic).
+ * State paths the #199 Epic and the #233 refactor removed or renamed, anchored on
+ * the canonical per-dispatcher state-dir builders so the leaf names are the only
+ * historical constants here (the live builders for these were deleted with each
+ * change). Probes the specific removed leaves — `teammate/` and `team/` stay
+ * valid as the new per-entity collection roots.
  */
 function removedStatePaths(dispatcherId: string): LegacyStateFinding[] {
   const teammate = dispatcherTeamMateDir(dispatcherId);
@@ -45,19 +60,35 @@ function removedStatePaths(dispatcherId: string): LegacyStateFinding[] {
   return [
     {
       path: join(teammate, 'identities'),
-      what: 'pre-#199 TeamMate identities directory, renamed to teammate/records/',
+      what: 'pre-#199 TeamMate identities directory, replaced by teammate/<name>/identity.json',
+    },
+    {
+      path: join(teammate, 'records'),
+      what: 'pre-#233 flat TeamMate records directory, replaced by teammate/<name>/identity.json',
+    },
+    {
+      path: join(teammate, 'turns'),
+      what: 'pre-#233 flat TeamMate turns directory, replaced by teammate/<name>/turn.jsonl',
     },
     {
       path: join(teammate, 'sessions.jsonl'),
-      what: 'pre-#199 TeamMate/Team session ledger, replaced by per-name teammate/turns/<name>.jsonl',
+      what: 'pre-#199 TeamMate/Team session ledger, replaced by per-entity teammate/<name>/turn.jsonl',
     },
     {
       path: join(teammate, 'history'),
-      what: 'pre-#182 per-name TeamMate history index, folded into the record plus the turns archive',
+      what: 'pre-#182 per-name TeamMate history index, folded into the identity plus the turn archive',
+    },
+    {
+      path: join(team, 'records'),
+      what: 'pre-#233 flat Team records directory, replaced by team/<team>/record.json',
+    },
+    {
+      path: join(team, 'channel-bindings.json'),
+      what: 'pre-#233 Team-scoped channel bindings, moved to channel-bindings.json at the dispatcher root',
     },
     {
       path: join(team, 'ledger'),
-      what: 'pre-#199 Team audit ledger, removed (Team history now reads team/records/<team_name>.json)',
+      what: 'pre-#199 Team audit ledger, removed (Team history now reads team/<team>/record.json)',
     },
   ];
 }

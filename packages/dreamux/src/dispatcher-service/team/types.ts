@@ -1,11 +1,12 @@
 import type { ChannelTarget } from '@excitedjs/dreamux-types';
 
-import type {
-  TeamMateIdentityStatus,
-  TeamMateRuntimeStatus,
-  TeamMateTurnResult,
-  TeamMateWorktreeIdentity,
-  TeamMateWorktreeRequest,
+import {
+  assertNotReservedAgentName,
+  type TeamMateIdentityStatus,
+  type TeamMateRuntimeStatus,
+  type TeamMateTurnResult,
+  type TeamMateWorktreeIdentity,
+  type TeamMateWorktreeRequest,
 } from '../teammate/types.js';
 
 export const TEAM_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -192,5 +193,6 @@ export function validateTeamId(id: string): string {
         `or dashes, starting with a letter or digit: ${id}`,
     );
   }
+  assertNotReservedAgentName(id);
   return id;
 }

@@ -3,8 +3,8 @@ import { readFile, readdir } from 'node:fs/promises';
 import { writeFileAtomic } from '../../platform/atomic-write.js';
 import { isNotFound } from '../../platform/fs-errors.js';
 import {
+  dispatcherTeamDir,
   dispatcherTeamRecordPath,
-  dispatcherTeamRecordsDir,
 } from '../../platform/paths.js';
 import type { TeamRecord, TeamStatus } from './types.js';
 import { validateTeamId } from './types.js';
@@ -25,17 +25,21 @@ export class TeamStore {
   }
 
   async list(dispatcherId: string): Promise<TeamRecord[]> {
-    let entries: string[];
+    let entries: import('node:fs').Dirent[];
     try {
-      entries = await readdir(dispatcherTeamRecordsDir(dispatcherId));
+      // One directory per team (issue #233 symmetric layout); the team record is
+      // `team/<team>/record.json`. Blind-scan the collection of team dirs.
+      entries = await readdir(dispatcherTeamDir(dispatcherId), {
+        withFileTypes: true,
+      });
     } catch (err) {
       if (isNotFound(err)) return [];
       throw err;
     }
     const teams: TeamRecord[] = [];
-    for (const entry of entries.sort()) {
-      if (!entry.endsWith('.json')) continue;
-      const team = await this.get(dispatcherId, entry.slice(0, -'.json'.length));
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (!entry.isDirectory()) continue;
+      const team = await this.get(dispatcherId, entry.name);
       if (team !== null) teams.push(team);
     }
     return teams;

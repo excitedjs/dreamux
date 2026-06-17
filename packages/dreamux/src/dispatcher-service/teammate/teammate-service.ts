@@ -144,7 +144,7 @@ export class TeammateService {
     const turn = await this.submitPrompt(input.prompt, {
       teamId: input.teamId,
     });
-    await recordSubmittedTurn(this.turnsStore, this.dispatcherId, this.live(), {
+    await recordSubmittedTurn(this.turnsStore, this.live(), {
       turnId: turn.turn_id ?? null,
       turnOrigin: turnOriginForTeamId(input.teamId),
       prompt: input.prompt,
@@ -158,7 +158,7 @@ export class TeammateService {
     opts: { teamId?: string; turnOrigin?: TeamMateTurnOrigin } = {},
   ): Promise<TeamMateTurnResult> {
     const turn = await this.submitPrompt(prompt, { teamId: opts.teamId });
-    await recordSubmittedTurn(this.turnsStore, this.dispatcherId, this.live(), {
+    await recordSubmittedTurn(this.turnsStore, this.live(), {
       turnId: turn.turn_id ?? null,
       turnOrigin: opts.turnOrigin ?? turnOriginForTeamId(opts.teamId),
       prompt,
@@ -171,7 +171,7 @@ export class TeammateService {
     const runtime = this.mustRuntime();
     const result = await runtime.channelInput(input);
     if (result.status === 'submitted') {
-      await recordSubmittedTurn(this.turnsStore, this.dispatcherId, this.live(), {
+      await recordSubmittedTurn(this.turnsStore, this.live(), {
         turnId: result.turnId,
         turnOrigin: 'channel',
         prompt: input.text,
@@ -367,17 +367,11 @@ export class TeammateService {
       status: settled.status,
       result,
     };
-    const record = recordSettledTurn(
-      this.turnsStore,
-      this.dispatcherId,
-      identity.name,
-      this.state,
-      {
-        turnId: settled.turnId,
-        assistant: result,
-        settleStatus: settled.status,
-      },
-    );
+    const record = recordSettledTurn(this.turnsStore, this.state, {
+      turnId: settled.turnId,
+      assistant: result,
+      settleStatus: settled.status,
+    });
     const route = this.deps.routeSettledCompletion(
       identity.name,
       settled.turnId,

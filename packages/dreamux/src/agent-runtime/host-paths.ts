@@ -39,9 +39,11 @@ export const dispatcherHostPaths: AgentRuntimePathContext = {
 /**
  * Build the path context for a teammate/team-member runtime. The state runtime
  * dir and completion spill stay grouped under the operator dispatcher (so a
- * teammate's `mcp.json` lands in `<operator>/teammate/runtime/<name>/` and its
- * spill in the operator's cache), independent of the composite runtime id the
- * launcher assigns. Logs and sockets share the host-wide roots.
+ * teammate's `mcp.json` lands in `<operator>/runtime/<name>/` and its spill in
+ * the operator's cache), independent of the composite runtime id the launcher
+ * assigns. The scratch root sits beside the `teammate/` and `team/` blind-scan
+ * collections (issue #233), never inside them. Logs and sockets share the
+ * host-wide roots.
  *
  * @param operatorDispatcherId the dispatcher that owns the teammate
  * @param runtimeName the teammate's runtime-identity name

@@ -136,8 +136,7 @@ export class TeammateCollection {
     base: string,
     teamSlug?: string,
   ): Promise<string> {
-    const identities = await this.identities.list(dispatcherId);
-    const taken = new Set(identities.map((identity) => identity.name));
+    const taken = await this.identities.listAllNames(dispatcherId);
     return allocateConcreteName({
       role,
       base,
@@ -262,7 +261,10 @@ export class TeammateCollection {
 
   async createTeamLeader(input: CreateTeamLeaderInput): Promise<TeamMateSpawnResult> {
     const name = validateTeamMateName(input.name);
-    const existing = await this.identities.get(input.dispatcherId, name);
+    // The leader lives at the team scope root (`team/<team>/identity.json`), so
+    // the existence probe must be team-scoped — a dispatcher-scope `get` would
+    // miss it and re-create a name that #188 forbids reusing (issue #233).
+    const existing = await this.identities.get(input.dispatcherId, name, input.teamId);
     if (existing !== null) {
       throw new Error(`TeamLeader ${JSON.stringify(name)} already exists`);
     }

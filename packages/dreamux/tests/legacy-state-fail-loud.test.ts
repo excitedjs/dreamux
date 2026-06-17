@@ -13,15 +13,25 @@ import {
   detectLegacyChannelBindingStore,
 } from '../src/dispatcher-service/channel-binding/store.js';
 import {
+  dispatcherAgentIdentityPath,
   dispatcherChannelBindingsPath,
   dispatcherTeamDir,
   dispatcherTeamMateDir,
-  dispatcherTeamMateRecordPath,
   resetRuntimeConfig,
 } from '../src/platform/paths.js';
 
 const DISPATCHER = 'flow';
 const silentLog = { warn(): void {} };
+
+/** The #233 per-entity identity path for a dispatcher-owned teammate. */
+function teammateIdentityPath(name: string): string {
+  return dispatcherAgentIdentityPath({
+    dispatcherId: DISPATCHER,
+    name,
+    teamId: null,
+    role: 'teammate',
+  });
+}
 
 function writeRaw(path: string, raw: unknown): void {
   mkdirSync(dirname(path), { recursive: true });
@@ -48,7 +58,7 @@ describe('issue #199 Slice 5 — pre-#199 local state fails loud', () => {
 
   describe('detectLegacyDispatcherState (removed state paths)', () => {
     it('reports nothing when only the current layout is present', async () => {
-      writeRaw(dispatcherTeamMateRecordPath(DISPATCHER, 'solo'), { version: 1 });
+      writeRaw(teammateIdentityPath('solo'), { version: 1 });
       expect(await detectLegacyDispatcherState(DISPATCHER)).toEqual([]);
     });
 
@@ -57,6 +67,11 @@ describe('issue #199 Slice 5 — pre-#199 local state fails loud', () => {
       ['teammate/sessions.jsonl', () => join(dispatcherTeamMateDir(DISPATCHER), 'sessions.jsonl')],
       ['teammate/history', () => join(dispatcherTeamMateDir(DISPATCHER), 'history', 'x.jsonl')],
       ['team/ledger', () => join(dispatcherTeamDir(DISPATCHER), 'ledger', 'x.jsonl')],
+      // #233: the flat Phase-1 leaves replaced by the per-entity directory layout.
+      ['teammate/records', () => join(dispatcherTeamMateDir(DISPATCHER), 'records', 'x.json')],
+      ['teammate/turns', () => join(dispatcherTeamMateDir(DISPATCHER), 'turns', 'x.jsonl')],
+      ['team/records', () => join(dispatcherTeamDir(DISPATCHER), 'records', 'x.json')],
+      ['team/channel-bindings.json', () => join(dispatcherTeamDir(DISPATCHER), 'channel-bindings.json')],
     ])('detects the removed %s path', async (_label, makePath) => {
       writeRaw(makePath(), { stale: true });
       const findings = await detectLegacyDispatcherState(DISPATCHER);
@@ -87,7 +102,7 @@ describe('issue #199 Slice 5 — pre-#199 local state fails loud', () => {
     it.each(['checkpoint', 'checkpoint_kind', 'session_ref', 'display_name', 'close_status'])(
       'fails loud on the removed %s field',
       async (field) => {
-        writeRaw(dispatcherTeamMateRecordPath(DISPATCHER, 'alice'), {
+        writeRaw(teammateIdentityPath('alice'), {
           ...base,
           [field]: 'legacy',
         });
@@ -99,7 +114,7 @@ describe('issue #199 Slice 5 — pre-#199 local state fails loud', () => {
     );
 
     it('reads a clean record without complaint', async () => {
-      writeRaw(dispatcherTeamMateRecordPath(DISPATCHER, 'alice'), base);
+      writeRaw(teammateIdentityPath('alice'), base);
       const store = new TeamMateIdentityStore(silentLog);
       const identity = await store.get(DISPATCHER, 'alice');
       expect(identity?.name).toBe('alice');
@@ -109,8 +124,8 @@ describe('issue #199 Slice 5 — pre-#199 local state fails loud', () => {
       // A clean record + a stale one: list() must not silently drop the stale
       // record (which would hide it from teammate.list / teammate.history); it
       // re-throws the legacy-state error.
-      writeRaw(dispatcherTeamMateRecordPath(DISPATCHER, 'alice'), base);
-      writeRaw(dispatcherTeamMateRecordPath(DISPATCHER, 'stale'), {
+      writeRaw(teammateIdentityPath('alice'), base);
+      writeRaw(teammateIdentityPath('stale'), {
         ...base,
         name: 'stale',
         checkpoint: null,
@@ -123,12 +138,10 @@ describe('issue #199 Slice 5 — pre-#199 local state fails loud', () => {
       // Resilience is preserved for corrupt JSON: it warns + skips, only the
       // good record is returned. Old-state detection must not over-reach into
       // every read failure.
-      writeRaw(dispatcherTeamMateRecordPath(DISPATCHER, 'alice'), base);
-      writeFileSync(
-        dispatcherTeamMateRecordPath(DISPATCHER, 'broken'),
-        '{ not json',
-        { mode: 0o600 },
-      );
+      writeRaw(teammateIdentityPath('alice'), base);
+      const brokenPath = teammateIdentityPath('broken');
+      mkdirSync(dirname(brokenPath), { recursive: true });
+      writeFileSync(brokenPath, '{ not json', { mode: 0o600 });
       const store = new TeamMateIdentityStore(silentLog);
       const names = (await store.list(DISPATCHER)).map((identity) => identity.name);
       expect(names).toEqual(['alice']);

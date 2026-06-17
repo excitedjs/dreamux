@@ -1,7 +1,7 @@
 import type { AgentRuntimeTurnResult } from '@excitedjs/dreamux-types';
 
 import type { TeamMateRuntimeStateStore } from './runtime-state.js';
-import type { TeamMateTurnsStore } from './turns-store.js';
+import { turnsScopeOf, type TeamMateTurnsStore } from './turns-store.js';
 import type {
   TeamMateTurnOrigin,
   TeamMateTurnResult,
@@ -9,7 +9,6 @@ import type {
 
 export async function recordSubmittedTurn(
   turnsStore: TeamMateTurnsStore,
-  dispatcherId: string,
   live: { state: TeamMateRuntimeStateStore },
   input: {
     turnId: string | null;
@@ -18,7 +17,7 @@ export async function recordSubmittedTurn(
   },
 ): Promise<void> {
   const current = live.state.current();
-  await turnsStore.appendSubmit(dispatcherId, current.name, {
+  await turnsStore.appendSubmit(turnsScopeOf(current), {
     turnId: input.turnId,
     turnOrigin: input.turnOrigin,
     prompt: input.prompt,
@@ -29,8 +28,6 @@ export async function recordSubmittedTurn(
 
 export async function recordSettledTurn(
   turnsStore: TeamMateTurnsStore,
-  dispatcherId: string,
-  name: string,
   state: TeamMateRuntimeStateStore,
   input: {
     turnId: string | null;
@@ -38,7 +35,7 @@ export async function recordSettledTurn(
     settleStatus: 'completed' | 'failed' | 'stopped' | null;
   },
 ): Promise<void> {
-  await turnsStore.appendSettled(dispatcherId, name, {
+  await turnsStore.appendSettled(turnsScopeOf(state.current()), {
     turnId: input.turnId,
     assistant: input.assistant,
     settleStatus: input.settleStatus,

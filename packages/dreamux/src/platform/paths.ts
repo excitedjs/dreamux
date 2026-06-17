@@ -12,10 +12,15 @@
  *       sockets/              fallback root for runtime rendezvous sockets
  *                             (see platform/runtime-sockets.ts)
  *     state/                  durable server-owned state
- *       <dispatcher-id>/
- *         status.json
+ *       <dispatcher-id>/      (issue #233 symmetric layout)
+ *         status.json         AUTHORITATIVE dispatcher state for rebuild
  *         access.json
- *         teammate/           Server-hosted TeamMate records/, turns/, runtime/
+ *         chat-bots.json
+ *         channel-bindings.json
+ *         teammate/<name>/    dispatcher-owned teammates: {identity.json, turn.jsonl}
+ *         team/<team>/        one dir per team: leader {identity.json, turn.jsonl},
+ *                             record.json, teammate/<name>/ members
+ *         runtime/<name>/     per-teammate provider scratch (mcp.json, …)
  *     logs/
  *       dreamux-server.log
  *       codex-app-server/
@@ -293,73 +298,111 @@ export function dispatcherAccessPath(id: string): string {
   return join(dispatcherDir(id), 'access.json');
 }
 
-/** Per-dispatcher server-hosted TeamMate state root. */
+/**
+ * Per-dispatcher agent-collection root (issue #233 symmetric layout): the
+ * `teammate/` directory whose immediate children are one directory per
+ * dispatcher-owned teammate. Listing the collection is a blind `readdir` of this
+ * dir, so it must hold ONLY entity directories — the dispatcher agent's own
+ * pair, channel bindings, and runtime scratch live elsewhere.
+ */
 export function dispatcherTeamMateDir(id: string): string {
   return join(dispatcherDir(id), 'teammate');
 }
 
 /**
- * Directory containing one primary TeamMate record per file (issue #199
- * Slice 3): `teammate/records/<name>.json` is the source for history / list /
- * status. Renamed from the former `teammate/identities/` directory.
+ * Per-dispatcher Team Mode collection root (issue #233): the `team/` directory
+ * whose immediate children are one directory per team. Like `teammate/` it holds
+ * ONLY entity directories (channel bindings moved to the dispatcher root).
  */
-export function dispatcherTeamMateRecordsDir(id: string): string {
-  return join(dispatcherTeamMateDir(id), 'records');
-}
-
-export function dispatcherTeamMateRecordPath(
-  id: string,
-  teammateName: string,
-): string {
-  return join(
-    dispatcherTeamMateRecordsDir(id),
-    `${teamMateNameSegment(teammateName)}.json`,
-  );
-}
-
-/** Directory of per-name turn archives (issue #199 Slice 3). */
-export function dispatcherTeamMateTurnsDir(id: string): string {
-  return join(dispatcherTeamMateDir(id), 'turns');
-}
-
-/**
- * Per-name append-only TeamMate turns archive (issue #199 Slice 3) — the only
- * JSONL store. One file per concrete teammate name; each line is a compact turn
- * event (submit / settled) folded by `last`. Common recovery facts live on the
- * `teammate/records/<name>.json` record and are not repeated here.
- */
-export function dispatcherTeamMateTurnsPath(
-  id: string,
-  teammateName: string,
-): string {
-  return join(
-    dispatcherTeamMateTurnsDir(id),
-    `${teamMateNameSegment(teammateName)}.jsonl`,
-  );
-}
-
-export function dispatcherTeamMateRuntimeDir(
-  id: string,
-  teammateName: string,
-): string {
-  return join(dispatcherTeamMateDir(id), 'runtime', teamMateNameSegment(teammateName));
-}
-
-/** Per-dispatcher Team Mode state root. */
 export function dispatcherTeamDir(id: string): string {
   return join(dispatcherDir(id), 'team');
 }
 
-export function dispatcherTeamRecordsDir(id: string): string {
-  return join(dispatcherTeamDir(id), 'records');
+/**
+ * One team's root directory (issue #233 symmetric layout). Holds the team
+ * leader's `{identity.json, turn.jsonl}` pair at its root, the team `record.json`,
+ * and a `teammate/` sub-collection of the team's members.
+ */
+export function dispatcherTeamScopeDir(id: string, teamId: string): string {
+  return join(dispatcherTeamDir(id), teamMateNameSegment(teamId));
 }
 
+/** A team's `record.json` — members, bound channel, leader name, … (issue #233). */
 export function dispatcherTeamRecordPath(id: string, teamId: string): string {
-  return join(dispatcherTeamRecordsDir(id), `${teamMateNameSegment(teamId)}.json`);
+  return join(dispatcherTeamScopeDir(id, teamId), 'record.json');
+}
+
+/**
+ * The `teammate/` sub-collection inside one team's scope — the team's members,
+ * one directory each. Distinct from {@link dispatcherTeamMateDir} (dispatcher
+ * scope); both are blind-scan collections of per-name entity directories.
+ */
+export function dispatcherTeamTeamMateDir(id: string, teamId: string): string {
+  return join(dispatcherTeamScopeDir(id, teamId), 'teammate');
+}
+
+/**
+ * The on-disk directory for one agent entity (issue #233 symmetric layout). A
+ * `team_leader` lives at its team root; a `team_member` under that team's
+ * `teammate/<name>/`; an ordinary `teammate` under the dispatcher's
+ * `teammate/<name>/`. Every entity directory holds `identity.json` + `turn.jsonl`.
+ */
+export function dispatcherAgentEntityDir(input: {
+  dispatcherId: string;
+  name: string;
+  teamId: string | null;
+  role: 'teammate' | 'team_leader' | 'team_member';
+}): string {
+  if (input.role === 'team_leader' && input.teamId !== null) {
+    return dispatcherTeamScopeDir(input.dispatcherId, input.teamId);
+  }
+  if (input.role === 'team_member' && input.teamId !== null) {
+    return join(
+      dispatcherTeamTeamMateDir(input.dispatcherId, input.teamId),
+      teamMateNameSegment(input.name),
+    );
+  }
+  return join(
+    dispatcherTeamMateDir(input.dispatcherId),
+    teamMateNameSegment(input.name),
+  );
+}
+
+/** `<entity-dir>/identity.json` — identity plus the rolling recovery summary. */
+export function dispatcherAgentIdentityPath(input: {
+  dispatcherId: string;
+  name: string;
+  teamId: string | null;
+  role: 'teammate' | 'team_leader' | 'team_member';
+}): string {
+  return join(dispatcherAgentEntityDir(input), 'identity.json');
+}
+
+/** `<entity-dir>/turn.jsonl` — the per-entity append-only turns archive. */
+export function dispatcherAgentTurnsPath(input: {
+  dispatcherId: string;
+  name: string;
+  teamId: string | null;
+  role: 'teammate' | 'team_leader' | 'team_member';
+}): string {
+  return join(dispatcherAgentEntityDir(input), 'turn.jsonl');
+}
+
+/**
+ * Per-teammate provider runtime scratch root (mcp.json, etc.). Lives at the
+ * dispatcher root under `runtime/<name>/`, a sibling of the `teammate/` and
+ * `team/` blind-scan collections — never inside them — so listing a collection
+ * never enumerates scratch (issue #233).
+ */
+export function dispatcherTeamMateRuntimeDir(
+  id: string,
+  teammateName: string,
+): string {
+  return join(dispatcherDir(id), 'runtime', teamMateNameSegment(teammateName));
 }
 
 export function dispatcherChannelBindingsPath(id: string): string {
-  return join(dispatcherTeamDir(id), 'channel-bindings.json');
+  return join(dispatcherDir(id), 'channel-bindings.json');
 }
 
 /**

@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { mkdir, readFile, readdir, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { execa } from 'execa';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -26,13 +26,26 @@ import { asAgentRuntimeDescriptor } from './helpers/provider.js';
 import { TeammateCollection } from '../src/dispatcher-service/teammate/service.js';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
 import {
+  dispatcherAgentIdentityPath,
+  dispatcherAgentTurnsPath,
   dispatcherCompletionSpillDir,
   dispatcherTeamMateDir,
-  dispatcherTeamMateRecordsDir,
-  dispatcherTeamMateRecordPath,
-  dispatcherTeamMateTurnsPath,
   resetRuntimeConfig,
 } from '../src/platform/paths.js';
+
+/**
+ * The #233 per-entity state paths for a dispatcher-owned teammate (`teamId:null`,
+ * `role:'teammate'`) — the scope every teammate in this suite is spawned at.
+ */
+function teammateIdentityPath(dispatcherId: string, name: string): string {
+  return dispatcherAgentIdentityPath({ dispatcherId, name, teamId: null, role: 'teammate' });
+}
+function teammateTurnsPath(dispatcherId: string, name: string): string {
+  return dispatcherAgentTurnsPath({ dispatcherId, name, teamId: null, role: 'teammate' });
+}
+function teammateTurnsScope(dispatcherId: string, name: string) {
+  return { dispatcherId, name, teamId: null, role: 'teammate' as const };
+}
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 
@@ -445,7 +458,7 @@ describe('TeammateCollection', () => {
     // row per spawn/send, in append order, with prompt previews. No settle rows
     // here (no completion sink wired).
     const turnRows = [];
-    for await (const row of service.turns().stream('flow', reviewer)) {
+    for await (const row of service.turns().stream(teammateTurnsScope('flow', reviewer))) {
       turnRows.push(row);
     }
     expect(turnRows.map((row) => row.type)).toEqual(['submit', 'submit', 'submit']);
@@ -484,7 +497,7 @@ describe('TeammateCollection', () => {
     // The per-name record is JSON and never persists the runtime checkpoint
     // wrapper (checkpoint / checkpoint_kind / session_ref).
     const record = JSON.parse(
-      await readFile(dispatcherTeamMateRecordPath('flow', name), 'utf8'),
+      await readFile(teammateIdentityPath('flow', name), 'utf8'),
     ) as Record<string, unknown>;
     expect(record['version']).toBe(1);
     // The runtime checkpoint wrapper and the write-only `display_name` are no
@@ -497,7 +510,7 @@ describe('TeammateCollection', () => {
     // The turns archive is JSONL and its rows are compact — turn facts only, no
     // record/common fields repeated.
     const turnLines = (
-      await readFile(dispatcherTeamMateTurnsPath('flow', name), 'utf8')
+      await readFile(teammateTurnsPath('flow', name), 'utf8')
     )
       .trim()
       .split('\n');
@@ -526,14 +539,15 @@ describe('TeammateCollection', () => {
       'settled',
     ]);
 
-    // The only JSONL anywhere under the dispatcher's state is teammate/turns/*;
-    // the session ledger and the team ledger are gone.
+    // The only JSONL anywhere under the dispatcher's state is the per-entity
+    // teammate/<name>/turn.jsonl (issue #233); the session ledger and the team
+    // ledger are gone.
     const teammateDir = dispatcherTeamMateDir('flow');
     expect(existsSync(join(teammateDir, 'sessions.jsonl'))).toBe(false);
     const jsonl = await collectJsonl(join(teammateDir, '..'));
     expect(jsonl.length).toBeGreaterThan(0);
     for (const file of jsonl) {
-      expect(file.includes(join('teammate', 'turns'))).toBe(true);
+      expect(file.endsWith(join('teammate', name, 'turn.jsonl'))).toBe(true);
     }
   });
 
@@ -725,7 +739,7 @@ describe('TeammateCollection', () => {
     expect(closerHistory.items[0]?.status).toBe('closed');
     expect(closerHistory.items[0]?.close_note).toBe('done');
     const turnRows = [];
-    for await (const row of service.turns().stream('flow', closer)) {
+    for await (const row of service.turns().stream(teammateTurnsScope('flow', closer))) {
       turnRows.push(row);
     }
     expect(turnRows.map((row) => row.type)).toEqual(['submit']);
@@ -954,17 +968,8 @@ describe('TeammateCollection', () => {
       agentRuntimeProviders: catalog,
       log: noopLog(),
     });
-    const dir = join(
-      root,
-      'home',
-      '.dreamux',
-      'state',
-      'flow',
-      'teammate',
-      'records',
-    );
-    const path = join(dir, 'oldie.json');
-    await mkdir(dir, { recursive: true });
+    const path = teammateIdentityPath('flow', 'oldie');
+    await mkdir(dirname(path), { recursive: true });
     await writeFile(
       path,
       JSON.stringify({
@@ -1452,18 +1457,10 @@ describe('TeammateCollection', () => {
     // Seed a pre-#148 identity record carrying the removed provider_ref field
     // instead of agent_runtime. Any lifecycle verb that reads it must fail loud
     // with rebuild guidance rather than silently defaulting a runtime.
-    const dir = join(
-      root,
-      'home',
-      '.dreamux',
-      'state',
-      'flow',
-      'teammate',
-      'records',
-    );
-    await mkdir(dir, { recursive: true });
+    const legacyPath = teammateIdentityPath('flow', 'legacy');
+    await mkdir(dirname(legacyPath), { recursive: true });
     await writeFile(
-      join(dir, 'legacy.json'),
+      legacyPath,
       JSON.stringify({
         version: 1,
         dispatcher_id: 'flow',
@@ -1497,10 +1494,10 @@ describe('TeammateCollection', () => {
     // A stale record carrying the removed `checkpoint` field must not be quietly
     // skipped by the list chokepoint (which feeds teammate.list AND
     // teammate.history); both public read surfaces fail loud (issue #199 Slice 5).
-    const dir = join(root, 'home', '.dreamux', 'state', 'flow', 'teammate', 'records');
-    await mkdir(dir, { recursive: true });
+    const stalePath = teammateIdentityPath('flow', 'stale');
+    await mkdir(dirname(stalePath), { recursive: true });
     await writeFile(
-      join(dir, 'stale.json'),
+      stalePath,
       JSON.stringify({
         version: 1,
         dispatcher_id: 'flow',
@@ -1546,9 +1543,10 @@ describe('TeammateCollection', () => {
       'worktrees',
       'legacy-mate',
     );
-    await mkdir(dispatcherTeamMateRecordsDir('flow'), { recursive: true });
+    const legacyIdentityPath = teammateIdentityPath('flow', 'legacy-mate');
+    await mkdir(dirname(legacyIdentityPath), { recursive: true });
     await writeFile(
-      dispatcherTeamMateRecordPath('flow', 'legacy-mate'),
+      legacyIdentityPath,
       JSON.stringify({
         version: 1,
         dispatcher_id: 'flow',
@@ -1598,7 +1596,7 @@ describe('TeammateCollection', () => {
     const name = (
       await service.spawn({
         dispatcherId: 'flow',
-        name: 'turns',
+        name: 'turn-mate',
         intent: 'work',
         prompt: 'go',
         cwd: root,
@@ -1836,6 +1834,73 @@ describe('TeammateCollection', () => {
       /already exists/,
     );
   });
+
+  it('spawns a team member under team/<team>/teammate/<name>/ and round-trips it (#233)', async () => {
+    const { catalog, provider } = providerCatalog();
+    const config = testDreamuxConfig([testDispatcherConfig({ cwd: dispatcherCwd })]);
+    const service = new TeammateCollection({
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: catalog,
+      log: noopLog(),
+    });
+    const sharedWorkspace = {
+      sourceCwd: root,
+      sourceRepo: null,
+      runtimeCwd: root,
+      worktree: {
+        mode: 'reuse-cwd' as const,
+        slug: null,
+        path: root,
+        branch: null,
+        base_ref: null,
+        cleanup: 'keep' as const,
+        cleanup_state: 'not-managed' as const,
+        cleanup_error: null,
+      },
+    };
+    const member = (
+      await service.spawn({
+        dispatcherId: 'flow',
+        teamId: 'alpha',
+        name: 'worker',
+        intent: 'work',
+        prompt: 'go',
+        sharedWorkspace,
+      })
+    ).teammate.name;
+
+    // The member's identity + turn archive land in the team's own scope, not the
+    // dispatcher teammate/ collection.
+    const memberIdentity = dispatcherAgentIdentityPath({
+      dispatcherId: 'flow',
+      name: member,
+      teamId: 'alpha',
+      role: 'team_member',
+    });
+    expect(memberIdentity).toContain(join('team', 'alpha', 'teammate', member));
+    expect(existsSync(memberIdentity)).toBe(true);
+    // Not addressable as a dispatcher-owned teammate (different physical scope).
+    expect(existsSync(teammateIdentityPath('flow', member))).toBe(false);
+
+    // Team-scoped reads see it; a dispatcher-scoped list does not.
+    const teamRoster = (await service.list('flow', 'alpha')).map((m) => m.name);
+    expect(teamRoster).toContain(member);
+    expect((await service.list('flow')).map((m) => m.name)).not.toContain(member);
+
+    provider.runtimes[0]!.lastText = 'done';
+    provider.runtimes[0]!.settle('completed', 'turn-1');
+    // The settle handler records off a void-ed callback; poll the team-scoped
+    // `last` until the settled row lands in team/alpha/teammate/<name>/turn.jsonl.
+    const deadline = Date.now() + 10_000;
+    let assistant: string | null | undefined;
+    while (Date.now() < deadline) {
+      assistant = (await service.last('flow', member, 1, 'alpha')).turns.at(-1)?.assistant;
+      if (assistant === 'done') break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(assistant).toBe('done');
+  });
 });
 
 /** Poll the per-name turns archive until it has captured `count` settled turns. */
@@ -1849,7 +1914,7 @@ async function waitForSettled(
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
     let settled = 0;
-    for await (const row of service.turns().stream('flow', name)) {
+    for await (const row of service.turns().stream(teammateTurnsScope('flow', name))) {
       if (row.type === 'settled') settled += 1;
     }
     if (settled >= count) return;

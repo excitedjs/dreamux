@@ -1,12 +1,16 @@
 import { readFile, readdir } from 'node:fs/promises';
+import { join } from 'node:path';
 
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import { writeFileAtomic } from '../../platform/atomic-write.js';
 import { isNotFound } from '../../platform/fs-errors.js';
 import {
-  dispatcherTeamMateRecordsDir,
-  dispatcherTeamMateRecordPath,
+  dispatcherAgentIdentityPath,
+  dispatcherTeamDir,
+  dispatcherTeamMateDir,
+  dispatcherTeamScopeDir,
+  dispatcherTeamTeamMateDir,
 } from '../../platform/paths.js';
 import { assertNoRemovedRecordFields, LegacyStateError } from '../legacy-state.js';
 import {
@@ -57,51 +61,154 @@ export interface TeamMateIdentityUpdateInput {
 export class TeamMateIdentityStore {
   constructor(private readonly log: TeamMateIdentityStoreLog) {}
 
+  /**
+   * Read one identity by name within a scope (issue #233 symmetric layout).
+   * Within a team scope the entity is either a member at
+   * `team/<team>/teammate/<name>/` or the leader at `team/<team>/` — a two-probe
+   * (member dir, then team root) resolves it, safe because names are
+   * dispatcher-global. Without a team it is a dispatcher-owned teammate at
+   * `teammate/<name>/`.
+   */
   async get(
     dispatcherId: string,
     name: string,
+    teamId?: string,
   ): Promise<TeamMateIdentity | null> {
     validateTeamMateName(name);
-    try {
-      return readIdentity(
+    const candidates =
+      teamId === undefined
+        ? [dispatcherAgentIdentityPath({ dispatcherId, name, teamId: null, role: 'teammate' })]
+        : [
+            dispatcherAgentIdentityPath({ dispatcherId, name, teamId, role: 'team_member' }),
+            dispatcherAgentIdentityPath({ dispatcherId, name, teamId, role: 'team_leader' }),
+          ];
+    for (const path of candidates) {
+      const identity = await this.readAt(dispatcherId, name, path);
+      // The leader probe shares its dir with the team; only accept it when the
+      // stored name actually matches (a member-named lookup must miss the root).
+      if (identity !== null && identity.name === name) return identity;
+    }
+    return null;
+  }
+
+  /**
+   * The roster of one scope (issue #233): a dispatcher's own teammates
+   * (`teamId` omitted) or one team's leader + members (`teamId` given). A blind
+   * `readdir` of the scope's entity directories — physical scoping replaces the
+   * former role/team_id roster filter.
+   */
+  async list(dispatcherId: string, teamId?: string): Promise<TeamMateIdentity[]> {
+    if (teamId === undefined) {
+      return this.listCollection(dispatcherId, dispatcherTeamMateDir(dispatcherId));
+    }
+    const identities: TeamMateIdentity[] = [];
+    const leader = await this.readAt(
+      dispatcherId,
+      null,
+      join(dispatcherTeamScopeDir(dispatcherId, teamId), 'identity.json'),
+    );
+    if (leader !== null) identities.push(leader);
+    identities.push(
+      ...(await this.listCollection(
         dispatcherId,
-        name,
-        await readFile(dispatcherTeamMateRecordPath(dispatcherId, name), 'utf8'),
-      );
+        dispatcherTeamTeamMateDir(dispatcherId, teamId),
+      )),
+    );
+    return identities;
+  }
+
+  /**
+   * Every teammate/leader name across the whole dispatcher (issue #233): the
+   * dispatcher's own teammates, plus each team's leader and members. Names-only,
+   * so the dispatcher-global `allocateName` dedup stays collision-free for the
+   * per-turn router key without `TeammateCollection` reaching into the team store.
+   */
+  async listAllNames(dispatcherId: string): Promise<Set<string>> {
+    const names = new Set<string>();
+    for (const identity of await this.listCollection(
+      dispatcherId,
+      dispatcherTeamMateDir(dispatcherId),
+    )) {
+      names.add(identity.name);
+    }
+    for (const teamId of await this.listTeamIds(dispatcherId)) {
+      for (const identity of await this.list(dispatcherId, teamId)) {
+        names.add(identity.name);
+      }
+    }
+    return names;
+  }
+
+  private async listTeamIds(dispatcherId: string): Promise<string[]> {
+    try {
+      const entries = await readdir(dispatcherTeamDir(dispatcherId), {
+        withFileTypes: true,
+      });
+      return entries.filter((e) => e.isDirectory()).map((e) => e.name).sort();
     } catch (err) {
-      if (isNotFound(err)) return null;
+      if (isNotFound(err)) return [];
       throw err;
     }
   }
 
-  async list(dispatcherId: string): Promise<TeamMateIdentity[]> {
-    let entries: string[];
+  /** Read every `<dir>/<entity>/identity.json` child, skipping unreadable ones. */
+  private async listCollection(
+    dispatcherId: string,
+    dir: string,
+  ): Promise<TeamMateIdentity[]> {
+    let entries: import('node:fs').Dirent[];
     try {
-      entries = await readdir(dispatcherTeamMateRecordsDir(dispatcherId));
+      entries = await readdir(dir, { withFileTypes: true });
     } catch (err) {
       if (isNotFound(err)) return [];
       throw err;
     }
     const identities: TeamMateIdentity[] = [];
-    for (const entry of entries.sort()) {
-      if (!entry.endsWith('.json')) continue;
-      const name = entry.slice(0, -'.json'.length);
-      try {
-        const identity = await this.get(dispatcherId, name);
-        if (identity !== null) identities.push(identity);
-      } catch (err) {
-        if (err instanceof LegacyStateError) throw err;
-        this.log.warn(
-          {
-            dispatcher_id: dispatcherId,
-            name,
-            error: err instanceof Error ? err.message : String(err),
-          },
-          'skipping unreadable TeamMate identity',
-        );
-      }
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (!entry.isDirectory()) continue;
+      const identity = await this.readAt(
+        dispatcherId,
+        entry.name,
+        join(dir, entry.name, 'identity.json'),
+      );
+      if (identity !== null) identities.push(identity);
     }
     return identities;
+  }
+
+  /**
+   * Read one identity file. A missing file yields null; a legacy/old-state file
+   * is rethrown (fail-loud); any other parse/IO error is logged and skipped so a
+   * single bad entity never sinks a whole collection list. `name` is the lookup
+   * name for validation/logging; when scanning a collection it is the dir name.
+   */
+  private async readAt(
+    dispatcherId: string,
+    name: string | null,
+    path: string,
+  ): Promise<TeamMateIdentity | null> {
+    let raw: string;
+    try {
+      raw = await readFile(path, 'utf8');
+    } catch (err) {
+      if (isNotFound(err)) return null;
+      throw err;
+    }
+    try {
+      return readIdentity(dispatcherId, name, raw);
+    } catch (err) {
+      if (err instanceof LegacyStateError) throw err;
+      this.log.warn(
+        {
+          dispatcher_id: dispatcherId,
+          name,
+          path,
+          error: err instanceof Error ? err.message : String(err),
+        },
+        'skipping unreadable TeamMate identity',
+      );
+      return null;
+    }
   }
 
   async create(input: TeamMateIdentityCreateInput): Promise<TeamMateIdentity> {
@@ -168,47 +275,59 @@ export class TeamMateIdentityStore {
     return updated;
   }
 
+  /** Derive the entity directory from the identity's own role + team (issue #233). */
   private async write(identity: TeamMateIdentity): Promise<void> {
-    const path = dispatcherTeamMateRecordPath(
-      identity.dispatcher_id,
-      identity.name,
-    );
+    const path = dispatcherAgentIdentityPath({
+      dispatcherId: identity.dispatcher_id,
+      name: identity.name,
+      teamId: identity.team_id,
+      role: identity.role,
+    });
     await writeFileAtomic(path, `${JSON.stringify(identity, null, 2)}\n`);
   }
 }
 
+/**
+ * Parse and validate one identity file. `expectedName` is the name the caller
+ * looked up (or the scanned dir name); pass `null` when reading the team-root
+ * leader, whose name is not encoded in the path — the parsed `name` is then
+ * trusted as authoritative.
+ */
 function readIdentity(
   dispatcherId: string,
-  name: string,
+  expectedName: string | null,
   raw: string,
 ): TeamMateIdentity {
   const value = JSON.parse(raw) as Record<string, unknown>;
+  const storedName = typeof value['name'] === 'string' ? value['name'] : expectedName;
   if (
     typeof value['agent_runtime'] !== 'string' &&
     typeof value['provider_ref'] === 'string'
   ) {
     throw new LegacyStateError(
-      `TeamMate identity ${JSON.stringify(name)} uses the legacy provider_ref ` +
+      `TeamMate identity ${JSON.stringify(storedName)} uses the legacy provider_ref ` +
         'format (pre-#148). Teammate identities now reference an agents[].id via ' +
         'agent_runtime. Close and respawn this teammate, or delete its identity ' +
         'file to rebuild it.',
     );
   }
   assertNoRemovedRecordFields(
-    `TeamMate record ${JSON.stringify(name)}`,
+    `TeamMate record ${JSON.stringify(storedName)}`,
     value,
     ['checkpoint', 'checkpoint_kind', 'session_ref', 'display_name', 'close_status'],
-    `close and respawn this teammate, or delete its record at ${dispatcherTeamMateRecordPath(dispatcherId, name)} to rebuild it.`,
+    'close and respawn this teammate, or delete its identity directory to rebuild it.',
   );
   if (
     value['version'] !== 1 ||
     value['dispatcher_id'] !== dispatcherId ||
-    value['name'] !== name ||
+    typeof value['name'] !== 'string' ||
+    (expectedName !== null && value['name'] !== expectedName) ||
     typeof value['agent_runtime'] !== 'string' ||
     typeof value['cwd'] !== 'string'
   ) {
-    throw new Error(`invalid TeamMate identity ${JSON.stringify(name)}`);
+    throw new Error(`invalid TeamMate identity ${JSON.stringify(storedName)}`);
   }
+  const name = value['name'] as string;
   const record = value as Record<string, unknown>;
   const sourceCwd =
     typeof record['source_cwd'] === 'string'

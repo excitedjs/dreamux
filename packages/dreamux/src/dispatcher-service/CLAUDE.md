@@ -80,26 +80,38 @@ is wiring only — all per-dispatcher orchestration lives here.
   its own leader + members through the INTERNAL `team_service` principal (built
   only by the Team service, never from a public caller); a dispatcher inspects
   Teams via `team.*` compact summaries, never `teammate.*`.
-- **Teammate storage is the per-name record + the per-name turns archive
-  (issue #199 Slice 3).** `teammate/records/<name>.json` is the primary record —
-  identity plus a rolling recovery summary (turn_count / last_seen_at / last
-  prompt+assistant previews) — and is the single source for `history` / `list` /
-  `status` (no event fold). `teammate/turns/<name>.jsonl` is the ONLY JSONL store:
-  one compact `submit`/`settled` row per turn event, holding turn-only facts (no
-  record fields repeated), folded by `last`. `last` reads the record first
-  (existence/scope), then the turns archive — it never starts or resumes a
-  runtime, so a closed/stopped teammate stays recoverable. Both writes are
-  best-effort and never fail a lifecycle verb. The former `teammate/sessions.jsonl`
-  session ledger, the Dreamux-minted `session_id` key, and the persisted
-  `checkpoint` object are gone: `session_id` is now the runtime-native thread id,
-  persisted directly, and the resume checkpoint kind is rebuilt from the runtime.
-- **Pre-#199 state fails loud, it is never migrated (issue #199 Slice 5).** 0.x
+- **State is a symmetric directory per agent entity (issue #233).** Every agent
+  is a directory holding `identity.json` (identity + rolling recovery summary:
+  turn_count / last_seen_at / last prompt+assistant previews — the single source
+  for `history` / `list` / `status`, no event fold) and `turn.jsonl` (the ONLY
+  JSONL store: one compact `submit`/`settled` row per turn, turn-only facts, no
+  record fields repeated, folded by `last`). Placement is by role:
+  `teammate/<name>/` for dispatcher-owned teammates, `team/<team>/` for the team
+  *leader* (its pair sits at the team root, beside `record.json`), and
+  `team/<team>/teammate/<name>/` for team members. The `teammate/` and `team/`
+  dirs are blind-scan collections of entity dirs only — `channel-bindings.json`
+  sits at the dispatcher root and provider runtime scratch under `runtime/<name>/`,
+  never inside a collection. Writing is a blind `mkdir -p` + write; the store
+  derives every path from the identity's `role` + `team_id` (`paths.ts`
+  `dispatcherAgentEntityDir`). Reads/lists scan `<scope>/teammate/<name>/`; a
+  team-scoped read-by-name two-probes (member dir, then team root for the
+  leader). `last` reads the identity first (existence/scope), then the turn
+  archive — it never starts a runtime, so a closed teammate stays recoverable.
+  Both writes are best-effort. Teammate **names stay dispatcher-global**:
+  `allocateName` dedups against `IdentityStore.listAllNames` (all three scopes,
+  leaders included), so `producerName:turnId` is collision-free for the router.
+  The reserved-name guard (`assertNotReservedAgentName`) blocks names that would
+  recreate a legacy leaf (`records` / `turns` / …). `session_id` is the
+  runtime-native thread id, persisted directly.
+- **Old state fails loud, it is never migrated (issue #199 Slice 5, #233).** 0.x
   has no schema migration (issue #98). `legacy-state.ts` is the one place that
   knows the removed layout: `detectLegacyDispatcherState` probes the removed
-  whole-file/dir paths (`teammate/identities/`, `teammate/sessions.jsonl`,
-  `teammate/history/`, `team/ledger/`) and `dreamux serve` aborts startup —
-  `dreamux doctor` diagnoses — naming the path to delete. Removed *fields* left in
-  a present record (`checkpoint` / `checkpoint_kind` / `session_ref` /
+  leaves (`teammate/identities/`, `teammate/records/`, `teammate/turns/`,
+  `teammate/sessions.jsonl`, `teammate/history/`, `team/records/`,
+  `team/channel-bindings.json`, `team/ledger/`) — the `teammate/`/`team/` parents
+  stay valid as the new collection roots — and `dreamux serve` aborts startup
+  while `dreamux doctor` diagnoses, naming the path to delete. Removed *fields*
+  left in a present record (`checkpoint` / `checkpoint_kind` / `session_ref` /
   `display_name` / `close_status`, or a channel binding keyed by `team_id`) are
   rejected by that record's reader via `assertNoRemovedRecordFields`. Detection
   only: the legacy paths/files are never read for migration, rewritten, or

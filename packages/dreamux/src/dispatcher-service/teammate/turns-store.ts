@@ -6,8 +6,30 @@ import { createInterface } from 'node:readline';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import { isNotFound } from '../../platform/fs-errors.js';
-import { dispatcherTeamMateTurnsPath } from '../../platform/paths.js';
-import type { TeamMateTurnRecord } from './types.js';
+import { dispatcherAgentTurnsPath } from '../../platform/paths.js';
+import type { TeamMateRole, TeamMateTurnRecord } from './types.js';
+
+/**
+ * The identity facts that place a turns archive on disk (issue #233 symmetric
+ * layout). The archive lives in the entity's own directory next to its
+ * `identity.json`, so writing/reading derives the path from role + team — never
+ * a flat dispatcher-global file.
+ */
+export interface AgentTurnsScope {
+  dispatcherId: string;
+  name: string;
+  teamId: string | null;
+  role: TeamMateRole;
+}
+
+function turnsPath(scope: AgentTurnsScope): string {
+  return dispatcherAgentTurnsPath({
+    dispatcherId: scope.dispatcherId,
+    name: scope.name,
+    teamId: scope.teamId,
+    role: scope.role,
+  });
+}
 
 /** Reuse the neutral logger's `warn` — no forked, message-first shape. */
 export type TeamMateTurnsStoreLog = Pick<DreamuxLogger, 'warn'>;
@@ -49,11 +71,10 @@ export class TeamMateTurnsStore {
   constructor(private readonly log: TeamMateTurnsStoreLog) {}
 
   async appendSubmit(
-    dispatcherId: string,
-    name: string,
+    scope: AgentTurnsScope,
     input: TeamMateTurnSubmitInput,
   ): Promise<void> {
-    await this.append(dispatcherId, name, {
+    await this.append(scope, {
       version: 1,
       type: 'submit',
       turn_id: input.turnId,
@@ -69,15 +90,14 @@ export class TeamMateTurnsStore {
   }
 
   async appendSettled(
-    dispatcherId: string,
-    name: string,
+    scope: AgentTurnsScope,
     input: TeamMateTurnSettledInput,
   ): Promise<void> {
     const raw = input.assistant ?? null;
     const truncated = raw !== null && raw.length > ASSISTANT_TEXT_MAX;
     const assistant =
       raw === null ? null : truncated ? raw.slice(0, ASSISTANT_TEXT_MAX) : raw;
-    await this.append(dispatcherId, name, {
+    await this.append(scope, {
       version: 1,
       type: 'settled',
       turn_id: input.turnId,
@@ -97,13 +117,8 @@ export class TeamMateTurnsStore {
    * caller folds with bounded memory. A missing archive yields nothing; a
    * torn/partial line is skipped rather than failing the read.
    */
-  async *stream(
-    dispatcherId: string,
-    name: string,
-  ): AsyncGenerator<TeamMateTurnRecord> {
-    const stream = createReadStream(dispatcherTeamMateTurnsPath(dispatcherId, name), {
-      encoding: 'utf8',
-    });
+  async *stream(scope: AgentTurnsScope): AsyncGenerator<TeamMateTurnRecord> {
+    const stream = createReadStream(turnsPath(scope), { encoding: 'utf8' });
     const lines = createInterface({ input: stream, crlfDelay: Infinity });
     try {
       for await (const line of lines) {
@@ -120,8 +135,8 @@ export class TeamMateTurnsStore {
       if (!isNotFound(err)) {
         this.log.warn(
           {
-            dispatcher_id: dispatcherId,
-            name,
+            dispatcher_id: scope.dispatcherId,
+            name: scope.name,
             error: err instanceof Error ? err.message : String(err),
           },
           'TeamMate turns archive read failed',
@@ -133,19 +148,18 @@ export class TeamMateTurnsStore {
   }
 
   private async append(
-    dispatcherId: string,
-    name: string,
+    scope: AgentTurnsScope,
     row: TeamMateTurnRecord,
   ): Promise<void> {
     try {
-      const path = dispatcherTeamMateTurnsPath(dispatcherId, name);
+      const path = turnsPath(scope);
       await mkdir(dirname(path), { recursive: true });
       await appendFile(path, `${JSON.stringify(row)}\n`, { mode: 0o600 });
     } catch (err) {
       this.log.warn(
         {
-          dispatcher_id: dispatcherId,
-          name,
+          dispatcher_id: scope.dispatcherId,
+          name: scope.name,
           type: row.type,
           error: err instanceof Error ? err.message : String(err),
         },
@@ -153,6 +167,21 @@ export class TeamMateTurnsStore {
       );
     }
   }
+}
+
+/** The turns scope derived from a full identity. */
+export function turnsScopeOf(identity: {
+  dispatcher_id: string;
+  name: string;
+  team_id: string | null;
+  role: TeamMateRole;
+}): AgentTurnsScope {
+  return {
+    dispatcherId: identity.dispatcher_id,
+    name: identity.name,
+    teamId: identity.team_id,
+    role: identity.role,
+  };
 }
 
 export function preview(text: string): string {

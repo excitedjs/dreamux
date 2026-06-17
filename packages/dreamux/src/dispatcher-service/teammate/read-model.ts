@@ -3,7 +3,7 @@ import { Buffer } from 'node:buffer';
 import type { AgentRuntime } from '@excitedjs/dreamux-types';
 
 import { TeamMateIdentityStore } from './identity-store.js';
-import { TeamMateTurnsStore } from './turns-store.js';
+import { TeamMateTurnsStore, turnsScopeOf } from './turns-store.js';
 import {
   validateTeamMateName,
   type TeamMateHistoryQuery,
@@ -106,10 +106,7 @@ export class TeammateReadModel {
       Pick<TeamMateLastTurn, 'turn_origin' | 'prompt_preview' | 'intent' | 'submitted_at'>
     >();
     const recent = new Map<string, TeamMateLastTurn>();
-    for await (const event of this.opts.turnsStore.stream(
-      dispatcherId,
-      identity.name,
-    )) {
+    for await (const event of this.opts.turnsStore.stream(turnsScopeOf(identity))) {
       const turnId = event.turn_id;
       if (turnId === null) continue;
       seqOf(turnId);
@@ -175,7 +172,7 @@ export class TeammateReadModel {
     name: string,
     teamId?: string,
   ): Promise<TeamMateIdentity> {
-    const identity = await this.opts.identities.get(dispatcherId, name);
+    const identity = await this.opts.identities.get(dispatcherId, name, teamId);
     if (identity === null) {
       throw new Error(`TeamMate ${JSON.stringify(name)} does not exist`);
     }
@@ -222,10 +219,10 @@ export class TeammateReadModel {
     dispatcherId: string,
     teamId?: string,
   ): Promise<TeamMateIdentity[]> {
-    const identities = await this.opts.identities.list(dispatcherId);
-    return identities.filter((identity) =>
-      this.identityInRoster(identity, dispatcherId, teamId),
-    );
+    // Physical scoping is the roster (issue #233): a dispatcher-scope list reads
+    // only `teammate/<name>/`, a team-scope list only that team's leader +
+    // members. No post-filter is needed.
+    return this.opts.identities.list(dispatcherId, teamId);
   }
 
   private identityInRoster(

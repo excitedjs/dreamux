@@ -3,6 +3,34 @@ import type { DispatcherStatus } from "../../state/dispatcher-store.js";
 
 export const TEAMMATE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
+/**
+ * Directory segments an agent (teammate or team) name MUST NOT take (issue
+ * #233). With the symmetric layout each entity is a directory whose name is the
+ * agent name, sitting beside the legacy leaves that `legacy-state.ts` fail-loud
+ * detects (`identities/`, `records/`, `turns/`, `history/`, `sessions.jsonl`,
+ * `ledger/`). Reserving those names keeps a real entity dir from recreating a
+ * path legacy detection would flag, or shadowing the old layout. Matched
+ * case-insensitively so a case-folding filesystem can't smuggle a collision.
+ * Keep in sync with the probed leaves in `legacy-state.ts`.
+ */
+export const RESERVED_AGENT_NAME_SEGMENTS = new Set([
+  'identities',
+  'records',
+  'turns',
+  'history',
+  'sessions',
+  'ledger',
+]);
+
+export function assertNotReservedAgentName(name: string): void {
+  if (RESERVED_AGENT_NAME_SEGMENTS.has(name.toLowerCase())) {
+    throw new Error(
+      `name ${JSON.stringify(name)} is reserved by the dreamux state layout ` +
+        `(issue #233); choose another. Reserved: ${[...RESERVED_AGENT_NAME_SEGMENTS].join(', ')}`,
+    );
+  }
+}
+
 export type TeamMateIdentityStatus =
   | "starting"
   | "running"
@@ -257,6 +285,7 @@ export function validateTeamMateName(name: string): string {
         `or dashes, starting with a letter or digit: ${name}`,
     );
   }
+  assertNotReservedAgentName(name);
   return name;
 }
 
