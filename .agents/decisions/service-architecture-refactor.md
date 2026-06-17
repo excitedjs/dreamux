@@ -173,7 +173,7 @@ classDiagram
     class TeamService {
         +id
         +leader: TeammateService
-        +teammates: TeammateCollection
+        +members() TeammateService[]
         +record: TeamRecord
         +dissolve()
         +status()
@@ -221,7 +221,7 @@ classDiagram
     TeamCollection o-- TeamService
     TeamCollection o-- TeamStore
     TeamService o-- TeammateService : has a leader
-    TeamService o-- TeammateCollection : owns members
+    TeamService ..> TeammateCollection : members (team-scoped, shared)
     TeammateCollection o-- TeammateService
     TeammateCollection o-- IdentityStore
     TeammateCollection o-- TurnsStore
@@ -292,9 +292,16 @@ Server (process-level · composition root)
 ```
 TeamCollection (per-dispatcher)
   └── TeamService (per-team)
-        ├── leader: TeammateService       # team leader
-        └── teammates: TeammateCollection # team members
+        ├── leader: TeammateService   # team leader
+        └── members ── via the dispatcher's single shared TeammateCollection, scoped by team_id
 ```
+
+**One shared `TeammateCollection` per dispatcher.** The two hierarchies above are
+conceptual. In the implementation there is a *single* `TeammateCollection` per
+dispatcher; a `TeamService` reaches its leader and members through that shared
+collection scoped by `team_id`, and the read model's directory-scope predicate
+enforces the boundary. A per-team collection would only re-wrap the same stores —
+symmetry is a guideline, not a goal, so the implementation skips that facade.
 
 ### Lifecycle Management
 
