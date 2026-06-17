@@ -9,7 +9,7 @@ import {
   configuredDispatcherCwd,
   diagnoseDispatcherWorkspace,
   ensureDispatcherWorkspace,
-} from '../src/service/dispatcher-service/workspace.js';
+} from '../src/service/dispatcher-workspace.js';
 import {
   managedWorkspaceGitignorePath,
   managedWorktreePath,
