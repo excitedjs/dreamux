@@ -468,7 +468,7 @@ function repoRequest(
 
 function historyQuery(
   params: Record<string, unknown> | undefined,
-): Omit<TeamMateHistoryQuery, 'dispatcherId'> {
+): TeamMateHistoryQuery {
   const name = optionalString(params, 'name');
   const status = optionalTeammateStatus(params, 'status');
   const agentRuntime = optionalString(params, 'agent_runtime');

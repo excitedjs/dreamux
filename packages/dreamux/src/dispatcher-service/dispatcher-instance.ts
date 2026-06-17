@@ -350,9 +350,9 @@ export class DispatcherService implements TeamChannelContext {
   ): Promise<CompletionInitiator | null> {
     if (producer.role === 'team_member' && producer.team_id !== null) {
       const team = await this.teams.get(producer.team_id).catch(() => null);
-      if (team === null) return this.dispatcherInitiator();
-      const leader = this.teammates.get(team.leaderName);
-      return leader ?? this.dispatcherInitiator();
+      // The team's leader is its contained `TeammateService` (issue #233 Phase
+      // 4); a member's settled turn delivers to it via `completionInput`.
+      return team?.leader ?? this.dispatcherInitiator();
     }
     return this.dispatcherInitiator();
   }

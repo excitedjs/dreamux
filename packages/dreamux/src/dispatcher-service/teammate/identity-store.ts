@@ -92,29 +92,33 @@ export class TeamMateIdentityStore {
   }
 
   /**
-   * The roster of one scope (issue #233): a dispatcher's own teammates
-   * (`teamId` omitted) or one team's leader + members (`teamId` given). A blind
-   * `readdir` of the scope's entity directories — physical scoping replaces the
+   * The roster of one scope (issue #233 / #233 Phase 4): a dispatcher's own
+   * teammates (`teamId` omitted) or one team's MEMBERS (`teamId` given). The team
+   * leader lives at the team root, not under `teammate/`, so a team-scope list
+   * scans only `team/<team>/teammate/<name>/` and never enumerates the leader —
+   * the leader is a contained `TeammateService` held by the `TeamService`, read by
+   * its known name via {@link leaderIdentity}, not surfaced as a member. A blind
+   * `readdir` of the scope's entity directories; physical scoping replaces the
    * former role/team_id roster filter.
    */
   async list(dispatcherId: string, teamId?: string): Promise<TeamMateIdentity[]> {
-    if (teamId === undefined) {
-      return this.listCollection(dispatcherId, dispatcherTeamMateDir(dispatcherId));
-    }
-    const identities: TeamMateIdentity[] = [];
-    const leader = await this.readAt(
+    const dir =
+      teamId === undefined
+        ? dispatcherTeamMateDir(dispatcherId)
+        : dispatcherTeamTeamMateDir(dispatcherId, teamId);
+    return this.listCollection(dispatcherId, dir);
+  }
+
+  /** Read a team leader's identity from the team root, or null if absent. */
+  async leaderIdentity(
+    dispatcherId: string,
+    teamId: string,
+  ): Promise<TeamMateIdentity | null> {
+    return this.readAt(
       dispatcherId,
       null,
       join(dispatcherTeamScopeDir(dispatcherId, teamId), 'identity.json'),
     );
-    if (leader !== null) identities.push(leader);
-    identities.push(
-      ...(await this.listCollection(
-        dispatcherId,
-        dispatcherTeamTeamMateDir(dispatcherId, teamId),
-      )),
-    );
-    return identities;
   }
 
   /**
@@ -122,6 +126,8 @@ export class TeamMateIdentityStore {
    * dispatcher's own teammates, plus each team's leader and members. Names-only,
    * so the dispatcher-global `allocateName` dedup stays collision-free for the
    * per-turn router key without `TeammateCollection` reaching into the team store.
+   * The leader is read explicitly from the team root because `list` is now
+   * members-only.
    */
   async listAllNames(dispatcherId: string): Promise<Set<string>> {
     const names = new Set<string>();
@@ -132,6 +138,8 @@ export class TeamMateIdentityStore {
       names.add(identity.name);
     }
     for (const teamId of await this.listTeamIds(dispatcherId)) {
+      const leader = await this.leaderIdentity(dispatcherId, teamId);
+      if (leader !== null) names.add(leader.name);
       for (const identity of await this.list(dispatcherId, teamId)) {
         names.add(identity.name);
       }

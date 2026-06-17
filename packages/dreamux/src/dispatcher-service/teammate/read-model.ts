@@ -196,8 +196,10 @@ export class TeammateReadModel {
 
   private async rosterList(teamId?: string): Promise<TeamMateIdentity[]> {
     // Physical scoping is the roster (issue #233): a dispatcher-scope list reads
-    // only `teammate/<name>/`, a team-scope list only that team's leader +
-    // members. No post-filter is needed.
+    // only `teammate/<name>/`, a team-scope list only that team's MEMBERS under
+    // `team/<team>/teammate/<name>/`. The leader lives at the team root and is a
+    // contained `TeammateService` on the `TeamService`, never a member row (Phase
+    // 4). No post-filter is needed.
     return this.opts.identities.list(this.dispatcherId, teamId);
   }
 

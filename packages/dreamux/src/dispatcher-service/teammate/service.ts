@@ -1,6 +1,5 @@
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type {
-  AgentRuntimeTurnResult,
   AgentRuntimeMcpServer,
   CompletionEnvelope,
 } from '@excitedjs/dreamux-types';
@@ -238,16 +237,16 @@ export class TeammateCollection {
     return this.readModel.last(name, turns, teamId);
   }
 
-  async channelInput(
-    teamId: string,
-    name: string,
-    input: import('@excitedjs/dreamux-types').InboundTurnInput,
-  ): Promise<AgentRuntimeTurnResult> {
-    const entity = await this.mustEntity(name, teamId);
-    return entity.channelInput(input);
-  }
-
-  async createTeamLeader(input: CreateTeamLeaderInput): Promise<TeamMateSpawnResult> {
+  /**
+   * Create a team leader as a contained {@link TeammateService} (issue #233
+   * Phase 4): same entity, store, runtime, and turn recording as a regular
+   * teammate, only with `role: 'team_leader'` so it lands at the team root. The
+   * created entity is returned so the {@link TeamService} can hold it directly
+   * (has-a), rather than re-resolving the leader by name on every call.
+   */
+  async createTeamLeader(
+    input: CreateTeamLeaderInput,
+  ): Promise<{ leader: TeammateService; result: TeamMateSpawnResult }> {
     const name = validateTeamMateName(input.name);
     // The leader lives at the team scope root (`team/<team>/identity.json`), so
     // the existence probe must be team-scoped — a dispatcher-scope `get` would
@@ -278,7 +277,18 @@ export class TeammateCollection {
     });
     // A dispatcher->leader create registers `leaderName:turnId -> dispatcher`.
     await this.registerCompletion(entity, turn.turn_id ?? null);
-    return { teammate: entity.status(), turn };
+    return { leader: entity, result: { teammate: entity.status(), turn } };
+  }
+
+  /**
+   * Materialize a team's leader {@link TeammateService} entity by its known name
+   * (issue #233 Phase 4). The leader lives at the team root, so the lookup is
+   * team-scoped; the entity is created from the persisted record on first access
+   * after a restart and cached thereafter. The `TeamService` holds the returned
+   * entity for the team's lifetime.
+   */
+  async leader(teamId: string, leaderName: string): Promise<TeammateService> {
+    return this.mustEntity(leaderName, teamId);
   }
 
   getCapabilities(): TeamMateCapabilities {
@@ -312,11 +322,6 @@ export class TeammateCollection {
     while (this.inFlightSettleCaptures.size > 0) {
       await Promise.allSettled([...this.inFlightSettleCaptures]);
     }
-  }
-
-  /** The live entity for a name, looked up per turn so the router target is known. */
-  get(name: string): TeammateService | undefined {
-    return this.entities.get(validateTeamMateName(name));
   }
 
   async dispatcherWorkspace(): Promise<string> {

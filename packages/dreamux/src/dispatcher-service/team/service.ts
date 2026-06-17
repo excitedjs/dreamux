@@ -8,6 +8,7 @@ import type {
   TeammateCollection,
   TeamMateSharedWorkspace,
 } from '../teammate/service.js';
+import type { TeammateService } from '../teammate/teammate-service.js';
 import { requireLifecycleText } from '../teammate/types.js';
 import type { ChannelBindingStore } from '../channel-binding/store.js';
 import type { ChannelBinding } from '../channel-binding/store.js';
@@ -131,7 +132,7 @@ export class TeamCollection {
       leaderName,
     });
     const prompt = input.prompt ?? teamLeaderPrompt(team);
-    const leader = await this.opts.teammates.createTeamLeader({
+    const { result } = await this.opts.teammates.createTeamLeader({
       teamId,
       name: leaderName,
       prompt,
@@ -145,10 +146,10 @@ export class TeamCollection {
     team = await this.store.update(team, { status: 'running' });
     return {
       team: teamView(team),
-      leader: leader.teammate,
+      leader: result.teammate,
       member_count: await this.memberCount(team),
       binding: null,
-      turn: leader.turn,
+      turn: result.turn,
     };
   }
 
@@ -188,6 +189,11 @@ export class TeamCollection {
     return this.serviceFor(record);
   }
 
+  /** A team's leader as its contained {@link TeammateService} (issue #233 Phase 4). */
+  private async leaderFor(record: TeamRecord) {
+    return this.opts.teammates.leader(record.team_id, record.leader_name);
+  }
+
   async resolveChannel(input: {
     channelId: string;
     targetKey: string;
@@ -213,9 +219,10 @@ export class TeamCollection {
     });
   }
 
-  private serviceFor(record: TeamRecord): TeamService {
+  private async serviceFor(record: TeamRecord): Promise<TeamService> {
     return new TeamService({
       record,
+      leader: await this.leaderFor(record),
       store: this.store,
       bindings: this.bindings,
       worktrees: this.worktrees,
@@ -284,11 +291,9 @@ export class TeamCollection {
   }
 
   private async memberCount(team: TeamRecord): Promise<number> {
-    return (
-      (await this.opts.teammates.list(team.team_id)).filter(
-        (member) => member.name !== team.leader_name,
-      )
-    ).length;
+    // `list(teamId)` is members-only (the leader lives at the team root), so no
+    // leader filter is needed (issue #233 Phase 4).
+    return (await this.opts.teammates.list(team.team_id)).length;
   }
 
   private async mustTeam(teamId: string): Promise<TeamRecord> {
@@ -302,6 +307,8 @@ export class TeamCollection {
 
 export interface TeamServiceOptions {
   record: TeamRecord;
+  /** The team's leader, a contained {@link TeammateService} (issue #233 Phase 4). */
+  leader: TeammateService;
   store: TeamStore;
   bindings: ChannelBindingStore;
   worktrees: WorktreeManager;
@@ -309,19 +316,25 @@ export interface TeamServiceOptions {
 }
 
 /**
- * A single team entity (issue #233): holds its own {@link TeamRecord} plus the
- * dispatcher-owned stores it needs, and exposes the per-team domain operations
- * (`status` / `dissolve` / `bindChannel` / `deliverToLeader` / `sharedWorkspace`)
- * and the teammate forwards the admin `team_leader` target calls. Channel-bound
- * operations run through an injected {@link TeamChannelContext}.
+ * A single team entity (issue #233): holds its own {@link TeamRecord}, *has a*
+ * leader {@link TeammateService} (Phase 4 — same entity/runtime/turn recording as
+ * a regular member, only at the team root), plus the dispatcher-owned stores it
+ * needs. It exposes the per-team domain operations (`status` / `dissolve` /
+ * `bindChannel` / `deliverToLeader` / `sharedWorkspace`) and the teammate forwards
+ * the admin `team_leader` target calls. The leader's identity/turn operations go
+ * through that held entity; member listing scans only the team's `teammate/`
+ * collection (the leader is never a member row). Channel-bound operations run
+ * through an injected {@link TeamChannelContext}.
  */
 export class TeamService {
   private record: TeamRecord;
   readonly id: string;
+  readonly leader: TeammateService;
 
   constructor(private readonly opts: TeamServiceOptions) {
     this.record = opts.record;
     this.id = opts.record.team_id;
+    this.leader = opts.leader;
   }
 
   get dispatcherId(): string {
@@ -333,12 +346,9 @@ export class TeamService {
   }
 
   async status(): Promise<TeamSummary> {
-    const leader = await this.opts.teammates
-      .status(this.record.leader_name, this.id)
-      .catch(() => null);
     return {
       team: teamView(this.record),
-      leader,
+      leader: this.leader.status(),
       member_count: await this.memberCount(),
       binding: await this.activeGroupBinding(),
     };
@@ -362,11 +372,7 @@ export class TeamService {
         note: input.note,
       });
     }
-    await this.opts.teammates.close({
-      teamId: this.id,
-      name: this.record.leader_name,
-      note: input.note,
-    });
+    await this.leader.close({ note: input.note });
     this.record = await this.opts.store.update(this.record, {
       status: 'closed',
       closedAt: Date.now(),
@@ -420,11 +426,7 @@ export class TeamService {
     turn: InboundTurnInput,
   ): Promise<import('@excitedjs/dreamux-types').AgentRuntimeTurnResult> {
     if (this.record.status === 'closed') return { status: 'stopped' };
-    return this.opts.teammates.channelInput(
-      this.id,
-      this.record.leader_name,
-      turn,
-    );
+    return this.leader.channelInput(turn);
   }
 
   sharedWorkspace(): TeamMateSharedWorkspace {
@@ -484,9 +486,9 @@ export class TeamService {
   }
 
   private async members(): Promise<TeamMateRuntimeStatus[]> {
-    return (await this.opts.teammates.list(this.id)).filter(
-      (member) => member.name !== this.record.leader_name,
-    );
+    // `list(teamId)` is members-only — the leader lives at the team root and is
+    // held as `this.leader`, never a member row (issue #233 Phase 4).
+    return this.opts.teammates.list(this.id);
   }
 
   private async memberCount(): Promise<number> {
