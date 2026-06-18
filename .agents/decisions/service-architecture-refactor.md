@@ -545,7 +545,7 @@ Team leader explicitly uses `TeammateService` entity (medium risk — leader is 
 
 - Team leader creation flows through the same `TeammateService` entity as regular members
 - Unify leader turn recording with teammate turn recording
-- Team leader delivery flows through the same `CompletionRouter`: a dispatcher→leader `send`/create registers `leaderName:turnId → dispatcher`, and a leader→member `send` registers `memberName:turnId → leader`
+- Team leader delivery flows through the same `CompletionRouter`: a dispatcher→leader `send` (and a create that supplies an explicit `prompt`) registers `leaderName:turnId → dispatcher`, and a leader→member `send` registers `memberName:turnId → leader` (a prompt-less create fires no first turn, so it registers nothing)
 
 ### Phase 5: Dispatcher agent → TeammateService
 

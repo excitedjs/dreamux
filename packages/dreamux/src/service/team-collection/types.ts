@@ -179,7 +179,11 @@ export interface TeamHistoryResult {
 }
 
 export interface TeamCreateResult extends TeamSummary {
-  turn: TeamMateTurnResult;
+  /**
+   * The leader's first-turn result, or `null` when the team was created without
+   * an explicit `prompt` (the leader starts idle and fires no turn at creation).
+   */
+  turn: TeamMateTurnResult | null;
 }
 
 export function validateTeamId(id: string): string {

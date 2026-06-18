@@ -122,7 +122,14 @@ export interface SpawnTeamMateInput {
 
 export interface CreateTeamLeaderInput {
   name: string;
-  prompt: string;
+  /**
+   * Optional explicit first-turn prompt. When omitted, the leader is started
+   * idle and fires no turn at creation — the team no longer fabricates a
+   * synthetic default prompt to auto-run a turn. A leader created without a
+   * prompt waits for a bound channel or a dispatcher `send` to drive its first
+   * real turn.
+   */
+  prompt?: string;
   agentRuntime: string;
   sourceCwd: string;
   sourceRepo: string | null;

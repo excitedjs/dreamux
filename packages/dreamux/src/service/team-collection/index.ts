@@ -164,10 +164,9 @@ export class TeamCollection {
       intent: input.intent,
       leaderName,
     });
-    const prompt = input.prompt ?? teamLeaderPrompt(team);
     const { leader, result } = await teammates.createTeamLeader({
       name: leaderName,
-      prompt,
+      ...(input.prompt !== undefined ? { prompt: input.prompt } : {}),
       agentRuntime: input.leaderAgentRuntime,
       sourceCwd: workspace.sourceCwd,
       sourceRepo: workspace.sourceRepo,
@@ -404,15 +403,6 @@ function dedupe<T>(
   const promise = start().finally(() => inFlight.delete(key));
   inFlight.set(key, promise);
   return promise;
-}
-
-function teamLeaderPrompt(team: TeamRecord): string {
-  return [
-    'You are the TeamLeader for this Dreamux team.',
-    `Team: ${team.name}`,
-    `Repository cwd: ${team.repo_cwd}`,
-    team.intent !== null ? `Intent: ${team.intent}` : '',
-  ].filter((line) => line !== '').join('\n');
 }
 
 function matchesTeamHistoryQuery(
