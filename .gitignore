@@ -10,6 +10,10 @@ dist/
 .runtime/
 ~/.codex-host/
 
+# dispatcher/teammate runtime work area (worktrees, work dirs, local scratch);
+# never committed — same posture as .agents/wip/ below
+.workspace/
+
 # editor
 .vscode/
 .idea/
