@@ -8,13 +8,18 @@ source before making changes.
 
 `dreamux serve` runs one local Node process. The server owns admin IPC,
 configuration loading, provider registries, durable state, and one
-`DispatcherRuntimeService` per enabled dispatcher.
+`DispatcherService` per enabled dispatcher. Each `DispatcherService` *has an*
+agent: a contained `TeammateService` that owns the agent runtime lifecycle
+(Phase 5, #233). The dispatcher-only concerns — channel sessions, restart-notice
+injection, role MCP assembly, completion routing — stay on `DispatcherService`;
+there is no separate `DispatcherRuntimeService`.
 
 Key source:
 
 - `/packages/dreamux/src/server.ts`
-- `/packages/dreamux/src/dispatcher-service/service.ts`
-- `/packages/dreamux/src/dispatcher-service/dispatcher/service.ts`
+- `/packages/dreamux/src/service/dispatchers/index.ts`
+- `/packages/dreamux/src/service/dispatcher-service/index.ts`
+- `/packages/dreamux/src/service/dispatcher-service/agent.ts`
 
 ## Configuration
 
@@ -85,8 +90,8 @@ with multiple channel providers can route and egress by `channel_id`; with only
 
 Key source:
 
-- `/packages/dreamux/src/dispatcher-service/dispatcher/service.ts`
-- `/packages/dreamux/src/dispatcher-service/dispatcher/mcp-descriptors.ts`
+- `/packages/dreamux/src/service/dispatcher-service/index.ts`
+- `/packages/dreamux/src/service/dispatcher-service/mcp-descriptors.ts`
 - `/packages/dreamux/src/mcp/channel-mcp.ts`
 - `/packages/dreamux/src/mcp/team-mcp.ts`
 - `/packages/dreamux/src/mcp/teammate-mcp.ts`
@@ -128,9 +133,9 @@ a Feishu group chat.
 
 Key source:
 
-- `/packages/dreamux/src/dispatcher-service/teammate/`
-- `/packages/dreamux/src/dispatcher-service/team/`
-- `/packages/dreamux/src/dispatcher-service/channel-binding/`
+- `/packages/dreamux/src/service/teammate-collection/`
+- `/packages/dreamux/src/service/team-collection/`
+- `/packages/dreamux/src/service/channel-binding/`
 - `/packages/dreamux/src/mcp/team-mcp.ts`
 
 ## State, Cache, Run Files, And Logs

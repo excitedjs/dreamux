@@ -9,13 +9,13 @@ import {
   configuredDispatcherCwd,
   diagnoseDispatcherWorkspace,
   ensureDispatcherWorkspace,
-} from '../src/dispatcher-service/dispatcher-workspace.js';
+} from '../src/service/dispatcher-workspace.js';
 import {
   managedWorkspaceGitignorePath,
   managedWorktreePath,
   managedWorktreeRoot,
   repoDisambiguatedSlug,
-} from '../src/dispatcher-service/teammate/worktree-paths.js';
+} from '../src/service/worktree/paths.js';
 import {
   dreamuxRoot,
   isRealPathUnderDreamuxRoot,

@@ -134,7 +134,7 @@ see its `verbs/` (spawn/resume/history), `persistence/history-index.ts` and
   ledger and the persisted `checkpoint` object — see top-level-design.)
 - **Ownership.** The Dispatcher Service owns TeamMate identity and history
   through focused modules under
-  `/packages/dreamux/src/dispatcher-service/teammate/`.
+  `/packages/dreamux/src/service/teammate-collection/`.
 
 ## Consequences
 
@@ -165,7 +165,7 @@ see its `verbs/` (spawn/resume/history), `persistence/history-index.ts` and
   conduit only.
 - PR E also closes the dispatcher-agent ownership debt: `DispatcherService`
   delegates dispatcher runtime/channel lifecycle to
-  `/packages/dreamux/src/dispatcher-service/dispatcher/service.ts`, which owns
+  `/packages/dreamux/src/service/dispatcher-service/index.ts`, which owns
   live dispatcher slots, start coalescing, stop, runtime lookup, restart-notice
   injection, and Feishu channel MCP dispatch. `/packages/dreamux/src/server.ts`
   is wiring only.

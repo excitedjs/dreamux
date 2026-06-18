@@ -12,12 +12,16 @@ import {
   adminSocketPath,
   cacheRoot,
   dispatcherAccessPath,
+  dispatcherChannelBindingsPath,
   dispatcherCompletionSpillDir,
   dispatcherDir,
+  dispatcherAgentIdentityPath,
+  dispatcherAgentTurnsPath,
+  dispatcherTeamDir,
   dispatcherTeamMateDir,
-  dispatcherTeamMateRecordsDir,
-  dispatcherTeamMateRecordPath,
-  dispatcherTeamMateTurnsPath,
+  dispatcherTeamRecordPath,
+  dispatcherTeamScopeDir,
+  dispatcherTeamTeamMateDir,
   dispatcherTeamMateRuntimeDir,
   channelLogDir,
   channelLogPath,
@@ -93,21 +97,65 @@ describe('runtime paths', () => {
     expect(dispatcherCompletionSpillDir('dispatcher-a')).toBe(
       join(cacheRoot(), 'dispatcher-a', 'spill'),
     );
+    // #233 symmetric layout: each agent is a directory holding
+    // {identity.json, turn.jsonl}. The dispatcher `teammate/` and `team/` dirs
+    // hold ONLY entity dirs; channel bindings live at the dispatcher root and
+    // runtime scratch beside (not inside) the blind-scan collections.
     expect(dispatcherTeamMateDir('dispatcher-a')).toBe(
       join(stateRoot(), 'dispatcher-a', 'teammate'),
     );
-    // #199 Slice 3: per-name records + per-name turns archive; no sessions.jsonl.
-    expect(dispatcherTeamMateRecordsDir('dispatcher-a')).toBe(
-      join(stateRoot(), 'dispatcher-a', 'teammate', 'records'),
+    expect(dispatcherTeamDir('dispatcher-a')).toBe(
+      join(stateRoot(), 'dispatcher-a', 'team'),
     );
-    expect(dispatcherTeamMateRecordPath('dispatcher-a', 'reviewer-1')).toBe(
-      join(stateRoot(), 'dispatcher-a', 'teammate', 'records', 'reviewer-1.json'),
+    expect(dispatcherChannelBindingsPath('dispatcher-a')).toBe(
+      join(stateRoot(), 'dispatcher-a', 'channel-bindings.json'),
     );
-    expect(dispatcherTeamMateTurnsPath('dispatcher-a', 'reviewer-1')).toBe(
-      join(stateRoot(), 'dispatcher-a', 'teammate', 'turns', 'reviewer-1.jsonl'),
+    // A dispatcher-owned teammate: teammate/<name>/{identity.json, turn.jsonl}.
+    const reviewer = {
+      dispatcherId: 'dispatcher-a',
+      name: 'reviewer-1',
+      teamId: null,
+      role: 'teammate' as const,
+    };
+    expect(dispatcherAgentIdentityPath(reviewer)).toBe(
+      join(stateRoot(), 'dispatcher-a', 'teammate', 'reviewer-1', 'identity.json'),
     );
+    expect(dispatcherAgentTurnsPath(reviewer)).toBe(
+      join(stateRoot(), 'dispatcher-a', 'teammate', 'reviewer-1', 'turn.jsonl'),
+    );
+    // A team scope: leader pair + record.json at the team root, members under
+    // team/<team>/teammate/<name>/.
+    expect(dispatcherTeamScopeDir('dispatcher-a', 'alpha')).toBe(
+      join(stateRoot(), 'dispatcher-a', 'team', 'alpha'),
+    );
+    expect(dispatcherTeamRecordPath('dispatcher-a', 'alpha')).toBe(
+      join(stateRoot(), 'dispatcher-a', 'team', 'alpha', 'record.json'),
+    );
+    expect(
+      dispatcherAgentIdentityPath({
+        dispatcherId: 'dispatcher-a',
+        name: 'alpha.leader',
+        teamId: 'alpha',
+        role: 'team_leader',
+      }),
+    ).toBe(join(stateRoot(), 'dispatcher-a', 'team', 'alpha', 'identity.json'));
+    expect(dispatcherTeamTeamMateDir('dispatcher-a', 'alpha')).toBe(
+      join(stateRoot(), 'dispatcher-a', 'team', 'alpha', 'teammate'),
+    );
+    expect(
+      dispatcherAgentTurnsPath({
+        dispatcherId: 'dispatcher-a',
+        name: 'member-1',
+        teamId: 'alpha',
+        role: 'team_member',
+      }),
+    ).toBe(
+      join(stateRoot(), 'dispatcher-a', 'team', 'alpha', 'teammate', 'member-1', 'turn.jsonl'),
+    );
+    // Provider runtime scratch sits beside the collections, at the dispatcher
+    // root under runtime/<name>/ (issue #233).
     expect(dispatcherTeamMateRuntimeDir('dispatcher-a', 'reviewer-1')).toBe(
-      join(stateRoot(), 'dispatcher-a', 'teammate', 'runtime', 'reviewer-1'),
+      join(stateRoot(), 'dispatcher-a', 'runtime', 'reviewer-1'),
     );
     // Per-runtime app-server log paths are no longer core path builders: each
     // runtime package composes a flat `<logsDir>/<engine>/<runtime_id>.log`

@@ -7,9 +7,11 @@ function spawnStub(capture: (input: unknown) => void): Server {
   return {
     repos: { dispatchers: { get: () => ({ dispatcher_id: 'flow' }) } },
     getDispatcher: () => ({
-      spawnTeamMate: (input: unknown) => {
-        capture(input);
-        return { teammate: { name: 'solo' }, turn: {} };
+      teammates: {
+        spawn: (input: unknown) => {
+          capture(input);
+          return { teammate: { name: 'solo' }, turn: {} };
+        },
       },
       workspace: () => {
         throw new Error(

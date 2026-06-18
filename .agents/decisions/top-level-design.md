@@ -761,7 +761,7 @@ field: it fails loud (issue #199 Slice 5, the 0.x no-migration policy of issue
 #98). A removed whole-file/dir layout — the `teammate/identities/` directory,
 the `teammate/sessions.jsonl` session ledger, the per-name `teammate/history/`
 index, or the `team/ledger/` audit dir — is detected by
-`dispatcher-service/legacy-state.ts` and aborts `dreamux serve` startup with the
+`service/legacy-state.ts` and aborts `dreamux serve` startup with the
 exact path(s) to delete (`dreamux doctor` reports the same as a diagnostic);
 detection only, the files are never read for migration or removed. A removed
 *field* still sitting in a present record (`checkpoint` / `checkpoint_kind` /

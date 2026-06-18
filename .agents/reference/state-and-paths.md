@@ -50,11 +50,11 @@ would live under `~/.dreamux`.
 
 Key source:
 
-- `/packages/dreamux/src/dispatcher-service/dispatcher-workspace.ts`
-- `/packages/dreamux/src/dispatcher-service/teammate/workspaces.ts`
-- `/packages/dreamux/src/dispatcher-service/teammate/worktree-manager.ts`
-- `/packages/dreamux/src/dispatcher-service/teammate/worktree-paths.ts`
-- `/packages/dreamux/src/dispatcher-service/team/service.ts`
+- `/packages/dreamux/src/service/dispatcher-workspace.ts`
+- `/packages/dreamux/src/service/worktree/workspaces.ts`
+- `/packages/dreamux/src/service/worktree/manager.ts`
+- `/packages/dreamux/src/service/worktree/paths.ts`
+- `/packages/dreamux/src/service/team-collection/index.ts`
 
 ## Server-Owned State
 
@@ -64,7 +64,13 @@ surface.
 Important children:
 
 - `~/.dreamux/state/<dispatcher-id>/status.json`: dispatcher runtime status and
-  saved Agent Runtime thread/session identity.
+  saved Agent Runtime thread/session identity. **Authoritative** for the
+  dispatcher agent's rebuild/recovery (the dispatcher agent is a contained
+  `TeammateService`, Phase 5 / #233).
+- `~/.dreamux/state/<dispatcher-id>/identity.json` + `turn.jsonl`: the dispatcher
+  agent's own write-only **debug** record at the dispatcher *root* (not under
+  `teammate/`), so the `teammate.*` read chokepoints never enumerate it. No
+  consumer; `status.json` is the authoritative state.
 - `~/.dreamux/state/<dispatcher-id>/access.json`: dispatcher-local Feishu access
   gate state.
 - `~/.dreamux/state/<dispatcher-id>/chat-bots.json`: Feishu known/trusted peer
@@ -80,9 +86,9 @@ Key source:
 
 - `/packages/dreamux/src/platform/paths.ts`
 - `/packages/dreamux/src/state/dispatcher-store.ts`
-- `/packages/dreamux/src/dispatcher-service/teammate/identity-store.ts`
-- `/packages/dreamux/src/dispatcher-service/teammate/turns-store.ts`
-- `/packages/dreamux/src/dispatcher-service/team/store.ts`
+- `/packages/dreamux/src/service/teammate-collection/identity-store.ts`
+- `/packages/dreamux/src/service/teammate-collection/turns-store.ts`
+- `/packages/dreamux/src/service/team-collection/store.ts`
 - `/packages/channel/feishu-channel/src/chat-bots-store.ts`
 
 ## Run Files

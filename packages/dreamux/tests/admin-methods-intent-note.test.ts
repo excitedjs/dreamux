@@ -10,8 +10,10 @@ const stubServer = {
     team: () => {
       throw new Error('team must not be reached on a rejected request');
     },
-    closeTeamMate: () => {
-      throw new Error('closeTeamMate must not be reached on a rejected request');
+    teammates: {
+      close: () => {
+        throw new Error('close must not be reached on a rejected request');
+      },
     },
     createTeam: () => {
       throw new Error('createTeam must not be reached on a rejected request');

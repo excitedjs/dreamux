@@ -40,7 +40,7 @@ the implementation is still mostly host-local:
   still runs one live session per declared channel, and only a channel whose
   provider package cannot be loaded or does not implement the channel contract
   fails loud. See "Live multi-channel routing" below.
-- `/packages/dreamux/src/dispatcher-service/channel-binding/store.ts` stores
+- `/packages/dreamux/src/service/channel-binding/store.ts` stores
   version 1 rows keyed by `(provider, chat_id)`, which cannot distinguish
   multiple channel instances or non-chat channel targets.
 - Team MCP previously exposed Feishu-specific binding tools:

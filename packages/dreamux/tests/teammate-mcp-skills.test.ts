@@ -6,7 +6,7 @@ import { bundledSkillDir, type BundledSkillName } from '../src/platform/paths.js
 import {
   DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS,
   DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
-} from '../src/dispatcher-service/dispatcher/base-prompt.js';
+} from '../src/service/dispatcher-service/base-prompt.js';
 
 /**
  * Guards the issue #124 alignment as updated by PR6 (issue #126): the bundled

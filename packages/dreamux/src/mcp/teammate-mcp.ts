@@ -7,7 +7,7 @@ import {
 } from '../admin/client.js';
 import { adminSocketPath as defaultAdminSocketPath } from '../platform/paths.js';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
-import { validateTeamId } from '../dispatcher-service/team/types.js';
+import { validateTeamId } from '../service/team-collection/types.js';
 
 export type TeamMateMcpCallerKind = 'dispatcher' | 'team_leader';
 

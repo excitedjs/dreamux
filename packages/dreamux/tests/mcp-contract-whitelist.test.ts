@@ -51,7 +51,7 @@ class JsonLineReader {
 }
 
 async function teammateTools(
-  callerKind: 'dispatcher' | 'team_leader' | 'teammate',
+  callerKind: 'dispatcher' | 'team_leader',
 ): Promise<Array<Record<string, unknown>>> {
   const input = new PassThrough();
   const output = new PassThrough();
