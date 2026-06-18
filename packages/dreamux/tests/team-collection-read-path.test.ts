@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
+const execFileAsync = promisify(execFile);
 
 import type {
   AgentRuntime,
@@ -286,5 +290,109 @@ describe('TeamCollection create without a prompt fires no leader turn', () => {
     const status = await (await teams.get('beta')).status();
     expect(status.leader).not.toBeNull();
     expect(status.member_count).toBe(0);
+  });
+});
+
+/**
+ * Regression: closing a team member must NOT clean up the Team's shared
+ * worktree. A member borrows the team's one managed worktree (spawn injects the
+ * shared workspace), so its `close()` used to run `WorktreeManager.cleanup()`
+ * on that shared worktree — `git worktree remove`-ing the live dir out from
+ * under the leader and every other member when it was `delete-on-close` and
+ * clean. The shared worktree is owned by the Team and must only be cleaned at
+ * `dissolve`. This exercises the real delete path (a fresh managed worktree at
+ * base HEAD is clean and reachable, so the old code's retain guard would NOT
+ * save it).
+ */
+describe('closing a team member must not remove the shared team worktree', () => {
+  let root: string;
+  let previousHome: string | undefined;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'dreamux-team-member-close-'));
+    previousHome = process.env['HOME'];
+    process.env['HOME'] = join(root, 'home');
+    mkdirSync(process.env['HOME'], { recursive: true });
+  });
+
+  afterEach(() => {
+    if (previousHome === undefined) delete process.env['HOME'];
+    else process.env['HOME'] = previousHome;
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('preserves the managed/delete-on-close worktree on member close; only dissolve removes it', async () => {
+    // A real source repo so the managed worktree is a real `git worktree`.
+    const sourceRepo = join(root, 'source');
+    mkdirSync(sourceRepo, { recursive: true });
+    const git = async (args: string[]): Promise<string> => {
+      const { stdout } = await execFileAsync('git', args, { cwd: sourceRepo });
+      return stdout;
+    };
+    await git(['init', '-q']);
+    await git(['config', 'user.email', 'test@example.com']);
+    await git(['config', 'user.name', 'Test']);
+    writeFileSync(join(sourceRepo, 'README.md'), '# source\n');
+    await git(['add', '.']);
+    await git(['commit', '-qm', 'init']);
+    const countWorktrees = async (): Promise<number> =>
+      (await git(['worktree', 'list', '--porcelain']))
+        .split('\n')
+        .filter((line) => line.startsWith('worktree ')).length;
+
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const log = noopLog();
+    const teams = new TeamCollection({
+      dispatcherId: 'dispatcher-a',
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
+      worktrees: new WorktreeManager(),
+      bindings: new ChannelBindingStore(),
+      identities: new TeamMateIdentityStore({ warn: log.warn.bind(log) }),
+      turnsStore: new TeamMateTurnsStore({ warn: log.warn.bind(log) }),
+      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
+      initiatorFor: async () => null,
+      isShuttingDown: () => false,
+      mcpServersForTeamMate: () => [],
+      log,
+    });
+
+    // Create the team on a MANAGED, delete-on-close worktree of the source repo.
+    await teams.create({
+      name: 'gamma',
+      leaderAgentRuntime: 'agent-a',
+      intent: 'lead gamma',
+      repoCwd: sourceRepo,
+      worktree: { mode: 'managed', cleanup: 'delete-on-close' },
+      prompt: 'lead',
+    });
+    // source repo's main worktree + the team's managed worktree.
+    expect(await countWorktrees()).toBe(2);
+
+    const team = await teams.get('gamma');
+    const spawn = await team.spawnTeamMate({
+      name: 'worker',
+      prompt: 'do the work',
+      agentRuntime: 'agent-a',
+      intent: 'member work',
+    });
+
+    // Closing the member must leave the shared team worktree intact.
+    await team.teammates.close({ name: spawn.teammate.name, note: 'member done' });
+    expect(await countWorktrees()).toBe(2);
+
+    // Dissolve is the one place that cleans the shared worktree.
+    await team.dissolve({ teamId: 'gamma', note: 'team done' });
+    expect(await countWorktrees()).toBe(1);
   });
 });
