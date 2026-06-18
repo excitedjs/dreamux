@@ -99,23 +99,35 @@ export class TeamService {
         });
       }
     }
-    for (const member of await this.members()) {
+    const members = await this.members();
+    for (const member of members) {
       await this.opts.teammates.close({
         name: member.name,
         note: input.note,
       });
     }
     await this.leader.close({ note: input.note });
+    // `dissolve` is the single authoritative cleanup site for the Team's shared
+    // worktree (issue #236): members and the leader borrow it and skip cleanup on
+    // their own `close`, so only this call removes it.
+    const cleaned = await this.opts.worktrees.cleanup({
+      source_cwd: this.record.repo_cwd,
+      source_repo: this.record.source_repo,
+      worktree: this.record.worktree,
+    });
     this.record = await this.opts.store.update(this.record, {
       status: 'closed',
       closedAt: Date.now(),
       closeNote: input.note,
-      worktree: await this.opts.worktrees.cleanup({
-        source_cwd: this.record.repo_cwd,
-        source_repo: this.record.source_repo,
-        worktree: this.record.worktree,
-      }),
+      worktree: cleaned,
     });
+    // Propagate that single result to every borrower so a leader/member
+    // `cleanup_state` does not stay `managed-active` after the worktree is gone
+    // (issue #237). They share the one worktree, so the same identity applies.
+    await this.leader.applyWorktreeCleanup(cleaned);
+    for (const member of members) {
+      await this.opts.teammates.applyWorktreeCleanup(member.name, cleaned);
+    }
     const summary = await this.status();
     // Evict so a later `get` rebuilds from disk and reads `status: closed`.
     this.opts.evict();

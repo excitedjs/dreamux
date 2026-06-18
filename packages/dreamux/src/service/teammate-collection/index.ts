@@ -302,6 +302,21 @@ export class TeammateCollection implements TeammateOps {
     return closed;
   }
 
+  /**
+   * Sync a member's persisted worktree to the Team's authoritative `dissolve`
+   * cleanup result (issue #237), so a borrowed shared worktree's `cleanup_state`
+   * does not stay `managed-active` after the Team removed it. Concrete-only (off
+   * `TeammateOps`): only `TeamService.dissolve`, which holds the concrete
+   * collection, calls this — it is not part of the admin-facing teammate surface.
+   */
+  async applyWorktreeCleanup(
+    name: string,
+    worktree: TeamMateWorktreeIdentity,
+  ): Promise<void> {
+    const entity = await this.mustEntity(name);
+    await entity.applyWorktreeCleanup(worktree);
+  }
+
   async list(): Promise<TeamMateRuntimeStatus[]> {
     return (await this.rosterList()).map((identity) =>
       toStatus(identity, this.runtimeFor(identity.name)),

@@ -396,3 +396,98 @@ describe('closing a team member must not remove the shared team worktree', () =>
     expect(await countWorktrees()).toBe(1);
   });
 });
+
+/**
+ * Regression (issue #237): after `dissolve` removes the Team's shared worktree,
+ * every borrower's recorded `cleanup_state` must reflect that — not stay
+ * `managed-active`. Since members/leader skip cleanup on their own close (#236),
+ * dissolve propagates its single authoritative cleanup result to the leader and
+ * each member.
+ */
+describe('team dissolve syncs cleanup_state to the leader and members (#237)', () => {
+  let root: string;
+  let previousHome: string | undefined;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'dreamux-team-dissolve-state-'));
+    previousHome = process.env['HOME'];
+    process.env['HOME'] = join(root, 'home');
+    mkdirSync(process.env['HOME'], { recursive: true });
+  });
+
+  afterEach(() => {
+    if (previousHome === undefined) delete process.env['HOME'];
+    else process.env['HOME'] = previousHome;
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('reports cleanup_state "deleted" for the leader and members after dissolve', async () => {
+    const sourceRepo = join(root, 'source');
+    mkdirSync(sourceRepo, { recursive: true });
+    const git = async (args: string[]): Promise<string> => {
+      const { stdout } = await execFileAsync('git', args, { cwd: sourceRepo });
+      return stdout;
+    };
+    await git(['init', '-q']);
+    await git(['config', 'user.email', 'test@example.com']);
+    await git(['config', 'user.name', 'Test']);
+    writeFileSync(join(sourceRepo, 'README.md'), '# source\n');
+    await git(['add', '.']);
+    await git(['commit', '-qm', 'init']);
+
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const log = noopLog();
+    const teams = new TeamCollection({
+      dispatcherId: 'dispatcher-a',
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
+      worktrees: new WorktreeManager(),
+      bindings: new ChannelBindingStore(),
+      identities: new TeamMateIdentityStore({ warn: log.warn.bind(log) }),
+      turnsStore: new TeamMateTurnsStore({ warn: log.warn.bind(log) }),
+      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
+      initiatorFor: async () => null,
+      isShuttingDown: () => false,
+      mcpServersForTeamMate: () => [],
+      log,
+    });
+
+    await teams.create({
+      name: 'delta',
+      leaderAgentRuntime: 'agent-a',
+      intent: 'lead delta',
+      repoCwd: sourceRepo,
+      worktree: { mode: 'managed', cleanup: 'delete-on-close' },
+      prompt: 'lead',
+    });
+    const team = await teams.get('delta');
+    const spawn = await team.spawnTeamMate({
+      name: 'worker',
+      prompt: 'do the work',
+      agentRuntime: 'agent-a',
+      intent: 'member work',
+    });
+    const memberName = spawn.teammate.name;
+
+    // Sanity: before dissolve the leader's worktree is live.
+    const before = await team.status();
+    expect(before.leader!.repo?.cleanup_state).toBe('managed-active');
+
+    const dissolved = await team.dissolve({ teamId: 'delta', note: 'team done' });
+
+    // The worktree is actually gone, AND the persisted/displayed state agrees.
+    expect(dissolved.leader!.repo?.cleanup_state).toBe('deleted');
+    const member = await team.teammates.status(memberName);
+    expect(member.repo?.cleanup_state).toBe('deleted');
+  });
+});
