@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "Team creation no longer fabricates a synthetic default TeamLeader prompt and auto-fires a turn. Previously `team.create` without an explicit `prompt` built a `\"You are the TeamLeader…\"` string and immediately submitted it, so a freshly created leader ran one throwaway turn before any real work or channel binding existed. Now the leader is started (it still gets a resumable session at start) and left idle; its first turn comes from a bound channel inbound, a dispatcher `send`, or an explicit `prompt` supplied at create time. The optional `team.create` `prompt` param is unchanged and still delivered as the leader's first turn when present. The `team.create` result `turn` is now `null` when no `prompt` was supplied.",
+      "comment": "Team creation no longer fabricates a synthetic default TeamLeader prompt and auto-fires a turn. Previously `team.create` without an explicit `prompt` built a `\"You are the TeamLeader…\"` string and immediately submitted it, so a freshly created leader ran one throwaway turn before any real work or channel binding existed. Now the leader is started and left idle: its entity is persisted and recoverable from its record, and its runtime-native session materializes on start (eager runtimes, e.g. Codex) or on its first turn (lazy runtimes, e.g. Claude Code). Its first turn comes from a bound channel inbound, a dispatcher `send`, or an explicit `prompt` supplied at create time. The optional `team.create` `prompt` param is unchanged and still delivered as the leader's first turn when present. The `team.create` result `turn` is now `null` when no `prompt` was supplied.",
       "type": "minor",
       "packageName": "@excitedjs/dreamux"
     }

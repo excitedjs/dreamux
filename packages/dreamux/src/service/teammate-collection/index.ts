@@ -418,10 +418,12 @@ export class TeammateCollection implements TeammateOps {
     const entity = this.entityFor(identity);
     await entity.ensureStarted({ teamId });
     // Only fire a first turn when the dispatcher explicitly supplied a prompt.
-    // A team created without a prompt starts its leader idle (the runtime start
-    // already establishes a resumable session) and waits for a bound channel or
-    // a dispatcher `send` to drive its first real turn — we no longer fabricate
-    // a synthetic default prompt and auto-run a turn at creation time.
+    // A team created without a prompt starts its leader idle — the leader entity
+    // is persisted and recoverable from its record, and its runtime-native
+    // session materializes on start (eager runtimes, e.g. Codex `thread/start`)
+    // or on the first turn (lazy runtimes, e.g. Claude Code) — and waits for a
+    // bound channel or a dispatcher `send` to drive its first real turn. We no
+    // longer fabricate a synthetic default prompt and auto-run a turn at create.
     let turn: TeamMateTurnResult | null = null;
     if (input.prompt !== undefined) {
       // The dispatcher created this leader, so its first turn is `dispatcher`
