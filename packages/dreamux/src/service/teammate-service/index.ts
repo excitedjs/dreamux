@@ -227,12 +227,25 @@ export class TeammateService {
   async close(input: Pick<CloseTeamMateInput, 'note'>): Promise<TeamMateCloseResult> {
     requireLifecycleText(input.note, 'TeamMate close note');
     await this.stop();
-    const closed = await this.deps.identities.update(this.current(), {
+    const identity = this.current();
+    // A `team_member` / `team_leader` BORROWS the Team's one shared worktree (a
+    // member spawn requires a `sharedWorkspace`, and the leader sits at the team
+    // root) — it does not own it. Running `cleanup()` here would
+    // `git worktree remove` the live shared dir out from under the leader and
+    // every other member; a clean, already-merged shared worktree would actually
+    // be deleted. The shared worktree's lifecycle belongs to the Team and is
+    // cleaned exactly once at `dissolve`. Only a dispatcher-owned `teammate`
+    // cleans its worktree on close.
+    const worktree =
+      identity.role === 'teammate'
+        ? await this.mustWorktrees().cleanup(identity)
+        : identity.worktree;
+    const closed = await this.deps.identities.update(identity, {
       status: 'closed',
       closedAt: Date.now(),
       closeNote: input.note,
       lastSeenAt: Date.now(),
-      worktree: await this.mustWorktrees().cleanup(this.current()),
+      worktree,
     });
     this.identity = closed;
     this.state = new TeamMateRuntimeStateStore(this.deps.identities, closed);

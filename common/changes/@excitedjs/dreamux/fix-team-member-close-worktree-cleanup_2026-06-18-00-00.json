@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Fix: closing a team member (or the team leader outside dissolve) no longer cleans up the Team's shared worktree. A `team_member` / `team_leader` borrows the Team's one shared worktree (a member spawn injects the shared workspace; the leader sits at the team root), so `TeammateService.close()` used to run `WorktreeManager.cleanup()` on that shared worktree — `git worktree remove`-ing the live shared directory out from under the leader and every other member whenever it was `managed` + `delete-on-close` and clean/merged. close() now only cleans the worktree for a dispatcher-owned `teammate` (which owns its own worktree); the Team's shared worktree is owned by the Team and is cleaned exactly once at `dissolve`.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}
