@@ -117,6 +117,27 @@ export type SpawnTeamMateRequest = SpawnTeamMateInput & {
 };
 
 /**
+ * The narrow teammate-operations surface a dispatcher or team exposes to the
+ * admin layer (issue #233). `TeammateCollection` implements it; the owning
+ * service hands it out via a `get teammates()` so callers can drive the
+ * collection without the service re-forwarding each verb. `Omit` hides the
+ * scope-internal inputs — `sharedWorkspace` (injected by `TeamService.spawnTeamMate`)
+ * and the history `teamId` (the scope is baked into the collection) — and the
+ * leader/lifecycle methods (`createTeamLeader` / `allocateLeaderName` / `leader`
+ * / `turns` / `stopAll` / `dispatcherWorkspace`) stay off the interface entirely.
+ */
+export interface TeammateOps {
+  spawn(input: Omit<SpawnTeamMateRequest, 'sharedWorkspace'>): Promise<TeamMateSpawnResult>;
+  send(input: SendTeamMateInput): Promise<TeamMateSendResult>;
+  close(input: CloseTeamMateInput): Promise<TeamMateCloseResult>;
+  list(): Promise<TeamMateRuntimeStatus[]>;
+  status(name: string): Promise<TeamMateRuntimeStatus>;
+  history(input: Omit<TeamMateHistoryQuery, 'teamId'>): Promise<TeamMateHistoryResult>;
+  last(name: string, turns?: number): Promise<TeamMateLastResult>;
+  getCapabilities(): TeamMateCapabilities;
+}
+
+/**
  * A scoped teammate collection (issue #233): one instance per scope — one for the
  * dispatcher's own teammates (`teamScope: null`), one per team
  * (`teamScope: team_id`). The dispatcher-scope collection is owned by
@@ -128,7 +149,7 @@ export type SpawnTeamMateRequest = SpawnTeamMateInput & {
  * / completion delivery) live on `TeammateService`. Both the dispatcher id and
  * the scope are baked into the collection, not threaded per call.
  */
-export class TeammateCollection {
+export class TeammateCollection implements TeammateOps {
   private readonly dispatcherId: string;
   private readonly teamScope: string | null;
   private readonly identities: TeamMateIdentityStore;

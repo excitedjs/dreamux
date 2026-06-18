@@ -3,7 +3,10 @@ import type {
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
 
-import type { TeammateCollection } from '../teammate-collection/index.js';
+import type {
+  TeammateCollection,
+  TeammateOps,
+} from '../teammate-collection/index.js';
 import {
   type SpawnTeamMateRequest,
   type TeamMateSharedWorkspace,
@@ -20,12 +23,7 @@ import type {
   TeamSummary,
   TeamView,
 } from '../team-collection/types.js';
-import type {
-  CloseTeamMateInput,
-  SendTeamMateInput,
-  TeamMateHistoryQuery,
-  TeamMateRuntimeStatus,
-} from '../teammate-collection/types.js';
+import type { TeamMateRuntimeStatus } from '../teammate-collection/types.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 
 /**
@@ -185,39 +183,21 @@ export class TeamService {
 
   async spawnTeamMate(input: Omit<SpawnTeamMateRequest, 'sharedWorkspace'>) {
     // The owned collection is team-scoped (spawns a `team_member`); still pass
-    // the shared workspace (issue #233).
+    // the shared workspace (issue #233). This stays a real method — injecting
+    // the shared workspace is the team's job — unlike the pure teammate forwards
+    // that now go through `.teammates`.
     return this.opts.teammates.spawn({
       ...input,
       sharedWorkspace: this.sharedWorkspace(),
     });
   }
 
-  sendTeamMate(input: SendTeamMateInput) {
-    return this.opts.teammates.send(input);
-  }
-
-  closeTeamMate(input: CloseTeamMateInput) {
-    return this.opts.teammates.close(input);
-  }
-
-  listTeamMates(): Promise<TeamMateRuntimeStatus[]> {
-    return this.opts.teammates.list();
-  }
-
-  getTeamMateStatus(name: string) {
-    return this.opts.teammates.status(name);
-  }
-
-  getTeamMateHistory(input: Omit<TeamMateHistoryQuery, 'teamId'>) {
-    return this.opts.teammates.history(input);
-  }
-
-  getTeamMateLast(name: string, turns?: number) {
-    return this.opts.teammates.last(name, turns);
-  }
-
-  getTeamMateCapabilities() {
-    return this.opts.teammates.getCapabilities();
+  /** This team's members, as the narrow admin-facing op surface (issue #233).
+   * `spawnTeamMate` stays separate because it injects the shared workspace; the
+   * remaining teammate verbs the admin `team_leader` target needs run directly
+   * through this collection. */
+  get teammates(): TeammateOps {
+    return this.opts.teammates;
   }
 
   async memberCount(): Promise<number> {

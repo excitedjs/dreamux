@@ -34,19 +34,13 @@ import {
 } from '../completion-router/index.js';
 import { teammateMcpServerDescriptor } from '../teammate-collection/mcp-config.js';
 import {
-  type SpawnTeamMateRequest,
   TeammateCollection,
+  type TeammateOps,
 } from '../teammate-collection/index.js';
 import type { TeammateService } from '../teammate-service/index.js';
 import { WorktreeManager } from '../worktree/manager.js';
 import { ChannelBindingStore } from '../channel-binding/store.js';
-import {
-  type CloseTeamMateInput,
-  type SendTeamMateInput,
-  type TeamMateHistoryQuery,
-  type TeamMateIdentity,
-  type TeamMateRuntimeStatus,
-} from '../teammate-collection/types.js';
+import { type TeamMateIdentity } from '../teammate-collection/types.js';
 import { type TeamChannelContext } from '../team-service/index.js';
 import { TeamCollection } from '../team-collection/index.js';
 import type {
@@ -98,7 +92,7 @@ export class DispatcherService implements TeamChannelContext {
   private readonly channelProviders: ChannelProviderCatalog;
   private readonly log: DreamuxLogger;
   private readonly router: CompletionRouter;
-  private readonly teammates: TeammateCollection;
+  private readonly _teammates: TeammateCollection;
   private readonly teams: TeamCollection;
   private readonly channels: ChannelSessions;
   private readonly agent: TeammateService;
@@ -169,7 +163,7 @@ export class DispatcherService implements TeamChannelContext {
           ]
         : [];
 
-    this.teammates = new TeammateCollection({
+    this._teammates = new TeammateCollection({
       dispatcherId: opts.id,
       teamScope: null,
       config: opts.config,
@@ -334,7 +328,7 @@ export class DispatcherService implements TeamChannelContext {
     // Members now live in per-team collections, so the dispatcher-scope `stopAll`
     // alone would miss them — sweep both (issue #233). Each team's `stopAll`
     // stops its own members + leader; only materialized teams are swept.
-    await this.teammates.stopAll();
+    await this._teammates.stopAll();
     await this.teams.stopAll();
     await this.stop();
   }
@@ -379,39 +373,14 @@ export class DispatcherService implements TeamChannelContext {
   }
 
   workspace(): Promise<string> {
-    return this.teammates.dispatcherWorkspace();
+    return this._teammates.dispatcherWorkspace();
   }
 
-  spawnTeamMate(input: Omit<SpawnTeamMateRequest, 'sharedWorkspace'>) {
-    return this.teammates.spawn(input);
-  }
-
-  sendTeamMate(input: SendTeamMateInput) {
-    return this.teammates.send(input);
-  }
-
-  closeTeamMate(input: CloseTeamMateInput) {
-    return this.teammates.close(input);
-  }
-
-  listTeamMates(): Promise<TeamMateRuntimeStatus[]> {
-    return this.teammates.list();
-  }
-
-  getTeamMateStatus(name: string) {
-    return this.teammates.status(name);
-  }
-
-  getTeamMateHistory(input: Omit<TeamMateHistoryQuery, 'teamId'>) {
-    return this.teammates.history(input);
-  }
-
-  getTeamMateLast(name: string, turns?: number) {
-    return this.teammates.last(name, turns);
-  }
-
-  getTeamMateCapabilities() {
-    return this.teammates.getCapabilities();
+  /** The dispatcher's own teammates, as the narrow admin-facing op surface
+   * (issue #233). The admin layer drives the collection directly through this
+   * instead of the dispatcher re-forwarding each verb. */
+  get teammates(): TeammateOps {
+    return this._teammates;
   }
 
   /** The single-entity team service for a team id (admin `team_leader` target). */

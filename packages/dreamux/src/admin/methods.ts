@@ -127,15 +127,21 @@ export const adminMethods: Record<string, AdminHandler> = {
         ? null
         : repo.cwd ?? (await dispatcher.workspace());
     const worktree = target.callerKind === 'team_leader' ? null : repo?.worktree ?? null;
+    const spawnInput = {
+      name,
+      prompt,
+      intent,
+      ...(cwd !== null ? { cwd } : {}),
+      ...(agentRuntime !== null ? { agentRuntime } : {}),
+      ...(worktree !== null ? { worktree } : {}),
+    };
     try {
-      return await target.service.spawnTeamMate({
-        name,
-        prompt,
-        intent,
-        ...(cwd !== null ? { cwd } : {}),
-        ...(agentRuntime !== null ? { agentRuntime } : {}),
-        ...(worktree !== null ? { worktree } : {}),
-      });
+      // The team_leader path keeps the real `spawnTeamMate` method (it injects
+      // the team shared workspace); the dispatcher path drives the collection
+      // directly (issue #233).
+      return await (target.callerKind === 'team_leader'
+        ? target.service.spawnTeamMate(spawnInput)
+        : target.service.teammates.spawn(spawnInput));
     } catch (err) {
       throw new AdminError('TEAMMATE_SPAWN_FAILED', parseMessage(err));
     }
@@ -149,7 +155,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     const prompt = mustString(params, 'prompt');
     const intent = optionalString(params, 'intent');
     try {
-      return await target.service.sendTeamMate({
+      return await target.service.teammates.send({
         name,
         prompt,
         ...(intent !== null ? { intent } : {}),
@@ -166,7 +172,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     const name = mustString(params, 'name');
     const note = mustNonEmptyString(params, 'note');
     try {
-      return await target.service.closeTeamMate({
+      return await target.service.teammates.close({
         name,
         note,
       });
@@ -180,7 +186,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     mustExistingDispatcher(server, id);
     return (
       await teammateTargetFor(server.getDispatcher(id), params)
-    ).service.getTeamMateHistory(historyQuery(params));
+    ).service.teammates.history(historyQuery(params));
   },
 
   'mcp.teammate.list': async (server, params) => {
@@ -189,7 +195,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     return {
       teammates: await (
         await teammateTargetFor(server.getDispatcher(id), params)
-      ).service.listTeamMates(),
+      ).service.teammates.list(),
     };
   },
 
@@ -200,7 +206,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     return {
       teammate: await (
         await teammateTargetFor(server.getDispatcher(id), params)
-      ).service.getTeamMateStatus(name),
+      ).service.teammates.status(name),
     };
   },
 
@@ -211,7 +217,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     const turns = optionalInteger(params, 'turns');
     return (
       await teammateTargetFor(server.getDispatcher(id), params)
-    ).service.getTeamMateLast(name, turns ?? undefined);
+    ).service.teammates.last(name, turns ?? undefined);
   },
 
   'mcp.teammate.capabilities': async (server, params) => {
@@ -219,7 +225,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     mustExistingDispatcher(server, id);
     return (
       await teammateTargetFor(server.getDispatcher(id), params)
-    ).service.getTeamMateCapabilities();
+    ).service.teammates.getCapabilities();
   },
 
   'mcp.team.create': async (server, params) => {
