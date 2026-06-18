@@ -23,7 +23,12 @@ import type { ResolvedAgentConfig } from '../../config/config.js';
 import { validateDispatcherId } from '../../state/dispatcher-id.js';
 import { resolveAgent } from '../teammate-collection/agent-config.js';
 import type { TeamMateIdentityStore } from '../teammate-collection/identity-store.js';
-import type { TeammateReadModel } from '../teammate-collection/read-model.js';
+import {
+  assertInRoster,
+  foldLastTurns,
+  toStatus,
+  validateLastTurns,
+} from '../teammate-collection/read-helpers.js';
 import { TeamMateRuntimeStateStore } from '../teammate-collection/runtime-state.js';
 import { recordSettledTurn, recordSubmittedTurn, toTurnResult } from './turn-recording.js';
 import type { TeamMateTurnsStore } from '../teammate-collection/turns-store.js';
@@ -68,7 +73,6 @@ export interface TeammateServiceDeps {
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   identities: TeamMateIdentityStore;
   turnsStore: TeamMateTurnsStore;
-  readModel: TeammateReadModel;
   /**
    * The worktree manager backing `close` (cleanup) and a closed-teammate reopen
    * (reprepare). Omitted only for the dispatcher agent (issue #233 Phase 5),
@@ -232,15 +236,28 @@ export class TeammateService {
     });
     this.identity = closed;
     this.state = new TeamMateRuntimeStateStore(this.deps.identities, closed);
-    return { teammate: this.deps.readModel.toStatus(closed, null) };
+    return { teammate: toStatus(closed, null) };
   }
 
   status(): TeamMateRuntimeStatus {
-    return this.deps.readModel.toStatus(this.current(), this.runtime);
+    return toStatus(this.current(), this.runtime);
   }
 
-  last(turns?: number, teamId?: string): Promise<TeamMateLastResult> {
-    return this.deps.readModel.last(this.name, turns, teamId);
+  async last(turns?: number): Promise<TeamMateLastResult> {
+    const requestedTurns = validateLastTurns(turns);
+    const identity = this.current();
+    const teammate = toStatus(identity, this.runtime);
+    const lastTurns = await foldLastTurns(
+      this.turnsStore,
+      identity,
+      requestedTurns,
+    );
+    return {
+      teammate,
+      requested_turns: requestedTurns,
+      returned_turns: lastTurns.length,
+      turns: lastTurns,
+    };
   }
 
   /** Stop the live runtime if any; leaves the persisted record intact. */
@@ -272,7 +289,7 @@ export class TeammateService {
     // lives at the dispatcher root, outside the teammate/team collections — so
     // the roster guard applies only to ordinary teammates (issue #233 Phase 5).
     if (this.deps.buildLaunch === undefined) {
-      this.deps.readModel.assertInRoster(this.current(), opts.teamId);
+      assertInRoster(this.current(), this.dispatcherId, opts.teamId);
     }
     if (this.runtime !== null) return;
     if (this.starting !== null) return this.starting;

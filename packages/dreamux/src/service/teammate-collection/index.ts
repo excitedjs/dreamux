@@ -1,5 +1,6 @@
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type {
+  AgentRuntime,
   AgentRuntimeMcpServer,
   CompletionEnvelope,
 } from '@excitedjs/dreamux-types';
@@ -15,7 +16,17 @@ import {
   type CompletionRouter,
 } from '../completion-router/index.js';
 import { TeamMateIdentityStore } from './identity-store.js';
-import { TeammateReadModel } from './read-model.js';
+import {
+  assertInRoster,
+  clampHistoryLimit,
+  decodeCursor,
+  encodeCursor,
+  foldLastTurns,
+  matchesRecordQuery,
+  toRecordRow,
+  toStatus,
+  validateLastTurns,
+} from './read-helpers.js';
 import { TeammateService, type TeammateServiceDeps } from '../teammate-service/index.js';
 import { TeamMateTurnsStore } from './turns-store.js';
 import { allocateConcreteName, type SuffixGenerator } from './name-allocator.js';
@@ -38,6 +49,7 @@ import {
   type TeamMateHistoryResult,
   type TeamMateIdentity,
   type TeamMateLastResult,
+  type TeamMateRecordRow,
   type TeamMateRole,
   type TeamMateRuntimeStatus,
   type TeamMateSendResult,
@@ -121,7 +133,6 @@ export class TeammateCollection {
   private readonly teamScope: string | null;
   private readonly identities: TeamMateIdentityStore;
   private readonly turnsStore: TeamMateTurnsStore;
-  private readonly readModel: TeammateReadModel;
   private readonly worktrees: WorktreeManager;
   private readonly entities = new Map<string, TeammateService>();
   private submissionSeq = 0;
@@ -133,12 +144,11 @@ export class TeammateCollection {
     this.worktrees = opts.worktrees;
     this.identities = new TeamMateIdentityStore({ warn: opts.log.warn.bind(opts.log) });
     this.turnsStore = new TeamMateTurnsStore({ warn: opts.log.warn.bind(opts.log) });
-    this.readModel = new TeammateReadModel({
-      dispatcherId: this.dispatcherId,
-      identities: this.identities,
-      turnsStore: this.turnsStore,
-      runtimeFor: (name) => this.entities.get(name)?.getRuntime() ?? null,
-    });
+  }
+
+  /** The live runtime for a cached entity, or null (drives status projection). */
+  private runtimeFor(name: string): AgentRuntime | null {
+    return this.entities.get(name)?.getRuntime() ?? null;
   }
 
   turns(): TeamMateTurnsStore {
@@ -259,22 +269,80 @@ export class TeammateCollection {
   }
 
   async list(): Promise<TeamMateRuntimeStatus[]> {
-    return this.readModel.list(this.teamScope ?? undefined);
+    return (await this.rosterList()).map((identity) =>
+      toStatus(identity, this.runtimeFor(identity.name)),
+    );
   }
 
   async status(name: string): Promise<TeamMateRuntimeStatus> {
-    return this.readModel.status(name, this.teamScope ?? undefined);
+    const identity = await this.mustIdentity(validateTeamMateName(name));
+    return toStatus(identity, this.runtimeFor(identity.name));
   }
 
   async history(input: TeamMateHistoryQuery): Promise<TeamMateHistoryResult> {
-    return this.readModel.history({
-      ...input,
-      ...(this.teamScope !== null ? { teamId: this.teamScope } : {}),
-    });
+    const rows: TeamMateRecordRow[] = [];
+    for (const identity of await this.rosterList()) {
+      const row = toRecordRow(identity, this.runtimeFor(identity.name));
+      if (matchesRecordQuery(row, input)) {
+        rows.push(row);
+      }
+    }
+    rows.sort((a, b) =>
+      b.last_seen_at - a.last_seen_at ||
+      b.updated_at - a.updated_at ||
+      a.name.localeCompare(b.name),
+    );
+    const start = input.cursor !== undefined ? decodeCursor(input.cursor) : 0;
+    const limit = clampHistoryLimit(input.limit);
+    const items = rows.slice(start, start + limit);
+    const next = start + items.length;
+    return {
+      items,
+      next_cursor: next < rows.length ? encodeCursor(next) : null,
+    };
   }
 
   async last(name: string, turns?: number): Promise<TeamMateLastResult> {
-    return this.readModel.last(name, turns, this.teamScope ?? undefined);
+    const requestedTurns = validateLastTurns(turns);
+    const identity = await this.mustIdentity(validateTeamMateName(name));
+    const teammate = toStatus(identity, this.runtimeFor(identity.name));
+    const lastTurns = await foldLastTurns(
+      this.turnsStore,
+      identity,
+      requestedTurns,
+    );
+    return {
+      teammate,
+      requested_turns: requestedTurns,
+      returned_turns: lastTurns.length,
+      turns: lastTurns,
+    };
+  }
+
+  /**
+   * Resolve an identity by name within this collection's scope, throwing "does
+   * not exist" for a missing or wrong-scope name (the single read-by-name
+   * chokepoint, issue #233).
+   */
+  private async mustIdentity(name: string): Promise<TeamMateIdentity> {
+    const teamId = this.teamScope ?? undefined;
+    const identity = await this.identities.get(this.dispatcherId, name, teamId);
+    if (identity === null) {
+      throw new Error(`TeamMate ${JSON.stringify(name)} does not exist`);
+    }
+    assertInRoster(identity, this.dispatcherId, teamId);
+    return identity;
+  }
+
+  /**
+   * The scope roster (issue #233): physical scoping is the roster — a
+   * dispatcher-scope list reads only `teammate/<name>/`, a team-scope list only
+   * that team's MEMBERS under `team/<team>/teammate/<name>/`. The leader lives at
+   * the team root and is a contained `TeammateService`, never a member row, so no
+   * post-filter is needed.
+   */
+  private async rosterList(): Promise<TeamMateIdentity[]> {
+    return this.identities.list(this.dispatcherId, this.teamScope ?? undefined);
   }
 
   /**
@@ -396,10 +464,10 @@ export class TeammateCollection {
     const teammateName = validateTeamMateName(name);
     const existing = this.entities.get(teammateName);
     if (existing !== undefined) {
-      this.readModel.assertInRoster(existing.current(), teamId);
+      assertInRoster(existing.current(), this.dispatcherId, teamId);
       return existing;
     }
-    const identity = await this.readModel.mustIdentity(teammateName, teamId);
+    const identity = await this.mustIdentity(teammateName);
     return this.entityFor(identity);
   }
 
@@ -421,7 +489,6 @@ export class TeammateCollection {
       agentRuntimeProviders: this.opts.agentRuntimeProviders,
       identities: this.identities,
       turnsStore: this.turnsStore,
-      readModel: this.readModel,
       worktrees: this.worktrees,
       log: this.opts.log,
       ...(this.opts.mcpServersForTeamMate !== undefined

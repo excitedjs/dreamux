@@ -17,7 +17,6 @@ import {
   type CompletionRouter,
 } from '../completion-router/index.js';
 import { TeamMateIdentityStore } from '../teammate-collection/identity-store.js';
-import { TeammateReadModel } from '../teammate-collection/read-model.js';
 import {
   TeammateService,
   type RuntimeLaunchSpec,
@@ -82,12 +81,6 @@ export function createDispatcherAgent(deps: DispatcherAgentDeps): TeammateServic
   const turnsStore = new TeamMateTurnsStore({
     warn: deps.log.warn.bind(deps.log),
   });
-  const readModel = new TeammateReadModel({
-    dispatcherId: deps.id,
-    identities,
-    turnsStore,
-    runtimeFor: () => agent.getRuntime(),
-  });
   const identity = debugIdentity(deps.id, deps.config);
   // Best-effort: persist the write-only debug record at the dispatcher root. A
   // failure here never blocks launch — `status.json` is the authoritative state.
@@ -113,7 +106,6 @@ export function createDispatcherAgent(deps: DispatcherAgentDeps): TeammateServic
     agentRuntimeProviders: deps.agentRuntimeProviders,
     identities,
     turnsStore,
-    readModel,
     // The dispatcher agent has no worktree — it neither spawns nor closes, so it
     // never reaches the worktree manager (issue #233 Phase 5).
     log: deps.log,
