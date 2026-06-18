@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Fix (completes #236): `team.dissolve` now syncs the cleaned worktree state to the TeamLeader and every member, so `team.status` / `teammate.status` no longer report `cleanup_state: managed-active` for a shared worktree that dissolve already removed (issue #237). Since a `team_member` / `team_leader` borrows the Team's one shared worktree and skips cleanup on its own `close` (#236), dissolve is the single authoritative cleanup site; it now propagates the identity `WorktreeManager.cleanup()` returned to the leader and members (via a new `TeammateService.applyWorktreeCleanup` / `TeammateOps.applyWorktreeCleanup`) so persisted and displayed state match reality everywhere. Behavior-only state-consistency fix; actual worktree cleanup was already correct.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

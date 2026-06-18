@@ -46,6 +46,7 @@ import {
   type TeamMateSendResult,
   type TeamMateTurnOrigin,
   type TeamMateTurnResult,
+  type TeamMateWorktreeIdentity,
 } from '../teammate-collection/types.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
@@ -250,6 +251,21 @@ export class TeammateService {
     this.identity = closed;
     this.state = new TeamMateRuntimeStateStore(this.deps.identities, closed);
     return { teammate: toStatus(closed, null) };
+  }
+
+  /**
+   * Sync this entity's persisted worktree to the result of the Team's single
+   * authoritative cleanup at `dissolve` (issue #237). A `team_member` /
+   * `team_leader` borrows the Team's shared worktree and skips cleanup on its own
+   * `close`, so without this its recorded `cleanup_state` would stay
+   * `managed-active` after dissolve removed the worktree. dissolve hands every
+   * borrower the same identity `WorktreeManager.cleanup()` returned, so the
+   * persisted (and displayed, via `status`) state matches reality everywhere.
+   */
+  async applyWorktreeCleanup(worktree: TeamMateWorktreeIdentity): Promise<void> {
+    const updated = await this.deps.identities.update(this.current(), { worktree });
+    this.identity = updated;
+    this.state = new TeamMateRuntimeStateStore(this.deps.identities, updated);
   }
 
   status(): TeamMateRuntimeStatus {

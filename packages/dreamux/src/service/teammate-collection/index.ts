@@ -139,6 +139,12 @@ export interface TeammateOps {
   spawn(input: Omit<SpawnTeamMateRequest, 'sharedWorkspace'>): Promise<TeamMateSpawnResult>;
   send(input: SendTeamMateInput): Promise<TeamMateSendResult>;
   close(input: CloseTeamMateInput): Promise<TeamMateCloseResult>;
+  /**
+   * Sync a member's persisted worktree to the Team's authoritative `dissolve`
+   * cleanup result (issue #237), so a borrowed shared worktree's `cleanup_state`
+   * does not stay `managed-active` after the Team removed it.
+   */
+  applyWorktreeCleanup(name: string, worktree: TeamMateWorktreeIdentity): Promise<void>;
   list(): Promise<TeamMateRuntimeStatus[]>;
   status(name: string): Promise<TeamMateRuntimeStatus>;
   history(input: Omit<TeamMateHistoryQuery, 'teamId'>): Promise<TeamMateHistoryResult>;
@@ -300,6 +306,14 @@ export class TeammateCollection implements TeammateOps {
     const entity = await this.mustEntity(input.name);
     const closed = await entity.close({ note: input.note });
     return closed;
+  }
+
+  async applyWorktreeCleanup(
+    name: string,
+    worktree: TeamMateWorktreeIdentity,
+  ): Promise<void> {
+    const entity = await this.mustEntity(name);
+    await entity.applyWorktreeCleanup(worktree);
   }
 
   async list(): Promise<TeamMateRuntimeStatus[]> {
