@@ -119,9 +119,11 @@ export class DispatcherService implements TeamChannelContext {
     const bindings = new ChannelBindingStore();
 
     // One identity + turns store pair shared by the dispatcher agent (role
-    // `dispatcher` debug record) and the dispatcher-scope collection (role
-    // `teammate` reads), constructed BEFORE both (issue #233). The stores are
-    // stateless (paths by role + team_id), so one pair safely serves both roles.
+    // `dispatcher` debug record), the dispatcher-scope collection (role
+    // `teammate` reads), and the team collection — which forwards it into every
+    // per-team collection and its own read probes (R4) — constructed BEFORE all
+    // of them (issue #233). The stores are stateless (paths by role + team_id),
+    // so one pair safely serves every role/scope.
     const identities = new TeamMateIdentityStore({
       warn: opts.log.warn.bind(opts.log),
     });
@@ -199,6 +201,8 @@ export class DispatcherService implements TeamChannelContext {
       agentRuntimeProviders: opts.agentRuntimeProviders,
       worktrees,
       bindings,
+      identities,
+      turnsStore,
       router: this.router,
       initiatorFor: (producer) => this.initiatorFor(producer),
       isShuttingDown: () => this.shuttingDown,

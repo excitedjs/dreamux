@@ -10,6 +10,8 @@ import type { DreamuxConfig } from '../../config/config.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 import { dispatcherWorkspace } from '../worktree/workspaces.js';
 import { TeammateCollection } from '../teammate-collection/index.js';
+import type { TeamMateIdentityStore } from '../teammate-collection/identity-store.js';
+import type { TeamMateTurnsStore } from '../teammate-collection/turns-store.js';
 import type {
   CompletionInitiator,
   CompletionRouter,
@@ -47,6 +49,16 @@ export interface TeamCollectionOptions {
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   worktrees: WorktreeManager;
   bindings: ChannelBindingStore;
+  /**
+   * The dispatcher's identity + turns store pair (issue #233 R4). Supplied by
+   * `DispatcherService` (the same pair the dispatcher agent + dispatcher-scope
+   * collection share) and forwarded into every per-team collection so no team
+   * news its own. Read-path probes (`leaderState` / `memberCount`) read the
+   * identity store directly, never a throwaway collection. The stores are
+   * stateless (paths by role + team_id), so one pair safely serves all scopes.
+   */
+  identities: TeamMateIdentityStore;
+  turnsStore: TeamMateTurnsStore;
   // Shared per-dispatcher deps `DispatcherService` always supplies; forwarded
   // unchanged into each team's own collection so it stays topology-free (#233).
   router: CompletionRouter;
@@ -255,7 +267,9 @@ export class TeamCollection {
     return service;
   }
 
-  /** Build the team-scoped {@link TeammateCollection} the team OWNS (issue #233). */
+  /** Build the team-scoped {@link TeammateCollection} the team OWNS (issue #233).
+   * Shares the dispatcher's identity + turns store pair (R4) — the stores are
+   * stateless path-derivers, so no team news its own. */
   private buildTeammates(teamId: string): TeammateCollection {
     return new TeammateCollection({
       dispatcherId: this.dispatcherId,
@@ -263,6 +277,8 @@ export class TeamCollection {
       config: this.opts.config,
       agentRuntimeProviders: this.opts.agentRuntimeProviders,
       worktrees: this.worktrees,
+      identities: this.opts.identities,
+      turnsStore: this.opts.turnsStore,
       router: this.opts.router,
       initiatorFor: this.opts.initiatorFor,
       isShuttingDown: this.opts.isShuttingDown,
@@ -326,9 +342,16 @@ export class TeamCollection {
   private async leaderState(
     team: TeamRecord,
   ): Promise<TeamMateIdentityStatus | null> {
-    // Ephemeral read-only probe (stores are stateless); not cached (issue #233).
-    const leader = await this.buildTeammates(team.team_id)
-      .status(team.leader_name)
+    // Read-only probe straight from the shared identity store (issue #233 R4):
+    // the leader lives at the team root, so the get is team-scoped. Equivalent to
+    // the old throwaway-collection `status(name)` — that probe held no entities,
+    // so its projection was already just `identity.status` with no live runtime.
+    // The `.catch(() => null)` matches the old `status(...).catch(() => null)`:
+    // this is a scan probe, so one unreadable team record (malformed leader_name,
+    // legacy state, IO error) must degrade to a null leader_state for that row,
+    // not throw and poison the whole list/history scan.
+    const leader = await this.opts.identities
+      .get(this.dispatcherId, team.leader_name, team.team_id)
       .catch(() => null);
     return leader?.status ?? null;
   }
@@ -343,8 +366,11 @@ export class TeamCollection {
   }
 
   private async memberCount(team: TeamRecord): Promise<number> {
-    // `list()` is members-only; ephemeral read collection, no cache (issue #233).
-    return (await this.buildTeammates(team.team_id).list()).length;
+    // Members-only roster, read straight from the shared identity store (issue
+    // #233 R4): a team-scope list returns only that team's members. Equivalent to
+    // the old throwaway-collection `list().length` — same store call, no entities.
+    return (await this.opts.identities.list(this.dispatcherId, team.team_id))
+      .length;
   }
 
   private async mustTeam(teamId: string): Promise<TeamRecord> {
