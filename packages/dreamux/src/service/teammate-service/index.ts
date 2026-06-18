@@ -203,7 +203,11 @@ export class TeammateService {
   }
 
   async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
-    await this.ensureStarted({ reopenClosed: true });
+    const teamId = this.current().team_id ?? undefined;
+    await this.ensureStarted({
+      reopenClosed: true,
+      ...(teamId !== undefined ? { teamId } : {}),
+    });
     const runtime = this.mustRuntime();
     const result = await runtime.channelInput(input);
     if (result.status === 'submitted') {
