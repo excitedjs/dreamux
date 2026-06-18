@@ -54,6 +54,7 @@ import {
   type TeamMateRuntimeStatus,
   type TeamMateSendResult,
   type TeamMateSpawnResult,
+  type TeamMateTurnResult,
   type TeamMateWorktreeIdentity,
 } from './types.js';
 
@@ -387,7 +388,10 @@ export class TeammateCollection implements TeammateOps {
    */
   async createTeamLeader(
     input: CreateTeamLeaderInput,
-  ): Promise<{ leader: TeammateService; result: TeamMateSpawnResult }> {
+  ): Promise<{
+    leader: TeammateService;
+    result: Omit<TeamMateSpawnResult, 'turn'> & { turn: TeamMateTurnResult | null };
+  }> {
     const teamId = this.mustTeamScope('createTeamLeader');
     const name = validateTeamMateName(input.name);
     // The leader lives at the team scope root (`team/<team>/identity.json`), so
@@ -413,14 +417,22 @@ export class TeammateCollection implements TeammateOps {
     });
     const entity = this.entityFor(identity);
     await entity.ensureStarted({ teamId });
-    // The dispatcher created this leader, so its first turn is `dispatcher`
-    // origin — not the `team_leader` origin a team_id alone would imply.
-    const turn = await entity.submitInitialPrompt(input.prompt, {
-      teamId,
-      turnOrigin: 'dispatcher',
-    });
-    // A dispatcher->leader create registers `leaderName:turnId -> dispatcher`.
-    await this.registerCompletion(entity, turn.turn_id ?? null);
+    // Only fire a first turn when the dispatcher explicitly supplied a prompt.
+    // A team created without a prompt starts its leader idle (the runtime start
+    // already establishes a resumable session) and waits for a bound channel or
+    // a dispatcher `send` to drive its first real turn — we no longer fabricate
+    // a synthetic default prompt and auto-run a turn at creation time.
+    let turn: TeamMateTurnResult | null = null;
+    if (input.prompt !== undefined) {
+      // The dispatcher created this leader, so its first turn is `dispatcher`
+      // origin — not the `team_leader` origin a team_id alone would imply.
+      turn = await entity.submitInitialPrompt(input.prompt, {
+        teamId,
+        turnOrigin: 'dispatcher',
+      });
+      // A dispatcher->leader create registers `leaderName:turnId -> dispatcher`.
+      await this.registerCompletion(entity, turn.turn_id ?? null);
+    }
     return { leader: entity, result: { teammate: entity.status(), turn } };
   }
 

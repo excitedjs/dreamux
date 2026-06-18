@@ -41,7 +41,11 @@ ships in the npm package for supported agent runtimes:
 - `team` MCP is injected for dispatcher-only Team Mode lifecycle, addressed by
   `team_name` (issue #182 PR-7/PR-8; concrete-key rename in #199 Slice 1):
   `create` a TeamLeader (with an optional `repo` object, same shape as
-  `teammate.spawn`, replacing the old `repo_cwd`; #199 Slice 2) — inspect with
+  `teammate.spawn`, replacing the old `repo_cwd`; #199 Slice 2). `create` starts
+  the leader idle unless an optional `prompt` is supplied as its first turn;
+  without a prompt no turn is fired at creation (the leader waits for a bound
+  channel inbound or a later `send`), and creation never fabricates a default
+  leader prompt. Inspect with
   `list` (compact rows) / `status` (the public `team_name`-keyed team view +
   leader/binding summary, no machine-local `repo_cwd`/`worktree`; #199 Slice 2) /
   `history` (a compact recovery search

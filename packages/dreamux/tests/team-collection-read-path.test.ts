@@ -214,3 +214,77 @@ describe('TeamCollection read path (issue #233 R4)', () => {
     expect(status.leader).not.toBeNull();
   });
 });
+
+/**
+ * Guards the create-time behavior change: a Team created WITHOUT an explicit
+ * `prompt` must start its leader idle and fire no turn — we no longer fabricate
+ * a synthetic default prompt and auto-run a turn at creation. The leader still
+ * exists and is started (resumable), so a later bound channel or dispatcher
+ * `send` drives its first real turn.
+ */
+describe('TeamCollection create without a prompt fires no leader turn', () => {
+  let root: string;
+  let previousHome: string | undefined;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'dreamux-team-create-'));
+    previousHome = process.env['HOME'];
+    process.env['HOME'] = join(root, 'home');
+    mkdirSync(process.env['HOME'], { recursive: true });
+  });
+
+  afterEach(() => {
+    if (previousHome === undefined) delete process.env['HOME'];
+    else process.env['HOME'] = previousHome;
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('starts the leader idle and returns turn === null when no prompt is given', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const log = noopLog();
+    const teams = new TeamCollection({
+      dispatcherId: 'dispatcher-a',
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
+      worktrees: new WorktreeManager(),
+      bindings: new ChannelBindingStore(),
+      identities: new TeamMateIdentityStore({ warn: log.warn.bind(log) }),
+      turnsStore: new TeamMateTurnsStore({ warn: log.warn.bind(log) }),
+      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
+      initiatorFor: async () => null,
+      isShuttingDown: () => false,
+      mcpServersForTeamMate: () => [],
+      log,
+    });
+
+    // No `prompt` field on the create input.
+    const created = await teams.create({
+      name: 'beta',
+      leaderAgentRuntime: 'agent-a',
+      intent: 'lead beta',
+    });
+
+    // No first turn was fabricated or fired at creation.
+    expect(created.turn).toBeNull();
+
+    // The leader runtime was started, but received no submitted turn.
+    expect(runtimes).toHaveLength(1);
+    expect(runtimes[0]!.getStatus()).toBe('ready');
+    expect(runtimes[0]!.submitted).toHaveLength(0);
+
+    // The leader still exists in the read path (idle, resumable).
+    const status = await (await teams.get('beta')).status();
+    expect(status.leader).not.toBeNull();
+    expect(status.member_count).toBe(0);
+  });
+});
