@@ -139,12 +139,6 @@ export interface TeammateOps {
   spawn(input: Omit<SpawnTeamMateRequest, 'sharedWorkspace'>): Promise<TeamMateSpawnResult>;
   send(input: SendTeamMateInput): Promise<TeamMateSendResult>;
   close(input: CloseTeamMateInput): Promise<TeamMateCloseResult>;
-  /**
-   * Sync a member's persisted worktree to the Team's authoritative `dissolve`
-   * cleanup result (issue #237), so a borrowed shared worktree's `cleanup_state`
-   * does not stay `managed-active` after the Team removed it.
-   */
-  applyWorktreeCleanup(name: string, worktree: TeamMateWorktreeIdentity): Promise<void>;
   list(): Promise<TeamMateRuntimeStatus[]>;
   status(name: string): Promise<TeamMateRuntimeStatus>;
   history(input: Omit<TeamMateHistoryQuery, 'teamId'>): Promise<TeamMateHistoryResult>;
@@ -308,6 +302,13 @@ export class TeammateCollection implements TeammateOps {
     return closed;
   }
 
+  /**
+   * Sync a member's persisted worktree to the Team's authoritative `dissolve`
+   * cleanup result (issue #237), so a borrowed shared worktree's `cleanup_state`
+   * does not stay `managed-active` after the Team removed it. Concrete-only (off
+   * `TeammateOps`): only `TeamService.dissolve`, which holds the concrete
+   * collection, calls this — it is not part of the admin-facing teammate surface.
+   */
   async applyWorktreeCleanup(
     name: string,
     worktree: TeamMateWorktreeIdentity,

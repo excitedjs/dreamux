@@ -263,7 +263,16 @@ export class TeammateService {
    * persisted (and displayed, via `status`) state matches reality everywhere.
    */
   async applyWorktreeCleanup(worktree: TeamMateWorktreeIdentity): Promise<void> {
-    const updated = await this.deps.identities.update(this.current(), { worktree });
+    const identity = this.current();
+    // Only a borrowed Team worktree is synced from the Team's dissolve cleanup. A
+    // dispatcher-owned `teammate` owns its worktree and updates it on its own
+    // `close`; overwriting it from the team result would be wrong, so fail loud.
+    if (identity.role !== 'team_leader' && identity.role !== 'team_member') {
+      throw new Error(
+        `applyWorktreeCleanup is only valid for a team_leader/team_member, not ${JSON.stringify(identity.role)}`,
+      );
+    }
+    const updated = await this.deps.identities.update(identity, { worktree });
     this.identity = updated;
     this.state = new TeamMateRuntimeStateStore(this.deps.identities, updated);
   }
