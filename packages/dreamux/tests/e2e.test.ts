@@ -288,6 +288,11 @@ describe('dreamux cross-module e2e', () => {
     expect(codexInputs[0]).toContain('<channel source="feishu"');
     expect(codexInputs[0]).toContain('sender_name="Ada"');
     expect(codexInputs[0]).toContain('please reply');
+    // Every delivered inbound ends with the standing channel-reminder so the
+    // agent is reminded to answer through the channel reply tool. It rides the
+    // body (text alone is discarded for channel turns), so it reaches the model.
+    expect(codexInputs[0]).toContain('<channel-reminder>');
+    expect(codexInputs[0]).toContain('channel reply tool');
     expect(bot.reactions).toEqual([
       {
         messageId: 'msg-e2e-1',

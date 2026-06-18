@@ -50,6 +50,16 @@ export const RECEIVED_REACTION_EMOJI = 'Get';
 export const IN_PROGRESS_REACTION_EMOJI = 'OnIt';
 const MAX_PENDING_RECEIVED_REACTION_CLEARS = 1024;
 
+/**
+ * Appended to every delivered inbound's content as a standing guardrail: a
+ * channel message must be answered with the channel reply tool, not a plain
+ * assistant message. English to match the other model-facing strings in this
+ * layer (`FEISHU_SKILL_FALLBACK_NOTE`, the `<group_bots>` note). Placed at the
+ * very end of the body the runtime wraps into its `<channel>` block.
+ */
+const CHANNEL_REMINDER =
+  '<channel-reminder>A message from this channel must be answered with the channel reply tool, not a plain assistant message. Acknowledge it with a brief reply through that tool first, then start the work.</channel-reminder>';
+
 type InboundReactionState = 'received' | 'in_progress';
 
 interface InboundReactionLedgerEntry {
@@ -395,12 +405,18 @@ export class FeishuChannelSession {
     // display passthrough — the runtime never routes on them; reply targeting
     // stays here via the Feishu reply MCP tool. `text` carries the body as a
     // neutral fallback for any runtime that ignores the structured fields.
+    // Append the standing channel-reminder on its own line at the very end. It
+    // goes into `body` (the field both runtimes render into the `<channel>`
+    // block via renderChannelInput) AND the neutral `text` fallback — `text`
+    // alone is discarded for channel turns, so the reminder must ride `body` to
+    // reach the model.
+    const body = `${formatted.body}\n\n${CHANNEL_REMINDER}`;
     const input: InboundTurnInput = {
       sourceId: event.messageId,
       source: 'feishu',
-      text: formatted.body,
+      text: body,
       attrs: formatted.attrs,
-      body: formatted.body,
+      body,
       attachments: formatted.attachments.map((attachment) => ({
         kind: attachment.type,
         ...(attachment.name !== undefined ? { name: attachment.name } : {}),
