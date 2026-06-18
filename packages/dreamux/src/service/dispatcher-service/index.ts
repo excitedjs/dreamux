@@ -37,6 +37,8 @@ import {
   TeammateCollection,
   type TeammateOps,
 } from '../teammate-collection/index.js';
+import { TeamMateIdentityStore } from '../teammate-collection/identity-store.js';
+import { TeamMateTurnsStore } from '../teammate-collection/turns-store.js';
 import type { TeammateService } from '../teammate-service/index.js';
 import { WorktreeManager } from '../worktree/manager.js';
 import { ChannelBindingStore } from '../channel-binding/store.js';
@@ -116,6 +118,17 @@ export class DispatcherService implements TeamChannelContext {
     const worktrees = new WorktreeManager();
     const bindings = new ChannelBindingStore();
 
+    // One identity + turns store pair shared by the dispatcher agent (role
+    // `dispatcher` debug record) and the dispatcher-scope collection (role
+    // `teammate` reads), constructed BEFORE both (issue #233). The stores are
+    // stateless (paths by role + team_id), so one pair safely serves both roles.
+    const identities = new TeamMateIdentityStore({
+      warn: opts.log.warn.bind(opts.log),
+    });
+    const turnsStore = new TeamMateTurnsStore({
+      warn: opts.log.warn.bind(opts.log),
+    });
+
     this.channels = new ChannelSessions({
       dispatcherId: opts.id,
       config: opts.config,
@@ -131,6 +144,8 @@ export class DispatcherService implements TeamChannelContext {
       config: opts.config,
       dispatchers: opts.dispatchers,
       agentRuntimeProviders: opts.agentRuntimeProviders,
+      identities,
+      turnsStore,
       router: this.router,
       log: opts.log,
       adminSocketPath: adminSocket,
@@ -169,6 +184,8 @@ export class DispatcherService implements TeamChannelContext {
       config: opts.config,
       agentRuntimeProviders: opts.agentRuntimeProviders,
       worktrees,
+      identities,
+      turnsStore,
       mcpServersForTeamMate,
       router: this.router,
       initiatorFor: (producer) => this.initiatorFor(producer),

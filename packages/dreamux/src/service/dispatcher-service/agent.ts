@@ -16,13 +16,13 @@ import {
   completionKey,
   type CompletionRouter,
 } from '../completion-router/index.js';
-import { TeamMateIdentityStore } from '../teammate-collection/identity-store.js';
+import type { TeamMateIdentityStore } from '../teammate-collection/identity-store.js';
 import {
   TeammateService,
   type RuntimeLaunchSpec,
   type TeammateServiceDeps,
 } from '../teammate-service/index.js';
-import { TeamMateTurnsStore } from '../teammate-collection/turns-store.js';
+import type { TeamMateTurnsStore } from '../teammate-collection/turns-store.js';
 import type { TeamMateIdentity } from '../teammate-collection/types.js';
 import {
   DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS,
@@ -48,6 +48,15 @@ export interface DispatcherAgentDeps {
   router: CompletionRouter;
   log: DreamuxLogger;
   adminSocketPath: string;
+  /**
+   * The identity + turns store pair, constructed once by `DispatcherService` and
+   * shared with the dispatcher-scope `TeammateCollection` (issue #233). The stores
+   * are stateless (paths by role + team_id), so one pair safely serves the
+   * dispatcher agent's write-only debug record (role `dispatcher`) and the
+   * collection's teammate reads (role `teammate`).
+   */
+  identities: TeamMateIdentityStore;
+  turnsStore: TeamMateTurnsStore;
   /**
    * The dispatcher's validated workspace cwd, resolved by `DispatcherService`
    * before `agent.start()` (`ensureDispatcherWorkspace`). The runtime runs here.
@@ -75,16 +84,10 @@ export interface DispatcherAgentDeps {
  * debug record at the dispatcher root.
  */
 export function createDispatcherAgent(deps: DispatcherAgentDeps): TeammateService {
-  const identities = new TeamMateIdentityStore({
-    warn: deps.log.warn.bind(deps.log),
-  });
-  const turnsStore = new TeamMateTurnsStore({
-    warn: deps.log.warn.bind(deps.log),
-  });
   const identity = debugIdentity(deps.id, deps.config);
   // Best-effort: persist the write-only debug record at the dispatcher root. A
   // failure here never blocks launch — `status.json` is the authoritative state.
-  void identities
+  void deps.identities
     .create({
       dispatcherId: deps.id,
       name: DISPATCHER_AGENT_NAME,
@@ -104,8 +107,8 @@ export function createDispatcherAgent(deps: DispatcherAgentDeps): TeammateServic
   const serviceDeps: TeammateServiceDeps = {
     config: deps.config,
     agentRuntimeProviders: deps.agentRuntimeProviders,
-    identities,
-    turnsStore,
+    identities: deps.identities,
+    turnsStore: deps.turnsStore,
     // The dispatcher agent has no worktree — it neither spawns nor closes, so it
     // never reaches the worktree manager (issue #233 Phase 5).
     log: deps.log,

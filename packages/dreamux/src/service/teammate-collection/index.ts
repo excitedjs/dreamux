@@ -74,6 +74,14 @@ export interface TeammateCollectionOptions {
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   /** The per-dispatcher worktree manager, shared with the team collection. */
   worktrees: WorktreeManager;
+  /**
+   * The identity + turns store pair, optionally injected (issue #233). The
+   * dispatcher-scope collection shares one pair with the dispatcher agent (passed
+   * here); per-team collections omit them and the constructor news its own. The
+   * stores are stateless (paths by role + team_id), so a shared pair is safe.
+   */
+  identities?: TeamMateIdentityStore;
+  turnsStore?: TeamMateTurnsStore;
   mcpServersForTeamMate?: (input: {
     dispatcherId: string;
     name: string;
@@ -163,8 +171,12 @@ export class TeammateCollection implements TeammateOps {
     this.dispatcherId = opts.dispatcherId;
     this.teamScope = opts.teamScope;
     this.worktrees = opts.worktrees;
-    this.identities = new TeamMateIdentityStore({ warn: opts.log.warn.bind(opts.log) });
-    this.turnsStore = new TeamMateTurnsStore({ warn: opts.log.warn.bind(opts.log) });
+    this.identities =
+      opts.identities ??
+      new TeamMateIdentityStore({ warn: opts.log.warn.bind(opts.log) });
+    this.turnsStore =
+      opts.turnsStore ??
+      new TeamMateTurnsStore({ warn: opts.log.warn.bind(opts.log) });
   }
 
   /** The live runtime for a cached entity, or null (drives status projection). */
