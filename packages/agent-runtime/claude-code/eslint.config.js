@@ -1,6 +1,9 @@
-// Thin re-export of the shared synchronous-blocking-IO lint gate (issue #85).
-// The single source of rules/scoping is @excitedjs/eslint-config; this file
-// only wires it into this package so `npm run lint` / `rush lint` pick it up.
-import config from '@excitedjs/eslint-config';
+// Lint config for @excitedjs/agent-runtime-claude-code.
+//
+// Base: the shared synchronous-blocking-IO gate (issue #85). Plus the provider
+// side of the neutrality import boundary (issue #209): a provider package must
+// implement the neutral @excitedjs/dreamux-types contract and must never import
+// @excitedjs/dreamux core. The boundary is centralized in @excitedjs/eslint-config.
+import baseConfig, { withProviderImportBoundary } from '@excitedjs/eslint-config';
 
-export default config;
+export default withProviderImportBoundary(baseConfig);

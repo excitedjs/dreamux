@@ -8,6 +8,38 @@ When this file and `.agents/` disagree, this file is authoritative for operating
 rules. For architecture facts, read the current source first, then the linked
 KB entry.
 
+## Architecture Discipline
+
+Refactoring is never "done" — it is always on the road. Treat the architecture
+as a living thing every task must leave at least as clean as it found it.
+
+- **Refactor-first, not glue-first.** Before implementing any non-trivial
+  requirement, ask: *does this need an architecture change, or a new/extended
+  capability?* If the clean home for the logic does not exist yet, create or
+  reshape it. Do **not** stitch behavior together with ad-hoc glue (magic-string
+  prefixes, target data smuggled through prompts/free-text fields, state
+  re-derived in core that a lower layer already owns authoritatively,
+  responsibilities bolted onto whatever class is nearest). Glue is how a
+  codebase rots into a mess.
+- **Self-check layering every time.** For each change, verify the module
+  boundaries still hold: is this logic in the layer that owns it? Does it honor
+  the neutral seams (core stays behind `AgentRuntimeProvider` / `ChannelProvider`;
+  no runtime/channel specifics leak into shared/core layers)? Would a new
+  capability/contract be the right home instead of a special case? If a change
+  fights the layering, the layering — or the change — is wrong; stop and fix the
+  boundary, don't force it through.
+- **Prefer a capability over a special case.** When two features want the same
+  underlying fact or action (e.g. "is the agent idle", "where does this egress
+  go"), design one foundational capability the whole core depends on, rather
+  than re-solving it ad hoc each time.
+- **Leave the cleanup trail.** When a task reveals a boundary that should move,
+  either fix it or record it (`.agents/`, an issue, or the knowledge-delta
+  update) — never silently pile another layer of glue on top.
+
+The goal is explicit: this repo must not degrade into a spaghetti/"big ball of
+mud" codebase. Cleanliness of module layering is a standing acceptance criterion,
+not an optional nicety.
+
 ## Communication
 
 - Reply to the user in **Chinese**.
