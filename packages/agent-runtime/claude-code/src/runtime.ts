@@ -212,6 +212,8 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   private session: ClaudeCodeSession | null = null;
   private lastResult: AgentRuntimeLastResult | null = null;
   private activeChannelTurn: ActiveChannelTurn | null = null;
+  private queuedTurnCount = 0;
+  private readonly idleWaiters = new Set<() => void>();
 
   constructor(
     identity: AgentRuntimeIdentity,
@@ -306,12 +308,15 @@ export class ClaudeCodeRuntime implements AgentRuntime {
         this.log('warn', 'claude-code session stop errored', err);
       }
     }
+    this.queuedTurnCount = 0;
+    this.resolveIdleWaitersIfIdle();
     await this.setStatus('stopped');
   }
 
   async systemInput(notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult> {
     if (this.stopped) return { status: 'stopped' };
     const turnId = this.nextTurnId('system');
+    this.recordQueuedTurnStart();
     void this.runTurnOnQueue(notice.text, turnId).then(
       () => this.markTurnSucceeded(turnId),
       (err) => this.markTurnFailed(turnId, err),
@@ -351,6 +356,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       }
     }
     const turnId = this.nextTurnId('turn');
+    this.recordQueuedTurnStart();
     const channelTurn: ActiveChannelTurn = {
       turnId,
       pendingSteers: [],
@@ -391,11 +397,19 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       };
     }
     const turnId = `claude-teammate-${completion.id}`;
+    this.recordQueuedTurnStart();
     void this.runTurnOnQueue(text, turnId, { isSynthetic: false }).then(
       () => this.markTurnSucceeded(turnId),
       (err) => this.markTurnFailed(turnId, err),
     );
     return { status: 'accepted' };
+  }
+
+  waitIdle(): Promise<void> {
+    if (this.queuedTurnCount === 0) return Promise.resolve();
+    return new Promise((resolve) => {
+      this.idleWaiters.add(resolve);
+    });
   }
 
   /**
@@ -468,12 +482,14 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   }
 
   private async markTurnSucceeded(turnId: string): Promise<void> {
+    this.recordQueuedTurnEnd();
     this.deps.onTurnSettled?.({ turnId, status: 'completed' });
     if (this.stopped) return;
     if (this.status !== 'ready') await this.setStatus('ready');
   }
 
   private async markTurnFailed(turnId: string, err: unknown): Promise<void> {
+    this.recordQueuedTurnEnd();
     this.log('error', `claude-code turn ${turnId} failed`, err);
     // A turn that fails after stop() was requested (the resident child is being
     // torn down) is a `stopped` settlement; otherwise it is a genuine `failed`.
@@ -487,6 +503,22 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     if (this.stopped) return;
     // Surface the failure as durable runtime state rather than swallowing it.
     await this.setStatus('degraded', err);
+  }
+
+  private recordQueuedTurnStart(): void {
+    this.queuedTurnCount += 1;
+  }
+
+  private recordQueuedTurnEnd(): void {
+    this.queuedTurnCount = Math.max(0, this.queuedTurnCount - 1);
+    this.resolveIdleWaitersIfIdle();
+  }
+
+  private resolveIdleWaitersIfIdle(): void {
+    if (this.queuedTurnCount !== 0 || this.idleWaiters.size === 0) return;
+    const waiters = [...this.idleWaiters];
+    this.idleWaiters.clear();
+    for (const resolve of waiters) resolve();
   }
 
   /**

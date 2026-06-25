@@ -11,6 +11,29 @@
   `/packages/dreamux/tests/codex-live.test.ts`,
   `/packages/agent-runtime/codex/tests/turn-manager.test.ts`
 
+## Regression Trap (read before touching codex busy/idle or `turn-manager.ts`)
+
+This contract has been regressed once (2026-06-24) and the regression nearly
+shipped, so it is called out here at the source:
+
+- **Do NOT "fix" codex busy/idle accuracy by serializing `turn/start` or adding
+  any submission mutex** (e.g. a `submissionQueue` / `waitNoActiveTurn()` gate
+  that holds the next submit until the active turn completes). That reintroduces
+  the head-of-line blocking this issue removed: a long-lived dispatcher turn
+  (waiting on `send`/`wait`/`spawn`) would block *all* later Feishu inbound, so a
+  user gets no response until the long turn ends. dreamux must keep submitting
+  `turn/start` immediately and let Codex fold natively. Fix accuracy in the
+  activity **accounting only** (e.g. keep `busy` true while a submission is
+  in-flight; do not clear the active slot while `pendingSubmissions > 0`), never
+  by changing the submission model.
+- **The live gate is the proof, and "tests pass" is circular if the diff also
+  edits the gate.** The regression came with the live-gate test
+  (`codex-live.test.ts`) rewritten from asserting folding (one `turn/completed`,
+  marker folded) to asserting serialization (two `turn/completed`, queued). A
+  diff that inverts this test's folding assertions is the smell — review the
+  test diff against this contract, do not trust a green run produced by a
+  rewritten test.
+
 ## Locked Scope
 
 The dispatcher teammate mechanism stays synchronous. There is no trigger-turn,

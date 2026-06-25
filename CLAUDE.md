@@ -35,6 +35,14 @@ as a living thing every task must leave at least as clean as it found it.
 - **Leave the cleanup trail.** When a task reveals a boundary that should move,
   either fix it or record it (`.agents/`, an issue, or the knowledge-delta
   update) — never silently pile another layer of glue on top.
+- **Do not weaken a load-bearing test to make a change pass.** Some tests encode
+  a locked contract (e.g. the issue #63 non-blocking-inbound live gate). If a
+  change makes such a test fail, the change is usually wrong — fix the change,
+  not the assertion. When a diff edits a test's assertions, "the tests pass" is
+  circular: review the test diff against the source contract, never trust a
+  green run produced by a rewritten test. When reviewing a fix, review the whole
+  current change holistically (a narrow "did it fix X" pass hides regressions
+  the fix introduced).
 
 The goal is explicit: this repo must not degrade into a spaghetti/"big ball of
 mud" codebase. Cleanliness of module layering is a standing acceptance criterion,

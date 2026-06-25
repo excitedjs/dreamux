@@ -290,6 +290,15 @@ export function teammateMcpLogPath(id: string): string {
   return join(teammateMcpLogDir(), `${dispatcherPathSegment(id)}.log`);
 }
 
+export function cronMcpLogDir(): string {
+  return join(logsRoot(), 'cron-mcp');
+}
+
+/** Per-dispatcher scheduled-tasks MCP stdio shim diagnostics. */
+export function cronMcpLogPath(id: string): string {
+  return join(cronMcpLogDir(), `${dispatcherPathSegment(id)}.log`);
+}
+
 export function dispatcherStatusPath(id: string): string {
   return join(dispatcherDir(id), 'status.json');
 }
@@ -415,6 +424,10 @@ export function dispatcherTeamMateRuntimeDir(
 
 export function dispatcherChannelBindingsPath(id: string): string {
   return join(dispatcherDir(id), 'channel-bindings.json');
+}
+
+export function dispatcherCronJobsPath(id: string): string {
+  return join(dispatcherDir(id), 'cron-jobs.json');
 }
 
 /**

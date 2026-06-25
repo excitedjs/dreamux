@@ -225,6 +225,27 @@ export class TeammateService {
     return result;
   }
 
+  async scheduledInput(input: {
+    jobId: string;
+    prompt: string;
+  }): Promise<AgentRuntimeTurnResult> {
+    await this.ensureStarted();
+    const runtime = this.mustRuntime();
+    const result = await runtime.systemInput({
+      kind: 'system',
+      text: input.prompt,
+      reason: 'scheduled',
+    });
+    if (result.status === 'submitted') {
+      await recordSubmittedTurn(this.turnsStore, this.live(), {
+        turnId: result.turnId,
+        turnOrigin: { kind: 'scheduled', job_id: input.jobId },
+        prompt: input.prompt,
+      });
+    }
+    return result;
+  }
+
   async close(input: Pick<CloseTeamMateInput, 'note'>): Promise<TeamMateCloseResult> {
     requireLifecycleText(input.note, 'TeamMate close note');
     await this.stop();

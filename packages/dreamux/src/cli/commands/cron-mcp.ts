@@ -1,0 +1,41 @@
+import type { Argv, CommandModule } from 'yargs';
+
+import { runCronMcp } from '../../mcp/cron-mcp.js';
+import { createLogger } from '../../platform/logger.js';
+import { cronMcpLogPath } from '../../platform/paths.js';
+import { validateDispatcherId } from '../../state/dispatcher-id.js';
+
+interface CronMcpArgv {
+  dispatcher: string;
+  adminSocket?: string;
+}
+
+export function createCronMcpCommand(): CommandModule<{}, CronMcpArgv> {
+  return {
+    command: 'cron-mcp',
+    describe: 'Run the dispatcher-scoped cron MCP stdio shim',
+    builder: (y) =>
+      y
+        .option('dispatcher', {
+          type: 'string',
+          demandOption: true,
+          describe: 'Dispatcher id this MCP shim is scoped to',
+        })
+        .option('admin-socket', {
+          type: 'string',
+          describe: 'dreamux serve admin socket path',
+        }) as Argv<CronMcpArgv>,
+    handler: async (argv) => {
+      const dispatcherId = validateDispatcherId(argv.dispatcher);
+      const log = createLogger({
+        name: `cron-mcp/${dispatcherId}`,
+        filePath: cronMcpLogPath(dispatcherId),
+      });
+      await runCronMcp({
+        dispatcherId,
+        adminSocketPath: argv.adminSocket,
+        log: (message) => log.info(message),
+      });
+    },
+  };
+}

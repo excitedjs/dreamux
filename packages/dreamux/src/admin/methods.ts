@@ -82,6 +82,55 @@ export const adminMethods: Record<string, AdminHandler> = {
     await server.getDispatcher(id).stop();
     return { dispatcher_id: id, status: 'stopped' };
   },
+
+  'scheduler.cron.list': async (server, params) => {
+    const id = mustDispatcherId(params);
+    mustExistingDispatcher(server, id);
+    return server.getDispatcher(id).scheduler.list();
+  },
+
+  'scheduler.cron.create': async (server, params) => {
+    const id = mustDispatcherId(params);
+    mustExistingDispatcher(server, id);
+    return server.getDispatcher(id).scheduler.create({
+      cron: mustString(params, 'cron'),
+      prompt: mustNonEmptyString(params, 'prompt'),
+      ...optionalStringField(params, 'title'),
+      ...optionalBooleanField(params, 'recurring'),
+      ...optionalStringField(params, 'tz'),
+      ...optionalRecordField(params, 'action'),
+      ...optionalRecordField(params, 'deliver'),
+    });
+  },
+
+  'scheduler.cron.update': async (server, params) => {
+    const id = mustDispatcherId(params);
+    mustExistingDispatcher(server, id);
+    return server.getDispatcher(id).scheduler.update({
+      id: mustString(params, 'id'),
+      ...optionalStringField(params, 'cron'),
+      ...optionalStringField(params, 'prompt'),
+      ...optionalNullableStringField(params, 'title'),
+      ...optionalBooleanField(params, 'recurring'),
+      ...optionalStringField(params, 'tz'),
+      ...optionalRecordField(params, 'action'),
+      ...optionalNullableRecordField(params, 'deliver'),
+      ...optionalBooleanField(params, 'enabled'),
+    });
+  },
+
+  'scheduler.cron.delete': async (server, params) => {
+    const id = mustDispatcherId(params);
+    mustExistingDispatcher(server, id);
+    return server.getDispatcher(id).scheduler.delete(mustString(params, 'id'));
+  },
+
+  'scheduler.cron.run_now': async (server, params) => {
+    const id = mustDispatcherId(params);
+    mustExistingDispatcher(server, id);
+    return server.getDispatcher(id).scheduler.runNow(mustString(params, 'id'));
+  },
+
   'channel.invoke_tool': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
@@ -550,6 +599,64 @@ function optionalStringProp(
 ): Record<string, string> {
   const value = optionalString(params, key);
   return value === null ? {} : { [key]: value };
+}
+
+function optionalStringField(
+  params: Record<string, unknown> | undefined,
+  key: string,
+): Record<string, string> {
+  const value = optionalString(params, key);
+  return value === null ? {} : { [key]: value };
+}
+
+function optionalNullableStringField(
+  params: Record<string, unknown> | undefined,
+  key: string,
+): Record<string, string | null> {
+  if (params === undefined || !(key in params)) return {};
+  const value = params[key];
+  if (value === null) return { [key]: null };
+  if (typeof value !== 'string') {
+    throw new AdminError('BAD_REQUEST', `param '${key}' must be a string or null`);
+  }
+  return { [key]: value };
+}
+
+function optionalBooleanField(
+  params: Record<string, unknown> | undefined,
+  key: string,
+): Record<string, boolean> {
+  if (params === undefined || !(key in params)) return {};
+  const value = params[key];
+  if (typeof value !== 'boolean') {
+    throw new AdminError('BAD_REQUEST', `param '${key}' must be a boolean`);
+  }
+  return { [key]: value };
+}
+
+function optionalRecordField(
+  params: Record<string, unknown> | undefined,
+  key: string,
+): Record<string, Record<string, unknown>> {
+  if (params === undefined || !(key in params)) return {};
+  const value = params[key];
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new AdminError('BAD_REQUEST', `param '${key}' must be an object`);
+  }
+  return { [key]: value as Record<string, unknown> };
+}
+
+function optionalNullableRecordField(
+  params: Record<string, unknown> | undefined,
+  key: string,
+): Record<string, Record<string, unknown> | null> {
+  if (params === undefined || !(key in params)) return {};
+  const value = params[key];
+  if (value === null) return { [key]: null };
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new AdminError('BAD_REQUEST', `param '${key}' must be an object or null`);
+  }
+  return { [key]: value as Record<string, unknown> };
 }
 
 function mustExistingDispatcher(server: Server, id: string): void {

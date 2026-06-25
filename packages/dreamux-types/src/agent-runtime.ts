@@ -131,7 +131,11 @@ export type TeamMateCompletionDeliveryResult =
 export interface AgentRuntimeSystemInput {
   kind: 'system';
   text: string;
-  reason: 'restart-notice' | 'teammate-completion' | 'runtime-control';
+  reason:
+    | 'restart-notice'
+    | 'teammate-completion'
+    | 'runtime-control'
+    | 'scheduled';
 }
 
 export interface AgentRuntimeResumeInput {
@@ -317,6 +321,11 @@ export interface AgentRuntime {
   ): Promise<AgentRuntimeTurnResult>;
   /** Inject a system-originated notice (e.g. a restart notice). */
   systemInput(notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult>;
+  /**
+   * Resolve when no turn is in progress. Optional: runtimes that omit it are
+   * treated by core as always idle.
+   */
+  waitIdle?(): Promise<void>;
   getStatus(): AgentRuntimeStatus;
   getThreadId(): string | null;
   wasThreadResumed(): boolean;

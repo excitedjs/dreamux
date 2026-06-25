@@ -109,7 +109,11 @@ export interface TeamMateRuntimeStatus {
   close_note: string | null;
 }
 
-export type TeamMateTurnOrigin = "channel" | "dispatcher" | "team_leader";
+export type TeamMateTurnOrigin =
+  | "channel"
+  | "dispatcher"
+  | "team_leader"
+  | { kind: "scheduled"; job_id: string };
 
 export interface SpawnTeamMateInput {
   name: string;

@@ -45,6 +45,7 @@ import { ChannelBindingStore } from '../channel-binding/store.js';
 import { type TeamMateIdentity } from '../teammate-collection/types.js';
 import { type TeamChannelContext } from '../team-service/index.js';
 import { TeamCollection } from '../team-collection/index.js';
+import { SchedulerService } from '../scheduler/service.js';
 import type {
   TeamCreateInput,
   TeamDissolveInput,
@@ -98,6 +99,7 @@ export class DispatcherService implements TeamChannelContext {
   private readonly teams: TeamCollection;
   private readonly channels: ChannelSessions;
   private readonly agent: TeammateService;
+  readonly scheduler: SchedulerService;
   private restartIntent: RestartIntentConsumer | null = null;
   private starting: Promise<void> | null = null;
   private workspaceCwd: string | null = null;
@@ -155,6 +157,12 @@ export class DispatcherService implements TeamChannelContext {
       liveChannels: () => this.channels.live(),
     });
 
+    this.scheduler = new SchedulerService({
+      dispatcherId: opts.id,
+      getRuntime: () => this.agent.getRuntime(),
+      submitScheduled: (input) => this.agent.scheduledInput(input),
+      log: opts.log,
+    });
     // The team_leader MCP descriptor builder. Forwarded into every per-team
     // collection (where the leader actually lives) AND the dispatcher collection;
     // a dispatcher-owned teammate is never a leader, so it is a no-op there
@@ -269,8 +277,9 @@ export class DispatcherService implements TeamChannelContext {
     }
 
     try {
-      // The runtime is up and the sessions are already adopted as the live slot,
-      // so each session is observable as it starts (issue #209 fix #7).
+      // Runtime up, sessions adopted as the live slot so each is observable as it
+      // starts (issue #209 fix #7); restart-notice + scheduler arming run in this
+      // SAME try so a failure rolls back rather than leaving cron silently unarmed.
       for (const [channelId, session] of channels) {
         await session.start({
           deliver: async (turn, envelope, hooks) =>
@@ -279,6 +288,8 @@ export class DispatcherService implements TeamChannelContext {
             ),
         });
       }
+      await this.injectRestartNoticeIfNeeded(id, runtime);
+      await this.scheduler.start();
     } catch (err) {
       // Undo the slot adoption so a failed start never leaves a half-built slot.
       this.channels.clear();
@@ -299,10 +310,10 @@ export class DispatcherService implements TeamChannelContext {
       },
       'dispatcher ready',
     );
-    await this.injectRestartNoticeIfNeeded(id, runtime);
   }
 
   async stop(): Promise<void> {
+    this.scheduler.stop();
     await this.channels.closeAll(this.log);
     try {
       await this.agent.stop();

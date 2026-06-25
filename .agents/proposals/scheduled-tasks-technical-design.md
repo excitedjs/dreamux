@@ -23,7 +23,7 @@ chosen option is stated inline. All `file:line` references are against `next`.
 | Schedule library | `croner` (MIT, zero-dep, tz/DST), added via rush. |
 | Cron MCP scope | Injected on the dispatcher/owner path only, **not** team_leader. |
 | Persistence base | `JsonDocumentStore<TDoc>` shared base; `CronJobStore` is its first adopter. |
-| Activity signal | Neutral `AgentRuntime.getActivity()` / `waitIdle()` (Promise-first). |
+| Activity signal | Optional neutral `AgentRuntime.waitIdle?()` (Promise-first). |
 
 Non-goals: distributed multi-host scheduling, sub-second precision, long-outage replay.
 
@@ -36,48 +36,44 @@ signal. `AgentRuntimeStatus` (`:202-208`) is a lifecycle enum, not turn-active.
 `'scheduled'`. `TurnSettledSignal` (`turn.ts:76-80`) is for completion routing
 and stays unchanged.
 
-Add:
+Add **one optional method, nothing else** (minimal surface, decided 2026-06-24 —
+no `getActivity`, no `AbortSignal`, no `capabilities.activity` flag):
 
 ```ts
-export interface AgentRuntimeActivity {
-  busy: boolean;               // a turn is executing or queued right now
-  activeTurnId: string | null; // in-flight turn id when known, else null
-}
-
 export interface AgentRuntime {
   // ...existing...
-  getActivity(): AgentRuntimeActivity;           // synchronous snapshot
-  waitIdle(signal?: AbortSignal): Promise<void>; // resolves immediately if idle, else on next busy→idle edge
+  /** Resolve when no turn is in progress (immediately if already idle, else at
+   *  the next turn-end). Optional: a runtime that cannot track turn activity
+   *  omits it and is treated as always-idle (feature-detected by presence, like
+   *  `completionInput`). */
+  waitIdle?(): Promise<void>;
 }
-
-// in AgentRuntimeCapabilities:
-activity: { supported: boolean };
 
 // in AgentRuntimeSystemInput.reason union, add:
 | 'scheduled'
 ```
 
 `waitIdle()` semantics:
-1. **Fast path** — `getActivity().busy === false` ⇒ already-resolved promise.
-2. **Slow path** — busy ⇒ push a resolver onto an internal waiter list; on the
-   busy→idle edge resolve all and clear.
-3. **AbortSignal** — already-aborted ⇒ reject `AbortError`; otherwise register an
-   `abort` listener that removes the resolver and rejects. Always remove the
-   listener on either settle path (no leaks).
-4. **Capability fallback** — `activity.supported === false` ⇒ `waitIdle()`
-   resolves immediately and `getActivity()` reports `{busy:false}`. Consumers
-   then inject without deferring, **never** a core-side submit/settle counter.
-   Both built-ins report `true`.
+1. **Already idle** ⇒ already-resolved promise.
+2. **Busy** ⇒ push a resolver onto an internal waiter list; on the next
+   busy→idle edge resolve **all** waiters and clear the list.
+3. **No cancellation.** A caller that gives up (its timeout fired) just abandons
+   the promise; it resolves harmlessly at the next idle, where all waiters are
+   flushed — no leak, so no `AbortSignal` is needed.
+4. **Timeout is the caller's job, as a race:**
+   `await Promise.race([runtime.waitIdle?.() ?? Promise.resolve(), timeout])`.
+   The runtime owns no timeout/turn-duration mechanism.
+5. **Unsupported runtime** ⇒ omits `waitIdle`; core's `runtime.waitIdle?.()`
+   yields `undefined` (treated as immediately idle). No capability flag, no
+   forced contract change on external providers.
 
 Race note (implementation comment): a user turn can begin between `waitIdle()`
-resolving and the injection running — unavoidable with any signal style.
-Acceptable for fire-and-forget; a caller that cares re-checks
-`getActivity().busy` and re-waits. No atomic "run-when-idle" primitive in v1.
+resolving and the injection running. Acceptable for fire-and-forget; no atomic
+"run-when-idle" primitive in v1.
 
 Why not overload `TurnSettledSignal`: "a turn reached terminal state" ≠ "the
 runtime is idle" (queued turns may remain); its consumer is `CompletionRouter`.
-Keep them separate. `waitIdle` (act-once) beats an observer (subscription
-bookkeeping). Both decided in the activity-capability record.
+Keep them separate.
 
 ### 2.1 Provider implementations + correctness traps
 
@@ -88,10 +84,10 @@ near-zero cost. Truth: `activeTurnId` (`:75`), `pendingTurnIds: Set` (`:82`),
   covers the window where `enqueue()` has claimed a slot but the app-server has
   not yet returned the turn id (`pendingSubmissions > 0`, `:122-123`). Omitting
   it reports idle in the instant right after submit.
-- Expose `isBusy()` / `activeTurnId` getter / `waitIdle(signal)` on `TurnManager`
-  (maintain `idleWaiters`, drain on the completion/failure branches `:308-332`
-  and on `recordTurnStartFailure`). `CodexRuntime.getActivity/waitIdle` forward;
-  `turnManager === null` ⇒ `busy:false`, immediate resolve.
+- Expose `isBusy()` / `waitIdle()` on `TurnManager` (maintain simple resolver
+  `idleWaiters`, drain on the completion/failure branches `:308-332` and on
+  `recordTurnStartFailure`). `CodexRuntime.waitIdle` forwards; `turnManager ===
+  null` ⇒ immediate resolve.
 - Precision 100% (push events, `provider.ts:66`).
 
 **Claude Code (`agent-runtime/claude-code/src/runtime.ts`)** — needs a counter.
@@ -205,19 +201,22 @@ G5). Version policy `fail-loud-on-unknown` (0.x no-migration; changelog needs
 ### 4.1 Defer-until-idle (the two-line core)
 
 ```ts
-await runtime.waitIdle(signal);
+await (runtime.waitIdle?.() ?? Promise.resolve());
 await runtime.systemInput({ kind: 'system', text: job.prompt, reason: 'scheduled', /* + structured scheduled meta */ });
 ```
 
-- **Held-fire queue:** `SchedulerService` keeps `Map<jobId, AbortController>` of
+- **Held-fire queue:** `SchedulerService` keeps `Map<jobId, symbol>` tokens for
   pending waits. If a job comes due while the same id is already held, do NOT
   enqueue another — same-job fires across one long busy stretch **collapse to one**
-  (R2/OQ-5).
-- **Max-defer:** each held wait gets an `AbortController` + `setTimeout(...).unref()`;
-  on timeout, abort → the held fire is recorded missed (a log line; no
+  (R2/OQ-5). After idle, the token is rechecked before injection.
+- **Max-defer:** the caller owns timeout with `Promise.race` around
+  `runtime.waitIdle?.() ?? Promise.resolve()`. The runtime receives no
+  `AbortSignal` and has no watchdog. The scheduler clears the timeout handle
+  when idle wins; on timeout, the held fire is recorded missed (a log line; no
   `last_status` under fire-and-forget).
-- **Teardown:** `SchedulerService.stop()` aborts all controllers; waits reject
-  `AbortError` with no leaks.
+- **Teardown:** `SchedulerService.stop()` invalidates held tokens, clears timers,
+  and resolves stop waiters so in-flight held fires return skipped without
+  injecting a scheduled turn.
 
 ### 4.2 Scheduled injection verb (conclusion: `systemInput reason:'scheduled'`)
 
@@ -264,16 +263,21 @@ Bindings are Team-scoped `ChannelBinding` (`channel-binding/store.ts:20-39`), ke
 Note: `channel.ts`'s `message_id` is a legitimate **channel-layer** field; the
 runtime contract (`turn.ts InboundTurnInput`) has none — keep it that way.
 
-### 4.4 Restart-notice unification
+### 4.4 Restart-notice is NOT changed (corrected 2026-06-25)
 
-The restart-notice "skip if busy" and cron "defer until idle" are the same problem.
-Unify into one core **deferred system-injection** (`await waitIdle(signal); await
-systemInput(...)`), shared by both, and retire the `NoticeInjectionResult.'skipped'`
-race-result (`turn.ts:58-62`) and its translations (`dispatcher-service/index.ts:667`,
-`teammate-service/turn-recording.ts:57`). `injectRestartNoticeIfNeeded`
-(`index.ts:614-639`) becomes: on resumed thread with a notice, deferred-inject with
-`reason:'restart-notice'`. Not migrated (different axis): `getRuntime() !== null`
-existence gates and `getStatus()` lifecycle reads.
+An earlier draft proposed unifying restart-notice and cron into one shared
+deferred-injection mechanism. That was wrong: `injectRestartNoticeIfNeeded`
+(`index.ts:614-639`) runs at the end of `doStart`, the instant the runtime just
+started / resumed — the process is fresh, there is no in-progress turn, the agent
+is idle by definition, so `waitIdle` would be a no-op. The restart-notice's
+existing `inboundSubmitted` skip latch is a *different* concern (a real Feishu
+inbound raced in during startup → don't double-wake), not defer-until-idle.
+**Leave `injectRestartNoticeIfNeeded` exactly as it is** (direct
+`systemInput({reason:'restart-notice'})`, original skip behavior). The scheduler
+is the **sole** consumer of `waitIdle`; it inlines
+`await Promise.race([runtime.waitIdle?.() ?? Promise.resolve(), maxDefer])` —
+there is no shared deferred-injection helper. (`getRuntime() !== null` existence
+gates and `getStatus()` lifecycle reads are unrelated and untouched.)
 
 ## 5. Control surface (native-aligned)
 
@@ -335,10 +339,10 @@ admin `dispatcher.stop` calls `stop()` (R6); `shutdown()` already calls `stop()`
 
 | PR | Content | Depends |
 |---|---|---|
-| PR1 | Neutral contract: `AgentRuntimeActivity`, `getActivity/waitIdle`, `capabilities.activity`, `reason:'scheduled'` (`dreamux-types`); keep the contract lint gate neutral | — |
-| PR2 | **codex** `getActivity/waitIdle` (TurnManager busy + idleWaiters, TRAP-1); `systemInput` reason-dispatch (prereq #1) | PR1 |
-| PR3 | **claude** `getActivity/waitIdle` (+`queuedTurnCount`, TRAP-2); `systemInput` reason-aware | PR1 |
-| PR4 | core deferred system-injection; migrate restart-notice; retire `'skipped'` | PR2,PR3 |
+| PR1 | Neutral contract: optional `waitIdle?()` and `reason:'scheduled'` (`dreamux-types`); keep the contract lint gate neutral | — |
+| PR2 | **codex** `waitIdle` (TurnManager busy + idleWaiters, TRAP-1); `systemInput` reason-dispatch (prereq #1) | PR1 |
+| PR3 | **claude** `waitIdle` (+`queuedTurnCount`, TRAP-2); `systemInput` reason-aware | PR1 |
+| PR4 | scheduler-only `waitIdle` consumer (inline `Promise.race`); restart-notice UNCHANGED | PR2,PR3 |
 | PR5 | `JsonDocumentStore` + `CronJobStore` + `dispatcherCronJobsPath`/`cronMcpLogPath` + `detectLegacyCronJobStore` into serve/doctor preflight; round-trip/fail-loud tests | — (parallel) |
 | PR6 | `SchedulerService` (croner schedule, arm/disarm, next recompute, held-fire collapse + max-defer) + `prompt-agent` execution; lifecycle wiring (§7) | PR4,PR5 |
 | PR7 | `spawn-teammate` execution path (teammate collection + CompletionRouter) | PR6 |
@@ -364,13 +368,14 @@ stores onto `JsonDocumentStore`, fixing the non-atomic `DispatcherStore` write.
 
 ## 10. Test plan
 
-- **Contract (per provider):** codex idle/busy/`waitIdle` resolve-all/abort/no-leak +
-  TRAP-1 (busy in the slot-claimed window); claude `++`/`--` parity + TRAP-2 regression
-  (steer fold adds no count, `waitIdle` still resolves after the original turn
-  settles); capability fallback (`supported:false`).
-- **Defer-until-idle (core):** inject deferred while busy, fires on idle; same-job
-  collapse; max-defer abort → missed; restart-notice via the unified path; `'skipped'`
-  path gone.
+- **Contract (per provider):** codex idle/busy/`waitIdle` resolve-all/no-leak +
+  TRAP-1 (busy in the slot-claimed window); claude `++`/`--` parity + TRAP-2
+  regression (steer fold adds no count, `waitIdle` still resolves after the
+  original turn settles); omitted `waitIdle` means always idle.
+- **Defer-until-idle (scheduler only):** already idle injects immediately; busy
+  injects on idle; same-job collapse; max-defer timeout skips/re-arms; cancel or
+  missing/disabled job before idle does not inject; non-submitted systemInput does
+  not advance schedule.
 - **Store:** round-trip; missing⇒`empty()`; version/shape mismatch ⇒ fail-loud;
   atomic no-torn-write; malformed `cron-jobs.json` caught at `Server.start()` + doctor
   (`detectLegacyCronJobStore`, cf. `channel-binding/store.ts:219`).

@@ -97,8 +97,9 @@ the current code:
 
   Implementation note — the signals this needs:
   - The wake mechanism is a Promise: `runtime.waitIdle()` (see "Agent activity
-    capability"). The scheduler does `await runtime.waitIdle(signal)` then
-    injects — no subscribe/unsubscribe. (`onTurnSettled` stays for completion
+    capability"). The scheduler does
+    `await (runtime.waitIdle?.() ?? Promise.resolve())` then injects — no
+    subscribe/unsubscribe. (`onTurnSettled` stays for completion
     routing, not for idle-waiting.)
   - "is the agent busy right now" does **not** exist as a neutral signal yet:
     `AgentRuntimeStatus` (`agent-runtime.ts:202`) is a lifecycle enum
@@ -155,39 +156,27 @@ than a publish/subscribe / observer callback. Consumers `await` it; no listener
 registration, no unsubscribe bookkeeping.
 
 ```ts
-interface AgentRuntimeActivity {
-  busy: boolean;               // a turn is in progress (or queued) right now
-  activeTurnId: string | null; // the in-flight turn, when known
-}
-
 interface AgentRuntime {
   // ...existing...
-  getActivity(): AgentRuntimeActivity;          // synchronous snapshot (status/observability)
-  waitIdle(signal?: AbortSignal): Promise<void>; // resolves when (next) idle
+  waitIdle?(): Promise<void>; // resolves when (next) idle; omitted means always idle
 }
-
-// capability gate:
-capabilities.activity = { supported: boolean };
 ```
 
 `waitIdle()` semantics:
 - If the runtime is already idle, the promise resolves immediately
   (already-resolved fast path).
 - If busy, it resolves on the next busy→idle transition.
-- Optional `AbortSignal` lets a waiter cancel — used for the max-defer timeout
-  and for scheduler teardown on `stop()`, so a held fire never leaks a pending
-  promise. On abort the promise rejects with an `AbortError`.
+- No parameters and no cancellation. A caller that gives up abandons the promise;
+  the runtime resolves all pending waiters and clears them at the next idle edge.
+- Timeout and teardown are caller-owned `Promise.race` concerns plus local submit
+  guards before `systemInput`.
 
 Consumer shape — the whole defer-until-idle becomes two lines:
 
 ```ts
-await runtime.waitIdle(signal);
+await (runtime.waitIdle?.() ?? Promise.resolve());
 await runtime.systemInput(/* or agent.send */ ...);
 ```
-
-`getActivity()` stays as a synchronous snapshot for status reads and for a
-caller that wants to branch without awaiting (e.g. "inject now if idle, else
-enqueue"). The primary control-flow interface is `waitIdle()`.
 
 Why Promise over observer: a `waitIdle` promise models "I want to act once, when
 free" directly and disposes itself on resolve; an `onActivityChanged` listener
@@ -199,34 +188,27 @@ and "the runtime is idle now" (`waitIdle`) stay separate facts.
 Small race note: after `await waitIdle()` resolves, a user turn could begin
 before the injection runs (an unavoidable window with any signal style). For
 fire-and-forget scheduling this window is tiny and acceptable; if it ever
-matters, the consumer re-checks `getActivity().busy` and re-waits. We do **not**
-need an atomic "run-when-idle" primitive in the first cut.
+matters, the consumer uses a local submit guard and re-waits. We do **not** need
+an atomic "run-when-idle" primitive in the first cut.
 
-Capability fallback: a runtime that declares `activity.supported === false` has
-`waitIdle()` resolve immediately and `getActivity()` report `busy: false` — core
-consumers then inject without deferring, never falling back to a silent
-core-side reconstruction. Both built-ins will report `true`.
+Capability fallback: a runtime that omits `waitIdle` is treated as always idle —
+core consumers then inject without deferring, never falling back to a silent
+core-side reconstruction. Both built-ins implement `waitIdle`.
 
-### Migration: existing busy/idle-ish logic moves onto this
+### Migration: scheduler-only wait-idle consumer
 
-Today the only places that reason about "a turn is in progress" do it ad hoc,
-mostly via the `systemInput` injection path returning a `skipped` result when it
-races a live turn:
+Today the scheduler is the only core feature that must reason about "a turn is
+in progress" before submitting work. It consumes `waitIdle?()` directly and owns
+its timeout/retry policy.
 
-- `NoticeInjectionResult { status: 'skipped' }` ("real inbound already handed to
-  runtime") — `dreamux-types/src/turn.ts:56`.
-- The `skipped → stopped` translation — `dispatcher-service/index.ts:667` and
-  `teammate-service/turn-recording.ts:57`.
-- `injectRestartNoticeIfNeeded` timing assumptions —
-  `dispatcher-service/index.ts:618-626`.
-
-This is exactly a hidden busy-check baked into the injection return contract.
-The restart-notice "skip if a turn is in progress" problem and the scheduler's
-"defer until idle" problem are **the same problem**. With the activity
-capability, core builds one **deferred system-injection** mechanism
-(`await runtime.waitIdle(signal); await runtime.systemInput(...)`) that *both*
-the scheduler and restart-notice injection use, and the `skipped` race-result
-can be retired.
+Restart-notice is deliberately **not** migrated to defer-until-idle. It runs at
+the end of dispatcher startup, immediately after the runtime starts/resumes, so
+the process is fresh and the agent is idle by construction. Its existing
+`restart-notice`/`injectNotice` skip behavior covers a different startup race:
+real inbound can arrive first and should avoid a duplicate wake. The scheduler
+therefore inlines the only wait-idle consumer path:
+`await Promise.race([runtime.waitIdle?.() ?? Promise.resolve(), maxDefer])`,
+then re-checks that the held fire is still current before `systemInput`.
 
 Explicitly *not* migrated (different axis — keep as is): `getRuntime() !== null`
 runtime-existence gates and `getStatus()` lifecycle reads. Those are
@@ -237,8 +219,8 @@ runtime-existence gates and `getStatus()` lifecycle reads. Those are
 Per the repo rule "Codex protocol bumps: update `@excitedjs/agent-runtime-codex`
 first; core must stay behind the neutral interface": land the neutral contract +
 capability, implement Codex (already has the state), implement Claude Code (add
-`queuedTurnCount`), then the core consumer (deferred system-injection) and the
-scheduler on top. This capability deserves its own `decisions/` record since it
+`queuedTurnCount`), then the scheduler-only consumer on top. This capability
+deserves its own `decisions/` record since it
 changes a cross-process runtime contract independent of the cron feature.
 
 ## Proposed architecture

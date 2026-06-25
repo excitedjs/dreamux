@@ -32,6 +32,7 @@ import {
   legacyDispatcherStateMessage,
 } from '../service/legacy-state.js';
 import { detectLegacyChannelBindingStore } from '../service/channel-binding/store.js';
+import { detectLegacyCronJobStore } from '../service/scheduler/store.js';
 import { ExecaCommandRunner } from '../onboard/commands.js';
 import {
   defaultServiceNodeProbe,
@@ -154,6 +155,12 @@ export async function runDreamuxDoctor(
       name: `dispatcher ${dispatcher.id} channel bindings`,
       ok: bindingLegacy === null,
       detail: bindingLegacy ?? 'channel binding store is current (v2) or absent',
+    });
+    const cronLegacy = await detectLegacyCronJobStore(dispatcher.id);
+    checks.push({
+      name: `dispatcher ${dispatcher.id} cron jobs`,
+      ok: cronLegacy === null,
+      detail: cronLegacy ?? 'cron job store is current (v1) or absent',
     });
   }
 

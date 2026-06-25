@@ -40,6 +40,7 @@ import {
   legacyDispatcherStateMessage,
 } from './service/legacy-state.js';
 import { detectLegacyChannelBindingStore } from './service/channel-binding/store.js';
+import { detectLegacyCronJobStore } from './service/scheduler/store.js';
 
 export interface ServerOptions {
   /**
@@ -268,6 +269,8 @@ export class Server {
       // boot with rebuild guidance, not lazily on the first inbound message.
       const bindingLegacy = await detectLegacyChannelBindingStore(row.dispatcher_id);
       if (bindingLegacy !== null) messages.push(bindingLegacy);
+      const cronLegacy = await detectLegacyCronJobStore(row.dispatcher_id);
+      if (cronLegacy !== null) messages.push(cronLegacy);
     }
     if (messages.length > 0) {
       throw new Error(
