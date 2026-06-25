@@ -7,6 +7,7 @@ import { validateDispatcherId } from '../state/dispatcher-id.js';
 
 export interface CronMcpOptions {
   dispatcherId: string;
+  teamId?: string;
   adminSocketPath?: string;
   input?: Readable;
   output?: Writable;
@@ -30,6 +31,7 @@ const DEFAULT_MCP_PROTOCOL_VERSION = '2024-11-05';
 
 export async function runCronMcp(opts: CronMcpOptions): Promise<void> {
   const dispatcherId = validateDispatcherId(opts.dispatcherId);
+  const teamId = opts.teamId;
   const socketPath = opts.adminSocketPath ?? defaultAdminSocketPath();
   const input = opts.input ?? process.stdin;
   const output = opts.output ?? process.stdout;
@@ -47,7 +49,7 @@ export async function runCronMcp(opts: CronMcpOptions): Promise<void> {
       continue;
     }
     try {
-      await handleRequest(request, { dispatcherId, socketPath, output });
+      await handleRequest(request, { dispatcherId, teamId, socketPath, output });
     } catch (err) {
       log(`cron-mcp: ${parseMessage(err)}`);
       if (request.id !== undefined) {
@@ -59,7 +61,12 @@ export async function runCronMcp(opts: CronMcpOptions): Promise<void> {
 
 async function handleRequest(
   request: JsonRpcRequest,
-  ctx: { dispatcherId: string; socketPath: string; output: Writable },
+  ctx: {
+    dispatcherId: string;
+    teamId: string | undefined;
+    socketPath: string;
+    output: Writable;
+  },
 ): Promise<void> {
   if (typeof request.method !== 'string') {
     if (request.id !== undefined) {
@@ -99,14 +106,14 @@ async function handleRequest(
 
 function cronTools(): Array<Record<string, unknown>> {
   return [
-    tool('cron_create', 'Create a durable Dreamux cron job for this dispatcher. cron is a standard 5-field local-time expression (M H DoM Mon DoW); prefer off-:00/:30 minutes for approximate schedules. prompt is the text injected into the resident dispatcher agent. recurring defaults to true; use recurring:false for one-shot reminders. dreamux jobs are always persisted and do not auto-expire. tz is resolved and stored. This milestone supports only internal prompt-agent jobs, with no deliver or spawn target.', {
+    tool('cron_create', 'Create a durable Dreamux cron job for this agent. cron is a standard 5-field local-time expression (M H DoM Mon DoW); prefer off-:00/:30 minutes for approximate schedules. prompt is the text injected into this dispatcher or TeamLeader agent. recurring defaults to true; use recurring:false for one-shot reminders. dreamux jobs are always persisted and do not auto-expire. tz is resolved and stored. This milestone supports only internal prompt-agent jobs, with no deliver or spawn target.', {
       cron: { type: 'string', minLength: 1, maxLength: 200 },
       prompt: { type: 'string', minLength: 1, maxLength: 20000 },
       recurring: { type: 'boolean' },
       tz: { type: 'string', minLength: 1, maxLength: 100 },
       title: { type: 'string', minLength: 1, maxLength: 200 },
     }, ['cron', 'prompt']),
-    tool('cron_list', 'List durable cron jobs for this dispatcher.', {}, []),
+    tool('cron_list', 'List durable cron jobs for this agent.', {}, []),
     tool('cron_delete', 'Delete a cron job by id.', {
       id: { type: 'string', minLength: 1, maxLength: 128 },
     }, ['id']),
@@ -140,14 +147,26 @@ function tool(
 
 async function callTool(
   params: unknown,
-  ctx: { dispatcherId: string; socketPath: string },
+  ctx: { dispatcherId: string; teamId: string | undefined; socketPath: string },
 ): Promise<Record<string, unknown>> {
   try {
     const call = asToolCallParams(params);
     const mapped = mapToolCall(call);
+    // The cron target is descriptor-bound, NOT model-supplied: strip any
+    // dispatcher_id/team_id the tool arguments tried to inject, then apply the
+    // process-scoped binding LAST so it always wins. Otherwise a TeamLeader cron
+    // MCP could pass an extra team_id (or any cron MCP an extra dispatcher_id) to
+    // reach another scheduler, breaking the per-conversational-agent boundary.
+    const safeParams = { ...mapped.params };
+    delete safeParams['dispatcher_id'];
+    delete safeParams['team_id'];
     const result = await sendAdminRequest(
       mapped.method,
-      { dispatcher_id: ctx.dispatcherId, ...mapped.params },
+      {
+        ...safeParams,
+        dispatcher_id: ctx.dispatcherId,
+        ...(ctx.teamId !== undefined ? { team_id: ctx.teamId } : {}),
+      },
       { socketPath: ctx.socketPath },
     );
     return {

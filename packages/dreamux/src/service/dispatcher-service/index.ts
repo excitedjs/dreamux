@@ -15,7 +15,7 @@ import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { ChannelProviderCatalog } from '../../channel/catalog.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
-import { adminSocketPath as defaultAdminSocketPath } from '../../platform/paths.js';
+import { adminSocketPath as defaultAdminSocketPath, dispatcherCronJobsPath } from '../../platform/paths.js';
 import type {
   DispatcherRow,
   DispatcherStatus,
@@ -28,15 +28,9 @@ import type { ChannelMcpCallerScope } from './mcp-descriptors.js';
 import { assertRunnableChannelShape } from './runnable-channel.js';
 import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
 import { ChannelToolAuthorizationError } from './errors.js';
-import {
-  CompletionRouter,
-  type CompletionInitiator,
-} from '../completion-router/index.js';
+import { CompletionRouter, type CompletionInitiator } from '../completion-router/index.js';
 import { teammateMcpServerDescriptor } from '../teammate-collection/mcp-config.js';
-import {
-  TeammateCollection,
-  type TeammateOps,
-} from '../teammate-collection/index.js';
+import { TeammateCollection, type TeammateOps } from '../teammate-collection/index.js';
 import { TeamMateIdentityStore } from '../teammate-collection/identity-store.js';
 import { TeamMateTurnsStore } from '../teammate-collection/turns-store.js';
 import type { TeammateService } from '../teammate-service/index.js';
@@ -46,6 +40,8 @@ import { type TeamMateIdentity } from '../teammate-collection/types.js';
 import { type TeamChannelContext } from '../team-service/index.js';
 import { TeamCollection } from '../team-collection/index.js';
 import { SchedulerService } from '../scheduler/service.js';
+import { CronJobStore } from '../scheduler/store.js';
+import { cronMcpServerDescriptor } from '../scheduler/mcp-config.js';
 import type {
   TeamCreateInput,
   TeamDissolveInput,
@@ -158,7 +154,9 @@ export class DispatcherService implements TeamChannelContext {
     });
 
     this.scheduler = new SchedulerService({
-      dispatcherId: opts.id,
+      ownerId: opts.id,
+      store: new CronJobStore({ cronJobsPath: dispatcherCronJobsPath(opts.id), dispatcherId: opts.id }),
+      absentRuntimeStrategy: 'miss',
       getRuntime: () => this.agent.getRuntime(),
       submitScheduled: (input) => this.agent.scheduledInput(input),
       log: opts.log,
@@ -180,6 +178,7 @@ export class DispatcherService implements TeamChannelContext {
               teamId: input.identity.team_id ?? '',
               adminSocketPath: adminSocket,
             }),
+            cronMcpServerDescriptor({ dispatcherId: input.dispatcherId, teamId: input.identity.team_id ?? undefined, adminSocketPath: adminSocket }),
             ...this.channelMcpServerDescriptorsForCaller({
               callerKind: 'team_leader',
               team_id: input.identity.team_id ?? '',
@@ -290,7 +289,10 @@ export class DispatcherService implements TeamChannelContext {
       }
       await this.injectRestartNoticeIfNeeded(id, runtime);
       await this.scheduler.start();
+      await this.teams.startSchedulers();
     } catch (err) {
+      this.scheduler.stop();
+      this.teams.stopSchedulers();
       // Undo the slot adoption so a failed start never leaves a half-built slot.
       this.channels.clear();
       await closeAllBuilt(channels);
@@ -314,6 +316,7 @@ export class DispatcherService implements TeamChannelContext {
 
   async stop(): Promise<void> {
     this.scheduler.stop();
+    this.teams.stopSchedulers();
     await this.channels.closeAll(this.log);
     try {
       await this.agent.stop();
@@ -404,9 +407,7 @@ export class DispatcherService implements TeamChannelContext {
     });
   }
 
-  workspace(): Promise<string> {
-    return this._teammates.dispatcherWorkspace();
-  }
+  workspace(): Promise<string> { return this._teammates.dispatcherWorkspace(); }
 
   /** The dispatcher's own teammates, as the narrow admin-facing op surface
    * (issue #233). The admin layer drives the collection directly through this
@@ -416,26 +417,19 @@ export class DispatcherService implements TeamChannelContext {
   }
 
   /** The single-entity team service for a team id (admin `team_leader` target). */
-  team(teamId: string) {
-    return this.teams.get(teamId);
-  }
+  team(teamId: string) { return this.teams.get(teamId); }
 
-  createTeam(input: TeamCreateInput) {
-    this.assertNotShuttingDown();
-    return this.teams.create(input);
-  }
+  teamScheduler(teamId: string) { return this.teams.scheduler(teamId); }
 
-  listTeams() {
-    return this.teams.list();
-  }
+  createTeam(input: TeamCreateInput) { this.assertNotShuttingDown(); return this.teams.create(input); }
+
+  listTeams() { return this.teams.list(); }
 
   async getTeamStatus(teamId: string) {
     return (await this.teams.get(teamId)).status();
   }
 
-  getTeamHistory(input: TeamHistoryQuery) {
-    return this.teams.history(input);
-  }
+  getTeamHistory(input: TeamHistoryQuery) { return this.teams.history(input); }
 
   async dissolveTeam(input: TeamDissolveInput) {
     return (await this.teams.get(input.teamId)).dissolve(input);

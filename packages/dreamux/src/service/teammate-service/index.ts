@@ -229,7 +229,8 @@ export class TeammateService {
     jobId: string;
     prompt: string;
   }): Promise<AgentRuntimeTurnResult> {
-    await this.ensureStarted();
+    const teamId = this.current().team_id ?? undefined;
+    await this.ensureStarted({ ...(teamId !== undefined ? { teamId } : {}) });
     const runtime = this.mustRuntime();
     const result = await runtime.systemInput({
       kind: 'system',

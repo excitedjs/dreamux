@@ -7,6 +7,7 @@ import { validateDispatcherId } from '../../state/dispatcher-id.js';
 
 interface CronMcpArgv {
   dispatcher: string;
+  team?: string;
   adminSocket?: string;
 }
 
@@ -21,6 +22,10 @@ export function createCronMcpCommand(): CommandModule<{}, CronMcpArgv> {
           demandOption: true,
           describe: 'Dispatcher id this MCP shim is scoped to',
         })
+        .option('team', {
+          type: 'string',
+          describe: 'Team id when this cron MCP shim is scoped to a TeamLeader',
+        })
         .option('admin-socket', {
           type: 'string',
           describe: 'dreamux serve admin socket path',
@@ -33,6 +38,7 @@ export function createCronMcpCommand(): CommandModule<{}, CronMcpArgv> {
       });
       await runCronMcp({
         dispatcherId,
+        teamId: argv.team,
         adminSocketPath: argv.adminSocket,
         log: (message) => log.info(message),
       });

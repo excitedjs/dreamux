@@ -341,6 +341,11 @@ export function dispatcherTeamRecordPath(id: string, teamId: string): string {
   return join(dispatcherTeamScopeDir(id, teamId), 'record.json');
 }
 
+/** Per-TeamLeader cron jobs; path isolation keeps the job schema dispatcher-scoped. */
+export function dispatcherTeamCronJobsPath(id: string, teamId: string): string {
+  return join(dispatcherTeamScopeDir(id, teamId), 'cron-jobs.json');
+}
+
 /**
  * The `teammate/` sub-collection inside one team's scope — the team's members,
  * one directory each. Distinct from {@link dispatcherTeamMateDir} (dispatcher

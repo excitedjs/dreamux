@@ -5,8 +5,10 @@ import { adminSocketPath as defaultAdminSocketPath } from '../../platform/paths.
 
 export function cronMcpServerDescriptor(input: {
   dispatcherId: string;
+  teamId?: string;
   adminSocketPath?: string;
 }): AgentRuntimeMcpServer {
+  const teamArgs = input.teamId !== undefined ? ['--team', input.teamId] : [];
   return {
     name: 'cron',
     command: dreamuxBinPath(),
@@ -14,6 +16,7 @@ export function cronMcpServerDescriptor(input: {
       'cron-mcp',
       '--dispatcher',
       input.dispatcherId,
+      ...teamArgs,
       '--admin-socket',
       input.adminSocketPath ?? defaultAdminSocketPath(),
     ],

@@ -1,13 +1,14 @@
 import { randomUUID } from 'node:crypto';
+import { unlink } from 'node:fs/promises';
 
 import { Cron } from 'croner';
 
 import { JsonDocumentStore } from '../../platform/json-document-store.js';
-import { dispatcherCronJobsPath } from '../../platform/paths.js';
+import { isNotFound } from '../../platform/fs-errors.js';
 import { LegacyStateError } from '../legacy-state.js';
 
 const STORE_VERSION = 1;
-const MIN_INTERVAL_MS = 60_000;
+export const MIN_CRON_INTERVAL_MS = 60_000;
 
 export interface CronDeliverTarget {
   channel_id: string;
@@ -51,7 +52,6 @@ interface CronJobFile {
 }
 
 export interface CronJobCreateInput {
-  dispatcherId: string;
   title?: string;
   cron: string;
   tz: string;
@@ -73,6 +73,11 @@ export interface CronJobUpdateInput {
   nextRunAt?: number | null;
 }
 
+export interface CronJobStoreOptions {
+  cronJobsPath: string;
+  dispatcherId: string;
+}
+
 export class CronJobStore {
   private readonly base = new JsonDocumentStore<CronJobFile>({
     version: STORE_VERSION,
@@ -81,34 +86,39 @@ export class CronJobStore {
   });
   private writes: Promise<void> = Promise.resolve();
 
-  async assertCurrent(dispatcherId: string): Promise<void> {
-    const path = dispatcherCronJobsPath(dispatcherId);
-    const file = await this.base.read(path);
-    assertCronJobSemantics(dispatcherId, file.jobs, path);
+  constructor(private readonly opts: CronJobStoreOptions) {}
+
+  async assertCurrent(): Promise<void> {
+    const file = await this.base.read(this.opts.cronJobsPath);
+    assertCronJobSemantics(
+      this.opts.dispatcherId,
+      file.jobs,
+      this.opts.cronJobsPath,
+    );
   }
 
-  async list(dispatcherId: string): Promise<CronJob[]> {
-    return (await this.read(dispatcherId)).jobs.map(cloneJob);
+  async list(): Promise<CronJob[]> {
+    return (await this.read()).jobs.map(cloneJob);
   }
 
-  async get(dispatcherId: string, id: string): Promise<CronJob | null> {
+  async get(id: string): Promise<CronJob | null> {
     return cloneOptional(
-      (await this.read(dispatcherId)).jobs.find((job) => job.id === id) ?? null,
+      (await this.read()).jobs.find((job) => job.id === id) ?? null,
     );
   }
 
   async create(input: CronJobCreateInput, maxJobs: number): Promise<CronJob> {
     return this.runExclusive(async () => {
-      const file = await this.read(input.dispatcherId);
+      const file = await this.read();
       if (file.jobs.length >= maxJobs) {
         throw new Error(
-          `dispatcher '${input.dispatcherId}' already has the maximum ${maxJobs} cron jobs`,
+          `cron owner '${this.opts.dispatcherId}' already has the maximum ${maxJobs} cron jobs`,
         );
       }
       const now = Date.now();
       const job: CronJob = {
         id: `job-${randomUUID().slice(0, 8)}`,
-        dispatcher_id: input.dispatcherId,
+        dispatcher_id: this.opts.dispatcherId,
         ...(input.title !== undefined ? { title: input.title } : {}),
         cron: input.cron,
         tz: input.tz,
@@ -122,17 +132,14 @@ export class CronJobStore {
         last_fired_at: null,
       };
       file.jobs.push(job);
-      await this.write(input.dispatcherId, file);
+      await this.write(file);
       return cloneJob(job);
     });
   }
 
-  async update(
-    dispatcherId: string,
-    input: CronJobUpdateInput,
-  ): Promise<CronJob> {
+  async update(input: CronJobUpdateInput): Promise<CronJob> {
     return this.runExclusive(async () => {
-      const file = await this.read(dispatcherId);
+      const file = await this.read();
       const index = file.jobs.findIndex((job) => job.id === input.id);
       if (index === -1) throw new Error(`cron job '${input.id}' does not exist`);
       const current = file.jobs[index]!;
@@ -152,48 +159,62 @@ export class CronJobStore {
       if (input.enabled !== undefined) next.enabled = input.enabled;
       if (input.nextRunAt !== undefined) next.next_run_at = input.nextRunAt;
       file.jobs[index] = next;
-      await this.write(dispatcherId, file);
+      await this.write(file);
       return cloneJob(next);
     });
   }
 
-  async delete(dispatcherId: string, id: string): Promise<boolean> {
+  async delete(id: string): Promise<boolean> {
     return this.runExclusive(async () => {
-      const file = await this.read(dispatcherId);
+      const file = await this.read();
       const next = file.jobs.filter((job) => job.id !== id);
       if (next.length === file.jobs.length) return false;
       file.jobs = next;
-      await this.write(dispatcherId, file);
+      await this.write(file);
       return true;
     });
   }
 
   async setFired(input: {
-    dispatcherId: string;
     id: string;
     firedAt: number;
     nextRunAt: number | null;
     enabled: boolean;
   }): Promise<CronJob | null> {
     return this.runExclusive(async () => {
-      const file = await this.read(input.dispatcherId);
+      const file = await this.read();
       const job = file.jobs.find((entry) => entry.id === input.id);
       if (job === undefined) return null;
       job.last_fired_at = input.firedAt;
       job.next_run_at = input.nextRunAt;
       job.enabled = input.enabled;
       job.updated_at = input.firedAt;
-      await this.write(input.dispatcherId, file);
+      await this.write(file);
       return cloneJob(job);
     });
   }
 
-  private async read(dispatcherId: string): Promise<CronJobFile> {
-    return this.base.read(dispatcherCronJobsPath(dispatcherId));
+  async deleteStoreFile(): Promise<void> {
+    // Serialize the unlink through the same exclusive queue as every write, so a
+    // scheduled fire that is mid-flight when a team is dissolved cannot recreate
+    // the file: a `setFired` ordered BEFORE the delete writes first and is then
+    // unlinked; one ordered AFTER reads the now-missing file, finds no job, and
+    // returns null without writing. Either way the store stays deleted.
+    await this.runExclusive(async () => {
+      try {
+        await unlink(this.opts.cronJobsPath);
+      } catch (err) {
+        if (!isNotFound(err)) throw err;
+      }
+    });
   }
 
-  private async write(dispatcherId: string, file: CronJobFile): Promise<void> {
-    await this.base.write(dispatcherCronJobsPath(dispatcherId), file);
+  private async read(): Promise<CronJobFile> {
+    return this.base.read(this.opts.cronJobsPath);
+  }
+
+  private async write(file: CronJobFile): Promise<void> {
+    await this.base.write(this.opts.cronJobsPath, file);
   }
 
   private runExclusive<T>(fn: () => Promise<T>): Promise<T> {
@@ -207,10 +228,11 @@ export class CronJobStore {
 }
 
 export async function detectLegacyCronJobStore(
+  cronJobsPath: string,
   dispatcherId: string,
 ): Promise<string | null> {
   try {
-    await new CronJobStore().assertCurrent(dispatcherId);
+    await new CronJobStore({ cronJobsPath, dispatcherId }).assertCurrent();
     return null;
   } catch (err) {
     if (err instanceof LegacyStateError) return err.message;
@@ -337,7 +359,7 @@ function assertValidCron(job: CronJob, path: string): void {
       const runs = cron.nextRuns(2, new Date());
       if (runs.length >= 2) {
         const gap = runs[1]!.getTime() - runs[0]!.getTime();
-        if (gap < MIN_INTERVAL_MS) {
+        if (gap < MIN_CRON_INTERVAL_MS) {
           throw new Error('cron interval must be at least one minute');
         }
       }

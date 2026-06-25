@@ -16,6 +16,7 @@ import { requireLifecycleText } from '../teammate-collection/types.js';
 import type { ChannelBindingStore } from '../channel-binding/store.js';
 import type { ChannelBinding } from '../channel-binding/store.js';
 import { TeamStore } from '../team-collection/store.js';
+import type { SchedulerService } from '../scheduler/service.js';
 import type {
   TeamChannelBindingSummary,
   TeamDissolveInput,
@@ -42,6 +43,7 @@ export interface TeamServiceOptions {
   record: TeamRecord;
   /** The team's leader, a contained {@link TeammateService} (issue #233 Phase 4). */
   leader: TeammateService;
+  scheduler: SchedulerService;
   store: TeamStore;
   bindings: ChannelBindingStore;
   worktrees: WorktreeManager;
@@ -64,11 +66,13 @@ export class TeamService {
   private record: TeamRecord;
   readonly id: string;
   readonly leader: TeammateService;
+  readonly scheduler: SchedulerService;
 
   constructor(private readonly opts: TeamServiceOptions) {
     this.record = opts.record;
     this.id = opts.record.team_id;
     this.leader = opts.leader;
+    this.scheduler = opts.scheduler;
   }
 
   get dispatcherId(): string {
@@ -90,6 +94,7 @@ export class TeamService {
 
   async dissolve(input: TeamDissolveInput): Promise<TeamSummary> {
     requireLifecycleText(input.note, 'Team dissolve note');
+    this.scheduler.stop();
     for (const binding of await this.opts.bindings.list(this.dispatcherId)) {
       if (binding.active && binding.team_name === this.id) {
         await this.opts.bindings.transferBack({
@@ -128,6 +133,7 @@ export class TeamService {
     for (const member of members) {
       await this.opts.teammates.applyWorktreeCleanup(member.name, cleaned);
     }
+    await this.scheduler.deleteStoreFile();
     const summary = await this.status();
     // Evict so a later `get` rebuilds from disk and reads `status: closed`.
     this.opts.evict();

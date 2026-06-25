@@ -21,6 +21,9 @@ import { requireLifecycleText } from '../teammate-collection/types.js';
 import type { TeamMateIdentity } from '../teammate-collection/types.js';
 import type { ChannelBindingStore } from '../channel-binding/store.js';
 import type { ChannelBinding } from '../channel-binding/store.js';
+import { SchedulerService } from '../scheduler/service.js';
+import { CronJobStore } from '../scheduler/store.js';
+import { dispatcherTeamCronJobsPath } from '../../platform/paths.js';
 import { TeamStore } from './store.js';
 import type {
   TeamChannelBindingSummary,
@@ -97,6 +100,8 @@ export class TeamCollection {
   /** In-flight cache-miss `get`, so a cold-cache race rebuilds one TeamService
    * (one leader runtime), not two (issue #233 concurrency guard). */
   private readonly rebuilding = new Map<string, Promise<TeamService>>();
+  /** Live TeamLeader schedulers keyed by team id; schedulers are resident at boot. */
+  private readonly schedulers = new Map<string, SchedulerService>();
 
   constructor(private readonly opts: TeamCollectionOptions) {
     this.dispatcherId = opts.dispatcherId;
@@ -178,7 +183,7 @@ export class TeamCollection {
     // Cache the live service so later `get`s reuse this leader + collection and
     // record mutations route through it (issue #233).
     const service = new TeamService(
-      this.teamServiceOptions(team, teammates, leader),
+      await this.teamServiceOptions(team, teammates, leader),
     );
     this.cache.set(teamId, service);
     return {
@@ -260,7 +265,7 @@ export class TeamCollection {
     const teammates = this.buildTeammates(record.team_id);
     const leader = await teammates.leader(record.leader_name);
     const service = new TeamService(
-      this.teamServiceOptions(record, teammates, leader),
+      await this.teamServiceOptions(record, teammates, leader),
     );
     this.cache.set(record.team_id, service);
     return service;
@@ -286,20 +291,61 @@ export class TeamCollection {
     });
   }
 
-  private teamServiceOptions(
+  private async teamServiceOptions(
     record: TeamRecord,
     teammates: TeammateCollection,
     leader: TeammateService,
-  ): TeamServiceOptions {
+  ): Promise<TeamServiceOptions> {
+    const scheduler =
+      record.status === 'closed'
+        ? this.buildScheduler(record.team_id)
+        : this.schedulerFor(record.team_id);
+    if (record.status !== 'closed') await scheduler.start();
     return {
       record,
       leader,
+      scheduler,
       store: this.store,
       bindings: this.bindings,
       worktrees: this.worktrees,
       teammates,
-      evict: () => this.cache.delete(record.team_id),
+      evict: () => {
+        this.schedulers.get(record.team_id)?.stop();
+        this.cache.delete(record.team_id);
+        this.schedulers.delete(record.team_id);
+      },
     };
+  }
+
+  private schedulerFor(teamId: string): SchedulerService {
+    const existing = this.schedulers.get(teamId);
+    if (existing !== undefined) return existing;
+    const scheduler = this.buildScheduler(teamId);
+    this.schedulers.set(teamId, scheduler);
+    return scheduler;
+  }
+
+  private buildScheduler(teamId: string): SchedulerService {
+    const scheduler = new SchedulerService({
+      ownerId: `${this.dispatcherId}/team/${teamId}`,
+      store: new CronJobStore({
+        cronJobsPath: dispatcherTeamCronJobsPath(this.dispatcherId, teamId),
+        dispatcherId: this.dispatcherId,
+      }),
+      absentRuntimeStrategy: 'submit',
+      getRuntime: () => this.cache.get(teamId)?.leader.getRuntime() ?? null,
+      submitScheduled: (input) => this.leaderFor(teamId).scheduledInput(input),
+      log: this.opts.log,
+    });
+    return scheduler;
+  }
+
+  private leaderFor(teamId: string): TeammateService {
+    const team = this.cache.get(teamId);
+    if (team === undefined) {
+      throw new Error(`Team ${JSON.stringify(teamId)} is not materialized`);
+    }
+    return team.leader;
   }
 
   private async listRow(team: TeamRecord): Promise<TeamListRow> {
@@ -375,9 +421,41 @@ export class TeamCollection {
   private async mustTeam(teamId: string): Promise<TeamRecord> {
     const team = await this.store.get(this.dispatcherId, validateTeamId(teamId));
     if (team === null) {
-      throw new Error(`Team ${JSON.stringify(teamId)} does not exist`);
+      throw new TeamUnavailableError(`Team ${JSON.stringify(teamId)} does not exist`);
     }
     return team;
+  }
+
+  private async mustOpenTeam(teamId: string): Promise<TeamRecord> {
+    const team = await this.mustTeam(teamId);
+    if (team.status === 'closed') {
+      throw new TeamUnavailableError(`Team ${JSON.stringify(teamId)} is closed`);
+    }
+    return team;
+  }
+
+  async scheduler(teamId: string): Promise<SchedulerService> {
+    await this.mustOpenTeam(teamId);
+    return (await this.get(teamId)).scheduler;
+  }
+
+  async startSchedulers(): Promise<void> {
+    const teams = await this.store.list(this.dispatcherId);
+    for (const team of teams) {
+      if (team.status === 'closed') continue;
+      try {
+        await this.serviceFor(team);
+      } catch (err) {
+        this.opts.log.error(
+          { dispatcher_id: this.dispatcherId, team_id: team.team_id, err: errInfo(err) },
+          'TeamLeader scheduler start failed',
+        );
+      }
+    }
+  }
+
+  stopSchedulers(): void {
+    for (const scheduler of this.schedulers.values()) scheduler.stop();
   }
 
   /**
@@ -389,6 +467,13 @@ export class TeamCollection {
     for (const service of this.cache.values()) {
       await service.stopAll();
     }
+  }
+}
+
+export class TeamUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TeamUnavailableError';
   }
 }
 
@@ -466,4 +551,11 @@ function decodeTeamCursor(cursor: string): number {
 function previewTeamText(text: string): string {
   const collapsed = text.replace(/\s+/g, ' ').trim();
   return collapsed.length <= 500 ? collapsed : `${collapsed.slice(0, 497)}...`;
+}
+
+function errInfo(err: unknown): Record<string, unknown> {
+  if (err instanceof Error) {
+    return { type: err.name, message: err.message, stack: err.stack };
+  }
+  return { value: String(err) };
 }

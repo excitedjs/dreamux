@@ -5,6 +5,8 @@ import type {
   DispatcherService,
 } from '../service/dispatcher-service/index.js';
 import type { TeamService } from '../service/team-service/index.js';
+import type { SchedulerService } from '../service/scheduler/service.js';
+import { TeamUnavailableError } from '../service/team-collection/index.js';
 import { AdminError } from './protocol.js';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
 import { ChannelToolAuthorizationError } from '../service/dispatcher-service/errors.js';
@@ -84,15 +86,11 @@ export const adminMethods: Record<string, AdminHandler> = {
   },
 
   'scheduler.cron.list': async (server, params) => {
-    const id = mustDispatcherId(params);
-    mustExistingDispatcher(server, id);
-    return server.getDispatcher(id).scheduler.list();
+    return (await cronTargetFor(server, params)).list();
   },
 
   'scheduler.cron.create': async (server, params) => {
-    const id = mustDispatcherId(params);
-    mustExistingDispatcher(server, id);
-    return server.getDispatcher(id).scheduler.create({
+    return (await cronTargetFor(server, params)).create({
       cron: mustString(params, 'cron'),
       prompt: mustNonEmptyString(params, 'prompt'),
       ...optionalStringField(params, 'title'),
@@ -104,9 +102,7 @@ export const adminMethods: Record<string, AdminHandler> = {
   },
 
   'scheduler.cron.update': async (server, params) => {
-    const id = mustDispatcherId(params);
-    mustExistingDispatcher(server, id);
-    return server.getDispatcher(id).scheduler.update({
+    return (await cronTargetFor(server, params)).update({
       id: mustString(params, 'id'),
       ...optionalStringField(params, 'cron'),
       ...optionalStringField(params, 'prompt'),
@@ -120,15 +116,11 @@ export const adminMethods: Record<string, AdminHandler> = {
   },
 
   'scheduler.cron.delete': async (server, params) => {
-    const id = mustDispatcherId(params);
-    mustExistingDispatcher(server, id);
-    return server.getDispatcher(id).scheduler.delete(mustString(params, 'id'));
+    return (await cronTargetFor(server, params)).delete(mustString(params, 'id'));
   },
 
   'scheduler.cron.run_now': async (server, params) => {
-    const id = mustDispatcherId(params);
-    mustExistingDispatcher(server, id);
-    return server.getDispatcher(id).scheduler.runNow(mustString(params, 'id'));
+    return (await cronTargetFor(server, params)).runNow(mustString(params, 'id'));
   },
 
   'channel.invoke_tool': async (server, params) => {
@@ -372,6 +364,25 @@ export const adminMethods: Record<string, AdminHandler> = {
     });
   },
 };
+
+async function cronTargetFor(
+  server: Server,
+  params: Record<string, unknown> | undefined,
+): Promise<SchedulerService> {
+  const id = mustDispatcherId(params);
+  mustExistingDispatcher(server, id);
+  const teamId = optionalString(params, 'team_id');
+  const dispatcher = server.getDispatcher(id);
+  if (teamId === null) return dispatcher.scheduler;
+  try {
+    return await dispatcher.teamScheduler(teamId);
+  } catch (err) {
+    if (err instanceof TeamUnavailableError) {
+      throw new AdminError('TEAM_NOT_FOUND', err.message);
+    }
+    throw err;
+  }
+}
 
 function mustToolArguments(
   params: Record<string, unknown> | undefined,

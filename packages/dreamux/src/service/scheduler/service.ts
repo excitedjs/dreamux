@@ -12,11 +12,11 @@ import {
   type CronJob,
   type CronJobAction,
   type CronJobUpdateInput,
+  MIN_CRON_INTERVAL_MS,
 } from './store.js';
 
 const MAX_TIMEOUT_MS = 2_147_483_647;
-const MAX_JOBS_PER_DISPATCHER = 128;
-const MIN_INTERVAL_MS = 60_000;
+const MAX_JOBS_PER_OWNER = 128;
 const MAX_DEFER_MS = 60 * 60 * 1000;
 
 interface TimerSlot {
@@ -47,8 +47,9 @@ export interface CronUpdateRequest {
 }
 
 export interface SchedulerServiceOptions {
-  dispatcherId: string;
-  store?: CronJobStore;
+  ownerId: string;
+  store: CronJobStore;
+  absentRuntimeStrategy: 'miss' | 'submit';
   getRuntime(): AgentRuntime | null;
   submitScheduled(input: {
     jobId: string;
@@ -59,7 +60,7 @@ export interface SchedulerServiceOptions {
 }
 
 export class SchedulerService {
-  private readonly dispatcherId: string;
+  private readonly ownerId: string;
   private readonly store: CronJobStore;
   private readonly log: DreamuxLogger;
   private readonly now: () => number;
@@ -69,16 +70,16 @@ export class SchedulerService {
   private running = false;
 
   constructor(private readonly opts: SchedulerServiceOptions) {
-    this.dispatcherId = opts.dispatcherId;
-    this.store = opts.store ?? new CronJobStore();
+    this.ownerId = opts.ownerId;
+    this.store = opts.store;
     this.log = opts.log;
     this.now = opts.now ?? (() => Date.now());
   }
 
   async start(): Promise<void> {
     if (this.running) return;
-    await this.store.assertCurrent(this.dispatcherId);
-    const jobs = await this.store.list(this.dispatcherId);
+    await this.store.assertCurrent();
+    const jobs = await this.store.list();
     for (const job of jobs) this.validatePersistedJob(job);
     // Reconcile durable state for every job BEFORE arming any timer, so a
     // mid-reconcile store I/O failure leaves the scheduler fully un-started
@@ -103,7 +104,7 @@ export class SchedulerService {
   }
 
   async list(): Promise<{ jobs: CronJob[] }> {
-    return { jobs: await this.store.list(this.dispatcherId) };
+    return { jobs: await this.store.list() };
   }
 
   async create(input: CronCreateRequest): Promise<CronJob> {
@@ -111,14 +112,13 @@ export class SchedulerService {
     const nextRunAt = nextRunAfter(normalized.cron, normalized.tz, this.now());
     const job = await this.store.create(
       {
-        dispatcherId: this.dispatcherId,
         ...normalized,
         nextRunAt,
       },
-      MAX_JOBS_PER_DISPATCHER,
+      MAX_JOBS_PER_OWNER,
     );
     this.log.info(
-      { dispatcher_id: this.dispatcherId, job_id: job.id },
+      { owner_id: this.ownerId, job_id: job.id },
       'cron job created',
     );
     if (this.running) this.arm(job);
@@ -135,13 +135,13 @@ export class SchedulerService {
     const nextRunAt = effectiveEnabled
       ? nextRunAfter(normalized.cron, normalized.tz, this.now())
       : null;
-    const job = await this.store.update(this.dispatcherId, {
+    const job = await this.store.update({
       ...normalized,
       nextRunAt,
     });
     this.clearTimer(job.id);
     this.log.info(
-      { dispatcher_id: this.dispatcherId, job_id: job.id },
+      { owner_id: this.ownerId, job_id: job.id },
       'cron job updated',
     );
     if (this.running) this.arm(job);
@@ -151,12 +151,16 @@ export class SchedulerService {
   async delete(id: string): Promise<{ id: string; deleted: boolean }> {
     this.clearTimer(id);
     this.heldFires.delete(id);
-    const deleted = await this.store.delete(this.dispatcherId, id);
+    const deleted = await this.store.delete(id);
     this.log.info(
-      { dispatcher_id: this.dispatcherId, job_id: id, deleted },
+      { owner_id: this.ownerId, job_id: id, deleted },
       'cron job deleted',
     );
     return { id, deleted };
+  }
+
+  async deleteStoreFile(): Promise<void> {
+    await this.store.deleteStoreFile();
   }
 
   async runNow(id: string): Promise<{ id: string; status: string }> {
@@ -168,10 +172,10 @@ export class SchedulerService {
     const now = this.now();
     if (!job.recurring && job.next_run_at !== null && job.next_run_at <= now) {
       this.log.warn(
-        { dispatcher_id: this.dispatcherId, job_id: job.id },
+        { owner_id: this.ownerId, job_id: job.id },
         'cron one-shot missed while scheduler was stopped',
       );
-      await this.store.update(this.dispatcherId, {
+      await this.store.update({
         id: job.id,
         enabled: false,
         nextRunAt: null,
@@ -184,7 +188,7 @@ export class SchedulerService {
         : nextRunAfter(job.cron, job.tz, now);
     return nextRunAt === job.next_run_at
       ? job
-      : await this.store.update(this.dispatcherId, {
+      : await this.store.update({
           id: job.id,
           nextRunAt,
         });
@@ -224,11 +228,11 @@ export class SchedulerService {
     opts: { manual: boolean },
   ): Promise<{ id: string; status: string }> {
     try {
-      const job = await this.store.get(this.dispatcherId, jobId);
+      const job = await this.store.get(jobId);
       if (job === null || !job.enabled) return { id: jobId, status: 'skipped' };
       if (job.action.kind !== 'prompt-agent') {
         this.log.warn(
-          { dispatcher_id: this.dispatcherId, job_id: jobId },
+          { owner_id: this.ownerId, job_id: jobId },
           'cron job skipped because action is not implemented',
         );
         return { id: jobId, status: 'skipped' };
@@ -240,7 +244,7 @@ export class SchedulerService {
       return { id: jobId, status };
     } catch (err) {
       this.log.error(
-        { dispatcher_id: this.dispatcherId, job_id: jobId, err: errInfo(err) },
+        { owner_id: this.ownerId, job_id: jobId, err: errInfo(err) },
         'cron job dispatch failed',
       );
       if (!opts.manual) await this.rearmAfterDispatchError(jobId);
@@ -255,12 +259,12 @@ export class SchedulerService {
     // is rebuilt from persisted state on the next start().
     try {
       if (!this.running) return;
-      const job = await this.store.get(this.dispatcherId, jobId);
+      const job = await this.store.get(jobId);
       if (job === null || !job.enabled || !job.recurring) return;
       await this.rearmAfterMiss(job);
     } catch (err) {
       this.log.error(
-        { dispatcher_id: this.dispatcherId, job_id: jobId, err: errInfo(err) },
+        { owner_id: this.ownerId, job_id: jobId, err: errInfo(err) },
         'cron job re-arm after dispatch error failed',
       );
     }
@@ -271,17 +275,15 @@ export class SchedulerService {
     this.heldFires.set(job.id, token);
     const runtime = this.opts.getRuntime();
     if (runtime === null) {
-      // No runtime only happens in a degraded state — a dispatcher whose
-      // doStart failed (serve catches and continues) or a disabled one; a
-      // healthy daemon starts every dispatcher, and an agent firing its own
-      // cron MCP is by definition running. Both timer and manual fires record
-      // 'missed' here BY DESIGN: we do NOT lazy-start the agent to fire a cron,
-      // which would half-wire-resurrect a failed dispatcher outside the doStart
-      // transaction (no channels, no restart-notice). 'missed' is the honest,
-      // safe answer for a broken/disabled dispatcher.
-      this.heldFires.delete(job.id);
-      await this.armMissed(job, 'runtime unavailable');
-      return 'missed';
+      if (this.opts.absentRuntimeStrategy === 'miss') {
+        // Dispatcher-owned scheduler: a missing runtime means the start
+        // transaction failed or was torn down; do not resurrect it outside
+        // doStart().
+        this.heldFires.delete(job.id);
+        await this.armMissed(job, 'runtime unavailable');
+        return 'missed';
+      }
+      return this.submitHeld(job, token);
     }
     const idle = runtime.waitIdle?.() ?? Promise.resolve();
     let maxDeferTimer: NodeJS.Timeout | null = null;
@@ -317,11 +319,15 @@ export class SchedulerService {
       return 'missed';
     }
 
+    return this.submitHeld(job, token);
+  }
+
+  private async submitHeld(job: CronJob, token: symbol): Promise<string> {
     // Keep the held token across the submit so a stop() (which clears heldFires)
-    // aborts this in-flight fire instead of submitting into a stopping
-    // dispatcher; release the hold in `finally` only if it is still ours.
+    // aborts this in-flight fire instead of submitting into a stopping owner;
+    // release the hold in `finally` only if it is still ours.
     try {
-      const current = await this.store.get(this.dispatcherId, job.id);
+      const current = await this.store.get(job.id);
       if (current === null || !current.enabled) return 'skipped';
       if (this.heldFires.get(job.id) !== token) return 'skipped';
       const result = await this.opts.submitScheduled({
@@ -338,14 +344,13 @@ export class SchedulerService {
         : null;
       const enabled = current.recurring;
       const updated = await this.store.setFired({
-        dispatcherId: this.dispatcherId,
         id: current.id,
         firedAt,
         nextRunAt,
         enabled,
       });
       this.log.info(
-        { dispatcher_id: this.dispatcherId, job_id: current.id, fired_at: firedAt },
+        { owner_id: this.ownerId, job_id: current.id, fired_at: firedAt },
         'cron job fired',
       );
       if (updated !== null) this.arm(updated);
@@ -357,14 +362,14 @@ export class SchedulerService {
 
   private async armMissed(job: CronJob, reason: string): Promise<void> {
     this.log.warn(
-      { dispatcher_id: this.dispatcherId, job_id: job.id, reason },
+      { owner_id: this.ownerId, job_id: job.id, reason },
       'cron job fire missed',
     );
     try {
       await this.rearmAfterMiss(job);
     } catch (err) {
       this.log.error(
-        { dispatcher_id: this.dispatcherId, job_id: job.id, err: errInfo(err) },
+        { owner_id: this.ownerId, job_id: job.id, err: errInfo(err) },
         'cron job missed rearm failed',
       );
     }
@@ -377,7 +382,7 @@ export class SchedulerService {
           nextRunAt: nextRunAfter(job.cron, job.tz, this.now()),
         }
       : { id: job.id, enabled: false, nextRunAt: null };
-    const updated = await this.store.update(this.dispatcherId, update);
+    const updated = await this.store.update(update);
     this.arm(updated);
   }
 
@@ -446,7 +451,7 @@ export class SchedulerService {
   }
 
   private async mustJob(id: string): Promise<CronJob> {
-    const job = await this.store.get(this.dispatcherId, id);
+    const job = await this.store.get(id);
     if (job === null) throw new Error(`cron job '${id}' does not exist`);
     return job;
   }
@@ -518,7 +523,7 @@ function assertMinimumInterval(
   const runs = cronFor(pattern, tz).nextRuns(2, new Date());
   if (runs.length < 2) return;
   const gap = runs[1]!.getTime() - runs[0]!.getTime();
-  if (gap < MIN_INTERVAL_MS) {
+  if (gap < MIN_CRON_INTERVAL_MS) {
     throw new Error('cron interval must be at least one minute');
   }
 }
