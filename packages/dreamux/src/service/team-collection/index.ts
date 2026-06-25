@@ -5,33 +5,21 @@ import type {
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
 
-import {
-  DISABLE_FEATURE_CRON,
-  type AgentRuntimeProviderCatalog,
-} from '../../agent-runtime/index.js';
-import { cronMcpServerDescriptor } from '../scheduler/mcp-config.js';
-import { teammateMcpServerDescriptor } from '../teammate-collection/mcp-config.js';
+import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 import { dispatcherWorkspace } from '../worktree/workspaces.js';
-import { TeammateCollection } from '../teammate-collection/index.js';
 import type { TeamMateIdentityStore } from '../teammate-collection/identity-store.js';
 import type { TeamMateTurnsStore } from '../teammate-collection/turns-store.js';
 import type {
   CompletionInitiator,
   CompletionRouter,
 } from '../completion-router/index.js';
-import type { TeammateService } from '../teammate-service/index.js';
 import { requireLifecycleText } from '../teammate-collection/types.js';
-import type {
-  TeamMateIdentity,
-  TeamMateLaunchPolicy,
-} from '../teammate-collection/types.js';
+import type { TeamMateIdentity } from '../teammate-collection/types.js';
 import type { ChannelBindingStore } from '../channel-binding/store.js';
 import type { ChannelBinding } from '../channel-binding/store.js';
-import { SchedulerService } from '../scheduler/service.js';
-import { CronJobStore } from '../scheduler/store.js';
-import { dispatcherTeamCronJobsPath } from '../../platform/paths.js';
+import type { SchedulerService } from '../scheduler/service.js';
 import { TeamStore } from './store.js';
 import type {
   TeamChannelBindingSummary,
@@ -48,9 +36,8 @@ import { validateTeamId } from './types.js';
 import type { TeamMateIdentityStatus } from '../teammate-collection/types.js';
 import {
   activeGroupBindingFor,
-  teamView,
   TeamService,
-  type TeamServiceOptions,
+  type TeamServiceDeps,
 } from '../team-service/index.js';
 
 export interface TeamCollectionOptions {
@@ -151,58 +138,27 @@ export class TeamCollection {
               cleanup: 'keep',
             },
           });
-    // The team's own collection allocates the (dispatcher-global) leader name
-    // and creates the leader (issue #233).
-    const teammates = this.buildTeammates(teamId);
-    const leaderName = await teammates.allocateLeaderName();
-    let team =
-      existing ??
-      (await this.store.create({
-        dispatcher_id: this.dispatcherId,
-        team_id: teamId,
+    const { service, leaderResult } = await TeamService.createNew(
+      { ...this.depsBase(), evict: () => this.cache.delete(teamId) },
+      {
+        teamId,
         name: input.name,
-        repo_cwd: workspace.sourceCwd,
-        source_repo: workspace.sourceRepo,
-        leader_name: leaderName,
-        leader_agent_runtime: input.leaderAgentRuntime,
-        runtime_cwd: workspace.runtimeCwd,
-        worktree: workspace.worktree,
-        status: 'starting',
+        ...(input.prompt !== undefined ? { prompt: input.prompt } : {}),
+        leaderAgentRuntime: input.leaderAgentRuntime,
         intent: input.intent,
-        closed_at: null,
-        close_note: null,
-      }));
-    team = await this.store.update(team, {
-      status: 'starting',
-      closedAt: null,
-      closeNote: null,
-      worktree: workspace.worktree,
-      intent: input.intent,
-      leaderName,
-    });
-    const { leader, result } = await teammates.createTeamLeader({
-      name: leaderName,
-      ...(input.prompt !== undefined ? { prompt: input.prompt } : {}),
-      agentRuntime: input.leaderAgentRuntime,
-      sourceCwd: workspace.sourceCwd,
-      sourceRepo: workspace.sourceRepo,
-      runtimeCwd: workspace.runtimeCwd,
-      worktree: workspace.worktree,
-      intent: input.intent,
-    });
-    team = await this.store.update(team, { status: 'running' });
+        workspace,
+        existing,
+      },
+    );
     // Cache the live service so later `get`s reuse this leader + collection and
     // record mutations route through it (issue #233).
-    const service = new TeamService(
-      await this.teamServiceOptions(team, teammates, leader),
-    );
     this.cache.set(teamId, service);
     return {
-      team: teamView(team),
-      leader: result.teammate,
+      team: service.view(),
+      leader: leaderResult.teammate,
       member_count: await service.memberCount(),
       binding: null,
-      turn: result.turn,
+      turn: leaderResult.turn,
     };
   }
 
@@ -273,55 +229,17 @@ export class TeamCollection {
 
   /** Rebuild a team's live service from its record and cache it (issue #233). */
   private async serviceFor(record: TeamRecord): Promise<TeamService> {
-    const teammates = this.buildTeammates(record.team_id);
-    const leader = await teammates.leader(record.leader_name);
-    const service = new TeamService(
-      await this.teamServiceOptions(record, teammates, leader),
+    const service = await TeamService.rebuild(
+      { ...this.depsBase(), evict: () => this.cache.delete(record.team_id) },
+      record,
     );
     this.cache.set(record.team_id, service);
     return service;
   }
 
-  /** The team_leader role policy, owned here because team_leader is a team
-   * concept: a leader's MCP servers (its team's teammate MCP + cron MCP + its
-   * channel-egress descriptors) plus the native features its runtime disables
-   * (cron — it drives Dreamux's cron MCP instead). A team_member gets neither.
-   * The dispatcher only injects the primitives (admin socket, channel
-   * descriptors); it does not decide what a team_leader gets. */
-  private teamMateLaunchPolicy(identity: TeamMateIdentity): TeamMateLaunchPolicy {
-    if (identity.role !== 'team_leader') {
-      return { mcpServers: [], disableFeatures: [] };
-    }
-    const teamId = identity.team_id ?? '';
+  private depsBase(): Omit<TeamServiceDeps, 'evict'> {
     return {
-      mcpServers: [
-        teammateMcpServerDescriptor({
-          dispatcherId: this.dispatcherId,
-          callerKind: 'team_leader',
-          teamId,
-          adminSocketPath: this.opts.adminSocketPath,
-        }),
-        cronMcpServerDescriptor({
-          dispatcherId: this.dispatcherId,
-          teamId: identity.team_id ?? undefined,
-          adminSocketPath: this.opts.adminSocketPath,
-        }),
-        ...this.opts.leaderChannelDescriptors({
-          teamId,
-          leaderName: identity.name,
-        }),
-      ],
-      disableFeatures: [DISABLE_FEATURE_CRON],
-    };
-  }
-
-  /** Build the team-scoped {@link TeammateCollection} the team OWNS (issue #233).
-   * Shares the dispatcher's identity + turns store pair (R4) — the stores are
-   * stateless path-derivers, so no team news its own. */
-  private buildTeammates(teamId: string): TeammateCollection {
-    return new TeammateCollection({
       dispatcherId: this.dispatcherId,
-      teamScope: teamId,
       config: this.opts.config,
       agentRuntimeProviders: this.opts.agentRuntimeProviders,
       worktrees: this.worktrees,
@@ -330,49 +248,12 @@ export class TeamCollection {
       router: this.opts.router,
       initiatorFor: this.opts.initiatorFor,
       isShuttingDown: this.opts.isShuttingDown,
-      launchPolicyForTeamMate: (input) => this.teamMateLaunchPolicy(input.identity),
-      log: this.opts.log,
-    });
-  }
-
-  private async teamServiceOptions(
-    record: TeamRecord,
-    teammates: TeammateCollection,
-    leader: TeammateService,
-  ): Promise<TeamServiceOptions> {
-    // The scheduler is owned by the TeamService it is built with: its closures
-    // fire against that service's own leader, so it is created and evicted with
-    // the service (no separate registry). A closed team gets an unstarted one
-    // only to satisfy the field; dissolve()/stopSchedulers() stop it.
-    const scheduler = this.buildScheduler(record.team_id, leader);
-    if (record.status !== 'closed') await scheduler.start();
-    return {
-      record,
-      leader,
-      scheduler,
       store: this.store,
       bindings: this.bindings,
-      worktrees: this.worktrees,
-      teammates,
-      evict: () => this.cache.delete(record.team_id),
-    };
-  }
-
-  private buildScheduler(
-    teamId: string,
-    leader: TeammateService,
-  ): SchedulerService {
-    return new SchedulerService({
-      ownerId: `${this.dispatcherId}/team/${teamId}`,
-      store: new CronJobStore({
-        cronJobsPath: dispatcherTeamCronJobsPath(this.dispatcherId, teamId),
-        dispatcherId: this.dispatcherId,
-      }),
-      absentRuntimeStrategy: 'submit',
-      getRuntime: () => leader.getRuntime() ?? null,
-      submitScheduled: (input) => leader.scheduledInput(input),
+      adminSocketPath: this.opts.adminSocketPath,
+      leaderChannelDescriptors: this.opts.leaderChannelDescriptors,
       log: this.opts.log,
-    });
+    };
   }
 
   private async listRow(team: TeamRecord): Promise<TeamListRow> {
