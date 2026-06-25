@@ -474,6 +474,11 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
   it('threads agents[].config.remote_control into the resident session spec', async () => {
     const fleet = fakeFleet();
     const logs: string[] = [];
+    // Pino-shaped fields-first: the message is the 2nd arg (or the 1st when
+    // called bare). Capture whichever carries the message string. Typed to the
+    // DreamuxLogFn overloads (fields+optional-message, or bare message).
+    const pushLog = (fields: Record<string, unknown> | string, msg?: string): void =>
+      void logs.push(typeof fields === 'string' ? fields : (msg ?? ''));
     const dispatcher = claudeDispatcher('flow', { remote_control: true });
     const store = new DispatcherStore(testDreamuxConfig([dispatcher]));
     const row = store.get('flow');
@@ -488,18 +493,11 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       state: store,
       paths: dispatcherHostPaths,
       logger: {
-        // Pino-shaped fields-first: the message is the 2nd arg (or the 1st when
-        // called bare). Capture whichever carries the message string.
-        error: (fields, msg) =>
-          void logs.push(typeof fields === 'string' ? fields : (msg ?? '')),
-        warn: (fields, msg) =>
-          void logs.push(typeof fields === 'string' ? fields : (msg ?? '')),
-        info: (fields, msg) =>
-          void logs.push(typeof fields === 'string' ? fields : (msg ?? '')),
-        debug: (fields, msg) =>
-          void logs.push(typeof fields === 'string' ? fields : (msg ?? '')),
-        trace: (fields, msg) =>
-          void logs.push(typeof fields === 'string' ? fields : (msg ?? '')),
+        error: pushLog,
+        warn: pushLog,
+        info: pushLog,
+        debug: pushLog,
+        trace: pushLog,
       },
     });
     await runtime.start();
