@@ -22,6 +22,8 @@ import type {
 } from '../src/provider-diagnostics.js';
 import {
   defaultDispatcherCwd,
+  dispatcherTeamCronJobsPath,
+  dispatcherTeamRecordPath,
   resetRuntimeConfig,
   stateRoot,
 } from '../src/platform/paths.js';
@@ -275,6 +277,35 @@ describe('dreamux doctor command', () => {
     });
 
     expect(JSON.stringify(result)).not.toContain('secret-test');
+  });
+
+  it('preflights non-closed Team cron stores', async () => {
+    const runner = new FakeRunner();
+    writeConfig();
+    writeDispatcherHome({ auth: true });
+    writeTeamRecord('flow', 'alpha', 'running');
+    const cronPath = dispatcherTeamCronJobsPath('flow', 'alpha');
+    mkdirSync(dirname(cronPath), { recursive: true });
+    writeFileSync(cronPath, JSON.stringify({ version: 99, jobs: [] }), {
+      mode: 0o600,
+    });
+
+    const result = await runDreamuxDoctor({
+      runner,
+      platform: 'linux',
+      homeDir: join(root, 'home'),
+      env: {},
+    });
+
+    expect(result.ok).toBe(false);
+    expect(
+      result.checks.find(
+        (check) => check.name === 'dispatcher flow team alpha cron jobs',
+      ),
+    ).toMatchObject({
+      ok: false,
+      detail: expect.stringContaining('not version 1'),
+    });
   });
 
   it('checks a Claude Code runtime without requiring Codex home state', async () => {
@@ -849,6 +880,27 @@ describe('dreamux doctor command', () => {
           ],
         }),
       ),
+      { mode: 0o600 },
+    );
+  }
+
+  function writeTeamRecord(
+    dispatcherId: string,
+    teamId: string,
+    status: 'starting' | 'running' | 'closed',
+  ): void {
+    const path = dispatcherTeamRecordPath(dispatcherId, teamId);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(
+      path,
+      JSON.stringify({
+        version: 1,
+        dispatcher_id: dispatcherId,
+        team_id: teamId,
+        name: teamId,
+        leader_name: `tl-${teamId}`,
+        status,
+      }),
       { mode: 0o600 },
     );
   }

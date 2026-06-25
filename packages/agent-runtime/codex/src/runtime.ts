@@ -178,6 +178,11 @@ export class CodexRuntime implements AgentRuntime {
     return result;
   }
 
+  private async submitSystemInput(text: string): Promise<AgentRuntimeTurnResult> {
+    if (this.turnManager === null) return { status: 'stopped' };
+    return this.turnManager.submitSystemInput(text);
+  }
+
     async start(): Promise<void> {
     this.stopping = false;
     this.restarting = false;
@@ -346,7 +351,14 @@ export class CodexRuntime implements AgentRuntime {
   }
 
     async systemInput(notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult> {
-    return this.submitRestartNotice(notice.text);
+    if (notice.reason === 'restart-notice') {
+      return this.submitRestartNotice(notice.text);
+    }
+    return this.submitSystemInput(notice.text);
+  }
+
+  waitIdle(): Promise<void> {
+    return this.turnManager?.waitIdle() ?? Promise.resolve();
   }
 
     async completionInput(

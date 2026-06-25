@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Implement the optional waitIdle activity hook for the Codex runtime and route scheduled/runtime-control system input through normal turn/start while preserving restart-notice skip behavior.",
+      "type": "minor",
+      "packageName": "@excitedjs/agent-runtime-codex"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-codex",
+  "email": "053700@gmail.com"
+}

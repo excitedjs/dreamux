@@ -23,6 +23,8 @@ import {
 } from '../provider-diagnostics.js';
 import { pathExists } from '../platform/fs-errors.js';
 import {
+  dispatcherCronJobsPath,
+  dispatcherTeamCronJobsPath,
   setRuntimeConfig,
   stateRoot,
 } from '../platform/paths.js';
@@ -32,6 +34,8 @@ import {
   legacyDispatcherStateMessage,
 } from '../service/legacy-state.js';
 import { detectLegacyChannelBindingStore } from '../service/channel-binding/store.js';
+import { detectLegacyCronJobStore } from '../service/scheduler/store.js';
+import { TeamStore } from '../service/team-collection/store.js';
 import { ExecaCommandRunner } from '../onboard/commands.js';
 import {
   defaultServiceNodeProbe,
@@ -155,6 +159,27 @@ export async function runDreamuxDoctor(
       ok: bindingLegacy === null,
       detail: bindingLegacy ?? 'channel binding store is current (v2) or absent',
     });
+    const cronLegacy = await detectLegacyCronJobStore(
+      dispatcherCronJobsPath(dispatcher.id),
+      dispatcher.id,
+    );
+    checks.push({
+      name: `dispatcher ${dispatcher.id} cron jobs`,
+      ok: cronLegacy === null,
+      detail: cronLegacy ?? 'cron job store is current (v1) or absent',
+    });
+    for (const team of await new TeamStore().list(dispatcher.id)) {
+      if (team.status === 'closed') continue;
+      const teamCronLegacy = await detectLegacyCronJobStore(
+        dispatcherTeamCronJobsPath(dispatcher.id, team.team_id),
+        dispatcher.id,
+      );
+      checks.push({
+        name: `dispatcher ${dispatcher.id} team ${team.team_id} cron jobs`,
+        ok: teamCronLegacy === null,
+        detail: teamCronLegacy ?? 'cron job store is current (v1) or absent',
+      });
+    }
   }
 
   const service = await getServiceStatus({

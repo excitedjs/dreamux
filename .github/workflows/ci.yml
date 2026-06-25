@@ -183,6 +183,12 @@ jobs:
         run: node common/scripts/install-run-rush.js smoke-built-cli
       - name: rush typecheck
         run: node common/scripts/install-run-rush.js typecheck
+      # Test-aware typecheck (tsconfig.tests.json = src + tests). `rush build`
+      # uses the src-only tsconfig and `rush test` runs vitest via esbuild (no
+      # typecheck), so a test-only type error — e.g. a renamed/required option a
+      # test still passes the old way — surfaces nowhere else.
+      - name: rush typecheck tests
+        run: node common/scripts/install-run-rush.js typecheck:tests
       # Enforce the issue #85 synchronous-blocking-IO ban (n/no-sync + import /
       # syntax backstops, shared via @excitedjs/eslint-config). src/** is a hard
       # error on any *Sync IO; tests/** is audited via reasoned disables.

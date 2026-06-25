@@ -7,6 +7,7 @@ import type {
 
 import {
   bundledSkillSourcesForRole,
+  DISABLE_FEATURE_CRON,
   dispatcherHostPaths,
   type AgentRuntimeProviderCatalog,
 } from '../../agent-runtime/index.js';
@@ -172,6 +173,7 @@ function buildDispatcherLaunch(deps: DispatcherAgentDeps): RuntimeLaunchSpec {
       systemPromptContent,
       mcpServers,
       skillSources: bundledSkillSourcesForRole('dispatcher'),
+      disableFeatures: [DISABLE_FEATURE_CRON],
       state: deps.dispatchers,
       paths: dispatcherHostPaths,
       logger: deps.log,

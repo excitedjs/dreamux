@@ -5,7 +5,12 @@ import type {
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
 
-import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
+import {
+  DISABLE_FEATURE_CRON,
+  type AgentRuntimeProviderCatalog,
+} from '../../agent-runtime/index.js';
+import { cronMcpServerDescriptor } from '../scheduler/mcp-config.js';
+import { teammateMcpServerDescriptor } from '../teammate-collection/mcp-config.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 import { dispatcherWorkspace } from '../worktree/workspaces.js';
@@ -18,9 +23,15 @@ import type {
 } from '../completion-router/index.js';
 import type { TeammateService } from '../teammate-service/index.js';
 import { requireLifecycleText } from '../teammate-collection/types.js';
-import type { TeamMateIdentity } from '../teammate-collection/types.js';
+import type {
+  TeamMateIdentity,
+  TeamMateLaunchPolicy,
+} from '../teammate-collection/types.js';
 import type { ChannelBindingStore } from '../channel-binding/store.js';
 import type { ChannelBinding } from '../channel-binding/store.js';
+import { SchedulerService } from '../scheduler/service.js';
+import { CronJobStore } from '../scheduler/store.js';
+import { dispatcherTeamCronJobsPath } from '../../platform/paths.js';
 import { TeamStore } from './store.js';
 import type {
   TeamChannelBindingSummary,
@@ -66,10 +77,15 @@ export interface TeamCollectionOptions {
     producer: TeamMateIdentity,
   ) => Promise<CompletionInitiator | null>;
   isShuttingDown: () => boolean;
-  mcpServersForTeamMate: (input: {
-    dispatcherId: string;
-    name: string;
-    identity: TeamMateIdentity;
+  adminSocketPath: string;
+  /**
+   * Build a team_leader's channel-egress MCP descriptors from the dispatcher's
+   * live channels. Channels are dispatcher-owned, so the team layer only asks
+   * for its own leader's set — it never reaches into the channel layer itself.
+   */
+  leaderChannelDescriptors: (input: {
+    teamId: string;
+    leaderName: string;
   }) => readonly AgentRuntimeMcpServer[];
   log: DreamuxLogger;
 }
@@ -178,7 +194,7 @@ export class TeamCollection {
     // Cache the live service so later `get`s reuse this leader + collection and
     // record mutations route through it (issue #233).
     const service = new TeamService(
-      this.teamServiceOptions(team, teammates, leader),
+      await this.teamServiceOptions(team, teammates, leader),
     );
     this.cache.set(teamId, service);
     return {
@@ -260,10 +276,43 @@ export class TeamCollection {
     const teammates = this.buildTeammates(record.team_id);
     const leader = await teammates.leader(record.leader_name);
     const service = new TeamService(
-      this.teamServiceOptions(record, teammates, leader),
+      await this.teamServiceOptions(record, teammates, leader),
     );
     this.cache.set(record.team_id, service);
     return service;
+  }
+
+  /** The team_leader role policy, owned here because team_leader is a team
+   * concept: a leader's MCP servers (its team's teammate MCP + cron MCP + its
+   * channel-egress descriptors) plus the native features its runtime disables
+   * (cron — it drives Dreamux's cron MCP instead). A team_member gets neither.
+   * The dispatcher only injects the primitives (admin socket, channel
+   * descriptors); it does not decide what a team_leader gets. */
+  private teamMateLaunchPolicy(identity: TeamMateIdentity): TeamMateLaunchPolicy {
+    if (identity.role !== 'team_leader') {
+      return { mcpServers: [], disableFeatures: [] };
+    }
+    const teamId = identity.team_id ?? '';
+    return {
+      mcpServers: [
+        teammateMcpServerDescriptor({
+          dispatcherId: this.dispatcherId,
+          callerKind: 'team_leader',
+          teamId,
+          adminSocketPath: this.opts.adminSocketPath,
+        }),
+        cronMcpServerDescriptor({
+          dispatcherId: this.dispatcherId,
+          teamId: identity.team_id ?? undefined,
+          adminSocketPath: this.opts.adminSocketPath,
+        }),
+        ...this.opts.leaderChannelDescriptors({
+          teamId,
+          leaderName: identity.name,
+        }),
+      ],
+      disableFeatures: [DISABLE_FEATURE_CRON],
+    };
   }
 
   /** Build the team-scoped {@link TeammateCollection} the team OWNS (issue #233).
@@ -281,25 +330,49 @@ export class TeamCollection {
       router: this.opts.router,
       initiatorFor: this.opts.initiatorFor,
       isShuttingDown: this.opts.isShuttingDown,
-      mcpServersForTeamMate: this.opts.mcpServersForTeamMate,
+      launchPolicyForTeamMate: (input) => this.teamMateLaunchPolicy(input.identity),
       log: this.opts.log,
     });
   }
 
-  private teamServiceOptions(
+  private async teamServiceOptions(
     record: TeamRecord,
     teammates: TeammateCollection,
     leader: TeammateService,
-  ): TeamServiceOptions {
+  ): Promise<TeamServiceOptions> {
+    // The scheduler is owned by the TeamService it is built with: its closures
+    // fire against that service's own leader, so it is created and evicted with
+    // the service (no separate registry). A closed team gets an unstarted one
+    // only to satisfy the field; dissolve()/stopSchedulers() stop it.
+    const scheduler = this.buildScheduler(record.team_id, leader);
+    if (record.status !== 'closed') await scheduler.start();
     return {
       record,
       leader,
+      scheduler,
       store: this.store,
       bindings: this.bindings,
       worktrees: this.worktrees,
       teammates,
       evict: () => this.cache.delete(record.team_id),
     };
+  }
+
+  private buildScheduler(
+    teamId: string,
+    leader: TeammateService,
+  ): SchedulerService {
+    return new SchedulerService({
+      ownerId: `${this.dispatcherId}/team/${teamId}`,
+      store: new CronJobStore({
+        cronJobsPath: dispatcherTeamCronJobsPath(this.dispatcherId, teamId),
+        dispatcherId: this.dispatcherId,
+      }),
+      absentRuntimeStrategy: 'submit',
+      getRuntime: () => leader.getRuntime() ?? null,
+      submitScheduled: (input) => leader.scheduledInput(input),
+      log: this.opts.log,
+    });
   }
 
   private async listRow(team: TeamRecord): Promise<TeamListRow> {
@@ -375,9 +448,41 @@ export class TeamCollection {
   private async mustTeam(teamId: string): Promise<TeamRecord> {
     const team = await this.store.get(this.dispatcherId, validateTeamId(teamId));
     if (team === null) {
-      throw new Error(`Team ${JSON.stringify(teamId)} does not exist`);
+      throw new TeamUnavailableError(`Team ${JSON.stringify(teamId)} does not exist`);
     }
     return team;
+  }
+
+  private async mustOpenTeam(teamId: string): Promise<TeamRecord> {
+    const team = await this.mustTeam(teamId);
+    if (team.status === 'closed') {
+      throw new TeamUnavailableError(`Team ${JSON.stringify(teamId)} is closed`);
+    }
+    return team;
+  }
+
+  async scheduler(teamId: string): Promise<SchedulerService> {
+    await this.mustOpenTeam(teamId);
+    return (await this.get(teamId)).scheduler;
+  }
+
+  async startSchedulers(): Promise<void> {
+    const teams = await this.store.list(this.dispatcherId);
+    for (const team of teams) {
+      if (team.status === 'closed') continue;
+      try {
+        await this.serviceFor(team);
+      } catch (err) {
+        this.opts.log.error(
+          { dispatcher_id: this.dispatcherId, team_id: team.team_id, err: errInfo(err) },
+          'TeamLeader scheduler start failed',
+        );
+      }
+    }
+  }
+
+  stopSchedulers(): void {
+    for (const service of this.cache.values()) service.scheduler.stop();
   }
 
   /**
@@ -389,6 +494,13 @@ export class TeamCollection {
     for (const service of this.cache.values()) {
       await service.stopAll();
     }
+  }
+}
+
+export class TeamUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TeamUnavailableError';
   }
 }
 
@@ -466,4 +578,11 @@ function decodeTeamCursor(cursor: string): number {
 function previewTeamText(text: string): string {
   const collapsed = text.replace(/\s+/g, ' ').trim();
   return collapsed.length <= 500 ? collapsed : `${collapsed.slice(0, 497)}...`;
+}
+
+function errInfo(err: unknown): Record<string, unknown> {
+  if (err instanceof Error) {
+    return { type: err.name, message: err.message, stack: err.stack };
+  }
+  return { value: String(err) };
 }

@@ -29,6 +29,17 @@ import type { DispatcherClaudeCodeConfig } from './config.js';
  */
 export const CLAUDE_SKILLS_PARENT_LAYOUT = 'claude-skills-parent';
 
+/**
+ * Neutral host feature names → the Claude Code native tools they disable. Every
+ * requested feature's tools are merged into a single `--disallowedTools` flag
+ * (it takes a comma list, so emit it once); unknown feature names map to no
+ * tools and are ignored.
+ */
+const CLAUDE_DISALLOWED_TOOLS_BY_FEATURE: Record<string, readonly string[]> = {
+  cron: ['CronCreate', 'CronDelete', 'CronList'],
+  userInterrupt: ['AskUserQuestion'],
+};
+
 export interface ClaudeCodeResidentArgsInput {
   config: DispatcherClaudeCodeConfig;
   /** Path to the generated Claude Code MCP config document. */
@@ -49,6 +60,11 @@ export interface ClaudeCodeResidentArgsInput {
    * discovers their `.claude/skills`. Omitted/empty for launches with none.
    */
   skillSources?: readonly AgentRuntimeSkillSource[];
+  /**
+   * Neutral feature names the host asked this runtime to disable. This package
+   * maps only the names Claude Code understands and ignores the rest.
+   */
+  disableFeatures?: readonly string[];
 }
 
 /**
@@ -99,6 +115,12 @@ export function claudeCodeResidentArgs(input: ClaudeCodeResidentArgsInput): stri
   // `.claude/skills`. Present on every (re)spawn — start and resume both rebuild
   // these args — so skills survive a crash-respawn (issue #209 slice 6).
   args.push(...claudeCodeSkillAddDirArgs(input.skillSources));
+  const disallowedTools = (input.disableFeatures ?? []).flatMap(
+    (feature) => CLAUDE_DISALLOWED_TOOLS_BY_FEATURE[feature] ?? [],
+  );
+  if (disallowedTools.length > 0) {
+    args.push('--disallowedTools', disallowedTools.join(','));
+  }
   if (input.config.permission_mode !== null) {
     args.push('--permission-mode', input.config.permission_mode);
   }

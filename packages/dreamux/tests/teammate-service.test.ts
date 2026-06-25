@@ -37,6 +37,7 @@ const CAPABILITIES: AgentRuntimeCapabilities = {
 class FakeRuntime implements AgentRuntime {
   readonly providerRef = FAKE_RUNTIME_REF;
   readonly submitted: InboundTurnInput[] = [];
+  readonly systemSubmitted: AgentRuntimeSystemInput[] = [];
   private status: AgentRuntimeStatus = 'declared';
 
   async start(): Promise<void> {
@@ -56,8 +57,9 @@ class FakeRuntime implements AgentRuntime {
     return { status: 'submitted', turnId: `turn-${this.submitted.length}` };
   }
 
-  async systemInput(_notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult> {
-    return { status: 'skipped' };
+  async systemInput(notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult> {
+    this.systemSubmitted.push(notice);
+    return { status: 'submitted', turnId: `system-${this.systemSubmitted.length}` };
   }
 
   getStatus(): AgentRuntimeStatus {
@@ -192,6 +194,90 @@ describe('TeammateService channel input routing', () => {
     expect(runtimes[0]!.submitted.map((input) => input.text)).toEqual([
       'initial leader prompt',
       'from bound group',
+    ]);
+  });
+
+  it('lazy-starts a cold team-scoped TeamLeader for scheduled input', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const collection = new TeammateCollection({
+      dispatcherId: 'dispatcher-a',
+      teamScope: 'alpha',
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
+      worktrees: new WorktreeManager(),
+      log: noopLog(),
+    });
+
+    const { leader } = await collection.createTeamLeader({
+      name: 'tl-alpha-0001',
+      agentRuntime: 'agent-a',
+      sourceCwd: workspace,
+      sourceRepo: null,
+      runtimeCwd: workspace,
+      worktree: reuseCwd(workspace),
+      intent: 'lead alpha',
+    });
+
+    await expect(
+      leader.scheduledInput({ jobId: 'job-1', prompt: 'scheduled report' }),
+    ).resolves.toMatchObject({ status: 'submitted' });
+    expect(runtimes).toHaveLength(1);
+    expect(runtimes[0]!.systemSubmitted).toEqual([
+      { kind: 'system', text: 'scheduled report', reason: 'scheduled' },
+    ]);
+  });
+
+  it('submits scheduled input to an already-running team-scoped TeamLeader', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const collection = new TeammateCollection({
+      dispatcherId: 'dispatcher-a',
+      teamScope: 'alpha',
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
+      worktrees: new WorktreeManager(),
+      log: noopLog(),
+    });
+
+    const { leader } = await collection.createTeamLeader({
+      name: 'tl-alpha-0001',
+      prompt: 'initial leader prompt',
+      agentRuntime: 'agent-a',
+      sourceCwd: workspace,
+      sourceRepo: null,
+      runtimeCwd: workspace,
+      worktree: reuseCwd(workspace),
+      intent: 'lead alpha',
+    });
+
+    await expect(
+      leader.scheduledInput({ jobId: 'job-1', prompt: 'scheduled report' }),
+    ).resolves.toMatchObject({ status: 'submitted' });
+    expect(runtimes).toHaveLength(1);
+    expect(runtimes[0]!.submitted.map((input) => input.text)).toEqual([
+      'initial leader prompt',
+    ]);
+    expect(runtimes[0]!.systemSubmitted.map((input) => input.text)).toEqual([
+      'scheduled report',
     ]);
   });
 });

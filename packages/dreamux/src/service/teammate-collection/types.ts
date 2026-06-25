@@ -1,5 +1,21 @@
-import type { AgentRuntimeCapabilities } from "@excitedjs/dreamux-types";
+import type {
+  AgentRuntimeCapabilities,
+  AgentRuntimeMcpServer,
+} from "@excitedjs/dreamux-types";
 import type { DispatcherStatus } from "../../state/dispatcher-store.js";
+
+/**
+ * The per-teammate launch additions supplied by role/identity (issue #233): the
+ * MCP servers a teammate gets plus the neutral host features its runtime should
+ * disable. The decision is owned by the layer that owns the role — the team
+ * layer (`TeamCollection`) builds the team_leader policy (its cron MCP + native
+ * cron disabled); ordinary teammates get none. The generic `TeammateService`
+ * only consumes the result, never branches on role itself.
+ */
+export interface TeamMateLaunchPolicy {
+  mcpServers: readonly AgentRuntimeMcpServer[];
+  disableFeatures: readonly string[];
+}
 
 export const TEAMMATE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
@@ -109,7 +125,11 @@ export interface TeamMateRuntimeStatus {
   close_note: string | null;
 }
 
-export type TeamMateTurnOrigin = "channel" | "dispatcher" | "team_leader";
+export type TeamMateTurnOrigin =
+  | "channel"
+  | "dispatcher"
+  | "team_leader"
+  | { kind: "scheduled"; job_id: string };
 
 export interface SpawnTeamMateInput {
   name: string;

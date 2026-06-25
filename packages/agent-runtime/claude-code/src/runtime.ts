@@ -130,6 +130,11 @@ export interface ClaudeCodeRuntimeDeps {
    * add-dir-compatible ones become `--add-dir` flags on every (re)spawn.
    */
   skillSources?: readonly AgentRuntimeSkillSource[];
+  /**
+   * Neutral feature names the host asked this runtime to disable. Args mapping
+   * is applied on every resident (re)spawn.
+   */
+  disableFeatures?: readonly string[];
   /** Fired each time a delivered turn reaches a terminal state. */
   onTurnSettled?: (settled: TurnSettledSignal) => void;
   /** Structured logger; falls back to a minimal `console.error` sink. */
@@ -212,6 +217,9 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   private session: ClaudeCodeSession | null = null;
   private lastResult: AgentRuntimeLastResult | null = null;
   private activeChannelTurn: ActiveChannelTurn | null = null;
+  private queuedTurnCount = 0;
+  private idlePromise: Promise<void> | null = null;
+  private idleResolve: (() => void) | null = null;
 
   constructor(
     identity: AgentRuntimeIdentity,
@@ -306,12 +314,15 @@ export class ClaudeCodeRuntime implements AgentRuntime {
         this.log('warn', 'claude-code session stop errored', err);
       }
     }
+    this.queuedTurnCount = 0;
+    this.resolveIdleWaitersIfIdle();
     await this.setStatus('stopped');
   }
 
   async systemInput(notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult> {
     if (this.stopped) return { status: 'stopped' };
     const turnId = this.nextTurnId('system');
+    this.recordQueuedTurnStart();
     void this.runTurnOnQueue(notice.text, turnId).then(
       () => this.markTurnSucceeded(turnId),
       (err) => this.markTurnFailed(turnId, err),
@@ -351,6 +362,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       }
     }
     const turnId = this.nextTurnId('turn');
+    this.recordQueuedTurnStart();
     const channelTurn: ActiveChannelTurn = {
       turnId,
       pendingSteers: [],
@@ -391,11 +403,24 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       };
     }
     const turnId = `claude-teammate-${completion.id}`;
+    this.recordQueuedTurnStart();
     void this.runTurnOnQueue(text, turnId, { isSynthetic: false }).then(
       () => this.markTurnSucceeded(turnId),
       (err) => this.markTurnFailed(turnId, err),
     );
     return { status: 'accepted' };
+  }
+
+  waitIdle(): Promise<void> {
+    if (this.queuedTurnCount === 0) return Promise.resolve();
+    // All concurrent waiters share one promise for the current busy period; it
+    // is replaced with a fresh one the next time a turn is queued.
+    if (this.idlePromise === null) {
+      this.idlePromise = new Promise((resolve) => {
+        this.idleResolve = resolve;
+      });
+    }
+    return this.idlePromise;
   }
 
   /**
@@ -468,12 +493,14 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   }
 
   private async markTurnSucceeded(turnId: string): Promise<void> {
+    this.recordQueuedTurnEnd();
     this.deps.onTurnSettled?.({ turnId, status: 'completed' });
     if (this.stopped) return;
     if (this.status !== 'ready') await this.setStatus('ready');
   }
 
   private async markTurnFailed(turnId: string, err: unknown): Promise<void> {
+    this.recordQueuedTurnEnd();
     this.log('error', `claude-code turn ${turnId} failed`, err);
     // A turn that fails after stop() was requested (the resident child is being
     // torn down) is a `stopped` settlement; otherwise it is a genuine `failed`.
@@ -489,6 +516,23 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     await this.setStatus('degraded', err);
   }
 
+  private recordQueuedTurnStart(): void {
+    this.queuedTurnCount += 1;
+  }
+
+  private recordQueuedTurnEnd(): void {
+    this.queuedTurnCount = Math.max(0, this.queuedTurnCount - 1);
+    this.resolveIdleWaitersIfIdle();
+  }
+
+  private resolveIdleWaitersIfIdle(): void {
+    if (this.queuedTurnCount !== 0) return;
+    const resolve = this.idleResolve;
+    this.idlePromise = null;
+    this.idleResolve = null;
+    resolve?.();
+  }
+
   /**
    * Ensure a live resident session exists, spawning (or re-spawning after an
    * unexpected exit) as needed. Re-spawn resumes the persisted session id so the
@@ -502,6 +546,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       resumeSessionId: this.threadId,
       systemPromptContent: this.deps.systemPromptContent,
       skillSources: this.deps.skillSources,
+      disableFeatures: this.deps.disableFeatures,
     });
     const session = this.deps.sessionFactory({
       bin: this.bin,

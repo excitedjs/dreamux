@@ -131,7 +131,11 @@ export type TeamMateCompletionDeliveryResult =
 export interface AgentRuntimeSystemInput {
   kind: 'system';
   text: string;
-  reason: 'restart-notice' | 'teammate-completion' | 'runtime-control';
+  reason:
+    | 'restart-notice'
+    | 'teammate-completion'
+    | 'runtime-control'
+    | 'scheduled';
 }
 
 export interface AgentRuntimeResumeInput {
@@ -281,6 +285,12 @@ export interface AgentRuntimeCreateContext<TConfig = unknown> {
    * receive no bundled Dreamux skills (ordinary teammate/team-member).
    */
   skillSources?: readonly AgentRuntimeSkillSource[];
+  /**
+   * Neutral feature names the host asks this runtime to disable. Core emits
+   * only neutral names; each runtime maps the names it understands to its own
+   * mechanism and ignores the rest.
+   */
+  disableFeatures?: readonly string[];
   logger?: DreamuxLogger;
   paths?: AgentRuntimePathContext;
   state?: AgentRuntimeStateCallbacks;
@@ -317,6 +327,11 @@ export interface AgentRuntime {
   ): Promise<AgentRuntimeTurnResult>;
   /** Inject a system-originated notice (e.g. a restart notice). */
   systemInput(notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult>;
+  /**
+   * Resolve when no turn is in progress. Optional: runtimes that omit it are
+   * treated by core as always idle.
+   */
+  waitIdle?(): Promise<void>;
   getStatus(): AgentRuntimeStatus;
   getThreadId(): string | null;
   wasThreadResumed(): boolean;

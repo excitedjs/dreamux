@@ -366,6 +366,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       onTurnSettled?: (settled: TurnSettledSignal) => void;
       role?: AgentRuntimeRole;
       skillSources?: AgentRuntimeSkillSource[];
+      disableFeatures?: readonly string[];
     } = {},
   ): { runtime: AgentRuntime; store: DispatcherStore; fleet: FakeFleet } {
     const dispatcher = claudeDispatcher('flow');
@@ -387,6 +388,9 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       paths: dispatcherHostPaths,
       ...(opts.skillSources !== undefined
         ? { skillSources: opts.skillSources }
+        : {}),
+      ...(opts.disableFeatures !== undefined
+        ? { disableFeatures: opts.disableFeatures }
         : {}),
       ...(opts.onTurnSettled !== undefined
         ? { onTurnSettled: opts.onTurnSettled }
@@ -430,6 +434,19 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     expect(fleet.sessions[0]?.spec.args).not.toContain('--add-dir');
   });
 
+  it('forwards disableFeatures into Claude Code resident args', async () => {
+    const fleet = fakeFleet();
+    const { runtime } = makeRuntime(fleet, {
+      disableFeatures: ['userInterrupt', 'cron'],
+    });
+    await runtime.start();
+
+    const args = fleet.sessions[0]?.spec.args ?? [];
+    const i = args.indexOf('--disallowedTools');
+    expect(i).toBeGreaterThanOrEqual(0);
+    expect(args[i + 1]).toBe('AskUserQuestion,CronCreate,CronDelete,CronList');
+  });
+
   it('start() materializes the MCP config, spawns one resident session, and reports ready', async () => {
     const fleet = fakeFleet();
     const { runtime } = makeRuntime(fleet);
@@ -457,6 +474,11 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
   it('threads agents[].config.remote_control into the resident session spec', async () => {
     const fleet = fakeFleet();
     const logs: string[] = [];
+    // Pino-shaped fields-first: the message is the 2nd arg (or the 1st when
+    // called bare). Capture whichever carries the message string. Typed to the
+    // DreamuxLogFn overloads (fields+optional-message, or bare message).
+    const pushLog = (fields: Record<string, unknown> | string, msg?: string): void =>
+      void logs.push(typeof fields === 'string' ? fields : (msg ?? ''));
     const dispatcher = claudeDispatcher('flow', { remote_control: true });
     const store = new DispatcherStore(testDreamuxConfig([dispatcher]));
     const row = store.get('flow');
@@ -471,18 +493,11 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       state: store,
       paths: dispatcherHostPaths,
       logger: {
-        // Pino-shaped fields-first: the message is the 2nd arg (or the 1st when
-        // called bare). Capture whichever carries the message string.
-        error: (fields, msg) =>
-          void logs.push(typeof fields === 'string' ? fields : (msg ?? '')),
-        warn: (fields, msg) =>
-          void logs.push(typeof fields === 'string' ? fields : (msg ?? '')),
-        info: (fields, msg) =>
-          void logs.push(typeof fields === 'string' ? fields : (msg ?? '')),
-        debug: (fields, msg) =>
-          void logs.push(typeof fields === 'string' ? fields : (msg ?? '')),
-        trace: (fields, msg) =>
-          void logs.push(typeof fields === 'string' ? fields : (msg ?? '')),
+        error: pushLog,
+        warn: pushLog,
+        info: pushLog,
+        debug: pushLog,
+        trace: pushLog,
       },
     });
     await runtime.start();

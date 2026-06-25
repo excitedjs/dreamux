@@ -131,6 +131,37 @@ describe('TurnManager restart-notice injection', () => {
 });
 
 describe('TurnManager turn settlement', () => {
+  it('waitIdle treats the slot-claimed submission window as busy', async () => {
+    const client = new DelayedFakeCodexClient();
+    const manager = new TurnManager({
+      dispatcherId: 'flow',
+      getThreadId: () => 'thread-1',
+      client: client as never,
+    });
+
+    const submitted = manager.enqueue(input('msg-1', 'first'));
+    await waitFor(() => client.inputs.length === 1);
+    expect(manager.isBusy()).toBe(true);
+
+    let idle = false;
+    void manager.waitIdle().then(() => {
+      idle = true;
+    });
+    await flush();
+    expect(idle).toBe(false);
+
+    client.resolveNext('turn-1');
+    await expect(submitted).resolves.toEqual({
+      status: 'submitted',
+      turnId: 'turn-1',
+    });
+    expect(idle).toBe(false);
+
+    client.emitCompleted('thread-1', 'turn-1', 'done');
+    await waitFor(() => idle);
+    expect(manager.isBusy()).toBe(false);
+  });
+
   it('forwards the completed turn (with its turn id) on turn/completed', async () => {
     const client = new FakeCodexClient();
     const completed: CollectedTurn[] = [];

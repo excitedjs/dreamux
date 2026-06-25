@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Emit neutral disableFeatures for agent runtime launches: every agent receives userInterrupt (the model-facing ask-the-user tool, which would wedge a turn in a channel-only environment), and dispatcher and TeamLeader launches additionally receive cron so runtimes with native scheduling defer to Dreamux's role-gated cron MCP. Core emits only neutral feature names and preserves any launch-specific disabled features.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

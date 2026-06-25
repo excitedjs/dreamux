@@ -150,6 +150,9 @@ export function createClaudeCodeAgentRuntimeProvider(
         ...(context.skillSources !== undefined
           ? { skillSources: context.skillSources }
           : {}),
+        ...(context.disableFeatures !== undefined
+          ? { disableFeatures: context.disableFeatures }
+          : {}),
         ...(context.systemPromptContent !== undefined
           ? { systemPromptContent: context.systemPromptContent }
           : {}),
