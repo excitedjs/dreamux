@@ -213,7 +213,8 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   private lastResult: AgentRuntimeLastResult | null = null;
   private activeChannelTurn: ActiveChannelTurn | null = null;
   private queuedTurnCount = 0;
-  private readonly idleWaiters = new Set<() => void>();
+  private idlePromise: Promise<void> | null = null;
+  private idleResolve: (() => void) | null = null;
 
   constructor(
     identity: AgentRuntimeIdentity,
@@ -407,9 +408,14 @@ export class ClaudeCodeRuntime implements AgentRuntime {
 
   waitIdle(): Promise<void> {
     if (this.queuedTurnCount === 0) return Promise.resolve();
-    return new Promise((resolve) => {
-      this.idleWaiters.add(resolve);
-    });
+    // All concurrent waiters share one promise for the current busy period; it
+    // is replaced with a fresh one the next time a turn is queued.
+    if (this.idlePromise === null) {
+      this.idlePromise = new Promise((resolve) => {
+        this.idleResolve = resolve;
+      });
+    }
+    return this.idlePromise;
   }
 
   /**
@@ -515,10 +521,11 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   }
 
   private resolveIdleWaitersIfIdle(): void {
-    if (this.queuedTurnCount !== 0 || this.idleWaiters.size === 0) return;
-    const waiters = [...this.idleWaiters];
-    this.idleWaiters.clear();
-    for (const resolve of waiters) resolve();
+    if (this.queuedTurnCount !== 0) return;
+    const resolve = this.idleResolve;
+    this.idlePromise = null;
+    this.idleResolve = null;
+    resolve?.();
   }
 
   /**

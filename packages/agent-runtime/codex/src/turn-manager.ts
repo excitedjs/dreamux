@@ -80,7 +80,8 @@ export class TurnManager {
    * interrupted by teardown is not lost.
    */
   private readonly pendingTurnIds = new Set<string>();
-  private readonly idleWaiters = new Set<() => void>();
+  private idlePromise: Promise<void> | null = null;
+  private idleResolve: (() => void) | null = null;
   private readonly log: NonNullable<TurnManagerOptions['log']>;
   private readonly messageIdDedupeWindow: number;
 
@@ -102,9 +103,14 @@ export class TurnManager {
 
   waitIdle(): Promise<void> {
     if (!this.isBusy()) return Promise.resolve();
-    return new Promise((resolve) => {
-      this.idleWaiters.add(resolve);
-    });
+    // All concurrent waiters share one promise for the current busy period; it
+    // is replaced with a fresh one the next time the runtime goes busy.
+    if (this.idlePromise === null) {
+      this.idlePromise = new Promise((resolve) => {
+        this.idleResolve = resolve;
+      });
+    }
+    return this.idlePromise;
   }
 
   /**
@@ -419,9 +425,10 @@ export class TurnManager {
   }
 
   private resolveIdleWaitersIfIdle(): void {
-    if (this.isBusy() || this.idleWaiters.size === 0) return;
-    const waiters = [...this.idleWaiters];
-    this.idleWaiters.clear();
-    for (const resolve of waiters) resolve();
+    if (this.isBusy()) return;
+    const resolve = this.idleResolve;
+    this.idlePromise = null;
+    this.idleResolve = null;
+    resolve?.();
   }
 }
