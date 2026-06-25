@@ -36,6 +36,15 @@
       "incremental": false
     },
     {
+      "name": "typecheck:tests",
+      "commandKind": "bulk",
+      "summary": "Run each project's `npm run typecheck:tests` (tsc on tsconfig.tests.json).",
+      "description": "Bulk-runs the test-aware TypeScript typecheck (tsconfig.tests.json includes src + tests) across every package that declares a `typecheck:tests` script. Catches test-only type errors that `rush build` (src-only tsconfig) and `rush test` (vitest/esbuild, no typecheck) both miss.",
+      "enableParallelism": true,
+      "ignoreMissingScript": true,
+      "incremental": false
+    },
+    {
       "name": "lint",
       "commandKind": "bulk",
       "summary": "Run each project's `npm run lint` (eslint).",
