@@ -135,8 +135,6 @@ export class TeamService {
       router: deps.router,
       initiatorFor: deps.initiatorFor,
       isShuttingDown: deps.isShuttingDown,
-      launchPolicyForTeamMate: (input) =>
-        this.teamMateLaunchPolicy(input.identity),
       log: deps.log,
     });
     this.scheduler = new SchedulerService({
@@ -183,16 +181,19 @@ export class TeamService {
       intent: input.intent,
       leaderName,
     });
-    const { leader, result } = await service.teammateCollection.createTeamLeader({
-      name: leaderName,
-      ...(input.prompt !== undefined ? { prompt: input.prompt } : {}),
-      agentRuntime: input.leaderAgentRuntime,
-      sourceCwd: input.workspace.sourceCwd,
-      sourceRepo: input.workspace.sourceRepo,
-      runtimeCwd: input.workspace.runtimeCwd,
-      worktree: input.workspace.worktree,
-      intent: input.intent,
-    });
+    const { leader, result } = await service.teammateCollection.createTeamLeader(
+      {
+        name: leaderName,
+        ...(input.prompt !== undefined ? { prompt: input.prompt } : {}),
+        agentRuntime: input.leaderAgentRuntime,
+        sourceCwd: input.workspace.sourceCwd,
+        sourceRepo: input.workspace.sourceRepo,
+        runtimeCwd: input.workspace.runtimeCwd,
+        worktree: input.workspace.worktree,
+        intent: input.intent,
+      },
+      service.leaderLaunchPolicy(leaderName),
+    );
     service.leader_ = leader;
     team = await deps.store.update(team, { status: 'running' });
     service.record = team;
@@ -206,7 +207,10 @@ export class TeamService {
   ): Promise<TeamService> {
     const service = new TeamService(deps, record.team_id);
     service.record = record;
-    service.leader_ = await service.teammateCollection.leader(record.leader_name);
+    service.leader_ = await service.teammateCollection.leader(
+      record.leader_name,
+      service.leaderLaunchPolicy(record.leader_name),
+    );
     if (record.status !== 'closed') await service.scheduler.start();
     return service;
   }
@@ -380,33 +384,32 @@ export class TeamService {
     );
   }
 
-  /** The team_leader role policy, owned here because team_leader is a team
-   * concept: a leader's MCP servers (its team's teammate MCP + cron MCP + its
+  /** The team leader's launch policy, owned here because team_leader is a team
+   * concept: the leader's MCP servers (its team's teammate MCP + cron MCP + its
    * channel-egress descriptors) plus the native features its runtime disables
-   * (cron — it drives Dreamux's cron MCP instead). A team_member gets neither.
-   * The dispatcher only injects the primitives (admin socket, channel
-   * descriptors); it does not decide what a team_leader gets. */
-  private teamMateLaunchPolicy(identity: TeamMateIdentity): TeamMateLaunchPolicy {
-    if (identity.role !== 'team_leader') {
-      return { mcpServers: [], disableFeatures: [] };
-    }
-    const teamId = identity.team_id ?? '';
+   * (cron — it drives Dreamux's cron MCP instead). The team supplies this only
+   * where it structurally builds the leader (`createNew` → `createTeamLeader`,
+   * `rebuild` → `leader`); team members are built with no policy and get none,
+   * so nothing branches on `identity.role` to decide capability. The dispatcher
+   * only injects the primitives (admin socket, channel descriptors); it does not
+   * decide what a team_leader gets. */
+  private leaderLaunchPolicy(leaderName: string): TeamMateLaunchPolicy {
     return {
       mcpServers: [
         teammateMcpServerDescriptor({
           dispatcherId: this.deps.dispatcherId,
           callerKind: 'team_leader',
-          teamId,
+          teamId: this.id,
           adminSocketPath: this.deps.adminSocketPath,
         }),
         cronMcpServerDescriptor({
           dispatcherId: this.deps.dispatcherId,
-          teamId: identity.team_id ?? undefined,
+          teamId: this.id,
           adminSocketPath: this.deps.adminSocketPath,
         }),
         ...this.deps.leaderChannelDescriptors({
-          teamId,
-          leaderName: identity.name,
+          teamId: this.id,
+          leaderName,
         }),
       ],
       disableFeatures: [DISABLE_FEATURE_CRON],

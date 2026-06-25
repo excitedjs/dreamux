@@ -82,11 +82,6 @@ export interface TeammateServiceDeps {
    */
   worktrees?: WorktreeManager;
   log: DreamuxLogger;
-  launchPolicyForTeamMate?: (input: {
-    dispatcherId: string;
-    name: string;
-    identity: TeamMateIdentity;
-  }) => TeamMateLaunchPolicy;
   /**
    * Build the provider + create context for this entity's runtime (issue #233
    * Phase 5). Omitted for an ordinary teammate, which derives its launch from its
@@ -132,6 +127,17 @@ export class TeammateService {
     private readonly deps: TeammateServiceDeps,
     private readonly dispatcherId: string,
     private identity: TeamMateIdentity,
+    /**
+     * The role-granted launch additions (MCP servers + neutral disabled
+     * features) for THIS entity, fixed at construction (issue #233). Defaults to
+     * empty: only a team leader is built with a non-empty policy, supplied by the
+     * team layer at its construction sites. The entity never re-derives this from
+     * its `identity.role`.
+     */
+    private readonly launchPolicy: TeamMateLaunchPolicy = {
+      mcpServers: [],
+      disableFeatures: [],
+    },
   ) {
     this.state = new TeamMateRuntimeStateStore(deps.identities, identity);
   }
@@ -410,11 +416,7 @@ export class TeammateService {
     );
     const provider = this.deps.agentRuntimeProviders.resolve(agent.provider);
     const runtimeName = runtimeIdentityName(identity);
-    const launchPolicy = this.deps.launchPolicyForTeamMate?.({
-      dispatcherId: this.dispatcherId,
-      name: identity.name,
-      identity,
-    }) ?? { mcpServers: [], disableFeatures: [] };
+    const launchPolicy = this.launchPolicy;
     return {
       provider,
       checkpointId: identity.session_id,

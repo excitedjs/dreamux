@@ -185,7 +185,7 @@ describe('TeammateService channel input routing', () => {
       runtimeCwd: workspace,
       worktree: reuseCwd(workspace),
       intent: 'lead alpha',
-    });
+    }, { mcpServers: [], disableFeatures: [] });
 
     await expect(
       leader.channelInput({ sourceId: 'message-1', text: 'from bound group' }),
@@ -226,7 +226,7 @@ describe('TeammateService channel input routing', () => {
       runtimeCwd: workspace,
       worktree: reuseCwd(workspace),
       intent: 'lead alpha',
-    });
+    }, { mcpServers: [], disableFeatures: [] });
 
     await expect(
       leader.scheduledInput({ jobId: 'job-1', prompt: 'scheduled report' }),
@@ -267,7 +267,7 @@ describe('TeammateService channel input routing', () => {
       runtimeCwd: workspace,
       worktree: reuseCwd(workspace),
       intent: 'lead alpha',
-    });
+    }, { mcpServers: [], disableFeatures: [] });
 
     await expect(
       leader.scheduledInput({ jobId: 'job-1', prompt: 'scheduled report' }),
