@@ -366,6 +366,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       onTurnSettled?: (settled: TurnSettledSignal) => void;
       role?: AgentRuntimeRole;
       skillSources?: AgentRuntimeSkillSource[];
+      disableFeatures?: readonly string[];
     } = {},
   ): { runtime: AgentRuntime; store: DispatcherStore; fleet: FakeFleet } {
     const dispatcher = claudeDispatcher('flow');
@@ -387,6 +388,9 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       paths: dispatcherHostPaths,
       ...(opts.skillSources !== undefined
         ? { skillSources: opts.skillSources }
+        : {}),
+      ...(opts.disableFeatures !== undefined
+        ? { disableFeatures: opts.disableFeatures }
         : {}),
       ...(opts.onTurnSettled !== undefined
         ? { onTurnSettled: opts.onTurnSettled }
@@ -428,6 +432,19 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     });
     await runtime.start();
     expect(fleet.sessions[0]?.spec.args).not.toContain('--add-dir');
+  });
+
+  it('forwards disableFeatures into Claude Code resident args', async () => {
+    const fleet = fakeFleet();
+    const { runtime } = makeRuntime(fleet, {
+      disableFeatures: ['userInterrupt', 'cron'],
+    });
+    await runtime.start();
+
+    const args = fleet.sessions[0]?.spec.args ?? [];
+    const i = args.indexOf('--disallowedTools');
+    expect(i).toBeGreaterThanOrEqual(0);
+    expect(args[i + 1]).toBe('AskUserQuestion,CronCreate,CronDelete,CronList');
   });
 
   it('start() materializes the MCP config, spawns one resident session, and reports ready', async () => {

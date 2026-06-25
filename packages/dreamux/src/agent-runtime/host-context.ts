@@ -19,3 +19,16 @@
  * and is never routed through here.
  */
 export const HOST_INJECT_ENV: Record<string, string> = {};
+
+export const DISABLE_FEATURE_CRON = 'cron';
+
+/**
+ * Disable the runtime's model-facing "ask the user a question" capability. A
+ * Dreamux agent reaches a human only through its channel, so a tool that blocks
+ * the turn waiting for an out-of-band answer just wedges. Emitted for every
+ * agent as a core-wide rule; each runtime maps this neutral name to its own
+ * mechanism (see that runtime package). The guarantee is at the Dreamux-authored
+ * launch level; operator `extra_args` remains a raw, unpoliced escape hatch on
+ * every runtime.
+ */
+export const DISABLE_FEATURE_USER_INTERRUPT = 'userInterrupt';

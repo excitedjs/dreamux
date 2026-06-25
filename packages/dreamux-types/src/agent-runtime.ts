@@ -285,6 +285,12 @@ export interface AgentRuntimeCreateContext<TConfig = unknown> {
    * receive no bundled Dreamux skills (ordinary teammate/team-member).
    */
   skillSources?: readonly AgentRuntimeSkillSource[];
+  /**
+   * Neutral feature names the host asks this runtime to disable. Core emits
+   * only neutral names; each runtime maps the names it understands to its own
+   * mechanism and ignores the rest.
+   */
+  disableFeatures?: readonly string[];
   logger?: DreamuxLogger;
   paths?: AgentRuntimePathContext;
   state?: AgentRuntimeStateCallbacks;

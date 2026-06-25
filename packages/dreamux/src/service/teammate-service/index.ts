@@ -16,6 +16,8 @@ import type {
 
 import {
   bundledSkillSourcesForRole,
+  DISABLE_FEATURE_CRON,
+  DISABLE_FEATURE_USER_INTERRUPT,
   HOST_INJECT_ENV,
   teammateHostPaths,
 } from '../../agent-runtime/index.js';
@@ -427,6 +429,8 @@ export class TeammateService {
         config: agent.config,
         cwd: identity.cwd,
         skillSources: bundledSkillSourcesForRole(identity.role),
+        disableFeatures:
+          identity.role === 'team_leader' ? [DISABLE_FEATURE_CRON] : [],
         state: this.state,
         paths: teammateHostPaths(identity.dispatcher_id, runtimeName),
         mcpServers: [...mcpServers],
@@ -445,6 +449,13 @@ export class TeammateService {
     const runtime = launch.provider.createRuntime({
       ...launch.context,
       injectEnv: HOST_INJECT_ENV,
+      // Core-wide rule: every Dreamux agent has the model-facing "ask the user"
+      // tool disabled (it would wedge a turn waiting for an out-of-band answer).
+      // Role-specific features (e.g. cron) are already on launch.context.
+      disableFeatures: [
+        DISABLE_FEATURE_USER_INTERRUPT,
+        ...(launch.context.disableFeatures ?? []),
+      ],
       onTurnSettled: (settled: TurnSettledSignal): void => {
         if (liveRuntime === null) return;
         this.captureSettledTurn(liveRuntime, settled);

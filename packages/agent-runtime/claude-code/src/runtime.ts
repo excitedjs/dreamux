@@ -130,6 +130,11 @@ export interface ClaudeCodeRuntimeDeps {
    * add-dir-compatible ones become `--add-dir` flags on every (re)spawn.
    */
   skillSources?: readonly AgentRuntimeSkillSource[];
+  /**
+   * Neutral feature names the host asked this runtime to disable. Args mapping
+   * is applied on every resident (re)spawn.
+   */
+  disableFeatures?: readonly string[];
   /** Fired each time a delivered turn reaches a terminal state. */
   onTurnSettled?: (settled: TurnSettledSignal) => void;
   /** Structured logger; falls back to a minimal `console.error` sink. */
@@ -541,6 +546,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       resumeSessionId: this.threadId,
       systemPromptContent: this.deps.systemPromptContent,
       skillSources: this.deps.skillSources,
+      disableFeatures: this.deps.disableFeatures,
     });
     const session = this.deps.sessionFactory({
       bin: this.bin,
