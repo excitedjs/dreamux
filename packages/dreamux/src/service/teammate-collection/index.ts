@@ -1,7 +1,6 @@
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type {
   AgentRuntime,
-  AgentRuntimeMcpServer,
   CompletionEnvelope,
 } from '@excitedjs/dreamux-types';
 import type { DreamuxConfig } from '../../config/config.js';
@@ -49,6 +48,7 @@ import {
   type TeamMateHistoryResult,
   type TeamMateIdentity,
   type TeamMateLastResult,
+  type TeamMateLaunchPolicy,
   type TeamMateRecordRow,
   type TeamMateRole,
   type TeamMateRuntimeStatus,
@@ -83,11 +83,11 @@ export interface TeammateCollectionOptions {
    */
   identities?: TeamMateIdentityStore;
   turnsStore?: TeamMateTurnsStore;
-  mcpServersForTeamMate?: (input: {
+  launchPolicyForTeamMate?: (input: {
     dispatcherId: string;
     name: string;
     identity: TeamMateIdentity;
-  }) => readonly AgentRuntimeMcpServer[];
+  }) => TeamMateLaunchPolicy;
   /**
    * The dispatcher's delivery router (issue #233). Omitted in storage-only
    * contexts (no settle delivery is then routed).
@@ -553,8 +553,8 @@ export class TeammateCollection implements TeammateOps {
       turnsStore: this.turnsStore,
       worktrees: this.worktrees,
       log: this.opts.log,
-      ...(this.opts.mcpServersForTeamMate !== undefined
-        ? { mcpServersForTeamMate: this.opts.mcpServersForTeamMate }
+      ...(this.opts.launchPolicyForTeamMate !== undefined
+        ? { launchPolicyForTeamMate: this.opts.launchPolicyForTeamMate }
         : {}),
       nextSubmissionSeq: () => ++this.submissionSeq,
       trackSettleCapture: (capture) => {

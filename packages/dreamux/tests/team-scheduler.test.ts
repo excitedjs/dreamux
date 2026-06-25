@@ -8,7 +8,6 @@ import type {
   AgentRuntimeCapabilities,
   AgentRuntimeCreateContext,
   AgentRuntimeLastResult,
-  AgentRuntimeMcpServer,
   AgentRuntimeProvider,
   AgentRuntimeStatus,
   AgentRuntimeSystemInput,
@@ -27,7 +26,6 @@ import {
   TeamCollection,
   TeamUnavailableError,
 } from '../src/service/team-collection/index.js';
-import type { TeamMateIdentity } from '../src/service/teammate-collection/types.js';
 import { TeamMateIdentityStore } from '../src/service/teammate-collection/identity-store.js';
 import { TeamMateTurnsStore } from '../src/service/teammate-collection/turns-store.js';
 import { WorktreeManager } from '../src/service/worktree/manager.js';
@@ -365,11 +363,6 @@ function makeTeams(input: {
   log: DreamuxLogger;
   runtimes: FakeRuntime[];
   contexts?: AgentRuntimeCreateContext[];
-  mcpServersForTeamMate?: (input: {
-    dispatcherId: string;
-    name: string;
-    identity: TeamMateIdentity;
-  }) => readonly AgentRuntimeMcpServer[];
 }): TeamCollection {
   return new TeamCollection({
     dispatcherId: 'dispatcher-a',
@@ -385,7 +378,7 @@ function makeTeams(input: {
     router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log: input.log }),
     initiatorFor: async () => null,
     isShuttingDown: () => false,
-    mcpServersForTeamMate: input.mcpServersForTeamMate ?? (() => []),
+    launchPolicyForTeamMate: () => ({ mcpServers: [], disableFeatures: [] }),
     log: input.log,
   });
 }

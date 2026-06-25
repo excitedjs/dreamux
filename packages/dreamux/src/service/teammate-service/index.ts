@@ -3,7 +3,6 @@ import { createHash } from 'node:crypto';
 import type {
   AgentRuntime,
   AgentRuntimeCreateContext,
-  AgentRuntimeMcpServer,
   AgentRuntimeProvider,
   AgentRuntimeStateCallbacks,
   AgentRuntimeTurnResult,
@@ -16,7 +15,6 @@ import type {
 
 import {
   bundledSkillSourcesForRole,
-  DISABLE_FEATURE_CRON,
   DISABLE_FEATURE_USER_INTERRUPT,
   HOST_INJECT_ENV,
   teammateHostPaths,
@@ -44,6 +42,7 @@ import {
   type TeamMateCloseResult,
   type TeamMateIdentity,
   type TeamMateLastResult,
+  type TeamMateLaunchPolicy,
   type TeamMateRuntimeStatus,
   type TeamMateSendResult,
   type TeamMateTurnOrigin,
@@ -83,11 +82,11 @@ export interface TeammateServiceDeps {
    */
   worktrees?: WorktreeManager;
   log: DreamuxLogger;
-  mcpServersForTeamMate?: (input: {
+  launchPolicyForTeamMate?: (input: {
     dispatcherId: string;
     name: string;
     identity: TeamMateIdentity;
-  }) => readonly AgentRuntimeMcpServer[];
+  }) => TeamMateLaunchPolicy;
   /**
    * Build the provider + create context for this entity's runtime (issue #233
    * Phase 5). Omitted for an ordinary teammate, which derives its launch from its
@@ -411,12 +410,11 @@ export class TeammateService {
     );
     const provider = this.deps.agentRuntimeProviders.resolve(agent.provider);
     const runtimeName = runtimeIdentityName(identity);
-    const mcpServers =
-      this.deps.mcpServersForTeamMate?.({
-        dispatcherId: this.dispatcherId,
-        name: identity.name,
-        identity,
-      }) ?? [];
+    const launchPolicy = this.deps.launchPolicyForTeamMate?.({
+      dispatcherId: this.dispatcherId,
+      name: identity.name,
+      identity,
+    }) ?? { mcpServers: [], disableFeatures: [] };
     return {
       provider,
       checkpointId: identity.session_id,
@@ -429,11 +427,10 @@ export class TeammateService {
         config: agent.config,
         cwd: identity.cwd,
         skillSources: bundledSkillSourcesForRole(identity.role),
-        disableFeatures:
-          identity.role === 'team_leader' ? [DISABLE_FEATURE_CRON] : [],
+        disableFeatures: launchPolicy.disableFeatures,
         state: this.state,
         paths: teammateHostPaths(identity.dispatcher_id, runtimeName),
-        mcpServers: [...mcpServers],
+        mcpServers: [...launchPolicy.mcpServers],
         logger:
           this.deps.log.child?.({
             dispatcher_id: this.dispatcherId,

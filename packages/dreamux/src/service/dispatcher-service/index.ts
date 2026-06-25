@@ -11,7 +11,7 @@ import type {
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
 
-import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
+import { type AgentRuntimeProviderCatalog, DISABLE_FEATURE_CRON } from '../../agent-runtime/index.js';
 import type { ChannelProviderCatalog } from '../../channel/catalog.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
@@ -36,7 +36,7 @@ import { TeamMateTurnsStore } from '../teammate-collection/turns-store.js';
 import type { TeammateService } from '../teammate-service/index.js';
 import { WorktreeManager } from '../worktree/manager.js';
 import { ChannelBindingStore } from '../channel-binding/store.js';
-import { type TeamMateIdentity } from '../teammate-collection/types.js';
+import { type TeamMateIdentity, type TeamMateLaunchPolicy } from '../teammate-collection/types.js';
 import { type TeamChannelContext } from '../team-service/index.js';
 import { TeamCollection } from '../team-collection/index.js';
 import { SchedulerService } from '../scheduler/service.js';
@@ -161,31 +161,35 @@ export class DispatcherService implements TeamChannelContext {
       submitScheduled: (input) => this.agent.scheduledInput(input),
       log: opts.log,
     });
-    // The team_leader MCP descriptor builder. Forwarded into every per-team
-    // collection (where the leader actually lives) AND the dispatcher collection;
-    // a dispatcher-owned teammate is never a leader, so it is a no-op there
-    // (issue #233).
-    const mcpServersForTeamMate = (input: {
+    // The team_leader role policy, owned by the service (not a role-branch in the
+    // generic TeammateService): a leader's MCP servers + the native features it
+    // disables (cron — Dreamux's cron MCP replaces it). Forwarded into every
+    // collection; a dispatcher-owned teammate is never a leader, so it is a no-op
+    // there (issue #233).
+    const launchPolicyForTeamMate = (input: {
       dispatcherId: string;
       name: string;
       identity: TeamMateIdentity;
-    }): readonly AgentRuntimeMcpServer[] =>
+    }): TeamMateLaunchPolicy =>
       input.identity.role === 'team_leader'
-        ? [
-            teammateMcpServerDescriptor({
-              dispatcherId: input.dispatcherId,
-              callerKind: 'team_leader',
-              teamId: input.identity.team_id ?? '',
-              adminSocketPath: adminSocket,
-            }),
-            cronMcpServerDescriptor({ dispatcherId: input.dispatcherId, teamId: input.identity.team_id ?? undefined, adminSocketPath: adminSocket }),
-            ...this.channelMcpServerDescriptorsForCaller({
-              callerKind: 'team_leader',
-              team_id: input.identity.team_id ?? '',
-              leader_name: input.identity.name,
-            }),
-          ]
-        : [];
+        ? {
+            mcpServers: [
+              teammateMcpServerDescriptor({
+                dispatcherId: input.dispatcherId,
+                callerKind: 'team_leader',
+                teamId: input.identity.team_id ?? '',
+                adminSocketPath: adminSocket,
+              }),
+              cronMcpServerDescriptor({ dispatcherId: input.dispatcherId, teamId: input.identity.team_id ?? undefined, adminSocketPath: adminSocket }),
+              ...this.channelMcpServerDescriptorsForCaller({
+                callerKind: 'team_leader',
+                team_id: input.identity.team_id ?? '',
+                leader_name: input.identity.name,
+              }),
+            ],
+            disableFeatures: [DISABLE_FEATURE_CRON],
+          }
+        : { mcpServers: [], disableFeatures: [] };
 
     this._teammates = new TeammateCollection({
       dispatcherId: opts.id,
@@ -195,7 +199,7 @@ export class DispatcherService implements TeamChannelContext {
       worktrees,
       identities,
       turnsStore,
-      mcpServersForTeamMate,
+      launchPolicyForTeamMate,
       router: this.router,
       initiatorFor: (producer) => this.initiatorFor(producer),
       isShuttingDown: () => this.shuttingDown,
@@ -213,7 +217,7 @@ export class DispatcherService implements TeamChannelContext {
       router: this.router,
       initiatorFor: (producer) => this.initiatorFor(producer),
       isShuttingDown: () => this.shuttingDown,
-      mcpServersForTeamMate,
+      launchPolicyForTeamMate,
       log: opts.log,
     });
   }

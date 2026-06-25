@@ -1,5 +1,21 @@
-import type { AgentRuntimeCapabilities } from "@excitedjs/dreamux-types";
+import type {
+  AgentRuntimeCapabilities,
+  AgentRuntimeMcpServer,
+} from "@excitedjs/dreamux-types";
 import type { DispatcherStatus } from "../../state/dispatcher-store.js";
+
+/**
+ * The per-teammate launch additions a service supplies by role/identity (issue
+ * #233): the MCP servers a teammate gets plus the neutral host features its
+ * runtime should disable. The decision lives in the service that wires the
+ * collection (e.g. `DispatcherService` gives a team_leader the cron MCP and
+ * disables native cron); the generic `TeammateService` only consumes it, never
+ * branches on role itself.
+ */
+export interface TeamMateLaunchPolicy {
+  mcpServers: readonly AgentRuntimeMcpServer[];
+  disableFeatures: readonly string[];
+}
 
 export const TEAMMATE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 

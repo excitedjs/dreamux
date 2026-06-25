@@ -1,9 +1,6 @@
 import { Buffer } from 'node:buffer';
 
-import type {
-  AgentRuntimeMcpServer,
-  DreamuxLogger,
-} from '@excitedjs/dreamux-types';
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { DreamuxConfig } from '../../config/config.js';
@@ -18,7 +15,10 @@ import type {
 } from '../completion-router/index.js';
 import type { TeammateService } from '../teammate-service/index.js';
 import { requireLifecycleText } from '../teammate-collection/types.js';
-import type { TeamMateIdentity } from '../teammate-collection/types.js';
+import type {
+  TeamMateIdentity,
+  TeamMateLaunchPolicy,
+} from '../teammate-collection/types.js';
 import type { ChannelBindingStore } from '../channel-binding/store.js';
 import type { ChannelBinding } from '../channel-binding/store.js';
 import { SchedulerService } from '../scheduler/service.js';
@@ -69,11 +69,11 @@ export interface TeamCollectionOptions {
     producer: TeamMateIdentity,
   ) => Promise<CompletionInitiator | null>;
   isShuttingDown: () => boolean;
-  mcpServersForTeamMate: (input: {
+  launchPolicyForTeamMate: (input: {
     dispatcherId: string;
     name: string;
     identity: TeamMateIdentity;
-  }) => readonly AgentRuntimeMcpServer[];
+  }) => TeamMateLaunchPolicy;
   log: DreamuxLogger;
 }
 
@@ -100,8 +100,6 @@ export class TeamCollection {
   /** In-flight cache-miss `get`, so a cold-cache race rebuilds one TeamService
    * (one leader runtime), not two (issue #233 concurrency guard). */
   private readonly rebuilding = new Map<string, Promise<TeamService>>();
-  /** Live TeamLeader schedulers keyed by team id; schedulers are resident at boot. */
-  private readonly schedulers = new Map<string, SchedulerService>();
 
   constructor(private readonly opts: TeamCollectionOptions) {
     this.dispatcherId = opts.dispatcherId;
@@ -286,7 +284,7 @@ export class TeamCollection {
       router: this.opts.router,
       initiatorFor: this.opts.initiatorFor,
       isShuttingDown: this.opts.isShuttingDown,
-      mcpServersForTeamMate: this.opts.mcpServersForTeamMate,
+      launchPolicyForTeamMate: this.opts.launchPolicyForTeamMate,
       log: this.opts.log,
     });
   }
@@ -296,10 +294,11 @@ export class TeamCollection {
     teammates: TeammateCollection,
     leader: TeammateService,
   ): Promise<TeamServiceOptions> {
-    const scheduler =
-      record.status === 'closed'
-        ? this.buildScheduler(record.team_id)
-        : this.schedulerFor(record.team_id);
+    // The scheduler is owned by the TeamService it is built with: its closures
+    // fire against that service's own leader, so it is created and evicted with
+    // the service (no separate registry). A closed team gets an unstarted one
+    // only to satisfy the field; dissolve()/stopSchedulers() stop it.
+    const scheduler = this.buildScheduler(record.team_id, leader);
     if (record.status !== 'closed') await scheduler.start();
     return {
       record,
@@ -309,43 +308,25 @@ export class TeamCollection {
       bindings: this.bindings,
       worktrees: this.worktrees,
       teammates,
-      evict: () => {
-        this.schedulers.get(record.team_id)?.stop();
-        this.cache.delete(record.team_id);
-        this.schedulers.delete(record.team_id);
-      },
+      evict: () => this.cache.delete(record.team_id),
     };
   }
 
-  private schedulerFor(teamId: string): SchedulerService {
-    const existing = this.schedulers.get(teamId);
-    if (existing !== undefined) return existing;
-    const scheduler = this.buildScheduler(teamId);
-    this.schedulers.set(teamId, scheduler);
-    return scheduler;
-  }
-
-  private buildScheduler(teamId: string): SchedulerService {
-    const scheduler = new SchedulerService({
+  private buildScheduler(
+    teamId: string,
+    leader: TeammateService,
+  ): SchedulerService {
+    return new SchedulerService({
       ownerId: `${this.dispatcherId}/team/${teamId}`,
       store: new CronJobStore({
         cronJobsPath: dispatcherTeamCronJobsPath(this.dispatcherId, teamId),
         dispatcherId: this.dispatcherId,
       }),
       absentRuntimeStrategy: 'submit',
-      getRuntime: () => this.cache.get(teamId)?.leader.getRuntime() ?? null,
-      submitScheduled: (input) => this.leaderFor(teamId).scheduledInput(input),
+      getRuntime: () => leader.getRuntime() ?? null,
+      submitScheduled: (input) => leader.scheduledInput(input),
       log: this.opts.log,
     });
-    return scheduler;
-  }
-
-  private leaderFor(teamId: string): TeammateService {
-    const team = this.cache.get(teamId);
-    if (team === undefined) {
-      throw new Error(`Team ${JSON.stringify(teamId)} is not materialized`);
-    }
-    return team.leader;
   }
 
   private async listRow(team: TeamRecord): Promise<TeamListRow> {
@@ -455,7 +436,7 @@ export class TeamCollection {
   }
 
   stopSchedulers(): void {
-    for (const scheduler of this.schedulers.values()) scheduler.stop();
+    for (const service of this.cache.values()) service.scheduler.stop();
   }
 
   /**

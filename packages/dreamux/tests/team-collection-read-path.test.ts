@@ -178,7 +178,7 @@ describe('TeamCollection read path (issue #233 R4)', () => {
       router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
-      mcpServersForTeamMate: () => [],
+      launchPolicyForTeamMate: () => ({ mcpServers: [], disableFeatures: [] }),
       log,
     });
 
@@ -267,7 +267,7 @@ describe('TeamCollection create without a prompt fires no leader turn', () => {
       router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
-      mcpServersForTeamMate: () => [],
+      launchPolicyForTeamMate: () => ({ mcpServers: [], disableFeatures: [] }),
       log,
     });
 
@@ -363,7 +363,7 @@ describe('closing a team member must not remove the shared team worktree', () =>
       router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
-      mcpServersForTeamMate: () => [],
+      launchPolicyForTeamMate: () => ({ mcpServers: [], disableFeatures: [] }),
       log,
     });
 
@@ -458,7 +458,7 @@ describe('team dissolve syncs cleanup_state to the leader and members (#237)', (
       router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
-      mcpServersForTeamMate: () => [],
+      launchPolicyForTeamMate: () => ({ mcpServers: [], disableFeatures: [] }),
       log,
     });
 
