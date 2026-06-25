@@ -11,7 +11,7 @@ import type {
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
 
-import { type AgentRuntimeProviderCatalog, DISABLE_FEATURE_CRON } from '../../agent-runtime/index.js';
+import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { ChannelProviderCatalog } from '../../channel/catalog.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
@@ -29,19 +29,17 @@ import { assertRunnableChannelShape } from './runnable-channel.js';
 import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
 import { ChannelToolAuthorizationError } from './errors.js';
 import { CompletionRouter, type CompletionInitiator } from '../completion-router/index.js';
-import { teammateMcpServerDescriptor } from '../teammate-collection/mcp-config.js';
 import { TeammateCollection, type TeammateOps } from '../teammate-collection/index.js';
 import { TeamMateIdentityStore } from '../teammate-collection/identity-store.js';
 import { TeamMateTurnsStore } from '../teammate-collection/turns-store.js';
 import type { TeammateService } from '../teammate-service/index.js';
 import { WorktreeManager } from '../worktree/manager.js';
 import { ChannelBindingStore } from '../channel-binding/store.js';
-import { type TeamMateIdentity, type TeamMateLaunchPolicy } from '../teammate-collection/types.js';
+import { type TeamMateIdentity } from '../teammate-collection/types.js';
 import { type TeamChannelContext } from '../team-service/index.js';
 import { TeamCollection } from '../team-collection/index.js';
 import { SchedulerService } from '../scheduler/service.js';
 import { CronJobStore } from '../scheduler/store.js';
-import { cronMcpServerDescriptor } from '../scheduler/mcp-config.js';
 import type {
   TeamCreateInput,
   TeamDissolveInput,
@@ -161,36 +159,8 @@ export class DispatcherService implements TeamChannelContext {
       submitScheduled: (input) => this.agent.scheduledInput(input),
       log: opts.log,
     });
-    // The team_leader role policy, owned by the service (not a role-branch in the
-    // generic TeammateService): a leader's MCP servers + the native features it
-    // disables (cron — Dreamux's cron MCP replaces it). Forwarded into every
-    // collection; a dispatcher-owned teammate is never a leader, so it is a no-op
-    // there (issue #233).
-    const launchPolicyForTeamMate = (input: {
-      dispatcherId: string;
-      name: string;
-      identity: TeamMateIdentity;
-    }): TeamMateLaunchPolicy =>
-      input.identity.role === 'team_leader'
-        ? {
-            mcpServers: [
-              teammateMcpServerDescriptor({
-                dispatcherId: input.dispatcherId,
-                callerKind: 'team_leader',
-                teamId: input.identity.team_id ?? '',
-                adminSocketPath: adminSocket,
-              }),
-              cronMcpServerDescriptor({ dispatcherId: input.dispatcherId, teamId: input.identity.team_id ?? undefined, adminSocketPath: adminSocket }),
-              ...this.channelMcpServerDescriptorsForCaller({
-                callerKind: 'team_leader',
-                team_id: input.identity.team_id ?? '',
-                leader_name: input.identity.name,
-              }),
-            ],
-            disableFeatures: [DISABLE_FEATURE_CRON],
-          }
-        : { mcpServers: [], disableFeatures: [] };
-
+    // A dispatcher-owned teammate is never a team_leader, so it carries no
+    // launch policy (the team_leader policy is owned by the team layer).
     this._teammates = new TeammateCollection({
       dispatcherId: opts.id,
       teamScope: null,
@@ -199,13 +169,15 @@ export class DispatcherService implements TeamChannelContext {
       worktrees,
       identities,
       turnsStore,
-      launchPolicyForTeamMate,
       router: this.router,
       initiatorFor: (producer) => this.initiatorFor(producer),
       isShuttingDown: () => this.shuttingDown,
       log: opts.log,
     });
 
+    // The Team layer owns the team_leader role policy; the dispatcher only lends
+    // the primitives a leader's policy is built from — the admin socket and its
+    // channel-egress descriptors (channels are dispatcher-owned).
     this.teams = new TeamCollection({
       dispatcherId: opts.id,
       config: opts.config,
@@ -217,7 +189,13 @@ export class DispatcherService implements TeamChannelContext {
       router: this.router,
       initiatorFor: (producer) => this.initiatorFor(producer),
       isShuttingDown: () => this.shuttingDown,
-      launchPolicyForTeamMate,
+      adminSocketPath: adminSocket,
+      leaderChannelDescriptors: ({ teamId, leaderName }) =>
+        this.channelMcpServerDescriptorsForCaller({
+          callerKind: 'team_leader',
+          team_id: teamId,
+          leader_name: leaderName,
+        }),
       log: opts.log,
     });
   }

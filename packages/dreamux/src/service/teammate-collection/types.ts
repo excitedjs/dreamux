@@ -5,12 +5,12 @@ import type {
 import type { DispatcherStatus } from "../../state/dispatcher-store.js";
 
 /**
- * The per-teammate launch additions a service supplies by role/identity (issue
- * #233): the MCP servers a teammate gets plus the neutral host features its
- * runtime should disable. The decision lives in the service that wires the
- * collection (e.g. `DispatcherService` gives a team_leader the cron MCP and
- * disables native cron); the generic `TeammateService` only consumes it, never
- * branches on role itself.
+ * The per-teammate launch additions supplied by role/identity (issue #233): the
+ * MCP servers a teammate gets plus the neutral host features its runtime should
+ * disable. The decision is owned by the layer that owns the role — the team
+ * layer (`TeamCollection`) builds the team_leader policy (its cron MCP + native
+ * cron disabled); ordinary teammates get none. The generic `TeammateService`
+ * only consumes the result, never branches on role itself.
  */
 export interface TeamMateLaunchPolicy {
   mcpServers: readonly AgentRuntimeMcpServer[];

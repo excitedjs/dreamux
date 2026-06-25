@@ -378,7 +378,8 @@ function makeTeams(input: {
     router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log: input.log }),
     initiatorFor: async () => null,
     isShuttingDown: () => false,
-    launchPolicyForTeamMate: () => ({ mcpServers: [], disableFeatures: [] }),
+    adminSocketPath: '/tmp/admin.sock',
+    leaderChannelDescriptors: () => [],
     log: input.log,
   });
 }

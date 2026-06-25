@@ -1,8 +1,16 @@
 import { Buffer } from 'node:buffer';
 
-import type { DreamuxLogger } from '@excitedjs/dreamux-types';
+import type {
+  AgentRuntimeMcpServer,
+  DreamuxLogger,
+} from '@excitedjs/dreamux-types';
 
-import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
+import {
+  DISABLE_FEATURE_CRON,
+  type AgentRuntimeProviderCatalog,
+} from '../../agent-runtime/index.js';
+import { cronMcpServerDescriptor } from '../scheduler/mcp-config.js';
+import { teammateMcpServerDescriptor } from '../teammate-collection/mcp-config.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 import { dispatcherWorkspace } from '../worktree/workspaces.js';
@@ -69,11 +77,16 @@ export interface TeamCollectionOptions {
     producer: TeamMateIdentity,
   ) => Promise<CompletionInitiator | null>;
   isShuttingDown: () => boolean;
-  launchPolicyForTeamMate: (input: {
-    dispatcherId: string;
-    name: string;
-    identity: TeamMateIdentity;
-  }) => TeamMateLaunchPolicy;
+  adminSocketPath: string;
+  /**
+   * Build a team_leader's channel-egress MCP descriptors from the dispatcher's
+   * live channels. Channels are dispatcher-owned, so the team layer only asks
+   * for its own leader's set — it never reaches into the channel layer itself.
+   */
+  leaderChannelDescriptors: (input: {
+    teamId: string;
+    leaderName: string;
+  }) => readonly AgentRuntimeMcpServer[];
   log: DreamuxLogger;
 }
 
@@ -269,6 +282,39 @@ export class TeamCollection {
     return service;
   }
 
+  /** The team_leader role policy, owned here because team_leader is a team
+   * concept: a leader's MCP servers (its team's teammate MCP + cron MCP + its
+   * channel-egress descriptors) plus the native features its runtime disables
+   * (cron — it drives Dreamux's cron MCP instead). A team_member gets neither.
+   * The dispatcher only injects the primitives (admin socket, channel
+   * descriptors); it does not decide what a team_leader gets. */
+  private teamMateLaunchPolicy(identity: TeamMateIdentity): TeamMateLaunchPolicy {
+    if (identity.role !== 'team_leader') {
+      return { mcpServers: [], disableFeatures: [] };
+    }
+    const teamId = identity.team_id ?? '';
+    return {
+      mcpServers: [
+        teammateMcpServerDescriptor({
+          dispatcherId: this.dispatcherId,
+          callerKind: 'team_leader',
+          teamId,
+          adminSocketPath: this.opts.adminSocketPath,
+        }),
+        cronMcpServerDescriptor({
+          dispatcherId: this.dispatcherId,
+          teamId: identity.team_id ?? undefined,
+          adminSocketPath: this.opts.adminSocketPath,
+        }),
+        ...this.opts.leaderChannelDescriptors({
+          teamId,
+          leaderName: identity.name,
+        }),
+      ],
+      disableFeatures: [DISABLE_FEATURE_CRON],
+    };
+  }
+
   /** Build the team-scoped {@link TeammateCollection} the team OWNS (issue #233).
    * Shares the dispatcher's identity + turns store pair (R4) — the stores are
    * stateless path-derivers, so no team news its own. */
@@ -284,7 +330,7 @@ export class TeamCollection {
       router: this.opts.router,
       initiatorFor: this.opts.initiatorFor,
       isShuttingDown: this.opts.isShuttingDown,
-      launchPolicyForTeamMate: this.opts.launchPolicyForTeamMate,
+      launchPolicyForTeamMate: (input) => this.teamMateLaunchPolicy(input.identity),
       log: this.opts.log,
     });
   }
