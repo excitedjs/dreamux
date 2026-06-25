@@ -15,7 +15,7 @@ import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { ChannelProviderCatalog } from '../../channel/catalog.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
-import { adminSocketPath as defaultAdminSocketPath, dispatcherCronJobsPath } from '../../platform/paths.js';
+import { adminSocketPath as defaultAdminSocketPath } from '../../platform/paths.js';
 import type {
   DispatcherRow,
   DispatcherStatus,
@@ -38,8 +38,7 @@ import { ChannelBindingStore } from '../channel-binding/store.js';
 import { type TeamMateIdentity } from '../teammate-collection/types.js';
 import { type TeamChannelContext } from '../team-service/index.js';
 import { TeamCollection } from '../team-collection/index.js';
-import { SchedulerService } from '../scheduler/service.js';
-import { CronJobStore } from '../scheduler/store.js';
+import type { SchedulerService } from '../scheduler/service.js';
 import type {
   TeamCreateInput,
   TeamDissolveInput,
@@ -93,7 +92,6 @@ export class DispatcherService implements TeamChannelContext {
   private readonly teams: TeamCollection;
   private readonly channels: ChannelSessions;
   private readonly agent: TeammateService;
-  readonly scheduler: SchedulerService;
   private restartIntent: RestartIntentConsumer | null = null;
   private starting: Promise<void> | null = null;
   private workspaceCwd: string | null = null;
@@ -151,14 +149,6 @@ export class DispatcherService implements TeamChannelContext {
       liveChannels: () => this.channels.live(),
     });
 
-    this.scheduler = new SchedulerService({
-      ownerId: opts.id,
-      store: new CronJobStore({ cronJobsPath: dispatcherCronJobsPath(opts.id), dispatcherId: opts.id }),
-      absentRuntimeStrategy: 'miss',
-      getRuntime: () => this.agent.getRuntime(),
-      submitScheduled: (input) => this.agent.scheduledInput(input),
-      log: opts.log,
-    });
     // A dispatcher-owned teammate is never a team_leader, so it carries no
     // launch policy (the team_leader policy is owned by the team layer).
     this._teammates = new TeammateCollection({
@@ -198,6 +188,16 @@ export class DispatcherService implements TeamChannelContext {
         }),
       log: opts.log,
     });
+  }
+
+  get scheduler(): SchedulerService {
+    const scheduler = this.agent.scheduler;
+    if (scheduler === null) {
+      throw new Error(
+        `dispatcher ${JSON.stringify(this.id)} agent has no scheduler capability`,
+      );
+    }
+    return scheduler;
   }
 
   /**
@@ -270,10 +270,10 @@ export class DispatcherService implements TeamChannelContext {
         });
       }
       await this.injectRestartNoticeIfNeeded(id, runtime);
-      await this.scheduler.start();
+      await this.agent.startScheduler();
       await this.teams.startSchedulers();
     } catch (err) {
-      this.scheduler.stop();
+      this.agent.stopScheduler();
       this.teams.stopSchedulers();
       // Undo the slot adoption so a failed start never leaves a half-built slot.
       this.channels.clear();
@@ -297,7 +297,7 @@ export class DispatcherService implements TeamChannelContext {
   }
 
   async stop(): Promise<void> {
-    this.scheduler.stop();
+    this.agent.stopScheduler();
     this.teams.stopSchedulers();
     await this.channels.closeAll(this.log);
     try {

@@ -18,7 +18,7 @@ import type {
 import type { ChannelBindingStore } from '../channel-binding/store.js';
 import type { ChannelBinding } from '../channel-binding/store.js';
 import { cronMcpServerDescriptor } from '../scheduler/mcp-config.js';
-import { SchedulerService } from '../scheduler/service.js';
+import type { SchedulerService } from '../scheduler/service.js';
 import { CronJobStore } from '../scheduler/store.js';
 import {
   TeammateCollection,
@@ -36,7 +36,10 @@ import {
   type TeamMateRuntimeStatus,
   type TeamMateTurnResult,
 } from '../teammate-collection/types.js';
-import type { TeammateService } from '../teammate-service/index.js';
+import type {
+  TeammateService,
+  TeamMateSchedulerConfig,
+} from '../teammate-service/index.js';
 import type { TeamStore } from '../team-collection/store.js';
 import type {
   TeamChannelBindingSummary,
@@ -120,7 +123,6 @@ export class TeamService {
    * `TeammateOps`. The PUBLIC surface stays the narrow admin op set via the
    * `teammates` getter — never re-expose those internal verbs to callers. */
   private readonly teammateCollection: TeammateCollection;
-  readonly scheduler: SchedulerService;
 
   private constructor(private readonly deps: TeamServiceDeps, teamId: string) {
     this.id = teamId;
@@ -135,17 +137,6 @@ export class TeamService {
       router: deps.router,
       initiatorFor: deps.initiatorFor,
       isShuttingDown: deps.isShuttingDown,
-      log: deps.log,
-    });
-    this.scheduler = new SchedulerService({
-      ownerId: `${deps.dispatcherId}/team/${teamId}`,
-      store: new CronJobStore({
-        cronJobsPath: dispatcherTeamCronJobsPath(deps.dispatcherId, teamId),
-        dispatcherId: deps.dispatcherId,
-      }),
-      absentRuntimeStrategy: 'submit',
-      getRuntime: () => this.leader_?.getRuntime() ?? null,
-      submitScheduled: (input) => this.mustLeader().scheduledInput(input),
       log: deps.log,
     });
   }
@@ -192,12 +183,15 @@ export class TeamService {
         worktree: input.workspace.worktree,
         intent: input.intent,
       },
-      service.leaderLaunchPolicy(leaderName),
+      {
+        launchPolicy: service.leaderLaunchPolicy(leaderName),
+        scheduler: service.leaderSchedulerConfig(),
+      },
     );
     service.leader_ = leader;
     team = await deps.store.update(team, { status: 'running' });
     service.record = team;
-    await service.scheduler.start();
+    await leader.startScheduler();
     return { service, leaderResult: result };
   }
 
@@ -209,14 +203,27 @@ export class TeamService {
     service.record = record;
     service.leader_ = await service.teammateCollection.leader(
       record.leader_name,
-      service.leaderLaunchPolicy(record.leader_name),
+      {
+        launchPolicy: service.leaderLaunchPolicy(record.leader_name),
+        scheduler: service.leaderSchedulerConfig(),
+      },
     );
-    if (record.status !== 'closed') await service.scheduler.start();
+    if (record.status !== 'closed') await service.leader_.startScheduler();
     return service;
   }
 
   get leader(): TeammateService {
     return this.mustLeader();
+  }
+
+  get scheduler(): SchedulerService {
+    const scheduler = this.mustLeader().scheduler;
+    if (scheduler === null) {
+      throw new Error(
+        `Team ${JSON.stringify(this.id)} leader has no scheduler capability`,
+      );
+    }
+    return scheduler;
   }
 
   /** This team's members, as the narrow admin-facing op surface (issue #233):
@@ -250,7 +257,7 @@ export class TeamService {
 
   async dissolve(input: TeamDissolveInput): Promise<TeamSummary> {
     requireLifecycleText(input.note, 'Team dissolve note');
-    this.scheduler.stop();
+    this.mustLeader().stopScheduler();
     const record = this.mustRecord();
     for (const binding of await this.deps.bindings.list(this.dispatcherId)) {
       if (binding.active && binding.team_name === this.id) {
@@ -290,7 +297,7 @@ export class TeamService {
     for (const member of members) {
       await this.teammateCollection.applyWorktreeCleanup(member.name, cleaned);
     }
-    await this.scheduler.deleteStoreFile();
+    await this.mustLeader().deleteSchedulerStore();
     const summary = await this.status();
     // Evict so a later `get` rebuilds from disk and reads `status: closed`.
     this.deps.evict();
@@ -413,6 +420,17 @@ export class TeamService {
         }),
       ],
       disableFeatures: [DISABLE_FEATURE_CRON],
+    };
+  }
+
+  private leaderSchedulerConfig(): TeamMateSchedulerConfig {
+    return {
+      ownerId: `${this.deps.dispatcherId}/team/${this.id}`,
+      store: new CronJobStore({
+        cronJobsPath: dispatcherTeamCronJobsPath(this.deps.dispatcherId, this.id),
+        dispatcherId: this.deps.dispatcherId,
+      }),
+      absentRuntimeStrategy: 'submit',
     };
   }
 

@@ -176,16 +176,19 @@ describe('TeammateService channel input routing', () => {
       log: noopLog(),
     });
 
-    const { leader } = await collection.createTeamLeader({
-      name: 'tl-alpha-0001',
-      prompt: 'initial leader prompt',
-      agentRuntime: 'agent-a',
-      sourceCwd: workspace,
-      sourceRepo: null,
-      runtimeCwd: workspace,
-      worktree: reuseCwd(workspace),
-      intent: 'lead alpha',
-    }, { mcpServers: [], disableFeatures: [] });
+    const { leader } = await collection.createTeamLeader(
+      {
+        name: 'tl-alpha-0001',
+        prompt: 'initial leader prompt',
+        agentRuntime: 'agent-a',
+        sourceCwd: workspace,
+        sourceRepo: null,
+        runtimeCwd: workspace,
+        worktree: reuseCwd(workspace),
+        intent: 'lead alpha',
+      },
+      { launchPolicy: { mcpServers: [], disableFeatures: [] } },
+    );
 
     await expect(
       leader.channelInput({ sourceId: 'message-1', text: 'from bound group' }),
@@ -218,15 +221,18 @@ describe('TeammateService channel input routing', () => {
       log: noopLog(),
     });
 
-    const { leader } = await collection.createTeamLeader({
-      name: 'tl-alpha-0001',
-      agentRuntime: 'agent-a',
-      sourceCwd: workspace,
-      sourceRepo: null,
-      runtimeCwd: workspace,
-      worktree: reuseCwd(workspace),
-      intent: 'lead alpha',
-    }, { mcpServers: [], disableFeatures: [] });
+    const { leader } = await collection.createTeamLeader(
+      {
+        name: 'tl-alpha-0001',
+        agentRuntime: 'agent-a',
+        sourceCwd: workspace,
+        sourceRepo: null,
+        runtimeCwd: workspace,
+        worktree: reuseCwd(workspace),
+        intent: 'lead alpha',
+      },
+      { launchPolicy: { mcpServers: [], disableFeatures: [] } },
+    );
 
     await expect(
       leader.scheduledInput({ jobId: 'job-1', prompt: 'scheduled report' }),
@@ -258,16 +264,19 @@ describe('TeammateService channel input routing', () => {
       log: noopLog(),
     });
 
-    const { leader } = await collection.createTeamLeader({
-      name: 'tl-alpha-0001',
-      prompt: 'initial leader prompt',
-      agentRuntime: 'agent-a',
-      sourceCwd: workspace,
-      sourceRepo: null,
-      runtimeCwd: workspace,
-      worktree: reuseCwd(workspace),
-      intent: 'lead alpha',
-    }, { mcpServers: [], disableFeatures: [] });
+    const { leader } = await collection.createTeamLeader(
+      {
+        name: 'tl-alpha-0001',
+        prompt: 'initial leader prompt',
+        agentRuntime: 'agent-a',
+        sourceCwd: workspace,
+        sourceRepo: null,
+        runtimeCwd: workspace,
+        worktree: reuseCwd(workspace),
+        intent: 'lead alpha',
+      },
+      { launchPolicy: { mcpServers: [], disableFeatures: [] } },
+    );
 
     await expect(
       leader.scheduledInput({ jobId: 'job-1', prompt: 'scheduled report' }),

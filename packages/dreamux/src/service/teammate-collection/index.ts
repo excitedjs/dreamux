@@ -26,7 +26,11 @@ import {
   toStatus,
   validateLastTurns,
 } from './read-helpers.js';
-import { TeammateService, type TeammateServiceDeps } from '../teammate-service/index.js';
+import {
+  TeammateService,
+  type TeammateServiceDeps,
+  type TeammateServiceOptions,
+} from '../teammate-service/index.js';
 import { TeamMateTurnsStore } from './turns-store.js';
 import { allocateConcreteName, type SuffixGenerator } from './name-allocator.js';
 import {
@@ -48,7 +52,6 @@ import {
   type TeamMateHistoryResult,
   type TeamMateIdentity,
   type TeamMateLastResult,
-  type TeamMateLaunchPolicy,
   type TeamMateRecordRow,
   type TeamMateRole,
   type TeamMateRuntimeStatus,
@@ -57,14 +60,6 @@ import {
   type TeamMateTurnResult,
   type TeamMateWorktreeIdentity,
 } from './types.js';
-
-/** A teammate with no role-granted launch additions. The default for every
- * entity; only a team's leader is built with a non-empty policy, supplied by
- * the team layer at the leader's construction sites (issue #233). */
-const EMPTY_LAUNCH_POLICY: TeamMateLaunchPolicy = {
-  mcpServers: [],
-  disableFeatures: [],
-};
 
 export interface TeammateCollectionOptions {
   /** The dispatcher this collection belongs to (issue #233 ownership sinking). */
@@ -406,7 +401,7 @@ export class TeammateCollection implements TeammateOps {
    */
   async createTeamLeader(
     input: CreateTeamLeaderInput,
-    launchPolicy: TeamMateLaunchPolicy,
+    options: TeammateServiceOptions,
   ): Promise<{
     leader: TeammateService;
     result: Omit<TeamMateSpawnResult, 'turn'> & { turn: TeamMateTurnResult | null };
@@ -434,7 +429,7 @@ export class TeammateCollection implements TeammateOps {
       intent: input.intent ?? null,
       status: 'starting',
     });
-    const entity = this.entityFor(identity, launchPolicy);
+    const entity = this.entityFor(identity, options);
     await entity.ensureStarted({ teamId });
     // Only fire a first turn when the dispatcher explicitly supplied a prompt.
     // A team created without a prompt starts its leader idle — the leader entity
@@ -464,17 +459,17 @@ export class TeammateCollection implements TeammateOps {
    * after a restart and cached thereafter. The `TeamService` holds the returned
    * entity for the team's lifetime.
    *
-   * The leader's `launchPolicy` is supplied by the team layer at both leader
+   * The leader's construction options are supplied by the team layer at both
    * construction sites (here on rebuild, `createTeamLeader` on create), so the
    * leader's role capabilities travel with its construction and no entity is
    * ever built by re-inspecting `identity.role` (issue #233).
    */
   async leader(
     leaderName: string,
-    launchPolicy: TeamMateLaunchPolicy,
+    options: TeammateServiceOptions,
   ): Promise<TeammateService> {
     this.mustTeamScope('leader');
-    return this.mustEntity(leaderName, launchPolicy);
+    return this.mustEntity(leaderName, options);
   }
 
   getCapabilities(): TeamMateCapabilities {
@@ -535,7 +530,7 @@ export class TeammateCollection implements TeammateOps {
 
   private async mustEntity(
     name: string,
-    launchPolicy: TeamMateLaunchPolicy = EMPTY_LAUNCH_POLICY,
+    options: TeammateServiceOptions = {},
   ): Promise<TeammateService> {
     const teamId = this.teamScope ?? undefined;
     const teammateName = validateTeamMateName(name);
@@ -545,17 +540,17 @@ export class TeammateCollection implements TeammateOps {
       return existing;
     }
     const identity = await this.mustIdentity(teammateName);
-    return this.entityFor(identity, launchPolicy);
+    return this.entityFor(identity, options);
   }
 
-  /** Build (and cache) the entity for an identity. `launchPolicy` defaults to
-   * empty: only a team's leader is built with a non-empty policy, passed in at
+  /** Build (and cache) the entity for an identity. Options default to empty:
+   * only a team's leader is built with role-granted capabilities, passed in at
    * its two construction sites (`createTeamLeader` / `leader`). Members and
    * dispatcher-owned teammates take the empty default — capability is decided by
    * the construction path, never by re-inspecting `identity.role` (issue #233). */
   private entityFor(
     identity: TeamMateIdentity,
-    launchPolicy: TeamMateLaunchPolicy = EMPTY_LAUNCH_POLICY,
+    options: TeammateServiceOptions = {},
   ): TeammateService {
     const existing = this.entities.get(identity.name);
     if (existing !== undefined) return existing;
@@ -563,7 +558,7 @@ export class TeammateCollection implements TeammateOps {
       this.entityDeps(),
       this.dispatcherId,
       identity,
-      launchPolicy,
+      options,
     );
     this.entities.set(identity.name, entity);
     return entity;

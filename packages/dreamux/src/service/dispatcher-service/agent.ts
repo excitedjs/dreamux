@@ -12,6 +12,7 @@ import {
   type AgentRuntimeProviderCatalog,
 } from '../../agent-runtime/index.js';
 import type { DispatcherConfig, DreamuxConfig } from '../../config/config.js';
+import { dispatcherCronJobsPath } from '../../platform/paths.js';
 import type { DispatcherStore } from '../../state/dispatcher-store.js';
 import {
   completionKey,
@@ -25,6 +26,7 @@ import {
 } from '../teammate-service/index.js';
 import type { TeamMateTurnsStore } from '../teammate-collection/turns-store.js';
 import type { TeamMateIdentity } from '../teammate-collection/types.js';
+import { CronJobStore } from '../scheduler/store.js';
 import {
   DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS,
   DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
@@ -123,7 +125,16 @@ export function createDispatcherAgent(deps: DispatcherAgentDeps): TeammateServic
       routeSettled(deps.router, producerName, turnId, completion),
   };
 
-  const agent = new TeammateService(serviceDeps, deps.id, identity);
+  const agent = new TeammateService(serviceDeps, deps.id, identity, {
+    scheduler: {
+      ownerId: deps.id,
+      store: new CronJobStore({
+        cronJobsPath: dispatcherCronJobsPath(deps.id),
+        dispatcherId: deps.id,
+      }),
+      absentRuntimeStrategy: 'miss',
+    },
+  });
   return agent;
 }
 
