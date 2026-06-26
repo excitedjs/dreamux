@@ -18,89 +18,153 @@ KB_ROOT="$(cd -- "$SCRIPT_DIR/.." &> /dev/null && pwd)"
 REPO_ROOT="$(cd -- "$KB_ROOT/.." &> /dev/null && pwd)"
 
 errors=0
+kb_file_count=0
+link_graph_result_file="$(mktemp "${TMPDIR:-/tmp}/dreamux-kb-check.XXXXXX")"
+trap 'rm -f "$link_graph_result_file"' EXIT
 
 # ---------- 1) internal Markdown links resolve ----------
-# Match each Markdown inline link target. External URLs and same-page anchors are
-# skipped; repo-root-absolute and relative links must resolve.
-# shellcheck disable=SC2016  # the perl one-liner below feeds this loop; its single
-# quotes are intentional ($ARGV/$1 are perl variables, not shell expansions).
-while IFS= read -r entry; do
-  file="${entry%%:*}"
-  target="${entry#*:}"
-  target="${target%%#*}"
-  [ -z "$target" ] && continue
-  case "$target" in
-    http://*|https://*|mailto:*|\#*) continue ;;
-    /*) full="$REPO_ROOT$target" ;;
-    *) full="$(cd -- "$(dirname -- "$file")" 2>/dev/null && realpath -m -- "$target")" ;;
-  esac
-  if [ ! -e "$full" ]; then
-    rel_file="${file#"$REPO_ROOT"/}"
-    echo "broken markdown link in $rel_file -> $target (resolved to $full)" >&2
-    errors=$((errors + 1))
-  fi
-done < <(find "$KB_ROOT" -type f -name '*.md' -print0 | xargs -0 perl -ne 'while (/\]\(([^)]+)\)/g) { print "$ARGV:$1\n" }' 2>/dev/null || true)
-
 # ---------- 2) orphan detection ----------
-# Build the set of every .md file under .agents/, minus root.md itself.
-# Then walk reachable files from root.md following any .md link
-# (relative or absolute-into-.agents/). Anything not in the reachable set
-# is an orphan.
+# Checks 1 and 2 share Markdown-link parsing and path normalization. Keep the
+# portability-sensitive parts here: no GNU realpath flags and no bash 4 hashes.
+perl - "$KB_ROOT" "$REPO_ROOT" > "$link_graph_result_file" <<'PERL'
+use strict;
+use warnings;
+use File::Basename qw(dirname);
+use File::Find qw(find);
 
-declare -A all
-while IFS= read -r f; do
-  rel="${f#"$KB_ROOT"/}"
-  [ "$rel" = "root.md" ] && continue
-  all["$rel"]=1
-done < <(find "$KB_ROOT" -type f -name '*.md')
+my ($kb_root, $repo_root) = @ARGV;
+my $errors = 0;
 
-declare -A seen
-queue=("root.md")
-seen["root.md"]=1
-while [ ${#queue[@]} -gt 0 ]; do
-  cur="${queue[0]}"
-  queue=("${queue[@]:1}")
-  curfile="$KB_ROOT/$cur"
-  [ -f "$curfile" ] || continue
-  while IFS= read -r target; do
-    # Match either `](foo.md)` or absolute `](/.agents/foo.md)`.
-    target="${target%%#*}"
-    [ -z "$target" ] && continue
-    case "$target" in
-      http*|mailto:*) continue ;;
-      /*)
-        # absolute repo path
-        next="${target#/}"
-        case "$next" in
-          .agents/*) next="${next#.agents/}" ;;
-          *) continue ;;
-        esac
-        ;;
-      *)
-        # relative to current file
-        next="$(dirname "$cur")/$target"
-        # normalize
-        next="$(cd "$KB_ROOT" 2>/dev/null && realpath --no-symlinks --relative-to=. "$next" 2>/dev/null || echo "$next")"
-        ;;
-    esac
-    # only follow .md links
-    case "$next" in
-      *.md) ;;
-      *) continue ;;
-    esac
-    if [ -z "${seen[$next]+x}" ]; then
-      seen["$next"]=1
-      queue+=("$next")
-    fi
-  done < <(perl -ne 'while (/\]\(([^)]+)\)/g) { print "$1\n" }' "$curfile" 2>/dev/null || true)
-done
+sub normalize_abs {
+  my ($path) = @_;
+  my @parts;
+  for my $part (split m{/+}, $path) {
+    next if $part eq q{} || $part eq q{.};
+    if ($part eq q{..}) {
+      pop @parts if @parts;
+      next;
+    }
+    push @parts, $part;
+  }
+  return q{/} . join q{/}, @parts;
+}
 
-for rel in "${!all[@]}"; do
-  if [ -z "${seen[$rel]+x}" ]; then
-    echo "orphan KB doc: .agents/$rel is not reachable from root.md" >&2
-    errors=$((errors + 1))
-  fi
-done
+sub repo_relative {
+  my ($path) = @_;
+  my $prefix = $repo_root . q{/};
+  return substr $path, length $prefix if index($path, $prefix) == 0;
+  return $path;
+}
+
+sub kb_relative {
+  my ($path) = @_;
+  my $prefix = $kb_root . q{/};
+  return substr $path, length $prefix if index($path, $prefix) == 0;
+  return $path;
+}
+
+sub strip_fragment {
+  my ($target) = @_;
+  $target =~ s/#.*\z//;
+  return $target;
+}
+
+sub read_markdown_links {
+  my ($file) = @_;
+  open my $fh, q{<}, $file or return;
+  my @targets;
+  while (my $line = <$fh>) {
+    while ($line =~ /\]\(([^)]+)\)/g) {
+      push @targets, $1;
+    }
+  }
+  close $fh or return;
+  return @targets;
+}
+
+my @markdown_files;
+find(
+  sub {
+    return unless -f $_;
+    return unless /\.md\z/;
+    push @markdown_files, $File::Find::name;
+  },
+  $kb_root
+);
+@markdown_files = sort @markdown_files;
+
+for my $file (@markdown_files) {
+  for my $raw_target (read_markdown_links($file)) {
+    my $target = strip_fragment($raw_target);
+    next if $target eq q{};
+    next if $target =~ m{\A(?:http://|https://|mailto:)};
+
+    my $full = $target =~ m{\A/}
+      ? normalize_abs($repo_root . $target)
+      : normalize_abs(dirname($file) . q{/} . $target);
+
+    next if -e $full;
+
+    print STDERR 'broken markdown link in ', repo_relative($file),
+      ' -> ', $target, ' (resolved to ', $full, ")\n";
+    ++$errors;
+  }
+}
+
+my %all = map { $_ => 1 }
+  grep { $_ ne 'root.md' }
+  map { kb_relative($_) } @markdown_files;
+
+my %seen = ( 'root.md' => 1 );
+my @queue = ('root.md');
+my $agents_abs = normalize_abs($repo_root . '/.agents');
+
+while (@queue) {
+  my $cur = shift @queue;
+  my $cur_file = normalize_abs($kb_root . q{/} . $cur);
+  next unless -f $cur_file;
+
+  for my $raw_target (read_markdown_links($cur_file)) {
+    my $target = strip_fragment($raw_target);
+    next if $target eq q{};
+    next if $target =~ m{\Ahttp};
+    next if $target =~ m{\Amailto:};
+
+    # Resolve BOTH absolute (`/.agents/...`) and relative links to an absolute
+    # path, then key by the `.agents`-relative path — exactly like the original
+    # `realpath --relative-to=$KB_ROOT`. A relative link that traverses out of
+    # `.agents` and back in (`../.agents/reference/x.md`) must therefore key to
+    # `reference/x.md`, not stay `../.agents/...`. Links that resolve OUTSIDE
+    # `.agents` can never be orphans (not in %all), so skip them.
+    my $next_abs = $target =~ m{\A/}
+      ? normalize_abs($repo_root . $target)
+      : normalize_abs(dirname($cur_file) . q{/} . $target);
+    next unless $next_abs eq $agents_abs
+      || index($next_abs, $agents_abs . q{/}) == 0;
+    my $next = $next_abs eq $agents_abs
+      ? q{}
+      : substr $next_abs, length($agents_abs) + 1;
+
+    next unless $next =~ /\.md\z/;
+    next if exists $seen{$next};
+
+    $seen{$next} = 1;
+    push @queue, $next;
+  }
+}
+
+for my $rel (sort keys %all) {
+  next if exists $seen{$rel};
+  print STDERR "orphan KB doc: .agents/$rel is not reachable from root.md\n";
+  ++$errors;
+}
+
+print $errors, q{ }, scalar(keys %all), "\n";
+PERL
+link_graph_result="$(cat "$link_graph_result_file")"
+link_graph_errors="${link_graph_result%% *}"
+kb_file_count="${link_graph_result#* }"
+errors=$((errors + link_graph_errors))
 
 # ---------- 3) decision index completeness ----------
 decision_index="$KB_ROOT/decisions/README.md"
@@ -145,4 +209,4 @@ if [ "$errors" -gt 0 ]; then
   echo "$errors KB issue(s) found" >&2
   exit 1
 fi
-echo "KB OK ($(echo "${!all[@]}" | wc -w) files reachable from root.md)"
+echo "KB OK ($kb_file_count files reachable from root.md)"
