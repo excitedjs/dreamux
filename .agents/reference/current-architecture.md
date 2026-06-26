@@ -131,10 +131,19 @@ required only when the dispatcher has more than one configured channel.
 `meta` is provider-owned selector input, for example `{ "chat_id": "..." }` for
 a Feishu group chat.
 
+Each `TeamService` directly builds and holds its TeamLeader `TeammateService`
+through `/packages/dreamux/src/service/team-service/leader-agent.ts`, using the
+same dispatcher-owned identity store, turns store, worktree manager, and
+completion router that its owning `TeamCollection` injects. The per-team
+`TeammateCollection` is members-only: it spawns and caches team members under
+`team/<team>/teammate/<name>/`, while the TeamLeader lives at the team root and
+is never cached in the collection's entity map.
+
 Key source:
 
 - `/packages/dreamux/src/service/teammate-collection/`
 - `/packages/dreamux/src/service/team-collection/`
+- `/packages/dreamux/src/service/team-service/`
 - `/packages/dreamux/src/service/channel-binding/`
 - `/packages/dreamux/src/mcp/team-mcp.ts`
 
