@@ -29,10 +29,10 @@ import { assertRunnableChannelShape } from './runnable-channel.js';
 import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
 import { ChannelToolAuthorizationError } from './errors.js';
 import { CompletionRouter, type CompletionInitiator } from '../completion-router/index.js';
+import { AgentHost } from '../agent-host/index.js';
 import { TeammateCollection, type TeammateOps } from '../teammate-collection/index.js';
 import { TeamMateIdentityStore } from '../teammate-collection/identity-store.js';
 import { TeamMateTurnsStore } from '../teammate-collection/turns-store.js';
-import type { TeammateService } from '../teammate-service/index.js';
 import { WorktreeManager } from '../worktree/manager.js';
 import { ChannelBindingStore } from '../channel-binding/store.js';
 import { type TeamMateIdentity } from '../teammate-collection/types.js';
@@ -88,10 +88,9 @@ export class DispatcherService implements TeamChannelContext {
   private readonly channelProviders: ChannelProviderCatalog;
   private readonly log: DreamuxLogger;
   private readonly router: CompletionRouter;
-  private readonly _teammates: TeammateCollection;
+  private readonly host: AgentHost;
   private readonly teams: TeamCollection;
   private readonly channels: ChannelSessions;
-  private readonly agent: TeammateService;
   private restartIntent: RestartIntentConsumer | null = null;
   private starting: Promise<void> | null = null;
   private workspaceCwd: string | null = null;
@@ -135,7 +134,7 @@ export class DispatcherService implements TeamChannelContext {
         : {}),
     });
 
-    this.agent = createDispatcherAgent({
+    const agent = createDispatcherAgent({
       id: opts.id,
       config: opts.config,
       dispatchers: opts.dispatchers,
@@ -151,7 +150,7 @@ export class DispatcherService implements TeamChannelContext {
 
     // A dispatcher-owned teammate is never a team_leader, so it carries no
     // launch policy (the team_leader policy is owned by the team layer).
-    this._teammates = new TeammateCollection({
+    const teammates = new TeammateCollection({
       dispatcherId: opts.id,
       teamScope: null,
       config: opts.config,
@@ -163,6 +162,11 @@ export class DispatcherService implements TeamChannelContext {
       initiatorFor: (producer) => this.initiatorFor(producer),
       isShuttingDown: () => this.shuttingDown,
       log: opts.log,
+    });
+    this.host = new AgentHost({
+      members: teammates,
+      agent,
+      agentDescription: `dispatcher ${JSON.stringify(this.id)} agent`,
     });
 
     // The Team layer owns the team_leader role policy; the dispatcher only lends
@@ -191,13 +195,7 @@ export class DispatcherService implements TeamChannelContext {
   }
 
   get scheduler(): SchedulerService {
-    const scheduler = this.agent.scheduler;
-    if (scheduler === null) {
-      throw new Error(
-        `dispatcher ${JSON.stringify(this.id)} agent has no scheduler capability`,
-      );
-    }
-    return scheduler;
+    return this.host.scheduler;
   }
 
   /**
@@ -208,7 +206,7 @@ export class DispatcherService implements TeamChannelContext {
    * concurrent callers.
    */
   async start(): Promise<void> {
-    if (this.agent.getRuntime() !== null) return;
+    if (this.host.agent.getRuntime() !== null) return;
     if (this.starting !== null) return this.starting;
     const promise = this.doStart().finally(() => {
       this.starting = null;
@@ -249,7 +247,7 @@ export class DispatcherService implements TeamChannelContext {
 
     let runtime: AgentRuntime;
     try {
-      await this.agent.ensureStarted();
+      await this.host.agent.ensureStarted();
       runtime = this.mustRuntime();
     } catch (err) {
       this.channels.clear();
@@ -270,16 +268,16 @@ export class DispatcherService implements TeamChannelContext {
         });
       }
       await this.injectRestartNoticeIfNeeded(id, runtime);
-      await this.agent.startScheduler();
+      await this.host.startScheduler();
       await this.teams.startSchedulers();
     } catch (err) {
-      this.agent.stopScheduler();
+      this.host.stopScheduler();
       this.teams.stopSchedulers();
       // Undo the slot adoption so a failed start never leaves a half-built slot.
       this.channels.clear();
       await closeAllBuilt(channels);
       try {
-        await this.agent.stop();
+        await this.host.agent.stop();
       } catch {
         /* best effort */
       }
@@ -297,11 +295,11 @@ export class DispatcherService implements TeamChannelContext {
   }
 
   async stop(): Promise<void> {
-    this.agent.stopScheduler();
+    this.host.stopScheduler();
     this.teams.stopSchedulers();
     await this.channels.closeAll(this.log);
     try {
-      await this.agent.stop();
+      await this.host.agent.stop();
     } catch (err) {
       this.log.error(
         { dispatcher_id: this.id, err: errInfo(err) },
@@ -311,7 +309,7 @@ export class DispatcherService implements TeamChannelContext {
   }
 
   runtimeStatus(): { status: string | null; threadId: string | null } {
-    const runtime = this.agent.getRuntime();
+    const runtime = this.host.agent.getRuntime();
     return {
       status: runtime?.getStatus() ?? null,
       threadId: runtime?.getThreadId() ?? null,
@@ -323,7 +321,7 @@ export class DispatcherService implements TeamChannelContext {
   }
 
   summary(row: DispatcherRow): DispatcherSummary {
-    const runtime = this.agent.getRuntime();
+    const runtime = this.host.agent.getRuntime();
     return {
       dispatcher_id: row.dispatcher_id,
       channel_identity: row.channel_identity,
@@ -338,14 +336,18 @@ export class DispatcherService implements TeamChannelContext {
    * the traversal-window race: it is set first so any concurrent `spawn`/`send` /
    * team `create`/`send` is rejected before it can lazily start a runtime the
    * sweep would miss. Then every live teammate runtime is stopped, followed by
-   * the dispatcher agent (channel sessions first, then the agent runtime).
+   * the dispatcher agent (channel sessions first, then the agent runtime, via
+   * `stop()`).
    */
   async shutdown(): Promise<void> {
     this.shuttingDown = true;
     // Members now live in per-team collections, so the dispatcher-scope `stopAll`
     // alone would miss them — sweep both (issue #233). Each team's `stopAll`
-    // stops its own members + leader; only materialized teams are swept.
-    await this._teammates.stopAll();
+    // stops its own members + leader; only materialized teams are swept. The
+    // dispatcher agent itself is stopped once, by `stop()` below (after channel
+    // sessions close), so sweep MEMBERS only here — not `host.stopAll()`, which
+    // would stop the agent early and out of order.
+    await this.host.members.stopAll();
     await this.teams.stopAll();
     await this.stop();
   }
@@ -389,13 +391,13 @@ export class DispatcherService implements TeamChannelContext {
     });
   }
 
-  workspace(): Promise<string> { return this._teammates.dispatcherWorkspace(); }
+  workspace(): Promise<string> { return this.host.members.dispatcherWorkspace(); }
 
   /** The dispatcher's own teammates, as the narrow admin-facing op surface
    * (issue #233). The admin layer drives the collection directly through this
    * instead of the dispatcher re-forwarding each verb. */
   get teammates(): TeammateOps {
-    return this._teammates;
+    return this.host.teammates;
   }
 
   /** The single-entity team service for a team id (admin `team_leader` target). */
@@ -461,7 +463,7 @@ export class DispatcherService implements TeamChannelContext {
         return result;
       }
     }
-    const runtime = this.agent.getRuntime();
+    const runtime = this.host.agent.getRuntime();
     if (runtime === null) return { status: 'stopped' };
     return runtime.channelInput(input, hooks);
   }
@@ -480,12 +482,12 @@ export class DispatcherService implements TeamChannelContext {
       const team = await this.teams.get(producer.team_id).catch(() => null);
       // The team's leader is its contained `TeammateService` (issue #233 Phase
       // 4); a member's settled turn delivers to it via `completionInput`.
-      return team?.leader ?? this.agent;
+      return team?.leader ?? this.host.agent;
     }
     // The dispatcher agent itself is the contained `TeammateService` (issue #233
     // Phase 5) — a dispatcher-owned teammate or leader delivers to it via its own
     // `completionInput`, the same unified router path as any other target.
-    return this.agent;
+    return this.host.agent;
   }
 
   async teamLeaderCanUseChannel(input: {
@@ -626,7 +628,7 @@ export class DispatcherService implements TeamChannelContext {
   }
 
   private mustRuntime(): AgentRuntime {
-    const runtime = this.agent.getRuntime();
+    const runtime = this.host.agent.getRuntime();
     if (runtime === null) {
       throw new Error(`dispatcher '${this.id}' agent runtime is not running`);
     }

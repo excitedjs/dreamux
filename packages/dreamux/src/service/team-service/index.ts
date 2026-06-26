@@ -49,6 +49,7 @@ import type {
   TeamView,
 } from '../team-collection/types.js';
 import type { WorktreeManager } from '../worktree/manager.js';
+import { AgentHost } from '../agent-host/index.js';
 
 /**
  * The narrow dispatcher seam a {@link TeamService} needs for channel-bound
@@ -114,19 +115,18 @@ export interface TeamServiceCreateOutput {
  */
 export class TeamService {
   private record: TeamRecord | null = null;
-  private leader_: TeammateService | null = null;
   readonly id: string;
   /** The team's OWN members collection (`teamScope: team_id`, issue #233). Held
-   * as the concrete class internally because the lifecycle/factory methods the
+   * by the host as the concrete class internally because the lifecycle/factory methods the
    * team drives (`allocateLeaderName` / `createTeamLeader` / `leader` /
    * `stopAll` / `applyWorktreeCleanup` / workspace-injecting `spawn`) live off
    * `TeammateOps`. The PUBLIC surface stays the narrow admin op set via the
    * `teammates` getter — never re-expose those internal verbs to callers. */
-  private readonly teammateCollection: TeammateCollection;
+  private readonly host: AgentHost;
 
   private constructor(private readonly deps: TeamServiceDeps, teamId: string) {
     this.id = teamId;
-    this.teammateCollection = new TeammateCollection({
+    const members = new TeammateCollection({
       dispatcherId: deps.dispatcherId,
       teamScope: teamId,
       config: deps.config,
@@ -139,6 +139,10 @@ export class TeamService {
       isShuttingDown: deps.isShuttingDown,
       log: deps.log,
     });
+    this.host = new AgentHost({
+      members,
+      agentDescription: `Team ${JSON.stringify(this.id)} leader`,
+    });
   }
 
   static async createNew(
@@ -146,7 +150,7 @@ export class TeamService {
     input: TeamServiceCreateInput,
   ): Promise<TeamServiceCreateOutput> {
     const service = new TeamService(deps, input.teamId);
-    const leaderName = await service.teammateCollection.allocateLeaderName();
+    const leaderName = await service.host.members.allocateLeaderName();
     let team =
       input.existing ??
       (await deps.store.create({
@@ -172,7 +176,7 @@ export class TeamService {
       intent: input.intent,
       leaderName,
     });
-    const { leader, result } = await service.teammateCollection.createTeamLeader(
+    const { leader, result } = await service.host.members.createTeamLeader(
       {
         name: leaderName,
         ...(input.prompt !== undefined ? { prompt: input.prompt } : {}),
@@ -188,10 +192,10 @@ export class TeamService {
         scheduler: service.leaderSchedulerConfig(),
       },
     );
-    service.leader_ = leader;
+    service.host.setAgent(leader);
     team = await deps.store.update(team, { status: 'running' });
     service.record = team;
-    await leader.startScheduler();
+    await service.host.startScheduler();
     return { service, leaderResult: result };
   }
 
@@ -201,29 +205,24 @@ export class TeamService {
   ): Promise<TeamService> {
     const service = new TeamService(deps, record.team_id);
     service.record = record;
-    service.leader_ = await service.teammateCollection.leader(
+    const leader = await service.host.members.leader(
       record.leader_name,
       {
         launchPolicy: service.leaderLaunchPolicy(record.leader_name),
         scheduler: service.leaderSchedulerConfig(),
       },
     );
-    if (record.status !== 'closed') await service.leader_.startScheduler();
+    service.host.setAgent(leader);
+    if (record.status !== 'closed') await service.host.startScheduler();
     return service;
   }
 
   get leader(): TeammateService {
-    return this.mustLeader();
+    return this.host.agent;
   }
 
   get scheduler(): SchedulerService {
-    const scheduler = this.mustLeader().scheduler;
-    if (scheduler === null) {
-      throw new Error(
-        `Team ${JSON.stringify(this.id)} leader has no scheduler capability`,
-      );
-    }
-    return scheduler;
+    return this.host.scheduler;
   }
 
   /** This team's members, as the narrow admin-facing op surface (issue #233):
@@ -231,7 +230,7 @@ export class TeamService {
    * collection. `spawnTeamMate` stays a separate method because it injects the
    * shared workspace — the raw `spawn` is deliberately not on `TeammateOps`. */
   get teammates(): TeammateOps {
-    return this.teammateCollection;
+    return this.host.teammates;
   }
 
   get dispatcherId(): string {
@@ -257,7 +256,7 @@ export class TeamService {
 
   async dissolve(input: TeamDissolveInput): Promise<TeamSummary> {
     requireLifecycleText(input.note, 'Team dissolve note');
-    this.mustLeader().stopScheduler();
+    this.host.stopScheduler();
     const record = this.mustRecord();
     for (const binding of await this.deps.bindings.list(this.dispatcherId)) {
       if (binding.active && binding.team_name === this.id) {
@@ -270,7 +269,7 @@ export class TeamService {
     }
     const members = await this.members();
     for (const member of members) {
-      await this.teammateCollection.close({
+      await this.host.members.close({
         name: member.name,
         note: input.note,
       });
@@ -295,9 +294,9 @@ export class TeamService {
     // (issue #237). They share the one worktree, so the same identity applies.
     await this.leader.applyWorktreeCleanup(cleaned);
     for (const member of members) {
-      await this.teammateCollection.applyWorktreeCleanup(member.name, cleaned);
+      await this.host.members.applyWorktreeCleanup(member.name, cleaned);
     }
-    await this.mustLeader().deleteSchedulerStore();
+    await this.host.deleteSchedulerStore();
     const summary = await this.status();
     // Evict so a later `get` rebuilds from disk and reads `status: closed`.
     this.deps.evict();
@@ -307,8 +306,7 @@ export class TeamService {
   /** Stop this team's live runtimes on server shutdown (issue #233): members in
    * the owned collection, then the leader. Persisted records stay intact. */
   async stopAll(): Promise<void> {
-    await this.teammateCollection.stopAll();
-    await this.leader.stop();
+    await this.host.stopAll();
   }
 
   async bindChannel(
@@ -370,7 +368,7 @@ export class TeamService {
     // the shared workspace (issue #233). This stays a real method — injecting
     // the shared workspace is the team's job — unlike the pure teammate forwards
     // that now go through `.teammates`.
-    return this.teammateCollection.spawn({
+    return this.host.members.spawn({
       ...input,
       sharedWorkspace: this.sharedWorkspace(),
     });
@@ -381,7 +379,7 @@ export class TeamService {
   }
 
   private async members(): Promise<TeamMateRuntimeStatus[]> {
-    return this.teammateCollection.list(); // members-only; leader is `this.leader`
+    return this.host.members.list(); // members-only; leader is `this.leader`
   }
 
   private async activeGroupBinding(): Promise<TeamChannelBindingSummary | null> {
@@ -441,12 +439,6 @@ export class TeamService {
     return this.record;
   }
 
-  private mustLeader(): TeammateService {
-    if (this.leader_ === null) {
-      throw new Error(`Team ${JSON.stringify(this.id)} leader is not booted`);
-    }
-    return this.leader_;
-  }
 }
 
 /** Shared team view helpers (issue #233): used by both {@link TeamService} and
