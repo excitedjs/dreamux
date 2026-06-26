@@ -80,7 +80,12 @@ history and rationale; when you need current behavior, pair them with
 
 ## Active Proposals
 
-There are no active proposals in this snapshot.
+- [Post-#110 architecture sustainability](proposals/post-110-architecture-sustainability.md)
+  — diagnostic of why agent-written code drifted from the intended architecture
+  after the #110 pluginization inflection (load-bearing invariants are prose with
+  no executable backstop; the ownership map lives outside the queryable KB; review
+  bypassed at land-first merges) plus a prioritized, mostly-executable improvement
+  backlog (topology map + ownership/boundary fitness functions + process gates).
 
 Move an active proposal out of `proposals/` once it is implemented,
 superseded, or abandoned; preserve the old text under `archive/` when the
