@@ -50,9 +50,16 @@ Key source:
 
 ## Execution
 
-`SchedulerService` is owned by `DispatcherService`. It starts after the
-dispatcher agent, channel sessions, and restart-notice injection have completed,
-and it stops before channel sessions and the agent runtime are stopped.
+`SchedulerService` is owned by the conversational agent's `TeammateService` — the
+dispatcher agent owns the dispatcher scheduler, each non-closed TeamLeader owns
+its Team scheduler — built from a host-supplied config (cron-jobs store path,
+owner id, absent-runtime strategy) and wired to that agent's own runtime. The
+containers (`DispatcherService` / `TeamService`) construct no scheduler; they only
+orchestrate lifecycle and expose it for admin cron routing. The dispatcher
+scheduler starts after the dispatcher agent, channel sessions, and restart-notice
+injection have completed, and stops before channel sessions and the agent runtime
+are stopped; Team schedulers are armed at dispatcher boot (without starting the
+TeamLeader runtime) and stopped/deleted with their team.
 
 For `prompt-agent` jobs the scheduler:
 
@@ -72,7 +79,8 @@ The conversational management surface wraps the same `SchedulerService`:
 `admin/methods.ts` exposes the `scheduler.cron.*` admin methods, the `dreamux
 cron` CLI (`cli/commands/cron-mcp.ts`) drives them, and the Cron MCP
 (`mcp/cron-mcp.ts`) mirrors the native scheduling tool surface; the Cron MCP is
-injected into the dispatcher agent only (not team_leader/teammate).
+injected into each conversational agent — the dispatcher agent and every
+TeamLeader — but not regular teammates/team members.
 
 Key source:
 

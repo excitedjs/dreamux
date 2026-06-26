@@ -14,9 +14,9 @@ import {
   type CompletionInitiator,
   type CompletionRouter,
 } from '../completion-router/index.js';
+import { createTeammateService } from '../teammate-service/factory.js';
 import { TeamMateIdentityStore } from './identity-store.js';
 import {
-  assertInRoster,
   clampHistoryLimit,
   decodeCursor,
   encodeCursor,
@@ -26,7 +26,7 @@ import {
   toStatus,
   validateLastTurns,
 } from './read-helpers.js';
-import { TeammateService, type TeammateServiceDeps } from '../teammate-service/index.js';
+import type { TeammateService } from '../teammate-service/index.js';
 import { TeamMateTurnsStore } from './turns-store.js';
 import { allocateConcreteName, type SuffixGenerator } from './name-allocator.js';
 import {
@@ -43,18 +43,15 @@ import {
   type SpawnTeamMateInput,
   type TeamMateCapabilities,
   type TeamMateCloseResult,
-  type CreateTeamLeaderInput,
   type TeamMateHistoryQuery,
   type TeamMateHistoryResult,
   type TeamMateIdentity,
   type TeamMateLastResult,
-  type TeamMateLaunchPolicy,
   type TeamMateRecordRow,
   type TeamMateRole,
   type TeamMateRuntimeStatus,
   type TeamMateSendResult,
   type TeamMateSpawnResult,
-  type TeamMateTurnResult,
   type TeamMateWorktreeIdentity,
 } from './types.js';
 
@@ -64,11 +61,11 @@ export interface TeammateCollectionOptions {
   /**
    * The fixed scope this collection serves (issue #233): `null` = the
    * dispatcher's own teammates (`teammate/<name>/`); a `team_id` = that team's
-   * leader + members (`team/<team>/…`). One `TeammateCollection` per scope; the
-   * scope is baked in, not threaded per call — `spawn` / `send` / `list` /
-   * `status` / `history` / `last` / `close` supply this scope to the (unchanged)
-   * stores and read model. Leader operations (`allocateLeaderName` /
-   * `createTeamLeader` / `leader`) require a non-null scope.
+   * members (`team/<team>/teammate/<name>/`). One `TeammateCollection` per
+   * scope; the scope is baked in, not threaded per call — `spawn` / `send` /
+   * `list` / `status` / `history` / `last` / `close` supply this scope to the
+   * (unchanged) stores and read model. The team leader is owned directly by
+   * `TeamService`.
    */
   teamScope: string | null;
   config: DreamuxConfig;
@@ -83,11 +80,6 @@ export interface TeammateCollectionOptions {
    */
   identities?: TeamMateIdentityStore;
   turnsStore?: TeamMateTurnsStore;
-  launchPolicyForTeamMate?: (input: {
-    dispatcherId: string;
-    name: string;
-    identity: TeamMateIdentity;
-  }) => TeamMateLaunchPolicy;
   /**
    * The dispatcher's delivery router (issue #233). Omitted in storage-only
    * contexts (no settle delivery is then routed).
@@ -132,8 +124,8 @@ export type SpawnTeamMateRequest = SpawnTeamMateInput & {
  * collection without the service re-forwarding each verb. `Omit` hides the
  * scope-internal inputs — `sharedWorkspace` (injected by `TeamService.spawnTeamMate`)
  * and the history `teamId` (the scope is baked into the collection) — and the
- * leader/lifecycle methods (`createTeamLeader` / `allocateLeaderName` / `leader`
- * / `turns` / `stopAll` / `dispatcherWorkspace`) stay off the interface entirely.
+ * lifecycle methods (`turns` / `stopAll` / `dispatcherWorkspace`) stay off the
+ * interface entirely.
  */
 export interface TeammateOps {
   spawn(input: Omit<SpawnTeamMateRequest, 'sharedWorkspace'>): Promise<TeamMateSpawnResult>;
@@ -152,11 +144,11 @@ export interface TeammateOps {
  * (`teamScope: team_id`). The dispatcher-scope collection is owned by
  * `DispatcherService`; each team-scope collection is owned by its `TeamService`.
  * It owns the identity/turns stores, holds the per-dispatcher worktree manager,
- * and caches the per-name `TeammateService` entity, and exposes `spawn` / `get` /
- * `list` / `history` / `close` plus the factory paths (`createTeamLeader`,
- * `allocateLeaderName`). Per-entity domain operations (`send` / `status` / `last`
- * / completion delivery) live on `TeammateService`. Both the dispatcher id and
- * the scope are baked into the collection, not threaded per call.
+ * and caches the per-name member `TeammateService` entity, and exposes `spawn` /
+ * `list` / `history` / `close`. Per-entity domain operations (`send` /
+ * `status` / `last` / completion delivery) live on `TeammateService`. Both the
+ * dispatcher id and the scope are baked into the collection, not threaded per
+ * call.
  */
 export class TeammateCollection implements TeammateOps {
   private readonly dispatcherId: string;
@@ -187,22 +179,6 @@ export class TeammateCollection implements TeammateOps {
 
   turns(): TeamMateTurnsStore {
     return this.turnsStore;
-  }
-
-  async allocateLeaderName(): Promise<string> {
-    const teamId = this.mustTeamScope('allocateLeaderName');
-    return this.allocateName('team_leader', teamId, teamId);
-  }
-
-  /** The team id this collection is scoped to, or throw for a dispatcher-scope
-   * collection (leader ops only exist within a team scope, issue #233). */
-  private mustTeamScope(op: string): string {
-    if (this.teamScope === null) {
-      throw new Error(
-        `${op} requires a team-scoped collection (this collection is dispatcher-scoped)`,
-      );
-    }
-    return this.teamScope;
   }
 
   /**
@@ -379,7 +355,7 @@ export class TeammateCollection implements TeammateOps {
     if (identity === null) {
       throw new Error(`TeamMate ${JSON.stringify(name)} does not exist`);
     }
-    assertInRoster(identity, this.dispatcherId, teamId);
+    this.assertInCollection(identity);
     return identity;
   }
 
@@ -392,77 +368,6 @@ export class TeammateCollection implements TeammateOps {
    */
   private async rosterList(): Promise<TeamMateIdentity[]> {
     return this.identities.list(this.dispatcherId, this.teamScope ?? undefined);
-  }
-
-  /**
-   * Create a team leader as a contained {@link TeammateService} (issue #233
-   * Phase 4): same entity, store, runtime, and turn recording as a regular
-   * teammate, only with `role: 'team_leader'` so it lands at the team root. The
-   * created entity is returned so the {@link TeamService} can hold it directly
-   * (has-a), rather than re-resolving the leader by name on every call.
-   */
-  async createTeamLeader(
-    input: CreateTeamLeaderInput,
-  ): Promise<{
-    leader: TeammateService;
-    result: Omit<TeamMateSpawnResult, 'turn'> & { turn: TeamMateTurnResult | null };
-  }> {
-    const teamId = this.mustTeamScope('createTeamLeader');
-    const name = validateTeamMateName(input.name);
-    // The leader lives at the team scope root (`team/<team>/identity.json`), so
-    // the existence probe must be team-scoped — a dispatcher-scope `get` would
-    // miss it and re-create a name that #188 forbids reusing (issue #233).
-    const existing = await this.identities.get(this.dispatcherId, name, teamId);
-    if (existing !== null) {
-      throw new Error(`TeamLeader ${JSON.stringify(name)} already exists`);
-    }
-    const identity = await this.identities.create({
-      dispatcherId: this.dispatcherId,
-      name,
-      role: 'team_leader',
-      teamId,
-      agentRuntime: input.agentRuntime,
-      sourceCwd: input.sourceCwd,
-      sourceRepo: input.sourceRepo,
-      cwd: input.runtimeCwd,
-      runtimeCwd: input.runtimeCwd,
-      worktree: input.worktree,
-      intent: input.intent ?? null,
-      status: 'starting',
-    });
-    const entity = this.entityFor(identity);
-    await entity.ensureStarted({ teamId });
-    // Only fire a first turn when the dispatcher explicitly supplied a prompt.
-    // A team created without a prompt starts its leader idle — the leader entity
-    // is persisted and recoverable from its record, and its runtime-native
-    // session materializes on start (eager runtimes, e.g. Codex `thread/start`)
-    // or on the first turn (lazy runtimes, e.g. Claude Code) — and waits for a
-    // bound channel or a dispatcher `send` to drive its first real turn. We no
-    // longer fabricate a synthetic default prompt and auto-run a turn at create.
-    let turn: TeamMateTurnResult | null = null;
-    if (input.prompt !== undefined) {
-      // The dispatcher created this leader, so its first turn is `dispatcher`
-      // origin — not the `team_leader` origin a team_id alone would imply.
-      turn = await entity.submitInitialPrompt(input.prompt, {
-        teamId,
-        turnOrigin: 'dispatcher',
-      });
-      // A dispatcher->leader create registers `leaderName:turnId -> dispatcher`.
-      await this.registerCompletion(entity, turn.turn_id ?? null);
-    }
-    return { leader: entity, result: { teammate: entity.status(), turn } };
-  }
-
-  /**
-   * Materialize a team's leader {@link TeammateService} entity by its known name
-   * (issue #233 Phase 4). The leader lives at the team root, so the lookup is
-   * team-scoped; the entity is created from the persisted record on first access
-   * after a restart and cached thereafter. The `TeamService` holds the returned
-   * entity for the team's lifetime.
-   */
-  async leader(leaderName: string): Promise<TeammateService> {
-    this.mustTeamScope('leader');
-    return this.mustEntity(leaderName);
   }
 
   getCapabilities(): TeamMateCapabilities {
@@ -522,40 +427,41 @@ export class TeammateCollection implements TeammateOps {
   }
 
   private async mustEntity(name: string): Promise<TeammateService> {
-    const teamId = this.teamScope ?? undefined;
     const teammateName = validateTeamMateName(name);
     const existing = this.entities.get(teammateName);
     if (existing !== undefined) {
-      assertInRoster(existing.current(), this.dispatcherId, teamId);
+      this.assertInCollection(existing.current());
       return existing;
     }
     const identity = await this.mustIdentity(teammateName);
     return this.entityFor(identity);
   }
 
+  private assertInCollection(identity: TeamMateIdentity): void {
+    const inCollection =
+      identity.dispatcher_id === this.dispatcherId &&
+      (this.teamScope === null
+        ? identity.team_id === null && identity.role === 'teammate'
+        : identity.team_id === this.teamScope && identity.role === 'team_member');
+    if (inCollection) return;
+    throw new Error(`TeamMate ${JSON.stringify(identity.name)} does not exist`);
+  }
+
+  /** Build (and cache) the entity for an identity. Options default to empty:
+   * members and dispatcher-owned teammates get no role policy here. */
   private entityFor(identity: TeamMateIdentity): TeammateService {
     const existing = this.entities.get(identity.name);
     if (existing !== undefined) return existing;
-    const entity = new TeammateService(
-      this.entityDeps(),
-      this.dispatcherId,
+    const entity = createTeammateService({
+      dispatcherId: this.dispatcherId,
       identity,
-    );
-    this.entities.set(identity.name, entity);
-    return entity;
-  }
-
-  private entityDeps(): TeammateServiceDeps {
-    return {
+      launch: { kind: 'agent-ref' },
       config: this.opts.config,
       agentRuntimeProviders: this.opts.agentRuntimeProviders,
       identities: this.identities,
       turnsStore: this.turnsStore,
       worktrees: this.worktrees,
       log: this.opts.log,
-      ...(this.opts.launchPolicyForTeamMate !== undefined
-        ? { launchPolicyForTeamMate: this.opts.launchPolicyForTeamMate }
-        : {}),
       nextSubmissionSeq: () => ++this.submissionSeq,
       trackSettleCapture: (capture) => {
         this.inFlightSettleCaptures.add(capture);
@@ -565,7 +471,9 @@ export class TeammateCollection implements TeammateOps {
       },
       routeSettledCompletion: (producerName, turnId, completion) =>
         this.routeSettledCompletion(producerName, turnId, completion),
-    };
+    });
+    this.entities.set(identity.name, entity);
+    return entity;
   }
 
   private async routeSettledCompletion(

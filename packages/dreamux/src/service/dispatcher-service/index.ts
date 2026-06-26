@@ -15,7 +15,10 @@ import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { ChannelProviderCatalog } from '../../channel/catalog.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
-import { adminSocketPath as defaultAdminSocketPath, dispatcherCronJobsPath } from '../../platform/paths.js';
+import {
+  adminSocketPath as defaultAdminSocketPath,
+  dispatcherCronJobsPath,
+} from '../../platform/paths.js';
 import type {
   DispatcherRow,
   DispatcherStatus,
@@ -93,7 +96,7 @@ export class DispatcherService implements TeamChannelContext {
   private readonly teams: TeamCollection;
   private readonly channels: ChannelSessions;
   private readonly agent: TeammateService;
-  readonly scheduler: SchedulerService;
+  private readonly scheduler_: SchedulerService;
   private restartIntent: RestartIntentConsumer | null = null;
   private starting: Promise<void> | null = null;
   private workspaceCwd: string | null = null;
@@ -151,14 +154,18 @@ export class DispatcherService implements TeamChannelContext {
       liveChannels: () => this.channels.live(),
     });
 
-    this.scheduler = new SchedulerService({
+    this.scheduler_ = new SchedulerService({
       ownerId: opts.id,
-      store: new CronJobStore({ cronJobsPath: dispatcherCronJobsPath(opts.id), dispatcherId: opts.id }),
+      store: new CronJobStore({
+        cronJobsPath: dispatcherCronJobsPath(opts.id),
+        dispatcherId: opts.id,
+      }),
       absentRuntimeStrategy: 'miss',
       getRuntime: () => this.agent.getRuntime(),
       submitScheduled: (input) => this.agent.scheduledInput(input),
       log: opts.log,
     });
+
     // A dispatcher-owned teammate is never a team_leader, so it carries no
     // launch policy (the team_leader policy is owned by the team layer).
     this._teammates = new TeammateCollection({
@@ -198,6 +205,10 @@ export class DispatcherService implements TeamChannelContext {
         }),
       log: opts.log,
     });
+  }
+
+  get scheduler(): SchedulerService {
+    return this.scheduler_;
   }
 
   /**

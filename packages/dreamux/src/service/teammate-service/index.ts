@@ -82,11 +82,6 @@ export interface TeammateServiceDeps {
    */
   worktrees?: WorktreeManager;
   log: DreamuxLogger;
-  launchPolicyForTeamMate?: (input: {
-    dispatcherId: string;
-    name: string;
-    identity: TeamMateIdentity;
-  }) => TeamMateLaunchPolicy;
   /**
    * Build the provider + create context for this entity's runtime (issue #233
    * Phase 5). Omitted for an ordinary teammate, which derives its launch from its
@@ -113,6 +108,14 @@ export interface TeammateServiceDeps {
   ) => Promise<void>;
 }
 
+export interface TeammateServiceOptions {
+  /**
+   * Role-granted launch additions for THIS entity, fixed at construction. The
+   * entity never re-derives this from `identity.role`.
+   */
+  launchPolicy?: TeamMateLaunchPolicy;
+}
+
 /**
  * A single named teammate entity (issue #233): it holds its own identity, its
  * (lazily started) runtime, a per-turn origin cache, and the domain operations
@@ -127,12 +130,18 @@ export class TeammateService {
   private runtime: AgentRuntime | null = null;
   private starting: Promise<void> | null = null;
   private state: TeamMateRuntimeStateStore;
+  private readonly launchPolicy: TeamMateLaunchPolicy;
 
   constructor(
     private readonly deps: TeammateServiceDeps,
     private readonly dispatcherId: string,
     private identity: TeamMateIdentity,
+    options: TeammateServiceOptions = {},
   ) {
+    this.launchPolicy = options.launchPolicy ?? {
+      mcpServers: [],
+      disableFeatures: [],
+    };
     this.state = new TeamMateRuntimeStateStore(deps.identities, identity);
   }
 
@@ -410,11 +419,7 @@ export class TeammateService {
     );
     const provider = this.deps.agentRuntimeProviders.resolve(agent.provider);
     const runtimeName = runtimeIdentityName(identity);
-    const launchPolicy = this.deps.launchPolicyForTeamMate?.({
-      dispatcherId: this.dispatcherId,
-      name: identity.name,
-      identity,
-    }) ?? { mcpServers: [], disableFeatures: [] };
+    const launchPolicy = this.launchPolicy;
     return {
       provider,
       checkpointId: identity.session_id,

@@ -17,8 +17,11 @@ import type {
 } from '@excitedjs/dreamux-types';
 
 import type { AgentRuntimeProviderCatalog } from '../src/agent-runtime/index.js';
-import { TeammateCollection } from '../src/service/teammate-collection/index.js';
+import { TeamMateIdentityStore } from '../src/service/teammate-collection/identity-store.js';
+import { TeamMateTurnsStore } from '../src/service/teammate-collection/turns-store.js';
 import type { TeamMateWorktreeIdentity } from '../src/service/teammate-collection/types.js';
+import { createTeamLeaderAgent } from '../src/service/team-service/leader-agent.js';
+import type { TeammateService } from '../src/service/teammate-service/index.js';
 import { WorktreeManager } from '../src/service/worktree/manager.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 
@@ -138,6 +141,61 @@ function reuseCwd(path: string): TeamMateWorktreeIdentity {
   };
 }
 
+async function createTestTeamLeader(input: {
+  dispatcherId: string;
+  teamId: string;
+  name: string;
+  prompt?: string;
+  agentRuntime: string;
+  workspace: string;
+  config: ReturnType<typeof testDreamuxConfig>;
+  agentRuntimeProviders: AgentRuntimeProviderCatalog;
+}): Promise<TeammateService> {
+  const log = noopLog();
+  const identities = new TeamMateIdentityStore({ warn: log.warn.bind(log) });
+  const turnsStore = new TeamMateTurnsStore({ warn: log.warn.bind(log) });
+  const identity = await identities.create({
+    dispatcherId: input.dispatcherId,
+    name: input.name,
+    role: 'team_leader',
+    teamId: input.teamId,
+    agentRuntime: input.agentRuntime,
+    sourceCwd: input.workspace,
+    sourceRepo: null,
+    cwd: input.workspace,
+    runtimeCwd: input.workspace,
+    worktree: reuseCwd(input.workspace),
+    intent: 'lead alpha',
+    status: 'starting',
+  });
+  const leader = createTeamLeaderAgent({
+    dispatcherId: input.dispatcherId,
+    identity,
+    launchPolicy: { mcpServers: [], disableFeatures: [] },
+    config: input.config,
+    agentRuntimeProviders: input.agentRuntimeProviders,
+    identities,
+    turnsStore,
+    worktrees: new WorktreeManager(),
+    log,
+    nextSubmissionSeq: () => 0,
+    trackSettleCapture: () => {
+      /* tests do not emit settle signals */
+    },
+    routeSettledCompletion: async () => {
+      /* no router in this unit helper */
+    },
+  });
+  await leader.ensureStarted({ teamId: input.teamId });
+  if (input.prompt !== undefined) {
+    await leader.submitInitialPrompt(input.prompt, {
+      teamId: input.teamId,
+      turnOrigin: 'dispatcher',
+    });
+  }
+  return leader;
+}
+
 describe('TeammateService channel input routing', () => {
   let root: string;
   let previousHome: string | undefined;
@@ -167,24 +225,15 @@ describe('TeammateService channel input routing', () => {
         runtimeProvider: FAKE_RUNTIME_REF,
       }),
     ]);
-    const collection = new TeammateCollection({
+    const leader = await createTestTeamLeader({
       dispatcherId: 'dispatcher-a',
-      teamScope: 'alpha',
-      config,
-      agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
-      worktrees: new WorktreeManager(),
-      log: noopLog(),
-    });
-
-    const { leader } = await collection.createTeamLeader({
+      teamId: 'alpha',
       name: 'tl-alpha-0001',
       prompt: 'initial leader prompt',
       agentRuntime: 'agent-a',
-      sourceCwd: workspace,
-      sourceRepo: null,
-      runtimeCwd: workspace,
-      worktree: reuseCwd(workspace),
-      intent: 'lead alpha',
+      workspace,
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
     });
 
     await expect(
@@ -209,23 +258,14 @@ describe('TeammateService channel input routing', () => {
         runtimeProvider: FAKE_RUNTIME_REF,
       }),
     ]);
-    const collection = new TeammateCollection({
+    const leader = await createTestTeamLeader({
       dispatcherId: 'dispatcher-a',
-      teamScope: 'alpha',
-      config,
-      agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
-      worktrees: new WorktreeManager(),
-      log: noopLog(),
-    });
-
-    const { leader } = await collection.createTeamLeader({
+      teamId: 'alpha',
       name: 'tl-alpha-0001',
       agentRuntime: 'agent-a',
-      sourceCwd: workspace,
-      sourceRepo: null,
-      runtimeCwd: workspace,
-      worktree: reuseCwd(workspace),
-      intent: 'lead alpha',
+      workspace,
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
     });
 
     await expect(
@@ -249,24 +289,15 @@ describe('TeammateService channel input routing', () => {
         runtimeProvider: FAKE_RUNTIME_REF,
       }),
     ]);
-    const collection = new TeammateCollection({
+    const leader = await createTestTeamLeader({
       dispatcherId: 'dispatcher-a',
-      teamScope: 'alpha',
-      config,
-      agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
-      worktrees: new WorktreeManager(),
-      log: noopLog(),
-    });
-
-    const { leader } = await collection.createTeamLeader({
+      teamId: 'alpha',
       name: 'tl-alpha-0001',
       prompt: 'initial leader prompt',
       agentRuntime: 'agent-a',
-      sourceCwd: workspace,
-      sourceRepo: null,
-      runtimeCwd: workspace,
-      worktree: reuseCwd(workspace),
-      intent: 'lead alpha',
+      workspace,
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
     });
 
     await expect(
