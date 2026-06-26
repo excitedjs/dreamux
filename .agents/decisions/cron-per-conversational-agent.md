@@ -74,3 +74,11 @@ for prompt-agent cron only:
 The risk is therefore bounded to the same capability the user already has when
 talking to the TeamLeader directly, with the existing Team channel authorization
 still enforced.
+
+## References
+
+- Originating proposal:
+  [cron for team leaders](../proposals/scheduled-tasks-team-leader.md).
+- Baseline it extends:
+  [scheduled tasks](../proposals/scheduled-tasks.md),
+  [agent activity capability](agent-activity-capability.md).
