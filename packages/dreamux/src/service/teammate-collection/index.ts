@@ -14,6 +14,7 @@ import {
   type CompletionInitiator,
   type CompletionRouter,
 } from '../completion-router/index.js';
+import { createTeammateService } from '../teammate-service/factory.js';
 import { TeamMateIdentityStore } from './identity-store.js';
 import {
   assertInRoster,
@@ -26,10 +27,9 @@ import {
   toStatus,
   validateLastTurns,
 } from './read-helpers.js';
-import {
+import type {
   TeammateService,
-  type TeammateServiceDeps,
-  type TeammateServiceOptions,
+  TeammateServiceOptions,
 } from '../teammate-service/index.js';
 import { TeamMateTurnsStore } from './turns-store.js';
 import { allocateConcreteName, type SuffixGenerator } from './name-allocator.js';
@@ -554,18 +554,11 @@ export class TeammateCollection implements TeammateOps {
   ): TeammateService {
     const existing = this.entities.get(identity.name);
     if (existing !== undefined) return existing;
-    const entity = new TeammateService(
-      this.entityDeps(),
-      this.dispatcherId,
+    const entity = createTeammateService({
+      dispatcherId: this.dispatcherId,
       identity,
+      launch: { kind: 'agent-ref' },
       options,
-    );
-    this.entities.set(identity.name, entity);
-    return entity;
-  }
-
-  private entityDeps(): TeammateServiceDeps {
-    return {
       config: this.opts.config,
       agentRuntimeProviders: this.opts.agentRuntimeProviders,
       identities: this.identities,
@@ -581,7 +574,9 @@ export class TeammateCollection implements TeammateOps {
       },
       routeSettledCompletion: (producerName, turnId, completion) =>
         this.routeSettledCompletion(producerName, turnId, completion),
-    };
+    });
+    this.entities.set(identity.name, entity);
+    return entity;
   }
 
   private async routeSettledCompletion(
