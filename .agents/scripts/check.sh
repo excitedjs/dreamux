@@ -7,6 +7,7 @@
 #   2. every .md file under .agents/ is reachable from .agents/root.md
 #      (link graph; flags orphans)
 #   3. every decision record is listed in .agents/decisions/README.md
+#   4. every /packages/... file path cited by service-topology.md exists
 #
 # Exits 0 on success, non-zero with a noisy list of failures otherwise.
 # Run before committing KB changes, and from CI.
@@ -119,6 +120,25 @@ while IFS= read -r f; do
     errors=$((errors + 1))
   fi
 done < <(find "$KB_ROOT/decisions" -maxdepth 1 -type f -name '*.md' | sort)
+
+# ---------- 4) service topology source path liveness ----------
+service_topology="$KB_ROOT/reference/service-topology.md"
+if [ -f "$service_topology" ]; then
+  while IFS= read -r cited; do
+    path="${cited%%#*}"
+    case "$path" in
+      *:[0-9]*) path="${path%:*}" ;;
+    esac
+    full="$REPO_ROOT$path"
+    if [ ! -e "$full" ]; then
+      echo "missing service topology source path: reference/service-topology.md -> $path" >&2
+      errors=$((errors + 1))
+    fi
+  done < <(
+    perl -ne 'while (m{(/packages/[^`)\s#]+)}g) { print "$1\n" }' "$service_topology" \
+      | sort -u
+  )
+fi
 
 if [ "$errors" -gt 0 ]; then
   echo "" >&2
