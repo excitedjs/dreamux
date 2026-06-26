@@ -31,8 +31,6 @@ import {
 } from '../teammate-collection/read-helpers.js';
 import { TeamMateRuntimeStateStore } from '../teammate-collection/runtime-state.js';
 import { recordSettledTurn, recordSubmittedTurn, toTurnResult } from './turn-recording.js';
-import { SchedulerService } from '../scheduler/service.js';
-import type { CronJobStore } from '../scheduler/store.js';
 import type { TeamMateTurnsStore } from '../teammate-collection/turns-store.js';
 import {
   reprepareDeletedManagedWorktree,
@@ -110,23 +108,12 @@ export interface TeammateServiceDeps {
   ) => Promise<void>;
 }
 
-export interface TeamMateSchedulerConfig {
-  store: CronJobStore;
-  ownerId: string;
-  absentRuntimeStrategy: 'miss' | 'submit';
-}
-
 export interface TeammateServiceOptions {
   /**
    * Role-granted launch additions for THIS entity, fixed at construction. The
    * entity never re-derives this from `identity.role`.
    */
   launchPolicy?: TeamMateLaunchPolicy;
-  /**
-   * Optional scheduler capability for conversational agents only. The caller
-   * owns host paths and strategy; this entity only wires the scheduler to itself.
-   */
-  scheduler?: TeamMateSchedulerConfig;
 }
 
 /**
@@ -144,7 +131,6 @@ export class TeammateService {
   private starting: Promise<void> | null = null;
   private state: TeamMateRuntimeStateStore;
   private readonly launchPolicy: TeamMateLaunchPolicy;
-  private readonly scheduler_: SchedulerService | null;
 
   constructor(
     private readonly deps: TeammateServiceDeps,
@@ -157,15 +143,6 @@ export class TeammateService {
       disableFeatures: [],
     };
     this.state = new TeamMateRuntimeStateStore(deps.identities, identity);
-    this.scheduler_ =
-      options.scheduler === undefined
-        ? null
-        : new SchedulerService({
-            ...options.scheduler,
-            getRuntime: () => this.getRuntime(),
-            submitScheduled: (input) => this.scheduledInput(input),
-            log: deps.log,
-          });
   }
 
   get name(): string {
@@ -178,22 +155,6 @@ export class TeammateService {
 
   getRuntime(): AgentRuntime | null {
     return this.runtime;
-  }
-
-  get scheduler(): SchedulerService | null {
-    return this.scheduler_;
-  }
-
-  async startScheduler(): Promise<void> {
-    await this.scheduler_?.start();
-  }
-
-  stopScheduler(): void {
-    this.scheduler_?.stop();
-  }
-
-  async deleteSchedulerStore(): Promise<void> {
-    await this.scheduler_?.deleteStoreFile();
   }
 
   /**
