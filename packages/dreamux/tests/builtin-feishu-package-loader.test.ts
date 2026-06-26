@@ -98,6 +98,7 @@ describe('builtin:feishu loads the real @excitedjs/feishu-channel package', () =
       'reply',
       'react',
       'list_chat_bots',
+      'access',
     ]);
   });
 });

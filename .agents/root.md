@@ -36,7 +36,7 @@ For current behavior, read the linked source code too.
 | modify dispatcher runtime lifecycle or MCP injection | [Current architecture](reference/current-architecture.md), [dispatcher local aggregate](decisions/dispatcher-local-aggregate.md), [service architecture refactor](decisions/service-architecture-refactor.md), source |
 | modify TeamMate / Team lifecycle, read surfaces, or bundled dispatcher skills | [Dispatcher skill reference](reference/dispatcher-skill.md), [provider architecture realignment](decisions/provider-architecture-realignment.md), [top-level design](decisions/top-level-design.md), [service architecture refactor](decisions/service-architecture-refactor.md) |
 | modify channel binding or channel target routing | [Channel runtime](reference/channel-runtime.md), [NPM package split and channel targets](decisions/npm-package-split-and-channel-targets.md), source |
-| modify Feishu inbound, `/introduce`, trusted bot context, or reaction timing | [Channel runtime](reference/channel-runtime.md), [Feishu introduce](domains/feishu-introduce.md), [non-blocking dispatcher inbound](domains/non-blocking-dispatcher-inbound.md), source |
+| modify Feishu inbound, `/introduce`, trusted bot context, or reaction timing | [Channel runtime](reference/channel-runtime.md), [Feishu introduce](domains/feishu-introduce.md), [Feishu pairing access](domains/feishu-pairing-access.md), [non-blocking dispatcher inbound](domains/non-blocking-dispatcher-inbound.md), source |
 | modify Feishu attachment download/cache behavior | [Feishu inbound attachments](decisions/feishu-inbound-attachments.md) |
 | modify onboard, daemon, uninstall, or public CLI names | [Global bin/onboard/serve](decisions/global-bin-onboard-serve.md), [CLI and package naming](decisions/cli-and-package-naming.md) |
 | modify the anti-leak guardrail, `.gitleaks.toml`, `.npmrc`, CI, or hooks | [Anti-leak guardrail](decisions/anti-leak-guardrail.md) |
@@ -74,6 +74,7 @@ history and rationale; when you need current behavior, pair them with
 ## Domains
 
 - [Feishu introduce](domains/feishu-introduce.md)
+- [Feishu pairing access](domains/feishu-pairing-access.md)
 - [Non-blocking dispatcher inbound](domains/non-blocking-dispatcher-inbound.md)
 
 ## Active Proposals

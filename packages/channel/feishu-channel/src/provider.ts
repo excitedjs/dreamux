@@ -42,7 +42,7 @@ import {
 } from './feishu-channel.js';
 import type { FeishuBot } from './bot.js';
 import { listChatBots } from './chat-bots-store.js';
-import { feishuMcpTools, parseFeishuMcpToolInput } from './feishu-mcp-tools.js';
+import { buildToolCatalog, parseFeishuMcpToolInput } from './feishu-mcp-tools.js';
 import { BUILTIN_FEISHU_PROVIDER_REF } from './provider-ref.js';
 
 /**
@@ -157,7 +157,7 @@ class FeishuChannelSessionAdapter implements ChannelSession {
     // travels with the descriptor (base64 JSON — robust through the runtime's arg
     // layer) and the generic shim serves `tools/list` from it WITHOUT an admin
     // round-trip; only `tools/call` reaches the live session.
-    const toolsB64 = Buffer.from(JSON.stringify(feishuMcpTools()), 'utf8').toString(
+    const toolsB64 = Buffer.from(JSON.stringify(buildToolCatalog()), 'utf8').toString(
       'base64',
     );
     return {
@@ -215,10 +215,10 @@ class FeishuChannelSessionAdapter implements ChannelSession {
   }
 
   tools(): readonly ChannelToolDescriptor[] {
-    return feishuMcpTools().map((tool) => ({
-      name: tool['name'] as string,
-      description: tool['description'] as string,
-      inputSchema: tool['inputSchema'],
+    return buildToolCatalog().map((tool) => ({
+      name: tool.name as string,
+      description: tool.description as string,
+      inputSchema: tool.inputSchema,
     }));
   }
 
@@ -316,9 +316,10 @@ export function createFeishuChannelProvider(
       // (`{ chat_id, known, trusted }` with `WireChatBot` open_ids), so a
       // sessionless `list_chat_bots` (no live session) is byte-identical to the
       // live one — core routes either way by session presence.
-      const listing = await listChatBots(context.state_root ?? '.', parsed.input.chatId);
+      const listInput = parsed.input as { chatId: string };
+      const listing = await listChatBots(context.state_root ?? '.', listInput.chatId);
       return {
-        chat_id: parsed.input.chatId,
+        chat_id: listInput.chatId,
         known: listing.known.map(toWireChatBot),
         trusted: listing.trusted.map(toWireChatBot),
       };

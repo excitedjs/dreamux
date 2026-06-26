@@ -285,17 +285,14 @@ export function teammateMcpLogDir(): string {
   return join(logsRoot(), 'teammate-mcp');
 }
 
-/** Per-dispatcher TeamMate scheduling MCP stdio shim diagnostics. */
+/**
+ * Per-dispatcher TeamMate scheduling MCP stdio shim diagnostics. */
 export function teammateMcpLogPath(id: string): string {
   return join(teammateMcpLogDir(), `${dispatcherPathSegment(id)}.log`);
 }
 
 export function dispatcherStatusPath(id: string): string {
   return join(dispatcherDir(id), 'status.json');
-}
-
-export function dispatcherAccessPath(id: string): string {
-  return join(dispatcherDir(id), 'access.json');
 }
 
 /**
@@ -424,17 +421,6 @@ export function dispatcherChannelBindingsPath(id: string): string {
 export function teamMateNameSegment(name: string): string {
   return name.replace(/[^A-Za-z0-9._-]/g, '_');
 }
-
-/**
- * Per-dispatcher peer-bot awareness/trust store. One file per dispatcher,
- * keyed internally by chat_id, holds the *known* (passively observed) and
- * *trusted* (introduced via an allowlisted `/introduce`) peer-bot open_ids
- * plus the bot-added baseline bookkeeping. Server-owned state; safe to delete.
- */
-export function dispatcherChatBotsPath(id: string): string {
-  return join(dispatcherDir(id), 'chat-bots.json');
-}
-
 
 export function dispatcherPathSegment(id: string): string {
   return validateDispatcherId(id);

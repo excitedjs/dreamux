@@ -11,7 +11,6 @@ import {
   BUNDLED_SKILL_NAMES,
   adminSocketPath,
   cacheRoot,
-  dispatcherAccessPath,
   dispatcherChannelBindingsPath,
   dispatcherCompletionSpillDir,
   dispatcherDir,
@@ -87,9 +86,6 @@ describe('runtime paths', () => {
     );
     expect(dispatcherStatusPath('dispatcher-a')).toBe(
       join(stateRoot(), 'dispatcher-a', 'status.json'),
-    );
-    expect(dispatcherAccessPath('dispatcher-a')).toBe(
-      join(stateRoot(), 'dispatcher-a', 'access.json'),
     );
     // Cache, not durable state (issue #182 PR-2). The per-channel attachment
     // cache subdir is the channel package's concern now (issue #209 de-leak);

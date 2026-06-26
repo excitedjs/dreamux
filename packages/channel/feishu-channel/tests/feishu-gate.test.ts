@@ -1,3 +1,10 @@
+/**
+ * Feishu access gate v3 — pairing-code model.
+ *
+ * Pure-function unit tests for `dreamuxFeishuGate`, the pairing helper
+ * primitives, and the IO loader/saver fail-loud contract.
+ */
+
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   existsSync,
@@ -12,234 +19,649 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import {
+  ACCESS_STATE_VERSION,
+  ACCESS_CODE_HEX_LEN,
+  MAX_PENDING_PER_KIND,
+  MAX_PAIRING_REPLIES,
+  PAIRING_TTL_MS,
   TRUST_DOMAIN_WARNING,
   defaultDispatcherAccessState,
   dreamuxFeishuGate,
+  generatePairingCode,
+  generateUniquePairingCode,
   loadDispatcherAccess,
+  readDispatcherAccess,
   saveDispatcherAccess,
   type DispatcherAccessState,
+  type DispatcherAccessStateV3,
+  type DmPolicy,
+  type GateInbound,
+  type GroupPolicy,
+  type PendingPairingEntry,
 } from '../src/feishu-gate.js';
 
-describe('dreamuxFeishuGate', () => {
-  it('delivers direct messages only from senders on the global allow-user list', () => {
-    const access = state({ allow_users: ['sender-allowed'] });
+// ──────────────────────────────────────────────────────────────────────────
+// Helpers
+// ──────────────────────────────────────────────────────────────────────────
 
-    expect(gate({ chatType: 'p2p', senderId: 'sender-allowed' }, access))
-      .toMatchObject({ action: 'deliver' });
-    expect(gate({ chatType: 'p2p', senderId: 'sender-other' }, access))
-      .toMatchObject({
-        action: 'drop',
-        reason: 'direct sender not allowed',
-      });
-  });
+const NOW = 1_700_000_000_000;
+const SENDER_KNOWN = 'sender-known';
+const SENDER_STRANGER = 'sender-stranger';
+const CHAT_ALLOWED = 'chat-allowed';
+const CHAT_STRANGER = 'chat-stranger';
 
-  it('drops self-sent, bot-sender, and missing-sender messages', () => {
-    const access = state({ allow_users: ['sender-allowed'] });
+function state(
+  overrides: Partial<DispatcherAccessStateV3> = {},
+): DispatcherAccessStateV3 {
+  const base = defaultDispatcherAccessState();
+  return {
+    ...base,
+    ...overrides,
+    group: { ...base.group, ...(overrides.group ?? {}) },
+  };
+}
 
-    expect(gate({ senderId: '' }, access)).toMatchObject({
-      action: 'drop',
-      reason: 'missing sender id',
-    });
-    expect(gate({ senderId: 'bot-open-id' }, access)).toMatchObject({
-      action: 'drop',
-      reason: 'message sent by this bot',
-    });
-    expect(gate({ senderId: 'sender-bot', senderType: 'bot' }, access))
-      .toMatchObject({
-        action: 'drop',
-        reason: 'bot sender type: bot',
-      });
-  });
+function gate(
+  input: Partial<GateInbound>,
+  access: DispatcherAccessStateV3 = state(),
+  now: number = NOW,
+) {
+  const fullInput: GateInbound = {
+    chat_type: 'group',
+    sender_id: SENDER_KNOWN,
+    chat_id: CHAT_ALLOWED,
+    is_bot_sender: false,
+    trusted_bot: false,
+    bot_mentioned: true,
+    ...input,
+  };
+  return dreamuxFeishuGate(access, fullInput, now);
+}
 
-  describe('follow-user policy — the global allow-user list gates every group', () => {
-    const access = state({
-      allow_users: ['sender-allowed'],
-      group: { policy: 'follow-user', allow_chats: [], require_mention: true },
-    });
+function makePendingEntry(
+  kind: 'dm' | 'group',
+  idx: number,
+  now: number,
+  expired = false,
+): PendingPairingEntry {
+  const ttl = expired ? -1000 : PAIRING_TTL_MS;
+  const id = String(1000 + idx);
+  return {
+    kind,
+    sender_id: kind === 'dm' ? `u-${id}` : SENDER_STRANGER,
+    chat_id: kind === 'group' ? `c-${id}` : `dm-${id}`,
+    created_at: now,
+    expires_at: now + ttl,
+    replies: 1,
+  };
+}
 
-    it('delivers a global allow-user who @-mentions the bot in any group', () => {
-      expect(gate({ chatId: 'chat-group-a' }, access)).toMatchObject({
-        action: 'deliver',
-      });
-      // A different group the operator never configured — still delivered.
-      expect(gate({ chatId: 'chat-group-z' }, access)).toMatchObject({
-        action: 'deliver',
-      });
-    });
+// ──────────────────────────────────────────────────────────────────────────
+// A. Branch table — every distinct gate decision
+// ──────────────────────────────────────────────────────────────────────────
 
-    it('ignores a configured chat allowlist under follow-user', () => {
-      // allow_chats names only chat-group-a, but follow-user does not gate on
-      // the chat: an allow-user is delivered in an unlisted chat all the same.
-      const scoped = state({
-        allow_users: ['sender-allowed'],
-        group: {
-          policy: 'follow-user',
-          allow_chats: ['chat-group-a'],
-          require_mention: true,
+type TableCase = {
+  name: string;
+  input: Partial<GateInbound>;
+  statePatch?: Partial<DispatcherAccessStateV3>;
+  expect: {
+    action: 'deliver' | 'drop' | 'pair';
+    reason?: string;
+    isResend?: boolean;
+    kind?: 'dm' | 'group';
+  };
+};
+
+const BRANCH_CASES: TableCase[] = [
+  // ── DM ────────────────────────────────────────────────────────────────
+  {
+    name: 'DM / disabled → drop dm_disabled',
+    input: { chat_type: 'p2p', sender_id: SENDER_STRANGER },
+    statePatch: { dm_policy: 'disabled' as DmPolicy },
+    expect: { action: 'drop', reason: 'dm_disabled' },
+  },
+  {
+    name: 'DM / allowlist + stranger → drop dm_not_on_allowlist',
+    input: { chat_type: 'p2p', sender_id: SENDER_STRANGER },
+    statePatch: { dm_policy: 'allowlist' as DmPolicy, allow_users: [SENDER_KNOWN] },
+    expect: { action: 'drop', reason: 'dm_not_on_allowlist' },
+  },
+  {
+    name: 'DM / allowlist + known user → deliver',
+    input: { chat_type: 'p2p', sender_id: SENDER_KNOWN },
+    statePatch: { dm_policy: 'allowlist' as DmPolicy, allow_users: [SENDER_KNOWN] },
+    expect: { action: 'deliver' },
+  },
+  {
+    name: 'DM / pairing + stranger → pair (new slot)',
+    input: { chat_type: 'p2p', sender_id: SENDER_STRANGER },
+    statePatch: { dm_policy: 'pairing' as DmPolicy },
+    expect: { action: 'pair', kind: 'dm', isResend: false },
+  },
+  {
+    name: 'DM / pairing + known user → deliver (short-circuit allowlist)',
+    input: { chat_type: 'p2p', sender_id: SENDER_KNOWN },
+    statePatch: { dm_policy: 'pairing' as DmPolicy, allow_users: [SENDER_KNOWN] },
+    expect: { action: 'deliver' },
+  },
+  {
+    name: 'DM / pairing + already paired (same sender, not expired) → pair + is_resend',
+    input: { chat_type: 'p2p', sender_id: SENDER_STRANGER },
+    statePatch: {
+      dm_policy: 'pairing' as DmPolicy,
+      pending: {
+        abcdef: {
+          kind: 'dm',
+          sender_id: SENDER_STRANGER,
+          chat_id: 'dm-self',
+          created_at: NOW,
+          expires_at: NOW + PAIRING_TTL_MS,
+          replies: 1,
         },
-      });
-      expect(gate({ chatId: 'chat-group-z' }, scoped)).toMatchObject({
-        action: 'deliver',
-      });
-    });
+      },
+    },
+    expect: { action: 'pair', kind: 'dm', isResend: true },
+  },
+  {
+    name: 'DM / all → deliver',
+    input: { chat_type: 'p2p', sender_id: 'anyone' },
+    statePatch: { dm_policy: 'all' as DmPolicy },
+    expect: { action: 'deliver' },
+  },
+  {
+    name: 'DM / bot sender (is_bot_sender) → drop bot_untrusted',
+    input: { chat_type: 'p2p', sender_id: 'peer-bot', is_bot_sender: true },
+    statePatch: { dm_policy: 'all' as DmPolicy },
+    expect: { action: 'drop', reason: 'bot_untrusted' },
+  },
 
-    it('drops a sender who is not on the global allow-user list', () => {
-      expect(gate({ senderId: 'sender-other' }, access)).toMatchObject({
-        action: 'drop',
-        reason: 'sender not on allowlist',
-      });
-    });
+  // ── GROUP: require_mention ────────────────────────────────────────────
+  {
+    name: 'GROUP / require_mention + not mentioned → drop group_bot_not_mentioned',
+    input: { chat_type: 'group', bot_mentioned: false },
+    statePatch: {
+      group: { policy: 'follow-user', allow_chats: [CHAT_ALLOWED], require_mention: true },
+      allow_users: [SENDER_KNOWN],
+    },
+    expect: { action: 'drop', reason: 'group_bot_not_mentioned' },
+  },
+  {
+    name: 'GROUP / require_mention=false + not mentioned + follow-user + allowed sender → deliver',
+    input: { chat_type: 'group', bot_mentioned: false, sender_id: SENDER_KNOWN },
+    statePatch: {
+      group: { policy: 'follow-user', allow_chats: [], require_mention: false },
+      allow_users: [SENDER_KNOWN],
+    },
+    expect: { action: 'deliver' },
+  },
 
-    it('always requires an @-mention, regardless of require_mention', () => {
-      expect(gate({ mentions: [] }, access)).toMatchObject({
-        action: 'drop',
-        reason: 'bot not mentioned',
-      });
-      const noMentionFlag = state({
-        allow_users: ['sender-allowed'],
-        group: {
-          policy: 'follow-user',
-          allow_chats: [],
-          require_mention: false,
+  // ── GROUP: block ──────────────────────────────────────────────────────
+  {
+    name: 'GROUP / block → drop group_policy_block',
+    input: { chat_type: 'group', bot_mentioned: true },
+    statePatch: {
+      group: { policy: 'block' as GroupPolicy, allow_chats: [CHAT_ALLOWED], require_mention: false },
+      allow_users: [SENDER_KNOWN],
+    },
+    expect: { action: 'drop', reason: 'group_policy_block' },
+  },
+
+  // ── GROUP: allowlist ──────────────────────────────────────────────────
+  //
+  // After the C3 semantic rewrite (review comment PR #255, 2026-06-27):
+  // Rule 1: group policy=allowlist AND chat ∉ allow_chats → DROP everything
+  //         (no pairing code can ever add a chat to allow_chats).
+  // Rule 2: group policy=allowlist AND chat ∈ allow_chats → ADDITIONALLY
+  //         enforce the dm_policy user-level check on top (sender must be on
+  //         allow_users to deliver; otherwise trigger a dm-kind pair).
+  {
+    name: 'GROUP / allowlist + allowlisted chat + known sender → deliver (rule 2叠加)',
+    input: { chat_type: 'group', chat_id: CHAT_ALLOWED, sender_id: SENDER_KNOWN, bot_mentioned: true },
+    statePatch: {
+      group: { policy: 'allowlist', allow_chats: [CHAT_ALLOWED], require_mention: true },
+      allow_users: [SENDER_KNOWN],
+    },
+    expect: { action: 'deliver' },
+  },
+  {
+    name: 'GROUP / allowlist + allowlisted chat + stranger + mentioned → pair dm-kind (rule 2叠加 + pairing)',
+    input: { chat_type: 'group', chat_id: CHAT_ALLOWED, sender_id: SENDER_STRANGER, bot_mentioned: true },
+    statePatch: {
+      group: { policy: 'allowlist', allow_chats: [CHAT_ALLOWED], require_mention: true },
+    },
+    expect: { action: 'pair', kind: 'dm', isResend: false },
+  },
+  {
+    name: 'GROUP / allowlist + non-allowlisted chat + not mentioned → drop rule1',
+    input: { chat_type: 'group', chat_id: CHAT_STRANGER, bot_mentioned: false },
+    statePatch: {
+      group: { policy: 'allowlist', allow_chats: [CHAT_ALLOWED], require_mention: false },
+    },
+    expect: { action: 'drop', reason: 'group_not_on_allowlist' },
+  },
+  {
+    name: 'GROUP / allowlist + non-allowlisted chat + mentioned → drop rule1 (no group-kind pairing anymore)',
+    input: { chat_type: 'group', chat_id: CHAT_STRANGER, sender_id: SENDER_STRANGER, bot_mentioned: true },
+    statePatch: {
+      group: { policy: 'allowlist', allow_chats: [CHAT_ALLOWED], require_mention: true },
+      // Even if the sender IS on allow_users, rule 1 drops the whole chat.
+      allow_users: [SENDER_STRANGER],
+    },
+    expect: { action: 'drop', reason: 'group_not_on_allowlist' },
+  },
+
+  // ── GROUP: follow-user ────────────────────────────────────────────────
+  //
+  // follow-user = no group allowlist shell; dm_policy switch applies directly.
+  {
+    name: 'GROUP / follow-user + known sender (allow_users) → deliver',
+    input: { chat_type: 'group', sender_id: SENDER_KNOWN, bot_mentioned: true, chat_id: CHAT_STRANGER },
+    statePatch: {
+      group: { policy: 'follow-user', allow_chats: [], require_mention: true },
+      allow_users: [SENDER_KNOWN],
+    },
+    expect: { action: 'deliver' },
+  },
+  {
+    name: 'GROUP / follow-user + stranger + not mentioned → drop dm=pairing no mention',
+    input: { chat_type: 'group', sender_id: SENDER_STRANGER, bot_mentioned: false },
+    statePatch: {
+      group: { policy: 'follow-user', allow_chats: [], require_mention: false },
+    },
+    expect: { action: 'drop', reason: 'group_pairing_stranger_not_mentioned' },
+  },
+  {
+    name: 'GROUP / follow-user + stranger + mentioned → pair dm-kind (陌生人@bot → 个人配对码)',
+    input: { chat_type: 'group', sender_id: SENDER_STRANGER, bot_mentioned: true, chat_id: CHAT_STRANGER },
+    statePatch: {
+      group: { policy: 'follow-user', allow_chats: [], require_mention: true },
+    },
+    expect: { action: 'pair', kind: 'dm', isResend: false },
+  },
+
+  // ── GROUP: trusted bot ────────────────────────────────────────────────
+  {
+    name: 'GROUP / trusted bot sender + mentioned → deliver',
+    input: { chat_type: 'group', sender_id: 'peer-bot', is_bot_sender: true, trusted_bot: true, bot_mentioned: true },
+    statePatch: {
+      group: { policy: 'follow-user', allow_chats: [], require_mention: true },
+    },
+    expect: { action: 'deliver' },
+  },
+  {
+    name: 'GROUP / trusted bot sender + NOT mentioned → drop',
+    input: { chat_type: 'group', sender_id: 'peer-bot', is_bot_sender: true, trusted_bot: true, bot_mentioned: false },
+    statePatch: {
+      group: { policy: 'follow-user', allow_chats: [], require_mention: false },
+    },
+    expect: { action: 'drop', reason: 'group_bot_not_mentioned' },
+  },
+  {
+    name: 'GROUP / untrusted bot sender → drop bot_untrusted',
+    input: { chat_type: 'group', sender_id: 'unknown-bot', is_bot_sender: true, trusted_bot: false, bot_mentioned: true },
+    statePatch: {
+      group: { policy: 'follow-user', allow_chats: [], require_mention: false },
+    },
+    expect: { action: 'drop', reason: 'bot_untrusted' },
+  },
+
+  // ── GROUP: already pending (resend) ───────────────────────────────────
+  //
+  // In-group pairing is dm-kind (C3 rewrite): the dedupe key is SENDER_ID,
+  // not chat_id. A second user in the same group does NOT reuse the first
+  // user's pending code (that was the old group-kind behavior). A repeat
+  // @-mention by the SAME user DOES resend their existing dm-kind code.
+  {
+    name: 'GROUP / follow-user + stranger + already pending same sender → pair resend dm-kind',
+    input: { chat_type: 'group', sender_id: SENDER_STRANGER, chat_id: CHAT_STRANGER, bot_mentioned: true },
+    statePatch: {
+      group: { policy: 'follow-user', allow_chats: [], require_mention: true },
+      pending: {
+        a1b2c3: {
+          kind: 'dm',
+          sender_id: SENDER_STRANGER,
+          chat_id: CHAT_STRANGER,
+          created_at: NOW,
+          expires_at: NOW + PAIRING_TTL_MS,
+          replies: 1,
         },
-      });
-      expect(gate({ mentions: [] }, noMentionFlag)).toMatchObject({
-        action: 'drop',
-        reason: 'bot not mentioned',
-      });
-    });
+      },
+    },
+    expect: { action: 'pair', kind: 'dm', isResend: true },
+  },
 
-    it('drops when the bot open_id is unknown', () => {
-      expect(gate({ botOpenId: undefined }, access)).toMatchObject({
-        action: 'drop',
-        reason: 'group message requires a bot mention but bot open_id is unknown',
-      });
-    });
-  });
+  // ── Quota / matrix edge cases ─────────────────────────────────────────
+  {
+    name: 'DM / pairing + stranger + same-sender expired → pair with FRESH code (TTL guard)',
+    input: { chat_type: 'p2p', sender_id: SENDER_STRANGER },
+    statePatch: {
+      dm_policy: 'pairing' as DmPolicy,
+      pending: {
+        oldcode: {
+          kind: 'dm',
+          sender_id: SENDER_STRANGER,
+          chat_id: 'dm-x',
+          created_at: NOW - PAIRING_TTL_MS - 1000,
+          expires_at: NOW - 1,
+          replies: 1,
+        },
+      },
+    },
+    expect: { action: 'pair', kind: 'dm', isResend: false },
+  },
+  {
+    name: 'DM / pairing + stranger + 10 non-expired DM pending → drop dm_pairing_slot_cap',
+    input: { chat_type: 'p2p', sender_id: SENDER_STRANGER },
+    statePatch: (() => {
+      const pending: Record<string, PendingPairingEntry> = {};
+      for (let i = 0; i < MAX_PENDING_PER_KIND; i++) {
+        pending[`d${i}`] = {
+          kind: 'dm',
+          sender_id: `u-${i}`,
+          chat_id: `dm-${i}`,
+          created_at: NOW,
+          expires_at: NOW + PAIRING_TTL_MS,
+          replies: 1,
+        };
+      }
+      return { dm_policy: 'pairing' as DmPolicy, pending };
+    })(),
+    expect: { action: 'drop', reason: 'dm_pairing_slot_cap' },
+  },
+  {
+    name: 'GROUP / follow-user + 10 DM pending full (10 不同陌生人各占一槽) → next new stranger drops dm_pairing_slot_cap',
+    input: { chat_type: 'group', sender_id: SENDER_STRANGER, chat_id: CHAT_STRANGER, bot_mentioned: true },
+    statePatch: (() => {
+      const pending: Record<string, PendingPairingEntry> = {};
+      for (let i = 0; i < MAX_PENDING_PER_KIND; i++) {
+        pending[`d-g${i}`] = {
+          kind: 'dm',
+          sender_id: `u-${i}`,
+          chat_id: `c-${i}`,
+          created_at: NOW,
+          expires_at: NOW + PAIRING_TTL_MS,
+          replies: 1,
+        };
+      }
+      return {
+        group: { policy: 'follow-user', allow_chats: [], require_mention: true },
+        pending,
+      };
+    })(),
+    expect: { action: 'drop', reason: 'dm_pairing_slot_cap' },
+  },
+];
 
-  describe('allowlist policy — the chat is the unit of trust', () => {
+describe('A. Branch table — every distinct gate decision', () => {
+  for (const tc of BRANCH_CASES) {
+    it(tc.name, () => {
+      const access = state(tc.statePatch ?? {});
+      const result = gate(tc.input, access, NOW);
+
+      expect(result.action.action).toBe(tc.expect.action);
+
+      if (tc.expect.action === 'drop') {
+        expect(result.action).toMatchObject({
+          action: 'drop',
+          reason: tc.expect.reason,
+        });
+      }
+      if (tc.expect.action === 'pair') {
+        expect(result.action).toMatchObject({
+          action: 'pair',
+          kind: tc.expect.kind,
+          is_resend: !!tc.expect.isResend,
+        });
+        const act = result.action;
+        if (act.action === 'pair') {
+          expect(act.code.length).toBe(ACCESS_CODE_HEX_LEN * 2);
+          expect(/^[0-9a-f]{6}$/.test(act.code)).toBe(true);
+          expect(act.ttl_left_ms).toBeGreaterThan(0);
+        }
+      }
+
+      // last_gate invariant
+      expect(result.nextState.last_gate.at).toBe(NOW);
+      expect(result.nextState.last_gate.sender_id).toBe(
+        (tc.input.sender_id ?? SENDER_KNOWN) as string,
+      );
+      expect(result.nextState.last_gate.chat_id).toBe(
+        (tc.input.chat_id ?? CHAT_ALLOWED) as string,
+      );
+    });
+  }
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// B. TTL double-guard
+// ──────────────────────────────────────────────────────────────────────────
+
+describe('B. TTL double-guard', () => {
+  it('expired pending entry is NOT counted as existing — fresh code generated', () => {
+    const expired: PendingPairingEntry = {
+      kind: 'dm',
+      sender_id: SENDER_STRANGER,
+      chat_id: 'dm-self',
+      created_at: NOW - PAIRING_TTL_MS - 1000,
+      expires_at: NOW - 1,
+      replies: 1,
+    };
     const access = state({
-      // No global allow-user: allowlist mode trusts the group, not the sender.
-      group: { policy: 'allowlist', allow_chats: ['chat-group-a'], require_mention: true },
+      dm_policy: 'pairing',
+      pending: { deadcode: expired },
     });
-
-    it('delivers any member of an authorized chat once the bot is mentioned', () => {
-      expect(gate({ chatId: 'chat-group-a', senderId: 'anyone' }, access))
-        .toMatchObject({ action: 'deliver' });
-    });
-
-    it('drops a chat that is not on the allowlist', () => {
-      expect(gate({ chatId: 'chat-group-b' }, access)).toMatchObject({
-        action: 'drop',
-        reason: 'group chat not allowed',
-      });
-    });
-
-    it('honors require_mention in allowlist mode', () => {
-      expect(gate({ chatId: 'chat-group-a', mentions: [] }, access))
-        .toMatchObject({ action: 'drop', reason: 'bot not mentioned' });
-
-      const open = state({
-        group: { policy: 'allowlist', allow_chats: ['chat-group-a'], require_mention: false },
-      });
-      expect(gate({ chatId: 'chat-group-a', mentions: [] }, open))
-        .toMatchObject({ action: 'deliver' });
-    });
+    const result = gate({ chat_type: 'p2p', sender_id: SENDER_STRANGER }, access, NOW);
+    expect(result.action.action).toBe('pair');
+    if (result.action.action !== 'pair') throw new Error('unreachable');
+    expect(result.action.is_resend).toBe(false);
+    expect(result.action.code).not.toBe('deadcode');
+    // Pruned entry should no longer be present
+    expect(result.nextState.pending.deadcode).toBeUndefined();
+    // The new live entry is present under a different key
+    const newCode = result.action.code;
+    expect(result.nextState.pending[newCode]).toBeDefined();
+    expect(result.nextState.pending[newCode].expires_at).toBe(NOW + PAIRING_TTL_MS);
   });
 
-  describe('block policy', () => {
-    it('drops every group message', () => {
-      const access = state({
-        allow_users: ['sender-allowed'],
-        group: { policy: 'block', allow_chats: [], require_mention: true },
-      });
-      expect(gate({}, access)).toMatchObject({
-        action: 'drop',
-        reason: 'group messages are blocked (group policy: block)',
-      });
-    });
-  });
-
-  describe('peer-bot trust is per-chat and never reached through allow_users', () => {
-    const botBase = { senderId: 'peer-bot', senderType: 'bot' };
-    // The default `gate` helper mention list @-mentions `bot-open-id`, the bot's
-    // own open_id, so a bot message that keeps it counts as "@-mentions us".
-    const mentionUs = [{ key: '@_bot', id: { open_id: 'bot-open-id' } }];
-
-    it('drops an un-introduced bot sender', () => {
-      const access = state({ group: { policy: 'allowlist', allow_chats: ['chat-group-a'], require_mention: true } });
-      expect(gate(botBase, access)).toMatchObject({ action: 'drop' });
-    });
-
-    it('delivers a trusted bot that @-mentions us, under follow-user', () => {
-      const access = state({
-        allow_users: ['sender-allowed'],
-        group: { policy: 'follow-user', allow_chats: [], require_mention: true },
-      });
-      expect(
-        gate(
-          { ...botBase, mentions: mentionUs, trustedBotIds: new Set(['peer-bot']) },
-          access,
-        ),
-      ).toMatchObject({ action: 'deliver' });
-    });
-
-    it('drops a trusted bot that does NOT @-mention us (#102: trust is not a mention bypass)', () => {
-      const access = state({
-        allow_users: ['sender-allowed'],
-        group: { policy: 'follow-user', allow_chats: [], require_mention: true },
-      });
-      expect(
-        gate({ ...botBase, mentions: [], trustedBotIds: new Set(['peer-bot']) }, access),
-      ).toMatchObject({ action: 'drop', reason: 'bot not mentioned' });
-    });
-
-    it('drops an untrusted bot even when it @-mentions us', () => {
-      const access = state({
-        allow_users: ['sender-allowed'],
-        group: { policy: 'follow-user', allow_chats: [], require_mention: true },
-      });
-      expect(
-        gate({ ...botBase, mentions: mentionUs, trustedBotIds: new Set() }, access),
-      ).toMatchObject({ action: 'drop', reason: 'bot sender type: bot' });
-    });
-  });
-
-  it('shares one global list across direct and follow-user group delivery', () => {
+  it('non-expired pending is counted as existing (resend with same code — dm-kind)', () => {
+    // C3 rewrite: group-triggered pair requests create dm-kind entries. The
+    // dedupe key is sender_id (not chat_id). So we seed a dm-kind pending
+    // entry for the SAME sender that triggers the repeat @-mention.
+    const live: PendingPairingEntry = {
+      kind: 'dm',
+      sender_id: SENDER_STRANGER,
+      chat_id: CHAT_STRANGER,
+      created_at: NOW - 1000,
+      expires_at: NOW + PAIRING_TTL_MS - 1000,
+      replies: 1,
+    };
     const access = state({
-      allow_users: ['shared-user'],
       group: { policy: 'follow-user', allow_chats: [], require_mention: true },
+      pending: { livecode: live },
     });
-    expect(gate({ chatType: 'p2p', senderId: 'shared-user' }, access))
-      .toMatchObject({ action: 'deliver' });
-    expect(gate({ chatType: 'group', senderId: 'shared-user' }, access))
-      .toMatchObject({ action: 'deliver' });
+    const result = gate(
+      { chat_type: 'group', chat_id: CHAT_STRANGER, sender_id: SENDER_STRANGER, bot_mentioned: true },
+      access,
+      NOW,
+    );
+    expect(result.action.action).toBe('pair');
+    if (result.action.action !== 'pair') throw new Error('unreachable');
+    expect(result.action.is_resend).toBe(true);
+    expect(result.action.code).toBe('livecode');
+    // TTL refreshed from the user's pov
+    expect(result.nextState.pending.livecode.expires_at).toBe(NOW + PAIRING_TTL_MS);
+    expect(result.nextState.pending.livecode.replies).toBe(2);
   });
 
-  it('records a trust-domain warning when one dispatcher observes multiple chats', () => {
+  it('pruneExpiredPending (via gate) removes only expired entries and preserves live ones', () => {
+    const live: PendingPairingEntry = {
+      kind: 'dm',
+      sender_id: 'u-live',
+      chat_id: 'dm-live',
+      created_at: NOW,
+      expires_at: NOW + 1000,
+      replies: 1,
+    };
+    const dead: PendingPairingEntry = {
+      kind: 'dm',
+      sender_id: 'u-dead',
+      chat_id: 'dm-dead',
+      created_at: NOW - 10_000,
+      expires_at: NOW - 1,
+      replies: 1,
+    };
+    const dead2: PendingPairingEntry = {
+      kind: 'group',
+      sender_id: 'x',
+      chat_id: 'c-dead',
+      created_at: NOW - 10_000,
+      expires_at: 0,
+      replies: 1,
+    };
     const access = state({
-      allow_users: ['sender-allowed'],
-      group: { policy: 'follow-user', allow_chats: [], require_mention: true },
+      dm_policy: 'all',
+      pending: { LIVE: live, DEAD: dead, DEAD2: dead2 },
     });
-    const first = gate({ chatId: 'chat-group-a' }, access);
-    expect(first.action).toBe('deliver');
-    if (first.action !== 'deliver') throw new Error('unreachable');
-    expect(first.warning).toBeNull();
-
-    const second = gate({ chatId: 'chat-group-b' }, first.access);
-
-    expect(second.action).toBe('deliver');
-    if (second.action !== 'deliver') throw new Error('unreachable');
-    expect(second.warning).toBe(TRUST_DOMAIN_WARNING);
-    expect(second.access.warnings).toEqual([TRUST_DOMAIN_WARNING]);
-    expect(second.access.observed_chats).toEqual([
-      'chat-group-a',
-      'chat-group-b',
-    ]);
+    const result = gate({ chat_type: 'p2p', sender_id: 'anyone' }, access, NOW);
+    expect(result.action.action).toBe('deliver');
+    expect(Object.keys(result.nextState.pending)).toEqual(['LIVE']);
+    expect(result.nextState.pending.LIVE).toEqual(live);
   });
 });
 
-describe('dispatcher access state files', () => {
+// ──────────────────────────────────────────────────────────────────────────
+// C. Per-kind pending quota
+// ──────────────────────────────────────────────────────────────────────────
+
+describe('C. Per-kind pending quota (MAX_PENDING_PER_KIND = 10)', () => {
+  it('fill 10 DM pending → next DM pair request drops dm_pairing_slot_cap', () => {
+    const pending: Record<string, PendingPairingEntry> = {};
+    for (let i = 0; i < MAX_PENDING_PER_KIND; i++) {
+      pending[`d${i}`] = makePendingEntry('dm', i, NOW);
+    }
+    const access = state({ dm_policy: 'pairing', pending });
+    const result = gate({ chat_type: 'p2p', sender_id: 'new-stranger' }, access, NOW);
+    expect(result.action).toEqual({
+      action: 'drop',
+      reason: 'dm_pairing_slot_cap',
+      context: { pending: MAX_PENDING_PER_KIND, max: MAX_PENDING_PER_KIND },
+    });
+  });
+
+  it('10 DM pending ALSO blocks in-group pair request (shared dm-kind counter after C3 rewrite)', () => {
+    const pending: Record<string, PendingPairingEntry> = {};
+    for (let i = 0; i < MAX_PENDING_PER_KIND; i++) {
+      pending[`d${i}`] = makePendingEntry('dm', i, NOW);
+    }
+    const access = state({
+      group: { policy: 'follow-user', allow_chats: [], require_mention: true },
+      pending,
+    });
+    const result = gate(
+      { chat_type: 'group', sender_id: SENDER_STRANGER, chat_id: CHAT_STRANGER, bot_mentioned: true },
+      access,
+      NOW,
+    );
+    // Group-triggered pair requests now generate dm-kind entries → they share
+    // the dm counter with DM-triggered entries. 10 full → drop.
+    expect(result.action).toEqual({
+      action: 'drop',
+      reason: 'dm_pairing_slot_cap',
+      context: { pending: MAX_PENDING_PER_KIND, max: MAX_PENDING_PER_KIND },
+    });
+  });
+
+  it('fill 10 dm-kind pending (mixed DM + group sources) → next new stranger in group drops dm_pairing_slot_cap', () => {
+    const pending: Record<string, PendingPairingEntry> = {};
+    for (let i = 0; i < MAX_PENDING_PER_KIND; i++) {
+      pending[`mix${i}`] = makePendingEntry('dm', i, NOW);
+    }
+    const access = state({
+      group: { policy: 'follow-user', allow_chats: [], require_mention: true },
+      pending,
+    });
+    const result = gate(
+      { chat_type: 'group', sender_id: SENDER_STRANGER, chat_id: 'c-brand-new', bot_mentioned: true },
+      access,
+      NOW,
+    );
+    expect(result.action).toEqual({
+      action: 'drop',
+      reason: 'dm_pairing_slot_cap',
+      context: { pending: MAX_PENDING_PER_KIND, max: MAX_PENDING_PER_KIND },
+    });
+  });
+
+  it('LEGACY group-kind pending entries (pre-C3) do NOT block DM pair request', () => {
+    // After the C3 rewrite no code generates group-kind entries any more,
+    // but legacy ones sitting on disk still parse. Their kind is 'group' so
+    // they don't count toward the dm-kind quota.
+    const pending: Record<string, PendingPairingEntry> = {};
+    for (let i = 0; i < MAX_PENDING_PER_KIND; i++) {
+      pending[`g${i}`] = makePendingEntry('group', i, NOW);
+    }
+    const access = state({ dm_policy: 'pairing', pending });
+    const result = gate({ chat_type: 'p2p', sender_id: 'new-stranger' }, access, NOW);
+    expect(result.action.action).toBe('pair');
+    if (result.action.action !== 'pair') throw new Error('unreachable');
+    expect(result.action.kind).toBe('dm');
+  });
+
+  it('expired entries do NOT count toward quota — new slot succeeds', () => {
+    // Fill with all expired entries
+    const pending: Record<string, PendingPairingEntry> = {};
+    for (let i = 0; i < MAX_PENDING_PER_KIND + 5; i++) {
+      pending[`x${i}`] = makePendingEntry('dm', i, NOW, true);
+    }
+    const access = state({ dm_policy: 'pairing', pending });
+    const result = gate({ chat_type: 'p2p', sender_id: 'new-stranger' }, access, NOW);
+    // All expired → pruned → quota free → new pair slot
+    expect(result.action.action).toBe('pair');
+    if (result.action.action !== 'pair') throw new Error('unreachable');
+    expect(result.action.is_resend).toBe(false);
+    // None of the expired entries should remain
+    for (const k of Object.keys(pending)) {
+      expect(result.nextState.pending[k]).toBeUndefined();
+    }
+  });
+
+  it('max replies (MAX_PAIRING_REPLIES) reached → drop dm_pairing_slot_cap (C3: all pairs are dm-kind)', () => {
+    const exhausted: PendingPairingEntry = {
+      kind: 'dm',
+      sender_id: 'u-maxed',
+      chat_id: 'c-any',
+      created_at: NOW - 1000,
+      expires_at: NOW + PAIRING_TTL_MS,
+      replies: MAX_PAIRING_REPLIES,
+    };
+    const access = state({
+      group: { policy: 'follow-user', allow_chats: [], require_mention: true },
+      pending: { EXHAUST: exhausted },
+    });
+    // Same sender (dm-kind dedupe key is sender_id) → hits the exhausted slot.
+    const result = gate(
+      { chat_type: 'group', sender_id: 'u-maxed', chat_id: 'c-any', bot_mentioned: true },
+      access,
+      NOW,
+    );
+    expect(result.action).toMatchObject({
+      action: 'drop',
+      reason: 'dm_pairing_slot_cap',
+    });
+    // Warning pushed
+    expect(result.nextState.warnings.length).toBeGreaterThan(0);
+    type WarnE = DispatcherAccessStateV3['warnings'][number];
+    expect(
+      result.nextState.warnings.some((w: WarnE) => w.msg.includes('max resends reached')),
+    ).toBe(true);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// D. v3 loader fail-loud
+// ──────────────────────────────────────────────────────────────────────────
+
+describe('D. v3 loader fail-loud', () => {
   let stateDir: string;
 
   beforeEach(() => {
@@ -250,160 +672,337 @@ describe('dispatcher access state files', () => {
     rmSync(stateDir, { recursive: true, force: true });
   });
 
-  it('defaults a missing access.json to the secure follow-user shape', async () => {
+  function writeRaw(raw: unknown): void {
+    const path = join(stateDir, 'access.json');
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, JSON.stringify(raw), 'utf8');
+  }
+
+  it('missing access.json → returns default v3 state', async () => {
     const loaded = await loadDispatcherAccess(stateDir);
     expect(loaded).toEqual(defaultDispatcherAccessState());
-    expect(loaded.version).toBe(2);
-    expect(loaded.allow_users).toEqual([]);
+    expect(loaded.version).toBe(ACCESS_STATE_VERSION);
+    expect(loaded.version).toBe(3);
+    expect(loaded.dm_policy).toBe('pairing');
     expect(loaded.group.policy).toBe('follow-user');
+    expect(loaded.allow_users).toEqual([]);
+    expect(loaded.group.require_mention).toBe(true);
   });
 
-  it('writes owner-only v2 state and round-trips', async () => {
-    const access = state({
-      allow_users: ['sender-allowed'],
-      observed_chats: ['chat-group-a'],
+  it('v2 file → throws error mentioning version 3 and migration guidance', async () => {
+    writeRaw({
+      version: 2,
+      allow_users: ['user-a'],
+      group: { policy: 'follow-user', allow_chats: [], require_mention: true },
     });
-    await saveDispatcherAccess(stateDir, access);
+    await expect(loadDispatcherAccess(stateDir)).rejects.toThrow(/v3/);
+    await expect(loadDispatcherAccess(stateDir)).rejects.toThrow(/migration|CHANGELOG|access\.json/i);
+  });
 
+  it('v1 file → throws error mentioning v3', async () => {
+    writeRaw({ version: 1, dm: { allow_users: ['u'] } });
+    await expect(loadDispatcherAccess(stateDir)).rejects.toThrow(/v3/);
+  });
+
+  it('missing version field → throws error mentioning v3 shape', async () => {
+    writeRaw({ allow_users: ['u'] });
+    await expect(loadDispatcherAccess(stateDir)).rejects.toThrow(/v3/);
+  });
+
+  it('malformed JSON → throws mentioning v3 / access.json', async () => {
+    const path = join(stateDir, 'access.json');
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, '{not json', 'utf8');
+    await expect(loadDispatcherAccess(stateDir)).rejects.toThrow(/access\.json/);
+  });
+
+  it('save → load round-trips v3 state with 0600 file mode', async () => {
+    const s = state({
+      dm_policy: 'allowlist',
+      allow_users: ['u-1'],
+      group: { policy: 'allowlist', allow_chats: ['c-1'], require_mention: false },
+    });
+    await saveDispatcherAccess(stateDir, s);
     const path = join(stateDir, 'access.json');
     expect(existsSync(path)).toBe(true);
     expect(statSync(path).mode & 0o777).toBe(0o600);
-    const onDisk = JSON.parse(readFileSync(path, 'utf8'));
-    expect(onDisk).toMatchObject({
-      version: 2,
-      allow_users: ['sender-allowed'],
-      group: { policy: 'follow-user' },
-    });
-    // The legacy fields must not be written back.
-    expect(onDisk.dm).toBeUndefined();
-    expect(onDisk.group.follow_users).toBeUndefined();
-    expect(await loadDispatcherAccess(stateDir)).toEqual(access);
+    const loaded = await readDispatcherAccess(stateDir);
+    expect(loaded).toEqual(s);
+    // JSON on disk has the v3 version literal
+    const raw = JSON.parse(readFileSync(path, 'utf8'));
+    expect(raw.version).toBe(ACCESS_STATE_VERSION);
   });
 
-  describe('v2-only access schema (issue #98: no migration)', () => {
-    it('fails loud on a legacy v1 file instead of migrating it', async () => {
-      writeRawAccess(stateDir, {
-        version: 1,
-        dm: { allow_users: ['user-a'] },
-        group: {
-          allow_chats: [],
-          follow_users: ['user-b'],
-          require_mention: true,
-        },
-      });
-      await expect(loadDispatcherAccess(stateDir)).rejects.toThrow(
-        /unsupported schema version.*expected 2/s,
-      );
-    });
+  it('save rejects non-v3 shape', async () => {
+    const bad = { ...defaultDispatcherAccessState(), version: 2 as const };
+    await expect(
+      saveDispatcherAccess(stateDir, bad as unknown as DispatcherAccessStateV3),
+    ).rejects.toThrow(/non-v3|refusing/i);
+  });
+});
 
-    it('error names the action: delete to reset, then recreate a v2 file', async () => {
-      writeRawAccess(stateDir, { version: 1, dm: { allow_users: ['user-a'] } });
-      await expect(loadDispatcherAccess(stateDir)).rejects.toThrow(
-        /Delete it.*recreate it as a v2 access\.json/s,
-      );
-    });
+// ──────────────────────────────────────────────────────────────────────────
+// E. require_mention default
+// ──────────────────────────────────────────────────────────────────────────
 
-    it('fails loud when the version field is missing', async () => {
-      writeRawAccess(stateDir, {
-        allow_users: ['user-a'],
-        group: { policy: 'follow-user', allow_chats: [], require_mention: true },
-      });
-      await expect(loadDispatcherAccess(stateDir)).rejects.toThrow(
-        /unsupported schema version \(found missing/,
-      );
-    });
+describe('E. require_mention default', () => {
+  it('defaultDispatcherAccessState().group.require_mention === true', () => {
+    expect(defaultDispatcherAccessState().group.require_mention).toBe(true);
+  });
 
-    it('does not infer from legacy fields present on a v2 file', async () => {
-      // Legacy-only fields carry no meaning anymore: dm.* and group.follow_users
-      // are ignored, and a present allow_chats does NOT infer an allowlist policy.
-      writeRawAccess(stateDir, {
-        version: 2,
-        allow_users: ['user-a'],
-        dm: { allow_users: ['ignored'] },
-        group: {
-          allow_chats: ['chat-group-a'],
-          follow_users: ['ignored'],
-          require_mention: true,
-        },
-      });
-      const access = await loadDispatcherAccess(stateDir);
-      expect(access.allow_users).toEqual(['user-a']);
-      expect(access.group.policy).toBe('follow-user');
+  it('default state + human group + no mention → drop group_bot_not_mentioned', () => {
+    const access = defaultDispatcherAccessState();
+    expect(access.group.require_mention).toBe(true);
+    const result = gate(
+      { chat_type: 'group', sender_id: SENDER_STRANGER, bot_mentioned: false },
+      access,
+      NOW,
+    );
+    expect(result.action).toMatchObject({
+      action: 'drop',
+      reason: 'group_bot_not_mentioned',
     });
+  });
 
-    it('defaults an absent group.policy on a v2 file to secure follow-user', async () => {
-      writeRawAccess(stateDir, {
-        version: 2,
-        allow_users: [],
-        group: { allow_chats: ['chat-group-a'], require_mention: true },
-      });
-      expect((await loadDispatcherAccess(stateDir)).group.policy).toBe(
-        'follow-user',
-      );
+  it('require_mention=false + known sender + no mention → proceeds (deliver)', () => {
+    // With allow_users, require_mention=false + no mention → deliver
+    const access = state({
+      group: { policy: 'follow-user', allow_chats: [], require_mention: false },
+      allow_users: [SENDER_KNOWN],
     });
+    const r = gate(
+      { chat_type: 'group', sender_id: SENDER_KNOWN, bot_mentioned: false, chat_id: CHAT_STRANGER },
+      access,
+      NOW,
+    );
+    expect(r.action.action).toBe('deliver');
+  });
 
-    it('honors an explicit group.policy on a v2 file', async () => {
-      writeRawAccess(stateDir, {
-        version: 2,
-        allow_users: ['user-a'],
-        group: {
-          policy: 'allowlist',
-          allow_chats: ['chat-group-a'],
-          require_mention: true,
-        },
-      });
-      expect((await loadDispatcherAccess(stateDir)).group.policy).toBe('allowlist');
+  it('require_mention=false + allowlist stranger not mentioned → rule1 drop (no pairing)', () => {
+    // Rule 1 (C3): group.allowlist + chat ∉ allow_chats → drop everything,
+    // regardless of mention or require_mention setting.
+    const access = state({
+      group: { policy: 'allowlist', allow_chats: [], require_mention: false },
     });
-
-    it('rejects an invalid group.policy on a v2 file', async () => {
-      writeRawAccess(stateDir, {
-        version: 2,
-        allow_users: [],
-        group: { policy: 'nonsense', allow_chats: [], require_mention: true },
-      });
-      await expect(loadDispatcherAccess(stateDir)).rejects.toThrow(/group\.policy/);
+    const result = gate(
+      { chat_type: 'group', sender_id: SENDER_STRANGER, bot_mentioned: false, chat_id: CHAT_STRANGER },
+      access,
+      NOW,
+    );
+    expect(result.action).toMatchObject({
+      action: 'drop',
+      reason: 'group_not_on_allowlist',
     });
   });
 });
 
-function writeRawAccess(id: string, raw: unknown): void {
-  const path = join(id, 'access.json');
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(raw), 'utf8');
-}
+// ──────────────────────────────────────────────────────────────────────────
+// F. Misc
+// ──────────────────────────────────────────────────────────────────────────
 
-function state(
-  overrides: Partial<DispatcherAccessState> = {},
-): DispatcherAccessState {
-  const base = defaultDispatcherAccessState();
-  return {
-    ...base,
-    ...overrides,
-    group: { ...base.group, ...(overrides.group ?? {}) },
-  };
-}
+describe('F. Misc constants and helpers', () => {
+  describe('generatePairingCode', () => {
+    it('returns 6-char hex string (ACCESS_CODE_HEX_LEN bytes = 2*len chars)', () => {
+      // Random, so try several times
+      for (let i = 0; i < 20; i++) {
+        const code = generatePairingCode();
+        expect(typeof code).toBe('string');
+        expect(code).toHaveLength(ACCESS_CODE_HEX_LEN * 2);
+        expect(/^[0-9a-fA-F]{6}$/.test(code)).toBe(true);
+      }
+    });
 
-function gate(
-  overrides: Partial<Parameters<typeof dreamuxFeishuGate>[0]> = {},
-  access = state({ allow_users: ['sender-allowed'] }),
-) {
-  return dreamuxFeishuGate(
-    {
-      senderId: 'sender-allowed',
-      senderType: 'user',
-      chatId: 'chat-group-a',
-      chatType: 'group',
-      botOpenId: 'bot-open-id',
-      mentions: [
-        {
-          key: '@_user_1',
-          id: { open_id: 'bot-open-id' },
-          name: 'Dispatcher',
-        },
-      ],
-      now: 1_700_000_000_000,
-      ...overrides,
-    },
-    access,
-  );
-}
+    it('generateUniquePairingCode avoids existing keys', () => {
+      const existing: Record<string, boolean> = {};
+      for (let i = 0; i < 100; i++) {
+        const code = generateUniquePairingCode(existing);
+        expect(existing[code]).toBeUndefined();
+        expect(/^[0-9a-fA-F]{6}$/.test(code)).toBe(true);
+        existing[code] = true;
+      }
+    });
+  });
+
+  describe('pushWarn — FIFO cap at 200', () => {
+    it('caps warnings at 200 entries, FIFO eviction of oldest', () => {
+      // Drive the max-resends drop path via dm-kind entries — it pushes a
+      // warning per call. After the C3 semantic rewrite all in-group pairs
+      // are dm-kind, so exhausted pending entries use kind='dm' too.
+      let access: DispatcherAccessStateV3 = state({
+        group: { policy: 'follow-user', allow_chats: [], require_mention: true },
+      });
+      const MAX_WARN = 200;
+      const iterations = MAX_WARN + 50;
+      for (let i = 0; i < iterations; i++) {
+        const senderId = `u-warn-${i}`;
+        const seedAccess: DispatcherAccessStateV3 = {
+          ...access,
+          pending: {
+            ...access.pending,
+            [`dm${i}`]: {
+              kind: 'dm',
+              sender_id: senderId,
+              chat_id: 'c-same-for-all',
+              created_at: NOW,
+              expires_at: NOW + PAIRING_TTL_MS,
+              replies: MAX_PAIRING_REPLIES,
+            },
+          },
+        };
+        const r = gate(
+          { chat_type: 'group', sender_id: senderId, chat_id: 'c-same-for-all', bot_mentioned: true },
+          seedAccess,
+          NOW + i,
+        );
+        expect(r.action).toMatchObject({ action: 'drop', reason: 'dm_pairing_slot_cap' });
+        access = r.nextState;
+      }
+      expect(access.warnings.length).toBe(MAX_WARN);
+      // Strict FIFO ordering: timestamps monotonically non-decreasing
+      for (let i = 1; i < access.warnings.length; i++) {
+        expect(access.warnings[i].at).toBeGreaterThanOrEqual(access.warnings[i - 1].at);
+      }
+      // Oldest kept warning should be the (iterations - MAX_WARN)-th one
+      expect(access.warnings[0].at).toBe(NOW + (iterations - MAX_WARN));
+      // Newest should be the last
+      expect(access.warnings[MAX_WARN - 1].at).toBe(NOW + (iterations - 1));
+    });
+  });
+
+  describe('TRUST_DOMAIN_WARNING', () => {
+    it('is a non-empty string constant', () => {
+      expect(typeof TRUST_DOMAIN_WARNING).toBe('string');
+      expect(TRUST_DOMAIN_WARNING.length).toBeGreaterThan(0);
+    });
+
+    it('is emitted when dispatcher observes > 1 distinct chats, one-shot', () => {
+      const start = state({
+        allow_users: [SENDER_KNOWN],
+        group: { policy: 'follow-user', allow_chats: [], require_mention: false },
+      });
+      const r1 = gate(
+        { chat_type: 'group', sender_id: SENDER_KNOWN, chat_id: 'chat-a', bot_mentioned: false },
+        start,
+        NOW,
+      );
+      expect(r1.action.action).toBe('deliver');
+      expect(r1.nextState.warnings.filter((w: DispatcherAccessStateV3['warnings'][number]) => w.msg === TRUST_DOMAIN_WARNING)).toEqual([]);
+      expect(r1.nextState.observed_chats).toEqual(['chat-a']);
+
+      const r2 = gate(
+        { chat_type: 'group', sender_id: SENDER_KNOWN, chat_id: 'chat-b', bot_mentioned: false },
+        r1.nextState,
+        NOW + 1,
+      );
+      expect(r2.action.action).toBe('deliver');
+      expect(r2.nextState.observed_chats).toEqual(['chat-a', 'chat-b']);
+      expect(
+        r2.nextState.warnings.some((w: DispatcherAccessStateV3['warnings'][number]) => w.msg === TRUST_DOMAIN_WARNING),
+      ).toBe(true);
+
+      // Third chat should NOT duplicate the one-shot warning
+      const r3 = gate(
+        { chat_type: 'group', sender_id: SENDER_KNOWN, chat_id: 'chat-c', bot_mentioned: false },
+        r2.nextState,
+        NOW + 2,
+      );
+      const trustWarnCount = r3.nextState.warnings.filter(
+        (w: DispatcherAccessStateV3['warnings'][number]) => w.msg === TRUST_DOMAIN_WARNING,
+      ).length;
+      expect(trustWarnCount).toBe(1);
+    });
+  });
+
+  describe('constant values', () => {
+    it('ACCESS_STATE_VERSION is 3', () => {
+      expect(ACCESS_STATE_VERSION).toBe(3);
+    });
+    it('PAIRING_TTL_MS is 1 hour in ms', () => {
+      expect(PAIRING_TTL_MS).toBe(60 * 60 * 1000);
+    });
+    it('MAX_PENDING_PER_KIND is 10', () => {
+      expect(MAX_PENDING_PER_KIND).toBe(10);
+    });
+    it('ACCESS_CODE_HEX_LEN bytes → 6 hex chars total', () => {
+      expect(ACCESS_CODE_HEX_LEN * 2).toBe(6);
+    });
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// Export compatibility check
+// ──────────────────────────────────────────────────────────────────────────
+
+describe('Export compatibility', () => {
+  it('loadDispatcherAccess is an alias for readDispatcherAccess', () => {
+    expect(loadDispatcherAccess).toBe(readDispatcherAccess);
+  });
+
+  it('DispatcherAccess type alias equals DispatcherAccessStateV3', () => {
+    // Compile-time assertion — if this compiles, the aliases agree.
+    const _v3: DispatcherAccessState = defaultDispatcherAccessState();
+    const _also: DispatcherAccessStateV3 = _v3;
+    expect(_also.version).toBe(3);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// Invariant tests flagged by the boundary audit:
+//   • saveDispatcherAccess writes mode 0600 (never world-readable).
+//   • N concurrent saveDispatcherAccess calls under Promise.all never
+//     clobber each other's writes into a torn file (tmpfile + rename
+//     atomicity) AND each call's payload is fully preserved in the final
+//     file (last-writer-wins semantics).
+// ──────────────────────────────────────────────────────────────────────────
+
+describe('Atomic write invariants (KB §§ Invariants 7–9)', () => {
+  let tmp: string;
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), 'feishu-gate-atomic-'));
+  });
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it('saveDispatcherAccess writes the access file at mode 0o600', async () => {
+    const dir = join(tmp, 'feishu');
+    mkdirSync(dir, { mode: 0o700 });
+    const file = join(dir, 'access.json');
+    const s = defaultDispatcherAccessState();
+    await saveDispatcherAccess(dir, s);
+    expect(existsSync(file)).toBe(true);
+    const mode = statSync(file).mode & 0o777;
+    expect(mode.toString(8)).toBe('600');
+  });
+
+  it('concurrent saveDispatcherAccess (Promise.all) never produces a torn file', async () => {
+    const dir = join(tmp, 'feishu');
+    mkdirSync(dir, { mode: 0o700 });
+    // Generate N distinct states, each identifiable by a unique allow_users[0]
+    // open_id string. If atomic write is broken we'll either see a truncated
+    // JSON (parse failure) or a file that doesn't match ONE of the N writes
+    // (last-writer-wins should produce exactly one of them).
+    const N = 50;
+    const writers = Array.from({ length: N }, (_, i) => {
+      const s: DispatcherAccessStateV3 = {
+        ...defaultDispatcherAccessState(),
+        allow_users: [`ou_${String(i).padStart(4, '0')}`],
+      };
+      return saveDispatcherAccess(dir, s).then(() => s);
+    });
+    await expect(Promise.all(writers)).resolves.toBeDefined();
+
+    const reloaded = await readDispatcherAccess(dir);
+    // The reloaded file must be a valid state (parse did not throw); its
+    // allow_users[0] must match one of the writers' ids (last-writer-wins).
+    expect(reloaded.allow_users).toHaveLength(1);
+    const id = reloaded.allow_users[0];
+    expect(id).toMatch(/^ou_\d{4}$/);
+    // Additionally: every writer wrote a valid JSON, the final file is one
+    // of them. Re-reading the file fresh confirms we don't have e.g. two
+    // writes concatenated.
+    const raw = JSON.parse(readFileSync(join(dir, 'access.json'), 'utf8'));
+    expect(raw.allow_users).toEqual([id]);
+    expect(raw.version).toBe(3);
+  });
+});

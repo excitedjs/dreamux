@@ -473,12 +473,14 @@ describe('codex live integration', () => {
       // group messages are delivered (empty `allow_users` authorizes nobody
       // under the follow-user gate).
       await saveDispatcherAccess(dispatcherDir('live'), {
-        version: 2,
+        version: 3,
+        dm_policy: 'pairing',
         allow_users: ['sender-live'],
         group: { policy: 'follow-user', allow_chats: [], require_mention: true },
+        pending: {},
         observed_chats: [],
         warnings: [],
-        last_gate: null,
+        last_gate: { at: 0 },
       });
 
       try {
