@@ -12,7 +12,6 @@ import {
   type AgentRuntimeProviderCatalog,
 } from '../../agent-runtime/index.js';
 import type { DispatcherConfig, DreamuxConfig } from '../../config/config.js';
-import { dispatcherCronJobsPath } from '../../platform/paths.js';
 import type { DispatcherStore } from '../../state/dispatcher-store.js';
 import {
   completionKey,
@@ -26,7 +25,6 @@ import {
 import type { TeammateService } from '../teammate-service/index.js';
 import type { TeamMateTurnsStore } from '../teammate-collection/turns-store.js';
 import type { TeamMateIdentity } from '../teammate-collection/types.js';
-import { CronJobStore } from '../scheduler/store.js';
 import {
   DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS,
   DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
@@ -111,16 +109,6 @@ export function createDispatcherAgent(deps: DispatcherAgentDeps): TeammateServic
     dispatcherId: deps.id,
     identity,
     launch: { kind: 'inline', build: () => buildDispatcherLaunch(deps) },
-    options: {
-      scheduler: {
-        ownerId: deps.id,
-        store: new CronJobStore({
-          cronJobsPath: dispatcherCronJobsPath(deps.id),
-          dispatcherId: deps.id,
-        }),
-        absentRuntimeStrategy: 'miss',
-      },
-    },
     config: deps.config,
     agentRuntimeProviders: deps.agentRuntimeProviders,
     identities: deps.identities,
