@@ -46,6 +46,9 @@ export async function authorizeTeamLeaderChannelEgress(
       'TeamLeader channel tools require a resolvable target',
     );
   }
+  // `message_id` is a neutral channel message reference for the egress gate.
+  // Follow-up: pass opaque arguments to the channel seam, like resolveTarget(),
+  // and let the provider extract message_id under a neutral seam contract.
   const messageId = input.arguments['message_id'];
   if (
     typeof messageId === 'string' &&

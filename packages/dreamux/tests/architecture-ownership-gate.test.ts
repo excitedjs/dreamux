@@ -202,6 +202,16 @@ describe('architecture ownership gate (#233)', () => {
     });
   });
 
+  it('keeps core free of a parallel worker/runtime provider tree', async () => {
+    assertNoHits(
+      'T2 runtime-tree invariant violated: dreamux core has one AgentRuntime seam, backed by AgentRuntimeProviderCatalog and ProviderRegistry; do not reintroduce a parallel worker/runtime/provider tree.',
+      await findSourceHits(
+        SRC_ROOT,
+        /\b(?:class|interface|type)\s+(?!(?:AgentRuntimeProvider|AgentRuntimeProviderCatalog)\b)[A-Za-z_$][\w$]*(?:Worker(?:Provider|Runtime|Service|Catalog)|RuntimeProvider(?:Catalog)?|RuntimeService|RuntimeCatalog)\b/,
+      ),
+    );
+  });
+
   it('keeps the team leader out of the members collection', async () => {
     const file = 'teammate-collection/index.ts';
     const source = await readServiceSource(file);
