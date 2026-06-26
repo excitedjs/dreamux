@@ -90,7 +90,7 @@ Key source:
 - `/packages/dreamux/src/service/scheduler/service.ts`
 - `/packages/dreamux/src/service/scheduler/mcp-config.ts`
 - `/packages/dreamux/src/service/dispatcher-service/index.ts`
-- `/packages/dreamux/src/service/teammate-service/index.ts`
+- `/packages/dreamux/src/service/team-service/index.ts`
 - `/packages/dreamux/src/admin/methods.ts`
 - `/packages/dreamux/src/mcp/cron-mcp.ts`
 
