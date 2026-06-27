@@ -35,6 +35,12 @@ never on `@excitedjs/dreamux` core.
 
 - Do not import the Lark SDK directly. Use `@excitedjs/feishu-transport` for
   platform calls. Do not import `@excitedjs/dreamux` core.
+- Allowed upstream deps: `@excitedjs/dreamux-types`, `@excitedjs/dreamux-utils`,
+  and `@excitedjs/feishu-transport`. Pure neutral helpers (atomic writes, OS
+  primitives, config validation) go to `@excitedjs/dreamux-utils` — channel
+  source may import from there but may not add new host-owned path/layout/socket
+  contracts into dreamux-utils (see `dreamux-utils/src/os.ts` header for the
+  primitives-vs-contracts boundary).
 - Do not own dispatcher lifecycle, agent/Codex process supervision, thread
   state, admin socket handling, routing, binding state, authorization, or Team
   lifecycle. The generic channel-MCP transport — the core `channel-mcp` stdio

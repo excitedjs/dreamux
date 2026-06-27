@@ -58,6 +58,9 @@ The Feishu package owns its tool names and JSON schemas:
 - `reply`
 - `react`
 - `list_chat_bots`
+- `access` — approve a pending pairing entry via its 6-hex-digit code
+  (`{code: "XXXXXX"}`). Spec: [Feishu pairing access § The `access` MCP
+  Tool](../domains/feishu-pairing-access.md#the-access-mcp-tool).
 
 Dreamux core injects a generic `channel-mcp` stdio shim. The shim is a conduit:
 it serves provider-supplied `tools/list` metadata and forwards `tools/call` to
@@ -96,9 +99,11 @@ Key source:
 Current cross-cutting Feishu contracts live in domain docs:
 
 - [Feishu introduce](../domains/feishu-introduce.md)
+- [Feishu pairing access](../domains/feishu-pairing-access.md)
 - [Non-blocking dispatcher inbound](../domains/non-blocking-dispatcher-inbound.md)
 
-Use those pages for `/introduce`, trusted bot context, reaction timing, and
+Use those pages for `/introduce`, trusted bot context, reaction timing,
+pairing-code gate rules and `access` MCP tool semantics, and
 Codex `turn/start` folding details.
 
 ## Decision Trail
@@ -108,5 +113,6 @@ Codex `turn/start` folding details.
 - [Channel provider](../decisions/channel-provider.md)
 - [Channel input runtime assembly](../decisions/channel-input-runtime-assembly.md)
 - [Feishu inbound attachments](../decisions/feishu-inbound-attachments.md)
+- [Feishu pairing access v3](../decisions/feishu-pairing-access-v3.md)
 - Archived background:
   [plugin/provider architecture proposal](../archive/proposals/plugin-provider-architecture.md)

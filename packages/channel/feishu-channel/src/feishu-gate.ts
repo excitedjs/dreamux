@@ -1,437 +1,589 @@
-import {
-  isBotMentioned,
-  isBotSenderType,
-  type Mention,
-} from '@excitedjs/feishu-transport';
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+/**
+ * Feishu access gate v3 — pairing-code model.
+ *
+ * Pure gate (`dreamuxFeishuGate`) decides `deliver | drop | pair` against a
+ * snapshot of `DispatcherAccessStateV3` and returns the next state plus logs.
+ * The session owns IO, mutex, and send-before-save for pairing prompts.
+ *
+ * v3 replaces the v2 "everything is allowlist" model with per-DM / per-group
+ * pairing slots. An operator (human admin out-of-band) approves a 6-hex code
+ * to add a sender to `allow_users` or a chat to `group.allow_chats`.
+ */
 
+import { randomBytes } from 'node:crypto';
 
+// ─────────────────────────────────────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────────────────────────────────────
+
+export const ACCESS_STATE_VERSION = 3 as const;
+export const MAX_PENDING_PER_KIND = 10;
+export const MAX_PAIRING_REPLIES = 2;
+export const PAIRING_TTL_MS = 60 * 60 * 1000;
+export const ACCESS_CODE_HEX_LEN = 3;
+
+const MAX_WARNINGS = 200;
+/**
+ * Flag emitted into `state.warnings` when a single dispatcher observes traffic
+ * from more than one chat — the channel multiplexes chats over one runtime
+ * context, which is supported but worth surfacing to an operator once.
+ */
 export const TRUST_DOMAIN_WARNING =
   'dispatcher shares one runtime context across multiple Feishu chats';
 
-/**
- * Group-access mode — which trust model gates group messages.
- *
- *  - `block`       — every group message is dropped.
- *  - `allowlist`   — the *group* is the unit of trust: a chat must be in
- *                    `group.allow_chats`, and any member there may speak
- *                    (subject to `group.require_mention`).
- *  - `follow-user` — the *sender* is the unit of trust: the group needs no
- *                    authorization (`allow_chats` is ignored), a message is
- *                    always mention-gated, and the sender's open_id must be on
- *                    the top-level `allow_users` list — the same list that
- *                    authorizes direct messages.
- */
-export type GroupPolicy = 'block' | 'allowlist' | 'follow-user';
+// ─────────────────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────────────────
 
-export interface DispatcherAccessState {
-  /**
-   * Schema version. The only supported value is `2`: a single top-level
-   * `allow_users` list plus an explicit `group.policy`. Per issue #98, dreamux
-   * 0.x does not auto-migrate older shapes — `readDispatcherAccess` fails loud
-   * on any other (or missing) version and tells the operator to recreate the
-   * file, since it holds access authorization and cannot be inferred safely.
-   */
-  version: 2;
-  /**
-   * The single global allowlist of sender open_ids, shared by direct messages
-   * and the group `follow-user` policy (the dreamux equivalent of the transport
-   * gate's top-level `allowFrom`). An empty list authorizes nobody.
-   */
-  allow_users: string[];
-  group: {
-    policy: GroupPolicy;
-    /** Authorized chat_ids — consulted only under the `allowlist` policy. */
-    allow_chats: string[];
-    require_mention: boolean;
-  };
-  observed_chats: string[];
-  warnings: string[];
-  last_gate: GateDiagnostic | null;
+export type DmPolicy = 'all' | 'allowlist' | 'pairing' | 'disabled';
+export type GroupPolicy = 'block' | 'allowlist' | 'follow-user';
+export type PendingPairingKind = 'dm' | 'group';
+
+export interface PendingPairingEntry {
+  kind: PendingPairingKind;
+  sender_id: string;
+  chat_id: string;
+  created_at: number;
+  expires_at: number;
+  replies: number;
 }
 
-export interface GateDiagnostic {
+export interface WarnEntry {
   at: number;
-  action: 'deliver' | 'drop';
-  chat_id: string;
-  chat_type: string;
-  sender_id: string;
+  msg: string;
+  ctx?: Record<string, unknown>;
+}
+
+export interface LastGate {
+  at: number;
+  sender_id?: string;
+  chat_id?: string;
+  action?: string;
   reason?: string;
 }
 
-export interface DreamuxFeishuGateInput {
-  senderId: string;
-  senderType?: string;
-  chatId: string;
-  chatType: string;
-  mentions?: Mention[];
-  botOpenId?: string;
-  now?: number;
-  /**
-   * Peer-bot open_ids trusted in this chat via an allowlisted `/introduce`
-   * (issue #62, #102). A bot sender is dropped unless its open_id is in this
-   * set AND the message @-mentions this bot — trust is a precondition, not a
-   * bypass of the mention gate. `undefined` for direct messages and for callers
-   * that do not track trust, in which case no bot sender is ever delivered —
-   * preserving prior behavior.
-   */
-  trustedBotIds?: ReadonlySet<string>;
+export interface DispatcherAccessStateV3 {
+  version: typeof ACCESS_STATE_VERSION;
+  dm_policy: DmPolicy;
+  group: {
+    policy: GroupPolicy;
+    allow_chats: string[];
+    require_mention: boolean;
+  };
+  allow_users: string[];
+  pending: Record<string, PendingPairingEntry>;
+  observed_chats: string[];
+  warnings: WarnEntry[];
+  last_gate: LastGate;
 }
 
-export type DreamuxFeishuGateResult =
-  | {
-      action: 'deliver';
-      access: DispatcherAccessState;
-      warning: string | null;
-    }
+export type DispatcherAccessState = DispatcherAccessStateV3;
+
+export interface GateInbound {
+  chat_type: 'p2p' | 'group';
+  sender_id: string;
+  chat_id: string;
+  is_bot_sender: boolean;
+  trusted_bot: boolean;
+  bot_mentioned: boolean;
+}
+
+export type DropReason =
+  | 'dm_disabled'
+  | 'dm_not_on_allowlist'
+  | 'dm_pairing_slot_cap'
+  | 'group_policy_block'
+  | 'group_bot_not_mentioned'
+  // Legacy drop reasons retained on the exported type for read-compat with
+  // code/tests written before the C3 semantic rewrite. Not generated by new
+  // paths. (Group pairing was removed; group allowlist drops everything, and
+  // user-level checks in groups go through dm_policy.)
+  | 'group_not_on_allowlist_and_not_mentioned'
+  | 'group_follow_user_stranger_not_mentioned'
+  | 'group_pairing_slot_cap'
+  // New drop reasons after the C3 rewrite:
+  | 'group_not_on_allowlist'           // rule 1: group not on allowlist at all
+  | 'group_user_not_on_allowlist'      // rule 2: user not on allowlist (dm=allowlist)
+  | 'group_pairing_stranger_not_mentioned' // rule 3: stranger in group, dm=pairing, not @
+  | 'bot_untrusted'
+  | 'unsupported_chat_type'
+  | 'internal';
+
+export type GateAction =
+  | { action: 'deliver' }
   | {
       action: 'drop';
-      access: DispatcherAccessState;
-      reason: string;
-      warning: null;
+      reason: DropReason;
+      context?: Record<string, unknown>;
+    }
+  | {
+      action: 'pair';
+      kind: PendingPairingKind;
+      code: string;
+      is_resend: boolean;
+      ttl_left_ms: number;
     };
 
-export function defaultDispatcherAccessState(): DispatcherAccessState {
+export interface GateResult {
+  action: GateAction;
+  nextState: DispatcherAccessStateV3;
+  logs: Array<{
+    level: 'debug' | 'info' | 'warn' | 'error';
+    msg: string;
+    ctx?: Record<string, unknown>;
+  }>;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Defaults
+// ─────────────────────────────────────────────────────────────────────────
+
+export function defaultDispatcherAccessState(): DispatcherAccessStateV3 {
   return {
-    version: 2,
-    allow_users: [],
+    version: ACCESS_STATE_VERSION,
+    dm_policy: 'pairing',
     group: {
       policy: 'follow-user',
       allow_chats: [],
       require_mention: true,
     },
+    allow_users: [],
+    pending: {},
     observed_chats: [],
     warnings: [],
-    last_gate: null,
+    last_gate: { at: 0 },
   };
 }
 
-export async function loadDispatcherAccess(
-  stateDir: string,
-): Promise<DispatcherAccessState> {
-  const path = join(stateDir, 'access.json');
-  let raw: string;
-  try {
-    raw = await readFile(path, 'utf8');
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-      return defaultDispatcherAccessState();
-    }
-    throw err;
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(`dispatcher access parse error in ${path}: ${msg}`);
-  }
-  return readDispatcherAccess(parsed, path);
+// ─────────────────────────────────────────────────────────────────────────
+// Pairing code generators
+// ─────────────────────────────────────────────────────────────────────────
+
+export function generatePairingCode(): string {
+  return randomBytes(ACCESS_CODE_HEX_LEN).toString('hex');
 }
 
-export async function saveDispatcherAccess(
-  stateDir: string,
-  access: DispatcherAccessState,
-): Promise<void> {
-  const path = join(stateDir, 'access.json');
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(access, null, 2)}\n`, { mode: 0o600 });
-  await chmod(path, 0o600);
+export function generateUniquePairingCode(
+  existing: Record<string, unknown>,
+): string {
+  let code = generatePairingCode();
+  let guard = 0;
+  while (existing[code] !== undefined && guard++ < 1000) {
+    code = generatePairingCode();
+  }
+  return code;
 }
 
-export function dreamuxFeishuGate(
-  input: DreamuxFeishuGateInput,
-  access: DispatcherAccessState,
-): DreamuxFeishuGateResult {
-  const now = input.now ?? Date.now();
-  const drop = (reason: string): DreamuxFeishuGateResult => ({
-    action: 'drop',
-    reason,
-    warning: null,
-    access: withDiagnostic(access, input, now, 'drop', reason),
-  });
+// ─────────────────────────────────────────────────────────────────────────
+// Pure helpers
+// ─────────────────────────────────────────────────────────────────────────
 
-  if (input.senderId === '') return drop('missing sender id');
-  if (input.botOpenId !== undefined && input.senderId === input.botOpenId) {
-    return drop('message sent by this bot');
-  }
-  const senderIsBot = isBotSenderType(input.senderType);
+type PendingMap = Record<string, PendingPairingEntry>;
 
-  if (input.chatType === 'p2p') {
-    if (senderIsBot) return drop(`bot sender type: ${input.senderType}`);
-    if (!access.allow_users.includes(input.senderId)) {
-      return drop('direct sender not allowed');
-    }
-    return deliver(access, input, now);
-  }
-
-  if (input.chatType !== 'group') {
-    return drop(`unsupported chat type: ${input.chatType}`);
-  }
-
-  const policy = access.group.policy;
-  if (policy === 'block') {
-    return drop('group messages are blocked (group policy: block)');
-  }
-
-  // Under `allowlist` the group is the unit of trust: the chat must be named.
-  // Under `follow-user` the chat allowlist is intentionally ignored — the group
-  // needs no authorization, only the sender does.
-  if (policy === 'allowlist' && !access.group.allow_chats.includes(input.chatId)) {
-    return drop('group chat not allowed');
-  }
-
-  if (senderIsBot) {
-    // A peer bot speaks only if it was introduced (trusted) for this chat by an
-    // allowlisted `/introduce` AND it @-mentions this bot (issue #102, aligned
-    // with upstream lineage): trust is a precondition for entry, not a bypass of
-    // the mention gate. Untrusted bots are dropped regardless of mention. This
-    // is per-chat trust (`trustedBotIds` is scoped to this chat by the caller)
-    // and is never reached through the human `allow_users` list.
-    if (!(input.trustedBotIds?.has(input.senderId) ?? false)) {
-      return drop(`bot sender type: ${input.senderType}`);
-    }
-    if (input.botOpenId === undefined) {
-      return drop('group message requires a bot mention but bot open_id is unknown');
-    }
-    if (!isBotMentioned(input.mentions, input.botOpenId)) {
-      return drop('bot not mentioned');
-    }
-    return deliver(access, input, now);
-  }
-
-  if (policy === 'follow-user') {
-    // A deliberate @-mention is always required — without it the bot would
-    // react to every message in the group. The flag `group.require_mention`
-    // governs only the `allowlist` policy.
-    if (input.botOpenId === undefined) {
-      return drop('group message requires a bot mention but bot open_id is unknown');
-    }
-    if (!isBotMentioned(input.mentions, input.botOpenId)) {
-      return drop('bot not mentioned');
-    }
-    if (!access.allow_users.includes(input.senderId)) {
-      return drop('sender not on allowlist');
-    }
-    return deliver(access, input, now);
-  }
-
-  // policy === 'allowlist': the chat is already authorized above; any member
-  // may speak, subject to the configurable mention gate.
-  if (access.group.require_mention) {
-    if (input.botOpenId === undefined) {
-      return drop('group message requires a bot mention but bot open_id is unknown');
-    }
-    if (!isBotMentioned(input.mentions, input.botOpenId)) {
-      return drop('bot not mentioned');
-    }
-  }
-
-  return deliver(access, input, now);
-}
-
-function deliver(
-  access: DispatcherAccessState,
-  input: DreamuxFeishuGateInput,
+function pruneExpiredPending(
+  state: DispatcherAccessStateV3,
   now: number,
-): DreamuxFeishuGateResult {
-  let next = withDiagnostic(access, input, now, 'deliver');
-  if (!next.observed_chats.includes(input.chatId)) {
-    next = {
-      ...next,
-      observed_chats: [...next.observed_chats, input.chatId],
-    };
+): DispatcherAccessStateV3 {
+  const kept: PendingMap = {};
+  let anyRemoved = false;
+  for (const [code, entry] of Object.entries(state.pending)) {
+    if (entry.expires_at > now) {
+      kept[code] = entry;
+    } else {
+      anyRemoved = true;
+    }
   }
-
-  const needsWarning =
-    next.group.allow_chats.length > 1 || next.observed_chats.length > 1;
-  const warning =
-    needsWarning && !next.warnings.includes(TRUST_DOMAIN_WARNING)
-      ? TRUST_DOMAIN_WARNING
-      : null;
-  if (warning !== null) {
-    next = {
-      ...next,
-      warnings: [...next.warnings, warning],
-    };
-  }
-
-  return { action: 'deliver', access: next, warning };
+  return anyRemoved ? { ...state, pending: kept } : state;
 }
 
-function withDiagnostic(
-  access: DispatcherAccessState,
-  input: DreamuxFeishuGateInput,
+interface FoundPending {
+  code: string;
+  entry: PendingPairingEntry;
+}
+
+function findExistingPendingByKey(
+  pending: PendingMap,
+  kind: PendingPairingKind,
+  sender_id: string,
+  chat_id: string,
   now: number,
-  action: 'deliver' | 'drop',
+): FoundPending | null {
+  for (const [code, entry] of Object.entries(pending)) {
+    if (entry.expires_at <= now) continue;
+    if (entry.kind !== kind) continue;
+    if (kind === 'dm' && entry.sender_id === sender_id) {
+      return { code, entry };
+    }
+    if (kind === 'group' && entry.chat_id === chat_id) {
+      return { code, entry };
+    }
+  }
+  return null;
+}
+
+interface KindCount {
+  dm: number;
+  group: number;
+}
+
+function countByKind(pending: PendingMap, now: number): KindCount {
+  const c: KindCount = { dm: 0, group: 0 };
+  for (const entry of Object.values(pending)) {
+    if (entry.expires_at <= now) continue;
+    c[entry.kind] += 1;
+  }
+  return c;
+}
+
+function pushWarn(
+  warnings: WarnEntry[],
+  at: number,
+  msg: string,
+  ctx?: Record<string, unknown>,
+): WarnEntry[] {
+  const next = [...warnings, { at, msg, ...(ctx ? { ctx } : {}) }];
+  // cap at MAX_WARNINGS FIFO
+  if (next.length > MAX_WARNINGS) {
+    return next.slice(next.length - MAX_WARNINGS);
+  }
+  return next;
+}
+
+function pushObserved(
+  observed: string[],
+  chat_id: string,
+): string[] {
+  if (observed.includes(chat_id)) return observed;
+  return [...observed, chat_id];
+}
+
+function withLastGate(
+  state: DispatcherAccessStateV3,
+  input: GateInbound,
+  now: number,
+  action: string,
   reason?: string,
-): DispatcherAccessState {
+): DispatcherAccessStateV3 {
   return {
-    ...access,
+    ...state,
     last_gate: {
       at: now,
+      sender_id: input.sender_id,
+      chat_id: input.chat_id,
       action,
-      chat_id: input.chatId,
-      chat_type: input.chatType,
-      sender_id: input.senderId,
       ...(reason !== undefined ? { reason } : {}),
     },
   };
 }
 
-function readDispatcherAccess(
-  raw: unknown,
-  path: string,
-): DispatcherAccessState {
-  if (!isRecord(raw)) {
-    throw new Error(`dispatcher access error in ${path}: top-level must be an object`);
-  }
-  // v2-only: the legacy v1 shape (`dm.allow_users` + `group.follow_users`) is no
-  // longer read or inferred. An unsupported or missing version fails loud — this
-  // file holds access authorization, so dreamux refuses to guess old permissions.
-  if (raw['version'] !== 2) {
-    const found =
-      raw['version'] === undefined ? 'missing' : JSON.stringify(raw['version']);
-    throw new Error(
-      `dispatcher access error in ${path}: unsupported schema version (found ${found}, expected 2).\n` +
-        'dreamux 0.x does not migrate old access state. This file controls access ' +
-        'authorization and old permissions will not be inferred. Delete it to return ' +
-        'to the secure default (no one is authorized), then recreate it as a v2 ' +
-        'access.json — set `allow_users` and `group.policy` — and restart. See the ' +
-        'access.json section in the dreamux README for the v2 shape.',
-    );
-  }
-  const defaults = defaultDispatcherAccessState();
-  const group = isRecord(raw['group']) ? raw['group'] : {};
-  const lastGate = raw['last_gate'];
+// ─────────────────────────────────────────────────────────────────────────
+// Pairing subpath (dm-kind only — C3 semantic rewrite removed group pairing)
+// ─────────────────────────────────────────────────────────────────────────
 
-  const allowUsers = readStringArray(raw, 'allow_users', [], path);
-  const allowChats = readStringArray(
-    group,
-    'allow_chats',
-    defaults.group.allow_chats,
-    path,
+interface FinalizeOpts {
+  state: DispatcherAccessStateV3;
+  input: GateInbound;
+  now: number;
+  logs: GateResult['logs'];
+}
+
+// NOTE: groupPairPath was removed as part of the C3 semantic rewrite (review
+// comment of 2026-06-27 on PR #255). group.allow_chats is now a manual allowlist
+// only; there is no pairing mechanism to add a chat to it. All in-group triggers
+// route through dmPairPath and end up as dm-kind entries on allow_users.
+
+function dmPairPath(opts: FinalizeOpts): GateResult {
+  const { state, input, now, logs } = opts;
+  const existing = findExistingPendingByKey(
+    state.pending,
+    'dm',
+    input.sender_id,
+    input.chat_id,
+    now,
   );
 
-  // Group policy: an explicit value wins; an absent field falls back to the
-  // secure default. No inference from other fields — that was the v1 migration.
-  const policy: GroupPolicy =
-    readGroupPolicy(group['policy'], path) ?? defaults.group.policy;
+  if (existing !== null) {
+    const { code, entry } = existing;
+    if (entry.replies >= MAX_PAIRING_REPLIES) {
+      const msg = 'dm pairing: max resends reached, dropping';
+      const warnings = pushWarn(state.warnings, now, msg, {
+        code,
+        sender_id: input.sender_id,
+      });
+      logs.push({ level: 'warn', msg, ctx: { code, sender_id: input.sender_id } });
+      let nextState: DispatcherAccessStateV3 = { ...state, warnings };
+      nextState = withLastGate(nextState, input, now, 'drop', 'dm_pairing_slot_cap');
+      nextState = { ...nextState, observed_chats: pushObserved(nextState.observed_chats, input.chat_id) };
+      return {
+        action: {
+          action: 'drop',
+          reason: 'dm_pairing_slot_cap',
+          context: { code, replies: entry.replies },
+        },
+        nextState,
+        logs,
+      };
+    }
+    const newEntry: PendingPairingEntry = {
+      ...entry,
+      replies: entry.replies + 1,
+      expires_at: now + PAIRING_TTL_MS,
+    };
+    let nextState: DispatcherAccessStateV3 = {
+      ...state,
+      pending: { ...state.pending, [code]: newEntry },
+    };
+    nextState = withLastGate(nextState, input, now, 'pair');
+    nextState = { ...nextState, observed_chats: pushObserved(nextState.observed_chats, input.chat_id) };
+    logs.push({
+      level: 'info',
+      msg: 'dm pairing: resend',
+      ctx: { code, sender_id: input.sender_id, replies: newEntry.replies },
+    });
+    return {
+      action: {
+        action: 'pair',
+        kind: 'dm',
+        code,
+        is_resend: true,
+        ttl_left_ms: PAIRING_TTL_MS,
+      },
+      nextState,
+      logs,
+    };
+  }
 
+  const counts = countByKind(state.pending, now);
+  if (counts.dm >= MAX_PENDING_PER_KIND) {
+    const msg = 'dm pairing: slot cap reached';
+    const warnings = pushWarn(state.warnings, now, msg, {
+      count: counts.dm,
+      sender_id: input.sender_id,
+    });
+    logs.push({
+      level: 'warn',
+      msg,
+      ctx: { count: counts.dm, sender_id: input.sender_id },
+    });
+    let nextState: DispatcherAccessStateV3 = { ...state, warnings };
+    nextState = withLastGate(nextState, input, now, 'drop', 'dm_pairing_slot_cap');
+    nextState = { ...nextState, observed_chats: pushObserved(nextState.observed_chats, input.chat_id) };
+    return {
+      action: {
+        action: 'drop',
+        reason: 'dm_pairing_slot_cap',
+        context: { pending: counts.dm, max: MAX_PENDING_PER_KIND },
+      },
+      nextState,
+      logs,
+    };
+  }
+
+  const code = generateUniquePairingCode(state.pending);
+  const entry: PendingPairingEntry = {
+    kind: 'dm',
+    sender_id: input.sender_id,
+    chat_id: input.chat_id,
+    created_at: now,
+    expires_at: now + PAIRING_TTL_MS,
+    replies: 1,
+  };
+  let nextState: DispatcherAccessStateV3 = {
+    ...state,
+    pending: { ...state.pending, [code]: entry },
+  };
+  nextState = withLastGate(nextState, input, now, 'pair');
+  nextState = { ...nextState, observed_chats: pushObserved(nextState.observed_chats, input.chat_id) };
+  logs.push({
+    level: 'info',
+    msg: 'dm pairing: new slot',
+    ctx: { code, sender_id: input.sender_id },
+  });
   return {
-    version: 2,
-    allow_users: allowUsers,
-    group: {
-      policy,
-      allow_chats: allowChats,
-      require_mention: readBoolean(
-        group,
-        'require_mention',
-        defaults.group.require_mention,
-        path,
-      ),
+    action: {
+      action: 'pair',
+      kind: 'dm',
+      code,
+      is_resend: false,
+      ttl_left_ms: PAIRING_TTL_MS,
     },
-    observed_chats: readStringArray(
-      raw,
-      'observed_chats',
-      defaults.observed_chats,
-      path,
-    ),
-    warnings: readStringArray(raw, 'warnings', defaults.warnings, path),
-    last_gate: lastGate === null || lastGate === undefined
-      ? null
-      : readGateDiagnostic(lastGate, path),
+    nextState,
+    logs,
   };
 }
 
-function readGroupPolicy(
-  value: unknown,
-  path: string,
-): GroupPolicy | undefined {
-  if (value === undefined) return undefined;
-  if (value !== 'block' && value !== 'allowlist' && value !== 'follow-user') {
-    throw new Error(
-      `dispatcher access error in ${path}: group.policy must be block, allowlist, or follow-user`,
-    );
-  }
-  return value;
-}
+// ─────────────────────────────────────────────────────────────────────────
+// Core gate
+// ─────────────────────────────────────────────────────────────────────────
 
-function readGateDiagnostic(raw: unknown, path: string): GateDiagnostic {
-  if (!isRecord(raw)) {
-    throw new Error(`dispatcher access error in ${path}: last_gate must be an object`);
-  }
-  const action = raw['action'];
-  if (action !== 'deliver' && action !== 'drop') {
-    throw new Error(
-      `dispatcher access error in ${path}: last_gate.action must be deliver or drop`,
-    );
-  }
-  return {
-    at: readNumber(raw, 'at', path),
-    action,
-    chat_id: readString(raw, 'chat_id', path),
-    chat_type: readString(raw, 'chat_type', path),
-    sender_id: readString(raw, 'sender_id', path),
-    ...(typeof raw['reason'] === 'string' ? { reason: raw['reason'] } : {}),
+export function dreamuxFeishuGate(
+  state: DispatcherAccessStateV3,
+  input: GateInbound,
+  now: number = Date.now(),
+): GateResult {
+  const logs: GateResult['logs'] = [];
+
+  // Double-guard TTL — prune first, then helpers also check expires_at > now.
+  let working: DispatcherAccessStateV3 = pruneExpiredPending(state, now);
+
+  const finish = (
+    action: GateAction,
+    mutate: (s: DispatcherAccessStateV3) => DispatcherAccessStateV3 = (s) => s,
+  ): GateResult => {
+    let s = mutate(working);
+    s = { ...s, observed_chats: pushObserved(s.observed_chats, input.chat_id) };
+    // Attach trust-domain warning if we observe multiple chats.
+    if (
+      s.observed_chats.length > 1 &&
+      !s.warnings.some((w) => w.msg === TRUST_DOMAIN_WARNING)
+    ) {
+      s = {
+        ...s,
+        warnings: pushWarn(s.warnings, now, TRUST_DOMAIN_WARNING),
+      };
+      logs.push({ level: 'warn', msg: TRUST_DOMAIN_WARNING });
+    }
+    const actionStr =
+      action.action === 'drop'
+        ? `drop:${action.reason}`
+        : action.action === 'pair'
+          ? `pair:${action.kind}`
+          : 'deliver';
+    const reason = action.action === 'drop' ? action.reason : undefined;
+    s = withLastGate(s, input, now, actionStr, reason);
+    return { action, nextState: s, logs };
   };
-}
 
-function readStringArray(
-  obj: Record<string, unknown>,
-  key: string,
-  fallback: string[],
-  path: string,
-): string[] {
-  const value = obj[key];
-  if (value === undefined) return [...fallback];
-  if (!Array.isArray(value) || !value.every((item) => typeof item === 'string')) {
-    throw new Error(
-      `dispatcher access error in ${path}: ${key} must be an array of strings`,
-    );
+  // ── DM ────────────────────────────────────────────────────────────────
+  if (input.chat_type === 'p2p') {
+    if (input.is_bot_sender) {
+      return finish({
+        action: 'drop',
+        reason: 'bot_untrusted',
+        context: { sender_id: input.sender_id },
+      });
+    }
+    switch (working.dm_policy) {
+      case 'disabled':
+        return finish({ action: 'drop', reason: 'dm_disabled' });
+      case 'all':
+        return finish({ action: 'deliver' });
+      case 'allowlist':
+        if (working.allow_users.includes(input.sender_id)) {
+          return finish({ action: 'deliver' });
+        }
+        return finish({
+          action: 'drop',
+          reason: 'dm_not_on_allowlist',
+          context: { sender_id: input.sender_id },
+        });
+      case 'pairing':
+        if (working.allow_users.includes(input.sender_id)) {
+          return finish({ action: 'deliver' });
+        }
+        return dmPairPath({ state: working, input, now, logs });
+      default:
+        return finish({ action: 'drop', reason: 'internal' });
+    }
   }
-  return [...new Set(value)];
-}
 
-function readBoolean(
-  obj: Record<string, unknown>,
-  key: string,
-  fallback: boolean,
-  path: string,
-): boolean {
-  const value = obj[key];
-  if (value === undefined) return fallback;
-  if (typeof value !== 'boolean') {
-    throw new Error(`dispatcher access error in ${path}: ${key} must be a boolean`);
+  // ── GROUP ─────────────────────────────────────────────────────────────
+  if (input.chat_type === 'group') {
+    // Bot senders first
+    if (input.is_bot_sender) {
+      if (!input.trusted_bot) {
+        return finish({
+          action: 'drop',
+          reason: 'bot_untrusted',
+          context: { sender_id: input.sender_id },
+        });
+      }
+      if (!input.bot_mentioned) {
+        return finish({ action: 'drop', reason: 'group_bot_not_mentioned' });
+      }
+      return finish({ action: 'deliver' });
+    }
+
+    // Human sender — mention gate (applies before policy logic; still
+    // short-circuits silently when the bot isn't addressed, regardless of
+    // allowlist status.)
+    if (working.group.require_mention && !input.bot_mentioned) {
+      return finish({ action: 'drop', reason: 'group_bot_not_mentioned' });
+    }
+
+    const policy = working.group.policy;
+    if (policy === 'block') {
+      return finish({ action: 'drop', reason: 'group_policy_block' });
+    }
+
+    // Rule 1 (KB + review C3): group.allowlist + chat ∉ allow_chats →
+    // DROP unconditionally. No pairing code can ever add a chat to the
+    // group allowlist (pairing only manages allow_users). Even users who
+    // are on allow_users get dropped here: the group allowlist is the
+    // strict outer shell.
+    if (
+      policy === 'allowlist' &&
+      !working.group.allow_chats.includes(input.chat_id)
+    ) {
+      return finish({
+        action: 'drop',
+        reason: 'group_not_on_allowlist',
+        context: { chat_id: input.chat_id },
+      });
+    }
+
+    // At this point the group shell is satisfied:
+    //   - policy === 'follow_user' (no group allowlist), OR
+    //   - policy === 'allowlist' AND chat_id ∈ allow_chats.
+    //
+    // Rule 2/3 (C3): the USER-LEVEL check is now the dm_policy switch,
+    // identical for both group shells. Pairing is ALWAYS dm-kind (adds
+    // the sender to allow_users), never group-kind.
+
+    switch (working.dm_policy) {
+      case 'disabled':
+        return finish({ action: 'drop', reason: 'dm_disabled' });
+      case 'all':
+        return finish({ action: 'deliver' });
+      case 'allowlist':
+        if (working.allow_users.includes(input.sender_id)) {
+          return finish({ action: 'deliver' });
+        }
+        return finish({
+          action: 'drop',
+          reason: 'group_user_not_on_allowlist',
+          context: { sender_id: input.sender_id, chat_id: input.chat_id },
+        });
+      case 'pairing':
+        if (working.allow_users.includes(input.sender_id)) {
+          return finish({ action: 'deliver' });
+        }
+        // Rule 3: in-group pairing needs a mention (same as follow-user
+        // gate). This triggers a dm-kind pair (adds sender to allow_users)
+        // rather than any group-kind pair.
+        if (!input.bot_mentioned) {
+          return finish({
+            action: 'drop',
+            reason: 'group_pairing_stranger_not_mentioned',
+            context: { sender_id: input.sender_id, chat_id: input.chat_id },
+          });
+        }
+        return dmPairPath({ state: working, input, now, logs });
+      default:
+        return finish({ action: 'drop', reason: 'internal' });
+    }
   }
-  return value;
+
+  // Unsupported
+  return finish({ action: 'drop', reason: 'unsupported_chat_type' });
 }
 
-function readNumber(
-  obj: Record<string, unknown>,
-  key: string,
-  path: string,
-): number {
-  const value = obj[key];
-  if (typeof value !== 'number') {
-    throw new Error(`dispatcher access error in ${path}: ${key} must be a number`);
-  }
-  return value;
-}
+// IO + UI helpers moved to feishu-gate-io.ts. Re-exported to preserve the
+// public surface so callers (feishu-channel.ts, tests) need no change.
+export {
+  loadDispatcherAccess,
+  readDispatcherAccess,
+  renderPairingPrompt,
+  saveDispatcherAccess,
+} from './feishu-gate-io.js';
 
-function readString(
-  obj: Record<string, unknown>,
-  key: string,
-  path: string,
-): string {
-  const value = obj[key];
-  if (typeof value !== 'string') {
-    throw new Error(`dispatcher access error in ${path}: ${key} must be a string`);
-  }
-  return value;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}

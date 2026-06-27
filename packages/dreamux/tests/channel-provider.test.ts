@@ -57,7 +57,11 @@ describe('built-in Feishu channel', () => {
       { dispatcher_id: 'flow', channel_id: 'primary' },
     );
 
-    expect(result).toEqual({ message_ids: ['message-fake-1'] });
+    expect(result).toEqual({
+      status: 'ok',
+      message: 'reply sent',
+      message_ids: ['message-fake-1'],
+    });
     expect(bot.sentMessages).toHaveLength(1);
     expect(bot.sentMessages[0]?.target).toMatchObject({
       chatId: 'chat-1',
@@ -74,7 +78,11 @@ describe('built-in Feishu channel', () => {
       { dispatcher_id: 'flow', channel_id: 'primary' },
     );
 
-    expect(result).toEqual({ reaction_id: 'reaction-fake-1' });
+    expect(result).toEqual({
+      status: 'ok',
+      message: 'reaction added',
+      reaction_id: 'reaction-fake-1',
+    });
     expect(bot.reactions).toEqual([
       { messageId: 'msg-1', emoji: 'OK', reactionId: 'reaction-fake-1' },
     ]);

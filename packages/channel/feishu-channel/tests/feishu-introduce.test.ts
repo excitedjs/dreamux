@@ -35,7 +35,13 @@ import {
 } from '../src/chat-bots-store.js';
 import type { Mention } from '@excitedjs/feishu-transport';
 
-function state(overrides: Partial<DispatcherAccessState> = {}): DispatcherAccessState {
+type StateOverride = Partial<
+  Omit<DispatcherAccessState, 'group'> & {
+    group?: Partial<DispatcherAccessState['group']>;
+  }
+>;
+
+function state(overrides: StateOverride = {}): DispatcherAccessState {
   const base = defaultDispatcherAccessState();
   return {
     ...base,
@@ -284,19 +290,26 @@ describe('introduceDenyReason — stable diagnostic codes (issue #77)', () => {
   });
 });
 
-describe('gate vs introduce parity — follow-user semantics must not drift', () => {
+describe('gate vs introduce parity — C3 semantic rewrite removes all intentional divergence', () => {
   // The user asked review to verify that the normal delivery gate and the
-  // introduce gate agree under follow-user. Encode it so accidental drift fails
-  // CI rather than relying on a human reviewer. We hold the @-mention satisfied
-  // (introduce waives it; the gate requires it) and the sender human, then
-  // compare `dreamuxFeishuGate` deliver/drop against introduce authorization.
+  // introduce gate agree under all group policies after the C3 semantic
+  // rewrite (PR #255 review comment, 2026-06-27).
   //
-  // They must agree for `block` and `follow-user`. Under `allowlist` they
-  // diverge BY DESIGN (issue #62): the gate lets any member of an allowlisted
-  // chat speak, but introduce additionally requires the sender on `allow_users`
-  // because it changes trust. That one divergence is asserted explicitly below.
+  // HISTORICAL NOTE: Before C3 there was ONE intentional divergence between
+  // gate and introduce under policy=allowlist + chatInList + !senderInList
+  // (issue #62). The gate used to let any member of an allowlisted chat
+  // speak (chat-scoped delivery), while introduce additionally required the
+  // sender on allow_users (sender-scoped, because /introduce changes trust).
+  // After C3 rule 2 the gate itself performs the SAME sender-scoped
+  // user-allowlist check on TOP of the group allowlist shell. So gate and
+  // introduce now agree in all 12 (3 policies × 2 chatInList × 2 senderInList)
+  // combinations.
+  //
+  // Introduce waives the @-mention requirement; for parity with the gate we
+  // simulate a bot mention so both checks proceed under the same premise.
+  // dm_policy defaults to 'pairing' (state helper default).
   const POLICIES = ['block', 'follow-user', 'allowlist'] as const;
-  const MENTION: Mention[] = [{ key: '@_bot', id: { open_id: 'self-bot' } }];
+  const MENTION = true;
 
   for (const policy of POLICIES) {
     for (const chatInList of [false, true]) {
@@ -307,18 +320,20 @@ describe('gate vs introduce parity — follow-user semantics must not drift', ()
             group: { policy, allow_chats: chatInList ? ['chat-a'] : [] },
           });
           const gate = dreamuxFeishuGate(
-            {
-              senderId: 'user-a',
-              senderType: 'user',
-              chatId: 'chat-a',
-              chatType: 'group',
-              mentions: MENTION,
-              botOpenId: 'self-bot',
-              now: 1_700_000_000_000,
-            },
             access,
+            {
+              sender_id: 'user-a',
+              chat_id: 'chat-a',
+              chat_type: 'group',
+              is_bot_sender: false,
+              trusted_bot: false,
+              bot_mentioned: MENTION,
+            },
+            1_700_000_000_000,
           );
-          const gateDelivers = gate.action === 'deliver';
+          // gateDelivers = true only when gate returns {action:'deliver'}.
+          // A dm-pair action is a reply, not a delivery into the runtime.
+          const gateDelivers = gate.action.action === 'deliver';
           const introAuthorized =
             introduceDenyReason(access, {
               chatType: 'group',
@@ -326,18 +341,56 @@ describe('gate vs introduce parity — follow-user semantics must not drift', ()
               senderId: 'user-a',
             }) === null;
 
-          const intentionalAllowlistDivergence =
-            policy === 'allowlist' && chatInList && !senderInList;
-          if (intentionalAllowlistDivergence) {
-            // Gate delivers (any member of the allowlisted chat), introduce does
-            // not (trust-changing command is sender-scoped, #62).
-            expect(gateDelivers).toBe(true);
-            expect(introAuthorized).toBe(false);
-          } else {
-            expect(introAuthorized).toBe(gateDelivers);
-          }
+          // C3: gate and introduce agree in all 12 combinations.
+          expect(introAuthorized).toBe(gateDelivers);
         });
       }
+    }
+  }
+});
+
+// Domain-spec §Introduce parity lock, explicit: a sender whose sole status is
+// "has a pending pairing entry" (not in allow_users, chat not in allow_chats)
+// must NOT be authorized to run /introduce under any policy combination.
+// This case is NOT covered by the general parity table above because it uses
+// a sender who is in the pending list but not in any allowlist.
+describe('introduce rejects senders whose only trust is a pending pairing entry', () => {
+  const PENDING_CODE = 'abcd12';
+  function pendingOnlyState(policy: 'block' | 'follow-user' | 'allowlist') {
+    const s = state({
+      allow_users: [],
+      group: { policy, allow_chats: [] },
+    });
+    // Inject a fresh pending slot for sender=user-p / chat=chat-p as if the
+    // gate had just handed them a pairing code.
+    return {
+      ...s,
+      pending: {
+        [PENDING_CODE]: {
+          kind: 'dm' as const,
+          sender_id: 'user-p',
+          chat_id: 'chat-p',
+          created_at: 1_700_000_000_000,
+          expires_at: 1_700_000_000_000 + 3_600_000,
+          replies: 1,
+        },
+      },
+    };
+  }
+
+  for (const policy of ['block', 'follow-user', 'allowlist'] as const) {
+    for (const scope of [
+      { label: 'DM', args: { chatType: 'p2p' as const, chatId: 'chat-p', senderId: 'user-p' } },
+      { label: 'group', args: { chatType: 'group' as const, chatId: 'chat-p', senderId: 'user-p' } },
+    ]) {
+      it(`policy=${policy} scope=${scope.label} — pending-only sender is never authorized`, () => {
+        const s = pendingOnlyState(policy);
+        const reason = introduceDenyReason(s, scope.args);
+        expect(reason).not.toBe(null);
+        // Paranoia check: the pending entry actually exists so this test isn't
+        // passing trivially.
+        expect(s.pending[PENDING_CODE]).toBeDefined();
+      });
     }
   }
 });
@@ -440,43 +493,37 @@ describe('introduceAckText', () => {
 });
 
 describe('gate trust — only introduced bots may speak in a group', () => {
-  const base = {
-    senderId: 'peer-bot',
-    senderType: 'bot',
-    chatId: 'chat-a',
-    chatType: 'group',
-    botOpenId: 'self-bot',
-    now: 1_700_000_000_000,
-  };
-
-  // A peer bot @-mentioning us is encoded as a mention resolving to botOpenId.
-  const mentionUs = [{ key: '@_bot', id: { open_id: 'self-bot' } }];
+  // A peer bot @-mentioning us → bot_mentioned = true.
+  function baseInbound(opts: { trusted_bot: boolean; bot_mentioned: boolean }) {
+    return {
+      chat_type: 'group' as const,
+      chat_id: 'chat-a',
+      sender_id: 'peer-bot',
+      is_bot_sender: true,
+      trusted_bot: opts.trusted_bot,
+      bot_mentioned: opts.bot_mentioned,
+    };
+  }
 
   it('drops a bot sender that has not been introduced', () => {
     const access = state({ group: { policy: 'allowlist', allow_chats: ['chat-a'] } });
     expect(
-      dreamuxFeishuGate({ ...base, mentions: mentionUs }, access),
-    ).toMatchObject({ action: 'drop' });
+      dreamuxFeishuGate(access, baseInbound({ trusted_bot: false, bot_mentioned: true })).action,
+    ).toMatchObject({ action: 'drop', reason: 'bot_untrusted' });
   });
 
   it('delivers a trusted bot that @-mentions us', () => {
     const access = state({ group: { policy: 'allowlist', allow_chats: ['chat-a'] } });
     expect(
-      dreamuxFeishuGate(
-        { ...base, mentions: mentionUs, trustedBotIds: new Set(['peer-bot']) },
-        access,
-      ),
+      dreamuxFeishuGate(access, baseInbound({ trusted_bot: true, bot_mentioned: true })).action,
     ).toMatchObject({ action: 'deliver' });
   });
 
   it('drops a trusted bot that does NOT @-mention us (#102)', () => {
     const access = state({ group: { policy: 'allowlist', allow_chats: ['chat-a'] } });
     expect(
-      dreamuxFeishuGate(
-        { ...base, mentions: [], trustedBotIds: new Set(['peer-bot']) },
-        access,
-      ),
-    ).toMatchObject({ action: 'drop', reason: 'bot not mentioned' });
+      dreamuxFeishuGate(access, baseInbound({ trusted_bot: true, bot_mentioned: false })).action,
+    ).toMatchObject({ action: 'drop', reason: 'group_bot_not_mentioned' });
   });
 });
 

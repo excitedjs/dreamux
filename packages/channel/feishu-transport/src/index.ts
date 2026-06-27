@@ -2,27 +2,19 @@
  * `@excitedjs/feishu-transport` — the shared Feishu platform-I/O core.
  *
  * The single owner of the `@larksuiteoapi/node-sdk` import: connect / receive /
- * send / auth / render (md→card) / parse (Feishu content→text) + the pure,
- * stateless access policy (`gate` / pairing). Stateless and routing-agnostic —
- * it knows nothing about engine threads, sessions, or drop/deliver decisions;
- * those live in each host's channel layer. Imported in-process by both dreamux
- * (`@excitedjs/feishu-channel`) and claudemux's proxy.
+ * send / auth / render (md→card) / parse (Feishu content→text). Stateless and
+ * routing-agnostic — it knows nothing about engine threads, sessions, or
+ * drop/deliver decisions; those live in each host's channel layer. Imported
+ * in-process by both dreamux (`@excitedjs/feishu-channel`) and claudemux's
+ * proxy.
  *
  * See dreamux#25 / claudemux#155 for the responsibility model and contract.
  */
 
 // ── contract/ — the pure types (the future `@excitedjs/channel-contract`
 //    extraction point when a second platform lands) ──
-export type {
-  Access,
-  DmPolicy,
-  GroupPolicy,
-  GroupEntry,
-  PendingEntry,
-  Mention,
-} from './contract/types.js'
+export type { Mention } from './contract/types.js'
 export type { OutboundTarget } from './contract/outbound.js'
-export type { AccessStore } from './contract/access-store.js'
 
 // ── parse/ — Feishu content → forwardable text + comment-event decode ──
 export {
@@ -48,25 +40,10 @@ export {
   DOC_COMMENT_EVENT_TYPE,
   type FeishuCommentEvent,
 } from './parse/comment.js'
-
-// ── policy/ — pure access gate + pairing ──
 export {
-  gate,
   isBotMentioned,
-  pruneExpiredPending,
   isBotSenderType,
-  isGroupAuthorized,
-  MAX_PENDING,
-  MAX_PAIRING_REPLIES,
-  PAIRING_TTL_MS,
-  type GateInput,
-  type GateResult,
-} from './policy/gate.js'
-export {
-  generatePairingCode,
-  PAIRING_CODE_BYTES,
-  PAIRING_CODE_LENGTH,
-} from './policy/pairing.js'
+} from './parse/mentions.js'
 
 // ── render/ — markdown → Feishu v2 card (incl. inline `<@open_id>` mentions) ──
 export {

@@ -25,16 +25,23 @@ export {
   type FeishuInboundEnvelope,
   type FeishuMcpListChatBotsResult,
   type WireChatBot,
+  type ChannelLogger,
 } from './feishu-channel.js';
 
 export {
   feishuMcpTools,
   parseFeishuMcpToolInput,
+  buildToolCatalog,
+  FEISHU_TOOLS,
   type FeishuMcpToolName,
   type FeishuMcpToolInput,
   type FeishuMcpReplyInput,
   type FeishuMcpReactInput,
   type FeishuMcpListChatBotsInput,
+  type FeishuToolName,
+  type FeishuToolDef,
+  type FeishuToolResultEnvelope,
+  type FeishuToolContext,
 } from './feishu-mcp-tools.js';
 
 export {

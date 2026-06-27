@@ -1,194 +1,83 @@
 /**
- * Feishu Channel MCP tool surface: the tool names, input shapes, JSON-schema
- * tool descriptors, and the raw-argument parser the Feishu channel session backs.
+ * Feishu MCP tool surface — re-export shim.
  *
- * Pure platform-specific tool parsing/validation with no host dependency. The
- * channel's own `mcpServerDescriptor` (in `provider.ts`) shapes the MCP *server
- * descriptor* that points at the Dreamux bin + admin socket + the core's generic
- * `channel-mcp` shim; that shim is a blind conduit that forwards `tools/list`
- * and `tools/call` to the neutral `channel.list_tools` / `channel.invoke_tool`
- * admin methods, so core no longer names these tool symbols (issue #209
- * cleanup).
+ * @deprecated Import from `./tools/registry.js` directly in new code. Kept so
+ * existing callers (`provider.ts`, the barrel `index.ts`) keep compiling while
+ * the centralization settles.
  */
 
-export type FeishuMcpToolName = 'reply' | 'react' | 'list_chat_bots';
+import {
+  FEISHU_TOOLS,
+  FeishuToolName,
+  buildToolCatalog,
+} from './tools/registry.js';
+export type {
+  FeishuToolDef,
+  FeishuToolResultEnvelope,
+  FeishuToolContext,
+  ChannelLogger,
+  PeerBot,
+} from './tools/registry.js';
+export { FEISHU_TOOLS, buildToolCatalog };
+// Value + type re-export: FeishuToolName is a string-literal union type (no
+// runtime value), so `export type { ... }` would work, but using a two-line
+// re-export mirrors the above split for readability.
+export type { FeishuToolName };
 
-export interface FeishuMcpReplyInput {
+/** @deprecated Use {@link FeishuToolName} instead. */
+export type FeishuMcpToolName = FeishuToolName;
+
+/** @deprecated Internal to the `reply` tool; use the generic `FeishuToolDef.parse` shape. */
+export type FeishuMcpReplyInput = {
   chatId: string;
   text: string;
   messageId?: string;
   mentionUserIds?: string[];
-}
+};
 
-export interface FeishuMcpReactInput {
+/** @deprecated Internal to the `react` tool; use the generic `FeishuToolDef.parse` shape. */
+export type FeishuMcpReactInput = {
   chatId?: string;
   messageId: string;
   emoji: string;
-}
+};
 
-export interface FeishuMcpListChatBotsInput {
+/** @deprecated Internal to the `list_chat_bots` tool; use the generic `FeishuToolDef.parse` shape. */
+export type FeishuMcpListChatBotsInput = {
   chatId: string;
-}
+};
 
+/** @deprecated Use a per-definition `FeishuToolDef` discriminated union instead. */
 export type FeishuMcpToolInput =
   | { toolName: 'reply'; input: FeishuMcpReplyInput }
   | { toolName: 'react'; input: FeishuMcpReactInput }
-  | { toolName: 'list_chat_bots'; input: FeishuMcpListChatBotsInput };
+  | { toolName: 'list_chat_bots'; input: FeishuMcpListChatBotsInput }
+  | { toolName: 'access'; input: { code: string } };
 
+/**
+ * @deprecated Use `buildToolCatalog()` from `./tools/registry.js` instead.
+ * Same return shape.
+ */
 export function feishuMcpTools(): Array<Record<string, unknown>> {
-  return [
-    {
-      name: 'reply',
-      description: 'Send a Feishu message through this dispatcher channel.',
-      inputSchema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          chat_id: {
-            type: 'string',
-            description: 'Feishu chat id from the inbound <channel source="feishu"> block.',
-          },
-          message_id: {
-            type: 'string',
-            description: 'Optional source message id to reply under.',
-          },
-          text: {
-            type: 'string',
-            description: 'Message text to send.',
-          },
-          mention_user_ids: {
-            type: 'array',
-            items: { type: 'string' },
-            description: 'Optional Feishu user ids to mention.',
-          },
-        },
-        required: ['chat_id', 'text'],
-      },
-    },
-    {
-      name: 'react',
-      description: 'Add a model-owned Feishu reaction through this dispatcher channel.',
-      inputSchema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          message_id: {
-            type: 'string',
-            description: 'Feishu message id to react to.',
-          },
-          chat_id: {
-            type: 'string',
-            description: 'Feishu chat id from the inbound <channel source="feishu"> block.',
-          },
-          emoji: {
-            type: 'string',
-            description: 'Feishu reaction emoji key.',
-          },
-        },
-        required: ['message_id', 'emoji'],
-      },
-    },
-    {
-      name: 'list_chat_bots',
-      description:
-        'List the peer bots known and trusted in a Feishu group chat (names + open_ids). Use to recover bot identities after a context compaction.',
-      inputSchema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          chat_id: {
-            type: 'string',
-            description: 'Feishu chat id from the inbound <channel source="feishu"> block.',
-          },
-        },
-        required: ['chat_id'],
-      },
-    },
-  ];
+  return buildToolCatalog() as unknown as Array<Record<string, unknown>>;
 }
 
+/**
+ * Parse raw MCP-call arguments for a given Feishu tool name.
+ *
+ * Mirrors the legacy `{ toolName, input }` discriminated-union return so
+ * `handleSessionlessTool` in `provider.ts` keeps compiling unchanged in P1.
+ *
+ * @deprecated Use `FEISHU_TOOLS.find(t => t.name === name)?.parse(args)`
+ * from `./tools/registry.js` directly.
+ */
 export function parseFeishuMcpToolInput(
   toolName: string,
   value: unknown,
-): FeishuMcpToolInput {
-  if (toolName === 'reply') {
-    return { toolName, input: replyArgs(value) };
+): { toolName: FeishuToolName; input: unknown } {
+  const def = FEISHU_TOOLS.find((t) => t.name === toolName);
+  if (def === undefined) {
+    throw new Error(`unknown Feishu tool '${toolName}'`);
   }
-  if (toolName === 'react') {
-    return { toolName, input: reactArgs(value) };
-  }
-  if (toolName === 'list_chat_bots') {
-    return { toolName, input: listChatBotsArgs(value) };
-  }
-  throw new Error(`unknown Feishu tool '${toolName}'`);
-}
-
-function replyArgs(value: unknown): FeishuMcpReplyInput {
-  const obj = asRecord(value, 'reply arguments');
-  const chatId = requireString(obj, 'chat_id');
-  const text = requireString(obj, 'text');
-  const messageId = optionalString(obj, 'message_id');
-  const mentionUserIds = optionalStringArray(obj, 'mention_user_ids');
-  return {
-    chatId,
-    text,
-    ...(messageId !== null ? { messageId } : {}),
-    ...(mentionUserIds !== null ? { mentionUserIds } : {}),
-  };
-}
-
-function reactArgs(value: unknown): FeishuMcpReactInput {
-  const obj = asRecord(value, 'react arguments');
-  const chatId = optionalString(obj, 'chat_id');
-  return {
-    ...(chatId !== null ? { chatId } : {}),
-    messageId: requireString(obj, 'message_id'),
-    emoji: requireString(obj, 'emoji'),
-  };
-}
-
-function listChatBotsArgs(value: unknown): FeishuMcpListChatBotsInput {
-  const obj = asRecord(value, 'list_chat_bots arguments');
-  return {
-    chatId: requireString(obj, 'chat_id'),
-  };
-}
-
-function asRecord(value: unknown, label: string): Record<string, unknown> {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error(`${label} must be an object`);
-  }
-  return value as Record<string, unknown>;
-}
-
-function requireString(obj: Record<string, unknown>, key: string): string {
-  const value = obj[key];
-  if (typeof value !== 'string' || value === '') {
-    throw new Error(`${key} must be a non-empty string`);
-  }
-  return value;
-}
-
-function optionalString(
-  obj: Record<string, unknown>,
-  key: string,
-): string | null {
-  const value = obj[key];
-  if (value === undefined || value === null || value === '') return null;
-  if (typeof value !== 'string') {
-    throw new Error(`${key} must be a string`);
-  }
-  return value;
-}
-
-function optionalStringArray(
-  obj: Record<string, unknown>,
-  key: string,
-): string[] | null {
-  const value = obj[key];
-  if (value === undefined || value === null) return null;
-  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
-    throw new Error(`${key} must be an array of strings`);
-  }
-  return value as string[];
+  return { toolName: def.name, input: def.parse(value) };
 }
