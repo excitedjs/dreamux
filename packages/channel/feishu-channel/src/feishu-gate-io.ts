@@ -12,7 +12,7 @@
 
 import { mkdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { writeAtomic } from './lib/atomic-state-io.js';
+import { writeAtomic } from '@excitedjs/dreamux-utils';
 import {
   ACCESS_STATE_VERSION,
   defaultDispatcherAccessState,

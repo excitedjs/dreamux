@@ -1,3 +1,11 @@
+/**
+ * Filesystem write helpers shared across Dreamux providers and host.
+ *
+ * Domain note: these are primitives (atomic write, future: tmpdir,
+ * safe unlink). Dreamux host-owned path/layout contracts live in
+ * `@excitedjs/dreamux` — do not add them here.
+ */
+
 import { randomBytes } from 'node:crypto';
 import { open, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
