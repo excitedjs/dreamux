@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Bugfix for the promote-next workflow: the `git push origin main` in promote-next.yml uses the default GITHUB_TOKEN, and GitHub's documented anti-infinite-loop guard deliberately prevents a GITHUB_TOKEN-originated push from re-triggering other workflows. As a result, the `on.push.main` trigger in release.yml silently did not fire after a successful promote, requiring a manual dispatch workaround. Fix: (1) grant `permissions.actions:write`, (2) add a final `gh workflow run release.yml --ref main` step that dispatches the stable release pipeline explicitly after each non-noop promote, (3) update the workflow header comments to document the real coupling. No published package surface changes; this is a release-process workflow robustness fix.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

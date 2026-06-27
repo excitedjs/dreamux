@@ -20,13 +20,19 @@
 #      main and would drop the link between a beta.<run_number> publish
 #      and the exact commit that shipped as stable.
 #   4. Push the fast-forwarded main back to origin.
-#   5. release.yml (`on.push.branches: [main, next]`) catches the push
-#      and runs the stable version + publish pipeline. The two
-#      workflows are therefore coupled purely by git topology, not by
-#      workflow_dispatch cross-calls — simpler and auditable.
+#   5. Dispatch release.yml against the freshly pushed main via
+#      `gh workflow run release.yml --ref main`. The explicit dispatch is
+#      required because step (4) uses the built-in GITHUB_TOKEN, and
+#      GitHub's documented anti-infinite-loop guard prevents a
+#      GITHUB_TOKEN-originated `git push` from re-triggering other
+#      workflows. `on.push.main` in release.yml therefore does NOT fire
+#      automatically; coupling is still git-topology-based (the ref to be
+#      released is `main` at its newly fast-forwarded SHA), we just nudge
+#      the other workflow ourselves.
 #
 # Permissions:
 #   contents:write  — push the fast-forwarded main back.
+#   actions:write   — dispatch the release.yml workflow after the push.
 #   Using the workflow GITHUB_TOKEN (not a PAT) keeps this workflow
 #   self-contained. The main branch protection must allow the
 #   `github-actions[bot]` identity to bypass or satisfy push rules,
@@ -34,8 +40,9 @@
 #
 # Operator usage:
 #   Actions → promote-next → Run workflow → Run (no inputs).
-#   The workflow is safe to re-run: if next has not moved since the
-#   last promote, step 3 is a no-op (already up to date → 0 exit).
+#   A single click drives the whole stable-release path:
+#     topo guard → ff merge → push main → dispatch release.yml →
+#     release.yml version job → release.yml publish → npm `latest`.
 
 name: promote-next
 
@@ -48,6 +55,7 @@ concurrency:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   promote:
@@ -134,4 +142,32 @@ jobs:
           git remote set-url origin \
             "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git push origin main
-          echo "Pushed main → origin. release.yml (on.push.main) will run the stable publish next."
+          echo "Pushed main → origin."
+          echo "Next step dispatches release.yml on the new main explicitly."
+
+      - name: dispatch release.yml on main (stable publish)
+        if: steps.ff.outputs.noop != 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Required because GitHub deliberately prevents a `git push` made
+          # with the default GITHUB_TOKEN from triggering new workflow runs
+          # (anti-infinite-loop guard). Without this explicit dispatch, the
+          # on.push.main trigger in release.yml would silently not fire.
+          # `gh` is preinstalled on ubuntu-latest.
+          gh workflow run release.yml --ref main
+          sleep 5
+          # Print the newest release.yml run URL for convenience (best-effort)
+          run_url=$(gh run list \
+            --workflow release.yml \
+            --branch main \
+            --limit 1 \
+            --json url \
+            --jq '.[0].url' \
+            || true)
+          if [ -n "$run_url" ]; then
+            echo "release.yml run: $run_url"
+          else
+            echo "release.yml was dispatched; check Actions tab for the latest main run."
+          fi
