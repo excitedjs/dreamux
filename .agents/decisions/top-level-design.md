@@ -911,8 +911,9 @@ Channel binding is persisted as JSON under
 `state/<dispatcher-id>/team/channel-bindings.json` (issue #209 binding store v2:
 `version: 2`). Flat rows key active bindings on `(channel_id, target_key)` and
 carry `channel_id`, the provider-owned opaque `target_key`, `target_type`,
-`display`, `canonical_url`, a `meta` object (Feishu `chat_id` / `chat_type` live
-here, not as core columns), plus `team_name` / `leader_name` / `active` /
+`display`, `canonical_url`, a `meta` object (the neutral conversational selectors
+`chat_id` / `chat_type` live here, not as core columns), plus `team_name` /
+`leader_name` / `active` /
 timestamps. Active uniqueness is `(channel_id, target_key)` — one target is active
 for at most one Team; re-binding reassigns it. Targets are resolved by the channel
 provider's `resolveTarget(meta)`, run by core at the bind/route edge; the Team

@@ -104,7 +104,7 @@ async function handleRequest(
   }
 }
 
-function cronTools(): Array<Record<string, unknown>> {
+export function cronTools(): Array<Record<string, unknown>> {
   return [
     tool('cron_create', 'Create a durable Dreamux cron job for this agent. cron is a standard 5-field local-time expression (M H DoM Mon DoW); prefer off-:00/:30 minutes for approximate schedules. prompt is the text injected into this dispatcher or TeamLeader agent. recurring defaults to true; use recurring:false for one-shot reminders. dreamux jobs are always persisted and do not auto-expire. tz is resolved and stored. This milestone supports only internal prompt-agent jobs, with no deliver or spawn target.', {
       cron: { type: 'string', minLength: 1, maxLength: 200 },

@@ -22,14 +22,33 @@
 
 import { describe, it, expect } from 'vitest';
 import { ESLint } from 'eslint';
-import { dirname, join } from 'node:path';
+import { readdir, readFile } from 'node:fs/promises';
+import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 
 // tests/ -> @excitedjs/dreamux (core) package root.
 const CORE_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 // Sibling package roots in the monorepo layout.
 const CODEX_ROOT = join(CORE_ROOT, '..', 'agent-runtime', 'codex');
 const TYPES_ROOT = join(CORE_ROOT, '..', 'dreamux-types');
+const SERVICE_ROOT = join(CORE_ROOT, 'src', 'service');
+const SERVER_FILE = join(CORE_ROOT, 'src', 'server.ts');
+// Provider-specific identity SCHEMES that core service/server code must not read
+// (Feishu app/user id schemes with no generic-channel meaning). Generic
+// conversational-channel concepts (chat_id, message_id, sender_id) are EXCLUDED:
+// every conversational (IM) channel has them, so naming them in core is not a
+// provider leak. chat_id in particular is a unified channel-layer attribute
+// (Feishu/Slack/Telegram/WeCom all use it), NOT a Feishu-specific field; the
+// binding store keeps it in `meta` only because core routes by the universal
+// opaque `target_key`, which also covers non-chat (subscription) channels.
+const PROVIDER_FIELD_NAMES = new Set(['app_id', 'union_id', 'open_id']);
+
+interface MemberAccessHit {
+  file: string;
+  line: number;
+  text: string;
+}
 
 function lint(
   packageRoot: string,
@@ -42,6 +61,86 @@ function lint(
 
 function ruleIds(results: ESLint.LintResult[]): string[] {
   return results.flatMap((r) => r.messages.map((m) => m.ruleId ?? ''));
+}
+
+function packagePath(file: string): string {
+  return `packages/dreamux/${relative(CORE_ROOT, file).replace(/\\/g, '/')}`;
+}
+
+async function sourceFilesUnder(root: string): Promise<string[]> {
+  const entries = await readdir(root, { withFileTypes: true });
+  const files: string[] = [];
+  for (const entry of entries) {
+    const full = join(root, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...(await sourceFilesUnder(full)));
+    } else if (entry.isFile() && entry.name.endsWith('.ts')) {
+      files.push(full);
+    }
+  }
+  return files.sort();
+}
+
+function stringLiteralText(node: ts.Expression): string | null {
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+    return node.text;
+  }
+  return null;
+}
+
+function providerFieldMemberAccessHits(
+  file: string,
+  source: string,
+): MemberAccessHit[] {
+  const sourceFile = ts.createSourceFile(
+    file,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const hits: MemberAccessHit[] = [];
+
+  function record(node: ts.Node, fieldName: string): void {
+    if (!PROVIDER_FIELD_NAMES.has(fieldName)) return;
+    const { line } = sourceFile.getLineAndCharacterOfPosition(
+      node.getStart(sourceFile),
+    );
+    hits.push({
+      file,
+      line: line + 1,
+      text: node.getText(sourceFile),
+    });
+  }
+
+  function visit(node: ts.Node): void {
+    if (ts.isPropertyAccessExpression(node)) {
+      record(node, node.name.text);
+    } else if (ts.isElementAccessExpression(node)) {
+      const fieldName = stringLiteralText(node.argumentExpression);
+      if (fieldName !== null) record(node, fieldName);
+    }
+    ts.forEachChild(node, visit);
+  }
+
+  visit(sourceFile);
+  return hits;
+}
+
+async function findCoreProviderFieldMemberAccessHits(): Promise<MemberAccessHit[]> {
+  const hits: MemberAccessHit[] = [];
+  for (const file of [...(await sourceFilesUnder(SERVICE_ROOT)), SERVER_FILE]) {
+    hits.push(
+      ...providerFieldMemberAccessHits(file, await readFile(file, 'utf8')),
+    );
+  }
+  return hits;
+}
+
+function formatMemberAccessHits(hits: MemberAccessHit[]): string {
+  return hits
+    .map((hit) => `${packagePath(hit.file)}:${hit.line}: ${hit.text}`)
+    .join('\n');
 }
 
 describe('architecture neutrality lint gate (issue #209)', () => {
@@ -177,5 +276,15 @@ describe('architecture neutrality lint gate (issue #209)', () => {
       ].join('\n'),
     );
     expect(ruleIds(results)).toContain('no-restricted-syntax');
+  });
+
+  it('keeps core service/server code from reading provider-specific fields', async () => {
+    const hits = await findCoreProviderFieldMemberAccessHits();
+    if (hits.length > 0) {
+      throw new Error(
+        'Semantic-neutrality invariant violated: core service/** and server.ts must not read provider identity/routing fields via member access. Use the neutral provider/channel seams and opaque target_key/meta pass-through instead.\n' +
+          `Offending member access:\n${formatMemberAccessHits(hits)}`,
+      );
+    }
   });
 });

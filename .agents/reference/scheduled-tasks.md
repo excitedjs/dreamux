@@ -50,12 +50,15 @@ Key source:
 
 ## Execution
 
-`SchedulerService` is owned by the conversational agent's `TeammateService` — the
-dispatcher agent owns the dispatcher scheduler, each non-closed TeamLeader owns
-its Team scheduler — built from a host-supplied config (cron-jobs store path,
-owner id, absent-runtime strategy) and wired to that agent's own runtime. The
-containers (`DispatcherService` / `TeamService`) construct no scheduler; they only
-orchestrate lifecycle and expose it for admin cron routing. The dispatcher
+`SchedulerService` is owned by the CONTAINER — `DispatcherService` owns the
+dispatcher scheduler, each non-closed `TeamService` owns its Team scheduler —
+constructed there from a host-supplied config (cron-jobs store path, owner id,
+absent-runtime strategy) and wired into the container's conversational agent (the
+dispatcher agent / the team leader) via that agent's neutral `getRuntime()` /
+`scheduledInput()` seam. `TeammateService` itself carries no scheduler, so "only
+the dispatcher and each team leader have cron" is structural — only those two
+container types hold a `SchedulerService`, with no per-instance capability policy.
+The dispatcher
 scheduler starts after the dispatcher agent, channel sessions, and restart-notice
 injection have completed, and stops before channel sessions and the agent runtime
 are stopped; Team schedulers are armed at dispatcher boot (without starting the
@@ -87,7 +90,7 @@ Key source:
 - `/packages/dreamux/src/service/scheduler/service.ts`
 - `/packages/dreamux/src/service/scheduler/mcp-config.ts`
 - `/packages/dreamux/src/service/dispatcher-service/index.ts`
-- `/packages/dreamux/src/service/teammate-service/index.ts`
+- `/packages/dreamux/src/service/team-service/index.ts`
 - `/packages/dreamux/src/admin/methods.ts`
 - `/packages/dreamux/src/mcp/cron-mcp.ts`
 

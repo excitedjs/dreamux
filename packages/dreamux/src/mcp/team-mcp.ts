@@ -98,7 +98,7 @@ async function handleRequest(
   }
 }
 
-function teamTools(): Array<Record<string, unknown>> {
+export function teamTools(): Array<Record<string, unknown>> {
   return [
     tool('create', 'Create a Team and start its TeamLeader. team_name is the concrete Team key used by all later status/history/dissolve calls. intent is required: it is the durable recovery subject for the Team. repo is optional: omit it to run the TeamLeader and members in a plain shared work directory under the dispatcher workspace (.workspace/work/<team_name>/ — the dispatcher cwd need not be a git repo), or pass { mode: reuse-cwd | managed, path?, base_ref?, branch?, slug?, cleanup? } — managed creates a git worktree. prompt is optional: when supplied it is delivered as the TeamLeader\'s first turn; when omitted the leader starts idle and fires no turn, waiting for a bound channel inbound or a later send to drive its first turn (creation does NOT fabricate a default prompt). To hand a group chat to the Team, bind it after create with the team bind_channel tool.', {
       team_name: { type: 'string', minLength: 1, maxLength: 64 },
@@ -125,7 +125,7 @@ function teamTools(): Array<Record<string, unknown>> {
       team_name: { type: 'string', minLength: 1, maxLength: 64 },
       note: { type: 'string', minLength: 1, maxLength: 2000 },
     }, ['team_name', 'note']),
-    tool('bind_channel', 'Bind a configured channel target to a Team by team_name so inbound from that target routes to the Team\'s TeamLeader (a core-owned Team capability). channel_id selects the configured channel (optional; defaults to the dispatcher\'s sole channel). meta carries the channel\'s provider-specific selector — e.g. { "chat_id": "<group chat id>" } for a chat channel (group chats only; chat_type is inferred). Binding state, routing, and authorization are core-owned.', {
+    tool('bind_channel', 'Bind a configured channel target to a Team by team_name so inbound from that target routes to the Team\'s TeamLeader (a core-owned Team capability). channel_id selects the configured channel (optional; defaults to the dispatcher\'s sole channel). meta carries the channel\'s target selector — e.g. { "chat_id": "<group chat id>" } for a chat channel (group chats only; chat_type is inferred). Binding state, routing, and authorization are core-owned.', {
       team_name: { type: 'string', minLength: 1, maxLength: 64 },
       channel_id: { type: 'string', minLength: 1, maxLength: 64 },
       meta: { type: 'object' },

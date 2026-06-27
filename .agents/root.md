@@ -16,6 +16,8 @@ For current behavior, read the linked source code too.
   state, run, cache, log, and external-home ownership.
 - [Channel runtime](reference/channel-runtime.md) — Channel provider sessions,
   Feishu tools, target routing, and binding.
+- [Service topology](reference/service-topology.md) — source-anchored
+  service-layer ownership and construction map.
 - [Glossary](glossary.md) — short definitions for overloaded Dreamux terms.
 - [Decision index](decisions/README.md) — ADRs, with current-trail and
   historical-background sections.
@@ -35,6 +37,7 @@ For current behavior, read the linked source code too.
 | modify provider loading, Agent Runtime providers, Channel providers, or capabilities | [Current architecture](reference/current-architecture.md), [Channel runtime](reference/channel-runtime.md), [Provider architecture realignment](decisions/provider-architecture-realignment.md), [provider refs and registry](decisions/provider-references-and-capability-registry.md), [NPM package split and channel targets](decisions/npm-package-split-and-channel-targets.md) |
 | modify dispatcher runtime lifecycle or MCP injection | [Current architecture](reference/current-architecture.md), [dispatcher local aggregate](decisions/dispatcher-local-aggregate.md), [service architecture refactor](decisions/service-architecture-refactor.md), source |
 | modify scheduled tasks / cron jobs | [Scheduled tasks](reference/scheduled-tasks.md), [Agent activity capability](decisions/agent-activity-capability.md), [Json document store](decisions/json-document-store.md), source |
+| refactor/move a service class or change who-owns-what | [Service topology](reference/service-topology.md) FIRST, then source |
 | modify TeamMate / Team lifecycle, read surfaces, or bundled dispatcher skills | [Dispatcher skill reference](reference/dispatcher-skill.md), [provider architecture realignment](decisions/provider-architecture-realignment.md), [top-level design](decisions/top-level-design.md), [service architecture refactor](decisions/service-architecture-refactor.md) |
 | modify channel binding or channel target routing | [Channel runtime](reference/channel-runtime.md), [NPM package split and channel targets](decisions/npm-package-split-and-channel-targets.md), source |
 | modify Feishu inbound, `/introduce`, trusted bot context, or reaction timing | [Channel runtime](reference/channel-runtime.md), [Feishu introduce](domains/feishu-introduce.md), [non-blocking dispatcher inbound](domains/non-blocking-dispatcher-inbound.md), source |
@@ -63,6 +66,7 @@ For current behavior, read the linked source code too.
 - [Repository structure](reference/repo-structure.md)
 - [State and paths](reference/state-and-paths.md)
 - [Channel runtime](reference/channel-runtime.md)
+- [Service topology](reference/service-topology.md)
 - [Dispatcher skill and TeamMate workflow](reference/dispatcher-skill.md)
 - [Scheduled tasks](reference/scheduled-tasks.md)
 - [Glossary](glossary.md)
@@ -80,7 +84,12 @@ history and rationale; when you need current behavior, pair them with
 
 ## Active Proposals
 
-There are no active proposals in this snapshot.
+- [Post-#110 architecture sustainability](proposals/post-110-architecture-sustainability.md)
+  — diagnostic of why agent-written code drifted from the intended architecture
+  after the #110 pluginization inflection (load-bearing invariants are prose with
+  no executable backstop; the ownership map lives outside the queryable KB; review
+  bypassed at land-first merges) plus a prioritized, mostly-executable improvement
+  backlog (topology map + ownership/boundary fitness functions + process gates).
 
 Move an active proposal out of `proposals/` once it is implemented,
 superseded, or abandoned; preserve the old text under `archive/` when the
