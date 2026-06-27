@@ -1,0 +1,40 @@
+{
+  "name": "@excitedjs/dreamux-types",
+  "entries": [
+    {
+      "version": "0.2.0",
+      "tag": "@excitedjs/dreamux-types_v0.2.0",
+      "date": "Sat, 27 Jun 2026 12:09:24 GMT",
+      "comments": {
+        "minor": [
+          {
+            "comment": "Add an optional neutral AgentRuntimeCreateContext.disableFeatures string list so Dreamux core can ask runtimes to disable host-level feature groups without naming runtime-specific tools or protocol settings. This is additive for provider authors; runtimes should map only the names they understand and ignore the rest."
+          },
+          {
+            "comment": "Introduce the declaration-only @excitedjs/dreamux-types package as the provider-authoring contract anchor (issue #209). Emits .d.ts only with no runtime dependencies, and publishes the complete neutral AgentRuntimeProvider/AgentRuntime/AgentRuntimeCreateContext and ChannelProvider contracts so external and built-in runtime/channel packages can be authored against types only."
+          },
+          {
+            "comment": "Additive provider-authoring contract members for the #209 core-neutrality work: the channel MCP surface (ChannelSession.mcpServerDescriptor / tools / handleTool, ChannelProvider.handleSessionlessTool, ChannelMcpDescriptorContext, ChannelSessionlessToolContext), ChannelProvider.getIdentity for a neutral self-reported channel identity, and the AgentRuntime create-context env-injection + path-context additions. Declaration-only and additive; existing provider authors are unaffected."
+          },
+          {
+            "comment": "BREAKING: provider diagnostics use one public naming scheme. The shared result type is now `ProviderDiagnosticResult`, with `AgentRuntimeDiagnosticResult` and `ChannelDiagnosticResult` aliases; the previous `*DoctorResult` provider-facing aliases are removed. Add shared provider onboarding prompt types plus channel diagnostic contracts so core can call provider-owned onboard and diagnostic capabilities without importing provider implementations."
+          },
+          {
+            "comment": "Remove the speculative `list_peers` channel capability (issue #209): the optional `ChannelSession.listPeers?` method and the `ChannelListPeersInput` type are removed from the public channel contract. They were never an owner-designed capability and had no implementation; external channel providers do not need to declare or implement peer enumeration. The rest of the `ChannelSession` contract (`reply` / `react` / `resolveTarget` / `tools` / `handleTool` / `messageBelongsToTarget`) is unchanged."
+          },
+          {
+            "comment": "Public types-API audit (issue #209). Remove `@types/node` host globals from the public contract: `AgentRuntimeDiagnosticRunner` options + `AgentRuntimeDiagnosticContext.env` now use the package-owned `DreamuxEnvironment` (`Record<string, string | undefined>`) instead of `NodeJS.ProcessEnv`; a guard test forbids `NodeJS.*` / `Buffer` from reappearing. Publish the provider factory contract: `ProviderFactoryContext<TDescriptor>` / `ProviderFactory<TProvider, TDescriptor>` plus kind-specific aliases `AgentRuntimeProviderFactory` / `ChannelProviderFactory`. Narrow descriptors by kind: new `AgentRuntimeProviderDescriptor` / `ChannelProviderDescriptor`, and `AgentRuntimeProvider.descriptor` is now `agentRuntime`-narrowed. `AgentRuntimeProvider.readConfig` may now return `TConfig | Promise<TConfig>` (parity with `ChannelProvider.readConfig`). Root-export surface: the package root aggregates every public type from the source modules so an external provider author can name any shape they depend on (the type-only package gains nothing by hiding a public type behind transitive resolution); a root-export allowlist test pins the surface to that full set, in both directions. Update the stale `channel.ts` header that implied a generic Channel MCP."
+          },
+          {
+            "comment": "Add the optional AgentRuntime.waitIdle activity hook and the scheduled system-input reason for durable scheduled task injection. The hook is additive and feature-detected; runtimes that omit it are treated as always idle."
+          }
+        ],
+        "patch": [
+          {
+            "comment": "Restore the public root type-only surface of @excitedjs/dreamux-types (issue #209 final review). The package root again re-exports `AgentRuntimeDiagnosticContext`, `AgentRuntimeResumeCapability`, `AgentRuntimeResumeCheckpoint`, and `ChannelSender`, so a provider author can import these public type names directly from `@excitedjs/dreamux-types`. Each is a parameter or property type of an interface a provider already implements (the `AgentRuntimeDiagnostic` methods, `AgentRuntimeCapabilities.resume` / `AgentRuntimeResumeInput.checkpoint`, and `ChannelInboundEnvelope.sender`); a declaration-only package gains nothing by hiding a public type behind transitive resolution. The root now aggregates every public type declared in the source modules, and a guard test pins the root export set to that full set in both directions (no casual widening, no casual hiding). The package stays strictly type-only: every re-export is `export type`, no runtime values are exported, and the manifest is unchanged."
+          }
+        ]
+      }
+    }
+  ]
+}

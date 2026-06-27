@@ -1,0 +1,45 @@
+{
+  "name": "@excitedjs/agent-runtime-claude-code",
+  "entries": [
+    {
+      "version": "0.2.0",
+      "tag": "@excitedjs/agent-runtime-claude-code_v0.2.0",
+      "date": "Sat, 27 Jun 2026 12:09:24 GMT",
+      "comments": {
+        "minor": [
+          {
+            "comment": "Consume the neutral disableFeatures runtime context in the Claude Code provider. The cron feature maps to Claude Code's native CronCreate,CronDelete,CronList disallowed tools and userInterrupt maps to AskUserQuestion; all requested features are merged into a single --disallowedTools flag and unknown feature names are ignored."
+          },
+          {
+            "comment": "Introduce the built-in Claude Code Agent Runtime package @excitedjs/agent-runtime-claude-code (alias builtin:claude-code, issue #209 slice 4). Implements the neutral @excitedjs/dreamux-types AgentRuntimeProvider (resident stream-json supervisor, the stream-json wire protocol, turn RPC, per-turn idle deadline, MCP config translation, plain-turn teammate completion delivery, config/args) and depends on @excitedjs/dreamux-types only — never on @excitedjs/dreamux core. Everything host-specific (per-dispatcher paths, the durable state sink) is injected by the host through the neutral create context and provider options."
+          },
+          {
+            "comment": "#209 core-neutrality cleanup for the built-in Claude Code Agent Runtime: the package owns its own engine-specific concerns (the neutral diagnostic, stderr log composition, resident session) and ships a default provider-factory export so `builtin:claude-code` loads through the host's single dynamic provider loader like an npm: provider. Env injection flows through the neutral AgentRuntimeCreateContext. No config/state/path change for operators."
+          },
+          {
+            "comment": "The built-in Claude Code Agent Runtime provider now owns its onboarding prompt for the Claude Code CLI binary and returns provider-owned raw config to Dreamux core. Its diagnostic result type is renamed to the shared `AgentRuntimeDiagnosticResult` provider contract."
+          },
+          {
+            "comment": "Translate add-dir-compatible role-gated skill sources into startup `--add-dir <dir>` flags (issue #209 slice 6): sources whose layout marks a `.claude/skills` container are added (deduped, on both start and re-spawn) so claude discovers their skills; incompatible layouts (e.g. the bundled Dreamux `skill-dir` sources) emit nothing, preserving claude-code's prior behavior of injecting no bundled skills. Adds `skillSources` to the resident args input and threads it through the provider/runtime."
+          },
+          {
+            "comment": "Implement the optional waitIdle activity hook for the Claude Code runtime with queued-turn accounting that excludes steer-folded channel input."
+          }
+        ],
+        "patch": [
+          {
+            "comment": "Type the package's default factory export against the published `AgentRuntimeProviderFactory` contract and validate+narrow the seed descriptor to the `agentRuntime` kind (issue #209 types-API audit). `ClaudeCodeProviderFactoryContext` is now a back-compat alias of `ProviderFactoryContext<AgentRuntimeProviderDescriptor>`. No runtime behavior change."
+          }
+        ],
+        "dependency": [
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-types\" to `0.2.0`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-utils\" to `0.2.0`"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,6 +1,23 @@
 # Change Log - @excitedjs/feishu-transport
 
-This log was last generated on Wed, 10 Jun 2026 07:24:34 GMT and should not be manually modified.
+This log was last generated on Sat, 27 Jun 2026 12:09:24 GMT and should not be manually modified.
+
+## 0.4.0
+Sat, 27 Jun 2026 12:09:24 GMT
+
+### Minor changes
+
+- Remove access-control and persistence public exports. Deleted source files: `src/policy/gate.ts`, `src/policy/pairing.ts`, `src/contract/access-store.ts`; deleted the now-empty `src/policy/` directory. Corresponding barrel re-exports removed from `src/index.ts`: Access, `src/index.ts` contract type exports removed: Access, DmPolicy, GroupPolicy, GroupEntry, PendingEntry, DispatcherAccessStore, DispatcherChatBotsEntry, ChatBotKind, GateResult, DropReason, computeGateDecision, buildGateContext, readDispatcherAccess, writeDispatcherAccess, readChatBotsObserved, appendChatBotsObserved, generatePairingCode, insertPendingPairing, pairingCodeMatches, pruneExpiredPending, findExistingPendingByKey, isGroupAuthorized, dreamuxGate (note: dreamuxGate / computeGateDecision were exported only indirectly via the policy file; the barrel re-exports matching deletion verified zero). All v1/v2 state types removed. Mention family (parse/mentions inbound parsing utilities: Mention, applyMentions, mentionName, isBotMentioned, isBotSenderType) are deliberately retained; parse/mentions inbound parsing still actively uses them.
+
+The transport package boundary is now strictly transport-only: raw Lark JSAPI wrappers, bot start/close, message send/download, reaction, chat listing, parse/render. All access/trust behavior lives in `@excitedjs/feishu-channel` (the gate v3 implementation).
+
+Deleted tests: `tests/gate.test.ts` and `tests/pairing.test.ts` — they exercised logic that moved into the channel package.
+
+Publish hygiene: `prepublishOnly` now runs `clean && build` so stale `dist/` emit (orphan .d.ts from deleted source) never leaks into the published package.
+
+### Patches
+
+- Security: stop the transport from logging the app secret. The Lark SDK reports HTTP failures by handing its logger a structured error whose `config.data` is the outbound request body, and the app/tenant access-token calls POST `{app_id, app_secret}` — so a failed token fetch (e.g. behind a proxy) leaked the live `app_secret` to stderr and to the host's injected channel log. The SDK logger seam (`createTransportDiagnostics`) now runs every SDK arg through a depth- and cycle-bounded redactor that blanks the `data`/`headers`/`auth` of anything axios-config-shaped and any credential-named key (`*secret*`/`*token*`/`authorization`/...), on both the default-stderr and injected-logger paths, before it reaches a sink. Non-secret triage context (status, url, error message, error response) is preserved; plain (non-axios) errors still render their stack unchanged. No config/state/path/format change — no operator action on upgrade.
 
 ## 0.3.0
 Wed, 10 Jun 2026 07:24:34 GMT
