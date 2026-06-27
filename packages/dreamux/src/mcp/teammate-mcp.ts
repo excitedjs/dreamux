@@ -132,7 +132,7 @@ function initializeResult(params: unknown): Record<string, unknown> {
   };
 }
 
-function teammateTools(callerKind: TeamMateMcpCallerKind): Array<Record<string, unknown>> {
+export function teammateTools(callerKind: TeamMateMcpCallerKind): Array<Record<string, unknown>> {
   const readTools = [
     tool('history', 'Search this TeamMate set for recovery (closed included). A compact recovery list keyed by concrete name, not a raw event timeline. Returns { items, next_cursor }.', {
       name: { type: 'string', minLength: 1, maxLength: 64 },
