@@ -69,6 +69,12 @@ For current behavior, read the linked source code too.
 - [Service topology](reference/service-topology.md)
 - [Dispatcher skill and TeamMate workflow](reference/dispatcher-skill.md)
 - [Scheduled tasks](reference/scheduled-tasks.md)
+- [Release process](reference/release-process.md)
+  — operator-facing 4-stage SOP (PR → next → alpha → beta → promote-next →
+  main → stable publish), the strict main-is-ancestor-of-next topology
+  invariant, the GITHUB_TOKEN anti-loop workaround + sync-next repair
+  commitment built into the release workflow, and a failure-mode recovery
+  table for each release gate.
 - [Glossary](glossary.md)
 
 ## Decisions

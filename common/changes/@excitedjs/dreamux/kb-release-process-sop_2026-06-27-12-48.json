@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Add .agents/reference/release-process.md SOP page and link it from .agents/root.md. The new doc records the 4-stage development-and-release pipeline (PR to next -> alpha prerelease -> automatic beta prerelease on push to next -> one-click promote-next driving fast-forward to main + version bump + topology repair + stable publish), the strict main-is-strict-prefix-of-next invariant, the release/topology coupling design choices (GITHUB_TOKEN anti-loop guard -> explicit dispatch; version-bump commit on main -> sync-next step), and a failure-mode recovery table. Operators now have a single source of truth for how code enters the repo, moves through prereleases, and ships to npm latest. No package surface changes.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}
