@@ -1,11 +1,15 @@
 #!/bin/sh
-# Local pre-commit pre-flight. Two fast gates that shorten the feedback loop
+# Local pre-commit pre-flight. Three fast gates that shorten the feedback loop
 # before CI:
 #
 #   1. staged-eslint — lint staged package TypeScript against each package's
 #      ESLint flat config. This enforces the source max-lines cap, the issue #85
 #      n/no-sync ban, import / syntax backstops, and package-specific guards.
-#   2. anti-leak — scan the *staged* changes with gitleaks. dreamux is a PUBLIC
+#   2. author-identity — verify the commit author email is well-formed, is not
+#      a machine-local identity, and (optionally) is not on a private denylist.
+#      Mirrors the `commit-metadata` job in `.github/workflows/ci.yml` so a bad
+#      author email fails in <100 ms locally instead of minutes later in CI.
+#   3. anti-leak — scan the *staged* changes with gitleaks. dreamux is a PUBLIC
 #      repo: company-internal content (Feishu ids, tokens, private-mirror
 #      registry URLs, secrets) must never be committed.
 #
@@ -18,6 +22,14 @@
 # Rush installs this script into .git/hooks on `rush install` / `rush update`.
 # If your hooks aren't wired up yet, point git at this directory manually:
 #   git config core.hooksPath common/git-hooks
+#
+# The optional denylist in gate (2) mirrors the CI-side repository variable:
+#   AUTHOR_EMAIL_DENYLIST_REGEX
+# Set it as an (extended, case-insensitive) regex — matching author emails are
+# rejected. Example (bash):
+#   export AUTHOR_EMAIL_DENYLIST_REGEX='@([a-z0-9-]+\.)*(example\.com|example\.org)$'
+# Keep the regex out of committed files: this is a public repo and the denylist
+# is operator-owned configuration.
 
 repo_root=$(git rev-parse --show-toplevel)
 
@@ -78,7 +90,54 @@ if [ -n "$staged_ts" ]; then
   fi
 fi
 
-# --- 2. anti-leak gate -------------------------------------------------------
+# --- 2. author-identity gate ------------------------------------------------
+# Rejects malformed and machine-local author emails, plus any email matching
+# the optional AUTHOR_EMAIL_DENYLIST_REGEX. Semantics are intentionally
+# identical to the `commit-metadata` / "Check commit author emails" step in
+# .github/workflows/ci.yml so a local commit aborts with the same reason CI
+# would have failed 5+ minutes later.
+#
+# Prefer the GIT_AUTHOR_EMAIL env var set by `git commit -c --author` etc.,
+# then fall back to the resolved git config value (covers the common path of
+# `user.email` in repo / global / system config order).
+author_email="${GIT_AUTHOR_EMAIL:-$(git config user.email || true)}"
+
+if [ -z "$author_email" ]; then
+  echo "[author-identity] author email is not set." >&2
+  echo "[author-identity] Run: git config user.email <your-github-email>" >&2
+  exit 1
+fi
+
+case "$author_email" in
+  *@users.noreply.github.com)
+    # Always allow GitHub privacy emails — guaranteed public-repo-safe.
+    ;;
+  *@localhost|*@*.local|*@local)
+    echo "[author-identity] author email is a machine-local identity: $author_email" >&2
+    echo "[author-identity] Set a real email via: git config user.email <your-github-email>" >&2
+    exit 1
+    ;;
+  *@*)
+    # Well-formed address with a domain — fall through to optional denylist.
+    ;;
+  *)
+    echo "[author-identity] author email is invalid (no @-domain): $author_email" >&2
+    echo "[author-identity] Set a real email via: git config user.email <your-github-email>" >&2
+    exit 1
+    ;;
+esac
+
+# Optional private denylist (env var, never committed). Matches the CI-side
+# repository variable name so operators can set-and-forget across both.
+if [ -n "${AUTHOR_EMAIL_DENYLIST_REGEX:-}" ]; then
+  if printf '%s' "$author_email" | grep -qiE "$AUTHOR_EMAIL_DENYLIST_REGEX"; then
+    echo "[author-identity] author email matches AUTHOR_EMAIL_DENYLIST_REGEX: $author_email" >&2
+    echo "[author-identity] Fix with: git config user.email <allowed-github-email>" >&2
+    exit 1
+  fi
+fi
+
+# --- 3. anti-leak gate -------------------------------------------------------
 if ! command -v gitleaks >/dev/null 2>&1; then
   echo "[anti-leak] gitleaks not installed — skipping local scan; CI will enforce." >&2
   echo "[anti-leak] install: https://github.com/gitleaks/gitleaks#installing" >&2
