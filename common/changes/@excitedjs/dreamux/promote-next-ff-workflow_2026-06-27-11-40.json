@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Add `.github/workflows/promote-next.yml`, the operator-only manual gate for promoting the beta `next` branch into the stable `main` branch. The workflow enforces a strict fast-forward-only merge shape (topology guard + `git merge --ff-only`), pushes the fast-forwarded `main` back to origin using the built-in GITHUB_TOKEN, and relies on `release.yml` (`on.push.branches: [main, next]`) to then run the stable version+publish pipeline. No published package API changes; this is a release-process infrastructure change.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}
