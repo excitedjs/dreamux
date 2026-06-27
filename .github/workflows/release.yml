@@ -137,6 +137,47 @@ jobs:
           git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git push origin HEAD:"${GITHUB_REF_NAME}"
 
+      - name: sync next onto the freshly bumped main (topology invariant)
+        # The long-lived fast-forward contract between next and main is:
+        #   "main is always a strict ancestor of next".
+        # The version job above pushed a new `chore(release)` commit directly
+        # to main without going through next, which would otherwise break that
+        # contract and force the next promote-next run into Topology Violation
+        # (see promote-next.yml). Keep the invariant alive by syncing `next`
+        # to the newly bumped SHA of `main` immediately.
+        #
+        # This is ONLY safe because (1) the promote-next path guarantees that,
+        # at the moment version job starts, `next == main` (it produced main
+        # via `git merge --ff-only origin/next`), so any delta on main is the
+        # single version-bump commit we just wrote, and (2) any new commits
+        # added to next after this push land on top of the version bump,
+        # preserving the ancestor relationship required by promote-next.
+        #
+        # If next has already moved (someone pushed a new commit to next
+        # between the promote push and this point), the sync is skipped:
+        # next must already have absorbed the prior version bump, so the
+        # ancestor invariant still holds (otherwise promote-next would have
+        # refused to run earlier).
+        if: github.ref == 'refs/heads/main' && steps.version.outputs.changed == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git fetch origin next
+          new_main_sha=$(git rev-parse HEAD)
+          old_next_sha=$(git rev-parse origin/next || true)
+          # Only move next if it points at the exact pre-bump SHA. If next
+          # already moved on (new commits landed between promote and here),
+          # skip — the next promote-next run will fold the bump in via the
+          # normal fast-forward path.
+          pre_bump_sha=$(git rev-parse HEAD^)
+          if [ "$old_next_sha" = "$pre_bump_sha" ]; then
+            git push origin "refs/heads/main:refs/heads/next"
+            echo "Sync next ${old_next_sha} → ${new_main_sha} (release bump only)."
+          else
+            echo "Skipping next sync: next already moved (${old_next_sha}) past pre-bump (${pre_bump_sha})."
+          fi
+
   publish:
     name: rush publish changed packages to npm (OIDC)
     needs: version

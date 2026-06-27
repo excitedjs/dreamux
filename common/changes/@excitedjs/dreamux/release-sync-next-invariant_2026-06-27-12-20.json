@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Add a new 'sync next onto the freshly bumped main' step at the end of the release.yml version job. The long-lived topology invariant between the two long-lived branches is: 'main must always be a strict ancestor of next' (promote-next.yml enforces this with a hard fail). Without this step, every successful stable release breaks the invariant: the version job writes a 'chore(release): version packages [skip ci]' commit directly to main without going through next, which forces the next promote-next run into Topology Violation and requires a manual rebuild of the next branch (cherry-pick + force push). The new step fast-forwards next onto the freshly bumped main SHA immediately after the version bump, keeping the invariant alive. Skip logic: sync only if next still points at the exact pre-bump SHA; otherwise next already moved on and will absorb the bump via a future promote-next. No published package surface changes.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}
