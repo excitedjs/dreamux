@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Add `packages/dreamux-utils/src/fs.ts` with a shared `writeAtomic(dir, filename, data, mode?)` helper (tmpfile + O_CREAT|O_EXCL + rename, default mode 0o600) and re-export it from the package barrel index. Previously this helper lived inside `@excitedjs/feishu-channel` (v3 pairing-code access gate); hoisting it lets downstream packages share the same atomic-write primitive without copying. Future filesystem primitives (safe tmpdir, safe unlink) belong in this module rather than the sibling `os.ts` module (process/signal/directory-enforcement primitives).",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux-utils"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-utils",
+  "email": "053700@gmail.com"
+}
