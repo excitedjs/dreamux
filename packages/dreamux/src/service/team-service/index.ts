@@ -539,9 +539,10 @@ export function activeGroupBindingFor(
     (binding) => binding.active && binding.team_name === teamId,
   );
   if (active === undefined) return null;
+  const chatId = active.meta['chat_id'];
   return {
     provider: active.provider,
-    chat_id: active.target_key,
+    chat_id: typeof chatId === 'string' ? chatId : active.target_key,
   };
 }
 

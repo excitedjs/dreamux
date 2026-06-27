@@ -34,16 +34,15 @@ const CODEX_ROOT = join(CORE_ROOT, '..', 'agent-runtime', 'codex');
 const TYPES_ROOT = join(CORE_ROOT, '..', 'dreamux-types');
 const SERVICE_ROOT = join(CORE_ROOT, 'src', 'service');
 const SERVER_FILE = join(CORE_ROOT, 'src', 'server.ts');
-// Provider identity/routing fields that core service/server code must not read:
-// each has a neutral replacement at the core seam. Neutral channel concepts such
-// as message_id are deliberately excluded.
-const PROVIDER_FIELD_NAMES = new Set([
-  'chat_id',
-  'app_id',
-  'sender_id',
-  'union_id',
-  'open_id',
-]);
+// Provider-specific identity SCHEMES that core service/server code must not read
+// (Feishu app/user id schemes with no generic-channel meaning). Generic
+// conversational-channel concepts (chat_id, message_id, sender_id) are EXCLUDED:
+// every conversational (IM) channel has them, so naming them in core is not a
+// provider leak. chat_id in particular is a unified channel-layer attribute
+// (Feishu/Slack/Telegram/WeCom all use it), NOT a Feishu-specific field; the
+// binding store keeps it in `meta` only because core routes by the universal
+// opaque `target_key`, which also covers non-chat (subscription) channels.
+const PROVIDER_FIELD_NAMES = new Set(['app_id', 'union_id', 'open_id']);
 
 interface MemberAccessHit {
   file: string;
