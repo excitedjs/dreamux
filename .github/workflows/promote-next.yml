@@ -1,0 +1,137 @@
+# Promote `next` into `main` with a strict fast-forward-only merge.
+#
+# This workflow is the operator-controlled gate between the prerelease
+# (beta) channel and the stable (latest) channel. It is deliberately
+# manual-only: the operator decides when a beta that has lived on `next`
+# for long enough is stable enough to ship as the default `latest` npm
+# dist-tag. No automatic trigger, no schedule, no PR merge button can
+# invoke it.
+#
+# Behavior:
+#   1. Fetch both main and next at full depth.
+#   2. Fail hard if `main` is NOT a direct ancestor of `next`. A
+#      non-linear topology (e.g. a hotfix landed directly on main)
+#      means the operator must first reconcile it before promoting;
+#      silently producing a merge commit here would break the
+#      invariant that main is a strict prefix of next.
+#   3. `git checkout main && git merge --ff-only origin/next`.
+#      Fast-forward-only is the ONLY allowed merge shape. Squash,
+#      rebase, and true merge commits all rewrite commit metadata on
+#      main and would drop the link between a beta.<run_number> publish
+#      and the exact commit that shipped as stable.
+#   4. Push the fast-forwarded main back to origin.
+#   5. release.yml (`on.push.branches: [main, next]`) catches the push
+#      and runs the stable version + publish pipeline. The two
+#      workflows are therefore coupled purely by git topology, not by
+#      workflow_dispatch cross-calls — simpler and auditable.
+#
+# Permissions:
+#   contents:write  — push the fast-forwarded main back.
+#   Using the workflow GITHUB_TOKEN (not a PAT) keeps this workflow
+#   self-contained. The main branch protection must allow the
+#   `github-actions[bot]` identity to bypass or satisfy push rules,
+#   exactly as the release.yml version job already requires.
+#
+# Operator usage:
+#   Actions → promote-next → Run workflow → Run (no inputs).
+#   The workflow is safe to re-run: if next has not moved since the
+#   last promote, step 3 is a no-op (already up to date → 0 exit).
+
+name: promote-next
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: promote-next
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  promote:
+    name: fast-forward main to next
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # topology check + ff merge need the full graph
+          ref: main
+
+      - name: ensure local refs exist for both branches
+        run: |
+          set -euo pipefail
+          git show-ref --verify --quiet refs/remotes/origin/main || {
+            echo "::error::origin/main ref missing; aborting."
+            exit 1
+          }
+          git show-ref --verify --quiet refs/remotes/origin/next || {
+            echo "::error::origin/next ref missing; aborting."
+            exit 1
+          }
+
+      - name: topology guard — main MUST be a direct ancestor of next
+        id: topo
+        run: |
+          set -euo pipefail
+          main_sha=$(git rev-parse origin/main)
+          next_sha=$(git rev-parse origin/next)
+          echo "main_sha=$main_sha"
+          echo "next_sha=$next_sha"
+          echo "main_sha=$main_sha" >> "$GITHUB_OUTPUT"
+          echo "next_sha=$next_sha" >> "$GITHUB_OUTPUT"
+          if git merge-base --is-ancestor "$main_sha" "$next_sha"; then
+            echo "Topology OK: main is an ancestor of next — fast-forward is valid."
+            echo "linear=true" >> "$GITHUB_OUTPUT"
+          else
+            base=$(git merge-base "$main_sha" "$next_sha")
+            echo "::error::Topology violation: origin/main is NOT a direct ancestor of origin/next."
+            echo "::error::merge-base (divergence point) = $base"
+            echo "::error::This means a commit landed on main without going through next."
+            echo "::error::Resolve the divergence (cherry-pick / re-anchor next) before running promote-next."
+            # Human-readable debug for the operator
+            echo ""
+            echo "--- Commits on main but NOT on next ---"
+            git --no-pager log --oneline "${base}..origin/main" || true
+            echo ""
+            echo "--- Commits on next but NOT on main ---"
+            git --no-pager log --oneline "${base}..origin/next" || true
+            exit 1
+          fi
+
+      - name: fast-forward main to next
+        id: ff
+        run: |
+          set -euo pipefail
+          before=$(git rev-parse HEAD)
+          # checkout main explicitly; we already started on main but guard anyway
+          git checkout main
+          # --ff-only: produce a merge commit is never acceptable.
+          git merge --ff-only origin/next
+          after=$(git rev-parse HEAD)
+          echo "before=$before"
+          echo "after =$after"
+          echo "before=$before" >> "$GITHUB_OUTPUT"
+          echo "after=$after"   >> "$GITHUB_OUTPUT"
+          if [ "$before" = "$after" ]; then
+            echo "Note: main was already equal to next (nothing to promote)."
+            echo "noop=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "noop=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: push main to origin
+        if: steps.ff.outputs.noop != 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git remote set-url origin \
+            "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push origin main
+          echo "Pushed main → origin. release.yml (on.push.main) will run the stable publish next."
