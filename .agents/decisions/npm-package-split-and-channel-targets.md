@@ -416,34 +416,35 @@ keeps one-way event feeds from inheriting Feishu/Slack chat assumptions.
 
 ## Channel Targets and Binding
 
-`bind_channel` is a core-owned **Team MCP** capability. It writes core binding
-state, but it relies on the selected channel to normalize provider-specific
-selectors:
+`bind_channel` is a core-owned **Team MCP** capability for conversational
+(bindable) channels. It writes core binding state, but it relies on the selected
+channel to normalize its selector into a target:
 
 ```ts
 bind_channel({
   team_name: 'dreamux',
   channel_id: 'feishu',
-  meta: { chat_id: '<provider-local-chat-id>' }
-});
-
-bind_channel({
-  team_name: 'dreamux',
-  channel_id: 'github',
-  meta: { url: 'https://github.com/excitedjs/dreamux/issues/209' }
+  meta: { chat_id: '<group-chat-id>' }
 });
 ```
 
 Core resolves the configured channel by `channel_id`, calls
 `session.resolveTarget(meta)`, rejects `bindable: false`, derives
 `leader_name` from the active Team record, and stores the resolved target. Core
-does not trust a caller-supplied leader identity.
+does not trust a caller-supplied leader identity. Binding is a CAPABILITY, not a
+channel class (a one-way/two-way enum was rejected): a target is bindable when
+its channel's `resolveTarget` yields a stable `target_key`. (Whether one-way
+subscription channels — GitHub/Jira feeds — should ALSO bind through
+`bind_channel`, vs a separate publish/route path, is an OPEN design question;
+either way their replies are out of band, e.g. `gh` CLI, not a channel reply
+tool. See "Bidirectional vs subscription channels".)
 
-The selector `meta` is human/model-facing input. The durable routing key is
-`target_key`, which is provider-owned and opaque to core. A GitHub-style channel
-should normalize selectors such as URLs or `repo + number` into a
-platform-stable key, preferably an immutable platform id. If the channel cannot
-resolve a stable key, it fails loudly rather than storing an ambiguous selector.
+The selector `meta` is human/model-facing input (a chat channel's is
+`{ chat_id }` — a neutral IM-family selector shared by Feishu/Slack/Telegram,
+not a Feishu-specific field). The durable routing key is `target_key`, which is
+provider-owned and opaque to core. A conversational channel normalizes its
+selector into a platform-stable `target_key`, preferably an immutable platform
+id; if it cannot, it fails loudly rather than storing an ambiguous selector.
 
 The binding store remains flat:
 
@@ -459,7 +460,7 @@ The binding store remains flat:
       "display": "optional display name",
       "canonical_url": null,
       "meta": {
-        "chat_id": "provider-local-chat-id",
+        "chat_id": "group-chat-id",
         "chat_type": "group"
       },
       "team_name": "dreamux",
@@ -473,9 +474,12 @@ The binding store remains flat:
 }
 ```
 
-`chat_id` and `chat_type` are provider-specific data and stay inside `meta`.
-They are not core top-level columns. This keeps the store aligned with the
-`bind_channel` selector model and prevents core from re-coupling itself to
+`chat_id` and `chat_type` are neutral conversational-channel target selectors
+(every conversational provider has them — `chat_id` is NOT a Feishu-specific
+field) and stay inside `meta`. They are not core top-level columns because core
+routes by the opaque, target-shape-agnostic `target_key`. This keeps the store
+aligned with the `bind_channel` selector model and prevents core from re-coupling
+itself to
 chat-shaped channels.
 
 The active uniqueness key is `(channel_id, target_key)`. One Team may have
@@ -798,8 +802,9 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   channel-binding store moved to `version: 2`. Flat rows now key on
   `(channel_id, target_key)` and carry `channel_id`, the provider-owned opaque
   `target_key`, `target_type`, `display`, `canonical_url`, and a `meta` object;
-  the Feishu `chat_id` / `chat_type` selectors moved OUT of core top-level columns
-  INTO `meta`, so the store is channel-neutral. Active uniqueness is
+  the conversational `chat_id` / `chat_type` selectors moved OUT of core top-level
+  columns INTO `meta`, so the store routes by the opaque `target_key` and is
+  channel-neutral. Active uniqueness is
   `(channel_id, target_key)` — one channel target is active for at most one Team,
   and re-binding reassigns it (one row per key, `created_at` preserved). Target
   resolution is provider-owned: the Feishu `ChannelSession.resolveTarget(meta)`
@@ -992,6 +997,6 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   Feishu with Slack or Telegram, or running several channels at once, requires
   Feishu to exercise the same Channel provider contract.
 - **Keep `chat_id` and `chat_type` as core store columns:** rejected because
-  this re-couples core to chat-shaped channels. Provider-specific chat data
-  belongs in `meta`; core routes by `channel_id`, `target_type`, and
-  `target_key`.
+  this re-couples core to chat-shaped channels. The conversational selectors
+  (`chat_id` / `chat_type` — neutral, not Feishu-specific) belong in `meta`; core
+  routes by `channel_id`, `target_type`, and the opaque `target_key`.

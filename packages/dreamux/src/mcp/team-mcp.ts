@@ -125,7 +125,7 @@ function teamTools(): Array<Record<string, unknown>> {
       team_name: { type: 'string', minLength: 1, maxLength: 64 },
       note: { type: 'string', minLength: 1, maxLength: 2000 },
     }, ['team_name', 'note']),
-    tool('bind_channel', 'Bind a configured channel target to a Team by team_name so inbound from that target routes to the Team\'s TeamLeader (a core-owned Team capability). channel_id selects the configured channel (optional; defaults to the dispatcher\'s sole channel). meta carries the channel\'s provider-specific selector — e.g. { "chat_id": "<group chat id>" } for a chat channel (group chats only; chat_type is inferred). Binding state, routing, and authorization are core-owned.', {
+    tool('bind_channel', 'Bind a configured channel target to a Team by team_name so inbound from that target routes to the Team\'s TeamLeader (a core-owned Team capability). channel_id selects the configured channel (optional; defaults to the dispatcher\'s sole channel). meta carries the channel\'s target selector — e.g. { "chat_id": "<group chat id>" } for a chat channel (group chats only; chat_type is inferred). Binding state, routing, and authorization are core-owned.', {
       team_name: { type: 'string', minLength: 1, maxLength: 64 },
       channel_id: { type: 'string', minLength: 1, maxLength: 64 },
       meta: { type: 'object' },
