@@ -75,6 +75,8 @@ Important children:
   gate state.
 - `~/.dreamux/state/<dispatcher-id>/chat-bots.json`: Feishu known/trusted peer
   bot store owned by the Feishu Channel provider.
+- `~/.dreamux/state/<dispatcher-id>/cron-jobs.json`: durable scheduled-task
+  definitions owned by the scheduler service.
 - `~/.dreamux/state/<dispatcher-id>/teammate/`: TeamMate durable task ledgers.
 - `~/.dreamux/state/<dispatcher-id>/team/`: Team durable ledgers and channel
   binding state.
@@ -89,6 +91,7 @@ Key source:
 - `/packages/dreamux/src/service/teammate-collection/identity-store.ts`
 - `/packages/dreamux/src/service/teammate-collection/turns-store.ts`
 - `/packages/dreamux/src/service/team-collection/store.ts`
+- `/packages/dreamux/src/service/scheduler/store.ts`
 - `/packages/channel/feishu-channel/src/chat-bots-store.ts`
 
 ## Run Files

@@ -80,6 +80,8 @@ export class TurnManager {
    * interrupted by teardown is not lost.
    */
   private readonly pendingTurnIds = new Set<string>();
+  private idlePromise: Promise<void> | null = null;
+  private idleResolve: (() => void) | null = null;
   private readonly log: NonNullable<TurnManagerOptions['log']>;
   private readonly messageIdDedupeWindow: number;
 
@@ -93,6 +95,22 @@ export class TurnManager {
       0,
       opts.messageIdDedupeWindow ?? DEFAULT_MESSAGE_ID_DEDUPE_WINDOW,
     );
+  }
+
+  isBusy(): boolean {
+    return this.activeTurnSlot !== null || this.pendingTurnIds.size > 0;
+  }
+
+  waitIdle(): Promise<void> {
+    if (!this.isBusy()) return Promise.resolve();
+    // All concurrent waiters share one promise for the current busy period; it
+    // is replaced with a fresh one the next time the runtime goes busy.
+    if (this.idlePromise === null) {
+      this.idlePromise = new Promise((resolve) => {
+        this.idleResolve = resolve;
+      });
+    }
+    return this.idlePromise;
   }
 
   /**
@@ -139,6 +157,48 @@ export class TurnManager {
         `turn/start submission failed for message ${input.sourceId === '' ? '<none>' : input.sourceId}: ${error.message}`,
         error,
       );
+      return { status: 'failed', error };
+    }
+    const turnId = this.recordTurnStartSuccess(
+      activeTurn.slot,
+      res.turn.id,
+      activeTurn.primary,
+    );
+    try {
+      return {
+        status: 'submitted',
+        turnId: turnId ?? await activeTurn.slot.turnIdPromise,
+      };
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      return { status: 'failed', error };
+    }
+  }
+
+  async submitSystemInput(text: string): Promise<InboundDeliveryResult> {
+    if (this.stopped) return { status: 'stopped' };
+    const threadId = this.opts.getThreadId();
+    if (threadId === null) {
+      const error = new Error('system input submitted without thread_id');
+      this.log('error', error.message);
+      return { status: 'failed', error };
+    }
+
+    const activeTurn = this.claimActiveTurnSlot(threadId);
+    activeTurn.slot.pendingSubmissions += 1;
+
+    let res: Awaited<ReturnType<typeof submitTurnStart>>;
+    try {
+      res = await submitTurnStart(
+        this.opts.client,
+        threadId,
+        text,
+        this.opts.turnCwd ?? null,
+      );
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      this.recordTurnStartFailure(activeTurn.slot, error, activeTurn.primary);
+      this.log('error', `system turn/start submission failed: ${error.message}`, error);
       return { status: 'failed', error };
     }
     const turnId = this.recordTurnStartSuccess(
@@ -211,6 +271,7 @@ export class TurnManager {
     }
     this.pendingTurnIds.clear();
     this.activeTurnId = null;
+    this.resolveIdleWaitersIfIdle();
   }
 
   private claimActiveTurnSlot(threadId: string): {
@@ -278,6 +339,7 @@ export class TurnManager {
     if (slot.primaryFailed && slot.pendingSubmissions === 0) {
       if (this.activeTurnSlot === slot) this.activeTurnSlot = null;
       slot.rejectTurnId(error);
+      this.resolveIdleWaitersIfIdle();
     }
   }
 
@@ -314,6 +376,7 @@ export class TurnManager {
           if (this.activeTurnSlot === slot) this.activeTurnSlot = null;
           if (this.activeTurnId === turnId) this.activeTurnId = null;
           this.opts.onTurnCompleted?.(turn);
+          this.resolveIdleWaitersIfIdle();
         }
       },
       (err) => {
@@ -327,6 +390,7 @@ export class TurnManager {
             status: 'failed',
             error: err instanceof Error ? err : new Error(String(err)),
           });
+          this.resolveIdleWaitersIfIdle();
         }
       },
     );
@@ -358,5 +422,13 @@ export class TurnManager {
       if (evicted !== undefined) this.seenMessageIds.delete(evicted);
     }
     return true;
+  }
+
+  private resolveIdleWaitersIfIdle(): void {
+    if (this.isBusy()) return;
+    const resolve = this.idleResolve;
+    this.idlePromise = null;
+    this.idleResolve = null;
+    resolve?.();
   }
 }

@@ -3,7 +3,6 @@ import { createHash } from 'node:crypto';
 import type {
   AgentRuntime,
   AgentRuntimeCreateContext,
-  AgentRuntimeMcpServer,
   AgentRuntimeProvider,
   AgentRuntimeStateCallbacks,
   AgentRuntimeTurnResult,
@@ -16,6 +15,7 @@ import type {
 
 import {
   bundledSkillSourcesForRole,
+  DISABLE_FEATURE_USER_INTERRUPT,
   HOST_INJECT_ENV,
   teammateHostPaths,
 } from '../../agent-runtime/index.js';
@@ -42,6 +42,7 @@ import {
   type TeamMateCloseResult,
   type TeamMateIdentity,
   type TeamMateLastResult,
+  type TeamMateLaunchPolicy,
   type TeamMateRuntimeStatus,
   type TeamMateSendResult,
   type TeamMateTurnOrigin,
@@ -81,11 +82,6 @@ export interface TeammateServiceDeps {
    */
   worktrees?: WorktreeManager;
   log: DreamuxLogger;
-  mcpServersForTeamMate?: (input: {
-    dispatcherId: string;
-    name: string;
-    identity: TeamMateIdentity;
-  }) => readonly AgentRuntimeMcpServer[];
   /**
    * Build the provider + create context for this entity's runtime (issue #233
    * Phase 5). Omitted for an ordinary teammate, which derives its launch from its
@@ -112,6 +108,14 @@ export interface TeammateServiceDeps {
   ) => Promise<void>;
 }
 
+export interface TeammateServiceOptions {
+  /**
+   * Role-granted launch additions for THIS entity, fixed at construction. The
+   * entity never re-derives this from `identity.role`.
+   */
+  launchPolicy?: TeamMateLaunchPolicy;
+}
+
 /**
  * A single named teammate entity (issue #233): it holds its own identity, its
  * (lazily started) runtime, a per-turn origin cache, and the domain operations
@@ -126,12 +130,18 @@ export class TeammateService {
   private runtime: AgentRuntime | null = null;
   private starting: Promise<void> | null = null;
   private state: TeamMateRuntimeStateStore;
+  private readonly launchPolicy: TeamMateLaunchPolicy;
 
   constructor(
     private readonly deps: TeammateServiceDeps,
     private readonly dispatcherId: string,
     private identity: TeamMateIdentity,
+    options: TeammateServiceOptions = {},
   ) {
+    this.launchPolicy = options.launchPolicy ?? {
+      mcpServers: [],
+      disableFeatures: [],
+    };
     this.state = new TeamMateRuntimeStateStore(deps.identities, identity);
   }
 
@@ -220,6 +230,28 @@ export class TeammateService {
         turnId: result.turnId,
         turnOrigin: 'channel',
         prompt: input.text,
+      });
+    }
+    return result;
+  }
+
+  async scheduledInput(input: {
+    jobId: string;
+    prompt: string;
+  }): Promise<AgentRuntimeTurnResult> {
+    const teamId = this.current().team_id ?? undefined;
+    await this.ensureStarted({ ...(teamId !== undefined ? { teamId } : {}) });
+    const runtime = this.mustRuntime();
+    const result = await runtime.systemInput({
+      kind: 'system',
+      text: input.prompt,
+      reason: 'scheduled',
+    });
+    if (result.status === 'submitted') {
+      await recordSubmittedTurn(this.turnsStore, this.live(), {
+        turnId: result.turnId,
+        turnOrigin: { kind: 'scheduled', job_id: input.jobId },
+        prompt: input.prompt,
       });
     }
     return result;
@@ -387,12 +419,7 @@ export class TeammateService {
     );
     const provider = this.deps.agentRuntimeProviders.resolve(agent.provider);
     const runtimeName = runtimeIdentityName(identity);
-    const mcpServers =
-      this.deps.mcpServersForTeamMate?.({
-        dispatcherId: this.dispatcherId,
-        name: identity.name,
-        identity,
-      }) ?? [];
+    const launchPolicy = this.launchPolicy;
     return {
       provider,
       checkpointId: identity.session_id,
@@ -405,9 +432,10 @@ export class TeammateService {
         config: agent.config,
         cwd: identity.cwd,
         skillSources: bundledSkillSourcesForRole(identity.role),
+        disableFeatures: launchPolicy.disableFeatures,
         state: this.state,
         paths: teammateHostPaths(identity.dispatcher_id, runtimeName),
-        mcpServers: [...mcpServers],
+        mcpServers: [...launchPolicy.mcpServers],
         logger:
           this.deps.log.child?.({
             dispatcher_id: this.dispatcherId,
@@ -423,6 +451,13 @@ export class TeammateService {
     const runtime = launch.provider.createRuntime({
       ...launch.context,
       injectEnv: HOST_INJECT_ENV,
+      // Core-wide rule: every Dreamux agent has the model-facing "ask the user"
+      // tool disabled (it would wedge a turn waiting for an out-of-band answer).
+      // Role-specific features (e.g. cron) are already on launch.context.
+      disableFeatures: [
+        DISABLE_FEATURE_USER_INTERRUPT,
+        ...(launch.context.disableFeatures ?? []),
+      ],
       onTurnSettled: (settled: TurnSettledSignal): void => {
         if (liveRuntime === null) return;
         this.captureSettledTurn(liveRuntime, settled);

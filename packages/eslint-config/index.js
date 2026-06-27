@@ -97,6 +97,84 @@ const SYNC_DESTRUCTURE_SELECTOR = {
     'Destructuring a synchronous (*Sync) member is banned in runtime/CLI source (issue #85). Use the node:fs/promises (async) API instead.',
 };
 
+// Re-exported so a package that needs to ADD its own `no-restricted-syntax`
+// selectors to a scoped subset of files can compose them with the shared sync
+// gate instead of replacing it (flat-config rule options are replaced, not
+// merged, on the last matching block). See the dreamux-types neutral-contract
+// guard.
+export { SYNC_DESTRUCTURE_SELECTOR };
+
+/**
+ * The neutrality import boundary (issue #209 polymorphism). Pluginization is
+ * polymorphism: core calls only the neutral `@excitedjs/dreamux-types`
+ * contracts, and a provider package implements them against `dreamux-types`
+ * only — neither side statically imports the other. These two helpers express
+ * the two directions of that boundary as a hard lint error, layered ON TOP of
+ * the shared sync-IO gate (merged into `no-restricted-imports`, so flat-config
+ * last-wins does not drop the red-line sync gate). They are repo-wide policy,
+ * so they live here rather than being re-coded in each consuming package.
+ */
+
+/** Packages that core (`@excitedjs/dreamux`) must never statically import. */
+const PROVIDER_PACKAGES_BAN = {
+  group: [
+    '@excitedjs/agent-runtime-codex',
+    '@excitedjs/agent-runtime-codex/*',
+    '@excitedjs/agent-runtime-claude-code',
+    '@excitedjs/agent-runtime-claude-code/*',
+    '@excitedjs/feishu-channel',
+    '@excitedjs/feishu-channel/*',
+    '@excitedjs/feishu-transport',
+    '@excitedjs/feishu-transport/*',
+  ],
+  message:
+    'Core (@excitedjs/dreamux) must not import a provider or Feishu platform-I/O ' +
+    'package. Call the neutral @excitedjs/dreamux-types contract instead; builtin:* ' +
+    'resolves to a package name the dynamic loader imports at runtime (issue #209 ' +
+    'polymorphism boundary).',
+};
+
+/** The core host package that a provider package must never import. */
+const CORE_PACKAGE_BAN = {
+  group: ['@excitedjs/dreamux', '@excitedjs/dreamux/*'],
+  message:
+    'A provider package must depend on @excitedjs/dreamux-types (and dreamux-utils) ' +
+    'ONLY — it must never import @excitedjs/dreamux core. The provider implements ' +
+    'the neutral contract; it never reaches back into the host (issue #209 ' +
+    'polymorphism boundary).',
+};
+
+/** Merge extra `no-restricted-imports` patterns into a config's `src/**` block, preserving the sync gate. */
+function withSrcImportBans(baseConfig, patterns) {
+  return baseConfig.map((block) => {
+    if (!Array.isArray(block.files) || !block.files.includes('src/**/*.ts')) {
+      return block;
+    }
+    const restricted = block.rules?.['no-restricted-imports'];
+    const options = Array.isArray(restricted) ? (restricted[1] ?? {}) : {};
+    return {
+      ...block,
+      rules: {
+        ...block.rules,
+        'no-restricted-imports': [
+          'error',
+          { ...options, patterns: [...(options.patterns ?? []), ...patterns] },
+        ],
+      },
+    };
+  });
+}
+
+/** Core host lint config: shared gate + "core must not import a provider". */
+export function withCoreImportBoundary(baseConfig) {
+  return withSrcImportBans(baseConfig, [PROVIDER_PACKAGES_BAN]);
+}
+
+/** Provider package lint config: shared gate + "provider must not import core". */
+export function withProviderImportBoundary(baseConfig) {
+  return withSrcImportBans(baseConfig, [CORE_PACKAGE_BAN]);
+}
+
 const baseLanguageOptions = {
   parser: tseslint.parser,
   ecmaVersion: 2023,

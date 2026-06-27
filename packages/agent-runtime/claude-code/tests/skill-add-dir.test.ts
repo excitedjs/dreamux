@@ -70,3 +70,42 @@ describe('claudeCodeResidentArgs --add-dir', () => {
     expect(args).not.toContain('--add-dir');
   });
 });
+
+describe('claudeCodeResidentArgs disableFeatures', () => {
+  function argsFor(disableFeatures?: readonly string[]): string[] {
+    return claudeCodeResidentArgs({
+      config: defaultDispatcherClaudeCodeConfig(),
+      mcpConfigPath: '/tmp/mcp.json',
+      ...(disableFeatures !== undefined ? { disableFeatures } : {}),
+    });
+  }
+
+  it('maps cron to Claude Code native cron tools and ignores unknown features', () => {
+    const args = argsFor(['cron', 'unknown-a', 'unknown-b']);
+    const i = args.indexOf('--disallowedTools');
+    expect(i).toBeGreaterThanOrEqual(0);
+    expect(args[i + 1]).toBe('CronCreate,CronDelete,CronList');
+    expect(args.filter((arg) => arg === '--disallowedTools')).toHaveLength(1);
+  });
+
+  it('maps userInterrupt to the AskUserQuestion tool', () => {
+    const args = argsFor(['userInterrupt']);
+    const i = args.indexOf('--disallowedTools');
+    expect(i).toBeGreaterThanOrEqual(0);
+    expect(args[i + 1]).toBe('AskUserQuestion');
+  });
+
+  it('merges every feature into a single --disallowedTools flag', () => {
+    const args = argsFor(['userInterrupt', 'cron', 'unknown']);
+    const i = args.indexOf('--disallowedTools');
+    expect(i).toBeGreaterThanOrEqual(0);
+    expect(args[i + 1]).toBe('AskUserQuestion,CronCreate,CronDelete,CronList');
+    expect(args.filter((arg) => arg === '--disallowedTools')).toHaveLength(1);
+  });
+
+  it('does not emit disallowed tools when no known feature is requested', () => {
+    expect(argsFor(undefined)).not.toContain('--disallowedTools');
+    expect(argsFor([])).not.toContain('--disallowedTools');
+    expect(argsFor(['unknown'])).not.toContain('--disallowedTools');
+  });
+});

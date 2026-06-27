@@ -9,18 +9,17 @@ import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 import { dispatcherWorkspace } from '../worktree/workspaces.js';
-import { TeammateCollection } from '../teammate-collection/index.js';
 import type { TeamMateIdentityStore } from '../teammate-collection/identity-store.js';
 import type { TeamMateTurnsStore } from '../teammate-collection/turns-store.js';
 import type {
   CompletionInitiator,
   CompletionRouter,
 } from '../completion-router/index.js';
-import type { TeammateService } from '../teammate-service/index.js';
 import { requireLifecycleText } from '../teammate-collection/types.js';
 import type { TeamMateIdentity } from '../teammate-collection/types.js';
 import type { ChannelBindingStore } from '../channel-binding/store.js';
 import type { ChannelBinding } from '../channel-binding/store.js';
+import type { SchedulerService } from '../scheduler/service.js';
 import { TeamStore } from './store.js';
 import type {
   TeamChannelBindingSummary,
@@ -37,9 +36,8 @@ import { validateTeamId } from './types.js';
 import type { TeamMateIdentityStatus } from '../teammate-collection/types.js';
 import {
   activeGroupBindingFor,
-  teamView,
   TeamService,
-  type TeamServiceOptions,
+  type TeamServiceDeps,
 } from '../team-service/index.js';
 
 export interface TeamCollectionOptions {
@@ -66,10 +64,15 @@ export interface TeamCollectionOptions {
     producer: TeamMateIdentity,
   ) => Promise<CompletionInitiator | null>;
   isShuttingDown: () => boolean;
-  mcpServersForTeamMate: (input: {
-    dispatcherId: string;
-    name: string;
-    identity: TeamMateIdentity;
+  adminSocketPath: string;
+  /**
+   * Build a team_leader's channel-egress MCP descriptors from the dispatcher's
+   * live channels. Channels are dispatcher-owned, so the team layer only asks
+   * for its own leader's set — it never reaches into the channel layer itself.
+   */
+  leaderChannelDescriptors: (input: {
+    teamId: string;
+    leaderName: string;
   }) => readonly AgentRuntimeMcpServer[];
   log: DreamuxLogger;
 }
@@ -135,58 +138,27 @@ export class TeamCollection {
               cleanup: 'keep',
             },
           });
-    // The team's own collection allocates the (dispatcher-global) leader name
-    // and creates the leader (issue #233).
-    const teammates = this.buildTeammates(teamId);
-    const leaderName = await teammates.allocateLeaderName();
-    let team =
-      existing ??
-      (await this.store.create({
-        dispatcher_id: this.dispatcherId,
-        team_id: teamId,
+    const { service, leaderResult } = await TeamService.createNew(
+      { ...this.depsBase(), evict: () => this.cache.delete(teamId) },
+      {
+        teamId,
         name: input.name,
-        repo_cwd: workspace.sourceCwd,
-        source_repo: workspace.sourceRepo,
-        leader_name: leaderName,
-        leader_agent_runtime: input.leaderAgentRuntime,
-        runtime_cwd: workspace.runtimeCwd,
-        worktree: workspace.worktree,
-        status: 'starting',
+        ...(input.prompt !== undefined ? { prompt: input.prompt } : {}),
+        leaderAgentRuntime: input.leaderAgentRuntime,
         intent: input.intent,
-        closed_at: null,
-        close_note: null,
-      }));
-    team = await this.store.update(team, {
-      status: 'starting',
-      closedAt: null,
-      closeNote: null,
-      worktree: workspace.worktree,
-      intent: input.intent,
-      leaderName,
-    });
-    const { leader, result } = await teammates.createTeamLeader({
-      name: leaderName,
-      ...(input.prompt !== undefined ? { prompt: input.prompt } : {}),
-      agentRuntime: input.leaderAgentRuntime,
-      sourceCwd: workspace.sourceCwd,
-      sourceRepo: workspace.sourceRepo,
-      runtimeCwd: workspace.runtimeCwd,
-      worktree: workspace.worktree,
-      intent: input.intent,
-    });
-    team = await this.store.update(team, { status: 'running' });
+        workspace,
+        existing,
+      },
+    );
     // Cache the live service so later `get`s reuse this leader + collection and
     // record mutations route through it (issue #233).
-    const service = new TeamService(
-      this.teamServiceOptions(team, teammates, leader),
-    );
     this.cache.set(teamId, service);
     return {
-      team: teamView(team),
-      leader: result.teammate,
+      team: service.view(),
+      leader: leaderResult.teammate,
       member_count: await service.memberCount(),
       binding: null,
-      turn: result.turn,
+      turn: leaderResult.turn,
     };
   }
 
@@ -257,22 +229,17 @@ export class TeamCollection {
 
   /** Rebuild a team's live service from its record and cache it (issue #233). */
   private async serviceFor(record: TeamRecord): Promise<TeamService> {
-    const teammates = this.buildTeammates(record.team_id);
-    const leader = await teammates.leader(record.leader_name);
-    const service = new TeamService(
-      this.teamServiceOptions(record, teammates, leader),
+    const service = await TeamService.rebuild(
+      { ...this.depsBase(), evict: () => this.cache.delete(record.team_id) },
+      record,
     );
     this.cache.set(record.team_id, service);
     return service;
   }
 
-  /** Build the team-scoped {@link TeammateCollection} the team OWNS (issue #233).
-   * Shares the dispatcher's identity + turns store pair (R4) — the stores are
-   * stateless path-derivers, so no team news its own. */
-  private buildTeammates(teamId: string): TeammateCollection {
-    return new TeammateCollection({
+  private depsBase(): Omit<TeamServiceDeps, 'evict'> {
+    return {
       dispatcherId: this.dispatcherId,
-      teamScope: teamId,
       config: this.opts.config,
       agentRuntimeProviders: this.opts.agentRuntimeProviders,
       worktrees: this.worktrees,
@@ -281,24 +248,11 @@ export class TeamCollection {
       router: this.opts.router,
       initiatorFor: this.opts.initiatorFor,
       isShuttingDown: this.opts.isShuttingDown,
-      mcpServersForTeamMate: this.opts.mcpServersForTeamMate,
-      log: this.opts.log,
-    });
-  }
-
-  private teamServiceOptions(
-    record: TeamRecord,
-    teammates: TeammateCollection,
-    leader: TeammateService,
-  ): TeamServiceOptions {
-    return {
-      record,
-      leader,
       store: this.store,
       bindings: this.bindings,
-      worktrees: this.worktrees,
-      teammates,
-      evict: () => this.cache.delete(record.team_id),
+      adminSocketPath: this.opts.adminSocketPath,
+      leaderChannelDescriptors: this.opts.leaderChannelDescriptors,
+      log: this.opts.log,
     };
   }
 
@@ -375,9 +329,41 @@ export class TeamCollection {
   private async mustTeam(teamId: string): Promise<TeamRecord> {
     const team = await this.store.get(this.dispatcherId, validateTeamId(teamId));
     if (team === null) {
-      throw new Error(`Team ${JSON.stringify(teamId)} does not exist`);
+      throw new TeamUnavailableError(`Team ${JSON.stringify(teamId)} does not exist`);
     }
     return team;
+  }
+
+  private async mustOpenTeam(teamId: string): Promise<TeamRecord> {
+    const team = await this.mustTeam(teamId);
+    if (team.status === 'closed') {
+      throw new TeamUnavailableError(`Team ${JSON.stringify(teamId)} is closed`);
+    }
+    return team;
+  }
+
+  async scheduler(teamId: string): Promise<SchedulerService> {
+    await this.mustOpenTeam(teamId);
+    return (await this.get(teamId)).scheduler;
+  }
+
+  async startSchedulers(): Promise<void> {
+    const teams = await this.store.list(this.dispatcherId);
+    for (const team of teams) {
+      if (team.status === 'closed') continue;
+      try {
+        await this.serviceFor(team);
+      } catch (err) {
+        this.opts.log.error(
+          { dispatcher_id: this.dispatcherId, team_id: team.team_id, err: errInfo(err) },
+          'TeamLeader scheduler start failed',
+        );
+      }
+    }
+  }
+
+  stopSchedulers(): void {
+    for (const service of this.cache.values()) service.scheduler.stop();
   }
 
   /**
@@ -389,6 +375,13 @@ export class TeamCollection {
     for (const service of this.cache.values()) {
       await service.stopAll();
     }
+  }
+}
+
+export class TeamUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TeamUnavailableError';
   }
 }
 
@@ -466,4 +459,11 @@ function decodeTeamCursor(cursor: string): number {
 function previewTeamText(text: string): string {
   const collapsed = text.replace(/\s+/g, ' ').trim();
   return collapsed.length <= 500 ? collapsed : `${collapsed.slice(0, 497)}...`;
+}
+
+function errInfo(err: unknown): Record<string, unknown> {
+  if (err instanceof Error) {
+    return { type: err.name, message: err.message, stack: err.stack };
+  }
+  return { value: String(err) };
 }

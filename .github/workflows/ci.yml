@@ -23,17 +23,19 @@
 
 name: ci
 
-# Trigger scope: these gates must cover the epic integration branches too, not
-# only `main`. Implementation PRs target a `feature/**` integration branch first
-# (issue #182), so a `main`-only filter left those PRs unchecked and forced
-# manual `workflow_dispatch` runs. Run on PRs into `main` or any `feature/**`
-# branch, on pushes to those branches (validating the integrated state after a
-# merge), and on manual dispatch.
+# Trigger scope: every PR in this repo must run these gates, whatever its base
+# branch. A base-branch allowlist (`main` + `feature/**`) silently left PRs into
+# other long-lived integration branches — notably `next` — unchecked and forced
+# manual `workflow_dispatch` runs. GitHub evaluates a `pull_request` workflow
+# from the file on the PR's BASE branch, so an allowlist there is exactly what
+# skips those PRs; drop it so `pull_request` fires for ALL bases. `push` stays
+# scoped to the long-lived branches we want to re-validate post-merge (the
+# integrated state), so feature-branch dev pushes still trigger but throwaway
+# topic branches don't double-run alongside their PR.
 on:
   push:
-    branches: [main, 'feature/**']
+    branches: [main, next, 'feature/**']
   pull_request:
-    branches: [main, 'feature/**']
   workflow_dispatch:
 
 permissions:
@@ -183,6 +185,12 @@ jobs:
         run: node common/scripts/install-run-rush.js smoke-built-cli
       - name: rush typecheck
         run: node common/scripts/install-run-rush.js typecheck
+      # Test-aware typecheck (tsconfig.tests.json = src + tests). `rush build`
+      # uses the src-only tsconfig and `rush test` runs vitest via esbuild (no
+      # typecheck), so a test-only type error — e.g. a renamed/required option a
+      # test still passes the old way — surfaces nowhere else.
+      - name: rush typecheck tests
+        run: node common/scripts/install-run-rush.js typecheck:tests
       # Enforce the issue #85 synchronous-blocking-IO ban (n/no-sync + import /
       # syntax backstops, shared via @excitedjs/eslint-config). src/** is a hard
       # error on any *Sync IO; tests/** is audited via reasoned disables.

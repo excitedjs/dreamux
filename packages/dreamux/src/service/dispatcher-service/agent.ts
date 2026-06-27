@@ -7,6 +7,7 @@ import type {
 
 import {
   bundledSkillSourcesForRole,
+  DISABLE_FEATURE_CRON,
   dispatcherHostPaths,
   type AgentRuntimeProviderCatalog,
 } from '../../agent-runtime/index.js';
@@ -18,10 +19,10 @@ import {
 } from '../completion-router/index.js';
 import type { TeamMateIdentityStore } from '../teammate-collection/identity-store.js';
 import {
-  TeammateService,
+  createTeammateService,
   type RuntimeLaunchSpec,
-  type TeammateServiceDeps,
-} from '../teammate-service/index.js';
+} from '../teammate-service/factory.js';
+import type { TeammateService } from '../teammate-service/index.js';
 import type { TeamMateTurnsStore } from '../teammate-collection/turns-store.js';
 import type { TeamMateIdentity } from '../teammate-collection/types.js';
 import {
@@ -104,7 +105,10 @@ export function createDispatcherAgent(deps: DispatcherAgentDeps): TeammateServic
       /* debug record only */
     });
 
-  const serviceDeps: TeammateServiceDeps = {
+  const agent = createTeammateService({
+    dispatcherId: deps.id,
+    identity,
+    launch: { kind: 'inline', build: () => buildDispatcherLaunch(deps) },
     config: deps.config,
     agentRuntimeProviders: deps.agentRuntimeProviders,
     identities: deps.identities,
@@ -112,7 +116,6 @@ export function createDispatcherAgent(deps: DispatcherAgentDeps): TeammateServic
     // The dispatcher agent has no worktree — it neither spawns nor closes, so it
     // never reaches the worktree manager (issue #233 Phase 5).
     log: deps.log,
-    buildLaunch: () => buildDispatcherLaunch(deps),
     nextSubmissionSeq: () => 0,
     trackSettleCapture: () => {
       /* no-op: the dispatcher agent is never a send-registered producer, so it
@@ -120,9 +123,7 @@ export function createDispatcherAgent(deps: DispatcherAgentDeps): TeammateServic
     },
     routeSettledCompletion: (producerName, turnId, completion) =>
       routeSettled(deps.router, producerName, turnId, completion),
-  };
-
-  const agent = new TeammateService(serviceDeps, deps.id, identity);
+  });
   return agent;
 }
 
@@ -172,6 +173,7 @@ function buildDispatcherLaunch(deps: DispatcherAgentDeps): RuntimeLaunchSpec {
       systemPromptContent,
       mcpServers,
       skillSources: bundledSkillSourcesForRole('dispatcher'),
+      disableFeatures: [DISABLE_FEATURE_CRON],
       state: deps.dispatchers,
       paths: dispatcherHostPaths,
       logger: deps.log,

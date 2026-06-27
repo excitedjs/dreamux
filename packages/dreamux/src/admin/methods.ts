@@ -5,6 +5,8 @@ import type {
   DispatcherService,
 } from '../service/dispatcher-service/index.js';
 import type { TeamService } from '../service/team-service/index.js';
+import type { SchedulerService } from '../service/scheduler/service.js';
+import { TeamUnavailableError } from '../service/team-collection/index.js';
 import { AdminError } from './protocol.js';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
 import { ChannelToolAuthorizationError } from '../service/dispatcher-service/errors.js';
@@ -82,6 +84,45 @@ export const adminMethods: Record<string, AdminHandler> = {
     await server.getDispatcher(id).stop();
     return { dispatcher_id: id, status: 'stopped' };
   },
+
+  'scheduler.cron.list': async (server, params) => {
+    return (await cronTargetFor(server, params)).list();
+  },
+
+  'scheduler.cron.create': async (server, params) => {
+    return (await cronTargetFor(server, params)).create({
+      cron: mustString(params, 'cron'),
+      prompt: mustNonEmptyString(params, 'prompt'),
+      ...optionalStringField(params, 'title'),
+      ...optionalBooleanField(params, 'recurring'),
+      ...optionalStringField(params, 'tz'),
+      ...optionalRecordField(params, 'action'),
+      ...optionalRecordField(params, 'deliver'),
+    });
+  },
+
+  'scheduler.cron.update': async (server, params) => {
+    return (await cronTargetFor(server, params)).update({
+      id: mustString(params, 'id'),
+      ...optionalStringField(params, 'cron'),
+      ...optionalStringField(params, 'prompt'),
+      ...optionalNullableStringField(params, 'title'),
+      ...optionalBooleanField(params, 'recurring'),
+      ...optionalStringField(params, 'tz'),
+      ...optionalRecordField(params, 'action'),
+      ...optionalNullableRecordField(params, 'deliver'),
+      ...optionalBooleanField(params, 'enabled'),
+    });
+  },
+
+  'scheduler.cron.delete': async (server, params) => {
+    return (await cronTargetFor(server, params)).delete(mustString(params, 'id'));
+  },
+
+  'scheduler.cron.run_now': async (server, params) => {
+    return (await cronTargetFor(server, params)).runNow(mustString(params, 'id'));
+  },
+
   'channel.invoke_tool': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
@@ -324,6 +365,25 @@ export const adminMethods: Record<string, AdminHandler> = {
   },
 };
 
+async function cronTargetFor(
+  server: Server,
+  params: Record<string, unknown> | undefined,
+): Promise<SchedulerService> {
+  const id = mustDispatcherId(params);
+  mustExistingDispatcher(server, id);
+  const teamId = optionalString(params, 'team_id');
+  const dispatcher = server.getDispatcher(id);
+  if (teamId === null) return dispatcher.scheduler;
+  try {
+    return await dispatcher.teamScheduler(teamId);
+  } catch (err) {
+    if (err instanceof TeamUnavailableError) {
+      throw new AdminError('TEAM_NOT_FOUND', err.message);
+    }
+    throw err;
+  }
+}
+
 function mustToolArguments(
   params: Record<string, unknown> | undefined,
 ): Record<string, unknown> {
@@ -550,6 +610,64 @@ function optionalStringProp(
 ): Record<string, string> {
   const value = optionalString(params, key);
   return value === null ? {} : { [key]: value };
+}
+
+function optionalStringField(
+  params: Record<string, unknown> | undefined,
+  key: string,
+): Record<string, string> {
+  const value = optionalString(params, key);
+  return value === null ? {} : { [key]: value };
+}
+
+function optionalNullableStringField(
+  params: Record<string, unknown> | undefined,
+  key: string,
+): Record<string, string | null> {
+  if (params === undefined || !(key in params)) return {};
+  const value = params[key];
+  if (value === null) return { [key]: null };
+  if (typeof value !== 'string') {
+    throw new AdminError('BAD_REQUEST', `param '${key}' must be a string or null`);
+  }
+  return { [key]: value };
+}
+
+function optionalBooleanField(
+  params: Record<string, unknown> | undefined,
+  key: string,
+): Record<string, boolean> {
+  if (params === undefined || !(key in params)) return {};
+  const value = params[key];
+  if (typeof value !== 'boolean') {
+    throw new AdminError('BAD_REQUEST', `param '${key}' must be a boolean`);
+  }
+  return { [key]: value };
+}
+
+function optionalRecordField(
+  params: Record<string, unknown> | undefined,
+  key: string,
+): Record<string, Record<string, unknown>> {
+  if (params === undefined || !(key in params)) return {};
+  const value = params[key];
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new AdminError('BAD_REQUEST', `param '${key}' must be an object`);
+  }
+  return { [key]: value as Record<string, unknown> };
+}
+
+function optionalNullableRecordField(
+  params: Record<string, unknown> | undefined,
+  key: string,
+): Record<string, Record<string, unknown> | null> {
+  if (params === undefined || !(key in params)) return {};
+  const value = params[key];
+  if (value === null) return { [key]: null };
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new AdminError('BAD_REQUEST', `param '${key}' must be an object or null`);
+  }
+  return { [key]: value as Record<string, unknown> };
 }
 
 function mustExistingDispatcher(server: Server, id: string): void {

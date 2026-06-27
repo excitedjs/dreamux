@@ -1,6 +1,7 @@
 import { createChangelogCommand } from './changelog.js';
 import { createChannelMcpCommand } from './channel-mcp.js';
 import { createConfigCommand } from './config.js';
+import { createCronMcpCommand } from './cron-mcp.js';
 import { createDaemonCommand } from './daemon.js';
 import { createDispatcherCommand } from './dispatcher.js';
 import { createDoctorCommand } from './doctor.js';
@@ -26,6 +27,7 @@ export function createDreamuxCommands(deps: CliDeps): DreamuxCommand[] {
     createChannelMcpCommand(),
     createTeamMateMcpCommand(),
     createTeamMcpCommand(),
+    createCronMcpCommand(),
     createConfigCommand(),
     createChangelogCommand(),
   ];

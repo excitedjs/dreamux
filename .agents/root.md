@@ -34,6 +34,7 @@ For current behavior, read the linked source code too.
 | modify state/cache/run/log paths | [State and paths](reference/state-and-paths.md), [runtime run root](decisions/runtime-run-root.md), [top-level design](decisions/top-level-design.md) |
 | modify provider loading, Agent Runtime providers, Channel providers, or capabilities | [Current architecture](reference/current-architecture.md), [Channel runtime](reference/channel-runtime.md), [Provider architecture realignment](decisions/provider-architecture-realignment.md), [provider refs and registry](decisions/provider-references-and-capability-registry.md), [NPM package split and channel targets](decisions/npm-package-split-and-channel-targets.md) |
 | modify dispatcher runtime lifecycle or MCP injection | [Current architecture](reference/current-architecture.md), [dispatcher local aggregate](decisions/dispatcher-local-aggregate.md), [service architecture refactor](decisions/service-architecture-refactor.md), source |
+| modify scheduled tasks / cron jobs | [Scheduled tasks](reference/scheduled-tasks.md), [Agent activity capability](decisions/agent-activity-capability.md), [Json document store](decisions/json-document-store.md), source |
 | modify TeamMate / Team lifecycle, read surfaces, or bundled dispatcher skills | [Dispatcher skill reference](reference/dispatcher-skill.md), [provider architecture realignment](decisions/provider-architecture-realignment.md), [top-level design](decisions/top-level-design.md), [service architecture refactor](decisions/service-architecture-refactor.md) |
 | modify channel binding or channel target routing | [Channel runtime](reference/channel-runtime.md), [NPM package split and channel targets](decisions/npm-package-split-and-channel-targets.md), source |
 | modify Feishu inbound, `/introduce`, trusted bot context, or reaction timing | [Channel runtime](reference/channel-runtime.md), [Feishu introduce](domains/feishu-introduce.md), [Feishu pairing access](domains/feishu-pairing-access.md), [non-blocking dispatcher inbound](domains/non-blocking-dispatcher-inbound.md), source |
@@ -63,6 +64,7 @@ For current behavior, read the linked source code too.
 - [State and paths](reference/state-and-paths.md)
 - [Channel runtime](reference/channel-runtime.md)
 - [Dispatcher skill and TeamMate workflow](reference/dispatcher-skill.md)
+- [Scheduled tasks](reference/scheduled-tasks.md)
 - [Glossary](glossary.md)
 
 ## Decisions

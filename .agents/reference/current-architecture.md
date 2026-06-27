@@ -131,10 +131,19 @@ required only when the dispatcher has more than one configured channel.
 `meta` is provider-owned selector input, for example `{ "chat_id": "..." }` for
 a Feishu group chat.
 
+Each `TeamService` directly builds and holds its TeamLeader `TeammateService`
+through `/packages/dreamux/src/service/team-service/leader-agent.ts`, using the
+same dispatcher-owned identity store, turns store, worktree manager, and
+completion router that its owning `TeamCollection` injects. The per-team
+`TeammateCollection` is members-only: it spawns and caches team members under
+`team/<team>/teammate/<name>/`, while the TeamLeader lives at the team root and
+is never cached in the collection's entity map.
+
 Key source:
 
 - `/packages/dreamux/src/service/teammate-collection/`
 - `/packages/dreamux/src/service/team-collection/`
+- `/packages/dreamux/src/service/team-service/`
 - `/packages/dreamux/src/service/channel-binding/`
 - `/packages/dreamux/src/mcp/team-mcp.ts`
 
@@ -178,6 +187,41 @@ Key source:
 - `/packages/agent-runtime/codex/src/skill-roots.ts`
 - `/packages/agent-runtime/claude-code/src/args.ts`
 - `/packages/agent-runtime/claude-code/src/runtime.ts`
+
+## Disabled Runtime Features
+
+The Agent Runtime create context includes an optional neutral
+`disableFeatures?: readonly string[]`. Core emits only neutral feature-group
+names; each runtime maps the names it understands and ignores the rest.
+
+Current names:
+
+- `userInterrupt`: emitted for every agent at the shared
+  `TeammateService.createAndStart` gate (core-wide rule). It disables the
+  model-facing "ask the user a question" tool, which in a channel-only
+  environment would wedge a turn waiting for an out-of-band answer. Claude Code
+  maps it to the `AskUserQuestion` disallowed tool; Codex needs no code because
+  its `request_user_input` tool only exists behind the
+  `experimental_request_user_input` config feature, which Dreamux's authored
+  launch config never sets. The guarantee is at the Dreamux-authored-args level
+  on both runtimes: operator `extra_args` is a raw passthrough escape hatch that
+  Dreamux does not police (an operator who deliberately re-enables the tool —
+  Claude `--allowedTools`, Codex `-c experimental_request_user_input=true` — owns
+  that choice), so this is symmetric, not a Codex-specific gap.
+- `cron`: emitted only for dispatcher and TeamLeader launches, matching the
+  roles that receive Dreamux's cron MCP. Claude Code maps it to native cron
+  tool disallow args; Codex ignores it because Dreamux cron is an MCP
+  descriptor, not a Codex-native feature.
+
+Claude Code merges all requested features' tools into a single
+`--disallowedTools` flag.
+
+Key source:
+
+- `/packages/dreamux-types/src/agent-runtime.ts`
+- `/packages/dreamux/src/service/dispatcher-service/agent.ts`
+- `/packages/dreamux/src/service/teammate-service/index.ts`
+- `/packages/agent-runtime/claude-code/src/args.ts`
 
 ## Decision Trail
 

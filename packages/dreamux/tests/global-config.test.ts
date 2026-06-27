@@ -35,9 +35,6 @@ import {
   dispatcherCodexConfig,
   parseCodexArgs,
 } from '@excitedjs/agent-runtime-codex';
-import {
-  createBuiltinProviderRegistry,
-} from '../src/registry/index.js';
 import type { ExternalAgentRuntimeProviderFactory } from '../src/agent-runtime/index.js';
 import type { AgentRuntimeCapabilities } from '@excitedjs/dreamux-types';
 import {

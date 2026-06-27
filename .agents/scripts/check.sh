@@ -21,6 +21,8 @@ errors=0
 # ---------- 1) internal Markdown links resolve ----------
 # Match each Markdown inline link target. External URLs and same-page anchors are
 # skipped; repo-root-absolute and relative links must resolve.
+# shellcheck disable=SC2016  # the perl one-liner below feeds this loop; its single
+# quotes are intentional ($ARGV/$1 are perl variables, not shell expansions).
 while IFS= read -r entry; do
   file="${entry%%:*}"
   target="${entry#*:}"

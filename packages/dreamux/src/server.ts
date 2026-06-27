@@ -20,6 +20,8 @@ import {
 import { DispatcherStore } from './state/dispatcher-store.js';
 import {
   adminSocketPath,
+  dispatcherCronJobsPath,
+  dispatcherTeamCronJobsPath,
   setRuntimeConfig,
 } from './platform/paths.js';
 import { createLogger } from './platform/logger.js';
@@ -40,6 +42,8 @@ import {
   legacyDispatcherStateMessage,
 } from './service/legacy-state.js';
 import { detectLegacyChannelBindingStore } from './service/channel-binding/store.js';
+import { detectLegacyCronJobStore } from './service/scheduler/store.js';
+import { TeamStore } from './service/team-collection/store.js';
 
 export interface ServerOptions {
   /**
@@ -268,6 +272,7 @@ export class Server {
       // boot with rebuild guidance, not lazily on the first inbound message.
       const bindingLegacy = await detectLegacyChannelBindingStore(row.dispatcher_id);
       if (bindingLegacy !== null) messages.push(bindingLegacy);
+      messages.push(...(await detectLegacyCronStores(row.dispatcher_id)));
     }
     if (messages.length > 0) {
       throw new Error(
@@ -295,6 +300,24 @@ export class Server {
       this.admin = null;
     }
   }
+}
+
+async function detectLegacyCronStores(dispatcherId: string): Promise<string[]> {
+  const messages: string[] = [];
+  const dispatcherCron = await detectLegacyCronJobStore(
+    dispatcherCronJobsPath(dispatcherId),
+    dispatcherId,
+  );
+  if (dispatcherCron !== null) messages.push(dispatcherCron);
+  for (const team of await new TeamStore().list(dispatcherId)) {
+    if (team.status === 'closed') continue;
+    const teamCron = await detectLegacyCronJobStore(
+      dispatcherTeamCronJobsPath(dispatcherId, team.team_id),
+      dispatcherId,
+    );
+    if (teamCron !== null) messages.push(teamCron);
+  }
+  return messages;
 }
 
 /**

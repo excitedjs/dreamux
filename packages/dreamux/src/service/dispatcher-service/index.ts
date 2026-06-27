@@ -15,7 +15,10 @@ import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { ChannelProviderCatalog } from '../../channel/catalog.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
-import { adminSocketPath as defaultAdminSocketPath } from '../../platform/paths.js';
+import {
+  adminSocketPath as defaultAdminSocketPath,
+  dispatcherCronJobsPath,
+} from '../../platform/paths.js';
 import type {
   DispatcherRow,
   DispatcherStatus,
@@ -28,15 +31,8 @@ import type { ChannelMcpCallerScope } from './mcp-descriptors.js';
 import { assertRunnableChannelShape } from './runnable-channel.js';
 import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
 import { ChannelToolAuthorizationError } from './errors.js';
-import {
-  CompletionRouter,
-  type CompletionInitiator,
-} from '../completion-router/index.js';
-import { teammateMcpServerDescriptor } from '../teammate-collection/mcp-config.js';
-import {
-  TeammateCollection,
-  type TeammateOps,
-} from '../teammate-collection/index.js';
+import { CompletionRouter, type CompletionInitiator } from '../completion-router/index.js';
+import { TeammateCollection, type TeammateOps } from '../teammate-collection/index.js';
 import { TeamMateIdentityStore } from '../teammate-collection/identity-store.js';
 import { TeamMateTurnsStore } from '../teammate-collection/turns-store.js';
 import type { TeammateService } from '../teammate-service/index.js';
@@ -45,6 +41,8 @@ import { ChannelBindingStore } from '../channel-binding/store.js';
 import { type TeamMateIdentity } from '../teammate-collection/types.js';
 import { type TeamChannelContext } from '../team-service/index.js';
 import { TeamCollection } from '../team-collection/index.js';
+import { SchedulerService } from '../scheduler/service.js';
+import { CronJobStore } from '../scheduler/store.js';
 import type {
   TeamCreateInput,
   TeamDissolveInput,
@@ -98,6 +96,7 @@ export class DispatcherService implements TeamChannelContext {
   private readonly teams: TeamCollection;
   private readonly channels: ChannelSessions;
   private readonly agent: TeammateService;
+  private readonly scheduler_: SchedulerService;
   private restartIntent: RestartIntentConsumer | null = null;
   private starting: Promise<void> | null = null;
   private workspaceCwd: string | null = null;
@@ -155,31 +154,20 @@ export class DispatcherService implements TeamChannelContext {
       liveChannels: () => this.channels.live(),
     });
 
-    // The team_leader MCP descriptor builder. Forwarded into every per-team
-    // collection (where the leader actually lives) AND the dispatcher collection;
-    // a dispatcher-owned teammate is never a leader, so it is a no-op there
-    // (issue #233).
-    const mcpServersForTeamMate = (input: {
-      dispatcherId: string;
-      name: string;
-      identity: TeamMateIdentity;
-    }): readonly AgentRuntimeMcpServer[] =>
-      input.identity.role === 'team_leader'
-        ? [
-            teammateMcpServerDescriptor({
-              dispatcherId: input.dispatcherId,
-              callerKind: 'team_leader',
-              teamId: input.identity.team_id ?? '',
-              adminSocketPath: adminSocket,
-            }),
-            ...this.channelMcpServerDescriptorsForCaller({
-              callerKind: 'team_leader',
-              team_id: input.identity.team_id ?? '',
-              leader_name: input.identity.name,
-            }),
-          ]
-        : [];
+    this.scheduler_ = new SchedulerService({
+      ownerId: opts.id,
+      store: new CronJobStore({
+        cronJobsPath: dispatcherCronJobsPath(opts.id),
+        dispatcherId: opts.id,
+      }),
+      absentRuntimeStrategy: 'miss',
+      getRuntime: () => this.agent.getRuntime(),
+      submitScheduled: (input) => this.agent.scheduledInput(input),
+      log: opts.log,
+    });
 
+    // A dispatcher-owned teammate is never a team_leader, so it carries no
+    // launch policy (the team_leader policy is owned by the team layer).
     this._teammates = new TeammateCollection({
       dispatcherId: opts.id,
       teamScope: null,
@@ -188,13 +176,15 @@ export class DispatcherService implements TeamChannelContext {
       worktrees,
       identities,
       turnsStore,
-      mcpServersForTeamMate,
       router: this.router,
       initiatorFor: (producer) => this.initiatorFor(producer),
       isShuttingDown: () => this.shuttingDown,
       log: opts.log,
     });
 
+    // The Team layer owns the team_leader role policy; the dispatcher only lends
+    // the primitives a leader's policy is built from — the admin socket and its
+    // channel-egress descriptors (channels are dispatcher-owned).
     this.teams = new TeamCollection({
       dispatcherId: opts.id,
       config: opts.config,
@@ -206,9 +196,19 @@ export class DispatcherService implements TeamChannelContext {
       router: this.router,
       initiatorFor: (producer) => this.initiatorFor(producer),
       isShuttingDown: () => this.shuttingDown,
-      mcpServersForTeamMate,
+      adminSocketPath: adminSocket,
+      leaderChannelDescriptors: ({ teamId, leaderName }) =>
+        this.channelMcpServerDescriptorsForCaller({
+          callerKind: 'team_leader',
+          team_id: teamId,
+          leader_name: leaderName,
+        }),
       log: opts.log,
     });
+  }
+
+  get scheduler(): SchedulerService {
+    return this.scheduler_;
   }
 
   /**
@@ -269,8 +269,9 @@ export class DispatcherService implements TeamChannelContext {
     }
 
     try {
-      // The runtime is up and the sessions are already adopted as the live slot,
-      // so each session is observable as it starts (issue #209 fix #7).
+      // Runtime up, sessions adopted as the live slot so each is observable as it
+      // starts (issue #209 fix #7); restart-notice + scheduler arming run in this
+      // SAME try so a failure rolls back rather than leaving cron silently unarmed.
       for (const [channelId, session] of channels) {
         await session.start({
           deliver: async (turn, envelope, hooks) =>
@@ -279,7 +280,12 @@ export class DispatcherService implements TeamChannelContext {
             ),
         });
       }
+      await this.injectRestartNoticeIfNeeded(id, runtime);
+      await this.scheduler.start();
+      await this.teams.startSchedulers();
     } catch (err) {
+      this.scheduler.stop();
+      this.teams.stopSchedulers();
       // Undo the slot adoption so a failed start never leaves a half-built slot.
       this.channels.clear();
       await closeAllBuilt(channels);
@@ -299,10 +305,11 @@ export class DispatcherService implements TeamChannelContext {
       },
       'dispatcher ready',
     );
-    await this.injectRestartNoticeIfNeeded(id, runtime);
   }
 
   async stop(): Promise<void> {
+    this.scheduler.stop();
+    this.teams.stopSchedulers();
     await this.channels.closeAll(this.log);
     try {
       await this.agent.stop();
@@ -393,9 +400,7 @@ export class DispatcherService implements TeamChannelContext {
     });
   }
 
-  workspace(): Promise<string> {
-    return this._teammates.dispatcherWorkspace();
-  }
+  workspace(): Promise<string> { return this._teammates.dispatcherWorkspace(); }
 
   /** The dispatcher's own teammates, as the narrow admin-facing op surface
    * (issue #233). The admin layer drives the collection directly through this
@@ -405,26 +410,19 @@ export class DispatcherService implements TeamChannelContext {
   }
 
   /** The single-entity team service for a team id (admin `team_leader` target). */
-  team(teamId: string) {
-    return this.teams.get(teamId);
-  }
+  team(teamId: string) { return this.teams.get(teamId); }
 
-  createTeam(input: TeamCreateInput) {
-    this.assertNotShuttingDown();
-    return this.teams.create(input);
-  }
+  teamScheduler(teamId: string) { return this.teams.scheduler(teamId); }
 
-  listTeams() {
-    return this.teams.list();
-  }
+  createTeam(input: TeamCreateInput) { this.assertNotShuttingDown(); return this.teams.create(input); }
+
+  listTeams() { return this.teams.list(); }
 
   async getTeamStatus(teamId: string) {
     return (await this.teams.get(teamId)).status();
   }
 
-  getTeamHistory(input: TeamHistoryQuery) {
-    return this.teams.history(input);
-  }
+  getTeamHistory(input: TeamHistoryQuery) { return this.teams.history(input); }
 
   async dissolveTeam(input: TeamDissolveInput) {
     return (await this.teams.get(input.teamId)).dissolve(input);
