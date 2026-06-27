@@ -87,6 +87,9 @@ find(
   sub {
     return unless -f $_;
     return unless /\.md\z/;
+    # `.agents/skills/` holds repo dev skills (symlinked into `.claude/skills/`),
+    # not KB prose — they are not part of the root.md link graph.
+    return if $File::Find::name =~ m{/skills/};
     push @markdown_files, $File::Find::name;
   },
   $kb_root
