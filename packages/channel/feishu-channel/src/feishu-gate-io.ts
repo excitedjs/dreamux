@@ -17,7 +17,6 @@ import {
   ACCESS_STATE_VERSION,
   defaultDispatcherAccessState,
   type DispatcherAccessStateV3,
-  type PendingPairingKind,
 } from './feishu-gate.js';
 
 const V3_FAIL_MSG =
@@ -96,29 +95,3 @@ export async function saveDispatcherAccess(
 // compiles through a rename. Prefer the explicit `readDispatcherAccess` in
 // new code.
 export { readDispatcherAccess as loadDispatcherAccess };
-
-// ─────────────────────────────────────────────────────────────────────────
-// UI helpers
-// ─────────────────────────────────────────────────────────────────────────
-
-export function renderPairingPrompt(
-  kind: PendingPairingKind,
-  code: string,
-  isResend: boolean,
-  botDisplayName: string,
-): string {
-  // botDisplayName is intentionally required (no default). Session layer must
-  // resolve the real bot display name from the transport identity and pass it
-  // in; a hard-coded default ('赛丽亚' etc.) leaks operator-specific identity
-  // into a package-level helper. The caller is the transport/session boundary
-  // where the bot identity is already known.
-  const prefix = isResend ? '[重发] ' : '';
-  if (kind === 'dm') {
-    return (
-      `${prefix}您请求访问 ${botDisplayName}，请将配对码 "${code}" 发送给 bot 管理员以开通权限。(有效期 1 小时)`
-    );
-  }
-  return (
-    `${prefix}本群的 ${botDisplayName} 尚未开通权限，请群管理员将配对码 "${code}" 发送给 bot 管理员以开通本群。(有效期 1 小时)`
-  );
-}

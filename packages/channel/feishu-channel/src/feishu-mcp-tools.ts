@@ -51,8 +51,7 @@ export type FeishuMcpListChatBotsInput = {
 export type FeishuMcpToolInput =
   | { toolName: 'reply'; input: FeishuMcpReplyInput }
   | { toolName: 'react'; input: FeishuMcpReactInput }
-  | { toolName: 'list_chat_bots'; input: FeishuMcpListChatBotsInput }
-  | { toolName: 'access'; input: { code: string } };
+  | { toolName: 'list_chat_bots'; input: FeishuMcpListChatBotsInput };
 
 /**
  * @deprecated Use `buildToolCatalog()` from `./tools/registry.js` instead.

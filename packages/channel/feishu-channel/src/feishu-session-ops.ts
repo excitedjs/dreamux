@@ -10,16 +10,29 @@
  */
 
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
-import type { FeishuBot, FeishuInboundEvent } from './bot.js';
+import { FEISHU_APP_OWNER_TYPE_ENTERPRISE_MEMBER } from '@excitedjs/feishu-transport';
+import type {
+  FeishuBot,
+  FeishuCardActionEvent,
+  FeishuInboundEvent,
+} from './bot.js';
 import { channelOutboundToFeishuTarget } from './bot.js';
+import {
+  DREAMUX_ACTION_KEY,
+  DREAMUX_PAIRING_CARD_ACTION,
+  DREAMUX_PAIRING_TOKEN_KEY,
+  buildPairingSuccessCard,
+  rawCardActionResponse,
+  type FeishuCardActionResponse,
+} from './feishu-pairing-card.js';
 import { introduceAckText } from './introduce.js';
 import {
+  PAIRING_TOKEN_REGEX,
   loadDispatcherAccess,
   saveDispatcherAccess,
   type DispatcherAccessState,
 } from './feishu-gate.js';
 import { AsyncMutex } from './lib/mutex.js';
-import type { FeishuToolResultEnvelope } from './feishu-mcp-tools.js';
 import type { FeishuChannelSessionOptions } from './feishu-channel.js';
 import type { PeerBot } from './chat-bots-store.js';
 
@@ -51,6 +64,12 @@ export interface FeishuChannelState {
   inboundReactions: Map<string, InboundReactionLedgerEntry>;
   pendingReceivedReactionClears: Set<string>;
   messageChats: Map<string, string>;
+}
+
+export interface PairingApprovalResult {
+  status: 'ok' | 'not_found' | 'error';
+  message: string;
+  details?: Record<string, unknown>;
 }
 
 /** Opaque resource bundle a session builds for each helper call. */
@@ -87,6 +106,14 @@ function errInfo(err: unknown): { message: string; stack?: string } {
 }
 
 const log = (h: SessionHandle): DreamuxLogger => h.opts.log;
+
+function pairingTokenLogFields(token: string): Record<string, unknown> {
+  return { pairing_token_len: token.length };
+}
+
+function openIdLogFields(name: string, openId: string): Record<string, unknown> {
+  return { [`${name}_len`]: openId.length };
+}
 
 // ─────────────────────────────────────────────────────────────────────────
 // Reply + reaction primitives (were `private sendReply` / `addReaction`)
@@ -129,6 +156,46 @@ export async function sendReply(
       message_ids: result.messageIds,
     },
     'feishu message sent',
+  );
+  if (input.messageId !== undefined) {
+    await clearInboundReaction(h, input.messageId);
+  }
+  return result;
+}
+
+export async function sendCard(
+  h: SessionHandle,
+  input: { chatId: string; card: unknown; messageId?: string },
+): Promise<{ messageIds: string[] }> {
+  let result: { messageIds: string[] };
+  try {
+    result = await h.bot.sendCard(
+      channelOutboundToFeishuTarget({
+        conversationId: input.chatId,
+        ...(input.messageId !== undefined ? { replyTo: input.messageId } : {}),
+      }),
+      input.card,
+    );
+  } catch (err) {
+    log(h).error(
+      {
+        dispatcher_id: h.opts.dispatcherId,
+        chat_id: input.chatId,
+        message_id: input.messageId,
+        err: errInfo(err),
+      },
+      'feishu sendCard failed',
+    );
+    throw err;
+  }
+  log(h).info(
+    {
+      dispatcher_id: h.opts.dispatcherId,
+      chat_id: input.chatId,
+      message_id: input.messageId,
+      message_ids: result.messageIds,
+    },
+    'feishu interactive card sent',
   );
   if (input.messageId !== undefined) {
     await clearInboundReaction(h, input.messageId);
@@ -275,101 +342,187 @@ export function rememberPendingReceivedReactionClear(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Approve pairing by code (was the class method of the same name)
+// Approve pairing by token
 // ─────────────────────────────────────────────────────────────────────────
 
 /**
- * Approve a pending pairing by its 6-hex code.
+ * Approve a pending pairing by its internal 6-hex token.
  *
  * Behavior:
- *   - Normalizes `code` to lowercase (the gate stores lowercased codes).
- *   - Returns `not_found` when the code is unknown or expired (we reject
+ *   - Normalizes `token` to lowercase (the gate stores lowercased tokens).
+ *   - Returns `not_found` when the token is unknown or expired (we reject
  *     expired entries explicitly, not just "not found", so the operator
  *     gets the right diagnostic).
- *   - Adds the DM sender / group chat to the allowlists. Idempotent on
- *     allowlist membership (we detect duplicates via allowlist presence,
- *     not by whether the pending entry still has the slot), and always
- *     removes the pending key after a successful approval — the
+ *   - Adds the DM sender to `allow_users`. Idempotent on allowlist
+ *     membership (we detect duplicates via allowlist presence, not by
+ *     whether the pending entry still has the slot), and always removes
+ *     the pending key after a successful approval — the
  *     allowlist IS the source of truth, a pending entry is just a
  *     temporary token.
  *   - Details include `duplicate` flag, `ttl_left_ms`, `sender_id`,
  *     `chat_id`, `kind` for audit logging.
  */
-export async function approvePairingByCode(
+export async function approvePairingByToken(
   h: SessionHandle,
-  code: string,
-): Promise<FeishuToolResultEnvelope> {
-  if (!/^[0-9a-fA-F]{6}$/.test(code)) {
+  token: string,
+): Promise<PairingApprovalResult> {
+  if (!PAIRING_TOKEN_REGEX.test(token)) {
     return {
       status: 'error',
-      message: 'code 必须是 6 位十六进制字符串 (0-9, a-f)',
+      message: '授权请求格式错误',
     };
   }
-  const lowerCode = code.toLowerCase();
+  const lowerToken = token.toLowerCase();
   return h.accessMutex.lock(async () => {
     const state = await loadDispatcherAccess(h.opts.stateDir);
-    const entry = state.pending[lowerCode];
+    const entry = state.pending[lowerToken];
     const now = Date.now();
     if (entry === undefined || entry.expires_at <= now) {
       return {
         status: 'not_found',
-        message: '配对码不存在或已过期',
-        details: { code: lowerCode },
+        message: '授权请求不存在或已过期',
+        details: { token: lowerToken },
+      };
+    }
+
+    if (entry.kind !== 'dm') {
+      return {
+        status: 'error',
+        message: '授权请求类型已不再支持',
+        details: { token: lowerToken, kind: entry.kind },
       };
     }
 
     // Clone so we can mutate
-    let next: DispatcherAccessState = {
+    const next: DispatcherAccessState = {
       ...state,
       pending: { ...state.pending },
-      group: { ...state.group, allow_chats: [...state.group.allow_chats] },
       allow_users: [...state.allow_users],
     };
     let duplicate = false;
 
-    if (entry.kind === 'dm') {
-      if (next.allow_users.includes(entry.sender_id)) {
-        duplicate = true;
-      } else {
-        next.allow_users = [...next.allow_users, entry.sender_id];
-      }
+    if (next.allow_users.includes(entry.sender_id)) {
+      duplicate = true;
     } else {
-      if (next.group.allow_chats.includes(entry.chat_id)) {
-        duplicate = true;
-      } else {
-        next.group = {
-          ...next.group,
-          allow_chats: [...next.group.allow_chats, entry.chat_id],
-        };
-      }
+      next.allow_users = [...next.allow_users, entry.sender_id];
     }
 
     // Always remove the pending entry (allowlist membership is the
-    // durable approval; a re-approved duplicate code still consumes
-    // its single-use slot — no stale tokens leaking).
-    delete next.pending[lowerCode];
+    // durable approval; a re-approved duplicate token still consumes
+    // its single-use slot).
+    delete next.pending[lowerToken];
 
-    await saveDispatcherAccess(h.opts.stateDir, next);
+    try {
+      await saveDispatcherAccess(h.opts.stateDir, next);
+    } catch (err) {
+      log(h).error(
+        {
+          dispatcher_id: h.opts.dispatcherId,
+          ...pairingTokenLogFields(lowerToken),
+          sender_id: entry.sender_id,
+          chat_id: entry.chat_id,
+          err: errInfo(err),
+        },
+        '[card-action] failed to persist pairing approval',
+      );
+      return {
+        status: 'error',
+        message: '授权写入失败，请重试',
+        details: { token: lowerToken },
+      };
+    }
 
     const ttlLeftMs = Math.max(0, entry.expires_at - now);
-    const who =
-      entry.kind === 'dm'
-        ? `用户 ${entry.sender_id}`
-        : `群 ${entry.chat_id}`;
+    const who = `用户 ${entry.sender_id}`;
     return {
       status: 'ok',
       message: duplicate
-        ? `${who} 已在允许列表，配对码已清除`
+        ? `${who} 已在允许列表，授权请求已关闭`
         : `已批准 ${who} 访问`,
       details: {
         duplicate,
-        kind: entry.kind,
+        kind: 'dm',
         ttl_left_ms: ttlLeftMs,
         sender_id: entry.sender_id,
         chat_id: entry.chat_id,
       },
     };
   });
+}
+
+export async function handleCardAction(
+  h: SessionHandle,
+  event: FeishuCardActionEvent,
+): Promise<FeishuCardActionResponse | Record<string, never>> {
+  const action = String(event.actionValue[DREAMUX_ACTION_KEY] ?? '');
+  if (action !== DREAMUX_PAIRING_CARD_ACTION) return {};
+
+  const token = String(event.actionValue[DREAMUX_PAIRING_TOKEN_KEY] ?? '');
+  if (!PAIRING_TOKEN_REGEX.test(token)) {
+    return { toast: { type: 'error', content: '授权请求已失效或格式错误' } };
+  }
+
+  const operatorOpenId = event.operatorOpenId ?? '';
+  if (operatorOpenId === '') {
+    return { toast: { type: 'error', content: '身份解析失败：未获取到你的 open_id' } };
+  }
+
+  let ownerSet: Set<string>;
+  try {
+    const owner = await h.bot.resolveAppOwner();
+    ownerSet = new Set(
+      [
+        owner.creatorOpenId,
+        owner.ownerType === undefined ||
+        owner.ownerType === FEISHU_APP_OWNER_TYPE_ENTERPRISE_MEMBER
+          ? owner.ownerOpenId
+          : undefined,
+      ].filter((id): id is string => id !== undefined && id !== ''),
+    );
+  } catch (err) {
+    log(h).error(
+      {
+        dispatcher_id: h.opts.dispatcherId,
+        ...openIdLogFields('operator_open_id', operatorOpenId),
+        err: errInfo(err),
+      },
+      '[card-action] owner lookup failed',
+    );
+    return { toast: { type: 'error', content: 'Owner 校验失败，请稍后重试' } };
+  }
+
+  if (ownerSet.size === 0) {
+    return {
+      toast: {
+        type: 'error',
+        content: 'Owner 校验配置错误：未解析到 App Owner',
+      },
+    };
+  }
+  if (!ownerSet.has(operatorOpenId)) {
+    return {
+      toast: {
+        type: 'error',
+        content: '只有 App Owner 才有权限点击批准授权',
+      },
+    };
+  }
+
+  const result = await approvePairingByToken(h, token);
+  if (result.status !== 'ok') {
+    return {
+      toast: {
+        type: result.status === 'not_found' ? 'warning' : 'error',
+        content: result.message,
+      },
+    };
+  }
+
+  const duplicate = result.details?.['duplicate'] === true;
+  return rawCardActionResponse(
+    buildPairingSuccessCard({ duplicate }),
+    { type: 'success', content: result.message },
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────

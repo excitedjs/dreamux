@@ -14,7 +14,8 @@
  *     SDK acks.
  *   - `send(target, text)` delegates to the core transport, preserving reply
  *     threading / @-back metadata from the in-memory inbound batch.
- *   - `botOpenId` surfaces the core transport's `selfId`.
+ *   - `botOpenId` / `botDisplayName` surface the core transport's bot-info
+ *     fields, resolved from `/open-apis/bot/v3/info` during startup.
  *
  * Tests inject a `FakeFeishuBot` via `createFakeFeishuBot()` instead of opening
  * a live connection.
@@ -31,6 +32,7 @@ import {
   type FeishuMessageResourceFetcher,
   type FeishuMessageResourceRequest,
   type FeishuMessageResourceResponse,
+  type FeishuAppOwnerIdentity,
   type FeishuTransport,
   type InboundResource,
   type Mention,
@@ -87,6 +89,18 @@ export type BotMemberAddedHandler = (
   event: FeishuBotMemberAddedEvent,
 ) => void | Promise<void>;
 
+export interface FeishuCardActionEvent {
+  operatorOpenId?: string;
+  actionValue: Record<string, unknown>;
+  openChatId?: string;
+  openMessageId?: string;
+  raw: unknown;
+}
+
+export type CardActionHandler = (
+  event: FeishuCardActionEvent,
+) => unknown | Promise<unknown>;
+
 /**
  * The typed event-route seam (issue #62 Phase 1). `start` takes one handler per
  * Feishu event type instead of a single message handler, so a new event type is
@@ -101,6 +115,8 @@ export interface FeishuInboundRoutes {
   onMessage: InboundHandler;
   /** `im.chat.member.bot.added_v1` — the bot was added to a chat. Optional. */
   onBotMemberAdded?: BotMemberAddedHandler;
+  /** `card.action.trigger` — the user clicked an interactive card component. */
+  onCardAction?: CardActionHandler;
 }
 
 export interface FeishuSendResult {
@@ -111,14 +127,17 @@ export interface FeishuSendResult {
 export interface FeishuBot extends FeishuMessageResourceFetcher {
   readonly appId: string;
   readonly botOpenId: string | undefined;
+  readonly botDisplayName: string | undefined;
   start(routes: FeishuInboundRoutes): Promise<void>;
   send(target: OutboundTarget, text: string): Promise<FeishuSendResult>;
+  sendCard(target: OutboundTarget, card: unknown): Promise<FeishuSendResult>;
   inviteMembers(input: FeishuInviteMembersInput): Promise<FeishuInviteMembersResult>;
   addReaction(messageId: string, emoji: string): Promise<string>;
   removeReaction(messageId: string, reactionId: string): Promise<void>;
   fetchMessageResource(
     request: FeishuMessageResourceRequest,
   ): Promise<FeishuMessageResourceResponse>;
+  resolveAppOwner(): Promise<FeishuAppOwnerIdentity>;
   close(): Promise<void>;
 }
 
@@ -175,13 +194,16 @@ export function createFeishuBot(
     get botOpenId(): string | undefined {
       return transport.selfId;
     },
+    get botDisplayName(): string | undefined {
+      return transport.selfName;
+    },
 
     async start(routes: FeishuInboundRoutes): Promise<void> {
       // The core opens the WebSocket and awaits each route handler before the
       // SDK acks; awaiting here keeps gate/submission work before ACK.
       // `start` rejects if the connection does not come up, so the server's
       // try/catch can fail the dispatcher loudly rather than leave it dark.
-      const table: Record<string, (raw: unknown) => Promise<void>> = {
+      const table: Record<string, (raw: unknown) => Promise<unknown>> = {
         [IM_MESSAGE_EVENT_TYPE]: async (raw: unknown) => {
           const event = normalizeInboundEvent(raw);
           if (event === null) return;
@@ -196,11 +218,24 @@ export function createFeishuBot(
           await onBotMemberAdded(event);
         };
       }
+      if (routes.onCardAction !== undefined) {
+        const onCardAction = routes.onCardAction;
+        table['card.action.trigger'] = async (raw: unknown) =>
+          normalizeCardActionAck(
+            await onCardAction(normalizeCardActionEvent(raw)),
+            opts.logger,
+          );
+      }
       await transport.start(table);
     },
 
     async send(target: OutboundTarget, text: string): Promise<FeishuSendResult> {
       const { messageIds } = await transport.send(target, text);
+      return { messageIds };
+    },
+
+    async sendCard(target: OutboundTarget, card: unknown): Promise<FeishuSendResult> {
+      const { messageIds } = await transport.sendCard(target, card);
       return { messageIds };
     },
 
@@ -220,6 +255,10 @@ export function createFeishuBot(
       request: FeishuMessageResourceRequest,
     ): Promise<FeishuMessageResourceResponse> {
       return transport.fetchMessageResource(request);
+    },
+
+    resolveAppOwner(): Promise<FeishuAppOwnerIdentity> {
+      return transport.resolveAppOwner();
     },
 
     close(): Promise<void> {
@@ -297,6 +336,39 @@ function normalizeInboundEvent(raw: unknown): FeishuInboundEvent | null {
   };
 }
 
+function normalizeCardActionEvent(raw: unknown): FeishuCardActionEvent {
+  const root = asRecord(raw) ?? {};
+  const event = asRecord(root['event']) ?? root;
+  const operator = asRecord(root['operator']) ?? asRecord(event['operator']);
+  const action =
+    asRecord(root['action']) ??
+    asRecord(event['action']) ??
+    asRecord(root['card_action']) ??
+    asRecord(event['card_action']);
+  const context = asRecord(root['context']) ?? asRecord(event['context']) ?? root;
+  const actionValue = asRecord(action?.['value']) ?? {};
+  const operatorOpenId = firstString(operator?.['open_id'], operator?.['openId']);
+  const openChatId = firstString(
+    context['open_chat_id'],
+    context['openChatId'],
+    root['open_chat_id'],
+    event['open_chat_id'],
+  );
+  const openMessageId = firstString(
+    context['open_message_id'],
+    context['openMessageId'],
+    root['open_message_id'],
+    event['open_message_id'],
+  );
+  return {
+    ...(operatorOpenId !== '' ? { operatorOpenId } : {}),
+    actionValue,
+    ...(openChatId !== '' ? { openChatId } : {}),
+    ...(openMessageId !== '' ? { openMessageId } : {}),
+    raw,
+  };
+}
+
 function extractSenderName(raw: unknown): string {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return '';
   const root = raw as Record<string, unknown>;
@@ -324,6 +396,106 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+const FEISHU_CARD_TOP_LEVEL_KEYS = new Set([
+  'schema',
+  'config',
+  'card_link',
+  'header',
+  'i18n_header',
+  'elements',
+  'i18n_elements',
+  'fallback',
+  'body',
+]);
+
+function normalizeCardActionAck(
+  value: unknown,
+  logger: TransportLogger | undefined,
+): Record<string, unknown> {
+  if (value === undefined || value === null) return {};
+  const root = asRecord(value);
+  if (root === undefined) {
+    return invalidCardActionAck(logger, { reason: 'non_object' });
+  }
+  const allowed = new Set(['toast', 'card']);
+  const unknownTopLevel = Object.keys(root).filter((key) => !allowed.has(key));
+  const toast = parseCardActionToast(root['toast']);
+  if (root['toast'] !== undefined && toast === null) {
+    return invalidCardActionAck(logger, { reason: 'invalid_toast', unknownTopLevel });
+  }
+  const card = parseCardActionCard(root['card'], logger);
+  if (root['card'] !== undefined && card === null) {
+    return invalidCardActionAck(logger, { reason: 'invalid_card', unknownTopLevel });
+  }
+  if (unknownTopLevel.length > 0) {
+    logger?.warn(
+      { unknown_keys: unknownTopLevel },
+      'feishu card action response ignored unknown top-level keys',
+    );
+  }
+  return {
+    ...(toast !== undefined ? { toast } : {}),
+    ...(card !== undefined ? { card } : {}),
+  };
+}
+
+function parseCardActionToast(value: unknown):
+  | { type: 'info' | 'success' | 'error' | 'warning'; content: string }
+  | undefined
+  | null {
+  if (value === undefined) return undefined;
+  const toast = asRecord(value);
+  if (toast === undefined) return null;
+  const type = toast['type'];
+  const content = toast['content'];
+  if (
+    (type !== 'info' && type !== 'success' && type !== 'error' && type !== 'warning') ||
+    typeof content !== 'string'
+  ) {
+    return null;
+  }
+  return { type, content };
+}
+
+function parseCardActionCard(
+  value: unknown,
+  logger: TransportLogger | undefined,
+): { type: 'raw'; data: Record<string, unknown> } | undefined | null {
+  if (value === undefined) return undefined;
+  const card = asRecord(value);
+  if (card === undefined || card['type'] !== 'raw') return null;
+  const data = asRecord(card['data']);
+  if (data === undefined) return null;
+  const unknownDataKeys = Object.keys(data).filter(
+    (key) => !FEISHU_CARD_TOP_LEVEL_KEYS.has(key),
+  );
+  if (unknownDataKeys.length > 0) {
+    logger?.warn(
+      { unknown_keys: unknownDataKeys },
+      'feishu raw card action response stripped unknown card data keys',
+    );
+  }
+  return {
+    type: 'raw',
+    data: Object.fromEntries(
+      Object.entries(data).filter(([key]) => FEISHU_CARD_TOP_LEVEL_KEYS.has(key)),
+    ),
+  };
+}
+
+function invalidCardActionAck(
+  logger: TransportLogger | undefined,
+  fields: Record<string, unknown>,
+): Record<string, unknown> {
+  logger?.warn(fields, 'invalid feishu card action response');
+  return {
+    toast: {
+      type: 'error',
+      content: '卡片回调响应格式错误',
+    },
+  };
+}
+
 // -------------------------------------------------------------- fake (tests)
 
 export interface FakeFeishuBot extends FeishuBot {
@@ -331,6 +503,12 @@ export interface FakeFeishuBot extends FeishuBot {
     chatId: string;
     target: OutboundTarget;
     text: string;
+    messageIds: string[];
+  }>;
+  readonly sentCards: Array<{
+    chatId: string;
+    target: OutboundTarget;
+    card: unknown;
     messageIds: string[];
   }>;
   readonly reactions: Array<{
@@ -349,6 +527,8 @@ export interface FakeFeishuBot extends FeishuBot {
   >;
   inject(event: FeishuInboundEvent): Promise<void>;
   injectBotMemberAdded(event: FeishuBotMemberAddedEvent): Promise<void>;
+  injectCardAction(event: FeishuCardActionEvent): Promise<unknown>;
+  setAppOwner(owner: FeishuAppOwnerIdentity): void;
   setSendError(err: Error | null): void;
   setReactionError(err: Error | null): void;
   setRemoveReactionError(err: Error | null): void;
@@ -365,14 +545,17 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
     text: string;
     messageIds: string[];
   }> = [];
+  const sentCards: FakeFeishuBot['sentCards'] = [];
   let routes: FeishuInboundRoutes | null = null;
   let nextMessageId = 1;
   let nextReactionId = 1;
   let sendError: Error | null = null;
   let reactionError: Error | null = null;
   let removeReactionError: Error | null = null;
+  let appOwner: FeishuAppOwnerIdentity = {};
   const messageResources = new Map<string, FeishuMessageResourceResponse | Error>();
   const openId: string | undefined = `fake-open-id-${appId}`;
+  const displayName = `Fake ${appId}`;
   const reactions: Array<{
     messageId: string;
     emoji: string;
@@ -389,6 +572,9 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
     get botOpenId(): string | undefined {
       return openId;
     },
+    get botDisplayName(): string | undefined {
+      return displayName;
+    },
     async start(r: FeishuInboundRoutes): Promise<void> {
       routes = r;
     },
@@ -398,6 +584,14 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
       }
       const id = `message-fake-${nextMessageId++}`;
       sent.push({ chatId: target.chatId, target, text, messageIds: [id] });
+      return { messageIds: [id] };
+    },
+    async sendCard(target: OutboundTarget, card: unknown): Promise<FeishuSendResult> {
+      if (sendError !== null) {
+        throw sendError;
+      }
+      const id = `message-fake-${nextMessageId++}`;
+      sentCards.push({ chatId: target.chatId, target, card, messageIds: [id] });
       return { messageIds: [id] };
     },
     async inviteMembers(input: FeishuInviteMembersInput): Promise<FeishuInviteMembersResult> {
@@ -429,11 +623,17 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
       if (resource instanceof Error) throw resource;
       return resource;
     },
+    async resolveAppOwner(): Promise<FeishuAppOwnerIdentity> {
+      return appOwner;
+    },
     async close(): Promise<void> {
       routes = null;
     },
     get sentMessages() {
       return sent;
+    },
+    get sentCards() {
+      return sentCards;
     },
     get reactions() {
       return reactions;
@@ -451,6 +651,13 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
     async injectBotMemberAdded(event: FeishuBotMemberAddedEvent): Promise<void> {
       if (routes === null) throw new Error('fake bot not started');
       await routes.onBotMemberAdded?.(event);
+    },
+    async injectCardAction(event: FeishuCardActionEvent): Promise<unknown> {
+      if (routes === null) throw new Error('fake bot not started');
+      return routes.onCardAction?.(event);
+    },
+    setAppOwner(owner: FeishuAppOwnerIdentity): void {
+      appOwner = owner;
     },
     setSendError(err: Error | null): void {
       sendError = err;

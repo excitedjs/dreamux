@@ -1,5 +1,5 @@
 /**
- * Feishu access gate v3 — pairing-code model.
+ * Feishu access gate v3 — pairing-token model.
  *
  * Pure-function unit tests for `dreamuxFeishuGate`, the pairing helper
  * primitives, and the IO loader/saver fail-loud contract.
@@ -20,15 +20,14 @@ import { dirname, join } from 'node:path';
 
 import {
   ACCESS_STATE_VERSION,
-  ACCESS_CODE_HEX_LEN,
+  PAIRING_TOKEN_BYTES,
   MAX_PENDING_PER_KIND,
-  MAX_PAIRING_REPLIES,
   PAIRING_TTL_MS,
   TRUST_DOMAIN_WARNING,
   defaultDispatcherAccessState,
   dreamuxFeishuGate,
-  generatePairingCode,
-  generateUniquePairingCode,
+  generatePairingToken,
+  generateUniquePairingToken,
   loadDispatcherAccess,
   readDispatcherAccess,
   saveDispatcherAccess,
@@ -49,6 +48,8 @@ const SENDER_KNOWN = 'sender-known';
 const SENDER_STRANGER = 'sender-stranger';
 const CHAT_ALLOWED = 'chat-allowed';
 const CHAT_STRANGER = 'chat-stranger';
+const DM_RESEND_TOKEN = generatePairingToken();
+const GROUP_RESEND_TOKEN = generatePairingToken();
 
 function state(
   overrides: Partial<DispatcherAccessStateV3> = {},
@@ -150,7 +151,7 @@ const BRANCH_CASES: TableCase[] = [
     statePatch: {
       dm_policy: 'pairing' as DmPolicy,
       pending: {
-        abcdef: {
+        [DM_RESEND_TOKEN]: {
           kind: 'dm',
           sender_id: SENDER_STRANGER,
           chat_id: 'dm-self',
@@ -210,7 +211,7 @@ const BRANCH_CASES: TableCase[] = [
   //
   // After the C3 semantic rewrite (review comment PR #255, 2026-06-27):
   // Rule 1: group policy=allowlist AND chat ∉ allow_chats → DROP everything
-  //         (no pairing code can ever add a chat to allow_chats).
+  //         (no pairing token can ever add a chat to allow_chats).
   // Rule 2: group policy=allowlist AND chat ∈ allow_chats → ADDITIONALLY
   //         enforce the dm_policy user-level check on top (sender must be on
   //         allow_users to deliver; otherwise trigger a dm-kind pair).
@@ -271,7 +272,7 @@ const BRANCH_CASES: TableCase[] = [
     expect: { action: 'drop', reason: 'group_pairing_stranger_not_mentioned' },
   },
   {
-    name: 'GROUP / follow-user + stranger + mentioned → pair dm-kind (陌生人@bot → 个人配对码)',
+    name: 'GROUP / follow-user + stranger + mentioned → pair dm-kind (陌生人@bot → 个人授权请求)',
     input: { chat_type: 'group', sender_id: SENDER_STRANGER, bot_mentioned: true, chat_id: CHAT_STRANGER },
     statePatch: {
       group: { policy: 'follow-user', allow_chats: [], require_mention: true },
@@ -309,15 +310,15 @@ const BRANCH_CASES: TableCase[] = [
   //
   // In-group pairing is dm-kind (C3 rewrite): the dedupe key is SENDER_ID,
   // not chat_id. A second user in the same group does NOT reuse the first
-  // user's pending code (that was the old group-kind behavior). A repeat
-  // @-mention by the SAME user DOES resend their existing dm-kind code.
+  // user's pending token (that was the old group-kind behavior). A repeat
+  // @-mention by the SAME user DOES resend their existing dm-kind token.
   {
     name: 'GROUP / follow-user + stranger + already pending same sender → pair resend dm-kind',
     input: { chat_type: 'group', sender_id: SENDER_STRANGER, chat_id: CHAT_STRANGER, bot_mentioned: true },
     statePatch: {
       group: { policy: 'follow-user', allow_chats: [], require_mention: true },
       pending: {
-        a1b2c3: {
+        [GROUP_RESEND_TOKEN]: {
           kind: 'dm',
           sender_id: SENDER_STRANGER,
           chat_id: CHAT_STRANGER,
@@ -332,12 +333,12 @@ const BRANCH_CASES: TableCase[] = [
 
   // ── Quota / matrix edge cases ─────────────────────────────────────────
   {
-    name: 'DM / pairing + stranger + same-sender expired → pair with FRESH code (TTL guard)',
+    name: 'DM / pairing + stranger + same-sender expired → pair with FRESH token (TTL guard)',
     input: { chat_type: 'p2p', sender_id: SENDER_STRANGER },
     statePatch: {
       dm_policy: 'pairing' as DmPolicy,
       pending: {
-        oldcode: {
+        oldtoken: {
           kind: 'dm',
           sender_id: SENDER_STRANGER,
           chat_id: 'dm-x',
@@ -414,8 +415,8 @@ describe('A. Branch table — every distinct gate decision', () => {
         });
         const act = result.action;
         if (act.action === 'pair') {
-          expect(act.code.length).toBe(ACCESS_CODE_HEX_LEN * 2);
-          expect(/^[0-9a-f]{6}$/.test(act.code)).toBe(true);
+          expect(act.token.length).toBe(PAIRING_TOKEN_BYTES * 2);
+          expect(/^[0-9a-f]{6}$/.test(act.token)).toBe(true);
           expect(act.ttl_left_ms).toBeGreaterThan(0);
         }
       }
@@ -437,7 +438,7 @@ describe('A. Branch table — every distinct gate decision', () => {
 // ──────────────────────────────────────────────────────────────────────────
 
 describe('B. TTL double-guard', () => {
-  it('expired pending entry is NOT counted as existing — fresh code generated', () => {
+  it('expired pending entry is NOT counted as existing — fresh token generated', () => {
     const expired: PendingPairingEntry = {
       kind: 'dm',
       sender_id: SENDER_STRANGER,
@@ -448,22 +449,22 @@ describe('B. TTL double-guard', () => {
     };
     const access = state({
       dm_policy: 'pairing',
-      pending: { deadcode: expired },
+      pending: { deadtoken: expired },
     });
     const result = gate({ chat_type: 'p2p', sender_id: SENDER_STRANGER }, access, NOW);
     expect(result.action.action).toBe('pair');
     if (result.action.action !== 'pair') throw new Error('unreachable');
     expect(result.action.is_resend).toBe(false);
-    expect(result.action.code).not.toBe('deadcode');
+    expect(result.action.token).not.toBe('deadtoken');
     // Pruned entry should no longer be present
-    expect(result.nextState.pending.deadcode).toBeUndefined();
+    expect(result.nextState.pending.deadtoken).toBeUndefined();
     // The new live entry is present under a different key
-    const newCode = result.action.code;
-    expect(result.nextState.pending[newCode]).toBeDefined();
-    expect(result.nextState.pending[newCode].expires_at).toBe(NOW + PAIRING_TTL_MS);
+    const newToken = result.action.token;
+    expect(result.nextState.pending[newToken]).toBeDefined();
+    expect(result.nextState.pending[newToken].expires_at).toBe(NOW + PAIRING_TTL_MS);
   });
 
-  it('non-expired pending is counted as existing (resend with same code — dm-kind)', () => {
+  it('non-expired pending is counted as existing (resend with same token — dm-kind)', () => {
     // C3 rewrite: group-triggered pair requests create dm-kind entries. The
     // dedupe key is sender_id (not chat_id). So we seed a dm-kind pending
     // entry for the SAME sender that triggers the repeat @-mention.
@@ -477,7 +478,7 @@ describe('B. TTL double-guard', () => {
     };
     const access = state({
       group: { policy: 'follow-user', allow_chats: [], require_mention: true },
-      pending: { livecode: live },
+      pending: { livetoken: live },
     });
     const result = gate(
       { chat_type: 'group', chat_id: CHAT_STRANGER, sender_id: SENDER_STRANGER, bot_mentioned: true },
@@ -487,10 +488,11 @@ describe('B. TTL double-guard', () => {
     expect(result.action.action).toBe('pair');
     if (result.action.action !== 'pair') throw new Error('unreachable');
     expect(result.action.is_resend).toBe(true);
-    expect(result.action.code).toBe('livecode');
+    expect(result.action.token).toBe('livetoken');
+    expect(result.action.prompt_message_id).toBeUndefined();
     // TTL refreshed from the user's pov
-    expect(result.nextState.pending.livecode.expires_at).toBe(NOW + PAIRING_TTL_MS);
-    expect(result.nextState.pending.livecode.replies).toBe(2);
+    expect(result.nextState.pending.livetoken.expires_at).toBe(NOW + PAIRING_TTL_MS);
+    expect(result.nextState.pending.livetoken.replies).toBe(1);
   });
 
   it('pruneExpiredPending (via gate) removes only expired entries and preserves live ones', () => {
@@ -593,7 +595,7 @@ describe('C. Per-kind pending quota (MAX_PENDING_PER_KIND = 10)', () => {
   });
 
   it('LEGACY group-kind pending entries (pre-C3) do NOT block DM pair request', () => {
-    // After the C3 rewrite no code generates group-kind entries any more,
+    // After the C3 rewrite no token generates group-kind entries any more,
     // but legacy ones sitting on disk still parse. Their kind is 'group' so
     // they don't count toward the dm-kind quota.
     const pending: Record<string, PendingPairingEntry> = {};
@@ -625,14 +627,15 @@ describe('C. Per-kind pending quota (MAX_PENDING_PER_KIND = 10)', () => {
     }
   });
 
-  it('max replies (MAX_PAIRING_REPLIES) reached → drop dm_pairing_slot_cap (C3: all pairs are dm-kind)', () => {
+  it('existing pending returns the same token even when the legacy replies count is high', () => {
     const exhausted: PendingPairingEntry = {
       kind: 'dm',
       sender_id: 'u-maxed',
       chat_id: 'c-any',
       created_at: NOW - 1000,
       expires_at: NOW + PAIRING_TTL_MS,
-      replies: MAX_PAIRING_REPLIES,
+      replies: 999,
+      prompt_message_id: 'om_prompt',
     };
     const access = state({
       group: { policy: 'follow-user', allow_chats: [], require_mention: true },
@@ -645,15 +648,11 @@ describe('C. Per-kind pending quota (MAX_PENDING_PER_KIND = 10)', () => {
       NOW,
     );
     expect(result.action).toMatchObject({
-      action: 'drop',
-      reason: 'dm_pairing_slot_cap',
+      action: 'pair',
+      token: 'EXHAUST',
+      is_resend: true,
+      prompt_message_id: 'om_prompt',
     });
-    // Warning pushed
-    expect(result.nextState.warnings.length).toBeGreaterThan(0);
-    type WarnE = DispatcherAccessStateV3['warnings'][number];
-    expect(
-      result.nextState.warnings.some((w: WarnE) => w.msg.includes('max resends reached')),
-    ).toBe(true);
   });
 });
 
@@ -801,33 +800,32 @@ describe('E. require_mention default', () => {
 // ──────────────────────────────────────────────────────────────────────────
 
 describe('F. Misc constants and helpers', () => {
-  describe('generatePairingCode', () => {
-    it('returns 6-char hex string (ACCESS_CODE_HEX_LEN bytes = 2*len chars)', () => {
+  describe('generatePairingToken', () => {
+    it('returns 6-char hex string (PAIRING_TOKEN_BYTES bytes = 2*len chars)', () => {
       // Random, so try several times
       for (let i = 0; i < 20; i++) {
-        const code = generatePairingCode();
-        expect(typeof code).toBe('string');
-        expect(code).toHaveLength(ACCESS_CODE_HEX_LEN * 2);
-        expect(/^[0-9a-fA-F]{6}$/.test(code)).toBe(true);
+        const token = generatePairingToken();
+        expect(typeof token).toBe('string');
+        expect(token).toHaveLength(PAIRING_TOKEN_BYTES * 2);
+        expect(/^[0-9a-fA-F]{6}$/.test(token)).toBe(true);
       }
     });
 
-    it('generateUniquePairingCode avoids existing keys', () => {
+    it('generateUniquePairingToken avoids existing keys', () => {
       const existing: Record<string, boolean> = {};
       for (let i = 0; i < 100; i++) {
-        const code = generateUniquePairingCode(existing);
-        expect(existing[code]).toBeUndefined();
-        expect(/^[0-9a-fA-F]{6}$/.test(code)).toBe(true);
-        existing[code] = true;
+        const token = generateUniquePairingToken(existing);
+        expect(existing[token]).toBeUndefined();
+        expect(/^[0-9a-fA-F]{6}$/.test(token)).toBe(true);
+        existing[token] = true;
       }
     });
   });
 
   describe('pushWarn — FIFO cap at 200', () => {
     it('caps warnings at 200 entries, FIFO eviction of oldest', () => {
-      // Drive the max-resends drop path via dm-kind entries — it pushes a
-      // warning per call. After the C3 semantic rewrite all in-group pairs
-      // are dm-kind, so exhausted pending entries use kind='dm' too.
+      // Drive the slot-cap drop path via dm-kind entries; it pushes a warning
+      // per call while avoiding the same-sender existing-prompt branch.
       let access: DispatcherAccessStateV3 = state({
         group: { policy: 'follow-user', allow_chats: [], require_mention: true },
       });
@@ -835,19 +833,20 @@ describe('F. Misc constants and helpers', () => {
       const iterations = MAX_WARN + 50;
       for (let i = 0; i < iterations; i++) {
         const senderId = `u-warn-${i}`;
+        const pending: Record<string, PendingPairingEntry> = {};
+        for (let j = 0; j < MAX_PENDING_PER_KIND; j++) {
+          pending[`dm${i}-${j}`] = {
+            kind: 'dm',
+            sender_id: `u-existing-${i}-${j}`,
+            chat_id: 'c-same-for-all',
+            created_at: NOW,
+            expires_at: NOW + PAIRING_TTL_MS,
+            replies: 1,
+          };
+        }
         const seedAccess: DispatcherAccessStateV3 = {
           ...access,
-          pending: {
-            ...access.pending,
-            [`dm${i}`]: {
-              kind: 'dm',
-              sender_id: senderId,
-              chat_id: 'c-same-for-all',
-              created_at: NOW,
-              expires_at: NOW + PAIRING_TTL_MS,
-              replies: MAX_PAIRING_REPLIES,
-            },
-          },
+          pending,
         };
         const r = gate(
           { chat_type: 'group', sender_id: senderId, chat_id: 'c-same-for-all', bot_mentioned: true },
@@ -923,8 +922,8 @@ describe('F. Misc constants and helpers', () => {
     it('MAX_PENDING_PER_KIND is 10', () => {
       expect(MAX_PENDING_PER_KIND).toBe(10);
     });
-    it('ACCESS_CODE_HEX_LEN bytes → 6 hex chars total', () => {
-      expect(ACCESS_CODE_HEX_LEN * 2).toBe(6);
+    it('PAIRING_TOKEN_BYTES bytes → 6 hex chars total', () => {
+      expect(PAIRING_TOKEN_BYTES * 2).toBe(6);
     });
   });
 });

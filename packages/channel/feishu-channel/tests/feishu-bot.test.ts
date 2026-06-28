@@ -6,8 +6,15 @@ import {
   type FeishuInboundEvent,
 } from '../src/bot.js';
 import type {
+  FeishuAppOwnerIdentity,
+  FeishuCreateGroupInput,
+  FeishuCreateGroupResult,
   FeishuDocComment,
   FeishuDocMeta,
+  FeishuInviteMembersInput,
+  FeishuInviteMembersResult,
+  FeishuMessageResourceRequest,
+  FeishuMessageResourceResponse,
   FeishuSendResult,
   FeishuTransport,
   InboundRoutes,
@@ -17,8 +24,10 @@ import type {
 class FakeTransport implements FeishuTransport {
   readonly appId = 'app-test';
   readonly selfId = 'bot-open-id';
+  readonly selfName = 'App Test Bot';
   routes: InboundRoutes | null = null;
   readonly sent: Array<{ target: OutboundTarget; text: string }> = [];
+  readonly sentCards: Array<{ target: OutboundTarget; card: unknown }> = [];
   closed = false;
 
   async start(routes: InboundRoutes): Promise<void> {
@@ -28,6 +37,19 @@ class FakeTransport implements FeishuTransport {
   async send(target: OutboundTarget, text: string): Promise<FeishuSendResult> {
     this.sent.push({ target, text });
     return { messageIds: ['message-sent'] };
+  }
+
+  async sendCard(target: OutboundTarget, card: unknown): Promise<FeishuSendResult> {
+    this.sentCards.push({ target, card });
+    return { messageIds: ['message-card-sent'] };
+  }
+
+  async createGroup(input: FeishuCreateGroupInput): Promise<FeishuCreateGroupResult> {
+    return { chatId: input.name };
+  }
+
+  async inviteMembers(input: FeishuInviteMembersInput): Promise<FeishuInviteMembersResult> {
+    return { addedOpenIds: input.userOpenIds };
   }
 
   async addReaction(): Promise<string> {
@@ -50,15 +72,25 @@ class FakeTransport implements FeishuTransport {
     throw new Error('unused in this test');
   }
 
+  async fetchMessageResource(
+    _request: FeishuMessageResourceRequest,
+  ): Promise<FeishuMessageResourceResponse> {
+    throw new Error('unused in this test');
+  }
+
+  async resolveAppOwner(): Promise<FeishuAppOwnerIdentity> {
+    return { creatorOpenId: 'ou_owner' };
+  }
+
   async close(): Promise<void> {
     this.closed = true;
   }
 
-  async dispatch(eventType: string, raw: unknown): Promise<boolean> {
+  async dispatch(eventType: string, raw: unknown): Promise<unknown> {
     const handler = this.routes?.[eventType];
     if (handler === undefined) return false;
-    await handler(raw);
-    return true;
+    const result = await handler(raw);
+    return result === undefined ? true : result;
   }
 }
 
@@ -91,6 +123,7 @@ describe('createFeishuBot inbound channel', () => {
     ]);
     expect(bot.appId).toBe('app-test');
     expect(bot.botOpenId).toBe('bot-open-id');
+    expect(bot.botDisplayName).toBe('App Test Bot');
 
     const ignored = await transport.dispatch('drive.file.comment_v1', {
       event: {},
@@ -233,5 +266,100 @@ describe('createFeishuBot inbound channel', () => {
       event: { chat_id: 'chat-id-1' },
     });
     expect(added).toEqual([{ chatId: 'chat-id-1', eventId: 'evt-1' }]);
+  });
+
+  it('registers card.action.trigger and preserves the handler return value', async () => {
+    const transport = new FakeTransport();
+    const bot = createFeishuBot(
+      { appId: 'app-test', appSecret: 'secret-test' },
+      { createTransport: () => transport },
+    );
+
+    await bot.start({
+      onMessage: async () => {},
+      onCardAction: (event) => ({
+        toast: {
+          type: 'success',
+          content: String(event.actionValue['code']),
+        },
+      }),
+    });
+
+    expect(Object.keys(transport.routes ?? {})).toEqual([
+      'im.message.receive_v1',
+      'card.action.trigger',
+    ]);
+    const response = await transport.dispatch('card.action.trigger', {
+      operator: { open_id: 'ou_operator' },
+      action: { value: { code: 'sample-code' } },
+      context: { open_message_id: 'om_card', open_chat_id: 'oc_chat' },
+    });
+
+    expect(response).toEqual({
+      toast: { type: 'success', content: 'sample-code' },
+    });
+  });
+
+  it('normalizes malformed card-action responses into a legal error toast', async () => {
+    const transport = new FakeTransport();
+    const bot = createFeishuBot(
+      { appId: 'app-test', appSecret: 'secret-test' },
+      { createTransport: () => transport },
+    );
+
+    await bot.start({
+      onMessage: async () => {},
+      onCardAction: () => 'not-an-ack',
+    });
+
+    const response = await transport.dispatch('card.action.trigger', {
+      operator: { open_id: 'ou_operator' },
+      action: { value: {} },
+    });
+
+    expect(response).toEqual({
+      toast: { type: 'error', content: '卡片回调响应格式错误' },
+    });
+  });
+
+  it('strips unknown top-level keys from raw card callback data', async () => {
+    const transport = new FakeTransport();
+    const bot = createFeishuBot(
+      { appId: 'app-test', appSecret: 'secret-test' },
+      { createTransport: () => transport },
+    );
+
+    await bot.start({
+      onMessage: async () => {},
+      onCardAction: () => ({
+        toast: { type: 'success', content: 'ok' },
+        card: {
+          type: 'raw',
+          data: {
+            config: {},
+            header: { title: { tag: 'plain_text', content: 'done' } },
+            elements: [],
+            _debugVersion: 'local',
+          },
+        },
+      }),
+    });
+
+    const response = await transport.dispatch('card.action.trigger', {
+      operator: { open_id: 'ou_operator' },
+      action: { value: {} },
+    });
+
+    expect(response).toEqual({
+      toast: { type: 'success', content: 'ok' },
+      card: {
+        type: 'raw',
+        data: {
+          config: {},
+          header: { title: { tag: 'plain_text', content: 'done' } },
+          elements: [],
+        },
+      },
+    });
   });
 });

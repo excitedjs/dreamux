@@ -5,6 +5,7 @@ import type {
 import type {
   CreateBotOptions,
   FeishuBot,
+  FeishuCardActionEvent,
   FeishuInboundEvent,
 } from './bot.js';
 import { createFeishuBot } from './bot.js';
@@ -24,7 +25,7 @@ import {
   type FeishuToolResultEnvelope,
 } from './feishu-mcp-tools.js';
 import {
-  approvePairingByCode as sessionApprovePairingByCode,
+  handleCardAction as sessionHandleCardAction,
   sendReply as sessionSendReply,
   addReaction as sessionAddReaction,
   sessionHandle,
@@ -118,7 +119,6 @@ export class FeishuChannelSession {
     messageChats: new Map(),
   };
   private readonly _accessMutex = new AsyncMutex();
-  private readonly _botDisplayName = '赛丽亚';
 
   constructor(private readonly opts: FeishuChannelSessionOptions) {
     this.bot = opts.botFactory !== undefined
@@ -144,7 +144,7 @@ export class FeishuChannelSession {
       this.state,
       this.bot,
       this._accessMutex,
-      this._botDisplayName,
+      this.bot.botDisplayName ?? 'Dreamux bot',
     );
   }
 
@@ -160,20 +160,14 @@ export class FeishuChannelSession {
       onMessage: async (event) => {
         await this.onMessage(event, submitter);
       },
+      onCardAction: async (event) => {
+        return this.onCardAction(event);
+      },
     });
   }
 
   async close(): Promise<void> {
     await this.bot.close();
-  }
-
-  /**
-   * Approve a pending pairing by its 6-hex code. Thin wrapper around the
-   * extracted helper so the method stays reachable on the class while the
-   * body lives in `feishu-session-ops.ts` (max-lines lint).
-   */
-  async approvePairingByCode(code: string): Promise<FeishuToolResultEnvelope> {
-    return sessionApprovePairingByCode(this.handle, code);
   }
 
   async handleMcpTool(
@@ -210,8 +204,6 @@ export class FeishuChannelSession {
           ...(chatId !== undefined ? { chatId } : {}),
         }),
         listKnownChatBots: async (chatId: string) => this.readChatBots({ chatId }),
-        // Wire through the session method; body is filled in P3.
-        approvePairingByCode: this.approvePairingByCode.bind(this),
       },
     };
     let parsed: unknown;
@@ -310,6 +302,12 @@ export class FeishuChannelSession {
     submitter: FeishuInboundSubmitter,
   ): Promise<void> {
     return sessionOnMessage(this.handle, event, submitter);
+  }
+
+  private async onCardAction(
+    event: FeishuCardActionEvent,
+  ): Promise<unknown> {
+    return sessionHandleCardAction(this.handle, event);
   }
 }
 
