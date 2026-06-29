@@ -4,7 +4,6 @@ import type {
   AgentRuntimeTurnResult,
   ChannelInboundEnvelope,
   ChannelSession,
-  ChannelTarget,
   DreamuxLogger,
   InboundDeliveryHooks,
   InboundDeliveryResult,
@@ -25,24 +24,23 @@ import type {
   DispatcherStore,
 } from '../../state/dispatcher-store.js';
 import { createDispatcherAgent } from './agent.js';
-import { ChannelSessions } from './channel-sessions.js';
-import { authorizeTeamLeaderChannelEgress } from './channel-tool-auth.js';
 import type { ChannelMcpCallerScope } from './mcp-descriptors.js';
 import { assertRunnableChannelShape } from './runnable-channel.js';
 import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
-import { ChannelToolAuthorizationError } from './errors.js';
 import { CompletionRouter, type CompletionInitiator } from '../completion-router/index.js';
 import { TeammateCollection, type TeammateOps } from '../teammate-collection/index.js';
 import { TeamMateIdentityStore } from '../teammate-collection/identity-store.js';
 import { TeamMateTurnsStore } from '../teammate-collection/turns-store.js';
 import type { TeammateService } from '../teammate-service/index.js';
 import { WorktreeManager } from '../worktree/manager.js';
-import { ChannelBindingStore } from '../channel-binding/store.js';
 import { type TeamMateIdentity } from '../teammate-collection/types.js';
-import { type TeamChannelContext } from '../team-service/index.js';
 import { TeamCollection } from '../team-collection/index.js';
 import { SchedulerService } from '../scheduler/service.js';
 import { CronJobStore } from '../scheduler/store.js';
+import {
+  ChannelService,
+  type ChannelRouteOwner,
+} from '../channel-service/index.js';
 import type {
   TeamCreateInput,
   TeamDissolveInput,
@@ -74,18 +72,17 @@ export type ChannelToolCaller =
 
 /**
  * One dispatcher-local aggregate (issue #233). It owns the whole per-dispatcher
- * object graph — the delivery `CompletionRouter`, the shared `WorktreeManager` +
- * `ChannelBindingStore`, the `TeammateCollection` and `TeamCollection`, the live
- * `ChannelSessions`, and the dispatcher's own agent (a contained
+ * object graph — the delivery `CompletionRouter`, the shared `WorktreeManager`,
+ * the `TeammateCollection` and `TeamCollection`, the `ChannelService`, and the dispatcher's own agent (a contained
  * {@link TeammateService}, Phase 5) — built once in the constructor.
  *
  * The dispatcher *has an* agent (has-a): the shared `TeammateService` owns the
  * agent runtime lifecycle (start/resume/stop), the settle → router capture, and
  * `completionInput` as a delivery target. The dispatcher-only concerns —
- * channel sessions, restart-intent injection, role MCP descriptor assembly, and
- * completion routing — live here, on `DispatcherService`.
+ * ChannelService orchestration, restart-intent injection, role MCP descriptor
+ * assembly, and completion routing — live here, on `DispatcherService`.
  */
-export class DispatcherService implements TeamChannelContext {
+export class DispatcherService {
   readonly id: string;
   private readonly config: DreamuxConfig;
   private readonly dispatchers: DispatcherStore;
@@ -94,7 +91,7 @@ export class DispatcherService implements TeamChannelContext {
   private readonly router: CompletionRouter;
   private readonly _teammates: TeammateCollection;
   private readonly teams: TeamCollection;
-  private readonly channels: ChannelSessions;
+  private readonly channels: ChannelService;
   private readonly agent: TeammateService;
   private readonly scheduler_: SchedulerService;
   private restartIntent: RestartIntentConsumer | null = null;
@@ -112,10 +109,7 @@ export class DispatcherService implements TeamChannelContext {
 
     this.router = new CompletionRouter({ dispatcherId: opts.id, log: opts.log });
 
-    // One worktree manager + one channel-binding store per dispatcher, shared by
-    // both collections (issue #233).
     const worktrees = new WorktreeManager();
-    const bindings = new ChannelBindingStore();
 
     // One identity + turns store pair shared by the dispatcher agent (role
     // `dispatcher` debug record), the dispatcher-scope collection (role
@@ -130,7 +124,7 @@ export class DispatcherService implements TeamChannelContext {
       warn: opts.log.warn.bind(opts.log),
     });
 
-    this.channels = new ChannelSessions({
+    this.channels = new ChannelService({
       dispatcherId: opts.id,
       config: opts.config,
       channelProviders: opts.channelProviders,
@@ -190,7 +184,6 @@ export class DispatcherService implements TeamChannelContext {
       config: opts.config,
       agentRuntimeProviders: opts.agentRuntimeProviders,
       worktrees,
-      bindings,
       identities,
       turnsStore,
       router: this.router,
@@ -198,11 +191,13 @@ export class DispatcherService implements TeamChannelContext {
       isShuttingDown: () => this.shuttingDown,
       adminSocketPath: adminSocket,
       leaderChannelDescriptors: ({ teamId, leaderName }) =>
-        this.channelMcpServerDescriptorsForCaller({
-          callerKind: 'team_leader',
-          team_id: teamId,
-          leader_name: leaderName,
-        }),
+        [
+          ...this.channelMcpServerDescriptorsForCaller({
+            callerKind: 'team_leader',
+            team_id: teamId,
+            leader_name: leaderName,
+          }),
+        ],
       log: opts.log,
     });
   }
@@ -380,15 +375,15 @@ export class DispatcherService implements TeamChannelContext {
     arguments: Record<string, unknown>;
     caller: ChannelToolCaller;
   }): Promise<unknown> {
-    const channelId = this.resolveToolChannelId(
-      input.channelId,
-      input.providerRef,
-    );
     if (input.caller.kind === 'team_leader') {
-      await this.authorizeTeamLeaderChannelEgress({
-        channelId,
-        teamId: input.caller.teamId,
-        leaderName: input.caller.leaderName,
+      await this.channels.authorizeTeamLeaderEgress({
+        owner: {
+          kind: 'team',
+          teamName: input.caller.teamId,
+          leaderName: input.caller.leaderName,
+        },
+        ...(input.channelId !== undefined ? { channelId: input.channelId } : {}),
+        ...(input.providerRef !== undefined ? { providerRef: input.providerRef } : {}),
         arguments: input.arguments,
       });
     }
@@ -396,7 +391,7 @@ export class DispatcherService implements TeamChannelContext {
       ...(input.providerRef !== undefined ? { providerRef: input.providerRef } : {}),
       name: input.name,
       arguments: input.arguments,
-      channelId,
+      ...(input.channelId !== undefined ? { channelId: input.channelId } : {}),
     });
   }
 
@@ -424,7 +419,13 @@ export class DispatcherService implements TeamChannelContext {
 
   getTeamHistory(input: TeamHistoryQuery) { return this.teams.history(input); }
 
+  activeTeamBindingSummary(owner: ChannelRouteOwner) {
+    return this.channels.activeBindingSummaryForOwner(owner);
+  }
+
   async dissolveTeam(input: TeamDissolveInput) {
+    const owner = await this.teams.requireOpenTeamRouteOwner(input.teamId);
+    await this.channels.transferAllForOwner(owner);
     return (await this.teams.get(input.teamId)).dissolve(input);
   }
 
@@ -433,22 +434,23 @@ export class DispatcherService implements TeamChannelContext {
     channelId?: string;
     meta: Record<string, unknown>;
   }) {
-    const team = await this.teams.get(input.teamId);
-    return team.bindChannel(this, {
+    const owner = await this.teams.requireOpenTeamRouteOwner(input.teamId);
+    return this.channels.bindTarget({
+      owner,
       ...(input.channelId !== undefined ? { channelId: input.channelId } : {}),
       meta: input.meta,
     });
   }
 
   async transferTeamChannelBack(input: {
+    expectedOwner?: ChannelRouteOwner;
     channelId?: string;
     meta: Record<string, unknown>;
   }) {
-    const channelId = this.resolveChannelId(input.channelId);
-    const target = await this.channels.resolveTarget(input.meta, channelId);
-    return this.teams.transferChannelBack({
-      channelId,
-      targetKey: target.target_key,
+    return this.channels.transferBack({
+      ...(input.expectedOwner !== undefined ? { expectedOwner: input.expectedOwner } : {}),
+      ...(input.channelId !== undefined ? { channelId: input.channelId } : {}),
+      meta: input.meta,
     });
   }
 
@@ -461,12 +463,15 @@ export class DispatcherService implements TeamChannelContext {
     this.assertNotShuttingDown();
     const target = envelope.target;
     if (target.bindable) {
-      const binding = await this.teams.resolveChannel({
+      const routed = await this.channels.resolveInboundBinding({
         channelId,
-        targetKey: target.target_key,
+        target,
       });
-      if (binding !== null) {
-        const team = await this.teams.get(binding.team_name);
+      if (
+        routed !== null &&
+        (await this.teams.isOpenTeam(routed.owner.teamName))
+      ) {
+        const team = await this.teams.get(routed.owner.teamName);
         const result = await team.deliverToLeader(input);
         if (result.status === 'submitted') await hooks?.onAccepted?.(input);
         return result;
@@ -497,116 +502,6 @@ export class DispatcherService implements TeamChannelContext {
     // Phase 5) — a dispatcher-owned teammate or leader delivers to it via its own
     // `completionInput`, the same unified router path as any other target.
     return this.agent;
-  }
-
-  async teamLeaderCanUseChannel(input: {
-    teamId: string;
-    leaderName: string;
-    targetKey: string;
-  }): Promise<{ allowed: boolean; channelId: string | null }> {
-    const team = await this.teams.get(input.teamId).catch(() => null);
-    const channelId =
-      team === null
-        ? null
-        : await team.resolveLeaderChannel({
-            leaderName: input.leaderName,
-            targetKey: input.targetKey,
-          });
-    return { allowed: channelId !== null, channelId };
-  }
-
-  private authorizeTeamLeaderChannelEgress(input: {
-    channelId: string;
-    teamId: string;
-    leaderName: string;
-    arguments: Record<string, unknown>;
-  }): Promise<void> {
-    return authorizeTeamLeaderChannelEgress(
-      {
-        resolveTarget: (meta, channelId) =>
-          this.channels.resolveTarget(meta, channelId),
-        messageBelongsToTarget: (target, messageId, channelId) =>
-          this.channels.messageBelongsToTarget(target, messageId, channelId),
-        teamLeaderCanUseChannel: (i) => this.teamLeaderCanUseChannel(i),
-      },
-      input,
-    );
-  }
-
-  private resolveToolChannelId(
-    requested?: string,
-    providerRef?: string,
-  ): string {
-    if (providerRef === undefined) return this.resolveChannelId(requested);
-    if (requested !== undefined) {
-      const channelId = this.resolveChannelId(requested);
-      const actualProvider = this.channelProviderRef(channelId);
-      if (actualProvider !== providerRef) {
-        throw new ChannelToolAuthorizationError(
-          'BAD_REQUEST',
-          `channel '${channelId}' for dispatcher '${this.id}' uses provider '${actualProvider}', not '${providerRef}'`,
-        );
-      }
-      return channelId;
-    }
-    const dispatcher = this.dispatcherConfig();
-    const matches =
-      dispatcher?.channels.filter((channel) => channel.provider === providerRef) ??
-      [];
-    if (matches.length === 0) {
-      throw new ChannelToolAuthorizationError(
-        'BAD_REQUEST',
-        `dispatcher '${this.id}' has no configured channel for provider '${providerRef}'`,
-      );
-    }
-    if (matches.length > 1) {
-      throw new ChannelToolAuthorizationError(
-        'BAD_REQUEST',
-        `dispatcher '${this.id}' has ${matches.length} channels for provider '${providerRef}'; channel_id is required`,
-      );
-    }
-    return matches[0]!.id;
-  }
-
-  resolveChannelId(requested?: string): string {
-    const ids = this.dispatcherConfig()?.channels.map((channel) => channel.id) ?? [];
-    if (requested !== undefined) {
-      if (!ids.includes(requested)) {
-        throw new Error(
-          `unknown channel_id '${requested}' for dispatcher '${this.id}'; ` +
-            `its configured channels are ${
-              ids.length > 0 ? ids.map((id) => `'${id}'`).join(', ') : '(none)'
-            }`,
-        );
-      }
-      return requested;
-    }
-    if (ids.length === 0) {
-      throw new Error(`dispatcher '${this.id}' has no resolvable channel`);
-    }
-    if (ids.length > 1) {
-      throw new Error(
-        `dispatcher '${this.id}' has ${ids.length} channels; ` +
-          'channel_id is required to select one',
-      );
-    }
-    return ids[0]!;
-  }
-
-  channelProviderRef(channelId: string): string {
-    const channel = this.dispatcherConfig()?.channels.find(
-      (entry) => entry.id === channelId,
-    );
-    if (channel === undefined) {
-      throw new Error(
-        `unknown channel_id '${channelId}' for dispatcher '${this.id}'`,
-      );
-    }
-    return channel.provider;
-  }
-
-  resolveChannelTarget(meta: unknown, channelId?: string): Promise<ChannelTarget> {
-    return this.channels.resolveTarget(meta, channelId);
   }
 
   private async injectRestartNoticeIfNeeded(
@@ -652,10 +547,6 @@ export class DispatcherService implements TeamChannelContext {
       );
     }
     return cwd;
-  }
-
-  private dispatcherConfig() {
-    return this.config.dispatchers.find((entry) => entry.id === this.id);
   }
 }
 

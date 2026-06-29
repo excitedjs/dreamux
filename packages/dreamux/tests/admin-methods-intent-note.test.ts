@@ -79,7 +79,7 @@ describe('Channel MCP admin methods replace the Team binding methods (#209 slice
     expect(adminMethods['mcp.channel.transfer_back']).toBeUndefined();
   });
 
-  it('bind_channel and transfer_back share one return envelope (the binding, not wrapped) and pass meta through', async () => {
+  it('bind_channel returns the binding and transfer_back composes a model-facing envelope', async () => {
     const binding = { provider: 'builtin:feishu', target_key: 'chat-demo' };
     const seen: Array<Record<string, unknown>> = [];
     const channelStub = {
@@ -106,10 +106,44 @@ describe('Channel MCP admin methods replace the Team binding methods (#209 slice
       meta: { chat_id: 'chat-demo' },
     });
     expect(bound).toEqual(binding);
-    expect(transferred).toEqual(binding);
-    expect(transferred).not.toHaveProperty('binding');
+    expect(transferred).toEqual({
+      transferred: true,
+      binding,
+      message: 'Channel target transferred back to the dispatcher.',
+    });
     expect(seen[0]).toMatchObject({ teamId: 'alpha', meta: { chat_id: 'chat-demo' } });
     expect(seen[1]).toMatchObject({ meta: { chat_id: 'chat-demo' } });
+  });
+
+  it('passes TeamLeader caller scope as an expected transfer owner', async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const channelStub = {
+      repos: { dispatchers: { get: () => ({ dispatcher_id: 'flow' }) } },
+      getDispatcher: () => ({
+        transferTeamChannelBack: async (input: Record<string, unknown>) => {
+          seen.push(input);
+          return null;
+        },
+      }),
+    } as unknown as Server;
+
+    const transferred = await adminMethods['mcp.team.transfer_back']!(channelStub, {
+      dispatcher_id: 'flow',
+      caller_kind: 'team_leader',
+      team_id: 'alpha',
+      leader_name: 'alpha-leader',
+      meta: { chat_id: 'chat-demo' },
+    });
+
+    expect(transferred).toMatchObject({ transferred: false, binding: null });
+    expect(seen[0]).toMatchObject({
+      expectedOwner: {
+        kind: 'team',
+        teamName: 'alpha',
+        leaderName: 'alpha-leader',
+      },
+      meta: { chat_id: 'chat-demo' },
+    });
   });
 
   it('rejects a bind_channel call whose meta is missing or not an object', async () => {
@@ -123,5 +157,98 @@ describe('Channel MCP admin methods replace the Team binding methods (#209 slice
         team_name: 'alpha',
       }),
     ).rejects.toThrow(/meta/);
+  });
+});
+
+describe('Team MCP admin read methods compose channel binding summaries', () => {
+  it('adds bound_group for list and history and binding for status in the admin layer', async () => {
+    const binding = { provider: 'builtin:feishu', chat_id: 'chat-alpha' };
+    const owners: Array<Record<string, unknown>> = [];
+    const dispatcher = {
+      listTeams: async () => [
+        {
+          team_name: 'alpha',
+          status: 'running',
+          intent: 'lead alpha',
+          source_repo: null,
+          leader_name: 'alpha-leader',
+          leader_state: 'running',
+          member_count: 2,
+          created_at: 1,
+          updated_at: 2,
+          closed_at: null,
+        },
+      ],
+      getTeamStatus: async () => ({
+        team: {
+          team_name: 'alpha',
+          status: 'running',
+          intent: 'lead alpha',
+          source_repo: null,
+          leader_name: 'alpha-leader',
+          leader_agent_runtime: 'agent-a',
+          created_at: 1,
+          updated_at: 2,
+          closed_at: null,
+          close_note: null,
+        },
+        leader: null,
+        member_count: 2,
+      }),
+      getTeamHistory: async () => ({
+        items: [
+          {
+            team_name: 'alpha',
+            status: 'running',
+            intent: 'lead alpha',
+            source_repo: null,
+            leader_name: 'alpha-leader',
+            leader_agent_runtime: 'agent-a',
+            leader_state: 'running',
+            member_count: 2,
+            created_at: 1,
+            updated_at: 2,
+            closed_at: null,
+            close_note: null,
+            close_note_preview: null,
+          },
+        ],
+        next_cursor: null,
+      }),
+      activeTeamBindingSummary: async (owner: Record<string, unknown>) => {
+        owners.push(owner);
+        return binding;
+      },
+    };
+    const server = {
+      repos: { dispatchers: { get: () => ({ dispatcher_id: 'flow' }) } },
+      getDispatcher: () => dispatcher,
+    } as unknown as Server;
+
+    await expect(
+      adminMethods['mcp.team.list']!(server, { dispatcher_id: 'flow' }),
+    ).resolves.toMatchObject({
+      teams: [{ team_name: 'alpha', bound_group: binding }],
+    });
+    await expect(
+      adminMethods['mcp.team.status']!(server, {
+        dispatcher_id: 'flow',
+        team_name: 'alpha',
+      }),
+    ).resolves.toMatchObject({
+      team: { team_name: 'alpha' },
+      binding,
+    });
+    await expect(
+      adminMethods['mcp.team.history']!(server, { dispatcher_id: 'flow' }),
+    ).resolves.toMatchObject({
+      items: [{ team_name: 'alpha', bound_group: binding }],
+      next_cursor: null,
+    });
+    expect(owners).toEqual([
+      { kind: 'team', teamName: 'alpha', leaderName: 'alpha-leader' },
+      { kind: 'team', teamName: 'alpha', leaderName: 'alpha-leader' },
+      { kind: 'team', teamName: 'alpha', leaderName: 'alpha-leader' },
+    ]);
   });
 });

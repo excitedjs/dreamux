@@ -128,6 +128,7 @@ describe('channel binding is taught as a Team MCP capability (issue #209)', () =
     // The generalized Team-owned surface is present.
     expect(skill).toContain('bind_channel');
     expect(skill).toContain('transfer_back');
+    expect(skill).toContain('TeamLeaders receive only scoped `transfer_back`');
     // Addressed by a provider selector `meta` (Feishu example uses chat_id INSIDE
     // meta), not a top-level chat_id parameter.
     expect(skill).toMatch(/meta[\s\S]{0,80}chat_id/);
@@ -147,6 +148,7 @@ describe('channel binding is taught as a Team MCP capability (issue #209)', () =
 
     expect(prompt).toContain('bind_channel({ team_name, channel_id?, meta })');
     expect(prompt).toContain('transfer_back({ channel_id?, meta })');
+    expect(prompt).toContain('TeamLeaders receive only their scoped transfer_back projection');
     expect(prompt).toMatch(/meta is \{ chat_id \}/);
 
     // The stale append-mode "channel MCP ... addressed by chat_id" line is gone.

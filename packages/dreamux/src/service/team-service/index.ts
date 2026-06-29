@@ -1,7 +1,7 @@
 import type {
   CompletionEnvelope,
   AgentRuntimeMcpServer,
-  ChannelTarget,
+  AgentRuntimeTurnResult,
   DreamuxLogger,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
@@ -17,8 +17,6 @@ import type {
   CompletionRouter,
 } from '../completion-router/index.js';
 import { completionKey } from '../completion-router/index.js';
-import type { ChannelBindingStore } from '../channel-binding/store.js';
-import type { ChannelBinding } from '../channel-binding/store.js';
 import { cronMcpServerDescriptor } from '../scheduler/mcp-config.js';
 import { SchedulerService } from '../scheduler/service.js';
 import { CronJobStore } from '../scheduler/store.js';
@@ -30,11 +28,11 @@ import {
 } from '../teammate-collection/index.js';
 import type { TeamMateIdentityStore } from '../teammate-collection/identity-store.js';
 import { teammateMcpServerDescriptor } from '../teammate-collection/mcp-config.js';
+import { teamMcpServerDescriptor } from '../team-collection/mcp-config.js';
 import type { TeamMateTurnsStore } from '../teammate-collection/turns-store.js';
 import {
   requireLifecycleText,
   type TeamMateIdentity,
-  type TeamMateLaunchPolicy,
   type TeamMateRuntimeStatus,
   type TeamMateTurnResult,
 } from '../teammate-collection/types.js';
@@ -42,7 +40,6 @@ import { allocateConcreteName } from '../teammate-collection/name-allocator.js';
 import type { TeammateService } from '../teammate-service/index.js';
 import type { TeamStore } from '../team-collection/store.js';
 import type {
-  TeamChannelBindingSummary,
   TeamDissolveInput,
   TeamRecord,
   TeamSummary,
@@ -50,18 +47,6 @@ import type {
 } from '../team-collection/types.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 import { createTeamLeaderAgent } from './leader-agent.js';
-
-/**
- * The narrow dispatcher seam a {@link TeamService} needs for channel-bound
- * operations, kept as an interface so the Team layer never imports the whole
- * `DispatcherService` (breaks the construction cycle). `DispatcherService`
- * implements it.
- */
-export interface TeamChannelContext {
-  resolveChannelId(requested?: string): string;
-  channelProviderRef(channelId: string): string;
-  resolveChannelTarget(meta: unknown, channelId?: string): Promise<ChannelTarget>;
-}
 
 export interface TeamServiceDeps {
   dispatcherId: string;
@@ -81,7 +66,6 @@ export interface TeamServiceDeps {
     leaderName: string;
   }) => readonly AgentRuntimeMcpServer[];
   store: TeamStore;
-  bindings: ChannelBindingStore;
   evict: () => void;
   log: DreamuxLogger;
 }
@@ -108,10 +92,9 @@ export interface TeamServiceCreateOutput {
  * A single team entity (issue #233): holds its own {@link TeamRecord}, *has a*
  * leader {@link TeammateService} (Phase 4, at the team root), and OWNS its
  * members' team-scoped {@link TeammateCollection}. It exposes the per-team
- * domain ops (`status` / `dissolve` / `bindChannel` / `deliverToLeader` /
- * `sharedWorkspace`) and forwards admin `team_leader` target calls to its own
+ * domain ops (`status` / `dissolve` / `deliverToLeader` / `sharedWorkspace`)
+ * and forwards admin `team_leader` target calls to its own
  * collection (no team id — scope is baked in); the leader is never a member row.
- * Channel-bound ops run through an injected {@link TeamChannelContext}.
  */
 export class TeamService {
   private record: TeamRecord | null = null;
@@ -275,7 +258,6 @@ export class TeamService {
       team: this.view(),
       leader: this.leader.status(),
       member_count: await this.memberCount(),
-      binding: await this.activeGroupBinding(),
     };
   }
 
@@ -283,15 +265,6 @@ export class TeamService {
     requireLifecycleText(input.note, 'Team dissolve note');
     this.scheduler.stop();
     const record = this.mustRecord();
-    for (const binding of await this.deps.bindings.list(this.dispatcherId)) {
-      if (binding.active && binding.team_name === this.id) {
-        await this.deps.bindings.transferBack({
-          dispatcherId: this.dispatcherId,
-          channelId: binding.channel_id,
-          targetKey: binding.target_key,
-        });
-      }
-    }
     const members = await this.members();
     for (const member of members) {
       await this.teammateCollection.close({
@@ -335,46 +308,9 @@ export class TeamService {
     await this.stopLeader();
   }
 
-  async bindChannel(
-    context: TeamChannelContext,
-    input: { channelId?: string; meta: Record<string, unknown> },
-  ): Promise<ChannelBinding> {
-    const record = this.mustRecord();
-    if (record.status === 'closed') {
-      throw new Error(`Team ${JSON.stringify(this.id)} is closed`);
-    }
-    const channelId = context.resolveChannelId(input.channelId);
-    const target = await context.resolveChannelTarget(input.meta, channelId);
-    return this.deps.bindings.bind({
-      dispatcherId: this.dispatcherId,
-      channelId,
-      provider: context.channelProviderRef(channelId),
-      target,
-      teamName: this.id,
-      leaderName: record.leader_name,
-    });
-  }
-
-  async resolveLeaderChannel(input: {
-    leaderName: string;
-    targetKey: string;
-  }): Promise<string | null> {
-    const bindings = await this.deps.bindings.list(this.dispatcherId);
-    const match = bindings.find(
-      (binding) =>
-        binding.active &&
-        binding.target_key === input.targetKey &&
-        binding.team_name === this.id &&
-        binding.leader_name === input.leaderName,
-    );
-    if (match === undefined) return null;
-    if (this.mustRecord().status === 'closed') return null;
-    return match.channel_id;
-  }
-
   async deliverToLeader(
     turn: InboundTurnInput,
-  ): Promise<import('@excitedjs/dreamux-types').AgentRuntimeTurnResult> {
+  ): Promise<AgentRuntimeTurnResult> {
     if (this.mustRecord().status === 'closed') return { status: 'stopped' };
     return this.leader.channelInput(turn);
   }
@@ -408,13 +344,6 @@ export class TeamService {
     return this.teammateCollection.list(); // members-only; leader is `this.leader`
   }
 
-  private async activeGroupBinding(): Promise<TeamChannelBindingSummary | null> {
-    return activeGroupBindingFor(
-      await this.deps.bindings.list(this.dispatcherId),
-      this.id,
-    );
-  }
-
   private async allocateLeaderName(): Promise<string> {
     const taken = await this.deps.identities.listAllNames(this.deps.dispatcherId);
     return allocateConcreteName({
@@ -425,42 +354,39 @@ export class TeamService {
     });
   }
 
-  /** The team leader's launch policy, owned here because team_leader is a team
-   * concept: the leader's MCP servers (its team's teammate MCP + cron MCP + its
-   * channel-egress descriptors) plus the native features its runtime disables
-   * (cron — it drives Dreamux's cron MCP instead). The team supplies this only
-   * where it structurally builds the leader; team members are built with no
-   * policy and get none, so nothing branches on `identity.role` to decide
-   * capability. The dispatcher only injects the primitives (admin socket,
-   * channel descriptors); it does not decide what a team_leader gets. */
-  private leaderLaunchPolicy(leaderName: string): TeamMateLaunchPolicy {
-    return {
-      mcpServers: [
-        teammateMcpServerDescriptor({
-          dispatcherId: this.deps.dispatcherId,
-          callerKind: 'team_leader',
-          teamId: this.id,
-          adminSocketPath: this.deps.adminSocketPath,
-        }),
-        cronMcpServerDescriptor({
-          dispatcherId: this.deps.dispatcherId,
-          teamId: this.id,
-          adminSocketPath: this.deps.adminSocketPath,
-        }),
-        ...this.deps.leaderChannelDescriptors({
-          teamId: this.id,
-          leaderName,
-        }),
-      ],
-      disableFeatures: [DISABLE_FEATURE_CRON],
-    };
+  private leaderMcpServers(leaderName: string): readonly AgentRuntimeMcpServer[] {
+    return [
+      teammateMcpServerDescriptor({
+        dispatcherId: this.deps.dispatcherId,
+        callerKind: 'team_leader',
+        teamId: this.id,
+        adminSocketPath: this.deps.adminSocketPath,
+      }),
+      cronMcpServerDescriptor({
+        dispatcherId: this.deps.dispatcherId,
+        teamId: this.id,
+        adminSocketPath: this.deps.adminSocketPath,
+      }),
+      teamMcpServerDescriptor({
+        dispatcherId: this.deps.dispatcherId,
+        callerKind: 'team_leader',
+        teamId: this.id,
+        leaderName,
+        adminSocketPath: this.deps.adminSocketPath,
+      }),
+      ...this.deps.leaderChannelDescriptors({
+        teamId: this.id,
+        leaderName,
+      }),
+    ];
   }
 
   private buildLeader(identity: TeamMateIdentity): TeammateService {
     return createTeamLeaderAgent({
       dispatcherId: this.deps.dispatcherId,
       identity,
-      launchPolicy: this.leaderLaunchPolicy(identity.name),
+      mcpServers: this.leaderMcpServers(identity.name),
+      disableFeatures: [DISABLE_FEATURE_CRON],
       config: this.deps.config,
       agentRuntimeProviders: this.deps.agentRuntimeProviders,
       identities: this.deps.identities,
@@ -527,23 +453,7 @@ export class TeamService {
     }
     return this.leader_;
   }
-}
 
-/** Shared team view helpers (issue #233): used by both {@link TeamService} and
- * the {@link TeamCollection} list/history/create paths. */
-export function activeGroupBindingFor(
-  bindings: readonly ChannelBinding[],
-  teamId: string,
-): TeamChannelBindingSummary | null {
-  const active = bindings.find(
-    (binding) => binding.active && binding.team_name === teamId,
-  );
-  if (active === undefined) return null;
-  const chatId = active.meta['chat_id'];
-  return {
-    provider: active.provider,
-    chat_id: typeof chatId === 'string' ? chatId : active.target_key,
-  };
 }
 
 export function teamView(team: TeamRecord): TeamView {

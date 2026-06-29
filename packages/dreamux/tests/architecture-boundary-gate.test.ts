@@ -278,6 +278,50 @@ describe('architecture neutrality lint gate (issue #209)', () => {
     expect(ruleIds(results)).toContain('no-restricted-syntax');
   });
 
+  it('flags service submodules re-exporting another module', async () => {
+    const results = await lint(
+      CORE_ROOT,
+      'src/service/dispatcher-service/errors.ts',
+      [
+        "export { ChannelToolAuthorizationError } from '../channel-service/errors.js';",
+        '',
+      ].join('\n'),
+    );
+    expect(ruleIds(results)).toContain('no-restricted-syntax');
+    expect(results[0]?.errorCount ?? 0).toBeGreaterThan(0);
+  });
+
+  it('lets the service entrypoint re-export intentional service facades', async () => {
+    const results = await lint(
+      CORE_ROOT,
+      'src/service/index.ts',
+      [
+        "export { DispatcherService } from './dispatcher-service/index.js';",
+        "export { ChannelToolAuthorizationError } from './channel-service/errors.js';",
+        '',
+      ].join('\n'),
+    );
+    expect(ruleIds(results)).not.toContain('no-restricted-syntax');
+  });
+
+  it('preserves the shared sync-destructure backstop on service submodules', async () => {
+    const results = await lint(
+      CORE_ROOT,
+      'src/service/channel-service/__fixture__.ts',
+      [
+        'export function load(p: string): string {',
+        '  const fs = globalThis as unknown as {',
+        '    readFileSync(path: string): string;',
+        '  };',
+        '  const { readFileSync: read } = fs;',
+        '  return read(p);',
+        '}',
+        '',
+      ].join('\n'),
+    );
+    expect(ruleIds(results)).toContain('no-restricted-syntax');
+  });
+
   it('keeps core service/server code from reading provider-specific fields', async () => {
     const hits = await findCoreProviderFieldMemberAccessHits();
     if (hits.length > 0) {

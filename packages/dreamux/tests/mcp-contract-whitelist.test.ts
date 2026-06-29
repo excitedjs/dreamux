@@ -96,6 +96,29 @@ async function teamTools(): Promise<Array<Record<string, unknown>>> {
   return response.result.tools;
 }
 
+async function teamLeaderTeamTools(): Promise<Array<Record<string, unknown>>> {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const reader = new JsonLineReader(output);
+  const run = runTeamMcp({
+    dispatcherId: 'dispatcher-a',
+    callerKind: 'team_leader',
+    teamId: 'alpha',
+    leaderName: 'alpha-leader',
+    adminSocketPath: '/tmp/not-used.sock',
+    input,
+    output,
+    log: () => {},
+  });
+  input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' })}\n`);
+  const response = (await reader.next()) as {
+    result: { tools: Array<Record<string, unknown>> };
+  };
+  input.end();
+  await run;
+  return response.result.tools;
+}
+
 function schemaOf(tools: Array<Record<string, unknown>>, name: string): ToolSchema {
   const entry = tools.find((tool) => tool['name'] === name);
   if (entry === undefined) throw new Error(`tool '${name}' not found`);
@@ -193,6 +216,15 @@ describe('issue #199 Slice 1 — public MCP contract whitelist', () => {
     const names = (await teamTools()).map((tool) => tool['name']);
     expect(names).not.toContain('bind_group');
     expect(names).not.toContain('transfer_channel_back');
+  });
+
+  it('TeamLeader Team MCP exposes only explicit transfer_back', async () => {
+    const tools = await teamLeaderTeamTools();
+    expect(tools.map((tool) => tool['name'])).toEqual(['transfer_back']);
+    const transfer = schemaOf(tools, 'transfer_back');
+    expect(transfer.required).toEqual(['meta']);
+    expect(transfer.properties).toHaveProperty('channel_id');
+    expect(transfer.properties).toHaveProperty('meta');
   });
 
   it('team.history params are exactly the trimmed recovery set', async () => {

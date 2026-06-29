@@ -4,18 +4,16 @@ import { writeFileAtomic } from './atomic-write.js';
 import { isNotFound } from './fs-errors.js';
 import { LegacyStateError } from '../service/legacy-state.js';
 
-export type JsonDocumentCorruptPolicy = 'fail-loud' | 'warn-rebuild';
-
 export interface JsonDocumentStoreOptions<TDoc> {
   version: number;
   parse(raw: unknown, ctx: { path: string }): TDoc;
   empty(): TDoc;
-  corruptPolicy?: JsonDocumentCorruptPolicy;
+  corruptPolicy?: 'fail-loud' | 'warn-rebuild';
   warn?: (message: string) => void;
 }
 
 export class JsonDocumentStore<TDoc> {
-  private readonly corruptPolicy: JsonDocumentCorruptPolicy;
+  private readonly corruptPolicy: 'fail-loud' | 'warn-rebuild';
 
   constructor(private readonly opts: JsonDocumentStoreOptions<TDoc>) {
     this.corruptPolicy = opts.corruptPolicy ?? 'fail-loud';

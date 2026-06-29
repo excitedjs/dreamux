@@ -17,12 +17,10 @@ import type {
 } from '../completion-router/index.js';
 import { requireLifecycleText } from '../teammate-collection/types.js';
 import type { TeamMateIdentity } from '../teammate-collection/types.js';
-import type { ChannelBindingStore } from '../channel-binding/store.js';
-import type { ChannelBinding } from '../channel-binding/store.js';
 import type { SchedulerService } from '../scheduler/service.js';
+import type { ChannelRouteOwner } from '../channel-service/index.js';
 import { TeamStore } from './store.js';
 import type {
-  TeamChannelBindingSummary,
   TeamCreateInput,
   TeamCreateResult,
   TeamHistoryQuery,
@@ -30,15 +28,10 @@ import type {
   TeamHistoryRow,
   TeamListRow,
   TeamRecord,
-  TeamTransferChannelBackInput,
 } from './types.js';
 import { validateTeamId } from './types.js';
 import type { TeamMateIdentityStatus } from '../teammate-collection/types.js';
-import {
-  activeGroupBindingFor,
-  TeamService,
-  type TeamServiceDeps,
-} from '../team-service/index.js';
+import { TeamService, type TeamServiceDeps } from '../team-service/index.js';
 
 export interface TeamCollectionOptions {
   /** The dispatcher this collection belongs to (issue #233 ownership sinking). */
@@ -46,7 +39,6 @@ export interface TeamCollectionOptions {
   config: DreamuxConfig;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   worktrees: WorktreeManager;
-  bindings: ChannelBindingStore;
   /**
    * The dispatcher's identity + turns store pair (issue #233 R4). Supplied by
    * `DispatcherService` (the same pair the dispatcher agent + dispatcher-scope
@@ -79,9 +71,8 @@ export interface TeamCollectionOptions {
 
 /**
  * The dispatcher's team collection (issue #233): one per dispatcher, owned by
- * `DispatcherService`. Owns the team store + the per-dispatcher binding store /
- * worktree manager; exposes `create` / `list` / `history` + pre-team channel
- * resolution. `get(teamId)` is a get-or-rebuild factory (like `Dispatchers.get`
+ * `DispatcherService`. Owns the team store + worktree manager; exposes
+ * `create` / `list` / `history` and open-Team route-owner facts. `get(teamId)` is a get-or-rebuild factory (like `Dispatchers.get`
  * / `TeammateCollection.entityFor`): cached live {@link TeamService} if any, else
  * rebuilt from the persisted {@link TeamRecord} and cached. Each `TeamService`
  * OWNS its per-team {@link TeammateCollection} (`teamScope: team_id`) built from
@@ -92,7 +83,6 @@ export class TeamCollection {
   private readonly dispatcherId: string;
   private readonly store = new TeamStore();
   private readonly worktrees: WorktreeManager;
-  private readonly bindings: ChannelBindingStore;
   /** Live {@link TeamService} cache keyed by team id (issue #233 factory). */
   private readonly cache = new Map<string, TeamService>();
   /** In-flight `create` per team id (concurrent same-id creates share one). */
@@ -104,7 +94,6 @@ export class TeamCollection {
   constructor(private readonly opts: TeamCollectionOptions) {
     this.dispatcherId = opts.dispatcherId;
     this.worktrees = opts.worktrees;
-    this.bindings = opts.bindings;
   }
 
   async create(input: TeamCreateInput): Promise<TeamCreateResult> {
@@ -157,7 +146,6 @@ export class TeamCollection {
       team: service.view(),
       leader: leaderResult.teammate,
       member_count: await service.memberCount(),
-      binding: null,
       turn: leaderResult.turn,
     };
   }
@@ -165,11 +153,15 @@ export class TeamCollection {
   async list(): Promise<TeamListRow[]> {
     const teams = await this.store.list(this.dispatcherId);
     const out: TeamListRow[] = [];
-    for (const team of teams) out.push(await this.listRow(team));
+    for (const team of teams) {
+      out.push(await this.listRow(team));
+    }
     return out;
   }
 
-  async history(input: TeamHistoryQuery): Promise<TeamHistoryResult> {
+  async history(
+    input: TeamHistoryQuery,
+  ): Promise<TeamHistoryResult> {
     const teams = await this.store.list(this.dispatcherId);
     const rows: TeamHistoryRow[] = [];
     for (const team of teams) {
@@ -202,29 +194,18 @@ export class TeamCollection {
     );
   }
 
-  async resolveChannel(input: {
-    channelId: string;
-    targetKey: string;
-  }): Promise<ChannelBinding | null> {
-    const binding = await this.bindings.resolve({
-      dispatcherId: this.dispatcherId,
-      channelId: input.channelId,
-      targetKey: input.targetKey,
-    });
-    if (binding === null) return null;
-    const team = await this.store.get(this.dispatcherId, binding.team_name);
-    if (team === null || team.status === 'closed') return null;
-    return binding;
+  async requireOpenTeamRouteOwner(teamId: string): Promise<ChannelRouteOwner> {
+    const team = await this.mustOpenTeam(teamId);
+    return {
+      kind: 'team',
+      teamName: team.team_id,
+      leaderName: team.leader_name,
+    };
   }
 
-  async transferChannelBack(
-    input: TeamTransferChannelBackInput,
-  ): Promise<ChannelBinding | null> {
-    return this.bindings.transferBack({
-      dispatcherId: this.dispatcherId,
-      channelId: input.channelId,
-      targetKey: input.targetKey,
-    });
+  async isOpenTeam(teamId: string): Promise<boolean> {
+    const team = await this.store.get(this.dispatcherId, validateTeamId(teamId));
+    return team !== null && team.status !== 'closed';
   }
 
   /** Rebuild a team's live service from its record and cache it (issue #233). */
@@ -249,7 +230,6 @@ export class TeamCollection {
       initiatorFor: this.opts.initiatorFor,
       isShuttingDown: this.opts.isShuttingDown,
       store: this.store,
-      bindings: this.bindings,
       adminSocketPath: this.opts.adminSocketPath,
       leaderChannelDescriptors: this.opts.leaderChannelDescriptors,
       log: this.opts.log,
@@ -265,7 +245,6 @@ export class TeamCollection {
       leader_name: team.leader_name,
       leader_state: await this.leaderState(team),
       member_count: await this.memberCount(team),
-      bound_group: await this.activeGroupBinding(team),
       created_at: team.created_at,
       updated_at: team.updated_at,
       closed_at: team.closed_at,
@@ -282,7 +261,6 @@ export class TeamCollection {
       leader_agent_runtime: team.leader_agent_runtime,
       leader_state: await this.leaderState(team),
       member_count: await this.memberCount(team),
-      bound_group: await this.activeGroupBinding(team),
       created_at: team.created_at,
       updated_at: team.updated_at,
       closed_at: team.closed_at,
@@ -307,15 +285,6 @@ export class TeamCollection {
       .get(this.dispatcherId, team.leader_name, team.team_id)
       .catch(() => null);
     return leader?.status ?? null;
-  }
-
-  private async activeGroupBinding(
-    team: TeamRecord,
-  ): Promise<TeamChannelBindingSummary | null> {
-    return activeGroupBindingFor(
-      await this.bindings.list(this.dispatcherId),
-      team.team_id,
-    );
   }
 
   private async memberCount(team: TeamRecord): Promise<number> {

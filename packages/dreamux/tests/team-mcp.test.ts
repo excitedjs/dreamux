@@ -110,6 +110,29 @@ async function toolSchemas(): Promise<Array<Record<string, unknown>>> {
   return response.result.tools;
 }
 
+async function teamLeaderToolSchemas(): Promise<Array<Record<string, unknown>>> {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const reader = new JsonLineReader(output);
+  const run = runTeamMcp({
+    dispatcherId: 'dispatcher-a',
+    callerKind: 'team_leader',
+    teamId: 'alpha',
+    leaderName: 'alpha-leader',
+    adminSocketPath: '/tmp/not-used.sock',
+    input,
+    output,
+    log: () => {},
+  });
+  writeJson(input, { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} });
+  const response = (await reader.next()) as {
+    result: { tools: Array<Record<string, unknown>> };
+  };
+  input.end();
+  await run;
+  return response.result.tools;
+}
+
 function schemaOf(
   tools: Array<Record<string, unknown>>,
   name: string,
@@ -295,6 +318,67 @@ describe('team-mcp stdio shim', () => {
       });
 
       expect(admin.requests).toEqual([]);
+      input.end();
+      await run;
+    } finally {
+      await admin.close();
+    }
+  });
+
+  it('projects Team MCP to TeamLeader transfer_back only and forwards caller scope', async () => {
+    const tools = await teamLeaderToolSchemas();
+    expect(tools.map((tool) => tool['name'])).toEqual(['transfer_back']);
+    expect(schemaOf(tools, 'transfer_back').required).toEqual(['meta']);
+
+    const admin = await startFakeAdminServer((request) => ({
+      id: request.id,
+      ok: true,
+      result: { transferred: true },
+    }));
+    try {
+      const input = new PassThrough();
+      const output = new PassThrough();
+      const reader = new JsonLineReader(output);
+      const run = runTeamMcp({
+        dispatcherId: 'dispatcher-a',
+        callerKind: 'team_leader',
+        teamId: 'alpha',
+        leaderName: 'alpha-leader',
+        adminSocketPath: admin.socketPath,
+        input,
+        output,
+        log: () => {},
+      });
+
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'transfer_back',
+          arguments: { meta: { chat_id: 'chat-demo' } },
+        },
+      });
+      await reader.next();
+
+      expect(admin.requests[0]?.method).toBe('mcp.team.transfer_back');
+      expect(admin.requests[0]?.params).toMatchObject({
+        caller_kind: 'team_leader',
+        team_id: 'alpha',
+        leader_name: 'alpha-leader',
+        meta: { chat_id: 'chat-demo' },
+      });
+
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/call',
+        params: { name: 'status', arguments: { team_name: 'alpha' } },
+      });
+      expect(await reader.next()).toMatchObject({
+        result: { isError: true },
+      });
+
       input.end();
       await run;
     } finally {

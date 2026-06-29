@@ -121,15 +121,17 @@ reopens closed agents, and read tools (`history`, `list`, `status`, `last`) do
 not start a runtime.
 
 Team lifecycle is addressed by `team_name`. Channel binding is a Team MCP
-capability:
+capability. The Team MCP is caller-scoped:
 
-- `bind_channel({ team_name, channel_id?, meta })`
-- `transfer_back({ channel_id?, meta })`
+- dispatchers see lifecycle/read tools plus
+  `bind_channel({ team_name, channel_id?, meta })` and
+  `transfer_back({ channel_id?, meta })`
+- TeamLeaders see only scoped `transfer_back({ channel_id?, meta })`
 
 `channel_id` defaults to the dispatcher's sole configured channel and is
 required only when the dispatcher has more than one configured channel.
 `meta` is provider-owned selector input, for example `{ "chat_id": "..." }` for
-a Feishu group chat.
+a Feishu group chat. `team.send` remains future work.
 
 Each `TeamService` directly builds and holds its TeamLeader `TeammateService`
 through `/packages/dreamux/src/service/team-service/leader-agent.ts`, using the
@@ -144,6 +146,7 @@ Key source:
 - `/packages/dreamux/src/service/teammate-collection/`
 - `/packages/dreamux/src/service/team-collection/`
 - `/packages/dreamux/src/service/team-service/`
+- `/packages/dreamux/src/service/channel-service/`
 - `/packages/dreamux/src/service/channel-binding/`
 - `/packages/dreamux/src/mcp/team-mcp.ts`
 

@@ -123,6 +123,10 @@ async function readServiceSource(relativeFile: string): Promise<string> {
   return readFile(join(SERVICE_ROOT, relativeFile), 'utf8');
 }
 
+async function readSource(relativeFile: string): Promise<string> {
+  return readFile(join(SRC_ROOT, relativeFile), 'utf8');
+}
+
 function assertContains(
   source: string,
   pattern: RegExp,
@@ -337,6 +341,66 @@ describe('architecture ownership gate (#233)', () => {
       /launch:\s*\{\s*kind:\s*'inline'\s*,\s*build:/,
       "T2 dispatcher factory invariant violated: createDispatcherAgent must use launch: { kind: 'inline', build: ... }.",
       'dispatcher-service/agent.ts',
+    );
+  });
+
+  it('keeps channel binding ownership and summary composition out of TeamService and TeamCollection', async () => {
+    const teamServiceFile = join(SERVICE_ROOT, 'team-service/index.ts');
+    const teamService = await readFile(teamServiceFile, 'utf8');
+    assertNoHits(
+      'Channel binding ownership invariant violated: TeamService must not import, access, or compose channel binding facts.',
+      hitsInSource(
+        teamServiceFile,
+        teamService,
+        /ChannelBindingStore|ChannelBindingSummary|TeamBindingSummaryResolver|bindingSummaryForOwner|bindChannel|resolveLeaderChannel|activeGroupBindingFor|\bbinding\s*:/,
+      ),
+    );
+
+    const teamCollectionFile = join(SERVICE_ROOT, 'team-collection/index.ts');
+    const teamCollection = await readFile(teamCollectionFile, 'utf8');
+    assertNoHits(
+      'Channel binding ownership invariant violated: TeamCollection must expose Team facts only, not binding-store access or binding summary composition.',
+      hitsInSource(
+        teamCollectionFile,
+        teamCollection,
+        /ChannelBindingStore|ChannelBindingSummary|TeamBindingSummaryResolver|bindingSummaryForOwner|bindings:\s|transferChannelBack|resolveChannel|\bbound_group\s*:|\bbinding\s*:/,
+      ),
+    );
+
+    assertNoHits(
+      'Channel binding ownership invariant violated: Team service directories must not import the binding store or define binding-summary resolver callbacks.',
+      (
+        await Promise.all(
+          ['team-service', 'team-collection'].map((dir) =>
+            findSourceHits(
+              join(SERVICE_ROOT, dir),
+              /from\s+['"][^'"]*channel-binding\/store\.js['"]|TeamBindingSummaryResolver|bindingSummaryForOwner/,
+            ),
+          ),
+        )
+      ).flat(),
+    );
+  });
+
+  it('keeps Team read binding summaries composed in admin methods', async () => {
+    const adminMethods = await readSource('admin/methods.ts');
+    assertContains(
+      adminMethods,
+      /'mcp\.team\.list'[\s\S]*bound_group:\s*await dispatcher\.activeTeamBindingSummary/,
+      'Team read composition invariant violated: mcp.team.list must add bound_group in admin/methods.ts.',
+      '../admin/methods.ts',
+    );
+    assertContains(
+      adminMethods,
+      /'mcp\.team\.status'[\s\S]*binding:\s*await dispatcher\.activeTeamBindingSummary/,
+      'Team read composition invariant violated: mcp.team.status must add binding in admin/methods.ts.',
+      '../admin/methods.ts',
+    );
+    assertContains(
+      adminMethods,
+      /'mcp\.team\.history'[\s\S]*bound_group:\s*await dispatcher\.activeTeamBindingSummary/,
+      'Team read composition invariant violated: mcp.team.history must add bound_group in admin/methods.ts.',
+      '../admin/methods.ts',
     );
   });
 });

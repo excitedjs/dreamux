@@ -1,13 +1,14 @@
-import type { CompletionEnvelope, DreamuxLogger } from '@excitedjs/dreamux-types';
+import type {
+  AgentRuntimeMcpServer,
+  CompletionEnvelope,
+  DreamuxLogger,
+} from '@excitedjs/dreamux-types';
 
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { TeamMateIdentityStore } from '../teammate-collection/identity-store.js';
 import type { TeamMateTurnsStore } from '../teammate-collection/turns-store.js';
-import type {
-  TeamMateIdentity,
-  TeamMateLaunchPolicy,
-} from '../teammate-collection/types.js';
+import type { TeamMateIdentity } from '../teammate-collection/types.js';
 import {
   createTeammateService,
 } from '../teammate-service/factory.js';
@@ -17,7 +18,8 @@ import type { WorktreeManager } from '../worktree/manager.js';
 export interface TeamLeaderAgentDeps {
   dispatcherId: string;
   identity: TeamMateIdentity;
-  launchPolicy: TeamMateLaunchPolicy;
+  mcpServers: readonly AgentRuntimeMcpServer[];
+  disableFeatures: readonly string[];
   config: DreamuxConfig;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   identities: TeamMateIdentityStore;
@@ -40,7 +42,10 @@ export function createTeamLeaderAgent(
     dispatcherId: deps.dispatcherId,
     identity: deps.identity,
     launch: { kind: 'agent-ref' },
-    options: { launchPolicy: deps.launchPolicy },
+    options: {
+      mcpServers: deps.mcpServers,
+      disableFeatures: deps.disableFeatures,
+    },
     config: deps.config,
     agentRuntimeProviders: deps.agentRuntimeProviders,
     identities: deps.identities,

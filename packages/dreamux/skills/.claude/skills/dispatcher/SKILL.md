@@ -78,8 +78,8 @@ the dispatcher turn end, then recover through `history` and `last`. (The former
 
 **Team lifecycle.**
 
-Dreamux also injects a dispatcher-scoped `team` MCP server for Team Mode
-lifecycle. It is addressed by **`team_name`** (the concrete key you create with),
+Dreamux also injects a caller-scoped `team` MCP server. Dispatchers receive
+Team Mode lifecycle tools. It is addressed by **`team_name`** (the concrete key you create with),
 mirroring the TeamMate concrete-name model. Team work still runs through agents;
 do not inspect the target repo directly from the dispatcher.
 
@@ -113,8 +113,7 @@ do not inspect the target repo directly from the dispatcher.
 ## Channel binding (team)
 
 Binding a channel to a Team/TeamLeader is a core Team capability, so these two
-tools live on the **same `team` MCP server** as the lifecycle tools above —
-there is no separate "channel" MCP. Binding state, routing, and authorization
+dispatcher binding tools live on the **same dispatcher `team` MCP server** as the lifecycle tools above, while TeamLeaders receive only scoped `transfer_back` on their own `team` MCP projection. There is no separate "channel" MCP. Binding state, routing, and authorization
 stay in Dreamux core. The old `team.bind_group` / `team.transfer_channel_back` /
 `team.create.bind_group` surfaces were removed without aliases.
 
@@ -130,7 +129,9 @@ is group-only and the channel infers it).
   chat_id: "<group chat id>" } })`. After binding, that group's inbound routes to
   the Team's TeamLeader.
 - `transfer_back({ channel_id?, meta })` — return a bound group to the
-  dispatcher, deactivating the Team binding. Example: `transfer_back({ meta: {
+  dispatcher, deactivating the Team binding. TeamLeaders also receive this
+  scoped tool, with the same explicit `meta` requirement and no list/status
+  access. Example: `transfer_back({ meta: {
   chat_id: "<group chat id>" } })`.
 
 Do not imply a group chat has been handed off unless a tool result explicitly

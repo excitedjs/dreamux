@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import type {
   AgentRuntime,
   AgentRuntimeCreateContext,
+  AgentRuntimeMcpServer,
   AgentRuntimeProvider,
   AgentRuntimeStateCallbacks,
   AgentRuntimeTurnResult,
@@ -42,7 +43,6 @@ import {
   type TeamMateCloseResult,
   type TeamMateIdentity,
   type TeamMateLastResult,
-  type TeamMateLaunchPolicy,
   type TeamMateRuntimeStatus,
   type TeamMateSendResult,
   type TeamMateTurnOrigin,
@@ -109,11 +109,8 @@ export interface TeammateServiceDeps {
 }
 
 export interface TeammateServiceOptions {
-  /**
-   * Role-granted launch additions for THIS entity, fixed at construction. The
-   * entity never re-derives this from `identity.role`.
-   */
-  launchPolicy?: TeamMateLaunchPolicy;
+  mcpServers?: readonly AgentRuntimeMcpServer[];
+  disableFeatures?: readonly string[];
 }
 
 /**
@@ -130,7 +127,8 @@ export class TeammateService {
   private runtime: AgentRuntime | null = null;
   private starting: Promise<void> | null = null;
   private state: TeamMateRuntimeStateStore;
-  private readonly launchPolicy: TeamMateLaunchPolicy;
+  private readonly mcpServers: readonly AgentRuntimeMcpServer[];
+  private readonly disableFeatures: readonly string[];
 
   constructor(
     private readonly deps: TeammateServiceDeps,
@@ -138,10 +136,8 @@ export class TeammateService {
     private identity: TeamMateIdentity,
     options: TeammateServiceOptions = {},
   ) {
-    this.launchPolicy = options.launchPolicy ?? {
-      mcpServers: [],
-      disableFeatures: [],
-    };
+    this.mcpServers = options.mcpServers ?? [];
+    this.disableFeatures = options.disableFeatures ?? [];
     this.state = new TeamMateRuntimeStateStore(deps.identities, identity);
   }
 
@@ -419,7 +415,6 @@ export class TeammateService {
     );
     const provider = this.deps.agentRuntimeProviders.resolve(agent.provider);
     const runtimeName = runtimeIdentityName(identity);
-    const launchPolicy = this.launchPolicy;
     return {
       provider,
       checkpointId: identity.session_id,
@@ -432,10 +427,10 @@ export class TeammateService {
         config: agent.config,
         cwd: identity.cwd,
         skillSources: bundledSkillSourcesForRole(identity.role),
-        disableFeatures: launchPolicy.disableFeatures,
+        disableFeatures: this.disableFeatures,
         state: this.state,
         paths: teammateHostPaths(identity.dispatcher_id, runtimeName),
-        mcpServers: [...launchPolicy.mcpServers],
+        mcpServers: [...this.mcpServers],
         logger:
           this.deps.log.child?.({
             dispatcher_id: this.dispatcherId,
