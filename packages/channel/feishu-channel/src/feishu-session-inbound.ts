@@ -5,7 +5,7 @@
  * Owns the full onMessage flow: introduce/trusted-bot injection, the
  * two-lock access gate (LOCK-1 gate compute + LOCK-2 pair merge after send),
  * and the submitTurn delivery path. Primitive operations (reply/reaction
- * ledger, approve-by-code, introduce ack) live in `feishu-session-ops.ts`.
+ * ledger, token approval, introduce ack) live in `feishu-session-ops.ts`.
  */
 
 import { isBotMentioned, isBotSenderType } from '@excitedjs/feishu-transport';
@@ -30,17 +30,20 @@ import {
 } from './introduce.js';
 import {
   PAIRING_TTL_MS,
+  PAIRING_TOKEN_REGEX,
   dreamuxFeishuGate,
   loadDispatcherAccess,
-  renderPairingPrompt,
   saveDispatcherAccess,
   type GateInbound,
   type PendingPairingEntry,
 } from './feishu-gate.js';
+import { buildPairingApprovalCard } from './feishu-pairing-card.js';
 import { BUILTIN_FEISHU_PROVIDER_REF } from './provider-ref.js';
 import {
   CHANNEL_REMINDER,
+  clearInboundReaction,
   sendIntroduceAck,
+  sendCard,
   sendReply,
   setInboundReaction,
   type SessionHandle,
@@ -53,6 +56,10 @@ import {
 } from './feishu-channel.js';
 
 const log = (h: SessionHandle) => h.opts.log;
+
+function pairingTokenLogFields(token: string): Record<string, unknown> {
+  return { pairing_token_len: PAIRING_TOKEN_REGEX.test(token) ? 6 : token.length };
+}
 
 export async function onMessage(
   h: SessionHandle,
@@ -166,25 +173,73 @@ export async function onMessage(
   }
 
   if (action.action === 'pair') {
-    const text = renderPairingPrompt(
-      action.kind,
-      action.code,
-      action.is_resend,
-      h.botDisplayName,
-    );
+    if (action.is_resend && action.prompt_message_id !== undefined) {
+      try {
+        await sendReply(h, {
+          chatId: inbound.chat_id,
+          text:
+            '已有授权卡，请点击已发出的授权卡完成授权。\n' +
+            'An approval card already exists. Please use the existing card to authorize access.',
+          messageId: action.prompt_message_id,
+          mentionUserIds: [inbound.sender_id],
+        });
+        if (event.messageId !== '' && event.messageId !== action.prompt_message_id) {
+          await clearInboundReaction(h, event.messageId);
+        }
+      } catch (err) {
+        log(h).error(
+          {
+            err: err instanceof Error
+              ? { message: err.message, stack: err.stack }
+              : { message: String(err) },
+            ...pairingTokenLogFields(action.token),
+            prompt_message_id: action.prompt_message_id,
+            kind: action.kind,
+            chat_id: inbound.chat_id,
+          },
+          '[feishu-pair] failed to reference existing pairing prompt',
+        );
+        return;
+      }
+      await h.accessMutex.lock(async () => {
+        const latest = await loadDispatcherAccess(h.opts.stateDir);
+        const existing = latest.pending[action.token];
+        if (existing === undefined) return;
+        await saveDispatcherAccess(h.opts.stateDir, {
+          ...latest,
+          pending: {
+            ...latest.pending,
+            [action.token]: {
+              ...existing,
+              expires_at: Date.now() + PAIRING_TTL_MS,
+              prompt_message_id: existing.prompt_message_id ?? action.prompt_message_id,
+            },
+          },
+        });
+      });
+      return;
+    }
+
+    const card = buildPairingApprovalCard({
+      token: action.token,
+      botDisplayName: h.botDisplayName,
+      requesterOpenId: inbound.sender_id,
+    });
+    let sentCardMessageId: string | undefined;
     try {
-      await sendReply(h, {
+      const sendResult = await sendCard(h, {
         chatId: inbound.chat_id,
-        text,
+        card,
         ...(event.messageId !== '' ? { messageId: event.messageId } : {}),
       });
+      sentCardMessageId = sendResult.messageIds[0];
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       const stack = err instanceof Error ? err.stack : undefined;
       log(h).error(
         {
           err: { message, stack },
-          code: action.code,
+          ...pairingTokenLogFields(action.token),
           kind: action.kind,
           chat_id: inbound.chat_id,
         },
@@ -205,14 +260,32 @@ export async function onMessage(
       ) {
         return;
       }
-      // Another same-key pending entry exists? Don't clobber.
+      // Another same-key pending entry exists? For a resend from an older
+      // entry without a prompt message id, attach the newly-sent card id and
+      // refresh the TTL. Otherwise do not clobber a concurrent sender's
+      // already-recorded token.
       const existingKey = Object.entries(latest.pending).find(([, e]) => {
         if (action.kind === 'dm') {
           return e.kind === 'dm' && e.sender_id === inbound.sender_id;
         }
         return e.kind === 'group' && e.chat_id === inbound.chat_id;
       });
-      if (existingKey !== undefined) return;
+      if (existingKey !== undefined) {
+        if (!action.is_resend) return;
+        const [token, existing] = existingKey;
+        const bumped: PendingPairingEntry = {
+          ...existing,
+          expires_at: Date.now() + PAIRING_TTL_MS,
+          ...(existing.prompt_message_id !== undefined || sentCardMessageId !== undefined
+            ? { prompt_message_id: existing.prompt_message_id ?? sentCardMessageId }
+            : {}),
+        };
+        await saveDispatcherAccess(h.opts.stateDir, {
+          ...latest,
+          pending: { ...latest.pending, [token]: bumped },
+        });
+        return;
+      }
       // Merge with fresh TTL (send succeeded right now).
       const entry: PendingPairingEntry = {
         kind: action.kind,
@@ -220,11 +293,14 @@ export async function onMessage(
         chat_id: inbound.chat_id,
         created_at: Date.now(),
         expires_at: Date.now() + PAIRING_TTL_MS,
-        replies: action.is_resend ? 2 : 1,
+        replies: 1,
+        ...(sentCardMessageId !== undefined
+          ? { prompt_message_id: sentCardMessageId }
+          : {}),
       };
       const merged = {
         ...latest,
-        pending: { ...latest.pending, [action.code]: entry },
+        pending: { ...latest.pending, [action.token]: entry },
       };
       await saveDispatcherAccess(h.opts.stateDir, merged);
     });

@@ -52,7 +52,18 @@ export {
   type FakeFeishuBot,
   type CreateBotOptions,
   type FeishuInboundEvent,
+  type FeishuCardActionEvent,
 } from './bot.js';
+
+export {
+  DREAMUX_ACTION_KEY,
+  DREAMUX_PAIRING_CARD_ACTION,
+  DREAMUX_PAIRING_TOKEN_KEY,
+  buildPairingApprovalCard,
+  buildPairingSuccessCard,
+  rawCardActionResponse,
+  type FeishuCardActionResponse,
+} from './feishu-pairing-card.js';
 
 export {
   listChatBots,

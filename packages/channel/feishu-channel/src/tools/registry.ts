@@ -20,7 +20,7 @@ import { toWireChatBot } from '../feishu-channel.js';
 /** Logger shape used by the Feishu channel session — pino-style, fields-first. */
 export type ChannelLogger = DreamuxLogger;
 
-export type FeishuToolName = 'reply' | 'react' | 'list_chat_bots' | 'access';
+export type FeishuToolName = 'reply' | 'react' | 'list_chat_bots';
 
 export interface FeishuToolResultEnvelope {
   status: 'ok' | 'not_found' | 'error';
@@ -55,8 +55,6 @@ export interface FeishuToolContext {
     react: (chatId: string | undefined, messageId: string, emoji: string) => Promise<{ reaction_id: string }>;
     /** List the peer bots observed in a given chat (names + open_ids). */
     listKnownChatBots: (chatId: string) => Promise<FeishuMcpListChatBotsResultInternal>;
-    /** P3 stub: approve a pairing code presented by an operator. */
-    approvePairingByCode?: (code: string) => Promise<FeishuToolResultEnvelope>;
   };
 }
 
@@ -257,58 +255,6 @@ const listChatBotsDef: FeishuToolDef<ListChatBotsInput> = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────
-// access (P3 stub)
-// ─────────────────────────────────────────────────────────────────────────
-
-interface AccessInput {
-  code: string;
-}
-
-const accessInputSchema = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    code: {
-      type: 'string',
-      description: '6-hex pairing code presented by the operator to approve pairing.',
-      pattern: '^[0-9a-fA-F]{6}$',
-      minLength: 6,
-      maxLength: 6,
-    },
-  },
-  required: ['code'],
-};
-
-const ACCESS_CODE_RE = /^[0-9a-fA-F]{6}$/;
-
-function parseAccessInput(raw: unknown): AccessInput {
-  const obj = asRecord(raw, 'access arguments');
-  const code = requireString(obj, 'code');
-  if (!ACCESS_CODE_RE.test(code)) {
-    throw new Error('code must be a 6-character hex string');
-  }
-  return { code };
-}
-
-const accessDef: FeishuToolDef<AccessInput> = {
-  name: 'access',
-  description:
-    'Approve a pending pairing by its 6-hex pairing code. Adds the DM sender or group chat to the dispatcher allowlists. Idempotent on membership.',
-  inputSchema: accessInputSchema,
-  parse: parseAccessInput,
-  async handle(ctx, input) {
-    if (ctx.session.approvePairingByCode === undefined) {
-      return {
-        status: 'error',
-        message: 'approvePairingByCode not wired',
-        details: { code: input.code },
-      };
-    }
-    return ctx.session.approvePairingByCode(input.code);
-  },
-};
-
-// ─────────────────────────────────────────────────────────────────────────
 // Catalog
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -316,7 +262,6 @@ export const FEISHU_TOOLS: FeishuToolDef[] = [
   replyDef,
   reactDef,
   listChatBotsDef,
-  accessDef,
 ];
 
 /** Project `FEISHU_TOOLS` into the `{name, description, inputSchema}` shape `tools/list` returns. */

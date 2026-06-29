@@ -54,6 +54,59 @@ never on `@excitedjs/dreamux` core.
 - Do not make download failure look like success. If no local readable file
   exists, omit `path`, keep the key when available, and include a short reason.
 
+## Owner-Only Pairing Approval Card
+
+The Feishu pairing flow is an interactive-card approval flow, not a
+model-visible approval tool.
+
+Requirements:
+
+- When an untrusted sender reaches a `pairing` gate path, send an interactive
+  approval card. Do not send or expose a pairing code in user-visible text.
+- The card must carry the opaque pairing token only in the button value under
+  `dreamux_pairing_token`. The token must not appear in card text, toast text,
+  specs, fixtures, or logs committed to the repo.
+- The Feishu MCP surface must not include an `access` tool. Keep approval out
+  of the agent/model tool list; the channel MCP tools are `reply`, `react`, and
+  `list_chat_bots`.
+- Only the Feishu App Owner may approve. Resolve owner identity through the
+  transport-owned Feishu application API wrapper, then compare the click
+  operator's open_id with the creator/owner open_id values returned there.
+- Non-Owner clicks must return a toast only:
+  `只有 App Owner 才有权限点击批准授权`. They must not mutate `access.json` or
+  update the card.
+- Owner clicks approve the hidden token under the access mutex. Approval adds
+  the pending requester to `allow_users` and removes the pending entry.
+- A successful click must respond through the official card callback ACK shape:
+  `{ toast, card: { type: "raw", data: <green success card> } }`. Do not use
+  ordinary `im.v1.messages.patch` from the click handler, and do not return a
+  bare `{ card: <raw card> }` wrapper.
+- The success card must be green, must not contain the token, and must not
+  expose raw Feishu ids.
+- Visible card copy must use Feishu card i18n fields so the client displays a
+  single language. Default copy is Simplified Chinese; `en_us` carries the
+  English copy. Do not concatenate both languages into one visible string.
+- The approval card must @-mention the requester with the Feishu card
+  Markdown `<at id="open_id"></at>` form so the Owner can see who requested
+  access.
+
+Design constraints:
+
+- `allow_users` remains the source of truth for ordinary message delivery.
+  App Owner identity is checked only in the card action handler; it is not an
+  implicit gate bypass. If `allow_users` is empty, an Owner message still
+  triggers pairing under the normal `dm_policy` / `group.policy` rules, then
+  the Owner can approve the generated card.
+- Keep card rendering in `feishu-pairing-card.ts`, gate state transitions in
+  `feishu-gate.ts`, and IO/mutation orchestration in `feishu-session-ops.ts`.
+  Transport code owns only thin Feishu SDK wrappers such as card send and owner
+  lookup. Bot display names come from the transport's runtime bot info
+  (`/open-apis/bot/v3/info` `app_name`); if missing, the channel falls back to
+  the neutral `Dreamux bot` label.
+- Any change to this flow must update `feishu-pairing-card.test.ts`,
+  `feishu-mcp-tools.test.ts`, the transport tests for new SDK wrappers, and the
+  `.agents` pairing-access spec/decision docs when the contract changes.
+
 ## Attachment Message Contract
 
 Keep the core attachment block short and stable:

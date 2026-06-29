@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import {
   defaultDispatcherAccessState,
   dreamuxFeishuGate,
+  generatePairingToken,
   type DispatcherAccessState,
 } from '../src/feishu-gate.js';
 import {
@@ -355,18 +356,18 @@ describe('gate vs introduce parity — C3 semantic rewrite removes all intention
 // This case is NOT covered by the general parity table above because it uses
 // a sender who is in the pending list but not in any allowlist.
 describe('introduce rejects senders whose only trust is a pending pairing entry', () => {
-  const PENDING_CODE = 'abcd12';
   function pendingOnlyState(policy: 'block' | 'follow-user' | 'allowlist') {
+    const pendingToken = generatePairingToken();
     const s = state({
       allow_users: [],
       group: { policy, allow_chats: [] },
     });
     // Inject a fresh pending slot for sender=user-p / chat=chat-p as if the
-    // gate had just handed them a pairing code.
+    // gate had just handed them a pairing token.
     return {
       ...s,
       pending: {
-        [PENDING_CODE]: {
+        [pendingToken]: {
           kind: 'dm' as const,
           sender_id: 'user-p',
           chat_id: 'chat-p',
@@ -389,7 +390,7 @@ describe('introduce rejects senders whose only trust is a pending pairing entry'
         expect(reason).not.toBe(null);
         // Paranoia check: the pending entry actually exists so this test isn't
         // passing trivially.
-        expect(s.pending[PENDING_CODE]).toBeDefined();
+        expect(Object.keys(s.pending)).toHaveLength(1);
       });
     }
   }

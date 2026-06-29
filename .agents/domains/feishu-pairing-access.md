@@ -1,4 +1,4 @@
-# Feishu pairing-code access flow
+# Feishu pairing-token access flow
 
 - **Status:** Production ready. Decision record:
   [/.agents/decisions/feishu-pairing-access-v3.md](../decisions/feishu-pairing-access-v3.md).
@@ -6,7 +6,7 @@
   [Feishu introduce](feishu-introduce.md).
 - **Affects:** `/packages/channel/feishu-channel/src/feishu-gate.ts`
   (v3 schema, gate result, pending bookkeeping, prune, mutations,
-  pairing-code generator),
+  pairing-token generator),
   `/packages/channel/feishu-channel/src/feishu-gate-io.ts`
   (load/save, pairing-prompt rendering, default state factory),
   `/packages/channel/feishu-channel/src/feishu-session-inbound.ts`
@@ -14,7 +14,7 @@
   class-side thin wrapper lives in
   `/packages/channel/feishu-channel/src/feishu-channel.ts`),
   `/packages/channel/feishu-channel/src/tools/registry.ts`
-  (new `access` tool definition + handler;
+  (MCP tools remain `reply`, `react`, `list_chat_bots`;
   `src/feishu-mcp-tools.ts` is a backward-compatible re-export shim),
   `/packages/channel/feishu-channel/src/provider.ts`
   (provider session builder, unchanged),
@@ -99,7 +99,7 @@ body template.
 Only `@excitedjs/feishu-channel` reads and writes
 `access.json` / `chat-bots.json`. The pairing feature is therefore
 implemented entirely within the channel package; the channel package
-also owns the `generatePairingCode` primitive (§ Pairing code below).
+also owns the `generatePairingToken` primitive (§ Pairing token below).
 
 Out of scope for the first increment:
 
@@ -111,17 +111,15 @@ Out of scope for the first increment:
   to load v2 fails loud and blocks dispatcher boot for that channel.
 - Deny (block) verb and revoke verb. Not shipped in the first
   increment. An operator who needs to remove an id edits `access.json`
-  by hand. A future increment may extend `access` with a `revoke`
-  selector; until then, a removed id that re-enters the flow rolls a
+  by hand. Until a future admin surface exists, a removed id that re-enters the flow rolls a
   fresh pending entry as if it had never been seen.
-- `list_pending` / `list` selector on the `access` tool. Operator
+- `list_pending` / `list` approval inspection surface. Operator
   inspection reads `access.json` directly.
 - Transport-layer gate use. The transport gate (`policy/gate.ts`) is
   **deleted**. The transport package never exported a gate, never
   modeled access state, and will not grow one in the future.
 - CLI / admin RPC / `rushx doctor` extras. The only approval surface is
-  the `access` MCP tool reachable from the dispatcher or team-leader
-  agent via normal Feishu input.
+  the Owner-only Feishu interactive card callback.
 
 ## Data
 
@@ -180,14 +178,15 @@ interface PendingPairingEntry {
   chat_id: string;
   created_at: number;
   expires_at: number;
-  replies: number;
+  replies: number;              // legacy compatibility; not a resend-card cap
+  prompt_message_id?: string;   // message_id of the currently visible card
 }
 ```
 
 `snake_case` is used inside access state to match the v2 convention;
 runtime variables use `camelCase`.
 
-### Pairing code
+### Pairing token
 
 Owned by `@excitedjs/feishu-channel`, implemented directly inside
 `/packages/channel/feishu-channel/src/feishu-gate.ts` next to the
@@ -196,50 +195,44 @@ file IO:
 
 ```ts
 import { randomBytes } from 'node:crypto';
-const ACCESS_CODE_HEX_LEN = 3 as const;
-function generatePairingCode(): string {
-  return randomBytes(ACCESS_CODE_HEX_LEN).toString('hex');  // 6 lowercase hex characters
+const PAIRING_TOKEN_BYTES = 3 as const;
+function generatePairingToken(): string {
+  return randomBytes(PAIRING_TOKEN_BYTES).toString('hex');  // 6 lowercase hex characters
 }
 ```
 
 The transport layer neither owns nor re-exports this primitive.
 Uniqueness loop: inside `dreamuxFeishuGate` (next to the pending-store
-mutation), if `state.pending[code]` exists roll a new one until the
+mutation), if `state.pending[token]` exists roll a new one until the
 slot is free.
 
 ### Constants
 
 ```
-MAX_PENDING_PER_KIND   = 10   // simultaneous pending entries per kind (dm / group — independent quotas)
-MAX_PAIRING_REPLIES    = 2    // fencepost-inclusive cap on sends per code-sender pair
+MAX_PENDING_PER_KIND   = 10   // simultaneous dm-kind pending entries
 PAIRING_TTL_MS         = 3_600_000  // 1 hour
 ```
 
-**Dedicated per-kind quota.** DM and group pending entries are capped
-**independently** (`counts.dm < MAX`, `counts.group < MAX`). A
-single-kind saturation (10 spammy strangers DM or 10 new groups) does
-**not** starve the other kind. Per-kind quota is enforced **after**
-prune-expired and **after** a sender/chat-deduplication pass: a given
-`sender_id` in DM (or a given `chat_id` in group) counts against the
-quota at most once, regardless of how many pending entries its resend
-path would logically create. This bounds a single spammer to 1 slot
-per 1h TTL window instead of 10. The pending Record stays a flat
-`code → entry`; enforcement walks the values to count by
-`(kind, sender_id for dm | chat_id for group)`.
+**Dedicated dm quota.** New pairing entries are dm-kind only and are capped
+with `counts.dm < MAX`. The state shape still preserves `kind` so legacy
+group-kind pending entries can be read and rejected without widening access.
+The quota is enforced **after** prune-expired and **after** a sender
+deduplication pass: a given `sender_id` counts against the quota at most
+once, regardless of whether the request originated in a DM or group chat.
+This bounds a single spammer to 1 slot per 1h TTL window instead of 10.
+The pending Record stays a flat `token → entry`; enforcement walks the
+values to count dm-kind entries.
 
-**MAX_PAIRING_REPLIES fencepost (inclusive, important).** The check
-is `entry.replies >= MAX_PAIRING_REPLIES` — that is, `replies === 2`
-means "stop sending". A brand-new entry is persisted at
-`replies: 1` after the first prompt; the second inbound within the
-same TTL window returns the same code (`is_resend = true`) and
-persists `replies: 2`; the third (or later) inbound within the same
-window drops silently. In short: each code-sender pair sees the
-prompt **at most MAX_PAIRING_REPLIES times total** before the slot
-expires or is recycled.
+**Existing-card reuse.** A brand-new entry is persisted after the first
+card send with `prompt_message_id` set to the returned card message id when
+Feishu provides one. A repeated inbound within the same TTL window returns
+the same token (`is_resend = true`) and the session replies under the
+existing card message instead of sending another approval card. The legacy
+`replies` field is kept only so older access files remain readable.
 
 `pruneExpiredPending(state)` is called at the **top** of every
 `dreamuxFeishuGate()` invocation (and only there — see invariant #12
-for the access-tool path's different guard). It mutates
+for the approval path's different guard). It mutates
 `state.pending` in place and drops every entry where
 `expires_at <= Date.now()`. The `last_gate` diagnostic records the
 prune count. Running prune at the gate top guarantees expired
@@ -283,7 +276,7 @@ type GateAction =
   | {
       action: 'pair';
       kind: 'dm' | 'group';
-      code: string;              // 6 lowercase hex chars
+      token: string;             // 6 lowercase hex chars, internal only
       is_resend: boolean;
       ttl_left_ms: number;        // exposed so the session log can carry TTL without a second state read
     };
@@ -312,23 +305,23 @@ groups, then per-policy branches. "DM" here means `chat_type === 'p2p'`
 | 3 | human | `p2p` | `dm_policy === 'all'` | not self | `deliver` |
 | 4 | human | `p2p` | `allowlist` \| `pairing` | `sender_id ∈ allow_users` | `deliver` |
 | 5 | human | `p2p` | `allowlist` | otherwise | `drop dm_not_on_allowlist` |
-| 6 | human | `p2p` | `pairing` | existing `kind:'dm'` pending for sender **AND** `replies < MAX_PAIRING_REPLIES` | `pair dm (resend=true)` |
+| 6 | human | `p2p` | `pairing` | existing `kind:'dm'` pending for sender | `pair dm (resend=true)` |
 | 7 | human | `p2p` | `pairing` | **no** existing dm pending **AND** `counts.dm < MAX_PENDING_PER_KIND` | `pair dm (resend=false)` |
-| 8 | human | `p2p` | `pairing` | otherwise (slot cap OR `replies >= MAX`) | `drop dm_pairing_slot_cap` |
-| 9 | any | group | `group.policy === 'block'` | — | `drop group_policy_block` |
-| 10 | any | group | any (not block) | `require_mention === true` **AND** `bot_mentioned === false` | `drop group_bot_not_mentioned` |
-| 11 | bot sender | group | any | `trusted_bot === false` | `drop bot_untrusted` |
-| 12 | human \| trusted bot | group | `follow-user` | human sender **AND** `sender_id ∈ allow_users` | `deliver` |
-| 13 | trusted bot | group | `follow-user` | — | `deliver` |
-| 14 | human | group | `follow-user` | existing `kind:'group'` pending for chat **AND** `replies < MAX_PAIRING_REPLIES` | `pair group (resend=true)` |
-| 15 | human | group | `follow-user` | **no** existing group pending **AND** `counts.group < MAX_PENDING_PER_KIND` | `pair group (resend=false)` |
-| 16 | human | group | `follow-user` | otherwise (slot cap OR replies >= MAX) | `drop group_pairing_slot_cap` |
-| 17 | human | group | `allowlist` | `chat_id ∈ allow_chats` | `deliver` |
-| 18 | trusted bot | group | `allowlist` | `chat_id ∈ allow_chats` | `deliver` |
-| 19 | human \| trusted bot | group | `allowlist` | `chat_id ∉ allow_chats` **AND** not mentioned (mention check already done, this line only reachable when `require_mention === false`) — unreachable in practice | `drop group_not_on_allowlist_and_not_mentioned` |
-| 20 | human \| trusted bot | group | `allowlist` | `chat_id ∉ allow_chats` **AND** existing group pending **AND** `replies < MAX` | `pair group (resend=true)` |
-| 21 | human \| trusted bot | group | `allowlist` | `chat_id ∉ allow_chats` **AND no** group pending **AND** `counts.group < MAX_PENDING_PER_KIND` | `pair group (resend=false)` |
-| 22 | human \| trusted bot | group | `allowlist` | `chat_id ∉ allow_chats` **AND** otherwise | `drop group_pairing_slot_cap` |
+| 8 | human | `p2p` | `pairing` | otherwise (slot cap) | `drop dm_pairing_slot_cap` |
+| 9 | bot sender | group | any | `trusted_bot === false` | `drop bot_untrusted` |
+| 10 | bot sender | group | any | `trusted_bot === true` **AND** `bot_mentioned === false` | `drop group_bot_not_mentioned` |
+| 11 | bot sender | group | any | `trusted_bot === true` **AND** `bot_mentioned === true` | `deliver` |
+| 12 | human | group | any | `require_mention === true` **AND** `bot_mentioned === false` | `drop group_bot_not_mentioned` |
+| 13 | human | group | `group.policy === 'block'` | — | `drop group_policy_block` |
+| 14 | human | group | `group.policy === 'allowlist'` | `chat_id ∉ allow_chats` | `drop group_not_on_allowlist` |
+| 15 | human | group | any satisfied group shell | `dm_policy === 'disabled'` | `drop dm_disabled` |
+| 16 | human | group | any satisfied group shell | `dm_policy === 'all'` | `deliver` |
+| 17 | human | group | any satisfied group shell + `dm_policy === 'allowlist'` | `sender_id ∈ allow_users` | `deliver` |
+| 18 | human | group | any satisfied group shell + `dm_policy === 'allowlist'` | otherwise | `drop group_user_not_on_allowlist` |
+| 19 | human | group | any satisfied group shell + `dm_policy === 'pairing'` | `sender_id ∈ allow_users` | `deliver` |
+| 20 | human | group | any satisfied group shell + `dm_policy === 'pairing'` | existing `kind:'dm'` pending for sender | `pair dm (resend=true)` |
+| 21 | human | group | any satisfied group shell + `dm_policy === 'pairing'` | **no** existing dm pending **AND** `counts.dm < MAX_PENDING_PER_KIND` | `pair dm (resend=false)` |
+| 22 | human | group | any satisfied group shell + `dm_policy === 'pairing'` | otherwise (slot cap) | `drop dm_pairing_slot_cap` |
 | 23 | any | unsupported (meeting / calendar / topic / …) | any | `chat_type ∉ {'p2p','group'}` | `drop unsupported_chat_type` |
 | — | — | — | — | default fallthrough (defense in depth) | `drop internal` |
 
@@ -353,13 +346,14 @@ trust. Concretely:
 
 - `/introduce` in a DM from a pending user → not authorized (the
   sender is not on `allow_users`) → falls through to gate →
-  `pair dm resend` (row 7).
+  `pair dm resend` (row 6).
 - `/introduce` in a `follow-user` group with a sender not on
   `allow_users` → `introduceDenyReason = 'sender_not_followed'` →
-  falls through to gate → `pair group` (rows 14/15).
+  falls through to gate → `pair dm` when `dm_policy === 'pairing'`
+  and the bot is mentioned (rows 20/21).
 - `/introduce` in an `allowlist` group whose chat is not on
   `allow_chats` → `introduceDenyReason = 'chat_not_allowlisted'` →
-  falls through → `pair group` (rows 18/19).
+  falls through to gate → `drop group_not_on_allowlist` (row 14).
 
 Add one assertion to `tests/feishu-introduce.test.ts`'s gate-vs-introduce
 parity table to lock this: `/introduce` + pending-only state → never
@@ -374,19 +368,20 @@ authorized.
 - `deliver` → existing path: reaction emoji, format, attachment cache,
   `this.deliver(turn, envelope, hooks)`. No changes.
 - `drop` → structured `logDebug('feishu inbound dropped', fields)`
-  with all fields from v2 plus any `pending` context (`code`, `kind`,
+  with all fields from v2 plus any `pending` context (`token`, `kind`,
   `ttl_left_ms`) when applicable. Silent to Feishu; no reply, no
   reaction.
 - `pair` → **SEND FIRST, SAVE SECOND**:
-  1. Build prompt (`dmPairingPrompt(code, ttlMinutes)` or
-     `groupPairingPrompt(code, ttlMinutes)`). Chinese copy. No raw
-     ids.
-  2. `ctx.transport.sendText(chat_id, prompt)`. Logged send errors:
-     `'pairing prompt send failed'` with `chat_id` / `code` / `kind`
+  1. Build an Owner-only approval card. The internal token is carried only in
+     the button `value`; it is never rendered in visible card text.
+  2. `ctx.transport.sendCard(chat_id, card)`. Logged send errors:
+     `'pairing prompt send failed'` with `chat_id` / `token` / `kind`
      / err. On send failure → do **not** write a `pending` entry,
-     return from handler. No phantom codes.
-  3. Compute the new `pending[code]` entry (or bump `replies` on
-     resend). Update `state.last_gate` with `pair: {kind, code, resend}`.
+     return from handler. No phantom tokens.
+  3. Compute the new `pending[token]` entry with the returned
+     `prompt_message_id` when available. On resend, reference the existing
+     `prompt_message_id` instead of sending another card. Update
+     `state.last_gate` with `pair: {kind, token, resend}`.
   4. `saveDispatcherAccess(stateDir, state)` — atomic via
      `writeFile(tmpPath, ..., {mode:0600})` → `rename(tmpPath, realPath)`.
      A `chmod` after `writeFile` on the final path is **not** allowed
@@ -394,84 +389,31 @@ authorized.
      atomic-write helper pattern from
      `/packages/channel/feishu-channel/src/chat-bots-store.ts`.
 
-### Prompt copy
+### Approval card copy
 
-Prompt rendering lives in `renderPairingPrompt` at
-`/packages/channel/feishu-channel/src/feishu-gate-io.ts` (signature:
-`(kind, code, isResend, botDisplayName?) -> string`). Default bot
-display name is `赛丽亚`; a `[重发]` prefix is prepended when
-`isResend === true`. The prompt text **never names a specific
-operator by id or real name** — it refers to the generic
-"**bot 管理员**" so the same copy works for any deployment. No raw
-Feishu identifiers leak into the prompt beyond the 6-hex code.
+Approval-card rendering lives in
+`/packages/channel/feishu-channel/src/feishu-pairing-card.ts`. The bot display
+name comes from the transport's runtime bot info (`bot.v3.info` `app_name`) and
+falls back to the neutral `Dreamux bot` label if unavailable. Visible card text
+(approval and success states) must use Feishu card i18n fields: default content
+is Simplified Chinese and `en_us` carries English, so clients show one language
+instead of a bilingual combined string. The approval card must @-mention the
+requester with `<at id="open_id"></at>`. Repeated requests reference the
+existing card message when `pending[token].prompt_message_id` is known instead
+of sending another approval card. The card text **never displays the internal
+token** and never names a specific operator by raw id or real name outside the
+Feishu at-mention.
 
-```
-DM (first send):
-您请求访问 赛丽亚，请将配对码 "abc123" 发送给 bot 管理员以开通权限。(有效期 1 小时)
+## Internal Approve-by-Token Helper
 
-DM (resend):
-[重发] 您请求访问 赛丽亚，请将配对码 "abc123" 发送给 bot 管理员以开通权限。(有效期 1 小时)
+Feishu no longer exposes an `access` MCP tool. The tool catalog remains
+`reply`, `react`, `list_chat_bots`; `parseFeishuMcpToolInput('access', ...)`
+must fail. Pairing approval is an internal session helper called only after
+the Owner-only card callback verifies the click operator.
 
-Group (posted publicly — approval is operator-mediated):
-本群的 赛丽亚 尚未开通权限，请群管理员将配对码 "abc123" 发送给 bot 管理员以开通本群。(有效期 1 小时)
-```
+Helper order for `approvePairingByToken(token)`:
 
-## The `access` MCP Tool
-
-Added to Feishu tool catalog at
-`/packages/channel/feishu-channel/src/feishu-mcp-tools.ts`; registered
-alongside `reply`, `react`, `list_chat_bots` in `provider.ts`.
-
-Tool name: `access`. Schema — one required field only:
-
-```json
-{
-  "type": "object",
-  "additionalProperties": false,
-  "properties": {
-    "code": {
-      "type": "string",
-      "pattern": "^[0-9a-f]{6}$",
-      "minLength": 6,
-      "maxLength": 6
-    }
-  },
-  "required": ["code"]
-}
-```
-
-Tool always returns the same typed envelope; the session-level
-`handleMcpTool` wrapper then flattens it to the legacy wire shape so
-the 3 existing callers (`reply` / `react` / `list_chat_bots`) can keep
-reading `message_ids`, `reaction_id`, `{known, trusted}` off the
-top-level result without a P1 refactor. `message` is in Chinese for
-model display:
-
-```json
-// Handler return (typed envelope — internal to tool/handler)
-{
-  "status": "ok" | "not_found" | "error",
-  "message": "human-readable summary",
-  "details": {
-    "kind": "dm" | "group",
-    "added": "<open_id 或 chat_id>",
-    "duplicate": false,
-    "ttl_left_ms": 123456
-  }
-}
-// What `handleMcpTool` actually returns to the caller (flattened wire)
-{
-  "status": "…",
-  "message": "…",
-  "...detailsSpread..."
-}
-```
-
-### Semantics
-
-Handler order for `access {code: C}`:
-
-1. **Per-entry expiry guard (not a global prune).** The access-tool
+1. **Per-entry expiry guard (not a global prune).** The approval
    path does **not** run `pruneExpiredPending` over the full pending
    Record. It relies on the single-entry
    `expires_at <= now` check at step 3 plus the gate-top prune
@@ -481,38 +423,73 @@ Handler order for `access {code: C}`:
    extra O(N) walk there would add latency to the operator-critical
    approve path without improving correctness of the single
    matching entry.
-2. Look up `pending[C]`. If absent → `not_found` with
-   `details.code = C`. No write.
+2. Look up `pending[T]`. If absent → `not_found` with
+   `details.token = T`. No write.
 3. **Explicit TTL guard on the matching entry.** If
-   `pending[C].expires_at <= Date.now()` → treat as absent, return
-   `not_found` with `details.code = C`. **No delete, no persist**
+   `pending[T].expires_at <= Date.now()` → treat as absent, return
+   `not_found` with `details.token = T`. **No delete, no persist**
    inside the approve path — the approval hot path does only the
    single-entry O(1) guard; expired entries are cleaned lazily by
    the inbound gate's per-kind prune pass (which runs before every
    `pair` new-slot decision). One shared `not_found` envelope with
-   a unified human-readable message (`"配对码不存在或已过期"`)
-   covers both the unknown-code and expired branches so the wire
+   a unified human-readable message (`"授权请求不存在或已过期"`)
+   covers both the unknown-token and expired branches so the wire
    surface stays minimal.
 4. `kind='dm'` entry → de-dupe push `sender_id` → `allow_users`,
-   delete `pending[C]`, persist → `ok`.
-5. `kind='group'` entry → de-dupe push `chat_id` →
-   `group.allow_chats`, delete `pending[C]`, persist → `ok`.
+   delete `pending[T]`, persist → `ok`.
+5. `kind='group'` is no longer generated or approved. It is treated as
+   unsupported and does not mutate `allow_users`, `group.allow_chats`, or
+   `pending`.
 6. If the id was already on the target array (consecutive approval
    race) → still `ok` with `duplicate:true`.
 
-| Invocation | Handler | `status` + top-level flattened fields |
-|---|---|---|
-| `{code: "abc123"}`, `pending["abc123"]` exists, `kind: 'dm'`, `expires_at > now` | push `entry.sender_id` to `allow_users` (deduplicated), delete `pending["abc123"]`, persist | `status: "ok"`, `kind: "dm"`, `sender_id`, `chat_id`, `duplicate: bool`, `ttl_left_ms` — message describes the approval action |
-| `{code: "abc123"}`, `pending["abc123"]` exists, `kind: 'group'`, `expires_at > now` | push `entry.chat_id` to `group.allow_chats` (deduplicated), delete `pending["abc123"]`, persist | `status: "ok"`, `kind: "group"`, `sender_id`, `chat_id`, `duplicate: bool`, `ttl_left_ms` |
-| `{code: "abc123"}`, entry exists but `expires_at <= now` (single-entry TTL guard) | **no write** — shared not_found envelope; entry is cleaned later by gate prune | `status: "not_found"`, `code: "abc123"` — message `"配对码不存在或已过期"` |
-| `{code: "abc123"}`, not in `pending` | no mutation | `status: "not_found"`, `code: "abc123"` — same shared envelope as expired |
-| JSON schema validation failure at caller | no mutation, reported by MCP framework | `status: "error"` — message from Zod schema |
+| Invocation | Helper result |
+|---|---|
+| `pending["<PAIRING_TOKEN_HEX>"]` exists, `kind: 'dm'`, `expires_at > now` | push `entry.sender_id` to `allow_users` (deduplicated), delete `pending["<PAIRING_TOKEN_HEX>"]`, persist; return `status: "ok"`, `kind: "dm"`, `sender_id`, `chat_id`, `duplicate: bool`, `ttl_left_ms` |
+| `pending["<PAIRING_TOKEN_HEX>"]` exists, `kind: 'group'`, `expires_at > now` | no mutation; return unsupported-request error |
+| Entry exists but `expires_at <= now` | **no write** — shared `not_found` result; entry is cleaned later by gate prune |
+| Token not in `pending` | no mutation; same `not_found` result as expired |
 
-### Model UX note
+## Owner-only Interactive Card Approval
 
-The system prompt teaches: to approve, write "access 配对码 XXXXXX" and
-call the tool with `{code: "XXXXXX"}`. The model may call `access` by
-rote; no other arguments are accepted.
+The interactive approval card is a channel-owned UI for the same
+approve-by-token operation above. It does **not** introduce a second approval
+path and must not mutate `allow_users`, `group.allow_chats`, or `pending`
+directly.
+
+When `dreamuxFeishuGate` returns `pair`, the session sends a Feishu interactive
+card whose button value contains:
+
+```json
+{
+  "dreamux_action": "approve_pairing",
+  "dreamux_pairing_token": "<PAIRING_TOKEN_HEX>"
+}
+```
+
+`card.action.trigger` handling stays below the LLM / Agent Runtime boundary:
+
+1. Ignore unrelated card actions by returning `{}`.
+2. Validate the 6-hex token from `dreamux_pairing_token`.
+3. Resolve the app creator / owner open_ids through the Feishu application API.
+4. If the click operator is not an App Owner, return only an error toast:
+   `"只有 App Owner 才有权限点击批准授权"`. The card is not updated.
+5. If the click operator is an App Owner, call `approvePairingByToken(token)`.
+6. On successful approval, return the official Feishu card callback response
+   shape:
+
+```json
+{
+  "toast": { "type": "success", "content": "..." },
+  "card": { "type": "raw", "data": { "...green success card..." } }
+}
+```
+
+The success update must be delivered through the callback ACK response above,
+not by calling ordinary `im.v1.messages.patch` from inside the handler. Feishu's
+callback contract treats `{card:{type:"raw",data}}` as the immediate update
+response; using `{card:<raw card>}` is a response-format error, and racing a
+message patch with the callback ACK can briefly update then revert the client.
 
 ## Invariants (assert in tests)
 
@@ -520,19 +497,19 @@ rote; no other arguments are accepted.
 2. **Send-before-save**: a failing Feishu send of a pairing prompt →
    no `pending` entry exists after the handler returns. An
    intermediate crash between send and save leaves at most a
-   *message-sent-with-no-code-on-file* edge case (harmless — sender
-   re-sends a message to roll a new code); the symmetric
-   *code-saved-but-message-never-sent* case is eliminated.
-3. **MAX_PENDING_PER_KIND never exceeded per kind**. Every `pair new`
-   branch counts `pending` entries **separately for `kind:'dm'` and
-   `kind:'group'`** after pruning expired ones; a single DM sender or a
-   single group chat counts as one slot regardless of resend count.
-   Flat global `|pending|` is not the enforcement shape.
+   *message-sent-with-no-token-on-file* edge case (harmless — sender
+   re-sends a message to roll a new token); the symmetric
+   *token-saved-but-message-never-sent* case is eliminated.
+3. **MAX_PENDING_PER_KIND never exceeded for dm-kind pairing**. Every `pair new`
+   branch counts dm-kind `pending` entries after pruning expired ones; a single
+   sender counts as one slot regardless of resend count. Group-kind pending
+   entries are legacy/unsupported and are never generated or approved by the
+   Owner-card flow.
 4. **Resend idempotency**. Re-invoking the same gate for the same
    sender/chat within the resend window either returns the same
-   `code` or (after `MAX_PAIRING_REPLIES`) drops silently. No new
-   code churn.
-5. **Approval idempotency**. `access {code: same}` twice → first `ok`
+   `token` and references the existing card message. No new token churn and
+   no repeated approval-card sends.
+5. **Approval idempotency**. `approvePairingByToken(same)` twice → first `ok`
    + `duplicate:false`, second `ok` + `duplicate:true`. No double
    push onto arrays; arrays stay unique. Implementation note: look
    up in `pending` first and capture the entry, THEN mutate.
@@ -560,13 +537,13 @@ rote; no other arguments are accepted.
     single private per-session `AsyncMutex` (`_accessMutex`) that is
     handed to helpers through the opaque `SessionHandle`. **Every**
     `read → mutate → saveDispatcherAccess` sequence — the inbound WS
-    path in `onMessage` AND the admin-socket path in
-    `handleMcpTool`/`access` (via `approvePairingByCode`) — acquires
+    path in `onMessage` AND the `card.action.trigger` path
+    (via `approvePairingByToken`) — acquires
     THIS mutex before `loadDispatcherAccess` and releases it after
     the rename() syscall in `saveDispatcherAccess`. The mutex does
     NOT live in a module-scope singleton or in IO helpers.
     `saveDispatcherAccess`. Regression test: fire `Promise.all([N ×
-    inbound pair, M × access approvals with distinct codes])` and
+    inbound pair, M × card approvals with distinct tokens])` and
     assert that, in the final file, ALL pending writes and ALL
     allowlist pushes are present — no last-rename-wins clobbering.
     Locking rationale is explicitly documented: the
@@ -578,12 +555,12 @@ rote; no other arguments are accepted.
     throws (disk full, permission denied, EIO), the `onMessage`
     handler for the `pair` branch has already sent the user a
     pairing prompt — it MUST log a level=error structured entry with
-    `chat_id`, `code`, `err`, return a `logError` to runtime hooks,
-    and MUST NOT subsequently try to approve or reuse that code on
+    `chat_id`, `token`, `err`, return a `logError` to runtime hooks,
+    and MUST NOT subsequently try to approve or reuse that token on
     later messages (the `pending` entry was never committed;
-    re-inbound rolls a fresh code). For the `access` branch, a
-    failing save returns `{status:'error'}` to the caller with the
-    raw err message so the model can retry.
+    re-inbound rolls a fresh token). For the card approval branch, a
+    failing save is surfaced as an error result so the callback can
+    return an error toast and the Owner can retry.
 11. **Diagnostic writes do not dominate IO.** `observed_chats` /
     `warnings` / `last_gate` (v2 carry-over diagnostics) are updated
     and persisted **only on `deliver` and `drop` branches**, not on
@@ -591,7 +568,7 @@ rote; no other arguments are accepted.
     actually records a new or bumped `pending` entry. This avoids
     doubling the write rate for the stranger-spam load path that
     pairing was designed to handle.
-12. **Approval respects TTL.** `access {code}` never promotes an
+12. **Approval respects TTL.** `approvePairingByToken(token)` never promotes an
     expired entry. The access handler runs a **single-entry explicit
     `expires_at > now` check** on the looked-up pending entry — it
     does NOT re-run `pruneExpiredPending` globally (pending-map
@@ -599,16 +576,13 @@ rote; no other arguments are accepted.
     path; the entry-specific check is O(1) and equally correct).
     Entries are cleaned lazily by the inbound gate path on its
     per-kind pruning passes. The `not_found` envelope for an
-    expired-or-unknown code shares one wire format (no top-level
+    expired-or-unknown token shares one wire format (no top-level
     `expired` boolean); callers diagnose from message text + logs.
-13. **Per-kind pending quotas, plus sender/chat dedup.**
-    `MAX_PENDING_PER_KIND` applies separately to `kind:'dm'` and
-    `kind:'group'`. Within each kind, a single `sender_id` (DM) or a
-    single `chat_id` (group) counts as **one slot** regardless of
-    resend count — a spammer with N identities still needs N
-    distinct ids to fill the quota, and a single chat cannot
-    starve the group pool on its own. The flat pending Record is
-    traversed for enforcement; no new top-level schema grouping is
+13. **Dm pending quota, plus sender dedup.**
+    `MAX_PENDING_PER_KIND` applies to active dm-kind pairing. A single
+    `sender_id` counts as **one slot** regardless of resend count — a spammer
+    with N identities still needs N distinct ids to fill the quota. The flat
+    pending Record is traversed for enforcement; no new top-level schema grouping is
     introduced.
 14. **`defaultDispatcherAccessState()` is the sole default.** There
     is no code path that writes an `access.json` from `onboard` or
@@ -628,7 +602,7 @@ verifiable by `grep`):
 2. `@excitedjs/feishu-transport` — the platform I/O boundary.
 3. `@excitedjs/dreamux-utils` — host-agnostic platform utilities
    (owner-only directory helpers, no dispatcher state).
-4. `node:*` built-ins. In practice: `node:crypto` (pairing-code
+4. `node:*` built-ins. In practice: `node:crypto` (pairing-token
    CSPRNG), `node:fs/promises` and `node:path` (access.json +
    chat-bots store + attachment cache persistence and atomic
    renames), `node:stream` (attachment download streams).
@@ -663,7 +637,7 @@ TypeScript never deletes old emit); fixed by forcing
 > is **retained** (not part of the deletion scope) because the
 > inbound path still consumes `isBotMentioned` / `isBotSenderType`
 > from `@excitedjs/feishu-transport/parse/mentions`. Deletion scope
-> is: the pairing/ code module, the top-level `FeishuSession` class,
+> is: the pairing-token module, the top-level `FeishuSession` class,
 > the `ChannelAccessGate` type, and v2 access helpers.
 
 Two Rush change files are required, **one per affected published
@@ -693,17 +667,17 @@ allowlist-only DM behavior exactly (no egress behavior change for
 existing deployments after rebuild).
 NEW BEHAVIOR (fresh installs only): fresh installs default
 dm_policy to "pairing" so unknown human DM senders receive a
-pairing-code reply instead of being silently dropped. This is an
+pairing-token reply instead of being silently dropped. This is an
 egress posture change — the bot now actively replies to strangers
 on a fresh install. Existing deployments rebuilt with
 dm_policy="allowlist" are unaffected.
-New `access` MCP tool approves pending pairing entries via a
-6-hex-digit code (schema {code: string}). Prune of expired entries
-runs at both gate top AND approval top so stale codes cannot be
-approved. DM/group pending slots are capped independently at 10
-each, with per-sender (DM) / per-chat (group) dedup so a single
-spammer cannot fill the pool. Inspect pending entries / revoke ids
-by editing access.json directly.
+Owner-only interactive cards approve pending pairing entries via a
+6-hex-digit token. The card handler validates App Owner identity first,
+then calls the internal approve-by-token helper. Expired entries are
+guarded by a single-entry TTL check so stale tokens cannot be approved.
+DM pending slots are capped at 10 with per-sender dedup so a single sender
+cannot fill the pool. Group allowlisting remains manual via access.json.
+Inspect pending entries / revoke ids by editing access.json directly.
 Rebuild: ~/.dreamux/state/<id>/access.json.
 ```
 
@@ -734,7 +708,7 @@ Deleted public exports from src/index.ts:
     file deleted).
   - dreamuxGate, GateResult, DropReason, pruneExpiredPending,
     isGroupAuthorized (from src/policy/gate.ts, whole file deleted).
-  - generatePairingCode (from src/policy/pairing.ts, whole file deleted).
+  - generatePairingToken (from src/policy/pairing.ts, whole file deleted).
 
 Deleted test files (orphaned by above:
   - tests/gate.test.ts (imports src/policy/gate).
@@ -748,9 +722,9 @@ Deleted documentation / metadata changes:
 
 CONSUMER ACTION REQUIRED if you import deleted exports from this package:
   - Claudemux consumers of the transport gate / access-store /
-    generatePairingCode exports:
+    generatePairingToken exports:
     • Gate / pairing / allowlist logic moves into your own
-      channel-layer equivalent. Inline the generatePairingCode
+      channel-layer equivalent. Inline the generatePairingToken
       one-liner if you only need the random-hex primitive.
     • Access JSON persistence belongs next to your own dispatcher
       state directory; use an atomic tmpfile+rename write helper
@@ -777,7 +751,6 @@ sequenceDiagram
     participant Chan as Channel Session
     participant Gate as dreamuxFeishuGate
     participant Store as access.json v3
-    participant Core as Dreamux Core (dispatcher/team leader)
     participant Operator
 
     Note over Stranger,Store: Trigger from unknown DM sender
@@ -787,21 +760,19 @@ sequenceDiagram
     Store-->>Chan: v3 state (dm_policy=pairing, A∉allow_users)
     Chan->>Gate: gate(state, input)
     Gate->>Gate: pruneExpiredPending
-    Gate-->>Chan: {action:pair, kind:dm, code:"abc123", resend:false}
-    Chan->>Bot: sendText(配对码 abc123)  ← SEND FIRST
-    Bot-->>Stranger: 配对提示
-    Chan->>Store: save pending["abc123"]  ← SAVE SECOND
+    Gate-->>Chan: {action:pair, kind:dm, token:"<PAIRING_TOKEN_HEX>", resend:false}
+    Chan->>Bot: sendCard(Owner approval card; hidden token)  ← SEND FIRST
+    Bot-->>Stranger: approval card
+    Chan->>Store: save pending["<PAIRING_TOKEN_HEX>"]  ← SAVE SECOND
 
     Note over Stranger,Operator: Out-of-band
-    Stranger->>Operator: 配对码 abc123
-    Operator->>Bot: @Bot approve abc123
+    Operator->>Bot: clicks pairing approval card
 
     Note over Bot,Store: Approval path
-    Bot->>Chan: inbound "approve abc123" (Operator is on allow_users)
-    Chan->>Core: deliver turn with message body
-    Core->>Chan: MCP call access {code:"abc123"}
+    Bot->>Chan: card.action.trigger (operator_open_id=Owner)
+    Chan->>Bot: resolve app owner identity
     Chan->>Store: load → push sender_id to allow_users → delete pending → save
     Store-->>Chan: ok
-    Chan-->>Core: tool result {status:ok, details:{kind:"dm", added:A}}
-    Core-->>Bot: reply "已通过，A 现在可以私聊我了"
+    Chan-->>Bot: callback response {toast, card:{type:"raw",data:green card}}
+    Bot-->>Operator: card becomes green success state
 ```

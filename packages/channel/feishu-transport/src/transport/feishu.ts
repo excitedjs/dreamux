@@ -25,6 +25,9 @@ const WS_HANDSHAKE_TIMEOUT_MS = 15_000
 
 const WS_STARTUP_GRACE_MS = 30_000
 
+// application/v6 owner.type: enterprise-member owner for a custom app.
+export const FEISHU_APP_OWNER_TYPE_ENTERPRISE_MEMBER = 2
+
 export interface FeishuSendResult {
     messageIds: string[]
 }
@@ -128,6 +131,17 @@ export interface FeishuMessageResourceFetcher {
   ): Promise<FeishuMessageResourceResponse>
 }
 
+/**
+ * Raw identity of the app creator / owner, returned by
+ * `GET /open-apis/application/v6/applications/{appId}` with
+ * `user_id_type=open_id`.
+ */
+export interface FeishuAppOwnerIdentity {
+  creatorOpenId?: string
+  ownerOpenId?: string
+  ownerType?: number
+}
+
 const COMMENT_FILE_TYPES = ['doc', 'docx', 'sheet', 'file'] as const
 type CommentFileType = (typeof COMMENT_FILE_TYPES)[number]
 
@@ -184,15 +198,17 @@ function asMetaDocType(fileType: string): MetaDocType | undefined {
     : undefined
 }
 
-export type RouteHandler = (raw: unknown) => Promise<void>
+export type RouteHandler = (raw: unknown) => Promise<unknown>
 
 export type InboundRoutes = Record<string, RouteHandler>
 
 export interface FeishuTransport {
     readonly appId: string
     readonly selfId: string | undefined
+    readonly selfName: string | undefined
     start(routes: InboundRoutes): Promise<void>
     send(target: OutboundTarget, text: string): Promise<FeishuSendResult>
+    sendCard(target: OutboundTarget, card: unknown): Promise<FeishuSendResult>
     createGroup(input: FeishuCreateGroupInput): Promise<FeishuCreateGroupResult>
     inviteMembers(input: FeishuInviteMembersInput): Promise<FeishuInviteMembersResult>
     addReaction(messageId: string, emoji: string): Promise<string>
@@ -207,6 +223,7 @@ export interface FeishuTransport {
     fetchMessageResource(
     request: FeishuMessageResourceRequest,
   ): Promise<FeishuMessageResourceResponse>
+    resolveAppOwner(): Promise<FeishuAppOwnerIdentity>
     close(): Promise<void>
 }
 
@@ -233,10 +250,10 @@ export function createFeishuTransport(
       logger: diag.sdkLogger,
     })
   let wsClient: lark.WSClient | undefined
-  let resolvedSelfId: string | undefined
+  let resolvedSelfInfo: FeishuBotInfo | undefined
 
     async function openInbound(routes: InboundRoutes): Promise<void> {
-    resolvedSelfId = await resolveBotOpenId(client, diag)
+    resolvedSelfInfo = await resolveBotInfo(client, diag)
     const dispatcher = new lark.EventDispatcher({ logger: diag.sdkLogger }).register(routes)
     let markReady: () => void = () => {}
     const ready = new Promise<void>((resolve) => {
@@ -279,7 +296,11 @@ export function createFeishuTransport(
     },
 
     get selfId(): string | undefined {
-      return resolvedSelfId
+      return resolvedSelfInfo?.openId
+    },
+
+    get selfName(): string | undefined {
+      return resolvedSelfInfo?.appName
     },
 
     async start(routes: InboundRoutes): Promise<void> {
@@ -297,6 +318,14 @@ export function createFeishuTransport(
         if (id) messageIds.push(id)
       }
       return { messageIds }
+    },
+
+    async sendCard(target: OutboundTarget, card: unknown): Promise<FeishuSendResult> {
+      const content = JSON.stringify(card)
+      assertCardContentFits(content)
+      const res = await sendInteractiveCard(client, target, content)
+      const id = res.data?.message_id
+      return { messageIds: id ? [id] : [] }
     },
 
     async createGroup(input: FeishuCreateGroupInput): Promise<FeishuCreateGroupResult> {
@@ -419,6 +448,10 @@ export function createFeishuTransport(
       }
     },
 
+    async resolveAppOwner(): Promise<FeishuAppOwnerIdentity> {
+      return resolveAppOwner(client, diag, creds.appId)
+    },
+
     async close(): Promise<void> {
       try {
         wsClient?.close()
@@ -469,18 +502,29 @@ function textWithLeadingMentions(target: OutboundTarget, text: string): string {
 
 const BOT_INFO_ATTEMPTS = 3
 
-async function resolveBotOpenId(
+interface FeishuBotInfo {
+  openId?: string
+  appName?: string
+}
+
+async function resolveBotInfo(
   client: lark.Client,
   diag: TransportDiagnostics,
-): Promise<string | undefined> {
+): Promise<FeishuBotInfo | undefined> {
   for (let attempt = 1; attempt <= BOT_INFO_ATTEMPTS; attempt++) {
     try {
-      const res = await client.request<{ bot?: { open_id?: string } }>({
+      const res = await client.request<{ bot?: { open_id?: string, app_name?: string } }>({
         method: 'GET',
         url: '/open-apis/bot/v3/info',
       })
       const openId = res.bot?.open_id
-      if (openId) return openId
+      const appName = res.bot?.app_name
+      if (openId) {
+        return {
+          openId,
+          ...(appName !== undefined && appName !== '' ? { appName } : {}),
+        }
+      }
       diag.diagnostic(
         'bot info response carried no open_id — groups that ' +
           'require an @-mention will drop every message until the channel restarts',
@@ -501,6 +545,58 @@ async function resolveBotOpenId(
     }
   }
   return undefined
+}
+
+async function resolveAppOwner(
+  client: lark.Client,
+  diag: TransportDiagnostics,
+  appId: string,
+): Promise<FeishuAppOwnerIdentity> {
+  const identity: FeishuAppOwnerIdentity = {}
+  for (let attempt = 1; attempt <= BOT_INFO_ATTEMPTS; attempt++) {
+    try {
+      const res = await client.request<{
+        data?: {
+          app?: {
+            creator_id?: string
+            owner?: { owner_id?: string; type?: number; owner_type?: number }
+          }
+        }
+      }>({
+        method: 'GET',
+        url: `/open-apis/application/v6/applications/${encodeURIComponent(appId)}`,
+        params: { lang: 'zh_cn', user_id_type: 'open_id' },
+      })
+      const app = res.data?.app
+      if (typeof app?.creator_id === 'string' && app.creator_id !== '') {
+        identity.creatorOpenId = app.creator_id
+      }
+      const ownerId = app?.owner?.owner_id
+      const ownerType = app?.owner?.type ?? app?.owner?.owner_type
+      if (typeof ownerType === 'number') identity.ownerType = ownerType
+      if (
+        typeof ownerId === 'string' &&
+        ownerId !== '' &&
+        (ownerType === undefined || ownerType === FEISHU_APP_OWNER_TYPE_ENTERPRISE_MEMBER)
+      ) {
+        identity.ownerOpenId = ownerId
+      }
+      return identity
+    } catch (err) {
+      if (attempt < BOT_INFO_ATTEMPTS) {
+        await delay(attempt * 500)
+        continue
+      }
+      diag.diagnostic(
+        'could not resolve the Feishu app owner via application/v6. ' +
+          'Ensure the app has scope `application:application:self_manage` ' +
+          'or `admin:app.info:readonly`:',
+        err,
+      )
+      return identity
+    }
+  }
+  return identity
 }
 
 function delay(ms: number): Promise<void> {

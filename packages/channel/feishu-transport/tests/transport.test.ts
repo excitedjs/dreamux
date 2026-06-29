@@ -129,6 +129,7 @@ function stubClient() {
   }))
   const chatCreate = vi.fn(async () => ({ data: { chat_id: 'oc_created' } }))
   const memberCreate = vi.fn(async () => ({}))
+  const request = vi.fn(async () => ({}))
   const stub = {
     im: {
       v1: { messageResource: { get: messageResourceGet } },
@@ -140,7 +141,7 @@ function stubClient() {
       fileComment: { batchQuery: vi.fn(async () => ({ data: { items: [] } })) },
       meta: { batchQuery: vi.fn(async () => ({ data: { metas: [] } })) },
     },
-    request: vi.fn(async () => ({})),
+    request,
   }
   return {
     client: stub as unknown as lark.Client,
@@ -153,6 +154,7 @@ function stubClient() {
     messageResourceGet,
     chatCreate,
     memberCreate,
+    request,
   }
 }
 
@@ -243,6 +245,91 @@ describe('createFeishuTransport — send', () => {
     expect(stub.create.mock.calls.length).toBeGreaterThanOrEqual(2)
     expect(result.messageIds[0]).toBe('om_a')
     expect(result.messageIds[1]).toBe('om_b')
+  })
+
+  test('sendCard sends caller-owned interactive card JSON without markdown rendering', async () => {
+    const stub = stubClient()
+    const transport = buildTransport(stub)
+    const card = { config: { update_multi: true }, elements: [{ tag: 'div' }] }
+
+    const result = await transport.sendCard({ chatId: 'oc_chat' }, card)
+
+    expect(result.messageIds).toEqual(['om_stub'])
+    const calls = stub.create.mock.calls as unknown as Array<
+      [{ params: { receive_id_type: string }; data: { receive_id: string; msg_type: string; content: string } }]
+    >
+    expect(calls[0]?.[0].data.msg_type).toBe('interactive')
+    expect(JSON.parse(calls[0]?.[0].data.content ?? '{}')).toEqual(card)
+  })
+})
+
+describe('createFeishuTransport — app owner', () => {
+  test('resolves creator and human owner as open_id values', async () => {
+    const stub = stubClient()
+    stub.request.mockResolvedValueOnce({
+      data: {
+        app: {
+          creator_id: 'ou_creator',
+          owner: { owner_id: 'ou_owner', type: 2 },
+        },
+      },
+    } as never)
+    const transport = buildTransport(stub)
+
+    await expect(transport.resolveAppOwner()).resolves.toEqual({
+      creatorOpenId: 'ou_creator',
+      ownerOpenId: 'ou_owner',
+      ownerType: 2,
+    })
+    expect(stub.request).toHaveBeenCalledWith({
+      method: 'GET',
+      url: '/open-apis/application/v6/applications/app',
+      params: { lang: 'zh_cn', user_id_type: 'open_id' },
+    })
+  })
+
+  test('does not accept a non-enterprise-member owner id', async () => {
+    const stub = stubClient()
+    stub.request.mockResolvedValueOnce({
+      data: {
+        app: {
+          creator_id: 'ou_creator',
+          owner: { owner_id: 'ou_partner_owner', type: 1 },
+        },
+      },
+    } as never)
+    const transport = buildTransport(stub)
+
+    await expect(transport.resolveAppOwner()).resolves.toEqual({
+      creatorOpenId: 'ou_creator',
+      ownerType: 1,
+    })
+  })
+
+  test('owner lookup diagnostic names the documented Feishu scopes', async () => {
+    const calls: Array<{ message: string; fields?: Record<string, unknown> }> = []
+    const record = (fields: Record<string, unknown>, message?: string) => {
+      calls.push({ message: message ?? '', fields })
+    }
+    const logger: TransportLogger = {
+      error: record,
+      warn: record,
+      info: record,
+      debug: record,
+      trace: record,
+    }
+    const stub = stubClient()
+    stub.request.mockRejectedValue(new Error('permission denied'))
+    const transport = createFeishuTransport(
+      { appId: 'app', appSecret: 'secret' },
+      { client: stub.client, logger },
+    )
+
+    await expect(transport.resolveAppOwner()).resolves.toEqual({})
+    const haystack = JSON.stringify(calls)
+    expect(haystack).toContain('application:application:self_manage')
+    expect(haystack).toContain('admin:app.info:readonly')
+    expect(haystack).not.toContain('application:app:readonly')
   })
 })
 
