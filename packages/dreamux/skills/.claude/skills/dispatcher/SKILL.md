@@ -92,6 +92,10 @@ do not inspect the target repo directly from the dispatcher.
   Team, bind it after create with the team `bind_channel` tool (see "Channel
   binding" below). (The former `create_group` tool — create a brand-new Feishu
   group and invite users — was retired; bind an existing group instead.)
+- `send` — submit a follow-up turn to that Team's TeamLeader by `team_name`.
+  This targets the TeamLeader agent only; it does not send to Team members and
+  does not bind or post to a channel. Pass `intent` (optional) to update the
+  TeamLeader's recovery subject when the work shifts.
 - `list` — compact scan rows for current Teams (team_name, status, intent, repo
   signal, leader name/state, member count, bound group marker, timestamps). Keep
   it cheap and scannable; reach for `status` for detail.

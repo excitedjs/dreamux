@@ -45,6 +45,7 @@ import type {
   TeamCreateInput,
   TeamDissolveInput,
   TeamHistoryQuery,
+  TeamLeaderSendResult,
 } from '../team-collection/types.js';
 
 export interface DispatcherServiceOptions {
@@ -410,6 +411,19 @@ export class DispatcherService {
   teamScheduler(teamId: string) { return this.teams.scheduler(teamId); }
 
   createTeam(input: TeamCreateInput) { this.assertNotShuttingDown(); return this.teams.create(input); }
+
+  sendTeamLeader(input: {
+    teamId: string;
+    prompt: string;
+    intent?: string;
+  }): Promise<TeamLeaderSendResult> {
+    this.assertNotShuttingDown();
+    return this.teams.sendToLeader(input.teamId, {
+      prompt: input.prompt,
+      ...(input.intent !== undefined ? { intent: input.intent } : {}),
+      initiator: this.agent,
+    });
+  }
 
   listTeams() { return this.teams.list(); }
 

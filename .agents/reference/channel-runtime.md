@@ -80,13 +80,15 @@ as `chat_id` and `chat_type`.
 Team channel binding is core-owned state behind the caller-scoped Team MCP:
 
 - dispatcher projection:
+  `send({ team_name, prompt, intent? })` to submit a turn to the TeamLeader,
   `bind_channel({ team_name, channel_id?, meta })` and
   `transfer_back({ channel_id?, meta })`
 - TeamLeader projection: only scoped
   `transfer_back({ channel_id?, meta })`
 
 The `meta` object is provider-owned target selector input. For Feishu, that is
-typically `{ "chat_id": "..." }`. `team.send` remains future work.
+typically `{ "chat_id": "..." }`. Team peer send remains future work and is not
+part of channel binding.
 
 Dreamux core owns channel sessions and durable binding rows through the
 dispatcher-local `ChannelService`. Channel providers remain Team-agnostic: they

@@ -182,7 +182,13 @@ export class TeammateService {
    * router so the settled turn routes back to the initiator.
    */
   async send(
-    input: { prompt: string; intent?: string; teamId?: string },
+    input: {
+      prompt: string;
+      intent?: string;
+      teamId?: string;
+      turnOrigin?: TeamMateTurnOrigin;
+      onSubmittedTurn?: (turnId: string) => void;
+    },
   ): Promise<TeamMateSendResult> {
     await this.ensureStarted({ reopenClosed: true, teamId: input.teamId });
     if (input.intent !== undefined && input.intent !== '') {
@@ -191,9 +197,12 @@ export class TeammateService {
     const turn = await this.submitPrompt(input.prompt, {
       teamId: input.teamId,
     });
+    if (turn.turn_id !== undefined) {
+      input.onSubmittedTurn?.(turn.turn_id);
+    }
     await recordSubmittedTurn(this.turnsStore, this.live(), {
       turnId: turn.turn_id ?? null,
-      turnOrigin: turnOriginForTeamId(input.teamId),
+      turnOrigin: input.turnOrigin ?? turnOriginForTeamId(input.teamId),
       prompt: input.prompt,
     });
     return { teammate: this.status(), turn };

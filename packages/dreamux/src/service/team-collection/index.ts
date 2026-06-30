@@ -26,6 +26,7 @@ import type {
   TeamHistoryQuery,
   TeamHistoryResult,
   TeamHistoryRow,
+  TeamLeaderSendResult,
   TeamListRow,
   TeamRecord,
 } from './types.js';
@@ -201,6 +202,19 @@ export class TeamCollection {
       teamName: team.team_id,
       leaderName: team.leader_name,
     };
+  }
+
+  async sendToLeader(
+    teamId: string,
+    input: {
+      prompt: string;
+      intent?: string;
+      initiator: CompletionInitiator;
+    },
+  ): Promise<TeamLeaderSendResult> {
+    const id = validateTeamId(teamId);
+    await this.mustOpenTeam(id);
+    return (await this.get(id)).sendToLeader(input);
   }
 
   async isOpenTeam(teamId: string): Promise<boolean> {

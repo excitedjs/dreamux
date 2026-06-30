@@ -122,13 +122,18 @@ export function teamTools(
   }, ['meta']);
   if (callerKind === 'team_leader') return [transferBackTool];
   return [
-    tool('create', 'Create a Team and start its TeamLeader. team_name is the concrete Team key used by all later status/history/dissolve calls. intent is required: it is the durable recovery subject for the Team. repo is optional: omit it to run the TeamLeader and members in a plain shared work directory under the dispatcher workspace (.workspace/work/<team_name>/ — the dispatcher cwd need not be a git repo), or pass { mode: reuse-cwd | managed, path?, base_ref?, branch?, slug?, cleanup? } — managed creates a git worktree. prompt is optional: when supplied it is delivered as the TeamLeader\'s first turn; when omitted the leader starts idle and fires no turn, waiting for a bound channel inbound or a later send to drive its first turn (creation does NOT fabricate a default prompt). To hand a group chat to the Team, bind it after create with the team bind_channel tool.', {
+    tool('create', 'Create a Team and start its TeamLeader. team_name is the concrete Team key used by all later status/history/dissolve/send calls. intent is required: it is the durable recovery subject for the Team. repo is optional: omit it to run the TeamLeader and members in a plain shared work directory under the dispatcher workspace (.workspace/work/<team_name>/ — the dispatcher cwd need not be a git repo), or pass { mode: reuse-cwd | managed, path?, base_ref?, branch?, slug?, cleanup? } — managed creates a git worktree. prompt is optional: when supplied it is delivered as the TeamLeader\'s first turn; when omitted the leader starts idle and fires no turn, waiting for a bound channel inbound or a later Team MCP send to drive its first turn (creation does NOT fabricate a default prompt). To hand a group chat to the Team, bind it after create with the team bind_channel tool.', {
       team_name: { type: 'string', minLength: 1, maxLength: 64 },
       repo: repoInputSchema(),
       leader_agent_runtime: { type: 'string', minLength: 1, maxLength: 128 },
       intent: { type: 'string', minLength: 1, maxLength: 2000 },
       prompt: { type: 'string', maxLength: 20000 },
     }, ['team_name', 'leader_agent_runtime', 'intent']),
+    tool('send', 'Submit a follow-up turn to a Team\'s TeamLeader by team_name. This targets the TeamLeader agent only; it does not send to Team members and does not bind or post to a channel.', {
+      team_name: { type: 'string', minLength: 1, maxLength: 64 },
+      prompt: { type: 'string', minLength: 1, maxLength: 20000 },
+      intent: { type: 'string', minLength: 1, maxLength: 2000 },
+    }, ['team_name', 'prompt']),
     tool('list', 'List Teams owned by this dispatcher (compact scan rows: team_name, status, intent, repo, leader, member count, bound group).', {}, []),
     tool('status', 'Read one Team\'s detailed current status by its team_name (record, TeamLeader status, member count, active bound group).', {
       team_name: { type: 'string', minLength: 1, maxLength: 64 },
@@ -207,6 +212,8 @@ function mapToolCall(
   switch (call.name) {
     case 'create':
       return { method: 'mcp.team.create', params: createArgs(call.arguments) };
+    case 'send':
+      return { method: 'mcp.team.send', params: sendArgs(call.arguments) };
     case 'list':
       return { method: 'mcp.team.list', params: {} };
     case 'status':
@@ -244,6 +251,16 @@ function createArgs(value: unknown): Record<string, unknown> {
 function teamNameArgs(value: unknown): Record<string, unknown> {
   const obj = asRecord(value, 'arguments');
   return { team_name: requireString(obj, 'team_name') };
+}
+
+function sendArgs(value: unknown): Record<string, unknown> {
+  const obj = asRecord(value, 'send arguments');
+  const intent = optionalString(obj, 'intent');
+  return {
+    team_name: requireString(obj, 'team_name'),
+    prompt: requireString(obj, 'prompt'),
+    ...(intent !== null ? { intent } : {}),
+  };
 }
 
 function historyArgs(value: unknown): Record<string, unknown> {

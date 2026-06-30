@@ -205,7 +205,7 @@ describe('issue #199 Slice 1 — public MCP contract whitelist', () => {
 
   it('team verbs address by team_name, never the legacy name/team_id', async () => {
     const tools = await teamTools();
-    for (const verb of ['create', 'status', 'dissolve']) {
+    for (const verb of ['create', 'send', 'status', 'dissolve']) {
       expect(schemaOf(tools, verb).properties).toHaveProperty('team_name');
       expect(schemaOf(tools, verb).properties).not.toHaveProperty('name');
       expect(schemaOf(tools, verb).properties).not.toHaveProperty('team_id');

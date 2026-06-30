@@ -372,6 +372,59 @@ describe('TeamLeader cron scheduler lifecycle', () => {
 
     await dispatcher.stop();
   });
+
+  it('dispatcher team.send submits to the TeamLeader and rejects shutdown sends', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const contexts: AgentRuntimeCreateContext[] = [];
+    const runtimes: FakeRuntime[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        channels: [],
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const log = noopLog();
+    const dispatcher = new DispatcherService({
+      id: 'dispatcher-a',
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: fakeRuntimeCatalog({
+        runtimes,
+        contexts,
+      }),
+      channelProviders: fakeChannelCatalog(),
+      adminSocketPath: '/tmp/dreamux-admin.sock',
+      channelLoggerFactory: () => log,
+      log,
+    });
+    await dispatcher.start();
+    await dispatcher.createTeam({
+      name: 'alpha',
+      leaderAgentRuntime: 'agent-a',
+      intent: 'lead alpha',
+    });
+
+    const sent = await dispatcher.sendTeamLeader({
+      teamId: 'alpha',
+      prompt: 'follow up',
+    });
+    expect(sent.turn).toEqual({ status: 'submitted', turn_id: 'turn-1' });
+    expect(runtimes).toHaveLength(2);
+    expect(runtimes[1]!.submitted.map((input) => input.text)).toEqual([
+      'follow up',
+    ]);
+
+    await dispatcher.shutdown();
+    await expect(
+      Promise.resolve().then(() =>
+        dispatcher.sendTeamLeader({ teamId: 'alpha', prompt: 'too late' }),
+      ),
+    ).rejects.toThrow(/shutting down/);
+  });
 });
 
 function makeTeams(input: {

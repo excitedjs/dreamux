@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { adminMethods } from '../src/admin/methods.js';
 import { AdminError } from '../src/admin/protocol.js';
+import { TeamUnavailableError } from '../src/service/team-collection/index.js';
 import type { Server } from '../src/server.js';
 
 const stubServer = {
@@ -63,6 +64,19 @@ describe('admin layer enforces required non-empty intent/note (#182 PR-3)', () =
     const base = { dispatcher_id: 'flow', team_name: 'alpha' };
     await expectBadRequest('mcp.team.dissolve', base);
     await expectBadRequest('mcp.team.dissolve', { ...base, note: '' });
+  });
+
+  it('rejects team.send for TeamLeader callers and requires a non-empty prompt', async () => {
+    const base = { dispatcher_id: 'flow', team_name: 'alpha' };
+    await expectBadRequest('mcp.team.send', base);
+    await expectBadRequest('mcp.team.send', { ...base, prompt: '' });
+    await expectBadRequest('mcp.team.send', {
+      ...base,
+      caller_kind: 'team_leader',
+      team_id: 'alpha',
+      leader_name: 'alpha-leader',
+      prompt: 'follow up',
+    });
   });
 });
 
@@ -161,6 +175,96 @@ describe('Channel MCP admin methods replace the Team binding methods (#209 slice
 });
 
 describe('Team MCP admin read methods compose channel binding summaries', () => {
+  it('team.send forwards to the dispatcher and returns only team, leader, and turn', async () => {
+    const sent = {
+      team: {
+        team_name: 'alpha',
+        status: 'running',
+        intent: 'lead alpha',
+        source_repo: null,
+        leader_name: 'alpha-leader',
+        leader_agent_runtime: 'agent-a',
+        created_at: 1,
+        updated_at: 2,
+        closed_at: null,
+        close_note: null,
+      },
+      leader: {
+        name: 'alpha-leader',
+        session_id: 'thread-a',
+        agent_runtime: 'agent-a',
+        repo: {
+          mode: 'reuse-cwd',
+          path: '/redacted',
+          source_repo: null,
+          branch: null,
+          base_ref: null,
+          cleanup: 'keep',
+          cleanup_state: 'not-managed',
+        },
+        intent: 'lead alpha follow-up',
+        status: 'running',
+        runtime_status: 'ready',
+        last_error: null,
+        closed_at: null,
+        close_note: null,
+      },
+      turn: { status: 'submitted', turn_id: 'turn-1' },
+    };
+    const seen: Array<Record<string, unknown>> = [];
+    const server = {
+      repos: { dispatchers: { get: () => ({ dispatcher_id: 'flow' }) } },
+      getDispatcher: () => ({
+        sendTeamLeader: async (input: Record<string, unknown>) => {
+          seen.push(input);
+          return sent;
+        },
+      }),
+    } as unknown as Server;
+
+    const result = await adminMethods['mcp.team.send']!(server, {
+      dispatcher_id: 'flow',
+      caller_kind: 'dispatcher',
+      team_name: 'alpha',
+      prompt: 'follow up',
+      intent: 'lead alpha follow-up',
+    });
+
+    expect(seen).toEqual([
+      { teamId: 'alpha', prompt: 'follow up', intent: 'lead alpha follow-up' },
+    ]);
+    expect(Object.keys(result as Record<string, unknown>).sort()).toEqual([
+      'leader',
+      'team',
+      'turn',
+    ]);
+    expect(result).toEqual(sent);
+    expect(result as Record<string, unknown>).not.toHaveProperty('binding');
+  });
+
+  it('maps unavailable team.send targets to TEAM_NOT_FOUND', async () => {
+    const server = {
+      repos: { dispatchers: { get: () => ({ dispatcher_id: 'flow' }) } },
+      getDispatcher: () => ({
+        sendTeamLeader: async () => {
+          throw new TeamUnavailableError('Team "ghost" does not exist');
+        },
+      }),
+    } as unknown as Server;
+
+    await expect(
+      adminMethods['mcp.team.send']!(server, {
+        dispatcher_id: 'flow',
+        team_name: 'ghost',
+        prompt: 'follow up',
+      }),
+    ).rejects.toMatchObject({
+      name: 'AdminError',
+      code: 'TEAM_NOT_FOUND',
+      message: 'Team "ghost" does not exist',
+    });
+  });
+
   it('adds bound_group for list and history and binding for status in the admin layer', async () => {
     const binding = { provider: 'builtin:feishu', chat_id: 'chat-alpha' };
     const owners: Array<Record<string, unknown>> = [];

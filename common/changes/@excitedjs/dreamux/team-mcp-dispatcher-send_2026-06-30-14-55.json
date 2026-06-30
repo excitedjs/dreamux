@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux",
+      "comment": "Expose dispatcher-scoped Team MCP send so dispatchers can submit follow-up turns to a Team's TeamLeader by team_name, with completion routed back to the dispatcher.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

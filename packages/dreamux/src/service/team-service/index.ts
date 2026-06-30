@@ -41,6 +41,7 @@ import type { TeammateService } from '../teammate-service/index.js';
 import type { TeamStore } from '../team-collection/store.js';
 import type {
   TeamDissolveInput,
+  TeamLeaderSendResult,
   TeamRecord,
   TeamSummary,
   TeamView,
@@ -315,6 +316,31 @@ export class TeamService {
     return this.leader.channelInput(turn);
   }
 
+  async sendToLeader(input: {
+    prompt: string;
+    intent?: string;
+    initiator: CompletionInitiator;
+  }): Promise<TeamLeaderSendResult> {
+    const record = this.mustRecord();
+    if (record.status === 'closed') {
+      throw new Error(`Team ${JSON.stringify(this.id)} is closed`);
+    }
+    const leader = this.mustLeader();
+    const sent = await leader.send({
+      prompt: input.prompt,
+      ...(input.intent !== undefined ? { intent: input.intent } : {}),
+      teamId: this.id,
+      turnOrigin: 'dispatcher',
+      onSubmittedTurn: (turnId) =>
+        this.registerLeaderCompletionFor(leader, turnId, input.initiator),
+    });
+    return {
+      team: this.view(),
+      leader: sent.teammate,
+      turn: sent.turn,
+    };
+  }
+
   sharedWorkspace(): TeamMateSharedWorkspace {
     const record = this.mustRecord();
     return {
@@ -429,6 +455,14 @@ export class TeamService {
     if (turnId === null) return;
     const initiator = await this.deps.initiatorFor(leader.current());
     if (initiator === null) return;
+    this.registerLeaderCompletionFor(leader, turnId, initiator);
+  }
+
+  private registerLeaderCompletionFor(
+    leader: TeammateService,
+    turnId: string,
+    initiator: CompletionInitiator,
+  ): void {
     this.deps.router.register(completionKey(leader.name, turnId), initiator);
   }
 
