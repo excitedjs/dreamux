@@ -44,6 +44,10 @@ The behavior should align with `teammate.send` wherever the target is also an
 agent turn: runtime-native continuation semantics, one submitted turn per call,
 and completion routed only after the target turn settles.
 
+The Team remains the lifecycle boundary. A closed Team must not be revived by
+reopening its leader identity; dispatcher `team.send` fails loudly for missing or
+closed Teams before submitting any leader turn.
+
 ## Scope
 
 This slice only adds dispatcher-to-TeamLeader send.
@@ -63,15 +67,34 @@ communication remains on the existing TeamLeader-scoped TeamMate MCP
 ## Tool contract
 
 `team_name` is the concrete Team key, matching the existing Team MCP lifecycle
-tools.
+tools. It is scoped to the descriptor-bound dispatcher, just like the existing
+Team MCP lifecycle and binding verbs.
 
-`prompt` is the submitted turn text, matching `teammate.send`.
+`prompt` is the submitted turn text, matching `teammate.send`. It is required
+and non-empty at both MCP-schema and admin-method validation layers.
 
 `intent` is optional. When supplied, it updates the TeamLeader's durable recovery
-subject in the same spirit as `teammate.send`.
+subject in the same spirit as `teammate.send`. This is the TeamLeader identity
+intent, not the Team record intent surfaced on the public Team view. Repeated
+send calls are last-writer-wins for that leader identity intent.
 
 The tool does not take `channel_id`, `meta`, or provider target selectors. Team
 send is an agent-to-agent control action, not a channel binding action.
+
+The structured admin result is fixed:
+
+```ts
+{
+  team: TeamView;
+  leader: TeamMateRuntimeStatus;
+  turn: TeamMateTurnResult;
+}
+```
+
+`team` is the public `TeamView` shape, with no machine-local `repo_cwd` or
+worktree fields. `leader` and `turn` reuse the same runtime status and turn
+result shapes as `teammate.send`; non-submitted turn statuses do not carry a
+`turn_id`. The send result does not include channel binding summaries.
 
 ## Completion semantics
 
@@ -86,6 +109,17 @@ threading special cases through the completion router.
 The completion producer remains the TeamLeader. The completion target is the
 dispatcher agent. Channel inbound turns and remote-control turns remain outside
 reverse-delivery registration unless an existing pathway already registers them.
+
+The implementation must avoid a settle-before-register window. Once the
+TeamLeader runtime accepts a submitted turn and returns a `turn_id`, the
+completion key must be registered to the dispatcher initiator immediately, before
+any awaited submitted-turn recording or response assembly. If the runtime result
+is not `submitted`, no completion registration is made and the returned `turn`
+status carries that non-submitted outcome. Tests must cover an immediate-settle
+runtime path so the registration order is executable, not just documented.
+
+The submitted turn must be recorded with `turn_origin: 'dispatcher'`, even
+though the leader send still needs its `teamId` for roster/runtime startup.
 
 ```mermaid
 sequenceDiagram
@@ -135,14 +169,26 @@ or dispatcher-specific branching.
   addressed Team's TeamLeader.
 - The TeamLeader can be lazily started or reopened through the existing
   `TeammateService.send` path when the Team itself is open.
-- Closed or missing Teams fail loudly with an actionable error.
+- Closed or missing Teams fail loudly before any leader runtime submission.
 - The submitted TeamLeader turn registers completion delivery back to the
-  dispatcher at send time.
+  dispatcher as soon as a submitted `turn_id` is available and before any
+  awaited recording side effect.
+- The submitted TeamLeader turn is recorded with `turn_origin: 'dispatcher'`.
+- `mcp.team.send` returns `{ team: TeamView, leader: TeamMateRuntimeStatus, turn:
+  TeamMateTurnResult }` and does not include binding data.
+- The admin method rejects `caller_kind: 'team_leader'` with a `BAD_REQUEST`
+  validation error; the TeamLeader MCP shim also continues to reject hidden
+  `send` calls before admin dispatch.
 - Existing TeamLeader `transfer_back`, dispatcher channel binding, and
   TeamLeader-to-member `teammate.send` behavior continue to pass.
 - Bundled dispatcher prompt, skill, and architecture reference text no longer
   describe `team.send` as entirely future work; they describe the dispatcher
   `send` slice and keep peer Team send as future work.
+- Dispatcher base prompt and bundled dispatcher skill text explicitly enumerate
+  Team MCP `send` in the Team MCP tool list; prompt parity must not pass only
+  because the TeamMate MCP section also contains the word `send`.
+- The final implementation includes the required Rush change file for the new
+  model-facing MCP capability.
 
 ## Out of scope
 
