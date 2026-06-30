@@ -110,13 +110,19 @@ The completion producer remains the TeamLeader. The completion target is the
 dispatcher agent. Channel inbound turns and remote-control turns remain outside
 reverse-delivery registration unless an existing pathway already registers them.
 
-The implementation must avoid a settle-before-register window. Once the
-TeamLeader runtime accepts a submitted turn and returns a `turn_id`, the
-completion key must be registered to the dispatcher initiator immediately, before
-any awaited submitted-turn recording or response assembly. If the runtime result
-is not `submitted`, no completion registration is made and the returned `turn`
-status carries that non-submitted outcome. Tests must cover an immediate-settle
-runtime path so the registration order is executable, not just documented.
+This slice follows the existing teammate send contract: `send` resolves at
+submit time, and the terminal result arrives later through
+`onTurnSettled` plus `CompletionRouter`. The TeamLeader turn registers
+completion delivery to the dispatcher initiator once a submitted `turn_id` is
+available, using the same `CompletionRouter` registration model as
+dispatcher-to-teammate and TeamLeader-to-member sends. It must not add a
+Team-specific pending-settle cache, local hook, or router branch. If the runtime
+result is not `submitted`, no completion registration is made and the returned
+`turn` status carries that non-submitted outcome.
+
+The known settle-before-register edge is a global send lifecycle concern, not a
+dispatcher-to-TeamLeader special case. Handling it requires a separate design for
+send / steer / completion promise semantics across all send paths.
 
 The submitted turn must be recorded with `turn_origin: 'dispatcher'`, even
 though the leader send still needs its `teamId` for roster/runtime startup.

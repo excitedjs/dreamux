@@ -156,37 +156,38 @@ sendToLeader(input: {
 
 - fail if the Team record is closed;
 - submit through the leader `TeammateService` with `teamId: this.id`,
-  `turnOrigin: 'dispatcher'`, and a synchronous submitted-turn hook;
-- register the submitted leader turn id with the supplied initiator from that
-  hook, before any awaited submitted-turn recording or response assembly;
+  and `turnOrigin: 'dispatcher'`;
+- register the submitted leader turn id with the supplied initiator using the
+  same post-submit `CompletionRouter` flow as existing teammate sends;
 - reuse the existing `CompletionRouter` key shape;
 - not know whether the initiator is a dispatcher or a future peer TeamLeader.
 
-Extend `TeammateService.send` with optional internal parameters rather than
-adding a router policy class:
+Make `TeammateService.send` record the caller-owned `turnOrigin` explicitly
+rather than deriving it from `teamId`:
 
 ```ts
 async send(input: {
   prompt: string;
   intent?: string;
   teamId?: string;
-  turnOrigin?: TeamMateTurnOrigin;
-  onSubmittedTurn?: (turnId: string) => void;
+  turnOrigin: TeamMateTurnOrigin;
 }): Promise<TeamMateSendResult>
 ```
 
-The hook is called only when `channelInput` returns `submitted`, and it is called
-synchronously with the accepted `turnId` before `recordSubmittedTurn(...)` or any
-other awaited side effect. `TeamService.sendToLeader` uses the hook to call a
-private helper such as `registerLeaderCompletionFor(leader, turnId, initiator)`.
-The existing initial-prompt path can keep the current helper that derives the
+This keeps `teamId` as runtime/team context only; the caller that owns the send
+semantics supplies whether the turn should be recorded as `dispatcher` or
+`team_leader`. `TeamService.sendToLeader` should await the leader send result,
+then register `leaderName:turnId -> initiator` when the turn was submitted. The
+existing initial-prompt path can keep the current helper that derives the
 initiator from `deps.initiatorFor(leader.current())`.
 
 Do not add a pending-latch, unmatched-settle cache, or Team-specific branch to
-`CompletionRouter` for this slice. The focused implementation contract is:
-once an `AgentRuntime` returns a submitted `turnId`, Dreamux registers the
-completion key before any local awaited recording work that could allow an
-immediate settlement to win the race.
+`CompletionRouter` for this slice. The focused implementation contract is to
+reuse the existing teammate send lifecycle: `send` returns a submit-time result,
+completion delivery is registered for submitted turns, and terminal completion
+arrives asynchronously via `onTurnSettled` plus `CompletionRouter`. A stronger
+settle-before-register guarantee belongs to a separate, global send / steer /
+completion lifecycle design rather than a dispatcher-to-TeamLeader special case.
 
 ## Completion routing
 
@@ -196,8 +197,8 @@ The router already takes an abstract `CompletionInitiator`. The important
 change is where that initiator is chosen:
 
 - current initial TeamLeader prompt: still derived from producer identity;
-- new dispatcher `team.send`: explicitly dispatcher agent, registered through
-  the submitted-turn hook;
+- new dispatcher `team.send`: explicitly dispatcher agent, registered from the
+  submitted send result;
 - future peer send: explicit caller-side initiator.
 
 This keeps producer identity available for the completion envelope while avoiding
@@ -233,8 +234,8 @@ Focused tests should cover:
 - `mcp.team.send` forwards `team_name`, `prompt`, and optional `intent`;
 - dispatcher `sendTeamLeader` submits to the TeamLeader and registers completion
   delivery to the dispatcher;
-- a focused immediate-settle test proves completion registration occurs before
-  awaited submitted-turn recording can let the settle path drop the completion;
+- focused coverage proves the TeamLeader completion is routed back to the
+  dispatcher initiator after the submitted turn settles;
 - the submitted TeamLeader turn is recorded with `turn_origin: 'dispatcher'`;
 - `mcp.team.send` returns `{ team, leader, turn }` with public `team` data and
   no binding summary;
