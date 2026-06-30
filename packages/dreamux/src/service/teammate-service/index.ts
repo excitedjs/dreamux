@@ -186,7 +186,9 @@ export class TeammateService {
       prompt: string;
       intent?: string;
       teamId?: string;
+      /** Override the recorded origin when a team-scoped runtime turn is dispatcher-initiated. */
       turnOrigin?: TeamMateTurnOrigin;
+      /** Register the completion route immediately after runtime submission returns a turn id. */
       onSubmittedTurn?: (turnId: string) => void;
     },
   ): Promise<TeamMateSendResult> {
