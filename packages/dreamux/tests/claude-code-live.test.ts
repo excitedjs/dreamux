@@ -117,7 +117,7 @@ describe('claude-code live integration (opt-in)', () => {
       config: dispatcherClaudeCodeConfig(dispatcher),
       cwd: home,
       mcpServers: [],
-      state: store,
+      state: store.bindRuntime('live'),
       paths: dispatcherHostPaths,
     });
 

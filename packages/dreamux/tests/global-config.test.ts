@@ -55,7 +55,6 @@ const EXTERNAL_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = {
   events: { kind: 'synthesized' },
   last: { supported: true },
   context: { supported: false },
-  systemPrompt: { mode: 'append' },
   teammateCompletion: [],
 };
 

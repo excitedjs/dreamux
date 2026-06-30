@@ -123,7 +123,7 @@ function state(): AgentRuntimeStateCallbacks {
     async setStatus() {
       /* no-op */
     },
-    async setThreadId() {
+    async setCheckpoint() {
       /* no-op */
     },
   };

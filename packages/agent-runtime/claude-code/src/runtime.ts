@@ -69,10 +69,13 @@ import {
   type TurnOutcome,
   type TurnSubmitOptions,
 } from './supervisor.js';
-import { renderChannelInput, resolveCompletionBody } from '@excitedjs/dreamux-utils';
+import { renderChannelInput } from '@excitedjs/dreamux-utils';
 import { CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES } from './provider.js';
+import { buildCompletionTurnText } from './completion-turn.js';
+import { consoleFallbackLogger } from './logger.js';
 import type {
   AgentRuntimeCapabilities,
+  AgentRuntimeControlNotice,
   AgentRuntime,
   AgentRuntimeIdentity,
   AgentRuntimeLastResult,
@@ -86,8 +89,10 @@ import type {
   AgentRuntimeTurnResult,
   CompletionEnvelope,
   DreamuxLogger,
+  InboundDeliveryResult,
   InboundDeliveryHooks,
   InboundTurnInput,
+  NoticeInjectionResult,
   TeamMateCompletionDeliveryResult,
   TurnSettledSignal,
 } from '@excitedjs/dreamux-types';
@@ -124,7 +129,7 @@ export interface ClaudeCodeRuntimeDeps {
    * Launcher-supplied role/system-prompt content, applied as an APPEND via
    * `--append-system-prompt`. Omitted for launches that supply none (teammates).
    */
-  systemPromptContent?: string;
+  systemPromptAppend?: string;
   /**
    * Role-gated skill sources core selected (issue #209 slice 6). The
    * add-dir-compatible ones become `--add-dir` flags on every (re)spawn.
@@ -149,40 +154,6 @@ interface ActiveChannelTurn {
 }
 
 let nextRuntimeInstanceId = 0;
-
-/**
- * Status line opening a TeamMate completion turn. Plain English, status-varied —
- * NOT claude-code's native `<task-notification>` XML. The old XML mimicked
- * claude-code's real task-notification system, so the model could mistake the
- * fabricated task-id / output-file for a live background task and act on them
- * (hallucination / harness collision). A plain user turn avoids that entirely.
- */
-function completionStatusLine(completion: CompletionEnvelope): string {
-  switch (completion.status) {
-    case 'completed':
-      return `TeamMate ${completion.source} has finished its task.`;
-    case 'failed':
-      return `TeamMate ${completion.source}'s task failed.`;
-    case 'stopped':
-      return `TeamMate ${completion.source}'s task was stopped.`;
-  }
-}
-
-/**
- * Build the plain-text completion turn. The result is inlined when short; when
- * it overflows the inline budget the full result is spilled to a file (see
- * {@link resolveCompletionBody}) and only the path is inlined.
- */
-async function buildCompletionTurnText(
-  completion: CompletionEnvelope,
-  spillDir: string,
-): Promise<string> {
-  const line = completionStatusLine(completion);
-  const body = await resolveCompletionBody(completion, spillDir);
-  return body.kind === 'inline'
-    ? `${line} Output below:\n\n${body.text}`
-    : `${line} The output is too long, so the full result was saved to a file:\n\n${body.path}`;
-}
 
 function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -256,12 +227,22 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     return CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES;
   }
 
+  getCheckpoint(): { kind: 'claudeCodeSession'; id: string } | null {
+    return this.threadId === null
+      ? null
+      : { kind: 'claudeCodeSession', id: this.threadId };
+  }
+
   getThreadId(): string | null {
-    return this.threadId;
+    return this.getCheckpoint()?.id ?? null;
+  }
+
+  wasCheckpointResumed(): boolean {
+    return this.resumed;
   }
 
   wasThreadResumed(): boolean {
-    return this.resumed;
+    return this.wasCheckpointResumed();
   }
 
   async getLast(): Promise<AgentRuntimeLastResult | null> {
@@ -319,21 +300,37 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     await this.setStatus('stopped');
   }
 
-  async systemInput(notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult> {
+  async injectControlNotice(
+    notice: AgentRuntimeControlNotice,
+  ): Promise<NoticeInjectionResult> {
     if (this.stopped) return { status: 'stopped' };
     const turnId = this.nextTurnId('system');
     this.recordQueuedTurnStart();
     void this.runTurnOnQueue(notice.text, turnId).then(
-      () => this.markTurnSucceeded(turnId),
+      (resultText) => this.markTurnSucceeded(turnId, resultText),
       (err) => this.markTurnFailed(turnId, err),
     );
     return { status: 'submitted', turnId };
   }
 
-  async channelInput(
+  async systemInput(notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult> {
+    if (notice.reason === 'teammate-completion') {
+      throw new Error('teammate completion must use completionInput');
+    }
+    if (notice.reason === 'scheduled') {
+      return this.submitTurn({ sourceId: '', text: notice.text });
+    }
+    return this.injectControlNotice({
+      kind: 'control',
+      text: notice.text,
+      reason: notice.reason,
+    });
+  }
+
+  async submitTurn(
     input: InboundTurnInput,
     hooks: InboundDeliveryHooks = {},
-  ): Promise<AgentRuntimeTurnResult> {
+  ): Promise<InboundDeliveryResult> {
     if (this.stopped) return { status: 'stopped' };
     const key = input.sourceId;
     if (key !== '' && this.seen.has(key)) return { status: 'duplicate' };
@@ -376,10 +373,17 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     // completion. Instead, a failed turn drives the runtime to `degraded` with a
     // persisted `last_error` (visible via status/doctor) — never swallowed.
     void this.runChannelTurnOnQueue(text, channelTurn).then(
-      () => this.markTurnSucceeded(turnId),
+      (resultText) => this.markTurnSucceeded(turnId, resultText),
       (err) => this.markTurnFailed(turnId, err),
     );
     return { status: 'submitted', turnId };
+  }
+
+  async channelInput(
+    input: InboundTurnInput,
+    hooks: InboundDeliveryHooks = {},
+  ): Promise<AgentRuntimeTurnResult> {
+    return this.submitTurn(input, hooks);
   }
 
   async completionInput(
@@ -405,7 +409,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     const turnId = `claude-teammate-${completion.id}`;
     this.recordQueuedTurnStart();
     void this.runTurnOnQueue(text, turnId, { isSynthetic: false }).then(
-      () => this.markTurnSucceeded(turnId),
+      (resultText) => this.markTurnSucceeded(turnId, resultText),
       (err) => this.markTurnFailed(turnId, err),
     );
     return { status: 'accepted' };
@@ -433,7 +437,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     prompt: string,
     turnId: string,
     options?: TurnSubmitOptions,
-  ): Promise<void> {
+  ): Promise<string | null> {
     const run = this.queue.then(() => this.runTurn(prompt, turnId, options));
     this.queue = run.then(
       () => undefined,
@@ -445,7 +449,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   private runChannelTurnOnQueue(
     prompt: string,
     active: ActiveChannelTurn,
-  ): Promise<void> {
+  ): Promise<string | null> {
     const run = this.queue.then(() => this.runChannelTurn(prompt, active));
     this.queue = run.then(
       () => undefined,
@@ -457,7 +461,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   private async runChannelTurn(
     prompt: string,
     active: ActiveChannelTurn,
-  ): Promise<void> {
+  ): Promise<string | null> {
     const session = await this.ensureSession();
     const steers = active.pendingSteers.splice(0);
     const fullPrompt =
@@ -465,7 +469,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     const outcome = session.submitTurn(fullPrompt);
     active.session = session;
     try {
-      await this.applyTurnOutcome(await outcome, active.turnId);
+      return await this.applyTurnOutcome(await outcome, active.turnId);
     } finally {
       active.session = null;
       if (this.activeChannelTurn === active) this.activeChannelTurn = null;
@@ -492,9 +496,16 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     await steer;
   }
 
-  private async markTurnSucceeded(turnId: string): Promise<void> {
+  private async markTurnSucceeded(
+    turnId: string,
+    resultText: string | null,
+  ): Promise<void> {
     this.recordQueuedTurnEnd();
-    this.deps.onTurnSettled?.({ turnId, status: 'completed' });
+    this.deps.onTurnSettled?.({
+      turnId,
+      status: 'completed',
+      result: { text: resultText },
+    });
     if (this.stopped) return;
     if (this.status !== 'ready') await this.setStatus('ready');
   }
@@ -509,6 +520,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     this.deps.onTurnSettled?.({
       turnId,
       status: this.stopped ? 'stopped' : 'failed',
+      result: { text: null },
       error: err instanceof Error ? err : new Error(String(err)),
     });
     if (this.stopped) return;
@@ -544,7 +556,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       config: this.config,
       mcpConfigPath: this.mcpConfigPath,
       resumeSessionId: this.threadId,
-      systemPromptContent: this.deps.systemPromptContent,
+      systemPromptContent: this.deps.systemPromptAppend,
       skillSources: this.deps.skillSources,
       disableFeatures: this.deps.disableFeatures,
     });
@@ -584,9 +596,9 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     prompt: string,
     turnId: string,
     options?: TurnSubmitOptions,
-  ): Promise<void> {
+  ): Promise<string | null> {
     const session = await this.ensureSession();
-    await this.runTurnWithSession(session, prompt, turnId, options);
+    return this.runTurnWithSession(session, prompt, turnId, options);
   }
 
   private async runTurnWithSession(
@@ -594,24 +606,29 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     prompt: string,
     turnId: string,
     options?: TurnSubmitOptions,
-  ): Promise<void> {
+  ): Promise<string | null> {
     const outcome = await session.submitTurn(prompt, options);
-    await this.applyTurnOutcome(outcome, turnId);
+    return this.applyTurnOutcome(outcome, turnId);
   }
 
   private async applyTurnOutcome(
     outcome: TurnOutcome,
     turnId: string,
-  ): Promise<void> {
+  ): Promise<string | null> {
     if (
       outcome.sessionId !== null &&
       outcome.sessionId !== '' &&
       outcome.sessionId !== this.threadId
     ) {
       this.threadId = outcome.sessionId;
-      await this.deps.state.setThreadId(this.dispatcherId, outcome.sessionId);
+      await this.deps.state.setCheckpoint({
+        kind: 'claudeCodeSession',
+        id: outcome.sessionId,
+      });
     }
-    if (!outcome.isError) this.lastResult = { text: outcome.text };
+    const resultText =
+      outcome.isError || outcome.text === '' ? null : outcome.text;
+    if (resultText !== null) this.lastResult = { text: resultText };
     if (outcome.isError) {
       const detail =
         outcome.errors.length > 0
@@ -620,6 +637,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       throw new Error(`claude turn ${turnId} returned an error result: ${detail}`);
     }
     this.log('info', `claude-code turn ${turnId} completed`);
+    return resultText;
   }
 
   private nextTurnId(kind: 'system' | 'turn'): string {
@@ -651,7 +669,6 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     this.status = status;
     try {
       await this.deps.state.setStatus(
-        this.dispatcherId,
         status,
         err !== undefined ? { last_error: errMessage(err) } : {},
       );
@@ -667,31 +684,4 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   ): void {
     this.logger[level](err !== undefined ? { err } : {}, msg);
   }
-}
-
-/**
- * Minimal `console.error`-backed logger the runtime falls back to when the host
- * passes none (the bare generic-loader / standalone path). Owned here, never in
- * `@excitedjs/dreamux-types` (which is declaration-only).
- */
-function consoleFallbackLogger(dispatcherId: string): DreamuxLogger {
-  const sink =
-    (level: string) =>
-    (fields: Record<string, unknown> | string, message?: string): void => {
-      const prefix = `[claude-code ${dispatcherId}] ${level}`;
-      if (typeof fields === 'string') {
-        console.error(prefix, fields);
-        return;
-      }
-      const err = fields['err'];
-      if (err !== undefined) console.error(prefix, message ?? '', err);
-      else console.error(prefix, message ?? '');
-    };
-  return {
-    error: sink('error'),
-    warn: sink('warn'),
-    info: sink('info'),
-    debug: () => {},
-    trace: () => {},
-  };
 }

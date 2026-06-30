@@ -1,7 +1,10 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
-import type { AgentRuntimeStateCallbacks } from '@excitedjs/dreamux-types';
+import type {
+  AgentRuntimeResumeCheckpoint,
+  AgentRuntimeStateCallbacks,
+} from '@excitedjs/dreamux-types';
 
 import {
   type DispatcherConfig,
@@ -65,7 +68,7 @@ interface DispatcherStatusFile {
   last_lost_thread_id: string | null;
 }
 
-export class DispatcherStore implements AgentRuntimeStateCallbacks {
+export class DispatcherStore {
   private readonly rows = new Map<string, DispatcherRow>();
   private readonly seedDispatchers: readonly DispatcherConfig[];
 
@@ -78,6 +81,16 @@ export class DispatcherStore implements AgentRuntimeStateCallbacks {
     for (const dispatcher of config.dispatchers) {
       this.rows.set(dispatcher.id, rowDefaults(dispatcher, now));
     }
+  }
+
+  bindRuntime(id: string): AgentRuntimeStateCallbacks {
+    this.mustRow(id);
+    return {
+      setStatus: (status, extras) => this.setStatus(id, status, extras),
+      setCheckpoint: (checkpoint) => this.setCheckpoint(id, checkpoint),
+      recordLostCheckpoint: (lost, replacement, error) =>
+        this.recordLostCheckpoint(id, lost, replacement, error),
+    };
   }
 
   /**
@@ -169,22 +182,25 @@ export class DispatcherStore implements AgentRuntimeStateCallbacks {
     await this.persist(row);
   }
 
-  async setThreadId(id: string, threadId: string): Promise<void> {
+  async setCheckpoint(
+    id: string,
+    checkpoint: AgentRuntimeResumeCheckpoint,
+  ): Promise<void> {
     const row = this.mustRow(id);
-    row.thread_id = threadId;
+    row.thread_id = checkpoint.id;
     row.updated_at = Date.now();
     await this.persist(row);
   }
 
-  async recordLostThread(
+  async recordLostCheckpoint(
     id: string,
-    lostThreadId: string,
-    newThreadId: string,
+    lost: AgentRuntimeResumeCheckpoint,
+    replacement: AgentRuntimeResumeCheckpoint,
     error: string,
   ): Promise<void> {
     const row = this.mustRow(id);
-    row.thread_id = newThreadId;
-    row.last_lost_thread_id = lostThreadId;
+    row.thread_id = replacement.id;
+    row.last_lost_thread_id = lost.id;
     row.last_error = error;
     row.updated_at = Date.now();
     await this.persist(row);

@@ -76,7 +76,7 @@ describe('codex teammate completion delivery (native inject + trigger)', () => {
       config: dispatcherCodexConfig(dispatcher),
       cwd: tmp,
       mcpServers: [],
-      state: store,
+      state: store.bindRuntime('flow'),
       paths,
     });
     runtimes.push(runtime);

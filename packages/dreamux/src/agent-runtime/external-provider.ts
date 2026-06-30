@@ -29,6 +29,7 @@ import {
 } from '../registry/provider-loader.js';
 import type {
   AgentRuntimeCapabilities,
+  AgentRuntimeCreateContext,
   AgentRuntimeProvider,
   CompletionDeliveryShape,
 } from '@excitedjs/dreamux-types';
@@ -115,6 +116,57 @@ function assertExternalAgentRuntimeProvider(
     context.fail(`provider.getCapabilities threw: ${errMessage(err)}`);
   }
   assertCapabilities(capabilities, context);
+  const createRuntime = candidate.createRuntime.bind(candidate);
+  candidate.createRuntime = (runtimeContext: AgentRuntimeCreateContext) => {
+    const runtime = createRuntime(runtimeContext);
+    assertRuntimeHandle(runtime, capabilities, context);
+    return runtime;
+  };
+}
+
+function assertRuntimeHandle(
+  value: unknown,
+  capabilities: AgentRuntimeCapabilities,
+  context: ProviderContractContext,
+): void {
+  if (!isRecord(value)) {
+    context.fail('createRuntime must return a runtime object');
+  }
+  const requiredMethods = [
+    'start',
+    'resume',
+    'stop',
+    'submitTurn',
+    'injectControlNotice',
+    'getStatus',
+    'getCheckpoint',
+    'wasCheckpointResumed',
+    'getLast',
+    'getContext',
+    'getCapabilities',
+  ];
+  for (const method of requiredMethods) {
+    if (typeof value[method] !== 'function') {
+      context.fail(`runtime.${method} must be a function`);
+    }
+  }
+  if (value['waitIdle'] !== undefined && typeof value['waitIdle'] !== 'function') {
+    context.fail('runtime.waitIdle must be a function when present');
+  }
+  for (const method of ['channelInput', 'systemInput', 'getThreadId', 'wasThreadResumed']) {
+    if (value[method] !== undefined && typeof value[method] !== 'function') {
+      context.fail(`runtime.${method} must be a function when present`);
+    }
+  }
+  const completionInput = value['completionInput'];
+  if (completionInput !== undefined && typeof completionInput !== 'function') {
+    context.fail('runtime.completionInput must be a function when present');
+  }
+  if (capabilities.teammateCompletion.length > 0 && completionInput === undefined) {
+    context.fail(
+      'runtime.completionInput must be present when capabilities.teammateCompletion is non-empty',
+    );
+  }
 }
 
 function assertOptionalOnboard(
@@ -158,7 +210,6 @@ function assertCapabilities(
   }
   assertSupportedBoolean('last', capabilities.last, context);
   assertSupportedBoolean('context', capabilities.context, context);
-  assertSystemPromptCapability(capabilities.systemPrompt, context);
   if (!Array.isArray(capabilities.teammateCompletion)) {
     context.fail('capabilities.teammateCompletion must be an array');
   }
@@ -191,19 +242,6 @@ function assertSupportedBoolean(
 ): void {
   if (!isRecord(value) || typeof value['supported'] !== 'boolean') {
     context.fail(`capabilities.${name}.supported must be a boolean`);
-  }
-}
-
-function assertSystemPromptCapability(
-  value: unknown,
-  context: ProviderContractContext,
-): void {
-  if (!isRecord(value)) {
-    context.fail('capabilities.systemPrompt must be an object');
-  }
-  const mode = value['mode'];
-  if (mode !== 'replace' && mode !== 'append') {
-    context.fail('capabilities.systemPrompt.mode must be "replace" or "append"');
   }
 }
 

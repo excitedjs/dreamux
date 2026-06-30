@@ -17,12 +17,17 @@ import type {
 import {
   TurnManager,
 } from './turn-manager.js';
-import { injectThreadItems, type CollectedTurn } from './events.js';
+import {
+  extractAssistantText,
+  injectThreadItems,
+  type CollectedTurn,
+} from './events.js';
 import { renderChannelInput } from '@excitedjs/dreamux-utils';
 import { createFailFastApprovalHandler } from './approval.js';
 import type {
   AgentRuntime,
   AgentRuntimeCapabilities,
+  AgentRuntimeControlNotice,
   AgentRuntimeIdentity,
   AgentRuntimeLastResult,
   AgentRuntimePathContext,
@@ -34,8 +39,10 @@ import type {
   AgentRuntimeTurnResult,
   CompletionEnvelope,
   DreamuxLogger,
+  InboundDeliveryResult,
   InboundDeliveryHooks,
   InboundTurnInput,
+  NoticeInjectionResult,
   TeamMateCompletionDeliveryResult,
   TurnSettledSignal,
 } from '@excitedjs/dreamux-types';
@@ -53,7 +60,7 @@ const DEFAULT_RESTART_BACKOFF_MAX_MS = 30_000;
 
 export interface CodexRuntimeDeps {
     cwd: string;
-    systemPromptContent?: string;
+    systemPromptReplace?: string;
     state: AgentRuntimeStateCallbacks;
     paths: AgentRuntimePathContext;
     allocateSocketPath: (id: string) => string;
@@ -139,12 +146,22 @@ export class CodexRuntime implements AgentRuntime {
     return CODEX_AGENT_RUNTIME_CAPABILITIES;
   }
 
+  getCheckpoint(): { kind: 'codexThread'; id: string } | null {
+    return this.threadId === null
+      ? null
+      : { kind: 'codexThread', id: this.threadId };
+  }
+
   getThreadId(): string | null {
-    return this.threadId;
+    return this.getCheckpoint()?.id ?? null;
+  }
+
+  wasCheckpointResumed(): boolean {
+    return this.threadResumed;
   }
 
     wasThreadResumed(): boolean {
-    return this.threadResumed;
+    return this.wasCheckpointResumed();
   }
 
   async getLast(): Promise<AgentRuntimeLastResult | null> {
@@ -167,7 +184,7 @@ export class CodexRuntime implements AgentRuntime {
     await this.start();
   }
 
-  private async submitRestartNotice(text: string): Promise<AgentRuntimeTurnResult> {
+  private async submitRestartNotice(text: string): Promise<NoticeInjectionResult> {
     if (this.turnManager === null) return { status: 'stopped' };
     const result = await this.turnManager.injectNotice(text);
     if (result.status === 'submitted') {
@@ -178,7 +195,7 @@ export class CodexRuntime implements AgentRuntime {
     return result;
   }
 
-  private async submitSystemInput(text: string): Promise<AgentRuntimeTurnResult> {
+  private async submitSystemInput(text: string): Promise<InboundDeliveryResult> {
     if (this.turnManager === null) return { status: 'stopped' };
     return this.turnManager.submitSystemInput(text);
   }
@@ -188,7 +205,7 @@ export class CodexRuntime implements AgentRuntime {
     this.restarting = false;
     this.clearRestartTimer();
     this.setStatus('starting');
-    await this.state.setStatus(this.dispatcherId, 'starting', {
+    await this.state.setStatus('starting', {
       last_started_at: Date.now(),
     });
 
@@ -200,7 +217,7 @@ export class CodexRuntime implements AgentRuntime {
       const msg = err instanceof Error ? err.message : String(err);
       this.log('error', `start failed: ${msg}`, err);
       this.setStatus('degraded');
-      await this.state.setStatus(this.dispatcherId, 'degraded', {
+      await this.state.setStatus('degraded', {
         last_error: msg,
       });
       await this.cleanupOnFailure();
@@ -290,21 +307,21 @@ export class CodexRuntime implements AgentRuntime {
     const existing = this.threadId ?? this.identity.checkpoint_id ?? null;
     if (existing === null) {
       const params: ThreadStartParams = {
-        baseInstructions: this.deps.systemPromptContent,
+        baseInstructions: this.deps.systemPromptReplace,
       };
       const res = await this.client.request<ThreadStartResponse>(
         'thread/start',
         params,
       );
       this.threadId = res.thread.id;
-      await this.state.setThreadId(this.dispatcherId, this.threadId);
+      await this.state.setCheckpoint({ kind: 'codexThread', id: this.threadId });
       this.log('info', `started fresh thread ${this.threadId}`);
       return;
     }
     try {
       const params: ThreadResumeParams = {
         threadId: existing,
-        baseInstructions: this.deps.systemPromptContent,
+        baseInstructions: this.deps.systemPromptReplace,
       };
       await this.client.request<ThreadResumeResponse>('thread/resume', params);
       this.threadId = existing;
@@ -318,29 +335,28 @@ export class CodexRuntime implements AgentRuntime {
       );
       const res = await this.client.request<ThreadStartResponse>(
         'thread/start',
-        { baseInstructions: this.deps.systemPromptContent },
+        { baseInstructions: this.deps.systemPromptReplace },
       );
       this.threadId = res.thread.id;
-      if (this.state.recordLostThread !== undefined) {
-        await this.state.recordLostThread(
-          this.dispatcherId,
-          existing,
-          this.threadId,
+      if (this.state.recordLostCheckpoint !== undefined) {
+        await this.state.recordLostCheckpoint(
+          { kind: 'codexThread', id: existing },
+          { kind: 'codexThread', id: this.threadId },
           `thread/resume failed: ${msg}`,
         );
       } else {
-        await this.state.setThreadId(this.dispatcherId, this.threadId);
-        await this.state.setStatus(this.dispatcherId, 'degraded', {
+        await this.state.setCheckpoint({ kind: 'codexThread', id: this.threadId });
+        await this.state.setStatus('degraded', {
           last_error: `thread/resume failed: ${msg}`,
         });
       }
     }
   }
 
-    async channelInput(
+  async submitTurn(
     input: InboundTurnInput,
     hooks: InboundDeliveryHooks = {},
-  ): Promise<AgentRuntimeTurnResult> {
+  ): Promise<InboundDeliveryResult> {
     if (this.turnManager === null) {
       return { status: 'failed', error: new Error('turn manager not initialized') };
     }
@@ -350,11 +366,40 @@ export class CodexRuntime implements AgentRuntime {
     );
   }
 
-    async systemInput(notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult> {
+  async channelInput(
+    input: InboundTurnInput,
+    hooks: InboundDeliveryHooks = {},
+  ): Promise<AgentRuntimeTurnResult> {
+    return this.submitTurn(input, hooks);
+  }
+
+  async injectControlNotice(
+    notice: AgentRuntimeControlNotice,
+  ): Promise<NoticeInjectionResult> {
     if (notice.reason === 'restart-notice') {
       return this.submitRestartNotice(notice.text);
     }
-    return this.submitSystemInput(notice.text);
+    const result = await this.submitSystemInput(notice.text);
+    return result.status === 'duplicate'
+      ? {
+          status: 'failed',
+          error: new Error('control notice unexpectedly deduplicated'),
+        }
+      : result;
+  }
+
+    async systemInput(notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult> {
+    if (notice.reason === 'teammate-completion') {
+      throw new Error('teammate completion must use completionInput');
+    }
+    if (notice.reason === 'scheduled') {
+      return this.submitTurn({ sourceId: '', text: notice.text });
+    }
+    return this.injectControlNotice({
+      kind: 'control',
+      text: notice.text,
+      reason: notice.reason,
+    });
   }
 
   waitIdle(): Promise<void> {
@@ -444,10 +489,10 @@ export class CodexRuntime implements AgentRuntime {
     this.stopping = true;
     this.clearRestartTimer();
     this.setStatus('stopping');
-    await this.state.setStatus(this.dispatcherId, 'stopping');
+    await this.state.setStatus('stopping');
     await this.teardownCodexRuntime();
     this.setStatus('stopped');
-    await this.state.setStatus(this.dispatcherId, 'stopped');
+    await this.state.setStatus('stopped');
   }
 
   private async cleanupOnFailure(): Promise<void> {
@@ -501,7 +546,7 @@ export class CodexRuntime implements AgentRuntime {
     this.log('warn', `${reason}; restarting in ${delay}ms`);
     this.setStatus('degraded');
     void this.state
-      .setStatus(this.dispatcherId, 'degraded', { last_error: reason })
+      .setStatus('degraded', { last_error: reason })
       .catch((err) =>
         this.log('warn', 'failed to persist degraded status', err),
       );
@@ -516,7 +561,7 @@ export class CodexRuntime implements AgentRuntime {
     this.restarting = true;
     let retryReason: string | null = null;
     this.setStatus('starting');
-    await this.state.setStatus(this.dispatcherId, 'starting', {
+    await this.state.setStatus('starting', {
       last_started_at: Date.now(),
     });
     try {
@@ -534,7 +579,7 @@ export class CodexRuntime implements AgentRuntime {
       const msg = err instanceof Error ? err.message : String(err);
       this.log('error', `restart failed: ${msg}`, err);
       this.setStatus('degraded');
-      await this.state.setStatus(this.dispatcherId, 'degraded', {
+      await this.state.setStatus('degraded', {
         last_error: msg,
       });
       await this.teardownCodexRuntime();
@@ -565,19 +610,22 @@ export class CodexRuntime implements AgentRuntime {
 
   private async markReady(): Promise<void> {
     this.setStatus('ready');
-    await this.state.setStatus(this.dispatcherId, 'ready', {
+    await this.state.setStatus('ready', {
       last_ready_at: Date.now(),
       last_error: null,
     });
   }
 
   private recordCollectedTurn(turn: CollectedTurn): void {
-    const messages = turn.items.filter((item) => item.type === 'agentMessage');
-    const last = messages[messages.length - 1];
-    if (typeof last?.text === 'string' && last.text.length > 0) {
-      this.lastResult = { text: last.text };
+    const resultText = extractAssistantText(turn);
+    if (resultText !== null) {
+      this.lastResult = { text: resultText };
     }
-    this.deps.onTurnSettled?.({ turnId: turn.turnId, status: 'completed' });
+    this.deps.onTurnSettled?.({
+      turnId: turn.turnId,
+      status: 'completed',
+      result: { text: resultText },
+    });
   }
 
     private rememberInjectedCompletion(id: string): void {

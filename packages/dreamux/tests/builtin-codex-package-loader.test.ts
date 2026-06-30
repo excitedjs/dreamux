@@ -96,7 +96,7 @@ describe('builtin:codex loads the real @excitedjs/agent-runtime-codex package', 
     };
     const state: AgentRuntimeStateCallbacks = {
       setStatus: async () => {},
-      setThreadId: async () => {},
+      setCheckpoint: async () => {},
     };
     const context: AgentRuntimeCreateContext<DispatcherCodexConfig> = {
       identity: { runtime_id: 'flow', checkpoint_id: null },

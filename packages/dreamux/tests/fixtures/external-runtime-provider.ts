@@ -8,6 +8,8 @@ import type {
   AgentRuntimeStatus,
   AgentRuntimeSystemInput,
   AgentRuntimeTurnResult,
+  InboundDeliveryResult,
+  NoticeInjectionResult,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
 
@@ -39,7 +41,6 @@ export const EXTERNAL_PARITY_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = {
   events: { kind: 'synthesized' },
   last: { supported: true },
   context: { supported: false },
-  systemPrompt: { mode: 'append' },
   teammateCompletion: [],
 };
 
@@ -65,11 +66,11 @@ class ExternalParityRuntime implements AgentRuntime {
     this.status = 'ready';
     this.observation.starts += 1;
     this.threadId = `external-thread:${this.context.identity.runtime_id}`;
-    await this.context.state?.setStatus(this.context.identity.runtime_id, 'ready');
-    await this.context.state?.setThreadId(
-      this.context.identity.runtime_id,
-      this.threadId,
-    );
+    await this.context.state?.setStatus('ready');
+    await this.context.state?.setCheckpoint({
+      kind: 'externalThread',
+      id: this.threadId,
+    });
   }
 
   async resume(): Promise<void> {
@@ -79,10 +80,10 @@ class ExternalParityRuntime implements AgentRuntime {
   async stop(): Promise<void> {
     this.status = 'stopped';
     this.observation.stops += 1;
-    await this.context.state?.setStatus(this.context.identity.runtime_id, 'stopped');
+    await this.context.state?.setStatus('stopped');
   }
 
-  async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
+  async submitTurn(input: InboundTurnInput): Promise<InboundDeliveryResult> {
     if (this.status !== 'ready') {
       return { status: 'failed', error: new Error('external runtime is not ready') };
     }
@@ -91,8 +92,20 @@ class ExternalParityRuntime implements AgentRuntime {
     this.observation.lastText =
       `${this.context.config.finalTextPrefix}: ${input.text}`;
     await Promise.resolve();
-    this.context.onTurnSettled?.({ turnId, status: 'completed' });
+    this.context.onTurnSettled?.({
+      turnId,
+      status: 'completed',
+      result: { text: this.observation.lastText },
+    });
     return { status: 'submitted', turnId };
+  }
+
+  async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
+    return this.submitTurn(input);
+  }
+
+  async injectControlNotice(): Promise<NoticeInjectionResult> {
+    return { status: 'skipped' };
   }
 
   async systemInput(_notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult> {
@@ -104,10 +117,20 @@ class ExternalParityRuntime implements AgentRuntime {
   }
 
   getThreadId(): string | null {
-    return this.threadId;
+    return this.getCheckpoint()?.id ?? null;
+  }
+
+  getCheckpoint(): { kind: string; id: string } | null {
+    return this.threadId === null
+      ? null
+      : { kind: 'externalThread', id: this.threadId };
   }
 
   wasThreadResumed(): boolean {
+    return this.wasCheckpointResumed();
+  }
+
+  wasCheckpointResumed(): boolean {
     return false;
   }
 

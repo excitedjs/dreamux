@@ -12,6 +12,8 @@ import type {
   AgentRuntimeStatus,
   AgentRuntimeSystemInput,
   AgentRuntimeTurnResult,
+  InboundDeliveryResult,
+  NoticeInjectionResult,
   DreamuxLogger,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
@@ -33,7 +35,6 @@ const CAPABILITIES: AgentRuntimeCapabilities = {
   events: { kind: 'synthesized' },
   last: { supported: true },
   context: { supported: false },
-  systemPrompt: { mode: 'append' },
   teammateCompletion: [],
 };
 
@@ -55,14 +56,22 @@ class FakeRuntime implements AgentRuntime {
     this.status = 'stopped';
   }
 
-  async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
+  async submitTurn(input: InboundTurnInput): Promise<InboundDeliveryResult> {
     this.submitted.push(input);
     return { status: 'submitted', turnId: `turn-${this.submitted.length}` };
   }
 
-  async systemInput(notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult> {
+  async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
+    return this.submitTurn(input);
+  }
+
+  async injectControlNotice(notice: AgentRuntimeSystemInput): Promise<NoticeInjectionResult> {
     this.systemSubmitted.push(notice);
     return { status: 'submitted', turnId: `system-${this.systemSubmitted.length}` };
+  }
+
+  async systemInput(notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult> {
+    return this.injectControlNotice(notice);
   }
 
   getStatus(): AgentRuntimeStatus {
@@ -70,10 +79,18 @@ class FakeRuntime implements AgentRuntime {
   }
 
   getThreadId(): string | null {
-    return 'thread-fake';
+    return this.getCheckpoint()?.id ?? null;
+  }
+
+  getCheckpoint(): { kind: string; id: string } | null {
+    return { kind: 'fakeThread', id: 'thread-fake' };
   }
 
   wasThreadResumed(): boolean {
+    return this.wasCheckpointResumed();
+  }
+
+  wasCheckpointResumed(): boolean {
     return false;
   }
 
@@ -272,8 +289,8 @@ describe('TeammateService channel input routing', () => {
       leader.scheduledInput({ jobId: 'job-1', prompt: 'scheduled report' }),
     ).resolves.toMatchObject({ status: 'submitted' });
     expect(runtimes).toHaveLength(1);
-    expect(runtimes[0]!.systemSubmitted).toEqual([
-      { kind: 'system', text: 'scheduled report', reason: 'scheduled' },
+    expect(runtimes[0]!.submitted).toEqual([
+      { sourceId: 'scheduled:job-1', text: 'scheduled report' },
     ]);
   });
 
@@ -306,9 +323,8 @@ describe('TeammateService channel input routing', () => {
     expect(runtimes).toHaveLength(1);
     expect(runtimes[0]!.submitted.map((input) => input.text)).toEqual([
       'initial leader prompt',
-    ]);
-    expect(runtimes[0]!.systemSubmitted.map((input) => input.text)).toEqual([
       'scheduled report',
     ]);
+    expect(runtimes[0]!.systemSubmitted).toEqual([]);
   });
 });

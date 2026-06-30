@@ -1,4 +1,7 @@
-import type { AgentRuntimeStateCallbacks } from '@excitedjs/dreamux-types';
+import type {
+  AgentRuntimeResumeCheckpoint,
+  AgentRuntimeStateCallbacks,
+} from '@excitedjs/dreamux-types';
 import type { DispatcherStatus } from '../../state/dispatcher-store.js';
 import type { TeamMateIdentityStore } from './identity-store.js';
 import {
@@ -48,7 +51,6 @@ export class TeamMateRuntimeStateStore implements AgentRuntimeStateCallbacks {
   }
 
   async setStatus(
-    _id: string,
     status: DispatcherStatus,
     extras: {
       last_error?: string | null;
@@ -64,22 +66,21 @@ export class TeamMateRuntimeStateStore implements AgentRuntimeStateCallbacks {
     });
   }
 
-  async setThreadId(_id: string, threadId: string): Promise<void> {
+  async setCheckpoint(checkpoint: AgentRuntimeResumeCheckpoint): Promise<void> {
     // #199 Slice 3: persist the runtime-native thread id directly as the public
     // session_id. The resume checkpoint KIND is never persisted — it is rebuilt
     // from the runtime's own declared capability when reopening.
     this.identity = await this.store.update(this.identity, {
-      sessionId: threadId,
+      sessionId: checkpoint.id,
     });
   }
 
-  async recordLostThread(
-    id: string,
-    _lostThreadId: string,
-    newThreadId: string,
+  async recordLostCheckpoint(
+    _lost: AgentRuntimeResumeCheckpoint,
+    replacement: AgentRuntimeResumeCheckpoint,
     error: string,
   ): Promise<void> {
-    await this.setThreadId(id, newThreadId);
+    await this.setCheckpoint(replacement);
     this.identity = await this.store.update(this.identity, {
       status: 'degraded',
       lastError: error,

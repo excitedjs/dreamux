@@ -486,6 +486,12 @@ function controllableIdle(): {
     async start() {},
     async resume() {},
     async stop() {},
+    async submitTurn() {
+      return { status: 'stopped' };
+    },
+    async injectControlNotice() {
+      return { status: 'stopped' };
+    },
     async channelInput() {
       return { status: 'stopped' };
     },
@@ -501,9 +507,15 @@ function controllableIdle(): {
       return 'ready';
     },
     getThreadId() {
-      return 'thread';
+      return this.getCheckpoint()?.id ?? null;
+    },
+    getCheckpoint() {
+      return { kind: 'fakeThread', id: 'thread' };
     },
     wasThreadResumed() {
+      return this.wasCheckpointResumed();
+    },
+    wasCheckpointResumed() {
       return false;
     },
     async getLast() {
@@ -519,7 +531,6 @@ function controllableIdle(): {
         events: { kind: 'push' },
         last: { supported: false },
         context: { supported: false },
-        systemPrompt: { mode: 'replace' },
         teammateCompletion: [],
       };
     },

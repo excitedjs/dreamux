@@ -194,7 +194,7 @@ describe('external runtime production parity', () => {
     const routedCompletions: Array<{
       producerName: string;
       turnId: string;
-      result: string;
+      result: string | null;
     }> = [];
     let submissionSeq = 0;
     const teammate = createTeammateService({

@@ -52,7 +52,6 @@ export const CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = 
   events: { kind: 'synthesized' },
   last: { supported: true },
   context: { supported: false },
-  systemPrompt: { mode: 'append' },
   teammateCompletion: [
     {
       kind: 'claudeCodePlainTurn',
@@ -153,8 +152,8 @@ export function createClaudeCodeAgentRuntimeProvider(
         ...(context.disableFeatures !== undefined
           ? { disableFeatures: context.disableFeatures }
           : {}),
-        ...(context.systemPromptContent !== undefined
-          ? { systemPromptContent: context.systemPromptContent }
+        ...(context.systemPrompt !== undefined
+          ? { systemPromptAppend: context.systemPrompt.append }
           : {}),
         ...(context.onTurnSettled !== undefined
           ? { onTurnSettled: context.onTurnSettled }

@@ -267,7 +267,11 @@ export class TurnManager {
     // (the WS is closing). Settle each as `stopped` so an interrupted teammate
     // turn is delivered with a status rather than vanishing.
     for (const turnId of this.pendingTurnIds) {
-      this.opts.onTurnSettled?.({ turnId, status: 'stopped' });
+      this.opts.onTurnSettled?.({
+        turnId,
+        status: 'stopped',
+        result: { text: null },
+      });
     }
     this.pendingTurnIds.clear();
     this.activeTurnId = null;
@@ -388,6 +392,7 @@ export class TurnManager {
           this.opts.onTurnSettled?.({
             turnId,
             status: 'failed',
+            result: { text: null },
             error: err instanceof Error ? err : new Error(String(err)),
           });
           this.resolveIdleWaitersIfIdle();

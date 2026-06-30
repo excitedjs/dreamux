@@ -97,7 +97,7 @@ describe('external provider fixture', () => {
     expect(runtime.getStatus()).toBe('declared');
     await runtime.start();
     expect(runtime.getStatus()).toBe('ready');
-    const result = await runtime.channelInput({ text: 'hi', sourceId: 'm1' });
+    const result = await runtime.submitTurn({ text: 'hi', sourceId: 'm1' });
     expect(result).toEqual({ status: 'submitted', turnId: 'm1' });
     await runtime.stop();
     expect(runtime.getStatus()).toBe('stopped');

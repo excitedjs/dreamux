@@ -372,7 +372,10 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     const dispatcher = claudeDispatcher('flow');
     const store = new DispatcherStore(testDreamuxConfig([dispatcher]));
     if (opts.resumeSession !== undefined) {
-      void store.setThreadId('flow', opts.resumeSession);
+      void store.setCheckpoint('flow', {
+        kind: 'claudeCodeSession',
+        id: opts.resumeSession,
+      });
     }
     const row = store.get('flow');
     expect(row).not.toBeNull();
@@ -384,7 +387,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       config: dispatcherClaudeCodeConfig(dispatcher),
       cwd: defaultDispatcherCwd('flow'),
       mcpServers: [FEISHU_MCP],
-      state: store,
+      state: store.bindRuntime('flow'),
       paths: dispatcherHostPaths,
       ...(opts.skillSources !== undefined
         ? { skillSources: opts.skillSources }
@@ -490,7 +493,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       config: dispatcherClaudeCodeConfig(dispatcher),
       cwd: defaultDispatcherCwd('flow'),
       mcpServers: [],
-      state: store,
+      state: store.bindRuntime('flow'),
       paths: dispatcherHostPaths,
       logger: {
         error: pushLog,
@@ -617,8 +620,29 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       {
         turnId: first.status === 'submitted' ? first.turnId : 'unreachable',
         status: 'completed',
+        result: { text: 'done' },
       },
     ]);
+  });
+
+  it('does not reuse the prior successful result for a later empty successful turn', async () => {
+    const settled: TurnSettledSignal[] = [];
+    const fleet = fakeFleet([
+      okOutcome('session-abc'),
+      { ...okOutcome('session-abc'), text: '' },
+    ]);
+    const { runtime } = makeRuntime(fleet, {
+      onTurnSettled: (s) => settled.push(s),
+    });
+    await runtime.start();
+
+    await runtime.channelInput({ sourceId: 'm1', text: 'first' });
+    await waitFor(() => settled.length === 1);
+    await runtime.channelInput({ sourceId: 'm2', text: 'second' });
+    await waitFor(() => settled.length === 2);
+
+    expect(settled.map((s) => s.result?.text ?? null)).toEqual(['done', null]);
+    expect(await runtime.getLast()).toEqual({ text: 'done' });
   });
 
   it('starts a fresh logical turn for a sequential send after the previous turn completed', async () => {
@@ -939,7 +963,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       config: dispatcherClaudeCodeConfig(dispatcher),
       cwd: defaultDispatcherCwd('flow'),
       mcpServers: [],
-      state: store,
+      state: store.bindRuntime('flow'),
       paths: dispatcherHostPaths,
     });
     await runtime.start();
@@ -1058,7 +1082,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       config: dispatcherClaudeCodeConfig(dispatcher),
       cwd: defaultDispatcherCwd('flow'),
       mcpServers: [],
-      state: store,
+      state: store.bindRuntime('flow'),
       paths: dispatcherHostPaths,
       onTurnSettled: (s) => settled.push(s),
     });

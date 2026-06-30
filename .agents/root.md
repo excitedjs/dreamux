@@ -91,6 +91,12 @@ history and rationale; when you need current behavior, pair them with
 
 ## Active Proposals
 
+- [AgentRuntime lifecycle contracts](proposals/agent-runtime-lifecycle-contracts.md)
+  — draft technical design for the minimum neutral Agent Runtime contract:
+  Dreamux logical turns, turn-owned settlement results, opaque checkpoints,
+  terminal completion-delivery semantics, instance-scoped runtime state facts,
+  provider-owned role prompt injection, and external runtime handle validation
+  while keeping native CLI/daemon details provider-owned.
 - [Dispatcher Team MCP send to TeamLeader](proposals/team-mcp-dispatcher-send.md)
   — draft requirement/spec for adding a dispatcher-only Team MCP `send` tool
   that submits turns to an existing Team's TeamLeader, registers completion

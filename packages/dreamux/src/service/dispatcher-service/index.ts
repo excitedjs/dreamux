@@ -321,7 +321,7 @@ export class DispatcherService {
     const runtime = this.agent.getRuntime();
     return {
       status: runtime?.getStatus() ?? null,
-      threadId: runtime?.getThreadId() ?? null,
+      threadId: runtime?.getCheckpoint()?.id ?? null,
     };
   }
 
@@ -335,7 +335,7 @@ export class DispatcherService {
       dispatcher_id: row.dispatcher_id,
       channel_identity: row.channel_identity,
       status: runtime?.getStatus() ?? row.status,
-      thread_id: runtime?.getThreadId() ?? row.thread_id,
+      thread_id: runtime?.getCheckpoint()?.id ?? row.thread_id,
       enabled: row.enabled === 1,
     };
   }
@@ -493,7 +493,7 @@ export class DispatcherService {
     }
     const runtime = this.agent.getRuntime();
     if (runtime === null) return { status: 'stopped' };
-    return runtime.channelInput(input, hooks);
+    return runtime.submitTurn(input, hooks);
   }
 
   /**
@@ -522,12 +522,12 @@ export class DispatcherService {
     dispatcherId: string,
     runtime: AgentRuntime,
   ): Promise<void> {
-    if (!runtime.wasThreadResumed()) return;
+    if (!runtime.wasCheckpointResumed()) return;
     const notice = this.restartIntent?.claim(dispatcherId, Date.now()) ?? null;
     if (notice === null) return;
     try {
-      const result = await runtime.systemInput({
-        kind: 'system',
+      const result = await runtime.injectControlNotice({
+        kind: 'control',
         text: notice,
         reason: 'restart-notice',
       });

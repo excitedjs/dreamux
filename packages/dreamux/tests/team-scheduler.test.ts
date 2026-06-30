@@ -12,6 +12,8 @@ import type {
   AgentRuntimeStatus,
   AgentRuntimeSystemInput,
   AgentRuntimeTurnResult,
+  InboundDeliveryResult,
+  NoticeInjectionResult,
   DreamuxLogger,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
@@ -43,7 +45,6 @@ const CAPABILITIES: AgentRuntimeCapabilities = {
   events: { kind: 'synthesized' },
   last: { supported: true },
   context: { supported: false },
-  systemPrompt: { mode: 'append' },
   teammateCompletion: [],
 };
 
@@ -65,14 +66,22 @@ class FakeRuntime implements AgentRuntime {
     this.status = 'stopped';
   }
 
-  async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
+  async submitTurn(input: InboundTurnInput): Promise<InboundDeliveryResult> {
     this.submitted.push(input);
     return { status: 'submitted', turnId: `turn-${this.submitted.length}` };
   }
 
-  async systemInput(notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult> {
+  async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
+    return this.submitTurn(input);
+  }
+
+  async injectControlNotice(notice: AgentRuntimeSystemInput): Promise<NoticeInjectionResult> {
     this.systemSubmitted.push(notice);
     return { status: 'submitted', turnId: `system-${this.systemSubmitted.length}` };
+  }
+
+  async systemInput(notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult> {
+    return this.injectControlNotice(notice);
   }
 
   getStatus(): AgentRuntimeStatus {
@@ -80,10 +89,18 @@ class FakeRuntime implements AgentRuntime {
   }
 
   getThreadId(): string | null {
-    return 'thread-fake';
+    return this.getCheckpoint()?.id ?? null;
+  }
+
+  getCheckpoint(): { kind: string; id: string } | null {
+    return { kind: 'fakeThread', id: 'thread-fake' };
   }
 
   wasThreadResumed(): boolean {
+    return this.wasCheckpointResumed();
+  }
+
+  wasCheckpointResumed(): boolean {
     return false;
   }
 
@@ -100,9 +117,16 @@ class FakeRuntime implements AgentRuntime {
   }
 }
 
+class NewContractOnlyRuntime extends FakeRuntime {
+  override getCheckpoint(): { kind: string; id: string } | null {
+    return { kind: 'fakeThread', id: 'checkpoint-only-thread' };
+  }
+}
+
 function fakeRuntimeCatalog(input: {
   runtimes: FakeRuntime[];
   contexts?: AgentRuntimeCreateContext[];
+  createRuntime?: () => FakeRuntime;
 }): AgentRuntimeProviderCatalog {
   const provider: AgentRuntimeProvider = {
     ref: FAKE_RUNTIME_REF,
@@ -114,7 +138,7 @@ function fakeRuntimeCatalog(input: {
     getCapabilities: () => CAPABILITIES,
     createRuntime(context: AgentRuntimeCreateContext) {
       input.contexts?.push(context);
-      const runtime = new FakeRuntime();
+      const runtime = input.createRuntime?.() ?? new FakeRuntime();
       input.runtimes.push(runtime);
       return runtime;
     },
@@ -225,7 +249,7 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     first.stopSchedulers();
     await first.stopAll();
 
-    await new CronJobStore({
+    const job = await new CronJobStore({
       dispatcherId: 'dispatcher-a',
       cronJobsPath: dispatcherTeamCronJobsPath('dispatcher-a', 'alpha'),
     }).create(
@@ -246,13 +270,12 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     await waitFor(
       () =>
         restartedRuntimes.length === 1 &&
-        restartedRuntimes[0]!.systemSubmitted.length === 1,
+        restartedRuntimes[0]!.submitted.length === 1,
       4000,
     );
-    expect(restartedRuntimes[0]!.systemSubmitted[0]).toEqual({
-      kind: 'system',
+    expect(restartedRuntimes[0]!.submitted[0]).toEqual({
+      sourceId: `scheduled:${job.id}`,
       text: 'scheduled alpha',
-      reason: 'scheduled',
     });
   });
 
@@ -290,6 +313,59 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       id: job.id,
       status: 'skipped',
     });
+  });
+
+  it('projects runtime status from checkpoints when legacy getThreadId is absent', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        channels: [],
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const dispatchers = new DispatcherStore(config);
+    const log = noopLog();
+    const dispatcher = new DispatcherService({
+      id: 'dispatcher-a',
+      config,
+      dispatchers,
+      agentRuntimeProviders: fakeRuntimeCatalog({
+        runtimes,
+        createRuntime: () => {
+          const runtime = new NewContractOnlyRuntime();
+          Object.defineProperties(runtime, {
+            getThreadId: { value: undefined },
+            wasThreadResumed: { value: undefined },
+            channelInput: { value: undefined },
+            systemInput: { value: undefined },
+          });
+          return runtime;
+        },
+      }),
+      channelProviders: fakeChannelCatalog(),
+      adminSocketPath: '/tmp/dreamux-admin.sock',
+      channelLoggerFactory: () => log,
+      log,
+    });
+
+    await dispatcher.start();
+
+    expect(typeof runtimes[0]?.getThreadId).toBe('undefined');
+    expect(dispatcher.runtimeStatus()).toEqual({
+      status: 'ready',
+      threadId: 'checkpoint-only-thread',
+    });
+    expect(dispatcher.summary(dispatchers.get('dispatcher-a')!)).toMatchObject({
+      status: 'ready',
+      thread_id: 'checkpoint-only-thread',
+    });
+
+    await dispatcher.stop();
   });
 
   it('injects cron MCP for TeamLeaders but not regular Team members', async () => {

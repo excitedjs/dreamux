@@ -27,6 +27,8 @@ import type {
   AgentRuntimeProviderConfigReadContext,
   AgentRuntimeSystemInput,
   AgentRuntimeTurnResult,
+  InboundDeliveryResult,
+  NoticeInjectionResult,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
 import {
@@ -42,7 +44,6 @@ const EXTERNAL_CAPABILITIES: AgentRuntimeCapabilities = {
   events: { kind: 'synthesized' },
   last: { supported: true },
   context: { supported: true },
-  systemPrompt: { mode: 'append' },
   teammateCompletion: [],
 };
 
@@ -71,9 +72,17 @@ class FakeExternalRuntime implements AgentRuntime {
     this.status = 'stopped';
   }
 
-  async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
+  async submitTurn(input: InboundTurnInput): Promise<InboundDeliveryResult> {
     this.submitted.push(input);
     return { status: 'submitted', turnId: 'turn-external' };
+  }
+
+  async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
+    return this.submitTurn(input);
+  }
+
+  async injectControlNotice(): Promise<NoticeInjectionResult> {
+    return { status: 'skipped' };
   }
 
   async systemInput(_notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult> {
@@ -85,10 +94,18 @@ class FakeExternalRuntime implements AgentRuntime {
   }
 
   getThreadId(): string | null {
-    return 'external-session';
+    return this.getCheckpoint()?.id ?? null;
+  }
+
+  getCheckpoint(): { kind: string; id: string } | null {
+    return { kind: 'thirdPartySession', id: 'external-session' };
   }
 
   wasThreadResumed(): boolean {
+    return this.wasCheckpointResumed();
+  }
+
+  wasCheckpointResumed(): boolean {
     return false;
   }
 
@@ -155,7 +172,7 @@ describe('AgentRuntimeProviderCatalog', () => {
       config: dispatcherCodexConfig(dispatcher),
       cwd: '/tmp/dreamux-test-cwd',
       mcpServers: [],
-      state: store,
+      state: store.bindRuntime('flow'),
       paths: dispatcherHostPaths,
     });
 
@@ -252,7 +269,7 @@ describe('AgentRuntimeProviderCatalog', () => {
       config: {},
       cwd: '/tmp/dreamux-test-cwd',
       mcpServers: [],
-      state: store,
+      state: store.bindRuntime('flow'),
       paths: dispatcherHostPaths,
     });
 
@@ -353,27 +370,86 @@ describe('AgentRuntimeProviderCatalog', () => {
     ).rejects.toThrow(/capabilities\.steer\.supported/);
   });
 
-  it('rejects external providers without a systemPrompt capability', async () => {
-    await expect(
-      loadAgentRuntimeProviders({
-        registry: createBuiltinProviderRegistry(),
-        refs: ['npm:@example/dreamux-runtime'],
-        importModule: async () => ({
-          default: ({
-            ref,
-            descriptor,
-          }: ExternalAgentRuntimeProviderFactoryContext) => ({
-            ref,
-            descriptor,
-            getCapabilities: () => ({
-              ...EXTERNAL_CAPABILITIES,
-              systemPrompt: undefined,
+  it('rejects malformed runtime handles before live use', async () => {
+    const registry = createBuiltinProviderRegistry();
+    await loadAgentRuntimeProviders({
+      registry,
+      refs: ['npm:@example/dreamux-runtime'],
+      importModule: async () => ({
+        default: ({
+          ref,
+          descriptor,
+        }: ExternalAgentRuntimeProviderFactoryContext) => ({
+          ref,
+          descriptor,
+          getCapabilities: () => EXTERNAL_CAPABILITIES,
+          createRuntime: () =>
+            Object.assign(new FakeExternalRuntime(ref), {
+              submitTurn: undefined,
             }),
-            createRuntime: () => new FakeExternalRuntime(ref),
-          }),
         }),
       }),
-    ).rejects.toThrow(/capabilities\.systemPrompt must be an object/);
+    });
+    const provider = new AgentRuntimeProviderCatalog({ registry }).resolve(
+      'npm:@example/dreamux-runtime',
+    );
+    expect(() =>
+      provider.createRuntime({
+        identity: { runtime_id: 'flow', checkpoint_id: null },
+        role: 'dispatcher',
+        config: {},
+        cwd: '/tmp/dreamux-test-cwd',
+        mcpServers: [],
+      }),
+    ).toThrow(/runtime\.submitTurn must be a function/);
+  });
+
+  it('accepts runtimes that omit legacy compatibility projections', async () => {
+    const registry = createBuiltinProviderRegistry();
+    await loadAgentRuntimeProviders({
+      registry,
+      refs: ['npm:@example/dreamux-runtime'],
+      importModule: async () => ({
+        default: ({
+          ref,
+          descriptor,
+        }: ExternalAgentRuntimeProviderFactoryContext) => ({
+          ref,
+          descriptor,
+          getCapabilities: () => EXTERNAL_CAPABILITIES,
+          createRuntime: () => {
+            const runtime = new FakeExternalRuntime(ref);
+            return {
+              providerRef: runtime.providerRef,
+              start: () => runtime.start(),
+              resume: () => runtime.resume(),
+              stop: () => runtime.stop(),
+              submitTurn: (input: InboundTurnInput) => runtime.submitTurn(input),
+              injectControlNotice: () => runtime.injectControlNotice(),
+              getStatus: () => runtime.getStatus(),
+              getCheckpoint: () => runtime.getCheckpoint(),
+              wasCheckpointResumed: () => runtime.wasCheckpointResumed(),
+              getLast: () => runtime.getLast(),
+              getContext: () => runtime.getContext(),
+              getCapabilities: () => runtime.getCapabilities(),
+            };
+          },
+        }),
+      }),
+    });
+    const provider = new AgentRuntimeProviderCatalog({ registry }).resolve(
+      'npm:@example/dreamux-runtime',
+    );
+
+    expect(() =>
+      provider.createRuntime({
+        identity: { runtime_id: 'flow', checkpoint_id: null },
+        role: 'dispatcher',
+        config: {},
+        cwd: '/tmp/dreamux-test-cwd',
+        mcpServers: [],
+      }),
+    ).not.toThrow();
   });
 
   it('rejects providers that do not echo the seed descriptor id', async () => {

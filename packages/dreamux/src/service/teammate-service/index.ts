@@ -218,7 +218,7 @@ export class TeammateService {
   async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
     await this.ensureStarted({ reopenClosed: true });
     const runtime = this.mustRuntime();
-    const result = await runtime.channelInput(input);
+    const result = await runtime.submitTurn(input);
     if (result.status === 'submitted') {
       await recordSubmittedTurn(this.turnsStore, this.live(), {
         turnId: result.turnId,
@@ -235,10 +235,9 @@ export class TeammateService {
   }): Promise<AgentRuntimeTurnResult> {
     await this.ensureStarted();
     const runtime = this.mustRuntime();
-    const result = await runtime.systemInput({
-      kind: 'system',
+    const result = await runtime.submitTurn({
+      sourceId: `scheduled:${input.jobId}`,
       text: input.prompt,
-      reason: 'scheduled',
     });
     if (result.status === 'submitted') {
       await recordSubmittedTurn(this.turnsStore, this.live(), {
@@ -480,35 +479,11 @@ export class TeammateService {
    * never gated by, or lost to, delivery.
    */
   private async deliverSettledTurn(
-    runtime: AgentRuntime,
+    _runtime: AgentRuntime,
     settled: TurnSettledSignal,
   ): Promise<void> {
     const identity = this.current();
-    if (settled.turnId === null) {
-      this.deps.log.warn(
-        {
-          dispatcher_id: this.dispatcherId,
-          teammate: identity.name,
-          status: settled.status,
-        },
-        'dropping teammate completion: settled turn has no turn id',
-      );
-      return;
-    }
-    let result = '';
-    try {
-      const last = await runtime.getLast();
-      result = last?.text ?? '';
-    } catch (err) {
-      this.deps.log.warn(
-        {
-          dispatcher_id: this.dispatcherId,
-          teammate: identity.name,
-          err: errInfo(err),
-        },
-        'teammate completion getLast failed',
-      );
-    }
+    const result = settled.result?.text ?? null;
     const envelope: CompletionEnvelope = {
       source: identity.name,
       id: `${identity.name}:${settled.turnId}`,
@@ -547,7 +522,7 @@ export class TeammateService {
     await this.ensureStarted({ reopenClosed: true });
     const runtime = this.mustRuntime();
     const submissionSeq = this.deps.nextSubmissionSeq();
-    const result = await runtime.channelInput({
+    const result = await runtime.submitTurn({
       sourceId: `teammate:${this.name}:${submissionSeq}`,
       text: prompt,
     });
@@ -594,11 +569,4 @@ function runtimeIdentityName(identity: TeamMateIdentity): string {
   return identity.team_id !== null
     ? `${identity.team_id}.${identity.name}`
     : identity.name;
-}
-
-function errInfo(err: unknown): Record<string, unknown> {
-  if (err instanceof Error) {
-    return { type: err.name, message: err.message, stack: err.stack };
-  }
-  return { value: String(err) };
 }

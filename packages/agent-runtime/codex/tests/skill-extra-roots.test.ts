@@ -19,6 +19,7 @@ import type {
   AgentRuntimeSkillSource,
   AgentRuntimeStateCallbacks,
   DreamuxLogger,
+  TurnSettledSignal,
 } from '@excitedjs/dreamux-types';
 
 const SKILL_LAYOUT = 'skill-dir';
@@ -30,12 +31,16 @@ function skillSource(path: string): AgentRuntimeSkillSource {
 class FakeClient {
   readonly methods: string[] = [];
   readonly extraRootsCalls: string[][] = [];
+  private readonly handlers: Array<(notification: unknown) => void> = [];
+  private nextTurnId = 1;
   failExtraRoots = false;
   /** When set, `skills/extraRoots/set` rejects with this error instead. */
   extraRootsError: Error | null = null;
 
   onClose(): void {}
-  onNotification(): void {}
+  onNotification(handler: (notification: unknown) => void): void {
+    this.handlers.push(handler);
+  }
   setServerRequestHandler(): void {}
   async ready(): Promise<void> {}
   close(): void {}
@@ -64,7 +69,48 @@ class FakeClient {
     if (method === 'thread/start') {
       return { thread: { id: 'thread-fake' } } as R;
     }
+    if (method === 'turn/start') {
+      const p = params as {
+        threadId: string;
+        input: Array<{ text: string }>;
+      };
+      const turnId = `turn-${this.nextTurnId++}`;
+      const text = p.input[0]?.text ?? '';
+      queueMicrotask(() => {
+        this.emitCompleted(p.threadId, turnId, text === 'empty' ? null : text);
+      });
+      return { turn: { id: turnId } } as R;
+    }
     throw new Error(`unexpected method ${method}`);
+  }
+
+  private emitCompleted(
+    threadId: string,
+    turnId: string,
+    text: string | null,
+  ): void {
+    if (text !== null) {
+      this.emit({
+        method: 'item/completed',
+        params: {
+          threadId,
+          turnId,
+          completedAtMs: Date.now(),
+          item: { type: 'agentMessage', id: `item-${turnId}`, text },
+        },
+      });
+    }
+    this.emit({
+      method: 'turn/completed',
+      params: {
+        threadId,
+        turn: { id: turnId, items: [] },
+      },
+    });
+  }
+
+  private emit(notification: unknown): void {
+    for (const handler of this.handlers) handler(notification);
   }
 }
 
@@ -108,7 +154,7 @@ const PATHS: AgentRuntimePathContext = {
 function noopState(): AgentRuntimeStateCallbacks {
   return {
     async setStatus(): Promise<void> {},
-    async setThreadId(): Promise<void> {},
+    async setCheckpoint(): Promise<void> {},
   };
 }
 
@@ -116,6 +162,7 @@ function buildRuntime(
   client: FakeClient,
   skillSources: AgentRuntimeSkillSource[],
   logger?: DreamuxLogger,
+  onTurnSettled?: (settled: TurnSettledSignal) => void,
 ): CodexRuntime {
   const identity: AgentRuntimeIdentity = { runtime_id: 'flow', checkpoint_id: null };
   return new CodexRuntime(identity, {
@@ -126,6 +173,7 @@ function buildRuntime(
     skillSources,
     codexProcessFactory: () => new FakeProcess() as never,
     codexClientFactory: () => client as never,
+    ...(onTurnSettled !== undefined ? { onTurnSettled } : {}),
     ...(logger !== undefined ? { logger } : {}),
   });
 }
@@ -211,7 +259,34 @@ describe('codex skills/extraRoots/set injection', () => {
     await expect(runtime.start()).rejects.toThrow(/permission denied/);
     expect(client.methods).not.toContain('thread/start');
   });
+
+  it('does not reuse the prior successful result for a later empty successful turn', async () => {
+    const client = new FakeClient();
+    const settled: TurnSettledSignal[] = [];
+    const runtime = buildRuntime(client, [], undefined, (s) => settled.push(s));
+
+    await runtime.start();
+    await expect(runtime.submitTurn({ sourceId: 'm1', text: 'first' })).resolves
+      .toMatchObject({ status: 'submitted' });
+    await waitFor(() => settled.length === 1);
+    await expect(runtime.submitTurn({ sourceId: 'm2', text: 'empty' })).resolves
+      .toMatchObject({ status: 'submitted' });
+    await waitFor(() => settled.length === 2);
+    await runtime.stop();
+
+    expect(settled.map((s) => s.result?.text ?? null)).toEqual(['first', null]);
+    await expect(runtime.getLast()).resolves.toEqual({ text: 'first' });
+  });
 });
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  const deadline = Date.now() + 1000;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('waitFor timed out');
+}
 
 describe('isUnsupportedRpcMethodError', () => {
   it('classifies capability/version-gap rejections as unsupported', () => {

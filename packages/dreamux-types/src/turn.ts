@@ -51,6 +51,16 @@ export type InboundDeliveryResult =
   | { status: 'submitted'; turnId: string }
   | { status: 'failed'; error: Error };
 
+export type AgentRuntimeControlNoticeReason =
+  | 'restart-notice'
+  | 'runtime-control';
+
+export interface AgentRuntimeControlNotice {
+  kind: 'control';
+  text: string;
+  reason: AgentRuntimeControlNoticeReason;
+}
+
 /**
  * Result of a best-effort restart-notice injection. `skipped` means a real
  * inbound had already been handed to the runtime.
@@ -74,7 +84,11 @@ export interface InboundDeliveryHooks {
  * Capability-neutral — carries no channel or runtime specifics.
  */
 export interface TurnSettledSignal {
-  turnId: string | null;
+  turnId: string;
   status: 'completed' | 'failed' | 'stopped';
+  result?: {
+    text: string | null;
+    truncated?: boolean;
+  };
   error?: Error;
 }

@@ -285,7 +285,9 @@ describe('TurnManager turn settlement', () => {
     expect(settled).toEqual([]);
 
     await manager.stop();
-    expect(settled).toEqual([{ turnId: 'turn-1', status: 'stopped' }]);
+    expect(settled).toEqual([
+      { turnId: 'turn-1', status: 'stopped', result: { text: null } },
+    ]);
   });
 
   it('does not re-settle a completed turn as stopped', async () => {

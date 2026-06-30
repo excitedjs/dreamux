@@ -65,7 +65,6 @@ describe('builtin:claude-code loads the real @excitedjs/agent-runtime-claude-cod
       supported: true,
       checkpoint: 'claudeCodeSession',
     });
-    expect(capabilities.systemPrompt.mode).toBe('append');
     expect(capabilities.events.kind).toBe('synthesized');
     expect(capabilities.teammateCompletion.map((s) => s.kind)).toEqual([
       'claudeCodePlainTurn',
@@ -111,7 +110,7 @@ describe('builtin:claude-code loads the real @excitedjs/agent-runtime-claude-cod
     };
     const state: AgentRuntimeStateCallbacks = {
       setStatus: async () => {},
-      setThreadId: async () => {},
+      setCheckpoint: async () => {},
     };
     const context: AgentRuntimeCreateContext<DispatcherClaudeCodeConfig> = {
       identity: { runtime_id: 'flow', checkpoint_id: null },

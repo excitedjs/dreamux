@@ -87,9 +87,10 @@ export async function resolveCompletionBody(
   completion: CompletionEnvelope,
   spillDir: string,
 ): Promise<ResolvedCompletionBody> {
+  const result = completion.result ?? '';
   const budget = completionInlineBudget();
-  if (completion.result.length <= budget) {
-    return { kind: 'inline', text: completion.result };
+  if (result.length <= budget) {
+    return { kind: 'inline', text: result };
   }
   const path = teamMateCompletionOutputPath(
     spillDir,
@@ -101,7 +102,7 @@ export async function resolveCompletionBody(
   // foreign-uid dir is rejected (issue #182 — same invariant as the run tree),
   // then a 0600 file + explicit chmod (writeFile's `mode` honors the umask).
   await ensureOwnerOnlyDir(spillDir);
-  await writeFile(path, completion.result, { mode: 0o600 });
+  await writeFile(path, result, { mode: 0o600 });
   await chmod(path, 0o600);
   return { kind: 'spilled', path };
 }

@@ -66,7 +66,6 @@ export const CODEX_AGENT_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = {
   events: { kind: 'push' },
   last: { supported: true },
   context: { supported: false },
-  systemPrompt: { mode: 'replace' },
   teammateCompletion: [
     {
       kind: 'codexInboxTurn',
@@ -159,8 +158,8 @@ export function createCodexAgentRuntimeProvider(
         ...(context.skillSources !== undefined
           ? { skillSources: context.skillSources }
           : {}),
-        ...(context.systemPromptContent !== undefined
-          ? { systemPromptContent: context.systemPromptContent }
+        ...(context.systemPrompt !== undefined
+          ? { systemPromptReplace: context.systemPrompt.replace }
           : {}),
         ...(context.onTurnSettled !== undefined
           ? { onTurnSettled: context.onTurnSettled }

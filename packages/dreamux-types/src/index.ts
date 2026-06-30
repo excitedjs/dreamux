@@ -46,6 +46,8 @@ export type {
   SubscribeChannelProviderDescriptor,
 } from './provider.js';
 export type {
+  AgentRuntimeControlNotice,
+  AgentRuntimeControlNoticeReason,
   InboundAttachment,
   InboundDeliveryHooks,
   InboundDeliveryResult,
@@ -77,8 +79,11 @@ export type {
   AgentRuntimeSkillSource,
   AgentRuntimeStateCallbacks,
   AgentRuntimeStatus,
+  AgentRuntimeSystemPromptBundle,
   AgentRuntimeSystemInput,
+  AgentRuntimeScheduledTurnInput,
   AgentRuntimeTurnResult,
+  CompletionDeliveryResult,
   CompletionDeliveryShape,
   CompletionEnvelope,
   TeamMateCompletionDeliveryResult,

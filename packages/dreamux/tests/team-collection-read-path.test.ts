@@ -16,6 +16,8 @@ import type {
   AgentRuntimeStatus,
   AgentRuntimeSystemInput,
   AgentRuntimeTurnResult,
+  InboundDeliveryResult,
+  NoticeInjectionResult,
   CompletionEnvelope,
   DreamuxLogger,
   InboundTurnInput,
@@ -39,7 +41,6 @@ const CAPABILITIES: AgentRuntimeCapabilities = {
   events: { kind: 'synthesized' },
   last: { supported: true },
   context: { supported: false },
-  systemPrompt: { mode: 'append' },
   teammateCompletion: [],
 };
 
@@ -58,7 +59,11 @@ class FakeRuntime implements AgentRuntime {
   }
 
   settle(turnId: string, status: TurnSettledSignal['status'] = 'completed'): void {
-    this.onTurnSettled?.({ turnId, status });
+    this.onTurnSettled?.({
+      turnId,
+      status,
+      result: { text: this.opts.lastText ?? null },
+    });
   }
 
   async start(): Promise<void> {
@@ -73,15 +78,27 @@ class FakeRuntime implements AgentRuntime {
     this.status = 'stopped';
   }
 
-  async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
+  async submitTurn(input: InboundTurnInput): Promise<InboundDeliveryResult> {
     this.submitted.push(input);
     const turnId = `turn-${this.submitted.length}`;
     if (this.opts.settleImmediately) {
       queueMicrotask(() =>
-        this.onTurnSettled?.({ turnId, status: 'completed' }),
+        this.onTurnSettled?.({
+          turnId,
+          status: 'completed',
+          result: { text: this.opts.lastText ?? null },
+        }),
       );
     }
     return { status: 'submitted', turnId };
+  }
+
+  async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
+    return this.submitTurn(input);
+  }
+
+  async injectControlNotice(): Promise<NoticeInjectionResult> {
+    return { status: 'skipped' };
   }
 
   async systemInput(_notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult> {
@@ -93,10 +110,18 @@ class FakeRuntime implements AgentRuntime {
   }
 
   getThreadId(): string | null {
-    return 'thread-fake';
+    return this.getCheckpoint()?.id ?? null;
+  }
+
+  getCheckpoint(): { kind: string; id: string } | null {
+    return { kind: 'fakeThread', id: 'thread-fake' };
   }
 
   wasThreadResumed(): boolean {
+    return this.wasCheckpointResumed();
+  }
+
+  wasCheckpointResumed(): boolean {
     return false;
   }
 
