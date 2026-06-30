@@ -267,6 +267,7 @@ export class TeammateCollection implements TeammateOps {
       prompt: input.prompt,
       ...(input.intent !== undefined ? { intent: input.intent } : {}),
       ...(teamId !== undefined ? { teamId } : {}),
+      turnOrigin: teamId === undefined ? 'dispatcher' : 'team_leader',
     });
     await this.registerCompletion(entity, result.turn.turn_id ?? null);
     return result;

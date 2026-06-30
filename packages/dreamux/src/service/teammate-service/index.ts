@@ -186,10 +186,8 @@ export class TeammateService {
       prompt: string;
       intent?: string;
       teamId?: string;
-      /** Override the recorded origin when a team-scoped runtime turn is dispatcher-initiated. */
-      turnOrigin?: TeamMateTurnOrigin;
-      /** Register the completion route immediately after runtime submission returns a turn id. */
-      onSubmittedTurn?: (turnId: string) => void;
+      /** The caller-owned source to record in the teammate turn ledger. */
+      turnOrigin: TeamMateTurnOrigin;
     },
   ): Promise<TeamMateSendResult> {
     await this.ensureStarted({ reopenClosed: true, teamId: input.teamId });
@@ -199,12 +197,9 @@ export class TeammateService {
     const turn = await this.submitPrompt(input.prompt, {
       teamId: input.teamId,
     });
-    if (turn.turn_id !== undefined) {
-      input.onSubmittedTurn?.(turn.turn_id);
-    }
     await recordSubmittedTurn(this.turnsStore, this.live(), {
       turnId: turn.turn_id ?? null,
-      turnOrigin: input.turnOrigin ?? turnOriginForTeamId(input.teamId),
+      turnOrigin: input.turnOrigin,
       prompt: input.prompt,
     });
     return { teammate: this.status(), turn };

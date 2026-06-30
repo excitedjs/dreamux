@@ -221,7 +221,10 @@ describe('external runtime production parity', () => {
       },
     });
 
-    const sent = await teammate.send({ prompt: 'exercise neutral runtime seam' });
+    const sent = await teammate.send({
+      prompt: 'exercise neutral runtime seam',
+      turnOrigin: 'dispatcher',
+    });
     expect(sent.turn).toEqual({
       status: 'submitted',
       turn_id: 'teammate:external-peer:1',

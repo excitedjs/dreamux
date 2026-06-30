@@ -331,9 +331,10 @@ export class TeamService {
       ...(input.intent !== undefined ? { intent: input.intent } : {}),
       teamId: this.id,
       turnOrigin: 'dispatcher',
-      onSubmittedTurn: (turnId) =>
-        this.registerLeaderCompletionFor(leader, turnId, input.initiator),
     });
+    if (sent.turn.turn_id !== undefined) {
+      this.registerLeaderCompletionFor(leader, sent.turn.turn_id, input.initiator);
+    }
     return {
       team: this.view(),
       leader: sent.teammate,

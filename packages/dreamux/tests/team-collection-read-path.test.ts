@@ -26,11 +26,7 @@ import type {
 import type { AgentRuntimeProviderCatalog } from '../src/agent-runtime/index.js';
 import { TeamCollection } from '../src/service/team-collection/index.js';
 import { TeamMateIdentityStore } from '../src/service/teammate-collection/identity-store.js';
-import {
-  TeamMateTurnsStore,
-  type AgentTurnsScope,
-  type TeamMateTurnSubmitInput,
-} from '../src/service/teammate-collection/turns-store.js';
+import { TeamMateTurnsStore } from '../src/service/teammate-collection/turns-store.js';
 import { CompletionRouter } from '../src/service/completion-router/index.js';
 import { WorktreeManager } from '../src/service/worktree/manager.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
@@ -157,24 +153,6 @@ class FakeInitiator {
   ): Promise<TeamMateCompletionDeliveryResult> {
     this.completions.push(completion);
     return { status: 'accepted' };
-  }
-}
-
-class SettlingTurnsStore extends TeamMateTurnsStore {
-  constructor(
-    log: ConstructorParameters<typeof TeamMateTurnsStore>[0],
-    private readonly settle: (turnId: string) => void,
-  ) {
-    super(log);
-  }
-
-  override async appendSubmit(
-    scope: AgentTurnsScope,
-    input: TeamMateTurnSubmitInput,
-  ): Promise<void> {
-    if (input.turnId !== null) this.settle(input.turnId);
-    await new Promise((resolve) => setTimeout(resolve, 25));
-    await super.appendSubmit(scope, input);
   }
 }
 
@@ -447,7 +425,7 @@ describe('TeamCollection dispatcher send to TeamLeader', () => {
 
   });
 
-  it('registers completion before awaited submitted-turn recording can lose an immediate settle', async () => {
+  it('routes dispatcher team.send completion back to the dispatcher initiator', async () => {
     const workspace = join(root, 'workspace');
     mkdirSync(workspace, { recursive: true });
     const runtimes: FakeRuntime[] = [];
@@ -461,10 +439,7 @@ describe('TeamCollection dispatcher send to TeamLeader', () => {
     ]);
     const log = noopLog();
     const router = new CompletionRouter({ dispatcherId: 'dispatcher-a', log });
-    const turnsStore = new SettlingTurnsStore(
-      { warn: log.warn.bind(log) },
-      (turnId) => runtimes[0]?.settle(turnId),
-    );
+    const turnsStore = new TeamMateTurnsStore({ warn: log.warn.bind(log) });
     const teams = new TeamCollection({
       dispatcherId: 'dispatcher-a',
       config,
@@ -489,9 +464,10 @@ describe('TeamCollection dispatcher send to TeamLeader', () => {
     });
 
     await teams.sendToLeader('alpha', {
-      prompt: 'settle now',
+      prompt: 'settle later',
       initiator,
     });
+    runtimes[0]?.settle('turn-1');
     await waitFor(() => initiator.completions.length === 1);
 
     const team = await teams.get('alpha');
