@@ -25,7 +25,6 @@ import { validateDispatcherId } from '../../state/dispatcher-id.js';
 import { resolveAgent } from '../teammate-collection/agent-config.js';
 import type { TeamMateIdentityStore } from '../teammate-collection/identity-store.js';
 import {
-  assertInRoster,
   foldLastTurns,
   toStatus,
   validateLastTurns,
@@ -182,18 +181,21 @@ export class TeammateService {
    * router so the settled turn routes back to the initiator.
    */
   async send(
-    input: { prompt: string; intent?: string; teamId?: string },
+    input: {
+      prompt: string;
+      intent?: string;
+      /** The caller-owned source to record in the teammate turn ledger. */
+      turnOrigin: TeamMateTurnOrigin;
+    },
   ): Promise<TeamMateSendResult> {
-    await this.ensureStarted({ reopenClosed: true, teamId: input.teamId });
+    await this.ensureStarted({ reopenClosed: true });
     if (input.intent !== undefined && input.intent !== '') {
       await this.state.updateIntent(input.intent);
     }
-    const turn = await this.submitPrompt(input.prompt, {
-      teamId: input.teamId,
-    });
+    const turn = await this.submitPrompt(input.prompt);
     await recordSubmittedTurn(this.turnsStore, this.live(), {
       turnId: turn.turn_id ?? null,
-      turnOrigin: turnOriginForTeamId(input.teamId),
+      turnOrigin: input.turnOrigin,
       prompt: input.prompt,
     });
     return { teammate: this.status(), turn };
@@ -202,23 +204,19 @@ export class TeammateService {
   /** Submit the first prompt of a freshly created teammate / leader. */
   async submitInitialPrompt(
     prompt: string,
-    opts: { teamId?: string; turnOrigin?: TeamMateTurnOrigin } = {},
+    opts: { turnOrigin: TeamMateTurnOrigin },
   ): Promise<TeamMateTurnResult> {
-    const turn = await this.submitPrompt(prompt, { teamId: opts.teamId });
+    const turn = await this.submitPrompt(prompt);
     await recordSubmittedTurn(this.turnsStore, this.live(), {
       turnId: turn.turn_id ?? null,
-      turnOrigin: opts.turnOrigin ?? turnOriginForTeamId(opts.teamId),
+      turnOrigin: opts.turnOrigin,
       prompt,
     });
     return turn;
   }
 
   async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
-    const teamId = this.current().team_id ?? undefined;
-    await this.ensureStarted({
-      reopenClosed: true,
-      ...(teamId !== undefined ? { teamId } : {}),
-    });
+    await this.ensureStarted({ reopenClosed: true });
     const runtime = this.mustRuntime();
     const result = await runtime.channelInput(input);
     if (result.status === 'submitted') {
@@ -235,8 +233,7 @@ export class TeammateService {
     jobId: string;
     prompt: string;
   }): Promise<AgentRuntimeTurnResult> {
-    const teamId = this.current().team_id ?? undefined;
-    await this.ensureStarted({ ...(teamId !== undefined ? { teamId } : {}) });
+    await this.ensureStarted();
     const runtime = this.mustRuntime();
     const result = await runtime.systemInput({
       kind: 'system',
@@ -344,18 +341,16 @@ export class TeammateService {
    *
    * Concurrency guard (issue #233): a single `starting` promise serializes
    * concurrent callers (two `send`/`channelInput`/`spawn` turns that both see
-   * `runtime === null`) so the runtime is created exactly once. The roster check
-   * runs eagerly on every caller — including those that join an in-flight start —
-   * so a wrong-scope caller still fails fast.
+   * `runtime === null`) so the runtime is created exactly once. The identity
+   * scope check runs eagerly on every caller — including those that join an
+   * in-flight start — so corrupt identity scope still fails fast.
    */
-  async ensureStarted(
-    opts: { reopenClosed?: boolean; teamId?: string } = {},
-  ): Promise<void> {
+  async ensureStarted(opts: { reopenClosed?: boolean } = {}): Promise<void> {
     // The dispatcher agent (injected `buildLaunch`) is not a roster member — it
     // lives at the dispatcher root, outside the teammate/team collections — so
     // the roster guard applies only to ordinary teammates (issue #233 Phase 5).
     if (this.deps.buildLaunch === undefined) {
-      assertInRoster(this.current(), this.dispatcherId, opts.teamId);
+      this.assertOwnRoster();
     }
     if (this.runtime !== null) return;
     if (this.starting !== null) return this.starting;
@@ -366,9 +361,7 @@ export class TeammateService {
     return promise;
   }
 
-  private async startFromRecord(
-    opts: { reopenClosed?: boolean; teamId?: string },
-  ): Promise<void> {
+  private async startFromRecord(opts: { reopenClosed?: boolean }): Promise<void> {
     let identity = this.current();
     if (identity.status === 'closed') {
       if (opts.reopenClosed !== true) {
@@ -535,11 +528,23 @@ export class TeammateService {
     await Promise.allSettled([record, route]);
   }
 
-  private async submitPrompt(
-    prompt: string,
-    opts: { teamId?: string } = {},
-  ): Promise<TeamMateTurnResult> {
-    await this.ensureStarted({ reopenClosed: true, teamId: opts.teamId });
+  private assertOwnRoster(): void {
+    const identity = this.current();
+    if (identity.dispatcher_id !== this.dispatcherId) {
+      throw new Error(`TeamMate ${JSON.stringify(identity.name)} does not exist`);
+    }
+    if (identity.role === 'teammate' && identity.team_id === null) return;
+    if (
+      (identity.role === 'team_leader' || identity.role === 'team_member') &&
+      identity.team_id !== null
+    ) {
+      return;
+    }
+    throw new Error(`TeamMate ${JSON.stringify(identity.name)} does not exist`);
+  }
+
+  private async submitPrompt(prompt: string): Promise<TeamMateTurnResult> {
+    await this.ensureStarted({ reopenClosed: true });
     const runtime = this.mustRuntime();
     const submissionSeq = this.deps.nextSubmissionSeq();
     const result = await runtime.channelInput({
@@ -574,10 +579,6 @@ export class TeammateService {
     }
     return worktrees;
   }
-}
-
-function turnOriginForTeamId(teamId: string | undefined): TeamMateTurnOrigin {
-  return teamId === undefined ? 'dispatcher' : 'team_leader';
 }
 
 function runtimeId(dispatcherId: string, name: string): string {

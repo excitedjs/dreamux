@@ -168,6 +168,7 @@ describe('team-mcp stdio shim', () => {
     expect(names).not.toContain('transfer_channel_back');
     expect(names).toEqual([
       'create',
+      'send',
       'list',
       'status',
       'history',
@@ -182,6 +183,13 @@ describe('team-mcp stdio shim', () => {
     expect(schemaOf(tools, 'bind_channel').properties).toHaveProperty('meta');
     expect(schemaOf(tools, 'bind_channel').properties).not.toHaveProperty('chat_id');
     expect(schemaOf(tools, 'bind_channel').properties).not.toHaveProperty('chat_type');
+    // send: dispatcher-only TeamLeader turn submission; no channel selectors.
+    expect(schemaOf(tools, 'send').required).toEqual(['team_name', 'prompt']);
+    expect(schemaOf(tools, 'send').properties).toHaveProperty('team_name');
+    expect(schemaOf(tools, 'send').properties).toHaveProperty('prompt');
+    expect(schemaOf(tools, 'send').properties).toHaveProperty('intent');
+    expect(schemaOf(tools, 'send').properties).not.toHaveProperty('channel_id');
+    expect(schemaOf(tools, 'send').properties).not.toHaveProperty('meta');
     // transfer_back: meta required; channel_id optional.
     expect(schemaOf(tools, 'transfer_back').required).toEqual(['meta']);
     expect(schemaOf(tools, 'transfer_back').properties).toHaveProperty('channel_id');
@@ -242,10 +250,25 @@ describe('team-mcp stdio shim', () => {
         },
       });
       await reader.next();
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 3,
+        method: 'tools/call',
+        params: {
+          name: 'send',
+          arguments: {
+            team_name: 'alpha',
+            prompt: 'follow up',
+            intent: 'lead alpha follow-up',
+          },
+        },
+      });
+      await reader.next();
 
       expect(admin.requests.map((r) => r.method)).toEqual([
         'mcp.team.status',
         'mcp.team.history',
+        'mcp.team.send',
       ]);
       expect(admin.requests[0]?.params).toMatchObject({ team_name: 'alpha' });
       expect(admin.requests[1]?.params).toMatchObject({
@@ -253,6 +276,12 @@ describe('team-mcp stdio shim', () => {
         team_name: 'alpha',
         status: 'running',
         limit: 5,
+      });
+      expect(admin.requests[2]?.params).toMatchObject({
+        caller_kind: 'dispatcher',
+        team_name: 'alpha',
+        prompt: 'follow up',
+        intent: 'lead alpha follow-up',
       });
       // #199 Slice 1: the legacy `close_status` filter is not part of the surface.
       expect(admin.requests[1]?.params).not.toHaveProperty('close_status');
@@ -369,15 +398,29 @@ describe('team-mcp stdio shim', () => {
         meta: { chat_id: 'chat-demo' },
       });
 
-      writeJson(input, {
-        jsonrpc: '2.0',
-        id: 2,
-        method: 'tools/call',
-        params: { name: 'status', arguments: { team_name: 'alpha' } },
-      });
-      expect(await reader.next()).toMatchObject({
-        result: { isError: true },
-      });
+      const hiddenTools = [
+        'create',
+        'send',
+        'list',
+        'status',
+        'history',
+        'dissolve',
+        'bind_channel',
+      ];
+      for (const [idx, name] of hiddenTools.entries()) {
+        writeJson(input, {
+          jsonrpc: '2.0',
+          id: idx + 2,
+          method: 'tools/call',
+          params: { name, arguments: {} },
+        });
+        expect(await reader.next()).toMatchObject({
+          result: { isError: true },
+        });
+      }
+      expect(admin.requests.map((request) => request.method)).toEqual([
+        'mcp.team.transfer_back',
+      ]);
 
       input.end();
       await run;

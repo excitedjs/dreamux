@@ -163,6 +163,12 @@ export interface TeamCreateResult extends TeamSummary {
   turn: TeamMateTurnResult | null;
 }
 
+export interface TeamLeaderSendResult {
+  team: TeamView;
+  leader: TeamMateRuntimeStatus;
+  turn: TeamMateTurnResult;
+}
+
 export function validateTeamId(id: string): string {
   if (!TEAM_ID_PATTERN.test(id)) {
     throw new Error(

@@ -99,6 +99,15 @@ describe('dispatcher prompt matches registered Dreamux MCP tools', () => {
     ).toEqual([]);
   });
 
+  it('mentions Team MCP send in the Team MCP instructions explicitly', () => {
+    expect(DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS).toMatch(
+      /Team MCP[\s\S]*create, send, list, status, history, dissolve, bind_channel, and transfer_back/,
+    );
+    expect(DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS).toMatch(
+      /send\(\{ team_name, prompt, intent\? \}\) submits a follow-up turn to that Team's TeamLeader only/,
+    );
+  });
+
   it('keeps prompt-declared removed verbs out of the registered dispatcher tools', () => {
     const registered = new Set(registeredDreamuxMcpTools().map((tool) => tool.name));
     const reintroduced = PROMPT_DECLARED_REMOVED_VERBS.filter((name) =>

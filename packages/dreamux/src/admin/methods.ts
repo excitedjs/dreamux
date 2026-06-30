@@ -311,6 +311,32 @@ export const adminMethods: Record<string, AdminHandler> = {
     }
   },
 
+  'mcp.team.send': async (server, params) => {
+    const id = mustDispatcherId(params);
+    mustExistingDispatcher(server, id);
+    if (teamCallerKind(params) === 'team_leader') {
+      throw new AdminError(
+        'BAD_REQUEST',
+        'mcp.team.send is only available to dispatcher-scoped Team MCP callers',
+      );
+    }
+    const name = mustString(params, 'team_name');
+    const prompt = mustNonEmptyString(params, 'prompt');
+    const intent = optionalString(params, 'intent');
+    try {
+      return await server.getDispatcher(id).sendTeamLeader({
+        teamId: name,
+        prompt,
+        ...(intent !== null ? { intent } : {}),
+      });
+    } catch (err) {
+      if (err instanceof TeamUnavailableError) {
+        throw new AdminError('TEAM_NOT_FOUND', err.message);
+      }
+      throw new AdminError('TEAM_SEND_FAILED', parseMessage(err));
+    }
+  },
+
   'mcp.team.list': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
@@ -473,6 +499,7 @@ function channelToolCaller(
 function teamCallerKind(
   params: Record<string, unknown> | undefined,
 ): 'dispatcher' | 'team_leader' {
+  // Omitted caller_kind preserves the existing dispatcher-scoped admin contract.
   const kind = optionalString(params, 'caller_kind') ?? 'dispatcher';
   if (kind === 'dispatcher' || kind === 'team_leader') return kind;
   throw new AdminError(

@@ -124,6 +124,8 @@ Team lifecycle is addressed by `team_name`. Channel binding is a Team MCP
 capability. The Team MCP is caller-scoped:
 
 - dispatchers see lifecycle/read tools plus
+  `send({ team_name, prompt, intent? })` to submit a turn to that Team's
+  TeamLeader,
   `bind_channel({ team_name, channel_id?, meta })` and
   `transfer_back({ channel_id?, meta })`
 - TeamLeaders see only scoped `transfer_back({ channel_id?, meta })`
@@ -131,7 +133,8 @@ capability. The Team MCP is caller-scoped:
 `channel_id` defaults to the dispatcher's sole configured channel and is
 required only when the dispatcher has more than one configured channel.
 `meta` is provider-owned selector input, for example `{ "chat_id": "..." }` for
-a Feishu group chat. `team.send` remains future work.
+a Feishu group chat. Peer Team send remains future work; TeamLeaders still use
+their scoped TeamMate MCP to send to members.
 
 Each `TeamService` directly builds and holds its TeamLeader `TeammateService`
 through `/packages/dreamux/src/service/team-service/leader-agent.ts`, using the

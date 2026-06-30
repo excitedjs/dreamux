@@ -163,16 +163,13 @@ The folded corrections:
   runtimes) become resident at boot, superseding the "materialized on first
   conversational access" note — record it in a decision/KB.
 
-- **(Blocker, codex) Prerequisite seam fix: `scheduledInput` team scope.**
-  `TeammateService.ensureStarted` runs `assertInRoster` only when
-  `buildLaunch === undefined` (`teammate-service/index.ts:350`). The dispatcher
-  agent injects `buildLaunch` so it skips the check; a team leader is an ordinary
-  `TeammateService` (no `buildLaunch`) so the check runs, and `scheduledInput`'s
-  `ensureStarted()` passes no `teamId` → a `team_leader` is judged out-of-roster
-  and throws `Teammate "<leader>" does not exist`. FIX: `scheduledInput` calls
-  `ensureStarted({ teamId: this.current().team_id ?? undefined })` (correct for
-  both: dispatcher skips the check, leader passes its own team scope). Land this
-  fix + a test (cold and already-running leader) BEFORE the scheduler generalization.
+- **(Resolved blocker, codex) Prerequisite seam fix: `scheduledInput` team scope.**
+  The original risk was a per-call roster check that required callers to pass
+  `teamId` into `ensureStarted()`, which made a cold TeamLeader scheduled fire
+  fail as out-of-roster when the team scope was omitted. Current code resolves
+  this by validating the service's own persisted identity scope instead of taking
+  a per-call `teamId`, so `scheduledInput` needs no scope argument. Keep the cold
+  and already-running leader coverage when touching this path.
 
 - **(Major) Policy seam rename.** `onAbsentRuntime: 'miss' | 'lazy-start'` →
   `absentRuntimeStrategy: 'miss' | 'submit'`, where `'submit'` = "call the host's

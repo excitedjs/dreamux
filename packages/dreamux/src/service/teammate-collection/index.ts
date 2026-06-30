@@ -250,9 +250,9 @@ export class TeammateCollection implements TeammateOps {
       status: 'starting',
     });
     const entity = this.entityFor(identity);
-    await entity.ensureStarted({ teamId });
+    await entity.ensureStarted();
     const turn = await entity.submitInitialPrompt(input.prompt, {
-      ...(teamId !== undefined ? { teamId } : {}),
+      turnOrigin: teamId === undefined ? 'dispatcher' : 'team_leader',
     });
     await this.registerCompletion(entity, turn.turn_id ?? null);
     return { teammate: entity.status(), turn };
@@ -266,7 +266,7 @@ export class TeammateCollection implements TeammateOps {
     const result = await entity.send({
       prompt: input.prompt,
       ...(input.intent !== undefined ? { intent: input.intent } : {}),
-      ...(teamId !== undefined ? { teamId } : {}),
+      turnOrigin: teamId === undefined ? 'dispatcher' : 'team_leader',
     });
     await this.registerCompletion(entity, result.turn.turn_id ?? null);
     return result;

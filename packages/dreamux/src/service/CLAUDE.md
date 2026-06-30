@@ -101,10 +101,11 @@ the explicit `service/index.ts` facade.
   `teammate/<name>/` for a dispatcher-scope read and only that team's members
   under `team/<team>/teammate/<name>/` for a team-scope read — the leader lives at
   the team root and is never a member row, so no post-filter is needed. The single
-  read-by-name chokepoint `mustIdentity` then calls `assertInRoster` (backed by
-  `identityInRoster`) so a wrong-scope name resolves as "does not exist": a
-  dispatcher-scope read sees only `role: 'teammate'` entities with `team_id ===
-  null`, a team-scope read only that team's `team_leader` / `team_member`. The
+  read-by-name chokepoint `mustIdentity` then applies `assertInCollection` so a
+  wrong-scope name resolves as "does not exist": a dispatcher-scope read sees
+  only `role: 'teammate'` entities with `team_id === null`, a team-scope read
+  only that team's `team_member` rows; the TeamLeader lives at the team root and
+  is reached through `TeamService`, not the members collection. The
   Team service reaches its own leader + members through the team-scoped reads it
   drives; a dispatcher inspects Teams via `team.*` compact summaries, never
   `teammate.*`.

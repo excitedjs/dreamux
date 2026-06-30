@@ -44,8 +44,10 @@ ships in the npm package for supported agent runtimes:
   `teammate.spawn`, replacing the old `repo_cwd`; #199 Slice 2). `create` starts
   the leader idle unless an optional `prompt` is supplied as its first turn;
   without a prompt no turn is fired at creation (the leader waits for a bound
-  channel inbound or a later `send`), and creation never fabricates a default
-  leader prompt. Inspect with
+  channel inbound or a later Team MCP `send`), and creation never fabricates a
+  default leader prompt. `send({ team_name, prompt, intent? })` submits a
+  follow-up turn to that Team's TeamLeader only; it does not send to Team
+  members or bind/post to a channel. Inspect with
   `list` (compact rows) / `status` (the public `team_name`-keyed team view +
   leader/binding summary, no machine-local `repo_cwd`/`worktree`; #199 Slice 2) /
   `history` (a compact recovery search
