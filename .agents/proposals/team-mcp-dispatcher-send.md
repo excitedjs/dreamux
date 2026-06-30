@@ -177,8 +177,8 @@ or dispatcher-specific branching.
   `TeammateService.send` path when the Team itself is open.
 - Closed or missing Teams fail loudly before any leader runtime submission.
 - The submitted TeamLeader turn registers completion delivery back to the
-  dispatcher as soon as a submitted `turn_id` is available and before any
-  awaited recording side effect.
+  dispatcher once a submitted `turn_id` is available, using the same post-submit
+  registration model as existing teammate sends.
 - The submitted TeamLeader turn is recorded with `turn_origin: 'dispatcher'`.
 - `mcp.team.send` returns `{ team: TeamView, leader: TeamMateRuntimeStatus, turn:
   TeamMateTurnResult }` and does not include binding data.
