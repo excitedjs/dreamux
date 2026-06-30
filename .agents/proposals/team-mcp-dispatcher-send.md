@@ -124,8 +124,9 @@ The known settle-before-register edge is a global send lifecycle concern, not a
 dispatcher-to-TeamLeader special case. Handling it requires a separate design for
 send / steer / completion promise semantics across all send paths.
 
-The submitted turn must be recorded with `turn_origin: 'dispatcher'`, even
-though the leader send still needs its `teamId` for roster/runtime startup.
+The submitted turn must be recorded with `turn_origin: 'dispatcher'`. The
+leader's team scope comes from its persisted identity and owning `TeamService`,
+not from a per-send `teamId` argument.
 
 ```mermaid
 sequenceDiagram

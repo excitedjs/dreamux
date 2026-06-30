@@ -187,10 +187,9 @@ async function createTestTeamLeader(input: {
       /* no router in this unit helper */
     },
   });
-  await leader.ensureStarted({ teamId: input.teamId });
+  await leader.ensureStarted();
   if (input.prompt !== undefined) {
     await leader.submitInitialPrompt(input.prompt, {
-      teamId: input.teamId,
       turnOrigin: 'dispatcher',
     });
   }

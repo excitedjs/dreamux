@@ -193,11 +193,10 @@ export class TeamService {
       status: 'starting',
     });
     const leader = service.buildLeader(identity);
-    await leader.ensureStarted({ teamId: input.teamId });
+    await leader.ensureStarted();
     let turn: TeamMateTurnResult | null = null;
     if (input.prompt !== undefined) {
       turn = await leader.submitInitialPrompt(input.prompt, {
-        teamId: input.teamId,
         turnOrigin: 'dispatcher',
       });
       await service.registerLeaderCompletion(leader, turn.turn_id ?? null);
@@ -329,7 +328,6 @@ export class TeamService {
     const sent = await leader.send({
       prompt: input.prompt,
       ...(input.intent !== undefined ? { intent: input.intent } : {}),
-      teamId: this.id,
       turnOrigin: 'dispatcher',
     });
     if (sent.turn.turn_id !== undefined) {

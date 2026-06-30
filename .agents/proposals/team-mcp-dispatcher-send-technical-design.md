@@ -39,9 +39,9 @@
   to its TeamLeader and routes a `team_leader` completion back to the dispatcher.
 - `CompletionRouter` already supports arbitrary initiators as long as the
   caller registers `completionKey -> initiator` before the producer settles.
-- `TeammateService.send({ teamId })` currently records `turn_origin` as
-  `team_leader`, while `TeamService.createNew` overrides the TeamLeader initial
-  prompt to `turn_origin: 'dispatcher'`.
+- `TeammateService.send` records a caller-owned `turnOrigin`; the service's team
+  scope comes from its persisted identity and owning collection/service, not a
+  per-send `teamId`.
 - `TeamCollection` already has an open-Team guard that throws
   `TeamUnavailableError` for missing or closed Teams, and the cron admin path
   maps that error family to `TEAM_NOT_FOUND`.
@@ -155,8 +155,7 @@ sendToLeader(input: {
 `TeamService` should:
 
 - fail if the Team record is closed;
-- submit through the leader `TeammateService` with `teamId: this.id`,
-  and `turnOrigin: 'dispatcher'`;
+- submit through the leader `TeammateService` with `turnOrigin: 'dispatcher'`;
 - register the submitted leader turn id with the supplied initiator using the
   same post-submit `CompletionRouter` flow as existing teammate sends;
 - reuse the existing `CompletionRouter` key shape;
@@ -169,14 +168,13 @@ rather than deriving it from `teamId`:
 async send(input: {
   prompt: string;
   intent?: string;
-  teamId?: string;
   turnOrigin: TeamMateTurnOrigin;
 }): Promise<TeamMateSendResult>
 ```
 
-This keeps `teamId` as runtime/team context only; the caller that owns the send
-semantics supplies whether the turn should be recorded as `dispatcher` or
-`team_leader`. `TeamService.sendToLeader` should await the leader send result,
+The caller that owns the send semantics supplies whether the turn should be
+recorded as `dispatcher` or `team_leader`; team scope is already part of the
+entity identity. `TeamService.sendToLeader` should await the leader send result,
 then register `leaderName:turnId -> initiator` when the turn was submitted. The
 existing initial-prompt path can keep the current helper that derives the
 initiator from `deps.initiatorFor(leader.current())`.
