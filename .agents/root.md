@@ -91,6 +91,11 @@ history and rationale; when you need current behavior, pair them with
 
 ## Active Proposals
 
+- [Dispatcher Team MCP send to TeamLeader](proposals/team-mcp-dispatcher-send.md)
+  — draft requirement/spec for adding a dispatcher-only Team MCP `send` tool
+  that submits turns to an existing Team's TeamLeader, registers completion
+  delivery back to the dispatcher at send time, and leaves Team peer messaging
+  out of this slice.
 - [TeamLeader-scoped Team MCP transfer back](proposals/team-mcp-teamleader-transfer-back.md)
   — draft requirement/spec for exposing only `transfer_back` from Team MCP to
   TeamLeaders, keeping dispatcher Team lifecycle tools private, keeping explicit
