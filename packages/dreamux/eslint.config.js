@@ -6,6 +6,35 @@
 // contracts and resolves `builtin:*` to a package NAME the dynamic loader
 // imports at runtime. The boundary (both directions) is centralized in
 // @excitedjs/eslint-config so it is expressed once and consumed uniformly.
-import baseConfig, { withCoreImportBoundary } from '@excitedjs/eslint-config';
+import baseConfig, {
+  SYNC_DESTRUCTURE_SELECTOR,
+  withCoreImportBoundary,
+} from '@excitedjs/eslint-config';
 
-export default withCoreImportBoundary(baseConfig);
+const SERVICE_REEXPORT_SELECTORS = [
+  {
+    selector: 'ExportAllDeclaration',
+    message:
+      'Service submodules must not re-export another module. Import the owning module directly, or add an intentional export to src/service/index.ts.',
+  },
+  {
+    selector: 'ExportNamedDeclaration[source]',
+    message:
+      'Service submodules must not re-export another module. Import the owning module directly, or add an intentional export to src/service/index.ts.',
+  },
+];
+
+export default [
+  ...withCoreImportBoundary(baseConfig),
+  {
+    files: ['src/service/**/*.ts'],
+    ignores: ['src/service/index.ts'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        SYNC_DESTRUCTURE_SELECTOR,
+        ...SERVICE_REEXPORT_SELECTORS,
+      ],
+    },
+  },
+];

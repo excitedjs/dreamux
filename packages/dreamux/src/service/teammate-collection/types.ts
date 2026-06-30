@@ -1,21 +1,5 @@
-import type {
-  AgentRuntimeCapabilities,
-  AgentRuntimeMcpServer,
-} from "@excitedjs/dreamux-types";
+import type { AgentRuntimeCapabilities } from "@excitedjs/dreamux-types";
 import type { DispatcherStatus } from "../../state/dispatcher-store.js";
-
-/**
- * The per-teammate launch additions supplied by role/identity (issue #233): the
- * MCP servers a teammate gets plus the neutral host features its runtime should
- * disable. The decision is owned by the layer that owns the role — the team
- * layer (`TeamCollection`) builds the team_leader policy (its cron MCP + native
- * cron disabled); ordinary teammates get none. The generic `TeammateService`
- * only consumes the result, never branches on role itself.
- */
-export interface TeamMateLaunchPolicy {
-  mcpServers: readonly AgentRuntimeMcpServer[];
-  disableFeatures: readonly string[];
-}
 
 export const TEAMMATE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
@@ -108,7 +92,7 @@ export interface TeamMateRepoView {
   source_repo: string | null;
   branch: string | null;
   base_ref: string | null;
-  cleanup: TeamMateWorktreeCleanupPolicy;
+  cleanup: "keep" | "delete-on-close";
   cleanup_state: TeamMateWorktreeCleanupState;
 }
 
@@ -166,8 +150,6 @@ export interface TeamMateWorktreeRequest {
   cleanup?: "keep" | "delete-on-close";
 }
 
-export type TeamMateWorktreeCleanupPolicy = "keep" | "delete-on-close";
-
 export type TeamMateWorktreeCleanupState =
   | "not-managed"
   | "managed-active"
@@ -184,7 +166,7 @@ export interface TeamMateWorktreeIdentity {
   path: string;
   branch: string | null;
   base_ref: string | null;
-  cleanup: TeamMateWorktreeCleanupPolicy;
+  cleanup: "keep" | "delete-on-close";
   cleanup_state: TeamMateWorktreeCleanupState;
   cleanup_error: string | null;
 }

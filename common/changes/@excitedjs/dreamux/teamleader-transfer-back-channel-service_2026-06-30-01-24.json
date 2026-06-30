@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux",
+      "comment": "Expose TeamLeader-scoped Team MCP transfer_back, move channel session and binding ownership behind ChannelService with admin-side Team read composition so Team services stay Channel-agnostic, flatten TeamMate launch policy aliases, and add a service-subtree lint gate against non-entrypoint re-exports.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

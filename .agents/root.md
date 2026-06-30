@@ -91,6 +91,13 @@ history and rationale; when you need current behavior, pair them with
 
 ## Active Proposals
 
+- [TeamLeader-scoped Team MCP transfer back](proposals/team-mcp-teamleader-transfer-back.md)
+  — draft requirement/spec for exposing only `transfer_back` from Team MCP to
+  TeamLeaders, keeping dispatcher Team lifecycle tools private, keeping explicit
+  provider target `meta`, moving channel binding ownership to a core
+  `ChannelService` over live sessions plus `ChannelBindingStore`, and recording
+  the future `team.send` parity requirement without implementing it in this
+  slice.
 - [Post-#110 architecture sustainability](proposals/post-110-architecture-sustainability.md)
   — diagnostic of why agent-written code drifted from the intended architecture
   after the #110 pluginization inflection (load-bearing invariants are prose with

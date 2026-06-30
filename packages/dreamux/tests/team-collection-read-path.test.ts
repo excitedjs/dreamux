@@ -25,7 +25,6 @@ import { TeamCollection } from '../src/service/team-collection/index.js';
 import { TeamMateIdentityStore } from '../src/service/teammate-collection/identity-store.js';
 import { TeamMateTurnsStore } from '../src/service/teammate-collection/turns-store.js';
 import { CompletionRouter } from '../src/service/completion-router/index.js';
-import { ChannelBindingStore } from '../src/service/channel-binding/store.js';
 import { WorktreeManager } from '../src/service/worktree/manager.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 
@@ -172,7 +171,6 @@ describe('TeamCollection read path (issue #233 R4)', () => {
       config,
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
-      bindings: new ChannelBindingStore(),
       identities: new TeamMateIdentityStore({ warn: log.warn.bind(log) }),
       turnsStore: new TeamMateTurnsStore({ warn: log.warn.bind(log) }),
       router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
@@ -262,7 +260,6 @@ describe('TeamCollection create without a prompt fires no leader turn', () => {
       config,
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
-      bindings: new ChannelBindingStore(),
       identities: new TeamMateIdentityStore({ warn: log.warn.bind(log) }),
       turnsStore: new TeamMateTurnsStore({ warn: log.warn.bind(log) }),
       router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
@@ -359,7 +356,6 @@ describe('closing a team member must not remove the shared team worktree', () =>
       config,
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
-      bindings: new ChannelBindingStore(),
       identities: new TeamMateIdentityStore({ warn: log.warn.bind(log) }),
       turnsStore: new TeamMateTurnsStore({ warn: log.warn.bind(log) }),
       router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
@@ -455,7 +451,6 @@ describe('team dissolve syncs cleanup_state to the leader and members (#237)', (
       config,
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
-      bindings: new ChannelBindingStore(),
       identities: new TeamMateIdentityStore({ warn: log.warn.bind(log) }),
       turnsStore: new TeamMateTurnsStore({ warn: log.warn.bind(log) }),
       router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),

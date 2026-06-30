@@ -171,7 +171,8 @@ async function createTestTeamLeader(input: {
   const leader = createTeamLeaderAgent({
     dispatcherId: input.dispatcherId,
     identity,
-    launchPolicy: { mcpServers: [], disableFeatures: [] },
+    mcpServers: [],
+    disableFeatures: [],
     config: input.config,
     agentRuntimeProviders: input.agentRuntimeProviders,
     identities,

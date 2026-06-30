@@ -4,17 +4,30 @@ import type {
   ChannelToolCaller,
   DispatcherService,
 } from '../service/dispatcher-service/index.js';
+import type { ChannelRouteOwner } from '../service/channel-service/index.js';
+import { ChannelToolAuthorizationError } from '../service/channel-service/errors.js';
 import type { TeamService } from '../service/team-service/index.js';
 import type { SchedulerService } from '../service/scheduler/service.js';
 import { TeamUnavailableError } from '../service/team-collection/index.js';
 import { AdminError } from './protocol.js';
-import { validateDispatcherId } from '../state/dispatcher-id.js';
-import { ChannelToolAuthorizationError } from '../service/dispatcher-service/errors.js';
 import {
-  type TeamMateHistoryQuery,
-  type TeamMateIdentityStatus,
-  type TeamMateWorktreeRequest,
-} from '../service/teammate-collection/types.js';
+  historyQuery,
+  mustDispatcherId,
+  mustExistingDispatcher,
+  mustNonEmptyString,
+  mustRecord,
+  mustString,
+  optionalBooleanField,
+  optionalInteger,
+  optionalNullableRecordField,
+  optionalNullableStringField,
+  optionalRecordField,
+  optionalString,
+  optionalStringField,
+  optionalTeamStatus,
+  parseMessage,
+  repoRequest,
+} from './params.js';
 
 export type AdminHandler = (
   server: Server,
@@ -284,7 +297,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     const worktree = repo?.worktree ?? null;
     const prompt = optionalString(params, 'prompt');
     try {
-      return await dispatcher.createTeam({
+      const created = await dispatcher.createTeam({
         name,
         ...(repoCwd !== null ? { repoCwd } : {}),
         leaderAgentRuntime,
@@ -292,6 +305,7 @@ export const adminMethods: Record<string, AdminHandler> = {
         ...(worktree !== null ? { worktree } : {}),
         ...(prompt !== null ? { prompt } : {}),
       });
+      return { ...created, binding: null };
     } catch (err) {
       throw new AdminError('TEAM_CREATE_FAILED', parseMessage(err));
     }
@@ -300,14 +314,30 @@ export const adminMethods: Record<string, AdminHandler> = {
   'mcp.team.list': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    return { teams: await server.getDispatcher(id).listTeams() };
+    const dispatcher = server.getDispatcher(id);
+    const teams = await dispatcher.listTeams();
+    return {
+      teams: await Promise.all(
+        teams.map(async (team) => ({
+          ...team,
+          bound_group: await dispatcher.activeTeamBindingSummary(ownerForTeamRead(team)),
+        })),
+      ),
+    };
   },
 
   'mcp.team.status': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     const name = mustString(params, 'team_name');
-    return server.getDispatcher(id).getTeamStatus(name);
+    const dispatcher = server.getDispatcher(id);
+    const summary = await dispatcher.getTeamStatus(name);
+    return {
+      ...summary,
+      binding: await dispatcher.activeTeamBindingSummary(
+        ownerForTeamRead(summary.team),
+      ),
+    };
   },
 
   'mcp.team.history': async (server, params) => {
@@ -321,7 +351,8 @@ export const adminMethods: Record<string, AdminHandler> = {
     const until = optionalInteger(params, 'until');
     const limit = optionalInteger(params, 'limit');
     const cursor = optionalString(params, 'cursor');
-    return server.getDispatcher(id).getTeamHistory({
+    const dispatcher = server.getDispatcher(id);
+    const history = await dispatcher.getTeamHistory({
       ...(name !== null ? { name } : {}),
       ...(status !== null ? { status } : {}),
       ...(repo !== null ? { repo } : {}),
@@ -331,6 +362,15 @@ export const adminMethods: Record<string, AdminHandler> = {
       ...(limit !== null ? { limit } : {}),
       ...(cursor !== null ? { cursor } : {}),
     });
+    return {
+      ...history,
+      items: await Promise.all(
+        history.items.map(async (team) => ({
+          ...team,
+          bound_group: await dispatcher.activeTeamBindingSummary(ownerForTeamRead(team)),
+        })),
+      ),
+    };
   },
   'mcp.team.bind_channel': async (server, params) => {
     const id = mustDispatcherId(params);
@@ -347,10 +387,28 @@ export const adminMethods: Record<string, AdminHandler> = {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     const channelId = optionalString(params, 'channel_id');
-    return server.getDispatcher(id).transferTeamChannelBack({
+    const callerKind = teamCallerKind(params);
+    const expectedOwner =
+      callerKind === 'team_leader'
+        ? {
+            kind: 'team' as const,
+            teamName: mustString(params, 'team_id'),
+            leaderName: mustString(params, 'leader_name'),
+          }
+        : undefined;
+    const binding = await server.getDispatcher(id).transferTeamChannelBack({
+      ...(expectedOwner !== undefined ? { expectedOwner } : {}),
       ...(channelId !== null ? { channelId } : {}),
       meta: mustRecord(params, 'meta'),
     });
+    return {
+      transferred: binding !== null,
+      binding,
+      message:
+        binding === null
+          ? 'No active Team channel binding matched the resolved target.'
+          : 'Channel target transferred back to the dispatcher.',
+    };
   },
 
   'mcp.team.dissolve': async (server, params) => {
@@ -358,10 +416,11 @@ export const adminMethods: Record<string, AdminHandler> = {
     mustExistingDispatcher(server, id);
     const name = mustString(params, 'team_name');
     const note = mustNonEmptyString(params, 'note');
-    return server.getDispatcher(id).dissolveTeam({
+    const dissolved = await server.getDispatcher(id).dissolveTeam({
       teamId: name,
       note,
     });
+    return { ...dissolved, binding: null };
   },
 };
 
@@ -411,6 +470,28 @@ function channelToolCaller(
   );
 }
 
+function teamCallerKind(
+  params: Record<string, unknown> | undefined,
+): 'dispatcher' | 'team_leader' {
+  const kind = optionalString(params, 'caller_kind') ?? 'dispatcher';
+  if (kind === 'dispatcher' || kind === 'team_leader') return kind;
+  throw new AdminError(
+    'BAD_REQUEST',
+    "param 'caller_kind' must be dispatcher or team_leader",
+  );
+}
+
+function ownerForTeamRead(input: {
+  team_name: string;
+  leader_name: string;
+}): ChannelRouteOwner {
+  return {
+    kind: 'team',
+    teamName: input.team_name,
+    leaderName: input.leader_name,
+  };
+}
+
 async function teammateTargetFor(
   dispatcher: DispatcherService,
   params: Record<string, unknown> | undefined,
@@ -432,251 +513,4 @@ async function teammateTargetFor(
     'BAD_REQUEST',
     "param 'caller_kind' must be dispatcher or team_leader",
   );
-}
-
-function mustString(
-  params: Record<string, unknown> | undefined,
-  key: string,
-): string {
-  if (params === undefined || typeof params[key] !== 'string') {
-    throw new AdminError('BAD_REQUEST', `missing or non-string param '${key}'`);
-  }
-  return params[key] as string;
-}
-
-function mustNonEmptyString(
-  params: Record<string, unknown> | undefined,
-  key: string,
-): string {
-  const value = mustString(params, key);
-  if (value === '') {
-    throw new AdminError('BAD_REQUEST', `param '${key}' must be a non-empty string`);
-  }
-  return value;
-}
-
-function mustRecord(
-  params: Record<string, unknown> | undefined,
-  key: string,
-): Record<string, unknown> {
-  const value = params?.[key];
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    throw new AdminError('BAD_REQUEST', `param '${key}' must be an object`);
-  }
-  return value as Record<string, unknown>;
-}
-
-function mustDispatcherId(
-  params: Record<string, unknown> | undefined,
-): string {
-  const id = mustString(params, 'dispatcher_id');
-  try {
-    return validateDispatcherId(id);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new AdminError('BAD_REQUEST', message);
-  }
-}
-
-function optionalString(
-  params: Record<string, unknown> | undefined,
-  key: string,
-): string | null {
-  if (params === undefined) return null;
-  const v = params[key];
-  if (v === undefined || v === null) return null;
-  if (typeof v !== 'string') {
-    throw new AdminError('BAD_REQUEST', `param '${key}' must be a string`);
-  }
-  return v;
-}
-
-function repoRequest(
-  params: Record<string, unknown> | undefined,
-  key: string,
-): { cwd: string | null; worktree: TeamMateWorktreeRequest | null } | null {
-  if (params === undefined) return null;
-  const value = params[key];
-  if (value === undefined || value === null) return null;
-  if (typeof value !== 'object' || Array.isArray(value)) {
-    throw new AdminError('BAD_REQUEST', `param '${key}' must be an object`);
-  }
-  const obj = value as Record<string, unknown>;
-  const mode = mustString(obj, 'mode');
-  if (mode !== 'reuse-cwd' && mode !== 'managed') {
-    throw new AdminError(
-      'BAD_REQUEST',
-      `param '${key}.mode' must be 'reuse-cwd' or 'managed'`,
-    );
-  }
-  const cwd = optionalString(obj, 'path');
-  if (mode === 'reuse-cwd') {
-    return { cwd, worktree: { mode: 'reuse-cwd' } };
-  }
-  const cleanup = optionalString(obj, 'cleanup');
-  if (cleanup !== null && cleanup !== 'keep' && cleanup !== 'delete-on-close') {
-    throw new AdminError(
-      'BAD_REQUEST',
-      `param '${key}.cleanup' must be 'keep' or 'delete-on-close'`,
-    );
-  }
-  return {
-    cwd,
-    worktree: {
-      mode,
-      ...optionalStringProp(obj, 'slug'),
-      ...optionalStringProp(obj, 'base_ref'),
-      ...optionalStringProp(obj, 'branch'),
-      ...(cleanup !== null ? { cleanup } : {}),
-    },
-  };
-}
-
-function historyQuery(
-  params: Record<string, unknown> | undefined,
-): TeamMateHistoryQuery {
-  const name = optionalString(params, 'name');
-  const status = optionalTeammateStatus(params, 'status');
-  const agentRuntime = optionalString(params, 'agent_runtime');
-  const repo = optionalString(params, 'repo');
-  const grep = optionalString(params, 'grep');
-  const since = optionalInteger(params, 'since');
-  const until = optionalInteger(params, 'until');
-  const cursor = optionalString(params, 'cursor');
-  const limit = optionalInteger(params, 'limit');
-  return {
-    ...(name !== null ? { name } : {}),
-    ...(status !== null ? { status } : {}),
-    ...(agentRuntime !== null ? { agentRuntime } : {}),
-    ...(repo !== null ? { repo } : {}),
-    ...(grep !== null ? { grep } : {}),
-    ...(since !== null ? { since } : {}),
-    ...(until !== null ? { until } : {}),
-    ...(cursor !== null ? { cursor } : {}),
-    ...(limit !== null ? { limit } : {}),
-  };
-}
-
-function optionalTeammateStatus(
-  params: Record<string, unknown> | undefined,
-  key: string,
-): TeamMateIdentityStatus | null {
-  const value = optionalString(params, key);
-  if (value === null) return null;
-  if (
-    value === 'starting' ||
-    value === 'running' ||
-    value === 'degraded' ||
-    value === 'closed' ||
-    value === 'stopped'
-  ) {
-    return value;
-  }
-  throw new AdminError(
-    'BAD_REQUEST',
-    `param '${key}' must be starting, running, degraded, closed, or stopped`,
-  );
-}
-
-function optionalTeamStatus(
-  params: Record<string, unknown> | undefined,
-  key: string,
-): 'starting' | 'running' | 'closed' | null {
-  const value = optionalString(params, key);
-  if (value === null) return null;
-  if (value === 'starting' || value === 'running' || value === 'closed') return value;
-  throw new AdminError(
-    'BAD_REQUEST',
-    `param '${key}' must be starting, running, or closed`,
-  );
-}
-
-function optionalInteger(
-  params: Record<string, unknown> | undefined,
-  key: string,
-): number | null {
-  if (params === undefined) return null;
-  const value = params[key];
-  if (value === undefined || value === null) return null;
-  if (!Number.isInteger(value)) {
-    throw new AdminError('BAD_REQUEST', `param '${key}' must be an integer`);
-  }
-  return value as number;
-}
-
-function optionalStringProp(
-  params: Record<string, unknown>,
-  key: string,
-): Record<string, string> {
-  const value = optionalString(params, key);
-  return value === null ? {} : { [key]: value };
-}
-
-function optionalStringField(
-  params: Record<string, unknown> | undefined,
-  key: string,
-): Record<string, string> {
-  const value = optionalString(params, key);
-  return value === null ? {} : { [key]: value };
-}
-
-function optionalNullableStringField(
-  params: Record<string, unknown> | undefined,
-  key: string,
-): Record<string, string | null> {
-  if (params === undefined || !(key in params)) return {};
-  const value = params[key];
-  if (value === null) return { [key]: null };
-  if (typeof value !== 'string') {
-    throw new AdminError('BAD_REQUEST', `param '${key}' must be a string or null`);
-  }
-  return { [key]: value };
-}
-
-function optionalBooleanField(
-  params: Record<string, unknown> | undefined,
-  key: string,
-): Record<string, boolean> {
-  if (params === undefined || !(key in params)) return {};
-  const value = params[key];
-  if (typeof value !== 'boolean') {
-    throw new AdminError('BAD_REQUEST', `param '${key}' must be a boolean`);
-  }
-  return { [key]: value };
-}
-
-function optionalRecordField(
-  params: Record<string, unknown> | undefined,
-  key: string,
-): Record<string, Record<string, unknown>> {
-  if (params === undefined || !(key in params)) return {};
-  const value = params[key];
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    throw new AdminError('BAD_REQUEST', `param '${key}' must be an object`);
-  }
-  return { [key]: value as Record<string, unknown> };
-}
-
-function optionalNullableRecordField(
-  params: Record<string, unknown> | undefined,
-  key: string,
-): Record<string, Record<string, unknown> | null> {
-  if (params === undefined || !(key in params)) return {};
-  const value = params[key];
-  if (value === null) return { [key]: null };
-  if (typeof value !== 'object' || Array.isArray(value)) {
-    throw new AdminError('BAD_REQUEST', `param '${key}' must be an object or null`);
-  }
-  return { [key]: value as Record<string, unknown> };
-}
-
-function mustExistingDispatcher(server: Server, id: string): void {
-  const row = server.repos.dispatchers.get(id);
-  if (row === null) {
-    throw new AdminError('DISPATCHER_NOT_FOUND', `no dispatcher with id '${id}'`);
-  }
-}
-
-function parseMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

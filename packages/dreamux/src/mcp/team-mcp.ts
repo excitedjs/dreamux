@@ -6,8 +6,13 @@ import { adminSocketPath as defaultAdminSocketPath } from '../platform/paths.js'
 import { validateDispatcherId } from '../state/dispatcher-id.js';
 import { optionalRepoInput, repoInputSchema } from './teammate-mcp.js';
 
+export type TeamMcpCallerKind = 'dispatcher' | 'team_leader';
+
 export interface TeamMcpOptions {
   dispatcherId: string;
+  callerKind?: TeamMcpCallerKind;
+  teamId?: string;
+  leaderName?: string;
   adminSocketPath?: string;
   input?: Readable;
   output?: Writable;
@@ -26,11 +31,16 @@ interface ToolCall {
   arguments: unknown;
 }
 
+type TeamMcpCaller =
+  | { kind: 'dispatcher' }
+  | { kind: 'team_leader'; teamId: string; leaderName: string };
+
 const JSONRPC_VERSION = '2.0';
 const DEFAULT_MCP_PROTOCOL_VERSION = '2024-11-05';
 
 export async function runTeamMcp(opts: TeamMcpOptions): Promise<void> {
   const dispatcherId = validateDispatcherId(opts.dispatcherId);
+  const caller = teamMcpCaller(opts);
   const socketPath = opts.adminSocketPath ?? defaultAdminSocketPath();
   const input = opts.input ?? process.stdin;
   const output = opts.output ?? process.stdout;
@@ -48,7 +58,7 @@ export async function runTeamMcp(opts: TeamMcpOptions): Promise<void> {
       continue;
     }
     try {
-      await handleRequest(request, { dispatcherId, socketPath, output });
+      await handleRequest(request, { dispatcherId, socketPath, output, caller });
     } catch (err) {
       log(`team-mcp: ${parseMessage(err)}`);
       if (request.id !== undefined) {
@@ -60,7 +70,12 @@ export async function runTeamMcp(opts: TeamMcpOptions): Promise<void> {
 
 async function handleRequest(
   request: JsonRpcRequest,
-  ctx: { dispatcherId: string; socketPath: string; output: Writable },
+  ctx: {
+    dispatcherId: string;
+    socketPath: string;
+    output: Writable;
+    caller: TeamMcpCaller;
+  },
 ): Promise<void> {
   if (typeof request.method !== 'string') {
     if (request.id !== undefined) {
@@ -83,7 +98,7 @@ async function handleRequest(
       return;
     case 'tools/list':
       if (request.id !== undefined) {
-        write(ctx.output, okResponse(request.id, { tools: teamTools() }));
+        write(ctx.output, okResponse(request.id, { tools: teamTools(ctx.caller.kind) }));
       }
       return;
     case 'tools/call':
@@ -98,7 +113,14 @@ async function handleRequest(
   }
 }
 
-export function teamTools(): Array<Record<string, unknown>> {
+export function teamTools(
+  callerKind: TeamMcpCallerKind = 'dispatcher',
+): Array<Record<string, unknown>> {
+  const transferBackTool = tool('transfer_back', 'Return a bound channel target to the dispatcher, deactivating the Team binding. channel_id selects the configured channel (optional; defaults to the sole channel). meta carries the channel provider target selector that Dreamux normalizes through the channel provider — e.g. { "chat_id": "<group chat id>" } for a chat channel.', {
+    channel_id: { type: 'string', minLength: 1, maxLength: 64 },
+    meta: { type: 'object' },
+  }, ['meta']);
+  if (callerKind === 'team_leader') return [transferBackTool];
   return [
     tool('create', 'Create a Team and start its TeamLeader. team_name is the concrete Team key used by all later status/history/dissolve calls. intent is required: it is the durable recovery subject for the Team. repo is optional: omit it to run the TeamLeader and members in a plain shared work directory under the dispatcher workspace (.workspace/work/<team_name>/ — the dispatcher cwd need not be a git repo), or pass { mode: reuse-cwd | managed, path?, base_ref?, branch?, slug?, cleanup? } — managed creates a git worktree. prompt is optional: when supplied it is delivered as the TeamLeader\'s first turn; when omitted the leader starts idle and fires no turn, waiting for a bound channel inbound or a later send to drive its first turn (creation does NOT fabricate a default prompt). To hand a group chat to the Team, bind it after create with the team bind_channel tool.', {
       team_name: { type: 'string', minLength: 1, maxLength: 64 },
@@ -130,10 +152,7 @@ export function teamTools(): Array<Record<string, unknown>> {
       channel_id: { type: 'string', minLength: 1, maxLength: 64 },
       meta: { type: 'object' },
     }, ['team_name', 'meta']),
-    tool('transfer_back', 'Return a bound channel target to the dispatcher, deactivating the Team binding. channel_id selects the configured channel (optional; defaults to the sole channel). meta carries the channel\'s provider selector — e.g. { "chat_id": "<group chat id>" } for a chat channel.', {
-      channel_id: { type: 'string', minLength: 1, maxLength: 64 },
-      meta: { type: 'object' },
-    }, ['meta']),
+    transferBackTool,
   ];
 }
 
@@ -152,14 +171,18 @@ function tool(
 
 async function callTool(
   params: unknown,
-  ctx: { dispatcherId: string; socketPath: string },
+  ctx: { dispatcherId: string; socketPath: string; caller: TeamMcpCaller },
 ): Promise<Record<string, unknown>> {
   try {
     const call = asToolCallParams(params);
-    const mapped = mapToolCall(call);
+    const mapped = mapToolCall(call, ctx.caller.kind);
     const result = await sendAdminRequest(
       mapped.method,
-      { dispatcher_id: ctx.dispatcherId, ...mapped.params },
+      {
+        dispatcher_id: ctx.dispatcherId,
+        ...callerParams(ctx.caller),
+        ...mapped.params,
+      },
       { socketPath: ctx.socketPath },
     );
     return {
@@ -172,7 +195,15 @@ async function callTool(
   }
 }
 
-function mapToolCall(call: ToolCall): { method: string; params: Record<string, unknown> } {
+function mapToolCall(
+  call: ToolCall,
+  callerKind: TeamMcpCallerKind,
+): { method: string; params: Record<string, unknown> } {
+  if (callerKind === 'team_leader' && call.name !== 'transfer_back') {
+    throw new Error(
+      `TeamLeader-scoped Team MCP exposes only transfer_back; hidden Team tool '${String(call.name)}' is not available`,
+    );
+  }
   switch (call.name) {
     case 'create':
       return { method: 'mcp.team.create', params: createArgs(call.arguments) };
@@ -316,6 +347,35 @@ function optionalInteger(obj: Record<string, unknown>, key: string): number | nu
   if (value === undefined || value === null) return null;
   if (!Number.isInteger(value)) throw new Error(`${key} must be an integer`);
   return value as number;
+}
+
+function teamMcpCaller(opts: TeamMcpOptions): TeamMcpCaller {
+  const kind = opts.callerKind ?? 'dispatcher';
+  if (kind === 'dispatcher') return { kind };
+  if (kind === 'team_leader') {
+    return {
+      kind,
+      teamId: requireOption(opts.teamId, 'teamId'),
+      leaderName: requireOption(opts.leaderName, 'leaderName'),
+    };
+  }
+  throw new Error(`unknown Team MCP caller kind '${String(kind)}'`);
+}
+
+function callerParams(caller: TeamMcpCaller): Record<string, unknown> {
+  if (caller.kind === 'dispatcher') return { caller_kind: 'dispatcher' };
+  return {
+    caller_kind: 'team_leader',
+    team_id: caller.teamId,
+    leader_name: caller.leaderName,
+  };
+}
+
+function requireOption(value: string | undefined, name: string): string {
+  if (value === undefined || value === '') {
+    throw new Error(`${name} is required for TeamLeader-scoped Team MCP`);
+  }
+  return value;
 }
 
 function okResponse(id: JsonRpcRequest['id'], result: unknown): string {

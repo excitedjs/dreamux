@@ -38,7 +38,7 @@ ships in the npm package for supported agent runtimes:
   ([provider architecture realignment](../decisions/provider-architecture-realignment.md)).
 - `team-dev-workflow` covers multi-teammate review, design, merge, and unblock
   coordination.
-- `team` MCP is injected for dispatcher-only Team Mode lifecycle, addressed by
+- `team` MCP is caller-scoped: dispatchers receive Team Mode lifecycle tools, addressed by
   `team_name` (issue #182 PR-7/PR-8; concrete-key rename in #199 Slice 1):
   `create` a TeamLeader (with an optional `repo` object, same shape as
   `teammate.spawn`, replacing the old `repo_cwd`; #199 Slice 2). `create` starts
@@ -56,8 +56,10 @@ ships in the npm package for supported agent runtimes:
   verbs were retired.
 - Channel binding is on the **Team MCP**, not on the provider channel MCP:
   `bind_channel({ team_name, channel_id?, meta })` hands an existing channel
-  target to a Team, and `transfer_back({ channel_id?, meta })` returns a bound
-  target to the dispatcher. `channel_id` selects a configured dispatcher channel
+  target to a Team from the dispatcher projection, and `transfer_back({ channel_id?, meta })` returns a bound
+  target to the dispatcher. TeamLeaders receive only scoped `transfer_back`
+  with the same explicit provider `meta`; they do not receive lifecycle, list,
+  status, history, dissolve, or bind tools. `channel_id` selects a configured dispatcher channel
   and defaults to the sole channel when unambiguous; `meta` is the provider
   selector (for Feishu group chats, `{ "chat_id": "..." }`). The removed
   `team.bind_group` / `team.transfer_channel_back` /
@@ -107,7 +109,7 @@ Two state owners are kept distinct in the skill:
   the requested label internally; the `history` projection no longer surfaces it
   (issue #199 Slice 1).
 - The Dreamux server owns Team **lifecycle state** behind the injected
-  dispatcher-scoped `team` MCP under `~/.dreamux/state/<dispatcher-id>/team/`.
+  caller-scoped `team` MCP under `~/.dreamux/state/<dispatcher-id>/team/`.
   TeamLeader and member agents remain TeamMate identities with role/owner
   metadata.
 - `tm` owns live tm **session** state — teammate liveness, repository worktrees,

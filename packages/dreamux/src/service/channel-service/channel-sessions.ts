@@ -17,9 +17,9 @@ import {
 import {
   channelMcpServerDescriptorsForCaller,
   type ChannelMcpCallerScope,
-} from './mcp-descriptors.js';
+} from '../dispatcher-service/mcp-descriptors.js';
 
-export interface ChannelToolInvocation {
+interface ChannelToolInvocation {
   /** Provider ref carried by the channel MCP descriptor. Used to select/verify the session. */
   providerRef?: string;
   /** Provider-owned tool name, forwarded opaquely (core never enumerates it). */
@@ -30,7 +30,7 @@ export interface ChannelToolInvocation {
   channelId?: string;
 }
 
-export interface ChannelSessionsOptions {
+interface ChannelSessionsOptions {
   dispatcherId: string;
   config: DreamuxConfig;
   channelProviders: ChannelProviderCatalog;
@@ -39,14 +39,14 @@ export interface ChannelSessionsOptions {
 }
 
 /**
- * The dispatcher's live channel sessions (issue #233 Phase 5): the
+ * The channel service's live channel sessions (issue #233 Phase 5): the
  * `Map<channel_id, ChannelSession>` together with the channel-tool dispatch,
- * target resolution, and MCP descriptor assembly that key off it. `DispatcherService` owns one instance and drives session start/stop
+ * target resolution, and MCP descriptor assembly that key off it. `ChannelService` owns one instance and DispatcherService drives session start/stop
  * around the agent runtime's lifecycle so the slot-before-session ordering (issue
  * #209 fix #7) is preserved. Core stays a blind MCP conduit — it never names a
  * provider's tool.
  */
-export class ChannelSessions {
+class ChannelSessions {
   private sessions: Map<string, ChannelSession> | null = null;
 
   constructor(private readonly opts: ChannelSessionsOptions) {}
@@ -341,3 +341,6 @@ function errInfo(err: unknown): { message: string; stack?: string } {
   }
   return { message: String(err) };
 }
+
+export type { ChannelSessionsOptions, ChannelToolInvocation };
+export { ChannelSessions };

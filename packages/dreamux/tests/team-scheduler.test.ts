@@ -19,7 +19,6 @@ import type {
 import type { AgentRuntimeProviderCatalog } from '../src/agent-runtime/index.js';
 import type { ChannelProviderCatalog } from '../src/channel/catalog.js';
 import { CompletionRouter } from '../src/service/completion-router/index.js';
-import { ChannelBindingStore } from '../src/service/channel-binding/store.js';
 import { DispatcherService } from '../src/service/dispatcher-service/index.js';
 import { CronJobStore } from '../src/service/scheduler/store.js';
 import {
@@ -349,7 +348,24 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     const teammateContext = contexts.find((context) => context.role === 'teammate');
     expect(dispatcherContext?.disableFeatures).toEqual(['userInterrupt', 'cron']);
     expect(leaderContext?.mcpServers.map((server) => server.name)).toContain('cron');
+    expect(leaderContext?.mcpServers.map((server) => server.name)).toContain('team');
+    expect(
+      leaderContext?.mcpServers.find((server) => server.name === 'team')?.args,
+    ).toEqual([
+      'team-mcp',
+      '--dispatcher',
+      'dispatcher-a',
+      '--admin-socket',
+      '/tmp/dreamux-admin.sock',
+      '--caller',
+      'team_leader',
+      '--team-id',
+      'alpha',
+      '--leader-name',
+      expect.any(String),
+    ]);
     expect(leaderContext?.disableFeatures).toEqual(['userInterrupt', 'cron']);
+    expect(memberContext?.mcpServers.map((server) => server.name)).not.toContain('team');
     expect(memberContext?.mcpServers.map((server) => server.name)).not.toContain('cron');
     expect(memberContext?.disableFeatures).toEqual(['userInterrupt']);
     expect(teammateContext?.disableFeatures).toEqual(['userInterrupt']);
@@ -372,7 +388,6 @@ function makeTeams(input: {
       contexts: input.contexts,
     }),
     worktrees: new WorktreeManager(),
-    bindings: new ChannelBindingStore(),
     identities: new TeamMateIdentityStore({ warn: input.log.warn.bind(input.log) }),
     turnsStore: new TeamMateTurnsStore({ warn: input.log.warn.bind(input.log) }),
     router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log: input.log }),

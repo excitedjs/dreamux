@@ -1,5 +1,3 @@
-import type { ChannelTarget } from '@excitedjs/dreamux-types';
-
 import {
   assertNotReservedAgentName,
   type TeamMateIdentityStatus,
@@ -55,23 +53,6 @@ export interface TeamDissolveInput {
   note: string;
 }
 
-export interface TeamBindChannelInput {
-  dispatcherId: string;
-  teamId: string;
-  /** Dispatcher-local channel id (`dispatchers[].channels[].id`). */
-  channelId: string;
-  /** The bound channel's provider ref (e.g. `builtin:feishu`). */
-  provider: string;
-  /** Provider-resolved target (the caller already ran `resolveTarget`). */
-  target: ChannelTarget;
-}
-
-export interface TeamTransferChannelBackInput {
-  channelId: string;
-  /** Provider-owned routing key (e.g. a chat channel: the chat id). */
-  targetKey: string;
-}
-
 /**
  * Active group binding marker surfaced by the Team read tools (issue #182 PR-7).
  * Bound targets are group chats on a conversational channel; `chat_id` is the
@@ -107,8 +88,6 @@ export interface TeamSummary {
   team: TeamView;
   leader: TeamMateRuntimeStatus | null;
   member_count: number;
-  /** The active bound group chat, or null when no group is bound (issue #182 PR-7). */
-  binding: TeamChannelBindingSummary | null;
 }
 
 /**
@@ -124,7 +103,6 @@ export interface TeamListRow {
   leader_name: string;
   leader_state: TeamMateIdentityStatus | null;
   member_count: number;
-  bound_group: TeamChannelBindingSummary | null;
   created_at: number;
   updated_at: number;
   closed_at: number | null;
@@ -165,7 +143,6 @@ export interface TeamHistoryRow {
   leader_agent_runtime: string;
   leader_state: TeamMateIdentityStatus | null;
   member_count: number;
-  bound_group: TeamChannelBindingSummary | null;
   created_at: number;
   updated_at: number;
   closed_at: number | null;
