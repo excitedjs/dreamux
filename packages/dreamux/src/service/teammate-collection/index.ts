@@ -251,7 +251,9 @@ export class TeammateCollection implements TeammateOps {
     });
     const entity = this.entityFor(identity);
     await entity.ensureStarted();
-    const turn = await entity.submitInitialPrompt(input.prompt);
+    const turn = await entity.submitInitialPrompt(input.prompt, {
+      turnOrigin: teamId === undefined ? 'dispatcher' : 'team_leader',
+    });
     await this.registerCompletion(entity, turn.turn_id ?? null);
     return { teammate: entity.status(), turn };
   }

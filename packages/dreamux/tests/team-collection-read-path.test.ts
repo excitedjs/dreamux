@@ -205,13 +205,14 @@ describe('TeamCollection read path (issue #233 R4)', () => {
       }),
     ]);
     const log = noopLog();
+    const turnsStore = new TeamMateTurnsStore({ warn: log.warn.bind(log) });
     const teams = new TeamCollection({
       dispatcherId: 'dispatcher-a',
       config,
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
       identities: new TeamMateIdentityStore({ warn: log.warn.bind(log) }),
-      turnsStore: new TeamMateTurnsStore({ warn: log.warn.bind(log) }),
+      turnsStore,
       router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
@@ -236,6 +237,23 @@ describe('TeamCollection read path (issue #233 R4)', () => {
       intent: 'member work',
     });
     expect(spawn.teammate.name).toMatch(/worker/);
+    const memberTurns = [];
+    for await (const row of turnsStore.stream({
+      dispatcherId: 'dispatcher-a',
+      name: spawn.teammate.name,
+      teamId: team.id,
+      role: 'team_member',
+    })) {
+      memberTurns.push(row);
+    }
+    expect(memberTurns).toContainEqual(
+      expect.objectContaining({
+        type: 'submit',
+        turn_id: 'turn-1',
+        turn_origin: 'team_leader',
+        prompt_preview: 'do the work',
+      }),
+    );
 
     // list(): leaderState + memberCount read straight from the shared store.
     const rows = await teams.list();

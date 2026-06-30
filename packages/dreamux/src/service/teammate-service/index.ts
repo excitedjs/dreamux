@@ -204,12 +204,12 @@ export class TeammateService {
   /** Submit the first prompt of a freshly created teammate / leader. */
   async submitInitialPrompt(
     prompt: string,
-    opts: { turnOrigin?: TeamMateTurnOrigin } = {},
+    opts: { turnOrigin: TeamMateTurnOrigin },
   ): Promise<TeamMateTurnResult> {
     const turn = await this.submitPrompt(prompt);
     await recordSubmittedTurn(this.turnsStore, this.live(), {
       turnId: turn.turn_id ?? null,
-      turnOrigin: opts.turnOrigin ?? turnOriginForIdentity(this.current()),
+      turnOrigin: opts.turnOrigin,
       prompt,
     });
     return turn;
@@ -579,10 +579,6 @@ export class TeammateService {
     }
     return worktrees;
   }
-}
-
-function turnOriginForIdentity(identity: TeamMateIdentity): TeamMateTurnOrigin {
-  return identity.team_id === null ? 'dispatcher' : 'team_leader';
 }
 
 function runtimeId(dispatcherId: string, name: string): string {

@@ -14,8 +14,8 @@ import {
 
 /**
  * Project an identity (+ its live runtime, if any) into the public runtime
- * status. Pure: no store reads, no scope decisions. The scope predicate is
- * `identityInRoster`; placement on disk is the turns/identity store's job.
+ * status. Pure: no store reads and no scope decisions; the owning collection's
+ * read chokepoint validates scope before calling this projector.
  */
 export function toStatus(
   identity: TeamMateIdentity,
@@ -153,37 +153,6 @@ export async function foldLastTurns(
   return [...recent.values()].sort(
     (a, b) => (firstSeq.get(a.turn_id) ?? 0) - (firstSeq.get(b.turn_id) ?? 0),
   );
-}
-
-/**
- * Scope adjudication (issue #233): a dispatcher-scope read sees only
- * `role: 'teammate'` entities with `team_id === null`; a team-scope read sees
- * only that team's `team_leader` / `team_member`. The `dispatcherId` guard keeps
- * a different dispatcher's entity out of the roster.
- */
-export function identityInRoster(
-  identity: TeamMateIdentity,
-  dispatcherId: string,
-  teamId?: string,
-): boolean {
-  if (identity.dispatcher_id !== dispatcherId) return false;
-  if (teamId === undefined) {
-    return identity.team_id === null && identity.role === 'teammate';
-  }
-  return (
-    identity.team_id === teamId &&
-    (identity.role === 'team_leader' || identity.role === 'team_member')
-  );
-}
-
-/** Throw "does not exist" for a wrong-scope identity (the read-by-name guard). */
-export function assertInRoster(
-  identity: TeamMateIdentity,
-  dispatcherId: string,
-  teamId?: string,
-): void {
-  if (identityInRoster(identity, dispatcherId, teamId)) return;
-  throw new Error(`TeamMate ${JSON.stringify(identity.name)} does not exist`);
 }
 
 export function matchesRecordQuery(
