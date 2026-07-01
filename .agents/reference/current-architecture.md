@@ -196,24 +196,26 @@ Key source:
 
 ## Runtime Prompt Inputs
 
-The Agent Runtime create context keeps launcher role prompts separate from
-TeamMate identity guidance:
+The Agent Runtime create context has one provider-facing prompt surface:
+`systemPrompt`. It carries two canonical forms:
 
-- `systemPrompt` is launcher-supplied role prompt content. Dispatcher launches
-  provide both the full replacement prompt for replace-native runtimes and the
-  focused append prompt for append-native runtimes.
-- `identityGuidance` is MCP-created TeamLeader/TeamMate role guidance rendered
-  from the persisted `TeamMateIdentity.identity_prompt`. It is never populated
-  for dispatcher launch prompts. Core re-supplies it on each TeamLeader,
-  TeamMate, or team-member runtime launch/relaunch that rebuilds the create
-  context: initial create/spawn, close/reopen, process restart, Team rebuild,
-  and runtime resume.
+- `replace`: full role instructions for runtimes that replace their native base
+  prompt.
+- `append`: focused role guidance to add on top of native/base instructions.
 
-Runtime adapters own the native application point. Claude Code folds launcher
-append prompt content and identity guidance into `--append-system-prompt` before
-the resident session is created. Codex maps launcher `systemPrompt.replace` to
-`baseInstructions` and injects `identityGuidance` as a developer-role history
-item with `thread/inject_items` before the first user/channel turn.
+Dispatcher launches provide both `replace` and `append`: replace-native runtimes
+such as Codex use the full dispatcher prompt, while append-native runtimes use
+the focused dispatcher guidance. TeamLeader, TeamMate, and team-member identity
+guidance is rendered from the persisted `TeamMateIdentity.identity_prompt` and
+re-supplied as append-only `systemPrompt.append` on each runtime
+launch/relaunch that rebuilds the create context: initial create/spawn,
+close/reopen, process restart, Team rebuild, and runtime resume.
+
+Runtime adapters must implement `systemPrompt.append` semantics. Claude Code
+folds append prompt content into `--append-system-prompt` before the resident
+session is created. Codex maps `systemPrompt.replace` to `baseInstructions` and
+applies `systemPrompt.append` as a developer-role history item with
+`thread/inject_items` before the first user/channel turn.
 
 Key source:
 
