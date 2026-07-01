@@ -46,9 +46,11 @@ Add a minimal, provider-neutral TeamMate identity capability:
   by that Team.
 - Dreamux persists the identity on the TeamMate identity record so restart,
   Team rebuild, close/reopen, and runtime resume keep the same role guidance.
-- Dreamux converts the identity into a focused system-prompt injection triggered
-  by the MCP create/spawn action. It is applied after the runtime is available
-  and before the first user/channel turn, not as launcher role prompt content.
+- Dreamux converts the identity into focused system-prompt guidance triggered by
+  the MCP create/spawn action and carries it through
+  `AgentRuntimeCreateContext.identityGuidance`. The field is distinct from
+  launcher role prompt content and must be applied before the first user/channel
+  turn.
 
 ## Contract
 
@@ -83,17 +85,25 @@ replacement base prompt.
 
 Dispatcher launch continues to use `AgentRuntimeCreateContext.systemPrompt`.
 TeamLeader and TeamMate identity guidance must not use that launch prompt
-surface. Instead, Dreamux core should call a neutral runtime system-prompt
-injection surface from the MCP lifecycle action (`team.create` or
-`teammate.spawn`) after the runtime starts or resumes and before the initial
-prompt is submitted. The runtime adapter owns how to apply that injection:
+surface. Instead, Dreamux core adds a new neutral create-context field:
 
-- an append-native runtime may fold the injected guidance into its native append
-  prompt before the resident session is created;
-- a runtime with a native model-history injection path may inject a
-  developer/system item without starting a user turn;
-- a runtime that cannot represent system-prompt injection safely must fail
-  loudly before the first user/channel prompt is submitted.
+```ts
+interface AgentRuntimeCreateContext<TConfig = unknown> {
+  identityGuidance?: string;
+}
+```
+
+Core fills `identityGuidance` only from the MCP lifecycle action (`team.create`
+or `teammate.spawn`) and only when an identity prompt exists. The runtime adapter
+owns how to apply that guidance before the first user/channel prompt:
+
+- an append-native runtime may fold it into its native append prompt before the
+  resident session is created;
+- a runtime with a native model-history injection path may defer application
+  until after process start, then inject a developer/system item without
+  starting a user turn;
+- a runtime that cannot represent system-prompt guidance safely must fail loudly
+  before the first user/channel prompt is submitted.
 
 The injection must not be routed through `channelInput`, first-turn `prompt`,
 `intent`, `name_prefix`, or `team_name`. It also must not be routed through
@@ -116,7 +126,8 @@ TeamLeader system prompt is injected just because the agent was created.
   their native base prompt.
 - `AgentRuntimeCreateContext.systemPrompt` remains the dispatcher launch role
   prompt surface. TeamLeader and TeamMate identities are injected by the MCP
-  create/spawn action through a separate runtime injection surface.
+  create/spawn action through `AgentRuntimeCreateContext.identityGuidance`, a
+  separate field that is never populated for dispatcher launch prompts.
 - No prompt smuggling through `prompt`, `intent`, `name_prefix`, or free-form MCP
   descriptions.
 - No closed role enum. Future identities remain caller text.
@@ -148,8 +159,14 @@ TeamLeader system prompt is injected just because the agent was created.
   and tolerates missing identity data in existing records.
 - Runtime launch for TeamMates, Team members, and TeamLeaders no longer passes
   identity guidance through `AgentRuntimeCreateContext.systemPrompt`.
-- The MCP create/spawn path injects identity system-prompt content only when an
-  identity is present, after runtime start/resume and before the initial prompt.
+- `AgentRuntimeCreateContext` exposes optional `identityGuidance?: string`,
+  documented as MCP-created TeamLeader/TeamMate role guidance that is distinct
+  from launcher `systemPrompt`.
+- The MCP create/spawn path sets `identityGuidance` only when an identity is
+  present. Runtime adapters apply it at their native safe point before the
+  initial prompt: append-native runtimes can fold it into launch args before
+  resident session creation, while runtimes with model-history injection can
+  apply it after process start without starting a user turn.
 - Dispatcher launch remains covered: dispatcher role prompts still provide the
   full replacement prompt for replace-native runtimes and the focused append
   prompt for append-native runtimes.
