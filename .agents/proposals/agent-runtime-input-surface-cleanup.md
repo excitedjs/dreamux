@@ -90,7 +90,9 @@ object. The optional `sourceId` is correlation/dedupe metadata only; it must not
 be rendered into the model-visible text unless the runtime has no other
 correlation mechanism and documents that choice. When `sourceId` is supplied,
 runtimes should use it for at-most-once turn acceptance/dedupe unless their
-adapter has an equivalent provider-owned acceptance guard.
+adapter has an equivalent provider-owned acceptance guard. The delivery target
+must provide a stable `sourceId` for the same logical delivery across router
+retries; it must not append retry counters that defeat runtime-side dedupe.
 
 `channelInput` is only for messages that came from a ChannelProvider. It owns
 rendering the neutral `InboundTurnInput` into the runtime's native
@@ -119,7 +121,9 @@ TeamLeader) should render the envelope to plain text before it calls
 accepted completion delivery; a stopped runtime maps to unsupported delivery; a
 failed runtime submission maps to failed delivery. Duplicate acceptance should
 be explicit and tested so router retries do not create repeated model-visible
-notifications.
+notifications. `CompletionRouter` remains the authoritative at-most-once owner;
+runtime `sourceId` dedupe is an adapter-level hardening layer, not the only
+delivery guard.
 
 ## Skill Sources
 
@@ -195,11 +199,13 @@ Do not pass the whole Dreamux role as an escape hatch.
 - MCP `spawn`/`send`, TeamLeader send, scheduler delivery, restart notice
   delivery, and reverse completion notification delivery use plain text
   `completionInput`.
-- Restart notice delivery preserves the existing recovered-session claim and
-  skip behavior before calling the runtime: Dreamux core decides whether a
-  restart notice should be rendered and submitted, then calls
-  `completionInput({ text, sourceId })`. Providers do not receive
-  `reason: "restart-notice"` or any hidden restart discriminator.
+- Restart notice delivery preserves both parts of the existing behavior:
+  Dreamux core keeps the recovered-session claim, while the built-in adapters
+  keep the startup race guard that suppresses a best-effort restart wake after a
+  real inbound/channel turn has already been accepted. The race guard can live
+  in the adapter's `completionInput` acceptance path or an equivalent core
+  sequencing guarantee, but it is not a provider-facing restart reason, hidden
+  discriminator, or public capability.
 - Reverse completion delivery still preserves at-most-once semantics, spill-file
   handling for long outputs, and a clear fallback when the target runtime is
   stopped or cannot accept the turn.
@@ -213,6 +219,10 @@ Do not pass the whole Dreamux role as an escape hatch.
 - Existing proposal text that still instructs scheduler delivery through
   `systemInput` or `channelInput` is marked superseded by this proposal before
   implementation is considered complete.
+- External-provider runtime-handle validation treats `completionInput` as a
+  required method and removes `systemInput` from required provider-facing
+  methods; `CompletionRouter` maps `AgentRuntimeTurnResult` back to its
+  accepted/unsupported/failed delivery outcomes.
 - Focused tests cover the routing matrix: channel inbound uses `channelInput`;
   MCP/scheduler/restart/completion notifications use unwrapped
   `completionInput` on both built-in runtimes; skill source layouts remain
