@@ -203,11 +203,20 @@ The Agent Runtime create context has one provider-facing prompt surface:
   prompt.
 - `append`: focused role guidance to add on top of native/base instructions.
 
+Runtime adapters select at most one prompt form from `systemPrompt`:
+
+- if `replace` is present and the runtime supports replacement prompts, use
+  `replace`;
+- otherwise, if `append` is present, use the append flow;
+- otherwise, if only `replace` is present and the runtime does not support
+  replacement prompts, leave prompt customization unchanged.
+
 Dispatcher launches provide both `replace` and `append` as alternate canonical
-representations of the same dispatcher role guidance: replace-native runtimes
-such as Codex use the full dispatcher prompt, while append-native runtimes use
-the focused dispatcher guidance. A replace-native runtime does not also inject
-the dispatcher append text, because that would duplicate the same role guidance.
+representations of the same dispatcher role guidance. Replace-native runtimes
+such as Codex use the full dispatcher prompt and do not also inject the
+dispatcher append text, because that would duplicate the same role guidance.
+Append-native runtimes that cannot use `replace` fall through to the focused
+dispatcher append guidance.
 
 TeamLeader, TeamMate, and team-member identity guidance is rendered from the
 persisted `TeamMateIdentity.identity_prompt` and re-supplied as append-only
@@ -215,12 +224,12 @@ persisted `TeamMateIdentity.identity_prompt` and re-supplied as append-only
 context: initial create/spawn, close/reopen, process restart, Team rebuild, and
 runtime resume.
 
-Runtime adapters must implement append-only `systemPrompt.append` semantics.
-Claude Code folds append prompt content into `--append-system-prompt` before the
-resident session is created. Codex maps `systemPrompt.replace` to
-`baseInstructions`; when it receives append-only identity guidance, it applies
-that append text as a developer-role history item with `thread/inject_items`
-before the first user/channel turn.
+Runtime adapters must implement selected `systemPrompt.append` semantics. Claude
+Code folds append prompt content into `--append-system-prompt` before the
+resident session is created. Codex maps selected `systemPrompt.replace` to
+`baseInstructions`; when append is selected, it applies that append text as a
+developer-role history item with `thread/inject_items` before the first
+user/channel turn.
 
 Key source:
 
