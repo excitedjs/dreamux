@@ -13,12 +13,13 @@ The AgentRuntime contract now keeps Dreamux core behind neutral runtime inputs.
 - `append`, for runtimes that append focused role guidance to an existing native
   prompt.
 
-The dispatcher was the first user of this surface: Dreamux supplies a full
-replacement prompt for replace-native runtimes such as Codex, and focused append
-guidance for append-native runtimes. TeamLeader and TeamMate identity guidance
-is the same kind of model-facing role guidance, but with a different source:
-it comes from MCP lifecycle tools and the persisted TeamMate identity record.
-That source difference should live in Dreamux core, not in a second
+The dispatcher was the first user of this surface: Dreamux supplies two
+canonical representations of the same dispatcher role guidance. Replace-native
+runtimes such as Codex use the full replacement prompt, while append-native
+runtimes use the focused append guidance. TeamLeader and TeamMate identity
+guidance is the same kind of model-facing role guidance, but with a different
+source: it comes from MCP lifecycle tools and the persisted TeamMate identity
+record. That source difference should live in Dreamux core, not in a second
 provider-facing runtime field.
 
 Ordinary TeamMates, Team members, and TeamLeaders are shaped by their MCP tool
@@ -95,10 +96,19 @@ interface AgentRuntimeSystemPrompt {
 }
 ```
 
-Dispatcher launch continues to use `systemPrompt.replace` for full dispatcher
-instructions and `systemPrompt.append` for append-native dispatcher guidance.
+`systemPrompt` is a representation bundle, not an ordered list of prompt
+fragments to apply blindly. When both `replace` and `append` are supplied for
+the dispatcher, they are alternate canonical representations of the same
+dispatcher role prompt. The runtime adapter chooses the representation that
+matches its native prompt model; a replace-native runtime is not required to
+also inject the dispatcher append text, because that would duplicate the same
+role guidance.
+
 TeamLeader and TeamMate identity guidance uses only `systemPrompt.append`;
-Dreamux must never fill `systemPrompt.replace` with the identity block.
+Dreamux must never fill `systemPrompt.replace` with the identity block. In this
+append-only shape, the append text is load-bearing input, not an alternate
+representation, so every runtime provider must apply it additively before the
+first user/channel prompt for that runtime session.
 
 The identity source is the MCP lifecycle action (`team.create` or
 `teammate.spawn`), but the `systemPrompt.append` value is supplied from the
@@ -106,18 +116,22 @@ persisted `identity_prompt` on every launch path that rebuilds the runtime
 context: initial creation, close/reopen, process restart, Team rebuild, and
 runtime resume.
 
-AgentRuntime providers must implement the append side of the prompt contract
-when `systemPrompt.append` is supplied. The runtime adapter owns how to apply
-that append guidance before the first user/channel prompt for that runtime
-session:
+AgentRuntime providers must implement the append-only side of the prompt
+contract. The runtime adapter owns how to apply that append guidance before the
+first user/channel prompt for that runtime session:
 
 - an append-native runtime may fold it into its native append prompt before the
   resident session is created;
 - a runtime with a native model-history injection path may defer application
   until after process start, then inject a developer/system item without
   starting a user turn;
-- a runtime that also supports `replace` must keep `append` additive; it must not
-  replace native/base instructions with the append delta or silently drop it.
+- a runtime that also supports `replace` must keep append-only prompt guidance
+  additive; it must not replace native/base instructions with the append delta or
+  silently drop it.
+
+If a runtime cannot apply append-only prompt guidance through any supported
+mechanism, it must fail loudly before the first user/channel prompt instead of
+starting a session that silently lacks the requested role guidance.
 
 Because core re-supplies the persisted identity on each runtime launch context,
 runtime adapters own idempotence against their native persistence model. For
@@ -142,11 +156,12 @@ TeamLeader system prompt is injected just because the agent was created.
   prompt delta and runtime adapters decide how to append it without weakening
   their native base prompt.
 - `AgentRuntimeCreateContext.systemPrompt` is the single provider-facing prompt
-  surface. Dispatcher launch uses `replace` plus `append`; TeamLeader and
-  TeamMate identity guidance uses append-only `systemPrompt`.
-- AgentRuntime providers must implement `systemPrompt.append` semantics. Append
-  support can be native prompt append, model-history injection, or an equivalent
-  pre-first-turn mechanism owned by the adapter.
+  surface. Dispatcher launch may supply both `replace` and `append` as alternate
+  canonical forms of the same dispatcher role prompt; TeamLeader and TeamMate
+  identity guidance uses append-only `systemPrompt`.
+- AgentRuntime providers must implement append-only `systemPrompt.append`
+  semantics. Append support can be native prompt append, model-history injection,
+  or an equivalent pre-first-turn mechanism owned by the adapter.
 - No prompt smuggling through `prompt`, `intent`, `name_prefix`, or free-form MCP
   descriptions.
 - No closed role enum. Future identities remain caller text.
@@ -187,7 +202,8 @@ TeamLeader system prompt is injected just because the agent was created.
   user turn.
 - Dispatcher launch remains covered: dispatcher role prompts still provide
   `systemPrompt.replace` for replace-native runtimes and `systemPrompt.append`
-  for append-native runtimes.
+  for append-native runtimes as alternate canonical representations of the same
+  dispatcher role guidance.
 - Focused tests prove schema exposure, admin forwarding, persistence/read-back,
   old-record read compatibility, MCP-triggered system-prompt append, and the
   negative guarantee that identity guidance is not smuggled into initial-turn
@@ -197,9 +213,11 @@ TeamLeader system prompt is injected just because the agent was created.
   append-native runtimes keep the same identity after a resident session is
   recreated.
 - Focused tests also cover at least one replace-native runtime path and prove
-  that enabling identity does not reduce replacement/base instructions to the
-  bare identity delta or fail the default runtime path solely because the
-  identity is append-only.
+  that dispatcher launch with both `replace` and `append` preserves replacement
+  base instructions without injecting duplicate dispatcher append guidance, while
+  enabling identity does not reduce replacement/base instructions to the bare
+  identity delta or fail the default runtime path solely because the identity is
+  append-only.
 - `team.create` identity applies only to the created TeamLeader record. Team
   members do not inherit it; a TeamLeader assigns each member's identity through
   that member's own `teammate.spawn` call.
