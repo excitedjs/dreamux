@@ -65,8 +65,8 @@ export async function buildCodexCompletionItem(
   };
 }
 
-export function buildCodexIdentityGuidanceItem(
-  identityGuidance: string,
+export function buildCodexSystemPromptAppendItem(
+  systemPromptAppend: string,
 ): Record<string, unknown> {
   return {
     type: 'message',
@@ -74,7 +74,7 @@ export function buildCodexIdentityGuidanceItem(
     content: [
       {
         type: 'input_text',
-        text: identityGuidance,
+        text: systemPromptAppend,
       },
     ],
   };

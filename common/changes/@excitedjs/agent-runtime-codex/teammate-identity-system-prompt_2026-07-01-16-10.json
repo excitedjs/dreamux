@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "Reject append-only system prompts in the Codex runtime instead of mapping them to replacement baseInstructions.",
+      "comment": "Apply append-only systemPrompt guidance through Codex thread injection while keeping replacement prompts as baseInstructions.",
       "type": "patch",
       "packageName": "@excitedjs/agent-runtime-codex"
     }

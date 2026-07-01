@@ -76,9 +76,9 @@ function asAgentRuntimeDescriptor(
 /**
  * Create the built-in Claude Code `AgentRuntimeProvider`. It implements the
  * neutral `@excitedjs/dreamux-types` contract: `readConfig` parses Claude Code
- * runtime config, `getCapabilities` reports its append/synthesized/plain-turn
- * shape, and `createRuntime` builds a {@link ClaudeCodeRuntime} from the neutral
- * create context plus the host-supplied options.
+ * runtime config, `getCapabilities` reports resume support, and `createRuntime`
+ * builds a {@link ClaudeCodeRuntime} from the neutral create context plus the
+ * host-supplied options.
  */
 export function createClaudeCodeAgentRuntimeProvider(
   options: ClaudeCodeAgentRuntimeProviderOptions = {},
@@ -124,7 +124,6 @@ export function createClaudeCodeAgentRuntimeProvider(
           'claude-code runtime requires a path context in the create context',
         );
       }
-      const systemPromptAppend = claudeCodeAppendPrompt(context);
       const deps: ClaudeCodeRuntimeDeps = {
         config: context.config,
         cwd: context.cwd,
@@ -142,8 +141,8 @@ export function createClaudeCodeAgentRuntimeProvider(
         ...(context.disableFeatures !== undefined
           ? { disableFeatures: context.disableFeatures }
           : {}),
-        ...(systemPromptAppend !== undefined
-          ? { systemPromptAppend }
+        ...(context.systemPrompt?.append !== undefined
+          ? { systemPromptAppend: context.systemPrompt.append }
           : {}),
         ...(context.onTurnSettled !== undefined
           ? { onTurnSettled: context.onTurnSettled }
@@ -153,14 +152,6 @@ export function createClaudeCodeAgentRuntimeProvider(
       return new ClaudeCodeRuntime(context.identity, deps);
     },
   };
-}
-
-function claudeCodeAppendPrompt(
-  context: AgentRuntimeCreateContext,
-): string | undefined {
-  return [context.systemPrompt?.append, context.identityGuidance]
-    .filter((entry): entry is string => entry !== undefined && entry !== '')
-    .join('\n\n') || undefined;
 }
 
 /** Re-export the typed accessor for a runtime's resolved claude-code config. */

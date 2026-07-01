@@ -76,13 +76,15 @@ export function codexSystemPromptReplace(
 ): string | undefined {
   if (systemPrompt === undefined) return undefined;
   if (systemPrompt.replace !== undefined) return systemPrompt.replace;
-  if (systemPrompt.append !== undefined) {
-    throw new Error(
-      'codex runtime cannot apply append-only systemPrompt safely: Codex ' +
-        'uses replacement baseInstructions and no complete replacement prompt was provided',
-    );
-  }
   return undefined;
+}
+
+export function codexSystemPromptAppend(
+  systemPrompt: AgentRuntimeSystemPrompt | undefined,
+): string | undefined {
+  if (systemPrompt === undefined) return undefined;
+  if (systemPrompt.replace !== undefined) return undefined;
+  return systemPrompt.append;
 }
 
 /** Validate + narrow a seed descriptor to the Agent Runtime kind. */
@@ -144,6 +146,7 @@ export function createCodexAgentRuntimeProvider(
       ];
       const paths = context.paths;
       const systemPromptReplace = codexSystemPromptReplace(context.systemPrompt);
+      const systemPromptAppend = codexSystemPromptAppend(context.systemPrompt);
       const deps: CodexRuntimeDeps = {
         cwd: context.cwd,
         state: context.state,
@@ -165,8 +168,8 @@ export function createCodexAgentRuntimeProvider(
         ...(systemPromptReplace !== undefined
           ? { systemPromptReplace }
           : {}),
-        ...(context.identityGuidance !== undefined
-          ? { identityGuidance: context.identityGuidance }
+        ...(systemPromptAppend !== undefined
+          ? { systemPromptAppend }
           : {}),
         ...(context.onTurnSettled !== undefined
           ? { onTurnSettled: context.onTurnSettled }

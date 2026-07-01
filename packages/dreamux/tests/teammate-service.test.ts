@@ -246,7 +246,7 @@ describe('TeammateService channel input routing', () => {
     ]);
   });
 
-  it('sets identityGuidance from the stored identity and keeps it out of systemPrompt and channel input', async () => {
+  it('sets append-only systemPrompt from the stored identity and keeps it out of channel input', async () => {
     const workspace = join(root, 'workspace');
     mkdirSync(workspace, { recursive: true });
     const runtimes: FakeRuntime[] = [];
@@ -272,8 +272,8 @@ describe('TeammateService channel input routing', () => {
     });
 
     expect(leader.current().identity_prompt).toBe('architecture reviewer');
-    expect(contexts[0]?.identityGuidance).toContain('architecture reviewer');
-    expect(contexts[0]?.systemPrompt).toBeUndefined();
+    expect(contexts[0]?.systemPrompt?.append).toContain('architecture reviewer');
+    expect(contexts[0]?.systemPrompt).not.toHaveProperty('replace');
     expect(leader.status()).not.toHaveProperty('identity_prompt');
     expect(runtimes[0]!.submitted.map((input) => input.text)).toEqual([
       'current task only',
@@ -311,10 +311,10 @@ describe('TeammateService channel input routing', () => {
     });
 
     expect(contexts).toHaveLength(2);
-    expect(contexts[0]?.identityGuidance).toContain('architecture reviewer');
-    expect(contexts[1]?.identityGuidance).toContain('architecture reviewer');
-    expect(contexts[0]?.systemPrompt).toBeUndefined();
-    expect(contexts[1]?.systemPrompt).toBeUndefined();
+    expect(contexts[0]?.systemPrompt?.append).toContain('architecture reviewer');
+    expect(contexts[1]?.systemPrompt?.append).toContain('architecture reviewer');
+    expect(contexts[0]?.systemPrompt).not.toHaveProperty('replace');
+    expect(contexts[1]?.systemPrompt).not.toHaveProperty('replace');
     expect(runtimes[1]!.submitted.map((input) => input.text)).toEqual([
       'resume the review',
     ]);

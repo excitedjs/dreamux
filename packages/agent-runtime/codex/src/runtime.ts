@@ -47,7 +47,7 @@ import { BUILTIN_CODEX_PROVIDER_REF } from './provider-ref.js';
 import { CODEX_AGENT_RUNTIME_CAPABILITIES } from './provider.js';
 import {
   buildCodexCompletionItem,
-  buildCodexIdentityGuidanceItem,
+  buildCodexSystemPromptAppendItem,
   CODEX_COMPLETION_TRIGGER_TEXT,
   codexProcessEnv,
 } from './runtime-support.js';
@@ -59,7 +59,7 @@ const DEFAULT_RESTART_BACKOFF_MAX_MS = 30_000;
 export interface CodexRuntimeDeps {
     cwd: string;
     systemPromptReplace?: string;
-    identityGuidance?: string;
+    systemPromptAppend?: string;
     state: AgentRuntimeStateCallbacks;
     paths: AgentRuntimePathContext;
     allocateSocketPath: (id: string) => string;
@@ -262,7 +262,7 @@ export class CodexRuntime implements AgentRuntime {
     await this.applySkillExtraRoots();
 
     await this.resolveThread();
-    await this.injectIdentityGuidance();
+    await this.injectSystemPromptAppend();
 
     this.turnManager = new TurnManager({
       dispatcherId: this.dispatcherId,
@@ -335,20 +335,20 @@ export class CodexRuntime implements AgentRuntime {
     }
   }
 
-  private async injectIdentityGuidance(): Promise<void> {
-    if (this.deps.identityGuidance === undefined) return;
+  private async injectSystemPromptAppend(): Promise<void> {
+    if (this.deps.systemPromptAppend === undefined) return;
     if (this.client === null) throw new Error('client not initialized');
     if (this.threadId === null) {
-      throw new Error('codex identity guidance injection has no thread id');
+      throw new Error('codex systemPrompt.append injection has no thread id');
     }
     try {
       await injectThreadItems(this.client, this.threadId, [
-        buildCodexIdentityGuidanceItem(this.deps.identityGuidance),
+        buildCodexSystemPromptAppendItem(this.deps.systemPromptAppend),
       ]);
     } catch (err) {
       const cause = err instanceof Error ? err.message : String(err);
       throw new Error(
-        `codex identity guidance thread/inject_items failed (requires codex 0.137+): ${cause}`,
+        `codex systemPrompt.append thread/inject_items failed (requires codex 0.137+): ${cause}`,
       );
     }
   }

@@ -396,7 +396,6 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     const memberContext = contexts.find((context) => context.role === 'team_member');
     const teammateContext = contexts.find((context) => context.role === 'teammate');
     expect(dispatcherContext?.disableFeatures).toEqual(['userInterrupt', 'cron']);
-    expect(dispatcherContext?.identityGuidance).toBeUndefined();
     expect(dispatcherContext?.systemPrompt?.replace).toContain('Dreamux dispatcher');
     expect(dispatcherContext?.systemPrompt?.append).toContain('Dreamux dispatcher');
     expect(leaderContext?.mcpServers.map((server) => server.name)).toContain('cron');
@@ -417,16 +416,16 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       expect.any(String),
     ]);
     expect(leaderContext?.disableFeatures).toEqual(['userInterrupt', 'cron']);
-    expect(leaderContext?.identityGuidance).toContain('team coordinator');
-    expect(leaderContext?.systemPrompt).toBeUndefined();
+    expect(leaderContext?.systemPrompt?.append).toContain('team coordinator');
+    expect(leaderContext?.systemPrompt).not.toHaveProperty('replace');
     expect(memberContext?.mcpServers.map((server) => server.name)).not.toContain('team');
     expect(memberContext?.mcpServers.map((server) => server.name)).not.toContain('cron');
     expect(memberContext?.disableFeatures).toEqual(['userInterrupt']);
-    expect(memberContext?.identityGuidance).toContain('worker specialist');
-    expect(memberContext?.systemPrompt).toBeUndefined();
+    expect(memberContext?.systemPrompt?.append).toContain('worker specialist');
+    expect(memberContext?.systemPrompt).not.toHaveProperty('replace');
     expect(teammateContext?.disableFeatures).toEqual(['userInterrupt']);
-    expect(teammateContext?.identityGuidance).toContain('general helper');
-    expect(teammateContext?.systemPrompt).toBeUndefined();
+    expect(teammateContext?.systemPrompt?.append).toContain('general helper');
+    expect(teammateContext?.systemPrompt).not.toHaveProperty('replace');
 
     await dispatcher.stop();
   });

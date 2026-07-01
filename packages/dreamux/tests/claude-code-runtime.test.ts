@@ -43,6 +43,7 @@ import type {
   AgentRuntimeMcpServer,
   AgentRuntimeRole,
   AgentRuntimeSkillSource,
+  AgentRuntimeSystemPrompt,
   TurnSettledSignal,
 } from '@excitedjs/dreamux-types';
 
@@ -362,8 +363,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       resumeSession?: string;
       onTurnSettled?: (settled: TurnSettledSignal) => void;
       role?: AgentRuntimeRole;
-      systemPromptAppend?: string;
-      identityGuidance?: string;
+      systemPrompt?: AgentRuntimeSystemPrompt;
       skillSources?: AgentRuntimeSkillSource[];
       disableFeatures?: readonly string[];
     } = {},
@@ -385,12 +385,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       mcpServers: [FEISHU_MCP],
       state: store.bindRuntime('flow'),
       paths: dispatcherHostPaths,
-      ...(opts.systemPromptAppend !== undefined
-        ? { systemPrompt: { append: opts.systemPromptAppend } }
-        : {}),
-      ...(opts.identityGuidance !== undefined
-        ? { identityGuidance: opts.identityGuidance }
-        : {}),
+      ...(opts.systemPrompt !== undefined ? { systemPrompt: opts.systemPrompt } : {}),
       ...(opts.skillSources !== undefined
         ? { skillSources: opts.skillSources }
         : {}),
@@ -439,11 +434,12 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     expect(fleet.sessions[0]?.spec.args).not.toContain('--add-dir');
   });
 
-  it('composes launcher append prompt and identity guidance for resident launch', async () => {
+  it('forwards systemPrompt.append to resident launch', async () => {
     const fleet = fakeFleet();
     const { runtime } = makeRuntime(fleet, {
-      systemPromptAppend: 'Dispatcher append prompt.',
-      identityGuidance: 'Dreamux persistent TeamMate identity guidance:\nReviewer role.',
+      systemPrompt: {
+        append: 'Dreamux persistent TeamMate identity guidance:\nReviewer role.',
+      },
     });
     await runtime.start();
 
@@ -451,9 +447,37 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     const i = args.indexOf('--append-system-prompt');
     expect(i).toBeGreaterThanOrEqual(0);
     expect(args[i + 1]).toBe(
-      'Dispatcher append prompt.\n\n' +
-        'Dreamux persistent TeamMate identity guidance:\nReviewer role.',
+      'Dreamux persistent TeamMate identity guidance:\nReviewer role.',
     );
+  });
+
+  it('falls through to append when replace and append are both supplied', async () => {
+    const fleet = fakeFleet();
+    const { runtime } = makeRuntime(fleet, {
+      systemPrompt: {
+        replace: 'Complete replacement prompt for replace-native runtimes.',
+        append: 'Focused append prompt for Claude Code.',
+      },
+    });
+    await runtime.start();
+
+    const args = fleet.sessions[0]?.spec.args ?? [];
+    const i = args.indexOf('--append-system-prompt');
+    expect(i).toBeGreaterThanOrEqual(0);
+    expect(args[i + 1]).toBe('Focused append prompt for Claude Code.');
+    expect(args[i + 1]).not.toContain('Complete replacement prompt');
+  });
+
+  it('ignores replace-only prompt because Claude Code has no replacement support', async () => {
+    const fleet = fakeFleet();
+    const { runtime } = makeRuntime(fleet, {
+      systemPrompt: {
+        replace: 'Complete replacement prompt for replace-native runtimes.',
+      },
+    });
+    await runtime.start();
+
+    expect(fleet.sessions[0]?.spec.args).not.toContain('--append-system-prompt');
   });
 
   it('forwards disableFeatures into Claude Code resident args', async () => {

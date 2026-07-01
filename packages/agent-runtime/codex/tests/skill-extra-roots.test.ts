@@ -17,6 +17,7 @@ import type {
   AgentRuntimeIdentity,
   AgentRuntimePathContext,
   AgentRuntimeSkillSource,
+  AgentRuntimeSystemPrompt,
   AgentRuntimeStateCallbacks,
   DreamuxLogger,
   TurnSettledSignal,
@@ -174,7 +175,7 @@ function buildRuntime(
   skillSources: AgentRuntimeSkillSource[],
   logger?: DreamuxLogger,
   onTurnSettled?: (settled: TurnSettledSignal) => void,
-  identityGuidance?: string,
+  systemPrompt?: AgentRuntimeSystemPrompt,
 ): CodexRuntime {
   const identity: AgentRuntimeIdentity = { runtime_id: 'flow', checkpoint_id: null };
   return new CodexRuntime(identity, {
@@ -185,7 +186,12 @@ function buildRuntime(
     skillSources,
     codexProcessFactory: () => new FakeProcess() as never,
     codexClientFactory: () => client as never,
-    ...(identityGuidance !== undefined ? { identityGuidance } : {}),
+    ...(systemPrompt?.replace !== undefined
+      ? { systemPromptReplace: systemPrompt.replace }
+      : {}),
+    ...(systemPrompt?.replace === undefined && systemPrompt?.append !== undefined
+      ? { systemPromptAppend: systemPrompt.append }
+      : {}),
     ...(onTurnSettled !== undefined ? { onTurnSettled } : {}),
     ...(logger !== undefined ? { logger } : {}),
   });
@@ -212,7 +218,7 @@ describe('codex skills/extraRoots/set injection', () => {
     expect(startIdx).toBeGreaterThan(setIdx);
   });
 
-  it('fails identity guidance loudly before first turn when injection fails', async () => {
+  it('fails append-only systemPrompt loudly before first turn when injection fails', async () => {
     const client = new FakeClient();
     client.injectItemsError = new Error('injection unavailable');
     const runtime = buildRuntime(
@@ -220,21 +226,21 @@ describe('codex skills/extraRoots/set injection', () => {
       [],
       undefined,
       undefined,
-      'Dreamux persistent TeamMate identity guidance:\narchitecture reviewer',
+      { append: 'Dreamux persistent TeamMate identity guidance:\narchitecture reviewer' },
     );
 
-    await expect(runtime.start()).rejects.toThrow(/identity guidance/);
+    await expect(runtime.start()).rejects.toThrow(/systemPrompt\.append/);
     expect(client.methods).not.toContain('turn/start');
   });
 
-  it('injects identity guidance after thread start and before first turn', async () => {
+  it('injects append-only systemPrompt after thread start and before first turn', async () => {
     const client = new FakeClient();
     const runtime = buildRuntime(
       client,
       [],
       undefined,
       undefined,
-      'Dreamux persistent TeamMate identity guidance:\narchitecture reviewer',
+      { append: 'Dreamux persistent TeamMate identity guidance:\narchitecture reviewer' },
     );
 
     await runtime.start();
@@ -261,6 +267,28 @@ describe('codex skills/extraRoots/set injection', () => {
     };
     expect(firstTurn.input[0]?.text).toBe('first task');
     expect(firstTurn.input[0]?.text).not.toContain('architecture reviewer');
+  });
+
+  it('uses replacement baseInstructions without duplicate append injection', async () => {
+    const client = new FakeClient();
+    const runtime = buildRuntime(
+      client,
+      [],
+      undefined,
+      undefined,
+      {
+        replace: 'complete dispatcher base instructions',
+        append: 'dispatcher append guidance',
+      },
+    );
+
+    await runtime.start();
+    await runtime.stop();
+
+    expect(client.threadStartCalls[0]).toEqual({
+      baseInstructions: 'complete dispatcher base instructions',
+    });
+    expect(client.methods).not.toContain('thread/inject_items');
   });
 
   it('skips the RPC entirely when no skill sources are supplied', async () => {
