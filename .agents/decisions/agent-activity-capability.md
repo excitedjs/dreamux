@@ -12,8 +12,8 @@
 ## Context
 
 The scheduled-tasks "defer-until-idle" rule needs to know whether an agent is
-mid-turn before injecting a trigger (a mid-turn inject would be folded into the
-user's active turn — Codex `steer.supported` — and hijack it). The naive fix is
+mid-turn before injecting a trigger (a mid-turn inject can be folded into the
+user's active turn by runtimes such as Codex and hijack it). The naive fix is
 a core-side counter that increments on `submitted` and decrements on
 `onTurnSettled`. That is a fragile re-derivation of state the runtime already
 owns authoritatively, and it drifts from reality under Codex input folding and

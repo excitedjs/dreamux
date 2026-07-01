@@ -53,8 +53,9 @@ The factory must return an `AgentRuntimeProvider` whose `ref` and
 `createRuntime(context)`. It may implement `readConfig(rawConfig, context)` when
 it owns provider-specific config validation and normalization. Capability
 declarations are provider-owned: the registry stores the implementation handle
-only and never mirrors or assumes support for `resume`, `steer`, `events`,
-`last`, `context`, or TeamMate completion delivery.
+only and never mirrors or assumes runtime support. Today the neutral capability
+shape is intentionally minimal (`resume.supported`); optional behavior such as
+TeamMate completion delivery is detected from the runtime method surface.
 
 `AgentRuntime` is a single-instance runtime interface. Dispatcher orchestration
 verbs such as spawn, list, and close stay on Dispatcher Service and must not be
@@ -127,10 +128,10 @@ Implementation status:
     on the named `agents[]` runtime config, so every dispatcher or TeamMate
     launched through that agent gets the same Remote Control posture. The
     returned Remote Control URL is logged through the runtime's local diagnostic
-    log. Remote Control is distinct from Dreamux `send` steer; the runtime's
-    `steer.supported` capability remains the source of truth for Dreamux
-    multi-send semantics. Ownership/attribution for spontaneous
-    Remote-Control-driven turns is tracked separately in
+    log. Remote Control is distinct from Dreamux `send`; Dreamux multi-send
+    semantics are implemented behind the runtime's `channelInput` behavior.
+    Ownership/attribution for spontaneous Remote-Control-driven turns is tracked
+    separately in
     [issue #161](https://github.com/excitedjs/dreamux/issues/161).
   - The resident protocol model and process-supervision shape are adapted from
     the Claudemux `next` implementation; the AgentRuntime provider seam,
