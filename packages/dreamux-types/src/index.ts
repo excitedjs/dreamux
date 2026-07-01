@@ -71,7 +71,6 @@ export type {
   AgentRuntimeProviderFactory,
   AgentRuntimeResumeCapability,
   AgentRuntimeResumeCheckpoint,
-  AgentRuntimeResumeInput,
   AgentRuntimeRole,
   AgentRuntimeSkillSource,
   AgentRuntimeStateCallbacks,
@@ -80,7 +79,6 @@ export type {
   AgentRuntimeSystemPrompt,
   AgentRuntimeTurnResult,
   CompletionDeliveryResult,
-  CompletionDeliveryShape,
   CompletionEnvelope,
 } from './agent-runtime.js';
 export type {

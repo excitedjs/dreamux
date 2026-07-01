@@ -80,7 +80,6 @@ import type {
   AgentRuntimeLastResult,
   AgentRuntimeMcpServer,
   AgentRuntimePathContext,
-  AgentRuntimeResumeInput,
   AgentRuntimeSkillSource,
   AgentRuntimeStateCallbacks,
   AgentRuntimeStatus,
@@ -224,10 +223,8 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     return CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES;
   }
 
-  getCheckpoint(): { kind: 'claudeCodeSession'; id: string } | null {
-    return this.threadId === null
-      ? null
-      : { kind: 'claudeCodeSession', id: this.threadId };
+  getCheckpoint(): { id: string } | null {
+    return this.threadId === null ? null : { id: this.threadId };
   }
 
   wasCheckpointResumed(): boolean {
@@ -242,16 +239,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     return null;
   }
 
-  async resume(input: AgentRuntimeResumeInput = {}): Promise<void> {
-    if (input.checkpoint !== undefined && input.checkpoint !== null) {
-      if (input.checkpoint.kind !== 'claudeCodeSession') {
-        throw new Error(
-          `unsupported resume checkpoint for Claude Code runtime: ${input.checkpoint.kind}`,
-        );
-      }
-      this.threadId = input.checkpoint.id;
-      this.resumed = true;
-    }
+  async resume(): Promise<void> {
     await this.start();
   }
 
@@ -594,10 +582,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       outcome.sessionId !== this.threadId
     ) {
       this.threadId = outcome.sessionId;
-      await this.deps.state.setCheckpoint({
-        kind: 'claudeCodeSession',
-        id: outcome.sessionId,
-      });
+      await this.deps.state.setCheckpoint({ id: outcome.sessionId });
     }
     const resultText =
       outcome.isError || outcome.text === '' ? null : outcome.text;

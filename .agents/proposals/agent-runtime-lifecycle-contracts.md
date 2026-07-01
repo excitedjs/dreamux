@@ -326,16 +326,21 @@ not enumerate native transports or policy schemas.
 
 Minimum behavior capabilities:
 
-- `resume`: whether a checkpoint can be supplied on resume, and which checkpoint
-  kind the provider expects.
-- `steer`: whether a new input may be absorbed while a turn is active. This is a
-  routing hint only; the provider still returns and settles Dreamux logical turn
-  ids.
-- `events`: whether settlement is pushed by the provider or synthesized by the
-  adapter.
-- `last` and `context`: whether recovery/read surfaces can report last output
-  and context usage.
-- `teammateCompletion`: whether `completionInput` exists.
+- `resume`: whether the runtime can reopen the checkpoint id supplied in its
+  create context. The checkpoint id itself is runtime-owned state, not a
+  capability, and the checkpoint kind is not a shared fact.
+
+Do not add capability fields for facts core does not branch on. The current
+contract intentionally omits:
+
+- `steer`: mid-turn absorption is runtime behavior behind `channelInput`, not a
+  core routing decision today.
+- `events`: pushed versus synthesized settlement is an adapter implementation
+  detail once both paths emit the same neutral settlement signal.
+- `last` and `context`: callers probe `getLast()` / `getContext()` and treat
+  `null` as unavailable; no capability flag is needed.
+- `teammateCompletion`: completion delivery is feature-detected by presence of
+  `completionInput`, and the router handles `unsupported` as terminal.
 
 Provider-owned capabilities, such as supported native launch modes,
 permissions, auth requirements, subagents, media support, and project config
@@ -364,8 +369,8 @@ External provider loading should validate the runtime handle returned by
 
 - required methods exist and are functions;
 - optional methods, when present, have function shape;
-- provider capabilities and runtime capabilities are compatible;
-- a provider that declares teammate completion has a usable `completionInput`;
+- provider capabilities have the minimal supported shape;
+- optional `completionInput`, when present, has function shape;
 - unsupported optional surfaces fail loudly or are omitted, rather than hiding
   throwing/no-op stubs behind a capability.
 
@@ -380,8 +385,8 @@ contract directly:
 - channel/user delivery is `channelInput()`, not a public `submitTurn()`;
 - Dreamux system messages are `systemInput()`, not a public
   `injectControlNotice()`;
-- completion delivery is `completionInput()` when the provider declares a
-  teammate-completion shape.
+- completion delivery is `completionInput()` when the runtime supports it; there
+  is no separate teammate-completion capability array.
 
 Built-in runtime classes may keep provider-specific lower-level helpers only as
 implementation details or concrete-class test probes. Those helpers must not be
@@ -407,6 +412,8 @@ thread/session names and checkpoint names as independent authoritative facts.
 - Runtime state callbacks no longer accept host ids.
 - Checkpoint terminology is provider-facing; thread/session names are only host
   compatibility projections.
+- AgentRuntime capabilities contain only behavior facts core actually consumes:
+  today, resume support.
 - Dreamux supplies both replacement and append role prompts to providers; core
   does not choose one by provider ref or provider capability.
 - External runtime loading rejects malformed runtime handles before live use.

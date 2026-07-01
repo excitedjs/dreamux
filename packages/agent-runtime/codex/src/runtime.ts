@@ -30,7 +30,6 @@ import type {
   AgentRuntimeIdentity,
   AgentRuntimeLastResult,
   AgentRuntimePathContext,
-  AgentRuntimeResumeInput,
   AgentRuntimeSkillSource,
   AgentRuntimeStateCallbacks,
   AgentRuntimeStatus,
@@ -144,10 +143,8 @@ export class CodexRuntime implements AgentRuntime {
     return CODEX_AGENT_RUNTIME_CAPABILITIES;
   }
 
-  getCheckpoint(): { kind: 'codexThread'; id: string } | null {
-    return this.threadId === null
-      ? null
-      : { kind: 'codexThread', id: this.threadId };
+  getCheckpoint(): { id: string } | null {
+    return this.threadId === null ? null : { id: this.threadId };
   }
 
   wasCheckpointResumed(): boolean {
@@ -162,15 +159,7 @@ export class CodexRuntime implements AgentRuntime {
     return null;
   }
 
-  async resume(input: AgentRuntimeResumeInput = {}): Promise<void> {
-    if (input.checkpoint !== undefined && input.checkpoint !== null) {
-      if (input.checkpoint.kind !== 'codexThread') {
-        throw new Error(
-          `unsupported resume checkpoint for Codex runtime: ${input.checkpoint.kind}`,
-        );
-      }
-      this.threadId = input.checkpoint.id;
-    }
+  async resume(): Promise<void> {
     await this.start();
   }
 
@@ -304,7 +293,7 @@ export class CodexRuntime implements AgentRuntime {
         params,
       );
       this.threadId = res.thread.id;
-      await this.state.setCheckpoint({ kind: 'codexThread', id: this.threadId });
+      await this.state.setCheckpoint({ id: this.threadId });
       this.log('info', `started fresh thread ${this.threadId}`);
       return;
     }
@@ -330,12 +319,12 @@ export class CodexRuntime implements AgentRuntime {
       this.threadId = res.thread.id;
       if (this.state.recordLostCheckpoint !== undefined) {
         await this.state.recordLostCheckpoint(
-          { kind: 'codexThread', id: existing },
-          { kind: 'codexThread', id: this.threadId },
+          { id: existing },
+          { id: this.threadId },
           `thread/resume failed: ${msg}`,
         );
       } else {
-        await this.state.setCheckpoint({ kind: 'codexThread', id: this.threadId });
+        await this.state.setCheckpoint({ id: this.threadId });
         await this.state.setStatus('degraded', {
           last_error: `thread/resume failed: ${msg}`,
         });

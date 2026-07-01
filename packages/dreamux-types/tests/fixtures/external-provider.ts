@@ -51,13 +51,6 @@ import type {
 
 export const EXTERNAL_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = {
   resume: { supported: false },
-  steer: { supported: false },
-  events: { kind: 'synthesized' },
-  last: { supported: false },
-  context: { supported: false },
-  teammateCompletion: [
-    { kind: 'fixturePlainTurn', description: 'deliver as a plain user turn' },
-  ],
 };
 
 export function describeConfigContext(
@@ -107,10 +100,8 @@ class FixtureRuntime implements AgentRuntime {
     return this.status;
   }
 
-  getCheckpoint(): { kind: string; id: string } | null {
-    return this.threadId === null
-      ? null
-      : { kind: 'fixtureCheckpoint', id: this.threadId };
+  getCheckpoint(): { id: string } | null {
+    return this.threadId === null ? null : { id: this.threadId };
   }
 
   wasCheckpointResumed(): boolean {

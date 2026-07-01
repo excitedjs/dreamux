@@ -61,19 +61,7 @@ export interface CodexAgentRuntimeProviderOptions {
 }
 
 export const CODEX_AGENT_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = {
-  resume: { supported: true, checkpoint: 'codexThread' },
-  steer: { supported: true },
-  events: { kind: 'push' },
-  last: { supported: true },
-  context: { supported: false },
-  teammateCompletion: [
-    {
-      kind: 'codexInboxTurn',
-      description:
-        'inject the completion into thread history (thread/inject_items), then ' +
-        'trigger a dispatcher turn',
-    },
-  ],
+  resume: { supported: true },
 };
 
 const DEFAULT_CODEX_DESCRIPTOR: AgentRuntimeProviderDescriptor = {
@@ -98,7 +86,7 @@ function asAgentRuntimeDescriptor(
 /**
  * Create the built-in Codex `AgentRuntimeProvider`. It implements the neutral
  * `@excitedjs/dreamux-types` contract: `readConfig` parses Codex runtime config,
- * `getCapabilities` reports Codex's resume/steer/completion shape, and
+ * `getCapabilities` reports Codex's resume support, and
  * `createRuntime` builds a {@link CodexRuntime} from the neutral create context
  * plus the host-supplied hooks.
  */

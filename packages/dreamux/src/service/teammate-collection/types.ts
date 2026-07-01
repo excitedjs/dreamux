@@ -270,10 +270,6 @@ export interface TeamMateAgentRuntimeCapability {
   spawn: { agent_runtime: string };
   runtime_available: boolean;
   resume: AgentRuntimeCapabilities["resume"];
-  steer: AgentRuntimeCapabilities["steer"];
-  events: AgentRuntimeCapabilities["events"];
-  last: AgentRuntimeCapabilities["last"];
-  context: AgentRuntimeCapabilities["context"];
   unsupported_reason: string | null;
 }
 

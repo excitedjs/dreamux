@@ -19,10 +19,7 @@ import {
 
 describe('external provider fixture', () => {
   it('declares neutral runtime capabilities', () => {
-    expect(EXTERNAL_RUNTIME_CAPABILITIES.events.kind).toBe('synthesized');
-    expect(EXTERNAL_RUNTIME_CAPABILITIES.teammateCompletion).toEqual([
-      { kind: 'fixturePlainTurn', description: 'deliver as a plain user turn' },
-    ]);
+    expect(EXTERNAL_RUNTIME_CAPABILITIES.resume.supported).toBe(false);
   });
 
   it('narrows provider descriptors to their kind (P2)', () => {

@@ -452,12 +452,7 @@ export class TeammateService {
     });
     liveRuntime = runtime;
     if (launch.checkpointId !== null && resumeCapability.supported) {
-      await runtime.resume({
-        checkpoint: {
-          kind: resumeCapability.checkpoint,
-          id: launch.checkpointId,
-        },
-      });
+      await runtime.resume();
     } else {
       await runtime.start();
     }

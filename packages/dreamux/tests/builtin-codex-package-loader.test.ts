@@ -60,11 +60,7 @@ describe('builtin:codex loads the real @excitedjs/agent-runtime-codex package', 
     const capabilities = provider.getCapabilities();
     expect(capabilities.resume).toEqual({
       supported: true,
-      checkpoint: 'codexThread',
     });
-    expect(capabilities.teammateCompletion.map((s) => s.kind)).toEqual([
-      'codexInboxTurn',
-    ]);
   });
 
   it('parses real Codex runtime config via the loaded provider readConfig', async () => {

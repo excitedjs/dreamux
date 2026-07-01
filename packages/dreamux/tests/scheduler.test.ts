@@ -501,7 +501,7 @@ function controllableIdle(): {
       return 'ready';
     },
     getCheckpoint() {
-      return { kind: 'fakeThread', id: 'thread' };
+      return { id: 'thread' };
     },
     wasCheckpointResumed() {
       return false;
@@ -515,11 +515,6 @@ function controllableIdle(): {
     getCapabilities(): AgentRuntimeCapabilities {
       return {
         resume: { supported: false },
-        steer: { supported: false },
-        events: { kind: 'push' },
-        last: { supported: false },
-        context: { supported: false },
-        teammateCompletion: [],
       };
     },
   };

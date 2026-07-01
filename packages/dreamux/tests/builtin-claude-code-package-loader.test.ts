@@ -63,12 +63,7 @@ describe('builtin:claude-code loads the real @excitedjs/agent-runtime-claude-cod
     const capabilities = provider.getCapabilities();
     expect(capabilities.resume).toEqual({
       supported: true,
-      checkpoint: 'claudeCodeSession',
     });
-    expect(capabilities.events.kind).toBe('synthesized');
-    expect(capabilities.teammateCompletion.map((s) => s.kind)).toEqual([
-      'claudeCodePlainTurn',
-    ]);
   });
 
   it('parses real Claude Code runtime config via the loaded provider readConfig', async () => {

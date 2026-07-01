@@ -66,44 +66,18 @@ export interface AgentRuntimeSkillSource {
   source: 'dreamux-core' | string;
 }
 
-/**
- * An open, source-agnostic completion delivery shape. Each runtime self-declares
- * its own `kind` string inside its own capabilities; the shared contract never
- * enumerates them.
- */
-export interface CompletionDeliveryShape {
-  kind: string;
-  description: string;
-}
-
 export interface AgentRuntimeResumeCheckpoint {
-  /** Runtime-owned checkpoint kind; each runtime self-declares its own. */
-  kind: string;
+  /** Runtime-owned checkpoint id persisted by Dreamux and interpreted by the runtime. */
   id: string;
 }
 
-export type AgentRuntimeResumeCapability =
-  | { supported: true; checkpoint: AgentRuntimeResumeCheckpoint['kind'] }
-  | { supported: false };
+export interface AgentRuntimeResumeCapability {
+  supported: boolean;
+}
 
 export interface AgentRuntimeCapabilities {
-  /** Whether this runtime can resume a prior checkpoint, and which checkpoint id it expects. */
+  /** Whether this runtime can resume a prior checkpoint id from its create context. */
   resume: AgentRuntimeResumeCapability;
-  /**
-   * Whether a follow-up turn delivered while a turn is active folds into that
-   * turn rather than queueing behind it. Purely behavioral: there is no separate
-   * "steer" method — core still delivers through `channelInput`,
-   * and this flag only tells core whether mid-turn delivery is absorbed.
-   */
-  steer: { supported: boolean };
-  /** How runtime events are surfaced to Dreamux. */
-  events: { kind: 'push' | 'synthesized' };
-  /** Whether {@link AgentRuntime.getLast} can report the last result. */
-  last: { supported: boolean };
-  /** Whether {@link AgentRuntime.getContext} can report context-window usage. */
-  context: { supported: boolean };
-  /** Upward delivery shapes this runtime supports for teammate completion. */
-  teammateCompletion: readonly CompletionDeliveryShape[];
 }
 
 export interface AgentRuntimeSystemPrompt {
@@ -138,10 +112,6 @@ export interface AgentRuntimeSystemInput {
    * their type dependency before they can ignore or map it.
    */
   reason: 'restart-notice' | 'runtime-control' | 'scheduled' | (string & {});
-}
-
-export interface AgentRuntimeResumeInput {
-  checkpoint?: AgentRuntimeResumeCheckpoint | null;
 }
 
 export interface AgentRuntimeLastResult {
@@ -250,7 +220,7 @@ export interface AgentRuntimeIdentity {
   runtime_id: string;
   /**
    * A prior resumable checkpoint id the launcher recovered, or null for a fresh
-   * start. The runtime interprets it per its own `resume` capability.
+   * start. The runtime interprets the id in its own native format.
    */
   checkpoint_id?: string | null;
 }
@@ -320,7 +290,7 @@ export interface AgentRuntimeCreateContext<TConfig = unknown> {
 export interface AgentRuntime {
   readonly providerRef: string;
   start(): Promise<void>;
-  resume(input?: AgentRuntimeResumeInput): Promise<void>;
+  resume(): Promise<void>;
   stop(): Promise<void>;
   /**
    * Deliver a channel/user turn. The runtime owns rendering the neutral channel
@@ -342,22 +312,18 @@ export interface AgentRuntime {
   wasCheckpointResumed(): boolean;
   /**
    * The last assistant/user-visible result, or `null` when unavailable.
-   * A runtime whose `capabilities.last.supported` is false returns `null`
-   * rather than throwing or blocking — core treats `null` as "not reported".
+   * Core treats `null` as "not reported".
    */
   getLast(): Promise<AgentRuntimeLastResult | null>;
   /**
-   * Context-window usage, or `null` when unavailable. A runtime whose
-   * `capabilities.context.supported` is false returns `null` rather than
-   * throwing or blocking.
+   * Context-window usage, or `null` when unavailable.
    */
   getContext(): Promise<AgentRuntimeContextSnapshot | null>;
   getCapabilities(): AgentRuntimeCapabilities;
   /**
    * Deliver a teammate-completion envelope upward. Optional, and feature-detected
-   * by presence: a runtime that declares no `capabilities.teammateCompletion`
-   * shapes should omit this method entirely rather than ship a throwing/no-op
-   * stub, since callers test for the method, not the capability array.
+   * by presence: runtimes that do not support completion delivery omit this
+   * method entirely rather than ship a throwing/no-op stub.
    */
   completionInput?(
     completion: CompletionEnvelope,

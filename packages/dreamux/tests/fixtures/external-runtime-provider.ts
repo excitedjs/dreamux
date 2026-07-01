@@ -35,11 +35,6 @@ export interface ExternalRuntimeObservation {
 
 export const EXTERNAL_PARITY_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = {
   resume: { supported: false },
-  steer: { supported: false },
-  events: { kind: 'synthesized' },
-  last: { supported: true },
-  context: { supported: false },
-  teammateCompletion: [],
 };
 
 export const externalRuntimeObservations: ExternalRuntimeObservation[] = [];
@@ -65,10 +60,7 @@ class ExternalParityRuntime implements AgentRuntime {
     this.observation.starts += 1;
     this.threadId = `external-thread:${this.context.identity.runtime_id}`;
     await this.context.state?.setStatus('ready');
-    await this.context.state?.setCheckpoint({
-      kind: 'externalThread',
-      id: this.threadId,
-    });
+    await this.context.state?.setCheckpoint({ id: this.threadId });
   }
 
   async resume(): Promise<void> {
@@ -106,10 +98,8 @@ class ExternalParityRuntime implements AgentRuntime {
     return this.status;
   }
 
-  getCheckpoint(): { kind: string; id: string } | null {
-    return this.threadId === null
-      ? null
-      : { kind: 'externalThread', id: this.threadId };
+  getCheckpoint(): { id: string } | null {
+    return this.threadId === null ? null : { id: this.threadId };
   }
 
   wasCheckpointResumed(): boolean {

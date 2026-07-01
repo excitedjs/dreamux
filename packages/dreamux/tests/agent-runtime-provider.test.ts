@@ -37,12 +37,7 @@ import { DispatcherStore } from '../src/state/dispatcher-store.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 
 const EXTERNAL_CAPABILITIES: AgentRuntimeCapabilities = {
-  resume: { supported: true, checkpoint: 'thirdPartySession' },
-  steer: { supported: false },
-  events: { kind: 'synthesized' },
-  last: { supported: true },
-  context: { supported: true },
-  teammateCompletion: [],
+  resume: { supported: true },
 };
 
 function builtinCatalog(): AgentRuntimeProviderCatalog {
@@ -83,8 +78,8 @@ class FakeExternalRuntime implements AgentRuntime {
     return this.status;
   }
 
-  getCheckpoint(): { kind: string; id: string } | null {
-    return { kind: 'thirdPartySession', id: 'external-session' };
+  getCheckpoint(): { id: string } | null {
+    return { id: 'external-session' };
   }
 
   wasCheckpointResumed(): boolean {
@@ -135,11 +130,7 @@ describe('AgentRuntimeProviderCatalog', () => {
 
     expect(provider.ref).toBe('builtin:codex');
     expect(provider.descriptor.kind).toBe('agentRuntime');
-    expect(provider.getCapabilities().last.supported).toBe(true);
-    expect(provider.getCapabilities().context.supported).toBe(false);
-    expect(
-      provider.getCapabilities().teammateCompletion.map((shape) => shape.kind),
-    ).toEqual(['codexInboxTurn']);
+    expect(provider.getCapabilities()).toEqual({ resume: { supported: true } });
   });
 
   it('creates a Codex-backed AgentRuntime without starting it', () => {
@@ -162,19 +153,12 @@ describe('AgentRuntimeProviderCatalog', () => {
     expect(runtime.getStatus()).toBe('declared');
   });
 
-  it('resolves builtin:claude-code with the task-notification delivery shape', () => {
+  it('resolves builtin:claude-code with the same minimal runtime capability shape', () => {
     const provider = builtinCatalog().resolve('builtin:claude-code');
 
     expect(provider.ref).toBe('builtin:claude-code');
     expect(provider.descriptor.kind).toBe('agentRuntime');
-    expect(provider.getCapabilities().steer.supported).toBe(true);
-    expect(provider.getCapabilities().last.supported).toBe(true);
-    expect(provider.getCapabilities().context.supported).toBe(false);
-    // Distinct delivery shape from Codex — proves the abstraction is not
-    // Codex-only.
-    expect(
-      provider.getCapabilities().teammateCompletion.map((shape) => shape.kind),
-    ).toEqual(['claudeCodePlainTurn']);
+    expect(provider.getCapabilities()).toEqual({ resume: { supported: true } });
   });
 
   it('does not expose the built-in Feishu channel through the runtime catalog', () => {
@@ -241,7 +225,6 @@ describe('AgentRuntimeProviderCatalog', () => {
     const provider = catalog.resolve('npm:@example/dreamux-runtime#named');
     expect(provider.getCapabilities().resume).toEqual({
       supported: true,
-      checkpoint: 'thirdPartySession',
     });
     const dispatcher = testDispatcherConfig({ id: 'flow' });
     const store = new DispatcherStore(testDreamuxConfig([dispatcher]));
@@ -330,7 +313,7 @@ describe('AgentRuntimeProviderCatalog', () => {
     ).rejects.toThrow(ExternalAgentRuntimeProviderContractError);
   });
 
-  it('rejects external providers with incomplete capabilities', async () => {
+  it('rejects external providers with malformed resume capabilities', async () => {
     await expect(
       loadAgentRuntimeProviders({
         registry: createBuiltinProviderRegistry(),
@@ -343,13 +326,13 @@ describe('AgentRuntimeProviderCatalog', () => {
             ref,
             descriptor,
             getCapabilities: () => ({
-              resume: { supported: false },
-            }),
+              resume: { supported: 'no' },
+            }) as unknown as AgentRuntimeCapabilities,
             createRuntime: () => new FakeExternalRuntime(ref),
           }),
         }),
       }),
-    ).rejects.toThrow(/capabilities\.steer\.supported/);
+    ).rejects.toThrow(/capabilities\.resume\.supported/);
   });
 
   it('rejects malformed runtime handles before live use', async () => {

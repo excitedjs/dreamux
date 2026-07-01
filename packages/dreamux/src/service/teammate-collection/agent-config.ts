@@ -64,10 +64,6 @@ export function agentRuntimeCapability(
     spawn: { agent_runtime: agentRuntimeId },
     runtime_available: capabilities !== null,
     resume: capabilities?.resume ?? { supported: false },
-    steer: capabilities?.steer ?? { supported: false },
-    events: capabilities?.events ?? { kind: 'synthesized' },
-    last: capabilities?.last ?? { supported: false },
-    context: capabilities?.context ?? { supported: false },
     unsupported_reason: unsupportedReason,
   };
 }

@@ -39,11 +39,6 @@ const FAKE_RUNTIME_REF = 'test:runtime';
 
 const CAPABILITIES: AgentRuntimeCapabilities = {
   resume: { supported: false },
-  steer: { supported: false },
-  events: { kind: 'synthesized' },
-  last: { supported: true },
-  context: { supported: false },
-  teammateCompletion: [],
 };
 
 class FakeRuntime implements AgentRuntime {
@@ -78,8 +73,8 @@ class FakeRuntime implements AgentRuntime {
     return this.status;
   }
 
-  getCheckpoint(): { kind: string; id: string } | null {
-    return { kind: 'fakeThread', id: 'thread-fake' };
+  getCheckpoint(): { id: string } | null {
+    return { id: 'thread-fake' };
   }
 
   wasCheckpointResumed(): boolean {
@@ -100,8 +95,8 @@ class FakeRuntime implements AgentRuntime {
 }
 
 class NewContractOnlyRuntime extends FakeRuntime {
-  override getCheckpoint(): { kind: string; id: string } | null {
-    return { kind: 'fakeThread', id: 'checkpoint-only-thread' };
+  override getCheckpoint(): { id: string } | null {
+    return { id: 'checkpoint-only-thread' };
   }
 }
 

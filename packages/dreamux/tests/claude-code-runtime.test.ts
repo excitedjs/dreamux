@@ -332,14 +332,11 @@ describe('claude-code pure translation (not Codex renamed)', () => {
 });
 
 describe('builtin:claude-code provider', () => {
-  it('exposes the claude-code ref and plain-turn delivery shape', () => {
+  it('exposes the claude-code ref and resume support', () => {
     const provider = claudeCodeProvider({ sessionFactory: fakeFleet().factory });
     expect(provider.ref).toBe('builtin:claude-code');
     expect(provider.descriptor.kind).toBe('agentRuntime');
-    expect(provider.getCapabilities().steer.supported).toBe(true);
-    expect(
-      provider.getCapabilities().teammateCompletion.map((s) => s.kind),
-    ).toEqual(['claudeCodePlainTurn']);
+    expect(provider.getCapabilities()).toEqual({ resume: { supported: true } });
   });
 });
 
@@ -372,10 +369,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     const dispatcher = claudeDispatcher('flow');
     const store = new DispatcherStore(testDreamuxConfig([dispatcher]));
     if (opts.resumeSession !== undefined) {
-      void store.setCheckpoint('flow', {
-        kind: 'claudeCodeSession',
-        id: opts.resumeSession,
-      });
+      void store.setCheckpoint('flow', { id: opts.resumeSession });
     }
     const row = store.get('flow');
     expect(row).not.toBeNull();

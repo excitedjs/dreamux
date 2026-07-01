@@ -68,8 +68,8 @@ export class TeamMateRuntimeStateStore implements AgentRuntimeStateCallbacks {
 
   async setCheckpoint(checkpoint: AgentRuntimeResumeCheckpoint): Promise<void> {
     // #199 Slice 3: persist the runtime-native thread id directly as the public
-    // session_id. The resume checkpoint KIND is never persisted — it is rebuilt
-    // from the runtime's own declared capability when reopening.
+    // session_id. Runtime packages interpret the id in their own native format
+    // when reopened.
     this.identity = await this.store.update(this.identity, {
       sessionId: checkpoint.id,
     });

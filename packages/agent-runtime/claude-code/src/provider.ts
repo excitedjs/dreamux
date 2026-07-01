@@ -47,18 +47,7 @@ export interface ClaudeCodeAgentRuntimeProviderOptions {
 }
 
 export const CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = {
-  resume: { supported: true, checkpoint: 'claudeCodeSession' },
-  steer: { supported: true },
-  events: { kind: 'synthesized' },
-  last: { supported: true },
-  context: { supported: false },
-  teammateCompletion: [
-    {
-      kind: 'claudeCodePlainTurn',
-      description:
-        'deliver the completion as a plain user turn (no task-notification harness path)',
-    },
-  ],
+  resume: { supported: true },
 };
 
 const DEFAULT_CLAUDE_CODE_DESCRIPTOR: AgentRuntimeProviderDescriptor = {
