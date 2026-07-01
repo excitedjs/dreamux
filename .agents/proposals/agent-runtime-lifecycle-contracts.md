@@ -194,12 +194,12 @@ Rules:
 
 ### Checkpoints
 
-Core stores an opaque checkpoint id and passes it back on resume. The id is a
+Core stores an opaque checkpoint id and supplies it in the next runtime create
+context. `resume()` reopens from that create-context checkpoint. The id is a
 provider boundary value, not a Dreamux thread/session concept.
 
 ```ts
 interface AgentRuntimeResumeCheckpoint {
-  kind: string;
   id: string;
 }
 
