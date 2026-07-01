@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "Apply ordered append-only systemPrompt fragments through Claude Code native append prompts, wrapping each fragment in its own system-reminder block.",
+      "comment": "Apply append-only systemPrompt guidance through Claude Code native append prompts.",
       "type": "patch",
       "packageName": "@excitedjs/agent-runtime-claude-code"
     }

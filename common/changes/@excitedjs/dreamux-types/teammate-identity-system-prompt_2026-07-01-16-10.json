@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "Allow AgentRuntimeSystemPrompt append content to carry ordered prompt fragments, alongside replace-only prompt content, so TeamMate and TeamLeader identity guidance can reuse the neutral runtime prompt surface.",
+      "comment": "Allow AgentRuntimeSystemPrompt to carry append-only or replace-only prompt content so TeamMate identity guidance can reuse the neutral runtime prompt surface.",
       "type": "minor",
       "packageName": "@excitedjs/dreamux-types"
     }
