@@ -6,6 +6,7 @@ import type {
   AgentRuntimeMcpServer,
   AgentRuntimeProvider,
   AgentRuntimeStateCallbacks,
+  AgentRuntimeSystemPrompt,
   AgentRuntimeTurnResult,
   DreamuxLogger,
   InboundTurnInput,
@@ -422,6 +423,7 @@ export class TeammateService {
     );
     const provider = this.deps.agentRuntimeProviders.resolve(agent.provider);
     const runtimeName = runtimeIdentityName(identity);
+    const systemPrompt = teammateSystemPrompt(identity);
     return {
       provider,
       checkpointId: identity.session_id,
@@ -434,9 +436,7 @@ export class TeammateService {
         cwd: identity.cwd,
         skillSources: bundledSkillSourcesForRole(identity.role),
         disableFeatures: this.disableFeatures,
-        ...(identity.identity_prompt !== null
-          ? { systemPrompt: teammateIdentitySystemPrompt(identity.identity_prompt) }
-          : {}),
+        ...(systemPrompt !== undefined ? { systemPrompt } : {}),
         state: this.state,
         paths: teammateHostPaths(identity.dispatcher_id, runtimeName),
         mcpServers: [...this.mcpServers],
@@ -628,14 +628,31 @@ function runtimeIdentityName(identity: TeamMateIdentity): string {
     : identity.name;
 }
 
-function teammateIdentitySystemPrompt(identityPrompt: string): {
-  append: string;
-} {
-  return {
-    append:
-      'Dreamux persistent TeamMate identity guidance:\n' +
-      'This is stable role guidance for this runtime session, not the current task request. ' +
-      'Apply it as an identity delta on top of your native coding-agent instructions.\n\n' +
-      identityPrompt,
-  };
+function teammateSystemPrompt(
+  identity: TeamMateIdentity,
+): AgentRuntimeSystemPrompt | undefined {
+  const append: string[] = [];
+  if (identity.role === 'team_leader') {
+    append.push(teamLeaderDefaultSystemPromptAppend(identity));
+  }
+  if (identity.identity_prompt !== null) {
+    append.push(teammateIdentitySystemPromptAppend(identity.identity_prompt));
+  }
+  if (append.length === 0) return undefined;
+  return { append };
+}
+
+function teamLeaderDefaultSystemPromptAppend(identity: TeamMateIdentity): string {
+  const teamName = identity.team_id ?? identity.name;
+  return `You are the TeamLeader of Dreamux Team ${JSON.stringify(teamName)}.`;
+}
+
+function teammateIdentitySystemPromptAppend(identityPrompt: string): string {
+  return (
+    'Dreamux persistent identity guidance:\n' +
+    'This is caller-supplied stable role or working guidance for this runtime session, ' +
+    'not the current task request. Apply it as an identity delta on top of ' +
+    'your native coding-agent instructions.\n\n' +
+    identityPrompt
+  );
 }

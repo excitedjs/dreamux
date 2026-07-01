@@ -30,6 +30,7 @@ import type {
   AgentRuntimeProviderDescriptor,
   AgentRuntimeProviderFactory,
   AgentRuntimeStatus,
+  AgentRuntimeSystemPrompt,
   AgentRuntimeTextInput,
   AgentRuntimeTurnResult,
   ChannelInboundEnvelope,
@@ -57,6 +58,11 @@ export function describeConfigContext(
 ): string {
   return `${context.providerRef}:${context.agentId}`;
 }
+
+export const appendArrayPrompt: AgentRuntimeSystemPrompt = {
+  replace: 'full replacement prompt',
+  append: ['first append fragment', 'second append fragment'],
+};
 
 /** The fixture runtime's parsed config shape. */
 interface FixtureRuntimeConfig {

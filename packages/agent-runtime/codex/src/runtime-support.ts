@@ -17,7 +17,7 @@ export function codexProcessEnv(
 }
 
 export function buildCodexSystemPromptAppendItem(
-  systemPromptAppend: string,
+  systemPromptAppend: readonly string[],
 ): Record<string, unknown> {
   return {
     type: 'message',
@@ -25,8 +25,35 @@ export function buildCodexSystemPromptAppendItem(
     content: [
       {
         type: 'input_text',
-        text: systemPromptAppend,
+        text: renderCodexSystemPromptAppend(systemPromptAppend),
       },
     ],
   };
+}
+
+export function renderCodexSystemPromptAppend(
+  append: readonly string[],
+): string {
+  return append
+    .filter((prompt) => prompt !== '')
+    .map(
+      (prompt) =>
+        `<developer-reminder>\n${escapeXmlText(prompt)}\n</developer-reminder>`,
+    )
+    .join('\n\n');
+}
+
+function escapeXmlText(text: string): string {
+  return text.replace(/[&<>]/g, (char) => {
+    switch (char) {
+      case '&':
+        return '&amp;';
+      case '<':
+        return '&lt;';
+      case '>':
+        return '&gt;';
+      default:
+        return char;
+    }
+  });
 }

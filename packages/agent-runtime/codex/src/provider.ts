@@ -81,10 +81,13 @@ export function codexSystemPromptReplace(
 
 export function codexSystemPromptAppend(
   systemPrompt: AgentRuntimeSystemPrompt | undefined,
-): string | undefined {
+): readonly string[] | undefined {
   if (systemPrompt === undefined) return undefined;
   if (systemPrompt.replace !== undefined) return undefined;
-  return systemPrompt.append;
+  if (systemPrompt.append === undefined || systemPrompt.append.length === 0)
+    return undefined;
+  const append = systemPrompt.append.filter((prompt) => prompt !== '');
+  return append.length > 0 ? append : undefined;
 }
 
 /** Validate + narrow a seed descriptor to the Agent Runtime kind. */

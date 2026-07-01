@@ -54,7 +54,7 @@ const DEFAULT_RESTART_BACKOFF_MAX_MS = 30_000;
 export interface CodexRuntimeDeps {
   cwd: string;
   systemPromptReplace?: string;
-  systemPromptAppend?: string;
+  systemPromptAppend?: readonly string[];
   state: AgentRuntimeStateCallbacks;
   paths: AgentRuntimePathContext;
   allocateSocketPath: (id: string) => string;
@@ -303,14 +303,17 @@ export class CodexRuntime implements AgentRuntime {
   }
 
   private async injectSystemPromptAppend(): Promise<void> {
-    if (this.deps.systemPromptAppend === undefined) return;
+    const systemPromptAppend = (this.deps.systemPromptAppend ?? []).filter(
+      (prompt) => prompt !== '',
+    );
+    if (systemPromptAppend.length === 0) return;
     if (this.client === null) throw new Error('client not initialized');
     if (this.threadId === null) {
       throw new Error('codex systemPrompt.append injection has no thread id');
     }
     try {
       await injectThreadItems(this.client, this.threadId, [
-        buildCodexSystemPromptAppendItem(this.deps.systemPromptAppend),
+        buildCodexSystemPromptAppendItem(systemPromptAppend),
       ]);
     } catch (err) {
       const cause = err instanceof Error ? err.message : String(err);

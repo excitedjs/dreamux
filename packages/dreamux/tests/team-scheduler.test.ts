@@ -395,17 +395,28 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       (context) => context.identity.runtime_id === 'dispatcher-a',
     );
     const leaderContext = contexts.find(
-      (context) => context.systemPrompt?.append?.includes('team coordinator') === true,
+      (context) =>
+        context.systemPrompt?.append?.some((prompt) =>
+          prompt.includes('team coordinator'),
+        ) === true,
     );
     const memberContext = contexts.find(
-      (context) => context.systemPrompt?.append?.includes('worker specialist') === true,
+      (context) =>
+        context.systemPrompt?.append?.some((prompt) =>
+          prompt.includes('worker specialist'),
+        ) === true,
     );
     const teammateContext = contexts.find(
-      (context) => context.systemPrompt?.append?.includes('general helper') === true,
+      (context) =>
+        context.systemPrompt?.append?.some((prompt) =>
+          prompt.includes('general helper'),
+        ) === true,
     );
     expect(dispatcherContext?.disableFeatures).toEqual(['userInterrupt', 'cron']);
     expect(dispatcherContext?.systemPrompt?.replace).toContain('Dreamux dispatcher');
-    expect(dispatcherContext?.systemPrompt?.append).toContain('Dreamux dispatcher');
+    expect(dispatcherContext?.systemPrompt?.append).toEqual([
+      expect.stringContaining('Dreamux dispatcher'),
+    ]);
     expect(leaderContext?.mcpServers.map((server) => server.name)).toContain('cron');
     expect(leaderContext?.mcpServers.map((server) => server.name)).toContain('team');
     expect(
@@ -424,15 +435,28 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       expect.any(String),
     ]);
     expect(leaderContext?.disableFeatures).toEqual(['userInterrupt', 'cron']);
-    expect(leaderContext?.systemPrompt?.append).toContain('team coordinator');
+    expect(leaderContext?.systemPrompt?.append).toEqual([
+      'You are the TeamLeader of Dreamux Team "alpha".',
+      expect.stringContaining('team coordinator'),
+    ]);
     expect(leaderContext?.systemPrompt).not.toHaveProperty('replace');
     expect(memberContext?.mcpServers.map((server) => server.name)).not.toContain('team');
     expect(memberContext?.mcpServers.map((server) => server.name)).not.toContain('cron');
     expect(memberContext?.disableFeatures).toEqual(['userInterrupt']);
-    expect(memberContext?.systemPrompt?.append).toContain('worker specialist');
+    expect(memberContext?.systemPrompt?.append).toEqual([
+      expect.stringContaining('worker specialist'),
+    ]);
+    expect(memberContext?.systemPrompt?.append?.join('\n')).not.toContain(
+      'TeamLeader of Dreamux Team',
+    );
     expect(memberContext?.systemPrompt).not.toHaveProperty('replace');
     expect(teammateContext?.disableFeatures).toEqual(['userInterrupt']);
-    expect(teammateContext?.systemPrompt?.append).toContain('general helper');
+    expect(teammateContext?.systemPrompt?.append).toEqual([
+      expect.stringContaining('general helper'),
+    ]);
+    expect(teammateContext?.systemPrompt?.append?.join('\n')).not.toContain(
+      'TeamLeader of Dreamux Team',
+    );
     expect(teammateContext?.systemPrompt).not.toHaveProperty('replace');
 
     await dispatcher.stop();

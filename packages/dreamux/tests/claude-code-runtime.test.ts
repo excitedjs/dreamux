@@ -306,7 +306,7 @@ describe('claude-code pure translation (not Codex renamed)', () => {
       config: defaultDispatcherClaudeCodeConfig(),
       mcpConfigPath: '/x.json',
       resumeSessionId: null,
-      systemPromptContent: 'You are a Dreamux dispatcher.',
+      systemPromptAppend: ['You are a Dreamux dispatcher.'],
     });
     // claude APPENDS the role prompt on top of its own system prompt — distinct
     // from codex, which REPLACES its base instructions.
@@ -315,7 +315,10 @@ describe('claude-code pure translation (not Codex renamed)', () => {
         args.indexOf('--append-system-prompt'),
         args.indexOf('--append-system-prompt') + 2,
       ),
-    ).toEqual(['--append-system-prompt', 'You are a Dreamux dispatcher.']);
+    ).toEqual([
+      '--append-system-prompt',
+      '<system-reminder>\nYou are a Dreamux dispatcher.\n</system-reminder>',
+    ]);
   });
 
   it('omits --append-system-prompt when no role prompt is supplied (e.g. teammate)', () => {
@@ -329,7 +332,7 @@ describe('claude-code pure translation (not Codex renamed)', () => {
       config: defaultDispatcherClaudeCodeConfig(),
       mcpConfigPath: '/x.json',
       resumeSessionId: null,
-      systemPromptContent: '',
+      systemPromptAppend: [],
     });
     expect(emptyArgs).not.toContain('--append-system-prompt');
   });
@@ -449,7 +452,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     const fleet = fakeFleet();
     const { runtime } = makeRuntime(fleet, {
       systemPrompt: {
-        append: 'Dreamux persistent TeamMate identity guidance:\nReviewer role.',
+        append: ['Dreamux persistent identity guidance:\nReviewer role.'],
       },
     });
     await runtime.start();
@@ -458,7 +461,53 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     const i = args.indexOf('--append-system-prompt');
     expect(i).toBeGreaterThanOrEqual(0);
     expect(args[i + 1]).toBe(
-      'Dreamux persistent TeamMate identity guidance:\nReviewer role.',
+      '<system-reminder>\n' +
+        'Dreamux persistent identity guidance:\nReviewer role.\n' +
+        '</system-reminder>',
+    );
+  });
+
+  it('wraps each systemPrompt.append item in its own system-reminder block', async () => {
+    const fleet = fakeFleet();
+    const { runtime } = makeRuntime(fleet, {
+      systemPrompt: {
+        append: ['Default TeamLeader identity.', 'Architecture review rules.'],
+      },
+    });
+    await runtime.start();
+
+    const args = fleet.sessions[0]?.spec.args ?? [];
+    const i = args.indexOf('--append-system-prompt');
+    expect(i).toBeGreaterThanOrEqual(0);
+    expect(args[i + 1]).toBe(
+      '<system-reminder>\n' +
+        'Default TeamLeader identity.\n' +
+        '</system-reminder>\n\n' +
+        '<system-reminder>\n' +
+        'Architecture review rules.\n' +
+        '</system-reminder>',
+    );
+  });
+
+  it('escapes each systemPrompt.append item inside its system-reminder block', async () => {
+    const fleet = fakeFleet();
+    const { runtime } = makeRuntime(fleet, {
+      systemPrompt: {
+        append: [
+          'Use <danger> & never close </system-reminder>',
+          '',
+        ],
+      },
+    });
+    await runtime.start();
+
+    const args = fleet.sessions[0]?.spec.args ?? [];
+    const i = args.indexOf('--append-system-prompt');
+    expect(i).toBeGreaterThanOrEqual(0);
+    expect(args[i + 1]).toBe(
+      '<system-reminder>\n' +
+        'Use &lt;danger&gt; &amp; never close &lt;/system-reminder&gt;\n' +
+        '</system-reminder>',
     );
   });
 
@@ -467,7 +516,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     const { runtime } = makeRuntime(fleet, {
       systemPrompt: {
         replace: 'Complete replacement prompt for replace-native runtimes.',
-        append: 'Focused append prompt for Claude Code.',
+        append: ['Focused append prompt for Claude Code.'],
       },
     });
     await runtime.start();
@@ -475,7 +524,9 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     const args = fleet.sessions[0]?.spec.args ?? [];
     const i = args.indexOf('--append-system-prompt');
     expect(i).toBeGreaterThanOrEqual(0);
-    expect(args[i + 1]).toBe('Focused append prompt for Claude Code.');
+    expect(args[i + 1]).toBe(
+      '<system-reminder>\nFocused append prompt for Claude Code.\n</system-reminder>',
+    );
     expect(args[i + 1]).not.toContain('Complete replacement prompt');
   });
 
@@ -484,6 +535,18 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     const { runtime } = makeRuntime(fleet, {
       systemPrompt: {
         replace: 'Complete replacement prompt for replace-native runtimes.',
+      },
+    });
+    await runtime.start();
+
+    expect(fleet.sessions[0]?.spec.args).not.toContain('--append-system-prompt');
+  });
+
+  it('omits append prompt when all append items are empty strings', async () => {
+    const fleet = fakeFleet();
+    const { runtime } = makeRuntime(fleet, {
+      systemPrompt: {
+        append: ['', ''],
       },
     });
     await runtime.start();
