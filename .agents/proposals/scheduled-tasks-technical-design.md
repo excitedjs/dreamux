@@ -239,27 +239,30 @@ user's live turn on Codex (R2). The former conclusion to use
   `teammate-service/index.ts:549`) — the structured turn↔job association (G3), never
   an `intent:'cron:<id>'` magic prefix.
 
-### 4.3 Egress (G1 closure)
+### 4.3 Egress (deferred until a separate neutral egress contract)
 
 Bindings are Team-scoped `ChannelBinding` (`channel-binding/store.ts:20-39`), keyed
-`(channel_id, target_key)`, provider selectors in `meta`. Design:
+`(channel_id, target_key)`, provider selectors in `meta`. This remains the right
+state shape for a future egress feature, but the updated AgentRuntime input
+surface is text-only for non-channel turns. Do not carry a resolved
+`ChannelTarget`, channel attributes, or reply metadata through
+`completionInput`.
+
+Deferred design shape:
 1. **State** — `deliver = {channel_id, target_key}` referencing an existing binding;
    validated at create/update via `DispatcherService.resolveChannelTarget(meta, channelId)`
    (`index.ts:610`) but only the neutral keys are stored.
 2. **Resolve** — at fire, `ChannelBindingStore.resolve(...)` → neutral `ChannelTarget`
    (`dreamux-types/channel.ts:32-39`).
-3. **Delivery** — carry the resolved neutral `ChannelTarget` to the agent as a
-   **structured** field on the scheduled injection, consumed by the channel reply
-   seam (`channel.ts:83,180`; Feishu adapter translates to `chat_id` internally,
-   `feishu-channel/src/provider.ts:200`). **Never** concatenate `chat_id` into prompt
-   text.
-   - **Residual (ties to G2):** the injection-contract extension that delivers the
-     neutral target to the agent must be settled **together with** the scheduled
-     injection verb. If not ready in v1, jobs WITHOUT `deliver` (internal turns) ship
-     first; egress jobs wait — **never** fall back to prompt-string glue. (Mandatory
-     prerequisite #3, §9.)
-4. The scheduler never sends channel messages itself; the agent owns egress through
-   the channel seam (preserves "no channel routing in the runtime/core trigger path").
+3. **Delivery** — out of scope for the text-only scheduled-turn slice. Jobs
+   without `deliver` (internal turns) may ship first; jobs with `deliver` remain
+   rejected or deferred until a separate neutral egress contract exists.
+
+The scheduler must not concatenate `chat_id` into prompt text, must not send
+channel messages itself, and must not pass channel target metadata through the
+runtime input surface. A future egress contract may execute outside the runtime
+input surface or add a dedicated neutral capability, but it is not part of this
+proposal.
 
 Note: `channel.ts`'s `message_id` is a legitimate **channel-layer** field; the
 runtime contract (`turn.ts InboundTurnInput`) has none — keep it that way.
@@ -360,10 +363,10 @@ stores onto `JsonDocumentStore`, fixing the non-atomic `DispatcherStore` write.
    `systemInput.reason` branch.
 2. **Claude `queuedTurnCount` must exclude the steer-fold branch** (TRAP-2) or
    `waitIdle` never resolves.
-3. **Egress stores only the neutral `(channel_id, target_key)`**; the mechanism that
-   delivers the resolved neutral target to the agent is a runtime-injection-contract
-   change to be settled together with the scheduled injection verb (G1/G2). Until
-   ready, egress jobs are deferred — never a prompt-string fallback.
+3. **Egress is deferred from this text-only slice** — scheduled jobs that need
+   `deliver` must be rejected or held until a separate neutral egress contract
+   exists. Never pass `ChannelTarget` metadata through `completionInput`, and
+   never fall back to prompt-string glue.
 
 ## 10. Test plan
 

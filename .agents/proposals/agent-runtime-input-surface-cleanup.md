@@ -192,6 +192,11 @@ Do not pass the whole Dreamux role as an escape hatch.
 - MCP `spawn`/`send`, TeamLeader send, scheduler delivery, restart notice
   delivery, and reverse completion notification delivery use plain text
   `completionInput`.
+- Restart notice delivery preserves the existing recovered-session claim and
+  skip behavior before calling the runtime: Dreamux core decides whether a
+  restart notice should be rendered and submitted, then calls
+  `completionInput({ text, sourceId })`. Providers do not receive
+  `reason: "restart-notice"` or any hidden restart discriminator.
 - Reverse completion delivery still preserves at-most-once semantics, spill-file
   handling for long outputs, and a clear fallback when the target runtime is
   stopped or cannot accept the turn.
