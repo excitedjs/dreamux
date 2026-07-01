@@ -6,6 +6,13 @@
 - **Source snapshot:** Verified against `origin/next` commit `50e3bd5268a07fcf0ba99214c81ac1701bfce740`
 - **External runtime snapshots:** Kimi Code `main@210cedb3bf22282fb16e0e7dabe2956f80f13976`, MiMo Code `main@1c5217ef342518d6cfcd2d1c1d96d`, OpenCode `dev@8e10ab0aa78fda983040d29ee73c16c66b8c418b`
 
+> Input-surface note: the "Inputs" and completion-delivery method shape below
+> are superseded by
+> [AgentRuntime input surface cleanup](agent-runtime-input-surface-cleanup.md).
+> The lifecycle principles here still stand; non-channel turns now converge on
+> plain text `completionInput`, and `systemInput` is no longer the intended
+> provider-facing seam.
+
 ## Intent
 
 Keep Dreamux core small and stable while making external Agent Runtime providers
@@ -249,6 +256,10 @@ Rules:
   host adapters.
 
 ### Inputs
+
+Superseded by
+[AgentRuntime input surface cleanup](agent-runtime-input-surface-cleanup.md).
+Keep this section as historical context for the earlier draft.
 
 Core should expose only the runtime inboxes Dreamux actually needs: channel/user
 turns, Dreamux-owned system messages, and optional completion delivery. It does

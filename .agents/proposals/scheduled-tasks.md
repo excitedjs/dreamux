@@ -7,6 +7,13 @@
 - **PR / Issue:** TBD
 - **Implementation blueprint:** [scheduled-tasks technical design](scheduled-tasks-technical-design.md)
 
+> Input-surface note: scheduled prompt injection references to `systemInput` are
+> superseded by
+> [AgentRuntime input surface cleanup](agent-runtime-input-surface-cleanup.md).
+> The scheduler still waits for idle before injecting, but the target injection
+> seam is plain text `completionInput`, not channel input or
+> `systemInput(reason: "scheduled")`.
+
 ## Context
 
 We want a scheduled-task ("cron") mechanism for Dreamux: at a wall-clock time
@@ -55,10 +62,10 @@ package docs).
 The research that motivated this design confirmed three load-bearing facts in
 the current code:
 
-1. **Turn injection already exists.** `AgentRuntime` exposes
-   `systemInput(notice: AgentRuntimeSystemInput)` (used today for the restart
-   notice) and the resident dispatcher agent is a `TeammateService` exposing
-   `send({ prompt, intent })`
+1. **Turn injection already exists.** Earlier drafts used
+   `systemInput(notice: AgentRuntimeSystemInput)` (used at the time for the
+   restart notice) or the resident dispatcher's `TeammateService.send({
+   prompt, intent })`
    (`/packages/dreamux/src/service/teammate-service/index.ts`). Neither path
    requires fabricating a channel message.
 2. **Durable state has a clear pattern to copy.** `ChannelBindingStore`
@@ -169,13 +176,13 @@ interface AgentRuntime {
 - No parameters and no cancellation. A caller that gives up abandons the promise;
   the runtime resolves all pending waiters and clears them at the next idle edge.
 - Timeout and teardown are caller-owned `Promise.race` concerns plus local submit
-  guards before `systemInput`.
+  guards before the plain text runtime input.
 
 Consumer shape — the whole defer-until-idle becomes two lines:
 
 ```ts
 await (runtime.waitIdle?.() ?? Promise.resolve());
-await runtime.systemInput(/* or agent.send */ ...);
+await runtime.completionInput({ text: prompt, sourceId });
 ```
 
 Why Promise over observer: a `waitIdle` promise models "I want to act once, when
@@ -208,7 +215,8 @@ the process is fresh and the agent is idle by construction. Its existing
 real inbound can arrive first and should avoid a duplicate wake. The scheduler
 therefore inlines the only wait-idle consumer path:
 `await Promise.race([runtime.waitIdle?.() ?? Promise.resolve(), maxDefer])`,
-then re-checks that the held fire is still current before `systemInput`.
+then re-checks that the held fire is still current before the plain text runtime
+input.
 
 Explicitly *not* migrated (different axis — keep as is): `getRuntime() !== null`
 runtime-existence gates and `getStatus()` lifecycle reads. Those are
@@ -526,15 +534,16 @@ capability/abstraction.** Found five; G1–G3 are real design glue, G4 is
   channel seam — not a `chat_id` smuggled inside a prompt string. (Overlaps
   reviewer R3, which only fixed the *state field*; the *mechanism* is still
   glue and must change too.)
-- **G2 — The scheduled trigger has no first-class injection path; it overloads
-  one.** Today the draft would call `agent.send` (which enters as a
-  channel-inbound turn, `runtime.channelInput({ sourceId: 'teammate:…' })`) or
-  `systemInput` with a generic control reason. The first misuses the
-  channel-input path for a non-channel event; the second overloads a generic
-  reason instead of naming the scheduler event. Both are glue. Proper shape: a scheduled trigger is its own neutral injection
-  intent — either a new `reason: 'scheduled'` on the system-input contract, or
-  a dedicated injection verb — so the runtime and turn records can tell a cron
-  fire apart from a user message or a restart notice without string sniffing.
+- **G2 — The scheduled trigger must not overload channel input.** Earlier drafts
+  would call `agent.send` (which enters as a channel-inbound turn,
+  `runtime.channelInput({ sourceId: 'teammate:…' })`) or `systemInput` with a
+  generic control reason. The first misuses the channel-input path for a
+  non-channel event; the second has since been superseded by the plain text
+  runtime input in
+  [AgentRuntime input surface cleanup](agent-runtime-input-surface-cleanup.md).
+  Proper shape: a scheduled trigger is a non-channel plain text turn with
+  structured turn-origin metadata in Dreamux records, not channel XML and not a
+  provider-facing reason discriminator.
 - **G3 — `intent: 'cron:<id>'` magic-prefix correlation.** Encoding the job id
   into the free-text `intent` with a `cron:` prefix and parsing it back is
   string glue. If core needs to correlate a turn to a cron job, carry a
@@ -583,9 +592,10 @@ described. `croner` is **not** yet a dependency (must be added via rush).
   `last_status: completed/failed` therefore had no implementation basis as
   drafted. **Resolved 2026-06-23 by descoping**: the scheduler is now
   fire-and-forget (see "Scope decisions") and records only `last_fired_at`, so
-  it never needs terminal status. The `send`-vs-`systemInput` choice still
-  stands as an implementation detail (which injection verb to use), but it no
-  longer carries a status-tracking requirement.
+  it never needs terminal status. The old `send`-vs-`systemInput` injection
+  choice is superseded by the plain text runtime input in
+  [AgentRuntime input surface cleanup](agent-runtime-input-surface-cleanup.md);
+  it no longer carries a status-tracking requirement.
 - **R2 — `prompt-agent` injection can hijack an active user turn.** Codex
   `steer.supported = true` means a `send` mid-turn is absorbed into the user's
   live turn (`agent-runtime.ts:96`). This is a correctness risk, not just

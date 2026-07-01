@@ -91,6 +91,12 @@ history and rationale; when you need current behavior, pair them with
 
 ## Active Proposals
 
+- [AgentRuntime input surface cleanup](proposals/agent-runtime-input-surface-cleanup.md)
+  — draft technical design for narrowing the provider-facing runtime input
+  surface: plain text `completionInput` for non-channel turns, `channelInput`
+  only for channel-originated XML rendering, provider-owned skill layout
+  materialization, and removal of Dreamux structural `role` from
+  `AgentRuntimeCreateContext`.
 - [AgentRuntime lifecycle contracts](proposals/agent-runtime-lifecycle-contracts.md)
   — draft technical design for the minimum neutral Agent Runtime contract:
   Dreamux logical turns, turn-owned settlement results, opaque checkpoints,
