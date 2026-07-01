@@ -15,7 +15,6 @@ import type {
   AgentRuntimeProvider,
   AgentRuntimeStatus,
   AgentRuntimeSystemInput,
-  AgentRuntimeSystemPrompt,
   AgentRuntimeTurnResult,
   CompletionEnvelope,
   DreamuxLogger,
@@ -371,7 +370,7 @@ describe('TeamCollection identity prompt launch behavior', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it('persists trimmed TeamLeader identity, injects it as append-only prompt, and does not inherit it to members', async () => {
+  it('persists trimmed TeamLeader identity, supplies identityGuidance, and does not inherit it to members', async () => {
     const workspace = join(root, 'workspace');
     mkdirSync(workspace, { recursive: true });
     const runtimes: FakeRuntime[] = [];
@@ -410,9 +409,8 @@ describe('TeamCollection identity prompt launch behavior', () => {
     });
     const team = await teams.get('alpha');
     expect(team.leader.current().identity_prompt).toBe('architecture reviewer');
-    expect((contexts[0]?.systemPrompt as AgentRuntimeSystemPrompt | undefined)?.append)
-      .toContain('architecture reviewer');
-    expect(contexts[0]?.systemPrompt).not.toHaveProperty('replace');
+    expect(contexts[0]?.identityGuidance).toContain('architecture reviewer');
+    expect(contexts[0]?.systemPrompt).toBeUndefined();
     const summary = await team.status();
     expect(summary.leader).not.toHaveProperty('identity_prompt');
     expect(runtimes[0]!.submitted.map((input) => input.text)).toEqual([
@@ -425,7 +423,9 @@ describe('TeamCollection identity prompt launch behavior', () => {
       agentRuntime: 'agent-a',
       intent: 'member work',
     });
-    expect(contexts.find((context) => context.role === 'team_member')?.systemPrompt)
+    const memberContext = contexts.find((context) => context.role === 'team_member');
+    expect(memberContext?.identityGuidance).toBeUndefined();
+    expect(memberContext?.systemPrompt)
       .toBeUndefined();
   });
 

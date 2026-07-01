@@ -47,6 +47,7 @@ import { BUILTIN_CODEX_PROVIDER_REF } from './provider-ref.js';
 import { CODEX_AGENT_RUNTIME_CAPABILITIES } from './provider.js';
 import {
   buildCodexCompletionItem,
+  buildCodexIdentityGuidanceItem,
   CODEX_COMPLETION_TRIGGER_TEXT,
   codexProcessEnv,
 } from './runtime-support.js';
@@ -58,6 +59,7 @@ const DEFAULT_RESTART_BACKOFF_MAX_MS = 30_000;
 export interface CodexRuntimeDeps {
     cwd: string;
     systemPromptReplace?: string;
+    identityGuidance?: string;
     state: AgentRuntimeStateCallbacks;
     paths: AgentRuntimePathContext;
     allocateSocketPath: (id: string) => string;
@@ -260,6 +262,7 @@ export class CodexRuntime implements AgentRuntime {
     await this.applySkillExtraRoots();
 
     await this.resolveThread();
+    await this.injectIdentityGuidance();
 
     this.turnManager = new TurnManager({
       dispatcherId: this.dispatcherId,
@@ -329,6 +332,24 @@ export class CodexRuntime implements AgentRuntime {
           last_error: `thread/resume failed: ${msg}`,
         });
       }
+    }
+  }
+
+  private async injectIdentityGuidance(): Promise<void> {
+    if (this.deps.identityGuidance === undefined) return;
+    if (this.client === null) throw new Error('client not initialized');
+    if (this.threadId === null) {
+      throw new Error('codex identity guidance injection has no thread id');
+    }
+    try {
+      await injectThreadItems(this.client, this.threadId, [
+        buildCodexIdentityGuidanceItem(this.deps.identityGuidance),
+      ]);
+    } catch (err) {
+      const cause = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `codex identity guidance thread/inject_items failed (requires codex 0.137+): ${cause}`,
+      );
     }
   }
 

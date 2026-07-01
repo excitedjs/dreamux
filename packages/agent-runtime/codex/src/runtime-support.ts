@@ -65,6 +65,21 @@ export async function buildCodexCompletionItem(
   };
 }
 
+export function buildCodexIdentityGuidanceItem(
+  identityGuidance: string,
+): Record<string, unknown> {
+  return {
+    type: 'message',
+    role: 'developer',
+    content: [
+      {
+        type: 'input_text',
+        text: identityGuidance,
+      },
+    ],
+  };
+}
+
 /**
  * Minimal user-turn text that wakes the idle dispatcher after a completion is
  * injected. The injected developer item carries the actual result; this turn

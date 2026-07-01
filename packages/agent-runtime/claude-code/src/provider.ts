@@ -124,6 +124,7 @@ export function createClaudeCodeAgentRuntimeProvider(
           'claude-code runtime requires a path context in the create context',
         );
       }
+      const systemPromptAppend = claudeCodeAppendPrompt(context);
       const deps: ClaudeCodeRuntimeDeps = {
         config: context.config,
         cwd: context.cwd,
@@ -141,8 +142,8 @@ export function createClaudeCodeAgentRuntimeProvider(
         ...(context.disableFeatures !== undefined
           ? { disableFeatures: context.disableFeatures }
           : {}),
-        ...(context.systemPrompt?.append !== undefined
-          ? { systemPromptAppend: context.systemPrompt.append }
+        ...(systemPromptAppend !== undefined
+          ? { systemPromptAppend }
           : {}),
         ...(context.onTurnSettled !== undefined
           ? { onTurnSettled: context.onTurnSettled }
@@ -152,6 +153,14 @@ export function createClaudeCodeAgentRuntimeProvider(
       return new ClaudeCodeRuntime(context.identity, deps);
     },
   };
+}
+
+function claudeCodeAppendPrompt(
+  context: AgentRuntimeCreateContext,
+): string | undefined {
+  return [context.systemPrompt?.append, context.identityGuidance]
+    .filter((entry): entry is string => entry !== undefined && entry !== '')
+    .join('\n\n') || undefined;
 }
 
 /** Re-export the typed accessor for a runtime's resolved claude-code config. */

@@ -247,6 +247,11 @@ export interface AgentRuntimeCreateContext<TConfig = unknown> {
    */
   systemPrompt?: AgentRuntimeSystemPrompt;
   /**
+   * MCP-created TeamLeader/TeamMate role guidance rendered from the persisted
+   * TeamMate identity record. Never populated for dispatcher launch prompts.
+   */
+  identityGuidance?: string;
+  /**
    * MCP servers the launcher injects for this runtime instance. Already fully
    * resolved by core: an empty array means "no MCP servers", and the provider
    * must launch exactly these — it must not infer, append, or mutate the list.

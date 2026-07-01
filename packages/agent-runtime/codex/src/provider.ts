@@ -165,6 +165,9 @@ export function createCodexAgentRuntimeProvider(
         ...(systemPromptReplace !== undefined
           ? { systemPromptReplace }
           : {}),
+        ...(context.identityGuidance !== undefined
+          ? { identityGuidance: context.identityGuidance }
+          : {}),
         ...(context.onTurnSettled !== undefined
           ? { onTurnSettled: context.onTurnSettled }
           : {}),

@@ -421,7 +421,7 @@ export class TeammateService {
         skillSources: bundledSkillSourcesForRole(identity.role),
         disableFeatures: this.disableFeatures,
         ...(identity.identity_prompt !== null
-          ? { systemPrompt: teammateIdentitySystemPrompt(identity.identity_prompt) }
+          ? { identityGuidance: teammateIdentityGuidance(identity.identity_prompt) }
           : {}),
         state: this.state,
         paths: teammateHostPaths(identity.dispatcher_id, runtimeName),
@@ -569,14 +569,11 @@ function runtimeIdentityName(identity: TeamMateIdentity): string {
     : identity.name;
 }
 
-function teammateIdentitySystemPrompt(identityPrompt: string): {
-  append: string;
-} {
-  return {
-    append:
-      'Dreamux persistent TeamMate identity guidance:\n' +
-      'This is stable role guidance for this runtime session, not the current task request. ' +
-      'Apply it as an identity delta on top of your native coding-agent instructions.\n\n' +
-      identityPrompt,
-  };
+function teammateIdentityGuidance(identityPrompt: string): string {
+  return (
+    'Dreamux persistent TeamMate identity guidance:\n' +
+    'This is stable role guidance for this runtime session, not the current task request. ' +
+    'Apply it as an identity delta on top of your native coding-agent instructions.\n\n' +
+    identityPrompt
+  );
 }
