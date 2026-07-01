@@ -76,9 +76,9 @@ function asAgentRuntimeDescriptor(
 /**
  * Create the built-in Claude Code `AgentRuntimeProvider`. It implements the
  * neutral `@excitedjs/dreamux-types` contract: `readConfig` parses Claude Code
- * runtime config, `getCapabilities` reports its append/synthesized/plain-turn
- * shape, and `createRuntime` builds a {@link ClaudeCodeRuntime} from the neutral
- * create context plus the host-supplied options.
+ * runtime config, `getCapabilities` reports resume support, and `createRuntime`
+ * builds a {@link ClaudeCodeRuntime} from the neutral create context plus the
+ * host-supplied options.
  */
 export function createClaudeCodeAgentRuntimeProvider(
   options: ClaudeCodeAgentRuntimeProviderOptions = {},
@@ -141,7 +141,7 @@ export function createClaudeCodeAgentRuntimeProvider(
         ...(context.disableFeatures !== undefined
           ? { disableFeatures: context.disableFeatures }
           : {}),
-        ...(context.systemPrompt !== undefined
+        ...(context.systemPrompt?.append !== undefined
           ? { systemPromptAppend: context.systemPrompt.append }
           : {}),
         ...(context.onTurnSettled !== undefined

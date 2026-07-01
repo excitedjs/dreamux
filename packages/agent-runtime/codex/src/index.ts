@@ -8,6 +8,7 @@
 export {
   default,
   createCodexAgentRuntimeProvider,
+  codexSystemPromptReplace,
   codexRuntimeArgsForMcpServers,
   dispatcherCodexConfig,
   CODEX_AGENT_RUNTIME_CAPABILITIES,

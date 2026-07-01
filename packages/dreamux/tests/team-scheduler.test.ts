@@ -10,7 +10,7 @@ import type {
   AgentRuntimeLastResult,
   AgentRuntimeProvider,
   AgentRuntimeStatus,
-  AgentRuntimeSystemInput,
+  AgentRuntimeTextInput,
   AgentRuntimeTurnResult,
   DreamuxLogger,
   InboundTurnInput,
@@ -44,7 +44,7 @@ const CAPABILITIES: AgentRuntimeCapabilities = {
 class FakeRuntime implements AgentRuntime {
   readonly providerRef = FAKE_RUNTIME_REF;
   readonly submitted: InboundTurnInput[] = [];
-  readonly systemSubmitted: AgentRuntimeSystemInput[] = [];
+  readonly textSubmitted: AgentRuntimeTextInput[] = [];
   private status: AgentRuntimeStatus = 'declared';
 
   async start(): Promise<void> {
@@ -64,9 +64,9 @@ class FakeRuntime implements AgentRuntime {
     return { status: 'submitted', turnId: `turn-${this.submitted.length}` };
   }
 
-  async systemInput(notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult> {
-    this.systemSubmitted.push(notice);
-    return { status: 'submitted', turnId: `system-${this.systemSubmitted.length}` };
+  async completionInput(input: AgentRuntimeTextInput): Promise<AgentRuntimeTurnResult> {
+    this.textSubmitted.push(input);
+    return { status: 'submitted', turnId: `text-${this.textSubmitted.length}` };
   }
 
   getStatus(): AgentRuntimeStatus {
@@ -247,12 +247,12 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     await waitFor(
       () =>
         restartedRuntimes.length === 1 &&
-        restartedRuntimes[0]!.systemSubmitted.length === 1,
+        restartedRuntimes[0]!.textSubmitted.length === 1,
       4000,
     );
-    expect(restartedRuntimes[0]!.systemSubmitted[0]).toEqual({
-      reason: 'scheduled',
+    expect(restartedRuntimes[0]!.textSubmitted[0]).toEqual({
       text: 'scheduled alpha',
+      sourceId: expect.stringMatching(/^scheduled:job-/),
     });
   });
 
@@ -371,6 +371,7 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       name: 'alpha',
       leaderAgentRuntime: 'agent-a',
       intent: 'lead alpha',
+      identity: 'team coordinator',
     });
     const team = await dispatcher.team('alpha');
     await team.spawnTeamMate({
@@ -378,6 +379,7 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       prompt: 'do work',
       agentRuntime: 'agent-a',
       intent: 'member work',
+      identity: 'worker specialist',
     });
     await dispatcher.teammates.spawn({
       name: 'helper',
@@ -386,13 +388,24 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       worktree: { mode: 'reuse-cwd' },
       agentRuntime: 'agent-a',
       intent: 'ordinary work',
+      identity: 'general helper',
     });
 
-    const dispatcherContext = contexts.find((context) => context.role === 'dispatcher');
-    const leaderContext = contexts.find((context) => context.role === 'team_leader');
-    const memberContext = contexts.find((context) => context.role === 'team_member');
-    const teammateContext = contexts.find((context) => context.role === 'teammate');
+    const dispatcherContext = contexts.find(
+      (context) => context.identity.runtime_id === 'dispatcher-a',
+    );
+    const leaderContext = contexts.find(
+      (context) => context.systemPrompt?.append?.includes('team coordinator') === true,
+    );
+    const memberContext = contexts.find(
+      (context) => context.systemPrompt?.append?.includes('worker specialist') === true,
+    );
+    const teammateContext = contexts.find(
+      (context) => context.systemPrompt?.append?.includes('general helper') === true,
+    );
     expect(dispatcherContext?.disableFeatures).toEqual(['userInterrupt', 'cron']);
+    expect(dispatcherContext?.systemPrompt?.replace).toContain('Dreamux dispatcher');
+    expect(dispatcherContext?.systemPrompt?.append).toContain('Dreamux dispatcher');
     expect(leaderContext?.mcpServers.map((server) => server.name)).toContain('cron');
     expect(leaderContext?.mcpServers.map((server) => server.name)).toContain('team');
     expect(
@@ -411,10 +424,16 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       expect.any(String),
     ]);
     expect(leaderContext?.disableFeatures).toEqual(['userInterrupt', 'cron']);
+    expect(leaderContext?.systemPrompt?.append).toContain('team coordinator');
+    expect(leaderContext?.systemPrompt).not.toHaveProperty('replace');
     expect(memberContext?.mcpServers.map((server) => server.name)).not.toContain('team');
     expect(memberContext?.mcpServers.map((server) => server.name)).not.toContain('cron');
     expect(memberContext?.disableFeatures).toEqual(['userInterrupt']);
+    expect(memberContext?.systemPrompt?.append).toContain('worker specialist');
+    expect(memberContext?.systemPrompt).not.toHaveProperty('replace');
     expect(teammateContext?.disableFeatures).toEqual(['userInterrupt']);
+    expect(teammateContext?.systemPrompt?.append).toContain('general helper');
+    expect(teammateContext?.systemPrompt).not.toHaveProperty('replace');
 
     await dispatcher.stop();
   });
@@ -458,11 +477,12 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       teamId: 'alpha',
       prompt: 'follow up',
     });
-    expect(sent.turn).toEqual({ status: 'submitted', turn_id: 'turn-1' });
+    expect(sent.turn).toEqual({ status: 'submitted', turn_id: 'text-1' });
     expect(runtimes).toHaveLength(2);
-    expect(runtimes[1]!.submitted.map((input) => input.text)).toEqual([
+    expect(runtimes[1]!.textSubmitted.map((input) => input.text)).toEqual([
       'follow up',
     ]);
+    expect(runtimes[1]!.submitted).toEqual([]);
 
     await dispatcher.shutdown();
     await expect(

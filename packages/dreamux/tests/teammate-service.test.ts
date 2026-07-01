@@ -10,7 +10,7 @@ import type {
   AgentRuntimeLastResult,
   AgentRuntimeProvider,
   AgentRuntimeStatus,
-  AgentRuntimeSystemInput,
+  AgentRuntimeTextInput,
   AgentRuntimeTurnResult,
   DreamuxLogger,
   InboundTurnInput,
@@ -34,7 +34,7 @@ const CAPABILITIES: AgentRuntimeCapabilities = {
 class FakeRuntime implements AgentRuntime {
   readonly providerRef = FAKE_RUNTIME_REF;
   readonly submitted: InboundTurnInput[] = [];
-  readonly systemSubmitted: AgentRuntimeSystemInput[] = [];
+  readonly textSubmitted: AgentRuntimeTextInput[] = [];
   private status: AgentRuntimeStatus = 'declared';
 
   async start(): Promise<void> {
@@ -54,9 +54,9 @@ class FakeRuntime implements AgentRuntime {
     return { status: 'submitted', turnId: `turn-${this.submitted.length}` };
   }
 
-  async systemInput(notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult> {
-    this.systemSubmitted.push(notice);
-    return { status: 'submitted', turnId: `system-${this.systemSubmitted.length}` };
+  async completionInput(input: AgentRuntimeTextInput): Promise<AgentRuntimeTurnResult> {
+    this.textSubmitted.push(input);
+    return { status: 'submitted', turnId: `text-${this.textSubmitted.length}` };
   }
 
   getStatus(): AgentRuntimeStatus {
@@ -84,7 +84,10 @@ class FakeRuntime implements AgentRuntime {
   }
 }
 
-function fakeRuntimeCatalog(runtimes: FakeRuntime[]): AgentRuntimeProviderCatalog {
+function fakeRuntimeCatalog(
+  runtimes: FakeRuntime[],
+  contexts: AgentRuntimeCreateContext[] = [],
+): AgentRuntimeProviderCatalog {
   const provider: AgentRuntimeProvider = {
     ref: FAKE_RUNTIME_REF,
     descriptor: {
@@ -93,8 +96,9 @@ function fakeRuntimeCatalog(runtimes: FakeRuntime[]): AgentRuntimeProviderCatalo
       ref: { source: 'builtin', id: 'test-runtime', raw: FAKE_RUNTIME_REF },
     },
     getCapabilities: () => CAPABILITIES,
-    createRuntime(_context: AgentRuntimeCreateContext) {
+    createRuntime(context: AgentRuntimeCreateContext) {
       const runtime = new FakeRuntime();
+      contexts.push(context);
       runtimes.push(runtime);
       return runtime;
     },
@@ -144,6 +148,7 @@ async function createTestTeamLeader(input: {
   workspace: string;
   config: ReturnType<typeof testDreamuxConfig>;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
+  identity?: string;
 }): Promise<TeammateService> {
   const log = noopLog();
   const identities = new TeamMateIdentityStore({ warn: log.warn.bind(log) });
@@ -160,6 +165,7 @@ async function createTestTeamLeader(input: {
     runtimeCwd: input.workspace,
     worktree: reuseCwd(input.workspace),
     intent: 'lead alpha',
+    ...(input.identity !== undefined ? { identityPrompt: input.identity } : {}),
     status: 'starting',
   });
   const leader = createTeamLeaderAgent({
@@ -234,10 +240,88 @@ describe('TeammateService channel input routing', () => {
       leader.channelInput({ sourceId: 'message-1', text: 'from bound group' }),
     ).resolves.toMatchObject({ status: 'submitted' });
     expect(runtimes).toHaveLength(1);
-    expect(runtimes[0]!.submitted.map((input) => input.text)).toEqual([
+    expect(runtimes[0]!.textSubmitted.map((input) => input.text)).toEqual([
       'initial leader prompt',
+    ]);
+    expect(runtimes[0]!.submitted.map((input) => input.text)).toEqual([
       'from bound group',
     ]);
+  });
+
+  it('sets append-only systemPrompt from the stored identity and keeps it out of channel input', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const contexts: AgentRuntimeCreateContext[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const leader = await createTestTeamLeader({
+      dispatcherId: 'dispatcher-a',
+      teamId: 'alpha',
+      name: 'tl-alpha-0001',
+      prompt: 'current task only',
+      agentRuntime: 'agent-a',
+      workspace,
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes, contexts),
+      identity: 'architecture reviewer',
+    });
+
+    expect(leader.current().identity_prompt).toBe('architecture reviewer');
+    expect(contexts[0]?.systemPrompt?.append).toContain('architecture reviewer');
+    expect(contexts[0]?.systemPrompt).not.toHaveProperty('replace');
+    expect(leader.status()).not.toHaveProperty('identity_prompt');
+    expect(runtimes[0]!.textSubmitted.map((input) => input.text)).toEqual([
+      'current task only',
+    ]);
+    expect(runtimes[0]!.submitted).toEqual([]);
+  });
+
+  it('reapplies stored identity when a closed teammate is reopened', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const contexts: AgentRuntimeCreateContext[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const leader = await createTestTeamLeader({
+      dispatcherId: 'dispatcher-a',
+      teamId: 'alpha',
+      name: 'tl-alpha-0001',
+      agentRuntime: 'agent-a',
+      workspace,
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes, contexts),
+      identity: 'architecture reviewer',
+    });
+
+    await leader.close({ note: 'pause' });
+    await leader.send({
+      prompt: 'resume the review',
+      turnOrigin: 'dispatcher',
+    });
+
+    expect(contexts).toHaveLength(2);
+    expect(contexts[0]?.systemPrompt?.append).toContain('architecture reviewer');
+    expect(contexts[1]?.systemPrompt?.append).toContain('architecture reviewer');
+    expect(contexts[0]?.systemPrompt).not.toHaveProperty('replace');
+    expect(contexts[1]?.systemPrompt).not.toHaveProperty('replace');
+    expect(runtimes[1]!.textSubmitted.map((input) => input.text)).toEqual([
+      'resume the review',
+    ]);
+    expect(runtimes[1]!.submitted).toEqual([]);
   });
 
   it('lazy-starts a cold team-scoped TeamLeader for scheduled input', async () => {
@@ -263,12 +347,16 @@ describe('TeammateService channel input routing', () => {
     });
 
     await expect(
-      leader.scheduledInput({ jobId: 'job-1', prompt: 'scheduled report' }),
+      leader.scheduledInput({
+        jobId: 'job-1',
+        prompt: 'scheduled report',
+        sourceId: 'scheduled:job-1:1',
+      }),
     ).resolves.toMatchObject({ status: 'submitted' });
     expect(runtimes).toHaveLength(1);
     expect(runtimes[0]!.submitted).toEqual([]);
-    expect(runtimes[0]!.systemSubmitted).toEqual([
-      { reason: 'scheduled', text: 'scheduled report' },
+    expect(runtimes[0]!.textSubmitted).toEqual([
+      { text: 'scheduled report', sourceId: 'scheduled:job-1:1' },
     ]);
   });
 
@@ -296,14 +384,20 @@ describe('TeammateService channel input routing', () => {
     });
 
     await expect(
-      leader.scheduledInput({ jobId: 'job-1', prompt: 'scheduled report' }),
+      leader.scheduledInput({
+        jobId: 'job-1',
+        prompt: 'scheduled report',
+        sourceId: 'scheduled:job-1:2',
+      }),
     ).resolves.toMatchObject({ status: 'submitted' });
     expect(runtimes).toHaveLength(1);
-    expect(runtimes[0]!.submitted.map((input) => input.text)).toEqual([
+    expect(runtimes[0]!.textSubmitted.map((input) => input.text)).toEqual([
       'initial leader prompt',
+      'scheduled report',
     ]);
-    expect(runtimes[0]!.systemSubmitted).toEqual([
-      { reason: 'scheduled', text: 'scheduled report' },
-    ]);
+    expect(runtimes[0]!.textSubmitted[1]).toEqual({
+      text: 'scheduled report',
+      sourceId: 'scheduled:job-1:2',
+    });
   });
 });

@@ -301,6 +301,7 @@ describe('teammate-mcp stdio shim', () => {
               cleanup: 'delete-on-close',
             },
             intent: 'review',
+            identity: 'architecture reviewer',
           },
         },
       });
@@ -336,6 +337,7 @@ describe('teammate-mcp stdio shim', () => {
               cleanup: 'delete-on-close',
             },
             intent: 'review',
+            identity: 'architecture reviewer',
           },
         },
       ]);
@@ -512,6 +514,7 @@ describe('teammate-mcp stdio shim', () => {
             cwd: '/ignored',
             worktree: { mode: 'managed', cleanup: 'delete-on-close' },
             intent: 'build',
+            identity: 'implementation specialist',
           },
         },
       });
@@ -534,6 +537,7 @@ describe('teammate-mcp stdio shim', () => {
             name_prefix: 'builder',
             prompt: 'Build the change.',
             intent: 'build',
+            identity: 'implementation specialist',
             caller_kind: 'team_leader',
             team_id: 'alpha',
           },

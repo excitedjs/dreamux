@@ -1,7 +1,6 @@
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type {
   AgentRuntime,
-  CompletionEnvelope,
 } from '@excitedjs/dreamux-types';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
@@ -11,6 +10,7 @@ import {
 } from './agent-config.js';
 import {
   completionKey,
+  type CompletionEnvelope,
   type CompletionInitiator,
   type CompletionRouter,
 } from '../completion-router/index.js';
@@ -36,6 +36,7 @@ import {
 } from '../worktree/workspaces.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 import {
+  optionalLifecycleText,
   requireLifecycleText,
   validateTeamMateName,
   type CloseTeamMateInput,
@@ -209,6 +210,10 @@ export class TeammateCollection implements TeammateOps {
       throw new Error(`dispatcher '${this.dispatcherId}' is shutting down`);
     requireLifecycleText(input.name, 'TeamMate spawn name');
     requireLifecycleText(input.intent, 'TeamMate spawn intent');
+    const identityPrompt = optionalLifecycleText(
+      input.identity,
+      'TeamMate identity',
+    );
     // The scope fixes the role: a team-scope collection spawns `team_member`s
     // (which require a shared team workspace), a dispatcher-scope collection
     // spawns plain `teammate`s (issue #233).
@@ -247,6 +252,7 @@ export class TeammateCollection implements TeammateOps {
       runtimeCwd: workspace.runtimeCwd,
       worktree: workspace.worktree,
       intent: input.intent,
+      identityPrompt,
       status: 'starting',
     });
     const entity = this.entityFor(identity);

@@ -1,10 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-
-import { teamMateCompletionOutputPath } from '@excitedjs/dreamux-utils';
 
 import {
   createCodexAgentRuntimeProvider,
@@ -35,7 +32,7 @@ class NoopCodexProcess extends CodexProcess {
   }
 }
 
-describe('codex teammate completion delivery (native inject + trigger)', () => {
+describe('codex plain completionInput delivery', () => {
   const tmpDirs: string[] = [];
   const fakes: FakeCodex[] = [];
   const runtimes: AgentRuntime[] = [];
@@ -46,20 +43,16 @@ describe('codex teammate completion delivery (native inject + trigger)', () => {
     for (const dir of tmpDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
-  async function makeRuntime(
-    fake: FakeCodex,
-  ): Promise<{ runtime: AgentRuntime; spillDir: string }> {
+  async function makeRuntime(fake: FakeCodex): Promise<AgentRuntime> {
     const dispatcher = testDispatcherConfig({ id: 'flow' });
     const store = new DispatcherStore(testDreamuxConfig([dispatcher]));
     const row = store.get('flow');
     expect(row).not.toBeNull();
     const tmp = mkdtempSync(join(tmpdir(), 'dx-codex-completion-'));
     tmpDirs.push(tmp);
-    const spillDir = join(tmp, 'spill');
     const paths: AgentRuntimePathContext = {
       dispatcherDir: () => tmp,
       logsDir: () => tmp,
-      completionSpillDir: () => spillDir,
       runtimeSocketDirs: () => [join(tmp, 'sockets')],
     };
     const provider = createCodexAgentRuntimeProvider({
@@ -72,7 +65,6 @@ describe('codex teammate completion delivery (native inject + trigger)', () => {
     });
     const runtime = provider.createRuntime({
       identity: { runtime_id: 'flow', checkpoint_id: row!.thread_id },
-      role: 'dispatcher',
       config: dispatcherCodexConfig(dispatcher),
       cwd: tmp,
       mcpServers: [],
@@ -81,204 +73,69 @@ describe('codex teammate completion delivery (native inject + trigger)', () => {
     });
     runtimes.push(runtime);
     await runtime.start();
-    return { runtime, spillDir };
+    return runtime;
   }
 
-  it('injects a developer item then triggers a turn, reporting accepted', async () => {
+  it('submits plain text through turn/start without channel XML or inject_items', async () => {
     const fake = await startFakeCodex();
     fakes.push(fake);
-    const { runtime } = await makeRuntime(fake);
+    const runtime = await makeRuntime(fake);
 
-    const result = await runtime.completionInput!({
-      source: 'teammate',
-      id: 'mate-1',
-      status: 'completed',
-      result: 'all done',
+    const result = await runtime.completionInput({
+      text: 'TeamMate reviewer has finished its task. Output below:\n\nall done',
+      sourceId: 'completion:mate-1',
     });
-    expect(result).toEqual({ status: 'accepted' });
+    expect(result).toMatchObject({ status: 'submitted' });
 
-    // Step 1: inject_items carried a developer-role message item (not a turn).
-    expect(fake.injectItemsParams).toHaveLength(1);
-    const inject = fake.injectItemsParams[0]!;
-    expect(inject['threadId']).toBe((runtime.getCheckpoint()?.id ?? null));
-    const items = inject['items'] as Array<Record<string, unknown>>;
-    expect(items).toHaveLength(1);
-    expect(items[0]?.['type']).toBe('message');
-    expect(items[0]?.['role']).toBe('developer');
-    const content = items[0]?.['content'] as Array<Record<string, unknown>>;
-    expect(content[0]?.['type']).toBe('input_text');
-    const text = content[0]?.['text'] as string;
-    expect(text).toContain('<teammate_session_completion');
-    expect(text).toContain('source="teammate"');
-    expect(text).toContain('id="mate-1"');
-    expect(text).toContain('status="completed"');
-    expect(text).toContain('all done');
-
-    // Step 2: a trigger turn was submitted (and ordered after the inject).
+    expect(fake.injectItemsParams).toHaveLength(0);
     expect(fake.turnsHandled).toBe(1);
-    const injectIdx = fake.methodLog.indexOf('thread/inject_items');
-    const turnIdx = fake.methodLog.indexOf('turn/start');
-    expect(injectIdx).toBeGreaterThanOrEqual(0);
-    expect(turnIdx).toBeGreaterThan(injectIdx);
-  });
-
-  it('keeps the wrapper and inlines a spill pointer when the result overflows', async () => {
-    const fake = await startFakeCodex();
-    fakes.push(fake);
-    const { runtime, spillDir } = await makeRuntime(fake);
-
-    const spillPath = teamMateCompletionOutputPath(
-      spillDir,
-      'teammate',
-      'mate-spill',
+    const input = fake.turnStartParams[0]?.['input'] as Array<Record<string, unknown>>;
+    expect(input[0]?.['text']).toBe(
+      'TeamMate reviewer has finished its task. Output below:\n\nall done',
     );
-    process.env['TASK_MAX_OUTPUT_LENGTH'] = '8';
-    try {
-      const result = await runtime.completionInput!({
-        source: 'teammate',
-        id: 'mate-spill',
-        status: 'completed',
-        result: 'a result far longer than eight characters',
-      });
-      expect(result).toEqual({ status: 'accepted' });
-
-      const items = fake.injectItemsParams[0]!['items'] as Array<Record<string, unknown>>;
-      const content = items[0]?.['content'] as Array<Record<string, unknown>>;
-      const text = content[0]?.['text'] as string;
-      // Wrapper preserved …
-      expect(text).toContain('<teammate_session_completion');
-      expect(text).toContain('status="completed"');
-      // … but the body is a spill pointer, not the full result.
-      expect(text).toContain('saved to a file:');
-      expect(text).toContain(spillPath);
-      expect(text).not.toContain('far longer than eight');
-    } finally {
-      delete process.env['TASK_MAX_OUTPUT_LENGTH'];
-      await rm(spillPath, { force: true });
-    }
+    expect(input[0]?.['text']).not.toContain('<channel');
   });
 
-  it('reports failed (after the item was injected) when the trigger turn is refused', async () => {
-    const fake = await startFakeCodex({ failTurnStart: true });
-    fakes.push(fake);
-    const { runtime } = await makeRuntime(fake);
-
-    const result = await runtime.completionInput!({
-      source: 'teammate',
-      id: 'mate-2',
-      status: 'failed',
-      result: 'it broke',
-    });
-    expect(result.status).toBe('failed');
-    // The inject already happened; only the trigger failed. A retry re-triggers
-    // WITHOUT re-injecting (see the idempotency test below).
-    expect(fake.injectItemsParams).toHaveLength(1);
-  });
-
-  it('does not re-inject the same completion on a retry (idempotent)', async () => {
-    const fake = await startFakeCodex({ failTurnStart: true });
-    fakes.push(fake);
-    const { runtime } = await makeRuntime(fake);
-
-    const completion = {
-      source: 'teammate',
-      id: 'mate-retry',
-      status: 'failed' as const,
-      result: 'broke',
-    };
-    // The Dispatcher Service retries completionInput on `failed` with the same
-    // envelope. The item must be injected only once across attempts so no
-    // duplicate <teammate_session_completion> is persisted to the thread.
-    const first = await runtime.completionInput!(completion);
-    expect(first.status).toBe('failed');
-    const second = await runtime.completionInput!(completion);
-    expect(second.status).toBe('failed');
-    expect(fake.injectItemsParams).toHaveLength(1);
-  });
-
-  it('retries a previously failed completion call without accepted-cache suppression', async () => {
-    const fake = await startFakeCodex({ failTurnStartAttempts: 1 });
-    fakes.push(fake);
-    const { runtime } = await makeRuntime(fake);
-    const completion = {
-      source: 'teammate',
-      id: 'mate-retry-then-accept',
-      status: 'completed' as const,
-      result: 'done after retry',
-    };
-
-    await expect(runtime.completionInput!(completion)).resolves.toMatchObject({
-      status: 'failed',
-    });
-    await expect(runtime.completionInput!(completion)).resolves.toEqual({
-      status: 'accepted',
-    });
-    await expect(runtime.completionInput!(completion)).resolves.toEqual({
-      status: 'accepted',
-    });
-
-    expect(fake.injectItemsParams).toHaveLength(1);
-    expect(fake.methodLog.filter((method) => method === 'turn/start')).toHaveLength(2);
-  });
-
-  it('coalesces concurrent duplicate completions before inject and trigger', async () => {
+  it('dedupes repeated stable sourceIds without a second model-visible turn', async () => {
     const fake = await startFakeCodex();
     fakes.push(fake);
-    const { runtime } = await makeRuntime(fake);
-    const completion = {
-      source: 'teammate',
-      id: 'mate-concurrent',
-      status: 'completed' as const,
-      result: 'done once',
-    };
+    const runtime = await makeRuntime(fake);
 
     await expect(
-      Promise.all([
-        runtime.completionInput!(completion),
-        runtime.completionInput!(completion),
-      ]),
-    ).resolves.toEqual([{ status: 'accepted' }, { status: 'accepted' }]);
+      runtime.completionInput({ text: 'done once', sourceId: 'completion:mate-1' }),
+    ).resolves.toMatchObject({ status: 'submitted' });
+    await expect(
+      runtime.completionInput({ text: 'done once', sourceId: 'completion:mate-1' }),
+    ).resolves.toEqual({ status: 'duplicate' });
 
-    expect(fake.injectItemsParams).toHaveLength(1);
-    expect(fake.methodLog.filter((method) => method === 'turn/start')).toHaveLength(1);
     expect(fake.turnsHandled).toBe(1);
+    expect(fake.injectItemsParams).toHaveLength(0);
   });
 
-  it('treats already accepted completion ids as delivered', async () => {
-    const fake = await startFakeCodex();
+  it('reports failed when the plain turn is refused', async () => {
+    const fake = await startFakeCodex({ failTurnStart: true });
     fakes.push(fake);
-    const { runtime } = await makeRuntime(fake);
-    const completion = {
-      source: 'teammate',
-      id: 'mate-accepted',
-      status: 'completed' as const,
-      result: 'done once',
-    };
+    const runtime = await makeRuntime(fake);
 
-    await expect(runtime.completionInput!(completion)).resolves.toEqual({
-      status: 'accepted',
+    const result = await runtime.completionInput({
+      text: 'delivery that fails',
+      sourceId: 'completion:mate-2',
     });
-    await expect(runtime.completionInput!(completion)).resolves.toEqual({
-      status: 'accepted',
-    });
-
-    expect(fake.injectItemsParams).toHaveLength(1);
-    expect(fake.methodLog.filter((method) => method === 'turn/start')).toHaveLength(1);
+    expect(result.status).toBe('failed');
+    expect(fake.injectItemsParams).toHaveLength(0);
   });
 
-  it('reports unsupported once the runtime is stopped', async () => {
+  it('reports stopped once the runtime is stopped', async () => {
     const fake = await startFakeCodex();
     fakes.push(fake);
-    const { runtime } = await makeRuntime(fake);
+    const runtime = await makeRuntime(fake);
     await runtime.stop();
 
-    const result = await runtime.completionInput!({
-      source: 'teammate',
-      id: 'mate-3',
-      status: 'completed',
-      result: 'late',
+    const result = await runtime.completionInput({
+      text: 'late',
+      sourceId: 'completion:mate-3',
     });
-    expect(result.status).toBe('unsupported');
+    expect(result.status).toBe('stopped');
     expect(fake.injectItemsParams).toHaveLength(0);
   });
 });

@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "comment": "Apply append-only systemPrompt guidance through Codex thread injection while keeping replacement prompts as baseInstructions.",
+      "type": "patch",
+      "packageName": "@excitedjs/agent-runtime-codex"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-codex"
+}

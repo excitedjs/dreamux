@@ -265,9 +265,10 @@ export class DispatcherService {
     }
 
     try {
-      // Runtime up, sessions adopted as the live slot so each is observable as it
-      // starts (issue #209 fix #7); restart-notice + scheduler arming run in this
-      // SAME try so a failure rolls back rather than leaving cron silently unarmed.
+      // Runtime up, sessions adopted as the live slot so each is observable.
+      // Restart-notice + channel starts + scheduler arming run in this SAME try
+      // so a failure rolls back rather than leaving cron silently unarmed.
+      await this.injectRestartNoticeIfNeeded(id, runtime);
       for (const [channelId, session] of channels) {
         await session.start({
           deliver: async (turn, envelope, hooks) =>
@@ -276,7 +277,6 @@ export class DispatcherService {
             ),
         });
       }
-      await this.injectRestartNoticeIfNeeded(id, runtime);
       await this.scheduler.start();
       await this.teams.startSchedulers();
     } catch (err) {
@@ -526,9 +526,9 @@ export class DispatcherService {
     const notice = this.restartIntent?.claim(dispatcherId, Date.now()) ?? null;
     if (notice === null) return;
     try {
-      const result = await runtime.systemInput({
+      const result = await runtime.completionInput({
         text: notice,
-        reason: 'restart-notice',
+        sourceId: `restart-notice:${dispatcherId}`,
       });
       if (result.status === 'failed') {
         this.log.warn(

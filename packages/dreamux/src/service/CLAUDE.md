@@ -54,7 +54,8 @@ the explicit `service/index.ts` facade.
   reads/writes/summaries/transfer-back operations. It treats Team route owners as
   flat routing data and does not import Team service types. The dispatcher base prompt and runnable-channel guard stay under `dispatcher-service/`. There
   is **no** `DispatcherRuntimeService`; the at-most-once policy lives in the
-  `CompletionRouter`, and `TeammateService.completionInput` is a thin forward.
+  `CompletionRouter`, while `TeammateService.completionInput` is the core-side
+  delivery target that renders a completion envelope into a plain runtime turn.
 - **`teammate-collection/` + `teammate-service/` + `completion-router/`** —
   `TeammateCollection` (the collection: stores, worktrees, `spawn` / `list` /
   `history` / `close`, factory paths, per-turn router registration) +
@@ -110,8 +111,9 @@ the explicit `service/index.ts` facade.
   drives; a dispatcher inspects Teams via `team.*` compact summaries, never
   `teammate.*`.
 - **State is a symmetric directory per agent entity (issue #233).** Every agent
-  is a directory holding `identity.json` (identity + rolling recovery summary:
-  turn_count / last_seen_at / last prompt+assistant previews — the single source
+  is a directory holding `identity.json` (identity + optional `identity_prompt`
+  append-only role guidance + rolling recovery summary: turn_count /
+  last_seen_at / last prompt+assistant previews — the single source
   for `history` / `list` / `status`, no event fold) and `turn.jsonl` (the ONLY
   JSONL store: one compact `submit`/`settled` row per turn, turn-only facts, no
   record fields repeated, folded by `last`). Placement is by role:

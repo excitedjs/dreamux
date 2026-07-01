@@ -1,5 +1,4 @@
 import type {
-  CompletionEnvelope,
   AgentRuntimeMcpServer,
   AgentRuntimeTurnResult,
   DreamuxLogger,
@@ -13,6 +12,7 @@ import {
 import type { DreamuxConfig } from '../../config/config.js';
 import { dispatcherTeamCronJobsPath } from '../../platform/paths.js';
 import type {
+  CompletionEnvelope,
   CompletionInitiator,
   CompletionRouter,
 } from '../completion-router/index.js';
@@ -31,6 +31,7 @@ import { teammateMcpServerDescriptor } from '../teammate-collection/mcp-config.j
 import { teamMcpServerDescriptor } from '../team-collection/mcp-config.js';
 import type { TeamMateTurnsStore } from '../teammate-collection/turns-store.js';
 import {
+  optionalLifecycleText,
   requireLifecycleText,
   type TeamMateIdentity,
   type TeamMateRuntimeStatus,
@@ -77,6 +78,7 @@ export interface TeamServiceCreateInput {
   prompt?: string;
   leaderAgentRuntime: string;
   intent: string;
+  identity?: string;
   workspace: TeamMateSharedWorkspace;
   existing: TeamRecord | null;
 }
@@ -144,6 +146,10 @@ export class TeamService {
     input: TeamServiceCreateInput,
   ): Promise<TeamServiceCreateOutput> {
     const service = new TeamService(deps, input.teamId);
+    const identityPrompt = optionalLifecycleText(
+      input.identity,
+      'TeamLeader identity',
+    );
     const leaderName = await service.allocateLeaderName();
     let team =
       input.existing ??
@@ -190,6 +196,7 @@ export class TeamService {
       runtimeCwd: input.workspace.runtimeCwd,
       worktree: input.workspace.worktree,
       intent: input.intent,
+      identityPrompt,
       status: 'starting',
     });
     const leader = service.buildLeader(identity);

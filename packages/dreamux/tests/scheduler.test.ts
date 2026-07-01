@@ -162,6 +162,35 @@ describe('SchedulerService dispatch', () => {
     expect(jobs[0]?.last_fired_at).toEqual(expect.any(Number));
   });
 
+  it('uses a fresh sourceId for each fire of the same recurring job', async () => {
+    const idle = controllableIdle();
+    const submitted: Array<{ jobId: string; prompt: string; sourceId: string }> = [];
+    const scheduler = service(idle.runtime, async (input) => {
+      submitted.push(input);
+      return { status: 'submitted', turnId: `turn-${submitted.length}` };
+    });
+    const job = await scheduler.create({
+      cron: '* * * * *',
+      prompt: 'run report',
+      tz: 'UTC',
+    });
+
+    const first = scheduler.runNow(job.id);
+    await waitFor(() => idle.pending());
+    idle.resolve();
+    await expect(first).resolves.toEqual({ id: job.id, status: 'submitted' });
+
+    const second = scheduler.runNow(job.id);
+    await waitFor(() => idle.pending());
+    idle.resolve();
+    await expect(second).resolves.toEqual({ id: job.id, status: 'submitted' });
+
+    expect(submitted.map((input) => input.sourceId)).toEqual([
+      `scheduled:${job.id}:1`,
+      `scheduled:${job.id}:2`,
+    ]);
+  });
+
   it('does not advance last_fired_at when submission is not submitted', async () => {
     const idle = controllableIdle();
     const scheduler = service(idle.runtime, async () => ({ status: 'stopped' }));
@@ -424,6 +453,7 @@ function service(
   submitScheduled: (input: {
     jobId: string;
     prompt: string;
+    sourceId: string;
   }) => Promise<AgentRuntimeTurnResult>,
   store?: CronJobStore,
   absentRuntimeStrategy: 'miss' | 'submit' = 'miss',
@@ -489,7 +519,7 @@ function controllableIdle(): {
     async channelInput() {
       return { status: 'stopped' };
     },
-    async systemInput() {
+    async completionInput() {
       return { status: 'stopped' };
     },
     waitIdle() {

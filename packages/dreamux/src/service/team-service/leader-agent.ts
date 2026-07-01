@@ -1,6 +1,5 @@
 import type {
   AgentRuntimeMcpServer,
-  CompletionEnvelope,
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
 
@@ -9,6 +8,7 @@ import type { DreamuxConfig } from '../../config/config.js';
 import type { TeamMateIdentityStore } from '../teammate-collection/identity-store.js';
 import type { TeamMateTurnsStore } from '../teammate-collection/turns-store.js';
 import type { TeamMateIdentity } from '../teammate-collection/types.js';
+import type { CompletionEnvelope } from '../completion-router/index.js';
 import {
   createTeammateService,
 } from '../teammate-service/factory.js';

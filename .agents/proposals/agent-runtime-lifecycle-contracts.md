@@ -6,6 +6,13 @@
 - **Source snapshot:** Verified against `origin/next` commit `50e3bd5268a07fcf0ba99214c81ac1701bfce740`
 - **External runtime snapshots:** Kimi Code `main@210cedb3bf22282fb16e0e7dabe2956f80f13976`, MiMo Code `main@1c5217ef342518d6cfcd2d1c1d96d`, OpenCode `dev@8e10ab0aa78fda983040d29ee73c16c66b8c418b`
 
+> Input-surface note: the "Inputs" and completion-delivery method shape below
+> are superseded by
+> [AgentRuntime input surface cleanup](agent-runtime-input-surface-cleanup.md).
+> The lifecycle principles here still stand; non-channel turns now converge on
+> plain text `completionInput`, and `systemInput` is no longer the intended
+> provider-facing seam.
+
 ## Intent
 
 Keep Dreamux core small and stable while making external Agent Runtime providers
@@ -49,8 +56,8 @@ Current source facts:
 - Earlier drafts exposed `getThreadId()` and `wasThreadResumed()` as runtime
   projections, while the neutral create identity already talked about
   `checkpoint_id`. The final contract should expose only checkpoint semantics.
-- `AgentRuntimeSystemInput.reason` currently mixes restart notices, runtime
-  control, scheduled model turns, and teammate completion
+- `AgentRuntimeSystemInput.reason` currently mixes restart notices, scheduled
+  model turns, and teammate completion
   (`/packages/dreamux-types/src/agent-runtime.ts`).
 - Dispatcher launch currently asks the resolved provider for
   `systemPrompt.mode`, then chooses either the full replacement prompt or the
@@ -250,6 +257,10 @@ Rules:
 
 ### Inputs
 
+Superseded by
+[AgentRuntime input surface cleanup](agent-runtime-input-surface-cleanup.md).
+Keep this section as historical context for the earlier draft.
+
 Core should expose only the runtime inboxes Dreamux actually needs: channel/user
 turns, Dreamux-owned system messages, and optional completion delivery. It does
 not need to model provider-native tool policy, permissions, approvals, or
@@ -258,7 +269,7 @@ subagent protocols.
 ```ts
 interface AgentRuntimeSystemInput {
   text: string;
-  reason: "restart-notice" | "runtime-control" | "scheduled" | (string & {});
+  reason: "restart-notice" | "scheduled" | (string & {});
 }
 
 interface AgentRuntime {
@@ -273,8 +284,8 @@ Rules:
 - `channelInput` is the user/channel-turn inbox. Channel messages and explicit
   Dreamux sends enter here, and the runtime owns rendering the neutral channel
   shape into its native input format.
-- `systemInput` is the Dreamux system-message inbox. Restart notices, runtime
-  control text, and scheduled prompts enter here, and the runtime decides whether
+- `systemInput` is the Dreamux system-message inbox. Restart notices and
+  scheduled prompts enter here, and the runtime decides whether
   to submit a plain turn, use a native system-message path, skip, or fail.
 - Completion delivery stays a separate surface because retry/terminal semantics
   are different from both channel/user turns and system messages.
@@ -297,9 +308,9 @@ them.
 ```ts
 interface AgentRuntimeSystemPrompt {
   /** Full role instructions for runtimes that replace their base prompt. */
-  replace: string;
+  replace?: string;
   /** Focused role delta for runtimes that append to an existing native prompt. */
-  append: string;
+  append?: string;
 }
 
 interface AgentRuntimeCreateContext<TConfig = unknown> {

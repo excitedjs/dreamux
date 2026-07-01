@@ -17,20 +17,23 @@ import type {
   AgentRuntimeIdentity,
   AgentRuntimePathContext,
   AgentRuntimeSkillSource,
+  AgentRuntimeSystemPrompt,
   AgentRuntimeStateCallbacks,
   DreamuxLogger,
   TurnSettledSignal,
 } from '@excitedjs/dreamux-types';
 
-const SKILL_LAYOUT = 'skill-dir';
-
 function skillSource(path: string): AgentRuntimeSkillSource {
-  return { name: path.split('/').pop()!, path, layout: SKILL_LAYOUT, source: 'dreamux-core' };
+  return { name: path.split('/').pop()!, path, source: 'dreamux-core' };
 }
 
 class FakeClient {
   readonly methods: string[] = [];
   readonly extraRootsCalls: string[][] = [];
+  readonly injectItemsCalls: unknown[] = [];
+  readonly threadStartCalls: unknown[] = [];
+  readonly turnStartCalls: unknown[] = [];
+  injectItemsError: Error | null = null;
   private readonly handlers: Array<(notification: unknown) => void> = [];
   private nextTurnId = 1;
   failExtraRoots = false;
@@ -67,9 +70,16 @@ class FakeClient {
       return {} as R;
     }
     if (method === 'thread/start') {
+      this.threadStartCalls.push(params);
       return { thread: { id: 'thread-fake' } } as R;
     }
+    if (method === 'thread/inject_items') {
+      if (this.injectItemsError !== null) throw this.injectItemsError;
+      this.injectItemsCalls.push(params);
+      return {} as R;
+    }
     if (method === 'turn/start') {
+      this.turnStartCalls.push(params);
       const p = params as {
         threadId: string;
         input: Array<{ text: string }>;
@@ -147,7 +157,6 @@ class FakeProcess {
 const PATHS: AgentRuntimePathContext = {
   dispatcherDir: (id) => join('/fake/state', id),
   logsDir: () => '/fake/logs',
-  completionSpillDir: (id) => join('/fake/cache', id, 'spill'),
   runtimeSocketDirs: () => ['/fake/run/sockets'],
 };
 
@@ -163,6 +172,7 @@ function buildRuntime(
   skillSources: AgentRuntimeSkillSource[],
   logger?: DreamuxLogger,
   onTurnSettled?: (settled: TurnSettledSignal) => void,
+  systemPrompt?: AgentRuntimeSystemPrompt,
 ): CodexRuntime {
   const identity: AgentRuntimeIdentity = { runtime_id: 'flow', checkpoint_id: null };
   return new CodexRuntime(identity, {
@@ -173,6 +183,12 @@ function buildRuntime(
     skillSources,
     codexProcessFactory: () => new FakeProcess() as never,
     codexClientFactory: () => client as never,
+    ...(systemPrompt?.replace !== undefined
+      ? { systemPromptReplace: systemPrompt.replace }
+      : {}),
+    ...(systemPrompt?.replace === undefined && systemPrompt?.append !== undefined
+      ? { systemPromptAppend: systemPrompt.append }
+      : {}),
     ...(onTurnSettled !== undefined ? { onTurnSettled } : {}),
     ...(logger !== undefined ? { logger } : {}),
   });
@@ -197,6 +213,79 @@ describe('codex skills/extraRoots/set injection', () => {
     expect(initIdx).toBeGreaterThanOrEqual(0);
     expect(setIdx).toBeGreaterThan(initIdx);
     expect(startIdx).toBeGreaterThan(setIdx);
+  });
+
+  it('fails append-only systemPrompt loudly before first turn when injection fails', async () => {
+    const client = new FakeClient();
+    client.injectItemsError = new Error('injection unavailable');
+    const runtime = buildRuntime(
+      client,
+      [],
+      undefined,
+      undefined,
+      { append: 'Dreamux persistent TeamMate identity guidance:\narchitecture reviewer' },
+    );
+
+    await expect(runtime.start()).rejects.toThrow(/systemPrompt\.append/);
+    expect(client.methods).not.toContain('turn/start');
+  });
+
+  it('injects append-only systemPrompt after thread start and before first turn', async () => {
+    const client = new FakeClient();
+    const runtime = buildRuntime(
+      client,
+      [],
+      undefined,
+      undefined,
+      { append: 'Dreamux persistent TeamMate identity guidance:\narchitecture reviewer' },
+    );
+
+    await runtime.start();
+    await runtime.channelInput({ sourceId: 'm1', text: 'first task' });
+    await runtime.stop();
+
+    const startIdx = client.methods.indexOf('thread/start');
+    const injectIdx = client.methods.indexOf('thread/inject_items');
+    const turnIdx = client.methods.indexOf('turn/start');
+    expect(injectIdx).toBeGreaterThan(startIdx);
+    expect(turnIdx).toBeGreaterThan(injectIdx);
+    expect(client.injectItemsCalls).toHaveLength(1);
+    const inject = client.injectItemsCalls[0] as {
+      threadId: string;
+      items: Array<Record<string, unknown>>;
+    };
+    expect(inject.threadId).toBe('thread-fake');
+    expect(inject.items[0]?.['role']).toBe('developer');
+    const content = inject.items[0]?.['content'] as Array<Record<string, unknown>>;
+    expect(content[0]?.['text']).toContain('architecture reviewer');
+    expect(client.threadStartCalls[0]).toEqual({ baseInstructions: undefined });
+    const firstTurn = client.turnStartCalls[0] as {
+      input: Array<{ text: string }>;
+    };
+    expect(firstTurn.input[0]?.text).toBe('first task');
+    expect(firstTurn.input[0]?.text).not.toContain('architecture reviewer');
+  });
+
+  it('uses replacement baseInstructions without duplicate append injection', async () => {
+    const client = new FakeClient();
+    const runtime = buildRuntime(
+      client,
+      [],
+      undefined,
+      undefined,
+      {
+        replace: 'complete dispatcher base instructions',
+        append: 'dispatcher append guidance',
+      },
+    );
+
+    await runtime.start();
+    await runtime.stop();
+
+    expect(client.threadStartCalls[0]).toEqual({
+      baseInstructions: 'complete dispatcher base instructions',
+    });
+    expect(client.methods).not.toContain('thread/inject_items');
   });
 
   it('skips the RPC entirely when no skill sources are supplied', async () => {

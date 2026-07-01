@@ -181,8 +181,11 @@ skill sources by role:
 
 - Dispatcher and TeamLeader roles receive Dreamux operational skills.
 - Ordinary TeamMate and team-member roles receive none by default.
-- Codex applies skill roots through `skills/extraRoots/set`.
-- Claude Code receives add-dir-compatible roots through `--add-dir`.
+- Core emits only direct skill directories. Codex derives extra roots from their
+  parent directories and applies them through `skills/extraRoots/set`.
+- Claude Code materializes a runtime-owned add-dir root containing
+  `.claude/skills/<name>` entries that point at those direct skill directories,
+  then passes that root through `--add-dir`.
 
 Dreamux no longer installs workspace `.codex/skills` symlinks during onboard or
 runtime startup.
@@ -193,6 +196,60 @@ Key source:
 - `/packages/agent-runtime/codex/src/skill-roots.ts`
 - `/packages/agent-runtime/claude-code/src/args.ts`
 - `/packages/agent-runtime/claude-code/src/runtime.ts`
+
+## Runtime Prompt Inputs
+
+The Agent Runtime create context has one provider-facing prompt surface:
+`systemPrompt`. It carries two canonical forms:
+
+- `replace`: full role instructions for runtimes that replace their native base
+  prompt.
+- `append`: focused role guidance to add on top of native/base instructions.
+
+Runtime adapters select at most one prompt form from `systemPrompt`:
+
+- if `replace` is present and the runtime supports replacement prompts, use
+  `replace`;
+- otherwise, if `append` is present, use the append flow;
+- otherwise, if only `replace` is present and the runtime does not support
+  replacement prompts, leave prompt customization unchanged.
+
+Replacement prompt support is a runtime-adapter implementation fact, not a new
+`AgentRuntimeCapabilities` field or an MCP-discoverable feature.
+
+Dispatcher launches provide both `replace` and `append` as alternate canonical
+representations of the same dispatcher role guidance. Replace-native runtimes
+such as Codex use the full dispatcher prompt and do not also inject the
+dispatcher append text, because that would duplicate the same role guidance.
+Append-native runtimes that cannot use `replace` fall through to the focused
+dispatcher append guidance.
+
+TeamLeader, TeamMate, and team-member identity guidance is rendered from the
+persisted `TeamMateIdentity.identity_prompt` and re-supplied as append-only
+`systemPrompt.append` on each runtime launch/relaunch that rebuilds the create
+context: initial create/spawn, close/reopen, process restart, Team rebuild, and
+runtime resume.
+
+Runtime adapters must implement selected `systemPrompt.append` semantics. Claude
+Code folds append prompt content into `--append-system-prompt` before the
+resident session is created. Codex maps selected `systemPrompt.replace` to
+`baseInstructions`; when append is selected, it applies that append text as a
+developer-role history item with `thread/inject_items` before the first
+user/channel turn.
+
+Dreamux-owned turns that are not channel messages use the provider-facing
+`completionInput({ text, sourceId? })` plain text input. Channel-originated
+messages are the only callers of `channelInput`, which is where runtime-specific
+channel/XML rendering belongs. Runtime providers do not receive
+`CompletionEnvelope` or a `systemInput` reason discriminator.
+
+Key source:
+
+- `/packages/dreamux-types/src/agent-runtime.ts`
+- `/packages/dreamux/src/service/dispatcher-service/agent.ts`
+- `/packages/dreamux/src/service/teammate-service/index.ts`
+- `/packages/agent-runtime/codex/src/runtime.ts`
+- `/packages/agent-runtime/claude-code/src/provider.ts`
 
 ## Disabled Runtime Features
 

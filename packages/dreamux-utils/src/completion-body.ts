@@ -1,5 +1,5 @@
 /**
- * Neutral completion-body resolution shared by every runtime and the host.
+ * Neutral completion-body resolution shared by host-side completion targets.
  *
  * A teammate completion is delivered back to the dispatcher as turn text. When
  * the result is short it is inlined verbatim; when it overflows the inline
@@ -7,15 +7,13 @@
  * host-supplied spill directory and only the path is inlined, so a large result
  * never floods the dispatcher's context window.
  *
- * The spill directory is supplied by the caller (the host through its path
- * context, or a runtime through the create context), so this module owns no
- * Dreamux layout contract — only the safe filename shape inside that directory.
+ * The spill directory is supplied by the host-side caller, so this module owns
+ * no Dreamux layout contract — only the safe filename shape inside that
+ * directory.
  */
 
 import { chmod, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-
-import type { CompletionEnvelope } from '@excitedjs/dreamux-types';
 
 import { ensureOwnerOnlyDir } from './os.js';
 
@@ -32,6 +30,12 @@ export type ResolvedCompletionBody =
   | { kind: 'inline'; text: string }
   | { kind: 'spilled'; path: string };
 
+export interface CompletionBodyInput {
+  source: string;
+  id: string;
+  result: string | null;
+}
+
 /** Sanitize a name into a safe single path segment. */
 function safeSegment(name: string): string {
   return name.replace(/[^A-Za-z0-9._-]/g, '_');
@@ -39,12 +43,13 @@ function safeSegment(name: string): string {
 
 /**
  * Spill file for a teammate completion result that overflows the inline budget.
- * Both runtimes write the full result here and inline only this path into the
- * dispatcher turn, so a large result never floods the dispatcher's context.
+ * The host writes the full result here and inlines only this path into the
+ * dispatcher or TeamLeader turn, so a large result never floods the target
+ * agent's context.
  * `spillDir` is the owning dispatcher's completion spill dir, supplied by the
- * caller so a teammate runtime spills under its operator dispatcher, not its
- * composite runtime id. `source` and `id` are sanitized for filename safety; the
- * id is unique per completion (teammate name + turn id).
+ * caller so a TeamLeader delivery target still spills under its operator
+ * dispatcher, not its composite runtime id. `source` and `id` are sanitized for
+ * filename safety; the id is unique per completion (teammate name + turn id).
  */
 export function teamMateCompletionOutputPath(
   spillDir: string,
@@ -84,7 +89,7 @@ export function completionInlineBudget(
  * runtime-neutral and never names a dispatcher id.
  */
 export async function resolveCompletionBody(
-  completion: CompletionEnvelope,
+  completion: CompletionBodyInput,
   spillDir: string,
 ): Promise<ResolvedCompletionBody> {
   const result = completion.result ?? '';

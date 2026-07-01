@@ -33,21 +33,17 @@ import type {
   AgentRuntimeSkillSource,
   AgentRuntimeStateCallbacks,
   AgentRuntimeStatus,
-  AgentRuntimeSystemInput,
+  AgentRuntimeTextInput,
   AgentRuntimeTurnResult,
-  CompletionEnvelope,
   DreamuxLogger,
-  InboundDeliveryResult,
   InboundDeliveryHooks,
   InboundTurnInput,
-  CompletionDeliveryResult,
   TurnSettledSignal,
 } from '@excitedjs/dreamux-types';
 import { BUILTIN_CODEX_PROVIDER_REF } from './provider-ref.js';
 import { CODEX_AGENT_RUNTIME_CAPABILITIES } from './provider.js';
 import {
-  buildCodexCompletionItem,
-  CODEX_COMPLETION_TRIGGER_TEXT,
+  buildCodexSystemPromptAppendItem,
   codexProcessEnv,
 } from './runtime-support.js';
 import { applyCodexSkillExtraRoots } from './skill-roots.js';
@@ -56,30 +52,29 @@ const DEFAULT_RESTART_BACKOFF_BASE_MS = 1000;
 const DEFAULT_RESTART_BACKOFF_MAX_MS = 30_000;
 
 export interface CodexRuntimeDeps {
-    cwd: string;
-    systemPromptReplace?: string;
-    state: AgentRuntimeStateCallbacks;
-    paths: AgentRuntimePathContext;
-    allocateSocketPath: (id: string) => string;
-    skillSources?: readonly AgentRuntimeSkillSource[];
-    injectEnv?: Record<string, string>;
-    codexBinPath?: string;
-    codexProcessFactory?: (opts: CodexProcessOptions) => CodexProcess;
-    codexClientFactory?: (socketPath: string) => CodexWsClient;
-    codexHomeDoctor?: (info: {
+  cwd: string;
+  systemPromptReplace?: string;
+  systemPromptAppend?: string;
+  state: AgentRuntimeStateCallbacks;
+  paths: AgentRuntimePathContext;
+  allocateSocketPath: (id: string) => string;
+  skillSources?: readonly AgentRuntimeSkillSource[];
+  injectEnv?: Record<string, string>;
+  codexBinPath?: string;
+  codexProcessFactory?: (opts: CodexProcessOptions) => CodexProcess;
+  codexClientFactory?: (socketPath: string) => CodexWsClient;
+  codexHomeDoctor?: (info: {
     runtimeId: string;
     cwd: string;
   }) => void | Promise<void>;
-    resolveExtraArgs?: () => string[];
-    handshakeTimeoutMs?: number;
-    extraEnv?: Record<string, string>;
-    restartBackoffBaseMs?: number;
-    restartBackoffMaxMs?: number;
-    onTurnSettled?: (settled: TurnSettledSignal) => void;
-    logger?: DreamuxLogger;
+  resolveExtraArgs?: () => string[];
+  handshakeTimeoutMs?: number;
+  extraEnv?: Record<string, string>;
+  restartBackoffBaseMs?: number;
+  restartBackoffMaxMs?: number;
+  onTurnSettled?: (settled: TurnSettledSignal) => void;
+  logger?: DreamuxLogger;
 }
-
-const COMPLETION_ID_CACHE_LIMIT = 256;
 
 export class CodexRuntime implements AgentRuntime {
   readonly providerRef = BUILTIN_CODEX_PROVIDER_REF;
@@ -88,17 +83,8 @@ export class CodexRuntime implements AgentRuntime {
   private client: CodexWsClient | null = null;
   private turnManager: TurnManager | null = null;
   private threadId: string | null = null;
-    private threadResumed = false;
+  private threadResumed = false;
   private status: AgentRuntimeStatus = 'declared';
-    private teammateDeliverySeq = 0;
-    private readonly inFlightCompletionDeliveries = new Map<
-    string,
-    Promise<CompletionDeliveryResult>
-  >();
-    private readonly acceptedCompletionIds = new Set<string>();
-  private readonly acceptedCompletionOrder: string[] = [];
-    private readonly injectedCompletionIds = new Set<string>();
-  private readonly injectedCompletionOrder: string[] = [];
   private readonly log: (
     level: 'info' | 'warn' | 'error',
     msg: string,
@@ -163,23 +149,7 @@ export class CodexRuntime implements AgentRuntime {
     await this.start();
   }
 
-  private async submitRestartNotice(text: string): Promise<AgentRuntimeTurnResult> {
-    if (this.turnManager === null) return { status: 'stopped' };
-    const result = await this.turnManager.injectNotice(text);
-    if (result.status === 'submitted') {
-      this.log('info', 'restart notice injected into resumed thread');
-    } else if (result.status === 'skipped') {
-      this.log('info', 'restart notice skipped; a live inbound already arrived');
-    }
-    return result;
-  }
-
-  private async submitSystemInput(text: string): Promise<InboundDeliveryResult> {
-    if (this.turnManager === null) return { status: 'stopped' };
-    return this.turnManager.submitSystemInput(text);
-  }
-
-    async start(): Promise<void> {
+  async start(): Promise<void> {
     this.stopping = false;
     this.restarting = false;
     this.clearRestartTimer();
@@ -191,7 +161,6 @@ export class CodexRuntime implements AgentRuntime {
     try {
       await this.startCodexRuntime();
       await this.markReady();
-
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.log('error', `start failed: ${msg}`, err);
@@ -260,6 +229,7 @@ export class CodexRuntime implements AgentRuntime {
     await this.applySkillExtraRoots();
 
     await this.resolveThread();
+    await this.injectSystemPromptAppend();
 
     this.turnManager = new TurnManager({
       dispatcherId: this.dispatcherId,
@@ -332,6 +302,24 @@ export class CodexRuntime implements AgentRuntime {
     }
   }
 
+  private async injectSystemPromptAppend(): Promise<void> {
+    if (this.deps.systemPromptAppend === undefined) return;
+    if (this.client === null) throw new Error('client not initialized');
+    if (this.threadId === null) {
+      throw new Error('codex systemPrompt.append injection has no thread id');
+    }
+    try {
+      await injectThreadItems(this.client, this.threadId, [
+        buildCodexSystemPromptAppendItem(this.deps.systemPromptAppend),
+      ]);
+    } catch (err) {
+      const cause = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `codex systemPrompt.append thread/inject_items failed (requires codex 0.137+): ${cause}`,
+      );
+    }
+  }
+
   async channelInput(
     input: InboundTurnInput,
     hooks: InboundDeliveryHooks = {},
@@ -345,106 +333,16 @@ export class CodexRuntime implements AgentRuntime {
     );
   }
 
-    async systemInput(notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult> {
-    if (notice.reason === 'scheduled') {
-      return this.channelInput({ sourceId: '', text: notice.text });
-    }
-    if (notice.reason === 'restart-notice') {
-      return this.submitRestartNotice(notice.text);
-    }
-    const result = await this.submitSystemInput(notice.text);
-    return result.status === 'duplicate'
-      ? {
-          status: 'failed',
-          error: new Error('system input unexpectedly deduplicated'),
-        }
-      : result;
-  }
-
   waitIdle(): Promise<void> {
     return this.turnManager?.waitIdle() ?? Promise.resolve();
   }
 
-    async completionInput(
-    completion: CompletionEnvelope,
-  ): Promise<CompletionDeliveryResult> {
-    if (this.acceptedCompletionIds.has(completion.id)) {
-      return { status: 'accepted' };
-    }
-    const inFlight = this.inFlightCompletionDeliveries.get(completion.id);
-    if (inFlight !== undefined) return inFlight;
-
-    const delivery = this.deliverCompletionInput(completion);
-    this.inFlightCompletionDeliveries.set(completion.id, delivery);
-    try {
-      const outcome = await delivery;
-      if (outcome.status === 'accepted') {
-        this.rememberAcceptedCompletion(completion.id);
-      }
-      return outcome;
-    } finally {
-      this.inFlightCompletionDeliveries.delete(completion.id);
-    }
+  async completionInput(input: AgentRuntimeTextInput): Promise<AgentRuntimeTurnResult> {
+    if (this.turnManager === null) return { status: 'stopped' };
+    return this.turnManager.submitTextInput(input);
   }
 
-  private async deliverCompletionInput(
-    completion: CompletionEnvelope,
-  ): Promise<CompletionDeliveryResult> {
-    if (this.client === null || this.turnManager === null || this.stopping) {
-      return { status: 'unsupported', reason: 'dispatcher runtime stopped' };
-    }
-    const threadId = this.threadId;
-    if (threadId === null) {
-      return {
-        status: 'failed',
-        error: new Error('teammate completion delivery has no thread id'),
-      };
-    }
-    if (!this.injectedCompletionIds.has(completion.id)) {
-      try {
-        await injectThreadItems(this.client, threadId, [
-          await buildCodexCompletionItem(
-            completion,
-            this.paths.completionSpillDir(this.dispatcherId),
-          ),
-        ]);
-      } catch (err) {
-        const cause = err instanceof Error ? err.message : String(err);
-        return {
-          status: 'failed',
-          error: new Error(
-            `teammate completion thread/inject_items failed (requires codex 0.137+): ${cause}`,
-          ),
-        };
-      }
-      this.rememberInjectedCompletion(completion.id);
-    }
-    const deliverySeq = ++this.teammateDeliverySeq;
-    const delivery = await this.channelInput({
-      sourceId: `teammate:${completion.id}#${deliverySeq}`,
-      text: CODEX_COMPLETION_TRIGGER_TEXT,
-    });
-    switch (delivery.status) {
-      case 'submitted':
-        return { status: 'accepted' };
-      case 'stopped':
-        return { status: 'unsupported', reason: 'dispatcher runtime stopped' };
-      case 'failed':
-        return { status: 'failed', error: delivery.error };
-      case 'duplicate':
-        return {
-          status: 'failed',
-          error: new Error('teammate completion trigger unexpectedly deduplicated'),
-        };
-      case 'skipped':
-        return {
-          status: 'failed',
-          error: new Error('teammate completion trigger unexpectedly skipped'),
-        };
-    }
-  }
-
-    async stop(): Promise<void> {
+  async stop(): Promise<void> {
     this.stopping = true;
     this.clearRestartTimer();
     this.setStatus('stopping');
@@ -585,26 +483,6 @@ export class CodexRuntime implements AgentRuntime {
       status: 'completed',
       result: { text: resultText },
     });
-  }
-
-    private rememberInjectedCompletion(id: string): void {
-    if (this.injectedCompletionIds.has(id)) return;
-    this.injectedCompletionIds.add(id);
-    this.injectedCompletionOrder.push(id);
-    while (this.injectedCompletionOrder.length > COMPLETION_ID_CACHE_LIMIT) {
-      const evicted = this.injectedCompletionOrder.shift();
-      if (evicted !== undefined) this.injectedCompletionIds.delete(evicted);
-    }
-  }
-
-    private rememberAcceptedCompletion(id: string): void {
-    if (this.acceptedCompletionIds.has(id)) return;
-    this.acceptedCompletionIds.add(id);
-    this.acceptedCompletionOrder.push(id);
-    while (this.acceptedCompletionOrder.length > COMPLETION_ID_CACHE_LIMIT) {
-      const evicted = this.acceptedCompletionOrder.shift();
-      if (evicted !== undefined) this.acceptedCompletionIds.delete(evicted);
-    }
   }
 
   private setStatus(s: AgentRuntimeStatus): void {

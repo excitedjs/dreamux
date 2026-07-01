@@ -1,8 +1,18 @@
 import type {
-  CompletionDeliveryResult,
-  CompletionEnvelope,
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
+
+export interface CompletionEnvelope {
+  source: string;
+  id: string;
+  status: 'completed' | 'failed' | 'stopped';
+  result: string | null;
+}
+
+export type CompletionDeliveryResult =
+  | { status: 'accepted' }
+  | { status: 'unsupported'; reason: string }
+  | { status: 'failed'; error: Error };
 
 /**
  * The delivery target of a settled, send-initiated turn: a dispatcher agent or a

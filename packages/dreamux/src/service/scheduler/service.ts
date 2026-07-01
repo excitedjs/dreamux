@@ -54,6 +54,7 @@ export interface SchedulerServiceOptions {
   submitScheduled(input: {
     jobId: string;
     prompt: string;
+    sourceId: string;
   }): Promise<AgentRuntimeTurnResult>;
   log: DreamuxLogger;
   now?: () => number;
@@ -67,6 +68,7 @@ export class SchedulerService {
   private readonly timers = new Map<string, TimerSlot>();
   private readonly heldFires = new Map<string, symbol>();
   private readonly stopWaiters = new Set<() => void>();
+  private fireSeq = 0;
   private running = false;
 
   constructor(private readonly opts: SchedulerServiceOptions) {
@@ -333,9 +335,10 @@ export class SchedulerService {
       const result = await this.opts.submitScheduled({
         jobId: current.id,
         prompt: current.action.prompt,
+        sourceId: this.nextFireSourceId(current.id),
       });
       if (result.status !== 'submitted') {
-        await this.armMissed(current, `systemInput returned ${result.status}`);
+        await this.armMissed(current, `completionInput returned ${result.status}`);
         return result.status;
       }
       const firedAt = this.now();
@@ -454,6 +457,10 @@ export class SchedulerService {
     const job = await this.store.get(id);
     if (job === null) throw new Error(`cron job '${id}' does not exist`);
     return job;
+  }
+
+  private nextFireSourceId(jobId: string): string {
+    return `scheduled:${jobId}:${++this.fireSeq}`;
   }
 }
 

@@ -71,15 +71,12 @@ export type {
   AgentRuntimeProviderFactory,
   AgentRuntimeResumeCapability,
   AgentRuntimeResumeCheckpoint,
-  AgentRuntimeRole,
   AgentRuntimeSkillSource,
   AgentRuntimeStateCallbacks,
   AgentRuntimeStatus,
-  AgentRuntimeSystemInput,
   AgentRuntimeSystemPrompt,
+  AgentRuntimeTextInput,
   AgentRuntimeTurnResult,
-  CompletionDeliveryResult,
-  CompletionEnvelope,
 } from './agent-runtime.js';
 export type {
   ChannelBinCheck,

@@ -135,7 +135,7 @@ function assertRuntimeHandle(
     'resume',
     'stop',
     'channelInput',
-    'systemInput',
+    'completionInput',
     'getStatus',
     'getCheckpoint',
     'wasCheckpointResumed',
@@ -150,10 +150,6 @@ function assertRuntimeHandle(
   }
   if (value['waitIdle'] !== undefined && typeof value['waitIdle'] !== 'function') {
     context.fail('runtime.waitIdle must be a function when present');
-  }
-  const completionInput = value['completionInput'];
-  if (completionInput !== undefined && typeof completionInput !== 'function') {
-    context.fail('runtime.completionInput must be a function when present');
   }
 }
 

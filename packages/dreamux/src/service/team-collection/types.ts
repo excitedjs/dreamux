@@ -44,6 +44,7 @@ export interface TeamCreateInput {
   worktree?: TeamMateWorktreeRequest;
   /** Required recovery subject for the Team (issue #182 PR-3). */
   intent: string;
+  identity?: string;
   prompt?: string;
 }
 

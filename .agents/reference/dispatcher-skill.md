@@ -74,10 +74,11 @@ They are not installed through Codex plugin marketplaces. Core injects them at
 runtime by role (issue #209 slice 6): `bundledSkillSourcesForRole(role)` selects
 the bundled skill sources for the Dispatcher and TeamLeader roles only (ordinary
 teammate / team-member runtimes get none), the launcher passes them as the create
-context's `skillSources`, and the runtime package applies them to its engine —
-Codex via the app-server `skills/extraRoots/set` RPC (each `skill-dir` source's
-parent becomes an extra skills root), Claude Code via `--add-dir` for compatible
-sources. `dreamux onboard` and dispatcher startup no longer symlink skills into
+context's `skillSources`, and the runtime package applies them to its engine.
+Core emits only direct skill directories: Codex derives parent extra roots for
+the app-server `skills/extraRoots/set` RPC, while Claude Code materializes a
+runtime-owned `.claude/skills/<name>` add-dir root and passes it via
+`--add-dir`. `dreamux onboard` and dispatcher startup no longer symlink skills into
 `<dispatcher cwd>/.codex/skills`; an old symlink dir from a prior version is left
 untouched (Codex lists the skill twice but does not fail) and is safe to delete.
 

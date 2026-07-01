@@ -19,6 +19,7 @@ import {
   mustString,
   optionalBooleanField,
   optionalInteger,
+  optionalNonBlankString,
   optionalNullableRecordField,
   optionalNullableStringField,
   optionalRecordField,
@@ -167,6 +168,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     const prompt = mustString(params, 'prompt');
     const intent = mustNonEmptyString(params, 'intent');
     const agentRuntime = optionalString(params, 'agent_runtime');
+    const identity = optionalNonBlankString(params, 'identity');
     const dispatcher = server.getDispatcher(id);
     const target = await teammateTargetFor(dispatcher, params);
     if (target.callerKind === 'team_leader' && params?.['repo'] !== undefined) {
@@ -187,6 +189,7 @@ export const adminMethods: Record<string, AdminHandler> = {
       intent,
       ...(cwd !== null ? { cwd } : {}),
       ...(agentRuntime !== null ? { agentRuntime } : {}),
+      ...(identity !== null ? { identity } : {}),
       ...(worktree !== null ? { worktree } : {}),
     };
     try {
@@ -296,6 +299,7 @@ export const adminMethods: Record<string, AdminHandler> = {
         : repo.cwd ?? (await dispatcher.workspace());
     const worktree = repo?.worktree ?? null;
     const prompt = optionalString(params, 'prompt');
+    const identity = optionalNonBlankString(params, 'identity');
     try {
       const created = await dispatcher.createTeam({
         name,
@@ -304,6 +308,7 @@ export const adminMethods: Record<string, AdminHandler> = {
         intent,
         ...(worktree !== null ? { worktree } : {}),
         ...(prompt !== null ? { prompt } : {}),
+        ...(identity !== null ? { identity } : {}),
       });
       return { ...created, binding: null };
     } catch (err) {

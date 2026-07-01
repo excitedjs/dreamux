@@ -44,6 +44,16 @@ describe('admin layer enforces required non-empty intent/note (#182 PR-3)', () =
     await expectBadRequest('mcp.teammate.spawn', { ...base, intent: '' });
   });
 
+  it('rejects teammate.spawn with blank identity', async () => {
+    await expectBadRequest('mcp.teammate.spawn', {
+      dispatcher_id: 'flow',
+      name_prefix: 'a',
+      prompt: 'go',
+      intent: 'work',
+      identity: '   ',
+    });
+  });
+
   it('rejects teammate.close with missing or empty note', async () => {
     const base = { dispatcher_id: 'flow', name: 'a' };
     await expectBadRequest('mcp.teammate.close', base);
@@ -58,6 +68,16 @@ describe('admin layer enforces required non-empty intent/note (#182 PR-3)', () =
     };
     await expectBadRequest('mcp.team.create', base);
     await expectBadRequest('mcp.team.create', { ...base, intent: '' });
+  });
+
+  it('rejects team.create with blank identity', async () => {
+    await expectBadRequest('mcp.team.create', {
+      dispatcher_id: 'flow',
+      team_name: 'alpha',
+      leader_agent_runtime: 'codex',
+      intent: 'work',
+      identity: '   ',
+    });
   });
 
   it('rejects team.dissolve with missing or empty note', async () => {
