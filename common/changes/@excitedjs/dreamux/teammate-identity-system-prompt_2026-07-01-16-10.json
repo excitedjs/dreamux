@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "comment": "Add optional TeamMate and TeamLeader identity prompts on teammate.spawn and team.create, persisted as identity_prompt and injected as append-only runtime role guidance.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux"
+}

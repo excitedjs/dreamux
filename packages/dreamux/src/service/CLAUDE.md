@@ -110,8 +110,9 @@ the explicit `service/index.ts` facade.
   drives; a dispatcher inspects Teams via `team.*` compact summaries, never
   `teammate.*`.
 - **State is a symmetric directory per agent entity (issue #233).** Every agent
-  is a directory holding `identity.json` (identity + rolling recovery summary:
-  turn_count / last_seen_at / last prompt+assistant previews — the single source
+  is a directory holding `identity.json` (identity + optional `identity_prompt`
+  append-only role guidance + rolling recovery summary: turn_count /
+  last_seen_at / last prompt+assistant previews — the single source
   for `history` / `list` / `status`, no event fold) and `turn.jsonl` (the ONLY
   JSONL store: one compact `submit`/`settled` row per turn, turn-only facts, no
   record fields repeated, folded by `last`). Placement is by role:

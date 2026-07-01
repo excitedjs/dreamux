@@ -82,9 +82,9 @@ export interface AgentRuntimeCapabilities {
 
 export interface AgentRuntimeSystemPrompt {
   /** Full role instructions for runtimes that replace their base prompt. */
-  replace: string;
+  replace?: string;
   /** Focused role delta for runtimes that append to an existing native prompt. */
-  append: string;
+  append?: string;
 }
 
 /**
@@ -107,11 +107,11 @@ export interface AgentRuntimeSystemInput {
   text: string;
   /**
    * Dreamux-owned system-message purpose. Known reasons emitted by core today
-   * are `restart-notice`, `runtime-control`, and `scheduled`; the string remains
+   * are `restart-notice` and `scheduled`; the string remains
    * open so a new core workflow does not require unrelated runtimes to update
    * their type dependency before they can ignore or map it.
    */
-  reason: 'restart-notice' | 'runtime-control' | 'scheduled' | (string & {});
+  reason: 'restart-notice' | 'scheduled' | (string & {});
 }
 
 export interface AgentRuntimeLastResult {

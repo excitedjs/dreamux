@@ -222,6 +222,7 @@ function debugIdentity(
       cleanup_error: null,
     },
     intent: null,
+    identity_prompt: null,
     created_at: now,
     updated_at: now,
     status: 'running',

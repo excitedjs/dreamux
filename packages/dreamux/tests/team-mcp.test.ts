@@ -147,6 +147,8 @@ describe('team-mcp stdio shim', () => {
   it('marks create.intent and dissolve.note required; create_group + create-time bind_group are gone', async () => {
     const tools = await toolSchemas();
     expect(schemaOf(tools, 'create').required).toContain('intent');
+    expect(schemaOf(tools, 'create').properties).toHaveProperty('identity');
+    expect(schemaOf(tools, 'create').required).not.toContain('identity');
     // #182 PR-8: create_group is retired from the public Team MCP surface.
     expect(tools.map((t) => t['name'])).not.toContain('create_group');
     // The create-time `bind_group` convenience is removed; bind a channel after
@@ -213,6 +215,70 @@ describe('team-mcp stdio shim', () => {
     expect(schemaOf(tools, 'history').properties).toHaveProperty('status');
     expect(schemaOf(tools, 'history').properties).not.toHaveProperty('close_status');
     expect(schemaOf(tools, 'history').properties).not.toHaveProperty('name');
+  });
+
+  it('forwards create identity to admin IPC', async () => {
+    const admin = await startFakeAdminServer((request) => ({
+      id: request.id,
+      ok: true,
+      result: { team: { team_name: 'alpha' }, leader: null, member_count: 0, turn: null },
+    }));
+    try {
+      const input = new PassThrough();
+      const output = new PassThrough();
+      const reader = new JsonLineReader(output);
+      const run = runTeamMcp({
+        dispatcherId: 'dispatcher-a',
+        adminSocketPath: admin.socketPath,
+        input,
+        output,
+        log: () => {},
+      });
+
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'create',
+          arguments: {
+            team_name: 'alpha',
+            leader_agent_runtime: 'codex',
+            intent: 'lead alpha',
+            identity: 'architecture lead',
+            prompt: 'start',
+          },
+        },
+      });
+
+      expect(await reader.next()).toMatchObject({
+        jsonrpc: '2.0',
+        id: 1,
+        result: {
+          structuredContent: {
+            team: { team_name: 'alpha' },
+          },
+        },
+      });
+      expect(admin.requests).toHaveLength(1);
+      expect(admin.requests[0]).toMatchObject({
+        method: 'mcp.team.create',
+        params: {
+          dispatcher_id: 'dispatcher-a',
+          caller_kind: 'dispatcher',
+          team_name: 'alpha',
+          leader_agent_runtime: 'codex',
+          intent: 'lead alpha',
+          identity: 'architecture lead',
+          prompt: 'start',
+        },
+      });
+
+      input.end();
+      await run;
+    } finally {
+      await admin.close();
+    }
   });
 
   it('forwards the redesigned read/bind verbs to the right admin methods (#182 PR-7)', async () => {

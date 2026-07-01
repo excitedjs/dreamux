@@ -228,7 +228,7 @@ first-class injection verb. Required provider changes:
 - **Codex `systemInput`** currently hard-wires `submitRestartNotice → injectNotice`
   (`runtime.ts:348-350`), which skips when `inboundSubmitted` and ignores `reason`
   (`turn-manager.ts:167-197`). It MUST dispatch by `reason`: `'restart-notice'`
-  keeps `injectNotice` (skip-if-busy); `'scheduled'`/`'runtime-control'` go through
+  keeps `injectNotice` (skip-if-busy); `'scheduled'` goes through
   a **normal submit** (sourceId is a structured scheduled origin / empty to disable
   dedupe). (This is mandatory prerequisite #1, §9.)
 - **Claude `systemInput`** (`runtime.ts:312-320`) already runs the turn on queue;

@@ -15,6 +15,7 @@ import type {
   AgentRuntimeProvider,
   AgentRuntimeStatus,
   AgentRuntimeSystemInput,
+  AgentRuntimeSystemPrompt,
   AgentRuntimeTurnResult,
   CompletionEnvelope,
   DreamuxLogger,
@@ -118,6 +119,7 @@ class FakeRuntime implements AgentRuntime {
 function fakeRuntimeCatalog(
   runtimes: FakeRuntime[],
   opts: { settleImmediately?: boolean; lastText?: string } = {},
+  contexts: AgentRuntimeCreateContext[] = [],
 ): AgentRuntimeProviderCatalog {
   const provider: AgentRuntimeProvider = {
     ref: FAKE_RUNTIME_REF,
@@ -128,6 +130,7 @@ function fakeRuntimeCatalog(
     },
     getCapabilities: () => CAPABILITIES,
     createRuntime(context: AgentRuntimeCreateContext) {
+      contexts.push(context);
       const runtime = new FakeRuntime(opts);
       if (context.onTurnSettled !== undefined) {
         runtime.setOnTurnSettled(context.onTurnSettled);
@@ -348,6 +351,121 @@ describe('TeamCollection create without a prompt fires no leader turn', () => {
     const status = await (await teams.get('beta')).status();
     expect(status.leader).not.toBeNull();
     expect(status.member_count).toBe(0);
+  });
+});
+
+describe('TeamCollection identity prompt launch behavior', () => {
+  let root: string;
+  let previousHome: string | undefined;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'dreamux-team-identity-'));
+    previousHome = process.env['HOME'];
+    process.env['HOME'] = join(root, 'home');
+    mkdirSync(process.env['HOME'], { recursive: true });
+  });
+
+  afterEach(() => {
+    if (previousHome === undefined) delete process.env['HOME'];
+    else process.env['HOME'] = previousHome;
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('persists trimmed TeamLeader identity, injects it as append-only prompt, and does not inherit it to members', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const contexts: AgentRuntimeCreateContext[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const log = noopLog();
+    const identities = new TeamMateIdentityStore({ warn: log.warn.bind(log) });
+    const teams = new TeamCollection({
+      dispatcherId: 'dispatcher-a',
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes, {}, contexts),
+      worktrees: new WorktreeManager(),
+      identities,
+      turnsStore: new TeamMateTurnsStore({ warn: log.warn.bind(log) }),
+      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
+      initiatorFor: async () => null,
+      isShuttingDown: () => false,
+      adminSocketPath: '/tmp/admin.sock',
+      leaderChannelDescriptors: () => [],
+      log,
+    });
+
+    await teams.create({
+      name: 'alpha',
+      leaderAgentRuntime: 'agent-a',
+      intent: 'lead alpha',
+      identity: '  architecture reviewer  ',
+      prompt: 'lead this team',
+    });
+    const team = await teams.get('alpha');
+    expect(team.leader.current().identity_prompt).toBe('architecture reviewer');
+    expect((contexts[0]?.systemPrompt as AgentRuntimeSystemPrompt | undefined)?.append)
+      .toContain('architecture reviewer');
+    expect(contexts[0]?.systemPrompt).not.toHaveProperty('replace');
+    const summary = await team.status();
+    expect(summary.leader).not.toHaveProperty('identity_prompt');
+    expect(runtimes[0]!.submitted.map((input) => input.text)).toEqual([
+      'lead this team',
+    ]);
+
+    await team.spawnTeamMate({
+      name: 'worker',
+      prompt: 'do the work',
+      agentRuntime: 'agent-a',
+      intent: 'member work',
+    });
+    expect(contexts.find((context) => context.role === 'team_member')?.systemPrompt)
+      .toBeUndefined();
+  });
+
+  it('rejects blank TeamLeader identity input', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const log = noopLog();
+    const teams = new TeamCollection({
+      dispatcherId: 'dispatcher-a',
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
+      worktrees: new WorktreeManager(),
+      identities: new TeamMateIdentityStore({ warn: log.warn.bind(log) }),
+      turnsStore: new TeamMateTurnsStore({ warn: log.warn.bind(log) }),
+      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
+      initiatorFor: async () => null,
+      isShuttingDown: () => false,
+      adminSocketPath: '/tmp/admin.sock',
+      leaderChannelDescriptors: () => [],
+      log,
+    });
+
+    await expect(
+      teams.create({
+        name: 'alpha',
+        leaderAgentRuntime: 'agent-a',
+        intent: 'lead alpha',
+        identity: '   ',
+      }),
+    ).rejects.toThrow('TeamLeader identity must be a non-empty string');
+    expect(runtimes).toHaveLength(0);
   });
 });
 

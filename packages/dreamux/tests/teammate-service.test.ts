@@ -11,6 +11,7 @@ import type {
   AgentRuntimeProvider,
   AgentRuntimeStatus,
   AgentRuntimeSystemInput,
+  AgentRuntimeSystemPrompt,
   AgentRuntimeTurnResult,
   DreamuxLogger,
   InboundTurnInput,
@@ -84,7 +85,10 @@ class FakeRuntime implements AgentRuntime {
   }
 }
 
-function fakeRuntimeCatalog(runtimes: FakeRuntime[]): AgentRuntimeProviderCatalog {
+function fakeRuntimeCatalog(
+  runtimes: FakeRuntime[],
+  contexts: AgentRuntimeCreateContext[] = [],
+): AgentRuntimeProviderCatalog {
   const provider: AgentRuntimeProvider = {
     ref: FAKE_RUNTIME_REF,
     descriptor: {
@@ -93,8 +97,9 @@ function fakeRuntimeCatalog(runtimes: FakeRuntime[]): AgentRuntimeProviderCatalo
       ref: { source: 'builtin', id: 'test-runtime', raw: FAKE_RUNTIME_REF },
     },
     getCapabilities: () => CAPABILITIES,
-    createRuntime(_context: AgentRuntimeCreateContext) {
+    createRuntime(context: AgentRuntimeCreateContext) {
       const runtime = new FakeRuntime();
+      contexts.push(context);
       runtimes.push(runtime);
       return runtime;
     },
@@ -144,6 +149,7 @@ async function createTestTeamLeader(input: {
   workspace: string;
   config: ReturnType<typeof testDreamuxConfig>;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
+  identity?: string;
 }): Promise<TeammateService> {
   const log = noopLog();
   const identities = new TeamMateIdentityStore({ warn: log.warn.bind(log) });
@@ -160,6 +166,7 @@ async function createTestTeamLeader(input: {
     runtimeCwd: input.workspace,
     worktree: reuseCwd(input.workspace),
     intent: 'lead alpha',
+    ...(input.identity !== undefined ? { identityPrompt: input.identity } : {}),
     status: 'starting',
   });
   const leader = createTeamLeaderAgent({
@@ -237,6 +244,79 @@ describe('TeammateService channel input routing', () => {
     expect(runtimes[0]!.submitted.map((input) => input.text)).toEqual([
       'initial leader prompt',
       'from bound group',
+    ]);
+  });
+
+  it('injects stored identity as an append-only launch prompt and keeps it out of channel input', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const contexts: AgentRuntimeCreateContext[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const leader = await createTestTeamLeader({
+      dispatcherId: 'dispatcher-a',
+      teamId: 'alpha',
+      name: 'tl-alpha-0001',
+      prompt: 'current task only',
+      agentRuntime: 'agent-a',
+      workspace,
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes, contexts),
+      identity: 'architecture reviewer',
+    });
+
+    expect(leader.current().identity_prompt).toBe('architecture reviewer');
+    expect((contexts[0]?.systemPrompt as AgentRuntimeSystemPrompt | undefined)?.append)
+      .toContain('architecture reviewer');
+    expect(contexts[0]?.systemPrompt).not.toHaveProperty('replace');
+    expect(leader.status()).not.toHaveProperty('identity_prompt');
+    expect(runtimes[0]!.submitted.map((input) => input.text)).toEqual([
+      'current task only',
+    ]);
+  });
+
+  it('reapplies stored identity when a closed teammate is reopened', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const contexts: AgentRuntimeCreateContext[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const leader = await createTestTeamLeader({
+      dispatcherId: 'dispatcher-a',
+      teamId: 'alpha',
+      name: 'tl-alpha-0001',
+      agentRuntime: 'agent-a',
+      workspace,
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes, contexts),
+      identity: 'architecture reviewer',
+    });
+
+    await leader.close({ note: 'pause' });
+    await leader.send({
+      prompt: 'resume the review',
+      turnOrigin: 'dispatcher',
+    });
+
+    expect(contexts).toHaveLength(2);
+    expect(contexts[0]?.systemPrompt?.append).toContain('architecture reviewer');
+    expect(contexts[1]?.systemPrompt?.append).toContain('architecture reviewer');
+    expect(runtimes[1]!.submitted.map((input) => input.text)).toEqual([
+      'resume the review',
     ]);
   });
 

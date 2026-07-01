@@ -26,6 +26,7 @@ import type {
   AgentRuntimeMcpServer,
   AgentRuntimeProvider,
   AgentRuntimeProviderDescriptor,
+  AgentRuntimeSystemPrompt,
   AgentRuntimeProviderFactory,
   ProviderDescriptor,
   ProviderFactoryContext,
@@ -69,6 +70,20 @@ const DEFAULT_CODEX_DESCRIPTOR: AgentRuntimeProviderDescriptor = {
   kind: 'agentRuntime',
   ref: { source: 'builtin', id: 'codex', raw: BUILTIN_CODEX_PROVIDER_REF },
 };
+
+export function codexSystemPromptReplace(
+  systemPrompt: AgentRuntimeSystemPrompt | undefined,
+): string | undefined {
+  if (systemPrompt === undefined) return undefined;
+  if (systemPrompt.replace !== undefined) return systemPrompt.replace;
+  if (systemPrompt.append !== undefined) {
+    throw new Error(
+      'codex runtime cannot apply append-only systemPrompt safely: Codex ' +
+        'uses replacement baseInstructions and no complete replacement prompt was provided',
+    );
+  }
+  return undefined;
+}
 
 /** Validate + narrow a seed descriptor to the Agent Runtime kind. */
 function asAgentRuntimeDescriptor(
@@ -128,6 +143,7 @@ export function createCodexAgentRuntimeProvider(
         ...codexMcpServerArgs(context.mcpServers),
       ];
       const paths = context.paths;
+      const systemPromptReplace = codexSystemPromptReplace(context.systemPrompt);
       const deps: CodexRuntimeDeps = {
         cwd: context.cwd,
         state: context.state,
@@ -146,8 +162,8 @@ export function createCodexAgentRuntimeProvider(
         ...(context.skillSources !== undefined
           ? { skillSources: context.skillSources }
           : {}),
-        ...(context.systemPrompt !== undefined
-          ? { systemPromptReplace: context.systemPrompt.replace }
+        ...(systemPromptReplace !== undefined
+          ? { systemPromptReplace }
           : {}),
         ...(context.onTurnSettled !== undefined
           ? { onTurnSettled: context.onTurnSettled }

@@ -529,10 +529,9 @@ capability/abstraction.** Found five; G1–G3 are real design glue, G4 is
 - **G2 — The scheduled trigger has no first-class injection path; it overloads
   one.** Today the draft would call `agent.send` (which enters as a
   channel-inbound turn, `runtime.channelInput({ sourceId: 'teammate:…' })`) or
-  `systemInput` with `reason: 'runtime-control'`. The first misuses the
-  channel-input path for a non-channel event; the second overloads an existing
-  reason enum that has no `scheduled` member (`agent-runtime.ts:131`). Both are
-  glue. Proper shape: a scheduled trigger is its own neutral injection
+  `systemInput` with a generic control reason. The first misuses the
+  channel-input path for a non-channel event; the second overloads a generic
+  reason instead of naming the scheduler event. Both are glue. Proper shape: a scheduled trigger is its own neutral injection
   intent — either a new `reason: 'scheduled'` on the system-input contract, or
   a dedicated injection verb — so the runtime and turn records can tell a cron
   fire apart from a user message or a restart notice without string sniffing.

@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "comment": "Reject append-only system prompts in the Codex runtime instead of mapping them to replacement baseInstructions.",
+      "type": "patch",
+      "packageName": "@excitedjs/agent-runtime-codex"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-codex"
+}

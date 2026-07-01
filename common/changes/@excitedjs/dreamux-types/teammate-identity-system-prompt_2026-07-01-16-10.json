@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "comment": "Allow AgentRuntimeSystemPrompt to carry append-only or replace-only prompt content, and remove runtime-control from the known system input reasons.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux-types"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-types"
+}

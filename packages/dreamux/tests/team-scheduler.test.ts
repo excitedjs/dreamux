@@ -371,6 +371,7 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       name: 'alpha',
       leaderAgentRuntime: 'agent-a',
       intent: 'lead alpha',
+      identity: 'team coordinator',
     });
     const team = await dispatcher.team('alpha');
     await team.spawnTeamMate({
@@ -378,6 +379,7 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       prompt: 'do work',
       agentRuntime: 'agent-a',
       intent: 'member work',
+      identity: 'worker specialist',
     });
     await dispatcher.teammates.spawn({
       name: 'helper',
@@ -386,6 +388,7 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       worktree: { mode: 'reuse-cwd' },
       agentRuntime: 'agent-a',
       intent: 'ordinary work',
+      identity: 'general helper',
     });
 
     const dispatcherContext = contexts.find((context) => context.role === 'dispatcher');
@@ -411,10 +414,13 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       expect.any(String),
     ]);
     expect(leaderContext?.disableFeatures).toEqual(['userInterrupt', 'cron']);
+    expect(leaderContext?.systemPrompt?.append).toContain('team coordinator');
     expect(memberContext?.mcpServers.map((server) => server.name)).not.toContain('team');
     expect(memberContext?.mcpServers.map((server) => server.name)).not.toContain('cron');
     expect(memberContext?.disableFeatures).toEqual(['userInterrupt']);
+    expect(memberContext?.systemPrompt?.append).toContain('worker specialist');
     expect(teammateContext?.disableFeatures).toEqual(['userInterrupt']);
+    expect(teammateContext?.systemPrompt?.append).toContain('general helper');
 
     await dispatcher.stop();
   });

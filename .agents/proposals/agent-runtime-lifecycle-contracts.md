@@ -49,8 +49,8 @@ Current source facts:
 - Earlier drafts exposed `getThreadId()` and `wasThreadResumed()` as runtime
   projections, while the neutral create identity already talked about
   `checkpoint_id`. The final contract should expose only checkpoint semantics.
-- `AgentRuntimeSystemInput.reason` currently mixes restart notices, runtime
-  control, scheduled model turns, and teammate completion
+- `AgentRuntimeSystemInput.reason` currently mixes restart notices, scheduled
+  model turns, and teammate completion
   (`/packages/dreamux-types/src/agent-runtime.ts`).
 - Dispatcher launch currently asks the resolved provider for
   `systemPrompt.mode`, then chooses either the full replacement prompt or the
@@ -258,7 +258,7 @@ subagent protocols.
 ```ts
 interface AgentRuntimeSystemInput {
   text: string;
-  reason: "restart-notice" | "runtime-control" | "scheduled" | (string & {});
+  reason: "restart-notice" | "scheduled" | (string & {});
 }
 
 interface AgentRuntime {
@@ -273,8 +273,8 @@ Rules:
 - `channelInput` is the user/channel-turn inbox. Channel messages and explicit
   Dreamux sends enter here, and the runtime owns rendering the neutral channel
   shape into its native input format.
-- `systemInput` is the Dreamux system-message inbox. Restart notices, runtime
-  control text, and scheduled prompts enter here, and the runtime decides whether
+- `systemInput` is the Dreamux system-message inbox. Restart notices and
+  scheduled prompts enter here, and the runtime decides whether
   to submit a plain turn, use a native system-message path, skip, or fail.
 - Completion delivery stays a separate surface because retry/terminal semantics
   are different from both channel/user turns and system messages.
@@ -297,9 +297,9 @@ them.
 ```ts
 interface AgentRuntimeSystemPrompt {
   /** Full role instructions for runtimes that replace their base prompt. */
-  replace: string;
+  replace?: string;
   /** Focused role delta for runtimes that append to an existing native prompt. */
-  append: string;
+  append?: string;
 }
 
 interface AgentRuntimeCreateContext<TConfig = unknown> {
