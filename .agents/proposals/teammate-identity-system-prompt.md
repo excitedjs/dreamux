@@ -57,7 +57,9 @@ Add a minimal, provider-neutral TeamMate identity capability:
 
 The public input is intentionally a single optional string. Dreamux does not
 define role enums such as `architect` or `performance_reviewer`; those are caller
-language, not core taxonomy.
+language, not core taxonomy. If provided, `identity` is trimmed before storage
+and must remain non-empty; omitted means no identity prompt, while `""` or
+whitespace-only input is rejected instead of persisted as an empty prompt block.
 
 On the persisted `TeamMateIdentity` record the field is `identity_prompt:
 string | null`. The different storage name avoids `identity.identity` call sites
@@ -75,7 +77,9 @@ the current task request. Core must supply both
 `AgentRuntimeCreateContext.systemPrompt.append` with that same wrapped identity
 block so replace-native and append-native runtimes both receive it. Core does
 not branch on provider ids; runtime adapters decide which native prompt mechanic
-to use.
+to use. The wrapped block must be self-contained enough to serve as full role
+instructions for replace-native runtimes while still reading as focused role
+guidance when an append-native runtime appends it to its own native prompt.
 
 When omitted, current behavior is unchanged: no TeamMate, Team member, or
 TeamLeader system prompt is injected just because the agent was created.
@@ -109,6 +113,8 @@ TeamLeader system prompt is injected just because the agent was created.
   TeamLeader-scoped tool schemas and forwards it through MCP/admin/service
   layers.
 - `team.create` exposes optional `identity` and applies it to the TeamLeader.
+- Provided `identity` input is trimmed, blank input is rejected, and the trimmed
+  value is persisted.
 - The persisted TeamMate identity record writes `identity_prompt` for new agents
   and tolerates missing identity data in existing records.
 - Runtime launch for TeamMates, Team members, and TeamLeaders supplies both
