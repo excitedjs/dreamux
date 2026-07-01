@@ -181,8 +181,11 @@ skill sources by role:
 
 - Dispatcher and TeamLeader roles receive Dreamux operational skills.
 - Ordinary TeamMate and team-member roles receive none by default.
-- Codex applies skill roots through `skills/extraRoots/set`.
-- Claude Code receives add-dir-compatible roots through `--add-dir`.
+- Core emits only direct skill directories. Codex derives extra roots from their
+  parent directories and applies them through `skills/extraRoots/set`.
+- Claude Code materializes a runtime-owned add-dir root containing
+  `.claude/skills/<name>` entries that point at those direct skill directories,
+  then passes that root through `--add-dir`.
 
 Dreamux no longer installs workspace `.codex/skills` symlinks during onboard or
 runtime startup.
@@ -233,6 +236,12 @@ resident session is created. Codex maps selected `systemPrompt.replace` to
 `baseInstructions`; when append is selected, it applies that append text as a
 developer-role history item with `thread/inject_items` before the first
 user/channel turn.
+
+Dreamux-owned turns that are not channel messages use the provider-facing
+`completionInput({ text, sourceId? })` plain text input. Channel-originated
+messages are the only callers of `channelInput`, which is where runtime-specific
+channel/XML rendering belongs. Runtime providers do not receive
+`CompletionEnvelope` or a `systemInput` reason discriminator.
 
 Key source:
 

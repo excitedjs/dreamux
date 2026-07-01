@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "BREAKING: Refine AgentRuntime lifecycle contracts around turn-owned settlement results, kindless opaque checkpoint ids, instance-scoped state sinks, resume-only capabilities, removal of public submitTurn/injectControlNotice projections, required channel/system inputs, optional completionInput delivery, and provider-owned prompt injection.",
+      "comment": "BREAKING: Refine AgentRuntime lifecycle contracts around turn-owned settlement results, kindless opaque checkpoint ids, instance-scoped state sinks, resume-only capabilities, removal of public submitTurn/injectControlNotice/systemInput projections, required channelInput and plain completionInput text delivery, provider-owned prompt injection, and core-owned completion envelope rendering.",
       "type": "minor",
       "packageName": "@excitedjs/dreamux"
     }

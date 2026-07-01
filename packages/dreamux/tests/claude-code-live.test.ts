@@ -113,7 +113,6 @@ describe('claude-code live integration (opt-in)', () => {
 
     const runtime = claudeCodeProvider().createRuntime({
       identity: { runtime_id: 'live', checkpoint_id: row!.thread_id },
-      role: 'dispatcher',
       config: dispatcherClaudeCodeConfig(dispatcher),
       cwd: home,
       mcpServers: [],

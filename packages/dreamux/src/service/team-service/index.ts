@@ -1,5 +1,4 @@
 import type {
-  CompletionEnvelope,
   AgentRuntimeMcpServer,
   AgentRuntimeTurnResult,
   DreamuxLogger,
@@ -13,6 +12,7 @@ import {
 import type { DreamuxConfig } from '../../config/config.js';
 import { dispatcherTeamCronJobsPath } from '../../platform/paths.js';
 import type {
+  CompletionEnvelope,
   CompletionInitiator,
   CompletionRouter,
 } from '../completion-router/index.js';

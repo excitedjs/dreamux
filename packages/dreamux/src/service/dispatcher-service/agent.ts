@@ -1,7 +1,6 @@
 import type {
   AgentRuntimeMcpServer,
   ChannelSession,
-  CompletionEnvelope,
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
 
@@ -15,6 +14,7 @@ import type { DispatcherConfig, DreamuxConfig } from '../../config/config.js';
 import type { DispatcherStore } from '../../state/dispatcher-store.js';
 import {
   completionKey,
+  type CompletionEnvelope,
   type CompletionRouter,
 } from '../completion-router/index.js';
 import type { TeamMateIdentityStore } from '../teammate-collection/identity-store.js';
@@ -161,7 +161,6 @@ function buildDispatcherLaunch(deps: DispatcherAgentDeps): RuntimeLaunchSpec {
     checkpointId: row.thread_id,
     context: {
       identity: { runtime_id: id, checkpoint_id: row.thread_id },
-      role: 'dispatcher',
       config: dispatcherConfig.runtime.config,
       cwd,
       systemPrompt: {

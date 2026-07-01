@@ -15,35 +15,17 @@
  * (`onboard/bundled-skills.ts`), which wrote the skills into each runtime's
  * working directory; nothing here mutates the filesystem.
  */
-import type { AgentRuntimeRole, AgentRuntimeSkillSource } from '@excitedjs/dreamux-types';
+import type { AgentRuntimeSkillSource } from '@excitedjs/dreamux-types';
 import {
   BUNDLED_SKILL_NAMES,
   bundledSkillDir,
-  bundledSkillsDir,
 } from '../platform/paths.js';
 
-/**
- * The on-disk layout of a per-skill bundled Dreamux skill source: `path` is the
- * skill's own directory, which contains its `SKILL.md`. Codex maps this to an
- * extra skills root by taking the *parent* of such a dir (a root whose immediate
- * children are skill dirs). Kept as a plain string because
- * `@excitedjs/dreamux-types` is declaration-only and cannot export a runtime
- * constant.
- */
-export const DREAMUX_SKILL_DIR_LAYOUT = 'skill-dir';
-
-/**
- * The layout for the single Claude-Code add-dir parent source: `path` is a
- * directory that contains a `.claude/skills/<name>` tree, which Claude Code
- * discovers when the dir is passed as `--add-dir <path>`. This MUST match the
- * `CLAUDE_SKILLS_PARENT_LAYOUT` literal the `@excitedjs/agent-runtime-claude-code`
- * package translates into `--add-dir` (a cross-package test pins the equality).
- * Kept as a plain string for the same declaration-only reason as above.
- */
-export const DREAMUX_CLAUDE_SKILLS_PARENT_LAYOUT = 'claude-skills-parent';
-
-/** The synthetic source name for the bundled Claude add-dir parent. */
-export const DREAMUX_BUNDLED_CLAUDE_PARENT_NAME = 'dreamux-bundled-skills';
+type AgentRuntimeRole =
+  | 'dispatcher'
+  | 'team_leader'
+  | 'teammate'
+  | 'team_member';
 
 /** Roles that receive the bundled Dreamux skills. */
 function roleReceivesBundledSkills(role: AgentRuntimeRole): boolean {
@@ -52,40 +34,17 @@ function roleReceivesBundledSkills(role: AgentRuntimeRole): boolean {
 
 /**
  * The bundled Dreamux skill sources for a runtime `role`. For Dispatcher and
- * TeamLeader this returns BOTH engine views of the SAME on-disk skills, so each
- * builtin picks the view its engine understands and the other engine ignores the
- * incompatible layout:
- *
- * - one `skill-dir` source per bundled skill (`path` = the skill dir) — Codex
- *   applies these via `skills/extraRoots/set` (the shared parent is one root);
- * - one `claude-skills-parent` source (`path` = the add-dir parent that contains
- *   `.claude/skills/<name>`) — Claude Code translates it into a real
- *   `--add-dir <absolute package path>` flag.
- *
- * Every other role gets an empty array. The launcher passes the result as
- * `AgentRuntimeCreateContext.skillSources`.
+ * TeamLeader this returns one neutral source per concrete skill directory. Each
+ * runtime package owns translating those directories into its native discovery
+ * layout; core emits no runtime-specific layout markers.
  */
 export function bundledSkillSourcesForRole(
   role: AgentRuntimeRole,
 ): AgentRuntimeSkillSource[] {
   if (!roleReceivesBundledSkills(role)) return [];
-  const codexSources: AgentRuntimeSkillSource[] = BUNDLED_SKILL_NAMES.map(
-    (name) => ({
-      name,
-      path: bundledSkillDir(name),
-      layout: DREAMUX_SKILL_DIR_LAYOUT,
-      source: 'dreamux-core',
-    }),
-  );
-  // The Claude Code add-dir parent: a single source whose path is the directory
-  // containing `.claude/skills`. Codex ignores this layout; Claude Code ignores
-  // the per-skill `skill-dir` sources — so both engines read the same physical
-  // `bundledSkillContainerDir()/<name>` skills from one bundled copy.
-  const claudeParent: AgentRuntimeSkillSource = {
-    name: DREAMUX_BUNDLED_CLAUDE_PARENT_NAME,
-    path: bundledSkillsDir(),
-    layout: DREAMUX_CLAUDE_SKILLS_PARENT_LAYOUT,
+  return BUNDLED_SKILL_NAMES.map((name) => ({
+    name,
+    path: bundledSkillDir(name),
     source: 'dreamux-core',
-  };
-  return [...codexSources, claudeParent];
+  }));
 }

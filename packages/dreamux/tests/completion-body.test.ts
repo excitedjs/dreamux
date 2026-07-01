@@ -11,14 +11,14 @@ import {
   completionInlineBudget,
   resolveCompletionBody,
   teamMateCompletionOutputPath,
+  type CompletionBodyInput,
 } from '@excitedjs/dreamux-utils';
-import type { CompletionEnvelope } from '@excitedjs/dreamux-types';
 
 const SOURCE = 'reviewer';
 const ID = 'reviewer:turn-7';
 
-function completion(result: string): CompletionEnvelope {
-  return { source: SOURCE, id: ID, status: 'completed', result };
+function completion(result: string): CompletionBodyInput {
+  return { source: SOURCE, id: ID, result };
 }
 
 describe('resolveCompletionBody', () => {

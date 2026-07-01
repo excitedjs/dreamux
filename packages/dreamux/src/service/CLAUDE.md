@@ -54,7 +54,8 @@ the explicit `service/index.ts` facade.
   reads/writes/summaries/transfer-back operations. It treats Team route owners as
   flat routing data and does not import Team service types. The dispatcher base prompt and runnable-channel guard stay under `dispatcher-service/`. There
   is **no** `DispatcherRuntimeService`; the at-most-once policy lives in the
-  `CompletionRouter`, and `TeammateService.completionInput` is a thin forward.
+  `CompletionRouter`, while `TeammateService.completionInput` is the core-side
+  delivery target that renders a completion envelope into a plain runtime turn.
 - **`teammate-collection/` + `teammate-service/` + `completion-router/`** —
   `TeammateCollection` (the collection: stores, worktrees, `spawn` / `list` /
   `history` / `close`, factory paths, per-turn router registration) +

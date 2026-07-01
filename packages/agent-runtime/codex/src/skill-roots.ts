@@ -6,8 +6,6 @@ import type {
 
 import type { CodexWsClient } from './rpc.js';
 
-const CODEX_SKILL_DIR_LAYOUT = 'skill-dir';
-
 export async function applyCodexSkillExtraRoots(input: {
   client: CodexWsClient;
   sources: readonly AgentRuntimeSkillSource[];
@@ -16,9 +14,7 @@ export async function applyCodexSkillExtraRoots(input: {
   if (input.sources.length === 0) return;
   const extraRoots = [
     ...new Set(
-      input.sources
-        .filter((source) => source.layout === CODEX_SKILL_DIR_LAYOUT)
-        .map((source) => dirname(source.path)),
+      input.sources.map((source) => dirname(source.path)),
     ),
   ];
   if (extraRoots.length === 0) return;

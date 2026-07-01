@@ -4,7 +4,7 @@
  * This file imports Dreamux contracts from `@excitedjs/dreamux-types` ONLY and
  * implements a complete Agent Runtime provider (descriptor + `readConfig` +
  * `getCapabilities` + optional `diagnostic` + `createRuntime` returning a live
- * `AgentRuntime` handle, including the optional `completionInput`) and a Channel
+ * `AgentRuntime` handle) and a Channel
  * provider (with the optional `reply` / `react` / `tools` / `handleTool` /
  * `messageBelongsToTarget`), the way an external provider package in another
  * repository would. It also exercises the published provider factory contracts
@@ -30,6 +30,7 @@ import type {
   AgentRuntimeProviderDescriptor,
   AgentRuntimeProviderFactory,
   AgentRuntimeStatus,
+  AgentRuntimeTextInput,
   AgentRuntimeTurnResult,
   ChannelInboundEnvelope,
   ChannelMessageTargetCheck,
@@ -43,8 +44,6 @@ import type {
   ChannelTarget,
   ChannelToolCall,
   ChannelToolDescriptor,
-  CompletionEnvelope,
-  CompletionDeliveryResult,
   DreamuxLogger,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
@@ -92,10 +91,6 @@ class FixtureRuntime implements AgentRuntime {
     return { status: 'submitted', turnId: input.sourceId };
   }
 
-  async systemInput(): Promise<AgentRuntimeTurnResult> {
-    return { status: 'skipped' };
-  }
-
   getStatus(): AgentRuntimeStatus {
     return this.status;
   }
@@ -120,11 +115,8 @@ class FixtureRuntime implements AgentRuntime {
     return EXTERNAL_RUNTIME_CAPABILITIES;
   }
 
-  async completionInput(
-    completion: CompletionEnvelope,
-  ): Promise<CompletionDeliveryResult> {
-    this.logger?.info({ id: completion.id }, 'fixture completion');
-    return { status: 'accepted' };
+  async completionInput(input: AgentRuntimeTextInput): Promise<AgentRuntimeTurnResult> {
+    return { status: 'submitted', turnId: input.sourceId ?? 'plain-turn' };
   }
 }
 

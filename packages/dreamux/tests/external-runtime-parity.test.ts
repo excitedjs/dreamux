@@ -253,7 +253,6 @@ describe('external runtime production parity', () => {
     expect(externalRuntimeModule.externalRuntimeObservations).toEqual([
       expect.objectContaining({
         providerRef: EXTERNAL_RUNTIME_REF,
-        role: 'teammate',
         cwd: workspace,
         config: {
           finalTextPrefix: 'settled-by-generic-loader',
@@ -265,6 +264,9 @@ describe('external runtime production parity', () => {
         submittedTexts: ['exercise neutral runtime seam'],
       }),
     ]);
+    expect(externalRuntimeModule.externalRuntimeObservations[0]).not.toHaveProperty(
+      'role',
+    );
     expect(
       externalRuntimeModule.externalRuntimeObservations[0]?.disableFeatures,
     ).toContain('userInterrupt');

@@ -25,7 +25,7 @@ import type {
   AgentRuntimeLastResult,
   AgentRuntimeProvider,
   AgentRuntimeProviderConfigReadContext,
-  AgentRuntimeSystemInput,
+  AgentRuntimeTextInput,
   AgentRuntimeTurnResult,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
@@ -50,6 +50,7 @@ function builtinCatalog(): AgentRuntimeProviderCatalog {
 class FakeExternalRuntime implements AgentRuntime {
   private status: ReturnType<AgentRuntime['getStatus']> = 'declared';
   readonly submitted: InboundTurnInput[] = [];
+  readonly textSubmitted: AgentRuntimeTextInput[] = [];
 
   constructor(readonly providerRef: string) {}
 
@@ -70,8 +71,9 @@ class FakeExternalRuntime implements AgentRuntime {
     return { status: 'submitted', turnId: 'turn-external' };
   }
 
-  async systemInput(_notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult> {
-    return { status: 'skipped' };
+  async completionInput(input: AgentRuntimeTextInput): Promise<AgentRuntimeTurnResult> {
+    this.textSubmitted.push(input);
+    return { status: 'submitted', turnId: input.sourceId ?? 'turn-external-text' };
   }
 
   getStatus(): ReturnType<AgentRuntime['getStatus']> {
@@ -141,7 +143,6 @@ describe('AgentRuntimeProviderCatalog', () => {
 
     const runtime = builtinCatalog().resolve('builtin:codex').createRuntime({
       identity: { runtime_id: 'flow', checkpoint_id: row!.thread_id },
-      role: 'dispatcher',
       config: dispatcherCodexConfig(dispatcher),
       cwd: '/tmp/dreamux-test-cwd',
       mcpServers: [],
@@ -230,7 +231,6 @@ describe('AgentRuntimeProviderCatalog', () => {
     const store = new DispatcherStore(testDreamuxConfig([dispatcher]));
     const runtime = provider.createRuntime({
       identity: { runtime_id: 'flow', checkpoint_id: store.get('flow')!.thread_id },
-      role: 'dispatcher',
       config: {},
       cwd: '/tmp/dreamux-test-cwd',
       mcpServers: [],
@@ -361,7 +361,6 @@ describe('AgentRuntimeProviderCatalog', () => {
     expect(() =>
       provider.createRuntime({
         identity: { runtime_id: 'flow', checkpoint_id: null },
-        role: 'dispatcher',
         config: {},
         cwd: '/tmp/dreamux-test-cwd',
         mcpServers: [],
@@ -390,7 +389,8 @@ describe('AgentRuntimeProviderCatalog', () => {
               resume: () => runtime.resume(),
               stop: () => runtime.stop(),
               channelInput: (input: InboundTurnInput) => runtime.channelInput(input),
-              systemInput: (input: AgentRuntimeSystemInput) => runtime.systemInput(input),
+              completionInput: (input: AgentRuntimeTextInput) =>
+                runtime.completionInput(input),
               getStatus: () => runtime.getStatus(),
               getCheckpoint: () => runtime.getCheckpoint(),
               wasCheckpointResumed: () => runtime.wasCheckpointResumed(),
@@ -409,7 +409,6 @@ describe('AgentRuntimeProviderCatalog', () => {
     expect(() =>
       provider.createRuntime({
         identity: { runtime_id: 'flow', checkpoint_id: null },
-        role: 'dispatcher',
         config: {},
         cwd: '/tmp/dreamux-test-cwd',
         mcpServers: [],

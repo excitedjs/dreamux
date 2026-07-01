@@ -1,7 +1,6 @@
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type {
   AgentRuntime,
-  CompletionEnvelope,
 } from '@excitedjs/dreamux-types';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
@@ -11,6 +10,7 @@ import {
 } from './agent-config.js';
 import {
   completionKey,
+  type CompletionEnvelope,
   type CompletionInitiator,
   type CompletionRouter,
 } from '../completion-router/index.js';

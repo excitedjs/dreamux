@@ -1,14 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import type {
-  CompletionEnvelope,
-  DreamuxLogger,
-  CompletionDeliveryResult,
-} from '@excitedjs/dreamux-types';
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import {
   CompletionRouter,
   completionKey,
+  type CompletionDeliveryResult,
+  type CompletionEnvelope,
   type CompletionInitiator,
 } from '../src/service/completion-router/index.js';
 

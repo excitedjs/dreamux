@@ -87,7 +87,6 @@ describe('builtin:codex loads the real @excitedjs/agent-runtime-codex package', 
     const paths: AgentRuntimePathContext = {
       dispatcherDir: () => tmp,
       logsDir: () => tmp,
-      completionSpillDir: () => join(tmp, 'spill'),
       runtimeSocketDirs: () => [join(tmp, 'sockets')],
     };
     const state: AgentRuntimeStateCallbacks = {
@@ -96,7 +95,6 @@ describe('builtin:codex loads the real @excitedjs/agent-runtime-codex package', 
     };
     const context: AgentRuntimeCreateContext<DispatcherCodexConfig> = {
       identity: { runtime_id: 'flow', checkpoint_id: null },
-      role: 'dispatcher',
       config,
       cwd: tmp,
       mcpServers: [],

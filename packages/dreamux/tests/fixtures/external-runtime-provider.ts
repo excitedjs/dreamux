@@ -6,7 +6,7 @@ import type {
   AgentRuntimeLastResult,
   AgentRuntimeProviderFactory,
   AgentRuntimeStatus,
-  AgentRuntimeSystemInput,
+  AgentRuntimeTextInput,
   AgentRuntimeTurnResult,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
@@ -19,7 +19,6 @@ interface ExternalParityRuntimeConfig {
 export interface ExternalRuntimeObservation {
   providerRef: string;
   runtimeId: string;
-  role: string;
   cwd: string;
   config: ExternalParityRuntimeConfig;
   mcpServerNames: string[];
@@ -90,8 +89,21 @@ class ExternalParityRuntime implements AgentRuntime {
     return { status: 'submitted', turnId };
   }
 
-  async systemInput(_notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult> {
-    return { status: 'skipped' };
+  async completionInput(input: AgentRuntimeTextInput): Promise<AgentRuntimeTurnResult> {
+    if (this.status !== 'ready') {
+      return { status: 'failed', error: new Error('external runtime is not ready') };
+    }
+    this.observation.submittedTexts.push(input.text);
+    const turnId = input.sourceId ?? `plain:${this.observation.submittedTexts.length}`;
+    this.observation.lastText =
+      `${this.context.config.finalTextPrefix}: ${input.text}`;
+    await Promise.resolve();
+    this.context.onTurnSettled?.({
+      turnId,
+      status: 'completed',
+      result: { text: this.observation.lastText },
+    });
+    return { status: 'submitted', turnId };
   }
 
   getStatus(): AgentRuntimeStatus {
@@ -139,7 +151,6 @@ export const provider: AgentRuntimeProviderFactory<ExternalParityRuntimeConfig> 
       const observation: ExternalRuntimeObservation = {
         providerRef: ref,
         runtimeId: context.identity.runtime_id,
-        role: context.role,
         cwd: context.cwd,
         config: context.config,
         mcpServerNames: context.mcpServers.map((server) => server.name),

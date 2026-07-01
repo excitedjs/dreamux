@@ -100,7 +100,6 @@ describe('builtin:claude-code loads the real @excitedjs/agent-runtime-claude-cod
     const paths: AgentRuntimePathContext = {
       dispatcherDir: () => tmp,
       logsDir: () => tmp,
-      completionSpillDir: () => join(tmp, 'spill'),
       runtimeSocketDirs: () => [join(tmp, 'sockets')],
     };
     const state: AgentRuntimeStateCallbacks = {
@@ -109,7 +108,6 @@ describe('builtin:claude-code loads the real @excitedjs/agent-runtime-claude-cod
     };
     const context: AgentRuntimeCreateContext<DispatcherClaudeCodeConfig> = {
       identity: { runtime_id: 'flow', checkpoint_id: null },
-      role: 'dispatcher',
       config,
       cwd: tmp,
       mcpServers: [],

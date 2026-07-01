@@ -14,12 +14,10 @@ import type {
   AgentRuntimeLastResult,
   AgentRuntimeProvider,
   AgentRuntimeStatus,
-  AgentRuntimeSystemInput,
+  AgentRuntimeTextInput,
   AgentRuntimeTurnResult,
-  CompletionEnvelope,
   DreamuxLogger,
   InboundTurnInput,
-  CompletionDeliveryResult,
   TurnSettledSignal,
 } from '@excitedjs/dreamux-types';
 
@@ -27,7 +25,11 @@ import type { AgentRuntimeProviderCatalog } from '../src/agent-runtime/index.js'
 import { TeamCollection } from '../src/service/team-collection/index.js';
 import { TeamMateIdentityStore } from '../src/service/teammate-collection/identity-store.js';
 import { TeamMateTurnsStore } from '../src/service/teammate-collection/turns-store.js';
-import { CompletionRouter } from '../src/service/completion-router/index.js';
+import {
+  CompletionRouter,
+  type CompletionDeliveryResult,
+  type CompletionEnvelope,
+} from '../src/service/completion-router/index.js';
 import { WorktreeManager } from '../src/service/worktree/manager.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 
@@ -86,8 +88,10 @@ class FakeRuntime implements AgentRuntime {
     return { status: 'submitted', turnId };
   }
 
-  async systemInput(_notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult> {
-    return { status: 'skipped' };
+  async completionInput(input: AgentRuntimeTextInput): Promise<AgentRuntimeTurnResult> {
+    this.submitted.push({ sourceId: input.sourceId ?? '', text: input.text });
+    const turnId = `turn-${this.submitted.length}`;
+    return { status: 'submitted', turnId };
   }
 
   getStatus(): AgentRuntimeStatus {
@@ -423,7 +427,10 @@ describe('TeamCollection identity prompt launch behavior', () => {
       agentRuntime: 'agent-a',
       intent: 'member work',
     });
-    const memberContext = contexts.find((context) => context.role === 'team_member');
+    const memberContext = contexts.find(
+      (context) => context.identity.runtime_id.includes('.tm.') &&
+        context.identity.runtime_id !== contexts[0]?.identity.runtime_id,
+    );
     expect(memberContext?.systemPrompt)
       .toBeUndefined();
   });

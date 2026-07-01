@@ -23,10 +23,8 @@ import type {
   TurnSettledSignal,
 } from '@excitedjs/dreamux-types';
 
-const SKILL_LAYOUT = 'skill-dir';
-
 function skillSource(path: string): AgentRuntimeSkillSource {
-  return { name: path.split('/').pop()!, path, layout: SKILL_LAYOUT, source: 'dreamux-core' };
+  return { name: path.split('/').pop()!, path, source: 'dreamux-core' };
 }
 
 class FakeClient {
@@ -159,7 +157,6 @@ class FakeProcess {
 const PATHS: AgentRuntimePathContext = {
   dispatcherDir: (id) => join('/fake/state', id),
   logsDir: () => '/fake/logs',
-  completionSpillDir: (id) => join('/fake/cache', id, 'spill'),
   runtimeSocketDirs: () => ['/fake/run/sockets'],
 };
 
