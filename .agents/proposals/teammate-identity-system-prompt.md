@@ -105,6 +105,9 @@ fragments to apply blindly. Runtime adapters select at most one prompt form:
 - otherwise, if only `replace` is present and the runtime does not support
   replacement prompts, leave prompt customization unchanged.
 
+Replacement prompt support is a runtime-adapter implementation fact, not a new
+`AgentRuntimeCapabilities` field or an MCP-discoverable feature.
+
 When both `replace` and `append` are supplied for the dispatcher, they are
 alternate canonical representations of the same dispatcher role prompt. A
 replace-native runtime therefore uses `replace` and must not also inject the

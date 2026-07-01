@@ -211,6 +211,9 @@ Runtime adapters select at most one prompt form from `systemPrompt`:
 - otherwise, if only `replace` is present and the runtime does not support
   replacement prompts, leave prompt customization unchanged.
 
+Replacement prompt support is a runtime-adapter implementation fact, not a new
+`AgentRuntimeCapabilities` field or an MCP-discoverable feature.
+
 Dispatcher launches provide both `replace` and `append` as alternate canonical
 representations of the same dispatcher role guidance. Replace-native runtimes
 such as Codex use the full dispatcher prompt and do not also inject the
