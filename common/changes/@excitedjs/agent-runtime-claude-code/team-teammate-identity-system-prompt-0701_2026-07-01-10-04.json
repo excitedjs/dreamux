@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Apply TeamMate identity guidance to Claude Code append prompts.",
+      "type": "patch",
+      "packageName": "@excitedjs/agent-runtime-claude-code"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-claude-code",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}
