@@ -70,24 +70,38 @@ For TeamLeaders, `intent` and `identity` remain independent inputs persisted on
 separate record fields: `intent` is the recovery subject, and `identity_prompt`
 is model-facing role guidance.
 
-When present, the stored identity is rendered as a Dreamux-owned prompt block
-that tells the runtime this is persistent role guidance for the session and not
-the current task request. Core must supply both
-`AgentRuntimeCreateContext.systemPrompt.replace` and
-`AgentRuntimeCreateContext.systemPrompt.append` with that same wrapped identity
-block so replace-native and append-native runtimes both receive it. Core does
-not branch on provider ids; runtime adapters decide which native prompt mechanic
-to use. The wrapped block must be self-contained enough to serve as full role
-instructions for replace-native runtimes while still reading as focused role
-guidance when an append-native runtime appends it to its own native prompt.
+When present, the stored identity is rendered as a Dreamux-owned append-style
+prompt block that tells the runtime this is persistent role guidance for the
+session and not the current task request. The identity block is a delta on top
+of the runtime's native coding-agent prompt; it must not be treated as a full
+replacement base prompt.
+
+Core builds the neutral identity delta and hands it to the runtime through the
+existing `AgentRuntimeCreateContext.systemPrompt` channel without branching on
+provider ids. Runtime adapters own the native prompt mechanic: an append-native
+runtime can map the delta directly to its native append flag, while a
+replace-native runtime must either compose the delta with a complete native base
+prompt, ignore the identity with an explicit unsupported path, or fail loudly if
+identity prompt injection is required but cannot be represented safely. A
+replace-native adapter must not pass the bare identity delta as
+`baseInstructions` / replacement text, because that would erase its native
+coding-agent instructions.
+
+For this feature, the load-bearing prompt content is append-only. If the current
+`AgentRuntimeSystemPrompt` type cannot express append-only prompt content
+without also forcing a replacement prompt, implementation must first adjust the
+neutral prompt type (for example, by making `replace` and `append` independently
+optional) rather than filling `replace` with a value that is not a complete base
+prompt.
 
 When omitted, current behavior is unchanged: no TeamMate, Team member, or
 TeamLeader system prompt is injected just because the agent was created.
 
 ## Hard constraints
 
-- No provider-specific checks in Dreamux core. Core renders a neutral system
-  prompt and runtime adapters decide how to apply `replace` and `append`.
+- No provider-specific checks in Dreamux core. Core renders a neutral identity
+  prompt delta and runtime adapters decide how to apply it without weakening
+  their native base prompt.
 - No prompt smuggling through `prompt`, `intent`, `name_prefix`, or free-form MCP
   descriptions.
 - No closed role enum. Future identities remain caller text.
@@ -117,14 +131,24 @@ TeamLeader system prompt is injected just because the agent was created.
   value is persisted.
 - The persisted TeamMate identity record writes `identity_prompt` for new agents
   and tolerates missing identity data in existing records.
-- Runtime launch for TeamMates, Team members, and TeamLeaders supplies both
-  `systemPrompt.replace` and `systemPrompt.append` only when an identity is
-  present.
+- Runtime launch for TeamMates, Team members, and TeamLeaders supplies identity
+  prompt content only when an identity is present, and replace-native runtimes do
+  not lose their native base prompt when identity is enabled.
+- If the neutral prompt type changes to support append-only content, dispatcher
+  launch remains covered: dispatcher role prompts still provide the full
+  replacement prompt for replace-native runtimes and the focused append prompt
+  for append-native runtimes.
 - Focused tests prove schema exposure, admin forwarding, persistence/read-back,
   old-record read compatibility, launch-context system prompt injection,
   closed-teammate reopen prompt reapplication, and the negative guarantee that
   identity guidance is not smuggled into initial-turn `channelInput` text or
   lifecycle read surfaces.
+- Focused tests also cover at least one replace-native runtime path and prove
+  that enabling identity does not reduce its launch prompt to the bare identity
+  delta.
+- `team.create` identity applies only to the created TeamLeader record. Team
+  members do not inherit it; a TeamLeader assigns each member's identity through
+  that member's own `teammate.spawn` call.
 
 ## Out of scope
 
