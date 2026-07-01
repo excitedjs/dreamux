@@ -88,7 +88,9 @@ interface AgentRuntime {
 turn body with no channel XML, no channel attributes, and no Dreamux envelope
 object. The optional `sourceId` is correlation/dedupe metadata only; it must not
 be rendered into the model-visible text unless the runtime has no other
-correlation mechanism and documents that choice.
+correlation mechanism and documents that choice. When `sourceId` is supplied,
+runtimes should use it for at-most-once turn acceptance/dedupe unless their
+adapter has an equivalent provider-owned acceptance guard.
 
 `channelInput` is only for messages that came from a ChannelProvider. It owns
 rendering the neutral `InboundTurnInput` into the runtime's native
@@ -111,7 +113,8 @@ has rendered it. Persistent role or identity guidance belongs in
 
 `CompletionEnvelope` remains a core routing record, not a runtime provider
 input. `CompletionRouter` can keep its at-most-once delivery policy, but the
-delivery target should render the envelope to plain text before it calls
+delivery target entity (`TeammateService` for the dispatcher agent or
+TeamLeader) should render the envelope to plain text before it calls
 `runtime.completionInput({ text, sourceId })`. A submitted runtime turn maps to
 accepted completion delivery; a stopped runtime maps to unsupported delivery; a
 failed runtime submission maps to failed delivery. Duplicate acceptance should
@@ -212,8 +215,8 @@ Do not pass the whole Dreamux role as an escape hatch.
   implementation is considered complete.
 - Focused tests cover the routing matrix: channel inbound uses `channelInput`;
   MCP/scheduler/restart/completion notifications use unwrapped
-  `completionInput`; skill source layouts remain provider-owned; runtime create
-  contexts contain no role.
+  `completionInput` on both built-in runtimes; skill source layouts remain
+  provider-owned; runtime create contexts contain no role.
 
 ## Out Of Scope
 
