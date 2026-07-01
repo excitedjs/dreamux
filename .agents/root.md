@@ -97,6 +97,11 @@ history and rationale; when you need current behavior, pair them with
   terminal completion-delivery semantics, instance-scoped runtime state facts,
   provider-owned role prompt injection, and external runtime handle validation
   while keeping native CLI/daemon details provider-owned.
+- [TeamMate identity system prompt](proposals/teammate-identity-system-prompt.md)
+  — draft requirement/spec for adding a minimal `identity` input to
+  `teammate.spawn` and `team.create`, persisting it on TeamMate identity records,
+  and rendering it as provider-neutral system-prompt append guidance rather than
+  first-turn prompt text.
 - [Dispatcher Team MCP send to TeamLeader](proposals/team-mcp-dispatcher-send.md)
   — draft requirement/spec for adding a dispatcher-only Team MCP `send` tool
   that submits turns to an existing Team's TeamLeader, registers completion

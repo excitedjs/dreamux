@@ -1,0 +1,109 @@
+# TeamMate identity system prompt
+
+- **Status:** Draft
+- **Date:** 2026-07-01
+- **Related PR:** [#271](https://github.com/excitedjs/dreamux/pull/271)
+
+## Context
+
+The AgentRuntime contract now keeps Dreamux core behind neutral runtime inputs.
+`AgentRuntimeCreateContext.systemPrompt` already exposes both canonical prompt
+forms:
+
+- `replace`, for runtimes that replace their native base prompt.
+- `append`, for runtimes that append focused role guidance to an existing native
+  prompt.
+
+Today the dispatcher agent is the only Dreamux-owned agent that supplies a
+system prompt. Ordinary TeamMates, Team members, and TeamLeaders are shaped by
+their MCP tool set, launch role, `intent`, and first-turn `prompt`, but callers
+cannot declare a stable working identity such as "architecture reviewer",
+"functional reviewer", or "performance reviewer".
+
+That missing surface matters most in Team workflows: the TeamLeader needs to
+spawn peers with distinct responsibilities, and the dispatcher needs to create a
+TeamLeader with an explicit collaboration identity. A first-turn prompt is the
+wrong home for that identity because it is task input, not persistent role
+guidance, and it is not replayed when a closed agent is reopened from its saved
+runtime checkpoint.
+
+The current `AgentRuntimeSystemInput.reason` type also names
+`runtime-control`, but current production code never emits that reason and both
+built-in runtimes treat unknown reasons as generic system input. The literal is
+a stale reserved value, not a current contract.
+
+## Intent
+
+Add a minimal, provider-neutral TeamMate identity capability:
+
+- `teammate.spawn` accepts an optional `identity` string for dispatcher-created
+  TeamMates and TeamLeader-created Team members.
+- `team.create` accepts an optional `identity` string for the TeamLeader created
+  by that Team.
+- Dreamux persists the identity on the TeamMate identity record so restart,
+  Team rebuild, close/reopen, and runtime resume keep the same role guidance.
+- Dreamux converts the identity into a focused system-prompt append delta before
+  runtime creation. It is never submitted as the first user/channel turn.
+
+## Contract
+
+`identity` is model-facing role guidance for the agent. It is distinct from:
+
+- `name_prefix` / `team_name`, which address the concrete agent or Team.
+- `intent`, which is the durable recovery subject.
+- `prompt`, which is turn input.
+- `AgentRuntimeRole`, which is Dreamux's structural role
+  (`dispatcher`, `teammate`, `team_leader`, or `team_member`).
+
+The public input is intentionally a single optional string. Dreamux does not
+define role enums such as `architect` or `performance_reviewer`; those are caller
+language, not core taxonomy.
+
+When present, the stored identity is rendered as a Dreamux-owned prompt block
+that tells the runtime this is persistent role guidance for the session and not
+the current task request. Core supplies that block through
+`AgentRuntimeCreateContext.systemPrompt.append`. Because the public
+`AgentRuntimeSystemPrompt` contract carries both canonical forms, core may also
+provide a replacement form containing the same role block for runtimes whose
+native prompt mechanic is replacement-only, without branching on provider ids.
+
+When omitted, current behavior is unchanged: no TeamMate, Team member, or
+TeamLeader system prompt is injected just because the agent was created.
+
+## Hard constraints
+
+- No provider-specific checks in Dreamux core. Core renders a neutral system
+  prompt and runtime adapters decide how to apply `replace` and `append`.
+- No prompt smuggling through `prompt`, `intent`, `name_prefix`, or free-form MCP
+  descriptions.
+- No closed role enum. Future identities remain caller text.
+- No state-loss on reopen. The identity must live in the persisted TeamMate
+  identity record and old records without the field read as `null`.
+- No read-surface expansion unless it is needed for correctness. Status, list,
+  history, and last can remain focused on lifecycle and recovery facts.
+- Public artifacts must not contain internal ids, secrets, private hosts, or
+  machine-local paths beyond reviewer-only operational context.
+
+## Acceptance
+
+- `AgentRuntimeSystemInput.reason` no longer lists `runtime-control` as a known
+  reason, and stale proposal text is updated or marked historical.
+- `teammate.spawn` exposes optional `identity` in both dispatcher and
+  TeamLeader-scoped tool schemas and forwards it through MCP/admin/service
+  layers.
+- `team.create` exposes optional `identity` and applies it to the TeamLeader.
+- The persisted TeamMate identity record includes the identity prompt for new
+  agents and tolerates missing identity data in existing records.
+- Runtime launch for TeamMates, Team members, and TeamLeaders supplies
+  `systemPrompt` only when an identity is present.
+- Focused tests prove schema exposure, admin forwarding, persistence/read-back,
+  and launch-context system prompt injection.
+
+## Out of scope
+
+- Editing runtime-provider-specific prompt behavior beyond consuming the neutral
+  `systemPrompt` fields already in the AgentRuntime contract.
+- Adding identity mutation after creation.
+- Adding identity to `send`, scheduler jobs, channel input, or completion
+  delivery.
+- Adding display-name, roster taxonomy, or Team role-management concepts.
