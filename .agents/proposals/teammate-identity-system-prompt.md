@@ -46,11 +46,11 @@ Add a minimal, provider-neutral TeamMate identity capability:
   by that Team.
 - Dreamux persists the identity on the TeamMate identity record so restart,
   Team rebuild, close/reopen, and runtime resume keep the same role guidance.
-- Dreamux converts the identity into focused system-prompt guidance triggered by
-  the MCP create/spawn action and carries it through
-  `AgentRuntimeCreateContext.identityGuidance`. The field is distinct from
-  launcher role prompt content and must be applied before the first user/channel
-  turn.
+- Dreamux converts the persisted identity into focused system-prompt guidance
+  and carries it through `AgentRuntimeCreateContext.identityGuidance` on each
+  runtime launch or relaunch that creates the agent's runtime context. The
+  field is distinct from launcher role prompt content and must be applied before
+  the first user/channel turn for that runtime session.
 
 ## Contract
 
@@ -89,13 +89,20 @@ surface. Instead, Dreamux core adds a new neutral create-context field:
 
 ```ts
 interface AgentRuntimeCreateContext<TConfig = unknown> {
+  /**
+   * MCP-created TeamLeader/TeamMate role guidance rendered from the persisted
+   * TeamMate identity record. Never populated for dispatcher launch prompts.
+   */
   identityGuidance?: string;
 }
 ```
 
-Core fills `identityGuidance` only from the MCP lifecycle action (`team.create`
-or `teammate.spawn`) and only when an identity prompt exists. The runtime adapter
-owns how to apply that guidance before the first user/channel prompt:
+The identity source is the MCP lifecycle action (`team.create` or
+`teammate.spawn`), but the runtime create-context value is supplied from the
+persisted `identity_prompt` on every launch path that rebuilds the runtime
+context: initial creation, close/reopen, process restart, Team rebuild, and
+runtime resume. The runtime adapter owns how to apply that guidance before the
+first user/channel prompt for that runtime session:
 
 - an append-native runtime may fold it into its native append prompt before the
   resident session is created;
@@ -104,6 +111,12 @@ owns how to apply that guidance before the first user/channel prompt:
   starting a user turn;
 - a runtime that cannot represent system-prompt guidance safely must fail loudly
   before the first user/channel prompt is submitted.
+
+Because core re-supplies the persisted identity on each runtime launch context,
+runtime adapters own idempotence against their native persistence model. For
+example, an append-native runtime must receive the guidance every time it
+spawns a resident session, while a model-history runtime may skip a duplicate
+injection when the same guidance already survives in the resumed native history.
 
 The injection must not be routed through `channelInput`, first-turn `prompt`,
 `intent`, `name_prefix`, or `team_name`. It also must not be routed through
@@ -125,9 +138,10 @@ TeamLeader system prompt is injected just because the agent was created.
   prompt delta and runtime adapters decide how to inject it without weakening
   their native base prompt.
 - `AgentRuntimeCreateContext.systemPrompt` remains the dispatcher launch role
-  prompt surface. TeamLeader and TeamMate identities are injected by the MCP
-  create/spawn action through `AgentRuntimeCreateContext.identityGuidance`, a
-  separate field that is never populated for dispatcher launch prompts.
+  prompt surface. TeamLeader and TeamMate identities originate from MCP
+  create/spawn actions and are re-supplied from persisted identity records
+  through `AgentRuntimeCreateContext.identityGuidance`, a separate field that is
+  never populated for dispatcher launch prompts.
 - No prompt smuggling through `prompt`, `intent`, `name_prefix`, or free-form MCP
   descriptions.
 - No closed role enum. Future identities remain caller text.
@@ -161,12 +175,15 @@ TeamLeader system prompt is injected just because the agent was created.
   identity guidance through `AgentRuntimeCreateContext.systemPrompt`.
 - `AgentRuntimeCreateContext` exposes optional `identityGuidance?: string`,
   documented as MCP-created TeamLeader/TeamMate role guidance that is distinct
-  from launcher `systemPrompt`.
-- The MCP create/spawn path sets `identityGuidance` only when an identity is
-  present. Runtime adapters apply it at their native safe point before the
-  initial prompt: append-native runtimes can fold it into launch args before
-  resident session creation, while runtimes with model-history injection can
-  apply it after process start without starting a user turn.
+  from launcher `systemPrompt` and never populated for dispatcher launch prompts.
+- Every runtime launch path for a TeamMate, Team member, or TeamLeader sets
+  `identityGuidance` from the persisted `identity_prompt` when one is present:
+  initial MCP create/spawn, close/reopen, process restart, Team rebuild, and
+  runtime resume. Runtime adapters apply it at their native safe point before
+  the initial prompt for that runtime session: append-native runtimes can fold
+  it into launch args before resident session creation, while runtimes with
+  model-history injection can apply it after process start without starting a
+  user turn.
 - Dispatcher launch remains covered: dispatcher role prompts still provide the
   full replacement prompt for replace-native runtimes and the focused append
   prompt for append-native runtimes.
@@ -174,6 +191,9 @@ TeamLeader system prompt is injected just because the agent was created.
   old-record read compatibility, MCP-triggered system-prompt injection, and the
   negative guarantee that identity guidance is not smuggled into initial-turn
   `channelInput` text, launch `systemPrompt`, or lifecycle read surfaces.
+- Focused tests prove stored identity guidance is re-supplied on close/reopen so
+  append-native runtimes keep the same identity after a resident session is
+  recreated.
 - Focused tests also cover at least one replace-native runtime path and prove
   that enabling identity does not reduce its launch prompt to the bare identity
   delta or fail the default runtime path solely because the identity is
