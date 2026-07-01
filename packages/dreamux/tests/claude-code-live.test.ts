@@ -131,10 +131,10 @@ describe('claude-code live integration (opt-in)', () => {
     expect(first.status).toBe('submitted');
 
     const deadline = Date.now() + 120_000;
-    while (runtime.getThreadId() === null && Date.now() < deadline) {
+    while ((runtime.getCheckpoint()?.id ?? null) === null && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
-    const sessionId = runtime.getThreadId();
+    const sessionId = (runtime.getCheckpoint()?.id ?? null);
     expect(sessionId).not.toBeNull();
 
     // Second turn over the SAME resident process: the runtime must stay ready
@@ -150,7 +150,7 @@ describe('claude-code live integration (opt-in)', () => {
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
     expect(runtime.getStatus()).toBe('ready');
-    expect(runtime.getThreadId()).toBe(sessionId);
+    expect((runtime.getCheckpoint()?.id ?? null)).toBe(sessionId);
 
     await runtime.stop();
     expect(runtime.getStatus()).toBe('stopped');

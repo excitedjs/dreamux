@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type {
   CompletionEnvelope,
   DreamuxLogger,
-  TeamMateCompletionDeliveryResult,
+  CompletionDeliveryResult,
 } from '@excitedjs/dreamux-types';
 
 import {
@@ -27,13 +27,13 @@ class FakeInitiator implements CompletionInitiator {
 
   constructor(
     private readonly outcomes:
-      | TeamMateCompletionDeliveryResult[]
-      | (() => TeamMateCompletionDeliveryResult),
+      | CompletionDeliveryResult[]
+      | (() => CompletionDeliveryResult),
   ) {}
 
   completionInput(
     completion: CompletionEnvelope,
-  ): Promise<TeamMateCompletionDeliveryResult> {
+  ): Promise<CompletionDeliveryResult> {
     this.received.push(completion);
     const next =
       typeof this.outcomes === 'function'
@@ -46,7 +46,7 @@ class FakeInitiator implements CompletionInitiator {
 /** An initiator whose `completionInput` throws, to drive the ambiguous branch. */
 class ThrowingInitiator implements CompletionInitiator {
   calls = 0;
-  completionInput(): Promise<TeamMateCompletionDeliveryResult> {
+  completionInput(): Promise<CompletionDeliveryResult> {
     this.calls += 1;
     throw new Error('boom');
   }

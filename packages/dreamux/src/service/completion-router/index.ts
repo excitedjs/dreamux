@@ -1,7 +1,7 @@
 import type {
+  CompletionDeliveryResult,
   CompletionEnvelope,
   DreamuxLogger,
-  TeamMateCompletionDeliveryResult,
 } from '@excitedjs/dreamux-types';
 
 /**
@@ -13,7 +13,7 @@ import type {
 export interface CompletionInitiator {
   completionInput(
     completion: CompletionEnvelope,
-  ): Promise<TeamMateCompletionDeliveryResult>;
+  ): Promise<CompletionDeliveryResult>;
 }
 
 const TERMINAL_CACHE_LIMIT = 512;
@@ -92,7 +92,7 @@ export class CompletionRouter {
   ): Promise<void> {
     const dispatcherId = this.deps.dispatcherId;
     for (let attempt = 1; attempt <= MAX_DELIVERY_ATTEMPTS; attempt += 1) {
-      let outcome: TeamMateCompletionDeliveryResult;
+      let outcome: CompletionDeliveryResult;
       try {
         outcome = await initiator.completionInput(completion);
       } catch (err) {

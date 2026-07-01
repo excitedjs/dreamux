@@ -266,10 +266,10 @@ describe('codex skills/extraRoots/set injection', () => {
     const runtime = buildRuntime(client, [], undefined, (s) => settled.push(s));
 
     await runtime.start();
-    await expect(runtime.submitTurn({ sourceId: 'm1', text: 'first' })).resolves
+    await expect(runtime.channelInput({ sourceId: 'm1', text: 'first' })).resolves
       .toMatchObject({ status: 'submitted' });
     await waitFor(() => settled.length === 1);
-    await expect(runtime.submitTurn({ sourceId: 'm2', text: 'empty' })).resolves
+    await expect(runtime.channelInput({ sourceId: 'm2', text: 'empty' })).resolves
       .toMatchObject({ status: 'submitted' });
     await waitFor(() => settled.length === 2);
     await runtime.stop();

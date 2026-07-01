@@ -12,8 +12,6 @@ import type {
   AgentRuntimeStatus,
   AgentRuntimeSystemInput,
   AgentRuntimeTurnResult,
-  InboundDeliveryResult,
-  NoticeInjectionResult,
   DreamuxLogger,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
@@ -66,38 +64,22 @@ class FakeRuntime implements AgentRuntime {
     this.status = 'stopped';
   }
 
-  async submitTurn(input: InboundTurnInput): Promise<InboundDeliveryResult> {
+  async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
     this.submitted.push(input);
     return { status: 'submitted', turnId: `turn-${this.submitted.length}` };
   }
 
-  async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
-    return this.submitTurn(input);
-  }
-
-  async injectControlNotice(notice: AgentRuntimeSystemInput): Promise<NoticeInjectionResult> {
+  async systemInput(notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult> {
     this.systemSubmitted.push(notice);
     return { status: 'submitted', turnId: `system-${this.systemSubmitted.length}` };
-  }
-
-  async systemInput(notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult> {
-    return this.injectControlNotice(notice);
   }
 
   getStatus(): AgentRuntimeStatus {
     return this.status;
   }
 
-  getThreadId(): string | null {
-    return this.getCheckpoint()?.id ?? null;
-  }
-
   getCheckpoint(): { kind: string; id: string } | null {
     return { kind: 'fakeThread', id: 'thread-fake' };
-  }
-
-  wasThreadResumed(): boolean {
-    return this.wasCheckpointResumed();
   }
 
   wasCheckpointResumed(): boolean {
@@ -249,7 +231,7 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     first.stopSchedulers();
     await first.stopAll();
 
-    const job = await new CronJobStore({
+    await new CronJobStore({
       dispatcherId: 'dispatcher-a',
       cronJobsPath: dispatcherTeamCronJobsPath('dispatcher-a', 'alpha'),
     }).create(
@@ -270,11 +252,11 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     await waitFor(
       () =>
         restartedRuntimes.length === 1 &&
-        restartedRuntimes[0]!.submitted.length === 1,
+        restartedRuntimes[0]!.systemSubmitted.length === 1,
       4000,
     );
-    expect(restartedRuntimes[0]!.submitted[0]).toEqual({
-      sourceId: `scheduled:${job.id}`,
+    expect(restartedRuntimes[0]!.systemSubmitted[0]).toEqual({
+      reason: 'scheduled',
       text: 'scheduled alpha',
     });
   });
@@ -315,7 +297,7 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     });
   });
 
-  it('projects runtime status from checkpoints when legacy getThreadId is absent', async () => {
+  it('projects runtime status from checkpoints', async () => {
     const workspace = join(root, 'workspace');
     mkdirSync(workspace, { recursive: true });
     const runtimes: FakeRuntime[] = [];
@@ -338,12 +320,6 @@ describe('TeamLeader cron scheduler lifecycle', () => {
         runtimes,
         createRuntime: () => {
           const runtime = new NewContractOnlyRuntime();
-          Object.defineProperties(runtime, {
-            getThreadId: { value: undefined },
-            wasThreadResumed: { value: undefined },
-            channelInput: { value: undefined },
-            systemInput: { value: undefined },
-          });
           return runtime;
         },
       }),
@@ -355,7 +331,6 @@ describe('TeamLeader cron scheduler lifecycle', () => {
 
     await dispatcher.start();
 
-    expect(typeof runtimes[0]?.getThreadId).toBe('undefined');
     expect(dispatcher.runtimeStatus()).toEqual({
       status: 'ready',
       threadId: 'checkpoint-only-thread',

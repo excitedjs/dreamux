@@ -51,26 +51,6 @@ export type InboundDeliveryResult =
   | { status: 'submitted'; turnId: string }
   | { status: 'failed'; error: Error };
 
-export type AgentRuntimeControlNoticeReason =
-  | 'restart-notice'
-  | 'runtime-control';
-
-export interface AgentRuntimeControlNotice {
-  kind: 'control';
-  text: string;
-  reason: AgentRuntimeControlNoticeReason;
-}
-
-/**
- * Result of a best-effort restart-notice injection. `skipped` means a real
- * inbound had already been handed to the runtime.
- */
-export type NoticeInjectionResult =
-  | { status: 'stopped' }
-  | { status: 'skipped' }
-  | { status: 'submitted'; turnId: string }
-  | { status: 'failed'; error: Error };
-
 export interface InboundDeliveryHooks {
   /**
    * Called after process-local dedupe accepts the message and before the turn

@@ -46,13 +46,10 @@ export type {
   SubscribeChannelProviderDescriptor,
 } from './provider.js';
 export type {
-  AgentRuntimeControlNotice,
-  AgentRuntimeControlNoticeReason,
   InboundAttachment,
   InboundDeliveryHooks,
   InboundDeliveryResult,
   InboundTurnInput,
-  NoticeInjectionResult,
   TurnSettledSignal,
 } from './turn.js';
 export type {
@@ -79,14 +76,12 @@ export type {
   AgentRuntimeSkillSource,
   AgentRuntimeStateCallbacks,
   AgentRuntimeStatus,
-  AgentRuntimeSystemPromptBundle,
   AgentRuntimeSystemInput,
-  AgentRuntimeScheduledTurnInput,
+  AgentRuntimeSystemPrompt,
   AgentRuntimeTurnResult,
   CompletionDeliveryResult,
   CompletionDeliveryShape,
   CompletionEnvelope,
-  TeamMateCompletionDeliveryResult,
 } from './agent-runtime.js';
 export type {
   ChannelBinCheck,

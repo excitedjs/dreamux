@@ -493,7 +493,7 @@ export class DispatcherService {
     }
     const runtime = this.agent.getRuntime();
     if (runtime === null) return { status: 'stopped' };
-    return runtime.submitTurn(input, hooks);
+    return runtime.channelInput(input, hooks);
   }
 
   /**
@@ -526,8 +526,7 @@ export class DispatcherService {
     const notice = this.restartIntent?.claim(dispatcherId, Date.now()) ?? null;
     if (notice === null) return;
     try {
-      const result = await runtime.injectControlNotice({
-        kind: 'control',
+      const result = await runtime.systemInput({
         text: notice,
         reason: 'restart-notice',
       });

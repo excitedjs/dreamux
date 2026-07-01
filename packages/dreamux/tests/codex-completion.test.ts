@@ -100,7 +100,7 @@ describe('codex teammate completion delivery (native inject + trigger)', () => {
     // Step 1: inject_items carried a developer-role message item (not a turn).
     expect(fake.injectItemsParams).toHaveLength(1);
     const inject = fake.injectItemsParams[0]!;
-    expect(inject['threadId']).toBe(runtime.getThreadId());
+    expect(inject['threadId']).toBe((runtime.getCheckpoint()?.id ?? null));
     const items = inject['items'] as Array<Record<string, unknown>>;
     expect(items).toHaveLength(1);
     expect(items[0]?.['type']).toBe('message');

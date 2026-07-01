@@ -28,11 +28,9 @@ import type {
   ProviderOnboard,
 } from './provider.js';
 import type {
-  AgentRuntimeControlNotice,
   InboundDeliveryHooks,
   InboundDeliveryResult,
   InboundTurnInput,
-  NoticeInjectionResult,
   TurnSettledSignal,
 } from './turn.js';
 
@@ -94,7 +92,7 @@ export interface AgentRuntimeCapabilities {
   /**
    * Whether a follow-up turn delivered while a turn is active folds into that
    * turn rather than queueing behind it. Purely behavioral: there is no separate
-   * "steer" method — core still delivers through `submitTurn`/compat inputs,
+   * "steer" method — core still delivers through `channelInput`,
    * and this flag only tells core whether mid-turn delivery is absorbed.
    */
   steer: { supported: boolean };
@@ -108,7 +106,7 @@ export interface AgentRuntimeCapabilities {
   teammateCompletion: readonly CompletionDeliveryShape[];
 }
 
-export interface AgentRuntimeSystemPromptBundle {
+export interface AgentRuntimeSystemPrompt {
   /** Full role instructions for runtimes that replace their base prompt. */
   replace: string;
   /** Focused role delta for runtimes that append to an existing native prompt. */
@@ -131,17 +129,15 @@ export type CompletionDeliveryResult =
   | { status: 'unsupported'; reason: string }
   | { status: 'failed'; error: Error };
 
-export type TeamMateCompletionDeliveryResult = CompletionDeliveryResult;
-
-export interface AgentRuntimeScheduledTurnInput extends InboundTurnInput {
-  kind?: 'turn';
-  reason?: 'scheduled';
-}
-
 export interface AgentRuntimeSystemInput {
-  kind: 'system' | 'control';
   text: string;
-  reason: AgentRuntimeControlNotice['reason'] | 'scheduled' | 'teammate-completion';
+  /**
+   * Dreamux-owned system-message purpose. Known reasons emitted by core today
+   * are `restart-notice`, `runtime-control`, and `scheduled`; the string remains
+   * open so a new core workflow does not require unrelated runtimes to update
+   * their type dependency before they can ignore or map it.
+   */
+  reason: 'restart-notice' | 'runtime-control' | 'scheduled' | (string & {});
 }
 
 export interface AgentRuntimeResumeInput {
@@ -239,7 +235,9 @@ export interface AgentRuntimeStateCallbacks {
   ): Promise<void>;
 }
 
-export type AgentRuntimeTurnResult = InboundDeliveryResult | NoticeInjectionResult;
+export type AgentRuntimeTurnResult =
+  | InboundDeliveryResult
+  | { status: 'skipped' };
 
 /**
  * The neutral, launcher-supplied identity of the runtime instance. Replaces the
@@ -277,7 +275,7 @@ export interface AgentRuntimeCreateContext<TConfig = unknown> {
    * Launcher-supplied role/system-prompt content. Core supplies both canonical
    * forms; runtime adapters decide which native prompt mechanic to use.
    */
-  systemPrompt?: AgentRuntimeSystemPromptBundle;
+  systemPrompt?: AgentRuntimeSystemPrompt;
   /**
    * MCP servers the launcher injects for this runtime instance. Already fully
    * resolved by core: an empty array means "no MCP servers", and the provider
@@ -324,22 +322,16 @@ export interface AgentRuntime {
   start(): Promise<void>;
   resume(input?: AgentRuntimeResumeInput): Promise<void>;
   stop(): Promise<void>;
-  /** Deliver a Dreamux model turn. */
-  submitTurn(
-    input: InboundTurnInput,
-    hooks?: InboundDeliveryHooks,
-  ): Promise<InboundDeliveryResult>;
-  /** Inject a best-effort runtime/control notice. */
-  injectControlNotice(
-    notice: AgentRuntimeControlNotice,
-  ): Promise<NoticeInjectionResult>;
-  /** Compatibility projection for older callers; new core code uses submitTurn. */
-  channelInput?(
+  /**
+   * Deliver a channel/user turn. The runtime owns rendering the neutral channel
+   * shape into its native input format.
+   */
+  channelInput(
     input: InboundTurnInput,
     hooks?: InboundDeliveryHooks,
   ): Promise<AgentRuntimeTurnResult>;
-  /** Compatibility projection for older callers; new core code uses injectControlNotice. */
-  systemInput?(notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult>;
+  /** Deliver a Dreamux-owned system message such as restart or scheduled work. */
+  systemInput(input: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult>;
   /**
    * Resolve when no turn is in progress. Optional: runtimes that omit it are
    * treated by core as always idle.
@@ -348,10 +340,6 @@ export interface AgentRuntime {
   getStatus(): AgentRuntimeStatus;
   getCheckpoint(): AgentRuntimeResumeCheckpoint | null;
   wasCheckpointResumed(): boolean;
-  /** Compatibility projection for older callers; new core code uses getCheckpoint. */
-  getThreadId?(): string | null;
-  /** Compatibility projection for older callers; new core code uses wasCheckpointResumed. */
-  wasThreadResumed?(): boolean;
   /**
    * The last assistant/user-visible result, or `null` when unavailable.
    * A runtime whose `capabilities.last.supported` is false returns `null`
@@ -373,7 +361,7 @@ export interface AgentRuntime {
    */
   completionInput?(
     completion: CompletionEnvelope,
-  ): Promise<TeamMateCompletionDeliveryResult>;
+  ): Promise<CompletionDeliveryResult>;
 }
 
 /**

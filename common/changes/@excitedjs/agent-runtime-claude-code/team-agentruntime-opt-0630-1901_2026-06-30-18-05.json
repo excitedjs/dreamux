@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "BREAKING: Refine AgentRuntime lifecycle contracts around turn-owned settlement results, opaque checkpoints, instance-scoped state sinks, separated turn/control/completion inputs, and provider-owned prompt injection.",
+      "comment": "BREAKING: Refine AgentRuntime lifecycle contracts around turn-owned settlement results, opaque checkpoints, instance-scoped state sinks, removal of public submitTurn/injectControlNotice projections, required channel/system inputs, optional completion delivery, and provider-owned prompt injection.",
       "type": "minor",
       "packageName": "@excitedjs/agent-runtime-claude-code"
     }

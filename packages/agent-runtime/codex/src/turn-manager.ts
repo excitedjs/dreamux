@@ -19,7 +19,7 @@ import { DEFAULT_MESSAGE_ID_DEDUPE_WINDOW } from '@excitedjs/dreamux-utils';
 import type {
   InboundTurnInput,
   InboundDeliveryResult,
-  NoticeInjectionResult,
+  AgentRuntimeTurnResult,
   InboundDeliveryHooks,
   TurnSettledSignal,
 } from '@excitedjs/dreamux-types';
@@ -224,7 +224,7 @@ export class TurnManager {
    * A submission failure is reported, never thrown — it must not fail the
    * dispatcher's start or the restart.
    */
-  async injectNotice(text: string): Promise<NoticeInjectionResult> {
+  async injectNotice(text: string): Promise<AgentRuntimeTurnResult> {
     if (this.stopped) return { status: 'stopped' };
     if (this.inboundSubmitted) return { status: 'skipped' };
 

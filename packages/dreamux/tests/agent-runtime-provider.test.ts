@@ -27,8 +27,6 @@ import type {
   AgentRuntimeProviderConfigReadContext,
   AgentRuntimeSystemInput,
   AgentRuntimeTurnResult,
-  InboundDeliveryResult,
-  NoticeInjectionResult,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
 import {
@@ -72,17 +70,9 @@ class FakeExternalRuntime implements AgentRuntime {
     this.status = 'stopped';
   }
 
-  async submitTurn(input: InboundTurnInput): Promise<InboundDeliveryResult> {
+  async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
     this.submitted.push(input);
     return { status: 'submitted', turnId: 'turn-external' };
-  }
-
-  async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
-    return this.submitTurn(input);
-  }
-
-  async injectControlNotice(): Promise<NoticeInjectionResult> {
-    return { status: 'skipped' };
   }
 
   async systemInput(_notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult> {
@@ -93,16 +83,8 @@ class FakeExternalRuntime implements AgentRuntime {
     return this.status;
   }
 
-  getThreadId(): string | null {
-    return this.getCheckpoint()?.id ?? null;
-  }
-
   getCheckpoint(): { kind: string; id: string } | null {
     return { kind: 'thirdPartySession', id: 'external-session' };
-  }
-
-  wasThreadResumed(): boolean {
-    return this.wasCheckpointResumed();
   }
 
   wasCheckpointResumed(): boolean {
@@ -385,7 +367,7 @@ describe('AgentRuntimeProviderCatalog', () => {
           getCapabilities: () => EXTERNAL_CAPABILITIES,
           createRuntime: () =>
             Object.assign(new FakeExternalRuntime(ref), {
-              submitTurn: undefined,
+              channelInput: undefined,
             }),
         }),
       }),
@@ -401,10 +383,10 @@ describe('AgentRuntimeProviderCatalog', () => {
         cwd: '/tmp/dreamux-test-cwd',
         mcpServers: [],
       }),
-    ).toThrow(/runtime\.submitTurn must be a function/);
+    ).toThrow(/runtime\.channelInput must be a function/);
   });
 
-  it('accepts runtimes that omit legacy compatibility projections', async () => {
+  it('accepts runtimes that implement the minimal runtime inboxes', async () => {
     const registry = createBuiltinProviderRegistry();
     await loadAgentRuntimeProviders({
       registry,
@@ -424,8 +406,8 @@ describe('AgentRuntimeProviderCatalog', () => {
               start: () => runtime.start(),
               resume: () => runtime.resume(),
               stop: () => runtime.stop(),
-              submitTurn: (input: InboundTurnInput) => runtime.submitTurn(input),
-              injectControlNotice: () => runtime.injectControlNotice(),
+              channelInput: (input: InboundTurnInput) => runtime.channelInput(input),
+              systemInput: (input: AgentRuntimeSystemInput) => runtime.systemInput(input),
               getStatus: () => runtime.getStatus(),
               getCheckpoint: () => runtime.getCheckpoint(),
               wasCheckpointResumed: () => runtime.wasCheckpointResumed(),

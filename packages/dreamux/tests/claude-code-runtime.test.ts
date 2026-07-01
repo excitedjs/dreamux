@@ -548,15 +548,15 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
 
   it('reports wasThreadResumed=false on a fresh dispatcher', async () => {
     const { runtime } = makeRuntime(fakeFleet());
-    expect(runtime.wasThreadResumed()).toBe(false);
-    expect(runtime.getThreadId()).toBeNull();
+    expect(runtime.wasCheckpointResumed()).toBe(false);
+    expect((runtime.getCheckpoint()?.id ?? null)).toBeNull();
   });
 
   it('resumes a persisted session and threads --resume into the launch args', async () => {
     const fleet = fakeFleet([okOutcome('session-new')]);
     const { runtime } = makeRuntime(fleet, { resumeSession: 'session-prev' });
-    expect(runtime.wasThreadResumed()).toBe(true);
-    expect(runtime.getThreadId()).toBe('session-prev');
+    expect(runtime.wasCheckpointResumed()).toBe(true);
+    expect((runtime.getCheckpoint()?.id ?? null)).toBe('session-prev');
     await runtime.start();
     expect(
       fleet.sessions[0]?.spec.args.slice(
@@ -581,7 +581,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
 
     await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
     expect(fleet.sessions[0]?.prompts[0]).toBe('do it');
-    await waitFor(() => runtime.getThreadId() === 'session-abc');
+    await waitFor(() => (runtime.getCheckpoint()?.id ?? null) === 'session-abc');
 
     const dup = await runtime.channelInput({
       sourceId: 'm1',
@@ -914,7 +914,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       sourceId: 'm1',
       text: 'first',
     });
-    await waitFor(() => runtime.getThreadId() === 'session-abc');
+    await waitFor(() => (runtime.getCheckpoint()?.id ?? null) === 'session-abc');
 
     // The resident child dies unexpectedly → degraded.
     fleet.sessions[0]?.triggerExit();

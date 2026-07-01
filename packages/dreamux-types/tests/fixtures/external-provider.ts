@@ -44,11 +44,9 @@ import type {
   ChannelToolCall,
   ChannelToolDescriptor,
   CompletionEnvelope,
+  CompletionDeliveryResult,
   DreamuxLogger,
-  InboundDeliveryResult,
   InboundTurnInput,
-  NoticeInjectionResult,
-  TeamMateCompletionDeliveryResult,
 } from '@excitedjs/dreamux-types';
 
 export const EXTERNAL_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = {
@@ -101,14 +99,6 @@ class FixtureRuntime implements AgentRuntime {
     return { status: 'submitted', turnId: input.sourceId };
   }
 
-  async submitTurn(input: InboundTurnInput): Promise<InboundDeliveryResult> {
-    return { status: 'submitted', turnId: input.sourceId };
-  }
-
-  async injectControlNotice(): Promise<NoticeInjectionResult> {
-    return { status: 'skipped' };
-  }
-
   async systemInput(): Promise<AgentRuntimeTurnResult> {
     return { status: 'skipped' };
   }
@@ -117,18 +107,10 @@ class FixtureRuntime implements AgentRuntime {
     return this.status;
   }
 
-  getThreadId(): string | null {
-    return this.getCheckpoint()?.id ?? null;
-  }
-
   getCheckpoint(): { kind: string; id: string } | null {
     return this.threadId === null
       ? null
       : { kind: 'fixtureCheckpoint', id: this.threadId };
-  }
-
-  wasThreadResumed(): boolean {
-    return this.wasCheckpointResumed();
   }
 
   wasCheckpointResumed(): boolean {
@@ -149,7 +131,7 @@ class FixtureRuntime implements AgentRuntime {
 
   async completionInput(
     completion: CompletionEnvelope,
-  ): Promise<TeamMateCompletionDeliveryResult> {
+  ): Promise<CompletionDeliveryResult> {
     this.logger?.info({ id: completion.id }, 'fixture completion');
     return { status: 'accepted' };
   }

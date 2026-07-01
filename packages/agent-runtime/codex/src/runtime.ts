@@ -27,7 +27,6 @@ import { createFailFastApprovalHandler } from './approval.js';
 import type {
   AgentRuntime,
   AgentRuntimeCapabilities,
-  AgentRuntimeControlNotice,
   AgentRuntimeIdentity,
   AgentRuntimeLastResult,
   AgentRuntimePathContext,
@@ -42,8 +41,7 @@ import type {
   InboundDeliveryResult,
   InboundDeliveryHooks,
   InboundTurnInput,
-  NoticeInjectionResult,
-  TeamMateCompletionDeliveryResult,
+  CompletionDeliveryResult,
   TurnSettledSignal,
 } from '@excitedjs/dreamux-types';
 import { BUILTIN_CODEX_PROVIDER_REF } from './provider-ref.js';
@@ -96,7 +94,7 @@ export class CodexRuntime implements AgentRuntime {
     private teammateDeliverySeq = 0;
     private readonly inFlightCompletionDeliveries = new Map<
     string,
-    Promise<TeamMateCompletionDeliveryResult>
+    Promise<CompletionDeliveryResult>
   >();
     private readonly acceptedCompletionIds = new Set<string>();
   private readonly acceptedCompletionOrder: string[] = [];
@@ -152,16 +150,8 @@ export class CodexRuntime implements AgentRuntime {
       : { kind: 'codexThread', id: this.threadId };
   }
 
-  getThreadId(): string | null {
-    return this.getCheckpoint()?.id ?? null;
-  }
-
   wasCheckpointResumed(): boolean {
     return this.threadResumed;
-  }
-
-    wasThreadResumed(): boolean {
-    return this.wasCheckpointResumed();
   }
 
   async getLast(): Promise<AgentRuntimeLastResult | null> {
@@ -184,7 +174,7 @@ export class CodexRuntime implements AgentRuntime {
     await this.start();
   }
 
-  private async submitRestartNotice(text: string): Promise<NoticeInjectionResult> {
+  private async submitRestartNotice(text: string): Promise<AgentRuntimeTurnResult> {
     if (this.turnManager === null) return { status: 'stopped' };
     const result = await this.turnManager.injectNotice(text);
     if (result.status === 'submitted') {
@@ -353,10 +343,10 @@ export class CodexRuntime implements AgentRuntime {
     }
   }
 
-  async submitTurn(
+  async channelInput(
     input: InboundTurnInput,
     hooks: InboundDeliveryHooks = {},
-  ): Promise<InboundDeliveryResult> {
+  ): Promise<AgentRuntimeTurnResult> {
     if (this.turnManager === null) {
       return { status: 'failed', error: new Error('turn manager not initialized') };
     }
@@ -366,16 +356,10 @@ export class CodexRuntime implements AgentRuntime {
     );
   }
 
-  async channelInput(
-    input: InboundTurnInput,
-    hooks: InboundDeliveryHooks = {},
-  ): Promise<AgentRuntimeTurnResult> {
-    return this.submitTurn(input, hooks);
-  }
-
-  async injectControlNotice(
-    notice: AgentRuntimeControlNotice,
-  ): Promise<NoticeInjectionResult> {
+    async systemInput(notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult> {
+    if (notice.reason === 'scheduled') {
+      return this.channelInput({ sourceId: '', text: notice.text });
+    }
     if (notice.reason === 'restart-notice') {
       return this.submitRestartNotice(notice.text);
     }
@@ -383,23 +367,9 @@ export class CodexRuntime implements AgentRuntime {
     return result.status === 'duplicate'
       ? {
           status: 'failed',
-          error: new Error('control notice unexpectedly deduplicated'),
+          error: new Error('system input unexpectedly deduplicated'),
         }
       : result;
-  }
-
-    async systemInput(notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult> {
-    if (notice.reason === 'teammate-completion') {
-      throw new Error('teammate completion must use completionInput');
-    }
-    if (notice.reason === 'scheduled') {
-      return this.submitTurn({ sourceId: '', text: notice.text });
-    }
-    return this.injectControlNotice({
-      kind: 'control',
-      text: notice.text,
-      reason: notice.reason,
-    });
   }
 
   waitIdle(): Promise<void> {
@@ -408,7 +378,7 @@ export class CodexRuntime implements AgentRuntime {
 
     async completionInput(
     completion: CompletionEnvelope,
-  ): Promise<TeamMateCompletionDeliveryResult> {
+  ): Promise<CompletionDeliveryResult> {
     if (this.acceptedCompletionIds.has(completion.id)) {
       return { status: 'accepted' };
     }
@@ -430,7 +400,7 @@ export class CodexRuntime implements AgentRuntime {
 
   private async deliverCompletionInput(
     completion: CompletionEnvelope,
-  ): Promise<TeamMateCompletionDeliveryResult> {
+  ): Promise<CompletionDeliveryResult> {
     if (this.client === null || this.turnManager === null || this.stopping) {
       return { status: 'unsupported', reason: 'dispatcher runtime stopped' };
     }

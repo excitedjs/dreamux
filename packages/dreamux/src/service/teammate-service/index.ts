@@ -7,10 +7,10 @@ import type {
   AgentRuntimeProvider,
   AgentRuntimeStateCallbacks,
   AgentRuntimeTurnResult,
+  CompletionDeliveryResult,
   CompletionEnvelope,
   DreamuxLogger,
   InboundTurnInput,
-  TeamMateCompletionDeliveryResult,
   TurnSettledSignal,
 } from '@excitedjs/dreamux-types';
 
@@ -160,7 +160,7 @@ export class TeammateService {
    */
   async completionInput(
     completion: CompletionEnvelope,
-  ): Promise<TeamMateCompletionDeliveryResult> {
+  ): Promise<CompletionDeliveryResult> {
     const runtime = this.runtime;
     if (runtime === null) {
       return { status: 'unsupported', reason: 'teammate runtime not running' };
@@ -218,7 +218,7 @@ export class TeammateService {
   async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
     await this.ensureStarted({ reopenClosed: true });
     const runtime = this.mustRuntime();
-    const result = await runtime.submitTurn(input);
+    const result = await runtime.channelInput(input);
     if (result.status === 'submitted') {
       await recordSubmittedTurn(this.turnsStore, this.live(), {
         turnId: result.turnId,
@@ -235,9 +235,9 @@ export class TeammateService {
   }): Promise<AgentRuntimeTurnResult> {
     await this.ensureStarted();
     const runtime = this.mustRuntime();
-    const result = await runtime.submitTurn({
-      sourceId: `scheduled:${input.jobId}`,
+    const result = await runtime.systemInput({
       text: input.prompt,
+      reason: 'scheduled',
     });
     if (result.status === 'submitted') {
       await recordSubmittedTurn(this.turnsStore, this.live(), {
@@ -522,7 +522,7 @@ export class TeammateService {
     await this.ensureStarted({ reopenClosed: true });
     const runtime = this.mustRuntime();
     const submissionSeq = this.deps.nextSubmissionSeq();
-    const result = await runtime.submitTurn({
+    const result = await runtime.channelInput({
       sourceId: `teammate:${this.name}:${submissionSeq}`,
       text: prompt,
     });
@@ -558,7 +558,7 @@ export class TeammateService {
 
 function runtimeId(dispatcherId: string, name: string): string {
   const suffix = createHash('sha256')
-    .update(`${dispatcherId} ${name}`)
+    .update(`${dispatcherId}\0${name}`)
     .digest('hex')
     .slice(0, 12);
   const prefix = dispatcherId.slice(0, 40);

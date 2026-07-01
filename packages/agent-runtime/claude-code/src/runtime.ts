@@ -75,7 +75,6 @@ import { buildCompletionTurnText } from './completion-turn.js';
 import { consoleFallbackLogger } from './logger.js';
 import type {
   AgentRuntimeCapabilities,
-  AgentRuntimeControlNotice,
   AgentRuntime,
   AgentRuntimeIdentity,
   AgentRuntimeLastResult,
@@ -89,11 +88,9 @@ import type {
   AgentRuntimeTurnResult,
   CompletionEnvelope,
   DreamuxLogger,
-  InboundDeliveryResult,
   InboundDeliveryHooks,
   InboundTurnInput,
-  NoticeInjectionResult,
-  TeamMateCompletionDeliveryResult,
+  CompletionDeliveryResult,
   TurnSettledSignal,
 } from '@excitedjs/dreamux-types';
 
@@ -233,16 +230,8 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       : { kind: 'claudeCodeSession', id: this.threadId };
   }
 
-  getThreadId(): string | null {
-    return this.getCheckpoint()?.id ?? null;
-  }
-
   wasCheckpointResumed(): boolean {
     return this.resumed;
-  }
-
-  wasThreadResumed(): boolean {
-    return this.wasCheckpointResumed();
   }
 
   async getLast(): Promise<AgentRuntimeLastResult | null> {
@@ -300,13 +289,11 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     await this.setStatus('stopped');
   }
 
-  async injectControlNotice(
-    notice: AgentRuntimeControlNotice,
-  ): Promise<NoticeInjectionResult> {
+  private async submitSystemTurn(text: string): Promise<AgentRuntimeTurnResult> {
     if (this.stopped) return { status: 'stopped' };
     const turnId = this.nextTurnId('system');
     this.recordQueuedTurnStart();
-    void this.runTurnOnQueue(notice.text, turnId).then(
+    void this.runTurnOnQueue(text, turnId).then(
       (resultText) => this.markTurnSucceeded(turnId, resultText),
       (err) => this.markTurnFailed(turnId, err),
     );
@@ -314,23 +301,16 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   }
 
   async systemInput(notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult> {
-    if (notice.reason === 'teammate-completion') {
-      throw new Error('teammate completion must use completionInput');
-    }
     if (notice.reason === 'scheduled') {
-      return this.submitTurn({ sourceId: '', text: notice.text });
+      return this.channelInput({ sourceId: '', text: notice.text });
     }
-    return this.injectControlNotice({
-      kind: 'control',
-      text: notice.text,
-      reason: notice.reason,
-    });
+    return this.submitSystemTurn(notice.text);
   }
 
-  async submitTurn(
+  async channelInput(
     input: InboundTurnInput,
     hooks: InboundDeliveryHooks = {},
-  ): Promise<InboundDeliveryResult> {
+  ): Promise<AgentRuntimeTurnResult> {
     if (this.stopped) return { status: 'stopped' };
     const key = input.sourceId;
     if (key !== '' && this.seen.has(key)) return { status: 'duplicate' };
@@ -379,16 +359,9 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     return { status: 'submitted', turnId };
   }
 
-  async channelInput(
-    input: InboundTurnInput,
-    hooks: InboundDeliveryHooks = {},
-  ): Promise<AgentRuntimeTurnResult> {
-    return this.submitTurn(input, hooks);
-  }
-
   async completionInput(
     completion: CompletionEnvelope,
-  ): Promise<TeamMateCompletionDeliveryResult> {
+  ): Promise<CompletionDeliveryResult> {
     if (this.stopped) {
       return { status: 'unsupported', reason: 'runtime stopped' };
     }

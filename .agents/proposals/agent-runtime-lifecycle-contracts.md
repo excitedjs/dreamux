@@ -46,9 +46,9 @@ Current source facts:
   providers (`/packages/dreamux-types/src/agent-runtime.ts`), even though
   teammate state binds the runtime instance by closure and ignores the incoming
   id (`/packages/dreamux/src/service/teammate-collection/runtime-state.ts`).
-- `AgentRuntime` exposes `getThreadId()` and `wasThreadResumed()`, while the
-  neutral create identity already talks about `checkpoint_id`
-  (`/packages/dreamux-types/src/agent-runtime.ts`).
+- Earlier drafts exposed `getThreadId()` and `wasThreadResumed()` as runtime
+  projections, while the neutral create identity already talked about
+  `checkpoint_id`. The final contract should expose only checkpoint semantics.
 - `AgentRuntimeSystemInput.reason` currently mixes restart notices, runtime
   control, scheduled model turns, and teammate completion
   (`/packages/dreamux-types/src/agent-runtime.ts`).
@@ -250,28 +250,39 @@ Rules:
 
 ### Inputs
 
-Core should separate model turns, control notices, and completion delivery. It
-does not need to model provider-native tool policy, permissions, approvals, or
+Core should expose only the runtime inboxes Dreamux actually needs: channel/user
+turns, Dreamux-owned system messages, and optional completion delivery. It does
+not need to model provider-native tool policy, permissions, approvals, or
 subagent protocols.
 
 ```ts
+interface AgentRuntimeSystemInput {
+  text: string;
+  reason: "restart-notice" | "runtime-control" | "scheduled" | (string & {});
+}
+
 interface AgentRuntime {
-  submitTurn(input: InboundTurnInput): Promise<InboundDeliveryResult>;
-  injectControlNotice(input: AgentRuntimeControlNotice): Promise<NoticeInjectionResult>;
+  channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult>;
+  systemInput(input: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult>;
   completionInput?(completion: CompletionEnvelope): Promise<CompletionDeliveryResult>;
 }
 ```
 
 Rules:
 
-- Channel messages, explicit sends, and scheduled prompts are model turns.
-- Restart/runtime notices are control notices with best-effort skip/fail
-  semantics.
+- `channelInput` is the user/channel-turn inbox. Channel messages and explicit
+  Dreamux sends enter here, and the runtime owns rendering the neutral channel
+  shape into its native input format.
+- `systemInput` is the Dreamux system-message inbox. Restart notices, runtime
+  control text, and scheduled prompts enter here, and the runtime decides whether
+  to submit a plain turn, use a native system-message path, skip, or fail.
 - Completion delivery stays a separate surface because retry/terminal semantics
-  are different from both turns and control notices.
-- The current `systemInput(reason: "teammate-completion")` path should fail
-  loudly during compatibility; teammate completion should not be injected
-  through the control-notice path.
+  are different from both channel/user turns and system messages.
+- Teammate completion must use `completionInput`; it is not a `systemInput`
+  reason.
+- `submitTurn` and `injectControlNotice` are not provider-facing AgentRuntime
+  methods. They may exist as lower-level runtime implementation details, but
+  core and external providers should not depend on them.
 - Provider-native approval or question flows are not part of this contract. A
   provider that cannot run non-interactively should expose that through
   diagnostic/onboard/config, not block an in-flight Dreamux turn waiting for an
@@ -284,7 +295,7 @@ offer both canonical prompt forms and let the runtime adapter decide how to use
 them.
 
 ```ts
-interface AgentRuntimeSystemPromptBundle {
+interface AgentRuntimeSystemPrompt {
   /** Full role instructions for runtimes that replace their base prompt. */
   replace: string;
   /** Focused role delta for runtimes that append to an existing native prompt. */
@@ -292,7 +303,7 @@ interface AgentRuntimeSystemPromptBundle {
 }
 
 interface AgentRuntimeCreateContext<TConfig = unknown> {
-  systemPrompt?: AgentRuntimeSystemPromptBundle;
+  systemPrompt?: AgentRuntimeSystemPrompt;
 }
 ```
 
@@ -360,16 +371,22 @@ External provider loading should validate the runtime handle returned by
 
 ## Compatibility posture
 
-Compatibility adapters may keep current public method names while the neutral
-names become the source of truth:
+The public `AgentRuntime` contract should not carry compatibility projections
+for tests or older internal names. Provider authors implement the required
+contract directly:
 
-- `getThreadId()` can project `getCheckpoint()?.id`;
-- `wasThreadResumed()` can project `wasCheckpointResumed()`;
-- `channelInput()` can delegate to `submitTurn()`;
-- `systemInput()` can dispatch to `submitTurn()` or `injectControlNotice()` by
-  reason during transition, except `teammate-completion`, which should fail
-  loudly;
-- `getLast()` stays available for read/recovery surfaces only.
+- checkpoint state is reported through `getCheckpoint()` and
+  `wasCheckpointResumed()`, not `getThreadId()` or `wasThreadResumed()`;
+- channel/user delivery is `channelInput()`, not a public `submitTurn()`;
+- Dreamux system messages are `systemInput()`, not a public
+  `injectControlNotice()`;
+- completion delivery is `completionInput()` when the provider declares a
+  teammate-completion shape.
+
+Built-in runtime classes may keep provider-specific lower-level helpers only as
+implementation details or concrete-class test probes. Those helpers must not be
+validated by the external-provider loader or named in the public
+`@excitedjs/dreamux-types` interface.
 
 Persisted field names do not need to change in this slice. The important
 boundary is provider-facing language and core behavior: core should not treat

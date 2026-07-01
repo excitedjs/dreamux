@@ -136,8 +136,8 @@ function assertRuntimeHandle(
     'start',
     'resume',
     'stop',
-    'submitTurn',
-    'injectControlNotice',
+    'channelInput',
+    'systemInput',
     'getStatus',
     'getCheckpoint',
     'wasCheckpointResumed',
@@ -152,11 +152,6 @@ function assertRuntimeHandle(
   }
   if (value['waitIdle'] !== undefined && typeof value['waitIdle'] !== 'function') {
     context.fail('runtime.waitIdle must be a function when present');
-  }
-  for (const method of ['channelInput', 'systemInput', 'getThreadId', 'wasThreadResumed']) {
-    if (value[method] !== undefined && typeof value[method] !== 'function') {
-      context.fail(`runtime.${method} must be a function when present`);
-    }
   }
   const completionInput = value['completionInput'];
   if (completionInput !== undefined && typeof completionInput !== 'function') {

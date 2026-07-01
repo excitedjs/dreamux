@@ -16,12 +16,10 @@ import type {
   AgentRuntimeStatus,
   AgentRuntimeSystemInput,
   AgentRuntimeTurnResult,
-  InboundDeliveryResult,
-  NoticeInjectionResult,
   CompletionEnvelope,
   DreamuxLogger,
   InboundTurnInput,
-  TeamMateCompletionDeliveryResult,
+  CompletionDeliveryResult,
   TurnSettledSignal,
 } from '@excitedjs/dreamux-types';
 
@@ -78,7 +76,7 @@ class FakeRuntime implements AgentRuntime {
     this.status = 'stopped';
   }
 
-  async submitTurn(input: InboundTurnInput): Promise<InboundDeliveryResult> {
+  async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
     this.submitted.push(input);
     const turnId = `turn-${this.submitted.length}`;
     if (this.opts.settleImmediately) {
@@ -93,14 +91,6 @@ class FakeRuntime implements AgentRuntime {
     return { status: 'submitted', turnId };
   }
 
-  async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
-    return this.submitTurn(input);
-  }
-
-  async injectControlNotice(): Promise<NoticeInjectionResult> {
-    return { status: 'skipped' };
-  }
-
   async systemInput(_notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult> {
     return { status: 'skipped' };
   }
@@ -109,16 +99,8 @@ class FakeRuntime implements AgentRuntime {
     return this.status;
   }
 
-  getThreadId(): string | null {
-    return this.getCheckpoint()?.id ?? null;
-  }
-
   getCheckpoint(): { kind: string; id: string } | null {
     return { kind: 'fakeThread', id: 'thread-fake' };
-  }
-
-  wasThreadResumed(): boolean {
-    return this.wasCheckpointResumed();
   }
 
   wasCheckpointResumed(): boolean {
@@ -175,7 +157,7 @@ class FakeInitiator {
 
   async completionInput(
     completion: CompletionEnvelope,
-  ): Promise<TeamMateCompletionDeliveryResult> {
+  ): Promise<CompletionDeliveryResult> {
     this.completions.push(completion);
     return { status: 'accepted' };
   }

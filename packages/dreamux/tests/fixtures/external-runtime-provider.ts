@@ -8,8 +8,6 @@ import type {
   AgentRuntimeStatus,
   AgentRuntimeSystemInput,
   AgentRuntimeTurnResult,
-  InboundDeliveryResult,
-  NoticeInjectionResult,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
 
@@ -83,7 +81,7 @@ class ExternalParityRuntime implements AgentRuntime {
     await this.context.state?.setStatus('stopped');
   }
 
-  async submitTurn(input: InboundTurnInput): Promise<InboundDeliveryResult> {
+  async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
     if (this.status !== 'ready') {
       return { status: 'failed', error: new Error('external runtime is not ready') };
     }
@@ -100,14 +98,6 @@ class ExternalParityRuntime implements AgentRuntime {
     return { status: 'submitted', turnId };
   }
 
-  async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
-    return this.submitTurn(input);
-  }
-
-  async injectControlNotice(): Promise<NoticeInjectionResult> {
-    return { status: 'skipped' };
-  }
-
   async systemInput(_notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult> {
     return { status: 'skipped' };
   }
@@ -116,18 +106,10 @@ class ExternalParityRuntime implements AgentRuntime {
     return this.status;
   }
 
-  getThreadId(): string | null {
-    return this.getCheckpoint()?.id ?? null;
-  }
-
   getCheckpoint(): { kind: string; id: string } | null {
     return this.threadId === null
       ? null
       : { kind: 'externalThread', id: this.threadId };
-  }
-
-  wasThreadResumed(): boolean {
-    return this.wasCheckpointResumed();
   }
 
   wasCheckpointResumed(): boolean {
