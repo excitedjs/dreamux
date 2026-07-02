@@ -50,6 +50,7 @@ export interface ThreadStartParams {
   cwd?: string | null;
   approvalPolicy?: string | null;
   baseInstructions?: string | null;
+  developerInstructions?: string | null;
 }
 
 export interface ThreadStartResponse {
@@ -62,6 +63,7 @@ export interface ThreadResumeParams {
   cwd?: string | null;
   approvalPolicy?: string | null;
   baseInstructions?: string | null;
+  developerInstructions?: string | null;
 }
 
 export interface ThreadResumeResponse {
