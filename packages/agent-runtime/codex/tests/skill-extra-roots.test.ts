@@ -360,6 +360,65 @@ describe('codex skills/extraRoots/set injection', () => {
     expect(client.methods).not.toContain('thread/inject_items');
   });
 
+  it('passes replacement baseInstructions on resume without duplicate append injection', async () => {
+    const client = new FakeClient();
+    const runtime = buildRuntime(
+      client,
+      [],
+      undefined,
+      undefined,
+      {
+        replace: 'complete dispatcher base instructions',
+        append: ['dispatcher append guidance'],
+      },
+      'thread-existing',
+    );
+
+    await runtime.start();
+    await runtime.stop();
+
+    expect(client.threadStartCalls).toEqual([]);
+    expect(client.threadResumeCalls).toEqual([
+      {
+        threadId: 'thread-existing',
+        baseInstructions: 'complete dispatcher base instructions',
+      },
+    ]);
+    expect(client.methods).not.toContain('thread/inject_items');
+  });
+
+  it('passes replacement baseInstructions on resume fallback start', async () => {
+    const client = new FakeClient();
+    client.threadResumeError = new Error('resume unavailable');
+    const runtime = buildRuntime(
+      client,
+      [],
+      undefined,
+      undefined,
+      {
+        replace: 'complete dispatcher base instructions',
+        append: ['dispatcher append guidance'],
+      },
+      'thread-existing',
+    );
+
+    await runtime.start();
+    await runtime.stop();
+
+    expect(client.threadResumeCalls).toEqual([
+      {
+        threadId: 'thread-existing',
+        baseInstructions: 'complete dispatcher base instructions',
+      },
+    ]);
+    expect(client.threadStartCalls).toEqual([
+      {
+        baseInstructions: 'complete dispatcher base instructions',
+      },
+    ]);
+    expect(client.methods).not.toContain('thread/inject_items');
+  });
+
   it('skips the RPC entirely when no skill sources are supplied', async () => {
     const client = new FakeClient();
     const runtime = buildRuntime(client, []);
