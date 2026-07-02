@@ -1,11 +1,18 @@
 # Dispatcher tm packaging
 
-- **Status:** Accepted
+- **Status:** Superseded by MCP-only workflow skills and removal of the `tm`
+  package surface
 - **Date:** 2026-06-03
 - **Affects:** `@excitedjs/dreamux` package dependencies, package bins, dispatcher Codex environment, bundled skill installation
 - **PR / Issue:** Local architecture clarification on 2026-06-03; supersedes the `npx @excitedjs/tm` dispatcher-skill command shape and the global dispatcher-skill install path
 
-## Context
+> **Current status:** this decision is historical. Dreamux now uses the
+> server-hosted TeamMate and Team MCP surfaces as the only Dreamux-owned
+> orchestration boundary. `@excitedjs/dreamux` no longer exposes a `tm` bin and
+> no longer depends on `@excitedjs/tm`; bundled skills must not instruct models
+> to use `tm`.
+
+## Historical context
 
 The dispatcher skill needs to delegate bounded work to tm-managed Codex
 teammates. The earlier long-form command shape made the model construct
@@ -20,7 +27,7 @@ That is the wrong boundary:
 The dreamux package already owns the dispatcher runtime and can own the tm
 version used by that runtime.
 
-## Decision
+## Historical decision
 
 `@excitedjs/tm` is a direct runtime dependency of `@excitedjs/dreamux`.
 
@@ -64,13 +71,12 @@ The bundled source directory, installed directory, and skill frontmatter name
 must match for each shipped skill. Older package-specific source-directory names
 must be renamed away before this design is implemented.
 
-`dreamux uninstall` does not delete these workspace-local skills by default. It
-removes dreamux-owned config, run, cache, state, logs, and service integration, then reports
-the workspace skill paths created by Dreamux so the operator can remove them
-manually when desired. This avoids deleting files under arbitrary operator
-workspaces during a global uninstall.
+Historical behavior: `dreamux uninstall` did not delete these workspace-local
+skills by default; it reported the workspace skill paths that Dreamux created so
+the operator could remove them manually when desired. Current Dreamux no longer
+creates, tracks, or reports workspace-local skill symlinks.
 
-## Consequences
+## Historical consequences
 
 - The published dreamux package has two bins:
   - `dreamux` for the public operator CLI.
@@ -104,7 +110,7 @@ workspaces during a global uninstall.
   symlinks into the operator's workspace, while uninstall only reports those
   paths.
 
-## Current source status
+## Historical source status
 
 At the time of this decision, the branch already contains:
 

@@ -120,9 +120,13 @@ async function teamLeaderTeamTools(): Promise<Array<Record<string, unknown>>> {
 }
 
 function schemaOf(tools: Array<Record<string, unknown>>, name: string): ToolSchema {
+  return (toolOf(tools, name) as { inputSchema: ToolSchema }).inputSchema;
+}
+
+function toolOf(tools: Array<Record<string, unknown>>, name: string): Record<string, unknown> {
   const entry = tools.find((tool) => tool['name'] === name);
   if (entry === undefined) throw new Error(`tool '${name}' not found`);
-  return (entry as { inputSchema: ToolSchema }).inputSchema;
+  return entry;
 }
 
 // The retired legacy filters. `status` stays a supported lifecycle filter and is
@@ -182,6 +186,14 @@ describe('issue #199 Slice 1 — public MCP contract whitelist', () => {
       expect(spawn.required).not.toContain('identity');
       expect(spawn.required).not.toContain('name');
     }
+  });
+
+  it('TeamLeader teammate.spawn has no repo input or dispatcher repo wording', async () => {
+    const spawn = toolOf(await teammateTools('team_leader'), 'spawn');
+    expect((spawn.inputSchema as ToolSchema).properties).not.toHaveProperty('repo');
+    expect(spawn['description']).toContain('Team-scoped TeamMate');
+    expect(spawn['description']).toContain('does not accept repo');
+    expect(spawn['description']).not.toContain('repo is optional');
   });
 
   it('teammate.history params are exactly the trimmed recovery set', async () => {

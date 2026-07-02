@@ -129,8 +129,8 @@ state that the dispatcher shares one Codex context across those chats.
 ## Operator Config
 
 `~/.dreamux/config.json` is the only dreamux operator-editable config source.
-It holds dispatcher declarations, local Feishu credentials, and the dispatcher
-cwd used for the workspace-local skill install.
+It holds dispatcher declarations, local Feishu credentials, and each
+dispatcher's workspace cwd.
 
 Each dispatcher MUST declare an explicit `cwd` (issue #182 PR-4). `dreamux serve`
 fails loud at startup if any enabled dispatcher has no `cwd` — there is no
@@ -379,7 +379,7 @@ Logs (issue #182 logs stage): logs are diagnostics, never durable state — the
 whole `logs/` tree is rebuildable and safe to clear while no server runs.
 Retention is **manual**, not automatic: Dreamux does not age-prune logs in 0.x;
 a 7-day retention is the documented guidance and zero-byte files are always safe
-to delete (see the `dreamux-maintenance` skill's Log Maintenance section). Runtime
+to delete (see the `dreamux-maintenance` skill). Runtime
 child stdout/stderr logs are opened eagerly as inherited fds (they cannot be
 lazily created — the child needs a valid fd at spawn), and normal Codex/Claude
 traffic flows over the socket/stream rather than stdout/stderr, so they are
@@ -525,8 +525,8 @@ The prompt is the dispatcher role contract:
   while treating the plan as dispatcher-internal state rather than a Feishu or
   operator-visible reply;
 - delegate repository exploration, edits, tests, reviews, and PR preparation
-  through `tm` instead of doing target-repo work directly in the dispatcher
-  thread;
+  through the injected TeamMate MCP instead of doing target-repo work directly
+  in the dispatcher thread;
 - keep fact discipline: embedded assumptions are sent to the responsible repo
   teammate to verify, not passed along as dispatcher-certified facts;
 - brief teammates with the goal, repo/branch/issue/PR anchors, hard
@@ -967,16 +967,16 @@ When the dispatcher cannot parse inbound rich content, it should tell Codex to
 use the Feishu skill and `lark-cli` with the provided `message_id` to fetch the
 message body.
 
-## Dispatcher Skill And TM
+## Workflow Skills And MCP
 
-`@excitedjs/tm` is a direct dependency of `@excitedjs/dreamux`. The package ships
-a `tm` bin wrapper.
+`@excitedjs/dreamux` no longer ships a `tm` bin wrapper and no longer depends on
+`@excitedjs/tm`. Dreamux-owned TeamMate and Team orchestration is model-facing
+through the injected MCP tools only.
 
-When `dreamux` starts a dispatcher Codex thread, it injects the package `tm` bin
-location into that thread's `PATH`. This lets the dispatcher skills call bare
-`tm` without constructing long `npx` commands.
-
-The npm package ships bundled Codex skills under `/packages/dreamux/skills/`.
+The npm package ships bundled skills under `/packages/dreamux/skills/`:
+`dispatcher-workflow` and `dreamux-maintenance` for Dispatchers, and
+`team-workflow` for TeamLeaders. Ordinary TeamMate and team-member runtimes
+receive none by default.
 
 > **Superseded by issue #209 slice 6 (role-gated skill injection).** The
 > workspace-symlink model below — `onboard` and dispatcher startup symlinking
@@ -986,8 +986,8 @@ The npm package ships bundled Codex skills under `/packages/dreamux/skills/`.
 > TeamLeader roles receive them, and the runtime package applies them to its
 > engine (Codex `skills/extraRoots/set`, Claude Code `--add-dir`). `onboard` and
 > startup no longer create or write `<dispatcher cwd>/.codex/skills`. Pre-existing
-> old symlinks are left untouched (codex lists the skill twice but does not fail);
-> operators may delete that directory. See
+> old symlinks are outside Dreamux-owned state and are left untouched; operators
+> may delete that directory manually. See
 > [`npm-package-split-and-channel-targets.md`](npm-package-split-and-channel-targets.md).
 
 Historical model (pre-slice-6): during `onboard` and dispatcher startup,
@@ -995,9 +995,10 @@ Historical model (pre-slice-6): during `onboard` and dispatcher startup,
 `<dispatcher cwd>/.codex/skills/<skill-name>`, intentionally not into the
 operator's global `~/.codex/skills`.
 
-`uninstall` removes dreamux-owned config, run, cache, state, logs, and service integration
-by default. It still reports any pre-existing workspace-local bundled skill
-paths, but it does not delete files under operator workspaces by default.
+`uninstall` removes dreamux-owned config, run, cache, state, logs, and service
+integration by default. It no longer tracks or reports legacy workspace-local
+bundled skill symlinks; those paths are operator workspace files and may be
+deleted manually.
 
 ## CLI And Admin
 
@@ -1081,5 +1082,5 @@ resume path.
 - Codex app-server child or child-WebSocket failure triggers backoff restart and
   thread resume.
 - A stuck turn alone does not trigger child restart.
-- `uninstall` reports workspace-local bundled skill paths but does not delete
-  them by default.
+- `uninstall` does not touch or report legacy workspace-local bundled skill
+  paths.

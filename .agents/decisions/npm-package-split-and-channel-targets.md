@@ -732,9 +732,10 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   bundled-skill model is removed from onboarding and runtime startup, replaced by
   role-gated `AgentRuntimeCreateContext.skillSources` injection. Core owns the
   bundled skills and the role gate: `bundledSkillSourcesForRole(role)`
-  (`agent-runtime/bundled-skill-sources.ts`) returns the bundled sources only for
-  the `dispatcher` and `team_leader` roles, and an empty set for ordinary
-  `teammate` / `team_member`. The launcher sets `role` and `skillSources`
+  (`agent-runtime/bundled-skill-sources.ts`) returns Dispatcher-only
+  `dispatcher-workflow` and `dreamux-maintenance` sources, the TeamLeader-only
+  `team-workflow` source, and an empty set for ordinary `teammate` /
+  `team_member`. The launcher sets `role` and `skillSources`
   explicitly (the dispatcher service for the dispatcher agent; the teammate
   identity's role for teammate/leader/member launches), retiring the old
   `onTurnSettled`-presence role heuristic in the Codex adapter — which had
@@ -759,11 +760,9 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   Claude launch DOES receive the bundled skills via a real `--add-dir`.)
 
   Startup does **not** delete pre-existing old `<dispatcher cwd>/.codex/skills`
-  symlinks. On an upgraded dispatcher, codex would then list each bundled skill
-  twice — once `repo`-scoped from the leftover cwd symlink and once `user`-scoped
-  from the new extra root — which is a benign duplicate listing (verified: no
-  error, no crash), not an upgrade blocker. Operators may delete
-  `<dispatcher cwd>/.codex/skills` to remove the duplicate; the changelog says so.
+  symlinks. They are no longer the active skill delivery mechanism, are not
+  tracked or reported by Dreamux, and may be deleted manually by the operator
+  when no longer needed.
   The `@excitedjs/agent-runtime-codex` `prepareWorkspaceSkills` host hook (and its
   `CodexWorkspaceSkillPrepResult` type) is removed.
 - **Multi-channel config support — satisfied now:** `dispatchers[].channels[]`
@@ -982,12 +981,11 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
     `--bot-app-secret` onboard path is retired; non-interactive callers pass
     provider raw config through `--agent-config-json` and
     `--channel-config-json`.
-  - **`tm` packaging DEFERRED (not removed this PR).** decision #6's default was to
-    retire the `@excitedjs/tm` dependency + `bin/tm`, but the dispatcher base
-    prompt still actively instructs bare-`tm` usage and the operational `tm` manual
-    is the maintainer-owned dispatcher skill. Removing the bin while the prompt/skill
-    still teach `tm` would be incoherent, so the dep + bin + base-prompt tm prose
-    stay; their removal rides with the maintainer's tm-skill/prose PR. See
+  - **`tm` packaging later removed.** decision #6's default was to retire the
+    `@excitedjs/tm` dependency + `bin/tm`, but removal was deferred while the
+    dispatcher prompt and skills still taught bare-`tm`. The later
+    role-specific workflow-skill rewrite removed that prompt/skill dependency
+    and retired the `tm` package surface. See
     [dispatcher-tm-packaging](dispatcher-tm-packaging.md).
 
 ## Alternatives Considered

@@ -56,9 +56,9 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = dirname(dirname(HERE));
 
 export const BUNDLED_SKILL_NAMES = [
-  'dispatcher',
-  'team-dev-workflow',
+  'dispatcher-workflow',
   'dreamux-maintenance',
+  'team-workflow',
 ] as const;
 
 export type BundledSkillName = typeof BUNDLED_SKILL_NAMES[number];

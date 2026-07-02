@@ -48,7 +48,7 @@ Two settled shape rules govern where code lives:
 
 ## Responsibilities
 
-- Own the `dreamux` and `tm` package bins.
+- Own the `dreamux` package bin.
 - Ship `CHANGELOG.md` / `CHANGELOG.json` inside the package (`files`) so
   `dreamux changelog` reads the installed version offline. Any user-visible
   upgrade blocker carries a rush change file (root `CLAUDE.md` "Changelog

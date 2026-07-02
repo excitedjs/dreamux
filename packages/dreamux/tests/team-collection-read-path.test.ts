@@ -413,8 +413,12 @@ describe('TeamCollection identity prompt launch behavior', () => {
     });
     const team = await teams.get('alpha');
     expect(team.leader.current().identity_prompt).toBe('architecture reviewer');
+    expect(contexts[0]?.skillSources?.map((source) => source.name)).toEqual([
+      'team-workflow',
+    ]);
     expect(contexts[0]?.systemPrompt?.append).toEqual([
       'You are the TeamLeader of Dreamux Team "alpha".',
+      'Load the bundled `team-workflow` skill before TeamMate, Team transfer, channel, or cron operations. It is the TeamLeader-only note set for role boundaries and MCP tool cautions.',
       'architecture reviewer',
     ]);
     expect(contexts[0]?.systemPrompt).not.toHaveProperty('replace');
@@ -436,6 +440,7 @@ describe('TeamCollection identity prompt launch behavior', () => {
     );
     expect(memberContext?.systemPrompt)
       .toBeUndefined();
+    expect(memberContext?.skillSources?.map((source) => source.name)).toEqual([]);
   });
 
   it('rejects blank TeamLeader identity input', async () => {

@@ -496,10 +496,12 @@ actually work and removes the dispatcher-side polling anti-pattern.
   `dreamux daemon install` / `onboard` to regenerate the unit PATH, then
   `daemon restart` to pick up the updated prompt/skills.
 
-`tm` remains the explicit, documented fallback (resume/recovery, multi-turn
-continuation, dead-session recovery, isolated worktrees, transition diagnostics);
-it is never hidden behind or shelled out to from the MCP. Team Mode stays a
-reservation only.
+The historical `tm` fallback has been removed from the Dreamux package surface.
+Dreamux-owned dispatcher guidance now uses the injected TeamMate MCP, including
+resume/recovery and multi-turn continuation where the runtime advertises support.
+The MCP still never shells out to `tm`. Team Mode now has a real Dispatcher /
+TeamLeader MCP surface for create/send/list/status/history/dissolve/channel
+handoff, with TeamLeader limited to scoped `transfer_back`.
 
 ## Current TeamMate MCP capability output
 

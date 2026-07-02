@@ -413,6 +413,10 @@ describe('TeamLeader cron scheduler lifecycle', () => {
         ) === true,
     );
     expect(dispatcherContext?.disableFeatures).toEqual(['userInterrupt', 'cron']);
+    expect(dispatcherContext?.skillSources?.map((source) => source.name)).toEqual([
+      'dispatcher-workflow',
+      'dreamux-maintenance',
+    ]);
     expect(dispatcherContext?.systemPrompt?.replace).toContain('Dreamux dispatcher');
     expect(dispatcherContext?.systemPrompt?.append).toEqual([
       expect.stringContaining('Dreamux dispatcher'),
@@ -435,20 +439,26 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       expect.any(String),
     ]);
     expect(leaderContext?.disableFeatures).toEqual(['userInterrupt', 'cron']);
+    expect(leaderContext?.skillSources?.map((source) => source.name)).toEqual([
+      'team-workflow',
+    ]);
     expect(leaderContext?.systemPrompt?.append).toEqual([
       'You are the TeamLeader of Dreamux Team "alpha".',
+      'Load the bundled `team-workflow` skill before TeamMate, Team transfer, channel, or cron operations. It is the TeamLeader-only note set for role boundaries and MCP tool cautions.',
       'team coordinator',
     ]);
     expect(leaderContext?.systemPrompt).not.toHaveProperty('replace');
     expect(memberContext?.mcpServers.map((server) => server.name)).not.toContain('team');
     expect(memberContext?.mcpServers.map((server) => server.name)).not.toContain('cron');
     expect(memberContext?.disableFeatures).toEqual(['userInterrupt']);
+    expect(memberContext?.skillSources?.map((source) => source.name)).toEqual([]);
     expect(memberContext?.systemPrompt?.append).toEqual([
       'worker specialist',
     ]);
     expect(memberContext?.systemPrompt?.append?.join('\n')).not.toContain(
       'TeamLeader of Dreamux Team',
     );
+    expect(teammateContext?.skillSources?.map((source) => source.name)).toEqual([]);
     expect(memberContext?.systemPrompt).not.toHaveProperty('replace');
     expect(teammateContext?.disableFeatures).toEqual(['userInterrupt']);
     expect(teammateContext?.systemPrompt?.append).toEqual([

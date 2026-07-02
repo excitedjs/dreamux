@@ -187,8 +187,9 @@ export type ClaudeCodeProviderFactoryContext =
  * drives the host-shaped create context, so it constructs the provider through
  * its own core-owned adapter (`@excitedjs/dreamux`
  * `builtin/claude-code/provider.ts`) to map that context onto the neutral one
- * AND inject its host contracts (the package-bin `PATH`, the durable state sink,
- * the per-dispatcher path context). This default export keeps the package a
+ * AND inject its host contracts (the durable state sink, the per-dispatcher
+ * path context, and any role-gated skill sources; MCP shims receive an explicit
+ * dreamux bin path). This default export keeps the package a
  * first-class, loadable `AgentRuntimeProvider` for the generic loader and for
  * external embedders.
  */

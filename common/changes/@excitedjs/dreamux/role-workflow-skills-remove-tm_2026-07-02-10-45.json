@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux",
+      "comment": "BREAKING: Replace the old bundled dispatcher/team-dev-workflow skill guidance with role-specific dispatcher-workflow and team-workflow skills, rewrite dreamux-maintenance as a Dispatcher-only host-operations skill, and remove the packaged tm CLI wrapper plus the @excitedjs/tm dependency. Rebuild: update any scripts, operator notes, or model prompts that call the dreamux-provided tm bin; Dreamux-owned TeamMate and Team orchestration now goes through the injected MCP tools only.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

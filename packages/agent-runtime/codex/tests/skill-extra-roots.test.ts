@@ -204,14 +204,17 @@ describe('codex skills/extraRoots/set injection', () => {
     const client = new FakeClient();
     // Two skills sharing one parent dir → exactly one deduped extra root.
     const runtime = buildRuntime(client, [
-      skillSource('/pkg/skills/dispatcher'),
-      skillSource('/pkg/skills/team-dev-workflow'),
+      skillSource('/pkg/skills/dispatcher-workflow'),
+      skillSource('/pkg/skills/dreamux-maintenance'),
+      skillSource('/pkg/skills/team-workflow'),
     ]);
 
     await runtime.start();
     await runtime.stop();
 
-    expect(client.extraRootsCalls).toEqual([[dirname('/pkg/skills/dispatcher')]]);
+    expect(client.extraRootsCalls).toEqual([
+      [dirname('/pkg/skills/dispatcher-workflow')],
+    ]);
     const initIdx = client.methods.indexOf('initialize');
     const setIdx = client.methods.indexOf('skills/extraRoots/set');
     const startIdx = client.methods.indexOf('thread/start');

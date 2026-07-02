@@ -8,7 +8,6 @@ import {
   unixSocketPathFitsBudget,
 } from '@excitedjs/dreamux-utils';
 import {
-  BUNDLED_SKILL_NAMES,
   adminSocketPath,
   cacheRoot,
   dispatcherChannelBindingsPath,
@@ -37,12 +36,6 @@ import {
   serverLogPath,
   stateRoot,
 } from '../src/platform/paths.js';
-import {
-  dispatcherWorkspaceCodexSkillsDir,
-  dispatcherWorkspaceSkillDirs,
-  dispatcherWorkspaceSkillPath,
-} from '../src/onboard/legacy-codex-skills.js';
-
 describe('runtime paths', () => {
   let root: string;
   let previousHome: string | undefined;
@@ -156,18 +149,6 @@ describe('runtime paths', () => {
     // Per-runtime app-server log paths are no longer core path builders: each
     // runtime package composes a flat `<logsDir>/<engine>/<runtime_id>.log`
     // keyed by its own runtime_id (issue #209). Core owns only logsRoot().
-    const workspace = join(root, 'workspace');
-    expect(dispatcherWorkspaceCodexSkillsDir(workspace)).toBe(
-      join(workspace, '.codex', 'skills'),
-    );
-    expect(dispatcherWorkspaceSkillPath(workspace)).toBe(
-      join(workspace, '.codex', 'skills', 'dispatcher', 'SKILL.md'),
-    );
-    expect(dispatcherWorkspaceSkillDirs(workspace)).toEqual(
-      BUNDLED_SKILL_NAMES.map((skillName) =>
-        join(workspace, '.codex', 'skills', skillName),
-      ),
-    );
   });
 
   it('keeps cache artifacts under cache/, never under durable state (issue #182 PR-2)', () => {

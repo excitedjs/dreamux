@@ -28,7 +28,6 @@ import {
   stateRoot,
 } from '../src/platform/paths.js';
 import { dispatcherCodexHome } from '@excitedjs/agent-runtime-codex';
-import { dispatcherWorkspaceSkillPath } from '../src/onboard/legacy-codex-skills.js';
 import {
   testConfigFileObject,
   testSingleDispatcherFileObject,
@@ -906,9 +905,6 @@ describe('dreamux doctor command', () => {
   }
 
   function writeDispatcherHome(options: { auth: boolean }): void {
-    const skillPath = dispatcherWorkspaceSkillPath(defaultDispatcherCwd('flow'));
-    mkdirSync(dirname(skillPath), { recursive: true });
-    writeFileSync(skillPath, '# test skill\n');
     mkdirSync(dispatcherCodexHome('flow'), { recursive: true });
     if (options.auth) {
       writeFileSync(join(dispatcherCodexHome('flow'), 'auth.json'), '{}');

@@ -8,7 +8,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 
 import { parse as parsePlist } from 'plist';
 
@@ -29,11 +29,6 @@ import {
   resetRuntimeConfig,
 } from '../src/platform/paths.js';
 import { dispatcherCodexHome } from '@excitedjs/agent-runtime-codex';
-import {
-  dispatcherWorkspaceSkillDir,
-  dispatcherWorkspaceSkillDirs,
-  dispatcherWorkspaceSkillPath,
-} from '../src/onboard/legacy-codex-skills.js';
 import { testSingleDispatcherFileObject } from './helpers/config.js';
 
 class FakeRunner implements CommandRunner {
@@ -222,27 +217,19 @@ describe('dreamux onboard', () => {
     expect(dreamuxConfig).not.toHaveProperty('runtime_dir');
     expect(dreamuxConfig).not.toHaveProperty('admin_socket');
     expect(dreamuxConfig).not.toHaveProperty('outbound');
-    // Onboard no longer symlinks bundled skills into the workspace (issue #209
-    // slice 6): no `.codex/skills` skill dir, no skill path, and the ledger
-    // records no skill entry. Core injects skills at runtime by role instead.
+    const workspaceSkillRoot = join(answers.dispatcherCwd, '.codex', 'skills');
+    expect(existsSync(workspaceSkillRoot)).toBe(false);
+    const ledger = new Map(result.files.map((entry) => [entry.path, entry]));
     expect(
-      existsSync(dispatcherWorkspaceSkillPath(answers.dispatcherCwd)),
-    ).toBe(false);
-    for (const skillDir of dispatcherWorkspaceSkillDirs(answers.dispatcherCwd)) {
-      expect(existsSync(skillDir)).toBe(false);
-    }
-    expect(
-      existsSync(
-        join(dispatcherCodexHome('flow'), 'skills', 'dispatcher', 'SKILL.md'),
+      result.files.some(
+        (entry) =>
+          entry.path === workspaceSkillRoot ||
+          entry.path.startsWith(`${workspaceSkillRoot}${sep}`),
       ),
     ).toBe(false);
-    const ledger = new Map(result.files.map((entry) => [entry.path, entry]));
     expect(ledger.get(join(root, 'config', 'config.json'))?.status).toBe(
       'created',
     );
-    for (const skillDir of dispatcherWorkspaceSkillDirs(answers.dispatcherCwd)) {
-      expect(ledger.get(skillDir)).toBeUndefined();
-    }
     expect(
       ledger.get(
         join(root, 'home', '.config', 'systemd', 'user', 'dreamux.service'),
@@ -264,40 +251,6 @@ describe('dreamux onboard', () => {
     ).toBe('created');
     expect(result.files.map((entry) => entry.reason)).not.toContain(
       'dispatcher database',
-    );
-  });
-
-  it('leaves a pre-existing workspace skill dir untouched during onboard', async () => {
-    // Onboard installs no skills and touches no `.codex/skills` path, so an
-    // operator's own skill dir there survives onboarding unchanged (issue #209
-    // slice 6). Old bundled symlinks are likewise never created or removed here.
-    const runner = new FakeRunner();
-    const answers = testAnswers({
-      configDir: join(root, 'config'),
-      registerService: false,
-      startService: false,
-    });
-    writeGlobalCodexAuth(answers);
-    const userSkillDir = dispatcherWorkspaceSkillDir(
-      answers.dispatcherCwd,
-      'dreamux-maintenance',
-    );
-    mkdirSync(userSkillDir, { recursive: true });
-    writeFileSync(join(userSkillDir, 'SKILL.md'), '# user maintenance skill\n');
-
-    const result = await runOnboard({
-      answers,
-      runner,
-      platform: 'linux',
-      homeDir: join(root, 'home'),
-      env: {},
-      nodeProbe: noSystemNodeProbe,
-    });
-
-    const ledger = new Map(result.files.map((entry) => [entry.path, entry]));
-    expect(ledger.get(userSkillDir)).toBeUndefined();
-    expect(readFileSync(join(userSkillDir, 'SKILL.md'), 'utf8')).toBe(
-      '# user maintenance skill\n',
     );
   });
 

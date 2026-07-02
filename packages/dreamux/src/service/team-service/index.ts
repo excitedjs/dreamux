@@ -504,6 +504,7 @@ function teamLeaderSystemPrompt(
 ): AgentRuntimeSystemPrompt {
   const append = [
     `You are the TeamLeader of Dreamux Team ${JSON.stringify(teamId)}.`,
+    'Load the bundled `team-workflow` skill before TeamMate, Team transfer, channel, or cron operations. It is the TeamLeader-only note set for role boundaries and MCP tool cautions.',
   ];
   if (identityPrompt !== null) append.push(identityPrompt);
   return { append };

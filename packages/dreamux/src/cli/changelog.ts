@@ -5,9 +5,9 @@
  * Per issue #98, the 0.x upgrade policy is fail-loud + rebuild rather than
  * accumulating automatic migrations. This command is the upgrade-time
  * information entry point: after installing a new package, an operator (or an
- * LLM following the `dreamux-maintenance` skill) reads the changelog shipped
- * inside that new package, handles any breaking changes / rebuilds, and only
- * then runs `dreamux daemon restart` / `onboard`.
+ * LLM following the `dreamux-maintenance` skill) reads the changelog
+ * shipped inside that new package, handles any breaking changes / rebuilds, and
+ * only then runs `dreamux daemon restart` / `onboard`.
  *
  * It reads the rush-generated `CHANGELOG.md` / `CHANGELOG.json` bundled in the
  * package. It never fetches over the network and never inspects a target

@@ -228,9 +228,10 @@ export type CodexProviderFactoryContext =
  * drives the host-shaped create context, so it constructs the provider through
  * its own core-owned adapter (`@excitedjs/dreamux` `builtin/codex/provider.ts`)
  * to map that context onto the neutral one AND inject its host contracts (the
- * shared runtime-socket root, the package-bin `PATH`, and the bundled Dreamux
- * skills). This default export keeps the package a first-class, loadable
- * `AgentRuntimeProvider` for the generic loader and for external embedders;
+ * shared runtime-socket root and bundled Dreamux skills; MCP shims receive an
+ * explicit dreamux bin path). This default export keeps the package a
+ * first-class, loadable `AgentRuntimeProvider` for the generic loader and for
+ * external embedders;
  * converging core's launcher onto the neutral context so it can drive the loaded
  * provider directly is later-slice work.
  */

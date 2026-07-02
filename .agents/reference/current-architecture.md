@@ -179,7 +179,8 @@ Key source:
 Dreamux ships bundled skills under `/packages/dreamux/skills/`. Core selects
 skill sources by role:
 
-- Dispatcher and TeamLeader roles receive Dreamux operational skills.
+- Dispatcher roles receive Dreamux workflow and maintenance skills; TeamLeader
+  roles receive the Team workflow skill.
 - Ordinary TeamMate and team-member roles receive none by default.
 - Core emits only direct skill directories. Codex derives extra roots from their
   parent directories and applies them through `skills/extraRoots/set`.
