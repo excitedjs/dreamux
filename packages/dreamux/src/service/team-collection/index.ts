@@ -136,6 +136,7 @@ export class TeamCollection {
         ...(input.prompt !== undefined ? { prompt: input.prompt } : {}),
         leaderAgentRuntime: input.leaderAgentRuntime,
         intent: input.intent,
+        ...(input.identity !== undefined ? { identity: input.identity } : {}),
         workspace,
         existing,
       },

@@ -26,6 +26,7 @@ import type {
   AgentRuntimeMcpServer,
   AgentRuntimeProvider,
   AgentRuntimeProviderDescriptor,
+  AgentRuntimeSystemPrompt,
   AgentRuntimeProviderFactory,
   ProviderDescriptor,
   ProviderFactoryContext,
@@ -61,20 +62,7 @@ export interface CodexAgentRuntimeProviderOptions {
 }
 
 export const CODEX_AGENT_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = {
-  resume: { supported: true, checkpoint: 'codexThread' },
-  steer: { supported: true },
-  events: { kind: 'push' },
-  last: { supported: true },
-  context: { supported: false },
-  systemPrompt: { mode: 'replace' },
-  teammateCompletion: [
-    {
-      kind: 'codexInboxTurn',
-      description:
-        'inject the completion into thread history (thread/inject_items), then ' +
-        'trigger a dispatcher turn',
-    },
-  ],
+  resume: { supported: true },
 };
 
 const DEFAULT_CODEX_DESCRIPTOR: AgentRuntimeProviderDescriptor = {
@@ -82,6 +70,25 @@ const DEFAULT_CODEX_DESCRIPTOR: AgentRuntimeProviderDescriptor = {
   kind: 'agentRuntime',
   ref: { source: 'builtin', id: 'codex', raw: BUILTIN_CODEX_PROVIDER_REF },
 };
+
+export function codexSystemPromptReplace(
+  systemPrompt: AgentRuntimeSystemPrompt | undefined,
+): string | undefined {
+  if (systemPrompt === undefined) return undefined;
+  if (systemPrompt.replace !== undefined) return systemPrompt.replace;
+  return undefined;
+}
+
+export function codexSystemPromptAppend(
+  systemPrompt: AgentRuntimeSystemPrompt | undefined,
+): readonly string[] | undefined {
+  if (systemPrompt === undefined) return undefined;
+  if (systemPrompt.replace !== undefined) return undefined;
+  if (systemPrompt.append === undefined || systemPrompt.append.length === 0)
+    return undefined;
+  const append = systemPrompt.append.filter((prompt) => prompt !== '');
+  return append.length > 0 ? append : undefined;
+}
 
 /** Validate + narrow a seed descriptor to the Agent Runtime kind. */
 function asAgentRuntimeDescriptor(
@@ -99,7 +106,7 @@ function asAgentRuntimeDescriptor(
 /**
  * Create the built-in Codex `AgentRuntimeProvider`. It implements the neutral
  * `@excitedjs/dreamux-types` contract: `readConfig` parses Codex runtime config,
- * `getCapabilities` reports Codex's resume/steer/completion shape, and
+ * `getCapabilities` reports Codex's resume support, and
  * `createRuntime` builds a {@link CodexRuntime} from the neutral create context
  * plus the host-supplied hooks.
  */
@@ -141,6 +148,8 @@ export function createCodexAgentRuntimeProvider(
         ...codexMcpServerArgs(context.mcpServers),
       ];
       const paths = context.paths;
+      const systemPromptReplace = codexSystemPromptReplace(context.systemPrompt);
+      const systemPromptAppend = codexSystemPromptAppend(context.systemPrompt);
       const deps: CodexRuntimeDeps = {
         cwd: context.cwd,
         state: context.state,
@@ -159,8 +168,11 @@ export function createCodexAgentRuntimeProvider(
         ...(context.skillSources !== undefined
           ? { skillSources: context.skillSources }
           : {}),
-        ...(context.systemPromptContent !== undefined
-          ? { systemPromptContent: context.systemPromptContent }
+        ...(systemPromptReplace !== undefined
+          ? { systemPromptReplace }
+          : {}),
+        ...(systemPromptAppend !== undefined
+          ? { systemPromptAppend }
           : {}),
         ...(context.onTurnSettled !== undefined
           ? { onTurnSettled: context.onTurnSettled }

@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { rm } from 'node:fs/promises';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readlinkSync,
+  rmSync,
+  symlinkSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -27,22 +34,19 @@ import { codexMcpServerArgs } from '@excitedjs/agent-runtime-codex';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
 import {
   defaultDispatcherCwd,
-  dispatcherCompletionSpillDir,
   dispatcherDir,
 } from '../src/platform/paths.js';
 import { dispatcherHostPaths } from '../src/agent-runtime/host-paths.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
 import {
   renderChannelInput,
-  teamMateCompletionOutputPath,
 } from '@excitedjs/dreamux-utils';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
-import { CLAUDE_SKILLS_PARENT_LAYOUT } from '@excitedjs/agent-runtime-claude-code';
 import type {
   AgentRuntime,
   AgentRuntimeMcpServer,
-  AgentRuntimeRole,
   AgentRuntimeSkillSource,
+  AgentRuntimeSystemPrompt,
   TurnSettledSignal,
 } from '@excitedjs/dreamux-types';
 
@@ -302,7 +306,7 @@ describe('claude-code pure translation (not Codex renamed)', () => {
       config: defaultDispatcherClaudeCodeConfig(),
       mcpConfigPath: '/x.json',
       resumeSessionId: null,
-      systemPromptContent: 'You are a Dreamux dispatcher.',
+      systemPromptAppend: ['You are a Dreamux dispatcher.'],
     });
     // claude APPENDS the role prompt on top of its own system prompt — distinct
     // from codex, which REPLACES its base instructions.
@@ -311,7 +315,10 @@ describe('claude-code pure translation (not Codex renamed)', () => {
         args.indexOf('--append-system-prompt'),
         args.indexOf('--append-system-prompt') + 2,
       ),
-    ).toEqual(['--append-system-prompt', 'You are a Dreamux dispatcher.']);
+    ).toEqual([
+      '--append-system-prompt',
+      '<system-reminder>\nYou are a Dreamux dispatcher.\n</system-reminder>',
+    ]);
   });
 
   it('omits --append-system-prompt when no role prompt is supplied (e.g. teammate)', () => {
@@ -325,21 +332,18 @@ describe('claude-code pure translation (not Codex renamed)', () => {
       config: defaultDispatcherClaudeCodeConfig(),
       mcpConfigPath: '/x.json',
       resumeSessionId: null,
-      systemPromptContent: '',
+      systemPromptAppend: [],
     });
     expect(emptyArgs).not.toContain('--append-system-prompt');
   });
 });
 
 describe('builtin:claude-code provider', () => {
-  it('exposes the claude-code ref and plain-turn delivery shape', () => {
+  it('exposes the claude-code ref and resume support', () => {
     const provider = claudeCodeProvider({ sessionFactory: fakeFleet().factory });
     expect(provider.ref).toBe('builtin:claude-code');
     expect(provider.descriptor.kind).toBe('agentRuntime');
-    expect(provider.getCapabilities().steer.supported).toBe(true);
-    expect(
-      provider.getCapabilities().teammateCompletion.map((s) => s.kind),
-    ).toEqual(['claudeCodePlainTurn']);
+    expect(provider.getCapabilities()).toEqual({ resume: { supported: true } });
   });
 });
 
@@ -364,7 +368,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     opts: {
       resumeSession?: string;
       onTurnSettled?: (settled: TurnSettledSignal) => void;
-      role?: AgentRuntimeRole;
+      systemPrompt?: AgentRuntimeSystemPrompt;
       skillSources?: AgentRuntimeSkillSource[];
       disableFeatures?: readonly string[];
     } = {},
@@ -372,7 +376,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     const dispatcher = claudeDispatcher('flow');
     const store = new DispatcherStore(testDreamuxConfig([dispatcher]));
     if (opts.resumeSession !== undefined) {
-      void store.setThreadId('flow', opts.resumeSession);
+      void store.setCheckpoint('flow', { id: opts.resumeSession });
     }
     const row = store.get('flow');
     expect(row).not.toBeNull();
@@ -380,12 +384,12 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       sessionFactory: fleet.factory,
     }).createRuntime({
       identity: { runtime_id: 'flow', checkpoint_id: row!.thread_id },
-      role: opts.role ?? 'dispatcher',
       config: dispatcherClaudeCodeConfig(dispatcher),
       cwd: defaultDispatcherCwd('flow'),
       mcpServers: [FEISHU_MCP],
-      state: store,
+      state: store.bindRuntime('flow'),
       paths: dispatcherHostPaths,
+      ...(opts.systemPrompt !== undefined ? { systemPrompt: opts.systemPrompt } : {}),
       ...(opts.skillSources !== undefined
         ? { skillSources: opts.skillSources }
         : {}),
@@ -399,39 +403,155 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     return { runtime, store, fleet };
   }
 
-  it('forwards role-gated skillSources from the host context into --add-dir (not hardcoded [])', async () => {
-    // The core adapter must mirror the Codex adapter: forward context.skillSources
-    // into the package, which owns the --add-dir mapping (issue #209 slice 6).
-    // A claude-compatible source therefore reaches the spawned launch args.
+  it('materializes neutral skillSources into a runtime-owned Claude add-dir', async () => {
     const fleet = fakeFleet();
     const { runtime } = makeRuntime(fleet, {
-      role: 'dispatcher',
-      skillSources: [
-        {
-          name: 'team-skills',
-          path: '/ext/team-skills',
-          layout: CLAUDE_SKILLS_PARENT_LAYOUT,
-          source: 'ext',
-        },
-      ],
+      skillSources: [{ name: 'team-skills', path: '/ext/team-skills', source: 'ext' }],
     });
     await runtime.start();
     const args = fleet.sessions[0]?.spec.args ?? [];
     expect(args.slice(args.indexOf('--add-dir'), args.indexOf('--add-dir') + 2)).toEqual(
-      ['--add-dir', '/ext/team-skills'],
+      ['--add-dir', join(dispatcherDir('flow'), 'claude-code-skills')],
     );
   });
 
-  it('emits no --add-dir for bundled skill-dir sources (package owns layout filtering)', async () => {
+  it('removes stale materialized skill links before rebuilding add-dir roots', async () => {
     const fleet = fakeFleet();
+    const staleSource = join(home, 'stale-source');
+    const currentSource = join(home, 'current-source');
+    mkdirSync(staleSource, { recursive: true });
+    mkdirSync(currentSource, { recursive: true });
+    const skillsRoot = join(
+      dispatcherDir('flow'),
+      'claude-code-skills',
+      '.claude',
+      'skills',
+    );
+    mkdirSync(skillsRoot, { recursive: true });
+    symlinkSync(staleSource, join(skillsRoot, 'stale'), 'dir');
+
     const { runtime } = makeRuntime(fleet, {
-      role: 'dispatcher',
       skillSources: [
-        { name: 'dispatcher', path: '/pkg/skills/dispatcher', layout: 'skill-dir', source: 'dreamux-core' },
+        { name: 'current', path: currentSource, source: 'test' },
       ],
     });
     await runtime.start();
+
+    expect(existsSync(join(skillsRoot, 'stale'))).toBe(false);
+    expect(readlinkSync(join(skillsRoot, 'current'))).toBe(currentSource);
+  });
+
+  it('emits no --add-dir when no neutral skill sources are supplied', async () => {
+    const fleet = fakeFleet();
+    const { runtime } = makeRuntime(fleet);
+    await runtime.start();
     expect(fleet.sessions[0]?.spec.args).not.toContain('--add-dir');
+  });
+
+  it('forwards systemPrompt.append to resident launch', async () => {
+    const fleet = fakeFleet();
+    const { runtime } = makeRuntime(fleet, {
+      systemPrompt: {
+        append: ['Reviewer role.'],
+      },
+    });
+    await runtime.start();
+
+    const args = fleet.sessions[0]?.spec.args ?? [];
+    const i = args.indexOf('--append-system-prompt');
+    expect(i).toBeGreaterThanOrEqual(0);
+    expect(args[i + 1]).toBe(
+      '<system-reminder>\n' +
+        'Reviewer role.\n' +
+        '</system-reminder>',
+    );
+  });
+
+  it('wraps each systemPrompt.append item in its own system-reminder block', async () => {
+    const fleet = fakeFleet();
+    const { runtime } = makeRuntime(fleet, {
+      systemPrompt: {
+        append: ['Default TeamLeader identity.', 'Architecture review rules.'],
+      },
+    });
+    await runtime.start();
+
+    const args = fleet.sessions[0]?.spec.args ?? [];
+    const i = args.indexOf('--append-system-prompt');
+    expect(i).toBeGreaterThanOrEqual(0);
+    expect(args[i + 1]).toBe(
+      '<system-reminder>\n' +
+        'Default TeamLeader identity.\n' +
+        '</system-reminder>\n\n' +
+        '<system-reminder>\n' +
+        'Architecture review rules.\n' +
+        '</system-reminder>',
+    );
+  });
+
+  it('escapes each systemPrompt.append item inside its system-reminder block', async () => {
+    const fleet = fakeFleet();
+    const { runtime } = makeRuntime(fleet, {
+      systemPrompt: {
+        append: [
+          'Use <danger> & never close </system-reminder>',
+          '',
+        ],
+      },
+    });
+    await runtime.start();
+
+    const args = fleet.sessions[0]?.spec.args ?? [];
+    const i = args.indexOf('--append-system-prompt');
+    expect(i).toBeGreaterThanOrEqual(0);
+    expect(args[i + 1]).toBe(
+      '<system-reminder>\n' +
+        'Use &lt;danger&gt; &amp; never close &lt;/system-reminder&gt;\n' +
+        '</system-reminder>',
+    );
+  });
+
+  it('falls through to append when replace and append are both supplied', async () => {
+    const fleet = fakeFleet();
+    const { runtime } = makeRuntime(fleet, {
+      systemPrompt: {
+        replace: 'Complete replacement prompt for replace-native runtimes.',
+        append: ['Focused append prompt for Claude Code.'],
+      },
+    });
+    await runtime.start();
+
+    const args = fleet.sessions[0]?.spec.args ?? [];
+    const i = args.indexOf('--append-system-prompt');
+    expect(i).toBeGreaterThanOrEqual(0);
+    expect(args[i + 1]).toBe(
+      '<system-reminder>\nFocused append prompt for Claude Code.\n</system-reminder>',
+    );
+    expect(args[i + 1]).not.toContain('Complete replacement prompt');
+  });
+
+  it('ignores replace-only prompt because Claude Code has no replacement support', async () => {
+    const fleet = fakeFleet();
+    const { runtime } = makeRuntime(fleet, {
+      systemPrompt: {
+        replace: 'Complete replacement prompt for replace-native runtimes.',
+      },
+    });
+    await runtime.start();
+
+    expect(fleet.sessions[0]?.spec.args).not.toContain('--append-system-prompt');
+  });
+
+  it('omits append prompt when all append items are empty strings', async () => {
+    const fleet = fakeFleet();
+    const { runtime } = makeRuntime(fleet, {
+      systemPrompt: {
+        append: ['', ''],
+      },
+    });
+    await runtime.start();
+
+    expect(fleet.sessions[0]?.spec.args).not.toContain('--append-system-prompt');
   });
 
   it('forwards disableFeatures into Claude Code resident args', async () => {
@@ -486,11 +606,10 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       sessionFactory: fleet.factory,
     }).createRuntime({
       identity: { runtime_id: 'flow', checkpoint_id: row!.thread_id },
-      role: 'dispatcher',
       config: dispatcherClaudeCodeConfig(dispatcher),
       cwd: defaultDispatcherCwd('flow'),
       mcpServers: [],
-      state: store,
+      state: store.bindRuntime('flow'),
       paths: dispatcherHostPaths,
       logger: {
         error: pushLog,
@@ -545,15 +664,15 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
 
   it('reports wasThreadResumed=false on a fresh dispatcher', async () => {
     const { runtime } = makeRuntime(fakeFleet());
-    expect(runtime.wasThreadResumed()).toBe(false);
-    expect(runtime.getThreadId()).toBeNull();
+    expect(runtime.wasCheckpointResumed()).toBe(false);
+    expect((runtime.getCheckpoint()?.id ?? null)).toBeNull();
   });
 
   it('resumes a persisted session and threads --resume into the launch args', async () => {
     const fleet = fakeFleet([okOutcome('session-new')]);
     const { runtime } = makeRuntime(fleet, { resumeSession: 'session-prev' });
-    expect(runtime.wasThreadResumed()).toBe(true);
-    expect(runtime.getThreadId()).toBe('session-prev');
+    expect(runtime.wasCheckpointResumed()).toBe(true);
+    expect((runtime.getCheckpoint()?.id ?? null)).toBe('session-prev');
     await runtime.start();
     expect(
       fleet.sessions[0]?.spec.args.slice(
@@ -578,7 +697,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
 
     await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
     expect(fleet.sessions[0]?.prompts[0]).toBe('do it');
-    await waitFor(() => runtime.getThreadId() === 'session-abc');
+    await waitFor(() => (runtime.getCheckpoint()?.id ?? null) === 'session-abc');
 
     const dup = await runtime.channelInput({
       sourceId: 'm1',
@@ -617,8 +736,29 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       {
         turnId: first.status === 'submitted' ? first.turnId : 'unreachable',
         status: 'completed',
+        result: { text: 'done' },
       },
     ]);
+  });
+
+  it('does not reuse the prior successful result for a later empty successful turn', async () => {
+    const settled: TurnSettledSignal[] = [];
+    const fleet = fakeFleet([
+      okOutcome('session-abc'),
+      { ...okOutcome('session-abc'), text: '' },
+    ]);
+    const { runtime } = makeRuntime(fleet, {
+      onTurnSettled: (s) => settled.push(s),
+    });
+    await runtime.start();
+
+    await runtime.channelInput({ sourceId: 'm1', text: 'first' });
+    await waitFor(() => settled.length === 1);
+    await runtime.channelInput({ sourceId: 'm2', text: 'second' });
+    await waitFor(() => settled.length === 2);
+
+    expect(settled.map((s) => s.result?.text ?? null)).toEqual(['done', null]);
+    expect(await runtime.getLast()).toEqual({ text: 'done' });
   });
 
   it('starts a fresh logical turn for a sequential send after the previous turn completed', async () => {
@@ -678,33 +818,31 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     expect(first.turnId).not.toBe(second.turnId);
   });
 
-  it('delivers a TeamMate completion as a plain status-varied user turn', async () => {
+  it('delivers completionInput as a plain user turn', async () => {
     const fleet = controllableFleet();
     const { runtime } = makeRuntime(fleet);
     await runtime.start();
 
-    const deliveryPromise = runtime.completionInput!({
-      source: 'reviewer',
-      id: 'mate-1',
-      status: 'completed',
-      result: 'all done',
+    const deliveryPromise = runtime.completionInput({
+      text: 'TeamMate reviewer has finished its task. Output below:\n\nall done',
+      sourceId: 'completion:mate-1',
     });
     // The turn is queued but the session outcome is NOT resolved yet.
-    // The delivery should return `accepted` immediately (submit-then-serialize),
+    // The delivery should return submitted immediately (submit-then-serialize),
     // decoupled from model thinking time.
     const result = await deliveryPromise;
-    expect(result).toEqual({ status: 'accepted' });
+    expect(result).toMatchObject({ status: 'submitted' });
+    if (result.status !== 'submitted') {
+      throw new Error('expected submitted completionInput result');
+    }
+    expect(result.turnId).toMatch(/^claude-turn-\d+-1$/u);
 
     // The turn is still pending in the fleet. Resolve it so it cleans up.
     fleet.resolveNext(okOutcome('session-abc'));
     await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
 
     const prompt = fleet.sessions[0]?.prompts[0] ?? '';
-    // Plain English status line + inlined result — NOT claude-code's native
-    // <task-notification> XML (which the model could mistake for a real task).
-    expect(prompt).toContain('TeamMate reviewer has finished its task.');
-    expect(prompt).toContain('Output below:');
-    expect(prompt).toContain('all done');
+    expect(prompt).toBe('TeamMate reviewer has finished its task. Output below:\n\nall done');
     expect(prompt).not.toContain('<task-notification>');
     expect(prompt).not.toContain('<task-id>');
     expect(prompt).not.toContain('<teammate_session_completion');
@@ -712,72 +850,29 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     expect(fleet.sessions[0]?.submitOptions[0]).toEqual({ isSynthetic: false });
   });
 
-  it('resolves completionInput with failed/unsupported for pre-submit failures', async () => {
+  it('returns stopped for completionInput after stop', async () => {
     const fleet = fakeFleet([okOutcome('session-abc')]);
     const { runtime } = makeRuntime(fleet);
     await runtime.start();
     await runtime.stop();
-    const stoppedResult = await runtime.completionInput!({
-      source: 'reviewer',
-      id: 'mate-stop',
-      status: 'completed',
-      result: 'done',
+    const stoppedResult = await runtime.completionInput({
+      text: 'late',
+      sourceId: 'completion:mate-stop',
     });
-    expect(stoppedResult.status).toBe('unsupported');
+    expect(stoppedResult.status).toBe('stopped');
   });
 
-  it('inlines a spill pointer when a completion overflows the budget', async () => {
+  it('dedupes repeated completionInput sourceIds', async () => {
     const fleet = fakeFleet([okOutcome('session-abc')]);
     const { runtime } = makeRuntime(fleet);
     await runtime.start();
-
-    // No path context → the runtime falls back to the operator dispatcher's
-    // cache spill dir under the (HOME-isolated) ~/.dreamux/cache/flow/spill.
-    const spillPath = teamMateCompletionOutputPath(
-      dispatcherCompletionSpillDir('flow'),
-      'reviewer',
-      'mate-big',
-    );
-    process.env['TASK_MAX_OUTPUT_LENGTH'] = '8';
-    try {
-      await runtime.completionInput!({
-        source: 'reviewer',
-        id: 'mate-big',
-        status: 'completed',
-        result: 'a result far longer than eight characters',
-      });
-      await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
-      const prompt = fleet.sessions[0]?.prompts[0] ?? '';
-      expect(prompt).toContain('TeamMate reviewer has finished its task.');
-      expect(prompt).toContain(
-        'The output is too long, so the full result was saved to a file:',
-      );
-      expect(prompt).toContain(spillPath);
-      expect(prompt).not.toContain('far longer than eight');
-      expect(fleet.sessions[0]?.submitOptions[0]).toEqual({ isSynthetic: false });
-    } finally {
-      delete process.env['TASK_MAX_OUTPUT_LENGTH'];
-      await rm(spillPath, { force: true });
-    }
-  });
-
-  it('renders status-varied completion lines for failed and stopped', async () => {
-    for (const [status, expected] of [
-      ['failed', "TeamMate reviewer's task failed."],
-      ['stopped', "TeamMate reviewer's task was stopped."],
-    ] as const) {
-      const fleet = fakeFleet([okOutcome('session-abc')]);
-      const { runtime } = makeRuntime(fleet);
-      await runtime.start();
-      await runtime.completionInput!({
-        source: 'reviewer',
-        id: `mate-${status}`,
-        status,
-        result: 'r',
-      });
-      await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
-      expect(fleet.sessions[0]?.prompts[0] ?? '').toContain(expected);
-    }
+    await expect(
+      runtime.completionInput({ text: 'done once', sourceId: 'completion:mate-1' }),
+    ).resolves.toMatchObject({ status: 'submitted' });
+    await expect(
+      runtime.completionInput({ text: 'done once', sourceId: 'completion:mate-1' }),
+    ).resolves.toEqual({ status: 'duplicate' });
+    await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
   });
 
   it('does not mark a normal channel turn as synthetic', async () => {
@@ -890,7 +985,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       sourceId: 'm1',
       text: 'first',
     });
-    await waitFor(() => runtime.getThreadId() === 'session-abc');
+    await waitFor(() => (runtime.getCheckpoint()?.id ?? null) === 'session-abc');
 
     // The resident child dies unexpectedly → degraded.
     fleet.sessions[0]?.triggerExit();
@@ -935,11 +1030,10 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       sessionFactory: stallFactory,
     }).createRuntime({
       identity: { runtime_id: 'flow', checkpoint_id: row!.thread_id },
-      role: 'dispatcher',
       config: dispatcherClaudeCodeConfig(dispatcher),
       cwd: defaultDispatcherCwd('flow'),
       mcpServers: [],
-      state: store,
+      state: store.bindRuntime('flow'),
       paths: dispatcherHostPaths,
     });
     await runtime.start();
@@ -951,15 +1045,13 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     await waitFor(() => runtime.getStatus() === 'degraded', 5000);
     expect(store.get('flow')?.last_error).toMatch(/stalled|no stream activity/i);
 
-    // Delivery must return `accepted` immediately since acceptance is now
+    // Delivery must return submitted immediately since acceptance is now
     // decoupled from model outcome. The async turn failure degrades the runtime.
-    const delivery = await runtime.completionInput!({
-      source: 'teammate',
-      id: 'mate-1',
-      status: 'completed',
-      result: 'done',
+    const delivery = await runtime.completionInput({
+      text: 'done',
+      sourceId: 'completion:mate-1',
     });
-    expect(delivery.status).toBe('accepted');
+    expect(delivery.status).toBe('submitted');
 
     await runtime.stop();
   });
@@ -969,13 +1061,11 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     const { runtime, store } = makeRuntime(fleet);
     await runtime.start();
 
-    const result = await runtime.completionInput!({
-      source: 'teammate',
-      id: 'mate-1',
-      status: 'completed',
-      result: 'done',
+    const result = await runtime.completionInput({
+      text: 'done',
+      sourceId: 'completion:mate-1',
     });
-    expect(result.status).toBe('accepted');
+    expect(result.status).toBe('submitted');
 
     // A delivery failure degrades the whole runtime just like a channel turn
     await waitFor(() => runtime.getStatus() === 'degraded');
@@ -1054,11 +1144,10 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       sessionFactory: blockingFactory,
     }).createRuntime({
       identity: { runtime_id: 'flow', checkpoint_id: row!.thread_id },
-      role: 'dispatcher',
       config: dispatcherClaudeCodeConfig(dispatcher),
       cwd: defaultDispatcherCwd('flow'),
       mcpServers: [],
-      state: store,
+      state: store.bindRuntime('flow'),
       paths: dispatcherHostPaths,
       onTurnSettled: (s) => settled.push(s),
     });

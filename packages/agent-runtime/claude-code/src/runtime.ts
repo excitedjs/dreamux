@@ -56,7 +56,7 @@
  * Dreamux's own, per `.agents/decisions/agent-runtime-provider.md`.
  */
 
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import { BUILTIN_CLAUDE_CODE_PROVIDER_REF } from './provider-ref.js';
@@ -69,8 +69,9 @@ import {
   type TurnOutcome,
   type TurnSubmitOptions,
 } from './supervisor.js';
-import { renderChannelInput, resolveCompletionBody } from '@excitedjs/dreamux-utils';
+import { renderChannelInput } from '@excitedjs/dreamux-utils';
 import { CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES } from './provider.js';
+import { consoleFallbackLogger } from './logger.js';
 import type {
   AgentRuntimeCapabilities,
   AgentRuntime,
@@ -78,17 +79,14 @@ import type {
   AgentRuntimeLastResult,
   AgentRuntimeMcpServer,
   AgentRuntimePathContext,
-  AgentRuntimeResumeInput,
   AgentRuntimeSkillSource,
   AgentRuntimeStateCallbacks,
   AgentRuntimeStatus,
-  AgentRuntimeSystemInput,
+  AgentRuntimeTextInput,
   AgentRuntimeTurnResult,
-  CompletionEnvelope,
   DreamuxLogger,
   InboundDeliveryHooks,
   InboundTurnInput,
-  TeamMateCompletionDeliveryResult,
   TurnSettledSignal,
 } from '@excitedjs/dreamux-types';
 
@@ -121,10 +119,10 @@ export interface ClaudeCodeRuntimeDeps {
    */
   injectEnv?: Record<string, string>;
   /**
-   * Launcher-supplied role/system-prompt content, applied as an APPEND via
-   * `--append-system-prompt`. Omitted for launches that supply none (teammates).
+   * Launcher-supplied ordered role/system-prompt content, applied as an APPEND
+   * via `--append-system-prompt`. Omitted for launches that supply none.
    */
-  systemPromptContent?: string;
+  systemPromptAppend?: readonly string[];
   /**
    * Role-gated skill sources core selected (issue #209 slice 6). The
    * add-dir-compatible ones become `--add-dir` flags on every (re)spawn.
@@ -150,40 +148,6 @@ interface ActiveChannelTurn {
 
 let nextRuntimeInstanceId = 0;
 
-/**
- * Status line opening a TeamMate completion turn. Plain English, status-varied —
- * NOT claude-code's native `<task-notification>` XML. The old XML mimicked
- * claude-code's real task-notification system, so the model could mistake the
- * fabricated task-id / output-file for a live background task and act on them
- * (hallucination / harness collision). A plain user turn avoids that entirely.
- */
-function completionStatusLine(completion: CompletionEnvelope): string {
-  switch (completion.status) {
-    case 'completed':
-      return `TeamMate ${completion.source} has finished its task.`;
-    case 'failed':
-      return `TeamMate ${completion.source}'s task failed.`;
-    case 'stopped':
-      return `TeamMate ${completion.source}'s task was stopped.`;
-  }
-}
-
-/**
- * Build the plain-text completion turn. The result is inlined when short; when
- * it overflows the inline budget the full result is spilled to a file (see
- * {@link resolveCompletionBody}) and only the path is inlined.
- */
-async function buildCompletionTurnText(
-  completion: CompletionEnvelope,
-  spillDir: string,
-): Promise<string> {
-  const line = completionStatusLine(completion);
-  const body = await resolveCompletionBody(completion, spillDir);
-  return body.kind === 'inline'
-    ? `${line} Output below:\n\n${body.text}`
-    : `${line} The output is too long, so the full result was saved to a file:\n\n${body.path}`;
-}
-
 function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -203,14 +167,15 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   private readonly cwd: string;
   private readonly mcpConfigPath: string;
   private readonly mcpConfigDoc: string;
+  private readonly skillAddDirRoot: string;
   private readonly stderrLogPath: string;
-  private readonly completionSpillDir: string;
   private readonly logger: DreamuxLogger;
   private status: AgentRuntimeStatus = 'declared';
   private threadId: string | null;
   private resumed: boolean;
   private stopped = false;
   private readonly seen = new Set<string>();
+  private readonly seenTextInputIds = new Set<string>();
   private queue: Promise<void> = Promise.resolve();
   private readonly runtimeInstanceId = ++nextRuntimeInstanceId;
   private turnCounter = 0;
@@ -233,6 +198,10 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       deps.paths.dispatcherDir(this.dispatcherId),
       'mcp.json',
     );
+    this.skillAddDirRoot = join(
+      deps.paths.dispatcherDir(this.dispatcherId),
+      'claude-code-skills',
+    );
     this.mcpConfigDoc = stringifyClaudeCodeMcpConfig(deps.mcpServers);
     // Compose the resident stream-json child's stderr log under the neutral
     // central logs root (B2): core no longer names a per-runtime log file. The
@@ -242,7 +211,6 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       'claude-code',
       `${this.dispatcherId}.stderr.log`,
     );
-    this.completionSpillDir = deps.paths.completionSpillDir(this.dispatcherId);
     this.threadId = identity.checkpoint_id ?? null;
     this.resumed = (identity.checkpoint_id ?? null) !== null;
     this.logger = deps.logger ?? consoleFallbackLogger(this.dispatcherId);
@@ -256,11 +224,11 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     return CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES;
   }
 
-  getThreadId(): string | null {
-    return this.threadId;
+  getCheckpoint(): { id: string } | null {
+    return this.threadId === null ? null : { id: this.threadId };
   }
 
-  wasThreadResumed(): boolean {
+  wasCheckpointResumed(): boolean {
     return this.resumed;
   }
 
@@ -272,16 +240,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     return null;
   }
 
-  async resume(input: AgentRuntimeResumeInput = {}): Promise<void> {
-    if (input.checkpoint !== undefined && input.checkpoint !== null) {
-      if (input.checkpoint.kind !== 'claudeCodeSession') {
-        throw new Error(
-          `unsupported resume checkpoint for Claude Code runtime: ${input.checkpoint.kind}`,
-        );
-      }
-      this.threadId = input.checkpoint.id;
-      this.resumed = true;
-    }
+  async resume(): Promise<void> {
     await this.start();
   }
 
@@ -290,6 +249,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     try {
       await mkdir(dirname(this.mcpConfigPath), { recursive: true });
       await writeFile(this.mcpConfigPath, this.mcpConfigDoc, { mode: 0o600 });
+      await this.materializeSkillAddDir();
       // Spawn the resident child up front so the runtime is truly resident
       // (Codex-aligned). A missing/broken `claude` binary fails here and drives
       // the runtime to degraded + throws, rather than a silent no-op.
@@ -319,12 +279,17 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     await this.setStatus('stopped');
   }
 
-  async systemInput(notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult> {
+  async completionInput(input: AgentRuntimeTextInput): Promise<AgentRuntimeTurnResult> {
     if (this.stopped) return { status: 'stopped' };
-    const turnId = this.nextTurnId('system');
+    const key = input.sourceId;
+    if (key !== undefined && key !== '' && this.seenTextInputIds.has(key)) {
+      return { status: 'duplicate' };
+    }
+    if (key !== undefined && key !== '') this.seenTextInputIds.add(key);
+    const turnId = this.nextTurnId('turn');
     this.recordQueuedTurnStart();
-    void this.runTurnOnQueue(notice.text, turnId).then(
-      () => this.markTurnSucceeded(turnId),
+    void this.runTurnOnQueue(input.text, turnId, { isSynthetic: false }).then(
+      (resultText) => this.markTurnSucceeded(turnId, resultText),
       (err) => this.markTurnFailed(turnId, err),
     );
     return { status: 'submitted', turnId };
@@ -376,39 +341,10 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     // completion. Instead, a failed turn drives the runtime to `degraded` with a
     // persisted `last_error` (visible via status/doctor) — never swallowed.
     void this.runChannelTurnOnQueue(text, channelTurn).then(
-      () => this.markTurnSucceeded(turnId),
+      (resultText) => this.markTurnSucceeded(turnId, resultText),
       (err) => this.markTurnFailed(turnId, err),
     );
     return { status: 'submitted', turnId };
-  }
-
-  async completionInput(
-    completion: CompletionEnvelope,
-  ): Promise<TeamMateCompletionDeliveryResult> {
-    if (this.stopped) {
-      return { status: 'unsupported', reason: 'runtime stopped' };
-    }
-    // Plain user-turn delivery: a stream-json user message marked
-    // `isSynthetic: false`, so claude-code treats it as ordinary human input
-    // rather than routing it through its native task-notification harness path.
-    // Submit-then-serialize: return accepted at enqueue so delivery acceptance
-    // is decoupled from model thinking time.
-    let text: string;
-    try {
-      text = await buildCompletionTurnText(completion, this.completionSpillDir);
-    } catch (err) {
-      return {
-        status: 'failed',
-        error: err instanceof Error ? err : new Error(String(err)),
-      };
-    }
-    const turnId = `claude-teammate-${completion.id}`;
-    this.recordQueuedTurnStart();
-    void this.runTurnOnQueue(text, turnId, { isSynthetic: false }).then(
-      () => this.markTurnSucceeded(turnId),
-      (err) => this.markTurnFailed(turnId, err),
-    );
-    return { status: 'accepted' };
   }
 
   waitIdle(): Promise<void> {
@@ -433,7 +369,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     prompt: string,
     turnId: string,
     options?: TurnSubmitOptions,
-  ): Promise<void> {
+  ): Promise<string | null> {
     const run = this.queue.then(() => this.runTurn(prompt, turnId, options));
     this.queue = run.then(
       () => undefined,
@@ -445,7 +381,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   private runChannelTurnOnQueue(
     prompt: string,
     active: ActiveChannelTurn,
-  ): Promise<void> {
+  ): Promise<string | null> {
     const run = this.queue.then(() => this.runChannelTurn(prompt, active));
     this.queue = run.then(
       () => undefined,
@@ -457,7 +393,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   private async runChannelTurn(
     prompt: string,
     active: ActiveChannelTurn,
-  ): Promise<void> {
+  ): Promise<string | null> {
     const session = await this.ensureSession();
     const steers = active.pendingSteers.splice(0);
     const fullPrompt =
@@ -465,7 +401,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     const outcome = session.submitTurn(fullPrompt);
     active.session = session;
     try {
-      await this.applyTurnOutcome(await outcome, active.turnId);
+      return await this.applyTurnOutcome(await outcome, active.turnId);
     } finally {
       active.session = null;
       if (this.activeChannelTurn === active) this.activeChannelTurn = null;
@@ -492,9 +428,16 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     await steer;
   }
 
-  private async markTurnSucceeded(turnId: string): Promise<void> {
+  private async markTurnSucceeded(
+    turnId: string,
+    resultText: string | null,
+  ): Promise<void> {
     this.recordQueuedTurnEnd();
-    this.deps.onTurnSettled?.({ turnId, status: 'completed' });
+    this.deps.onTurnSettled?.({
+      turnId,
+      status: 'completed',
+      result: { text: resultText },
+    });
     if (this.stopped) return;
     if (this.status !== 'ready') await this.setStatus('ready');
   }
@@ -509,6 +452,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     this.deps.onTurnSettled?.({
       turnId,
       status: this.stopped ? 'stopped' : 'failed',
+      result: { text: null },
       error: err instanceof Error ? err : new Error(String(err)),
     });
     if (this.stopped) return;
@@ -544,8 +488,11 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       config: this.config,
       mcpConfigPath: this.mcpConfigPath,
       resumeSessionId: this.threadId,
-      systemPromptContent: this.deps.systemPromptContent,
-      skillSources: this.deps.skillSources,
+      systemPromptAppend: this.deps.systemPromptAppend,
+      skillAddDirs:
+        (this.deps.skillSources ?? []).length === 0
+          ? []
+          : [this.skillAddDirRoot],
       disableFeatures: this.deps.disableFeatures,
     });
     const session = this.deps.sessionFactory({
@@ -571,6 +518,20 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     return session;
   }
 
+  private async materializeSkillAddDir(): Promise<void> {
+    const sources = this.deps.skillSources ?? [];
+    const skillsRoot = join(this.skillAddDirRoot, '.claude', 'skills');
+    await rm(skillsRoot, { recursive: true, force: true });
+    if (sources.length === 0) return;
+    await mkdir(skillsRoot, { recursive: true });
+    await Promise.all(
+      sources.map(async (source) => {
+        const link = join(skillsRoot, source.name);
+        await symlink(source.path, link, 'dir');
+      }),
+    );
+  }
+
   /** React to an unexpected resident-child exit: degrade and drop the session. */
   private async onSessionExit(session: ClaudeCodeSession): Promise<void> {
     if (this.session !== session) return; // already replaced/stopped
@@ -584,9 +545,9 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     prompt: string,
     turnId: string,
     options?: TurnSubmitOptions,
-  ): Promise<void> {
+  ): Promise<string | null> {
     const session = await this.ensureSession();
-    await this.runTurnWithSession(session, prompt, turnId, options);
+    return this.runTurnWithSession(session, prompt, turnId, options);
   }
 
   private async runTurnWithSession(
@@ -594,24 +555,26 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     prompt: string,
     turnId: string,
     options?: TurnSubmitOptions,
-  ): Promise<void> {
+  ): Promise<string | null> {
     const outcome = await session.submitTurn(prompt, options);
-    await this.applyTurnOutcome(outcome, turnId);
+    return this.applyTurnOutcome(outcome, turnId);
   }
 
   private async applyTurnOutcome(
     outcome: TurnOutcome,
     turnId: string,
-  ): Promise<void> {
+  ): Promise<string | null> {
     if (
       outcome.sessionId !== null &&
       outcome.sessionId !== '' &&
       outcome.sessionId !== this.threadId
     ) {
       this.threadId = outcome.sessionId;
-      await this.deps.state.setThreadId(this.dispatcherId, outcome.sessionId);
+      await this.deps.state.setCheckpoint({ id: outcome.sessionId });
     }
-    if (!outcome.isError) this.lastResult = { text: outcome.text };
+    const resultText =
+      outcome.isError || outcome.text === '' ? null : outcome.text;
+    if (resultText !== null) this.lastResult = { text: resultText };
     if (outcome.isError) {
       const detail =
         outcome.errors.length > 0
@@ -620,6 +583,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       throw new Error(`claude turn ${turnId} returned an error result: ${detail}`);
     }
     this.log('info', `claude-code turn ${turnId} completed`);
+    return resultText;
   }
 
   private nextTurnId(kind: 'system' | 'turn'): string {
@@ -651,7 +615,6 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     this.status = status;
     try {
       await this.deps.state.setStatus(
-        this.dispatcherId,
         status,
         err !== undefined ? { last_error: errMessage(err) } : {},
       );
@@ -667,31 +630,4 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   ): void {
     this.logger[level](err !== undefined ? { err } : {}, msg);
   }
-}
-
-/**
- * Minimal `console.error`-backed logger the runtime falls back to when the host
- * passes none (the bare generic-loader / standalone path). Owned here, never in
- * `@excitedjs/dreamux-types` (which is declaration-only).
- */
-function consoleFallbackLogger(dispatcherId: string): DreamuxLogger {
-  const sink =
-    (level: string) =>
-    (fields: Record<string, unknown> | string, message?: string): void => {
-      const prefix = `[claude-code ${dispatcherId}] ${level}`;
-      if (typeof fields === 'string') {
-        console.error(prefix, fields);
-        return;
-      }
-      const err = fields['err'];
-      if (err !== undefined) console.error(prefix, message ?? '', err);
-      else console.error(prefix, message ?? '');
-    };
-  return {
-    error: sink('error'),
-    warn: sink('warn'),
-    info: sink('info'),
-    debug: () => {},
-    trace: () => {},
-  };
 }

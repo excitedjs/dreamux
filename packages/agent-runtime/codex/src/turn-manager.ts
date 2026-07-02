@@ -19,8 +19,8 @@ import { DEFAULT_MESSAGE_ID_DEDUPE_WINDOW } from '@excitedjs/dreamux-utils';
 import type {
   InboundTurnInput,
   InboundDeliveryResult,
-  NoticeInjectionResult,
   InboundDeliveryHooks,
+  AgentRuntimeTextInput,
   TurnSettledSignal,
 } from '@excitedjs/dreamux-types';
 
@@ -64,14 +64,9 @@ export interface TurnManagerOptions {
 export class TurnManager {
   private readonly seenMessageIds = new Set<string>();
   private readonly seenMessageIdOrder: string[] = [];
+  private readonly seenTextInputIds = new Set<string>();
+  private readonly seenTextInputIdOrder: string[] = [];
   private stopped = false;
-  /**
-   * Set once any real inbound has been accepted and handed to Codex. There is
-   * no FIFO queue here — inbound submission folds onto Codex's active turn — so
-   * this flag is what lets a best-effort restart-notice injection detect an
-   * in-flight inbound and skip rather than wake the thread twice (issue #78).
-   */
-  private inboundSubmitted = false;
   private activeTurnSlot: ActiveTurnSlot | null = null;
   private activeTurnId: string | null = null;
   /**
@@ -125,10 +120,6 @@ export class TurnManager {
     if (!this.rememberMessageId(input.sourceId)) {
       return { status: 'duplicate' };
     }
-    // Mark before any await so a concurrent restart-notice injection observes
-    // that a real inbound is in flight and skips itself.
-    this.inboundSubmitted = true;
-
     const threadId = this.opts.getThreadId();
     if (threadId === null) {
       await this.notifyAccepted(input, hooks);
@@ -175,11 +166,18 @@ export class TurnManager {
     }
   }
 
-  async submitSystemInput(text: string): Promise<InboundDeliveryResult> {
+  async submitTextInput(input: AgentRuntimeTextInput): Promise<InboundDeliveryResult> {
     if (this.stopped) return { status: 'stopped' };
+    if (
+      input.sourceId !== undefined &&
+      input.sourceId !== '' &&
+      !this.rememberTextInputId(input.sourceId)
+    ) {
+      return { status: 'duplicate' };
+    }
     const threadId = this.opts.getThreadId();
     if (threadId === null) {
-      const error = new Error('system input submitted without thread_id');
+      const error = new Error('text input submitted without thread_id');
       this.log('error', error.message);
       return { status: 'failed', error };
     }
@@ -192,13 +190,13 @@ export class TurnManager {
       res = await submitTurnStart(
         this.opts.client,
         threadId,
-        text,
+        input.text,
         this.opts.turnCwd ?? null,
       );
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
       this.recordTurnStartFailure(activeTurn.slot, error, activeTurn.primary);
-      this.log('error', `system turn/start submission failed: ${error.message}`, error);
+      this.log('error', `text turn/start submission failed: ${error.message}`, error);
       return { status: 'failed', error };
     }
     const turnId = this.recordTurnStartSuccess(
@@ -217,45 +215,6 @@ export class TurnManager {
     }
   }
 
-  /**
-   * Best-effort one-shot notice injected after a `daemon restart --notify-
-   * resumed` resumes this dispatcher's thread. Skips if the manager is stopped,
-   * if a real inbound has already woken the thread, or if no thread is bound.
-   * A submission failure is reported, never thrown — it must not fail the
-   * dispatcher's start or the restart.
-   */
-  async injectNotice(text: string): Promise<NoticeInjectionResult> {
-    if (this.stopped) return { status: 'stopped' };
-    if (this.inboundSubmitted) return { status: 'skipped' };
-
-    const threadId = this.opts.getThreadId();
-    if (threadId === null) {
-      const error = new Error('restart notice injected without thread_id');
-      this.log('error', error.message);
-      return { status: 'failed', error };
-    }
-
-    // Mark before submitting so a racing real inbound is not double-counted and
-    // a second injection cannot fire.
-    this.inboundSubmitted = true;
-    try {
-      const collector = subscribeTurnCollection(this.opts.client, threadId);
-      const res = await submitTurnStart(
-        this.opts.client,
-        threadId,
-        text,
-        this.opts.turnCwd ?? null,
-      );
-      this.trackTurn(res.turn.id, collector);
-      this.log('info', `injected restart notice into thread ${threadId}`);
-      return { status: 'submitted', turnId: res.turn.id };
-    } catch (err) {
-      const error = err instanceof Error ? err : new Error(String(err));
-      this.log('warn', `restart notice injection failed: ${error.message}`, error);
-      return { status: 'failed', error };
-    }
-  }
-
   async stop(): Promise<void> {
     this.stopped = true;
     const activeSlot = this.activeTurnSlot;
@@ -267,7 +226,11 @@ export class TurnManager {
     // (the WS is closing). Settle each as `stopped` so an interrupted teammate
     // turn is delivered with a status rather than vanishing.
     for (const turnId of this.pendingTurnIds) {
-      this.opts.onTurnSettled?.({ turnId, status: 'stopped' });
+      this.opts.onTurnSettled?.({
+        turnId,
+        status: 'stopped',
+        result: { text: null },
+      });
     }
     this.pendingTurnIds.clear();
     this.activeTurnId = null;
@@ -388,6 +351,7 @@ export class TurnManager {
           this.opts.onTurnSettled?.({
             turnId,
             status: 'failed',
+            result: { text: null },
             error: err instanceof Error ? err : new Error(String(err)),
           });
           this.resolveIdleWaitersIfIdle();
@@ -420,6 +384,17 @@ export class TurnManager {
     while (this.seenMessageIdOrder.length > this.messageIdDedupeWindow) {
       const evicted = this.seenMessageIdOrder.shift();
       if (evicted !== undefined) this.seenMessageIds.delete(evicted);
+    }
+    return true;
+  }
+
+  private rememberTextInputId(id: string): boolean {
+    if (this.seenTextInputIds.has(id)) return false;
+    this.seenTextInputIds.add(id);
+    this.seenTextInputIdOrder.push(id);
+    while (this.seenTextInputIdOrder.length > this.messageIdDedupeWindow) {
+      const evicted = this.seenTextInputIdOrder.shift();
+      if (evicted !== undefined) this.seenTextInputIds.delete(evicted);
     }
     return true;
   }

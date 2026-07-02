@@ -48,6 +48,9 @@ describe('TeamMate MCP is the default teammate interface (issue #124, #126 PR6)'
     }
     expect(skill).toContain('the primary interface');
     expect(skill).toContain('the default interface');
+    expect(skill).toContain("currently `resume`");
+    expect(skill).not.toContain('steer, events, last, and context');
+    expect(skill).not.toContain('steer.supported');
 
     // The task/worker surface must stay deleted.
     expect(skill).toContain('semi-resident TeamMate agents');

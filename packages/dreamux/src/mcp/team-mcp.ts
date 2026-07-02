@@ -127,6 +127,7 @@ export function teamTools(
       repo: repoInputSchema(),
       leader_agent_runtime: { type: 'string', minLength: 1, maxLength: 128 },
       intent: { type: 'string', minLength: 1, maxLength: 2000 },
+      identity: { type: 'string', minLength: 1, maxLength: 4000 },
       prompt: { type: 'string', maxLength: 20000 },
     }, ['team_name', 'leader_agent_runtime', 'intent']),
     tool('send', 'Submit a follow-up turn to a Team\'s TeamLeader by team_name. This targets the TeamLeader agent only; it does not send to Team members and does not bind or post to a channel.', {
@@ -234,6 +235,7 @@ function mapToolCall(
 function createArgs(value: unknown): Record<string, unknown> {
   const obj = asRecord(value, 'create arguments');
   const prompt = optionalString(obj, 'prompt');
+  const identity = optionalString(obj, 'identity');
   // #199 Slice 2: the public work-directory input is a single optional `repo`
   // object (replacing the old required `repo_cwd`). Omitted → a plain shared
   // .workspace/work/<team_name>/ dir (no git worktree, issue #199).
@@ -245,6 +247,7 @@ function createArgs(value: unknown): Record<string, unknown> {
     intent: requireString(obj, 'intent'),
     ...(repo !== null ? { repo } : {}),
     ...(prompt !== null ? { prompt } : {}),
+    ...(identity !== null ? { identity } : {}),
   };
 }
 

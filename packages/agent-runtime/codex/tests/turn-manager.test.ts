@@ -69,8 +69,8 @@ describe('TurnManager inbound submission', () => {
   });
 });
 
-describe('TurnManager restart-notice injection', () => {
-  it('injects the notice as a turn when the thread is bound and idle', async () => {
+describe('TurnManager text input submission', () => {
+  it('submits plain text input as a turn when the thread is bound', async () => {
     const client = new FakeCodexClient();
     const manager = new TurnManager({
       dispatcherId: 'flow',
@@ -78,14 +78,16 @@ describe('TurnManager restart-notice injection', () => {
       client: client as never,
     });
 
-    await expect(manager.injectNotice('Restart completed.')).resolves.toEqual({
+    await expect(
+      manager.submitTextInput({ text: 'Restart completed.', sourceId: 'restart' }),
+    ).resolves.toEqual({
       status: 'submitted',
       turnId: 'turn-1',
     });
     expect(client.inputs).toEqual(['Restart completed.']);
   });
 
-  it('skips when a real inbound has already woken the thread', async () => {
+  it('does not treat prior channel input as a reason to skip plain text input', async () => {
     const client = new FakeCodexClient();
     const manager = new TurnManager({
       dispatcherId: 'flow',
@@ -94,10 +96,10 @@ describe('TurnManager restart-notice injection', () => {
     });
 
     await manager.enqueue(input('msg-1', 'real work'));
-    await expect(manager.injectNotice('Restart completed.')).resolves.toEqual({
-      status: 'skipped',
-    });
-    expect(client.inputs).toEqual(['real work']);
+    await expect(
+      manager.submitTextInput({ text: 'Restart completed.', sourceId: 'restart' }),
+    ).resolves.toMatchObject({ status: 'submitted' });
+    expect(client.inputs).toEqual(['real work', 'Restart completed.']);
   });
 
   it('fails (does not throw) when no thread is bound', async () => {
@@ -108,12 +110,12 @@ describe('TurnManager restart-notice injection', () => {
       client: client as never,
     });
 
-    const result = await manager.injectNotice('Restart completed.');
+    const result = await manager.submitTextInput({ text: 'Restart completed.' });
     expect(result.status).toBe('failed');
     expect(client.inputs).toEqual([]);
   });
 
-  it('injects at most once', async () => {
+  it('dedupes stable sourceIds', async () => {
     const client = new FakeCodexClient();
     const manager = new TurnManager({
       dispatcherId: 'flow',
@@ -121,11 +123,12 @@ describe('TurnManager restart-notice injection', () => {
       client: client as never,
     });
 
-    await expect(manager.injectNotice('Restart completed.')).resolves
-      .toMatchObject({ status: 'submitted' });
-    await expect(manager.injectNotice('Restart completed.')).resolves.toEqual({
-      status: 'skipped',
-    });
+    await expect(
+      manager.submitTextInput({ text: 'Restart completed.', sourceId: 'restart' }),
+    ).resolves.toMatchObject({ status: 'submitted' });
+    await expect(
+      manager.submitTextInput({ text: 'Restart completed.', sourceId: 'restart' }),
+    ).resolves.toEqual({ status: 'duplicate' });
     expect(client.inputs).toEqual(['Restart completed.']);
   });
 });
@@ -285,7 +288,9 @@ describe('TurnManager turn settlement', () => {
     expect(settled).toEqual([]);
 
     await manager.stop();
-    expect(settled).toEqual([{ turnId: 'turn-1', status: 'stopped' }]);
+    expect(settled).toEqual([
+      { turnId: 'turn-1', status: 'stopped', result: { text: null } },
+    ]);
   });
 
   it('does not re-settle a completed turn as stopped', async () => {

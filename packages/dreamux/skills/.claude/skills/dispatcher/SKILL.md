@@ -144,10 +144,8 @@ says so.
 **Control and inspect.**
 
 - `get_capabilities` — spawnable `agents[].id` values under `agent_runtimes[]`,
-  each with runtime capabilities: resume, steer, events, last, and context. Use
-  `spawn({ agent_runtime: id, ... })` with one of those ids. Claude Code Remote
-  Control is an external Claude UI surface, distinct from Dreamux `send` steer;
-  keep trusting `steer.supported` from the returned capabilities.
+  each with the runtime's minimal capabilities, currently `resume`. Use
+  `spawn({ agent_runtime: id, ... })` with one of those ids.
 
 The persistent record and turns files are the source of truth. A TeamMate
 reopened by send resumes from its saved runtime-native session (the resume

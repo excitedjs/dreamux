@@ -50,7 +50,6 @@ export type {
   InboundDeliveryHooks,
   InboundDeliveryResult,
   InboundTurnInput,
-  NoticeInjectionResult,
   TurnSettledSignal,
 } from './turn.js';
 export type {
@@ -72,16 +71,12 @@ export type {
   AgentRuntimeProviderFactory,
   AgentRuntimeResumeCapability,
   AgentRuntimeResumeCheckpoint,
-  AgentRuntimeResumeInput,
-  AgentRuntimeRole,
   AgentRuntimeSkillSource,
   AgentRuntimeStateCallbacks,
   AgentRuntimeStatus,
-  AgentRuntimeSystemInput,
+  AgentRuntimeSystemPrompt,
+  AgentRuntimeTextInput,
   AgentRuntimeTurnResult,
-  CompletionDeliveryShape,
-  CompletionEnvelope,
-  TeamMateCompletionDeliveryResult,
 } from './agent-runtime.js';
 export type {
   ChannelBinCheck,

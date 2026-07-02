@@ -17,25 +17,33 @@ import type {
   AgentRuntimeIdentity,
   AgentRuntimePathContext,
   AgentRuntimeSkillSource,
+  AgentRuntimeSystemPrompt,
   AgentRuntimeStateCallbacks,
   DreamuxLogger,
+  TurnSettledSignal,
 } from '@excitedjs/dreamux-types';
 
-const SKILL_LAYOUT = 'skill-dir';
-
 function skillSource(path: string): AgentRuntimeSkillSource {
-  return { name: path.split('/').pop()!, path, layout: SKILL_LAYOUT, source: 'dreamux-core' };
+  return { name: path.split('/').pop()!, path, source: 'dreamux-core' };
 }
 
 class FakeClient {
   readonly methods: string[] = [];
   readonly extraRootsCalls: string[][] = [];
+  readonly threadStartCalls: unknown[] = [];
+  readonly threadResumeCalls: unknown[] = [];
+  readonly turnStartCalls: unknown[] = [];
+  threadResumeError: Error | null = null;
+  private readonly handlers: Array<(notification: unknown) => void> = [];
+  private nextTurnId = 1;
   failExtraRoots = false;
   /** When set, `skills/extraRoots/set` rejects with this error instead. */
   extraRootsError: Error | null = null;
 
   onClose(): void {}
-  onNotification(): void {}
+  onNotification(handler: (notification: unknown) => void): void {
+    this.handlers.push(handler);
+  }
   setServerRequestHandler(): void {}
   async ready(): Promise<void> {}
   close(): void {}
@@ -62,9 +70,58 @@ class FakeClient {
       return {} as R;
     }
     if (method === 'thread/start') {
+      this.threadStartCalls.push(params);
       return { thread: { id: 'thread-fake' } } as R;
     }
+    if (method === 'thread/resume') {
+      this.threadResumeCalls.push(params);
+      if (this.threadResumeError !== null) throw this.threadResumeError;
+      const threadId = (params as { threadId: string }).threadId;
+      return { thread: { id: threadId } } as R;
+    }
+    if (method === 'turn/start') {
+      this.turnStartCalls.push(params);
+      const p = params as {
+        threadId: string;
+        input: Array<{ text: string }>;
+      };
+      const turnId = `turn-${this.nextTurnId++}`;
+      const text = p.input[0]?.text ?? '';
+      queueMicrotask(() => {
+        this.emitCompleted(p.threadId, turnId, text === 'empty' ? null : text);
+      });
+      return { turn: { id: turnId } } as R;
+    }
     throw new Error(`unexpected method ${method}`);
+  }
+
+  private emitCompleted(
+    threadId: string,
+    turnId: string,
+    text: string | null,
+  ): void {
+    if (text !== null) {
+      this.emit({
+        method: 'item/completed',
+        params: {
+          threadId,
+          turnId,
+          completedAtMs: Date.now(),
+          item: { type: 'agentMessage', id: `item-${turnId}`, text },
+        },
+      });
+    }
+    this.emit({
+      method: 'turn/completed',
+      params: {
+        threadId,
+        turn: { id: turnId, items: [] },
+      },
+    });
+  }
+
+  private emit(notification: unknown): void {
+    for (const handler of this.handlers) handler(notification);
   }
 }
 
@@ -101,14 +158,13 @@ class FakeProcess {
 const PATHS: AgentRuntimePathContext = {
   dispatcherDir: (id) => join('/fake/state', id),
   logsDir: () => '/fake/logs',
-  completionSpillDir: (id) => join('/fake/cache', id, 'spill'),
   runtimeSocketDirs: () => ['/fake/run/sockets'],
 };
 
 function noopState(): AgentRuntimeStateCallbacks {
   return {
     async setStatus(): Promise<void> {},
-    async setThreadId(): Promise<void> {},
+    async setCheckpoint(): Promise<void> {},
   };
 }
 
@@ -116,8 +172,14 @@ function buildRuntime(
   client: FakeClient,
   skillSources: AgentRuntimeSkillSource[],
   logger?: DreamuxLogger,
+  onTurnSettled?: (settled: TurnSettledSignal) => void,
+  systemPrompt?: AgentRuntimeSystemPrompt,
+  checkpointId: string | null = null,
 ): CodexRuntime {
-  const identity: AgentRuntimeIdentity = { runtime_id: 'flow', checkpoint_id: null };
+  const identity: AgentRuntimeIdentity = {
+    runtime_id: 'flow',
+    checkpoint_id: checkpointId,
+  };
   return new CodexRuntime(identity, {
     cwd: '/fake/cwd',
     state: noopState(),
@@ -126,6 +188,13 @@ function buildRuntime(
     skillSources,
     codexProcessFactory: () => new FakeProcess() as never,
     codexClientFactory: () => client as never,
+    ...(systemPrompt?.replace !== undefined
+      ? { systemPromptReplace: systemPrompt.replace }
+      : {}),
+    ...(systemPrompt?.replace === undefined && systemPrompt?.append !== undefined
+      ? { systemPromptAppend: systemPrompt.append }
+      : {}),
+    ...(onTurnSettled !== undefined ? { onTurnSettled } : {}),
     ...(logger !== undefined ? { logger } : {}),
   });
 }
@@ -149,6 +218,205 @@ describe('codex skills/extraRoots/set injection', () => {
     expect(initIdx).toBeGreaterThanOrEqual(0);
     expect(setIdx).toBeGreaterThan(initIdx);
     expect(startIdx).toBeGreaterThan(setIdx);
+  });
+
+  it('passes append-only systemPrompt as developerInstructions before first turn', async () => {
+    const client = new FakeClient();
+    const runtime = buildRuntime(
+      client,
+      [],
+      undefined,
+      undefined,
+      {
+        append: [
+          'Dreamux persistent identity guidance:\narchitecture reviewer',
+          'Keep <review> & do not close </developer-reminder>.',
+        ],
+      },
+    );
+
+    await runtime.start();
+    await runtime.channelInput({ sourceId: 'm1', text: 'first task' });
+    await runtime.stop();
+
+    const startIdx = client.methods.indexOf('thread/start');
+    const turnIdx = client.methods.indexOf('turn/start');
+    expect(turnIdx).toBeGreaterThan(startIdx);
+    expect(client.methods).not.toContain('thread/inject_items');
+    expect(client.threadStartCalls[0]).toEqual({
+      developerInstructions:
+        '<developer-reminder>\n' +
+        'Dreamux persistent identity guidance:\narchitecture reviewer\n' +
+        '</developer-reminder>\n\n' +
+        '<developer-reminder>\n' +
+        'Keep &lt;review&gt; &amp; do not close &lt;/developer-reminder&gt;.\n' +
+        '</developer-reminder>',
+    });
+    const firstTurn = client.turnStartCalls[0] as {
+      input: Array<{ text: string }>;
+    };
+    expect(firstTurn.input[0]?.text).toBe('first task');
+    expect(firstTurn.input[0]?.text).not.toContain('architecture reviewer');
+  });
+
+  it('passes append-only systemPrompt as developerInstructions on resume', async () => {
+    const client = new FakeClient();
+    const runtime = buildRuntime(
+      client,
+      [],
+      undefined,
+      undefined,
+      {
+        append: ['resume identity'],
+      },
+      'thread-existing',
+    );
+
+    await runtime.start();
+    await runtime.stop();
+
+    expect(client.threadStartCalls).toEqual([]);
+    expect(client.threadResumeCalls).toEqual([
+      {
+        threadId: 'thread-existing',
+        developerInstructions:
+          '<developer-reminder>\nresume identity\n</developer-reminder>',
+      },
+    ]);
+    expect(client.methods).not.toContain('thread/inject_items');
+  });
+
+  it('passes append-only systemPrompt as developerInstructions on resume fallback start', async () => {
+    const client = new FakeClient();
+    client.threadResumeError = new Error('resume unavailable');
+    const runtime = buildRuntime(
+      client,
+      [],
+      undefined,
+      undefined,
+      {
+        append: ['fallback identity'],
+      },
+      'thread-existing',
+    );
+
+    await runtime.start();
+    await runtime.stop();
+
+    expect(client.threadResumeCalls).toEqual([
+      {
+        threadId: 'thread-existing',
+        developerInstructions:
+          '<developer-reminder>\nfallback identity\n</developer-reminder>',
+      },
+    ]);
+    expect(client.threadStartCalls).toEqual([
+      {
+        developerInstructions:
+          '<developer-reminder>\nfallback identity\n</developer-reminder>',
+      },
+    ]);
+    expect(client.methods).not.toContain('thread/inject_items');
+  });
+
+  it('omits developerInstructions when append-only systemPrompt is empty after filtering', async () => {
+    const client = new FakeClient();
+    const runtime = buildRuntime(
+      client,
+      [],
+      undefined,
+      undefined,
+      {
+        append: ['', ''],
+      },
+    );
+
+    await runtime.start();
+    await runtime.stop();
+
+    expect(client.threadStartCalls[0]).toEqual({});
+    expect(client.methods).not.toContain('thread/inject_items');
+  });
+
+  it('uses replacement baseInstructions without duplicate append injection', async () => {
+    const client = new FakeClient();
+    const runtime = buildRuntime(
+      client,
+      [],
+      undefined,
+      undefined,
+      {
+        replace: 'complete dispatcher base instructions',
+        append: ['dispatcher append guidance'],
+      },
+    );
+
+    await runtime.start();
+    await runtime.stop();
+
+    expect(client.threadStartCalls[0]).toEqual({
+      baseInstructions: 'complete dispatcher base instructions',
+    });
+    expect(client.methods).not.toContain('thread/inject_items');
+  });
+
+  it('passes replacement baseInstructions on resume without duplicate append injection', async () => {
+    const client = new FakeClient();
+    const runtime = buildRuntime(
+      client,
+      [],
+      undefined,
+      undefined,
+      {
+        replace: 'complete dispatcher base instructions',
+        append: ['dispatcher append guidance'],
+      },
+      'thread-existing',
+    );
+
+    await runtime.start();
+    await runtime.stop();
+
+    expect(client.threadStartCalls).toEqual([]);
+    expect(client.threadResumeCalls).toEqual([
+      {
+        threadId: 'thread-existing',
+        baseInstructions: 'complete dispatcher base instructions',
+      },
+    ]);
+    expect(client.methods).not.toContain('thread/inject_items');
+  });
+
+  it('passes replacement baseInstructions on resume fallback start', async () => {
+    const client = new FakeClient();
+    client.threadResumeError = new Error('resume unavailable');
+    const runtime = buildRuntime(
+      client,
+      [],
+      undefined,
+      undefined,
+      {
+        replace: 'complete dispatcher base instructions',
+        append: ['dispatcher append guidance'],
+      },
+      'thread-existing',
+    );
+
+    await runtime.start();
+    await runtime.stop();
+
+    expect(client.threadResumeCalls).toEqual([
+      {
+        threadId: 'thread-existing',
+        baseInstructions: 'complete dispatcher base instructions',
+      },
+    ]);
+    expect(client.threadStartCalls).toEqual([
+      {
+        baseInstructions: 'complete dispatcher base instructions',
+      },
+    ]);
+    expect(client.methods).not.toContain('thread/inject_items');
   });
 
   it('skips the RPC entirely when no skill sources are supplied', async () => {
@@ -211,7 +479,34 @@ describe('codex skills/extraRoots/set injection', () => {
     await expect(runtime.start()).rejects.toThrow(/permission denied/);
     expect(client.methods).not.toContain('thread/start');
   });
+
+  it('does not reuse the prior successful result for a later empty successful turn', async () => {
+    const client = new FakeClient();
+    const settled: TurnSettledSignal[] = [];
+    const runtime = buildRuntime(client, [], undefined, (s) => settled.push(s));
+
+    await runtime.start();
+    await expect(runtime.channelInput({ sourceId: 'm1', text: 'first' })).resolves
+      .toMatchObject({ status: 'submitted' });
+    await waitFor(() => settled.length === 1);
+    await expect(runtime.channelInput({ sourceId: 'm2', text: 'empty' })).resolves
+      .toMatchObject({ status: 'submitted' });
+    await waitFor(() => settled.length === 2);
+    await runtime.stop();
+
+    expect(settled.map((s) => s.result?.text ?? null)).toEqual(['first', null]);
+    await expect(runtime.getLast()).resolves.toEqual({ text: 'first' });
+  });
 });
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  const deadline = Date.now() + 1000;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('waitFor timed out');
+}
 
 describe('isUnsupportedRpcMethodError', () => {
   it('classifies capability/version-gap rejections as unsupported', () => {

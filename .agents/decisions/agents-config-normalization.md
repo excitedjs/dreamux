@@ -156,11 +156,12 @@ stops branching on `BUILTIN_CODEX_PROVIDER_REF`:
 
 The codex diagnostic enforces `MIN_CODEX_VERSION = '0.137.0'`: it runs
 `codex --version`, parses the `major.minor.patch` triple, and compares
-component-wise (numeric, not string). Below 0.137 it fails loud. Reason: the
-teammate-completion reverse leg appends the completion to the dispatcher thread
-via `thread/inject_items`, an RPC that exists only on codex >= 0.137 — doctor
-surfaces the requirement up front rather than letting a teammate completion
-silently RPC-fail at runtime.
+component-wise (numeric, not string). Below 0.137 it fails loud. The floor now
+guards the app-server protocol surface used by the built-in runtime, including
+thread start/resume, turn start, and thread-level instruction overrides such as
+`baseInstructions` and `developerInstructions`. Doctor surfaces the requirement
+up front rather than letting prompt customization or turn delivery degrade
+silently at runtime.
 
 ### #98 fail-loud (no migration shim)
 

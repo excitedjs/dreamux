@@ -38,6 +38,21 @@ describe('admin no-repo spawn/create → default work dir (#199)', () => {
     expect(captured).not.toHaveProperty('worktree');
   });
 
+  it('teammate.spawn forwards optional identity', async () => {
+    let captured: Record<string, unknown> = {};
+    const server = spawnStub((input) => {
+      captured = input as Record<string, unknown>;
+    });
+    await adminMethods['mcp.teammate.spawn']!(server, {
+      dispatcher_id: 'flow',
+      name_prefix: 'solo',
+      prompt: 'go',
+      intent: 'work',
+      identity: 'reviewer',
+    });
+    expect(captured['identity']).toBe('reviewer');
+  });
+
   it('teammate.spawn with an explicit repo path forwards that cwd', async () => {
     let captured: Record<string, unknown> = {};
     const server = spawnStub((input) => {
@@ -76,5 +91,29 @@ describe('admin no-repo spawn/create → default work dir (#199)', () => {
     });
     expect(captured).not.toHaveProperty('repoCwd');
     expect(captured).not.toHaveProperty('worktree');
+  });
+
+  it('team.create forwards optional identity', async () => {
+    let captured: Record<string, unknown> = {};
+    const server = {
+      repos: { dispatchers: { get: () => ({ dispatcher_id: 'flow' }) } },
+      getDispatcher: () => ({
+        createTeam: (input: unknown) => {
+          captured = input as Record<string, unknown>;
+          return {};
+        },
+        workspace: () => {
+          throw new Error('workspace must not be resolved for a no-repo team');
+        },
+      }),
+    } as unknown as Server;
+    await adminMethods['mcp.team.create']!(server, {
+      dispatcher_id: 'flow',
+      team_name: 'plain',
+      leader_agent_runtime: 'codex',
+      intent: 'work',
+      identity: 'team lead',
+    });
+    expect(captured['identity']).toBe('team lead');
   });
 });

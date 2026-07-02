@@ -64,6 +64,18 @@ export function optionalString(
   return v;
 }
 
+export function optionalNonBlankString(
+  params: Record<string, unknown> | undefined,
+  key: string,
+): string | null {
+  const value = optionalString(params, key);
+  if (value === null) return null;
+  if (value.trim() === '') {
+    throw new AdminError('BAD_REQUEST', `param '${key}' must be a non-empty string`);
+  }
+  return value;
+}
+
 export function repoRequest(
   params: Record<string, unknown> | undefined,
   key: string,

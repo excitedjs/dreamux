@@ -1,8 +1,18 @@
 import type {
-  CompletionEnvelope,
   DreamuxLogger,
-  TeamMateCompletionDeliveryResult,
 } from '@excitedjs/dreamux-types';
+
+export interface CompletionEnvelope {
+  source: string;
+  id: string;
+  status: 'completed' | 'failed' | 'stopped';
+  result: string | null;
+}
+
+export type CompletionDeliveryResult =
+  | { status: 'accepted' }
+  | { status: 'unsupported'; reason: string }
+  | { status: 'failed'; error: Error };
 
 /**
  * The delivery target of a settled, send-initiated turn: a dispatcher agent or a
@@ -13,7 +23,7 @@ import type {
 export interface CompletionInitiator {
   completionInput(
     completion: CompletionEnvelope,
-  ): Promise<TeamMateCompletionDeliveryResult>;
+  ): Promise<CompletionDeliveryResult>;
 }
 
 const TERMINAL_CACHE_LIMIT = 512;
@@ -92,7 +102,7 @@ export class CompletionRouter {
   ): Promise<void> {
     const dispatcherId = this.deps.dispatcherId;
     for (let attempt = 1; attempt <= MAX_DELIVERY_ATTEMPTS; attempt += 1) {
-      let outcome: TeamMateCompletionDeliveryResult;
+      let outcome: CompletionDeliveryResult;
       try {
         outcome = await initiator.completionInput(completion);
       } catch (err) {

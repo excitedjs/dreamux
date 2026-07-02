@@ -1,7 +1,8 @@
-import type { CompletionEnvelope, DreamuxLogger } from '@excitedjs/dreamux-types';
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { DreamuxConfig } from '../../config/config.js';
+import type { CompletionEnvelope } from '../completion-router/index.js';
 import type { TeamMateIdentityStore } from '../teammate-collection/identity-store.js';
 import type { TeamMateTurnsStore } from '../teammate-collection/turns-store.js';
 import type { TeamMateIdentity } from '../teammate-collection/types.js';

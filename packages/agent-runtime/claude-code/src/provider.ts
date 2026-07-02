@@ -25,6 +25,13 @@ import type {
   ProviderFactoryContext,
 } from '@excitedjs/dreamux-types';
 
+function normalizedSystemPromptAppend(
+  append: readonly string[] | undefined,
+): readonly string[] | undefined {
+  const normalized = (append ?? []).filter((prompt) => prompt !== '');
+  return normalized.length > 0 ? normalized : undefined;
+}
+
 /**
  * Construction options for the built-in Claude Code provider. Env injection now
  * arrives on the NEUTRAL create context (`context.injectEnv`), not as a factory
@@ -47,19 +54,7 @@ export interface ClaudeCodeAgentRuntimeProviderOptions {
 }
 
 export const CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = {
-  resume: { supported: true, checkpoint: 'claudeCodeSession' },
-  steer: { supported: true },
-  events: { kind: 'synthesized' },
-  last: { supported: true },
-  context: { supported: false },
-  systemPrompt: { mode: 'append' },
-  teammateCompletion: [
-    {
-      kind: 'claudeCodePlainTurn',
-      description:
-        'deliver the completion as a plain user turn (no task-notification harness path)',
-    },
-  ],
+  resume: { supported: true },
 };
 
 const DEFAULT_CLAUDE_CODE_DESCRIPTOR: AgentRuntimeProviderDescriptor = {
@@ -88,9 +83,9 @@ function asAgentRuntimeDescriptor(
 /**
  * Create the built-in Claude Code `AgentRuntimeProvider`. It implements the
  * neutral `@excitedjs/dreamux-types` contract: `readConfig` parses Claude Code
- * runtime config, `getCapabilities` reports its append/synthesized/plain-turn
- * shape, and `createRuntime` builds a {@link ClaudeCodeRuntime} from the neutral
- * create context plus the host-supplied options.
+ * runtime config, `getCapabilities` reports resume support, and `createRuntime`
+ * builds a {@link ClaudeCodeRuntime} from the neutral create context plus the
+ * host-supplied options.
  */
 export function createClaudeCodeAgentRuntimeProvider(
   options: ClaudeCodeAgentRuntimeProviderOptions = {},
@@ -136,6 +131,9 @@ export function createClaudeCodeAgentRuntimeProvider(
           'claude-code runtime requires a path context in the create context',
         );
       }
+      const systemPromptAppend = normalizedSystemPromptAppend(
+        context.systemPrompt?.append,
+      );
       const deps: ClaudeCodeRuntimeDeps = {
         config: context.config,
         cwd: context.cwd,
@@ -153,8 +151,8 @@ export function createClaudeCodeAgentRuntimeProvider(
         ...(context.disableFeatures !== undefined
           ? { disableFeatures: context.disableFeatures }
           : {}),
-        ...(context.systemPromptContent !== undefined
-          ? { systemPromptContent: context.systemPromptContent }
+        ...(systemPromptAppend !== undefined
+          ? { systemPromptAppend }
           : {}),
         ...(context.onTurnSettled !== undefined
           ? { onTurnSettled: context.onTurnSettled }

@@ -36,6 +36,7 @@ export interface TeamMateIdentityCreateInput {
   runtimeCwd: string;
   worktree: TeamMateWorktreeIdentity;
   intent?: string | null;
+  identityPrompt?: string | null;
   status?: TeamMateIdentityStatus;
 }
 
@@ -48,6 +49,7 @@ export interface TeamMateIdentityUpdateInput {
   runtimeCwd?: string;
   worktree?: TeamMateWorktreeIdentity;
   intent?: string | null;
+  identityPrompt?: string | null;
   status?: TeamMateIdentityStatus;
   lastError?: string | null;
   closedAt?: number | null;
@@ -236,6 +238,7 @@ export class TeamMateIdentityStore {
       runtime_cwd: input.runtimeCwd,
       worktree: input.worktree,
       intent: input.intent ?? null,
+      identity_prompt: input.identityPrompt ?? null,
       created_at: now,
       updated_at: now,
       status: input.status ?? 'starting',
@@ -265,6 +268,9 @@ export class TeamMateIdentityStore {
       ...(input.runtimeCwd !== undefined ? { runtime_cwd: input.runtimeCwd } : {}),
       ...(input.worktree !== undefined ? { worktree: input.worktree } : {}),
       ...(input.intent !== undefined ? { intent: input.intent } : {}),
+      ...(input.identityPrompt !== undefined
+        ? { identity_prompt: input.identityPrompt }
+        : {}),
       ...(input.status !== undefined ? { status: input.status } : {}),
       ...(input.lastError !== undefined ? { last_error: input.lastError } : {}),
       ...(input.closedAt !== undefined ? { closed_at: input.closedAt } : {}),
@@ -365,6 +371,10 @@ function readIdentity(
     runtime_cwd: runtimeCwd,
     worktree,
     intent: typeof record['intent'] === 'string' ? record['intent'] : null,
+    identity_prompt:
+      typeof record['identity_prompt'] === 'string'
+        ? record['identity_prompt']
+        : null,
     created_at: createdAt,
     updated_at: updatedAt,
     status: readStatus(record['status']),

@@ -63,13 +63,7 @@ describe('builtin:claude-code loads the real @excitedjs/agent-runtime-claude-cod
     const capabilities = provider.getCapabilities();
     expect(capabilities.resume).toEqual({
       supported: true,
-      checkpoint: 'claudeCodeSession',
     });
-    expect(capabilities.systemPrompt.mode).toBe('append');
-    expect(capabilities.events.kind).toBe('synthesized');
-    expect(capabilities.teammateCompletion.map((s) => s.kind)).toEqual([
-      'claudeCodePlainTurn',
-    ]);
   });
 
   it('parses real Claude Code runtime config via the loaded provider readConfig', async () => {
@@ -106,16 +100,14 @@ describe('builtin:claude-code loads the real @excitedjs/agent-runtime-claude-cod
     const paths: AgentRuntimePathContext = {
       dispatcherDir: () => tmp,
       logsDir: () => tmp,
-      completionSpillDir: () => join(tmp, 'spill'),
       runtimeSocketDirs: () => [join(tmp, 'sockets')],
     };
     const state: AgentRuntimeStateCallbacks = {
       setStatus: async () => {},
-      setThreadId: async () => {},
+      setCheckpoint: async () => {},
     };
     const context: AgentRuntimeCreateContext<DispatcherClaudeCodeConfig> = {
       identity: { runtime_id: 'flow', checkpoint_id: null },
-      role: 'dispatcher',
       config,
       cwd: tmp,
       mcpServers: [],

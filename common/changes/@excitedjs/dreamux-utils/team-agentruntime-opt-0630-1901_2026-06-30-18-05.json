@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "BREAKING: Refine completion body resolution for core-owned plain text completion delivery; the helper now accepts the minimal source/id/result input shape instead of the provider-facing AgentRuntime completion envelope.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux-utils"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-utils",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

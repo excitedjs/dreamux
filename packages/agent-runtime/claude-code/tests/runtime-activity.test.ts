@@ -123,7 +123,7 @@ function state(): AgentRuntimeStateCallbacks {
     async setStatus() {
       /* no-op */
     },
-    async setThreadId() {
+    async setCheckpoint() {
       /* no-op */
     },
   };
@@ -133,7 +133,6 @@ function paths(root: string): AgentRuntimePathContext {
   return {
     dispatcherDir: (id) => join(root, 'state', id),
     logsDir: () => join(root, 'logs'),
-    completionSpillDir: (id) => join(root, 'cache', id, 'spill'),
     runtimeSocketDirs: () => [join(root, 'run')],
   };
 }

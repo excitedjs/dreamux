@@ -176,8 +176,10 @@ describe('issue #199 Slice 1 — public MCP contract whitelist', () => {
     for (const callerKind of ['dispatcher', 'team_leader'] as const) {
       const spawn = schemaOf(await teammateTools(callerKind), 'spawn');
       expect(spawn.properties).toHaveProperty('name_prefix');
+      expect(spawn.properties).toHaveProperty('identity');
       expect(spawn.properties).not.toHaveProperty('name');
       expect(spawn.required).toContain('name_prefix');
+      expect(spawn.required).not.toContain('identity');
       expect(spawn.required).not.toContain('name');
     }
   });
@@ -257,9 +259,11 @@ describe('issue #199 Slice 2 — repo input + field-collapse whitelist', () => {
   it('team.create takes an optional repo object, not the legacy repo_cwd', async () => {
     const create = schemaOf(await teamTools(), 'create');
     expect(create.properties).toHaveProperty('repo');
+    expect(create.properties).toHaveProperty('identity');
     expect(create.properties).not.toHaveProperty('repo_cwd');
     expect(create.properties).not.toHaveProperty('worktree');
     expect(create.required).not.toContain('repo_cwd');
+    expect(create.required).not.toContain('identity');
     expect(create.required).toEqual(['team_name', 'leader_agent_runtime', 'intent']);
   });
 });

@@ -1,6 +1,6 @@
 import type {
   AgentRuntimeMcpServer,
-  CompletionEnvelope,
+  AgentRuntimeSystemPrompt,
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
 
@@ -9,6 +9,7 @@ import type { DreamuxConfig } from '../../config/config.js';
 import type { TeamMateIdentityStore } from '../teammate-collection/identity-store.js';
 import type { TeamMateTurnsStore } from '../teammate-collection/turns-store.js';
 import type { TeamMateIdentity } from '../teammate-collection/types.js';
+import type { CompletionEnvelope } from '../completion-router/index.js';
 import {
   createTeammateService,
 } from '../teammate-service/factory.js';
@@ -20,6 +21,7 @@ export interface TeamLeaderAgentDeps {
   identity: TeamMateIdentity;
   mcpServers: readonly AgentRuntimeMcpServer[];
   disableFeatures: readonly string[];
+  systemPrompt?: AgentRuntimeSystemPrompt;
   config: DreamuxConfig;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   identities: TeamMateIdentityStore;
@@ -45,6 +47,9 @@ export function createTeamLeaderAgent(
     options: {
       mcpServers: deps.mcpServers,
       disableFeatures: deps.disableFeatures,
+      ...(deps.systemPrompt !== undefined
+        ? { systemPrompt: deps.systemPrompt }
+        : {}),
     },
     config: deps.config,
     agentRuntimeProviders: deps.agentRuntimeProviders,

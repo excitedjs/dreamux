@@ -4,7 +4,7 @@
  * This file imports Dreamux contracts from `@excitedjs/dreamux-types` ONLY and
  * implements a complete Agent Runtime provider (descriptor + `readConfig` +
  * `getCapabilities` + optional `diagnostic` + `createRuntime` returning a live
- * `AgentRuntime` handle, including the optional `completionInput`) and a Channel
+ * `AgentRuntime` handle) and a Channel
  * provider (with the optional `reply` / `react` / `tools` / `handleTool` /
  * `messageBelongsToTarget`), the way an external provider package in another
  * repository would. It also exercises the published provider factory contracts
@@ -30,6 +30,8 @@ import type {
   AgentRuntimeProviderDescriptor,
   AgentRuntimeProviderFactory,
   AgentRuntimeStatus,
+  AgentRuntimeSystemPrompt,
+  AgentRuntimeTextInput,
   AgentRuntimeTurnResult,
   ChannelInboundEnvelope,
   ChannelMessageTargetCheck,
@@ -43,22 +45,12 @@ import type {
   ChannelTarget,
   ChannelToolCall,
   ChannelToolDescriptor,
-  CompletionEnvelope,
   DreamuxLogger,
   InboundTurnInput,
-  TeamMateCompletionDeliveryResult,
 } from '@excitedjs/dreamux-types';
 
 export const EXTERNAL_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = {
   resume: { supported: false },
-  steer: { supported: false },
-  events: { kind: 'synthesized' },
-  last: { supported: false },
-  context: { supported: false },
-  systemPrompt: { mode: 'append' },
-  teammateCompletion: [
-    { kind: 'fixturePlainTurn', description: 'deliver as a plain user turn' },
-  ],
 };
 
 export function describeConfigContext(
@@ -66,6 +58,11 @@ export function describeConfigContext(
 ): string {
   return `${context.providerRef}:${context.agentId}`;
 }
+
+export const appendArrayPrompt: AgentRuntimeSystemPrompt = {
+  replace: 'full replacement prompt',
+  append: ['first append fragment', 'second append fragment'],
+};
 
 /** The fixture runtime's parsed config shape. */
 interface FixtureRuntimeConfig {
@@ -100,19 +97,15 @@ class FixtureRuntime implements AgentRuntime {
     return { status: 'submitted', turnId: input.sourceId };
   }
 
-  async systemInput(): Promise<AgentRuntimeTurnResult> {
-    return { status: 'skipped' };
-  }
-
   getStatus(): AgentRuntimeStatus {
     return this.status;
   }
 
-  getThreadId(): string | null {
-    return this.threadId;
+  getCheckpoint(): { id: string } | null {
+    return this.threadId === null ? null : { id: this.threadId };
   }
 
-  wasThreadResumed(): boolean {
+  wasCheckpointResumed(): boolean {
     return false;
   }
 
@@ -128,11 +121,8 @@ class FixtureRuntime implements AgentRuntime {
     return EXTERNAL_RUNTIME_CAPABILITIES;
   }
 
-  async completionInput(
-    completion: CompletionEnvelope,
-  ): Promise<TeamMateCompletionDeliveryResult> {
-    this.logger?.info({ id: completion.id }, 'fixture completion');
-    return { status: 'accepted' };
+  async completionInput(input: AgentRuntimeTextInput): Promise<AgentRuntimeTurnResult> {
+    return { status: 'submitted', turnId: input.sourceId ?? 'plain-turn' };
   }
 }
 

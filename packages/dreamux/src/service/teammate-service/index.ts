@@ -6,13 +6,13 @@ import type {
   AgentRuntimeMcpServer,
   AgentRuntimeProvider,
   AgentRuntimeStateCallbacks,
+  AgentRuntimeSystemPrompt,
   AgentRuntimeTurnResult,
-  CompletionEnvelope,
   DreamuxLogger,
   InboundTurnInput,
-  TeamMateCompletionDeliveryResult,
   TurnSettledSignal,
 } from '@excitedjs/dreamux-types';
+import { resolveCompletionBody } from '@excitedjs/dreamux-utils';
 
 import {
   bundledSkillSourcesForRole,
@@ -50,6 +50,11 @@ import {
 } from '../teammate-collection/types.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
+import { dispatcherCompletionSpillDir } from '../../platform/paths.js';
+import type {
+  CompletionDeliveryResult,
+  CompletionEnvelope,
+} from '../completion-router/index.js';
 
 /**
  * The provider-construction inputs a {@link TeammateService} needs to build its
@@ -59,7 +64,7 @@ import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
  * persists state to its identity record; the dispatcher resolves its inline
  * `dispatchers[].runtime`, runs in its validated workspace, and persists state to
  * the authoritative `status.json` store. Everything generic (resume-or-start,
- * `onTurnSettled` → route, `completionInput`) stays in the entity.
+ * `onTurnSettled` → route, completion delivery) stays in the entity.
  */
 export interface RuntimeLaunchSpec {
   provider: AgentRuntimeProvider;
@@ -110,14 +115,16 @@ export interface TeammateServiceDeps {
 export interface TeammateServiceOptions {
   mcpServers?: readonly AgentRuntimeMcpServer[];
   disableFeatures?: readonly string[];
+  systemPrompt?: AgentRuntimeSystemPrompt;
 }
 
 /**
  * A single named teammate entity (issue #233): it holds its own identity, its
  * (lazily started) runtime, a per-turn origin cache, and the domain operations
  * `send` / `close` / `status` / `last` / `history` / `channelInput`. It is also a
- * delivery target via `completionInput` — a thin forward into the runtime that
- * the per-dispatcher `CompletionRouter` calls when a member's turn settles.
+ * delivery target via `completionInput` — it renders the core completion
+ * envelope to a plain runtime turn before the per-dispatcher
+ * `CompletionRouter` considers the delivery accepted.
  *
  * Storage stays in the collection's shared stores; the entity holds references
  * to them rather than owning them (collections remain process-wide in Phase 1).
@@ -128,6 +135,7 @@ export class TeammateService {
   private state: TeamMateRuntimeStateStore;
   private readonly mcpServers: readonly AgentRuntimeMcpServer[];
   private readonly disableFeatures: readonly string[];
+  private readonly systemPrompt: AgentRuntimeSystemPrompt | undefined;
 
   constructor(
     private readonly deps: TeammateServiceDeps,
@@ -137,6 +145,7 @@ export class TeammateService {
   ) {
     this.mcpServers = options.mcpServers ?? [];
     this.disableFeatures = options.disableFeatures ?? [];
+    this.systemPrompt = options.systemPrompt;
     this.state = new TeamMateRuntimeStateStore(deps.identities, identity);
   }
 
@@ -153,26 +162,35 @@ export class TeammateService {
   }
 
   /**
-   * Forward a completion envelope into the runtime, the delivery-target side of
-   * the reverse path. Thin: the at-most-once policy lives in the
-   * `CompletionRouter`, not here. A runtime that is not running or exposes no
-   * completion surface reports `unsupported` so the router drops cleanly.
+   * Render a completion envelope into a plain text turn and submit it to the
+   * runtime, the delivery-target side of the reverse path. The at-most-once
+   * policy lives in the `CompletionRouter`; the stable sourceId gives runtimes a
+   * provider-owned dedupe/correlation hook across router retries.
    */
   async completionInput(
     completion: CompletionEnvelope,
-  ): Promise<TeamMateCompletionDeliveryResult> {
+  ): Promise<CompletionDeliveryResult> {
     const runtime = this.runtime;
     if (runtime === null) {
       return { status: 'unsupported', reason: 'teammate runtime not running' };
     }
-    const deliver = runtime.completionInput;
-    if (deliver === undefined) {
+    let text: string;
+    try {
+      text = await buildCompletionTurnText(
+        completion,
+        this.resolveCompletionSpillDir(),
+      );
+    } catch (err) {
       return {
-        status: 'unsupported',
-        reason: 'runtime has no completion delivery',
+        status: 'failed',
+        error: err instanceof Error ? err : new Error(String(err)),
       };
     }
-    return deliver.call(runtime, completion);
+    const result = await runtime.completionInput({
+      text,
+      sourceId: `completion:${completion.id}`,
+    });
+    return turnResultToCompletionDelivery(result);
   }
 
   /**
@@ -232,13 +250,13 @@ export class TeammateService {
   async scheduledInput(input: {
     jobId: string;
     prompt: string;
+    sourceId: string;
   }): Promise<AgentRuntimeTurnResult> {
     await this.ensureStarted();
     const runtime = this.mustRuntime();
-    const result = await runtime.systemInput({
-      kind: 'system',
+    const result = await runtime.completionInput({
       text: input.prompt,
-      reason: 'scheduled',
+      sourceId: input.sourceId,
     });
     if (result.status === 'submitted') {
       await recordSubmittedTurn(this.turnsStore, this.live(), {
@@ -416,11 +434,13 @@ export class TeammateService {
           runtime_id: runtimeId(identity.dispatcher_id, runtimeName),
           checkpoint_id: identity.session_id,
         },
-        role: identity.role,
         config: agent.config,
         cwd: identity.cwd,
         skillSources: bundledSkillSourcesForRole(identity.role),
         disableFeatures: this.disableFeatures,
+        ...(this.systemPrompt !== undefined
+          ? { systemPrompt: this.systemPrompt }
+          : {}),
         state: this.state,
         paths: teammateHostPaths(identity.dispatcher_id, runtimeName),
         mcpServers: [...this.mcpServers],
@@ -453,12 +473,7 @@ export class TeammateService {
     });
     liveRuntime = runtime;
     if (launch.checkpointId !== null && resumeCapability.supported) {
-      await runtime.resume({
-        checkpoint: {
-          kind: resumeCapability.checkpoint,
-          id: launch.checkpointId,
-        },
-      });
+      await runtime.resume();
     } else {
       await runtime.start();
     }
@@ -480,35 +495,11 @@ export class TeammateService {
    * never gated by, or lost to, delivery.
    */
   private async deliverSettledTurn(
-    runtime: AgentRuntime,
+    _runtime: AgentRuntime,
     settled: TurnSettledSignal,
   ): Promise<void> {
     const identity = this.current();
-    if (settled.turnId === null) {
-      this.deps.log.warn(
-        {
-          dispatcher_id: this.dispatcherId,
-          teammate: identity.name,
-          status: settled.status,
-        },
-        'dropping teammate completion: settled turn has no turn id',
-      );
-      return;
-    }
-    let result = '';
-    try {
-      const last = await runtime.getLast();
-      result = last?.text ?? '';
-    } catch (err) {
-      this.deps.log.warn(
-        {
-          dispatcher_id: this.dispatcherId,
-          teammate: identity.name,
-          err: errInfo(err),
-        },
-        'teammate completion getLast failed',
-      );
-    }
+    const result = settled.result?.text ?? null;
     const envelope: CompletionEnvelope = {
       source: identity.name,
       id: `${identity.name}:${settled.turnId}`,
@@ -547,7 +538,7 @@ export class TeammateService {
     await this.ensureStarted({ reopenClosed: true });
     const runtime = this.mustRuntime();
     const submissionSeq = this.deps.nextSubmissionSeq();
-    const result = await runtime.channelInput({
+    const result = await runtime.completionInput({
       sourceId: `teammate:${this.name}:${submissionSeq}`,
       text: prompt,
     });
@@ -579,11 +570,56 @@ export class TeammateService {
     }
     return worktrees;
   }
+
+  private resolveCompletionSpillDir(): string {
+    return dispatcherCompletionSpillDir(this.current().dispatcher_id);
+  }
+}
+
+function completionStatusLine(completion: CompletionEnvelope): string {
+  switch (completion.status) {
+    case 'completed':
+      return `TeamMate ${completion.source} has finished its task.`;
+    case 'failed':
+      return `TeamMate ${completion.source}'s task failed.`;
+    case 'stopped':
+      return `TeamMate ${completion.source}'s task was stopped.`;
+  }
+}
+
+async function buildCompletionTurnText(
+  completion: CompletionEnvelope,
+  spillDir: string,
+): Promise<string> {
+  const line = completionStatusLine(completion);
+  const body = await resolveCompletionBody(completion, spillDir);
+  return body.kind === 'inline'
+    ? `${line} Output below:\n\n${body.text}`
+    : `${line} The output is too long, so the full result was saved to a file:\n\n${body.path}`;
+}
+
+function turnResultToCompletionDelivery(
+  result: AgentRuntimeTurnResult,
+): CompletionDeliveryResult {
+  switch (result.status) {
+    case 'submitted':
+    case 'duplicate':
+      return { status: 'accepted' };
+    case 'stopped':
+      return { status: 'unsupported', reason: 'runtime stopped' };
+    case 'failed':
+      return { status: 'failed', error: result.error };
+    case 'skipped':
+      return {
+        status: 'failed',
+        error: new Error('completion delivery unexpectedly skipped'),
+      };
+  }
 }
 
 function runtimeId(dispatcherId: string, name: string): string {
   const suffix = createHash('sha256')
-    .update(`${dispatcherId} ${name}`)
+    .update(`${dispatcherId}\0${name}`)
     .digest('hex')
     .slice(0, 12);
   const prefix = dispatcherId.slice(0, 40);
@@ -594,11 +630,4 @@ function runtimeIdentityName(identity: TeamMateIdentity): string {
   return identity.team_id !== null
     ? `${identity.team_id}.${identity.name}`
     : identity.name;
-}
-
-function errInfo(err: unknown): Record<string, unknown> {
-  if (err instanceof Error) {
-    return { type: err.name, message: err.message, stack: err.stack };
-  }
-  return { value: String(err) };
 }

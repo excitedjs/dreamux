@@ -57,6 +57,5 @@ describe('agent-runtime-claude-code import boundary', () => {
     expect(provider.ref).toBe('builtin:claude-code');
     expect(provider.descriptor.kind).toBe('agentRuntime');
     expect(provider.getCapabilities().resume.supported).toBe(true);
-    expect(provider.getCapabilities().systemPrompt.mode).toBe('append');
   });
 });

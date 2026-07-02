@@ -7,6 +7,13 @@
   [json-document-store decision](../decisions/json-document-store.md)
 - **Verdict:** GO, subject to three mandatory prerequisites (§9)
 
+> Input-surface note: the scheduled injection verb sections below were written
+> before
+> [AgentRuntime input surface cleanup](agent-runtime-input-surface-cleanup.md).
+> Keep the wait-idle and scheduler-state design, but replace
+> `systemInput(reason: "scheduled")` with plain text `completionInput` when
+> implementing against the updated AgentRuntime contract.
+
 This is the implementation-level design for the durable scheduled-tasks (cron)
 feature. It is the synthesis of two independent dossiers (one Codex-runtime, one
 Claude-runtime author), both grounded in `next` source. Where they diverged, the
@@ -32,9 +39,10 @@ Non-goals: distributed multi-host scheduling, sub-second precision, long-outage 
 Current state: `AgentRuntime` (`agent-runtime.ts:308-345`) has **no** busy/idle
 signal. `AgentRuntimeStatus` (`:202-208`) is a lifecycle enum, not turn-active.
 `AgentRuntimeCapabilities` (`:90-113`) has no `activity`.
-`AgentRuntimeSystemInput.reason` (`:131-135`) is a closed union without
-`'scheduled'`. `TurnSettledSignal` (`turn.ts:76-80`) is for completion routing
-and stays unchanged.
+This draft still referred to `AgentRuntimeSystemInput.reason`, but that input
+surface is superseded by the plain text `completionInput` contract.
+`TurnSettledSignal` (`turn.ts:76-80`) is for completion routing and stays
+unchanged.
 
 Add **one optional method, nothing else** (minimal surface, decided 2026-06-24 —
 no `getActivity`, no `AbortSignal`, no `capabilities.activity` flag):
@@ -49,8 +57,7 @@ export interface AgentRuntime {
   waitIdle?(): Promise<void>;
 }
 
-// in AgentRuntimeSystemInput.reason union, add:
-| 'scheduled'
+// scheduled injection now uses completionInput({ text, sourceId })
 ```
 
 `waitIdle()` semantics:
@@ -91,12 +98,12 @@ near-zero cost. Truth: `activeTurnId` (`:75`), `pendingTurnIds: Set` (`:82`),
 - Precision 100% (push events, `provider.ts:66`).
 
 **Claude Code (`agent-runtime/claude-code/src/runtime.ts`)** — needs a counter.
-`activeChannelTurn` (`:214`) covers channel turns only; system/completion turns
-run on the `queue` promise chain (`:209`) with no count. Add
+`activeChannelTurn` (`:214`) covers channel turns only; plain text
+`completionInput` turns run on the `queue` promise chain (`:209`) with no count. Add
 `private queuedTurnCount = 0`.
-- `++` at the three real enqueue points: the **new-turn** branch of `channelInput`
-  (`:353-360`, i.e. `activeChannelTurn === null`), `systemInput` (`:314`),
-  `completionInput` (`:393`).
+- `++` at the real enqueue points: the **new-turn** branch of `channelInput`
+  (`:353-360`, i.e. `activeChannelTurn === null`) and the plain text
+  `completionInput` submit path.
 - `--` in the settle callbacks `markTurnSucceeded` (`:470`) and `markTurnFailed`
   (`:476`) — the unique correct decrement points.
 - Idle ⇔ `queuedTurnCount === 0`; `activeTurnId = activeChannelTurn?.turnId ?? null`.
@@ -202,7 +209,7 @@ G5). Version policy `fail-loud-on-unknown` (0.x no-migration; changelog needs
 
 ```ts
 await (runtime.waitIdle?.() ?? Promise.resolve());
-await runtime.systemInput({ kind: 'system', text: job.prompt, reason: 'scheduled', /* + structured scheduled meta */ });
+await runtime.completionInput({ text: job.prompt, sourceId });
 ```
 
 - **Held-fire queue:** `SchedulerService` keeps `Map<jobId, symbol>` tokens for
@@ -218,47 +225,44 @@ await runtime.systemInput({ kind: 'system', text: job.prompt, reason: 'scheduled
   and resolves stop waiters so in-flight held fires return skipped without
   injecting a scheduled turn.
 
-### 4.2 Scheduled injection verb (conclusion: `systemInput reason:'scheduled'`)
+### 4.2 Scheduled injection verb (superseded: now plain text completion input)
 
 `agent.send` is rejected as primary: it enters as a channel-inbound turn
 (`runtime.channelInput({sourceId:'teammate:...'})`, `teammate-service/index.ts:178,515`)
 — disguising a non-channel event as channel inbound (G2) and folding into the
-user's live turn on Codex (R2). Use `systemInput({reason:'scheduled'})` as the
-first-class injection verb. Required provider changes:
-- **Codex `systemInput`** currently hard-wires `submitRestartNotice → injectNotice`
-  (`runtime.ts:348-350`), which skips when `inboundSubmitted` and ignores `reason`
-  (`turn-manager.ts:167-197`). It MUST dispatch by `reason`: `'restart-notice'`
-  keeps `injectNotice` (skip-if-busy); `'scheduled'`/`'runtime-control'` go through
-  a **normal submit** (sourceId is a structured scheduled origin / empty to disable
-  dedupe). (This is mandatory prerequisite #1, §9.)
-- **Claude `systemInput`** (`runtime.ts:312-320`) already runs the turn on queue;
-  make it `reason`-aware analogously.
+user's live turn on Codex (R2). The former conclusion to use
+`systemInput({reason:'scheduled'})` is superseded. Use the plain text
+`completionInput({ text, sourceId })` seam from
+[AgentRuntime input surface cleanup](agent-runtime-input-surface-cleanup.md).
 - Tag the scheduled turn's record with a structured `origin: { kind:'scheduled',
   job_id }` in `turn.jsonl` (cf. teammate `turnOrigin`,
   `teammate-service/index.ts:549`) — the structured turn↔job association (G3), never
   an `intent:'cron:<id>'` magic prefix.
 
-### 4.3 Egress (G1 closure)
+### 4.3 Egress (deferred until a separate neutral egress contract)
 
 Bindings are Team-scoped `ChannelBinding` (`channel-binding/store.ts:20-39`), keyed
-`(channel_id, target_key)`, provider selectors in `meta`. Design:
+`(channel_id, target_key)`, provider selectors in `meta`. This remains the right
+state shape for a future egress feature, but the updated AgentRuntime input
+surface is text-only for non-channel turns. Do not carry a resolved
+`ChannelTarget`, channel attributes, or reply metadata through
+`completionInput`.
+
+Deferred design shape:
 1. **State** — `deliver = {channel_id, target_key}` referencing an existing binding;
    validated at create/update via `DispatcherService.resolveChannelTarget(meta, channelId)`
    (`index.ts:610`) but only the neutral keys are stored.
 2. **Resolve** — at fire, `ChannelBindingStore.resolve(...)` → neutral `ChannelTarget`
    (`dreamux-types/channel.ts:32-39`).
-3. **Delivery** — carry the resolved neutral `ChannelTarget` to the agent as a
-   **structured** field on the scheduled injection, consumed by the channel reply
-   seam (`channel.ts:83,180`; Feishu adapter translates to `chat_id` internally,
-   `feishu-channel/src/provider.ts:200`). **Never** concatenate `chat_id` into prompt
-   text.
-   - **Residual (ties to G2):** the injection-contract extension that delivers the
-     neutral target to the agent must be settled **together with** the scheduled
-     injection verb. If not ready in v1, jobs WITHOUT `deliver` (internal turns) ship
-     first; egress jobs wait — **never** fall back to prompt-string glue. (Mandatory
-     prerequisite #3, §9.)
-4. The scheduler never sends channel messages itself; the agent owns egress through
-   the channel seam (preserves "no channel routing in the runtime/core trigger path").
+3. **Delivery** — out of scope for the text-only scheduled-turn slice. Jobs
+   without `deliver` (internal turns) may ship first; jobs with `deliver` remain
+   rejected or deferred until a separate neutral egress contract exists.
+
+The scheduler must not concatenate `chat_id` into prompt text, must not send
+channel messages itself, and must not pass channel target metadata through the
+runtime input surface. A future egress contract may execute outside the runtime
+input surface or add a dedicated neutral capability, but it is not part of this
+proposal.
 
 Note: `channel.ts`'s `message_id` is a legitimate **channel-layer** field; the
 runtime contract (`turn.ts InboundTurnInput`) has none — keep it that way.
@@ -269,12 +273,11 @@ An earlier draft proposed unifying restart-notice and cron into one shared
 deferred-injection mechanism. That was wrong: `injectRestartNoticeIfNeeded`
 (`index.ts:614-639`) runs at the end of `doStart`, the instant the runtime just
 started / resumed — the process is fresh, there is no in-progress turn, the agent
-is idle by definition, so `waitIdle` would be a no-op. The restart-notice's
-existing `inboundSubmitted` skip latch is a *different* concern (a real Feishu
-inbound raced in during startup → don't double-wake), not defer-until-idle.
-**Leave `injectRestartNoticeIfNeeded` exactly as it is** (direct
-`systemInput({reason:'restart-notice'})`, original skip behavior). The scheduler
-is the **sole** consumer of `waitIdle`; it inlines
+is idle by definition, so `waitIdle` would be a no-op. The restart notice's
+delivery seam is now governed by
+[AgentRuntime input surface cleanup](agent-runtime-input-surface-cleanup.md),
+but it still does not become a scheduler wait-idle consumer. The scheduler is
+the **sole** consumer of `waitIdle`; it inlines
 `await Promise.race([runtime.waitIdle?.() ?? Promise.resolve(), maxDefer])` —
 there is no shared deferred-injection helper. (`getRuntime() !== null` existence
 gates and `getStatus()` lifecycle reads are unrelated and untouched.)
@@ -339,10 +342,10 @@ admin `dispatcher.stop` calls `stop()` (R6); `shutdown()` already calls `stop()`
 
 | PR | Content | Depends |
 |---|---|---|
-| PR1 | Neutral contract: optional `waitIdle?()` and `reason:'scheduled'` (`dreamux-types`); keep the contract lint gate neutral | — |
-| PR2 | **codex** `waitIdle` (TurnManager busy + idleWaiters, TRAP-1); `systemInput` reason-dispatch (prereq #1) | PR1 |
-| PR3 | **claude** `waitIdle` (+`queuedTurnCount`, TRAP-2); `systemInput` reason-aware | PR1 |
-| PR4 | scheduler-only `waitIdle` consumer (inline `Promise.race`); restart-notice UNCHANGED | PR2,PR3 |
+| PR1 | Neutral contract: optional `waitIdle?()` plus the plain text scheduled injection seam (`dreamux-types`); keep the contract lint gate neutral | — |
+| PR2 | **codex** `waitIdle` (TurnManager busy + idleWaiters, TRAP-1); scheduled turns use plain text input (prereq #1) | PR1 |
+| PR3 | **claude** `waitIdle` (+`queuedTurnCount`, TRAP-2); scheduled turns use plain text input | PR1 |
+| PR4 | scheduler-only `waitIdle` consumer (inline `Promise.race`); restart notice remains outside scheduler wait-idle | PR2,PR3 |
 | PR5 | `JsonDocumentStore` + `CronJobStore` + `dispatcherCronJobsPath`/`cronMcpLogPath` + `detectLegacyCronJobStore` into serve/doctor preflight; round-trip/fail-loud tests | — (parallel) |
 | PR6 | `SchedulerService` (croner schedule, arm/disarm, next recompute, held-fire collapse + max-defer) + `prompt-agent` execution; lifecycle wiring (§7) | PR4,PR5 |
 | PR7 | `spawn-teammate` execution path (teammate collection + CompletionRouter) | PR6 |
@@ -355,16 +358,15 @@ stores onto `JsonDocumentStore`, fixing the non-atomic `DispatcherStore` write.
 
 ## 9. Mandatory prerequisites (skipping any silently breaks the feature)
 
-1. **Codex `systemInput` must dispatch by `reason`** — restart-notice keeps
-   skip-if-busy; `scheduled` goes through a normal submit. Today it hard-wires
-   `injectNotice` and ignores `reason` (`codex/src/runtime.ts:348`), which would
-   silently skip cron turns.
+1. **Scheduled injection must use the plain text runtime input** — do not route
+   scheduled work through channel input, and do not add a provider-facing
+   `systemInput.reason` branch.
 2. **Claude `queuedTurnCount` must exclude the steer-fold branch** (TRAP-2) or
    `waitIdle` never resolves.
-3. **Egress stores only the neutral `(channel_id, target_key)`**; the mechanism that
-   delivers the resolved neutral target to the agent is a runtime-injection-contract
-   change to be settled together with the scheduled injection verb (G1/G2). Until
-   ready, egress jobs are deferred — never a prompt-string fallback.
+3. **Egress is deferred from this text-only slice** — scheduled jobs that need
+   `deliver` must be rejected or held until a separate neutral egress contract
+   exists. Never pass `ChannelTarget` metadata through `completionInput`, and
+   never fall back to prompt-string glue.
 
 ## 10. Test plan
 
@@ -374,8 +376,8 @@ stores onto `JsonDocumentStore`, fixing the non-atomic `DispatcherStore` write.
   original turn settles); omitted `waitIdle` means always idle.
 - **Defer-until-idle (scheduler only):** already idle injects immediately; busy
   injects on idle; same-job collapse; max-defer timeout skips/re-arms; cancel or
-  missing/disabled job before idle does not inject; non-submitted systemInput does
-  not advance schedule.
+  missing/disabled job before idle does not inject; non-submitted plain text
+  input does not advance schedule.
 - **Store:** round-trip; missing⇒`empty()`; version/shape mismatch ⇒ fail-loud;
   atomic no-torn-write; malformed `cron-jobs.json` caught at `Server.start()` + doctor
   (`detectLegacyCronJobStore`, cf. `channel-binding/store.ts:219`).

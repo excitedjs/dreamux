@@ -60,11 +60,7 @@ describe('builtin:codex loads the real @excitedjs/agent-runtime-codex package', 
     const capabilities = provider.getCapabilities();
     expect(capabilities.resume).toEqual({
       supported: true,
-      checkpoint: 'codexThread',
     });
-    expect(capabilities.teammateCompletion.map((s) => s.kind)).toEqual([
-      'codexInboxTurn',
-    ]);
   });
 
   it('parses real Codex runtime config via the loaded provider readConfig', async () => {
@@ -91,16 +87,14 @@ describe('builtin:codex loads the real @excitedjs/agent-runtime-codex package', 
     const paths: AgentRuntimePathContext = {
       dispatcherDir: () => tmp,
       logsDir: () => tmp,
-      completionSpillDir: () => join(tmp, 'spill'),
       runtimeSocketDirs: () => [join(tmp, 'sockets')],
     };
     const state: AgentRuntimeStateCallbacks = {
       setStatus: async () => {},
-      setThreadId: async () => {},
+      setCheckpoint: async () => {},
     };
     const context: AgentRuntimeCreateContext<DispatcherCodexConfig> = {
       identity: { runtime_id: 'flow', checkpoint_id: null },
-      role: 'dispatcher',
       config,
       cwd: tmp,
       mcpServers: [],

@@ -29,8 +29,8 @@ import {
 } from '../registry/provider-loader.js';
 import type {
   AgentRuntimeCapabilities,
+  AgentRuntimeCreateContext,
   AgentRuntimeProvider,
-  CompletionDeliveryShape,
 } from '@excitedjs/dreamux-types';
 
 export interface ExternalAgentRuntimeProviderFactoryContext {
@@ -115,6 +115,42 @@ function assertExternalAgentRuntimeProvider(
     context.fail(`provider.getCapabilities threw: ${errMessage(err)}`);
   }
   assertCapabilities(capabilities, context);
+  const createRuntime = candidate.createRuntime.bind(candidate);
+  candidate.createRuntime = (runtimeContext: AgentRuntimeCreateContext) => {
+    const runtime = createRuntime(runtimeContext);
+    assertRuntimeHandle(runtime, context);
+    return runtime;
+  };
+}
+
+function assertRuntimeHandle(
+  value: unknown,
+  context: ProviderContractContext,
+): void {
+  if (!isRecord(value)) {
+    context.fail('createRuntime must return a runtime object');
+  }
+  const requiredMethods = [
+    'start',
+    'resume',
+    'stop',
+    'channelInput',
+    'completionInput',
+    'getStatus',
+    'getCheckpoint',
+    'wasCheckpointResumed',
+    'getLast',
+    'getContext',
+    'getCapabilities',
+  ];
+  for (const method of requiredMethods) {
+    if (typeof value[method] !== 'function') {
+      context.fail(`runtime.${method} must be a function`);
+    }
+  }
+  if (value['waitIdle'] !== undefined && typeof value['waitIdle'] !== 'function') {
+    context.fail('runtime.waitIdle must be a function when present');
+  }
 }
 
 function assertOptionalOnboard(
@@ -152,19 +188,6 @@ function assertCapabilities(
   }
   const capabilities = value as Partial<AgentRuntimeCapabilities>;
   assertResumeCapability(capabilities.resume, context);
-  assertSupportedBoolean('steer', capabilities.steer, context);
-  if (!isRecord(capabilities.events) || !isEventKind(capabilities.events['kind'])) {
-    context.fail('capabilities.events.kind must be "push" or "synthesized"');
-  }
-  assertSupportedBoolean('last', capabilities.last, context);
-  assertSupportedBoolean('context', capabilities.context, context);
-  assertSystemPromptCapability(capabilities.systemPrompt, context);
-  if (!Array.isArray(capabilities.teammateCompletion)) {
-    context.fail('capabilities.teammateCompletion must be an array');
-  }
-  for (const shape of capabilities.teammateCompletion) {
-    assertCompletionDeliveryShape(shape, context);
-  }
 }
 
 function assertResumeCapability(
@@ -174,59 +197,4 @@ function assertResumeCapability(
   if (!isRecord(value) || typeof value['supported'] !== 'boolean') {
     context.fail('capabilities.resume.supported must be a boolean');
   }
-  const resume = value as Record<string, unknown>;
-  if (resume['supported'] === true) {
-    if (typeof resume['checkpoint'] !== 'string' || resume['checkpoint'] === '') {
-      context.fail(
-        'capabilities.resume.checkpoint must be a non-empty string when resume is supported',
-      );
-    }
-  }
-}
-
-function assertSupportedBoolean(
-  name: string,
-  value: unknown,
-  context: ProviderContractContext,
-): void {
-  if (!isRecord(value) || typeof value['supported'] !== 'boolean') {
-    context.fail(`capabilities.${name}.supported must be a boolean`);
-  }
-}
-
-function assertSystemPromptCapability(
-  value: unknown,
-  context: ProviderContractContext,
-): void {
-  if (!isRecord(value)) {
-    context.fail('capabilities.systemPrompt must be an object');
-  }
-  const mode = value['mode'];
-  if (mode !== 'replace' && mode !== 'append') {
-    context.fail('capabilities.systemPrompt.mode must be "replace" or "append"');
-  }
-}
-
-function assertCompletionDeliveryShape(
-  value: unknown,
-  context: ProviderContractContext,
-): asserts value is CompletionDeliveryShape {
-  if (!isRecord(value)) {
-    context.fail('capabilities.teammateCompletion entries must be objects');
-  }
-  const shape = value as Record<string, unknown>;
-  if (typeof shape['kind'] !== 'string' || shape['kind'] === '') {
-    context.fail('capabilities.teammateCompletion entries must include a kind');
-  }
-  if (typeof shape['description'] !== 'string' || shape['description'] === '') {
-    context.fail(
-      'capabilities.teammateCompletion entries must include a description',
-    );
-  }
-}
-
-function isEventKind(
-  value: unknown,
-): value is AgentRuntimeCapabilities['events']['kind'] {
-  return value === 'push' || value === 'synthesized';
 }

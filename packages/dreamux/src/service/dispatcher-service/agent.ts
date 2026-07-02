@@ -1,7 +1,6 @@
 import type {
   AgentRuntimeMcpServer,
   ChannelSession,
-  CompletionEnvelope,
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
 
@@ -15,6 +14,7 @@ import type { DispatcherConfig, DreamuxConfig } from '../../config/config.js';
 import type { DispatcherStore } from '../../state/dispatcher-store.js';
 import {
   completionKey,
+  type CompletionEnvelope,
   type CompletionRouter,
 } from '../completion-router/index.js';
 import type { TeamMateIdentityStore } from '../teammate-collection/identity-store.js';
@@ -151,12 +151,6 @@ function buildDispatcherLaunch(deps: DispatcherAgentDeps): RuntimeLaunchSpec {
     dispatcherConfig.runtime.provider,
   );
   const cwd = deps.resolveCwd();
-  // 'replace' runtimes (codex) consume the full dispatcher prompt as their base
-  // instructions; 'append' runtimes (claude-code) receive a focused delta.
-  const systemPromptContent =
-    provider.getCapabilities().systemPrompt.mode === 'replace'
-      ? DREAMUX_DISPATCHER_BASE_INSTRUCTIONS
-      : DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS;
   const mcpServers: AgentRuntimeMcpServer[] = dispatcherMcpServerDescriptors({
     dispatcherId: id,
     channels: deps.liveChannels(),
@@ -167,14 +161,16 @@ function buildDispatcherLaunch(deps: DispatcherAgentDeps): RuntimeLaunchSpec {
     checkpointId: row.thread_id,
     context: {
       identity: { runtime_id: id, checkpoint_id: row.thread_id },
-      role: 'dispatcher',
       config: dispatcherConfig.runtime.config,
       cwd,
-      systemPromptContent,
+      systemPrompt: {
+        replace: DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
+        append: [DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS],
+      },
       mcpServers,
       skillSources: bundledSkillSourcesForRole('dispatcher'),
       disableFeatures: [DISABLE_FEATURE_CRON],
-      state: deps.dispatchers,
+      state: deps.dispatchers.bindRuntime(id),
       paths: dispatcherHostPaths,
       logger: deps.log,
     },
@@ -225,6 +221,7 @@ function debugIdentity(
       cleanup_error: null,
     },
     intent: null,
+    identity_prompt: null,
     created_at: now,
     updated_at: now,
     status: 'running',

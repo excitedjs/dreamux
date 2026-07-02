@@ -78,6 +78,9 @@ Important children:
 - `~/.dreamux/state/<dispatcher-id>/cron-jobs.json`: durable scheduled-task
   definitions owned by the scheduler service.
 - `~/.dreamux/state/<dispatcher-id>/teammate/`: TeamMate durable task ledgers.
+  Each `identity.json` may include `identity_prompt`, the persisted append-only
+  model-facing role guidance for that TeamMate; old records without it read as
+  `null`.
 - `~/.dreamux/state/<dispatcher-id>/team/`: Team durable ledgers and channel
   binding state.
 

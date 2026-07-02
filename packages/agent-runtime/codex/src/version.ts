@@ -1,8 +1,9 @@
 /**
- * Codex version gate. The teammate-completion reverse leg (#147) appends the
- * completion to the dispatcher thread via `thread/inject_items`, an RPC that
- * exists only on codex >= 0.137. Doctor surfaces this loudly rather than letting
- * a teammate completion silently RPC-fail at runtime.
+ * Codex version gate. Dreamux depends on the app-server protocol surface used
+ * by the built-in runtime: `thread/start`, `thread/resume`, `turn/start`, and
+ * thread-level instruction overrides (`baseInstructions` / `developerInstructions`).
+ * Doctor surfaces unsupported Codex builds loudly rather than letting prompt
+ * customization or turn delivery degrade silently at runtime.
  *
  * Pure version logic lives here in the package; the host-coupled diagnostic surface
  * (codex home + path validation) lives in Dreamux core and imports these.

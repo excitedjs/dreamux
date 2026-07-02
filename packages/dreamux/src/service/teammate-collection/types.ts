@@ -58,6 +58,7 @@ export interface TeamMateIdentity {
   runtime_cwd: string;
   worktree: TeamMateWorktreeIdentity;
   intent: string | null;
+  identity_prompt: string | null;
   created_at: number;
   updated_at: number;
   status: TeamMateIdentityStatus;
@@ -122,6 +123,7 @@ export interface SpawnTeamMateInput {
   cwd?: string;
   worktree?: TeamMateWorktreeRequest;
   intent: string;
+  identity?: string;
 }
 
 export interface CreateTeamLeaderInput {
@@ -140,6 +142,7 @@ export interface CreateTeamLeaderInput {
   runtimeCwd: string;
   worktree: TeamMateWorktreeIdentity;
   intent?: string | null;
+  identity?: string;
 }
 
 export interface TeamMateWorktreeRequest {
@@ -270,10 +273,6 @@ export interface TeamMateAgentRuntimeCapability {
   spawn: { agent_runtime: string };
   runtime_available: boolean;
   resume: AgentRuntimeCapabilities["resume"];
-  steer: AgentRuntimeCapabilities["steer"];
-  events: AgentRuntimeCapabilities["events"];
-  last: AgentRuntimeCapabilities["last"];
-  context: AgentRuntimeCapabilities["context"];
   unsupported_reason: string | null;
 }
 
@@ -298,6 +297,21 @@ export function requireLifecycleText(value: unknown, label: string): string {
     throw new Error(`${label} must be a non-empty string`);
   }
   return value;
+}
+
+export function optionalLifecycleText(
+  value: unknown,
+  label: string,
+): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string") {
+    throw new Error(`${label} must be a string`);
+  }
+  const trimmed = value.trim();
+  if (trimmed === "") {
+    throw new Error(`${label} must be a non-empty string`);
+  }
+  return trimmed;
 }
 
 export function runtimeStatusToIdentityStatus(

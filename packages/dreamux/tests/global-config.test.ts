@@ -50,13 +50,7 @@ function writeConfigObjectAt(configDir: string, value: unknown): void {
 }
 
 const EXTERNAL_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = {
-  resume: { supported: true, checkpoint: 'externalSession' },
-  steer: { supported: false },
-  events: { kind: 'synthesized' },
-  last: { supported: true },
-  context: { supported: false },
-  systemPrompt: { mode: 'append' },
-  teammateCompletion: [],
+  resume: { supported: true },
 };
 
 const externalRuntimeFactory: ExternalAgentRuntimeProviderFactory = ({

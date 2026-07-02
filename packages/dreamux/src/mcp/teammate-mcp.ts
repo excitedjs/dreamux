@@ -167,6 +167,7 @@ export function teammateTools(callerKind: TeamMateMcpCallerKind): Array<Record<s
         'Spawnable agents[].id returned by get_capabilities.agent_runtimes[].id.',
     },
     intent: { type: 'string', minLength: 1, maxLength: 2000 },
+    identity: { type: 'string', minLength: 1, maxLength: 4000 },
   };
   if (callerKind === 'dispatcher') {
     spawnProperties['repo'] = repoInputSchema();
@@ -320,6 +321,7 @@ function spawnArgs(
       prompt: requireString(obj, 'prompt'),
       intent,
       ...(agentRuntime !== null ? { agent_runtime: agentRuntime } : {}),
+      ...optionalProp(obj, 'identity'),
     };
   }
   const repo = optionalRepoInput(obj, 'repo');
@@ -328,6 +330,7 @@ function spawnArgs(
     prompt: requireString(obj, 'prompt'),
     intent,
     ...(agentRuntime !== null ? { agent_runtime: agentRuntime } : {}),
+    ...optionalProp(obj, 'identity'),
     ...(repo !== null ? { repo } : {}),
   };
 }

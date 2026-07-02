@@ -31,7 +31,6 @@ import type {
   InboundDeliveryHooks,
   InboundDeliveryResult,
   InboundTurnInput,
-  NoticeInjectionResult,
   TurnSettledSignal,
 } from './turn.js';
 
@@ -41,105 +40,45 @@ export interface AgentRuntimeMcpServer {
   args: string[];
 }
 
-/** The role Dreamux core assigns to a runtime instance. */
-export type AgentRuntimeRole =
-  | 'dispatcher'
-  | 'team_leader'
-  | 'teammate'
-  | 'team_member';
-
 /**
  * A bundled skill source core hands to a runtime. Core selects sources by role;
  * the runtime package owns the mechanics of applying them to its engine.
  */
 export interface AgentRuntimeSkillSource {
   name: string;
+  /** Directory containing SKILL.md. */
   path: string;
-  /**
-   * How the runtime should mount `path` into its engine. An open string, not a
-   * closed union: a new runtime may define its own layout without a types bump.
-   * Standard layouts core emits today are `skill-dir` (a single skill directory,
-   * e.g. a Codex `skills/extraRoots` entry) and `claude-skills-parent` (the
-   * parent of a `.claude/skills` tree, e.g. a Claude `--add-dir` root). A runtime
-   * that does not recognize a layout should ignore that source, not fail.
-   */
-  layout: string;
   source: 'dreamux-core' | string;
 }
 
-/**
- * An open, source-agnostic completion delivery shape. Each runtime self-declares
- * its own `kind` string inside its own capabilities; the shared contract never
- * enumerates them.
- */
-export interface CompletionDeliveryShape {
-  kind: string;
-  description: string;
-}
-
 export interface AgentRuntimeResumeCheckpoint {
-  /** Runtime-owned checkpoint kind; each runtime self-declares its own. */
-  kind: string;
+  /** Runtime-owned checkpoint id persisted by Dreamux and interpreted by the runtime. */
   id: string;
 }
 
-export type AgentRuntimeResumeCapability =
-  | { supported: true; checkpoint: AgentRuntimeResumeCheckpoint['kind'] }
-  | { supported: false };
+export interface AgentRuntimeResumeCapability {
+  supported: boolean;
+}
 
 export interface AgentRuntimeCapabilities {
-  /** Whether this runtime can resume a prior checkpoint, and which checkpoint id it expects. */
+  /** Whether this runtime can resume a prior checkpoint id from its create context. */
   resume: AgentRuntimeResumeCapability;
-  /**
-   * Whether a follow-up turn delivered while a turn is active folds into that
-   * turn rather than queueing behind it. Purely behavioral: there is no separate
-   * "steer" method — core still delivers through `channelInput`/`systemInput`,
-   * and this flag only tells core whether mid-turn delivery is absorbed.
-   */
-  steer: { supported: boolean };
-  /** How runtime events are surfaced to Dreamux. */
-  events: { kind: 'push' | 'synthesized' };
-  /** Whether {@link AgentRuntime.getLast} can report the last result. */
-  last: { supported: boolean };
-  /** Whether {@link AgentRuntime.getContext} can report context-window usage. */
-  context: { supported: boolean };
-  /**
-   * How the launcher-supplied role/system prompt content is applied: `replace`
-   * swaps the engine's base instructions, `append` adds to them.
-   */
-  systemPrompt: { mode: 'replace' | 'append' };
-  /** Upward delivery shapes this runtime supports for teammate completion. */
-  teammateCompletion: readonly CompletionDeliveryShape[];
 }
 
-/**
- * A source-agnostic completion delivered upward to a runtime. `teammate` is one
- * source; `id` identifies the completing entity within that source.
- */
-export interface CompletionEnvelope {
-  source: string;
-  id: string;
-  status: 'completed' | 'failed' | 'stopped';
-  result: string;
+export interface AgentRuntimeSystemPrompt {
+  /** Full role instructions for runtimes that replace their base prompt. */
+  replace?: string;
+  /**
+   * Ordered role deltas for runtimes that append to an existing native prompt.
+   * Runtime adapters preserve order and choose their native isolation mechanic.
+   */
+  append?: readonly string[];
 }
 
-export type TeamMateCompletionDeliveryResult =
-  | { status: 'accepted' }
-  | { status: 'unsupported'; reason: string }
-  | { status: 'failed'; error: Error };
-
-export interface AgentRuntimeSystemInput {
-  kind: 'system';
+export interface AgentRuntimeTextInput {
   text: string;
-  reason:
-    | 'restart-notice'
-    | 'teammate-completion'
-    | 'runtime-control'
-    | 'scheduled';
-}
-
-export interface AgentRuntimeResumeInput {
-  checkpoint?: AgentRuntimeResumeCheckpoint | null;
+  /** Correlation/dedupe metadata; not part of the model-visible text. */
+  sourceId?: string;
 }
 
 export interface AgentRuntimeLastResult {
@@ -165,8 +104,6 @@ export interface AgentRuntimePathContext {
    * own tree here.
    */
   logsDir(): string;
-  /** The owning dispatcher's completion-spill directory in the cache tree. */
-  completionSpillDir(id: string): string;
   /**
    * Candidate directories for volatile rendezvous sockets, in host preference
    * order. A runtime that needs a Unix-domain socket allocates a fresh random
@@ -218,7 +155,6 @@ export type AgentRuntimeStatus =
  */
 export interface AgentRuntimeStateCallbacks {
   setStatus(
-    id: string,
     status: AgentRuntimeStatus,
     extras?: {
       last_error?: string | null;
@@ -226,16 +162,17 @@ export interface AgentRuntimeStateCallbacks {
       last_ready_at?: number;
     },
   ): Promise<void>;
-  setThreadId(id: string, threadId: string): Promise<void>;
-  recordLostThread?(
-    id: string,
-    lostThreadId: string,
-    newThreadId: string,
+  setCheckpoint(checkpoint: AgentRuntimeResumeCheckpoint): Promise<void>;
+  recordLostCheckpoint?(
+    lost: AgentRuntimeResumeCheckpoint,
+    replacement: AgentRuntimeResumeCheckpoint,
     error: string,
   ): Promise<void>;
 }
 
-export type AgentRuntimeTurnResult = InboundDeliveryResult | NoticeInjectionResult;
+export type AgentRuntimeTurnResult =
+  | InboundDeliveryResult
+  | { status: 'skipped' };
 
 /**
  * The neutral, launcher-supplied identity of the runtime instance. Replaces the
@@ -248,20 +185,19 @@ export interface AgentRuntimeIdentity {
   runtime_id: string;
   /**
    * A prior resumable checkpoint id the launcher recovered, or null for a fresh
-   * start. The runtime interprets it per its own `resume` capability.
+   * start. The runtime interprets the id in its own native format.
    */
   checkpoint_id?: string | null;
 }
 
 /**
  * The neutral create context a provider's `createRuntime` receives. Carries the
- * runtime identity, role, parsed provider config, cwd, optional system-prompt
+ * runtime identity, parsed provider config, cwd, optional system-prompt
  * content, MCP servers, bundled skill sources, and neutral logger/path/state
  * sinks. It never exposes host dispatcher rows, stores, or config models.
  */
 export interface AgentRuntimeCreateContext<TConfig = unknown> {
   identity: AgentRuntimeIdentity;
-  role: AgentRuntimeRole;
   /** Provider-parsed config (the output of the provider's own `readConfig`). */
   config: TConfig;
   /**
@@ -270,10 +206,10 @@ export interface AgentRuntimeCreateContext<TConfig = unknown> {
    */
   cwd: string;
   /**
-   * Launcher-supplied role/system-prompt content, applied per the runtime's
-   * `systemPrompt.mode` capability. Optional: teammate launches may omit it.
+   * Launcher-supplied role/system-prompt content. Core supplies both canonical
+   * forms; runtime adapters decide which native prompt mechanic to use.
    */
-  systemPromptContent?: string;
+  systemPrompt?: AgentRuntimeSystemPrompt;
   /**
    * MCP servers the launcher injects for this runtime instance. Already fully
    * resolved by core: an empty array means "no MCP servers", and the provider
@@ -318,45 +254,39 @@ export interface AgentRuntimeCreateContext<TConfig = unknown> {
 export interface AgentRuntime {
   readonly providerRef: string;
   start(): Promise<void>;
-  resume(input?: AgentRuntimeResumeInput): Promise<void>;
+  resume(): Promise<void>;
   stop(): Promise<void>;
-  /** Deliver a channel-inbound turn. */
+  /**
+   * Deliver a channel/user turn. The runtime owns rendering the neutral channel
+   * shape into its native input format.
+   */
   channelInput(
     input: InboundTurnInput,
     hooks?: InboundDeliveryHooks,
   ): Promise<AgentRuntimeTurnResult>;
-  /** Inject a system-originated notice (e.g. a restart notice). */
-  systemInput(notice: AgentRuntimeSystemInput): Promise<AgentRuntimeTurnResult>;
+  /**
+   * Deliver a Dreamux-owned plain text turn. This is not channel input and must
+   * not receive channel/XML rendering.
+   */
+  completionInput(input: AgentRuntimeTextInput): Promise<AgentRuntimeTurnResult>;
   /**
    * Resolve when no turn is in progress. Optional: runtimes that omit it are
    * treated by core as always idle.
    */
   waitIdle?(): Promise<void>;
   getStatus(): AgentRuntimeStatus;
-  getThreadId(): string | null;
-  wasThreadResumed(): boolean;
+  getCheckpoint(): AgentRuntimeResumeCheckpoint | null;
+  wasCheckpointResumed(): boolean;
   /**
    * The last assistant/user-visible result, or `null` when unavailable.
-   * A runtime whose `capabilities.last.supported` is false returns `null`
-   * rather than throwing or blocking — core treats `null` as "not reported".
+   * Core treats `null` as "not reported".
    */
   getLast(): Promise<AgentRuntimeLastResult | null>;
   /**
-   * Context-window usage, or `null` when unavailable. A runtime whose
-   * `capabilities.context.supported` is false returns `null` rather than
-   * throwing or blocking.
+   * Context-window usage, or `null` when unavailable.
    */
   getContext(): Promise<AgentRuntimeContextSnapshot | null>;
   getCapabilities(): AgentRuntimeCapabilities;
-  /**
-   * Deliver a teammate-completion envelope upward. Optional, and feature-detected
-   * by presence: a runtime that declares no `capabilities.teammateCompletion`
-   * shapes should omit this method entirely rather than ship a throwing/no-op
-   * stub, since callers test for the method, not the capability array.
-   */
-  completionInput?(
-    completion: CompletionEnvelope,
-  ): Promise<TeamMateCompletionDeliveryResult>;
 }
 
 /**

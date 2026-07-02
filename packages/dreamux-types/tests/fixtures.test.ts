@@ -19,10 +19,7 @@ import {
 
 describe('external provider fixture', () => {
   it('declares neutral runtime capabilities', () => {
-    expect(EXTERNAL_RUNTIME_CAPABILITIES.events.kind).toBe('synthesized');
-    expect(EXTERNAL_RUNTIME_CAPABILITIES.teammateCompletion).toEqual([
-      { kind: 'fixturePlainTurn', description: 'deliver as a plain user turn' },
-    ]);
+    expect(EXTERNAL_RUNTIME_CAPABILITIES.resume.supported).toBe(false);
   });
 
   it('narrows provider descriptors to their kind (P2)', () => {
@@ -43,22 +40,19 @@ describe('external provider fixture', () => {
     expect(channel.descriptor.kind).toBe('channel');
   });
 
-  it('delivers a completion upward through the optional completionInput', async () => {
+  it('delivers a plain text turn through required completionInput', async () => {
     const runtime = fixtureRuntimeProvider.createRuntime({
       identity: { runtime_id: 'd1', checkpoint_id: null },
-      role: 'dispatcher',
       config: { model: 'm' },
       cwd: '/tmp/fixture',
       mcpServers: [],
     });
     expect(runtime.completionInput).toBeDefined();
-    const result = await runtime.completionInput?.({
-      source: 'teammate',
-      id: 't1',
-      status: 'completed',
-      result: 'done',
+    const result = await runtime.completionInput({
+      text: 'done',
+      sourceId: 't1',
     });
-    expect(result).toEqual({ status: 'accepted' });
+    expect(result).toEqual({ status: 'submitted', turnId: 't1' });
   });
 
   it('formats a config-read context', () => {
@@ -89,7 +83,6 @@ describe('external provider fixture', () => {
 
     const runtime = fixtureRuntimeProvider.createRuntime({
       identity: { runtime_id: 'd1', checkpoint_id: null },
-      role: 'dispatcher',
       config: config ?? { model: 'default' },
       cwd: '/tmp/fixture',
       mcpServers: [],

@@ -51,16 +51,6 @@ export type InboundDeliveryResult =
   | { status: 'submitted'; turnId: string }
   | { status: 'failed'; error: Error };
 
-/**
- * Result of a best-effort restart-notice injection. `skipped` means a real
- * inbound had already been handed to the runtime.
- */
-export type NoticeInjectionResult =
-  | { status: 'stopped' }
-  | { status: 'skipped' }
-  | { status: 'submitted'; turnId: string }
-  | { status: 'failed'; error: Error };
-
 export interface InboundDeliveryHooks {
   /**
    * Called after process-local dedupe accepts the message and before the turn
@@ -74,7 +64,11 @@ export interface InboundDeliveryHooks {
  * Capability-neutral — carries no channel or runtime specifics.
  */
 export interface TurnSettledSignal {
-  turnId: string | null;
+  turnId: string;
   status: 'completed' | 'failed' | 'stopped';
+  result?: {
+    text: string | null;
+    truncated?: boolean;
+  };
   error?: Error;
 }

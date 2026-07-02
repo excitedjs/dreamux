@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { CompletionEnvelope, InboundTurnInput } from '@excitedjs/dreamux-types';
+import type { InboundTurnInput } from '@excitedjs/dreamux-types';
 
 import {
   COMPLETION_INLINE_BUDGET_DEFAULT,
@@ -27,6 +27,7 @@ import {
   requireNonEmptyString,
   resolveCompletionBody,
   teamMateCompletionOutputPath,
+  type CompletionBodyInput,
 } from '../src/index.js';
 
 let root: string;
@@ -150,8 +151,8 @@ describe('turn-render', () => {
   });
 });
 
-function completion(result: string): CompletionEnvelope {
-  return { source: 'reviewer', id: 'reviewer:turn-1', status: 'completed', result };
+function completion(result: string): CompletionBodyInput {
+  return { source: 'reviewer', id: 'reviewer:turn-1', result };
 }
 
 function plain(text: string): InboundTurnInput {

@@ -14,8 +14,8 @@
  * contextually today (e.g. `AgentRuntimeDiagnosticContext` as a param of the
  * `AgentRuntimeDiagnostic` methods, `ChannelSender` on `ChannelInboundEnvelope`,
  * `AgentRuntimeResumeCapability` / `AgentRuntimeResumeCheckpoint` on the
- * capability/resume shapes) is still re-exported so a provider author can name
- * a shape they legitimately depend on — hiding it buys nothing at runtime. The
+ * capability/checkpoint shapes) is still re-exported so a provider author can
+ * name a shape they legitimately depend on — hiding it buys nothing at runtime. The
  * expanded `tests/fixtures/external-provider.ts` separately proves the surface
  * is *sufficient* to author a full provider importing from the root only.
  */
@@ -49,12 +49,11 @@ const ALLOWLIST = [
   'AgentRuntimeProviderFactory',
   'AgentRuntimeResumeCapability',
   'AgentRuntimeResumeCheckpoint',
-  'AgentRuntimeResumeInput',
-  'AgentRuntimeRole',
   'AgentRuntimeSkillSource',
   'AgentRuntimeStateCallbacks',
   'AgentRuntimeStatus',
-  'AgentRuntimeSystemInput',
+  'AgentRuntimeSystemPrompt',
+  'AgentRuntimeTextInput',
   'AgentRuntimeTurnResult',
   'BuiltinProviderRef',
   'ChannelBinCheck',
@@ -81,15 +80,12 @@ const ALLOWLIST = [
   'ChannelToolContext',
   'ChannelToolDescriptor',
   'ChannelToolListContext',
-  'CompletionDeliveryShape',
-  'CompletionEnvelope',
   'DreamuxEnvironment',
   'DreamuxLogger',
   'InboundAttachment',
   'InboundDeliveryHooks',
   'InboundDeliveryResult',
   'InboundTurnInput',
-  'NoticeInjectionResult',
   'NpmProviderRef',
   'ProviderBinCheck',
   'ProviderDiagnosticRunner',
@@ -116,7 +112,6 @@ const ALLOWLIST = [
   'SubscribeChannelRoutes',
   'SubscribeChannelSession',
   'SubscribeChannelSessionCreateContext',
-  'TeamMateCompletionDeliveryResult',
   'TurnSettledSignal',
 ];
 

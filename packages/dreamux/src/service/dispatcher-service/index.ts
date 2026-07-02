@@ -161,8 +161,9 @@ export class DispatcherService {
       log: opts.log,
     });
 
-    // A dispatcher-owned teammate is never a team_leader, so it carries no
-    // launch policy (the team_leader policy is owned by the team layer).
+    // Dispatcher-owned teammates carry no default role policy. If the caller
+    // supplies MCP identity guidance, the collection passes it through as an
+    // append-only system prompt fragment.
     this._teammates = new TeammateCollection({
       dispatcherId: opts.id,
       teamScope: null,
@@ -265,9 +266,10 @@ export class DispatcherService {
     }
 
     try {
-      // Runtime up, sessions adopted as the live slot so each is observable as it
-      // starts (issue #209 fix #7); restart-notice + scheduler arming run in this
-      // SAME try so a failure rolls back rather than leaving cron silently unarmed.
+      // Runtime up, sessions adopted as the live slot so each is observable.
+      // Restart-notice + channel starts + scheduler arming run in this SAME try
+      // so a failure rolls back rather than leaving cron silently unarmed.
+      await this.injectRestartNoticeIfNeeded(id, runtime);
       for (const [channelId, session] of channels) {
         await session.start({
           deliver: async (turn, envelope, hooks) =>
@@ -276,7 +278,6 @@ export class DispatcherService {
             ),
         });
       }
-      await this.injectRestartNoticeIfNeeded(id, runtime);
       await this.scheduler.start();
       await this.teams.startSchedulers();
     } catch (err) {
@@ -321,7 +322,7 @@ export class DispatcherService {
     const runtime = this.agent.getRuntime();
     return {
       status: runtime?.getStatus() ?? null,
-      threadId: runtime?.getThreadId() ?? null,
+      threadId: runtime?.getCheckpoint()?.id ?? null,
     };
   }
 
@@ -335,7 +336,7 @@ export class DispatcherService {
       dispatcher_id: row.dispatcher_id,
       channel_identity: row.channel_identity,
       status: runtime?.getStatus() ?? row.status,
-      thread_id: runtime?.getThreadId() ?? row.thread_id,
+      thread_id: runtime?.getCheckpoint()?.id ?? row.thread_id,
       enabled: row.enabled === 1,
     };
   }
@@ -522,14 +523,13 @@ export class DispatcherService {
     dispatcherId: string,
     runtime: AgentRuntime,
   ): Promise<void> {
-    if (!runtime.wasThreadResumed()) return;
+    if (!runtime.wasCheckpointResumed()) return;
     const notice = this.restartIntent?.claim(dispatcherId, Date.now()) ?? null;
     if (notice === null) return;
     try {
-      const result = await runtime.systemInput({
-        kind: 'system',
+      const result = await runtime.completionInput({
         text: notice,
-        reason: 'restart-notice',
+        sourceId: `restart-notice:${dispatcherId}`,
       });
       if (result.status === 'failed') {
         this.log.warn(

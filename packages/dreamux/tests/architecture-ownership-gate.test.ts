@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdir, mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7,7 +7,10 @@ import { fileURLToPath } from 'node:url';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import type { AgentRuntimeProviderCatalog } from '../src/agent-runtime/index.js';
-import { resetRuntimeConfig } from '../src/platform/paths.js';
+import {
+  dispatcherAgentIdentityPath,
+  resetRuntimeConfig,
+} from '../src/platform/paths.js';
 import { TeammateCollection } from '../src/service/teammate-collection/index.js';
 import { TeamMateIdentityStore } from '../src/service/teammate-collection/identity-store.js';
 import { TeamMateTurnsStore } from '../src/service/teammate-collection/turns-store.js';
@@ -312,6 +315,62 @@ describe('architecture ownership gate (#233)', () => {
     await expect(collection.status('tl-alpha')).rejects.toThrow(
       'TeamMate "tl-alpha" does not exist',
     );
+  });
+
+  it('reads old TeamMate identity records with identity_prompt as null', async () => {
+    const workspace = join(root, 'workspace');
+    await mkdir(workspace, { recursive: true });
+    const log = noopLog();
+    const identities = new TeamMateIdentityStore({ warn: log.warn.bind(log) });
+    const worktree = {
+      mode: 'reuse-cwd',
+      slug: null,
+      path: workspace,
+      branch: null,
+      base_ref: null,
+      cleanup: 'keep',
+      cleanup_state: 'not-managed',
+      cleanup_error: null,
+    } satisfies TeamMateWorktreeIdentity;
+    const path = dispatcherAgentIdentityPath({
+      dispatcherId: 'dispatcher-a',
+      name: 'legacy-worker',
+      teamId: null,
+      role: 'teammate',
+    });
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(
+      path,
+      `${JSON.stringify({
+        version: 1,
+        dispatcher_id: 'dispatcher-a',
+        name: 'legacy-worker',
+        role: 'teammate',
+        team_id: null,
+        agent_runtime: 'agent-a',
+        session_id: null,
+        source_cwd: workspace,
+        source_repo: null,
+        cwd: workspace,
+        runtime_cwd: workspace,
+        worktree,
+        intent: 'old work',
+        created_at: 1,
+        updated_at: 1,
+        status: 'running',
+        last_error: null,
+        closed_at: null,
+        close_note: null,
+        turn_count: 0,
+        last_seen_at: 1,
+        last_prompt_preview: null,
+        last_assistant_preview: null,
+      })}\n`,
+    );
+
+    await expect(
+      identities.get('dispatcher-a', 'legacy-worker'),
+    ).resolves.toMatchObject({ identity_prompt: null });
   });
 
   it('builds conversational agents through the factory with named launch strategies', async () => {
