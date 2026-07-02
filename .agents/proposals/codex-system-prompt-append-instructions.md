@@ -5,7 +5,7 @@
 - **Related PR:** [#271](https://github.com/excitedjs/dreamux/pull/271)
 - **Depends on:** [TeamMate identity system prompt](teammate-identity-system-prompt.md)
 - **Affects:** `@excitedjs/agent-runtime-codex`, Codex runtime protocol mapping, system-prompt tests
-- **Source snapshot:** Dreamux branch `team/agentruntime-opt-0630-1901` after [#274](https://github.com/excitedjs/dreamux/pull/274); Codex source `main@129ea2aaf5fb426d8ba683ee53f290742f41dd31`
+- **Source snapshot:** Dreamux branch `team/agentruntime-opt-0630-1901` after [#274](https://github.com/excitedjs/dreamux/pull/274); Codex source `main@129ea2aaf5fb426d8ba683ee53f290742f41dd31`; refreshed Codex tags show `developerInstructions` present in `rust-v0.135.0` and `rust-v0.137.0`
 
 ## Context
 
@@ -35,7 +35,8 @@ That is the wrong layer for append-only system guidance:
 - `thread/inject_items` mutates model-visible thread history. It is suitable for
   historical item delivery, not for the runtime creation contract.
 - Codex app-server already accepts `developerInstructions` on both
-  `thread/start` and `thread/resume`.
+  `thread/start` and `thread/resume`; this was verified in Codex `rust-v0.135.0`
+  and `rust-v0.137.0`.
 - Codex persists `base_instructions` in thread metadata, but the current Codex
   source does not persist `developer_instructions` in `SessionMeta` or
   `CreateThreadParams`.
@@ -111,10 +112,29 @@ Codex adapter renders every append element as its own XML block:
 </developer-reminder>
 ```
 
-The adapter escapes XML text content inside each block. It then joins the blocks
-with blank lines and sends the joined string as `developerInstructions`. The
-adapter must not send append guidance through `thread/inject_items`, first-turn
-input, `channelInput`, `completionInput`, or `baseInstructions`.
+The adapter escapes XML text content inside each block. It should reuse the
+existing Codex append renderer rather than introducing a second renderer for the
+same XML boundary contract. After empty fragments are filtered, an empty result
+omits `developerInstructions`; it must not send an empty string. For non-empty
+append input, the adapter joins the rendered blocks with blank lines and sends
+the joined string as `developerInstructions`.
+
+The adapter must not send append guidance through `thread/inject_items`,
+first-turn input, `channelInput`, `completionInput`, or `baseInstructions`.
+
+Dreamux must continue to fail loudly when the installed Codex version cannot
+support the selected runtime prompt protocol. The existing Dreamux minimum
+Codex version (`0.137.0`) is already high enough for `developerInstructions`,
+because that field is present in Codex `rust-v0.137.0`. This change should keep
+or raise the version gate only if later code facts require it, but the gate and
+diagnostic text must no longer claim that teammate completion delivery depends
+on `thread/inject_items`.
+
+Reverse completion delivery is separate from append prompt delivery. Current
+Codex completion delivery uses `completionInput` -> `turn/start`, not
+`thread/inject_items`. This change must not remove or weaken that `turn/start`
+completion path, but it should remove the stale prompt-append item-injection
+helpers when no callers remain.
 
 If Codex later persists `developer_instructions` natively, Dreamux may still
 re-supply the same developer instructions on resume unless a future verified
@@ -131,14 +151,22 @@ requires a new proposal or decision update with source evidence.
 - The Codex runtime no longer calls `thread/inject_items` for
   `systemPrompt.append`.
 - Existing completion delivery behavior remains unchanged. This change must not
-  remove or weaken the reverse-completion delivery path that relies on Codex
-  item injection.
+  remove or weaken the reverse-completion delivery path
+  (`completionInput` -> `turn/start`).
+- Stale `thread/inject_items` append-prompt plumbing is cleaned up when no
+  callers remain: the `buildCodexSystemPromptAppendItem` helper is removed, and
+  the internal `injectThreadItems` helper is either removed or retained only with
+  a real remaining caller or a clearly documented near-term use.
+- Codex version gate comments and diagnostics are updated so they describe the
+  current runtime requirements and fail-loud behavior instead of the stale
+  "teammate completion delivery via `thread/inject_items`" rationale.
 - `replace` continues to map to `baseInstructions`, and Codex still suppresses
   `append` when `replace` is present so dispatcher guidance is not duplicated.
 - Append-only prompts never become `baseInstructions` and never appear in the
   first user/channel/completion turn text.
 - Tests cover fresh start, resume, resume-fallback start, replace precedence,
-  XML escaping, and the absence of append prompt delivery through
+  XML escaping, omission of empty `developerInstructions`, completion delivery
+  through `turn/start`, and the absence of append prompt delivery through
   `thread/inject_items`.
 - Focused verification runs for the Codex runtime package tests touched by this
   change, plus repository KB validation when proposal links change.
