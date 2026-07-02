@@ -173,6 +173,12 @@ async function createTestTeamLeader(input: {
     identity,
     mcpServers: [],
     disableFeatures: [],
+    systemPrompt: {
+      append: [
+        `You are the TeamLeader of Dreamux Team ${JSON.stringify(input.teamId)}.`,
+        ...(identity.identity_prompt !== null ? [identity.identity_prompt] : []),
+      ],
+    },
     config: input.config,
     agentRuntimeProviders: input.agentRuntimeProviders,
     identities,
@@ -281,7 +287,7 @@ describe('TeammateService channel input routing', () => {
     expect(leader.current().identity_prompt).toBe('architecture reviewer');
     expect(contexts[0]?.systemPrompt?.append).toEqual([
       'You are the TeamLeader of Dreamux Team "alpha".',
-      expect.stringContaining('architecture reviewer'),
+      'architecture reviewer',
     ]);
     expect(contexts[0]?.systemPrompt).not.toHaveProperty('replace');
     expect(leader.status()).not.toHaveProperty('identity_prompt');
@@ -324,11 +330,11 @@ describe('TeammateService channel input routing', () => {
     expect(contexts).toHaveLength(2);
     expect(contexts[0]?.systemPrompt?.append).toEqual([
       'You are the TeamLeader of Dreamux Team "alpha".',
-      expect.stringContaining('architecture reviewer'),
+      'architecture reviewer',
     ]);
     expect(contexts[1]?.systemPrompt?.append).toEqual([
       'You are the TeamLeader of Dreamux Team "alpha".',
-      expect.stringContaining('architecture reviewer'),
+      'architecture reviewer',
     ]);
     expect(contexts[0]?.systemPrompt).not.toHaveProperty('replace');
     expect(contexts[1]?.systemPrompt).not.toHaveProperty('replace');

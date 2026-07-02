@@ -452,7 +452,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     const fleet = fakeFleet();
     const { runtime } = makeRuntime(fleet, {
       systemPrompt: {
-        append: ['Dreamux persistent identity guidance:\nReviewer role.'],
+        append: ['Reviewer role.'],
       },
     });
     await runtime.start();
@@ -462,7 +462,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     expect(i).toBeGreaterThanOrEqual(0);
     expect(args[i + 1]).toBe(
       '<system-reminder>\n' +
-        'Dreamux persistent identity guidance:\nReviewer role.\n' +
+        'Reviewer role.\n' +
         '</system-reminder>',
     );
   });

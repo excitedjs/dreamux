@@ -437,14 +437,14 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     expect(leaderContext?.disableFeatures).toEqual(['userInterrupt', 'cron']);
     expect(leaderContext?.systemPrompt?.append).toEqual([
       'You are the TeamLeader of Dreamux Team "alpha".',
-      expect.stringContaining('team coordinator'),
+      'team coordinator',
     ]);
     expect(leaderContext?.systemPrompt).not.toHaveProperty('replace');
     expect(memberContext?.mcpServers.map((server) => server.name)).not.toContain('team');
     expect(memberContext?.mcpServers.map((server) => server.name)).not.toContain('cron');
     expect(memberContext?.disableFeatures).toEqual(['userInterrupt']);
     expect(memberContext?.systemPrompt?.append).toEqual([
-      expect.stringContaining('worker specialist'),
+      'worker specialist',
     ]);
     expect(memberContext?.systemPrompt?.append?.join('\n')).not.toContain(
       'TeamLeader of Dreamux Team',
@@ -452,7 +452,7 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     expect(memberContext?.systemPrompt).not.toHaveProperty('replace');
     expect(teammateContext?.disableFeatures).toEqual(['userInterrupt']);
     expect(teammateContext?.systemPrompt?.append).toEqual([
-      expect.stringContaining('general helper'),
+      'general helper',
     ]);
     expect(teammateContext?.systemPrompt?.append?.join('\n')).not.toContain(
       'TeamLeader of Dreamux Team',

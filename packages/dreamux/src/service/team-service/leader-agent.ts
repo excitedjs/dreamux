@@ -1,5 +1,6 @@
 import type {
   AgentRuntimeMcpServer,
+  AgentRuntimeSystemPrompt,
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
 
@@ -20,6 +21,7 @@ export interface TeamLeaderAgentDeps {
   identity: TeamMateIdentity;
   mcpServers: readonly AgentRuntimeMcpServer[];
   disableFeatures: readonly string[];
+  systemPrompt?: AgentRuntimeSystemPrompt;
   config: DreamuxConfig;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   identities: TeamMateIdentityStore;
@@ -45,6 +47,9 @@ export function createTeamLeaderAgent(
     options: {
       mcpServers: deps.mcpServers,
       disableFeatures: deps.disableFeatures,
+      ...(deps.systemPrompt !== undefined
+        ? { systemPrompt: deps.systemPrompt }
+        : {}),
     },
     config: deps.config,
     agentRuntimeProviders: deps.agentRuntimeProviders,

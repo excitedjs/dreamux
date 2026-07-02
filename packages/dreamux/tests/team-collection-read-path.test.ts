@@ -415,7 +415,7 @@ describe('TeamCollection identity prompt launch behavior', () => {
     expect(team.leader.current().identity_prompt).toBe('architecture reviewer');
     expect(contexts[0]?.systemPrompt?.append).toEqual([
       'You are the TeamLeader of Dreamux Team "alpha".',
-      expect.stringContaining('architecture reviewer'),
+      'architecture reviewer',
     ]);
     expect(contexts[0]?.systemPrompt).not.toHaveProperty('replace');
     const summary = await team.status();

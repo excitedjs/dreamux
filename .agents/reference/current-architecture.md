@@ -232,6 +232,10 @@ guidance from MCP `identity` is rendered from the persisted
 `systemPrompt.append` fragments on each runtime launch/relaunch that rebuilds the
 create context: initial create/spawn, close/reopen, process restart, Team
 rebuild, and runtime resume.
+Prompt-policy ownership stays outside the generic `TeammateService` runtime
+container: `TeamService` supplies the TeamLeader default and TeamLeader identity
+fragments, while `TeammateCollection` supplies only caller-provided TeamMate or
+team-member identity fragments.
 
 Runtime adapters must implement selected `systemPrompt.append` semantics. Claude
 Code folds append prompt fragments into `--append-system-prompt` before the

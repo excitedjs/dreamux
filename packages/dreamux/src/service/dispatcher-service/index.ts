@@ -161,8 +161,9 @@ export class DispatcherService {
       log: opts.log,
     });
 
-    // A dispatcher-owned teammate is never a team_leader, so it carries no
-    // launch policy (the team_leader policy is owned by the team layer).
+    // Dispatcher-owned teammates carry no default role policy. If the caller
+    // supplies MCP identity guidance, the collection passes it through as an
+    // append-only system prompt fragment.
     this._teammates = new TeammateCollection({
       dispatcherId: opts.id,
       teamScope: null,

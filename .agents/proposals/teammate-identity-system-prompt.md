@@ -83,11 +83,13 @@ For TeamLeaders, `intent` and `identity` remain independent inputs persisted on
 separate record fields: `intent` is the recovery subject, and `identity_prompt`
 is model-facing role guidance.
 
-When present, the stored identity is rendered as a Dreamux-owned append-style
-prompt block that tells the runtime this is persistent role guidance for the
-session and not the current task request. The identity block is a delta on top
-of the runtime's native coding-agent prompt; it must not be treated as a full
-replacement base prompt.
+When present, the stored identity is supplied unchanged as one append fragment.
+The owner layer that launches the agent decides whether such a fragment exists:
+TeamService supplies TeamLeader defaults and TeamLeader caller identity, while
+TeammateCollection supplies only caller-provided TeamMate or team-member
+identity. The fragment is a delta on top of the runtime's native coding-agent
+prompt; it must not be treated as a full replacement base prompt. Runtime
+adapters own any XML/native wrapping needed to keep append fragments isolated.
 
 `AgentRuntimeCreateContext.systemPrompt` is the single provider-facing prompt
 surface. Core may populate:

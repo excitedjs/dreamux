@@ -115,6 +115,7 @@ export interface TeammateServiceDeps {
 export interface TeammateServiceOptions {
   mcpServers?: readonly AgentRuntimeMcpServer[];
   disableFeatures?: readonly string[];
+  systemPrompt?: AgentRuntimeSystemPrompt;
 }
 
 /**
@@ -134,6 +135,7 @@ export class TeammateService {
   private state: TeamMateRuntimeStateStore;
   private readonly mcpServers: readonly AgentRuntimeMcpServer[];
   private readonly disableFeatures: readonly string[];
+  private readonly systemPrompt: AgentRuntimeSystemPrompt | undefined;
 
   constructor(
     private readonly deps: TeammateServiceDeps,
@@ -143,6 +145,7 @@ export class TeammateService {
   ) {
     this.mcpServers = options.mcpServers ?? [];
     this.disableFeatures = options.disableFeatures ?? [];
+    this.systemPrompt = options.systemPrompt;
     this.state = new TeamMateRuntimeStateStore(deps.identities, identity);
   }
 
@@ -423,7 +426,6 @@ export class TeammateService {
     );
     const provider = this.deps.agentRuntimeProviders.resolve(agent.provider);
     const runtimeName = runtimeIdentityName(identity);
-    const systemPrompt = teammateSystemPrompt(identity);
     return {
       provider,
       checkpointId: identity.session_id,
@@ -436,7 +438,9 @@ export class TeammateService {
         cwd: identity.cwd,
         skillSources: bundledSkillSourcesForRole(identity.role),
         disableFeatures: this.disableFeatures,
-        ...(systemPrompt !== undefined ? { systemPrompt } : {}),
+        ...(this.systemPrompt !== undefined
+          ? { systemPrompt: this.systemPrompt }
+          : {}),
         state: this.state,
         paths: teammateHostPaths(identity.dispatcher_id, runtimeName),
         mcpServers: [...this.mcpServers],
@@ -626,33 +630,4 @@ function runtimeIdentityName(identity: TeamMateIdentity): string {
   return identity.team_id !== null
     ? `${identity.team_id}.${identity.name}`
     : identity.name;
-}
-
-function teammateSystemPrompt(
-  identity: TeamMateIdentity,
-): AgentRuntimeSystemPrompt | undefined {
-  const append: string[] = [];
-  if (identity.role === 'team_leader') {
-    append.push(teamLeaderDefaultSystemPromptAppend(identity));
-  }
-  if (identity.identity_prompt !== null) {
-    append.push(teammateIdentitySystemPromptAppend(identity.identity_prompt));
-  }
-  if (append.length === 0) return undefined;
-  return { append };
-}
-
-function teamLeaderDefaultSystemPromptAppend(identity: TeamMateIdentity): string {
-  const teamName = identity.team_id ?? identity.name;
-  return `You are the TeamLeader of Dreamux Team ${JSON.stringify(teamName)}.`;
-}
-
-function teammateIdentitySystemPromptAppend(identityPrompt: string): string {
-  return (
-    'Dreamux persistent identity guidance:\n' +
-    'This is caller-supplied stable role or working guidance for this runtime session, ' +
-    'not the current task request. Apply it as an identity delta on top of ' +
-    'your native coding-agent instructions.\n\n' +
-    identityPrompt
-  );
 }
