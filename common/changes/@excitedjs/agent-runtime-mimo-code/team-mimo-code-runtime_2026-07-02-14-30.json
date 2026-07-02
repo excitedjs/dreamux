@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/agent-runtime-mimo-code",
+      "comment": "Add the external MiMo Code Agent Runtime provider package with isolated serve lifecycle and HTTP message settlement.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-mimo-code"
+}
