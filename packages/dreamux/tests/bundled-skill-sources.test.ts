@@ -16,7 +16,7 @@ import {
 } from '../src/agent-runtime/bundled-skill-sources.js';
 import {
   BUNDLED_SKILL_NAMES,
-  bundledSkillContainerDir,
+  bundledSkillsDir,
   bundledSkillDir,
   type BundledSkillName,
 } from '../src/platform/paths.js';
@@ -53,7 +53,7 @@ describe('bundledSkillSourcesForRole', () => {
       }
       const parents = new Set(sources.map((s) => dirname(s.path)));
       expect([...parents]).toEqual(
-        sources.length === 0 ? [] : [bundledSkillContainerDir()],
+        sources.length === 0 ? [] : [bundledSkillsDir()],
       );
     });
 

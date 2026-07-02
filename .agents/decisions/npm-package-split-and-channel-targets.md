@@ -867,20 +867,18 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   — it was never an owner-designed capability, acceptance item, or follow-up.
   (3) **Claude Code bundled-skill injection now works end-to-end** — see below.
 - **Claude Code bundled-skill injection — satisfied now:** the bundled Dreamux
-  skills are stored under `packages/dreamux/skills/.claude/skills/<name>/` (shipped
-  via the package `files` allowlist), so ONE on-disk copy serves both engines.
-  `bundledSkillSourcesForRole('dispatcher' | 'team_leader')` now emits BOTH a
-  per-skill `skill-dir` source (path = the skill dir) AND a single
-  `claude-skills-parent` source (path = `bundledSkillsDir()`, the add-dir parent
-  that contains `.claude/skills`). **Codex** still applies the `skill-dir` sources
-  via `skills/extraRoots/set` (the shared parent — now the `.claude/skills`
-  container — is one root; the skill set is unchanged). **Claude Code** translates
-  the `claude-skills-parent` source into a real
-  `--add-dir <absolute package path>` flag, so a Dispatcher/TeamLeader Claude
-  launch genuinely discovers the bundled skills (no more filtering to zero). Both
-  engines read the same physical skills; ordinary teammate/team_member roles still
-  receive none; no workspace mutation and no symlink/copy model. Runtime packages
-  still depend on `@excitedjs/dreamux-types` only.
+  skills are stored as direct skill directories under
+  `packages/dreamux/skills/<name>/` (shipped via the package `files` allowlist).
+  `bundledSkillSourcesForRole('dispatcher' | 'team_leader')` emits only those
+  direct skill directories as neutral `skillSources`; no source object encodes a
+  Claude-specific layout marker. **Codex** applies the source parents via
+  `skills/extraRoots/set` (the shared parent is `packages/dreamux/skills`, so the
+  skill set is unchanged). **Claude Code** materializes a runtime-owned add-dir
+  root containing `.claude/skills/<name>` symlinks that point at the direct skill
+  directories, then passes that add-dir root through `--add-dir`. Both engines
+  read the same physical skills; ordinary teammate/team_member roles still
+  receive none; no workspace mutation and no source-tree runtime layout. Runtime
+  packages still depend on `@excitedjs/dreamux-types` only.
 - **Live multi-channel routing — PARTIALLY SUPERSEDED by Decision #4 (PR #223):**
   the config-layer capability "a dispatcher may declare more than one
   `builtin:feishu` channel" is REVERSED — config now caps a dispatcher at one
