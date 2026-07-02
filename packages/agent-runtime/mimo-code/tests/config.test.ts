@@ -120,8 +120,6 @@ describe('MiMo Code native config shaping', () => {
     expect(nativeConfig).toMatchObject({
       share: 'disabled',
       model: 'mimo/model',
-      agent: 'build',
-      system: 'system prompt',
       permission: 'deny',
       mcp: {
         tool: {
@@ -130,5 +128,7 @@ describe('MiMo Code native config shaping', () => {
         },
       },
     });
+    expect(nativeConfig).not.toHaveProperty('agent');
+    expect(nativeConfig).not.toHaveProperty('system');
   });
 });

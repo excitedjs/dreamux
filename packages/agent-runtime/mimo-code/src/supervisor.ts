@@ -159,8 +159,6 @@ export function buildMimoNativeConfig(
     ),
   };
   if (options.config.model !== null) config.model = options.config.model;
-  if (options.config.agent !== null) config.agent = options.config.agent;
-  if (options.systemPrompt !== null) config.system = options.systemPrompt;
   config.permission = 'deny';
   return `${JSON.stringify(config, null, 2)}\n`;
 }
