@@ -19,7 +19,6 @@ import {
 } from './turn-manager.js';
 import {
   extractAssistantText,
-  injectThreadItems,
   type CollectedTurn,
 } from './events.js';
 import { renderChannelInput } from '@excitedjs/dreamux-utils';
@@ -43,8 +42,8 @@ import type {
 import { BUILTIN_CODEX_PROVIDER_REF } from './provider-ref.js';
 import { CODEX_AGENT_RUNTIME_CAPABILITIES } from './provider.js';
 import {
-  buildCodexSystemPromptAppendItem,
   codexProcessEnv,
+  renderCodexSystemPromptAppend,
 } from './runtime-support.js';
 import { applyCodexSkillExtraRoots } from './skill-roots.js';
 
@@ -229,7 +228,6 @@ export class CodexRuntime implements AgentRuntime {
     await this.applySkillExtraRoots();
 
     await this.resolveThread();
-    await this.injectSystemPromptAppend();
 
     this.turnManager = new TurnManager({
       dispatcherId: this.dispatcherId,
@@ -253,10 +251,11 @@ export class CodexRuntime implements AgentRuntime {
   private async resolveThread(): Promise<void> {
     if (this.client === null) throw new Error('client not initialized');
     this.threadResumed = false;
+    const threadInstructions = this.threadInstructionParams();
     const existing = this.threadId ?? this.identity.checkpoint_id ?? null;
     if (existing === null) {
       const params: ThreadStartParams = {
-        baseInstructions: this.deps.systemPromptReplace,
+        ...threadInstructions,
       };
       const res = await this.client.request<ThreadStartResponse>(
         'thread/start',
@@ -270,7 +269,7 @@ export class CodexRuntime implements AgentRuntime {
     try {
       const params: ThreadResumeParams = {
         threadId: existing,
-        baseInstructions: this.deps.systemPromptReplace,
+        ...threadInstructions,
       };
       await this.client.request<ThreadResumeResponse>('thread/resume', params);
       this.threadId = existing;
@@ -284,7 +283,7 @@ export class CodexRuntime implements AgentRuntime {
       );
       const res = await this.client.request<ThreadStartResponse>(
         'thread/start',
-        { baseInstructions: this.deps.systemPromptReplace },
+        { ...threadInstructions },
       );
       this.threadId = res.thread.id;
       if (this.state.recordLostCheckpoint !== undefined) {
@@ -302,25 +301,23 @@ export class CodexRuntime implements AgentRuntime {
     }
   }
 
-  private async injectSystemPromptAppend(): Promise<void> {
-    const systemPromptAppend = (this.deps.systemPromptAppend ?? []).filter(
-      (prompt) => prompt !== '',
-    );
-    if (systemPromptAppend.length === 0) return;
-    if (this.client === null) throw new Error('client not initialized');
-    if (this.threadId === null) {
-      throw new Error('codex systemPrompt.append injection has no thread id');
+  private threadInstructionParams(): Pick<
+    ThreadStartParams,
+    'baseInstructions' | 'developerInstructions'
+  > {
+    const params: Pick<
+      ThreadStartParams,
+      'baseInstructions' | 'developerInstructions'
+    > = {};
+    if (this.deps.systemPromptReplace !== undefined) {
+      params.baseInstructions = this.deps.systemPromptReplace;
+      return params;
     }
-    try {
-      await injectThreadItems(this.client, this.threadId, [
-        buildCodexSystemPromptAppendItem(systemPromptAppend),
-      ]);
-    } catch (err) {
-      const cause = err instanceof Error ? err.message : String(err);
-      throw new Error(
-        `codex systemPrompt.append thread/inject_items failed (requires codex 0.137+): ${cause}`,
-      );
+    if (this.deps.systemPromptAppend !== undefined) {
+      const rendered = renderCodexSystemPromptAppend(this.deps.systemPromptAppend);
+      if (rendered !== '') params.developerInstructions = rendered;
     }
+    return params;
   }
 
   async channelInput(

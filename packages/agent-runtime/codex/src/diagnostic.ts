@@ -47,7 +47,7 @@ async function checkCodexVersion(
   if (codexVersionSatisfies(raw)) return null;
   return (
     `Codex at ${bin} reported ${raw.trim() || '<empty>'}; requires codex >= ` +
-    `${MIN_CODEX_VERSION} for teammate completion delivery (thread/inject_items)`
+    `${MIN_CODEX_VERSION} for the app-server runtime protocol`
   );
 }
 

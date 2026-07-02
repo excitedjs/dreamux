@@ -30,10 +30,10 @@ function skillSource(path: string): AgentRuntimeSkillSource {
 class FakeClient {
   readonly methods: string[] = [];
   readonly extraRootsCalls: string[][] = [];
-  readonly injectItemsCalls: unknown[] = [];
   readonly threadStartCalls: unknown[] = [];
+  readonly threadResumeCalls: unknown[] = [];
   readonly turnStartCalls: unknown[] = [];
-  injectItemsError: Error | null = null;
+  threadResumeError: Error | null = null;
   private readonly handlers: Array<(notification: unknown) => void> = [];
   private nextTurnId = 1;
   failExtraRoots = false;
@@ -73,10 +73,11 @@ class FakeClient {
       this.threadStartCalls.push(params);
       return { thread: { id: 'thread-fake' } } as R;
     }
-    if (method === 'thread/inject_items') {
-      if (this.injectItemsError !== null) throw this.injectItemsError;
-      this.injectItemsCalls.push(params);
-      return {} as R;
+    if (method === 'thread/resume') {
+      this.threadResumeCalls.push(params);
+      if (this.threadResumeError !== null) throw this.threadResumeError;
+      const threadId = (params as { threadId: string }).threadId;
+      return { thread: { id: threadId } } as R;
     }
     if (method === 'turn/start') {
       this.turnStartCalls.push(params);
@@ -173,8 +174,12 @@ function buildRuntime(
   logger?: DreamuxLogger,
   onTurnSettled?: (settled: TurnSettledSignal) => void,
   systemPrompt?: AgentRuntimeSystemPrompt,
+  checkpointId: string | null = null,
 ): CodexRuntime {
-  const identity: AgentRuntimeIdentity = { runtime_id: 'flow', checkpoint_id: null };
+  const identity: AgentRuntimeIdentity = {
+    runtime_id: 'flow',
+    checkpoint_id: checkpointId,
+  };
   return new CodexRuntime(identity, {
     cwd: '/fake/cwd',
     state: noopState(),
@@ -215,27 +220,7 @@ describe('codex skills/extraRoots/set injection', () => {
     expect(startIdx).toBeGreaterThan(setIdx);
   });
 
-  it('fails append-only systemPrompt loudly before first turn when injection fails', async () => {
-    const client = new FakeClient();
-    client.injectItemsError = new Error('injection unavailable');
-    const runtime = buildRuntime(
-      client,
-      [],
-      undefined,
-      undefined,
-      {
-        append: [
-          'Dreamux persistent identity guidance:\narchitecture reviewer',
-          'Keep <review> & do not close </developer-reminder>.',
-        ],
-      },
-    );
-
-    await expect(runtime.start()).rejects.toThrow(/systemPrompt\.append/);
-    expect(client.methods).not.toContain('turn/start');
-  });
-
-  it('injects append-only systemPrompt after thread start and before first turn', async () => {
+  it('passes append-only systemPrompt as developerInstructions before first turn', async () => {
     const client = new FakeClient();
     const runtime = buildRuntime(
       client,
@@ -255,33 +240,102 @@ describe('codex skills/extraRoots/set injection', () => {
     await runtime.stop();
 
     const startIdx = client.methods.indexOf('thread/start');
-    const injectIdx = client.methods.indexOf('thread/inject_items');
     const turnIdx = client.methods.indexOf('turn/start');
-    expect(injectIdx).toBeGreaterThan(startIdx);
-    expect(turnIdx).toBeGreaterThan(injectIdx);
-    expect(client.injectItemsCalls).toHaveLength(1);
-    const inject = client.injectItemsCalls[0] as {
-      threadId: string;
-      items: Array<Record<string, unknown>>;
-    };
-    expect(inject.threadId).toBe('thread-fake');
-    expect(inject.items).toHaveLength(1);
-    expect(inject.items[0]?.['role']).toBe('developer');
-    const content = inject.items[0]?.['content'] as Array<Record<string, unknown>>;
-    expect(content[0]?.['text']).toBe(
-      '<developer-reminder>\n' +
+    expect(turnIdx).toBeGreaterThan(startIdx);
+    expect(client.methods).not.toContain('thread/inject_items');
+    expect(client.threadStartCalls[0]).toEqual({
+      developerInstructions:
+        '<developer-reminder>\n' +
         'Dreamux persistent identity guidance:\narchitecture reviewer\n' +
         '</developer-reminder>\n\n' +
         '<developer-reminder>\n' +
         'Keep &lt;review&gt; &amp; do not close &lt;/developer-reminder&gt;.\n' +
         '</developer-reminder>',
-    );
-    expect(client.threadStartCalls[0]).toEqual({ baseInstructions: undefined });
+    });
     const firstTurn = client.turnStartCalls[0] as {
       input: Array<{ text: string }>;
     };
     expect(firstTurn.input[0]?.text).toBe('first task');
     expect(firstTurn.input[0]?.text).not.toContain('architecture reviewer');
+  });
+
+  it('passes append-only systemPrompt as developerInstructions on resume', async () => {
+    const client = new FakeClient();
+    const runtime = buildRuntime(
+      client,
+      [],
+      undefined,
+      undefined,
+      {
+        append: ['resume identity'],
+      },
+      'thread-existing',
+    );
+
+    await runtime.start();
+    await runtime.stop();
+
+    expect(client.threadStartCalls).toEqual([]);
+    expect(client.threadResumeCalls).toEqual([
+      {
+        threadId: 'thread-existing',
+        developerInstructions:
+          '<developer-reminder>\nresume identity\n</developer-reminder>',
+      },
+    ]);
+    expect(client.methods).not.toContain('thread/inject_items');
+  });
+
+  it('passes append-only systemPrompt as developerInstructions on resume fallback start', async () => {
+    const client = new FakeClient();
+    client.threadResumeError = new Error('resume unavailable');
+    const runtime = buildRuntime(
+      client,
+      [],
+      undefined,
+      undefined,
+      {
+        append: ['fallback identity'],
+      },
+      'thread-existing',
+    );
+
+    await runtime.start();
+    await runtime.stop();
+
+    expect(client.threadResumeCalls).toEqual([
+      {
+        threadId: 'thread-existing',
+        developerInstructions:
+          '<developer-reminder>\nfallback identity\n</developer-reminder>',
+      },
+    ]);
+    expect(client.threadStartCalls).toEqual([
+      {
+        developerInstructions:
+          '<developer-reminder>\nfallback identity\n</developer-reminder>',
+      },
+    ]);
+    expect(client.methods).not.toContain('thread/inject_items');
+  });
+
+  it('omits developerInstructions when append-only systemPrompt is empty after filtering', async () => {
+    const client = new FakeClient();
+    const runtime = buildRuntime(
+      client,
+      [],
+      undefined,
+      undefined,
+      {
+        append: ['', ''],
+      },
+    );
+
+    await runtime.start();
+    await runtime.stop();
+
+    expect(client.threadStartCalls[0]).toEqual({});
+    expect(client.methods).not.toContain('thread/inject_items');
   });
 
   it('uses replacement baseInstructions without duplicate append injection', async () => {
@@ -303,6 +357,65 @@ describe('codex skills/extraRoots/set injection', () => {
     expect(client.threadStartCalls[0]).toEqual({
       baseInstructions: 'complete dispatcher base instructions',
     });
+    expect(client.methods).not.toContain('thread/inject_items');
+  });
+
+  it('passes replacement baseInstructions on resume without duplicate append injection', async () => {
+    const client = new FakeClient();
+    const runtime = buildRuntime(
+      client,
+      [],
+      undefined,
+      undefined,
+      {
+        replace: 'complete dispatcher base instructions',
+        append: ['dispatcher append guidance'],
+      },
+      'thread-existing',
+    );
+
+    await runtime.start();
+    await runtime.stop();
+
+    expect(client.threadStartCalls).toEqual([]);
+    expect(client.threadResumeCalls).toEqual([
+      {
+        threadId: 'thread-existing',
+        baseInstructions: 'complete dispatcher base instructions',
+      },
+    ]);
+    expect(client.methods).not.toContain('thread/inject_items');
+  });
+
+  it('passes replacement baseInstructions on resume fallback start', async () => {
+    const client = new FakeClient();
+    client.threadResumeError = new Error('resume unavailable');
+    const runtime = buildRuntime(
+      client,
+      [],
+      undefined,
+      undefined,
+      {
+        replace: 'complete dispatcher base instructions',
+        append: ['dispatcher append guidance'],
+      },
+      'thread-existing',
+    );
+
+    await runtime.start();
+    await runtime.stop();
+
+    expect(client.threadResumeCalls).toEqual([
+      {
+        threadId: 'thread-existing',
+        baseInstructions: 'complete dispatcher base instructions',
+      },
+    ]);
+    expect(client.threadStartCalls).toEqual([
+      {
+        baseInstructions: 'complete dispatcher base instructions',
+      },
+    ]);
     expect(client.methods).not.toContain('thread/inject_items');
   });
 

@@ -156,10 +156,12 @@ spawns a resident session, while a model-history runtime may skip a duplicate
 injection when the same guidance already survives in the resumed native history.
 When a built-in runtime folds multiple append fragments into one native prompt
 string, it wraps each fragment in its own XML block. The Claude Code runtime uses
-`<system-reminder>` for each fragment; the Codex runtime uses
-`<developer-reminder>` for each fragment. Built-in adapters escape XML text
-content inside each wrapper so one fragment cannot create or modify sibling
-blocks.
+`<system-reminder>` for each fragment. The Codex runtime uses
+`<developer-reminder>` for each fragment and supplies the rendered string through
+Codex `developerInstructions`; see
+[Codex system prompt append instructions](codex-system-prompt-append-instructions.md).
+Built-in adapters escape XML text content inside each wrapper so one fragment
+cannot create or modify sibling blocks.
 
 The injection must not be routed through `channelInput`, first-turn `prompt`,
 `intent`, `name_prefix`, or `team_name`.

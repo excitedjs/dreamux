@@ -16,21 +16,6 @@ export function codexProcessEnv(
   return { ...globalThis.process.env, ...injectEnv, ...extraEnv };
 }
 
-export function buildCodexSystemPromptAppendItem(
-  systemPromptAppend: readonly string[],
-): Record<string, unknown> {
-  return {
-    type: 'message',
-    role: 'developer',
-    content: [
-      {
-        type: 'input_text',
-        text: renderCodexSystemPromptAppend(systemPromptAppend),
-      },
-    ],
-  };
-}
-
 export function renderCodexSystemPromptAppend(
   append: readonly string[],
 ): string {

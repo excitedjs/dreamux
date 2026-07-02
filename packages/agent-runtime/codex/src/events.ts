@@ -241,23 +241,6 @@ function traceItemType(params: Record<string, unknown>): string | null {
 }
 
 /**
- * Append raw Responses API items to a thread's model-visible history without
- * starting a turn (`thread/inject_items`, codex 0.137+). codex folds the items
- * onto the active turn when one is running and otherwise records them against a
- * default turn context (codex_thread.rs `inject_response_items` →
- * `inject_no_new_turn`); either way it never rejects on a busy thread, so a
- * rejection here is a genuine RPC error. Persisted to the rollout, so injected
- * items survive resume.
- */
-export async function injectThreadItems(
-  client: CodexWsClient,
-  threadId: string,
-  items: ReadonlyArray<Record<string, unknown>>,
-): Promise<void> {
-  await client.request('thread/inject_items', { threadId, items });
-}
-
-/**
  * Send a `turn/start` request and resolve once Codex accepts the submission.
  * This is the production Feishu inbound primitive: it intentionally does not
  * wait for `turn/completed`.
