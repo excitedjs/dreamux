@@ -25,10 +25,10 @@ and TeamMate identity guidance supplies append-only fragments that must survive
 runtime recreation and resume because they describe the agent's durable working
 identity, not a single turn.
 
-The Codex runtime currently maps `replace` to Codex `baseInstructions`, renders
-append fragments as `<developer-reminder>` blocks, then injects one developer
-message into the thread with `thread/inject_items` after `thread/start` or
-`thread/resume`.
+Before this proposal, the Codex runtime mapped `replace` to Codex
+`baseInstructions`, rendered append fragments as `<developer-reminder>` blocks,
+then injected one developer message into the thread with `thread/inject_items`
+after `thread/start` or `thread/resume`.
 
 That is the wrong layer for append-only system guidance:
 

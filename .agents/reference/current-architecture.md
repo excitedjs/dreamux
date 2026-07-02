@@ -241,9 +241,10 @@ Runtime adapters must implement selected `systemPrompt.append` semantics. Claude
 Code folds append prompt fragments into `--append-system-prompt` before the
 resident session is created, wrapping each fragment in its own
 `<system-reminder>` block. Codex maps selected `systemPrompt.replace` to
-`baseInstructions`; when append is selected, it applies one developer-role
-history item with `thread/inject_items` before the first user/channel turn,
-wrapping each append fragment in its own `<developer-reminder>` block.
+`baseInstructions`; when append is selected, it renders each append fragment
+inside its own `<developer-reminder>` block and supplies the joined prompt as
+Codex `developerInstructions` on `thread/start`, `thread/resume`, and resume
+fallback start.
 Both built-in adapters escape XML text content inside each wrapper so one append
 fragment cannot create or modify sibling blocks.
 

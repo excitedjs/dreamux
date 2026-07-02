@@ -325,10 +325,11 @@ Rules:
 - Provider adapters decide whether to pass `replace`, `append`, a combination,
   nothing, or fail loudly when prompt injection is required but impossible.
 - Built-in Codex maps `replace` to Codex `baseInstructions`; when append is
-  selected, it wraps each append fragment in `<developer-reminder>` before
-  injecting one developer item. Built-in Claude Code wraps each append fragment in
-  `<system-reminder>` and maps the joined result to `--append-system-prompt`.
-  Future runtimes choose their own mapping without Dreamux core changes.
+  selected, it wraps each append fragment in `<developer-reminder>` and passes
+  the joined result as Codex `developerInstructions` on thread start/resume.
+  Built-in Claude Code wraps each append fragment in `<system-reminder>` and maps
+  the joined result to `--append-system-prompt`. Future runtimes choose their own
+  mapping without Dreamux core changes.
 - `systemPrompt.mode` should no longer be a core-routing capability. If kept for
   diagnostics/docs, it is provider-authored metadata only.
 
