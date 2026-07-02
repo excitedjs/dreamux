@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux-types",
+      "comment": "Allow AgentRuntimeSystemPrompt.append to carry ordered prompt fragments instead of a single append string.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-types"
+}

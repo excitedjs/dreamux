@@ -1,5 +1,6 @@
 import type {
   AgentRuntimeMcpServer,
+  AgentRuntimeSystemPrompt,
   AgentRuntimeTurnResult,
   DreamuxLogger,
   InboundTurnInput,
@@ -419,6 +420,7 @@ export class TeamService {
       identity,
       mcpServers: this.leaderMcpServers(identity.name),
       disableFeatures: [DISABLE_FEATURE_CRON],
+      systemPrompt: teamLeaderSystemPrompt(this.id, identity.identity_prompt),
       config: this.deps.config,
       agentRuntimeProviders: this.deps.agentRuntimeProviders,
       identities: this.deps.identities,
@@ -494,6 +496,17 @@ export class TeamService {
     return this.leader_;
   }
 
+}
+
+function teamLeaderSystemPrompt(
+  teamId: string,
+  identityPrompt: string | null,
+): AgentRuntimeSystemPrompt {
+  const append = [
+    `You are the TeamLeader of Dreamux Team ${JSON.stringify(teamId)}.`,
+  ];
+  if (identityPrompt !== null) append.push(identityPrompt);
+  return { append };
 }
 
 export function teamView(team: TeamRecord): TeamView {

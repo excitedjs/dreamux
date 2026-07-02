@@ -25,6 +25,13 @@ import type {
   ProviderFactoryContext,
 } from '@excitedjs/dreamux-types';
 
+function normalizedSystemPromptAppend(
+  append: readonly string[] | undefined,
+): readonly string[] | undefined {
+  const normalized = (append ?? []).filter((prompt) => prompt !== '');
+  return normalized.length > 0 ? normalized : undefined;
+}
+
 /**
  * Construction options for the built-in Claude Code provider. Env injection now
  * arrives on the NEUTRAL create context (`context.injectEnv`), not as a factory
@@ -124,6 +131,9 @@ export function createClaudeCodeAgentRuntimeProvider(
           'claude-code runtime requires a path context in the create context',
         );
       }
+      const systemPromptAppend = normalizedSystemPromptAppend(
+        context.systemPrompt?.append,
+      );
       const deps: ClaudeCodeRuntimeDeps = {
         config: context.config,
         cwd: context.cwd,
@@ -141,8 +151,8 @@ export function createClaudeCodeAgentRuntimeProvider(
         ...(context.disableFeatures !== undefined
           ? { disableFeatures: context.disableFeatures }
           : {}),
-        ...(context.systemPrompt?.append !== undefined
-          ? { systemPromptAppend: context.systemPrompt.append }
+        ...(systemPromptAppend !== undefined
+          ? { systemPromptAppend }
           : {}),
         ...(context.onTurnSettled !== undefined
           ? { onTurnSettled: context.onTurnSettled }

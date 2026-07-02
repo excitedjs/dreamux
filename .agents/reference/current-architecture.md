@@ -204,7 +204,8 @@ The Agent Runtime create context has one provider-facing prompt surface:
 
 - `replace`: full role instructions for runtimes that replace their native base
   prompt.
-- `append`: focused role guidance to add on top of native/base instructions.
+- `append`: ordered focused role-guidance fragments to add on top of native/base
+  instructions.
 
 Runtime adapters select at most one prompt form from `systemPrompt`:
 
@@ -224,18 +225,27 @@ dispatcher append text, because that would duplicate the same role guidance.
 Append-native runtimes that cannot use `replace` fall through to the focused
 dispatcher append guidance.
 
-TeamLeader, TeamMate, and team-member identity guidance is rendered from the
-persisted `TeamMateIdentity.identity_prompt` and re-supplied as append-only
-`systemPrompt.append` on each runtime launch/relaunch that rebuilds the create
-context: initial create/spawn, close/reopen, process restart, Team rebuild, and
-runtime resume.
+Every TeamLeader receives one default append fragment identifying it as the
+TeamLeader for that Dreamux Team. TeamLeader, TeamMate, and team-member identity
+guidance from MCP `identity` is rendered from the persisted
+`TeamMateIdentity.identity_prompt` and re-supplied as additional append-only
+`systemPrompt.append` fragments on each runtime launch/relaunch that rebuilds the
+create context: initial create/spawn, close/reopen, process restart, Team
+rebuild, and runtime resume.
+Prompt-policy ownership stays outside the generic `TeammateService` runtime
+container: `TeamService` supplies the TeamLeader default and TeamLeader identity
+fragments, while `TeammateCollection` supplies only caller-provided TeamMate or
+team-member identity fragments.
 
 Runtime adapters must implement selected `systemPrompt.append` semantics. Claude
-Code folds append prompt content into `--append-system-prompt` before the
-resident session is created. Codex maps selected `systemPrompt.replace` to
-`baseInstructions`; when append is selected, it applies that append text as a
-developer-role history item with `thread/inject_items` before the first
-user/channel turn.
+Code folds append prompt fragments into `--append-system-prompt` before the
+resident session is created, wrapping each fragment in its own
+`<system-reminder>` block. Codex maps selected `systemPrompt.replace` to
+`baseInstructions`; when append is selected, it applies one developer-role
+history item with `thread/inject_items` before the first user/channel turn,
+wrapping each append fragment in its own `<developer-reminder>` block.
+Both built-in adapters escape XML text content inside each wrapper so one append
+fragment cannot create or modify sibling blocks.
 
 Dreamux-owned turns that are not channel messages use the provider-facing
 `completionInput({ text, sourceId? })` plain text input. Channel-originated

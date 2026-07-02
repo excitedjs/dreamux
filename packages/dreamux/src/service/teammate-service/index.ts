@@ -6,6 +6,7 @@ import type {
   AgentRuntimeMcpServer,
   AgentRuntimeProvider,
   AgentRuntimeStateCallbacks,
+  AgentRuntimeSystemPrompt,
   AgentRuntimeTurnResult,
   DreamuxLogger,
   InboundTurnInput,
@@ -114,6 +115,7 @@ export interface TeammateServiceDeps {
 export interface TeammateServiceOptions {
   mcpServers?: readonly AgentRuntimeMcpServer[];
   disableFeatures?: readonly string[];
+  systemPrompt?: AgentRuntimeSystemPrompt;
 }
 
 /**
@@ -133,6 +135,7 @@ export class TeammateService {
   private state: TeamMateRuntimeStateStore;
   private readonly mcpServers: readonly AgentRuntimeMcpServer[];
   private readonly disableFeatures: readonly string[];
+  private readonly systemPrompt: AgentRuntimeSystemPrompt | undefined;
 
   constructor(
     private readonly deps: TeammateServiceDeps,
@@ -142,6 +145,7 @@ export class TeammateService {
   ) {
     this.mcpServers = options.mcpServers ?? [];
     this.disableFeatures = options.disableFeatures ?? [];
+    this.systemPrompt = options.systemPrompt;
     this.state = new TeamMateRuntimeStateStore(deps.identities, identity);
   }
 
@@ -434,8 +438,8 @@ export class TeammateService {
         cwd: identity.cwd,
         skillSources: bundledSkillSourcesForRole(identity.role),
         disableFeatures: this.disableFeatures,
-        ...(identity.identity_prompt !== null
-          ? { systemPrompt: teammateIdentitySystemPrompt(identity.identity_prompt) }
+        ...(this.systemPrompt !== undefined
+          ? { systemPrompt: this.systemPrompt }
           : {}),
         state: this.state,
         paths: teammateHostPaths(identity.dispatcher_id, runtimeName),
@@ -626,16 +630,4 @@ function runtimeIdentityName(identity: TeamMateIdentity): string {
   return identity.team_id !== null
     ? `${identity.team_id}.${identity.name}`
     : identity.name;
-}
-
-function teammateIdentitySystemPrompt(identityPrompt: string): {
-  append: string;
-} {
-  return {
-    append:
-      'Dreamux persistent TeamMate identity guidance:\n' +
-      'This is stable role guidance for this runtime session, not the current task request. ' +
-      'Apply it as an identity delta on top of your native coding-agent instructions.\n\n' +
-      identityPrompt,
-  };
 }

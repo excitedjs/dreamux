@@ -1,6 +1,7 @@
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type {
   AgentRuntime,
+  AgentRuntimeSystemPrompt,
 } from '@excitedjs/dreamux-types';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
@@ -453,15 +454,20 @@ export class TeammateCollection implements TeammateOps {
     throw new Error(`TeamMate ${JSON.stringify(identity.name)} does not exist`);
   }
 
-  /** Build (and cache) the entity for an identity. Options default to empty:
-   * members and dispatcher-owned teammates get no role policy here. */
+  /** Build (and cache) the entity for an identity. The collection owns only
+   * caller-supplied identity guidance; it does not invent default teammate role
+   * policy. */
   private entityFor(identity: TeamMateIdentity): TeammateService {
     const existing = this.entities.get(identity.name);
     if (existing !== undefined) return existing;
+    const systemPromptOptions = callerIdentitySystemPromptOptions(
+      identity.identity_prompt,
+    );
     const entity = createTeammateService({
       dispatcherId: this.dispatcherId,
       identity,
       launch: { kind: 'agent-ref' },
+      ...(systemPromptOptions !== undefined ? { options: systemPromptOptions } : {}),
       config: this.opts.config,
       agentRuntimeProviders: this.opts.agentRuntimeProviders,
       identities: this.identities,
@@ -491,4 +497,12 @@ export class TeammateCollection implements TeammateOps {
     if (router === undefined) return;
     await router.settle(completionKey(producerName, turnId), completion);
   }
+}
+
+function callerIdentitySystemPromptOptions(
+  identityPrompt: string | null,
+): { systemPrompt: AgentRuntimeSystemPrompt } | undefined {
+  return identityPrompt !== null
+    ? { systemPrompt: { append: [identityPrompt] } }
+    : undefined;
 }

@@ -68,8 +68,11 @@ export interface AgentRuntimeCapabilities {
 export interface AgentRuntimeSystemPrompt {
   /** Full role instructions for runtimes that replace their base prompt. */
   replace?: string;
-  /** Focused role delta for runtimes that append to an existing native prompt. */
-  append?: string;
+  /**
+   * Ordered role deltas for runtimes that append to an existing native prompt.
+   * Runtime adapters preserve order and choose their native isolation mechanic.
+   */
+  append?: readonly string[];
 }
 
 export interface AgentRuntimeTextInput {

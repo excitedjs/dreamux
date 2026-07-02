@@ -119,10 +119,10 @@ export interface ClaudeCodeRuntimeDeps {
    */
   injectEnv?: Record<string, string>;
   /**
-   * Launcher-supplied role/system-prompt content, applied as an APPEND via
-   * `--append-system-prompt`. Omitted for launches that supply none (teammates).
+   * Launcher-supplied ordered role/system-prompt content, applied as an APPEND
+   * via `--append-system-prompt`. Omitted for launches that supply none.
    */
-  systemPromptAppend?: string;
+  systemPromptAppend?: readonly string[];
   /**
    * Role-gated skill sources core selected (issue #209 slice 6). The
    * add-dir-compatible ones become `--add-dir` flags on every (re)spawn.
@@ -488,7 +488,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       config: this.config,
       mcpConfigPath: this.mcpConfigPath,
       resumeSessionId: this.threadId,
-      systemPromptContent: this.deps.systemPromptAppend,
+      systemPromptAppend: this.deps.systemPromptAppend,
       skillAddDirs:
         (this.deps.skillSources ?? []).length === 0
           ? []

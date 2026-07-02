@@ -165,7 +165,7 @@ function buildDispatcherLaunch(deps: DispatcherAgentDeps): RuntimeLaunchSpec {
       cwd,
       systemPrompt: {
         replace: DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
-        append: DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS,
+        append: [DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS],
       },
       mcpServers,
       skillSources: bundledSkillSourcesForRole('dispatcher'),

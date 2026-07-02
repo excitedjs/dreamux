@@ -32,12 +32,11 @@ export interface ClaudeCodeResidentArgsInput {
   /** Resume an existing Claude Code session, when one is known (spawn-time). */
   resumeSessionId?: string | null;
   /**
-   * Launcher-supplied dispatcher/role system-prompt content. Claude Code applies
-   * it as an APPEND (per its `systemPrompt` capability) via
-   * `--append-system-prompt`, layered on top of the engine's own system prompt.
-   * Omitted/empty for launches that supply none (e.g. teammates).
+   * Launcher-supplied ordered dispatcher/role system-prompt content. Claude Code
+   * applies it as an APPEND via one native `--append-system-prompt` argument.
+   * Omitted/empty for launches that supply none.
    */
-  systemPromptContent?: string;
+  systemPromptAppend?: readonly string[];
   /** Runtime-owned add-dir roots that contain `.claude/skills/<name>` entries. */
   skillAddDirs?: readonly string[];
   /**
@@ -56,6 +55,34 @@ export function claudeCodeSkillAddDirArgs(
 ): string[] {
   const paths = [...new Set(skillAddDirs ?? [])];
   return paths.flatMap((path) => ['--add-dir', path]);
+}
+
+export function claudeCodeSystemPromptAppendContent(
+  append: readonly string[] | undefined,
+): string | undefined {
+  const prompts = (append ?? []).filter((prompt) => prompt !== '');
+  if (prompts.length === 0) return undefined;
+  return prompts
+    .map(
+      (prompt) =>
+        `<system-reminder>\n${escapeXmlText(prompt)}\n</system-reminder>`,
+    )
+    .join('\n\n');
+}
+
+function escapeXmlText(text: string): string {
+  return text.replace(/[&<>]/g, (char) => {
+    switch (char) {
+      case '&':
+        return '&amp;';
+      case '<':
+        return '&lt;';
+      case '>':
+        return '&gt;';
+      default:
+        return char;
+    }
+  });
 }
 
 /**
@@ -100,11 +127,11 @@ export function claudeCodeResidentArgs(input: ClaudeCodeResidentArgsInput): stri
   if (input.config.model !== null) {
     args.push('--model', input.config.model);
   }
-  if (
-    input.systemPromptContent !== undefined &&
-    input.systemPromptContent !== ''
-  ) {
-    args.push('--append-system-prompt', input.systemPromptContent);
+  const systemPromptContent = claudeCodeSystemPromptAppendContent(
+    input.systemPromptAppend,
+  );
+  if (systemPromptContent !== undefined) {
+    args.push('--append-system-prompt', systemPromptContent);
   }
   if (
     input.resumeSessionId !== undefined &&

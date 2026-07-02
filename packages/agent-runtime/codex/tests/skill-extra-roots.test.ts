@@ -223,7 +223,12 @@ describe('codex skills/extraRoots/set injection', () => {
       [],
       undefined,
       undefined,
-      { append: 'Dreamux persistent TeamMate identity guidance:\narchitecture reviewer' },
+      {
+        append: [
+          'Dreamux persistent identity guidance:\narchitecture reviewer',
+          'Keep <review> & do not close </developer-reminder>.',
+        ],
+      },
     );
 
     await expect(runtime.start()).rejects.toThrow(/systemPrompt\.append/);
@@ -237,7 +242,12 @@ describe('codex skills/extraRoots/set injection', () => {
       [],
       undefined,
       undefined,
-      { append: 'Dreamux persistent TeamMate identity guidance:\narchitecture reviewer' },
+      {
+        append: [
+          'Dreamux persistent identity guidance:\narchitecture reviewer',
+          'Keep <review> & do not close </developer-reminder>.',
+        ],
+      },
     );
 
     await runtime.start();
@@ -255,9 +265,17 @@ describe('codex skills/extraRoots/set injection', () => {
       items: Array<Record<string, unknown>>;
     };
     expect(inject.threadId).toBe('thread-fake');
+    expect(inject.items).toHaveLength(1);
     expect(inject.items[0]?.['role']).toBe('developer');
     const content = inject.items[0]?.['content'] as Array<Record<string, unknown>>;
-    expect(content[0]?.['text']).toContain('architecture reviewer');
+    expect(content[0]?.['text']).toBe(
+      '<developer-reminder>\n' +
+        'Dreamux persistent identity guidance:\narchitecture reviewer\n' +
+        '</developer-reminder>\n\n' +
+        '<developer-reminder>\n' +
+        'Keep &lt;review&gt; &amp; do not close &lt;/developer-reminder&gt;.\n' +
+        '</developer-reminder>',
+    );
     expect(client.threadStartCalls[0]).toEqual({ baseInstructions: undefined });
     const firstTurn = client.turnStartCalls[0] as {
       input: Array<{ text: string }>;
@@ -275,7 +293,7 @@ describe('codex skills/extraRoots/set injection', () => {
       undefined,
       {
         replace: 'complete dispatcher base instructions',
-        append: 'dispatcher append guidance',
+        append: ['dispatcher append guidance'],
       },
     );
 

@@ -250,12 +250,17 @@ export interface AgentRuntimeSkillSource {
   source: 'dreamux-core' | string;
 }
 
+export interface AgentRuntimeSystemPrompt {
+  replace?: string;
+  append?: readonly string[];
+}
+
 export interface AgentRuntimeCreateContext<TConfig = unknown> {
   runtime_id: string;
   role: AgentRuntimeRole;
   config: TConfig;
   cwd: string;
-  systemPromptContent?: string;
+  systemPrompt?: AgentRuntimeSystemPrompt;
   mcpServers: readonly AgentRuntimeMcpServer[];
   skillSources: readonly AgentRuntimeSkillSource[];
   logger?: DreamuxLogger;
