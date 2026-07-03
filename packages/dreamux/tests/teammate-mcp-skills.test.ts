@@ -161,12 +161,14 @@ describe('role-specific bundled Dreamux skills', () => {
     expect(basePrompt).toMatch(/unexpected local file changes/i);
     expect(basePrompt).toMatch(/Do not read or edit repository code files/i);
     expect(basePrompt).toMatch(/delegat\w*[\s\S]{0,80}TeamMate or Team MCP tools/i);
+    expect(basePrompt).toMatch(/do not poll `last`[\s\S]{0,120}pushes task completions/i);
 
     expect(appendPrompt).toContain('Load `dispatcher-workflow` before');
     expect(appendPrompt).toContain('Load `dreamux-maintenance` before');
     expect(appendPrompt).toContain('MCP tool results as the authority');
     expect(appendPrompt).toMatch(/Do not read or edit repository code files/i);
     expect(appendPrompt).toMatch(/delegate repository work to TeamMates or Teams/i);
+    expect(appendPrompt).toMatch(/do not poll `last`[\s\S]{0,120}pushes task results/i);
 
     expect(allDispatcherPrompts).not.toContain('The tm CLI is the labeled fallback');
     expect(allDispatcherPrompts).not.toContain('tm CLI');
