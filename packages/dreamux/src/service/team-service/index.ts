@@ -11,7 +11,10 @@ import {
   type AgentRuntimeProviderCatalog,
 } from '../../agent-runtime/index.js';
 import type { DreamuxConfig } from '../../config/config.js';
-import { dispatcherTeamCronJobsPath } from '../../platform/paths.js';
+import {
+  bundledTeamLeaderSkillRoot,
+  dispatcherTeamCronJobsPath,
+} from '../../platform/paths.js';
 import type {
   CompletionEnvelope,
   CompletionInitiator,
@@ -419,6 +422,11 @@ export class TeamService {
       dispatcherId: this.deps.dispatcherId,
       identity,
       mcpServers: this.leaderMcpServers(identity.name),
+      skillSources: [{
+        name: 'team-leader',
+        path: bundledTeamLeaderSkillRoot(),
+        source: 'dreamux-core',
+      }],
       disableFeatures: [DISABLE_FEATURE_CRON],
       systemPrompt: teamLeaderSystemPrompt(this.id, identity.identity_prompt),
       config: this.deps.config,

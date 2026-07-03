@@ -414,7 +414,7 @@ describe('TeamCollection identity prompt launch behavior', () => {
     const team = await teams.get('alpha');
     expect(team.leader.current().identity_prompt).toBe('architecture reviewer');
     expect(contexts[0]?.skillSources?.map((source) => source.name)).toEqual([
-      'team-workflow',
+      'team-leader',
     ]);
     const append = contexts[0]?.systemPrompt?.append ?? [];
     expect(append).toHaveLength(3);

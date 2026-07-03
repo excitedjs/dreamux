@@ -1,5 +1,3 @@
-import { dirname } from 'node:path';
-
 import type {
   AgentRuntimeSkillSource,
 } from '@excitedjs/dreamux-types';
@@ -14,7 +12,7 @@ export async function applyCodexSkillExtraRoots(input: {
   if (input.sources.length === 0) return;
   const extraRoots = [
     ...new Set(
-      input.sources.map((source) => dirname(source.path)),
+      input.sources.map((source) => source.path),
     ),
   ];
   if (extraRoots.length === 0) return;

@@ -976,10 +976,11 @@ message body.
 TeamMate and Team orchestration is model-facing through the injected MCP tools
 only.
 
-The npm package ships bundled skills under `/packages/dreamux/skills/`:
-`dispatcher-workflow` and `dreamux-maintenance` for Dispatchers, and
-`team-workflow` for TeamLeaders. Ordinary TeamMate and team-member runtimes
-receive none by default.
+The npm package ships bundled skills under role-specific package roots:
+`/packages/dreamux/skills/dispatcher/` contains `dispatcher-workflow` and
+`dreamux-maintenance` for Dispatchers, and
+`/packages/dreamux/skills/team-leader/` contains `team-workflow` for
+TeamLeaders. Ordinary TeamMate and team-member runtimes receive none by default.
 
 > **Superseded by issue #209 slice 6 (role-gated skill injection).** The
 > workspace-symlink model below — `onboard` and dispatcher startup symlinking

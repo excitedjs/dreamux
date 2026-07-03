@@ -41,12 +41,12 @@ export interface AgentRuntimeMcpServer {
 }
 
 /**
- * A bundled skill source core hands to a runtime. Core selects sources by role;
- * the runtime package owns the mechanics of applying them to its engine.
+ * A bundled skill root core hands to a runtime. Core selects roots by role; the
+ * runtime package owns the mechanics of applying them to its engine.
  */
 export interface AgentRuntimeSkillSource {
   name: string;
-  /** Directory containing SKILL.md. */
+  /** Directory whose direct children are skill directories. */
   path: string;
   source: 'dreamux-core' | string;
 }

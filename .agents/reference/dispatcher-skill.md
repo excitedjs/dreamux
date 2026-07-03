@@ -1,20 +1,21 @@
 # Reference: bundled Dreamux skills
 
 `/packages/dreamux/skills/` contains Dreamux-owned skills shipped in the npm
-package. They are model-facing notes for the agent roles that can operate
-Dreamux MCP tools:
+package. The skill directories are grouped by role so runtimes that scan parent
+directories do not expose another role's skills:
 
-- `dispatcher-workflow` is injected only into Dispatcher runtimes. It covers
-  provider-visible replies and dispatcher-visible TeamMate/Team/cron MCP
-  cautions.
-- `dreamux-maintenance` is injected only into Dispatcher runtimes. It covers
-  Dreamux host/server operation, `dreamux doctor` / `status` / `changelog`
-  cautions, service/config/state/run/log diagnosis, missing-reply and stuck-turn
-  troubleshooting, and bundled-skill injection diagnosis.
-- `team-workflow` is injected only into TeamLeader runtimes. It covers
-  team-scoped TeamMate MCP cautions, shared Team workspace coordination,
-  provider-visible bound-channel replies, TeamLeader cron cautions, and the
-  scoped `transfer_back` tool.
+- `skills/dispatcher/dispatcher-workflow` is injected only into Dispatcher
+  runtimes. It covers provider-visible replies and dispatcher-visible
+  TeamMate/Team/cron MCP cautions.
+- `skills/dispatcher/dreamux-maintenance` is injected only into Dispatcher
+  runtimes. It covers Dreamux host/server operation, `dreamux doctor` /
+  `status` / `changelog` cautions, service/config/state/run/log diagnosis,
+  missing-reply and stuck-turn troubleshooting, and bundled-skill injection
+  diagnosis.
+- `skills/team-leader/team-workflow` is injected only into TeamLeader runtimes.
+  It covers team-scoped TeamMate MCP cautions, shared Team workspace
+  coordination, provider-visible bound-channel replies, TeamLeader cron
+  cautions, and the scoped `transfer_back` tool.
 
 Ordinary TeamMate and team-member runtimes receive no bundled Dreamux skill by
 default.
@@ -28,12 +29,13 @@ model-visible wording, also follow
 
 ## Injection Strategy
 
-Bundled skills are injected at runtime by role. Core selects skill sources with
-`bundledSkillSourcesForRole(role)` and passes them through the Agent Runtime
-create context as `skillSources`; the runtime package applies them to its engine:
+Bundled skills are injected at runtime by role. Dispatcher and TeamLeader launch
+sites pass role-specific skill roots through the Agent Runtime create context as
+`skillSources`; the runtime package applies those roots to its engine:
 
-- Codex dedupes parent directories and calls `skills/extraRoots/set` after
-  initialize and before thread start/resume.
+- Codex dedupes the supplied role roots and calls `skills/extraRoots/set` after
+  initialize and before thread start/resume. The package layout deliberately
+  gives Dispatcher and TeamLeader skills different roots.
 - Claude Code materializes runtime-owned `.claude/skills/<name>` add-dir roots
   and passes them through `--add-dir`.
 

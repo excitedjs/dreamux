@@ -182,18 +182,22 @@ skill sources by role:
 - Dispatcher roles receive Dreamux workflow and maintenance skills; TeamLeader
   roles receive the Team workflow skill.
 - Ordinary TeamMate and team-member roles receive none by default.
-- Core emits only direct skill directories. Codex derives extra roots from their
-  parent directories and applies them through `skills/extraRoots/set`.
+- Core emits only role-specific skill roots (`skills/dispatcher/` and
+  `skills/team-leader/`), never per-skill selector paths. Codex passes those
+  roots directly to `skills/extraRoots/set` so root scanning cannot expose
+  sibling skills from another role.
 - Claude Code materializes a runtime-owned add-dir root containing
-  `.claude/skills/<name>` entries that point at those direct skill directories,
-  then passes that root through `--add-dir`.
+  `.claude/skills/<name>` entries for each skill under the selected root, then
+  passes that materialized root through `--add-dir`.
 
 Dreamux does not install bundled skills into dispatcher workspaces during
 onboard or runtime startup.
 
 Key source:
 
-- `/packages/dreamux/src/agent-runtime/bundled-skill-sources.ts`
+- `/packages/dreamux/src/service/dispatcher-service/agent.ts`
+- `/packages/dreamux/src/service/teammate-service/index.ts`
+- `/packages/dreamux/src/platform/paths.ts`
 - `/packages/agent-runtime/codex/src/skill-roots.ts`
 - `/packages/agent-runtime/claude-code/src/args.ts`
 - `/packages/agent-runtime/claude-code/src/runtime.ts`

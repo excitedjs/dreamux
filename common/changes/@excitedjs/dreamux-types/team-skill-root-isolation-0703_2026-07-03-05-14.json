@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "BREAKING: Change the AgentRuntimeSkillSource.path contract from a single skill directory to a skill root whose direct children are skill directories. Runtime providers must apply or materialize skills from the direct child directories of each source root.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux-types"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-types",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

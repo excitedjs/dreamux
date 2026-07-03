@@ -2,7 +2,11 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { bundledSkillDir, type BundledSkillName } from '../src/platform/paths.js';
+import {
+  bundledDispatcherSkillRoot,
+  bundledTeamLeaderSkillRoot,
+  type BundledSkillName,
+} from '../src/platform/paths.js';
 import {
   DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS,
   DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
@@ -38,8 +42,14 @@ const CRON_MCP_TOOLS = [
   'cron_run_now',
 ];
 
+const SKILL_ROOT_BY_NAME = {
+  'dispatcher-workflow': bundledDispatcherSkillRoot(),
+  'dreamux-maintenance': bundledDispatcherSkillRoot(),
+  'team-workflow': bundledTeamLeaderSkillRoot(),
+} satisfies Record<BundledSkillName, string>;
+
 function readBundledSkill(name: BundledSkillName): string {
-  return readFileSync(join(bundledSkillDir(name), 'SKILL.md'), 'utf8');
+  return readFileSync(join(SKILL_ROOT_BY_NAME[name], name, 'SKILL.md'), 'utf8');
 }
 
 function frontmatterDescription(skill: string): string {

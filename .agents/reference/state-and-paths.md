@@ -147,7 +147,9 @@ into dispatcher workspaces during `onboard` or runtime startup.
 
 Key source:
 
-- `/packages/dreamux/src/agent-runtime/bundled-skill-sources.ts`
+- `/packages/dreamux/src/service/dispatcher-service/agent.ts`
+- `/packages/dreamux/src/service/teammate-service/index.ts`
+- `/packages/dreamux/src/platform/paths.ts`
 - `/packages/agent-runtime/codex/src/skill-roots.ts`
 - `/packages/agent-runtime/claude-code/src/args.ts`
 

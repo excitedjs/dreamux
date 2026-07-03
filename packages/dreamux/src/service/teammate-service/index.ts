@@ -5,6 +5,7 @@ import type {
   AgentRuntimeCreateContext,
   AgentRuntimeMcpServer,
   AgentRuntimeProvider,
+  AgentRuntimeSkillSource,
   AgentRuntimeStateCallbacks,
   AgentRuntimeSystemPrompt,
   AgentRuntimeTurnResult,
@@ -15,7 +16,6 @@ import type {
 import { resolveCompletionBody } from '@excitedjs/dreamux-utils';
 
 import {
-  bundledSkillSourcesForRole,
   DISABLE_FEATURE_USER_INTERRUPT,
   HOST_INJECT_ENV,
   teammateHostPaths,
@@ -114,6 +114,7 @@ export interface TeammateServiceDeps {
 
 export interface TeammateServiceOptions {
   mcpServers?: readonly AgentRuntimeMcpServer[];
+  skillSources?: readonly AgentRuntimeSkillSource[];
   disableFeatures?: readonly string[];
   systemPrompt?: AgentRuntimeSystemPrompt;
 }
@@ -134,6 +135,7 @@ export class TeammateService {
   private starting: Promise<void> | null = null;
   private state: TeamMateRuntimeStateStore;
   private readonly mcpServers: readonly AgentRuntimeMcpServer[];
+  private readonly skillSources: readonly AgentRuntimeSkillSource[];
   private readonly disableFeatures: readonly string[];
   private readonly systemPrompt: AgentRuntimeSystemPrompt | undefined;
 
@@ -144,6 +146,7 @@ export class TeammateService {
     options: TeammateServiceOptions = {},
   ) {
     this.mcpServers = options.mcpServers ?? [];
+    this.skillSources = options.skillSources ?? [];
     this.disableFeatures = options.disableFeatures ?? [];
     this.systemPrompt = options.systemPrompt;
     this.state = new TeamMateRuntimeStateStore(deps.identities, identity);
@@ -436,7 +439,7 @@ export class TeammateService {
         },
         config: agent.config,
         cwd: identity.cwd,
-        skillSources: bundledSkillSourcesForRole(identity.role),
+        skillSources: this.skillSources,
         disableFeatures: this.disableFeatures,
         ...(this.systemPrompt !== undefined
           ? { systemPrompt: this.systemPrompt }

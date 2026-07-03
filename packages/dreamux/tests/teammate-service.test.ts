@@ -172,6 +172,7 @@ async function createTestTeamLeader(input: {
     dispatcherId: input.dispatcherId,
     identity,
     mcpServers: [],
+    skillSources: [],
     disableFeatures: [],
     systemPrompt: {
       append: [
