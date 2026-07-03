@@ -41,10 +41,10 @@ interface ChannelSessionsOptions {
 /**
  * The channel service's live channel sessions (issue #233 Phase 5): the
  * `Map<channel_id, ChannelSession>` together with the channel-tool dispatch,
- * target resolution, and MCP descriptor assembly that key off it. `ChannelService` owns one instance and DispatcherService drives session start/stop
- * around the agent runtime's lifecycle so the slot-before-session ordering (issue
- * #209 fix #7) is preserved. Core stays a blind MCP conduit — it never names a
- * provider's tool.
+ * target resolution, and MCP descriptor assembly that key off it.
+ * `ChannelService` owns one instance and `DispatcherService` publishes sessions
+ * here only after their provider start succeeds. Core stays a blind MCP conduit
+ * — it never names a provider's tool.
  */
 class ChannelSessions {
   private sessions: Map<string, ChannelSession> | null = null;
@@ -100,7 +100,7 @@ class ChannelSessions {
     return channels;
   }
 
-  /** Adopt the built sessions as the live map (after the agent runtime started). */
+  /** Adopt successfully-started sessions as the live map. */
   adopt(channels: Map<string, ChannelSession>): void {
     this.sessions = channels;
   }
@@ -133,16 +133,19 @@ class ChannelSessions {
   channelMcpServerDescriptorsForCaller(
     scope: ChannelMcpCallerScope,
   ): AgentRuntimeMcpServer[] {
-    const sessions = this.sessions;
-    if (sessions === null) return [];
     return channelMcpServerDescriptorsForCaller({
       dispatcherId: this.opts.dispatcherId,
-      channels: sessions,
+      channels: this.configuredChannels(),
+      channelProviders: this.opts.channelProviders,
       ...(this.opts.adminSocketPath !== undefined
         ? { adminSocketPath: this.opts.adminSocketPath }
         : {}),
       scope,
     });
+  }
+
+  configuredChannels(): readonly DispatcherChannelConfig[] {
+    return this.channelConfigs();
   }
 
   /**

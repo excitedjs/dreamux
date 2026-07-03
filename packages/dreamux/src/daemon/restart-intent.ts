@@ -256,6 +256,15 @@ export class RestartIntentConsumer {
     this.remaining.delete(dispatcherId);
     return this.announce;
   }
+
+  /**
+   * Non-consuming target probe for server boot ordering. Uses the same TTL
+   * semantics as claim(), but claim() remains the only notice injection path.
+   */
+  hasTarget(dispatcherId: string, now: number): boolean {
+    if (!this.remaining.has(dispatcherId)) return false;
+    return now <= this.expiresAtMs;
+  }
 }
 
 function dedupeNonEmpty(values: string[]): string[] {

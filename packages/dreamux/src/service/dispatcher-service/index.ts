@@ -24,6 +24,7 @@ import type {
   DispatcherStore,
 } from '../../state/dispatcher-store.js';
 import { createDispatcherAgent } from './agent.js';
+import { dispatcherMcpServerDescriptors } from './mcp-descriptors.js';
 import type { ChannelMcpCallerScope } from './mcp-descriptors.js';
 import { assertRunnableChannelShape } from './runnable-channel.js';
 import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
@@ -97,7 +98,12 @@ export class DispatcherService {
   private readonly scheduler_: SchedulerService;
   private restartIntent: RestartIntentConsumer | null = null;
   private starting: Promise<void> | null = null;
+  private preparing: Promise<void> | null = null;
+  private inputSourcesStarting: Promise<void> | null = null;
+  private preparedChannels: Map<string, ChannelSession> | null = null;
+  private inputSourcesStarted = false;
   private workspaceCwd: string | null = null;
+  private stopping = false;
   private shuttingDown = false;
 
   constructor(opts: DispatcherServiceOptions) {
@@ -144,9 +150,13 @@ export class DispatcherService {
       turnsStore,
       router: this.router,
       log: opts.log,
-      adminSocketPath: adminSocket,
+      mcpServers: dispatcherMcpServerDescriptors({
+        dispatcherId: opts.id,
+        channels: this.channels.configuredChannels(),
+        channelProviders: opts.channelProviders,
+        adminSocketPath: adminSocket,
+      }),
       resolveCwd: () => this.mustWorkspaceCwd(),
-      liveChannels: () => this.channels.live(),
     });
 
     this.scheduler_ = new SchedulerService({
@@ -155,7 +165,7 @@ export class DispatcherService {
         cronJobsPath: dispatcherCronJobsPath(opts.id),
         dispatcherId: opts.id,
       }),
-      absentRuntimeStrategy: 'miss',
+      absentRuntimeStrategy: 'submit',
       getRuntime: () => this.agent.getRuntime(),
       submitScheduled: (input) => this.agent.scheduledInput(input),
       log: opts.log,
@@ -209,27 +219,30 @@ export class DispatcherService {
   }
 
   /**
-   * Launch the dispatcher agent runtime, then its channel sessions (issue #233
-   * Phase 5). The order is load-bearing: the agent runtime starts FIRST so an
-   * inbound arriving during `session.start()` resolves a running runtime instead
-   * of throwing (issue #209 fix #7). A single `starting` promise serializes
-   * concurrent callers.
+   * Prepare the dispatcher aggregate and start input sources. The dispatcher
+   * runtime remains dormant until an unbound channel turn, dispatcher cron, or
+   * explicit restart-notice eager start needs it.
    */
   async start(): Promise<void> {
-    if (this.agent.getRuntime() !== null) return;
-    if (this.starting !== null) return this.starting;
-    const promise = this.doStart().finally(() => {
-      this.starting = null;
+    return this.startInputSources();
+  }
+
+  async prepareChannels(): Promise<void> {
+    this.assertNotShuttingDown();
+    if (this.preparedChannels !== null || this.inputSourcesStarted) return;
+    if (this.preparing !== null) return this.preparing;
+    const promise = this.doPrepareChannels().finally(() => {
+      this.preparing = null;
     });
-    this.starting = promise;
+    this.preparing = promise;
     return promise;
   }
 
-  private async doStart(): Promise<void> {
+  private async doPrepareChannels(): Promise<void> {
+    this.assertNotShuttingDown();
     const id = this.id;
     const row = this.dispatchers.get(id);
     if (row === null) throw new Error(`no dispatcher '${id}'`);
-
     const dispatcherConfig = this.config.dispatchers.find(
       (dispatcher) => dispatcher.id === id,
     );
@@ -248,28 +261,57 @@ export class DispatcherService {
     // agent's launch builder reads it.
     this.workspaceCwd = await ensureDispatcherWorkspace(this.config, id);
 
-    // Build the un-started channel sessions BEFORE the runtime so the dispatcher
-    // MCP descriptors are derived from each session's own descriptor; the agent
-    // launch reads them via `liveChannels()`. They are adopted as live only after
-    // the runtime starts so the descriptor build sees them.
     const channels = await this.channels.build();
-    this.channels.adopt(channels);
-
-    let runtime: AgentRuntime;
     try {
-      await this.agent.ensureStarted();
-      runtime = this.mustRuntime();
+      this.assertNotShuttingDown();
+      this.preparedChannels = channels;
     } catch (err) {
-      this.channels.clear();
       await closeAllBuilt(channels);
       throw err;
     }
+  }
 
+  private async startAgentRuntime(): Promise<void> {
+    if (this.agent.getRuntime() !== null) return;
+    if (this.starting !== null) return this.starting;
+    const promise = this.doStartAgentRuntime().finally(() => {
+      this.starting = null;
+    });
+    this.starting = promise;
+    return promise;
+  }
+
+  private async doStartAgentRuntime(): Promise<void> {
     try {
-      // Runtime up, sessions adopted as the live slot so each is observable.
-      // Restart-notice + channel starts + scheduler arming run in this SAME try
-      // so a failure rolls back rather than leaving cron silently unarmed.
-      await this.injectRestartNoticeIfNeeded(id, runtime);
+      await this.agent.ensureStarted();
+      await this.injectRestartNoticeIfNeeded(this.id, this.mustRuntime());
+    } catch (err) {
+      throw err;
+    }
+  }
+
+  async startInputSources(): Promise<void> {
+    this.assertNotShuttingDown();
+    if (this.inputSourcesStarted) return;
+    if (this.inputSourcesStarting !== null) return this.inputSourcesStarting;
+    const promise = this.doStartInputSources().finally(() => {
+      this.inputSourcesStarting = null;
+    });
+    this.inputSourcesStarting = promise;
+    return promise;
+  }
+
+  private async doStartInputSources(): Promise<void> {
+    this.assertNotShuttingDown();
+    await this.prepareChannels();
+    this.assertNotShuttingDown();
+    const channels = this.preparedChannels ?? new Map<string, ChannelSession>();
+    const liveChannels = new Map<string, ChannelSession>();
+    try {
+      if (this.shouldStartRuntimeForResumeNotice()) {
+        await this.startAgentRuntime();
+      }
+      this.assertNotShuttingDown();
       for (const [channelId, session] of channels) {
         await session.start({
           deliver: async (turn, envelope, hooks) =>
@@ -277,13 +319,21 @@ export class DispatcherService {
               await this.routeChannelInput(channelId, turn, envelope, hooks),
             ),
         });
+        this.assertNotShuttingDown();
+        liveChannels.set(channelId, session);
+        this.channels.adopt(liveChannels);
       }
+      if (channels.size === 0) this.channels.adopt(liveChannels);
+      this.preparedChannels = null;
+      this.assertNotShuttingDown();
       await this.scheduler.start();
+      this.assertNotShuttingDown();
       await this.teams.startSchedulers();
+      this.assertNotShuttingDown();
+      this.inputSourcesStarted = true;
     } catch (err) {
       this.scheduler.stop();
       this.teams.stopSchedulers();
-      // Undo the slot adoption so a failed start never leaves a half-built slot.
       this.channels.clear();
       await closeAllBuilt(channels);
       try {
@@ -291,13 +341,17 @@ export class DispatcherService {
       } catch {
         /* best effort */
       }
+      this.preparedChannels = null;
+      this.inputSourcesStarted = false;
       throw err;
     }
 
+    const id = this.id;
+    const row = this.dispatchers.get(id);
     this.log.info(
       {
         dispatcher_id: id,
-        channel_identity: row.channel_identity,
+        channel_identity: row?.channel_identity ?? '',
         cwd: this.workspaceCwd,
       },
       'dispatcher ready',
@@ -305,16 +359,33 @@ export class DispatcherService {
   }
 
   async stop(): Promise<void> {
-    this.scheduler.stop();
-    this.teams.stopSchedulers();
-    await this.channels.closeAll(this.log);
+    this.stopping = true;
     try {
-      await this.agent.stop();
-    } catch (err) {
-      this.log.error(
-        { dispatcher_id: this.id, err: errInfo(err) },
-        'error stopping dispatcher',
-      );
+      if (this.preparing !== null) {
+        await this.preparing.catch(() => {});
+      }
+      if (this.inputSourcesStarting !== null) {
+        await this.inputSourcesStarting.catch(() => {});
+      }
+      this.scheduler.stop();
+      this.teams.stopSchedulers();
+      await this.channels.closeAll(this.log);
+      if (this.preparedChannels !== null) {
+        await closeAllBuilt(this.preparedChannels);
+        this.preparedChannels = null;
+      }
+      this.channels.clear();
+      this.inputSourcesStarted = false;
+      try {
+        await this.agent.stop();
+      } catch (err) {
+        this.log.error(
+          { dispatcher_id: this.id, err: errInfo(err) },
+          'error stopping dispatcher',
+        );
+      }
+    } finally {
+      this.stopping = false;
     }
   }
 
@@ -328,6 +399,15 @@ export class DispatcherService {
 
   setRestartIntent(consumer: RestartIntentConsumer | null): void {
     this.restartIntent = consumer;
+  }
+
+  private shouldStartRuntimeForResumeNotice(): boolean {
+    const row = this.dispatchers.get(this.id);
+    return (
+      row !== null &&
+      row.thread_id !== null &&
+      this.restartIntent?.hasTarget(this.id, Date.now()) === true
+    );
   }
 
   summary(row: DispatcherRow): DispatcherSummary {
@@ -359,7 +439,7 @@ export class DispatcherService {
   }
 
   private assertNotShuttingDown(): void {
-    if (this.shuttingDown) {
+    if (this.shuttingDown || this.stopping) {
       throw new Error(`dispatcher '${this.id}' is shutting down`);
     }
   }
@@ -487,14 +567,10 @@ export class DispatcherService {
         (await this.teams.isOpenTeam(routed.owner.teamName))
       ) {
         const team = await this.teams.get(routed.owner.teamName);
-        const result = await team.deliverToLeader(input);
-        if (result.status === 'submitted') await hooks?.onAccepted?.(input);
-        return result;
+        return team.deliverToLeader(input, hooks);
       }
     }
-    const runtime = this.agent.getRuntime();
-    if (runtime === null) return { status: 'stopped' };
-    return runtime.channelInput(input, hooks);
+    return this.agent.channelInput(input, hooks);
   }
 
   /**

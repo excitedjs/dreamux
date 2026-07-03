@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Make Dispatcher server boot lazy-start its runtime: ordinary starts prepare channel sessions and input sources without starting the Dispatcher agent, while unbound inbound, Dispatcher cron, and valid restart-notice targets wake the runtime.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

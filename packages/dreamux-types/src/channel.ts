@@ -134,11 +134,11 @@ export interface ChannelRoutes {
 }
 
 /**
- * The context core passes to {@link ChannelSession.mcpServerDescriptor}. Carries
+ * The context core passes to {@link ChannelProvider.mcpServerDescriptor}. Carries
  * the host bin command + admin-socket path the channel's stdio MCP shim forwards
  * to, plus the caller identity so the descriptor can scope its tool calls. The
- * provider builds its own stdio descriptor from these neutral pieces; core never
- * names the channel's tool transport.
+ * provider builds its own stdio descriptor from these neutral pieces and its
+ * configured channel view; core never names the channel's tool transport.
  */
 export interface ChannelMcpDescriptorContext {
   /** The Dreamux bin command the channel's MCP shim is spawned as. */
@@ -181,7 +181,11 @@ export interface ChannelSession {
   reply?(input: ChannelReplyInput): Promise<unknown>;
   /** Add a reaction. Omit entirely if the platform has no reaction surface. */
   react?(input: ChannelReactInput): Promise<unknown>;
-  /** Provider-specific MCP tools. Omit if the provider exposes none. */
+  /**
+   * Provider-specific live-session tools. Omit if the provider exposes none.
+   * This is independent from the provider-level MCP descriptor, which is static
+   * config metadata for runtime launch.
+   */
   tools?(context: ChannelToolListContext): readonly ChannelToolDescriptor[];
   /**
    * Handle a provider-specific tool call. Omit when `tools` is omitted; the two
@@ -196,16 +200,6 @@ export interface ChannelSession {
   messageBelongsToTarget?(
     input: ChannelMessageTargetCheck,
   ): boolean | Promise<boolean>;
-  /**
-   * Build the stdio MCP server descriptor that backs this channel's
-   * provider-specific tools for a runtime. Returns `null` when the channel
-   * exposes no MCP surface for the given caller. Omit entirely if the channel
-   * never exposes one. The descriptor is an {@link AgentRuntimeMcpServer} so a
-   * runtime can launch it through the same neutral MCP-server seam as any other.
-   */
-  mcpServerDescriptor?(
-    context: ChannelMcpDescriptorContext,
-  ): AgentRuntimeMcpServer | null;
 }
 
 /** Channel-specific alias of the shared provider binary check. */
@@ -255,6 +249,19 @@ export interface ChannelProvider<TConfig = unknown> {
    * stable identity to report.
    */
   getIdentity?(config: TConfig): string;
+  /**
+   * Build the stdio MCP server descriptor that backs this channel's
+   * provider-specific tools for a runtime. Returns `null` when the configured
+   * channel exposes no MCP surface for the given caller. Omit entirely if the
+   * provider never exposes one. The descriptor is an
+   * {@link AgentRuntimeMcpServer} so a runtime can launch it through the same
+   * neutral MCP-server seam as any other. This is provider/config-owned static
+   * metadata, not a live-session capability.
+   */
+  mcpServerDescriptor?(
+    context: ChannelMcpDescriptorContext,
+    config: TConfig,
+  ): AgentRuntimeMcpServer | null;
   /**
    * Provider-owned onboarding. Core asks only for host envelope fields and
    * delegates provider-specific raw config collection to this capability.

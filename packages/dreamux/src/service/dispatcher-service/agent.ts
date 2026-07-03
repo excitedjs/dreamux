@@ -1,6 +1,5 @@
 import type {
   AgentRuntimeMcpServer,
-  ChannelSession,
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
 
@@ -28,7 +27,6 @@ import {
   DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS,
   DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
 } from './base-prompt.js';
-import { dispatcherMcpServerDescriptors } from './mcp-descriptors.js';
 import { bundledDispatcherSkillRoot } from '../../platform/paths.js';
 
 /**
@@ -48,7 +46,7 @@ export interface DispatcherAgentDeps {
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   router: CompletionRouter;
   log: DreamuxLogger;
-  adminSocketPath: string;
+  mcpServers: readonly AgentRuntimeMcpServer[];
   /**
    * The identity + turns store pair, constructed once by `DispatcherService` and
    * shared with the dispatcher-scope `TeammateCollection` (issue #233). The stores
@@ -63,12 +61,6 @@ export interface DispatcherAgentDeps {
    * before `agent.start()` (`ensureDispatcherWorkspace`). The runtime runs here.
    */
   resolveCwd: () => string;
-  /**
-   * The dispatcher's live channel sessions at launch, supplied by
-   * `DispatcherService` (it owns the channel session map). The dispatcher MCP
-   * descriptors are derived from these so the runtime sees its channel tools.
-   */
-  liveChannels: () => Map<string, ChannelSession>;
 }
 
 /**
@@ -123,6 +115,19 @@ export function createDispatcherAgent(deps: DispatcherAgentDeps): TeammateServic
     },
     routeSettledCompletion: (producerName, turnId, completion) =>
       routeSettled(deps.router, producerName, turnId, completion),
+    options: {
+      mcpServers: deps.mcpServers,
+      skillSources: [{
+        name: 'dispatcher',
+        path: bundledDispatcherSkillRoot(),
+        source: 'dreamux-core',
+      }],
+      disableFeatures: [DISABLE_FEATURE_CRON],
+      systemPrompt: {
+        replace: DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
+        append: [DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS],
+      },
+    },
   });
   return agent;
 }
@@ -137,10 +142,10 @@ async function routeSettled(
 }
 
 /**
- * Build the dispatcher runtime's launch from the dispatcher config + the live
- * channel sessions (issue #233 Phase 5). The runtime persists its status/thread
- * to `status.json` through the injected {@link DispatcherStore}, which is passed
- * as the runtime `state` — NOT the entity's debug identity store.
+ * Build the dispatcher runtime's launch from the dispatcher config. The runtime
+ * persists its status/thread to `status.json` through the injected
+ * {@link DispatcherStore}, which is passed as the runtime `state` — NOT the
+ * entity's debug identity store.
  */
 function buildDispatcherLaunch(deps: DispatcherAgentDeps): RuntimeLaunchSpec {
   const id = deps.id;
@@ -151,11 +156,6 @@ function buildDispatcherLaunch(deps: DispatcherAgentDeps): RuntimeLaunchSpec {
     dispatcherConfig.runtime.provider,
   );
   const cwd = deps.resolveCwd();
-  const mcpServers: AgentRuntimeMcpServer[] = dispatcherMcpServerDescriptors({
-    dispatcherId: id,
-    channels: deps.liveChannels(),
-    adminSocketPath: deps.adminSocketPath,
-  });
   return {
     provider,
     checkpointId: row.thread_id,
@@ -163,17 +163,9 @@ function buildDispatcherLaunch(deps: DispatcherAgentDeps): RuntimeLaunchSpec {
       identity: { runtime_id: id, checkpoint_id: row.thread_id },
       config: dispatcherConfig.runtime.config,
       cwd,
-      systemPrompt: {
-        replace: DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
-        append: [DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS],
-      },
-      mcpServers,
-      skillSources: [{
-        name: 'dispatcher',
-        path: bundledDispatcherSkillRoot(),
-        source: 'dreamux-core',
-      }],
-      disableFeatures: [DISABLE_FEATURE_CRON],
+      // Overwritten by `TeammateServiceOptions`; kept only to satisfy the
+      // runtime create-context shape at the inline launch boundary.
+      mcpServers: [],
       state: deps.dispatchers.bindRuntime(id),
       paths: dispatcherHostPaths,
       logger: deps.log,

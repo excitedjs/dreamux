@@ -378,29 +378,18 @@ describe('codex live integration', () => {
         ...codexArgsToCli(
           parseCodexArgs('{"sandboxMode":"danger-full-access"}'),
         ),
-        // Build the channel MCP descriptor via the feishu provider's own
-        // session so the test does not hard-code core's neutral conduit shape.
+        // Build the channel MCP descriptor via the Feishu provider so the test
+        // does not hard-code core's neutral conduit shape.
         ...(() => {
-          const provider = createFeishuChannelProvider({
-            botFactory: () => createFakeFeishuBot('stub'),
-          });
-          const session = provider.createSession({
-            dispatcher_id: 'dispatcher-a',
-            channel_id: 'primary',
-            provider: 'builtin:feishu',
-            config: { appId: 'stub', appSecret: 'stub' } as never,
-            logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {}, child: () => ({} as never) } as never,
-            state_root: dir,
-            cache_root: dir,
-          });
-          const descriptor = session.mcpServerDescriptor?.({
+          const provider = createFeishuChannelProvider();
+          const descriptor = provider.mcpServerDescriptor?.({
             command: dreamuxBin,
             adminSocketPath: join(dir, 'admin.sock'),
             dispatcher_id: 'dispatcher-a',
             provider: 'builtin:feishu',
             channel_id: 'primary',
             callerKind: 'dispatcher',
-          });
+          }, { appId: 'stub', appSecret: 'stub' });
           return descriptor != null ? codexMcpServerArgs([descriptor]) : [];
         })(),
       ];
@@ -502,8 +491,6 @@ describe('codex live integration', () => {
           }),
         });
         await server.start();
-        expect(client).not.toBeNull();
-        const liveClient = client!;
         const marker = `ISSUE63_LIVE_MARKER_${Date.now()}`;
         const startMessageId = 'msg-live-start';
         const markerMessageId = 'msg-live-marker';
@@ -518,6 +505,8 @@ describe('codex live integration', () => {
         ].join('\n');
 
         await bot.inject(fakeInbound('chat-live', startPrompt, startMessageId));
+        await waitFor(() => client !== null, 10_000, 'dispatcher runtime started');
+        const liveClient = client!;
         await waitFor(
           () => turnStartRequests(liveClient).length === 1,
           10_000,

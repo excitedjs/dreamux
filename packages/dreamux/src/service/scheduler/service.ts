@@ -55,6 +55,8 @@ export interface SchedulerServiceOptions {
     jobId: string;
     prompt: string;
     sourceId: string;
+    /** False once this held fire has been stopped, deleted, or superseded. */
+    shouldSubmit?: () => boolean;
   }): Promise<AgentRuntimeTurnResult>;
   log: DreamuxLogger;
   now?: () => number;
@@ -331,12 +333,15 @@ export class SchedulerService {
     try {
       const current = await this.store.get(job.id);
       if (current === null || !current.enabled) return 'skipped';
-      if (this.heldFires.get(job.id) !== token) return 'skipped';
+      const isCurrent = (): boolean => this.heldFires.get(job.id) === token;
+      if (!isCurrent()) return 'skipped';
       const result = await this.opts.submitScheduled({
         jobId: current.id,
         prompt: current.action.prompt,
         sourceId: this.nextFireSourceId(current.id),
+        shouldSubmit: isCurrent,
       });
+      if (!isCurrent()) return 'skipped';
       if (result.status !== 'submitted') {
         await this.armMissed(current, `completionInput returned ${result.status}`);
         return result.status;

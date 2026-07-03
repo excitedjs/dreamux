@@ -73,7 +73,25 @@ describe('restart intent marker', () => {
     await writeRestartIntent({ targets: ['flow'], ttlMs: 100, now: 0, path });
     const consumer = await RestartIntentConsumer.load({ now: 50, path });
     // Within TTL at load, but claimed after expiry.
+    expect(consumer.hasTarget('flow', 50)).toBe(true);
+    expect(consumer.hasTarget('flow', 200)).toBe(false);
     expect(consumer.claim('flow', 200)).toBeNull();
+  });
+
+  it('probes targets without consuming and uses claim TTL semantics', async () => {
+    await writeRestartIntent({
+      targets: ['flow'],
+      announce: 'Restart completed.',
+      ttlMs: 100,
+      now: 0,
+      path,
+    });
+    const consumer = await RestartIntentConsumer.load({ now: 50, path });
+
+    expect(consumer.hasTarget('flow', 50)).toBe(true);
+    expect(consumer.hasTarget('other', 50)).toBe(false);
+    expect(consumer.claim('flow', 50)).toBe('Restart completed.');
+    expect(consumer.hasTarget('flow', 50)).toBe(false);
   });
 
   it('keeps the marker when the restart command succeeds', async () => {

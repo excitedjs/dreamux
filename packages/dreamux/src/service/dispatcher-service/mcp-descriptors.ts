@@ -1,9 +1,10 @@
 import type {
   AgentRuntimeMcpServer,
   ChannelMcpDescriptorContext,
-  ChannelSession,
 } from '@excitedjs/dreamux-types';
 
+import type { ChannelProviderCatalog } from '../../channel/catalog.js';
+import type { DispatcherChannelConfig } from '../../config/config.js';
 import { dreamuxBinPath } from '../../platform/package-bin.js';
 import { adminSocketPath as defaultAdminSocketPath } from '../../platform/paths.js';
 import { teamMcpServerDescriptor } from '../team-collection/mcp-config.js';
@@ -18,7 +19,8 @@ export interface ChannelMcpCallerScope {
 
 export function dispatcherMcpServerDescriptors(input: {
   dispatcherId: string;
-  channels: Map<string, ChannelSession>;
+  channels: readonly DispatcherChannelConfig[];
+  channelProviders: ChannelProviderCatalog;
   adminSocketPath?: string;
 }): AgentRuntimeMcpServer[] {
   const context = {
@@ -28,6 +30,7 @@ export function dispatcherMcpServerDescriptors(input: {
   return [
     ...channelMcpServerDescriptors({
       channels: input.channels,
+      channelProviders: input.channelProviders,
       adminSocketPath: input.adminSocketPath,
       dispatcher_id: input.dispatcherId,
       callerKind: 'dispatcher',
@@ -43,12 +46,14 @@ export function dispatcherMcpServerDescriptors(input: {
 
 export function channelMcpServerDescriptorsForCaller(input: {
   dispatcherId: string;
-  channels: Map<string, ChannelSession>;
+  channels: readonly DispatcherChannelConfig[];
+  channelProviders: ChannelProviderCatalog;
   adminSocketPath?: string;
   scope: ChannelMcpCallerScope;
 }): AgentRuntimeMcpServer[] {
   return channelMcpServerDescriptors({
     channels: input.channels,
+    channelProviders: input.channelProviders,
     adminSocketPath: input.adminSocketPath,
     dispatcher_id: input.dispatcherId,
     ...input.scope,
@@ -56,7 +61,8 @@ export function channelMcpServerDescriptorsForCaller(input: {
 }
 
 function channelMcpServerDescriptors(input: {
-  channels: Map<string, ChannelSession>;
+  channels: readonly DispatcherChannelConfig[];
+  channelProviders: ChannelProviderCatalog;
   adminSocketPath?: string;
   dispatcher_id: string;
   callerKind?: 'dispatcher' | 'team_leader';
@@ -64,18 +70,19 @@ function channelMcpServerDescriptors(input: {
   leader_name?: string;
 }): AgentRuntimeMcpServer[] {
   const out: AgentRuntimeMcpServer[] = [];
-  for (const session of input.channels.values()) {
+  for (const channel of input.channels) {
+    const provider = input.channelProviders.resolve(channel.provider);
     const context: ChannelMcpDescriptorContext = {
       command: dreamuxBinPath(),
       adminSocketPath: input.adminSocketPath ?? defaultAdminSocketPath(),
       dispatcher_id: input.dispatcher_id,
-      provider: session.provider,
-      channel_id: session.channel_id,
+      provider: channel.provider,
+      channel_id: channel.id,
       ...(input.callerKind !== undefined ? { callerKind: input.callerKind } : {}),
       ...(input.team_id !== undefined ? { team_id: input.team_id } : {}),
       ...(input.leader_name !== undefined ? { leader_name: input.leader_name } : {}),
     };
-    const descriptor = session.mcpServerDescriptor?.(context);
+    const descriptor = provider.mcpServerDescriptor?.(context, channel.config);
     if (descriptor != null) out.push(descriptor);
   }
   return out;

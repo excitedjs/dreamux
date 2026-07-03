@@ -12,12 +12,18 @@ import type {
   AgentRuntimeStatus,
   AgentRuntimeTextInput,
   AgentRuntimeTurnResult,
+  ChannelProvider,
+  ChannelProviderDescriptor,
+  ChannelRoutes,
+  ChannelSession,
+  ChannelTarget,
+  ChannelToolCall,
   DreamuxLogger,
+  InboundDeliveryHooks,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
 
 import type { AgentRuntimeProviderCatalog } from '../src/agent-runtime/index.js';
-import type { ChannelProviderCatalog } from '../src/channel/catalog.js';
 import { CompletionRouter } from '../src/service/completion-router/index.js';
 import { DispatcherService } from '../src/service/dispatcher-service/index.js';
 import { CronJobStore } from '../src/service/scheduler/store.js';
@@ -34,6 +40,10 @@ import {
   resetRuntimeConfig,
 } from '../src/platform/paths.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
+import { ChannelProviderCatalog } from '../src/channel/catalog.js';
+import { createBuiltinProviderRegistry } from '../src/registry/index.js';
+import { Server } from '../src/server.js';
+import { writeRestartIntent } from '../src/daemon/restart-intent.js';
 
 const FAKE_RUNTIME_REF = 'test:runtime';
 
@@ -45,6 +55,7 @@ class FakeRuntime implements AgentRuntime {
   readonly providerRef = FAKE_RUNTIME_REF;
   readonly submitted: InboundTurnInput[] = [];
   readonly textSubmitted: AgentRuntimeTextInput[] = [];
+  readonly accepted: InboundTurnInput[] = [];
   private status: AgentRuntimeStatus = 'declared';
 
   async start(): Promise<void> {
@@ -59,7 +70,12 @@ class FakeRuntime implements AgentRuntime {
     this.status = 'stopped';
   }
 
-  async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
+  async channelInput(
+    input: InboundTurnInput,
+    hooks?: InboundDeliveryHooks,
+  ): Promise<AgentRuntimeTurnResult> {
+    await hooks?.onAccepted?.(input);
+    this.accepted.push(input);
     this.submitted.push(input);
     return { status: 'submitted', turnId: `turn-${this.submitted.length}` };
   }
@@ -100,10 +116,27 @@ class NewContractOnlyRuntime extends FakeRuntime {
   }
 }
 
+class ResumedRuntime extends FakeRuntime {
+  override wasCheckpointResumed(): boolean {
+    return true;
+  }
+}
+
+class DeferredStartRuntime extends FakeRuntime {
+  releaseStart: (() => void) | null = null;
+
+  override async start(): Promise<void> {
+    await new Promise<void>((resolve) => {
+      this.releaseStart = resolve;
+    });
+    await super.start();
+  }
+}
+
 function fakeRuntimeCatalog(input: {
   runtimes: FakeRuntime[];
   contexts?: AgentRuntimeCreateContext[];
-  createRuntime?: () => FakeRuntime;
+  createRuntime?: (context: AgentRuntimeCreateContext) => FakeRuntime;
 }): AgentRuntimeProviderCatalog {
   const provider: AgentRuntimeProvider = {
     ref: FAKE_RUNTIME_REF,
@@ -115,7 +148,7 @@ function fakeRuntimeCatalog(input: {
     getCapabilities: () => CAPABILITIES,
     createRuntime(context: AgentRuntimeCreateContext) {
       input.contexts?.push(context);
-      const runtime = input.createRuntime?.() ?? new FakeRuntime();
+      const runtime = input.createRuntime?.(context) ?? new FakeRuntime();
       input.runtimes.push(runtime);
       return runtime;
     },
@@ -150,6 +183,112 @@ function fakeChannelCatalog(): ChannelProviderCatalog {
       throw new Error(`unexpected channel provider ${JSON.stringify(ref)}`);
     },
   } as unknown as ChannelProviderCatalog;
+}
+
+const CHANNEL_PROVIDER_REF = 'builtin:feishu';
+const CHANNEL_DESCRIPTOR: ChannelProviderDescriptor = {
+  id: 'feishu',
+  kind: 'channel',
+  ref: { source: 'builtin', id: 'feishu', raw: CHANNEL_PROVIDER_REF },
+};
+
+class CapturingChannelSession implements ChannelSession {
+  readonly provider = CHANNEL_PROVIDER_REF;
+  readonly channel_id: string;
+  routes: ChannelRoutes | null = null;
+  startCount = 0;
+  closeCount = 0;
+  handledTools: ChannelToolCall[] = [];
+
+  constructor(
+    channelId: string,
+    private readonly startBlocker?: Promise<void>,
+  ) {
+    this.channel_id = channelId;
+  }
+
+  async start(routes: ChannelRoutes): Promise<void> {
+    this.startCount += 1;
+    this.routes = routes;
+    await this.startBlocker;
+  }
+
+  async close(): Promise<void> {
+    this.closeCount += 1;
+  }
+
+  async resolveTarget(meta: unknown): Promise<ChannelTarget> {
+    const chatId =
+      typeof (meta as { chat_id?: unknown })?.chat_id === 'string'
+        ? (meta as { chat_id: string }).chat_id
+        : 'chat-default';
+    return groupTarget(chatId);
+  }
+
+  async handleTool(call: ChannelToolCall): Promise<unknown> {
+    this.handledTools.push(call);
+    return { channel_id: this.channel_id, tool: call.name };
+  }
+
+  async emit(
+    targetKey: string,
+    text: string,
+    hooks?: InboundDeliveryHooks,
+  ): Promise<AgentRuntimeTurnResult> {
+    if (this.routes === null) throw new Error('channel not started');
+    return this.routes.deliver(
+      { sourceId: `message:${targetKey}:${text}`, text },
+      {
+        provider: this.provider,
+        channel_id: this.channel_id,
+        target: groupTarget(targetKey),
+      },
+      hooks,
+    );
+  }
+}
+
+function groupTarget(targetKey: string): ChannelTarget {
+  return {
+    target_type: 'group',
+    target_key: targetKey,
+    bindable: true,
+    meta: { chat_id: targetKey },
+  };
+}
+
+function capturingChannelCatalog(
+  sessions: CapturingChannelSession[],
+  options: { startBlockers?: Record<string, Promise<void>> } = {},
+): ChannelProviderCatalog {
+  const registry = createBuiltinProviderRegistry();
+  const descriptor = registry.resolve('builtin:feishu');
+  const provider: ChannelProvider = {
+    ref: CHANNEL_PROVIDER_REF,
+    descriptor: {
+      ...CHANNEL_DESCRIPTOR,
+      id: descriptor.id,
+      ref: descriptor.ref,
+    },
+    readConfig: (raw) => raw,
+    createSession(context) {
+      const session = new CapturingChannelSession(
+        context.channel_id,
+        options.startBlockers?.[context.channel_id],
+      );
+      sessions.push(session);
+      return session;
+    },
+    mcpServerDescriptor(context) {
+      return {
+        name: `channel-${context.channel_id}`,
+        command: context.command,
+        args: ['channel-mcp', '--channel-id', context.channel_id],
+      };
+    },
+  };
+  registry.registerImplementation(descriptor.id, provider);
+  return new ChannelProviderCatalog({ registry });
 }
 
 describe('TeamLeader cron scheduler lifecycle', () => {
@@ -325,6 +464,14 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     });
 
     await dispatcher.start();
+    const wake = await dispatcher.scheduler.create({
+      cron: '* * * * *',
+      prompt: 'wake dispatcher',
+      tz: 'UTC',
+    });
+    await expect(dispatcher.scheduler.runNow(wake.id)).resolves.toMatchObject({
+      status: 'submitted',
+    });
 
     expect(dispatcher.runtimeStatus()).toEqual({
       status: 'ready',
@@ -367,6 +514,14 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       log,
     });
     await dispatcher.start();
+    const wake = await dispatcher.scheduler.create({
+      cron: '* * * * *',
+      prompt: 'wake dispatcher',
+      tz: 'UTC',
+    });
+    await expect(dispatcher.scheduler.runNow(wake.id)).resolves.toMatchObject({
+      status: 'submitted',
+    });
     await dispatcher.createTeam({
       name: 'alpha',
       leaderAgentRuntime: 'agent-a',
@@ -516,11 +671,11 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       prompt: 'follow up',
     });
     expect(sent.turn).toEqual({ status: 'submitted', turn_id: 'text-1' });
-    expect(runtimes).toHaveLength(2);
-    expect(runtimes[1]!.textSubmitted.map((input) => input.text)).toEqual([
+    expect(runtimes).toHaveLength(1);
+    expect(runtimes[0]!.textSubmitted.map((input) => input.text)).toEqual([
       'follow up',
     ]);
-    expect(runtimes[1]!.submitted).toEqual([]);
+    expect(runtimes[0]!.submitted).toEqual([]);
 
     await dispatcher.shutdown();
     await expect(
@@ -528,6 +683,457 @@ describe('TeamLeader cron scheduler lifecycle', () => {
         dispatcher.sendTeamLeader({ teamId: 'alpha', prompt: 'too late' }),
       ),
     ).rejects.toThrow(/shutting down/);
+  });
+
+  it('ordinary dispatcher start prepares inputs without starting its runtime', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const sessions: CapturingChannelSession[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        channels: [
+          {
+            id: 'primary',
+            provider: CHANNEL_PROVIDER_REF,
+            config: {},
+          },
+        ],
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const log = noopLog();
+    const dispatcher = new DispatcherService({
+      id: 'dispatcher-a',
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: fakeRuntimeCatalog({ runtimes }),
+      channelProviders: capturingChannelCatalog(sessions),
+      adminSocketPath: '/tmp/dreamux-admin.sock',
+      channelLoggerFactory: () => log,
+      log,
+    });
+
+    await dispatcher.start();
+
+    expect(runtimes).toHaveLength(0);
+    expect(dispatcher.runtimeStatus()).toEqual({ status: null, threadId: null });
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]?.startCount).toBe(1);
+    await dispatcher.stop();
+  });
+
+  it('coalesces concurrent dispatcher starts into one prepared channel set', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const sessions: CapturingChannelSession[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        channels: [
+          {
+            id: 'primary',
+            provider: CHANNEL_PROVIDER_REF,
+            config: {},
+          },
+        ],
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const log = noopLog();
+    const dispatcher = new DispatcherService({
+      id: 'dispatcher-a',
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: fakeRuntimeCatalog({ runtimes: [] }),
+      channelProviders: capturingChannelCatalog(sessions),
+      adminSocketPath: '/tmp/dreamux-admin.sock',
+      channelLoggerFactory: () => log,
+      log,
+    });
+
+    await Promise.all([dispatcher.start(), dispatcher.start()]);
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]?.startCount).toBe(1);
+    await dispatcher.stop();
+  });
+
+  it('publishes each started channel before later channels finish starting', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    let releaseSecondary: (() => void) | null = null;
+    const secondaryBlocker = new Promise<void>((resolve) => {
+      releaseSecondary = resolve;
+    });
+    const sessions: CapturingChannelSession[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        channels: [
+          {
+            id: 'primary',
+            provider: CHANNEL_PROVIDER_REF,
+            config: {},
+          },
+          {
+            id: 'secondary',
+            provider: CHANNEL_PROVIDER_REF,
+            config: {},
+          },
+        ],
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const log = noopLog();
+    const dispatcher = new DispatcherService({
+      id: 'dispatcher-a',
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: fakeRuntimeCatalog({ runtimes: [] }),
+      channelProviders: capturingChannelCatalog(sessions, {
+        startBlockers: { secondary: secondaryBlocker },
+      }),
+      adminSocketPath: '/tmp/dreamux-admin.sock',
+      channelLoggerFactory: () => log,
+      log,
+    });
+
+    const start = dispatcher.start();
+    await waitFor(
+      () =>
+        sessions.length === 2 &&
+        sessions[0]?.startCount === 1 &&
+        sessions[1] !== undefined &&
+        sessions[1].routes !== null,
+    );
+
+    await expect(
+      dispatcher.invokeChannelTool({
+        channelId: 'primary',
+        name: 'reply',
+        arguments: {},
+        caller: { kind: 'dispatcher' },
+      }),
+    ).resolves.toEqual({ channel_id: 'primary', tool: 'reply' });
+
+    releaseSecondary!();
+    await start;
+    await dispatcher.stop();
+  });
+
+  it('unbound channel inbound starts dispatcher runtime and fires onAccepted', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const sessions: CapturingChannelSession[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        channels: [
+          {
+            id: 'primary',
+            provider: CHANNEL_PROVIDER_REF,
+            config: {},
+          },
+        ],
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const log = noopLog();
+    const dispatcher = new DispatcherService({
+      id: 'dispatcher-a',
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: fakeRuntimeCatalog({ runtimes }),
+      channelProviders: capturingChannelCatalog(sessions),
+      adminSocketPath: '/tmp/dreamux-admin.sock',
+      channelLoggerFactory: () => log,
+      log,
+    });
+    await dispatcher.start();
+    const accepted: string[] = [];
+
+    await expect(
+      sessions[0]!.emit('chat-unbound', 'hello dispatcher', {
+        onAccepted: async (input) => {
+          accepted.push(input.text);
+        },
+      }),
+    ).resolves.toMatchObject({ status: 'submitted' });
+
+    expect(runtimes).toHaveLength(1);
+    expect(runtimes[0]!.submitted.map((input) => input.text)).toEqual([
+      'hello dispatcher',
+    ]);
+    expect(accepted).toEqual(['hello dispatcher']);
+    await dispatcher.stop();
+  });
+
+  it('bound channel inbound starts only TeamLeader, not dispatcher runtime', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const contexts: AgentRuntimeCreateContext[] = [];
+    const sessions: CapturingChannelSession[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        channels: [
+          {
+            id: 'primary',
+            provider: CHANNEL_PROVIDER_REF,
+            config: {},
+          },
+        ],
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const log = noopLog();
+    const dispatcher = new DispatcherService({
+      id: 'dispatcher-a',
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: fakeRuntimeCatalog({ runtimes, contexts }),
+      channelProviders: capturingChannelCatalog(sessions),
+      adminSocketPath: '/tmp/dreamux-admin.sock',
+      channelLoggerFactory: () => log,
+      log,
+    });
+    await dispatcher.start();
+    await dispatcher.createTeam({
+      name: 'alpha',
+      leaderAgentRuntime: 'agent-a',
+      intent: 'lead alpha',
+    });
+    await dispatcher.bindTeamChannel({
+      teamId: 'alpha',
+      channelId: 'primary',
+      meta: { chat_id: 'chat-team' },
+    });
+    await dispatcher.stop();
+
+    const restarted = new DispatcherService({
+      id: 'dispatcher-a',
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: fakeRuntimeCatalog({ runtimes, contexts }),
+      channelProviders: capturingChannelCatalog(sessions),
+      adminSocketPath: '/tmp/dreamux-admin.sock',
+      channelLoggerFactory: () => log,
+      log,
+    });
+    await restarted.start();
+    const accepted: string[] = [];
+
+    await expect(
+      sessions.at(-1)!.emit('chat-team', 'hello leader', {
+        onAccepted: async (input) => {
+          accepted.push(input.text);
+        },
+      }),
+    ).resolves.toMatchObject({ status: 'submitted' });
+
+    expect(
+      contexts.some((context) => context.identity.runtime_id === 'dispatcher-a'),
+    ).toBe(false);
+    expect(runtimes.at(-1)!.submitted.map((input) => input.text)).toEqual([
+      'hello leader',
+    ]);
+    expect(accepted).toEqual(['hello leader']);
+    await restarted.stop();
+  });
+
+  it('dispatcher cron starts a dormant dispatcher runtime', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        channels: [],
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const log = noopLog();
+    const dispatcher = new DispatcherService({
+      id: 'dispatcher-a',
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: fakeRuntimeCatalog({ runtimes }),
+      channelProviders: fakeChannelCatalog(),
+      adminSocketPath: '/tmp/dreamux-admin.sock',
+      channelLoggerFactory: () => log,
+      log,
+    });
+    await dispatcher.start();
+    const job = await dispatcher.scheduler.create({
+      cron: '* * * * *',
+      prompt: 'scheduled dispatcher',
+      tz: 'UTC',
+    });
+
+    await expect(dispatcher.scheduler.runNow(job.id)).resolves.toEqual({
+      id: job.id,
+      status: 'submitted',
+    });
+
+    expect(runtimes).toHaveLength(1);
+    expect(runtimes[0]!.textSubmitted[0]).toMatchObject({
+      text: 'scheduled dispatcher',
+      sourceId: expect.stringMatching(/^scheduled:/),
+    });
+    await dispatcher.stop();
+  });
+
+  it('dispatcher cron skips submission when stop races a lazy runtime start', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    let runtime: DeferredStartRuntime | null = null;
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        channels: [],
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const log = noopLog();
+    const dispatcher = new DispatcherService({
+      id: 'dispatcher-a',
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: fakeRuntimeCatalog({
+        runtimes: [],
+        createRuntime: () => {
+          runtime = new DeferredStartRuntime();
+          return runtime;
+        },
+      }),
+      channelProviders: fakeChannelCatalog(),
+      adminSocketPath: '/tmp/dreamux-admin.sock',
+      channelLoggerFactory: () => log,
+      log,
+    });
+    await dispatcher.start();
+    const job = await dispatcher.scheduler.create({
+      cron: '* * * * *',
+      prompt: 'scheduled dispatcher',
+      tz: 'UTC',
+    });
+
+    const run = dispatcher.scheduler.runNow(job.id);
+    await waitFor(() => runtime !== null && runtime.releaseStart !== null);
+    const stopped = dispatcher.stop();
+    runtime!.releaseStart!();
+
+    await stopped;
+    await expect(run).resolves.toEqual({ id: job.id, status: 'skipped' });
+    expect(runtime!.textSubmitted).toEqual([]);
+    expect(dispatcher.runtimeStatus()).toEqual({ status: null, threadId: null });
+  });
+
+  it('server start injects notify-resumed before input sources can deliver turns', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const sessions: CapturingChannelSession[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        channels: [
+          {
+            id: 'primary',
+            provider: CHANNEL_PROVIDER_REF,
+            config: {},
+          },
+        ],
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const log = noopLog();
+    const first = new DispatcherStore(config);
+    await first.setCheckpoint('dispatcher-a', { id: 'checkpoint-resume' });
+    await writeRestartIntent({
+      targets: ['dispatcher-a'],
+      announce: 'Restart completed.',
+      now: Date.now(),
+    });
+    const server = new Server({
+      config,
+      agentRuntimeProviderCatalog: fakeRuntimeCatalog({
+        runtimes,
+        createRuntime: () => new ResumedRuntime(),
+      }),
+      channelProviderCatalog: capturingChannelCatalog(sessions),
+      adminSocketPath: join(root, 'admin.sock'),
+      channelLoggerFactory: () => log,
+      logger: log,
+    });
+
+    await server.start();
+
+    expect(runtimes).toHaveLength(1);
+    expect(runtimes[0]!.textSubmitted.map((input) => input.text)).toEqual([
+      'Restart completed.',
+    ]);
+    expect(sessions[0]?.startCount).toBe(1);
+    await server.shutdown();
+  });
+
+  it('server start ignores expired restart targets and keeps dispatcher dormant', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        channels: [],
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const first = new DispatcherStore(config);
+    await first.setCheckpoint('dispatcher-a', { id: 'checkpoint-resume' });
+    await writeRestartIntent({
+      targets: ['dispatcher-a'],
+      ttlMs: 1,
+      now: Date.now() - 10_000,
+    });
+    const log = noopLog();
+    const server = new Server({
+      config,
+      agentRuntimeProviderCatalog: fakeRuntimeCatalog({
+        runtimes,
+        createRuntime: () => new ResumedRuntime(),
+      }),
+      channelProviderCatalog: fakeChannelCatalog(),
+      adminSocketPath: join(root, 'admin.sock'),
+      channelLoggerFactory: () => log,
+      logger: log,
+    });
+
+    await server.start();
+
+    expect(runtimes).toHaveLength(0);
+    await server.shutdown();
   });
 });
 

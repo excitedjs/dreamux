@@ -325,6 +325,38 @@ describe('SchedulerService dispatch', () => {
     expect(submitted).toEqual([]);
   });
 
+  it('does not complete a fire when stop() races after lazy submit starts', async () => {
+    let finishSubmit: (() => void) | null = null;
+    const submitted: string[] = [];
+    const scheduler = service(
+      () => null,
+      async (input) => {
+        submitted.push(input.prompt);
+        scheduler.stop();
+        await new Promise<void>((resolve) => {
+          finishSubmit = resolve;
+        });
+        return { status: 'submitted', turnId: 'turn-1' };
+      },
+      undefined,
+      'submit',
+    );
+    const job = await scheduler.create({
+      cron: '* * * * *',
+      prompt: 'run report',
+      tz: 'UTC',
+    });
+
+    const run = scheduler.runNow(job.id);
+    await waitFor(() => finishSubmit !== null);
+    finishSubmit!();
+
+    await expect(run).resolves.toEqual({ id: job.id, status: 'skipped' });
+    expect(submitted).toEqual(['run report']);
+    const jobs = (await scheduler.list()).jobs;
+    expect(jobs[0]?.last_fired_at).toBeNull();
+  });
+
   it('rejects an empty title on create and update so a job stays reloadable', async () => {
     const idle = controllableIdle();
     const scheduler = service(idle.runtime, async () => ({ status: 'stopped' }));

@@ -10,6 +10,7 @@ import type {
   AgentRuntimeSystemPrompt,
   AgentRuntimeTurnResult,
   DreamuxLogger,
+  InboundDeliveryHooks,
   InboundTurnInput,
   TurnSettledSignal,
 } from '@excitedjs/dreamux-types';
@@ -236,10 +237,13 @@ export class TeammateService {
     return turn;
   }
 
-  async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
+  async channelInput(
+    input: InboundTurnInput,
+    hooks?: InboundDeliveryHooks,
+  ): Promise<AgentRuntimeTurnResult> {
     await this.ensureStarted({ reopenClosed: true });
     const runtime = this.mustRuntime();
-    const result = await runtime.channelInput(input);
+    const result = await runtime.channelInput(input, hooks);
     if (result.status === 'submitted') {
       await recordSubmittedTurn(this.turnsStore, this.live(), {
         turnId: result.turnId,
@@ -254,8 +258,10 @@ export class TeammateService {
     jobId: string;
     prompt: string;
     sourceId: string;
+    shouldSubmit?: () => boolean;
   }): Promise<AgentRuntimeTurnResult> {
     await this.ensureStarted();
+    if (input.shouldSubmit?.() === false) return { status: 'skipped' };
     const runtime = this.mustRuntime();
     const result = await runtime.completionInput({
       text: input.prompt,
@@ -420,7 +426,17 @@ export class TeammateService {
   private resolveLaunch(): RuntimeLaunchSpec {
     const identity = this.current();
     if (this.deps.buildLaunch !== undefined) {
-      return this.deps.buildLaunch(identity, this.state);
+      return applyRoleOptions(
+        this.deps.buildLaunch(identity, this.state),
+        {
+          mcpServers: this.mcpServers,
+          skillSources: this.skillSources,
+          disableFeatures: this.disableFeatures,
+          ...(this.systemPrompt !== undefined
+            ? { systemPrompt: this.systemPrompt }
+            : {}),
+        },
+      );
     }
     const agent: ResolvedAgentConfig = resolveAgent(
       this.deps.config,
@@ -577,6 +593,36 @@ export class TeammateService {
   private resolveCompletionSpillDir(): string {
     return dispatcherCompletionSpillDir(this.current().dispatcher_id);
   }
+}
+
+function applyRoleOptions(
+  launch: RuntimeLaunchSpec,
+  options: {
+    mcpServers: readonly AgentRuntimeMcpServer[];
+    skillSources: readonly AgentRuntimeSkillSource[];
+    disableFeatures: readonly string[];
+    systemPrompt?: AgentRuntimeSystemPrompt;
+  },
+): RuntimeLaunchSpec {
+  const {
+    mcpServers: _mcpServers,
+    skillSources: _skillSources,
+    disableFeatures: _disableFeatures,
+    systemPrompt: _systemPrompt,
+    ...context
+  } = launch.context;
+  return {
+    ...launch,
+    context: {
+      ...context,
+      mcpServers: [...options.mcpServers],
+      skillSources: options.skillSources,
+      disableFeatures: options.disableFeatures,
+      ...(options.systemPrompt !== undefined
+        ? { systemPrompt: options.systemPrompt }
+        : {}),
+    },
+  };
 }
 
 function completionStatusLine(completion: CompletionEnvelope): string {

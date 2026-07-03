@@ -25,10 +25,13 @@ the explicit `service/index.ts` facade.
   by `dispatcher-service/agent.ts` (Phase 5, #233) — that owns the agent runtime
   lifecycle (start/resume/stop). `DispatcherService` keeps the dispatcher-only
   concerns the removed `DispatcherRuntimeService` held: the live `ChannelService`,
-  restart-notice injection (post-`agent.start()` hook), role MCP descriptor
-  assembly, channel-tool dispatch, channel binding ownership, and completion routing. It launches the agent
-  runtime first, then the channel sessions (slot-before-session ordering, #209
-  fix #7). It resolves a settled turn's delivery target via `initiatorFor` (a team
+  restart-notice injection for explicit resume notices, provider/config-based
+  role MCP descriptor assembly, channel-tool dispatch, channel binding ownership,
+  and completion routing. Ordinary start prepares channel sessions and input
+  sources while leaving the dispatcher runtime dormant; unbound channel inbound,
+  dispatcher cron, or an explicit resume notice lazy-starts the contained agent.
+  A channel session is published as live only after provider start succeeds. It
+  resolves a settled turn's delivery target via `initiatorFor` (a team
   member → its leader's `TeammateService`; a dispatcher-owned teammate / leader →
   the dispatcher's own `agent` `TeammateService`, the unified router path) and
   orchestrates Team route-owner facts with ChannelService binding operations.

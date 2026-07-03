@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Move channel MCP descriptor ownership from ChannelSession to ChannelProvider so descriptors are assembled from provider config without requiring live channel sessions.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux-types"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-types",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

@@ -3,6 +3,7 @@ import type {
   AgentRuntimeSystemPrompt,
   AgentRuntimeTurnResult,
   DreamuxLogger,
+  InboundDeliveryHooks,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
 
@@ -321,9 +322,10 @@ export class TeamService {
 
   async deliverToLeader(
     turn: InboundTurnInput,
+    hooks?: InboundDeliveryHooks,
   ): Promise<AgentRuntimeTurnResult> {
     if (this.mustRecord().status === 'closed') return { status: 'stopped' };
-    return this.leader.channelInput(turn);
+    return this.leader.channelInput(turn, hooks);
   }
 
   async sendToLeader(input: {
