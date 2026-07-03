@@ -504,6 +504,7 @@ function teamLeaderSystemPrompt(
 ): AgentRuntimeSystemPrompt {
   const append = [
     `You are the TeamLeader of Dreamux Team ${JSON.stringify(teamId)}.`,
+    'Load `team-workflow` before using this Team\'s TeamMate tools, provider-exposed channel tools, cron tools, or team transfer tool.',
   ];
   if (identityPrompt !== null) append.push(identityPrompt);
   return { append };

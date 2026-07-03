@@ -2,6 +2,7 @@ import { PassThrough } from 'node:stream';
 
 import { describe, expect, it } from 'vitest';
 
+import { cronTools } from '../src/mcp/cron-mcp.js';
 import { runTeamMateMcp } from '../src/mcp/teammate-mcp.js';
 import { runTeamMcp } from '../src/mcp/team-mcp.js';
 
@@ -120,9 +121,13 @@ async function teamLeaderTeamTools(): Promise<Array<Record<string, unknown>>> {
 }
 
 function schemaOf(tools: Array<Record<string, unknown>>, name: string): ToolSchema {
+  return (toolOf(tools, name) as { inputSchema: ToolSchema }).inputSchema;
+}
+
+function toolOf(tools: Array<Record<string, unknown>>, name: string): Record<string, unknown> {
   const entry = tools.find((tool) => tool['name'] === name);
   if (entry === undefined) throw new Error(`tool '${name}' not found`);
-  return (entry as { inputSchema: ToolSchema }).inputSchema;
+  return entry;
 }
 
 // The retired legacy filters. `status` stays a supported lifecycle filter and is
@@ -184,6 +189,28 @@ describe('issue #199 Slice 1 — public MCP contract whitelist', () => {
     }
   });
 
+  it('TeamLeader teammate.spawn has no repo input or dispatcher repo wording', async () => {
+    const spawn = toolOf(await teammateTools('team_leader'), 'spawn');
+    expect((spawn.inputSchema as ToolSchema).properties).not.toHaveProperty('repo');
+    expect(spawn['description']).toMatch(/TeamMate agent.*shared workspace/);
+    expect(spawn['description']).toMatch(/does not accept.*repo/);
+    expect(spawn['description']).toMatch(/only one TeamMate writes/);
+    expect(spawn['description']).not.toContain('repo is optional');
+    expect(spawn['description']).not.toContain('Dispatcher');
+    expect(spawn['description']).not.toContain('TeamLeader-scoped');
+  });
+
+  it('dispatcher teammate.spawn description avoids internal path layout and migration prose', async () => {
+    const spawn = toolOf(await teammateTools('dispatcher'), 'spawn');
+    expect((spawn.inputSchema as ToolSchema).properties).toHaveProperty('repo');
+    expect(spawn['description']).toMatch(/concrete, never-reused name/);
+    expect(spawn['description']).toMatch(/Dreamux allocate.*work directory/);
+    expect(spawn['description']).not.toContain('.workspace/work/');
+    expect(spawn['description']).not.toContain('dispatcher cwd');
+    expect(spawn['description']).not.toContain('does NOT');
+    expect(spawn['description']).not.toContain('core-owned');
+  });
+
   it('teammate.history params are exactly the trimmed recovery set', async () => {
     const history = schemaOf(await teammateTools('dispatcher'), 'history');
     expect(Object.keys(history.properties).sort()).toEqual(
@@ -223,10 +250,47 @@ describe('issue #199 Slice 1 — public MCP contract whitelist', () => {
   it('TeamLeader Team MCP exposes only explicit transfer_back', async () => {
     const tools = await teamLeaderTeamTools();
     expect(tools.map((tool) => tool['name'])).toEqual(['transfer_back']);
+    const transferTool = toolOf(tools, 'transfer_back');
     const transfer = schemaOf(tools, 'transfer_back');
     expect(transfer.required).toEqual(['meta']);
     expect(transfer.properties).toHaveProperty('channel_id');
     expect(transfer.properties).toHaveProperty('meta');
+    const description = String(transferTool['description'] ?? '');
+    expect(description).toMatch(/routing[- ]only/i);
+    expect(description).toMatch(/no .*channel[- ]message .*side effect/i);
+    expect(description).toMatch(/bind(?:ing)?[\s\S]{0,80}channel target/i);
+    expect(description).not.toContain('Dispatcher');
+    expect(description).not.toContain('dispatcher routing');
+    expect(description).not.toContain('report');
+    expect(description).not.toContain('Feishu');
+    expect(description).not.toContain('chat_id');
+  });
+
+  it('Team MCP descriptions keep channel selectors provider-owned', async () => {
+    const descriptions = (await teamTools())
+      .map((tool) => String(tool['description'] ?? ''))
+      .join('\n');
+    expect(descriptions).toMatch(/provider-defined .*target selector/);
+    expect(descriptions).not.toContain('Feishu');
+    expect(descriptions).not.toContain('chat_id');
+    expect(descriptions).not.toContain('group chat');
+    expect(descriptions).not.toContain('bound group');
+    expect(descriptions).not.toContain('{ "chat_id"');
+    expect(descriptions).not.toContain('core-owned');
+    expect(descriptions).not.toContain('.workspace/work/');
+    expect(descriptions).not.toContain('dispatcher cwd');
+    expect(descriptions).not.toContain('does NOT');
+  });
+
+  it('cron MCP descriptions describe product behavior, not release milestones', () => {
+    const descriptions = cronTools()
+      .map((tool) => String(tool['description'] ?? ''))
+      .join('\n');
+    expect(descriptions).toMatch(/cron jobs?[\s\S]{0,80}inject prompts? back into this agent/i);
+    expect(descriptions).toMatch(/do not[\s\S]{0,80}channel messages?/i);
+    expect(descriptions).toMatch(/do not[\s\S]{0,80}spawn agents?/i);
+    expect(descriptions).not.toContain('this milestone');
+    expect(descriptions).not.toContain('deliver or spawn target');
   });
 
   it('team.history params are exactly the trimmed recovery set', async () => {

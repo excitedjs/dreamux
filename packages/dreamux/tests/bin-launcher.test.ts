@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';
-// eslint-disable-next-line no-restricted-imports -- black-box launcher acceptance test: it execs the compiled `dreamux`/`tm` bins as real child processes and asserts on captured stdout/exit code; spawnSync keeps each case one synchronous assertion with no async lifecycle to leak between tests (issue #85 test-scope carve-out).
+// eslint-disable-next-line no-restricted-imports -- black-box launcher acceptance test: it execs the compiled `dreamux` bins as real child processes and asserts on captured stdout/exit code; spawnSync keeps each case one synchronous assertion with no async lifecycle to leak between tests (issue #85 test-scope carve-out).
 import { spawnSync } from 'node:child_process';
 import {
   existsSync,
@@ -30,7 +30,6 @@ const PACKAGE_ROOT = resolve(
 const MONOREPO_ROOT = resolve(PACKAGE_ROOT, '..', '..');
 
 const PKG_BIN_DREAMUX = join(PACKAGE_ROOT, 'bin', 'dreamux');
-const PKG_BIN_TM = join(PACKAGE_ROOT, 'bin', 'tm');
 const ROOT_BIN_DREAMUX = join(MONOREPO_ROOT, 'bin', 'dreamux');
 
 beforeAll(() => {
@@ -93,7 +92,6 @@ describe('package bin manifest', () => {
 
     expect(manifest.bin).toEqual({
       dreamux: './bin/dreamux',
-      tm: './bin/tm',
     });
   });
 });
@@ -107,15 +105,6 @@ describe('runtime dreamux bin resolution', () => {
     expect(dreamuxBinPath({ DREAMUX_BIN: 'relative/dreamux' })).toBe(
       resolve('relative/dreamux'),
     );
-  });
-});
-
-describe('packages/dreamux/bin/tm', () => {
-  it('forwards to the package-local @excitedjs/tm executable without tsx', () => {
-    const script = readFileSync(PKG_BIN_TM, 'utf8');
-
-    expect(script).toContain('node_modules/.bin/tm');
-    expect(script).not.toMatch(/\btsx\b/);
   });
 });
 

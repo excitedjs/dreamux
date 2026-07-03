@@ -16,7 +16,7 @@ interface TeamMateMcpArgv {
 export function createTeamMateMcpCommand(): CommandModule<{}, TeamMateMcpArgv> {
   return {
     command: 'teammate-mcp',
-    describe: 'Run the dispatcher-scoped TeamMate scheduling MCP stdio shim',
+    describe: 'Run the TeamMate MCP stdio shim for a dispatcher or TeamLeader caller scope',
     builder: buildTeamMateMcpOptions,
     handler: handleTeamMateMcp,
   };

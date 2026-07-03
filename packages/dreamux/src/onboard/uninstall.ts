@@ -12,10 +12,8 @@ import {
   globalConfigDir,
   globalConfigFile,
   loadConfig,
-  type DispatcherConfig,
 } from '../config/config.js';
 import { cacheRoot, logsRoot, runRoot, stateRoot } from '../platform/paths.js';
-import { dispatcherWorkspaceSkillDirs } from './legacy-codex-skills.js';
 
 export type UninstallStatus = 'removed' | 'missing' | 'skipped';
 
@@ -62,7 +60,6 @@ export async function runUninstall(
   assertSafeOwnedDirectory(cacheDir, 'dreamux cache directory');
   assertSafeOwnedDirectory(logDir, 'dreamux logs directory');
   assertSafeOwnedDirectory(configDir, 'dreamux config directory');
-  const workspaceSkillPaths = await collectWorkspaceSkillPaths(configDir);
 
   // Service removal (unit-only) is shared with `dreamux daemon uninstall`.
   const removal = await removeUserService({
@@ -78,7 +75,6 @@ export async function runUninstall(
     reason: `${removal.platform} unit`,
   });
 
-  await reportWorkspaceSkills(workspaceSkillPaths, entries);
   await removeOwnedDirectory(stateDir, entries, 'dreamux state directory', dryRun);
   await removeOwnedDirectory(runDir, entries, 'dreamux run directory', dryRun);
   await removeOwnedDirectory(cacheDir, entries, 'dreamux cache directory', dryRun);
@@ -108,35 +104,6 @@ async function warnIfConfigIsNotReadable(
     warnings.push(
       `could not validate dreamux config before uninstall; continuing with fixed state/log paths: ${message}`,
     );
-  }
-}
-
-async function collectWorkspaceSkillPaths(configDir: string): Promise<string[]> {
-  try {
-    return (await loadConfig({ configDir })).config.dispatchers
-      .flatMap(dispatcherWorkspaceSkillPathsFromConfig);
-  } catch {
-    return [];
-  }
-}
-
-function dispatcherWorkspaceSkillPathsFromConfig(
-  dispatcher: DispatcherConfig,
-): string[] {
-  if (dispatcher.cwd === null || dispatcher.cwd.trim() === '') return [];
-  return dispatcherWorkspaceSkillDirs(dispatcher.cwd);
-}
-
-async function reportWorkspaceSkills(
-  paths: string[],
-  entries: UninstallEntry[],
-): Promise<void> {
-  for (const path of uniquePaths(paths)) {
-    entries.push({
-      path,
-      status: (await pathExists(path)) ? 'skipped' : 'missing',
-      reason: 'workspace-local bundled skill (not removed)',
-    });
   }
 }
 

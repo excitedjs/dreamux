@@ -172,10 +172,13 @@ export function teammateTools(callerKind: TeamMateMcpCallerKind): Array<Record<s
   if (callerKind === 'dispatcher') {
     spawnProperties['repo'] = repoInputSchema();
   }
+  const spawnDescription = callerKind === 'dispatcher'
+    ? 'Start a resumable TeamMate agent managed by this dispatcher and submit its first turn. name_prefix is the requested label; spawn RETURNS the concrete, never-reused name that all later send/status/last/close MUST use. Use get_capabilities.agent_runtimes[].id as agent_runtime. intent is required: it is the durable recovery subject. repo is optional: omit it to let Dreamux allocate a fresh per-TeamMate work directory, or pass { mode: reuse-cwd | managed, path?, base_ref?, branch?, slug?, cleanup? } to choose an existing path or create a managed git worktree.'
+    : 'Start a resumable TeamMate agent in this Team\'s shared workspace and submit its first turn. name_prefix is the requested label; spawn RETURNS the concrete, never-reused name that all later send/status/last/close MUST use. Use get_capabilities.agent_runtimes[].id as agent_runtime. intent is required: it is the durable recovery subject. Coordinate edits so only one TeamMate writes the shared workspace unless the work is read-only or edits are independent. This tool does not accept a repo parameter.';
   return [
     tool(
       'spawn',
-      'Start a resumable TeamMate agent and submit its first turn. name_prefix is the requested label; spawn RETURNS the concrete, never-reused name that all later send/status/last/close MUST use. Use get_capabilities.agent_runtimes[].id as agent_runtime. intent is required: it is the durable recovery subject. repo is optional: omit it to run in a fresh per-TeamMate work directory under the dispatcher workspace (.workspace/work/<name>/, a plain directory — the dispatcher cwd need not be a git repo), or pass { mode: reuse-cwd | managed, path?, base_ref?, branch?, slug?, cleanup? } — reuse-cwd runs in path, managed creates a git worktree.',
+      spawnDescription,
       spawnProperties,
       ['name_prefix', 'prompt', 'intent'],
     ),

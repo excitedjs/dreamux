@@ -34,11 +34,11 @@ export function createTeamMcpCommand(): CommandModule<{}, TeamMcpArgv> {
         })
         .option('team-id', {
           type: 'string',
-          describe: 'Team id for TeamLeader-scoped Team MCP',
+          describe: 'Team id when this Team MCP shim runs for a TeamLeader',
         })
         .option('leader-name', {
           type: 'string',
-          describe: 'TeamLeader name for TeamLeader-scoped Team MCP',
+          describe: 'TeamLeader name when this Team MCP shim runs for a TeamLeader',
         }) as Argv<TeamMcpArgv>,
     handler: async (argv) => {
       await runTeamMcp({

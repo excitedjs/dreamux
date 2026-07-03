@@ -115,8 +115,8 @@ export async function runOnboard(
   // (`<cwd>/.codex/skills`) at onboard time (issue #209 slice 6). Core now
   // injects them at runtime by role via the create context's `skillSources`
   // capability, so onboarding creates no skill dir or symlinks. Pre-existing old
-  // symlinks are left untouched; `dreamux uninstall` reports but does not remove
-  // them.
+  // symlinks are outside Dreamux-owned state and are left untouched; operators
+  // may delete them manually.
 
   const loaded = answers.dryRun
     ? null

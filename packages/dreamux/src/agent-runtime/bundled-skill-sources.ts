@@ -7,19 +7,18 @@
  * context. The runtime package owns the mechanics of applying the sources to its
  * engine; core never touches `.codex/skills` / `.claude/skills` layout itself.
  *
- * Only the Dispatcher and TeamLeader roles receive the bundled skills. Ordinary
- * TeamMate and team-member runtimes receive none by default — they are scoped,
- * single-task agents and the operational skills are dispatcher/leader concerns.
+ * Only the Dispatcher and TeamLeader roles receive bundled skills. Dispatchers
+ * receive orchestration notes plus host-maintenance notes; TeamLeaders receive
+ * only their scoped workflow notes. Ordinary TeamMate and team-member runtimes
+ * receive none by default — they are scoped agents and the operational skills
+ * are dispatcher/leader concerns.
  *
  * This replaces the retired workspace-symlink installer
  * (`onboard/bundled-skills.ts`), which wrote the skills into each runtime's
  * working directory; nothing here mutates the filesystem.
  */
 import type { AgentRuntimeSkillSource } from '@excitedjs/dreamux-types';
-import {
-  BUNDLED_SKILL_NAMES,
-  bundledSkillDir,
-} from '../platform/paths.js';
+import { bundledSkillDir, type BundledSkillName } from '../platform/paths.js';
 
 type AgentRuntimeRole =
   | 'dispatcher'
@@ -27,24 +26,31 @@ type AgentRuntimeRole =
   | 'teammate'
   | 'team_member';
 
-/** Roles that receive the bundled Dreamux skills. */
-function roleReceivesBundledSkills(role: AgentRuntimeRole): boolean {
-  return role === 'dispatcher' || role === 'team_leader';
-}
+const BUNDLED_SKILLS_BY_ROLE: Record<AgentRuntimeRole, readonly BundledSkillName[]> = {
+  dispatcher: ['dispatcher-workflow', 'dreamux-maintenance'],
+  team_leader: ['team-workflow'],
+  teammate: [],
+  team_member: [],
+};
 
 /**
- * The bundled Dreamux skill sources for a runtime `role`. For Dispatcher and
- * TeamLeader this returns one neutral source per concrete skill directory. Each
+ * The bundled Dreamux skill sources for a runtime `role`. For roles with a
+ * bundled skill this returns one neutral source per concrete skill directory. Each
  * runtime package owns translating those directories into its native discovery
  * layout; core emits no runtime-specific layout markers.
  */
 export function bundledSkillSourcesForRole(
   role: AgentRuntimeRole,
 ): AgentRuntimeSkillSource[] {
-  if (!roleReceivesBundledSkills(role)) return [];
-  return BUNDLED_SKILL_NAMES.map((name) => ({
+  return BUNDLED_SKILLS_BY_ROLE[role].map((name) => ({
     name,
     path: bundledSkillDir(name),
     source: 'dreamux-core',
   }));
+}
+
+export function bundledSkillNamesForRole(
+  role: AgentRuntimeRole,
+): readonly BundledSkillName[] {
+  return BUNDLED_SKILLS_BY_ROLE[role];
 }

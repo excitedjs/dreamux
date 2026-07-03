@@ -8,21 +8,6 @@ import {
   DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
 } from '../src/service/dispatcher-service/base-prompt.js';
 
-/**
- * Guards the issue #124 alignment as updated by PR6 (issue #126): the bundled
- * dispatcher-facing skills and the injected dispatcher base prompt must present
- * the server-hosted TeamMate MCP as the DEFAULT orchestration interface for
- * named, semi-resident TeamMate agents: spawn/send/close plus
- * history/list/status/last/get_capabilities. The stale task/worker
- * vocabulary must stay gone after the agent-centric cut.
- *
- * These read the SHIPPED skill files (via `bundledSkillDir`) so packaging drift
- * — a stale tm-primary skill slipping back into the npm package — is caught, not
- * just an in-repo copy.
- */
-
-// The dispatcher-scoped `teammate` MCP tool names, owned by
-// `src/mcp/teammate-mcp.ts`. Kept in sync with that file's `teammateTools()`.
 const TEAMMATE_MCP_TOOLS = [
   'spawn',
   'send',
@@ -34,130 +19,203 @@ const TEAMMATE_MCP_TOOLS = [
   'get_capabilities',
 ];
 
+const DISPATCHER_TEAM_MCP_TOOLS = [
+  'create',
+  'send',
+  'list',
+  'status',
+  'history',
+  'dissolve',
+  'bind_channel',
+  'transfer_back',
+];
+
+const CRON_MCP_TOOLS = [
+  'cron_create',
+  'cron_list',
+  'cron_update',
+  'cron_delete',
+  'cron_run_now',
+];
+
 function readBundledSkill(name: BundledSkillName): string {
   return readFileSync(join(bundledSkillDir(name), 'SKILL.md'), 'utf8');
 }
 
-describe('TeamMate MCP is the default teammate interface (issue #124, #126 PR6)', () => {
-  it('dispatcher skill presents the MCP as default and tm as the explicit fallback', () => {
-    const skill = readBundledSkill('dispatcher');
+function frontmatterDescription(skill: string): string {
+  return skill.match(/^description:\s*"?(.+?)"?$/m)?.[1] ?? '';
+}
 
-    // Default framing names every MCP tool in the agent-centric surface.
-    for (const tool of TEAMMATE_MCP_TOOLS) {
-      expect(skill).toContain(tool);
-    }
-    expect(skill).toContain('the primary interface');
-    expect(skill).toContain('the default interface');
-    expect(skill).toContain("currently `resume`");
-    expect(skill).not.toContain('steer, events, last, and context');
-    expect(skill).not.toContain('steer.supported');
+describe('role-specific bundled Dreamux skills', () => {
+  it('dispatcher-workflow is MCP-only dispatcher orchestration guidance', () => {
+    const skill = readBundledSkill('dispatcher-workflow');
+    const description = frontmatterDescription(skill);
 
-    // The task/worker surface must stay deleted.
-    expect(skill).toContain('semi-resident TeamMate agents');
-    expect(skill).not.toContain('Phase 1 boundary');
-    expect(skill).not.toContain('autonomous worker execution');
-    expect(skill).not.toContain('may not run a scheduled task to completion');
-    expect(skill).not.toContain('runs a repo-local teammate to completion today');
-    expect(skill).not.toContain('run_task');
-    expect(skill).not.toContain('execute_task');
-    expect(skill).not.toContain('schedule');
-    expect(skill).not.toContain('task id');
+    expect(description).toMatch(/MCP operation notes/i);
+    expect(description).toMatch(/TeamMate|Team|channel|cron/);
+    expect(skill).toMatch(/dreamux-maintenance[\s\S]{0,180}(server|host|daemon|missing-reply)/i);
+    expect(skill).toMatch(/TeamMate completion/i);
+    expect(skill).toMatch(/progress/i);
+    expect(skill).toMatch(/milestones/i);
+    expect(skill).toMatch(/reply tool/i);
+    expect(skill).toMatch(/not channel delivery/i);
+    expect(skill).not.toContain('Maintenance Notes');
+    for (const tool of TEAMMATE_MCP_TOOLS) expect(skill).toContain(tool);
+    for (const tool of DISPATCHER_TEAM_MCP_TOOLS) expect(skill).toContain(tool);
+    for (const tool of CRON_MCP_TOOLS) expect(skill).toContain(tool);
 
-    // tm survives only as the explicit fallback.
-    expect(skill).toContain('the explicit fallback');
-
-    // Anti-regression: the old tm-primary framing must not return.
-    expect(skill).not.toContain('owns teammate lifecycle, history, and');
-    expect(skill).not.toContain('a tm-managed teammate');
+    expect(skill).not.toContain('Use this skill only from');
+    expect(skill).not.toContain('legacy TeamMate CLI fallback');
+    expect(skill).not.toContain('There is no separate resume tool');
+    expect(skill).not.toContain('Feishu');
+    expect(skill).not.toContain('chat_id');
+    expect(skill).not.toContain('list_chat_bots');
+    expect(skill).not.toContain('tm spawn');
+    expect(skill).not.toContain('tm send');
+    expect(skill).not.toContain('npm exec --package @excitedjs/tm');
+    expect(skill).not.toContain('team-dev-workflow');
+    expect(skill).not.toContain('.codex/skills');
+    expect(skill).not.toContain('references/');
   });
 
-  it('team-dev-workflow no longer inherits a tm-primary contract', () => {
-    const skill = readBundledSkill('team-dev-workflow');
-
-    expect(skill).toContain('server-hosted TeamMate');
-    expect(skill).not.toContain('`dispatcher` owns `tm` mechanics');
-  });
-
-  it('dreamux-maintenance covers the teammate MCP and labels tm as fallback', () => {
+  it('dreamux-maintenance is Dispatcher-only host operations guidance', () => {
     const skill = readBundledSkill('dreamux-maintenance');
+    const description = frontmatterDescription(skill);
 
-    expect(skill).toContain('teammate-mcp/<dispatcher-id>.log');
-    expect(skill).toContain('TeamMate MCP fails');
-    expect(skill).toContain('fallback path');
+    expect(description).toMatch(/Dreamux host operation notes/i);
+    expect(description).toMatch(/serve|daemon|doctor|status|missing replies/);
+    expect(skill).toContain('dreamux doctor');
+    expect(skill).toContain('dreamux status');
+    expect(skill).toContain('dreamux changelog');
+    expect(skill).toContain('dreamux daemon install|uninstall|start|stop|restart');
+    expect(skill).toContain('missing replies');
+    expect(skill).not.toContain('do not invent a separate public daemon command tree');
+
+    expect(skill).not.toContain('Use this skill only from');
+    expect(skill).not.toContain('legacy TeamMate CLI fallback');
+    expect(skill).not.toContain('There is no separate resume tool');
+    expect(skill).not.toContain('old `.codex/skills`');
+    expect(skill).not.toContain('Feishu');
+    expect(skill).not.toContain('chat_id');
+    expect(skill).not.toContain('tm spawn');
+    expect(skill).not.toContain('tm send');
+    expect(skill).not.toContain('npm exec --package @excitedjs/tm');
+    expect(skill).not.toContain('team-dev-workflow');
+    expect(skill).not.toContain('references/');
   });
 
-  it('injected base prompt makes the MCP default and executes for real', () => {
-    const prompt = DREAMUX_DISPATCHER_BASE_INSTRUCTIONS;
+  it('team-workflow is TeamLeader-only and does not teach dispatcher Team orchestration', () => {
+    const skill = readBundledSkill('team-workflow');
+    const description = frontmatterDescription(skill);
 
-    expect(prompt).toContain('# TeamMate Delegation');
-    expect(prompt).toContain('server-hosted TeamMate MCP is the primary interface');
-    expect(prompt).toContain('The tm CLI is the labeled fallback');
-    expect(prompt).toContain('named, semi-resident TeamMate agents');
-    for (const tool of TEAMMATE_MCP_TOOLS) {
-      expect(prompt).toContain(tool);
+    expect(description).toMatch(/MCP operation notes/i);
+    expect(description).toMatch(/TeamMate|channel|cron|transfer/);
+    expect(skill).toMatch(/`team` MCP exposes only `transfer_back`/);
+    expect(skill).toMatch(/share the Team\s+workspace/);
+    expect(skill).toMatch(/one TeamMate at a time to edit/);
+    expect(skill).toMatch(/TeamMate completion/i);
+    expect(skill).toMatch(/progress/i);
+    expect(skill).toMatch(/milestones/i);
+    expect(skill).toMatch(/reply tool/i);
+    expect(skill).toMatch(/not channel delivery/i);
+    for (const tool of TEAMMATE_MCP_TOOLS) expect(skill).toContain(tool);
+    for (const tool of CRON_MCP_TOOLS) expect(skill).toContain(tool);
+    expect(skill).toContain('transfer_back');
+
+    expect(skill).not.toContain('Use this skill only from');
+    expect(skill).not.toContain('TeamLeader-scoped');
+    expect(skill).not.toContain('legacy TeamMate CLI fallback');
+    expect(skill).not.toContain('There is no separate resume tool');
+    expect(skill).not.toContain('Feishu');
+    expect(skill).not.toContain('chat_id');
+    expect(skill).not.toContain('list_chat_bots');
+    expect(skill).not.toMatch(/ask the Dispatcher/i);
+    expect(skill).not.toMatch(/return(?:s|ing)? .*Dispatcher/i);
+    expect(skill).not.toMatch(/Dispatcher .*outcome/i);
+    expect(skill).not.toContain('dreamux-maintenance');
+    for (const dispatcherOnlyTool of ['create', 'dissolve', 'bind_channel']) {
+      expect(skill).not.toContain(`\`${dispatcherOnlyTool}\``);
     }
-
-    // The stale Phase 1 / not-to-completion caveat must be gone (PR6, #126).
-    expect(prompt).not.toContain('Phase 1 boundary');
-    expect(prompt).not.toContain('may not run a scheduled task to completion');
-    expect(prompt).not.toContain('run_task');
-    expect(prompt).not.toContain('execute_task');
-    expect(prompt).not.toContain('task id');
-    // Anti-regression: the old tm-primary section heading must not return.
-    expect(prompt).not.toContain('# tm Delegation');
-    expect(prompt).not.toContain('await_completion');
+    expect(skill).not.toContain('`team.send`');
+    expect(skill).not.toContain('targets that TeamLeader');
+    expect(skill).not.toContain('bind_channel({');
+    expect(skill).not.toContain('tm spawn');
   });
 
-  it('does not present a dispatcher-facing await/poll tool (issue #126 PR8)', () => {
-    expect(readBundledSkill('dispatcher')).not.toContain('await_completion');
-    expect(DREAMUX_DISPATCHER_BASE_INSTRUCTIONS).not.toContain('await_completion');
+  it('dispatcher prompt routes to skills without embedding repo-development policy', () => {
+    const basePrompt = DREAMUX_DISPATCHER_BASE_INSTRUCTIONS;
+    const appendPrompt = DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS;
+    const allDispatcherPrompts = `${basePrompt}\n${appendPrompt}`;
+
+    expect(basePrompt).toContain('Load `dispatcher-workflow` before');
+    expect(basePrompt).toContain('Load `dreamux-maintenance` before');
+    expect(basePrompt).toContain('provider-exposed reply tool');
+    expect(basePrompt).toContain('MCP tool results as the authority');
+    expect(basePrompt).toMatch(/warm, curious, collaborative/i);
+    expect(basePrompt).toMatch(/local reads[\s\S]{0,120}parallelize/i);
+    expect(basePrompt).toMatch(/simple request[\s\S]{0,120}terminal command/i);
+    expect(basePrompt).toMatch(/planning tool/i);
+    expect(basePrompt).toMatch(/review mindset/i);
+    expect(basePrompt).toMatch(/meaningful progress[\s\S]{0,120}key task milestones/i);
+    expect(basePrompt).toMatch(/destructive commands/i);
+    expect(basePrompt).toMatch(/unexpected local file changes/i);
+    expect(basePrompt).toMatch(/Do not read or edit repository code files/i);
+    expect(basePrompt).toMatch(/delegat\w*[\s\S]{0,80}TeamMate or Team MCP tools/i);
+    expect(basePrompt).toMatch(/do not poll `last`[\s\S]{0,120}pushes task completions/i);
+
+    expect(appendPrompt).toContain('Load `dispatcher-workflow` before');
+    expect(appendPrompt).toContain('Load `dreamux-maintenance` before');
+    expect(appendPrompt).toContain('MCP tool results as the authority');
+    expect(appendPrompt).toMatch(/Do not read or edit repository code files/i);
+    expect(appendPrompt).toMatch(/delegate repository work to TeamMates or Teams/i);
+    expect(appendPrompt).toMatch(/do not poll `last`[\s\S]{0,120}pushes task results/i);
+
+    expect(allDispatcherPrompts).not.toContain('The tm CLI is the labeled fallback');
+    expect(allDispatcherPrompts).not.toContain('tm CLI');
+    expect(allDispatcherPrompts).not.toContain('tm executable');
+    expect(allDispatcherPrompts).not.toContain('Load the bundled `dispatcher` skill');
+    expect(allDispatcherPrompts).not.toContain('legacy TeamMate CLI');
+    expect(allDispatcherPrompts).not.toContain('Feishu');
+    expect(allDispatcherPrompts).not.toContain('chat_id');
+    expect(allDispatcherPrompts).not.toContain('Phased Work And Review');
+    expect(allDispatcherPrompts).not.toContain('Working Style');
+    expect(allDispatcherPrompts).not.toContain('apply_patch');
+    expect(allDispatcherPrompts).not.toContain('AGENTS.md');
+    expect(allDispatcherPrompts).not.toContain('Frontend tasks');
+    expect(allDispatcherPrompts).not.toContain('AI slop');
+    expect(allDispatcherPrompts).not.toContain('【F:');
+    expect(allDispatcherPrompts).not.toContain('named, semi-resident TeamMate agents');
+    expect(allDispatcherPrompts).not.toContain('ctx and history_events');
+    expect(allDispatcherPrompts).not.toContain('run_task');
+    expect(allDispatcherPrompts).not.toContain('execute_task');
+    expect(allDispatcherPrompts).not.toContain('await_completion');
   });
 });
 
-/**
- * Channel-binding contract in the SHIPPED dispatcher skill + the append-mode base
- * prompt (issue #209 owner scope). Binding a channel to a Team is a core Team
- * capability on the Team MCP — `bind_channel({ team_name, channel_id?, meta })` /
- * `transfer_back({ channel_id?, meta })`, where `meta` carries the provider
- * selector (Feishu `{ chat_id }`). There is NO separate generic "channel" MCP,
- * and binding is NOT addressed by a top-level `chat_id` argument. These guards
- * matter because the bundled skills now reach `builtin:claude-code` Dispatcher /
- * TeamLeader launches, so stale prompt text is production-visible.
- */
-describe('channel binding is taught as a Team MCP capability (issue #209)', () => {
-  it('dispatcher skill teaches bind_channel / transfer_back with channel_id + meta, not a generic channel MCP', () => {
-    const skill = readBundledSkill('dispatcher');
+describe('channel binding remains a Team MCP capability', () => {
+  it('dispatcher-workflow teaches bind_channel / transfer_back with channel_id + meta', () => {
+    const skill = readBundledSkill('dispatcher-workflow');
 
-    // The generalized Team-owned surface is present.
     expect(skill).toContain('bind_channel');
     expect(skill).toContain('transfer_back');
-    expect(skill).toContain('TeamLeaders receive only scoped `transfer_back`');
-    // Addressed by a provider selector `meta` (Feishu example uses chat_id INSIDE
-    // meta), not a top-level chat_id parameter.
-    expect(skill).toMatch(/meta[\s\S]{0,80}chat_id/);
+    expect(skill).toContain('meta');
     expect(skill).toContain('channel_id');
-
-    // No removed generic Channel MCP surface, no "channel MCP" framing for binding.
+    expect(skill).not.toContain('chat_id');
     expect(skill).not.toContain('## Channel MCP (`channel`)');
-    expect(skill).not.toContain('channel MCP `bind_channel`');
     expect(skill).not.toContain('mcp.channel');
-    // The old top-level-chat_id binding instruction must stay gone.
-    expect(skill).not.toContain('and `chat_id` (group chats only)');
     expect(skill).not.toContain('list_peers');
   });
 
-  it('append-mode base prompt teaches the Team MCP bind_channel/meta contract, not a channel MCP', () => {
+  it('append-mode prompt delegates Team MCP details to dispatcher-workflow', () => {
     const prompt = DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS;
 
-    expect(prompt).toContain('bind_channel({ team_name, channel_id?, meta })');
-    expect(prompt).toContain('transfer_back({ channel_id?, meta })');
-    expect(prompt).toContain('TeamLeaders receive only their scoped transfer_back projection');
-    expect(prompt).toMatch(/meta is \{ chat_id \}/);
-
-    // The stale append-mode "channel MCP ... addressed by chat_id" line is gone.
+    expect(prompt).toContain('Load `dispatcher-workflow` before');
+    expect(prompt).not.toContain('bind_channel({ team_name, channel_id?, meta })');
+    expect(prompt).not.toContain('transfer_back({ channel_id?, meta })');
+    expect(prompt).not.toContain('TeamLeaders receive only their scoped transfer_back projection');
+    expect(prompt).not.toMatch(/meta is \{ chat_id \}/);
     expect(prompt).not.toContain('The channel MCP is the dispatcher-only channel-binding interface');
     expect(prompt).not.toContain('addressed by chat_id');
     expect(prompt).not.toContain('mcp.channel');
-    expect(prompt).not.toContain('list_peers');
   });
 });

@@ -142,9 +142,6 @@ importers:
       '@excitedjs/feishu-channel':
         specifier: workspace:*
         version: link:../channel/feishu-channel
-      '@excitedjs/tm':
-        specifier: 2.4.1
-        version: 2.4.1
       croner:
         specifier: ^10.0.1
         version: 10.0.1
@@ -436,11 +433,6 @@ packages:
   '@eslint/plugin-kit@0.4.1':
     resolution: {integrity: sha512-43/qtrDUokr7LJqoF2c3+RInu/t4zfrpYdoSDfYyhg52rwLV6TnOvdG4fXm7IkSB3wErkcmJS9iEhjVtOSEjjA==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
-
-  '@excitedjs/tm@2.4.1':
-    resolution: {integrity: sha512-OEKxqB4740iAzN8yCQn65DDBs/sc+VMggiBxgRP9TvGo7Tnjc4C06uJx+PZHVLbaGRIQla/r0i6WwS50hoF++A==}
-    engines: {node: '>=22.7.0'}
-    hasBin: true
 
   '@humanfs/core@0.19.2':
     resolution: {integrity: sha512-UhXNm+CFMWcbChXywFwkmhqjs3PRCmcSa/hfBgLIb7oQ5HNb1wS0icWsGtSAUNgefHeI+eBrA8I1fxmbHsGdvA==}
@@ -1761,8 +1753,6 @@ snapshots:
     dependencies:
       '@eslint/core': 0.17.0
       levn: 0.4.1
-
-  '@excitedjs/tm@2.4.1': {}
 
   '@humanfs/core@0.19.2':
     dependencies:

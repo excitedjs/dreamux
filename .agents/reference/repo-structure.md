@@ -50,7 +50,6 @@ verbatim through the move):
 | `src/platform/` | Centralized paths, logging, runtime sockets, and process helpers |
 | `src/server.ts` | Top-level `Server` class wiring everything together |
 | `bin/dreamux` | Public CLI launcher (`dreamux serve`, `dreamux dispatcher ...`) |
-| `bin/tm` | Public wrapper that forwards to the package-local `@excitedjs/tm` executable |
 | `skills/` | Bundled Dreamux skills injected at runtime by role (#209 slice 6): core hands them to Dispatcher/TeamLeader runtimes as `skillSources` and the runtime applies them (Codex `skills/extraRoots/set`, Claude Code `--add-dir`) — no longer symlinked into the workspace |
 | `tests/` | vitest: smoke, bin-launcher, dispatcher Codex home doctor, codex live integration |
 
@@ -129,8 +128,6 @@ multi-package release notes precise while still using Rush as the validator.
 - npm package: `@excitedjs/dreamux`
 - CLI binaries installed by the package:
   - `dreamux` (see [the global bin decision](../decisions/global-bin-onboard-serve.md))
-  - `tm` (wrapper around the package dependency used by dispatcher skills; see
-    [the dispatcher tm packaging decision](../decisions/dispatcher-tm-packaging.md))
 
 ## Runtime and Codex state
 

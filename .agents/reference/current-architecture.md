@@ -132,9 +132,9 @@ capability. The Team MCP is caller-scoped:
 
 `channel_id` defaults to the dispatcher's sole configured channel and is
 required only when the dispatcher has more than one configured channel.
-`meta` is provider-owned selector input, for example `{ "chat_id": "..." }` for
-a Feishu group chat. Peer Team send remains future work; TeamLeaders still use
-their scoped TeamMate MCP to send to members.
+`meta` is provider-owned selector input; the active channel provider's schema
+and results define the selector shape. Peer Team send remains future work;
+TeamLeaders still use their scoped TeamMate MCP to send to members.
 
 Each `TeamService` directly builds and holds its TeamLeader `TeammateService`
 through `/packages/dreamux/src/service/team-service/leader-agent.ts`, using the
@@ -179,7 +179,8 @@ Key source:
 Dreamux ships bundled skills under `/packages/dreamux/skills/`. Core selects
 skill sources by role:
 
-- Dispatcher and TeamLeader roles receive Dreamux operational skills.
+- Dispatcher roles receive Dreamux workflow and maintenance skills; TeamLeader
+  roles receive the Team workflow skill.
 - Ordinary TeamMate and team-member roles receive none by default.
 - Core emits only direct skill directories. Codex derives extra roots from their
   parent directories and applies them through `skills/extraRoots/set`.
@@ -187,8 +188,8 @@ skill sources by role:
   `.claude/skills/<name>` entries that point at those direct skill directories,
   then passes that root through `--add-dir`.
 
-Dreamux no longer installs workspace `.codex/skills` symlinks during onboard or
-runtime startup.
+Dreamux does not install bundled skills into dispatcher workspaces during
+onboard or runtime startup.
 
 Key source:
 
@@ -224,6 +225,20 @@ such as Codex use the full dispatcher prompt and do not also inject the
 dispatcher append text, because that would duplicate the same role guidance.
 Append-native runtimes that cannot use `replace` fall through to the focused
 dispatcher append guidance.
+
+Codex `replace` maps to `baseInstructions`, so Dreamux's dispatcher replacement
+prompt must carry both the Dispatcher role contract and the non-coding parts of
+Codex's current model-selected base prompt that would otherwise be lost. The
+source to compare against is the current Codex model catalog entry
+(`models-manager/models.json`, using the selected model's `base_instructions` /
+`model_messages`; currently GPT-5.5 when that is selected or default), not an
+older per-version prompt markdown file. The dispatcher replacement prompt keeps
+personality/tone, simple terminal-request handling, planning-tool guidance,
+review-answer shape, progress updates, unexpected-local-change and
+destructive-command cautions, and concise final-answer behavior, while leaving
+code-editing and frontend-production guidance out of the Dispatcher role.
+Append-native runtimes keep their native base prompt, so their dispatcher append
+guidance remains a short role delta.
 
 Every TeamLeader receives one default append fragment identifying it as the
 TeamLeader for that Dreamux Team. TeamLeader, TeamMate, and team-member identity

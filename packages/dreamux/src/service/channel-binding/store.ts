@@ -13,10 +13,9 @@ export type ChannelProviderRef = string;
 /**
  * A flat channel-binding row (issue #209 binding store v2). The durable routing
  * key is `(channel_id, target_key)`; `target_key` is provider-owned and opaque
- * to core. The conversational target selectors (e.g. a chat channel's `chat_id` /
- * `chat_type` — neutral channel concepts, not Feishu-specific) live in `meta`,
- * never as core top-level columns, so the store routes by the opaque `target_key`
- * and stays channel-neutral.
+ * to core. Provider-defined target selectors live in `meta`, never as core
+ * top-level columns, so the store routes by the opaque `target_key` and stays
+ * channel-neutral.
  */
 export interface ChannelBinding {
   /** Dispatcher-local channel id (`dispatchers[].channels[].id`). */
@@ -28,7 +27,7 @@ export interface ChannelBinding {
   target_key: string;
   display: string | null;
   canonical_url: string | null;
-  /** The channel's target selector(s) (e.g. `{ chat_id, chat_type }`). */
+  /** The channel provider's target selector(s). */
   meta: Record<string, unknown>;
   /** The concrete Team key the target is bound to (issue #199 Slice 4). */
   team_name: string;

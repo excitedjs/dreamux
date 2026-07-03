@@ -20,7 +20,7 @@ interface ChannelMcpArgv {
 export function createChannelMcpCommand(): CommandModule<{}, ChannelMcpArgv> {
   return {
     command: 'channel-mcp',
-    describe: 'Run the dispatcher-scoped channel MCP stdio shim',
+    describe: 'Run the channel MCP stdio shim for a dispatcher or TeamLeader caller scope',
     builder: buildChannelMcpOptions,
     handler: handleChannelMcp,
   };

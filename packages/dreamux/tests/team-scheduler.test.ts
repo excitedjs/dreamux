@@ -413,9 +413,13 @@ describe('TeamLeader cron scheduler lifecycle', () => {
         ) === true,
     );
     expect(dispatcherContext?.disableFeatures).toEqual(['userInterrupt', 'cron']);
-    expect(dispatcherContext?.systemPrompt?.replace).toContain('Dreamux dispatcher');
+    expect(dispatcherContext?.skillSources?.map((source) => source.name)).toEqual([
+      'dispatcher-workflow',
+      'dreamux-maintenance',
+    ]);
+    expect(dispatcherContext?.systemPrompt?.replace).toMatch(/Dreamux Dispatcher/i);
     expect(dispatcherContext?.systemPrompt?.append).toEqual([
-      expect.stringContaining('Dreamux dispatcher'),
+      expect.stringMatching(/Dreamux Dispatcher/i),
     ]);
     expect(leaderContext?.mcpServers.map((server) => server.name)).toContain('cron');
     expect(leaderContext?.mcpServers.map((server) => server.name)).toContain('team');
@@ -435,20 +439,30 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       expect.any(String),
     ]);
     expect(leaderContext?.disableFeatures).toEqual(['userInterrupt', 'cron']);
-    expect(leaderContext?.systemPrompt?.append).toEqual([
-      'You are the TeamLeader of Dreamux Team "alpha".',
-      'team coordinator',
+    expect(leaderContext?.skillSources?.map((source) => source.name)).toEqual([
+      'team-workflow',
     ]);
+    const append = leaderContext?.systemPrompt?.append ?? [];
+    expect(append).toHaveLength(3);
+    expect(append[0]).toBe('You are the TeamLeader of Dreamux Team "alpha".');
+    expect(append[1]).toContain('team-workflow');
+    expect(append[1]).toMatch(/TeamMate/i);
+    expect(append[1]).toMatch(/channel/i);
+    expect(append[1]).toMatch(/cron/i);
+    expect(append[1]).toMatch(/transfer/i);
+    expect(append[2]).toBe('team coordinator');
     expect(leaderContext?.systemPrompt).not.toHaveProperty('replace');
     expect(memberContext?.mcpServers.map((server) => server.name)).not.toContain('team');
     expect(memberContext?.mcpServers.map((server) => server.name)).not.toContain('cron');
     expect(memberContext?.disableFeatures).toEqual(['userInterrupt']);
+    expect(memberContext?.skillSources?.map((source) => source.name)).toEqual([]);
     expect(memberContext?.systemPrompt?.append).toEqual([
       'worker specialist',
     ]);
     expect(memberContext?.systemPrompt?.append?.join('\n')).not.toContain(
       'TeamLeader of Dreamux Team',
     );
+    expect(teammateContext?.skillSources?.map((source) => source.name)).toEqual([]);
     expect(memberContext?.systemPrompt).not.toHaveProperty('replace');
     expect(teammateContext?.disableFeatures).toEqual(['userInterrupt']);
     expect(teammateContext?.systemPrompt?.append).toEqual([

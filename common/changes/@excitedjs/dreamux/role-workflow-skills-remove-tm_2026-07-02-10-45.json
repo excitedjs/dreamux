@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux",
+      "comment": "BREAKING: Replace the old bundled dispatcher/team-dev-workflow skill guidance with role-specific dispatcher-workflow and team-workflow skills, rewrite dreamux-maintenance as a Dispatcher host-operations skill, store bundled skills as direct package skill directories, remove the packaged tm CLI wrapper plus the @excitedjs/tm dependency, and rename Team read binding projections from bound_group/chat_id or status binding to provider-neutral bound_target/target_key fields. Rebuild: update any scripts, operator notes, model prompts, or MCP consumers that call the dreamux-provided tm bin or read team.list/status/history binding fields; Dreamux-owned TeamMate and Team orchestration now goes through the injected MCP tools only.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

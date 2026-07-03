@@ -143,7 +143,7 @@ dispatcher app-server processes follow Codex there; Dreamux does not create
 dispatcher-private `CODEX_HOME` directories for the MVP.
 
 Dreamux bundled skills are injected at runtime by role. They are not installed
-as workspace `.codex/skills` symlinks during `onboard` or runtime startup.
+into dispatcher workspaces during `onboard` or runtime startup.
 
 Key source:
 

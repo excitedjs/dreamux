@@ -391,10 +391,9 @@ channel-binding tools alongside its lifecycle tools (`create` / `list` /
 
 `channel_id` identifies the configured channel (`dispatchers[].channels[].id`);
 it is optional and defaults to the dispatcher's sole configured channel (an
-explicit value must match it). `meta` is the provider-specific selector, opaque
-to core (for Feishu, `{ chat_id: '<group chat id>' }`); core hands it to the
-channel's `resolveTarget(meta)`, which infers/validates the target — binding is
-group-only and `chat_type` is not required on the surface. Binding state, target
+explicit value must match it). `meta` is the provider-defined selector, opaque
+to core; core hands it to the channel's `resolveTarget(meta)`, which infers and
+validates the target. Binding state, target
 normalization, routing, P2P denial, and TeamLeader authorization stay core-owned;
 the channel provider only normalizes the selector and does platform I/O.
 
@@ -429,7 +428,7 @@ channel to normalize its selector into a target:
 bind_channel({
   team_name: 'dreamux',
   channel_id: 'feishu',
-  meta: { chat_id: '<group-chat-id>' }
+  meta: { /* provider-defined target selector */ }
 });
 ```
 
@@ -444,9 +443,9 @@ subscription channels — GitHub/Jira feeds — should ALSO bind through
 either way their replies are out of band, e.g. `gh` CLI, not a channel reply
 tool. See "Bidirectional vs subscription channels".)
 
-The selector `meta` is human/model-facing input (a chat channel's is
-`{ chat_id }` — a neutral IM-family selector shared by Feishu/Slack/Telegram,
-not a Feishu-specific field). The durable routing key is `target_key`, which is
+The selector `meta` is human/model-facing input whose shape is owned by the
+active channel provider. The provider's tool schema or tool result is the
+authority for that shape. The durable routing key is `target_key`, which is
 provider-owned and opaque to core. A conversational channel normalizes its
 selector into a platform-stable `target_key`, preferably an immutable platform
 id; if it cannot, it fails loudly rather than storing an ambiguous selector.
@@ -479,12 +478,10 @@ The binding store remains flat:
 }
 ```
 
-`chat_id` and `chat_type` are neutral conversational-channel target selectors
-(every conversational provider has them — `chat_id` is NOT a Feishu-specific
-field) and stay inside `meta`. They are not core top-level columns because core
-routes by the opaque, target-shape-agnostic `target_key`. This keeps the store
-aligned with the `bind_channel` selector model and prevents core from re-coupling
-itself to
+Provider target selectors, including any chat-shaped provider fields, stay inside
+`meta`. They are not core top-level columns because core routes by the opaque,
+target-shape-agnostic `target_key`. This keeps the store aligned with the
+`bind_channel` selector model and prevents core from re-coupling itself to
 chat-shaped channels.
 
 The active uniqueness key is `(channel_id, target_key)`. One Team may have
@@ -732,9 +729,10 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   bundled-skill model is removed from onboarding and runtime startup, replaced by
   role-gated `AgentRuntimeCreateContext.skillSources` injection. Core owns the
   bundled skills and the role gate: `bundledSkillSourcesForRole(role)`
-  (`agent-runtime/bundled-skill-sources.ts`) returns the bundled sources only for
-  the `dispatcher` and `team_leader` roles, and an empty set for ordinary
-  `teammate` / `team_member`. The launcher sets `role` and `skillSources`
+  (`agent-runtime/bundled-skill-sources.ts`) returns Dispatcher-only
+  `dispatcher-workflow` and `dreamux-maintenance` sources, the TeamLeader-only
+  `team-workflow` source, and an empty set for ordinary `teammate` /
+  `team_member`. The launcher sets `role` and `skillSources`
   explicitly (the dispatcher service for the dispatcher agent; the teammate
   identity's role for teammate/leader/member launches), retiring the old
   `onTurnSettled`-presence role heuristic in the Codex adapter — which had
@@ -759,11 +757,9 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   Claude launch DOES receive the bundled skills via a real `--add-dir`.)
 
   Startup does **not** delete pre-existing old `<dispatcher cwd>/.codex/skills`
-  symlinks. On an upgraded dispatcher, codex would then list each bundled skill
-  twice — once `repo`-scoped from the leftover cwd symlink and once `user`-scoped
-  from the new extra root — which is a benign duplicate listing (verified: no
-  error, no crash), not an upgrade blocker. Operators may delete
-  `<dispatcher cwd>/.codex/skills` to remove the duplicate; the changelog says so.
+  symlinks. They are no longer the active skill delivery mechanism, are not
+  tracked or reported by Dreamux, and may be deleted manually by the operator
+  when no longer needed.
   The `@excitedjs/agent-runtime-codex` `prepareWorkspaceSkills` host hook (and its
   `CodexWorkspaceSkillPrepResult` type) is removed.
 - **Multi-channel config support — satisfied now:** `dispatchers[].channels[]`
@@ -828,9 +824,9 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   it — see "Live multi-channel routing" below); for the bind path it is the
   `channel_id` arg (a single-channel dispatcher defaults to its sole channel). The
   `bind_channel` / `transfer_back` tools (on the **Team MCP** — see the reversal
-  below) take a provider selector `meta` (Feishu: `{ chat_id }`) and an optional
-  `channel_id` (defaults to the sole configured channel; required when more than
-  one is configured; an explicit id must name a configured channel). A pre-v2
+  below) take a provider-defined selector `meta` and an optional `channel_id`
+  (defaults to the sole configured channel; required when more than one is
+  configured; an explicit id must name a configured channel). A pre-v2
   store fails loud at `dreamux serve` / `dreamux doctor` (and on access) with
   rebuild guidance — Dreamux 0.x does not migrate it.
 - **Final hardening (package-boundary guards) — satisfied now:** the
@@ -855,9 +851,9 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   **Team MCP** as
   `bind_channel({ team_name, channel_id?, meta })` /
   `transfer_back({ channel_id?, meta })`. `channel_id` selects the configured
-  channel (optional, defaults to the sole channel); `meta` is the opaque provider
-  selector (Feishu: `{ chat_id }`) core hands to `resolveTarget(meta)`, which
-  infers/validates the group target (no `chat_type` required). Binding state,
+  channel (optional, defaults to the sole channel); `meta` is the opaque
+  provider-defined selector core hands to `resolveTarget(meta)`, which infers
+  and validates the target. Binding state,
   normalization, routing, P2P denial, and TeamLeader authorization remain
   core-owned; the binding-store-v2 schema and `(channel_id, target_key)` routing
   are unchanged. The generic `channel-mcp` CLI still exists as the provider-tool
@@ -868,20 +864,18 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   — it was never an owner-designed capability, acceptance item, or follow-up.
   (3) **Claude Code bundled-skill injection now works end-to-end** — see below.
 - **Claude Code bundled-skill injection — satisfied now:** the bundled Dreamux
-  skills are stored under `packages/dreamux/skills/.claude/skills/<name>/` (shipped
-  via the package `files` allowlist), so ONE on-disk copy serves both engines.
-  `bundledSkillSourcesForRole('dispatcher' | 'team_leader')` now emits BOTH a
-  per-skill `skill-dir` source (path = the skill dir) AND a single
-  `claude-skills-parent` source (path = `bundledSkillsDir()`, the add-dir parent
-  that contains `.claude/skills`). **Codex** still applies the `skill-dir` sources
-  via `skills/extraRoots/set` (the shared parent — now the `.claude/skills`
-  container — is one root; the skill set is unchanged). **Claude Code** translates
-  the `claude-skills-parent` source into a real
-  `--add-dir <absolute package path>` flag, so a Dispatcher/TeamLeader Claude
-  launch genuinely discovers the bundled skills (no more filtering to zero). Both
-  engines read the same physical skills; ordinary teammate/team_member roles still
-  receive none; no workspace mutation and no symlink/copy model. Runtime packages
-  still depend on `@excitedjs/dreamux-types` only.
+  skills are stored as direct skill directories under
+  `packages/dreamux/skills/<name>/` (shipped via the package `files` allowlist).
+  `bundledSkillSourcesForRole('dispatcher' | 'team_leader')` emits only those
+  direct skill directories as neutral `skillSources`; no source object encodes a
+  Claude-specific layout marker. **Codex** applies the source parents via
+  `skills/extraRoots/set` (the shared parent is `packages/dreamux/skills`, so the
+  skill set is unchanged). **Claude Code** materializes a runtime-owned add-dir
+  root containing `.claude/skills/<name>` symlinks that point at the direct skill
+  directories, then passes that add-dir root through `--add-dir`. Both engines
+  read the same physical skills; ordinary teammate/team_member roles still
+  receive none; no workspace mutation and no source-tree runtime layout. Runtime
+  packages still depend on `@excitedjs/dreamux-types` only.
 - **Live multi-channel routing — PARTIALLY SUPERSEDED by Decision #4 (PR #223):**
   the config-layer capability "a dispatcher may declare more than one
   `builtin:feishu` channel" is REVERSED — config now caps a dispatcher at one
@@ -982,12 +976,11 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
     `--bot-app-secret` onboard path is retired; non-interactive callers pass
     provider raw config through `--agent-config-json` and
     `--channel-config-json`.
-  - **`tm` packaging DEFERRED (not removed this PR).** decision #6's default was to
-    retire the `@excitedjs/tm` dependency + `bin/tm`, but the dispatcher base
-    prompt still actively instructs bare-`tm` usage and the operational `tm` manual
-    is the maintainer-owned dispatcher skill. Removing the bin while the prompt/skill
-    still teach `tm` would be incoherent, so the dep + bin + base-prompt tm prose
-    stay; their removal rides with the maintainer's tm-skill/prose PR. See
+  - **`tm` packaging later removed.** decision #6's default was to retire the
+    `@excitedjs/tm` dependency + `bin/tm`, but removal was deferred while the
+    dispatcher prompt and skills still taught bare-`tm`. The later
+    role-specific workflow-skill rewrite removed that prompt/skill dependency
+    and retired the `tm` package surface. See
     [dispatcher-tm-packaging](dispatcher-tm-packaging.md).
 
 ## Alternatives Considered
@@ -1001,7 +994,7 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
 - **Keep Feishu outside the channel provider seam:** rejected because replacing
   Feishu with Slack or Telegram, or running several channels at once, requires
   Feishu to exercise the same Channel provider contract.
-- **Keep `chat_id` and `chat_type` as core store columns:** rejected because
-  this re-couples core to chat-shaped channels. The conversational selectors
-  (`chat_id` / `chat_type` — neutral, not Feishu-specific) belong in `meta`; core
-  routes by `channel_id`, `target_type`, and the opaque `target_key`.
+- **Keep provider target selectors as core store columns:** rejected because
+  this re-couples core to provider-specific target shapes. Provider-defined
+  target selectors belong in `meta`; core routes by `channel_id`, `target_type`,
+  and the opaque `target_key`.

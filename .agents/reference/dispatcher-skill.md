@@ -1,155 +1,78 @@
-# Reference: dispatcher skill
+# Reference: bundled Dreamux skills
 
-`/packages/dreamux/skills/` contains the bundled Dreamux skills that Dreamux
-ships in the npm package for supported agent runtimes:
+`/packages/dreamux/skills/` contains Dreamux-owned skills shipped in the npm
+package. They are model-facing notes for the agent roles that can operate
+Dreamux MCP tools:
 
-- `dispatcher` teaches dispatcher app-server sessions how to delegate product
-  work to TeamMates. The default interface is the server-hosted TeamMate MCP:
-  `spawn` creates a semi-resident TeamMate from a requested `name_prefix` and
-  returns its concrete, never-reused `name` (issue #199 Slice 1 — `name_prefix`
-  is only the requested label; all later calls use the returned `name`), `send`
-  submits follow-up turns (and reopens a closed TeamMate when one is not live —
-  there is no standalone dispatcher-facing `resume` verb; #155), and `close`
-  stops one. `history` is a compact recovery search keyed by concrete name
-  (filter by `name` / `status` / `agent_runtime` / `repo` / `grep` / `since` /
-  `until`, paginate with `limit` / `cursor`; returns `{ items, next_cursor }`)
-  — a recovery list, not a raw event timeline; `last` reads a TeamMate's most
-  recent settled turn(s) (`turns` 1..5) by concrete name — working even for a
-  closed TeamMate without starting a runtime — and
-  `list`/`status`/`get_capabilities` read state without polling. The lifecycle
-  `status` filter is kept; the public `history` surface no longer exposes the
-  retired `state` / `close_status` filters, the Dreamux-made `session_id`,
-  `id`/`team_id`, `display_name`, the machine-local cwd/worktree paths, or
-  runtime `checkpoint` (issue #199 Slice 1). Issue #199 Slice 2 collapses the
-  shared spawn/send/status/list output (`TeamMateRuntimeStatus`): `owner` is the
-  sole ownership authority (no public `role`/`team_id`), `display_name` and the
-  runtime `checkpoint` are gone, `session_id` now means the runtime-native thread
-  id (early `null` acceptable), and the cwd/source/worktree family is reported
-  through one compact `repo` view. The public work-directory INPUT for
-  `spawn`/`team.create` is the matching optional `repo` object (`{ mode: reuse-cwd
-  | managed, path?, base_ref?, branch?, slug?, cleanup? }`; omitted → a plain
-  per-name work dir under the dispatcher workspace,
-  `<dispatcher cwd>/.workspace/work/<name>/`, created with `mkdir -p` and NOT a
-  git worktree, so the dispatcher cwd need not be a git repo — `reuse-cwd` runs
-  in `path`, `managed` creates a git worktree; issue #199), replacing the old
-  `cwd` / `repo_cwd` / `worktree` inputs. The obsolete `ctx` and
-  `history_events` verbs were removed (issue #188). The
-  `tm` CLI is the explicit fallback for legacy diagnostics
-  ([provider architecture realignment](../decisions/provider-architecture-realignment.md)).
-- `team-dev-workflow` covers multi-teammate review, design, merge, and unblock
-  coordination.
-- `team` MCP is caller-scoped: dispatchers receive Team Mode lifecycle tools, addressed by
-  `team_name` (issue #182 PR-7/PR-8; concrete-key rename in #199 Slice 1):
-  `create` a TeamLeader (with an optional `repo` object, same shape as
-  `teammate.spawn`, replacing the old `repo_cwd`; #199 Slice 2). `create` starts
-  the leader idle unless an optional `prompt` is supplied as its first turn;
-  without a prompt no turn is fired at creation (the leader waits for a bound
-  channel inbound or a later Team MCP `send`), and creation never fabricates a
-  default leader prompt. `send({ team_name, prompt, intent? })` submits a
-  follow-up turn to that Team's TeamLeader only; it does not send to Team
-  members or bind/post to a channel. Inspect with
-  `list` (compact rows) / `status` (the public `team_name`-keyed team view +
-  leader/binding summary, no machine-local `repo_cwd`/`worktree`; #199 Slice 2) /
-  `history` (a compact recovery search
-  by `team_name` / `status` / `repo` / `grep` / `since` / `until`, returning
-  `{ items, next_cursor }`; the retired `close_status` filter and the
-  `team_id` / machine-local cwd/worktree rows are gone in #199 Slice 1), and
-  `dissolve` a Team. The `create_group` (create-a-new-group) and raw `ledger`
-  verbs were retired.
-- Channel binding is on the **Team MCP**, not on the provider channel MCP:
-  `bind_channel({ team_name, channel_id?, meta })` hands an existing channel
-  target to a Team from the dispatcher projection, and `transfer_back({ channel_id?, meta })` returns a bound
-  target to the dispatcher. TeamLeaders receive only scoped `transfer_back`
-  with the same explicit provider `meta`; they do not receive lifecycle, list,
-  status, history, dissolve, or bind tools. `channel_id` selects a configured dispatcher channel
-  and defaults to the sole channel when unambiguous; `meta` is the provider
-  selector (for Feishu group chats, `{ "chat_id": "..." }`). The removed
-  `team.bind_group` / `team.transfer_channel_back` /
-  `team.create.bind_group` surfaces have no aliases. Provider-owned tools such
-  as Feishu `reply`, `react`, and `list_chat_bots` remain behind the `channel`
-  MCP shim.
-- `dreamux-maintenance` covers installed Dreamux diagnosis and safe operation.
+- `dispatcher-workflow` is injected only into Dispatcher runtimes. It covers
+  provider-visible replies and dispatcher-visible TeamMate/Team/cron MCP
+  cautions.
+- `dreamux-maintenance` is injected only into Dispatcher runtimes. It covers
+  Dreamux host/server operation, `dreamux doctor` / `status` / `changelog`
+  cautions, service/config/state/run/log diagnosis, missing-reply and stuck-turn
+  troubleshooting, and bundled-skill injection diagnosis.
+- `team-workflow` is injected only into TeamLeader runtimes. It covers
+  team-scoped TeamMate MCP cautions, shared Team workspace coordination,
+  provider-visible bound-channel replies, TeamLeader cron cautions, and the
+  scoped `transfer_back` tool.
 
-They are not installed through Codex plugin marketplaces. Core injects them at
-runtime by role (issue #209 slice 6): `bundledSkillSourcesForRole(role)` selects
-the bundled skill sources for the Dispatcher and TeamLeader roles only (ordinary
-teammate / team-member runtimes get none), the launcher passes them as the create
-context's `skillSources`, and the runtime package applies them to its engine.
-Core emits only direct skill directories: Codex derives parent extra roots for
-the app-server `skills/extraRoots/set` RPC, while Claude Code materializes a
-runtime-owned `.claude/skills/<name>` add-dir root and passes it via
-`--add-dir`. `dreamux onboard` and dispatcher startup no longer symlink skills into
-`<dispatcher cwd>/.codex/skills`; an old symlink dir from a prior version is left
-untouched (Codex lists the skill twice but does not fail) and is safe to delete.
+Ordinary TeamMate and team-member runtimes receive no bundled Dreamux skill by
+default.
 
-Dispatcher app-server processes do not set `CODEX_HOME`; they use Codex's
-global default home for auth, config, and memory. See
-[the dispatcher tm packaging decision](../decisions/dispatcher-tm-packaging.md)
-and [the npm package split record](../decisions/npm-package-split-and-channel-targets.md).
+The skills intentionally avoid fixed workflow recipes. They are guardrails for
+which role can see which MCP surface and what mistakes to avoid.
 
-## Files
-
-| Path | Role |
-|---|---|
-| `/packages/dreamux/skills/.claude/skills/<skill-name>/` | Bundled skill directory shipped in the npm package, injected at runtime by role |
-| `/packages/dreamux/bin/tm` | Public wrapper that forwards to the package-local `@excitedjs/tm` executable |
-
-## Runtime Boundary
-
-[provider architecture realignment](../decisions/provider-architecture-realignment.md)
-supersedes the older dispatcher/tm boundary for server-owned TeamMate state.
-Two state owners are kept distinct in the skill:
-
-- The Dreamux server owns TeamMate **agent state** behind the injected
-  dispatcher-scoped `teammate` MCP — per-name records
-  (`teammate/records/<name>.json`: identity + rolling recovery summary, the
-  source for history/list/status) and a per-name turns archive
-  (`teammate/turns/<name>.jsonl`, the only JSONL store: prompts plus the captured
-  final assistant output that `last` returns) under
-  `~/.dreamux/state/<dispatcher-id>/teammate/` (issue #199 Slice 3). The former
-  `sessions.jsonl` session ledger and the persisted checkpoint object are gone;
-  `session_id` is the runtime-native thread id. The persisted record still keeps
-  the requested label internally; the `history` projection no longer surfaces it
-  (issue #199 Slice 1).
-- The Dreamux server owns Team **lifecycle state** behind the injected
-  caller-scoped `team` MCP under `~/.dreamux/state/<dispatcher-id>/team/`.
-  TeamLeader and member agents remain TeamMate identities with role/owner
-  metadata.
-- `tm` owns live tm **session** state — teammate liveness, repository worktrees,
-  and resumable session history — invoked through the command boundary.
-
-The dispatcher reaches server TeamMate state only through the `teammate` MCP tools
-and live tm sessions only through `tm`; it does not call `teammate.*` admin
-methods directly. The MCP path uses the same `AgentRuntime` providers as
-dispatchers; `tm` stays the path for isolated worktrees and legacy diagnostics.
-
-## tm Strategy
-
-`@excitedjs/tm` is a direct dependency of `@excitedjs/dreamux`, and the package
-exports a `tm` bin wrapper. `dreamux serve` prepends the dreamux package bin
-directory to dispatcher app-server `PATH`, so the dispatcher skills must invoke
-bare `tm`.
-
-Do not reintroduce `npx`, `npm exec`, plugin marketplace installation, or
-`@excitedjs/tm@latest` in the dispatcher skill. The installed package version is
-the compatibility boundary.
+When changing bundled skills, prompts, MCP descriptions, or tests that lock
+model-visible wording, also follow
+[Model-facing writing](model-facing-writing.md).
 
 ## Injection Strategy
 
-Bundled skills are injected at runtime by role (issue #209 slice 6); the old
-workspace-symlink installer is retired. Nothing is written into the dispatcher
-workspace:
+Bundled skills are injected at runtime by role. Core selects skill sources with
+`bundledSkillSourcesForRole(role)` and passes them through the Agent Runtime
+create context as `skillSources`; the runtime package applies them to its engine:
 
-- core selects the bundled skill sources for the Dispatcher and TeamLeader roles
-  only (`bundledSkillSourcesForRole`); ordinary teammate / team-member runtimes
-  receive none
-- the runtime package applies them on each (re)start: Codex sets the deduped
-  parent roots via `skills/extraRoots/set` after initialize and before thread
-  start/resume, reapplying after every app-server restart; Claude Code emits
-  `--add-dir` for add-dir-compatible sources
-- a Codex `skills/extraRoots/set` unsupported/method-missing response warns and
-  continues skill-blind for older app-servers; real root-application errors
-  still fail the start loud
-- an old `<dispatcher cwd>/.codex/skills` symlink dir from a prior version is
-  left untouched (Codex lists the skill twice but does not fail) and is safe to
-  delete; startup neither creates nor recreates it
+- Codex dedupes parent directories and calls `skills/extraRoots/set` after
+  initialize and before thread start/resume.
+- Claude Code materializes runtime-owned `.claude/skills/<name>` add-dir roots
+  and passes them through `--add-dir`.
+
+`dreamux onboard` and dispatcher startup do not install bundled skills into a
+workspace. Bundled skills are package-shipped runtime injection sources.
+
+## Dispatcher-Visible MCP
+
+Dispatcher `teammate` MCP tools are `spawn`, `send`, `close`, `list`, `status`,
+`history`, `last`, and `get_capabilities`. `spawn.name_prefix` is only a
+requested label; the returned concrete `teammate.name` is the address for every
+later call. `send` is also the reattach path for a closed TeamMate when the
+runtime can resume it from the recorded session.
+
+Dispatcher `team` MCP tools are `create`, `send`, `list`, `status`, `history`,
+`dissolve`, `bind_channel`, and `transfer_back`. Team lifecycle is addressed by
+`team_name`. `bind_channel({ team_name, channel_id?, meta })` routes an existing
+channel target to a Team, and `transfer_back({ channel_id?, meta })` releases a
+bound target from Team routing. `meta` is provider-owned; the active channel
+provider's tool schema and results are the authority for the target selector.
+
+Dispatcher `cron` MCP tools are `cron_create`, `cron_list`, `cron_update`,
+`cron_delete`, and `cron_run_now`. Cron prompts are injected back into the
+Dispatcher; they are not a TeamMate spawn target or channel delivery mechanism by
+themselves.
+
+## TeamLeader-Visible MCP
+
+TeamLeader `teammate` MCP tools are `spawn`, `send`, `close`, `list`, `status`,
+`history`, `last`, and `get_capabilities`, scoped to the Team's members.
+TeamLeader `spawn` does not accept a `repo` input because the Team workspace is
+already selected when the Team is created. Team-scoped TeamMates share that
+workspace, so concurrent editing needs an explicit non-conflict boundary.
+
+TeamLeader `team` MCP exposes only `transfer_back({ channel_id?, meta })`.
+TeamLeaders cannot create, send to, list, inspect, dissolve, or bind Teams
+through their scoped Team MCP projection. `transfer_back` is a routing operation;
+it is a routing-only state change with no channel-message side effect.
+
+TeamLeader `cron` MCP tools are `cron_create`, `cron_list`, `cron_update`,
+`cron_delete`, and `cron_run_now`. Cron prompts are injected back into that
+TeamLeader.

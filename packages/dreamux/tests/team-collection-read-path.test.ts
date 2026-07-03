@@ -413,10 +413,18 @@ describe('TeamCollection identity prompt launch behavior', () => {
     });
     const team = await teams.get('alpha');
     expect(team.leader.current().identity_prompt).toBe('architecture reviewer');
-    expect(contexts[0]?.systemPrompt?.append).toEqual([
-      'You are the TeamLeader of Dreamux Team "alpha".',
-      'architecture reviewer',
+    expect(contexts[0]?.skillSources?.map((source) => source.name)).toEqual([
+      'team-workflow',
     ]);
+    const append = contexts[0]?.systemPrompt?.append ?? [];
+    expect(append).toHaveLength(3);
+    expect(append[0]).toBe('You are the TeamLeader of Dreamux Team "alpha".');
+    expect(append[1]).toContain('team-workflow');
+    expect(append[1]).toMatch(/TeamMate/i);
+    expect(append[1]).toMatch(/channel/i);
+    expect(append[1]).toMatch(/cron/i);
+    expect(append[1]).toMatch(/transfer/i);
+    expect(append[2]).toBe('architecture reviewer');
     expect(contexts[0]?.systemPrompt).not.toHaveProperty('replace');
     const summary = await team.status();
     expect(summary.leader).not.toHaveProperty('identity_prompt');
@@ -436,6 +444,7 @@ describe('TeamCollection identity prompt launch behavior', () => {
     );
     expect(memberContext?.systemPrompt)
       .toBeUndefined();
+    expect(memberContext?.skillSources?.map((source) => source.name)).toEqual([]);
   });
 
   it('rejects blank TeamLeader identity input', async () => {
