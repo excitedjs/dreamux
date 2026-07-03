@@ -149,6 +149,13 @@ describe('role-specific bundled Dreamux skills', () => {
     expect(prompt).toContain('Load `dreamux-maintenance` before');
     expect(prompt).toContain('provider-exposed reply tool');
     expect(prompt).toContain('MCP tool results as the authority');
+    expect(prompt).toMatch(/simple request[\s\S]{0,120}terminal command/i);
+    expect(prompt).toMatch(/planning tool/i);
+    expect(prompt).toMatch(/review mindset/i);
+    expect(prompt).toMatch(/destructive commands/i);
+    expect(prompt).toMatch(/unexpected local file changes/i);
+    expect(prompt).toMatch(/Do not read or edit repository code files/i);
+    expect(prompt).toMatch(/delegat\w*[\s\S]{0,80}TeamMate or Team MCP tools/i);
 
     expect(prompt).not.toContain('The tm CLI is the labeled fallback');
     expect(prompt).not.toContain('tm CLI');
@@ -161,6 +168,8 @@ describe('role-specific bundled Dreamux skills', () => {
     expect(prompt).not.toContain('Working Style');
     expect(prompt).not.toContain('apply_patch');
     expect(prompt).not.toContain('AGENTS.md');
+    expect(prompt).not.toContain('Frontend tasks');
+    expect(prompt).not.toContain('AI slop');
     expect(prompt).not.toContain('【F:');
     expect(prompt).not.toContain('named, semi-resident TeamMate agents');
     expect(prompt).not.toContain('ctx and history_events');

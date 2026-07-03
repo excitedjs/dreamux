@@ -516,11 +516,24 @@ runtime-neutral `AgentRuntimeProvider` system prompt contract; the current
 source text lives in
 `/packages/dreamux/src/service/dispatcher-service/base-prompt.ts`.
 
-The product prompt is intentionally minimal. It identifies the agent as a
-Dreamux Dispatcher, routes TeamMate/Team/channel/cron operations to the
-`dispatcher-workflow` bundled skill, routes server and host diagnosis to the
-`dreamux-maintenance` bundled skill, and tells the model to treat Dreamux MCP
-tool results as the authority for routing and runtime state.
+The replacement product prompt is compact but not just a Dreamux delta: Codex
+receives it through `baseInstructions`, so it replaces Codex's native base
+instructions. It therefore preserves the non-coding parts of the Codex base
+contract — simple terminal requests, planning-tool use, review-answer shape,
+safe handling of unexpected local changes, destructive-command caution, and
+concise final-answer behavior — while omitting code-editing and frontend
+production guidance that would make the Dispatcher act like a repository coding
+agent.
+
+The Dreamux-specific part identifies the agent as a Dreamux Dispatcher, routes
+TeamMate/Team/channel/cron operations to the `dispatcher-workflow` bundled
+skill, routes server and host diagnosis to the `dreamux-maintenance` bundled
+skill, tells the model to treat Dreamux MCP tool results as the authority for
+routing and runtime state, and states that repository implementation/debugging/
+review work should be delegated to TeamMate/Team MCP by default. The Dispatcher
+must not read or edit repository code files under the dispatcher working
+directory unless the user explicitly asks this Dispatcher to inspect or edit
+local files.
 
 Visible channel communication remains provider-owned: the dispatcher should use
 a provider-exposed channel reply tool when the current source message has one,

@@ -226,6 +226,15 @@ dispatcher append text, because that would duplicate the same role guidance.
 Append-native runtimes that cannot use `replace` fall through to the focused
 dispatcher append guidance.
 
+Codex `replace` maps to `baseInstructions`, so Dreamux's dispatcher replacement
+prompt must carry both the Dispatcher role contract and the non-coding parts of
+Codex's native base prompt that would otherwise be lost. It keeps simple
+terminal-request handling, planning-tool guidance, review-answer shape,
+unexpected-local-change and destructive-command cautions, and concise final
+answer behavior, while leaving code-editing and frontend-production guidance out
+of the Dispatcher role. Append-native runtimes keep their native base prompt, so
+their dispatcher append guidance remains a short role delta.
+
 Every TeamLeader receives one default append fragment identifying it as the
 TeamLeader for that Dreamux Team. TeamLeader, TeamMate, and team-member identity
 guidance from MCP `identity` is rendered from the persisted

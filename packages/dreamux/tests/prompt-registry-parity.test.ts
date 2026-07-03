@@ -111,6 +111,9 @@ describe('dispatcher prompt matches registered Dreamux MCP tools', () => {
 
     expect(prompt).toContain('Load `dispatcher-workflow` before');
     expect(prompt).toContain('Load `dreamux-maintenance` before');
+    expect(prompt).toMatch(/Do not read or edit repository code files/i);
+    expect(prompt).toMatch(/delegat\w*[\s\S]{0,80}TeamMate or Team MCP tools/i);
+    expect(prompt).toMatch(/simple request[\s\S]{0,120}terminal command/i);
     expect(prompt).not.toContain('bind_channel({ team_name, channel_id?, meta })');
     expect(prompt).not.toContain('create, send, list, status, history, dissolve');
     expect(prompt).not.toContain('ctx and history_events');

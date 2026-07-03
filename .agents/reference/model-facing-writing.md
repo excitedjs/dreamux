@@ -74,18 +74,34 @@ projecting provider selectors like `chat_id` as top-level fields.
 System prompts should route to the right skills and state durable role
 boundaries. They should not become tool manuals or repo-development policies.
 
-Dispatcher prompts should stay small:
+Dispatcher replacement prompts replace the runtime's native base instructions,
+so they must keep the non-coding parts of that base contract: simple terminal
+requests, planning-tool use, review-answer shape, safe handling of unexpected
+local changes, destructive-command caution, and concise final-answer behavior.
+Remove code-editing and frontend-production guidance unless the Dispatcher role
+itself needs it.
+
+Dispatcher prompt content should still be compact and role-specific:
 
 - identify the Dreamux Dispatcher role;
 - load `dispatcher-workflow` before TeamMate, Team, channel, or cron MCP work;
 - load `dreamux-maintenance` before Dreamux host/server diagnosis;
+- state that repository implementation, debugging, and review work should be
+  delegated to TeamMate/Team MCP by default;
+- forbid reading or editing repository code files under the dispatcher working
+  directory unless the user explicitly asks the Dispatcher to do that local
+  inspection or edit;
 - treat MCP tool results as authority for Dreamux state;
 - use provider-exposed reply tools for visible channel delivery when available;
 - keep provider `meta` opaque and protect secrets/private identifiers.
 
+Append prompts layer onto an already-capable runtime prompt, so they should be
+short role deltas rather than a full reintroduction.
+
 Do not copy repository contributor guidance into product prompts. `AGENTS.md`,
-`apply_patch`, PR review rituals, citation-marker cleanup, and Dreamux
-open-source publication rules belong to repo work, not to every Dispatcher user.
+`apply_patch`, PR review rituals, citation-marker cleanup, frontend-production
+style rules, and Dreamux open-source publication rules belong to repo work, not
+to every Dispatcher user.
 
 ## MCP Descriptions And Results
 
