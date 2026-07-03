@@ -7,7 +7,7 @@
  * order so the test can prove `skills/extraRoots/set` lands AFTER `initialize`
  * and BEFORE `thread/start`.
  */
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 
 import { describe, it, expect } from 'vitest';
 
@@ -200,20 +200,22 @@ function buildRuntime(
 }
 
 describe('codex skills/extraRoots/set injection', () => {
-  it('sets the deduped parent roots after initialize and before thread/start', async () => {
+  it('sets the deduped skill roots after initialize and before thread/start', async () => {
     const client = new FakeClient();
-    // Two skills sharing one parent dir → exactly one deduped extra root.
     const runtime = buildRuntime(client, [
-      skillSource('/pkg/skills/dispatcher-workflow'),
-      skillSource('/pkg/skills/dreamux-maintenance'),
-      skillSource('/pkg/skills/team-workflow'),
+      skillSource('/pkg/skills/dispatcher'),
+      skillSource('/pkg/skills/team-leader'),
+      skillSource('/pkg/skills/dispatcher'),
     ]);
 
     await runtime.start();
     await runtime.stop();
 
     expect(client.extraRootsCalls).toEqual([
-      [dirname('/pkg/skills/dispatcher-workflow')],
+      [
+        '/pkg/skills/dispatcher',
+        '/pkg/skills/team-leader',
+      ],
     ]);
     const initIdx = client.methods.indexOf('initialize');
     const setIdx = client.methods.indexOf('skills/extraRoots/set');
@@ -464,7 +466,7 @@ describe('codex skills/extraRoots/set injection', () => {
 
     // The RPC was attempted, then downgraded to a warning, and thread/start
     // still ran — the dispatcher comes up, just without the extra roots.
-    expect(client.extraRootsCalls).toEqual([[dirname('/pkg/skills/dispatcher')]]);
+    expect(client.extraRootsCalls).toEqual([['/pkg/skills/dispatcher']]);
     expect(client.methods).toContain('thread/start');
     const warn = logs.find((l) => l.level === 'warn');
     expect(warn?.msg).toMatch(/unsupported by this app-server; continuing skill-blind/);

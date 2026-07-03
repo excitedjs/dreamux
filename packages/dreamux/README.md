@@ -27,8 +27,10 @@ Design background:
 - Bundled Dreamux skills injected at runtime by role (issue #209 slice 6):
   core hands the Dispatcher `dispatcher-workflow` and `dreamux-maintenance`, the
   TeamLeader `team-workflow`, and the runtime applies them to its engine (Codex
-  `skills/extraRoots/set`, Claude Code `--add-dir`). `dreamux onboard` does not
-  install bundled skills into dispatcher workspaces.
+  `skills/extraRoots/set`, Claude Code `--add-dir`). The package exposes
+  role-specific skill roots so root scanning cannot cross role boundaries.
+  `dreamux onboard` does not install bundled skills into
+  dispatcher workspaces.
 - Providerized dispatcher declarations, a process-local provider registry,
   server-owned state/log paths, the `builtin:feishu` Channel provider, the
   `builtin:codex` and `builtin:claude-code` Agent Runtime providers, and

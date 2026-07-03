@@ -5,7 +5,11 @@ import { join } from 'node:path';
 import { cronTools } from '../src/mcp/cron-mcp.js';
 import { teamTools } from '../src/mcp/team-mcp.js';
 import { teammateTools } from '../src/mcp/teammate-mcp.js';
-import { bundledSkillDir, type BundledSkillName } from '../src/platform/paths.js';
+import {
+  bundledDispatcherSkillRoot,
+  bundledTeamLeaderSkillRoot,
+  type BundledSkillName,
+} from '../src/platform/paths.js';
 import {
   DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS,
   DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
@@ -50,8 +54,14 @@ function skillMentionsTool(skillName: BundledSkillName, name: string): boolean {
   return textMentionsTool(readBundledSkill(skillName), name);
 }
 
+const SKILL_ROOT_BY_NAME = {
+  'dispatcher-workflow': bundledDispatcherSkillRoot(),
+  'dreamux-maintenance': bundledDispatcherSkillRoot(),
+  'team-workflow': bundledTeamLeaderSkillRoot(),
+} satisfies Record<BundledSkillName, string>;
+
 function readBundledSkill(name: BundledSkillName): string {
-  return readFileSync(join(bundledSkillDir(name), 'SKILL.md'), 'utf8');
+  return readFileSync(join(SKILL_ROOT_BY_NAME[name], name, 'SKILL.md'), 'utf8');
 }
 
 function textMentionsTool(text: string, name: string): boolean {

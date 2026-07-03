@@ -7,6 +7,7 @@ import {
   readlinkSync,
   rmSync,
   symlinkSync,
+  writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -405,22 +406,39 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
 
   it('materializes neutral skillSources into a runtime-owned Claude add-dir', async () => {
     const fleet = fakeFleet();
+    const skillRoot = join(home, 'team-skills');
+    const skillDir = join(skillRoot, 'team-workflow');
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, 'SKILL.md'), '---\nname: team-workflow\n---\n');
     const { runtime } = makeRuntime(fleet, {
-      skillSources: [{ name: 'team-skills', path: '/ext/team-skills', source: 'ext' }],
+      skillSources: [{ name: 'team-skills', path: skillRoot, source: 'ext' }],
     });
     await runtime.start();
     const args = fleet.sessions[0]?.spec.args ?? [];
     expect(args.slice(args.indexOf('--add-dir'), args.indexOf('--add-dir') + 2)).toEqual(
       ['--add-dir', join(dispatcherDir('flow'), 'claude-code-skills')],
     );
+    expect(
+      readlinkSync(
+        join(
+          dispatcherDir('flow'),
+          'claude-code-skills',
+          '.claude',
+          'skills',
+          'team-workflow',
+        ),
+      ),
+    ).toBe(skillDir);
   });
 
   it('removes stale materialized skill links before rebuilding add-dir roots', async () => {
     const fleet = fakeFleet();
     const staleSource = join(home, 'stale-source');
     const currentSource = join(home, 'current-source');
+    const currentSkill = join(currentSource, 'current');
     mkdirSync(staleSource, { recursive: true });
-    mkdirSync(currentSource, { recursive: true });
+    mkdirSync(currentSkill, { recursive: true });
+    writeFileSync(join(currentSkill, 'SKILL.md'), '---\nname: current\n---\n');
     const skillsRoot = join(
       dispatcherDir('flow'),
       'claude-code-skills',
@@ -438,7 +456,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     await runtime.start();
 
     expect(existsSync(join(skillsRoot, 'stale'))).toBe(false);
-    expect(readlinkSync(join(skillsRoot, 'current'))).toBe(currentSource);
+    expect(readlinkSync(join(skillsRoot, 'current'))).toBe(currentSkill);
   });
 
   it('emits no --add-dir when no neutral skill sources are supplied', async () => {

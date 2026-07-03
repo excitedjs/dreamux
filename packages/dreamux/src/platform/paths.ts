@@ -214,18 +214,17 @@ export function defaultDispatcherCwd(id: string): string {
   return join(dispatcherDir(id), 'cwd');
 }
 
-/**
- * The package-shipped bundled skill root (issue #209): its immediate children
- * are direct skill directories containing `SKILL.md`. Core passes those direct
- * directories through neutral `skillSources`; each runtime package translates
- * them into its native discovery layout.
- */
+/** The package-shipped bundled skill root (issue #209). */
 export function bundledSkillsDir(): string {
   return join(PACKAGE_ROOT, 'skills');
 }
 
-export function bundledSkillDir(skillName: BundledSkillName): string {
-  return join(bundledSkillsDir(), skillName);
+export function bundledDispatcherSkillRoot(): string {
+  return join(bundledSkillsDir(), 'dispatcher');
+}
+
+export function bundledTeamLeaderSkillRoot(): string {
+  return join(bundledSkillsDir(), 'team-leader');
 }
 
 /**

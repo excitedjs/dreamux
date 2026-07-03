@@ -5,7 +5,6 @@ import type {
 } from '@excitedjs/dreamux-types';
 
 import {
-  bundledSkillSourcesForRole,
   DISABLE_FEATURE_CRON,
   dispatcherHostPaths,
   type AgentRuntimeProviderCatalog,
@@ -30,6 +29,7 @@ import {
   DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
 } from './base-prompt.js';
 import { dispatcherMcpServerDescriptors } from './mcp-descriptors.js';
+import { bundledDispatcherSkillRoot } from '../../platform/paths.js';
 
 /**
  * The fixed debug-record name of a dispatcher's own agent (issue #233 Phase 5).
@@ -168,7 +168,11 @@ function buildDispatcherLaunch(deps: DispatcherAgentDeps): RuntimeLaunchSpec {
         append: [DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS],
       },
       mcpServers,
-      skillSources: bundledSkillSourcesForRole('dispatcher'),
+      skillSources: [{
+        name: 'dispatcher',
+        path: bundledDispatcherSkillRoot(),
+        source: 'dreamux-core',
+      }],
       disableFeatures: [DISABLE_FEATURE_CRON],
       state: deps.dispatchers.bindRuntime(id),
       paths: dispatcherHostPaths,

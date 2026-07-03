@@ -56,7 +56,7 @@
  * Dreamux's own, per `.agents/decisions/agent-runtime-provider.md`.
  */
 
-import { mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import { BUILTIN_CLAUDE_CODE_PROVIDER_REF } from './provider-ref.js';
@@ -524,12 +524,16 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     await rm(skillsRoot, { recursive: true, force: true });
     if (sources.length === 0) return;
     await mkdir(skillsRoot, { recursive: true });
-    await Promise.all(
-      sources.map(async (source) => {
-        const link = join(skillsRoot, source.name);
-        await symlink(source.path, link, 'dir');
-      }),
-    );
+    const linkedNames = new Set<string>();
+    for (const source of sources) {
+      for (const skill of await skillDirsInRoot(source.path)) {
+        if (linkedNames.has(skill.name)) {
+          throw new Error(`duplicate Claude skill name from skill root: ${skill.name}`);
+        }
+        linkedNames.add(skill.name);
+        await symlink(skill.path, join(skillsRoot, skill.name), 'dir');
+      }
+    }
   }
 
   /** React to an unexpected resident-child exit: degrade and drop the session. */
@@ -630,4 +634,13 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   ): void {
     this.logger[level](err !== undefined ? { err } : {}, msg);
   }
+}
+
+async function skillDirsInRoot(
+  root: string,
+): Promise<Array<{ name: string; path: string }>> {
+  const entries = await readdir(root, { withFileTypes: true });
+  return entries
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => ({ name: entry.name, path: join(root, entry.name) }));
 }

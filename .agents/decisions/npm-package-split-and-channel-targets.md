@@ -728,25 +728,22 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
 - **Slice 6 (role-gated skill injection) — satisfied now:** the workspace-symlink
   bundled-skill model is removed from onboarding and runtime startup, replaced by
   role-gated `AgentRuntimeCreateContext.skillSources` injection. Core owns the
-  bundled skills and the role gate: `bundledSkillSourcesForRole(role)`
-  (`agent-runtime/bundled-skill-sources.ts`) returns Dispatcher-only
-  `dispatcher-workflow` and `dreamux-maintenance` sources, the TeamLeader-only
-  `team-workflow` source, and an empty set for ordinary `teammate` /
-  `team_member`. The launcher sets `role` and `skillSources`
-  explicitly (the dispatcher service for the dispatcher agent; the teammate
-  identity's role for teammate/leader/member launches), retiring the old
+  bundled skills and the role gate directly at the launch sites: the Dispatcher
+  service passes the Dispatcher skill root, the Teammate service passes the
+  TeamLeader skill root only for `team_leader` identities, and ordinary
+  `teammate` / `team_member` launches receive no bundled skill root. The
+  launcher sets `role` and `skillSources` explicitly, retiring the old
   `onTurnSettled`-presence role heuristic in the Codex adapter — which had
   mislabeled a TeamLeader as `teammate`.
 
   Runtime packages own the engine mapping. **Codex** applies the sources via the
   app-server `skills/extraRoots/set` RPC AFTER `initialize` and BEFORE
   `thread/start` / `thread/resume`, and re-applies the full replacement set after
-  every app-server restart (the same start path runs again). Each `skill-dir`
-  source maps to the *parent* of its own directory (codex treats an extra root as
-  a directory whose immediate children are skill dirs — verified against codex
-  0.137's generated app-server schema and a live `skills/list` probe); the bundled
-  Dreamux skills share one parent, so one deduped root is set. Empty
-  `skillSources` skips the RPC. An RPC error fails the start loud (a
+  every app-server restart (the same start path runs again). Each `skillSources`
+  entry is already a role-specific skill root whose immediate children are skill
+  dirs; Codex passes those roots directly without deriving a parent directory.
+  The bundled Dreamux roots therefore stay separate for Dispatcher and TeamLeader
+  runtimes. Empty `skillSources` skips the RPC. An RPC error fails the start loud (a
   dispatcher/leader must not run skill-blind). Support is gated by the existing
   codex `>= 0.137` version floor (`MIN_CODEX_VERSION`) — `skills/extraRoots/set`
   is present from 0.137, so no second gate is added. **Claude Code** translates
@@ -864,18 +861,21 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   — it was never an owner-designed capability, acceptance item, or follow-up.
   (3) **Claude Code bundled-skill injection now works end-to-end** — see below.
 - **Claude Code bundled-skill injection — satisfied now:** the bundled Dreamux
-  skills are stored as direct skill directories under
-  `packages/dreamux/skills/<name>/` (shipped via the package `files` allowlist).
-  `bundledSkillSourcesForRole('dispatcher' | 'team_leader')` emits only those
-  direct skill directories as neutral `skillSources`; no source object encodes a
-  Claude-specific layout marker. **Codex** applies the source parents via
-  `skills/extraRoots/set` (the shared parent is `packages/dreamux/skills`, so the
-  skill set is unchanged). **Claude Code** materializes a runtime-owned add-dir
-  root containing `.claude/skills/<name>` symlinks that point at the direct skill
-  directories, then passes that add-dir root through `--add-dir`. Both engines
-  read the same physical skills; ordinary teammate/team_member roles still
-  receive none; no workspace mutation and no source-tree runtime layout. Runtime
-  packages still depend on `@excitedjs/dreamux-types` only.
+  skills are stored under role-specific package roots, for example
+  `packages/dreamux/skills/dispatcher/<name>/` and
+  `packages/dreamux/skills/team-leader/<name>/` (shipped via the package `files`
+  allowlist). Dispatcher and TeamLeader launch sites pass only their
+  role-specific roots as neutral `skillSources`; no source object encodes a
+  Claude-specific layout marker or per-skill selector path. **Codex** passes
+  those roots directly via `skills/extraRoots/set`, so the roots must stay
+  role-specific to prevent root scanning from exposing TeamLeader skills to
+  Dispatchers or Dispatcher skills to TeamLeaders. **Claude Code** materializes a
+  runtime-owned add-dir root containing `.claude/skills/<name>` symlinks for each
+  skill under the selected root, then passes that add-dir root through
+  `--add-dir`.
+  Both engines read the same physical skills; ordinary teammate/team_member
+  roles still receive none; no workspace mutation and no source-tree runtime
+  layout. Runtime packages still depend on `@excitedjs/dreamux-types` only.
 - **Live multi-channel routing — PARTIALLY SUPERSEDED by Decision #4 (PR #223):**
   the config-layer capability "a dispatcher may declare more than one
   `builtin:feishu` channel" is REVERSED — config now caps a dispatcher at one

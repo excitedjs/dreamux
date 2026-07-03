@@ -414,8 +414,7 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     );
     expect(dispatcherContext?.disableFeatures).toEqual(['userInterrupt', 'cron']);
     expect(dispatcherContext?.skillSources?.map((source) => source.name)).toEqual([
-      'dispatcher-workflow',
-      'dreamux-maintenance',
+      'dispatcher',
     ]);
     expect(dispatcherContext?.systemPrompt?.replace).toMatch(/Dreamux Dispatcher/i);
     expect(dispatcherContext?.systemPrompt?.append).toEqual([
@@ -440,7 +439,7 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     ]);
     expect(leaderContext?.disableFeatures).toEqual(['userInterrupt', 'cron']);
     expect(leaderContext?.skillSources?.map((source) => source.name)).toEqual([
-      'team-workflow',
+      'team-leader',
     ]);
     const append = leaderContext?.systemPrompt?.append ?? [];
     expect(append).toHaveLength(3);

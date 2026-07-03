@@ -55,7 +55,9 @@ Current source does not yet match the desired boundary:
   `skill-dir` and `claude-skills-parent`. The latter encodes Claude Code's
   `.claude/skills` discovery shape in the shared contract
   (`/packages/dreamux-types/src/agent-runtime.ts`,
-  `/packages/dreamux/src/agent-runtime/bundled-skill-sources.ts`).
+  `/packages/dreamux/src/service/dispatcher-service/agent.ts`,
+  `/packages/dreamux/src/service/teammate-service/index.ts`, and
+  `/packages/dreamux/src/platform/paths.ts`).
 - `AgentRuntimeCreateContext.role` exposes Dreamux structural topology to every
   runtime provider even though built-in runtimes do not consume it; core already
   uses the role before launch to choose MCP servers, disabled features,
