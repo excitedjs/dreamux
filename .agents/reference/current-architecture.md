@@ -228,12 +228,17 @@ dispatcher append guidance.
 
 Codex `replace` maps to `baseInstructions`, so Dreamux's dispatcher replacement
 prompt must carry both the Dispatcher role contract and the non-coding parts of
-Codex's native base prompt that would otherwise be lost. It keeps simple
-terminal-request handling, planning-tool guidance, review-answer shape,
-unexpected-local-change and destructive-command cautions, and concise final
-answer behavior, while leaving code-editing and frontend-production guidance out
-of the Dispatcher role. Append-native runtimes keep their native base prompt, so
-their dispatcher append guidance remains a short role delta.
+Codex's current model-selected base prompt that would otherwise be lost. The
+source to compare against is the current Codex model catalog entry
+(`models-manager/models.json`, using the selected model's `base_instructions` /
+`model_messages`; currently GPT-5.5 when that is selected or default), not an
+older per-version prompt markdown file. The dispatcher replacement prompt keeps
+personality/tone, simple terminal-request handling, planning-tool guidance,
+review-answer shape, progress updates, unexpected-local-change and
+destructive-command cautions, and concise final-answer behavior, while leaving
+code-editing and frontend-production guidance out of the Dispatcher role.
+Append-native runtimes keep their native base prompt, so their dispatcher append
+guidance remains a short role delta.
 
 Every TeamLeader receives one default append fragment identifying it as the
 TeamLeader for that Dreamux Team. TeamLeader, TeamMate, and team-member identity

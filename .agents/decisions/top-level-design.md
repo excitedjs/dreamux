@@ -517,9 +517,13 @@ source text lives in
 `/packages/dreamux/src/service/dispatcher-service/base-prompt.ts`.
 
 The replacement product prompt is compact but not just a Dreamux delta: Codex
-receives it through `baseInstructions`, so it replaces Codex's native base
-instructions. It therefore preserves the non-coding parts of the Codex base
-contract — simple terminal requests, planning-tool use, review-answer shape,
+receives it through `baseInstructions`, so it replaces Codex's model-selected
+base instructions. The reference source is the current Codex model catalog
+(`models-manager/models.json`, using the selected model's `base_instructions` /
+`model_messages`; currently GPT-5.5 when that is selected or default) rather than
+older per-version prompt markdown files. Dreamux therefore preserves the
+non-coding parts of the current Codex base contract — personality/tone, simple
+terminal requests, planning-tool use, review-answer shape, progress updates,
 safe handling of unexpected local changes, destructive-command caution, and
 concise final-answer behavior — while omitting code-editing and frontend
 production guidance that would make the Dispatcher act like a repository coding

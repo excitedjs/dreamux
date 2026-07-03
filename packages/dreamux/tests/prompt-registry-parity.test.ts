@@ -107,16 +107,23 @@ describe('dispatcher prompt matches registered Dreamux MCP tools', () => {
   });
 
   it('routes dispatcher prompts to skills instead of enumerating MCP schemas', () => {
-    const prompt = `${DREAMUX_DISPATCHER_BASE_INSTRUCTIONS}\n${DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS}`;
+    const basePrompt = DREAMUX_DISPATCHER_BASE_INSTRUCTIONS;
+    const appendPrompt = DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS;
+    const allDispatcherPrompts = `${basePrompt}\n${appendPrompt}`;
 
-    expect(prompt).toContain('Load `dispatcher-workflow` before');
-    expect(prompt).toContain('Load `dreamux-maintenance` before');
-    expect(prompt).toMatch(/Do not read or edit repository code files/i);
-    expect(prompt).toMatch(/delegat\w*[\s\S]{0,80}TeamMate or Team MCP tools/i);
-    expect(prompt).toMatch(/simple request[\s\S]{0,120}terminal command/i);
-    expect(prompt).not.toContain('bind_channel({ team_name, channel_id?, meta })');
-    expect(prompt).not.toContain('create, send, list, status, history, dissolve');
-    expect(prompt).not.toContain('ctx and history_events');
-    expect(prompt).not.toContain('legacy TeamMate CLI');
+    expect(basePrompt).toContain('Load `dispatcher-workflow` before');
+    expect(basePrompt).toContain('Load `dreamux-maintenance` before');
+    expect(basePrompt).toMatch(/warm, curious, collaborative/i);
+    expect(basePrompt).toMatch(/Do not read or edit repository code files/i);
+    expect(basePrompt).toMatch(/delegat\w*[\s\S]{0,80}TeamMate or Team MCP tools/i);
+    expect(basePrompt).toMatch(/simple request[\s\S]{0,120}terminal command/i);
+    expect(basePrompt).toMatch(/meaningful progress[\s\S]{0,120}key task milestones/i);
+    expect(appendPrompt).toContain('Load `dispatcher-workflow` before');
+    expect(appendPrompt).toContain('Load `dreamux-maintenance` before');
+    expect(appendPrompt).toMatch(/Do not read or edit repository code files/i);
+    expect(allDispatcherPrompts).not.toContain('bind_channel({ team_name, channel_id?, meta })');
+    expect(allDispatcherPrompts).not.toContain('create, send, list, status, history, dissolve');
+    expect(allDispatcherPrompts).not.toContain('ctx and history_events');
+    expect(allDispatcherPrompts).not.toContain('legacy TeamMate CLI');
   });
 });

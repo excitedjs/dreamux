@@ -74,12 +74,16 @@ projecting provider selectors like `chat_id` as top-level fields.
 System prompts should route to the right skills and state durable role
 boundaries. They should not become tool manuals or repo-development policies.
 
-Dispatcher replacement prompts replace the runtime's native base instructions,
-so they must keep the non-coding parts of that base contract: simple terminal
-requests, planning-tool use, review-answer shape, safe handling of unexpected
-local changes, destructive-command caution, and concise final-answer behavior.
-Remove code-editing and frontend-production guidance unless the Dispatcher role
-itself needs it.
+Dispatcher replacement prompts replace the runtime's model-selected base
+instructions. For Codex, the current source of truth is the model catalog entry
+(`models-manager/models.json`) and the selected model entry's
+`base_instructions` / `model_messages`, not older per-version prompt markdown
+files. Dreamux should track the selected Codex model's non-coding contract
+(currently GPT-5.5 when that is selected or default): personality/tone, simple
+terminal requests, planning-tool use, review-answer shape, progress updates,
+safe handling of unexpected local changes, destructive-command caution, and
+concise final-answer behavior. Remove code-editing and frontend-production
+guidance unless the Dispatcher role itself needs it.
 
 Dispatcher prompt content should still be compact and role-specific:
 
