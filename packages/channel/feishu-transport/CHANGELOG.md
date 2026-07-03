@@ -1,6 +1,13 @@
 # Change Log - @excitedjs/feishu-transport
 
-This log was last generated on Sat, 27 Jun 2026 12:09:24 GMT and should not be manually modified.
+This log was last generated on Fri, 03 Jul 2026 04:51:35 GMT and should not be manually modified.
+
+## 0.5.0
+Fri, 03 Jul 2026 04:51:35 GMT
+
+### Minor changes
+
+- Add thin SDK wrappers for sending caller-owned interactive cards and resolving Feishu app owner identity. These wrappers expose raw platform I/O only; access-control decisions and pairing approval remain in the channel layer.
 
 ## 0.4.0
 Sat, 27 Jun 2026 12:09:24 GMT

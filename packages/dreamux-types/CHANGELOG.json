@@ -2,6 +2,24 @@
   "name": "@excitedjs/dreamux-types",
   "entries": [
     {
+      "version": "0.3.0",
+      "tag": "@excitedjs/dreamux-types_v0.3.0",
+      "date": "Fri, 03 Jul 2026 04:51:35 GMT",
+      "comments": {
+        "minor": [
+          {
+            "comment": "BREAKING: Refine AgentRuntime lifecycle contracts around turn-owned settlement results, kindless opaque checkpoint ids, instance-scoped state sinks, resume-only capabilities, removal of public submitTurn/injectControlNotice/systemInput projections, required channelInput and plain completionInput text delivery, provider-owned prompt injection, neutral skill sources, and removal of core-only completion envelope/spill-path types from the provider API."
+          },
+          {
+            "comment": "Allow AgentRuntimeSystemPrompt.append to carry ordered prompt fragments instead of a single append string."
+          },
+          {
+            "comment": "Allow AgentRuntimeSystemPrompt to carry append-only or replace-only prompt content so TeamMate identity guidance can reuse the neutral runtime prompt surface."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.2.0",
       "tag": "@excitedjs/dreamux-types_v0.2.0",
       "date": "Sat, 27 Jun 2026 12:09:24 GMT",

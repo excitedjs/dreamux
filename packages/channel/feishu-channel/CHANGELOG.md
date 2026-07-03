@@ -1,6 +1,13 @@
 # Change Log - @excitedjs/feishu-channel
 
-This log was last generated on Sat, 27 Jun 2026 12:09:24 GMT and should not be manually modified.
+This log was last generated on Fri, 03 Jul 2026 04:51:35 GMT and should not be manually modified.
+
+## 2.0.0
+Fri, 03 Jul 2026 04:51:35 GMT
+
+### Breaking changes
+
+- BREAKING: remove the Feishu `access` MCP tool and make Owner-only interactive cards the only pairing approval surface. The channel now sends an interactive approval card for pending pairing requests, rejects non-Owner clicks with a toast-only response, and lets the App Owner approve through the card callback. The callback reuses the internal approve-by-token helper, then returns Feishu's raw-card callback response for the green success state. Existing callers must stop invoking the removed `access` tool; inspect or revoke pending entries by editing access.json directly.
 
 ## 1.0.0
 Sat, 27 Jun 2026 12:09:24 GMT

@@ -2,6 +2,26 @@
   "name": "@excitedjs/dreamux-utils",
   "entries": [
     {
+      "version": "0.3.0",
+      "tag": "@excitedjs/dreamux-utils_v0.3.0",
+      "date": "Fri, 03 Jul 2026 04:51:35 GMT",
+      "comments": {
+        "minor": [
+          {
+            "comment": "BREAKING: Refine completion body resolution for core-owned plain text completion delivery; the helper now accepts the minimal source/id/result input shape instead of the provider-facing AgentRuntime completion envelope."
+          },
+          {
+            "comment": "Refine completion body resolution for core-owned plain text completion delivery; the helper now accepts the minimal source/id/result input shape instead of the provider-facing AgentRuntime completion envelope."
+          }
+        ],
+        "dependency": [
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-types\" to `0.3.0`"
+          }
+        ]
+      }
+    },
+    {
       "version": "0.2.0",
       "tag": "@excitedjs/dreamux-utils_v0.2.0",
       "date": "Sat, 27 Jun 2026 12:09:24 GMT",

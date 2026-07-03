@@ -1,6 +1,18 @@
 # Change Log - @excitedjs/dreamux
 
-This log was last generated on Sat, 27 Jun 2026 12:09:24 GMT and should not be manually modified.
+This log was last generated on Fri, 03 Jul 2026 04:51:35 GMT and should not be manually modified.
+
+## 0.17.0
+Fri, 03 Jul 2026 04:51:35 GMT
+
+### Minor changes
+
+- BREAKING: Replace the old bundled dispatcher/team-dev-workflow skill guidance with role-specific dispatcher-workflow and team-workflow skills, rewrite dreamux-maintenance as a Dispatcher host-operations skill, store bundled skills as direct package skill directories, remove the packaged tm CLI wrapper plus the @excitedjs/tm dependency, and rename Team read binding projections from bound_group/chat_id or status binding to provider-neutral bound_target/target_key fields. Rebuild: update any scripts, operator notes, model prompts, or MCP consumers that call the dreamux-provided tm bin or read team.list/status/history binding fields; Dreamux-owned TeamMate and Team orchestration now goes through the injected MCP tools only.
+- BREAKING: Refine AgentRuntime lifecycle contracts around turn-owned settlement results, kindless opaque checkpoint ids, instance-scoped state sinks, resume-only capabilities, removal of public submitTurn/injectControlNotice/systemInput projections, required channelInput and plain completionInput text delivery, provider-owned prompt injection, and core-owned completion envelope rendering.
+- Expose dispatcher-scoped Team MCP send so dispatchers can submit follow-up turns to a Team's TeamLeader by team_name, with completion routed back to the dispatcher.
+- Add ordered append system prompts for TeamLeader defaults and identity guidance passed through team.create and teammate.spawn.
+- Expose TeamLeader-scoped Team MCP transfer_back, move channel session and binding ownership behind ChannelService with admin-side Team read composition so Team services stay Channel-agnostic, flatten TeamMate launch policy aliases, and add a service-subtree lint gate against non-entrypoint re-exports.
+- Add optional TeamMate and TeamLeader identity prompts on teammate.spawn and team.create, persisted as identity_prompt and injected as append-only runtime role guidance.
 
 ## 0.16.0
 Sat, 27 Jun 2026 12:09:24 GMT

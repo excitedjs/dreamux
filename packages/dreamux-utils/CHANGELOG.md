@@ -1,6 +1,14 @@
 # Change Log - @excitedjs/dreamux-utils
 
-This log was last generated on Sat, 27 Jun 2026 12:09:24 GMT and should not be manually modified.
+This log was last generated on Fri, 03 Jul 2026 04:51:35 GMT and should not be manually modified.
+
+## 0.3.0
+Fri, 03 Jul 2026 04:51:35 GMT
+
+### Minor changes
+
+- BREAKING: Refine completion body resolution for core-owned plain text completion delivery; the helper now accepts the minimal source/id/result input shape instead of the provider-facing AgentRuntime completion envelope.
+- Refine completion body resolution for core-owned plain text completion delivery; the helper now accepts the minimal source/id/result input shape instead of the provider-facing AgentRuntime completion envelope.
 
 ## 0.2.0
 Sat, 27 Jun 2026 12:09:24 GMT

@@ -2,6 +2,64 @@
   "name": "@excitedjs/dreamux",
   "entries": [
     {
+      "version": "0.17.0",
+      "tag": "@excitedjs/dreamux_v0.17.0",
+      "date": "Fri, 03 Jul 2026 04:51:35 GMT",
+      "comments": {
+        "none": [
+          {
+            "comment": "Sync the builtin Feishu package loader test with the removed access tool."
+          },
+          {
+            "comment": "Add .agents/reference/release-process.md SOP page and link it from .agents/root.md. The new doc records the 4-stage development-and-release pipeline (PR to next -> alpha prerelease -> automatic beta prerelease on push to next -> one-click promote-next driving fast-forward to main + version bump + topology repair + stable publish), the strict main-is-strict-prefix-of-next invariant, the release/topology coupling design choices (GITHUB_TOKEN anti-loop guard -> explicit dispatch; version-bump commit on main -> sync-next step), and a failure-mode recovery table. Operators now have a single source of truth for how code enters the repo, moves through prereleases, and ships to npm latest. No package surface changes."
+          },
+          {
+            "comment": "Bugfix for the promote-next workflow: the `git push origin main` in promote-next.yml uses the default GITHUB_TOKEN, and GitHub's documented anti-infinite-loop guard deliberately prevents a GITHUB_TOKEN-originated push from re-triggering other workflows. As a result, the `on.push.main` trigger in release.yml silently did not fire after a successful promote, requiring a manual dispatch workaround. Fix: (1) grant `permissions.actions:write`, (2) add a final `gh workflow run release.yml --ref main` step that dispatches the stable release pipeline explicitly after each non-noop promote, (3) update the workflow header comments to document the real coupling. No published package surface changes; this is a release-process workflow robustness fix."
+          },
+          {
+            "comment": "Add a new 'sync next onto the freshly bumped main' step at the end of the release.yml version job. The long-lived topology invariant between the two long-lived branches is: 'main must always be a strict ancestor of next' (promote-next.yml enforces this with a hard fail). Without this step, every successful stable release breaks the invariant: the version job writes a 'chore(release): version packages [skip ci]' commit directly to main without going through next, which forces the next promote-next run into Topology Violation and requires a manual rebuild of the next branch (cherry-pick + force push). The new step fast-forwards next onto the freshly bumped main SHA immediately after the version bump, keeping the invariant alive. Skip logic: sync only if next still points at the exact pre-bump SHA; otherwise next already moved on and will absorb the bump via a future promote-next. No published package surface changes."
+          }
+        ],
+        "minor": [
+          {
+            "comment": "BREAKING: Replace the old bundled dispatcher/team-dev-workflow skill guidance with role-specific dispatcher-workflow and team-workflow skills, rewrite dreamux-maintenance as a Dispatcher host-operations skill, store bundled skills as direct package skill directories, remove the packaged tm CLI wrapper plus the @excitedjs/tm dependency, and rename Team read binding projections from bound_group/chat_id or status binding to provider-neutral bound_target/target_key fields. Rebuild: update any scripts, operator notes, model prompts, or MCP consumers that call the dreamux-provided tm bin or read team.list/status/history binding fields; Dreamux-owned TeamMate and Team orchestration now goes through the injected MCP tools only."
+          },
+          {
+            "comment": "BREAKING: Refine AgentRuntime lifecycle contracts around turn-owned settlement results, kindless opaque checkpoint ids, instance-scoped state sinks, resume-only capabilities, removal of public submitTurn/injectControlNotice/systemInput projections, required channelInput and plain completionInput text delivery, provider-owned prompt injection, and core-owned completion envelope rendering."
+          },
+          {
+            "comment": "Expose dispatcher-scoped Team MCP send so dispatchers can submit follow-up turns to a Team's TeamLeader by team_name, with completion routed back to the dispatcher."
+          },
+          {
+            "comment": "Add ordered append system prompts for TeamLeader defaults and identity guidance passed through team.create and teammate.spawn."
+          },
+          {
+            "comment": "Expose TeamLeader-scoped Team MCP transfer_back, move channel session and binding ownership behind ChannelService with admin-side Team read composition so Team services stay Channel-agnostic, flatten TeamMate launch policy aliases, and add a service-subtree lint gate against non-entrypoint re-exports."
+          },
+          {
+            "comment": "Add optional TeamMate and TeamLeader identity prompts on teammate.spawn and team.create, persisted as identity_prompt and injected as append-only runtime role guidance."
+          }
+        ],
+        "dependency": [
+          {
+            "comment": "Updating dependency \"@excitedjs/agent-runtime-claude-code\" to `0.3.0`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/agent-runtime-codex\" to `0.3.0`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-types\" to `0.3.0`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-utils\" to `0.3.0`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/feishu-channel\" to `2.0.0`"
+          }
+        ]
+      }
+    },
+    {
       "version": "0.16.0",
       "tag": "@excitedjs/dreamux_v0.16.0",
       "date": "Sat, 27 Jun 2026 12:09:24 GMT",

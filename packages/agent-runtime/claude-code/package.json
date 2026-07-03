@@ -1,6 +1,6 @@
 {
   "name": "@excitedjs/agent-runtime-claude-code",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Built-in Claude Code Agent Runtime provider for Dreamux (alias builtin:claude-code). Implements the @excitedjs/dreamux-types AgentRuntimeProvider contract against a resident `claude` stream-json child; depends on @excitedjs/dreamux-types only, never on @excitedjs/dreamux core (issue excitedjs/dreamux#209).",
   "license": "MIT",
   "repository": {
