@@ -46,9 +46,8 @@ There are no legacy global-bin users to protect, so the implementation does
 not install `dreamux-server` or `server-ctl` and does not preserve old command
 forms as compatibility contracts.
 
-> **Current status:** the later role-specific workflow-skill rewrite also
-> removed the `tm` wrapper and `@excitedjs/tm` dependency. The only public package
-> bin is `dreamux`.
+> **Current status:** the package exposes one public bin, `dreamux`; orchestration
+> is available through Dreamux-owned MCP surfaces.
 
 `dreamux onboard` collects dispatcher and channel configuration and registers a
 native service manager entry. Bundled Dreamux skills are not installed into the

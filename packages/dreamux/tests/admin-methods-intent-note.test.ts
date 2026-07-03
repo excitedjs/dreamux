@@ -143,7 +143,7 @@ describe('Channel MCP admin methods replace the Team binding methods (#209 slice
     expect(transferred).toEqual({
       transferred: true,
       binding,
-      message: 'Channel target transferred back to the dispatcher.',
+      message: 'Channel target released from Team routing.',
     });
     expect(seen[0]).toMatchObject({ teamId: 'alpha', meta: { chat_id: 'chat-demo' } });
     expect(seen[1]).toMatchObject({ meta: { chat_id: 'chat-demo' } });
@@ -285,8 +285,15 @@ describe('Team MCP admin read methods compose channel binding summaries', () => 
     });
   });
 
-  it('adds bound_group for list and history and binding for status in the admin layer', async () => {
-    const binding = { provider: 'builtin:feishu', chat_id: 'chat-alpha' };
+  it('adds bound_target for Team read summaries in the admin layer', async () => {
+    const binding = {
+      channel_id: 'primary',
+      provider: 'builtin:feishu',
+      target_type: 'group',
+      target_key: 'chat-alpha',
+      display: 'Alpha',
+      canonical_url: null,
+    };
     const owners: Array<Record<string, unknown>> = [];
     const dispatcher = {
       listTeams: async () => [
@@ -352,7 +359,7 @@ describe('Team MCP admin read methods compose channel binding summaries', () => 
     await expect(
       adminMethods['mcp.team.list']!(server, { dispatcher_id: 'flow' }),
     ).resolves.toMatchObject({
-      teams: [{ team_name: 'alpha', bound_group: binding }],
+      teams: [{ team_name: 'alpha', bound_target: binding }],
     });
     await expect(
       adminMethods['mcp.team.status']!(server, {
@@ -361,12 +368,12 @@ describe('Team MCP admin read methods compose channel binding summaries', () => 
       }),
     ).resolves.toMatchObject({
       team: { team_name: 'alpha' },
-      binding,
+      bound_target: binding,
     });
     await expect(
       adminMethods['mcp.team.history']!(server, { dispatcher_id: 'flow' }),
     ).resolves.toMatchObject({
-      items: [{ team_name: 'alpha', bound_group: binding }],
+      items: [{ team_name: 'alpha', bound_target: binding }],
       next_cursor: null,
     });
     expect(owners).toEqual([

@@ -22,17 +22,17 @@ Design background:
 ## What this package ships
 
 - Public CLI bin: `dreamux`. It owns onboarding, serving, status, doctor,
-  dispatcher commands, and config commands. The package no longer ships a `tm`
-  wrapper or depends on `@excitedjs/tm`.
+  dispatcher commands, and config commands. TeamMate and Team orchestration are
+  available through Dreamux-owned MCP surfaces.
 - Bundled Dreamux skills injected at runtime by role (issue #209 slice 6):
   core hands the Dispatcher `dispatcher-workflow` and `dreamux-maintenance`, the
   TeamLeader `team-workflow`, and the runtime applies them to its engine (Codex
-  `skills/extraRoots/set`, Claude Code `--add-dir`). `dreamux onboard` no longer writes
-  `<dispatcher cwd>/.codex/skills`.
+  `skills/extraRoots/set`, Claude Code `--add-dir`). `dreamux onboard` does not
+  install bundled skills into dispatcher workspaces.
 - Providerized dispatcher declarations, a process-local provider registry,
   server-owned state/log paths, the `builtin:feishu` Channel provider, the
   `builtin:codex` and `builtin:claude-code` Agent Runtime providers, and
-  dispatcher-scoped MCP shims for channel replies, Teams, TeamMates, and cron.
+  role-gated MCP shims for channel replies, Teams, TeamMates, and cron.
 - Server-hosted TeamMate and Team ledgers with asynchronous turn delivery,
   recovery reads, bounded retry, and read-only result retrieval.
 
@@ -315,14 +315,12 @@ process over the admin socket, where the live channel session handles the tool.
 This MCP surface is not the binding surface; Team handoff stays on the Team MCP
 as `bind_channel` / `transfer_back`.
 
-The model-facing tools include:
-
-- `reply`: send a Feishu reply to a target message or chat.
-- `react`: add a model-owned reaction to a Feishu message.
-- `list_chat_bots`: list known bots in a Feishu chat when the Feishu provider
-  exposes that helper.
-
-If the model only emits assistant text, nothing is sent to Feishu.
+The model-facing channel tools are supplied by the active Channel provider. Use
+the provider's `tools/list` metadata as the current authority; the generic
+Dreamux contract is that assistant text is not sent to a channel automatically.
+For `builtin:feishu`, provider-owned examples include `reply`, `react`, and
+`list_chat_bots`; these are Feishu provider tools, not generic Dreamux channel
+tools.
 
 The Dispatcher Service also contributes Dreamux-owned TeamMate, Team, and cron
 MCP servers. Dispatcher-facing TeamMate tools are:
@@ -334,14 +332,17 @@ MCP servers. Dispatcher-facing TeamMate tools are:
   TeamMate state by concrete name.
 
 Dispatcher-facing Team tools are `create`, `send`, `list`, `status`, `history`,
-`dissolve`, `bind_channel`, and `transfer_back`. TeamLeader-scoped Team tools
-expose only `transfer_back`. Cron tools are `cron_create`, `cron_list`,
+`dissolve`, `bind_channel`, and `transfer_back`. TeamLeader callers receive only
+`transfer_back`. Cron tools are `cron_create`, `cron_list`,
 `cron_update`, `cron_delete`, and `cron_run_now`.
 
 There is no dispatcher-facing `complete` tool. Completion ingest is a
 server/admin seam, so a dispatcher model cannot fake a TeamMate completion.
 
-## Verification Path
+## Built-In Feishu Verification Example
+
+This example uses the built-in Feishu Channel provider; other providers use
+their own config and visible-reply tools.
 
 1. `dreamux onboard --dispatcher-id flow --dispatcher-cwd <WORKSPACE> --agent flow=builtin:codex --agent-config-json flow='{"bin":"codex"}' --channel primary=builtin:feishu --channel-config-json primary='{"app_id":"<APP_ID>","app_secret":"<APP_SECRET>"}'`
 2. `dreamux serve` starts dispatcher `flow`.

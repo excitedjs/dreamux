@@ -310,7 +310,7 @@ export const adminMethods: Record<string, AdminHandler> = {
         ...(prompt !== null ? { prompt } : {}),
         ...(identity !== null ? { identity } : {}),
       });
-      return { ...created, binding: null };
+      return { ...created, bound_target: null };
     } catch (err) {
       throw new AdminError('TEAM_CREATE_FAILED', parseMessage(err));
     }
@@ -322,7 +322,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     if (teamCallerKind(params) === 'team_leader') {
       throw new AdminError(
         'BAD_REQUEST',
-        'mcp.team.send is only available to dispatcher-scoped Team MCP callers',
+        'mcp.team.send is not available for this Team MCP caller',
       );
     }
     const name = mustString(params, 'team_name');
@@ -351,7 +351,7 @@ export const adminMethods: Record<string, AdminHandler> = {
       teams: await Promise.all(
         teams.map(async (team) => ({
           ...team,
-          bound_group: await dispatcher.activeTeamBindingSummary(ownerForTeamRead(team)),
+          bound_target: await dispatcher.activeTeamBindingSummary(ownerForTeamRead(team)),
         })),
       ),
     };
@@ -365,7 +365,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     const summary = await dispatcher.getTeamStatus(name);
     return {
       ...summary,
-      binding: await dispatcher.activeTeamBindingSummary(
+      bound_target: await dispatcher.activeTeamBindingSummary(
         ownerForTeamRead(summary.team),
       ),
     };
@@ -398,7 +398,7 @@ export const adminMethods: Record<string, AdminHandler> = {
       items: await Promise.all(
         history.items.map(async (team) => ({
           ...team,
-          bound_group: await dispatcher.activeTeamBindingSummary(ownerForTeamRead(team)),
+          bound_target: await dispatcher.activeTeamBindingSummary(ownerForTeamRead(team)),
         })),
       ),
     };
@@ -438,7 +438,7 @@ export const adminMethods: Record<string, AdminHandler> = {
       message:
         binding === null
           ? 'No active Team channel binding matched the resolved target.'
-          : 'Channel target transferred back to the dispatcher.',
+          : 'Channel target released from Team routing.',
     };
   },
 
@@ -451,7 +451,7 @@ export const adminMethods: Record<string, AdminHandler> = {
       teamId: name,
       note,
     });
-    return { ...dissolved, binding: null };
+    return { ...dissolved, bound_target: null };
   },
 };
 

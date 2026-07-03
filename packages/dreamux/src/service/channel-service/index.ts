@@ -20,8 +20,12 @@ export interface ChannelRouteOwner {
 }
 
 export interface ChannelBindingSummary {
+  channel_id: string;
   provider: string;
-  chat_id: string;
+  target_type: string;
+  target_key: string;
+  display: string | null;
+  canonical_url: string | null;
 }
 
 export interface ChannelServiceOptions {
@@ -234,10 +238,13 @@ export class ChannelService {
       (binding) => binding.active && ownerMatchesBinding(owner, binding),
     );
     if (active === undefined) return null;
-    const chatId = active.meta['chat_id'];
     return {
+      channel_id: active.channel_id,
       provider: active.provider,
-      chat_id: typeof chatId === 'string' ? chatId : active.target_key,
+      target_type: active.target_type,
+      target_key: active.target_key,
+      display: active.display,
+      canonical_url: active.canonical_url,
     };
   }
 

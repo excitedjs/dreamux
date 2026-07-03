@@ -281,12 +281,36 @@ describe('team-mcp stdio shim', () => {
     }
   });
 
-  it('forwards the redesigned read/bind verbs to the right admin methods (#182 PR-7)', async () => {
-    const admin = await startFakeAdminServer((request) => ({
-      id: request.id,
-      ok: true,
-      result: { ok: true },
-    }));
+  it('forwards redesigned read verbs and preserves bound_target results (#182 PR-7)', async () => {
+    const boundTarget = {
+      channel_id: 'primary',
+      provider: 'builtin:test',
+      target_type: 'group',
+      target_key: 'target-alpha',
+      display: 'Alpha',
+      canonical_url: null,
+    };
+    const admin = await startFakeAdminServer((request) => {
+      const results: Record<string, unknown> = {
+        'mcp.team.list': {
+          teams: [{ team_name: 'alpha', bound_target: boundTarget }],
+        },
+        'mcp.team.status': {
+          team: { team_name: 'alpha' },
+          bound_target: boundTarget,
+        },
+        'mcp.team.history': {
+          items: [{ team_name: 'alpha', bound_target: boundTarget }],
+          next_cursor: null,
+        },
+        'mcp.team.send': { ok: true },
+      };
+      return {
+        id: request.id,
+        ok: true,
+        result: results[request.method] ?? { ok: true },
+      };
+    });
     try {
       const input = new PassThrough();
       const output = new PassThrough();
@@ -303,22 +327,29 @@ describe('team-mcp stdio shim', () => {
         jsonrpc: '2.0',
         id: 1,
         method: 'tools/call',
-        params: { name: 'status', arguments: { team_name: 'alpha' } },
+        params: { name: 'list', arguments: {} },
       });
-      await reader.next();
+      const listResponse = await reader.next();
       writeJson(input, {
         jsonrpc: '2.0',
         id: 2,
+        method: 'tools/call',
+        params: { name: 'status', arguments: { team_name: 'alpha' } },
+      });
+      const statusResponse = await reader.next();
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 3,
         method: 'tools/call',
         params: {
           name: 'history',
           arguments: { grep: 'auth', team_name: 'alpha', status: 'running', limit: 5 },
         },
       });
-      await reader.next();
+      const historyResponse = await reader.next();
       writeJson(input, {
         jsonrpc: '2.0',
-        id: 3,
+        id: 4,
         method: 'tools/call',
         params: {
           name: 'send',
@@ -332,18 +363,42 @@ describe('team-mcp stdio shim', () => {
       await reader.next();
 
       expect(admin.requests.map((r) => r.method)).toEqual([
+        'mcp.team.list',
         'mcp.team.status',
         'mcp.team.history',
         'mcp.team.send',
       ]);
-      expect(admin.requests[0]?.params).toMatchObject({ team_name: 'alpha' });
-      expect(admin.requests[1]?.params).toMatchObject({
+      expect(listResponse).toMatchObject({
+        result: {
+          structuredContent: {
+            teams: [{ team_name: 'alpha', bound_target: boundTarget }],
+          },
+        },
+      });
+      expect(statusResponse).toMatchObject({
+        result: {
+          structuredContent: {
+            team: { team_name: 'alpha' },
+            bound_target: boundTarget,
+          },
+        },
+      });
+      expect(historyResponse).toMatchObject({
+        result: {
+          structuredContent: {
+            items: [{ team_name: 'alpha', bound_target: boundTarget }],
+            next_cursor: null,
+          },
+        },
+      });
+      expect(admin.requests[1]?.params).toMatchObject({ team_name: 'alpha' });
+      expect(admin.requests[2]?.params).toMatchObject({
         grep: 'auth',
         team_name: 'alpha',
         status: 'running',
         limit: 5,
       });
-      expect(admin.requests[2]?.params).toMatchObject({
+      expect(admin.requests[3]?.params).toMatchObject({
         caller_kind: 'dispatcher',
         team_name: 'alpha',
         prompt: 'follow up',

@@ -14,7 +14,7 @@ interface CronMcpArgv {
 export function createCronMcpCommand(): CommandModule<{}, CronMcpArgv> {
   return {
     command: 'cron-mcp',
-    describe: 'Run the dispatcher-scoped cron MCP stdio shim',
+    describe: 'Run the cron MCP stdio shim for a dispatcher or TeamLeader caller scope',
     builder: (y) =>
       y
         .option('dispatcher', {

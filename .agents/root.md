@@ -18,6 +18,9 @@ For current behavior, read the linked source code too.
   Feishu tools, target routing, and binding.
 - [Service topology](reference/service-topology.md) — source-anchored
   service-layer ownership and construction map.
+- [Model-facing writing](reference/model-facing-writing.md) — current
+  checklist for bundled skills, prompts, MCP descriptions, structured MCP
+  results, and tests that lock model-visible text.
 - [Glossary](glossary.md) — short definitions for overloaded Dreamux terms.
 - [Decision index](decisions/README.md) — ADRs, with current-trail and
   historical-background sections.
@@ -38,7 +41,8 @@ For current behavior, read the linked source code too.
 | modify dispatcher runtime lifecycle or MCP injection | [Current architecture](reference/current-architecture.md), [dispatcher local aggregate](decisions/dispatcher-local-aggregate.md), [service architecture refactor](decisions/service-architecture-refactor.md), source |
 | modify scheduled tasks / cron jobs | [Scheduled tasks](reference/scheduled-tasks.md), [Agent activity capability](decisions/agent-activity-capability.md), [Json document store](decisions/json-document-store.md), source |
 | refactor/move a service class or change who-owns-what | [Service topology](reference/service-topology.md) FIRST, then source |
-| modify TeamMate / Team lifecycle, read surfaces, or bundled dispatcher skills | [Dispatcher skill reference](reference/dispatcher-skill.md), [provider architecture realignment](decisions/provider-architecture-realignment.md), [top-level design](decisions/top-level-design.md), [service architecture refactor](decisions/service-architecture-refactor.md) |
+| modify TeamMate / Team lifecycle, read surfaces, or bundled dispatcher skills | [Dispatcher skill reference](reference/dispatcher-skill.md), [Model-facing writing](reference/model-facing-writing.md), [provider architecture realignment](decisions/provider-architecture-realignment.md), [top-level design](decisions/top-level-design.md), [service architecture refactor](decisions/service-architecture-refactor.md) |
+| modify bundled skills, system prompts, MCP tool descriptions, MCP result field names, or tests that lock model-visible text | [Model-facing writing](reference/model-facing-writing.md), then source |
 | modify channel binding or channel target routing | [Channel runtime](reference/channel-runtime.md), [NPM package split and channel targets](decisions/npm-package-split-and-channel-targets.md), source |
 | modify Feishu inbound, `/introduce`, trusted bot context, or reaction timing | [Channel runtime](reference/channel-runtime.md), [Feishu introduce](domains/feishu-introduce.md), [Feishu pairing access](domains/feishu-pairing-access.md), [non-blocking dispatcher inbound](domains/non-blocking-dispatcher-inbound.md), source |
 | modify Feishu attachment download/cache behavior | [Feishu inbound attachments](decisions/feishu-inbound-attachments.md) |
@@ -67,6 +71,7 @@ For current behavior, read the linked source code too.
 - [State and paths](reference/state-and-paths.md)
 - [Channel runtime](reference/channel-runtime.md)
 - [Service topology](reference/service-topology.md)
+- [Model-facing writing](reference/model-facing-writing.md)
 - [Dispatcher skill and TeamMate workflow](reference/dispatcher-skill.md)
 - [Scheduled tasks](reference/scheduled-tasks.md)
 - [Release process](reference/release-process.md)

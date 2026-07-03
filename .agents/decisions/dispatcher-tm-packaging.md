@@ -29,19 +29,20 @@ version used by that runtime.
 
 ## Historical decision
 
-`@excitedjs/tm` is a direct runtime dependency of `@excitedjs/dreamux`.
+Historically, `@excitedjs/tm` was a direct runtime dependency of
+`@excitedjs/dreamux`.
 
-`@excitedjs/dreamux` exposes a package bin named `tm` that forwards to the
-package-local `@excitedjs/tm` executable. The wrapper must resolve through
-symlinks like the `dreamux` launcher so it works in global installs, npm-link
-setups, and source checkouts.
+`@excitedjs/dreamux` exposed a package bin named `tm` that forwarded to the
+package-local `@excitedjs/tm` executable. The wrapper resolved through symlinks
+like the `dreamux` launcher so it worked in global installs, npm-link setups,
+and source checkouts.
 
-When `dreamux serve` starts a dispatcher Codex app-server, it prepends the
-dreamux package `bin/` directory to that child process `PATH`. The dispatcher
-skill must invoke bare `tm`, never `npx`, `npm exec`, or a version-qualified
-package command.
+When `dreamux serve` started a dispatcher Codex app-server, it prepended the
+dreamux package `bin/` directory to that child process `PATH`. The historical
+dispatcher skill invoked bare `tm`, not `npx`, `npm exec`, or a
+version-qualified package command.
 
-Dreamux ships a small set of bundled Codex skills in the npm package:
+Dreamux shipped a small set of bundled Codex skills in the npm package:
 `dispatcher`, `team-dev-workflow`, and `dreamux-maintenance`.
 
 > **Superseded by issue #209 slice 6 (role-gated skill injection).** The
@@ -50,8 +51,8 @@ Dreamux ships a small set of bundled Codex skills in the npm package:
 > `skillSources` — Dispatcher and TeamLeader only — and the runtime applies them
 > to its engine (Codex `skills/extraRoots/set`, Claude Code `--add-dir`).
 > `dreamux onboard` and dispatcher startup no longer write
-> `<dispatcher cwd>/.codex/skills`; old symlinks are left untouched (a benign
-> duplicate listing, safe to delete). See
+> `<dispatcher cwd>/.codex/skills`; pre-existing workspace symlinks are outside
+> Dreamux-owned state and are not tracked or reported. See
 > [npm-package-split-and-channel-targets.md](npm-package-split-and-channel-targets.md).
 
 Historical model (pre-slice-6): `dreamux onboard` and dispatcher startup
@@ -78,36 +79,36 @@ creates, tracks, or reports workspace-local skill symlinks.
 
 ## Historical consequences
 
-- The published dreamux package has two bins:
+- The published dreamux package had two bins:
   - `dreamux` for the public operator CLI.
   - `tm` for dispatcher runtime delegation.
-- `tm` is a packaging/runtime surface, not a new dreamux admin command tree.
-- The dreamux package owns the tm compatibility version. Updating tm requires a
+- `tm` was a packaging/runtime surface, not a new dreamux admin command tree.
+- The dreamux package owned the tm compatibility version. Updating tm required a
   normal package dependency update and release note.
-- Dispatcher prompts and skills stay short: use `tm spawn`, `tm send`, and
+- Dispatcher prompts and skills stayed short by using `tm spawn`, `tm send`, and
   `tm wait`.
-- Onboard and dispatcher startup install bundled skills once per dispatcher cwd.
+- Onboard and dispatcher startup installed bundled skills once per dispatcher cwd.
   A machine with multiple dispatchers may have multiple workspace-local
   symlink sets.
-- Correct symlinks are left unchanged. Stale or broken symlinks are replaced.
-  Real user files or directories are not overwritten; startup logs a diagnostic
-  and onboard reports the path as `skipped`. This includes an old hand-copied
-  `dispatcher` directory — Dreamux no longer fingerprints and migrates it
-  (issue #98); the operator removes or renames it to let startup recreate the
-  bundled symlink.
-- Custom symlinks at bundled skill paths are treated as Dreamux-managed links
-  and may be replaced. Operators who intentionally opt out should use a real
-  file or directory at that skill path.
-- A missing `.codex/skills` directory is created, but a missing dispatcher cwd
-  is a startup error.
-- Unsupported symlink platforms or permission failures fail loudly; Dreamux does
+- Correct symlinks were left unchanged. Stale or broken symlinks were replaced.
+  Real user files or directories were not overwritten; startup logged a
+  diagnostic and onboard reported the path as `skipped`. This included an old
+  hand-copied `dispatcher` directory — Dreamux no longer fingerprinted and
+  migrated it (issue #98); the operator removed or renamed it to let startup
+  recreate the bundled symlink.
+- Custom symlinks at bundled skill paths were treated as Dreamux-managed links
+  and could be replaced. Operators who intentionally opted out used a real file
+  or directory at that skill path.
+- A missing `.codex/skills` directory was created, but a missing dispatcher cwd
+  was a startup error.
+- Unsupported symlink platforms or permission failures failed loudly; Dreamux did
   not copy bundled skills as a fallback.
-- Removing or recreating a dispatcher workspace can remove its installed skill
+- Removing or recreating a dispatcher workspace could remove its installed skill
   symlinks; rerun `dreamux onboard` or restart the dispatcher to restore them.
-- dreamux must not silently mutate the operator's global `~/.codex/skills/`
+- dreamux did not silently mutate the operator's global `~/.codex/skills/`
   for these dispatcher-scoped skills.
-- Uninstall is intentionally asymmetric for workspace files: onboarding writes
-  symlinks into the operator's workspace, while uninstall only reports those
+- Uninstall was intentionally asymmetric for workspace files: onboarding wrote
+  symlinks into the operator's workspace, while uninstall only reported those
   paths.
 
 ## Historical source status

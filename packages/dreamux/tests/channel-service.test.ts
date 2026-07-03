@@ -95,8 +95,12 @@ describe('ChannelService binding ownership', () => {
       service.bindTarget({ owner, meta: { chat_id: 'chat-a' } }),
     ).resolves.toMatchObject({ team_name: 'alpha', leader_name: 'leader-a' });
     await expect(service.activeBindingSummaryForOwner(owner)).resolves.toEqual({
+      channel_id: 'primary',
       provider: PROVIDER_REF,
-      chat_id: 'chat-a',
+      target_type: 'group',
+      target_key: 'chat-a',
+      display: null,
+      canonical_url: null,
     });
 
     await expect(

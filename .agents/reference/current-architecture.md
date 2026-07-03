@@ -132,9 +132,9 @@ capability. The Team MCP is caller-scoped:
 
 `channel_id` defaults to the dispatcher's sole configured channel and is
 required only when the dispatcher has more than one configured channel.
-`meta` is provider-owned selector input, for example `{ "chat_id": "..." }` for
-a Feishu group chat. Peer Team send remains future work; TeamLeaders still use
-their scoped TeamMate MCP to send to members.
+`meta` is provider-owned selector input; the active channel provider's schema
+and results define the selector shape. Peer Team send remains future work;
+TeamLeaders still use their scoped TeamMate MCP to send to members.
 
 Each `TeamService` directly builds and holds its TeamLeader `TeammateService`
 through `/packages/dreamux/src/service/team-service/leader-agent.ts`, using the
@@ -188,8 +188,8 @@ skill sources by role:
   `.claude/skills/<name>` entries that point at those direct skill directories,
   then passes that root through `--add-dir`.
 
-Dreamux no longer installs workspace `.codex/skills` symlinks during onboard or
-runtime startup.
+Dreamux does not install bundled skills into dispatcher workspaces during
+onboard or runtime startup.
 
 Key source:
 

@@ -116,13 +116,16 @@ async function handleRequest(
 export function teamTools(
   callerKind: TeamMcpCallerKind = 'dispatcher',
 ): Array<Record<string, unknown>> {
-  const transferBackTool = tool('transfer_back', 'Return a bound channel target to the dispatcher, deactivating the Team binding. channel_id selects the configured channel (optional; defaults to the sole channel). meta carries the channel provider target selector that Dreamux normalizes through the channel provider — e.g. { "chat_id": "<group chat id>" } for a chat channel.', {
+  const transferBackDescription = callerKind === 'team_leader'
+    ? 'Release this Team\'s binding for the selected channel target. This is a routing-only state change with no channel-message side effect. channel_id selects the configured channel (optional; defaults to the sole channel). meta carries the provider-defined channel target selector that Dreamux normalizes through the channel provider.'
+    : 'Release a bound channel target from a Team so future inbound for that target is no longer routed to the Team. channel_id selects the configured channel (optional; defaults to the sole channel). meta carries the provider-defined channel target selector that Dreamux normalizes through the channel provider.';
+  const transferBackTool = tool('transfer_back', transferBackDescription, {
     channel_id: { type: 'string', minLength: 1, maxLength: 64 },
     meta: { type: 'object' },
   }, ['meta']);
   if (callerKind === 'team_leader') return [transferBackTool];
   return [
-    tool('create', 'Create a Team and start its TeamLeader. team_name is the concrete Team key used by all later status/history/dissolve/send calls. intent is required: it is the durable recovery subject for the Team. repo is optional: omit it to run the TeamLeader and members in a plain shared work directory under the dispatcher workspace (.workspace/work/<team_name>/ — the dispatcher cwd need not be a git repo), or pass { mode: reuse-cwd | managed, path?, base_ref?, branch?, slug?, cleanup? } — managed creates a git worktree. prompt is optional: when supplied it is delivered as the TeamLeader\'s first turn; when omitted the leader starts idle and fires no turn, waiting for a bound channel inbound or a later Team MCP send to drive its first turn (creation does NOT fabricate a default prompt). To hand a group chat to the Team, bind it after create with the team bind_channel tool.', {
+    tool('create', 'Create a Team and start its TeamLeader. team_name is the concrete Team key used by all later status/history/dissolve/send calls. intent is required: it is the durable recovery subject for the Team. repo is optional: omit it to let Dreamux allocate a plain shared work directory for the Team, or pass { mode: reuse-cwd | managed, path?, base_ref?, branch?, slug?, cleanup? } to choose an existing path or create a managed git worktree. prompt is optional: when supplied it is delivered as the TeamLeader\'s first turn; when omitted the leader starts idle and waits for bound-channel inbound or a later Team MCP send. To route a channel target to the Team, bind it after create with the team bind_channel tool.', {
       team_name: { type: 'string', minLength: 1, maxLength: 64 },
       repo: repoInputSchema(),
       leader_agent_runtime: { type: 'string', minLength: 1, maxLength: 128 },
@@ -135,8 +138,8 @@ export function teamTools(
       prompt: { type: 'string', minLength: 1, maxLength: 20000 },
       intent: { type: 'string', minLength: 1, maxLength: 2000 },
     }, ['team_name', 'prompt']),
-    tool('list', 'List Teams owned by this dispatcher (compact scan rows: team_name, status, intent, repo, leader, member count, bound group).', {}, []),
-    tool('status', 'Read one Team\'s detailed current status by its team_name (record, TeamLeader status, member count, active bound group).', {
+    tool('list', 'List Teams owned by this dispatcher (compact scan rows: team_name, status, intent, repo, leader, member count, bound channel target).', {}, []),
+    tool('status', 'Read one Team\'s detailed current status by its team_name (record, TeamLeader status, member count, active bound target).', {
       team_name: { type: 'string', minLength: 1, maxLength: 64 },
     }, ['team_name']),
     tool('history', 'Search Teams for recovery (closed included) by team_name, status, repo, intent text, and time range. A compact recovery list, not a raw event timeline. Returns { items, next_cursor }.', {
@@ -153,7 +156,7 @@ export function teamTools(
       team_name: { type: 'string', minLength: 1, maxLength: 64 },
       note: { type: 'string', minLength: 1, maxLength: 2000 },
     }, ['team_name', 'note']),
-    tool('bind_channel', 'Bind a configured channel target to a Team by team_name so inbound from that target routes to the Team\'s TeamLeader (a core-owned Team capability). channel_id selects the configured channel (optional; defaults to the dispatcher\'s sole channel). meta carries the channel\'s target selector — e.g. { "chat_id": "<group chat id>" } for a chat channel (group chats only; chat_type is inferred). Binding state, routing, and authorization are core-owned.', {
+    tool('bind_channel', 'Bind a configured channel target to a Team by team_name so inbound from that target routes to the Team\'s TeamLeader. channel_id selects the configured channel (optional; defaults to the dispatcher\'s sole channel). meta carries the provider-defined channel target selector.', {
       team_name: { type: 'string', minLength: 1, maxLength: 64 },
       channel_id: { type: 'string', minLength: 1, maxLength: 64 },
       meta: { type: 'object' },
@@ -207,7 +210,7 @@ function mapToolCall(
 ): { method: string; params: Record<string, unknown> } {
   if (callerKind === 'team_leader' && call.name !== 'transfer_back') {
     throw new Error(
-      `TeamLeader-scoped Team MCP exposes only transfer_back; hidden Team tool '${String(call.name)}' is not available`,
+      `Team tool '${String(call.name)}' is not available in this context. Available Team tools: transfer_back.`,
     );
   }
   switch (call.name) {
@@ -299,10 +302,9 @@ function dissolveArgs(value: unknown): Record<string, unknown> {
 
 function bindChannelArgs(value: unknown): Record<string, unknown> {
   const obj = asRecord(value, 'bind_channel arguments');
-  // Group-only bind by team_name + a provider selector `meta` (e.g. a chat
-  // channel: `{ chat_id }`). channel_id is optional (defaults to the sole configured
-  // channel); core resolves the (channel_id, target_key) v2 binding key via the
-  // channel's resolveTarget(meta).
+  // Bind by team_name + a provider selector `meta`. channel_id is optional
+  // (defaults to the sole configured channel); core resolves the
+  // (channel_id, target_key) v2 binding key via the channel's resolveTarget(meta).
   return {
     team_name: requireString(obj, 'team_name'),
     meta: requireRecord(obj, 'meta'),
@@ -393,7 +395,7 @@ function callerParams(caller: TeamMcpCaller): Record<string, unknown> {
 
 function requireOption(value: string | undefined, name: string): string {
   if (value === undefined || value === '') {
-    throw new Error(`${name} is required for TeamLeader-scoped Team MCP`);
+    throw new Error(`${name} is required when the Team MCP runs for a TeamLeader`);
   }
   return value;
 }

@@ -17,12 +17,6 @@ interface RegisteredTool {
   name: string;
 }
 
-const PROMPT_DECLARED_REMOVED_VERBS = [
-  'resume',
-  'ctx',
-  'history_events',
-] as const;
-
 function registeredDreamuxMcpTools(): RegisteredTool[] {
   return [
     ...toolNames('teammate', teammateTools('dispatcher')),
@@ -50,13 +44,6 @@ function toolNames(
     }
     return { server, name };
   });
-}
-
-function promptMentionsTool(name: string): boolean {
-  return textMentionsTool(
-    `${DREAMUX_DISPATCHER_BASE_INSTRUCTIONS}\n${DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS}`,
-    name,
-  );
 }
 
 function skillMentionsTool(skillName: BundledSkillName, name: string): boolean {
@@ -91,20 +78,6 @@ describe('dispatcher prompt matches registered Dreamux MCP tools', () => {
     expect(servers).toEqual(['team', 'teammate', 'cron']);
   });
 
-  it('names every registered dispatcher Dreamux MCP tool in the model-facing prompt', () => {
-    const missing = registeredDreamuxMcpTools().filter(
-      (tool) => !promptMentionsTool(tool.name),
-    );
-
-    expect(
-      missing,
-      [
-        'Dispatcher prompt/registry parity drift: registered Dreamux MCP tools must be named as whole words in DREAMUX_DISPATCHER_BASE_INSTRUCTIONS or DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS.',
-        `Missing tool(s):\n${formatTools(missing)}`,
-      ].join('\n'),
-    ).toEqual([]);
-  });
-
   it('names dispatcher-visible tools in dispatcher-workflow', () => {
     const missing = registeredDreamuxMcpTools().filter(
       (tool) => !skillMentionsTool('dispatcher-workflow', tool.name),
@@ -133,27 +106,14 @@ describe('dispatcher prompt matches registered Dreamux MCP tools', () => {
     ).toEqual([]);
   });
 
-  it('mentions Team MCP send in the Team MCP instructions explicitly', () => {
-    expect(DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS).toMatch(
-      /Team MCP[\s\S]*create, send, list, status, history, dissolve, bind_channel, and transfer_back/,
-    );
-    expect(DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS).toMatch(
-      /send\(\{ team_name, prompt, intent\? \}\) submits a follow-up turn to that Team's TeamLeader only/,
-    );
-  });
+  it('routes dispatcher prompts to skills instead of enumerating MCP schemas', () => {
+    const prompt = `${DREAMUX_DISPATCHER_BASE_INSTRUCTIONS}\n${DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS}`;
 
-  it('keeps prompt-declared removed verbs out of the registered dispatcher tools', () => {
-    const registered = new Set(registeredDreamuxMcpTools().map((tool) => tool.name));
-    const reintroduced = PROMPT_DECLARED_REMOVED_VERBS.filter((name) =>
-      registered.has(name),
-    );
-
-    expect(
-      reintroduced,
-      [
-        'Dispatcher prompt removed-verb honesty drift: the prompt declares these verbs removed, so they must not be registered dispatcher Dreamux MCP tools.',
-        `Reintroduced verb(s): ${reintroduced.join(', ')}`,
-      ].join('\n'),
-    ).toEqual([]);
+    expect(prompt).toContain('Load `dispatcher-workflow` before');
+    expect(prompt).toContain('Load `dreamux-maintenance` before');
+    expect(prompt).not.toContain('bind_channel({ team_name, channel_id?, meta })');
+    expect(prompt).not.toContain('create, send, list, status, history, dissolve');
+    expect(prompt).not.toContain('ctx and history_events');
+    expect(prompt).not.toContain('legacy TeamMate CLI');
   });
 });

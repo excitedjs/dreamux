@@ -54,15 +54,14 @@ export interface TeamDissolveInput {
   note: string;
 }
 
-/**
- * Active group binding marker surfaced by the Team read tools (issue #182 PR-7).
- * Bound targets are group chats on a conversational channel; `chat_id` is the
- * neutral selector (issue #209 — `chat_id` is a provider-local chat id, not a
- * provider-specific field) and `provider` is the bound channel's ref.
- */
+/** Active channel target marker surfaced by the Team read tools. */
 export interface TeamChannelBindingSummary {
+  channel_id: string;
   provider: string;
-  chat_id: string;
+  target_type: string;
+  target_key: string;
+  display: string | null;
+  canonical_url: string | null;
 }
 
 /**

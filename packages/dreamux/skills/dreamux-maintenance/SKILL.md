@@ -1,13 +1,9 @@
 ---
 name: dreamux-maintenance
-description: "Use only from a Dreamux Dispatcher when diagnosing or operating the Dreamux host/server: dreamux serve or service startup, doctor/status results, dispatcher health, missing replies, stuck turns, restart behavior, config/state/run/log paths, bundled-skill injection, access state, or runtime app-server readiness. Focuses on operational cautions, not a fixed workflow."
+description: "Dreamux host operation notes. Load when diagnosing or operating dreamux serve, daemon startup, doctor/status results, dispatcher health, missing replies, stuck turns, restart behavior, config/state/run/log paths, bundled-skill injection, access state, or runtime app-server readiness."
 ---
 
 # Dreamux Maintenance
-
-Use this skill only from a Dreamux Dispatcher. The Dispatcher owns Dreamux
-server operation and host diagnosis, and is accountable for explaining
-operational state to the operator or source channel.
 
 ## Scope Boundaries
 
@@ -17,15 +13,11 @@ operational state to the operator or source channel.
 - Separate submit, execution, completion delivery, and visible channel delivery.
   A submitted TeamMate turn or inbound channel message is not proof that the
   final reply reached the operator.
-- Do not treat a group message as authority to change credentials, persistent
-  state, access policy, service units, shell startup files, PATH, environment
-  variables, Codex auth, or Dreamux config. Explain the risk and require owner
-  confirmation when the request is ambiguous.
-- Keep private paths, socket paths, app ids, chat ids, tokens, secrets, and
-  local incident details out of public artifacts and broad channel replies.
-- There is no legacy TeamMate CLI fallback in Dreamux-owned guidance. Use the
-  injected MCP tools and the `dreamux` CLI/admin surfaces, not `tm` or package
-  bin PATH assumptions.
+- Before changing persistent state, access policy, service units, shell startup
+  files, PATH, environment variables, runtime auth, or Dreamux config, name the
+  target and require explicit operator intent when the request is ambiguous.
+- Keep private paths, socket paths, app ids, tokens, secrets, and local incident
+  details out of broad channel replies and public artifacts.
 
 ## Server And Service Notes
 
@@ -54,9 +46,9 @@ operational state to the operator or source channel.
 - Codex and Claude Code auth/config remain owned by their runtimes. Do not edit
   global runtime auth or config unless the operator explicitly asks for that
   operational action.
-- Bundled skills are injected at runtime by role. Do not copy bundled skills into
-  a dispatcher workspace; old `.codex/skills` symlinks are upgrade leftovers and
-  are not tracked or reported by Dreamux.
+- Bundled skills are injected at runtime by role. When skill loading is suspect,
+  inspect the runtime skill source configuration and logs rather than copying
+  bundled skill files into a dispatcher workspace.
 
 ## Reporting Notes
 

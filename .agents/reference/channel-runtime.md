@@ -73,11 +73,12 @@ Key source:
 
 ## Channel Targets And Binding
 
-Channel providers normalize routing endpoints into `ChannelTarget` objects.
-For Feishu group chat routing, the target carries provider-owned metadata such
-as `chat_id` and `chat_type`.
+Channel providers normalize routing endpoints into `ChannelTarget` objects. The
+target carries provider-owned metadata; Dreamux core treats that metadata as an
+opaque selector and routes by the normalized target key.
 
-Team channel binding is core-owned state behind the caller-scoped Team MCP:
+Team channel binding is Dreamux core state exposed through role-gated Team MCP
+projections:
 
 - dispatcher projection:
   `send({ team_name, prompt, intent? })` to submit a turn to the TeamLeader,
@@ -86,9 +87,8 @@ Team channel binding is core-owned state behind the caller-scoped Team MCP:
 - TeamLeader projection: only scoped
   `transfer_back({ channel_id?, meta })`
 
-The `meta` object is provider-owned target selector input. For Feishu, that is
-typically `{ "chat_id": "..." }`. Team peer send remains future work and is not
-part of channel binding.
+The `meta` object is provider-owned target selector input. Team peer send
+remains future work and is not part of channel binding.
 
 Dreamux core owns channel sessions and durable binding rows through the
 dispatcher-local `ChannelService`. Channel providers remain Team-agnostic: they

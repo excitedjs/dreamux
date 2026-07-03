@@ -422,7 +422,7 @@ describe('architecture ownership gate (#233)', () => {
       hitsInSource(
         teamCollectionFile,
         teamCollection,
-        /ChannelBindingStore|ChannelBindingSummary|TeamBindingSummaryResolver|bindingSummaryForOwner|bindings:\s|transferChannelBack|resolveChannel|\bbound_group\s*:|\bbinding\s*:/,
+        /ChannelBindingStore|ChannelBindingSummary|TeamBindingSummaryResolver|bindingSummaryForOwner|bindings:\s|transferChannelBack|resolveChannel|\bbound_target\s*:|\bbinding\s*:/,
       ),
     );
 
@@ -445,20 +445,20 @@ describe('architecture ownership gate (#233)', () => {
     const adminMethods = await readSource('admin/methods.ts');
     assertContains(
       adminMethods,
-      /'mcp\.team\.list'[\s\S]*bound_group:\s*await dispatcher\.activeTeamBindingSummary/,
-      'Team read composition invariant violated: mcp.team.list must add bound_group in admin/methods.ts.',
+      /'mcp\.team\.list'[\s\S]*bound_target:\s*await dispatcher\.activeTeamBindingSummary/,
+      'Team read composition invariant violated: mcp.team.list must add bound_target in admin/methods.ts.',
       '../admin/methods.ts',
     );
     assertContains(
       adminMethods,
-      /'mcp\.team\.status'[\s\S]*binding:\s*await dispatcher\.activeTeamBindingSummary/,
-      'Team read composition invariant violated: mcp.team.status must add binding in admin/methods.ts.',
+      /'mcp\.team\.status'[\s\S]*bound_target:\s*await dispatcher\.activeTeamBindingSummary/,
+      'Team read composition invariant violated: mcp.team.status must add bound_target in admin/methods.ts.',
       '../admin/methods.ts',
     );
     assertContains(
       adminMethods,
-      /'mcp\.team\.history'[\s\S]*bound_group:\s*await dispatcher\.activeTeamBindingSummary/,
-      'Team read composition invariant violated: mcp.team.history must add bound_group in admin/methods.ts.',
+      /'mcp\.team\.history'[\s\S]*bound_target:\s*await dispatcher\.activeTeamBindingSummary/,
+      'Team read composition invariant violated: mcp.team.history must add bound_target in admin/methods.ts.',
       '../admin/methods.ts',
     );
   });

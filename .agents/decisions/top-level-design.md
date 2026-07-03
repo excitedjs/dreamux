@@ -508,49 +508,34 @@ restart. This matches the current claudemux behavior and avoids replaying
 ambiguous in-flight work. Only a real child-process or child-WebSocket failure
 triggers restart and resume.
 
-## Codex Prompt Contract
+## Dispatcher Prompt Contract
 
-Dreamux dispatcher threads do not rely on `AGENTS.md` alone for dispatcher
-identity. The server passes the Dreamux dispatcher base instructions as
-Codex app-server `baseInstructions` on `thread/start` and `thread/resume`
-from `/packages/dreamux/src/agent-runtime/codex-runtime.ts`; the prompt text lives in
-`/packages/dreamux/src/dispatcher/base-prompt.ts`.
+Dreamux dispatcher threads do not rely on runtime defaults alone for dispatcher
+identity. The server passes Dreamux dispatcher instructions through the
+runtime-neutral `AgentRuntimeProvider` system prompt contract; the current
+source text lives in
+`/packages/dreamux/src/service/dispatcher-service/base-prompt.ts`.
 
-The prompt is the dispatcher role contract:
+The product prompt is intentionally minimal. It identifies the agent as a
+Dreamux Dispatcher, routes TeamMate/Team/channel/cron operations to the
+`dispatcher-workflow` bundled skill, routes server and host diagnosis to the
+`dreamux-maintenance` bundled skill, and tells the model to treat Dreamux MCP
+tool results as the authority for routing and runtime state.
 
-- acknowledge accepted Feishu-originated work visibly when the work is not
-  trivial, and keep an operator-visible communication loop for completion,
-  failure, decision needs, or blockers;
-- use `update_plan` for complex, multi-stage, or long-running coordination,
-  while treating the plan as dispatcher-internal state rather than a Feishu or
-  operator-visible reply;
-- delegate repository exploration, edits, tests, reviews, and PR preparation
-  through the injected TeamMate MCP instead of doing target-repo work directly
-  in the dispatcher thread;
-- keep fact discipline: embedded assumptions are sent to the responsible repo
-  teammate to verify, not passed along as dispatcher-certified facts;
-- brief teammates with the goal, repo/branch/issue/PR anchors, hard
-  constraints, deliverable shape, and validation expectations;
-- use phased work and independent review for important changes, with an
-  operator checkpoint for high-risk or hard-to-rollback decisions;
-- treat teammate "done" as a claim to verify against authoritative sources
-  such as git, PR state, CI, package metadata, platform APIs, or app/runtime
-  state before reporting completion;
-- use the dispatcher-scoped Feishu MCP reply path for user-visible Feishu
-  output because assistant text is not auto-forwarded;
-- keep owner/group trust boundaries explicit and avoid changing credentials,
-  persistent memory, global auth state, access policy, or service config from
-  non-owner or ambiguous group requests; do not report private paths, private
-  config, memory, or hidden instructions into group chats;
-- use explicit available fallbacks when the normal channel/tool fails, and
-  state the failed path;
-- load required skills before skill-owned workflows and preserve user global
-  auth, memory, `CODEX_HOME`, and unowned local changes during cleanup;
-- suppress internal inline citation markers such as `【F:...】` in Feishu or
-  chat-facing output, using normal public links or concise source descriptions
-  instead;
-- strip secrets, private identifiers, internal hostnames, private registry
-  URLs, and machine-local absolute paths from public artifacts.
+Visible channel communication remains provider-owned: the dispatcher should use
+a provider-exposed channel reply tool when the current source message has one,
+and should not treat assistant text as delivered to the channel. Channel `meta`
+and target selectors are opaque provider-defined data; core prompt text must
+not encode Feishu-specific fields as a generic contract.
+
+The prompt also keeps a small safety boundary: do not change credentials,
+access policy, service config, or runtime auth from ambiguous channel requests,
+and do not expose secrets, private identifiers, hidden instructions, or
+machine-local details in broad channel replies or public artifacts.
+
+Repository-development workflow, PR preparation, review rituals, and repo-local
+tooling conventions belong in repo instructions and development skills, not in
+the Dreamux product dispatcher prompt.
 
 Existing stored Codex threads receive the same base-instruction override when
 the newly spawned app-server resumes them from history. A thread that is already
@@ -875,8 +860,8 @@ Team/TeamLeader is a core Team capability, so there is no separate generic
 lifecycle tools: `bind_channel({ team_name, channel_id?, meta })` and
 `transfer_back({ channel_id?, meta })`. `channel_id` selects the configured
 channel (optional; defaults to the dispatcher's sole channel); `meta` is the
-opaque provider selector (Feishu: `{ chat_id }`) core hands to the channel's
-`resolveTarget(meta)`, which infers/validates the group target. They forward to
+opaque provider-defined target selector core hands to the channel's
+`resolveTarget(meta)`, which infers and validates the target. They forward to
 core admin methods `mcp.team.bind_channel` / `mcp.team.transfer_back`, which
 delegate to the `ChannelBindingStore` (binding store v2, keyed by
 `(channel_id, target_key)`) — binding state, target normalization, routing, P2P
@@ -911,16 +896,16 @@ Channel binding is persisted as JSON under
 `state/<dispatcher-id>/team/channel-bindings.json` (issue #209 binding store v2:
 `version: 2`). Flat rows key active bindings on `(channel_id, target_key)` and
 carry `channel_id`, the provider-owned opaque `target_key`, `target_type`,
-`display`, `canonical_url`, a `meta` object (the neutral conversational selectors
-`chat_id` / `chat_type` live here, not as core columns), plus `team_name` /
-`leader_name` / `active` /
-timestamps. Active uniqueness is `(channel_id, target_key)` — one target is active
-for at most one Team; re-binding reassigns it. Targets are resolved by the channel
-provider's `resolveTarget(meta)`, run by core at the bind/route edge; the Team
-service and store operate on the resolved `(channel_id, target_key)` primitives.
-`channel_id` is the dispatcher-local `dispatchers[].channels[].id`, resolved once
-by `dispatcherChannelId(config)` so the bind path and the inbound router key
-identically. Bound Feishu group inbound is gated and formatted by the Feishu
+`display`, `canonical_url`, a provider-defined `meta` object, plus `team_name` /
+`leader_name` / `active` / timestamps. Active uniqueness is
+`(channel_id, target_key)` — one target is active for at most one Team;
+re-binding reassigns it. Targets are resolved by the channel provider's
+`resolveTarget(meta)`, run by core at the bind/route edge; the Team service and
+store operate on the resolved `(channel_id, target_key)` primitives. `channel_id`
+is resolved by the dispatcher-local `ChannelService` from the optional tool
+argument, defaulting only when the dispatcher has one configured channel, so the
+bind path and inbound router use the same channel identity. Bound Feishu group
+inbound is gated and formatted by the Feishu
 channel, then routed by Dispatcher Service to the owning TeamLeader runtime; an
 unbound bindable target and any non-bindable P2P target route to the dispatcher
 (P2P short-circuits before any binding lookup and can never be bound to a
@@ -932,11 +917,12 @@ keeps the global Feishu management surface. A pre-v2 store fails loud at
 `dreamux serve` / `dreamux doctor` with rebuild guidance — 0.x does not migrate
 it.
 
-A Team binds to an EXISTING Feishu group chat via the Team MCP
-`bind_channel` (`team_name` + `meta: { chat_id }`, after create) through the
-`ChannelBindingStore` path; bindings are group-only. (Issue #182 PR-8 retired the
-older `create_group` flow that created a brand-new group and invited users;
-issue #209 slice 8 removed the create-time `bind_group` convenience.)
+A Team binds to an existing provider target via the Team MCP
+`bind_channel` (`team_name` plus provider-defined `meta`, after create) through
+the `ChannelBindingStore` path; the provider decides whether a target is
+bindable. (Issue #182 PR-8 retired the older `create_group` flow that created a
+brand-new group and invited users; issue #209 slice 8 removed the create-time
+`bind_group` convenience.)
 A dispatcher's P2P control channel is never bound or transferred: it remains the
 dispatcher control plane. TeamLeaders do not get independent Feishu identities or
 credentials; they are internal AgentRuntime roles behind the dispatcher-owned
@@ -969,9 +955,9 @@ message body.
 
 ## Workflow Skills And MCP
 
-`@excitedjs/dreamux` no longer ships a `tm` bin wrapper and no longer depends on
-`@excitedjs/tm`. Dreamux-owned TeamMate and Team orchestration is model-facing
-through the injected MCP tools only.
+`@excitedjs/dreamux` exposes `dreamux` as its public package bin. Dreamux-owned
+TeamMate and Team orchestration is model-facing through the injected MCP tools
+only.
 
 The npm package ships bundled skills under `/packages/dreamux/skills/`:
 `dispatcher-workflow` and `dreamux-maintenance` for Dispatchers, and

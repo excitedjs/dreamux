@@ -106,7 +106,7 @@ async function handleRequest(
 
 export function cronTools(): Array<Record<string, unknown>> {
   return [
-    tool('cron_create', 'Create a durable Dreamux cron job for this agent. cron is a standard 5-field local-time expression (M H DoM Mon DoW); prefer off-:00/:30 minutes for approximate schedules. prompt is the text injected into this dispatcher or TeamLeader agent. recurring defaults to true; use recurring:false for one-shot reminders. dreamux jobs are always persisted and do not auto-expire. tz is resolved and stored. This milestone supports only internal prompt-agent jobs, with no deliver or spawn target.', {
+    tool('cron_create', 'Create a durable Dreamux cron job for this agent. cron is a standard 5-field local-time expression (M H DoM Mon DoW); prefer off-:00/:30 minutes for approximate schedules. prompt is the text injected into this dispatcher or TeamLeader agent. recurring defaults to true; use recurring:false for one-shot reminders. dreamux jobs are always persisted and do not auto-expire. tz is resolved and stored. Cron jobs inject prompts back into this agent; they do not deliver channel messages or spawn agents.', {
       cron: { type: 'string', minLength: 1, maxLength: 200 },
       prompt: { type: 'string', minLength: 1, maxLength: 20000 },
       recurring: { type: 'boolean' },
@@ -117,7 +117,7 @@ export function cronTools(): Array<Record<string, unknown>> {
     tool('cron_delete', 'Delete a cron job by id.', {
       id: { type: 'string', minLength: 1, maxLength: 128 },
     }, ['id']),
-    tool('cron_update', 'Update a cron job by id. Same behavior as cron_create: this milestone supports only internal prompt-agent jobs, with no deliver or spawn target.', {
+    tool('cron_update', 'Update a cron job by id. Same behavior as cron_create: cron jobs inject prompts back into this agent; they do not deliver channel messages or spawn agents.', {
       id: { type: 'string', minLength: 1, maxLength: 128 },
       cron: { type: 'string', minLength: 1, maxLength: 200 },
       prompt: { type: 'string', minLength: 1, maxLength: 20000 },
