@@ -15,18 +15,18 @@ import {
 import { assertNoRemovedRecordFields, LegacyStateError } from '../legacy-state.js';
 import {
   validateTeamMateName,
-  type TeamMateIdentity,
-  type TeamMateIdentityStatus,
-  type TeamMateRole,
-  type TeamMateWorktreeIdentity,
+  type AgentEntityIdentity,
+  type AgentEntityIdentityStatus,
+  type AgentEntityRole,
+  type AgentEntityWorktreeIdentity,
 } from './types.js';
 
-export type TeamMateIdentityStoreLog = Pick<DreamuxLogger, 'warn'>;
+export type AgentIdentityStoreLog = Pick<DreamuxLogger, 'warn'>;
 
-export interface TeamMateIdentityCreateInput {
+export interface AgentIdentityCreateInput {
   dispatcherId: string;
   name: string;
-  role?: TeamMateRole;
+  role?: AgentEntityRole;
   teamId?: string | null;
   agentRuntime: string;
   sessionId?: string | null;
@@ -34,43 +34,34 @@ export interface TeamMateIdentityCreateInput {
   sourceRepo: string | null;
   cwd: string;
   runtimeCwd: string;
-  worktree: TeamMateWorktreeIdentity;
+  worktree: AgentEntityWorktreeIdentity;
   intent?: string | null;
   identityPrompt?: string | null;
-  status?: TeamMateIdentityStatus;
+  status?: AgentEntityIdentityStatus;
 }
 
-export interface TeamMateIdentityUpdateInput {
+export interface AgentIdentityUpdateInput {
   agentRuntime?: string;
   sessionId?: string | null;
   sourceCwd?: string;
   sourceRepo?: string | null;
   cwd?: string;
   runtimeCwd?: string;
-  worktree?: TeamMateWorktreeIdentity;
+  worktree?: AgentEntityWorktreeIdentity;
   intent?: string | null;
   identityPrompt?: string | null;
-  status?: TeamMateIdentityStatus;
+  status?: AgentEntityIdentityStatus;
   lastError?: string | null;
   closedAt?: number | null;
   closeNote?: string | null;
-    turnCount?: number;
+  turnCount?: number;
   lastSeenAt?: number;
   lastPromptPreview?: string | null;
   lastAssistantPreview?: string | null;
 }
 
-export interface DispatcherIdentityEnsureInput {
-  dispatcherId: string;
-  agentRuntime: string;
-  sourceCwd: string;
-  cwd: string;
-  runtimeCwd: string;
-  worktree: TeamMateWorktreeIdentity;
-}
-
-export class TeamMateIdentityStore {
-  constructor(private readonly log: TeamMateIdentityStoreLog) {}
+export class AgentIdentityStore {
+  constructor(private readonly log: AgentIdentityStoreLog) {}
 
   /**
    * Read one identity by name within a scope (issue #233 symmetric layout).
@@ -84,7 +75,7 @@ export class TeamMateIdentityStore {
     dispatcherId: string,
     name: string,
     teamId?: string,
-  ): Promise<TeamMateIdentity | null> {
+  ): Promise<AgentEntityIdentity | null> {
     validateTeamMateName(name);
     const candidates =
       teamId === undefined
@@ -112,7 +103,7 @@ export class TeamMateIdentityStore {
    * `readdir` of the scope's entity directories; physical scoping replaces the
    * former role/team_id roster filter.
    */
-  async list(dispatcherId: string, teamId?: string): Promise<TeamMateIdentity[]> {
+  async list(dispatcherId: string, teamId?: string): Promise<AgentEntityIdentity[]> {
     const dir =
       teamId === undefined
         ? dispatcherTeamMateDir(dispatcherId)
@@ -124,7 +115,7 @@ export class TeamMateIdentityStore {
   async leaderIdentity(
     dispatcherId: string,
     teamId: string,
-  ): Promise<TeamMateIdentity | null> {
+  ): Promise<AgentEntityIdentity | null> {
     return this.readAt(
       dispatcherId,
       null,
@@ -135,7 +126,7 @@ export class TeamMateIdentityStore {
   /** Read the root dispatcher identity, which lives outside teammate collections. */
   async dispatcherIdentity(
     dispatcherId: string,
-  ): Promise<TeamMateIdentity | null> {
+  ): Promise<AgentEntityIdentity | null> {
     return this.readAt(
       dispatcherId,
       null,
@@ -146,77 +137,6 @@ export class TeamMateIdentityStore {
         role: 'dispatcher',
       }),
     );
-  }
-
-  /**
-   * Upsert the config-owned dispatcher-root identity facts while preserving
-   * compatible runtime recovery state.
-   */
-  async ensureDispatcherIdentity(
-    input: DispatcherIdentityEnsureInput,
-  ): Promise<TeamMateIdentity> {
-    const existing = await this.dispatcherIdentity(input.dispatcherId);
-    const now = Date.now();
-    if (existing === null) {
-      const identity: TeamMateIdentity = {
-        version: 1,
-        dispatcher_id: input.dispatcherId,
-        name: DISPATCHER_AGENT_NAME,
-        role: 'dispatcher',
-        team_id: null,
-        agent_runtime: input.agentRuntime,
-        session_id: null,
-        source_cwd: input.sourceCwd,
-        source_repo: null,
-        cwd: input.cwd,
-        runtime_cwd: input.runtimeCwd,
-        worktree: input.worktree,
-        intent: null,
-        identity_prompt: null,
-        created_at: now,
-        updated_at: now,
-        status: 'stopped',
-        last_error: null,
-        closed_at: null,
-        close_note: null,
-        turn_count: 0,
-        last_seen_at: now,
-        last_prompt_preview: null,
-        last_assistant_preview: null,
-      };
-      await this.write(identity);
-      return identity;
-    }
-
-    const compatible =
-      existing.agent_runtime === input.agentRuntime &&
-      existing.cwd === input.cwd &&
-      existing.runtime_cwd === input.runtimeCwd &&
-      worktreeIdentityEquals(existing.worktree, input.worktree);
-    const updated: TeamMateIdentity = {
-      ...existing,
-      name: DISPATCHER_AGENT_NAME,
-      role: 'dispatcher',
-      team_id: null,
-      agent_runtime: input.agentRuntime,
-      source_cwd: input.sourceCwd,
-      source_repo: null,
-      cwd: input.cwd,
-      runtime_cwd: input.runtimeCwd,
-      worktree: input.worktree,
-      ...(compatible
-        ? {}
-        : {
-            session_id: null,
-            status: 'stopped' as const,
-            last_error: null,
-          }),
-      closed_at: null,
-      close_note: null,
-      updated_at: now,
-    };
-    await this.write(updated);
-    return updated;
   }
 
   /**
@@ -261,7 +181,7 @@ export class TeamMateIdentityStore {
   private async listCollection(
     dispatcherId: string,
     dir: string,
-  ): Promise<TeamMateIdentity[]> {
+  ): Promise<AgentEntityIdentity[]> {
     let entries: import('node:fs').Dirent[];
     try {
       entries = await readdir(dir, { withFileTypes: true });
@@ -269,7 +189,7 @@ export class TeamMateIdentityStore {
       if (isNotFound(err)) return [];
       throw err;
     }
-    const identities: TeamMateIdentity[] = [];
+    const identities: AgentEntityIdentity[] = [];
     for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
       if (!entry.isDirectory()) continue;
       const identity = await this.readAt(
@@ -292,7 +212,7 @@ export class TeamMateIdentityStore {
     dispatcherId: string,
     name: string | null,
     path: string,
-  ): Promise<TeamMateIdentity | null> {
+  ): Promise<AgentEntityIdentity | null> {
     let raw: string;
     try {
       raw = await readFile(path, 'utf8');
@@ -317,10 +237,10 @@ export class TeamMateIdentityStore {
     }
   }
 
-  async create(input: TeamMateIdentityCreateInput): Promise<TeamMateIdentity> {
+  async create(input: AgentIdentityCreateInput): Promise<AgentEntityIdentity> {
     validateTeamMateName(input.name);
     const now = Date.now();
-    const identity: TeamMateIdentity = {
+    const identity: AgentEntityIdentity = {
       version: 1,
       dispatcher_id: input.dispatcherId,
       name: input.name,
@@ -351,10 +271,10 @@ export class TeamMateIdentityStore {
   }
 
   async update(
-    identity: TeamMateIdentity,
-    input: TeamMateIdentityUpdateInput,
-  ): Promise<TeamMateIdentity> {
-    const updated: TeamMateIdentity = {
+    identity: AgentEntityIdentity,
+    input: AgentIdentityUpdateInput,
+  ): Promise<AgentEntityIdentity> {
+    const updated: AgentEntityIdentity = {
       ...identity,
       ...(input.agentRuntime !== undefined ? { agent_runtime: input.agentRuntime } : {}),
       ...(input.sessionId !== undefined ? { session_id: input.sessionId } : {}),
@@ -385,8 +305,13 @@ export class TeamMateIdentityStore {
     return updated;
   }
 
+  async upsert(identity: AgentEntityIdentity): Promise<AgentEntityIdentity> {
+    await this.write(identity);
+    return identity;
+  }
+
   /** Derive the entity directory from the identity's own role + team (issue #233). */
-  private async write(identity: TeamMateIdentity): Promise<void> {
+  private async write(identity: AgentEntityIdentity): Promise<void> {
     const path = dispatcherAgentIdentityPath({
       dispatcherId: identity.dispatcher_id,
       name: identity.name,
@@ -407,7 +332,7 @@ function readIdentity(
   dispatcherId: string,
   expectedName: string | null,
   raw: string,
-): TeamMateIdentity {
+): AgentEntityIdentity {
   const value = JSON.parse(raw) as Record<string, unknown>;
   const storedName = typeof value['name'] === 'string' ? value['name'] : expectedName;
   if (
@@ -491,7 +416,7 @@ function readIdentity(
   };
 }
 
-const IDENTITY_STATUSES = new Set<TeamMateIdentityStatus>([
+const IDENTITY_STATUSES = new Set<AgentEntityIdentityStatus>([
   'starting',
   'running',
   'degraded',
@@ -499,13 +424,13 @@ const IDENTITY_STATUSES = new Set<TeamMateIdentityStatus>([
   'stopped',
 ]);
 
-function readStatus(value: unknown): TeamMateIdentityStatus {
-  return typeof value === 'string' && IDENTITY_STATUSES.has(value as TeamMateIdentityStatus)
-    ? (value as TeamMateIdentityStatus)
+function readStatus(value: unknown): AgentEntityIdentityStatus {
+  return typeof value === 'string' && IDENTITY_STATUSES.has(value as AgentEntityIdentityStatus)
+    ? (value as AgentEntityIdentityStatus)
     : 'stopped';
 }
 
-function readRole(value: unknown): TeamMateRole {
+function readRole(value: unknown): AgentEntityRole {
   if (value === 'dispatcher') return value;
   if (value === 'team_leader' || value === 'team_member') return value;
   return 'teammate';
@@ -513,24 +438,10 @@ function readRole(value: unknown): TeamMateRole {
 
 const DISPATCHER_AGENT_NAME = 'dispatcher';
 
-function worktreeIdentityEquals(
-  a: TeamMateWorktreeIdentity,
-  b: TeamMateWorktreeIdentity,
-): boolean {
-  return a.mode === b.mode &&
-    a.slug === b.slug &&
-    a.path === b.path &&
-    a.branch === b.branch &&
-    a.base_ref === b.base_ref &&
-    a.cleanup === b.cleanup &&
-    a.cleanup_state === b.cleanup_state &&
-    a.cleanup_error === b.cleanup_error;
-}
-
 function readWorktreeIdentity(
   value: unknown,
   runtimeCwd: string,
-): TeamMateWorktreeIdentity {
+): AgentEntityWorktreeIdentity {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return {
       mode: 'reuse-cwd',
@@ -556,7 +467,7 @@ function readWorktreeIdentity(
       record['cleanup'] === 'delete-on-close' ? 'delete-on-close' : 'keep',
     cleanup_state:
       typeof record['cleanup_state'] === 'string'
-        ? (record['cleanup_state'] as TeamMateWorktreeIdentity['cleanup_state'])
+        ? (record['cleanup_state'] as AgentEntityWorktreeIdentity['cleanup_state'])
         : mode === 'managed'
           ? 'managed-active'
           : 'not-managed',

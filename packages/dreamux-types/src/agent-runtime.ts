@@ -28,7 +28,6 @@ import type {
   ProviderOnboard,
 } from './provider.js';
 import type {
-  InboundDeliveryHooks,
   InboundDeliveryResult,
   InboundTurnInput,
   TurnSettledSignal,
@@ -260,10 +259,7 @@ export interface AgentRuntime {
    * Deliver a channel/user turn. The runtime owns rendering the neutral channel
    * shape into its native input format.
    */
-  channelInput(
-    input: InboundTurnInput,
-    hooks?: InboundDeliveryHooks,
-  ): Promise<AgentRuntimeTurnResult>;
+  channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult>;
   /**
    * Deliver a Dreamux-owned plain text turn. This is not channel input and must
    * not receive channel/XML rendering.

@@ -23,5 +23,3 @@ export const hostRuntimePaths: AgentRuntimePathContext = {
   logsDir: logsRoot,
   runtimeSocketDirs: () => runtimeSocketDirCandidates(),
 };
-
-export const dispatcherHostPaths = hostRuntimePaths;

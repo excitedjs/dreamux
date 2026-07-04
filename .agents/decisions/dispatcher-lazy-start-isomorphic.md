@@ -1,690 +1,634 @@
-# Dispatcher Lazy Start And Agent-State Isomorphism
+# Dispatcher Agent Entity Isomorphism
 
-- **Status:** Accepted; implementation landed in this worktree
+- **Status:** Draft revision after PR #282 review comments
 - **Date:** 2026-07-04
-- **Affects:** `@excitedjs/dreamux-types`, `@excitedjs/feishu-channel`,
-  dispatcher service startup, dispatcher runtime state, channel MCP descriptors,
-  scheduler wakeup, restart notification delivery, dispatcher role prompts and
-  skills
+- **Affects:** `@excitedjs/dreamux-types`, `@excitedjs/dreamux`,
+  `@excitedjs/feishu-channel`, `@excitedjs/agent-runtime-claude-code`,
+  dispatcher service startup, agent identity/state storage, channel MCP
+  descriptors, scheduler wakeup, channel inbound acknowledgement, dispatcher
+  role prompts and skills
 - **PR / Issue:** [PR #282](https://github.com/excitedjs/dreamux/pull/282)
 
 ## Context
 
-PR #282 started as a documentation-only branch for aligning Dispatcher agent
-construction with TeamLeader construction and making the Dispatcher runtime
-lazy. The first draft lived under `.agents/specs/`, which is not a valid KB
-document kind, and it proposed delaying Dispatcher agent creation until channel
-sessions were built. This decision records the final design now implemented in
-the current source: Dispatcher, TeamLeader, TeamMate, and Team member launches
-all share the same identity-owned runtime state and launch boundary.
+PR #282 removed several real duplicate entities: Dispatcher runtime launch no
+longer has an inline `buildDispatcherLaunch()` path, Dispatcher runtime recovery
+no longer writes `status.json`, and built-in runtimes no longer need the
+durable `<state>/<dispatcherId>/runtime/<name>` scratch directory.
 
-Current source facts:
+That direction is still correct, but the implementation proved that the first
+decision record defined "isomorphism" too narrowly. It treated "Dispatcher,
+TeamLeader, TeamMate, and Team member all pass through `TeammateService` and
+`identity.json`" as sufficient. The PR comments show that this is not enough:
+some old Dispatcher special cases were deleted, while new special cases were
+introduced in shared classes, provider packages, helper files, and callback
+interfaces.
 
-- Dispatcher role inputs flow through `TeammateServiceOptions`, and Dispatcher
-  runtime launch uses the same `TeammateService.resolveLaunch()` path as child
-  roles.
-- Dispatcher, TeamLeader, TeamMate, and Team member launches resolve provider
-  config from `identity.agent_runtime -> agents[]`.
-- The inline `buildDispatcherLaunch()` / `buildLaunch` launch fork and
-  `applyRoleOptions()` helper are removed.
-- Dispatcher writes and reads the root agent identity
-  (`role: "dispatcher"`, `identity.json`, `turn.jsonl`) as authoritative runtime
-  recovery state.
-- Dispatcher runtime recovery no longer uses `DispatcherStore` or `status.json`.
-  `DispatcherStore` is now a config-backed projection.
-- `dispatchers[].agentRuntime` already points at a top-level `agents[].id`; the
-  resolved `dispatchers[].runtime` field is config-load output, not a separate
-  operator-facing runtime declaration.
-- `dispatcherIdentity()` and `ensureDispatcherIdentity()` provide the explicit
-  root identity read/ensure accessors. The identity parser round-trips
-  `role: "dispatcher"`, while teammate collection lookup keeps the root
-  Dispatcher non-enumerable and non-addressable.
-- `providerRuntimeId()` derives provider-facing labels from identity: root
-  Dispatcher keeps the bare dispatcher id, and child roles use scoped labels.
-- `AgentRuntimePathContext` exposes `cacheDir()`, `logsDir()`, and
-  `runtimeSocketDirs()`; the old writable `dispatcherDir(id)` provider state
-  seam is removed. The durable `<state>/<dispatcherId>/runtime/<name>` path,
-  `dispatcherTeamMateRuntimeDir()`, and `teammateHostPaths()` are removed.
-- Claude Code MCP config is passed as inline `--mcp-config` JSON. Its skill
-  adapter lives under the global cache root, is keyed by canonical source set,
-  is atomically published, and is never refreshed in place.
-- Channel MCP descriptors have moved to provider-level config assembly. The
-  Feishu descriptor builds a `channel-mcp` stdio descriptor from host context
-  plus a static tool catalog.
-- `channel-mcp` serves `tools/list` from static descriptor metadata; only
-  `tools/call` routes through admin back to the live channel session or a
-  provider sessionless handler.
-- `Server.start()` calls the aggregate `DispatcherService.start()` for each
-  enabled Dispatcher. The ordering for prepare, restart-notice eager runtime
-  start, channel-session start, and scheduler start is owned inside
-  `DispatcherService`.
-- Dispatcher cron already uses `absentRuntimeStrategy: 'submit'`, so scheduled
-  input can wake a dormant runtime.
-- `InboundDeliveryHooks` are already forwarded through Dispatcher and TeamLeader
-  channel input paths.
-- `ChannelService.adopt()` currently makes a session map live immediately. A
-  lazy-start boot split must not publish unstarted sessions through that live
-  slot.
+The revised design must make ownership and negative gates explicit. The target
+is not to hide Dispatcher differences inside the shared runtime holder. The
+target is to make every remaining difference either:
+
+- data supplied by the owning aggregate before constructing a shared service;
+- a neutral field on the agent identity;
+- or an explicitly documented structural difference, such as the Dispatcher root
+  identity being config-declared and non-enumerable.
+
+Anything else is glue and should not be approved.
+
+Current source facts verified in the PR worktree:
+
+- `ChannelProvider.mcpServerDescriptor()` lets a channel provider assemble the
+  Dreamux core `channel-mcp` command, caller args, and admin socket args.
+- `ChannelRoutes.deliver()`, `TeamService.deliverToLeader()`,
+  `TeammateService.channelInput()`, and runtime `channelInput()` forward
+  `InboundDeliveryHooks`.
+- `SchedulerServiceOptions.submitScheduled()` receives a `shouldSubmit`
+  predicate that represents scheduler-held-fire lifetime.
+- `TeammateService` contains behavior branches on concrete roles, including
+  roster validation, worktree cleanup, and provider-facing runtime id
+  derivation.
+- `TeamMateIdentityStore` lives under `service/teammate-collection/` but now
+  owns Dispatcher root identity ensure, TeamLeader identity reads, Team member
+  identity reads, and ordinary teammate identity reads.
+- `Dispatchers.summarize()` fabricates `status: 'stopped'` and
+  `thread_id: null` for unmaterialized dispatcher services.
+- `dispatcherHostPaths` is a no-op alias for `hostRuntimePaths`.
+- `dispatcher-service/helpers.ts` is a mechanical split of functions used only
+  by `DispatcherService`.
+
+Those facts are the defects this revision is meant to remove or explicitly
+bound.
 
 ## Decision
 
-Use provider-level channel MCP descriptor assembly and keep the Dispatcher agent
-as a contained `TeammateService` created from stable role options. Do not add
-`mcpServersProvider`, do not add `onRuntimeStarted`, and do not preserve the
-inline runtime-launch fork.
+Keep the high-level runtime-state direction:
 
-Remove the remaining dispatcher runtime-state fork instead of wrapping it in a
-new resolver abstraction. Dispatcher, TeamLeader, and TeamMate are all agent
-entities whose runtime recovery state is their `identity.json` record.
-The dispatcher root `identity.json` becomes the authoritative Dispatcher runtime
-state. `status.json` must stop being the Dispatcher runtime recovery authority.
+- Dispatcher, TeamLeader, TeamMate, and Team member are agent entities.
+- Runtime recovery state belongs in each entity's `identity.json`.
+- Provider launch resolves through `identity.agent_runtime -> agents[]`.
+- `status.json`, inline Dispatcher launch, and durable child runtime scratch
+  directories remain retired.
 
-Dispatcher runtime provider/config resolution uses the same
-`identity.agent_runtime -> agents[]` path as TeamLeader and TeamMate. The
-Dispatcher aggregate may still own channel sessions, teams, schedulers, routing,
-and restart notices, but it should not own a parallel runtime-state entity.
+Tighten the architecture boundary:
 
-## Technical Design
+- Channel providers own channel capabilities, platform I/O, static tool
+  catalogs, live tools, sessionless tools, target resolution, and message
+  ownership facts.
+- Dreamux core owns the generic `channel-mcp` process descriptor, CLI command,
+  admin socket, caller scoping, and shim arguments.
+- The shared runtime holder must not decide behavior by concrete role names.
+  Role differences must be supplied as construction-time profile data or stored
+  as neutral identity fields.
+- Agent identity storage is a neutral agent-entity concern, not a teammate
+  collection concern.
+- Channel acknowledgement and scheduler cancellation must not be implemented as
+  single-consumer callbacks threaded through unrelated layers.
 
-### Channel MCP Descriptor Ownership
+The revised design intentionally rejects a "small patch" that only fixes the
+visible comments while keeping the same ownership mistakes. The implementation
+is not ready until the negative gates below are true.
 
-Move the optional MCP descriptor method from `ChannelSession` to
-`ChannelProvider<TConfig>`:
+## Ownership Model
 
-```ts
-mcpServerDescriptor?(
-  context: ChannelMcpDescriptorContext,
-  config: TConfig,
-): AgentRuntimeMcpServer | null;
+```mermaid
+flowchart LR
+  Provider[Channel Provider]
+  Core[Dreamux Core Channel Service]
+  Shim[channel-mcp shim]
+  Runtime[Agent Runtime]
+  Session[Live Channel Session]
+
+  Provider -->|tool catalog and handlers| Core
+  Core -->|stdio MCP descriptor with command args caller scope admin socket| Runtime
+  Runtime -->|tools/call| Shim
+  Shim -->|admin channel.invoke_tool| Core
+  Core -->|live or sessionless call| Session
 ```
 
-The descriptor is a provider capability over provider config and host context.
-It is not a live-session capability. Feishu's implementation moves from
-`FeishuChannelSessionAdapter` to the provider object without changing the
-descriptor shape. The generated descriptor still points at the generic
-`channel-mcp` shim with provider, channel id, caller scope, static tool catalog,
-and admin socket args.
-
-Live tool semantics stay unchanged:
-
-- `tools/list` is static metadata carried in the descriptor.
-- `tools/call` still reaches `ChannelService.invokeTool()`.
-- `reply` and `react` still require a live session.
-- `list_chat_bots` can still use the existing sessionless provider handler when
-  no live session exists.
-
-`ChannelService` should expose the already-resolved dispatcher-scoped channel
-configs through one small read method instead of duplicating config traversal in
-`mcp-descriptors.ts`. The returned set is exactly the channels assigned to that
-Dispatcher, never a process-wide channel list. Both Dispatcher and TeamLeader
-channel MCP descriptor assembly should use that same config/provider path.
-
-That read method must consolidate existing dispatcher-channel config traversal
-rather than becoming another lookup path. In particular, implementation review
-should reject a patch that adds a new `config.dispatchers.find(...)` loop in MCP
-descriptor assembly while leaving the existing `ChannelSessions` /
-`ChannelService` traversal split untouched.
-
-### TeammateService Role Options
-
-Keep role surface as `TeammateServiceOptions` for every agent entity. Options
-overwrite the four role-shaped fields:
-
-- `skillSources`
-- `mcpServers`
-- `systemPrompt`
-- `disableFeatures`
-
-The runtime launch path should not set or merge these fields separately. Once
-the inline launch fork is removed, Dispatcher, TeamLeader, TeamMate, and Team
-member launches all receive role surface through the same option path.
-
-### Dispatcher Runtime State Authority
-
-Promote the dispatcher root agent identity from a write-only debug record into
-the authoritative Dispatcher runtime identity.
-
-The dispatcher root `identity.json` should carry the same recovery fields used
-by TeamLeader and TeamMate:
-
-- `agent_runtime`: the dispatcher config's `agentRuntime` reference;
-- `session_id`: the runtime-native checkpoint id;
-- `status`: the normalized runtime status;
-- `last_error`: the latest runtime error;
-- rolling turn metadata where normal `TeammateService` turn recording applies.
-
-During dispatcher preparation, before constructing the contained Dispatcher
-`TeammateService`, ensure that the root dispatcher identity exists and is
-current with config-owned identity facts:
-
-- `name: "dispatcher"`;
-- `role: "dispatcher"`;
-- `team_id: null`;
-- `agent_runtime` from `dispatchers[].agentRuntime`;
-- `cwd`, `source_cwd`, and `runtime_cwd` from the validated dispatcher
-  workspace;
-- `worktree.mode: "reuse-cwd"`.
-
-If a dispatcher root identity already exists, preserve runtime-owned recovery
-fields only when they are still compatible with the runtime selected by the
-current dispatcher declaration. A checkpoint id is runtime-native state scoped to
-both the runtime implementation and the runtime workspace context. It must not
-be handed to a different runtime provider or to the same provider under a
-different workspace identity. At minimum, if the dispatcher config changes
-`dispatchers[].agentRuntime`, `cwd`, `runtime_cwd`, or the worktree identity away
-from the identity's previous values, clear `session_id`, reset the runtime status
-to a non-running state (`stopped`), and clear provider-specific error state
-before constructing the runtime. A future provider may explicitly declare a
-checkpoint portable across some workspace changes, but current built-in
-providers should be treated as workspace-bound. Do not emit a restart-resumed
-notice for a checkpoint that was cleared by this compatibility gate.
-
-When the runtime and workspace selection are compatible, preserve runtime-owned
-recovery fields such as `session_id`, `status`, `last_error`, and rolling turn
-metadata. Update only config-owned fields that must track the current dispatcher
-declaration. This keeps restart/resume state in one place while making
-checkpoint invalidation explicit for runtime or workspace changes.
-
-The identity ensure step must be an upsert merge, not a call to the existing
-`create()` path. Existing identities keep compatible runtime-owned fields such
-as `session_id`, `status`, `last_error`, `created_at`, `turn_count`,
-`last_seen_at`, and turn previews. The ensure step overwrites only config-owned
-fields that must reflect the current dispatcher declaration, plus the explicit
-checkpoint/status/error cleanup when runtime selection changes. It must complete
-before the `TeamMateRuntimeStateStore` is constructed and before any runtime
-state callback can write the same identity, so there is a single writer snapshot
-for the dispatcher identity during preparation.
-
-This merge requirement is separate from the provider-facing runtime instance
-key. TeamLeader and TeamMate identities are created once when the entity is
-spawned and are later read back during rebuild/start; server boot does not
-re-create them from config. Dispatcher is config-declared, so every server boot
-must reconcile config-owned facts onto the root dispatcher identity. Once
-`identity.json` becomes the runtime recovery authority, that reconciliation must
-not erase the same file's runtime-owned recovery fields.
-
-The identity store must round-trip the dispatcher role. Reading a persisted
-`role: "dispatcher"` identity must not coerce it to `teammate`. Add an explicit
-dispatcher-root read/ensure accessor for `DispatcherService`; do not overload
-the dispatcher-scope teammate `get()` path, because that path intentionally
-probes only `teammate/<name>/`.
-
-The contained Dispatcher `TeammateService` is constructed from the
-loaded dispatcher identity and uses `TeamMateRuntimeStateStore` over that
-identity. Its runtime state callbacks then update `identity.json` exactly like
-TeamLeader and TeamMate.
-
-`DispatcherStore` no longer binds runtime callbacks or reads `status.json` as a
-recovery source. Dispatcher list/view state is config-backed: dispatcher id,
-enabled flag, and neutral channel identity. Runtime status, checkpoint id, and
-last error are read from the
-dispatcher agent identity and the live runtime.
-
-This intentionally overturns the previous state-layout compromise where
-Dispatcher runtime recovery lived in `status.json`. `status.json` is removed
-from the current runtime state contract. Do not import it into
-`identity.json`, do not keep reading it as a fallback, and do not fail server
-boot only because a retired `status.json` file is present. Record the retirement
-in the Rush changelog so the upgrade dispatcher/operator can handle stale local
-state deliberately. The changelog must state that a dispatcher whose only
-checkpoint lived in the retired `status.json` will start a fresh runtime after
-upgrade unless the upgrade dispatcher/operator explicitly seeds the root
-`identity.json` with a compatible `session_id`.
-
-### Dispatcher Agent Construction
-
-Construct the contained Dispatcher agent after the dispatcher root identity is
-loaded/ensured, not before. This is an async preparation step because
-`identity.json` is now authoritative state, not a best-effort debug artifact.
-The agent still does not depend on live channel sessions: channel MCP
-descriptors are provider/config-derived.
-
-Because the contained agent is no longer synchronously available in the
-`DispatcherService` constructor, do not let nullable access spread through the
-service. Keep a single private agent slot owned by the existing prepare
-transaction and expose it internally through `mustAgent()`. Scheduler callbacks,
-channel routing, team-leader forwarding, and status helpers must either be
-created after preparation or call `mustAgent()` only after the aggregate start
-has prepared the Dispatcher. A failed preparation must not leave a half-created
-agent published as live.
-
-`createDispatcherAgent()` should receive a static `mcpServers` array built from:
-
-- provider-level channel MCP descriptors for each configured channel;
-- the Team MCP descriptor;
-- the TeamMate MCP descriptor;
-- the Cron MCP descriptor.
-
-The Dispatcher inline launch path is removed rather than moved behind another
-abstraction:
-
-- `TeammateServiceLaunch = agent-ref | inline` is gone;
-- `TeammateServiceDeps.buildLaunch` is gone;
-- `buildDispatcherLaunch()` is gone;
-- `TeammateService.resolveLaunch()` resolves every role from
-  `identity.agent_runtime -> agents[]`;
-- role surface options apply uniformly without an inline-branch helper.
-
-`TeammateService.assertOwnRoster()` should accept the dispatcher root identity
-explicitly (`role: "dispatcher"`, `team_id: null`, fixed dispatcher-agent name)
-for the contained Dispatcher service instead of using `buildLaunch ===
-undefined` as a proxy for roster membership. That allowance must not widen
-`TeammateCollection`: dispatcher root identity remains outside the
-`teammate/` collection, is not enumerable through teammate list/history, and is
-not addressable through teammate send/status/last/close verbs.
-
-The fixed Dispatcher agent name (`dispatcher`) is reserved. Teammate spawn/name
-allocation must not create an ordinary teammate with that name, and admin
-teammate entry points should treat it as unavailable rather than resolving the
-root Dispatcher identity.
-
-Do not keep a separate runtime-id selection branch in Dispatcher launch code.
-Runtime launch should derive the provider-facing runtime instance key from the
-already-loaded agent identity through one shared helper. That helper may inspect
-the identity role for label compatibility: the root Dispatcher identity maps to
-the bare `dispatcher_id`, while TeamLeader, TeamMate, and Team member identities
-map to their scoped child-agent labels. This is a provider launch label only: it
-is not persisted as recovery state, not a host path selector, and not a second
-identity model.
-
-Keep the public provider-facing `AgentRuntimeIdentity.runtime_id` field for this
-implementation slice because built-in and external runtime providers use it as a
-neutral instance label for logs, diagnostics, and socket error context. It
-should become a derived launch value, not a separate Dreamux entity. Removing or
-renaming that public field is a later provider-contract cleanup, not a
-prerequisite for deleting `status.json` or the runtime scratch directory.
-
-Collapse the previous three-layer story into two durable layers plus one
-ephemeral launch label:
-
-- entity identity is the host entity record and turn log location. Dispatcher is
-  the root entity named `dispatcher`; TeamLeader, TeamMate, and Team member are
-  child entities under team/teammate collections.
-- runtime instance key is the provider-visible `runtime_id` field for now, but
-  it is derived mechanically from the agent identity and has no storage
-  authority. The derivation must be one shared helper over `TeamMateIdentity`.
-  Dispatcher keeps the bare dispatcher id as its label for log/socket/diagnostic
-  continuity; child roles receive scoped child-agent labels.
-- runtime scratch is provider-owned and must not create a durable child-runtime
-  state directory. Runtime recovery belongs in identity, logs belong under the
-  logs root, sockets belong under run/socket roots, and provider launch config
-  should be inline or rebuildable.
-
-### Agent Runtime Path Context
-
-Deleting `<state>/<dispatcherId>/runtime/<name>` required changing the neutral
-provider path seam, not only deleting a host path helper. The current public
-`AgentRuntimePathContext` no longer exposes the former writable
-`dispatcherDir(id)` runtime state root. Keeping that method would have either
-preserved the child runtime directory or tempted an implementation to point
-provider scratch at the dispatcher root, where `identity.json`, `turn.jsonl`,
-channel bindings, and team/teammate collections live.
-
-The replacement is `AgentRuntimePathContext.cacheDir(): string`. This returns
-the global Dreamux cache root, not `dispatcherCacheDir(dispatcherId)`: provider
-cache artifacts that are keyed only by role inputs must be able to converge
-across dispatchers. The cache root is rebuildable, droppable provider working
-storage. It is not recovery state and must not be used for checkpoints,
-identity, turn history, channel bindings, or admin state. `logsDir()` and
-`runtimeSocketDirs()` remain the log and volatile socket seams.
-
-Built-in runtime updates follow from that contract and are part of the landed
-implementation:
-
-- Codex continues to use `logsDir()` and `runtimeSocketDirs()` and does not
-  need a writable dispatcher state directory.
-- Claude Code passes MCP config inline and writes its shared skill compatibility
-  adapter under `cacheDir()`.
-- No built-in runtime writes under the dispatcher root state directory or under
-  `<state>/<dispatcherId>/runtime/<name>`.
-
-This is a public `@excitedjs/dreamux-types` contract change. Built-in providers,
-tests, fixtures, and Rush change files are updated together.
-If an external provider used `dispatcherDir()` for scratch, it should move that
-scratch to `cacheDir()`. If it used `dispatcherDir()` for recovery, that was an
-invalid layering dependency and must be replaced with the neutral checkpoint
-contract (`identity.checkpoint_id` plus runtime state callbacks).
-
-Claude Code does not require a `mcp.json` file for Dreamux-owned MCP servers.
-Its `--mcp-config` option accepts JSON strings as well as JSON file paths, and
-the CLI parser attempts JSON parsing before falling back to path loading.
-Dreamux should pass the rendered MCP config as an inline JSON argument instead
-of writing `mcp.json` under a runtime scratch directory.
-
-Claude Code role skills are the only remaining reason the current
-implementation writes a child runtime scratch directory: the runtime materializes
-Dreamux direct skill roots into a `.claude/skills` tree and passes that tree via
-`--add-dir`. That adapter is rebuildable launch data, not durable state.
-
-The Claude Code runtime owns this compatibility adapter under the Dreamux cache
-root, not under a per-runtime state path. The neutral runtime path context
-provides the cache-root capability so the runtime does not hard-code
-`~/.dreamux/cache`. For a given launch, the runtime scans the passed
-`skillSources`, deduplicates repeated roots, and derives a content-addressed
-cache key for the adapter it publishes. The preferred adapter keeps symlinks to
-the canonical source skill directories, so the key may be a source-set key
-derived from resolved skill names plus canonical target paths: skill file content
-changes are observed through the symlinks without rebuilding the adapter. If an
-implementation copies skill files instead of symlinking source directories, the
-key must include a real content digest or stable version stamp so immutable
-cache entries cannot serve stale skill content. The runtime publishes one shared
-`<cacheRoot>/claude-code/skills/<key>/.claude/skills` tree and passes the adapter
-root through `--add-dir`.
-
-The adapter is immutable after publication. Building must be idempotent and
-concurrency-safe: if the target key already exists, trust it; otherwise build in
-a temporary sibling directory and atomically publish it. A losing concurrent
-builder discards its temp directory after observing the published target. Never
-`rm -rf` or refresh an adapter directory that a live runtime may be using.
-Duplicate skill names from distinct roots should fail loud because Claude Code
-would otherwise see an ambiguous skill.
-
-The current Dreamux role surface has only two non-empty bundled skill source
-sets, Dispatcher and TeamLeader, so the cache should converge to two shared
-adapter directories rather than one directory per runtime instance. Empty
-`skillSources` should produce no adapter and no `--add-dir`.
-
-Do not keep `<state>/<dispatcherId>/runtime/<name>` as a contract.
-
-`liveChannels`, `adminSocketPath`, and `DispatcherStore` runtime-state
-dependencies are removed from `DispatcherAgentDeps`.
-
-Do not add a separate `prepareAgent()` single-flight or a second nullable
-prepared-agent slot. Fold dispatcher identity ensure and contained-agent
-construction into the existing Dispatcher preparation transaction that already
-owns workspace validation and channel-slot preparation. `stop()` waits on that
-same transaction, so preparation remains one lifecycle boundary.
-
-### Dispatcher Boot And Lazy Runtime Start
-
-Split Dispatcher startup into three responsibilities inside `DispatcherService`:
-
-- prepare the dispatcher host, dispatcher agent identity, and channel slots;
-- start input sources;
-- start the runtime.
-
-Preparation resolves the dispatcher workspace, ensures the dispatcher root
-identity, constructs the contained Dispatcher agent, validates runnable channel
-shape, and builds channel sessions into a private prepared slot. It must not
-publish those sessions through `ChannelService.live()`, must not start channel
-sessions, and must not start the agent runtime. The prepared channel slot has
-one owner: `DispatcherService`.
-
-`startInputSources()` starts channel sessions, the Dispatcher scheduler, and
-Team schedulers. It should be idempotent. Each channel session is adopted into
-the `ChannelService` live slot only after that session's own `start()` succeeds;
-sessions that have not started are never live. If input-source startup fails,
-rollback must match today's `doStart()` cleanup: stop schedulers, clear any live
-slot, close every built/prepared session, and leave no half-published channel
-state behind.
-
-Public `DispatcherService.start()` keeps the aggregate-level meaning used by
-Server boot and admin `dispatcher.start`: it ensures the Dispatcher is prepared
-and can receive inputs. It must not be narrowed into a runtime-only method.
-
-An internal runtime-start method starts or resumes the contained Dispatcher agent
-runtime through `agent.ensureStarted()`, then injects a restart notice only
-through the existing `injectRestartNoticeIfNeeded()` path. The existing
-`starting` guard semantics should remain the single runtime-start concurrency
-guard.
-
-Scheduler lazy-start must respect shutdown before starting a runtime. The
-`shouldSubmit` guard carried by held scheduler fires must be checked before
-`ensureStarted()` and checked again before submitting to the live runtime. If
-`stop()` clears the held-fire token while a scheduler fire is in flight, the
-fire returns `skipped` without starting a dormant runtime and without delivering
-a completion input.
-
-Server boot keeps the current aggregate boundary: it calls
-`DispatcherService.start()` for each enabled Dispatcher. The service-owned start
-transaction prepares the Dispatcher, then, for a `--notify-resumed` target whose
-dispatcher identity has a persisted `session_id`, starts the runtime with the
-internal runtime-start method and injects the restart notice before starting
-channel sessions or schedulers. Non-targets start input sources while leaving
-the runtime dormant.
-
-That ordering prevents inbound channel events or Dispatcher cron fires from
-winning the first-start race and causing the restart notice to arrive after a
-user or scheduled turn.
-
-### Lazy Start Triggers
-
-After boot, these inputs may start a dormant Dispatcher runtime:
-
-- unbound channel inbound routed to the Dispatcher agent;
-- Dispatcher cron with `absentRuntimeStrategy: 'submit'`;
-- explicit restart-notification eager start during `Server.start()`.
-
-Bound channel inbound that routes to an open Team should continue to wake the
-TeamLeader only; it must not start the Dispatcher runtime.
-
-`routeChannelInput()` should route unbound input through
-`this.agent.channelInput(input, hooks)` instead of checking
-`this.agent.getRuntime()` and returning `{ status: 'stopped' }`. The contained
-service already owns `ensureStarted()` and the start concurrency guard.
-
-`TeammateService.channelInput()` must accept optional `InboundDeliveryHooks` and
-forward them to `runtime.channelInput(input, hooks)`. TeamLeader delivery must
-use the same path: `DispatcherService.routeChannelInput()` passes hooks into
-`TeamService.deliverToLeader(input, hooks)`, `TeamService` forwards them to
-`leader.channelInput(input, hooks)`, and the routing-layer manual
-`hooks.onAccepted` special case is removed. This makes acceptance timing one
-contract for Dispatcher and TeamLeader channel turns.
-
-### Restart Intent
-
-Add a non-consuming `RestartIntentConsumer.hasTarget(dispatcherId, now)` method
-for service-owned boot ordering. It must apply the same TTL check as `claim()`
-so an expired restart marker cannot eager-start a runtime that will not receive
-a notice. The eager-start gate checks the dispatcher identity's `session_id`,
-not a dispatcher status row. Do not use `hasTarget()` for injection. Injection
-remains owned by `claim()`, which is already single-use.
-
-Do not add an `onRuntimeStarted` callback to `TeammateService`. It would serve
-only this Dispatcher restart-notice concern, while the real ordering problem is
-at the Server and Dispatcher input-source boundary.
-
-## Required Deletions And Boundaries
-
-The second Dispatcher runtime-state machine is deleted rather than bypassed:
-
-- `buildDispatcherLaunch()` and the `DispatcherAgentDeps` dependency on
-  `DispatcherStore` are gone;
-- the inline launch variant, `TeammateServiceDeps.buildLaunch`, and the inline
-  branch in `TeammateService.resolveLaunch()` are gone;
-- `applyRoleOptions()` is gone because role options are applied in the single
-  launch path;
-- `DispatcherStore.bindRuntime()` and all `AgentRuntimeStateCallbacks` methods
-  on `DispatcherStore` are gone;
-- `DispatcherStore` persistence/hydration over `status.json` is gone, including
-  `DispatcherStatusFile`, `readStatusFile()`, `rowFromConfig()` status merging,
-  and `dispatcherStatusPath()` callers;
-- `DispatcherRow` is shrunk to config-backed display fields such as dispatcher id,
-  enabled flag, channel identity, and timestamps that truly belong to the config
-  projection;
-- the durable child runtime scratch path
-  `<state>/<dispatcherId>/runtime/<name>`, `dispatcherTeamMateRuntimeDir()`, and
-  the `teammateHostPaths()` role-specific state-root adapter are gone;
-- `AgentRuntimePathContext.dispatcherDir(id)` is replaced with a cache-root
-  seam, and every built-in provider, test fixture, diagnostic path context, and
-  Rush change file that consumes the public type is updated;
-- Claude Code MCP config is inline and Claude Code role skills use the shared
-  cache-root adapter described above.
-
-Do not recreate `last_lost_thread_id`, `last_started_at`, or `last_ready_at` on
-the dispatcher identity just to preserve the old `status.json` shape. Those were
-DispatcherStore/status-file diagnostics. The unified model reports checkpoint,
-status, last error, and rolling turn summary from identity plus live runtime.
-
-Keep these boundaries:
-
-- dispatcher identity stays at the dispatcher root, not under `teammate/`;
-- `TeammateCollection` continues to enumerate only physical teammate/member
-  collections and continues to reject `role: "dispatcher"`;
-- provider-facing runtime instance keys are derived from agent identity through
-  one shared launch helper and are never a durable state or path contract;
-- child runtime scratch does not belong in durable dispatcher state;
-- `DispatcherService` continues to own channels, teams, schedulers, routing, and
-  restart intent;
-- provider-level channel MCP descriptor assembly remains dispatcher-scoped and
-  independent of runtime recovery state.
+The diagram is an ownership diagram, not an implementation call graph. The
+important point is that provider packages do not compose core command lines.
+
+## Channel MCP Ownership
+
+Remove `ChannelProvider.mcpServerDescriptor()` and
+`ChannelMcpDescriptorContext` as provider-authoring concepts. Apply the same
+rule to subscription channels: `SubscribeChannelSession.mcpServerDescriptors()`
+and `SubscribeChannelMcpDescriptorContext` are also removed as
+provider/session-authoring concepts because they carry the same core-owned
+command and admin-socket state.
+
+Add or reuse a provider-owned static tool catalog seam. The provider can expose
+tool metadata from config and provider context, for example:
+
+```ts
+tools?(config: TConfig):
+  readonly ChannelToolDescriptor[];
+```
+
+The tool catalog is launch-time static metadata. If a future provider needs
+dispatcher-scoped catalog filtering, add a small core-owned context then; do not
+pass core command, socket, or caller-shim information to the provider catalog
+method.
+
+The exact method name can reuse the existing `tools` word, but the ownership
+must be this:
+
+- provider returns only tool descriptors and handles tool calls;
+- core filters configured channels by dispatcher;
+- core renders the `AgentRuntimeMcpServer` descriptor;
+- core supplies `dreamuxBinPath()`, `channel-mcp`, `--provider`,
+  `--channel-id`, `--dispatcher`, `--caller`, `--team-id`, `--leader-name`,
+  `--channel-tools-b64`, and `--admin-socket`;
+- core remains the only owner of admin-socket and shim protocol flags.
+
+Subscription channels use the same ownership split. A subscription provider may
+expose static subscription tool metadata and handlers, but launch-time
+subscription `tools/list` metadata must not require a live or started
+subscription session. Dreamux core renders the subscription MCP descriptor,
+command, admin socket, and subscription id routing arguments. Subscription
+descriptors do not need Dispatcher/TeamLeader caller scope, but they still must
+not be assembled by the provider package.
+
+Feishu becomes a provider of:
+
+- `buildToolCatalog()` metadata;
+- live `reply` and `react` handling;
+- sessionless `list_chat_bots` handling;
+- channel start/close/target resolution/message ownership.
+
+Feishu does not build `channel-mcp` descriptors and does not know the generic
+shim's CLI argument layout.
+
+There must be one catalog authority for `tools/list`: provider/config static
+catalog. Session-level metadata must not be used to build runtime MCP
+descriptors or serve the shim's `tools/list`. A live channel session may handle
+live calls and ownership facts, but it is not the launch-time MCP metadata
+source. If keeping a session-level `tools()` method only preserves this double
+authority, delete it. `ChannelToolListContext` is removed with the
+session-level catalog path or folded into a core-owned descriptor-building
+context, not exposed as provider runtime launch context.
+
+`ChannelSessions.channelMcpServerDescriptorsForCaller()` may remain only as a
+core convenience if it returns core-rendered descriptors for dispatcher-scoped
+configured channels. It must not be a provider-descriptor forwarding layer.
+
+## Agent Entity Storage
+
+Rename and relocate the identity and turn stores so their names match their
+scope.
+
+The current `TeamMateIdentityStore`, `TeamMateTurnsStore`, and
+`TeamMateRuntimeStateStore` are already storing more than teammates:
+
+- root Dispatcher identity;
+- ordinary dispatcher-owned teammate identities;
+- TeamLeader identities;
+- Team member identities.
+
+The target owner is a neutral agent-entity module, for example
+`service/agent-entity/`. Names should reflect the neutral scope:
+
+- `AgentIdentityStore`;
+- `AgentTurnsStore`;
+- `AgentRuntimeStateStore`;
+- `AgentEntityRole`;
+- `AgentEntityIdentity`.
+
+The store may still use the same physical path layout:
+
+- Dispatcher root identity at the dispatcher root;
+- dispatcher-owned teammates under `teammate/`;
+- TeamLeader and Team members under team paths.
+
+The dispatcher root identity must stay outside the teammate collection so
+teammate admin verbs cannot enumerate or address it. The fix is not to move the
+Dispatcher into `teammate/`; the fix is to move the shared store out of the
+teammate collection namespace.
+
+After relocation, shared agent storage imports and public shared type names must
+come from the neutral agent-entity module. `TeamMate*` store/type names may
+remain only for truly teammate-specific collection APIs, not for storage
+infrastructure used by Dispatcher, TeamLeader, and Team member entities.
+
+Dispatcher identity ensure remains a Dispatcher-owned policy over a neutral
+store:
+
+- ensure the root identity exists;
+- update config-owned fields from the dispatcher declaration;
+- preserve compatible runtime-owned fields;
+- clear `session_id`, runtime status, and provider-specific error when
+  `agent_runtime`, `cwd`, `runtime_cwd`, or worktree identity becomes
+  incompatible.
+
+That compatibility policy should not live in a teammate collection store. It can
+live in a Dispatcher agent identity helper or a neutral agent-entity helper that
+is explicitly called only by `DispatcherService` preparation.
+
+## Shared Runtime Holder
+
+`TeammateService` currently acts as the shared runtime holder, but the name and
+some internals still reflect the old teammate-only world. This revision does
+not require a large rename before the next implementation, but it does require
+removing role-aware behavior from the shared runtime holder.
+
+The shared service should receive an entity profile from its owner. The profile
+is data, not role branching inside the shared class. It contains:
+
+- static `mcpServers`;
+- `skillSources`;
+- `systemPrompt`;
+- `disableFeatures`;
+- provider-facing runtime label;
+- completion routing behavior;
+- worktree cleanup policy derived from identity worktree metadata;
+- optional roster validator or scope validator;
+- logger identity fields.
+
+Dispatcher, TeamLeader, TeamMate, and Team member may have different profiles.
+The shared service should not switch on literal roles to discover those
+differences.
+
+Capabilities must be modeled by presence or absence, not by no-op callbacks.
+The profile must not force Dispatcher, TeamLeader, or TeamMate factories to pass
+empty implementations such as `() => 0`, `() => {}`, or "unsupported" stubs just
+to satisfy a shared constructor. If a capability is unsupported for an entity,
+the capability is absent and the shared holder never calls it. This applies to
+completion capture, worktree cleanup, roster validation, and any future
+entity-specific behavior. The shared constructor types should express
+unsupported capabilities as optional fields or role-specific `pick`/`omit`
+profiles so TypeScript prevents accidental invocation without a runtime `if`.
+
+Role-sensitive code to remove from the shared holder:
+
+- worktree cleanup based on `identity.role === 'teammate'`;
+- Team borrowed-worktree sync based on `team_leader` / `team_member` literals;
+- `assertOwnRoster()` branches over `dispatcher`, `teammate`, `team_leader`,
+  and `team_member`;
+- provider-facing runtime id derivation from role literals;
+- logger field choices based on role literals.
+
+Worktree cleanup must be capability based:
+
+- the decision to clean is driven by identity worktree metadata, not role name;
+- an owned worktree is cleaned when `identity.worktree.mode === 'managed'` and
+  `identity.worktree.cleanup === 'delete-on-close'`;
+- an entity without that cleanup state must not call the worktree manager even
+  if a worktree manager dependency exists elsewhere in the process;
+- borrowed Team worktree synchronization is a Team-owned operation, not a
+  role-name operation.
+
+Provider-facing runtime labels are supplied by the owner or by one neutral
+identity helper outside the runtime holder. The current compatibility choice is:
+
+- root Dispatcher keeps the bare dispatcher id for log/socket/diagnostic
+  continuity;
+- child entities use scoped child labels.
+
+That label is launch metadata only. It is not path authority and not recovery
+state.
+
+## Dispatcher Aggregate Boundary
+
+Dispatcher remains an aggregate root because it owns concerns no child agent
+owns:
+
+- channel sessions and channel bindings;
+- Team collection;
+- dispatcher-owned teammate collection;
+- dispatcher cron;
+- restart intent ordering;
+- inbound routing;
+- admin summary over Dispatcher-owned state.
+
+That does not mean one large class should implement every detail. The revised
+design should make `DispatcherService` a composition root plus lifecycle owner,
+not a place for unrelated helper logic.
+
+Keep inside `DispatcherService`:
+
+- aggregate start/stop/shutdown transaction;
+- sequencing of prepare, restart-notice eager start, input-source start, and
+  rollback;
+- binding between channel input and team/dispatcher routing;
+- ownership of live channel session publication.
+
+Move or inline away:
+
+- core channel MCP descriptor rendering into a dedicated core descriptor module;
+- identity ensure policy into an agent-entity helper called by Dispatcher
+  preparation;
+- admin summary reading into a reader that can read identity without
+  materializing the full service;
+- mechanical helpers that only make the file shorter and do not express a
+  boundary.
+
+`dispatcher-service/helpers.ts` should not exist merely to hold
+`asInboundDeliveryResult`, `closeAllBuilt`, and `errInfo`. Either give helpers a
+real domain owner or keep the code near the lifecycle it supports.
+
+## Channel Inbound Acknowledgement
+
+Remove `InboundDeliveryHooks` from the full inbound delivery path.
+
+The previous hook was a single-consumer callback used to time Feishu reactions.
+Threading it through `ChannelRoutes`, `DispatcherService`, `TeamService`,
+`TeammateService`, `AgentRuntime.channelInput()`, and runtime providers made
+channel acknowledgement a hidden runtime callback contract.
+
+The channel layer should observe delivery result instead:
+
+- channel session normalizes inbound input;
+- channel session may optimistically set its platform ack/reaction before
+  calling `routes.deliver()` when the platform UX needs immediate feedback;
+- channel session calls `routes.deliver(input, envelope)`;
+- core dedupes and submits the turn;
+- core returns a delivery result that distinguishes accepted/submitted,
+  duplicate, stopped, and failed;
+- the channel session updates or clears its reaction or ack ledger from that
+  result.
+
+Do not invent a background "accepted promise" or early-return async flow just to
+replace the hook. For Feishu-style UX, the channel session can mark the message
+as received before delivery, then clear or adjust the mark if `deliver()` returns
+`duplicate`, `stopped`, or `failed`, and finalize it when `deliver()` returns
+`submitted`. Runtime `channelInput()` should accept turn data only.
+
+This keeps Feishu reaction behavior in the Feishu channel session and keeps the
+agent runtime seam free of channel side effects.
+
+The cleanup is transitive:
+
+- `ChannelRoutes.deliver()` takes only `(input, envelope)`;
+- `DispatcherService.routeChannelInput()` takes no hooks parameter;
+- `TeamService.deliverToLeader()` takes no hooks parameter;
+- `TeammateService.channelInput()` takes no hooks parameter;
+- `AgentRuntime.channelInput()` and built-in runtime implementations take no
+  hooks parameter;
+- the `InboundDeliveryHooks` interface and root exports are deleted.
+
+## Scheduler Cancellation
+
+Do not expose scheduler-held-fire lifetime as an optional `shouldSubmit`
+predicate on the owner submit API.
+
+The scheduler owns held fire tokens, timer state, and stop/delete/supersede
+lifetime. Use a scheduler-owned `AbortSignal` or equivalent neutral cancellation
+token. The signal is created for the held fire and is aborted when `stop()`,
+delete, disable, or supersede invalidates that fire.
+
+The cancellation signal must remain checkable at the runtime-start boundary:
+the owner submit path must observe it before `ensureStarted()` can start a
+dormant runtime, and again before submitting to a live runtime. A single
+internal check before invoking owner submit is not sufficient because `stop()`
+can race between that check and the owner's runtime start.
+
+The important requirement remains: `stop()` racing a held scheduler fire must
+not start a dormant runtime and must not submit after shutdown begins. The
+implementation should satisfy that requirement without adding a bespoke
+`shouldSubmit?: () => boolean` callback to scheduled input.
+
+## Admin Dispatcher Status
+
+Admin list/status must not fabricate runtime recovery fields as if they were
+persisted facts.
+
+When a Dispatcher service is materialized, summary can combine live runtime and
+root identity. When it is not materialized, the summary reader should read the
+root identity directly or report an explicit non-live state that is not
+confused with a persisted runtime status.
+
+Summary reads are read-only. They must not trigger the full Dispatcher
+prepare/start transaction, must not build channel sessions, and must not create
+or start the contained Dispatcher agent. The reader may receive the neutral
+agent identity store directly or use a dedicated identity peek helper; it must
+not call `prepareChannels()` or `start()`.
+
+Do not return `status: 'stopped'` and `thread_id: null` merely because the
+service object is absent if the root identity can be read cheaply. If the
+identity is absent, the state can be "declared but not prepared" or another
+neutral display status, but it must be named as process visibility rather than
+runtime recovery truth.
+
+`status.json` remains retired. The solution is not to bring back
+`DispatcherStore` runtime rows; the solution is to read the new authority.
+
+## Runtime Path Context
+
+Keep the path-context direction from PR #282:
+
+- `AgentRuntimePathContext` exposes `cacheDir()`, `logsDir()`, and
+  `runtimeSocketDirs()`;
+- the old provider-facing writable `dispatcherDir(id)` state root is gone;
+- built-in runtimes do not write provider scratch under
+  `<state>/<dispatcherId>/runtime/<name>` or the dispatcher root state
+  directory;
+- Claude Code MCP config is passed inline as JSON and is not written as a
+  per-runtime scratch file;
+- Claude Code skill adapters are immutable cache artifacts and are never
+  refreshed in place.
+
+Delete `dispatcherHostPaths` as a no-op alias. Existing call sites should use
+`hostRuntimePaths` directly. Tests should assert the new name and shape, not
+preserve the old alias.
+
+## Dispatcher Runtime State
+
+Keep the state-authority direction from PR #282:
+
+- Dispatcher root `identity.json` is the runtime recovery authority;
+- `status.json` is retired local state;
+- `DispatcherStore` is a config projection, not a runtime callback sink;
+- runtime callbacks write identity through the neutral agent runtime state
+  store;
+- restart notification eager-start checks root identity `session_id` and
+  `RestartIntentConsumer.hasTarget()`, while injection still consumes only
+  through `claim()`.
+
+Leftover `status.json` files from versions before this change are ignored at
+boot. Their presence is not a boot error, but checkpoints held only in those
+files are not resumed automatically.
+
+The compatibility gate stays:
+
+- compatible `agent_runtime`, `cwd`, `runtime_cwd`, and worktree identity
+  preserve `session_id`, status, error, and turn metadata;
+- incompatible values clear checkpoint/status/error before runtime construction;
+- a cleared checkpoint cannot trigger `--notify-resumed` notice injection.
+
+This part was directionally correct; the revised work should preserve it while
+fixing the ownership mistakes around it.
+
+## Required End State
+
+The revised implementation is acceptable only when these statements are true:
+
+- `ChannelProvider` no longer exposes `mcpServerDescriptor()`.
+- `SubscribeChannelSession` no longer exposes `mcpServerDescriptors()`.
+- No provider package builds `dreamux channel-mcp` command lines or knows admin
+  socket argument layout.
+- Core renders all channel MCP descriptors from dispatcher-scoped channel config
+  and provider tool catalogs.
+- Core renders all subscription MCP descriptors from subscription config and
+  provider/config static tool catalogs. Launch metadata does not require a live
+  or started subscription session.
+- Provider/config static catalog is the only launch-time source for
+  `tools/list`; live sessions do not supply runtime MCP metadata.
+- `ChannelToolListContext` is removed or merged into a core-owned
+  descriptor-building context.
+- Agent identity and turns stores are named and located as neutral agent-entity
+  infrastructure, not teammate-collection internals.
+- Shared identity, turn, and runtime-state store imports/types are not named
+  `TeamMate*` and do not live under `service/teammate-collection/` once they are
+  used by Dispatcher, TeamLeader, or Team member entities.
+- Dispatcher root identity remains non-enumerable through teammate collection
+  APIs and teammate admin verbs.
+- The shared runtime holder contains no behavior branch on literal roles.
+- The shared runtime holder constructor/profile does not require no-op
+  callbacks or empty implementations for capabilities an entity does not
+  support.
+- Worktree cleanup is capability/identity-field driven, not role-name driven.
+- Provider-facing runtime label selection is outside the shared runtime holder
+  or passed into it as profile data.
+- `ChannelRoutes.deliver()`, runtime `channelInput()`, shared-agent
+  `channelInput()`, Dispatcher routing, and TeamLeader delivery do not accept
+  `InboundDeliveryHooks`.
+- Channel reaction/ack behavior is owned by channel sessions and driven by
+  explicit delivery results.
+- Scheduler cancellation is owned by scheduler lifecycle or a neutral
+  cancellation token, not a `shouldSubmit` predicate threaded into scheduled
+  input.
+- `Dispatchers.summarize()` reads root identity or reports process visibility;
+  it does not fabricate persisted runtime status from service absence.
+- `dispatcherHostPaths` alias is gone.
+- `dispatcher-service/helpers.ts` is gone or replaced by helpers that represent
+  a real domain boundary.
+- `status.json`, inline Dispatcher launch, and durable child runtime scratch
+  remain removed.
 
 ## Acceptance Gates
 
-- `.agents/scripts/check.sh` passes after the decision record move.
-- The old `.agents/specs/` document is gone; the decision index links the new
-  record.
-- Dispatcher boot prepares channel sessions and starts input sources without
-  starting the Dispatcher runtime for ordinary server starts.
-- Unstarted prepared sessions are not visible through `ChannelService.live()`,
-  channel MCP tool invocation, target ownership checks, or any other live-session
-  read path.
-- Public `DispatcherService.start()` remains an aggregate input-readiness method;
-  runtime-only start is internal.
-- An unbound channel inbound to a dormant Dispatcher starts the runtime,
-  submits the turn, records the channel turn, and fires `onAccepted`.
-- A bound channel inbound to a Team wakes the TeamLeader path and does not start
-  the Dispatcher runtime.
-- Bound TeamLeader channel input and unbound Dispatcher channel input use the
-  same `InboundDeliveryHooks` forwarding path; no routing-layer manual
-  `onAccepted` special case remains.
-- A Dispatcher cron fire with no live runtime submits through
-  `agent.scheduledInput()` and starts the runtime.
-- A Dispatcher `stop()` racing an already-held scheduler fire cannot resurrect a
-  runtime after shutdown begins; the guarded scheduler fire skips before
-  `ensureStarted()` when `shouldSubmit` is already false.
-- A `--notify-resumed` target with a dispatcher identity checkpoint receives the
-  restart notice before channel sessions and Dispatcher cron can deliver any
-  other turn.
-- A non-target, checkpoint-less Dispatcher, or Dispatcher targeted only by an
-  expired restart intent does not start eagerly just because a restart intent
-  file exists.
-- Dispatcher runtime recovery uses the dispatcher root `identity.json`, not
-  `status.json`.
-- `buildDispatcherLaunch()`, `TeammateServiceDeps.buildLaunch`, and the inline
-  launch branch are gone.
-- `TeammateService.resolveLaunch()` resolves Dispatcher, TeamLeader, TeamMate,
-  and Team member runtimes from `identity.agent_runtime -> agents[]`.
-- Dispatcher identity ensure preserves compatible `session_id`, `status`,
-  `last_error`, and rolling turn metadata across restart while updating
-  config-owned fields.
-- Dispatcher identity ensure clears `session_id` and provider-specific runtime
-  status/error when `agent_runtime`, `cwd`, `runtime_cwd`, or worktree identity
-  changes, unless a future provider explicitly declares the checkpoint portable
-  across that workspace change. No restart-resumed notice is injected for a
-  cleared checkpoint.
-- Dispatcher preparation has one single-flight transaction; there is no separate
-  `prepareAgent()` lifecycle cache.
-- The contained Dispatcher agent is accessed through one prepared-agent slot and
-  `mustAgent()`; nullable access does not spread through channel routing,
-  scheduler callbacks, team forwarding, or status helpers.
-- The identity parser round-trips `role: "dispatcher"`.
-- The fixed name `dispatcher` is reserved for the root Dispatcher identity and
-  cannot be spawned as an ordinary teammate/member.
-- `TeammateService.assertOwnRoster()` accepts the contained Dispatcher identity
-  explicitly; `TeammateCollection` and teammate admin verbs do not enumerate or
-  address the Dispatcher root identity.
-- Dispatcher, TeamLeader, TeamMate, and Team member launches use the same
-  identity-derived runtime instance key helper. That helper returns the bare
-  dispatcher id for `role: "dispatcher"` and scoped child-agent labels for
-  TeamLeader, TeamMate, and Team member. There is no inline launch fork or
-  role-specific path/state model.
-- `AgentRuntimePathContext` no longer exposes `dispatcherDir(id)` as a writable
-  provider state root. It exposes a rebuildable cache-root seam, plus logs and
-  socket seams.
-- TeamLeader/TeamMate runtime start does not create
-  `<state>/<dispatcherId>/runtime/<name>`. Claude Code MCP config is passed
-  inline, and Claude Code skill compatibility trees are shared under the Dreamux
-  cache root by skill-source set rather than under per-runtime state.
-- `AgentRuntimePathContext.cacheDir()` maps to the global Dreamux cache root, not
-  a per-dispatcher cache directory, so identical Dispatcher/TeamLeader skill
-  source sets converge across dispatchers.
-- Claude Code skill adapter publication is concurrency-safe and immutable:
-  concurrent same-key builders cannot expose an empty or partially-built
-  `.claude/skills` tree, and no live adapter directory is removed or refreshed
-  in place.
-- Claude Code skill adapter keys match the artifact strategy: symlink adapters
-  are keyed by canonical source set, while copied adapters are keyed by content
-  digest or stable version stamp so immutable cache entries cannot serve stale
-  copied skill content.
-- Tests prove built-in runtimes do not write provider scratch under either
-  `<state>/<dispatcherId>/runtime/<name>` or the dispatcher root state directory.
-- Tests pin provider-facing runtime labels: Dispatcher keeps bare
-  `dispatcher_id`; TeamLeader, TeamMate, and Team member use scoped child-agent
-  labels. The helper is shared, but Dispatcher log/socket/diagnostic labels do
-  not migrate to a child-agent hash form.
-- Dispatcher admin/status/list surfaces report runtime status, checkpoint id,
-  and last error from the dispatcher identity plus live runtime, not from a
-  parallel status row.
-- Retired `status.json` files are not imported and do not block boot merely by
-  existing; the upgrade note is recorded in the Rush change file.
-- Channel provider MCP descriptors still expose the same tool list and route
-  tool calls back to live/sessionless provider handling as before.
-- Provider-level channel MCP descriptor assembly uses only dispatcher-scoped
-  channels.
+- Architecture review must grep the shared runtime holder for role literals and
+  reject behavior branches on `dispatcher`, `teammate`, `team_leader`, or
+  `team_member`.
+- Architecture review must grep provider packages for `channel-mcp`,
+  `--admin-socket`, `--caller`, `--team-id`, `--leader-name`, and
+  `dreamuxBinPath()` usage and reject provider-owned core shim construction.
+  It must also reject any provider package implementation of
+  `mcpServerDescriptor`.
+- Architecture review must reject `SubscribeChannelSession.mcpServerDescriptors`
+  and `SubscribeChannelMcpDescriptorContext` for the same ownership reason.
+- Architecture review must inspect Dispatcher, TeamLeader, and TeamMate
+  factories and reject no-op callbacks used to satisfy shared-holder deps.
+  Unsupported capabilities must be absent, not represented as empty functions.
+- Type tests must prove provider authors can expose channel tools without
+  receiving core command or admin socket context.
+- Type tests must prove subscription-channel authors also do not receive core
+  command or admin socket context for MCP descriptor construction.
+- Tests must prove subscription MCP `tools/list` launch metadata does not
+  require a live or started subscription session.
+- Tests must prove `tools/list` metadata comes only from provider/config static
+  catalog. Session-level metadata is removed or ignored by descriptor/list
+  paths.
+- Unit tests must prove Dispatcher, TeamLeader, TeamMate, and Team member
+  runtime launch all use the same identity-to-agent-runtime resolver while role
+  profiles supply only data.
+- Unit tests must prove teammate admin list/status/send/last/close cannot
+  resolve the root Dispatcher identity.
+- Grep/type gates must prove shared agent storage imports and type names come
+  from the neutral agent-entity module, not `service/teammate-collection/` or
+  `TeamMate*` store names, once they are shared by Dispatcher, TeamLeader, or
+  Team member entities.
+- Unit tests must prove worktree cleanup follows worktree capability or cleanup
+  metadata, specifically `identity.worktree.mode === 'managed'` and
+  `identity.worktree.cleanup === 'delete-on-close'`, not role name.
+- Channel tests must prove Feishu reaction/ack behavior is driven by delivery
+  results and does not require runtime hooks. They must cover optimistic
+  pre-delivery reaction followed by duplicate/stopped/failed/submitted
+  adjustment.
+- Type and grep tests must prove `InboundDeliveryHooks` is gone from
+  `ChannelRoutes`, Dispatcher routing, `TeamService.deliverToLeader()`,
+  shared-agent `channelInput()`, `AgentRuntime.channelInput()`, built-in runtime
+  implementations, and root exports.
+- Scheduler tests must prove a held fire racing `stop()` does not start a
+  dormant runtime and does not submit after cancellation. The cancellation
+  signal must be observable before the owner calls `ensureStarted()`.
+- Admin tests must prove unmaterialized Dispatcher summaries read root identity
+  when present and do not hard-code stale `stopped/null` recovery fields.
+  They must also prove summary reads do not prepare/start the Dispatcher
+  aggregate.
+- Path tests must prove no built-in runtime writes provider scratch under the
+  dispatcher root or under `<state>/<dispatcherId>/runtime/<name>`.
+- Path tests must prove Claude Code MCP config is passed inline and no
+  per-runtime `mcp.json` scratch file is written.
+- Grep gates must prove `dispatcherHostPaths` is not imported from
+  `packages/dreamux/src/` or `packages/dreamux/tests/`.
+- Grep gates must prove `dispatcher-service/helpers.ts` is absent, or every
+  exported helper has a named domain owner and is not a mechanical extraction
+  used only to shorten `DispatcherService`.
+- Rush change files must cover public channel-provider contract changes,
+  subscription-channel MCP contract changes, `AgentRuntime.channelInput()`
+  hook removal, `InboundDeliveryHooks` removal, `status.json` retirement,
+  identity-store/type relocation, and `AgentRuntimePathContext` changes.
+- `.agents/scripts/check.sh`, build, test, and `rush change --verify` pass.
 
 ## Consequences
 
-- The channel provider contract changes, so this needs a Rush change file when
-  implemented.
-- Channel MCP descriptor ownership moves to the layer that owns static provider
-  capability metadata.
-- The Dispatcher agent no longer depends on live channel sessions for role MCP
-  construction.
-- Dispatcher scheduler semantics change intentionally: scheduled jobs can now
-  wake a dormant Dispatcher runtime instead of being marked missed.
-- Restart notice delivery remains explicit and one-shot; no new lifecycle
-  callback is added to `TeammateService`.
-- `status.json` no longer remains the Dispatcher runtime state authority. The
-  dispatcher root `identity.json` is the runtime recovery source. Existing
-  `status.json` files are retired local state and are documented in the
-  changelog, not migrated at runtime. The changelog explicitly notes that
-  checkpoints left only in `status.json` are not resumed automatically.
-- The lazy-start boot split keeps prepared/input-source/runtime phases inside
-  `DispatcherService`; those phases stay single-owned and rollback-complete so
-  they do not become competing state sources.
+This revision is more invasive than the current PR #282 implementation because
+it removes new glue instead of only deleting old state files.
+
+The likely public contract changes are:
+
+- `@excitedjs/dreamux-types`: remove provider-facing channel and subscription
+  MCP descriptor contexts, replace them with provider-owned static tool catalog
+  seams, remove `InboundDeliveryHooks` from root exports, and remove hooks from
+  `AgentRuntime.channelInput()`.
+- `@excitedjs/feishu-channel`: stop exporting a core shim descriptor and expose
+  only Feishu-owned channel tools and handlers.
+- `@excitedjs/dreamux`: core channel MCP descriptor rendering, agent-entity
+  store relocation/rename, scheduler cancellation cleanup, channel delivery
+  result cleanup, and Dispatcher admin summary cleanup.
+- `@excitedjs/agent-runtime-*`: remove runtime channel-input hook parameters if
+  they are currently part of the public runtime contract.
+
+The design still preserves the useful results from PR #282:
+
+- Dispatcher lazy start;
+- root identity runtime recovery;
+- no `status.json` recovery;
+- no inline Dispatcher launch;
+- no durable child runtime scratch path;
+- provider-facing runtime labels are derived launch metadata, not state.
 
 ## Alternatives Considered
 
-### Delay Dispatcher Agent Creation Until Channels Are Built
+### Keep Provider-Level MCP Descriptors
 
-This was the original PR #282 route. It makes static `mcpServers` possible but
-does so by making the Dispatcher agent nullable and by tying agent construction
-to channel preparation. That treats the symptom, not the ownership issue:
-channel MCP descriptors are still hanging off live sessions even though they are
-static provider metadata.
+This keeps the code small but gives provider packages knowledge of the Dreamux
+core shim, admin socket, and caller routing flags. It is rejected because the
+provider owns tool capability, not core process construction.
 
-### Add `mcpServersProvider`
+### Keep Role Branches Inside The Shared Runtime Holder
 
-A lazy provider would solve descriptor timing but add another construction
-concept that TeamLeader does not need. It would make Dispatcher a special case
-instead of making the shared contract cleaner.
+This is the shape that made the current PR look structurally unified while
+preserving special cases inside the shared class. It is rejected because real
+isomorphism requires role differences to arrive as data or neutral identity
+facts, not as behavior switches on literal role names.
 
-### Add `onRuntimeStarted`
+### Keep `InboundDeliveryHooks`
 
-This would let Dispatcher inject restart notices after any lazy start path, but
-restart notices only exist for the explicit `--notify-resumed` server-start
-path. The real bug is input-source ordering during server boot, not a missing
-generic lifecycle callback.
+The hook fixed one reaction-timing concern but expanded a Feishu channel side
+effect into core and runtime APIs. It is rejected because acknowledgement is a
+channel delivery concern and can be represented in the delivery result contract.
 
-### Add A Runtime Launch Source Wrapper
+### Keep `shouldSubmit`
 
-A shared `RuntimeLaunchSource` wrapper would make the two launch paths look
-similar but would preserve the underlying duplication: ordinary agents would
-still recover from `identity.json`, while Dispatcher would still recover from
-`status.json`. The target is to remove the second runtime-state entity, not to
-hide it behind a new abstraction.
+The predicate blocked a race but leaked scheduler-held-fire lifetime into owner
+submit APIs. It is rejected because cancellation belongs to scheduler lifecycle
+or a neutral cancellation token.
 
-### Keep `status.json` As Dispatcher Runtime State
+### Reintroduce Dispatcher Runtime Rows
 
-This was the earlier state-layout compromise. It kept Dispatcher recovery
-working while the dispatcher agent was still outside the normal agent-entity
-model, but the dispatcher root now already has an agent identity location.
-Keeping `status.json` would leave Dispatcher recovery permanently different from
-TeamLeader and TeamMate recovery.
-
-### Keep Dispatcher Runtime Eager
-
-This avoids startup-order work but fails the main requirement. The Dispatcher
-runtime should be dormant after ordinary server boot and start only when an
-actual Dispatcher turn source needs it.
+This would make unmaterialized admin summaries easy, but it would restore the
+second runtime-state authority. It is rejected. Admin summaries should read the
+root identity or report process visibility without pretending to have runtime
+truth.

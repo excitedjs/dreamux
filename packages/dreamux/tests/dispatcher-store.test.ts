@@ -7,7 +7,12 @@ import type { DreamuxConfig } from '../src/config/config.js';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
 import { dispatcherDir, resetRuntimeConfig } from '../src/platform/paths.js';
 import { testDispatcherConfig } from './helpers/config.js';
-import { TeamMateIdentityStore } from '../src/service/teammate-collection/identity-store.js';
+import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.js';
+import { ensureDispatcherIdentity } from '../src/service/dispatcher-service/identity.js';
+import { Server } from '../src/server.js';
+import { adminMethods } from '../src/admin/methods.js';
+import { codexAgentRuntimeCatalog } from './helpers/fake-agent-runtime.js';
+import { stubChannelCatalog } from './helpers/fake-channel.js';
 
 function configWith(id = 'flow'): DreamuxConfig {
   return {
@@ -94,9 +99,9 @@ describe('dispatcher root identity authority', () => {
   });
 
   it('upsert preserves compatible runtime recovery fields and dispatcher role', async () => {
-    const identities = new TeamMateIdentityStore({ warn: () => {} });
+    const identities = new AgentIdentityStore({ warn: () => {} });
     const workspace = join(root, 'workspace');
-    const first = await identities.ensureDispatcherIdentity({
+    const first = await ensureDispatcherIdentity(identities, {
       dispatcherId: 'flow',
       agentRuntime: 'agent-a',
       sourceCwd: workspace,
@@ -112,7 +117,7 @@ describe('dispatcher root identity authority', () => {
       lastPromptPreview: 'last prompt',
     });
 
-    const ensured = await identities.ensureDispatcherIdentity({
+    const ensured = await ensureDispatcherIdentity(identities, {
       dispatcherId: 'flow',
       agentRuntime: 'agent-a',
       sourceCwd: workspace,
@@ -148,9 +153,9 @@ describe('dispatcher root identity authority', () => {
     ['runtime_cwd', { runtimeCwd: 'runtime-workspace-b' }],
     ['worktree', { worktreePath: 'worktree-b' }],
   ])('clears checkpoint/status/error when %s changes', async (_field, change) => {
-    const identities = new TeamMateIdentityStore({ warn: () => {} });
+    const identities = new AgentIdentityStore({ warn: () => {} });
     const workspace = join(root, 'workspace-a');
-    const first = await identities.ensureDispatcherIdentity({
+    const first = await ensureDispatcherIdentity(identities, {
       dispatcherId: 'flow',
       agentRuntime: 'agent-a',
       sourceCwd: workspace,
@@ -169,7 +174,7 @@ describe('dispatcher root identity authority', () => {
       change.runtimeCwd === undefined ? workspace : join(root, change.runtimeCwd);
     const worktreePath =
       change.worktreePath === undefined ? runtimeCwd : join(root, change.worktreePath);
-    const ensured = await identities.ensureDispatcherIdentity({
+    const ensured = await ensureDispatcherIdentity(identities, {
       dispatcherId: 'flow',
       agentRuntime: change.agentRuntime ?? 'agent-a',
       sourceCwd: cwd,
@@ -185,6 +190,100 @@ describe('dispatcher root identity authority', () => {
       session_id: null,
       status: 'stopped',
       last_error: null,
+    });
+  });
+
+  it('dispatcher.status reads unmaterialized root identity without preparing service', async () => {
+    const workspace = join(root, 'workspace');
+    const config = configWith('flow');
+    config.agents = {
+      [config.dispatchers[0]!.agentRuntime]: {
+        provider: config.dispatchers[0]!.runtime.provider,
+        config: config.dispatchers[0]!.runtime.config,
+      },
+    };
+    const identities = new AgentIdentityStore({ warn: () => {} });
+    const identity = await ensureDispatcherIdentity(identities, {
+      dispatcherId: 'flow',
+      agentRuntime: config.dispatchers[0]!.agentRuntime,
+      sourceCwd: workspace,
+      cwd: workspace,
+      runtimeCwd: workspace,
+      worktree: reuseCwd(workspace),
+    });
+    await identities.update(identity, {
+      sessionId: 'session-a',
+      status: 'degraded',
+      lastError: 'provider detail',
+    });
+    const server = new Server({
+      config,
+      agentRuntimeProviderCatalog: codexAgentRuntimeCatalog(),
+      channelProviderCatalog: stubChannelCatalog(),
+      adminSocketPath: join(root, 'admin.sock'),
+    });
+
+    await expect(
+      adminMethods['dispatcher.status']!(server, { dispatcher_id: 'flow' }),
+    ).resolves.toMatchObject({
+      dispatcher_id: 'flow',
+      status: 'degraded',
+      thread_id: 'session-a',
+      last_error: 'provider detail',
+    });
+    await expect(identities.dispatcherIdentity('flow')).resolves.toMatchObject({
+      session_id: 'session-a',
+      status: 'degraded',
+    });
+  });
+
+  it('dispatcher.status and list read cached-but-unprepared root identity', async () => {
+    const workspace = join(root, 'workspace');
+    const config = configWith('flow');
+    config.agents = {
+      [config.dispatchers[0]!.agentRuntime]: {
+        provider: config.dispatchers[0]!.runtime.provider,
+        config: config.dispatchers[0]!.runtime.config,
+      },
+    };
+    const identities = new AgentIdentityStore({ warn: () => {} });
+    const identity = await ensureDispatcherIdentity(identities, {
+      dispatcherId: 'flow',
+      agentRuntime: config.dispatchers[0]!.agentRuntime,
+      sourceCwd: workspace,
+      cwd: workspace,
+      runtimeCwd: workspace,
+      worktree: reuseCwd(workspace),
+    });
+    await identities.update(identity, {
+      sessionId: 'session-cached',
+      status: 'running',
+      lastError: 'recoverable detail',
+    });
+    const server = new Server({
+      config,
+      agentRuntimeProviderCatalog: codexAgentRuntimeCatalog(),
+      channelProviderCatalog: stubChannelCatalog(),
+      adminSocketPath: join(root, 'admin.sock'),
+    });
+    server.getDispatcher('flow');
+
+    await expect(
+      adminMethods['dispatcher.status']!(server, { dispatcher_id: 'flow' }),
+    ).resolves.toMatchObject({
+      dispatcher_id: 'flow',
+      status: 'running',
+      thread_id: 'session-cached',
+      last_error: 'recoverable detail',
+    });
+    await expect(adminMethods['dispatcher.list']!(server, {})).resolves.toEqual({
+      dispatchers: [
+        expect.objectContaining({
+          dispatcher_id: 'flow',
+          status: 'running',
+          thread_id: 'session-cached',
+        }),
+      ],
     });
   });
 });

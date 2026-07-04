@@ -1,18 +1,18 @@
 import type { AgentRuntimeTurnResult } from '@excitedjs/dreamux-types';
 
-import type { TeamMateRuntimeStateStore } from '../teammate-collection/runtime-state.js';
-import { turnsScopeOf, type TeamMateTurnsStore } from '../teammate-collection/turns-store.js';
+import type { AgentRuntimeStateStore } from '../agent-entity/runtime-state.js';
+import { turnsScopeOf, type AgentTurnsStore } from '../agent-entity/turns-store.js';
 import type {
-  TeamMateTurnOrigin,
-  TeamMateTurnResult,
-} from '../teammate-collection/types.js';
+  AgentEntityTurnOrigin,
+  AgentEntityTurnResult,
+} from '../agent-entity/types.js';
 
 export async function recordSubmittedTurn(
-  turnsStore: TeamMateTurnsStore,
-  live: { state: TeamMateRuntimeStateStore },
+  turnsStore: AgentTurnsStore,
+  live: { state: AgentRuntimeStateStore },
   input: {
     turnId: string | null;
-    turnOrigin: TeamMateTurnOrigin | null;
+    turnOrigin: AgentEntityTurnOrigin | null;
     prompt: string;
   },
 ): Promise<void> {
@@ -27,8 +27,8 @@ export async function recordSubmittedTurn(
 }
 
 export async function recordSettledTurn(
-  turnsStore: TeamMateTurnsStore,
-  state: TeamMateRuntimeStateStore,
+  turnsStore: AgentTurnsStore,
+  state: AgentRuntimeStateStore,
   input: {
     turnId: string | null;
     assistant: string | null;
@@ -45,7 +45,7 @@ export async function recordSettledTurn(
 
 export function toTurnResult(
   result: AgentRuntimeTurnResult,
-): TeamMateTurnResult {
+): AgentEntityTurnResult {
   switch (result.status) {
     case 'submitted':
       return { status: 'submitted', turn_id: result.turnId };

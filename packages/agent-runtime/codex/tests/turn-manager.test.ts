@@ -14,24 +14,14 @@ describe('TurnManager inbound submission', () => {
       getThreadId: () => 'thread-1',
       client: client as never,
     });
-    const accepted: string[] = [];
 
     await expect(
-      manager.enqueue(input('msg-1', 'first'), {
-        onAccepted: (acceptedInput) => {
-          accepted.push(acceptedInput.sourceId);
-        },
-      }),
+      manager.enqueue(input('msg-1', 'first')),
     ).resolves.toEqual({ status: 'submitted', turnId: 'turn-1' });
     await expect(
-      manager.enqueue(input('msg-2', 'second'), {
-        onAccepted: (acceptedInput) => {
-          accepted.push(acceptedInput.sourceId);
-        },
-      }),
+      manager.enqueue(input('msg-2', 'second')),
     ).resolves.toEqual({ status: 'submitted', turnId: 'turn-2' });
 
-    expect(accepted).toEqual(['msg-1', 'msg-2']);
     expect(client.methods).toEqual(['turn/start', 'turn/start']);
     expect(client.inputs).toEqual(['first', 'second']);
   });

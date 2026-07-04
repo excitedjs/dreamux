@@ -19,7 +19,6 @@ import type {
   ChannelTarget,
   ChannelToolCall,
   DreamuxLogger,
-  InboundDeliveryHooks,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
 
@@ -31,8 +30,9 @@ import {
   TeamCollection,
   TeamUnavailableError,
 } from '../src/service/team-collection/index.js';
-import { TeamMateIdentityStore } from '../src/service/teammate-collection/identity-store.js';
-import { TeamMateTurnsStore } from '../src/service/teammate-collection/turns-store.js';
+import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.js';
+import { ensureDispatcherIdentity } from '../src/service/dispatcher-service/identity.js';
+import { AgentTurnsStore } from '../src/service/agent-entity/turns-store.js';
 import { WorktreeManager } from '../src/service/worktree/manager.js';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
 import {
@@ -44,6 +44,7 @@ import { ChannelProviderCatalog } from '../src/channel/catalog.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
 import { Server } from '../src/server.js';
 import { writeRestartIntent } from '../src/daemon/restart-intent.js';
+import { SubscribeChannelProviderCatalog } from '../src/subscribe-channel/catalog.js';
 
 const FAKE_RUNTIME_REF = 'test:runtime';
 
@@ -55,7 +56,6 @@ class FakeRuntime implements AgentRuntime {
   readonly providerRef = FAKE_RUNTIME_REF;
   readonly submitted: InboundTurnInput[] = [];
   readonly textSubmitted: AgentRuntimeTextInput[] = [];
-  readonly accepted: InboundTurnInput[] = [];
   private status: AgentRuntimeStatus = 'declared';
 
   async start(): Promise<void> {
@@ -70,12 +70,7 @@ class FakeRuntime implements AgentRuntime {
     this.status = 'stopped';
   }
 
-  async channelInput(
-    input: InboundTurnInput,
-    hooks?: InboundDeliveryHooks,
-  ): Promise<AgentRuntimeTurnResult> {
-    await hooks?.onAccepted?.(input);
-    this.accepted.push(input);
+  async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
     this.submitted.push(input);
     return { status: 'submitted', turnId: `turn-${this.submitted.length}` };
   }
@@ -185,6 +180,15 @@ function fakeChannelCatalog(): ChannelProviderCatalog {
   } as unknown as ChannelProviderCatalog;
 }
 
+function emptySubscribeChannelCatalog(): SubscribeChannelProviderCatalog {
+  return {
+    list: () => [],
+    resolve(ref: string) {
+      throw new Error(`unexpected subscribeChannel provider ${JSON.stringify(ref)}`);
+    },
+  } as unknown as SubscribeChannelProviderCatalog;
+}
+
 const CHANNEL_PROVIDER_REF = 'builtin:feishu';
 const CHANNEL_DESCRIPTOR: ChannelProviderDescriptor = {
   id: 'feishu',
@@ -233,7 +237,6 @@ class CapturingChannelSession implements ChannelSession {
   async emit(
     targetKey: string,
     text: string,
-    hooks?: InboundDeliveryHooks,
   ): Promise<AgentRuntimeTurnResult> {
     if (this.routes === null) throw new Error('channel not started');
     return this.routes.deliver(
@@ -242,8 +245,7 @@ class CapturingChannelSession implements ChannelSession {
         provider: this.provider,
         channel_id: this.channel_id,
         target: groupTarget(targetKey),
-      },
-      hooks,
+      }
     );
   }
 }
@@ -279,13 +281,7 @@ function capturingChannelCatalog(
       sessions.push(session);
       return session;
     },
-    mcpServerDescriptor(context) {
-      return {
-        name: `channel-${context.channel_id}`,
-        command: context.command,
-        args: ['channel-mcp', '--channel-id', context.channel_id],
-      };
-    },
+    tools: () => [{ name: 'reply' }],
   };
   registry.registerImplementation(descriptor.id, provider);
   return new ChannelProviderCatalog({ registry });
@@ -458,6 +454,7 @@ describe('TeamLeader cron scheduler lifecycle', () => {
         },
       }),
       channelProviders: fakeChannelCatalog(),
+      subscribeChannelProviders: emptySubscribeChannelCatalog(),
       adminSocketPath: '/tmp/dreamux-admin.sock',
       channelLoggerFactory: () => log,
       log,
@@ -510,6 +507,7 @@ describe('TeamLeader cron scheduler lifecycle', () => {
         contexts,
       }),
       channelProviders: fakeChannelCatalog(),
+      subscribeChannelProviders: emptySubscribeChannelCatalog(),
       adminSocketPath: '/tmp/dreamux-admin.sock',
       channelLoggerFactory: () => log,
       log,
@@ -656,6 +654,7 @@ describe('TeamLeader cron scheduler lifecycle', () => {
         contexts,
       }),
       channelProviders: fakeChannelCatalog(),
+      subscribeChannelProviders: emptySubscribeChannelCatalog(),
       adminSocketPath: '/tmp/dreamux-admin.sock',
       channelLoggerFactory: () => log,
       log,
@@ -713,6 +712,7 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: fakeRuntimeCatalog({ runtimes }),
       channelProviders: capturingChannelCatalog(sessions),
+      subscribeChannelProviders: emptySubscribeChannelCatalog(),
       adminSocketPath: '/tmp/dreamux-admin.sock',
       channelLoggerFactory: () => log,
       log,
@@ -757,6 +757,7 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: fakeRuntimeCatalog({ runtimes: [] }),
       channelProviders: capturingChannelCatalog(sessions),
+      subscribeChannelProviders: emptySubscribeChannelCatalog(),
       adminSocketPath: '/tmp/dreamux-admin.sock',
       channelLoggerFactory: () => log,
       log,
@@ -806,6 +807,7 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       channelProviders: capturingChannelCatalog(sessions, {
         startBlockers: { secondary: secondaryBlocker },
       }),
+      subscribeChannelProviders: emptySubscribeChannelCatalog(),
       adminSocketPath: '/tmp/dreamux-admin.sock',
       channelLoggerFactory: () => log,
       log,
@@ -834,7 +836,7 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     await dispatcher.stop();
   });
 
-  it('unbound channel inbound starts dispatcher runtime and fires onAccepted', async () => {
+  it('unbound channel inbound starts dispatcher runtime', async () => {
     const workspace = join(root, 'workspace');
     mkdirSync(workspace, { recursive: true });
     const runtimes: FakeRuntime[] = [];
@@ -861,26 +863,21 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: fakeRuntimeCatalog({ runtimes }),
       channelProviders: capturingChannelCatalog(sessions),
+      subscribeChannelProviders: emptySubscribeChannelCatalog(),
       adminSocketPath: '/tmp/dreamux-admin.sock',
       channelLoggerFactory: () => log,
       log,
     });
     await dispatcher.start();
-    const accepted: string[] = [];
 
     await expect(
-      sessions[0]!.emit('chat-unbound', 'hello dispatcher', {
-        onAccepted: async (input) => {
-          accepted.push(input.text);
-        },
-      }),
+      sessions[0]!.emit('chat-unbound', 'hello dispatcher', ),
     ).resolves.toMatchObject({ status: 'submitted' });
 
     expect(runtimes).toHaveLength(1);
     expect(runtimes[0]!.submitted.map((input) => input.text)).toEqual([
       'hello dispatcher',
     ]);
-    expect(accepted).toEqual(['hello dispatcher']);
     await dispatcher.stop();
   });
 
@@ -912,6 +909,7 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: fakeRuntimeCatalog({ runtimes, contexts }),
       channelProviders: capturingChannelCatalog(sessions),
+      subscribeChannelProviders: emptySubscribeChannelCatalog(),
       adminSocketPath: '/tmp/dreamux-admin.sock',
       channelLoggerFactory: () => log,
       log,
@@ -935,19 +933,15 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: fakeRuntimeCatalog({ runtimes, contexts }),
       channelProviders: capturingChannelCatalog(sessions),
+      subscribeChannelProviders: emptySubscribeChannelCatalog(),
       adminSocketPath: '/tmp/dreamux-admin.sock',
       channelLoggerFactory: () => log,
       log,
     });
     await restarted.start();
-    const accepted: string[] = [];
 
     await expect(
-      sessions.at(-1)!.emit('chat-team', 'hello leader', {
-        onAccepted: async (input) => {
-          accepted.push(input.text);
-        },
-      }),
+      sessions.at(-1)!.emit('chat-team', 'hello leader', ),
     ).resolves.toMatchObject({ status: 'submitted' });
 
     expect(
@@ -956,7 +950,6 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     expect(runtimes.at(-1)!.submitted.map((input) => input.text)).toEqual([
       'hello leader',
     ]);
-    expect(accepted).toEqual(['hello leader']);
     await restarted.stop();
   });
 
@@ -980,6 +973,7 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: fakeRuntimeCatalog({ runtimes }),
       channelProviders: fakeChannelCatalog(),
+      subscribeChannelProviders: emptySubscribeChannelCatalog(),
       adminSocketPath: '/tmp/dreamux-admin.sock',
       channelLoggerFactory: () => log,
       log,
@@ -1030,6 +1024,7 @@ describe('TeamLeader cron scheduler lifecycle', () => {
         },
       }),
       channelProviders: fakeChannelCatalog(),
+      subscribeChannelProviders: emptySubscribeChannelCatalog(),
       adminSocketPath: '/tmp/dreamux-admin.sock',
       channelLoggerFactory: () => log,
       log,
@@ -1149,9 +1144,9 @@ async function seedDispatcherCheckpoint(
   log: DreamuxLogger,
   sessionId: string,
 ): Promise<void> {
-  const identities = new TeamMateIdentityStore({ warn: log.warn.bind(log) });
+  const identities = new AgentIdentityStore({ warn: log.warn.bind(log) });
   const dispatcher = config.dispatchers[0]!;
-  const identity = await identities.ensureDispatcherIdentity({
+  const identity = await ensureDispatcherIdentity(identities, {
     dispatcherId: dispatcher.id,
     agentRuntime: dispatcher.agentRuntime,
     sourceCwd: workspace,
@@ -1185,8 +1180,8 @@ function makeTeams(input: {
       contexts: input.contexts,
     }),
     worktrees: new WorktreeManager(),
-    identities: new TeamMateIdentityStore({ warn: input.log.warn.bind(input.log) }),
-    turnsStore: new TeamMateTurnsStore({ warn: input.log.warn.bind(input.log) }),
+    identities: new AgentIdentityStore({ warn: input.log.warn.bind(input.log) }),
+    turnsStore: new AgentTurnsStore({ warn: input.log.warn.bind(input.log) }),
     router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log: input.log }),
     initiatorFor: async () => null,
     isShuttingDown: () => false,

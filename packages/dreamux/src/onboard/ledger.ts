@@ -6,7 +6,7 @@ import type {
   OnboardFileLedger,
   OnboardFileLedgerEntry,
   OnboardFileStatus,
-} from './types.js';
+} from '../onboard/types.js';
 
 type WriteFileStatus = Exclude<OnboardFileStatus, 'skipped'>;
 

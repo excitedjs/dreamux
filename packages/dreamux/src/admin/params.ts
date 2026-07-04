@@ -1,10 +1,10 @@
 import type { Server } from '../server.js';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
 import type {
-  TeamMateHistoryQuery,
-  TeamMateIdentityStatus,
-  TeamMateWorktreeRequest,
-} from '../service/teammate-collection/types.js';
+  AgentEntityHistoryQuery,
+  AgentEntityIdentityStatus,
+} from '../service/agent-entity/types.js';
+import type { TeamMateWorktreeRequest } from '../service/teammate-collection/types.js';
 import { AdminError } from './protocol.js';
 
 export function mustString(
@@ -119,7 +119,7 @@ export function repoRequest(
 
 export function historyQuery(
   params: Record<string, unknown> | undefined,
-): TeamMateHistoryQuery {
+): AgentEntityHistoryQuery {
   const name = optionalString(params, 'name');
   const status = optionalTeammateStatus(params, 'status');
   const agentRuntime = optionalString(params, 'agent_runtime');
@@ -240,7 +240,7 @@ export function parseMessage(err: unknown): string {
 function optionalTeammateStatus(
   params: Record<string, unknown> | undefined,
   key: string,
-): TeamMateIdentityStatus | null {
+): AgentEntityIdentityStatus | null {
   const value = optionalString(params, key);
   if (value === null) return null;
   if (

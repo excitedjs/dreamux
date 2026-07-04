@@ -5,7 +5,7 @@ import {
   stringifyConfig,
 } from '../config/config.js';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
-import type { OnboardAnswers } from './types.js';
+import type { OnboardAnswers } from '../onboard/types.js';
 
 export function buildDreamuxConfigJson(answers: OnboardAnswers): string {
   return stringifyConfig(dreamuxConfigFromAnswers(answers));
@@ -16,7 +16,11 @@ export function dreamuxConfigFromAnswers(
   existing?: DreamuxConfig,
 ): DreamuxConfig {
   validateDispatcherId(answers.dispatcherId);
-  const base: DreamuxConfig = existing ?? { agents: {}, dispatchers: [] };
+  const base: DreamuxConfig = existing ?? {
+    agents: {},
+    dispatchers: [],
+    subscriptions: [],
+  };
   const dispatchers = base.dispatchers
     .filter((dispatcher) => dispatcher.id !== answers.dispatcherId)
     .map(cloneDispatcherConfig);
@@ -46,7 +50,11 @@ export function dreamuxConfigFromAnswers(
       ...(rawConfig === undefined ? {} : { rawConfig }),
     };
   }
-  const next: DreamuxConfig = { agents, dispatchers };
+  const next: DreamuxConfig = {
+    agents,
+    dispatchers,
+    ...(base.subscriptions === undefined ? {} : { subscriptions: base.subscriptions }),
+  };
   return next;
 }
 

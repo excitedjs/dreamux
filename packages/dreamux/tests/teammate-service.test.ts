@@ -17,9 +17,9 @@ import type {
 } from '@excitedjs/dreamux-types';
 
 import type { AgentRuntimeProviderCatalog } from '../src/agent-runtime/index.js';
-import { TeamMateIdentityStore } from '../src/service/teammate-collection/identity-store.js';
-import { TeamMateTurnsStore } from '../src/service/teammate-collection/turns-store.js';
-import type { TeamMateWorktreeIdentity } from '../src/service/teammate-collection/types.js';
+import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.js';
+import { AgentTurnsStore } from '../src/service/agent-entity/turns-store.js';
+import type { AgentEntityWorktreeIdentity } from '../src/service/agent-entity/types.js';
 import { createTeamLeaderAgent } from '../src/service/team-service/leader-agent.js';
 import type { TeammateService } from '../src/service/teammate-service/index.js';
 import { WorktreeManager } from '../src/service/worktree/manager.js';
@@ -140,7 +140,7 @@ function noopLog(): DreamuxLogger {
   return log as DreamuxLogger;
 }
 
-function reuseCwd(path: string): TeamMateWorktreeIdentity {
+function reuseCwd(path: string): AgentEntityWorktreeIdentity {
   return {
     mode: 'reuse-cwd',
     slug: null,
@@ -166,8 +166,8 @@ async function createTestTeamLeader(input: {
   start?: boolean;
 }): Promise<TeammateService> {
   const log = noopLog();
-  const identities = new TeamMateIdentityStore({ warn: log.warn.bind(log) });
-  const turnsStore = new TeamMateTurnsStore({ warn: log.warn.bind(log) });
+  const identities = new AgentIdentityStore({ warn: log.warn.bind(log) });
+  const turnsStore = new AgentTurnsStore({ warn: log.warn.bind(log) });
   const identity = await identities.create({
     dispatcherId: input.dispatcherId,
     name: input.name,
@@ -388,6 +388,7 @@ describe('TeammateService channel input routing', () => {
         jobId: 'job-1',
         prompt: 'scheduled report',
         sourceId: 'scheduled:job-1:1',
+        signal: new AbortController().signal,
       }),
     ).resolves.toMatchObject({ status: 'submitted' });
     expect(runtimes).toHaveLength(1);
@@ -397,7 +398,7 @@ describe('TeammateService channel input routing', () => {
     ]);
   });
 
-  it('does not start a cold scheduled runtime when shouldSubmit is already false', async () => {
+  it('does not start a cold scheduled runtime when signal is already false', async () => {
     const workspace = join(root, 'workspace');
     mkdirSync(workspace, { recursive: true });
     const runtimes: FakeRuntime[] = [];
@@ -425,18 +426,18 @@ describe('TeammateService channel input routing', () => {
         jobId: 'job-1',
         prompt: 'scheduled report',
         sourceId: 'scheduled:job-1:1',
-        shouldSubmit: () => false,
+        signal: AbortSignal.abort(),
       }),
     ).resolves.toMatchObject({ status: 'skipped' });
     expect(runtimes).toHaveLength(0);
   });
 
-  it('does not submit when shouldSubmit flips false during scheduled runtime start', async () => {
+  it('does not submit when signal flips false during scheduled runtime start', async () => {
     const workspace = join(root, 'workspace');
     mkdirSync(workspace, { recursive: true });
     const runtimes: FakeRuntime[] = [];
     const created: DeferredStartRuntime[] = [];
-    let shouldSubmit = true;
+    const controller = new AbortController();
     const config = testDreamuxConfig([
       testDispatcherConfig({
         id: 'dispatcher-a',
@@ -464,10 +465,10 @@ describe('TeammateService channel input routing', () => {
       jobId: 'job-1',
       prompt: 'scheduled report',
       sourceId: 'scheduled:job-1:1',
-      shouldSubmit: () => shouldSubmit,
+      signal: controller.signal,
     });
     await waitFor(() => created[0]?.releaseStart !== null);
-    shouldSubmit = false;
+    controller.abort();
     const runtime = created[0]!;
     runtime.releaseStart!();
 
@@ -504,6 +505,7 @@ describe('TeammateService channel input routing', () => {
         jobId: 'job-1',
         prompt: 'scheduled report',
         sourceId: 'scheduled:job-1:2',
+        signal: new AbortController().signal,
       }),
     ).resolves.toMatchObject({ status: 'submitted' });
     expect(runtimes).toHaveLength(1);

@@ -1,7 +1,4 @@
-import type {
-  AgentRuntimeMcpServer,
-  ChannelMcpDescriptorContext,
-} from '@excitedjs/dreamux-types';
+import type { AgentRuntimeMcpServer } from '@excitedjs/dreamux-types';
 
 import type { ChannelProviderCatalog } from '../../channel/catalog.js';
 import type { DispatcherChannelConfig } from '../../config/config.js';
@@ -72,18 +69,30 @@ function channelMcpServerDescriptors(input: {
   const out: AgentRuntimeMcpServer[] = [];
   for (const channel of input.channels) {
     const provider = input.channelProviders.resolve(channel.provider);
-    const context: ChannelMcpDescriptorContext = {
+    const tools = provider.tools?.(channel.config);
+    if (tools === undefined || tools.length === 0) continue;
+    out.push({
+      name: provider.descriptor.id,
       command: dreamuxBinPath(),
-      adminSocketPath: input.adminSocketPath ?? defaultAdminSocketPath(),
-      dispatcher_id: input.dispatcher_id,
-      provider: channel.provider,
-      channel_id: channel.id,
-      ...(input.callerKind !== undefined ? { callerKind: input.callerKind } : {}),
-      ...(input.team_id !== undefined ? { team_id: input.team_id } : {}),
-      ...(input.leader_name !== undefined ? { leader_name: input.leader_name } : {}),
-    };
-    const descriptor = provider.mcpServerDescriptor?.(context, channel.config);
-    if (descriptor != null) out.push(descriptor);
+      args: [
+        'channel-mcp',
+        '--provider',
+        channel.provider,
+        '--channel-id',
+        channel.id,
+        '--dispatcher',
+        input.dispatcher_id,
+        ...(input.callerKind !== undefined ? ['--caller', input.callerKind] : []),
+        ...(input.team_id !== undefined ? ['--team-id', input.team_id] : []),
+        ...(input.leader_name !== undefined
+          ? ['--leader-name', input.leader_name]
+          : []),
+        '--channel-tools-b64',
+        Buffer.from(JSON.stringify(tools), 'utf8').toString('base64'),
+        '--admin-socket',
+        input.adminSocketPath ?? defaultAdminSocketPath(),
+      ],
+    });
   }
   return out;
 }

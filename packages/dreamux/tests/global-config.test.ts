@@ -37,11 +37,15 @@ import {
 } from '@excitedjs/agent-runtime-codex';
 import type { ExternalAgentRuntimeProviderFactory } from '../src/agent-runtime/index.js';
 import type { AgentRuntimeCapabilities } from '@excitedjs/dreamux-types';
+import type { ExternalSubscribeChannelProviderFactory } from '../src/subscribe-channel/external-provider.js';
 import {
   testConfigFileObject,
   testSingleDispatcherFileObject,
 } from './helpers/config.js';
-import { asAgentRuntimeDescriptor } from './helpers/provider.js';
+import {
+  asAgentRuntimeDescriptor,
+  asSubscribeChannelDescriptor,
+} from './helpers/provider.js';
 
 function writeConfigObjectAt(configDir: string, value: unknown): void {
   writeFileSync(globalConfigFile({ configDir }), JSON.stringify(value), {
@@ -822,6 +826,74 @@ describe('global config (~/.dreamux/config.json)', () => {
       config: { provider_option: 'kept', parsed_async: true },
       rawConfig: { provider_option: 'kept' },
     });
+  });
+
+  it('loads subscription providers from subscriptions[].provider', async () => {
+    const providerRef = 'npm:@example/dreamux-subscription#provider';
+    writeConfigObject({
+      ...testSingleDispatcherFileObject({ id: 'flow' }),
+      subscriptions: [
+        {
+          id: 'issues',
+          dispatcher_id: 'flow',
+          provider: providerRef,
+          config: { repo: 'example/repo' },
+        },
+      ],
+    });
+
+    const contexts: unknown[] = [];
+    const externalSubscriptionFactory: ExternalSubscribeChannelProviderFactory = ({
+      ref,
+      descriptor,
+    }) => ({
+      ref,
+      descriptor: asSubscribeChannelDescriptor(descriptor),
+      readConfig(rawConfig, context) {
+        contexts.push(context);
+        return {
+          ...(rawConfig as Record<string, unknown>),
+          parsed_by_provider: true,
+        };
+      },
+      createSession() {
+        throw new Error('subscription config test does not create a session');
+      },
+      tools: () => [{ name: 'ack_issue' }],
+      handleTool: async () => ({ ok: true }),
+    });
+
+    const { config, providerRegistry } = await loadConfig({
+      configDir,
+      externalSubscribeChannelModuleImporter: async (packageName) => {
+        expect(packageName).toBe('@example/dreamux-subscription');
+        return { provider: externalSubscriptionFactory };
+      },
+    });
+
+    expect(config.subscriptions).toEqual([
+      {
+        id: 'issues',
+        dispatcher_id: 'flow',
+        provider: providerRef,
+        config: {
+          repo: 'example/repo',
+          parsed_by_provider: true,
+        },
+        rawConfig: {
+          repo: 'example/repo',
+        },
+      },
+    ]);
+    expect(contexts).toEqual([
+      {
+        dispatcher_id: 'flow',
+        subscription_id: 'issues',
+        provider: providerRef,
+      },
+    ]);
+    expect(providerRegistry.resolve(providerRef).kind).toBe('subscribeChannel');
+    expect(providerRegistry.getImplementation(providerRef)).not.toBeUndefined();
   });
 
   it('fails loud when an external runtime async readConfig rejects (#209 F4)', async () => {

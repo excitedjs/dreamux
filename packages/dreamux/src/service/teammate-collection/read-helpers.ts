@@ -2,15 +2,15 @@ import { Buffer } from 'node:buffer';
 
 import type { AgentRuntime } from '@excitedjs/dreamux-types';
 
-import { TeamMateTurnsStore, turnsScopeOf } from './turns-store.js';
+import { AgentTurnsStore, turnsScopeOf } from '../agent-entity/turns-store.js';
 import {
   validateTeamMateName,
-  type TeamMateHistoryQuery,
-  type TeamMateIdentity,
-  type TeamMateLastTurn,
-  type TeamMateRecordRow,
-  type TeamMateRuntimeStatus,
-} from './types.js';
+  type AgentEntityHistoryQuery,
+  type AgentEntityIdentity,
+  type AgentEntityLastTurn,
+  type AgentEntityRecordRow,
+  type AgentEntityRuntimeStatus,
+} from '../agent-entity/types.js';
 
 /**
  * Project an identity (+ its live runtime, if any) into the public runtime
@@ -18,9 +18,9 @@ import {
  * read chokepoint validates scope before calling this projector.
  */
 export function toStatus(
-  identity: TeamMateIdentity,
+  identity: AgentEntityIdentity,
   runtime: AgentRuntime | null,
-): TeamMateRuntimeStatus {
+): AgentEntityRuntimeStatus {
   return {
     name: identity.name,
     session_id: identity.session_id,
@@ -45,9 +45,9 @@ export function toStatus(
 
 /** Project an identity (+ live runtime) into a history record row. Pure. */
 export function toRecordRow(
-  identity: TeamMateIdentity,
+  identity: AgentEntityIdentity,
   runtime: AgentRuntime | null,
-): TeamMateRecordRow {
+): AgentEntityRecordRow {
   return {
     name: identity.name,
     turn_count: identity.turn_count,
@@ -77,14 +77,14 @@ export function toRecordRow(
  * Fold the entity's turn archive into the most-recent `requestedTurns` turns,
  * newest-last. Pure read over the turns store: it neither validates the request
  * (the caller passes an already-validated `requestedTurns`) nor assembles the
- * `TeamMateLastResult` envelope (the caller pairs the array with
+ * `AgentEntityLastResult` envelope (the caller pairs the array with
  * `toStatus(...)`). Returns the turns array only.
  */
 export async function foldLastTurns(
-  turnsStore: TeamMateTurnsStore,
-  identity: TeamMateIdentity,
+  turnsStore: AgentTurnsStore,
+  identity: AgentEntityIdentity,
   requestedTurns: number,
-): Promise<TeamMateLastTurn[]> {
+): Promise<AgentEntityLastTurn[]> {
   let nextSeq = 0;
   const firstSeq = new Map<string, number>();
   const seqOf = (turnId: string): number => {
@@ -97,9 +97,9 @@ export async function foldLastTurns(
   };
   const submitMeta = new Map<
     string,
-    Pick<TeamMateLastTurn, 'turn_origin' | 'prompt_preview' | 'intent' | 'submitted_at'>
+    Pick<AgentEntityLastTurn, 'turn_origin' | 'prompt_preview' | 'intent' | 'submitted_at'>
   >();
-  const recent = new Map<string, TeamMateLastTurn>();
+  const recent = new Map<string, AgentEntityLastTurn>();
   for await (const event of turnsStore.stream(turnsScopeOf(identity))) {
     const turnId = event.turn_id;
     if (turnId === null) continue;
@@ -156,8 +156,8 @@ export async function foldLastTurns(
 }
 
 export function matchesRecordQuery(
-  row: TeamMateRecordRow,
-  input: Omit<TeamMateHistoryQuery, 'dispatcherId'>,
+  row: AgentEntityRecordRow,
+  input: Omit<AgentEntityHistoryQuery, 'dispatcherId'>,
 ): boolean {
   if (input.name !== undefined && row.name !== validateTeamMateName(input.name)) {
     return false;
@@ -223,7 +223,7 @@ export function decodeCursor(cursor: string): number {
   throw new Error('invalid history cursor');
 }
 
-function recordRowMatchesText(row: TeamMateRecordRow, grep: string): boolean {
+function recordRowMatchesText(row: AgentEntityRecordRow, grep: string): boolean {
   const needle = grep.trim().toLowerCase();
   if (needle === '') return true;
   return [

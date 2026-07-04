@@ -24,10 +24,11 @@ import {
   dispatcherClaudeCodeConfig,
   type ClaudeCodeAgentRuntimeProviderOptions,
 } from '@excitedjs/agent-runtime-claude-code';
-import { dispatcherHostPaths } from '../src/agent-runtime/host-paths.js';
+import { hostRuntimePaths } from '../src/agent-runtime/host-paths.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
-import { TeamMateIdentityStore } from '../src/service/teammate-collection/identity-store.js';
-import { TeamMateRuntimeStateStore } from '../src/service/teammate-collection/runtime-state.js';
+import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.js';
+import { ensureDispatcherIdentity } from '../src/service/dispatcher-service/identity.js';
+import { AgentRuntimeStateStore } from '../src/service/agent-entity/runtime-state.js';
 import { testDispatcherConfig } from './helpers/config.js';
 
 const execFileAsync = promisify(execFile);
@@ -108,8 +109,8 @@ describe('claude-code live integration (opt-in)', () => {
         },
       },
     });
-    const identities = new TeamMateIdentityStore({ warn: () => {} });
-    const identity = await identities.ensureDispatcherIdentity({
+    const identities = new AgentIdentityStore({ warn: () => {} });
+    const identity = await ensureDispatcherIdentity(identities, {
       dispatcherId: 'live',
       agentRuntime: dispatcher.agentRuntime,
       sourceCwd: home,
@@ -126,7 +127,7 @@ describe('claude-code live integration (opt-in)', () => {
         cleanup_error: null,
       },
     });
-    const state = new TeamMateRuntimeStateStore(identities, identity);
+    const state = new AgentRuntimeStateStore(identities, identity);
 
     const runtime = claudeCodeProvider().createRuntime({
       identity: { runtime_id: 'live', checkpoint_id: null },
@@ -134,7 +135,7 @@ describe('claude-code live integration (opt-in)', () => {
       cwd: home,
       mcpServers: [],
       state,
-      paths: dispatcherHostPaths,
+      paths: hostRuntimePaths,
     });
 
     await runtime.start();

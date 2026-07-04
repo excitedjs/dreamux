@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type {
-  AgentRuntimeMcpServer,
   ChannelProvider,
   ChannelProviderDescriptor,
   ChannelSession,
@@ -36,7 +35,7 @@ function groupTarget(chatId: string): ChannelTarget {
 
 function channelProviderCatalog(
   messageBelongsToTarget: ChannelSession['messageBelongsToTarget'] = () => true,
-  descriptors: Array<{ channelId: string; config: unknown }> = [],
+  toolConfigReads: unknown[] = [],
 ): ChannelProviderCatalog {
   const registry = createBuiltinProviderRegistry();
   const descriptor = registry.resolve(PROVIDER_REF);
@@ -48,13 +47,9 @@ function channelProviderCatalog(
       ref: descriptor.ref,
     },
     readConfig: (raw) => raw,
-    mcpServerDescriptor(context, config): AgentRuntimeMcpServer | null {
-      descriptors.push({ channelId: context.channel_id, config });
-      return {
-        name: `feishu-${context.channel_id}`,
-        command: context.command,
-        args: ['channel-mcp', '--channel-id', context.channel_id],
-      };
+    tools(config) {
+      toolConfigReads.push(config);
+      return [{ name: 'reply' }];
     },
     createSession(context) {
       return {
@@ -134,7 +129,7 @@ describe('ChannelService binding ownership', () => {
   });
 
   it('builds provider channel MCP descriptors from configured dispatcher channels before sessions are live', () => {
-    const descriptors: Array<{ channelId: string; config: unknown }> = [];
+    const toolConfigReads: unknown[] = [];
     const service = new ChannelService({
       dispatcherId: 'dispatcher-a',
       config: testDreamuxConfig([
@@ -149,7 +144,7 @@ describe('ChannelService binding ownership', () => {
           feishu: { marker: 'dispatcher-b' },
         }),
       ]),
-      channelProviders: channelProviderCatalog(undefined, descriptors),
+      channelProviders: channelProviderCatalog(undefined, toolConfigReads),
       channelLoggerFactory: () => ({}) as never,
       adminSocketPath: '/tmp/dreamux-admin.sock',
     });
@@ -158,16 +153,27 @@ describe('ChannelService binding ownership', () => {
       service.channelMcpServerDescriptorsForCaller({ callerKind: 'dispatcher' }),
     ).toEqual([
       {
-        name: 'feishu-primary',
+        name: 'feishu',
         command: expect.any(String),
-        args: ['channel-mcp', '--channel-id', 'primary'],
+        args: [
+          'channel-mcp',
+          '--provider',
+          'builtin:feishu',
+          '--channel-id',
+          'primary',
+          '--dispatcher',
+          'dispatcher-a',
+          '--caller',
+          'dispatcher',
+          '--channel-tools-b64',
+          expect.any(String),
+          '--admin-socket',
+          '/tmp/dreamux-admin.sock',
+        ],
       },
     ]);
-    expect(descriptors).toEqual([
-      {
-        channelId: 'primary',
-        config: expect.objectContaining({ marker: 'dispatcher-a' }),
-      },
+    expect(toolConfigReads).toEqual([
+      expect.objectContaining({ marker: 'dispatcher-a' }),
     ]);
     expect(service.live().size).toBe(0);
   });

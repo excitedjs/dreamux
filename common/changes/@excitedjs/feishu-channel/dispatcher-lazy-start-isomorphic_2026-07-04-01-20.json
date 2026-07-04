@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "Implement the channel MCP descriptor on the Feishu ChannelProvider instead of the live ChannelSession, preserving the existing channel-mcp descriptor shape and static tool catalog.",
+      "comment": "BREAKING: Stop authoring channel MCP descriptors in the Feishu provider. The package now exposes only the static Feishu tool catalog plus reply/react/list_chat_bots handlers; Dreamux core renders the channel-mcp descriptor, admin socket, caller, team, and leader routing args.",
       "type": "minor",
       "packageName": "@excitedjs/feishu-channel"
     }

@@ -13,13 +13,17 @@ import {
   type CompletionEnvelope,
   type CompletionRouter,
 } from '../completion-router/index.js';
-import type { TeamMateIdentityStore } from '../teammate-collection/identity-store.js';
+import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
 import {
   createTeammateService,
 } from '../teammate-service/factory.js';
+import {
+  assertDispatcherRootAgent,
+  dispatcherRuntimeId,
+} from '../agent-entity/runtime-profile.js';
 import type { TeammateService } from '../teammate-service/index.js';
-import type { TeamMateTurnsStore } from '../teammate-collection/turns-store.js';
-import type { TeamMateIdentity } from '../teammate-collection/types.js';
+import type { AgentTurnsStore } from '../agent-entity/turns-store.js';
+import type { AgentEntityIdentity } from '../agent-entity/types.js';
 import {
   DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS,
   DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
@@ -41,7 +45,7 @@ export interface DispatcherAgentDeps {
   router: CompletionRouter;
   log: DreamuxLogger;
   mcpServers: readonly AgentRuntimeMcpServer[];
-  identity: TeamMateIdentity;
+  identity: AgentEntityIdentity;
   /**
    * The identity + turns store pair, constructed once by `DispatcherService` and
    * shared with the dispatcher-scope `TeammateCollection` (issue #233). The stores
@@ -49,8 +53,8 @@ export interface DispatcherAgentDeps {
    * dispatcher agent's root identity (role `dispatcher`) and the collection's
    * teammate reads (role `teammate`).
    */
-  identities: TeamMateIdentityStore;
-  turnsStore: TeamMateTurnsStore;
+  identities: AgentIdentityStore;
+  turnsStore: AgentTurnsStore;
 }
 
 /**
@@ -76,15 +80,15 @@ export function createDispatcherAgent(deps: DispatcherAgentDeps): TeammateServic
     // The dispatcher agent has no worktree — it neither spawns nor closes, so it
     // never reaches the worktree manager (issue #233 Phase 5).
     log: deps.log,
-    nextSubmissionSeq: () => 0,
-    trackSettleCapture: () => {
-      /* no-op: the dispatcher agent is never a send-registered producer, so it
-         has no settle capture to track (issue #233 Phase 5). */
-    },
+    nextSubmissionSeq: createDispatcherSubmissionSeq(),
     routeSettledCompletion: (producerName, turnId, completion) =>
       routeSettled(deps.router, producerName, turnId, completion),
     options: {
       mcpServers: deps.mcpServers,
+      runtimeId: dispatcherRuntimeId(deps.id),
+      ownsWorktreeOnClose: false,
+      loggerFields: {},
+      assertIdentityScope: assertDispatcherRootAgent,
       skillSources: [{
         name: 'dispatcher',
         path: bundledDispatcherSkillRoot(),
@@ -98,6 +102,11 @@ export function createDispatcherAgent(deps: DispatcherAgentDeps): TeammateServic
     },
   });
   return agent;
+}
+
+function createDispatcherSubmissionSeq(): () => number {
+  let seq = 0;
+  return () => ++seq;
 }
 
 async function routeSettled(

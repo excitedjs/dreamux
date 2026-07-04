@@ -3,7 +3,6 @@ import type {
   AgentRuntimeSystemPrompt,
   AgentRuntimeTurnResult,
   DreamuxLogger,
-  InboundDeliveryHooks,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
 
@@ -31,17 +30,17 @@ import {
   type TeamMateSharedWorkspace,
   type TeammateOps,
 } from '../teammate-collection/index.js';
-import type { TeamMateIdentityStore } from '../teammate-collection/identity-store.js';
+import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
 import { teammateMcpServerDescriptor } from '../teammate-collection/mcp-config.js';
 import { teamMcpServerDescriptor } from '../team-collection/mcp-config.js';
-import type { TeamMateTurnsStore } from '../teammate-collection/turns-store.js';
+import type { AgentTurnsStore } from '../agent-entity/turns-store.js';
 import {
   optionalLifecycleText,
   requireLifecycleText,
-  type TeamMateIdentity,
-  type TeamMateRuntimeStatus,
-  type TeamMateTurnResult,
-} from '../teammate-collection/types.js';
+  type AgentEntityIdentity,
+  type AgentEntityRuntimeStatus,
+  type AgentEntityTurnResult,
+} from '../agent-entity/types.js';
 import { allocateConcreteName } from '../teammate-collection/name-allocator.js';
 import type { TeammateService } from '../teammate-service/index.js';
 import type { TeamStore } from '../team-collection/store.js';
@@ -60,11 +59,11 @@ export interface TeamServiceDeps {
   config: DreamuxConfig;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   worktrees: WorktreeManager;
-  identities: TeamMateIdentityStore;
-  turnsStore: TeamMateTurnsStore;
+  identities: AgentIdentityStore;
+  turnsStore: AgentTurnsStore;
   router: CompletionRouter;
   initiatorFor: (
-    producer: TeamMateIdentity,
+    producer: AgentEntityIdentity,
   ) => Promise<CompletionInitiator | null>;
   isShuttingDown: () => boolean;
   adminSocketPath: string;
@@ -91,8 +90,8 @@ export interface TeamServiceCreateInput {
 export interface TeamServiceCreateOutput {
   service: TeamService;
   leaderResult: {
-    teammate: TeamMateRuntimeStatus;
-    turn: TeamMateTurnResult | null;
+    teammate: AgentEntityRuntimeStatus;
+    turn: AgentEntityTurnResult | null;
   };
 }
 
@@ -206,7 +205,7 @@ export class TeamService {
     });
     const leader = service.buildLeader(identity);
     await leader.ensureStarted();
-    let turn: TeamMateTurnResult | null = null;
+    let turn: AgentEntityTurnResult | null = null;
     if (input.prompt !== undefined) {
       turn = await leader.submitInitialPrompt(input.prompt, {
         turnOrigin: 'dispatcher',
@@ -320,12 +319,9 @@ export class TeamService {
     await this.stopLeader();
   }
 
-  async deliverToLeader(
-    turn: InboundTurnInput,
-    hooks?: InboundDeliveryHooks,
-  ): Promise<AgentRuntimeTurnResult> {
+  async deliverToLeader(turn: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
     if (this.mustRecord().status === 'closed') return { status: 'stopped' };
-    return this.leader.channelInput(turn, hooks);
+    return this.leader.channelInput(turn);
   }
 
   async sendToLeader(input: {
@@ -378,7 +374,7 @@ export class TeamService {
     return (await this.members()).length;
   }
 
-  private async members(): Promise<TeamMateRuntimeStatus[]> {
+  private async members(): Promise<AgentEntityRuntimeStatus[]> {
     return this.teammateCollection.list(); // members-only; leader is `this.leader`
   }
 
@@ -419,7 +415,7 @@ export class TeamService {
     ];
   }
 
-  private buildLeader(identity: TeamMateIdentity): TeammateService {
+  private buildLeader(identity: AgentEntityIdentity): TeammateService {
     return createTeamLeaderAgent({
       dispatcherId: this.deps.dispatcherId,
       identity,

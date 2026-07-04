@@ -1,20 +1,25 @@
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { ChannelProviderCatalog } from '../../channel/catalog.js';
+import type { SubscribeChannelProviderCatalog } from '../../subscribe-channel/catalog.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
 import type { DispatcherStore } from '../../state/dispatcher-store.js';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
+import { AgentIdentityStore } from '../agent-entity/identity-store.js';
 import {
   DispatcherService,
   type DispatcherServiceOptions,
   type DispatcherSummary,
+  type DispatcherRuntimeStatus,
 } from '../dispatcher-service/index.js';
+import { runtimeStatusToIdentityStatus } from '../agent-entity/types.js';
 
 export interface DispatchersOptions {
   config: DreamuxConfig;
   dispatchers: DispatcherStore;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   channelProviders: ChannelProviderCatalog;
+  subscribeChannelProviders: SubscribeChannelProviderCatalog;
   adminSocketPath?: string;
   channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
   log: DreamuxLogger;
@@ -33,6 +38,7 @@ export class Dispatchers {
   private readonly dispatcherStore: DispatcherStore;
   private readonly agentRuntimeProviders: AgentRuntimeProviderCatalog;
   private readonly channelProviders: ChannelProviderCatalog;
+  private readonly subscribeChannelProviders: SubscribeChannelProviderCatalog;
   private readonly adminSocketPath: string | undefined;
   private readonly channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
   private readonly log: DreamuxLogger;
@@ -43,6 +49,7 @@ export class Dispatchers {
     this.dispatcherStore = opts.dispatchers;
     this.agentRuntimeProviders = opts.agentRuntimeProviders;
     this.channelProviders = opts.channelProviders;
+    this.subscribeChannelProviders = opts.subscribeChannelProviders;
     this.adminSocketPath = opts.adminSocketPath;
     this.channelLoggerFactory = opts.channelLoggerFactory;
     this.log = opts.log;
@@ -65,19 +72,48 @@ export class Dispatchers {
     }
   }
 
-  summarize(): DispatcherSummary[] {
-    return this.dispatcherStore.list().map((row) => {
+  async summarize(): Promise<DispatcherSummary[]> {
+    const identities = new AgentIdentityStore({
+      warn: this.log.warn.bind(this.log),
+    });
+    return Promise.all(this.dispatcherStore.list().map(async (row) => {
       const service = this.services.get(row.dispatcher_id);
-      return (
-        service?.summary(row) ?? {
+      const live = service?.liveRuntimeStatus() ?? null;
+      if (live !== null) {
+        return {
           dispatcher_id: row.dispatcher_id,
           channel_identity: row.channel_identity,
-          status: 'stopped',
-          thread_id: null,
+          status: live.status === null
+            ? 'stopped'
+            : runtimeStatusToIdentityStatus(live.status),
+          thread_id: live.threadId,
           enabled: row.enabled === 1,
-        }
-      );
+        };
+      }
+      const identity = await identities.dispatcherIdentity(row.dispatcher_id);
+      return {
+        dispatcher_id: row.dispatcher_id,
+        channel_identity: row.channel_identity,
+        status: identity?.status ?? 'stopped',
+        thread_id: identity?.session_id ?? null,
+        enabled: row.enabled === 1,
+      };
+    }));
+  }
+
+  async status(id: string): Promise<DispatcherRuntimeStatus> {
+    const service = this.services.get(id);
+    const live = service?.liveRuntimeStatus() ?? null;
+    if (live !== null) return live;
+    const identities = new AgentIdentityStore({
+      warn: this.log.warn.bind(this.log),
     });
+    const identity = await identities.dispatcherIdentity(id);
+    return {
+      status: identity?.status ?? null,
+      threadId: identity?.session_id ?? null,
+      lastError: identity?.last_error ?? null,
+    };
   }
 
   async shutdown(): Promise<void> {
@@ -93,6 +129,7 @@ export class Dispatchers {
       dispatchers: this.dispatcherStore,
       agentRuntimeProviders: this.agentRuntimeProviders,
       channelProviders: this.channelProviders,
+      subscribeChannelProviders: this.subscribeChannelProviders,
       ...(this.adminSocketPath !== undefined
         ? { adminSocketPath: this.adminSocketPath }
         : {}),

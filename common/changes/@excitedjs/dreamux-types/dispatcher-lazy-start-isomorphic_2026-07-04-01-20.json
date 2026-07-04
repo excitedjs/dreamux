@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "Move channel MCP descriptor ownership from ChannelSession to ChannelProvider so descriptors are assembled from provider config without requiring live channel sessions.",
+      "comment": "BREAKING: Remove provider-authored channel MCP descriptor contracts. ChannelProvider.mcpServerDescriptor, ChannelMcpDescriptorContext, ChannelSession.tools, ChannelToolListContext, SubscribeChannelSession.mcpServerDescriptors, SubscribeChannelMcpDescriptorContext, and InboundDeliveryHooks are removed; channel and subscription providers now expose only static tool catalogs plus handlers while Dreamux core owns MCP descriptor rendering and inbound ack/cancellation boundaries.",
       "type": "minor",
       "packageName": "@excitedjs/dreamux-types"
     },

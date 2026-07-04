@@ -5,7 +5,7 @@ import { basename, join, resolve, sep } from 'node:path';
 
 import { ExecaCommandRunner } from './commands.js';
 import { removeUserService } from './service.js';
-import type { CommandRunner, ServicePlatform } from './types.js';
+import type { CommandRunner, ServicePlatform } from '../onboard/types.js';
 import {
   assertNoLegacyTomlOnly,
   expandHome,

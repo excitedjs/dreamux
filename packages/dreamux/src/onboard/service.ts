@@ -18,7 +18,7 @@ import type {
   CommandRunner,
   OnboardFileLedger,
   ServicePlatform,
-} from './types.js';
+} from '../onboard/types.js';
 
 export const LAUNCHD_LABEL = 'dev.excited.dreamux';
 export const SYSTEMD_UNIT = 'dreamux.service';

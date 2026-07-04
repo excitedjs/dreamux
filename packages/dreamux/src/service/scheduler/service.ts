@@ -55,8 +55,8 @@ export interface SchedulerServiceOptions {
     jobId: string;
     prompt: string;
     sourceId: string;
-    /** False once this held fire has been stopped, deleted, or superseded. */
-    shouldSubmit?: () => boolean;
+    /** Aborted once this held fire has been stopped, deleted, or superseded. */
+    signal: AbortSignal;
   }): Promise<AgentRuntimeTurnResult>;
   log: DreamuxLogger;
   now?: () => number;
@@ -69,6 +69,7 @@ export class SchedulerService {
   private readonly now: () => number;
   private readonly timers = new Map<string, TimerSlot>();
   private readonly heldFires = new Map<string, symbol>();
+  private readonly heldFireControllers = new Map<string, AbortController>();
   private readonly stopWaiters = new Set<() => void>();
   private fireSeq = 0;
   private running = false;
@@ -101,6 +102,7 @@ export class SchedulerService {
     this.running = false;
     for (const slot of this.timers.values()) clearTimeout(slot.timer);
     this.timers.clear();
+    this.abortHeldFires();
     this.heldFires.clear();
     const waiters = [...this.stopWaiters];
     this.stopWaiters.clear();
@@ -154,6 +156,7 @@ export class SchedulerService {
 
   async delete(id: string): Promise<{ id: string; deleted: boolean }> {
     this.clearTimer(id);
+    this.abortHeldFire(id);
     this.heldFires.delete(id);
     const deleted = await this.store.delete(id);
     this.log.info(
@@ -277,17 +280,18 @@ export class SchedulerService {
   private async deferUntilIdleAndSubmit(job: CronJob): Promise<string> {
     const token = Symbol(job.id);
     this.heldFires.set(job.id, token);
+    const signal = this.signalForHeldFire(job.id, token);
     const runtime = this.opts.getRuntime();
     if (runtime === null) {
       if (this.opts.absentRuntimeStrategy === 'miss') {
         // Dispatcher-owned scheduler: a missing runtime means the start
         // transaction failed or was torn down; do not resurrect it outside
         // doStart().
-        this.heldFires.delete(job.id);
+        this.clearHeldFire(job.id);
         await this.armMissed(job, 'runtime unavailable');
         return 'missed';
       }
-      return this.submitHeld(job, token);
+      return this.submitHeld(job, token, signal);
     }
     const idle = runtime.waitIdle?.() ?? Promise.resolve();
     let maxDeferTimer: NodeJS.Timeout | null = null;
@@ -308,7 +312,7 @@ export class SchedulerService {
         stopSignal,
       ]);
     } catch (err) {
-      this.heldFires.delete(job.id);
+      this.clearHeldFire(job.id);
       throw err;
     } finally {
       if (maxDeferTimer !== null) clearTimeout(maxDeferTimer);
@@ -317,31 +321,34 @@ export class SchedulerService {
     if (this.heldFires.get(job.id) !== token) return 'skipped';
     if (wait !== 'idle') {
       // 'stopped' or 'timeout' — terminal for this fire, release the hold.
-      this.heldFires.delete(job.id);
+      this.clearHeldFire(job.id);
       if (wait === 'stopped') return 'skipped';
       await this.armMissed(job, 'max defer exceeded');
       return 'missed';
     }
 
-    return this.submitHeld(job, token);
+    return this.submitHeld(job, token, signal);
   }
 
-  private async submitHeld(job: CronJob, token: symbol): Promise<string> {
+  private async submitHeld(
+    job: CronJob,
+    token: symbol,
+    signal: AbortSignal,
+  ): Promise<string> {
     // Keep the held token across the submit so a stop() (which clears heldFires)
     // aborts this in-flight fire instead of submitting into a stopping owner;
     // release the hold in `finally` only if it is still ours.
     try {
       const current = await this.store.get(job.id);
       if (current === null || !current.enabled) return 'skipped';
-      const isCurrent = (): boolean => this.heldFires.get(job.id) === token;
-      if (!isCurrent()) return 'skipped';
+      if (signal.aborted) return 'skipped';
       const result = await this.opts.submitScheduled({
         jobId: current.id,
         prompt: current.action.prompt,
         sourceId: this.nextFireSourceId(current.id),
-        shouldSubmit: isCurrent,
+        signal,
       });
-      if (!isCurrent()) return 'skipped';
+      if (signal.aborted) return 'skipped';
       if (result.status !== 'submitted') {
         await this.armMissed(current, `completionInput returned ${result.status}`);
         return result.status;
@@ -364,8 +371,39 @@ export class SchedulerService {
       if (updated !== null) this.arm(updated);
       return 'submitted';
     } finally {
-      if (this.heldFires.get(job.id) === token) this.heldFires.delete(job.id);
+      if (this.heldFires.get(job.id) === token) {
+        this.clearHeldFire(job.id);
+      }
     }
+  }
+
+  private signalForHeldFire(jobId: string, token: symbol): AbortSignal {
+    if (this.heldFires.get(jobId) !== token) return AbortSignal.abort();
+    let controller = this.heldFireControllers.get(jobId);
+    if (controller === undefined) {
+      controller = new AbortController();
+      this.heldFireControllers.set(jobId, controller);
+    }
+    return controller.signal;
+  }
+
+  private abortHeldFire(jobId: string): void {
+    const controller = this.heldFireControllers.get(jobId);
+    if (controller === undefined) return;
+    controller.abort();
+    this.heldFireControllers.delete(jobId);
+  }
+
+  private abortHeldFires(): void {
+    for (const controller of this.heldFireControllers.values()) {
+      controller.abort();
+    }
+    this.heldFireControllers.clear();
+  }
+
+  private clearHeldFire(jobId: string): void {
+    this.abortHeldFire(jobId);
+    this.heldFires.delete(jobId);
   }
 
   private async armMissed(job: CronJob, reason: string): Promise<void> {

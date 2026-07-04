@@ -9,6 +9,11 @@
       "comment": "BREAKING: Dispatcher runtime recovery now lives in the dispatcher root identity.json. Retired state/<dispatcher>/status.json files are no longer imported, read as fallback, or treated as boot blockers; a dispatcher whose only checkpoint was left in status.json starts a fresh runtime after upgrade unless the operator deliberately seeds a compatible root identity.json session_id. Rebuild: old status.json checkpoints are not automatically resumed. Dispatcher launch now resolves through identity.agent_runtime -> agents[] like TeamLeader and TeamMate, and provider scratch no longer uses state/<dispatcher>/runtime/<name>.",
       "type": "minor",
       "packageName": "@excitedjs/dreamux"
+    },
+    {
+      "comment": "Rebuild: channel MCP descriptors are now rendered only by Dreamux core from provider static tool catalogs. Providers no longer construct descriptor command/admin-socket/caller/team args, inbound delivery hooks are removed, scheduler held-fire cancellation uses AbortSignal, and shared agent identity/turn/runtime-state storage moved to the neutral agent-entity module.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
     }
   ],
   "packageName": "@excitedjs/dreamux",

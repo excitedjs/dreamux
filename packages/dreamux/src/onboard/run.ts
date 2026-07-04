@@ -44,7 +44,7 @@ import type {
   OnboardDoctorResult,
   OnboardFileLedger,
   OnboardRunResult,
-} from './types.js';
+} from '../onboard/types.js';
 
 type EffectiveOnboardAnswers = OnboardAnswers & {
   nodeBin: string;

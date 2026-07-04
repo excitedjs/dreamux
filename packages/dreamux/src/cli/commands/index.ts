@@ -8,6 +8,7 @@ import { createDoctorCommand } from './doctor.js';
 import { createOnboardCommand } from './onboard.js';
 import { createServeCommand } from './serve.js';
 import { createStatusCommand } from './status.js';
+import { createSubscribeChannelMcpCommand } from './subscribe-channel-mcp.js';
 import { createTeamMateMcpCommand } from './teammate-mcp.js';
 import { createTeamMcpCommand } from './team-mcp.js';
 import { createUninstallCommand } from './uninstall.js';
@@ -25,6 +26,7 @@ export function createDreamuxCommands(deps: CliDeps): DreamuxCommand[] {
     createDaemonCommand(),
     createDispatcherCommand(deps),
     createChannelMcpCommand(),
+    createSubscribeChannelMcpCommand(),
     createTeamMateMcpCommand(),
     createTeamMcpCommand(),
     createCronMcpCommand(),

@@ -35,9 +35,10 @@ import {
   cacheRoot,
   defaultDispatcherCwd,
 } from '../src/platform/paths.js';
-import { dispatcherHostPaths } from '../src/agent-runtime/host-paths.js';
-import { TeamMateIdentityStore } from '../src/service/teammate-collection/identity-store.js';
-import { TeamMateRuntimeStateStore } from '../src/service/teammate-collection/runtime-state.js';
+import { hostRuntimePaths } from '../src/agent-runtime/host-paths.js';
+import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.js';
+import { ensureDispatcherIdentity } from '../src/service/dispatcher-service/identity.js';
+import { AgentRuntimeStateStore } from '../src/service/agent-entity/runtime-state.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
 import {
   renderChannelInput,
@@ -400,14 +401,14 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     } = {},
   ): Promise<{
     runtime: AgentRuntime;
-    state: TeamMateRuntimeStateStore;
+    state: AgentRuntimeStateStore;
     store: { get(id: string): { last_error: string | null } | null };
     fleet: FakeFleet;
   }> {
     const dispatcher = claudeDispatcher('flow', opts.config ?? {});
-    const identities = new TeamMateIdentityStore({ warn: () => {} });
+    const identities = new AgentIdentityStore({ warn: () => {} });
     const cwd = defaultDispatcherCwd('flow');
-    let identity = await identities.ensureDispatcherIdentity({
+    let identity = await ensureDispatcherIdentity(identities, {
       dispatcherId: 'flow',
       agentRuntime: dispatcher.agentRuntime,
       sourceCwd: cwd,
@@ -429,7 +430,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
         sessionId: opts.resumeSession,
       });
     }
-    const state = new TeamMateRuntimeStateStore(identities, identity);
+    const state = new AgentRuntimeStateStore(identities, identity);
     const runtime = claudeCodeProvider({
       sessionFactory: fleet.factory,
     }).createRuntime({
@@ -438,7 +439,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       cwd,
       mcpServers: [FEISHU_MCP],
       state,
-      paths: dispatcherHostPaths,
+      paths: hostRuntimePaths,
       ...(opts.systemPrompt !== undefined ? { systemPrompt: opts.systemPrompt } : {}),
       ...(opts.skillSources !== undefined
         ? { skillSources: opts.skillSources }
@@ -752,13 +753,8 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     const { runtime } = await makeRuntime(fleet);
     await runtime.start();
 
-    const accepted: string[] = [];
-    const first = await runtime.channelInput(
-      { sourceId: 'm1', text: 'do it' },
-      { onAccepted: (input) => void accepted.push(input.sourceId) },
-    );
+    const first = await runtime.channelInput({ sourceId: 'm1', text: 'do it' });
     expect(first.status).toBe('submitted');
-    expect(accepted).toEqual(['m1']);
 
     await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
     expect(fleet.sessions[0]?.prompts[0]).toBe('do it');

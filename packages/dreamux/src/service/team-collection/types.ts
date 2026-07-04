@@ -1,11 +1,11 @@
 import {
   assertNotReservedAgentName,
-  type TeamMateIdentityStatus,
-  type TeamMateRuntimeStatus,
-  type TeamMateTurnResult,
-  type TeamMateWorktreeIdentity,
-  type TeamMateWorktreeRequest,
-} from '../teammate-collection/types.js';
+  type AgentEntityIdentityStatus,
+  type AgentEntityRuntimeStatus,
+  type AgentEntityTurnResult,
+  type AgentEntityWorktreeIdentity,
+} from '../agent-entity/types.js';
+import type { TeamMateWorktreeRequest } from '../teammate-collection/types.js';
 
 export const TEAM_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
@@ -21,7 +21,7 @@ export interface TeamRecord {
   leader_name: string;
   leader_agent_runtime: string;
   runtime_cwd: string;
-  worktree: TeamMateWorktreeIdentity;
+  worktree: AgentEntityWorktreeIdentity;
   status: TeamStatus;
   intent: string | null;
   created_at: number;
@@ -86,7 +86,7 @@ export interface TeamView {
 
 export interface TeamSummary {
   team: TeamView;
-  leader: TeamMateRuntimeStatus | null;
+  leader: AgentEntityRuntimeStatus | null;
   member_count: number;
 }
 
@@ -101,7 +101,7 @@ export interface TeamListRow {
   intent: string | null;
   source_repo: string | null;
   leader_name: string;
-  leader_state: TeamMateIdentityStatus | null;
+  leader_state: AgentEntityIdentityStatus | null;
   member_count: number;
   created_at: number;
   updated_at: number;
@@ -141,7 +141,7 @@ export interface TeamHistoryRow {
   source_repo: string | null;
   leader_name: string;
   leader_agent_runtime: string;
-  leader_state: TeamMateIdentityStatus | null;
+  leader_state: AgentEntityIdentityStatus | null;
   member_count: number;
   created_at: number;
   updated_at: number;
@@ -160,13 +160,13 @@ export interface TeamCreateResult extends TeamSummary {
    * The leader's first-turn result, or `null` when the team was created without
    * an explicit `prompt` (the leader starts idle and fires no turn at creation).
    */
-  turn: TeamMateTurnResult | null;
+  turn: AgentEntityTurnResult | null;
 }
 
 export interface TeamLeaderSendResult {
   team: TeamView;
-  leader: TeamMateRuntimeStatus;
-  turn: TeamMateTurnResult;
+  leader: AgentEntityRuntimeStatus;
+  turn: AgentEntityTurnResult;
 }
 
 export function validateTeamId(id: string): string {

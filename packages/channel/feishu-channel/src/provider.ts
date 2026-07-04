@@ -8,20 +8,18 @@
  * The neutral seam is now fully load-bearing (issue #209 cleanup): `start(routes)`
  * forwards the normalized turn input + routing envelope to `routes.deliver` and
  * returns core's REAL `InboundDeliveryResult` (status + turnId), which the
- * session's reaction ledger keys off; provider-level `mcpServerDescriptor`,
- * `handleSessionlessTool`,
- * `getIdentity`, `reply`, `react`, `resolveTarget`, `tools`, `handleTool`, and
- * `messageBelongsToTarget` are all wired to the real session logic. Core converges
- * its dispatcher wiring onto this neutral `ChannelSession` in the same cleanup; the
- * package never imports `@excitedjs/dreamux` and stays a first-class, loader-real
- * `ChannelProvider` for the generic channel loader and external embedders.
+ * session's reaction ledger keys off; provider-level static tools,
+ * `handleSessionlessTool`, `getIdentity`, `reply`, `react`, `resolveTarget`,
+ * `handleTool`, and `messageBelongsToTarget` are all wired to the real session
+ * logic. Core converges its dispatcher wiring onto this neutral `ChannelSession`
+ * in the same cleanup; the package never imports `@excitedjs/dreamux` and stays
+ * a first-class, loader-real `ChannelProvider` for the generic channel loader
+ * and external embedders.
  */
 import { join } from 'node:path';
 
 import type {
-  AgentRuntimeMcpServer,
   ChannelInboundEnvelope,
-  ChannelMcpDescriptorContext,
   ChannelProvider,
   ChannelProviderDescriptor,
   ChannelProviderFactory,
@@ -45,14 +43,6 @@ import type { FeishuBot } from './bot.js';
 import { listChatBots } from './chat-bots-store.js';
 import { buildToolCatalog, parseFeishuMcpToolInput } from './feishu-mcp-tools.js';
 import { BUILTIN_FEISHU_PROVIDER_REF } from './provider-ref.js';
-
-/**
- * The Feishu MCP server name (this channel's MCP tool namespace). Core ships a
- * generic `channel-mcp` stdio shim and neutral admin-method routing; the package
- * only needs the server name to shape the descriptor it returns from
- * `mcpServerDescriptor` below.
- */
-const FEISHU_MCP_SERVER_NAME = 'feishu';
 
 /** Validated Feishu channel config the neutral session is constructed from. */
 export interface FeishuChannelConfig {
@@ -134,15 +124,11 @@ class FeishuChannelSessionAdapter implements ChannelSession {
   async start(routes: ChannelRoutes): Promise<void> {
     await this.session.start({
       // The session normalized the turn into `input`; forward it plus the
-      // channel routing envelope and the accept hooks to core, and return core's
+      // channel routing envelope to core, and return core's
       // REAL delivery result (status + turnId) so the session's reaction ledger
       // keys off the actually-submitted turn — not a fabricated id.
-      submitTurn: (input, envelope, hooks) =>
-        routes.deliver(
-          input,
-          inboundEnvelopeToChannelEnvelope(this.channel_id, envelope),
-          hooks,
-        ),
+      submitTurn: (input, envelope) =>
+        routes.deliver(input, inboundEnvelopeToChannelEnvelope(this.channel_id, envelope)),
     });
   }
 
@@ -172,14 +158,6 @@ class FeishuChannelSessionAdapter implements ChannelSession {
       message_id: input.message_id,
       emoji: input.reaction,
     });
-  }
-
-  tools(): readonly ChannelToolDescriptor[] {
-    return buildToolCatalog().map((tool) => ({
-      name: tool.name as string,
-      description: tool.description as string,
-      inputSchema: tool.inputSchema,
-    }));
   }
 
   async handleTool(call: ChannelToolCall): Promise<unknown> {
@@ -228,48 +206,12 @@ export function createFeishuChannelProvider(
       // and displays it without ever naming a Feishu config field.
       return config.appId;
     },
-    mcpServerDescriptor(
-      context: ChannelMcpDescriptorContext,
-      _config: FeishuChannelConfig,
-    ): AgentRuntimeMcpServer | null {
-      // Build the generic `channel-mcp` stdio descriptor from the host bin
-      // command + admin socket. Feishu always exposes its MCP surface, so this
-      // never returns null. Core owns the bin path and the generic shim; the
-      // package only shapes args. The provider + channel id are routed back
-      // through the shim so a multi-channel dispatcher reaches the configured
-      // channel whose descriptor was injected. The tool LIST is static provider
-      // metadata, so it travels with the descriptor (base64 JSON — robust
-      // through the runtime's arg layer) and the generic shim serves
-      // `tools/list` from it WITHOUT an admin round-trip; only `tools/call`
-      // reaches the live session or sessionless provider handler.
-      const toolsB64 = Buffer.from(
-        JSON.stringify(buildToolCatalog()),
-        'utf8',
-      ).toString('base64');
-      return {
-        name: FEISHU_MCP_SERVER_NAME,
-        command: context.command,
-        args: [
-          'channel-mcp',
-          '--provider',
-          context.provider,
-          '--channel-id',
-          context.channel_id,
-          '--dispatcher',
-          context.dispatcher_id,
-          ...(context.callerKind !== undefined
-            ? ['--caller', context.callerKind]
-            : []),
-          ...(context.team_id !== undefined ? ['--team-id', context.team_id] : []),
-          ...(context.leader_name !== undefined
-            ? ['--leader-name', context.leader_name]
-            : []),
-          '--channel-tools-b64',
-          toolsB64,
-          '--admin-socket',
-          context.adminSocketPath,
-        ],
-      };
+    tools(): readonly ChannelToolDescriptor[] {
+      return buildToolCatalog().map((tool) => ({
+        name: tool.name as string,
+        description: tool.description as string,
+        inputSchema: tool.inputSchema,
+      }));
     },
     onboard: {
       async collect(_context, prompts): Promise<Record<string, unknown>> {

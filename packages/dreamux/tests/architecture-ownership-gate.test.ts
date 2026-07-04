@@ -12,9 +12,9 @@ import {
   resetRuntimeConfig,
 } from '../src/platform/paths.js';
 import { TeammateCollection } from '../src/service/teammate-collection/index.js';
-import { TeamMateIdentityStore } from '../src/service/teammate-collection/identity-store.js';
-import { TeamMateTurnsStore } from '../src/service/teammate-collection/turns-store.js';
-import type { TeamMateWorktreeIdentity } from '../src/service/teammate-collection/types.js';
+import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.js';
+import { AgentTurnsStore } from '../src/service/agent-entity/turns-store.js';
+import type { AgentEntityWorktreeIdentity } from '../src/service/agent-entity/types.js';
 import { WorktreeManager } from '../src/service/worktree/manager.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 
@@ -267,8 +267,8 @@ describe('architecture ownership gate (#233)', () => {
     const workspace = join(root, 'workspace');
     await mkdir(workspace, { recursive: true });
     const log = noopLog();
-    const identities = new TeamMateIdentityStore({ warn: log.warn.bind(log) });
-    const turnsStore = new TeamMateTurnsStore({ warn: log.warn.bind(log) });
+    const identities = new AgentIdentityStore({ warn: log.warn.bind(log) });
+    const turnsStore = new AgentTurnsStore({ warn: log.warn.bind(log) });
     const worktree = {
       mode: 'reuse-cwd',
       slug: null,
@@ -278,7 +278,7 @@ describe('architecture ownership gate (#233)', () => {
       cleanup: 'keep',
       cleanup_state: 'not-managed',
       cleanup_error: null,
-    } satisfies TeamMateWorktreeIdentity;
+    } satisfies AgentEntityWorktreeIdentity;
 
     await identities.create({
       dispatcherId: 'dispatcher-a',
@@ -321,7 +321,7 @@ describe('architecture ownership gate (#233)', () => {
     const workspace = join(root, 'workspace');
     await mkdir(workspace, { recursive: true });
     const log = noopLog();
-    const identities = new TeamMateIdentityStore({ warn: log.warn.bind(log) });
+    const identities = new AgentIdentityStore({ warn: log.warn.bind(log) });
     const worktree = {
       mode: 'reuse-cwd',
       slug: null,
@@ -331,7 +331,7 @@ describe('architecture ownership gate (#233)', () => {
       cleanup: 'keep',
       cleanup_state: 'not-managed',
       cleanup_error: null,
-    } satisfies TeamMateWorktreeIdentity;
+    } satisfies AgentEntityWorktreeIdentity;
     const path = dispatcherAgentIdentityPath({
       dispatcherId: 'dispatcher-a',
       name: 'legacy-worker',

@@ -12,6 +12,10 @@ import {
   type ExternalChannelModuleImporter,
 } from '../channel/external-channel-provider.js';
 import {
+  loadSubscribeChannelProviders,
+  type ExternalSubscribeChannelModuleImporter,
+} from '../subscribe-channel/external-provider.js';
+import {
   createBuiltinProviderRegistry,
   type ProviderRegistry,
 } from '../registry/index.js';
@@ -33,13 +37,16 @@ import {
   readOptionalBoolean,
   redactConfigSecrets,
   resolveConfigProvider,
+  subscribeChannelProviderRefs,
 } from './config-helpers.js';
+import { asSubscribeChannelProvider } from '../subscribe-channel/catalog.js';
 
 export { expandHome } from './config-helpers.js';
 
 export interface DreamuxConfig {
     agents: Record<string, ResolvedAgentConfig>;
     dispatchers: DispatcherConfig[];
+    subscriptions?: DispatcherSubscriptionConfig[];
 }
 
 export interface ResolvedAgentConfig {
@@ -65,6 +72,14 @@ export interface DispatcherChannelConfig {
     identity?: string;
 }
 
+export interface DispatcherSubscriptionConfig {
+  id: string;
+  dispatcher_id: string;
+  provider: string;
+  config: DispatcherProviderConfig;
+  rawConfig?: DispatcherProviderConfig;
+}
+
 export interface DispatcherRuntimeConfig {
   provider: string;
     config: DispatcherProviderConfig;
@@ -84,6 +99,7 @@ export interface ConfigPathOverrides {
     providerRegistry?: ProviderRegistry;
     externalAgentRuntimeModuleImporter?: ExternalAgentRuntimeModuleImporter;
     externalChannelModuleImporter?: ExternalChannelModuleImporter;
+    externalSubscribeChannelModuleImporter?: ExternalSubscribeChannelModuleImporter;
 }
 
 export interface LoadConfigResult {
@@ -139,6 +155,7 @@ export async function loadConfig(
 }
 
 export function stringifyConfig(config: DreamuxConfig): string {
+  const subscriptions = config.subscriptions ?? [];
   const fileShape = {
     agents: Object.entries(config.agents).map(([id, agent]) => ({
       id,
@@ -156,6 +173,16 @@ export function stringifyConfig(config: DreamuxConfig): string {
       })),
       agentRuntime: dispatcher.agentRuntime,
     })),
+    ...(subscriptions.length === 0
+      ? {}
+      : {
+          subscriptions: subscriptions.map((subscription) => ({
+            id: subscription.id,
+            dispatcher_id: subscription.dispatcher_id,
+            provider: subscription.provider,
+            config: subscription.rawConfig ?? subscription.config,
+          })),
+        }),
   };
   return `${JSON.stringify(fileShape, null, 2)}\n`;
 }
@@ -207,6 +234,11 @@ async function readConfigFile(
     registry: providerRegistry,
     refs: channelProviderRefs(parsed),
     importModule: overrides.externalChannelModuleImporter,
+  });
+  await loadSubscribeChannelProviders({
+    registry: providerRegistry,
+    refs: subscribeChannelProviderRefs(parsed),
+    importModule: overrides.externalSubscribeChannelModuleImporter,
   });
   return await mergeWithDefaults(parsed, file, providerRegistry);
 }
@@ -267,12 +299,25 @@ async function mergeWithDefaults(
     throw new Error(`dreamux config error in ${file}: top-level must be an object`);
   }
   rejectTopLevelCodex(raw, file);
-  rejectUnknownKeys(raw, new Set(['agents', 'dispatchers']), file, '');
+  rejectUnknownKeys(raw, new Set(['agents', 'dispatchers', 'subscriptions']), file, '');
 
   const agents = await readAgents(raw['agents'], file, providerRegistry);
+  const dispatchers = await readDispatchers(
+    raw['dispatchers'],
+    file,
+    agents,
+    providerRegistry,
+  );
+  const subscriptions = await readSubscriptions(
+    raw['subscriptions'],
+    file,
+    dispatchers,
+    providerRegistry,
+  );
   return {
     agents,
-    dispatchers: await readDispatchers(raw['dispatchers'], file, agents, providerRegistry),
+    dispatchers,
+    ...(subscriptions.length === 0 ? {} : { subscriptions }),
   };
 }
 
@@ -454,6 +499,88 @@ function resolveAgentRuntime(
     );
   }
   return agentRuntimeId;
+}
+
+async function readSubscriptions(
+  rawSubscriptions: unknown,
+  file: string,
+  dispatchers: DispatcherConfig[],
+  providerRegistry: ProviderRegistry,
+): Promise<DispatcherSubscriptionConfig[]> {
+  if (rawSubscriptions === undefined) return [];
+  if (!Array.isArray(rawSubscriptions)) {
+    throw new Error(
+      `dreamux config error in ${file}: subscriptions must be an array (got ${describeType(rawSubscriptions)})`,
+    );
+  }
+  const out: DispatcherSubscriptionConfig[] = [];
+  const dispatcherIds = new Set(dispatchers.map((dispatcher) => dispatcher.id));
+  const keys = new Set<string>();
+  for (let index = 0; index < rawSubscriptions.length; index++) {
+    const raw = rawSubscriptions[index];
+    const prefix = `subscriptions[${index}].`;
+    if (!isPlainObject(raw)) {
+      throw new Error(
+        `dreamux config error in ${file}: subscriptions[${index}] must be an object (got ${describeType(raw)})`,
+      );
+    }
+    rejectUnknownKeys(raw, new Set(['id', 'dispatcher_id', 'provider', 'config']), file, prefix);
+    const id = requireNonEmptyString(raw, 'id', file, prefix);
+    const dispatcherId = validateDispatcherId(
+      requireNonEmptyString(raw, 'dispatcher_id', file, prefix),
+      `${prefix}dispatcher_id`,
+    );
+    if (!dispatcherIds.has(dispatcherId)) {
+      throw new Error(
+        `dreamux config error in ${file}: ${prefix}dispatcher_id='${dispatcherId}' ` +
+          'does not match any configured dispatcher.',
+      );
+    }
+    const key = `${dispatcherId}\0${id}`;
+    if (keys.has(key)) {
+      throw new Error(
+        `dreamux config error in ${file}: ${prefix}id='${id}' duplicates another subscription for dispatcher '${dispatcherId}'.`,
+      );
+    }
+    keys.add(key);
+    const provider = resolveConfigProvider(
+      requireNonEmptyString(raw, 'provider', file, prefix),
+      'subscribeChannel',
+      file,
+      prefix,
+      providerRegistry,
+    );
+    const rawConfig = readProviderConfigObject(
+      raw['config'],
+      file,
+      `${prefix}config`,
+      { allowMissing: true },
+    );
+    const subscriptionProvider = asSubscribeChannelProvider(
+      providerRegistry.getImplementation(provider.descriptor.id),
+    );
+    if (subscriptionProvider === null) {
+      throw new Error(
+        `dreamux config error in ${file}: ${prefix}provider='${provider.ref}' is registered but has no subscription implementation.\n` +
+          'Its provider package did not yield a usable subscribeChannel implementation. ' +
+          'Register a valid implementation before config validation.',
+      );
+    }
+    const parsed =
+      ((await subscriptionProvider.readConfig?.(rawConfig, {
+        dispatcher_id: dispatcherId,
+        subscription_id: id,
+        provider: provider.ref,
+      })) as DispatcherProviderConfig | undefined) ?? rawConfig;
+    out.push({
+      id,
+      dispatcher_id: dispatcherId,
+      provider: provider.ref,
+      config: parsed,
+      rawConfig,
+    });
+  }
+  return out;
 }
 
 async function readDispatcherChannels(

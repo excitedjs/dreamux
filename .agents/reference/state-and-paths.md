@@ -86,8 +86,8 @@ Key source:
 
 - `/packages/dreamux/src/platform/paths.ts`
 - `/packages/dreamux/src/state/dispatcher-store.ts`
-- `/packages/dreamux/src/service/teammate-collection/identity-store.ts`
-- `/packages/dreamux/src/service/teammate-collection/turns-store.ts`
+- `/packages/dreamux/src/service/agent-entity/identity-store.ts`
+- `/packages/dreamux/src/service/agent-entity/turns-store.ts`
 - `/packages/dreamux/src/service/team-collection/store.ts`
 - `/packages/dreamux/src/service/scheduler/store.ts`
 - `/packages/channel/feishu-channel/src/chat-bots-store.ts`

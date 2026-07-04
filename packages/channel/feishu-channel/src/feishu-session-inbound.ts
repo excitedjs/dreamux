@@ -347,21 +347,14 @@ export async function onMessage(
     chatType: event.chatType === 'group' ? 'group' : 'p2p',
     messageId: event.messageId,
   };
-  const delivery: AgentRuntimeTurnResult = await submitter.submitTurn(
-    input,
-    envelope,
-    {
-      onAccepted: async () => {
-        await setInboundReaction(
-          h,
-          event.messageId,
-          event.chatId,
-          RECEIVED_REACTION_EMOJI,
-          'received',
-        );
-      },
-    },
+  await setInboundReaction(
+    h,
+    event.messageId,
+    event.chatId,
+    RECEIVED_REACTION_EMOJI,
+    'received',
   );
+  const delivery: AgentRuntimeTurnResult = await submitter.submitTurn(input, envelope);
   if (delivery.status === 'submitted') {
     log(h).info(
       {
@@ -385,7 +378,10 @@ export async function onMessage(
       IN_PROGRESS_REACTION_EMOJI,
       'in_progress',
     );
-  } else if (delivery.status === 'failed') {
+    return;
+  }
+  await clearInboundReaction(h, event.messageId);
+  if (delivery.status === 'failed') {
     const message =
       delivery.error instanceof Error
         ? delivery.error.message

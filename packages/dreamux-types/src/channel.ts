@@ -11,7 +11,6 @@
  * here because external channel packages must compile against
  * `@excitedjs/dreamux-types` only and must not import `@excitedjs/dreamux`.
  */
-import type { AgentRuntimeMcpServer } from './agent-runtime.js';
 import type { DreamuxLogger } from './logger.js';
 import type {
   ChannelProviderDescriptor,
@@ -23,11 +22,7 @@ import type {
   ProviderFactory,
   ProviderOnboard,
 } from './provider.js';
-import type {
-  InboundDeliveryHooks,
-  InboundDeliveryResult,
-  InboundTurnInput,
-} from './turn.js';
+import type { InboundDeliveryResult, InboundTurnInput } from './turn.js';
 
 export interface ChannelTarget {
   target_type: string;
@@ -92,11 +87,6 @@ export interface ChannelReactInput {
   reaction: string;
 }
 
-export interface ChannelToolListContext {
-  dispatcher_id: string;
-  channel_id: string;
-}
-
 export interface ChannelToolCall {
   name: string;
   arguments: Record<string, unknown>;
@@ -120,40 +110,15 @@ export interface ChannelRoutes {
    * the neutral turn {@link InboundTurnInput} (text/body/attrs/attachments it
    * normalized) plus the routing/identity {@link ChannelInboundEnvelope}; core
    * dedupes (on `input.sourceId`), submits the turn, and returns the neutral
-   * {@link InboundDeliveryResult} — the channel session keys its own
-   * reaction/ack ledger off the `submitted` turn id. `hooks.onAccepted` (if
-   * given) fires after dedupe accepts and before submit, so the channel can mark
-   * the message received. A channel inbound never yields `'skipped'` (that is a
-   * notice-only state), so the union is exactly the inbound-delivery one.
+   * {@link InboundDeliveryResult}. The channel session owns any platform ack or
+   * reaction lifecycle around this call. A channel inbound never yields
+   * `'skipped'` (that is a notice-only state), so the union is exactly the
+   * inbound-delivery one.
    */
   deliver(
     input: InboundTurnInput,
     envelope: ChannelInboundEnvelope,
-    hooks?: InboundDeliveryHooks,
   ): Promise<InboundDeliveryResult>;
-}
-
-/**
- * The context core passes to {@link ChannelProvider.mcpServerDescriptor}. Carries
- * the host bin command + admin-socket path the channel's stdio MCP shim forwards
- * to, plus the caller identity so the descriptor can scope its tool calls. The
- * provider builds its own stdio descriptor from these neutral pieces and its
- * configured channel view; core never names the channel's tool transport.
- */
-export interface ChannelMcpDescriptorContext {
-  /** The Dreamux bin command the channel's MCP shim is spawned as. */
-  command: string;
-  /** The admin Unix-socket path the shim forwards tool calls to. */
-  adminSocketPath: string;
-  dispatcher_id: string;
-  /** Canonical provider ref for the channel whose MCP descriptor is being built. */
-  provider: string;
-  /** Dispatcher-local channel id for the channel whose MCP descriptor is being built. */
-  channel_id: string;
-  /** Which agent role hosts the MCP server (scopes the shim's admin calls). */
-  callerKind?: 'dispatcher' | 'team_leader';
-  team_id?: string;
-  leader_name?: string;
 }
 
 /**
@@ -181,12 +146,6 @@ export interface ChannelSession {
   reply?(input: ChannelReplyInput): Promise<unknown>;
   /** Add a reaction. Omit entirely if the platform has no reaction surface. */
   react?(input: ChannelReactInput): Promise<unknown>;
-  /**
-   * Provider-specific live-session tools. Omit if the provider exposes none.
-   * This is independent from the provider-level MCP descriptor, which is static
-   * config metadata for runtime launch.
-   */
-  tools?(context: ChannelToolListContext): readonly ChannelToolDescriptor[];
   /**
    * Handle a provider-specific tool call. Omit when `tools` is omitted; the two
    * go together. These optional members are absent, not no-op stubs, when the
@@ -250,18 +209,11 @@ export interface ChannelProvider<TConfig = unknown> {
    */
   getIdentity?(config: TConfig): string;
   /**
-   * Build the stdio MCP server descriptor that backs this channel's
-   * provider-specific tools for a runtime. Returns `null` when the configured
-   * channel exposes no MCP surface for the given caller. Omit entirely if the
-   * provider never exposes one. The descriptor is an
-   * {@link AgentRuntimeMcpServer} so a runtime can launch it through the same
-   * neutral MCP-server seam as any other. This is provider/config-owned static
-   * metadata, not a live-session capability.
+   * Static provider/config tool catalog. Core owns every MCP descriptor and uses
+   * this catalog as launch metadata; live sessions are never a metadata source.
+   * Omit when the channel exposes no provider-specific MCP tools.
    */
-  mcpServerDescriptor?(
-    context: ChannelMcpDescriptorContext,
-    config: TConfig,
-  ): AgentRuntimeMcpServer | null;
+  tools?(config: TConfig): readonly ChannelToolDescriptor[];
   /**
    * Provider-owned onboarding. Core asks only for host envelope fields and
    * delegates provider-specific raw config collection to this capability.

@@ -98,7 +98,6 @@ import type {
   AgentRuntimeTextInput,
   AgentRuntimeTurnResult,
   DreamuxLogger,
-  InboundDeliveryHooks,
   InboundTurnInput,
   TurnSettledSignal,
 } from '@excitedjs/dreamux-types';
@@ -303,21 +302,11 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     return { status: 'submitted', turnId };
   }
 
-  async channelInput(
-    input: InboundTurnInput,
-    hooks: InboundDeliveryHooks = {},
-  ): Promise<AgentRuntimeTurnResult> {
+  async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
     if (this.stopped) return { status: 'stopped' };
     const key = input.sourceId;
     if (key !== '' && this.seen.has(key)) return { status: 'duplicate' };
     if (key !== '') this.seen.add(key);
-    try {
-      await hooks.onAccepted?.(input);
-    } catch (err) {
-      // onAccepted is a best-effort side effect (e.g. a channel reaction); a
-      // failure there must not drop the turn.
-      this.log('warn', 'claude-code onAccepted hook failed', err);
-    }
     // This runtime owns wrapping the channel input into its delivery shape: a
     // structured channel turn becomes the native `<channel source="…">` block;
     // a plain turn passes through unchanged.

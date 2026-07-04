@@ -51,14 +51,6 @@ export type InboundDeliveryResult =
   | { status: 'submitted'; turnId: string }
   | { status: 'failed'; error: Error };
 
-export interface InboundDeliveryHooks {
-  /**
-   * Called after process-local dedupe accepts the message and before the turn
-   * is submitted.
-   */
-  onAccepted?: (input: InboundTurnInput) => void | Promise<void>;
-}
-
 /**
  * A neutral "turn settled" signal: a delivered turn reached a terminal state.
  * Capability-neutral — carries no channel or runtime specifics.

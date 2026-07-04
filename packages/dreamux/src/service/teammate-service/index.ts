@@ -1,5 +1,3 @@
-import { createHash } from 'node:crypto';
-
 import type {
   AgentRuntime,
   AgentRuntimeCreateContext,
@@ -9,7 +7,6 @@ import type {
   AgentRuntimeSystemPrompt,
   AgentRuntimeTurnResult,
   DreamuxLogger,
-  InboundDeliveryHooks,
   InboundTurnInput,
   TurnSettledSignal,
 } from '@excitedjs/dreamux-types';
@@ -21,33 +18,31 @@ import {
   hostRuntimePaths,
 } from '../../agent-runtime/index.js';
 import type { ResolvedAgentConfig } from '../../config/config.js';
-import { validateDispatcherId } from '../../state/dispatcher-id.js';
 import { resolveAgent } from '../teammate-collection/agent-config.js';
-import type { TeamMateIdentityStore } from '../teammate-collection/identity-store.js';
+import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
 import {
   foldLastTurns,
   toStatus,
   validateLastTurns,
 } from '../teammate-collection/read-helpers.js';
-import { TeamMateRuntimeStateStore } from '../teammate-collection/runtime-state.js';
+import { AgentRuntimeStateStore } from '../agent-entity/runtime-state.js';
 import { recordSettledTurn, recordSubmittedTurn, toTurnResult } from './turn-recording.js';
-import type { TeamMateTurnsStore } from '../teammate-collection/turns-store.js';
+import type { AgentTurnsStore } from '../agent-entity/turns-store.js';
 import {
   reprepareDeletedManagedWorktree,
 } from '../worktree/workspaces.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 import {
   requireLifecycleText,
-  type CloseTeamMateInput,
-  type TeamMateCloseResult,
-  type TeamMateIdentity,
-  type TeamMateLastResult,
-  type TeamMateRuntimeStatus,
-  type TeamMateSendResult,
-  type TeamMateTurnOrigin,
-  type TeamMateTurnResult,
-  type TeamMateWorktreeIdentity,
-} from '../teammate-collection/types.js';
+  type AgentEntityCloseResult,
+  type AgentEntityIdentity,
+  type AgentEntityLastResult,
+  type AgentEntityRuntimeStatus,
+  type AgentEntitySendResult,
+  type AgentEntityTurnOrigin,
+  type AgentEntityTurnResult,
+  type AgentEntityWorktreeIdentity,
+} from '../agent-entity/types.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import { dispatcherCompletionSpillDir } from '../../platform/paths.js';
@@ -56,7 +51,6 @@ import type {
   CompletionEnvelope,
 } from '../completion-router/index.js';
 
-/**
 /** The provider-construction inputs a {@link TeammateService} needs to launch. */
 export interface RuntimeLaunchSpec {
   provider: AgentRuntimeProvider;
@@ -69,8 +63,8 @@ export interface RuntimeLaunchSpec {
 export interface TeammateServiceDeps {
   config: DreamuxConfig;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
-  identities: TeamMateIdentityStore;
-  turnsStore: TeamMateTurnsStore;
+  identities: AgentIdentityStore;
+  turnsStore: AgentTurnsStore;
   /**
    * The worktree manager backing `close` (cleanup) and a closed-teammate reopen
    * (reprepare). Omitted only for the dispatcher agent (issue #233 Phase 5),
@@ -81,7 +75,7 @@ export interface TeammateServiceDeps {
   /** Increments per submission across the whole collection so sourceIds stay unique. */
   nextSubmissionSeq: () => number;
   /** Tracks an in-flight settle capture so the collection can drain on shutdown. */
-  trackSettleCapture: (capture: Promise<void>) => void;
+  trackSettleCapture?: (capture: Promise<void>) => void;
   /**
    * Route a settled, send-initiated turn's completion to whoever initiated it,
    * via the per-dispatcher `CompletionRouter`. The collection wires this to
@@ -99,6 +93,19 @@ export interface TeammateServiceOptions {
   skillSources?: readonly AgentRuntimeSkillSource[];
   disableFeatures?: readonly string[];
   systemPrompt?: AgentRuntimeSystemPrompt;
+  runtimeId: string;
+  ownsWorktreeOnClose: boolean;
+  loggerFields?: Record<string, unknown>;
+  assertIdentityScope?: (identity: AgentEntityIdentity, dispatcherId: string) => void;
+}
+
+function assertIdentityBelongsToDispatcher(
+  identity: AgentEntityIdentity,
+  dispatcherId: string,
+): void {
+  if (identity.dispatcher_id !== dispatcherId) {
+    throw new Error(`TeamMate ${JSON.stringify(identity.name)} does not exist`);
+  }
 }
 
 /**
@@ -115,30 +122,42 @@ export interface TeammateServiceOptions {
 export class TeammateService {
   private runtime: AgentRuntime | null = null;
   private starting: Promise<void> | null = null;
-  private state: TeamMateRuntimeStateStore;
+  private state: AgentRuntimeStateStore;
   private readonly mcpServers: readonly AgentRuntimeMcpServer[];
   private readonly skillSources: readonly AgentRuntimeSkillSource[];
   private readonly disableFeatures: readonly string[];
   private readonly systemPrompt: AgentRuntimeSystemPrompt | undefined;
+  private readonly runtimeId: string;
+  private readonly ownsWorktreeOnClose: boolean;
+  private readonly loggerFields: Record<string, unknown>;
+  private readonly assertIdentityScope: (
+    identity: AgentEntityIdentity,
+    dispatcherId: string,
+  ) => void;
 
   constructor(
     private readonly deps: TeammateServiceDeps,
     private readonly dispatcherId: string,
-    private identity: TeamMateIdentity,
-    options: TeammateServiceOptions = {},
+    private identity: AgentEntityIdentity,
+    options: TeammateServiceOptions,
   ) {
     this.mcpServers = options.mcpServers ?? [];
     this.skillSources = options.skillSources ?? [];
     this.disableFeatures = options.disableFeatures ?? [];
     this.systemPrompt = options.systemPrompt;
-    this.state = new TeamMateRuntimeStateStore(deps.identities, identity);
+    this.runtimeId = options.runtimeId;
+    this.ownsWorktreeOnClose = options.ownsWorktreeOnClose;
+    this.loggerFields = options.loggerFields ?? { teammate: identity.name };
+    this.assertIdentityScope =
+      options.assertIdentityScope ?? assertIdentityBelongsToDispatcher;
+    this.state = new AgentRuntimeStateStore(deps.identities, identity);
   }
 
   get name(): string {
     return this.identity.name;
   }
 
-  current(): TeamMateIdentity {
+  current(): AgentEntityIdentity {
     return this.state.current();
   }
 
@@ -188,9 +207,9 @@ export class TeammateService {
       prompt: string;
       intent?: string;
       /** The caller-owned source to record in the teammate turn ledger. */
-      turnOrigin: TeamMateTurnOrigin;
+      turnOrigin: AgentEntityTurnOrigin;
     },
-  ): Promise<TeamMateSendResult> {
+  ): Promise<AgentEntitySendResult> {
     await this.ensureStarted({ reopenClosed: true });
     if (input.intent !== undefined && input.intent !== '') {
       await this.state.updateIntent(input.intent);
@@ -207,8 +226,8 @@ export class TeammateService {
   /** Submit the first prompt of a freshly created teammate / leader. */
   async submitInitialPrompt(
     prompt: string,
-    opts: { turnOrigin: TeamMateTurnOrigin },
-  ): Promise<TeamMateTurnResult> {
+    opts: { turnOrigin: AgentEntityTurnOrigin },
+  ): Promise<AgentEntityTurnResult> {
     const turn = await this.submitPrompt(prompt);
     await recordSubmittedTurn(this.turnsStore, this.live(), {
       turnId: turn.turn_id ?? null,
@@ -218,13 +237,10 @@ export class TeammateService {
     return turn;
   }
 
-  async channelInput(
-    input: InboundTurnInput,
-    hooks?: InboundDeliveryHooks,
-  ): Promise<AgentRuntimeTurnResult> {
+  async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
     await this.ensureStarted({ reopenClosed: true });
     const runtime = this.mustRuntime();
-    const result = await runtime.channelInput(input, hooks);
+    const result = await runtime.channelInput(input);
     if (result.status === 'submitted') {
       await recordSubmittedTurn(this.turnsStore, this.live(), {
         turnId: result.turnId,
@@ -239,11 +255,11 @@ export class TeammateService {
     jobId: string;
     prompt: string;
     sourceId: string;
-    shouldSubmit?: () => boolean;
+    signal: AbortSignal;
   }): Promise<AgentRuntimeTurnResult> {
-    if (input.shouldSubmit?.() === false) return { status: 'skipped' };
+    if (input.signal.aborted) return { status: 'skipped' };
     await this.ensureStarted();
-    if (input.shouldSubmit?.() === false) return { status: 'skipped' };
+    if (input.signal.aborted) return { status: 'skipped' };
     const runtime = this.mustRuntime();
     const result = await runtime.completionInput({
       text: input.prompt,
@@ -259,22 +275,20 @@ export class TeammateService {
     return result;
   }
 
-  async close(input: Pick<CloseTeamMateInput, 'note'>): Promise<TeamMateCloseResult> {
+  async close(input: { note: string }): Promise<AgentEntityCloseResult> {
     requireLifecycleText(input.note, 'TeamMate close note');
     await this.stop();
     const identity = this.current();
-    // A `team_member` / `team_leader` BORROWS the Team's one shared worktree (a
-    // member spawn requires a `sharedWorkspace`, and the leader sits at the team
-    // root) — it does not own it. Running `cleanup()` here would
-    // `git worktree remove` the live shared dir out from under the leader and
-    // every other member; a clean, already-merged shared worktree would actually
-    // be deleted. The shared worktree's lifecycle belongs to the Team and is
-    // cleaned exactly once at `dissolve`. Only a dispatcher-owned `teammate`
-    // cleans its worktree on close.
-    const worktree =
-      identity.role === 'teammate'
-        ? await this.mustWorktrees().cleanup(identity)
-        : identity.worktree;
+    // Close-time cleanup requires both ownership from the entity profile and
+    // delete-on-close metadata from the identity. Shared worktrees can still
+    // carry delete-on-close, but their lifecycle belongs to their owner.
+    const shouldCleanup =
+      this.ownsWorktreeOnClose &&
+      identity.worktree.mode === 'managed' &&
+      identity.worktree.cleanup === 'delete-on-close';
+    const worktree = shouldCleanup
+      ? await this.mustWorktrees().cleanup(identity)
+      : identity.worktree;
     const closed = await this.deps.identities.update(identity, {
       status: 'closed',
       closedAt: Date.now(),
@@ -283,39 +297,27 @@ export class TeammateService {
       worktree,
     });
     this.identity = closed;
-    this.state = new TeamMateRuntimeStateStore(this.deps.identities, closed);
+    this.state = new AgentRuntimeStateStore(this.deps.identities, closed);
     return { teammate: toStatus(closed, null) };
   }
 
   /**
-   * Sync this entity's persisted worktree to the result of the Team's single
-   * authoritative cleanup at `dissolve` (issue #237). A `team_member` /
-   * `team_leader` borrows the Team's shared worktree and skips cleanup on its own
-   * `close`, so without this its recorded `cleanup_state` would stay
-   * `managed-active` after dissolve removed the worktree. dissolve hands every
-   * borrower the same identity `WorktreeManager.cleanup()` returned, so the
-   * persisted (and displayed, via `status`) state matches reality everywhere.
+   * Sync this entity's persisted worktree to an owner-performed cleanup result.
+   * Borrowers skip close-time cleanup, so their displayed state must be updated
+   * when the owning service removes the shared worktree.
    */
-  async applyWorktreeCleanup(worktree: TeamMateWorktreeIdentity): Promise<void> {
+  async applyWorktreeCleanup(worktree: AgentEntityWorktreeIdentity): Promise<void> {
     const identity = this.current();
-    // Only a borrowed Team worktree is synced from the Team's dissolve cleanup. A
-    // dispatcher-owned `teammate` owns its worktree and updates it on its own
-    // `close`; overwriting it from the team result would be wrong, so fail loud.
-    if (identity.role !== 'team_leader' && identity.role !== 'team_member') {
-      throw new Error(
-        `applyWorktreeCleanup is only valid for a team_leader/team_member, not ${JSON.stringify(identity.role)}`,
-      );
-    }
     const updated = await this.deps.identities.update(identity, { worktree });
     this.identity = updated;
-    this.state = new TeamMateRuntimeStateStore(this.deps.identities, updated);
+    this.state = new AgentRuntimeStateStore(this.deps.identities, updated);
   }
 
-  status(): TeamMateRuntimeStatus {
+  status(): AgentEntityRuntimeStatus {
     return toStatus(this.current(), this.runtime);
   }
 
-  async last(turns?: number): Promise<TeamMateLastResult> {
+  async last(turns?: number): Promise<AgentEntityLastResult> {
     const requestedTurns = validateLastTurns(turns);
     const identity = this.current();
     const teammate = toStatus(identity, this.runtime);
@@ -355,7 +357,7 @@ export class TeammateService {
    * in-flight start — so corrupt identity scope still fails fast.
    */
   async ensureStarted(opts: { reopenClosed?: boolean } = {}): Promise<void> {
-    this.assertOwnRoster();
+    this.assertIdentityScope(this.current(), this.dispatcherId);
     if (this.runtime !== null) return;
     if (this.starting !== null) return this.starting;
     const promise = this.startFromRecord(opts).finally(() => {
@@ -384,7 +386,7 @@ export class TeammateService {
         lastError: null,
       });
       this.identity = identity;
-      this.state = new TeamMateRuntimeStateStore(this.deps.identities, identity);
+      this.state = new AgentRuntimeStateStore(this.deps.identities, identity);
     }
     await this.startRuntime();
   }
@@ -410,7 +412,7 @@ export class TeammateService {
       checkpointId: identity.session_id,
       context: {
         identity: {
-          runtime_id: providerRuntimeId(identity),
+          runtime_id: this.runtimeId,
           checkpoint_id: identity.session_id,
         },
         config: agent.config,
@@ -426,7 +428,7 @@ export class TeammateService {
         logger:
           this.deps.log.child?.({
             dispatcher_id: this.dispatcherId,
-            teammate: identity.role === 'dispatcher' ? undefined : identity.name,
+            ...this.loggerFields,
           }) ?? this.deps.log,
       },
     };
@@ -464,7 +466,7 @@ export class TeammateService {
     settled: TurnSettledSignal,
   ): void {
     const capture = this.deliverSettledTurn(runtime, settled);
-    this.deps.trackSettleCapture(capture);
+    this.deps.trackSettleCapture?.(capture);
   }
 
   /**
@@ -498,29 +500,7 @@ export class TeammateService {
     await Promise.allSettled([record, route]);
   }
 
-  private assertOwnRoster(): void {
-    const identity = this.current();
-    if (identity.dispatcher_id !== this.dispatcherId) {
-      throw new Error(`TeamMate ${JSON.stringify(identity.name)} does not exist`);
-    }
-    if (
-      identity.role === 'dispatcher' &&
-      identity.team_id === null &&
-      identity.name === 'dispatcher'
-    ) {
-      return;
-    }
-    if (identity.role === 'teammate' && identity.team_id === null) return;
-    if (
-      (identity.role === 'team_leader' || identity.role === 'team_member') &&
-      identity.team_id !== null
-    ) {
-      return;
-    }
-    throw new Error(`TeamMate ${JSON.stringify(identity.name)} does not exist`);
-  }
-
-  private async submitPrompt(prompt: string): Promise<TeamMateTurnResult> {
+  private async submitPrompt(prompt: string): Promise<AgentEntityTurnResult> {
     await this.ensureStarted({ reopenClosed: true });
     const runtime = this.mustRuntime();
     const submissionSeq = this.deps.nextSubmissionSeq();
@@ -531,11 +511,11 @@ export class TeammateService {
     return toTurnResult(result);
   }
 
-  private get turnsStore(): TeamMateTurnsStore {
+  private get turnsStore(): AgentTurnsStore {
     return this.deps.turnsStore;
   }
 
-  private live(): { state: TeamMateRuntimeStateStore } {
+  private live(): { state: AgentRuntimeStateStore } {
     return { state: this.state };
   }
 
@@ -601,27 +581,4 @@ function turnResultToCompletionDelivery(
         error: new Error('completion delivery unexpectedly skipped'),
       };
   }
-}
-
-export function providerRuntimeId(identity: TeamMateIdentity): string {
-  if (identity.role === 'dispatcher') return validateDispatcherId(identity.dispatcher_id);
-  return childRuntimeId(
-    identity.dispatcher_id,
-    runtimeIdentityName(identity),
-  );
-}
-
-function childRuntimeId(dispatcherId: string, name: string): string {
-  const suffix = createHash('sha256')
-    .update(`${dispatcherId}\0${name}`)
-    .digest('hex')
-    .slice(0, 12);
-  const prefix = dispatcherId.slice(0, 40);
-  return validateDispatcherId(`${prefix}.tm.${suffix}`, 'teammate runtime id');
-}
-
-function runtimeIdentityName(identity: TeamMateIdentity): string {
-  return identity.team_id !== null
-    ? `${identity.team_id}.${identity.name}`
-    : identity.name;
 }

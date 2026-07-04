@@ -47,7 +47,6 @@ export type {
 } from './provider.js';
 export type {
   InboundAttachment,
-  InboundDeliveryHooks,
   InboundDeliveryResult,
   InboundTurnInput,
   TurnSettledSignal,
@@ -86,7 +85,6 @@ export type {
   ChannelDiagnosticRunner,
   ChannelDiagnosticResult,
   ChannelInboundEnvelope,
-  ChannelMcpDescriptorContext,
   ChannelMessageTargetCheck,
   ChannelProvider,
   ChannelProviderFactory,
@@ -101,15 +99,14 @@ export type {
   ChannelToolCall,
   ChannelToolContext,
   ChannelToolDescriptor,
-  ChannelToolListContext,
 } from './channel.js';
 export type {
   SubscribeChannelConfigContext,
   SubscribeChannelEvent,
-  SubscribeChannelMcpDescriptorContext,
   SubscribeChannelProvider,
   SubscribeChannelProviderFactory,
   SubscribeChannelRoutes,
   SubscribeChannelSession,
   SubscribeChannelSessionCreateContext,
+  SubscribeChannelToolContext,
 } from './subscribe-channel.js';

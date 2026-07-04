@@ -94,7 +94,7 @@ describe('builtin:feishu loads the real @excitedjs/feishu-channel package', () =
     expect(target.bindable).toBe(true);
 
     expect(session.messageBelongsToTarget!({ target, message_id: 'm-1' })).toBe(false);
-    expect(session.tools!({ dispatcher_id: 'flow', channel_id: 'feishu' }).map((t) => t.name)).toEqual([
+    expect(provider.tools!(config).map((t) => t.name)).toEqual([
       'reply',
       'react',
       'list_chat_bots',

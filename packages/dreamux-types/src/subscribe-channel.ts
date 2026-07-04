@@ -8,13 +8,16 @@
  * publish subscribed events into Dreamux and may contribute MCP tools, but they
  * do not have chat ids, channel targets, Team binding, or reply ownership.
  */
-import type { AgentRuntimeMcpServer } from './agent-runtime.js';
 import type { DreamuxLogger } from './logger.js';
 import type {
   ProviderFactory,
   SubscribeChannelProviderDescriptor,
 } from './provider.js';
 import type { InboundDeliveryResult } from './turn.js';
+import type {
+  ChannelToolCall,
+  ChannelToolDescriptor,
+} from './channel.js';
 
 export interface SubscribeChannelConfigContext {
   dispatcher_id: string;
@@ -51,28 +54,17 @@ export interface SubscribeChannelRoutes {
   publish(event: SubscribeChannelEvent): Promise<InboundDeliveryResult>;
 }
 
-export interface SubscribeChannelMcpDescriptorContext {
-  /** The Dreamux bin command a subscription MCP shim is spawned as. */
-  command: string;
-  /** The admin Unix-socket path the shim forwards tool calls to. */
-  adminSocketPath: string;
-  dispatcher_id: string;
-  provider: string;
-  subscription_id: string;
-}
-
 export interface SubscribeChannelSession {
   readonly provider: string;
   readonly subscription_id: string;
   start(routes: SubscribeChannelRoutes): Promise<void>;
   close(): Promise<void>;
-  /**
-   * Optional MCP servers contributed by the subscription provider. These tools
-   * are provider capabilities, not Team binding or chat reply tools.
-   */
-  mcpServerDescriptors?(
-    context: SubscribeChannelMcpDescriptorContext,
-  ): readonly AgentRuntimeMcpServer[];
+}
+
+export interface SubscribeChannelToolContext {
+  dispatcher_id: string;
+  subscription_id: string;
+  logger?: DreamuxLogger;
 }
 
 export interface SubscribeChannelProvider<TConfig = unknown> {
@@ -85,6 +77,21 @@ export interface SubscribeChannelProvider<TConfig = unknown> {
   createSession(
     context: SubscribeChannelSessionCreateContext<TConfig>,
   ): SubscribeChannelSession;
+  /**
+   * Static provider/config tool catalog. Core owns any MCP descriptors and uses
+   * this catalog as launch metadata; live subscription sessions are never a
+   * metadata source. Omit when the subscription exposes no provider-specific
+   * MCP tools.
+   */
+  tools?(config: TConfig): readonly ChannelToolDescriptor[];
+  /**
+   * Handle a provider-specific subscription tool call. Omit when `tools` is
+   * omitted; the two go together.
+   */
+  handleTool?(
+    call: ChannelToolCall,
+    context: SubscribeChannelToolContext,
+  ): Promise<unknown>;
 }
 
 export type SubscribeChannelProviderFactory<TConfig = unknown> = ProviderFactory<

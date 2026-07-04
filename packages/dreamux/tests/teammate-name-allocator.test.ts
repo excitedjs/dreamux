@@ -11,7 +11,7 @@ import {
 import {
   assertNotReservedAgentName,
   TEAMMATE_NAME_PATTERN,
-} from '../src/service/teammate-collection/types.js';
+} from '../src/service/agent-entity/types.js';
 
 /**
  * Unit coverage for the concrete-name allocator (issue #188): role prefixes,

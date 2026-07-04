@@ -16,7 +16,7 @@ import {
 } from '@excitedjs/agent-runtime-codex';
 import { createClaudeCodeAgentRuntimeProvider } from '@excitedjs/agent-runtime-claude-code';
 import { codexAgentRuntimeCatalog } from './helpers/fake-agent-runtime.js';
-import { dispatcherHostPaths } from '../src/agent-runtime/host-paths.js';
+import { hostRuntimePaths } from '../src/agent-runtime/host-paths.js';
 import { asAgentRuntimeDescriptor } from './helpers/provider.js';
 import type {
   AgentRuntime,
@@ -144,7 +144,7 @@ describe('AgentRuntimeProviderCatalog', () => {
       cwd: '/tmp/dreamux-test-cwd',
       mcpServers: [],
       state: noopState(),
-      paths: dispatcherHostPaths,
+      paths: hostRuntimePaths,
     });
 
     expect(runtime.providerRef).toBe('builtin:codex');
@@ -230,7 +230,7 @@ describe('AgentRuntimeProviderCatalog', () => {
       cwd: '/tmp/dreamux-test-cwd',
       mcpServers: [],
       state: noopState(),
-      paths: dispatcherHostPaths,
+      paths: hostRuntimePaths,
     });
 
     expect(runtime.providerRef).toBe('npm:@example/dreamux-runtime#named');
