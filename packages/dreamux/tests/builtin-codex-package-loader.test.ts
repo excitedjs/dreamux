@@ -85,7 +85,7 @@ describe('builtin:codex loads the real @excitedjs/agent-runtime-codex package', 
     const tmp = mkdtempSync(join(tmpdir(), 'dx-codex-loader-'));
     tmpDirs.push(tmp);
     const paths: AgentRuntimePathContext = {
-      dispatcherDir: () => tmp,
+      cacheDir: () => tmp,
       logsDir: () => tmp,
       runtimeSocketDirs: () => [join(tmp, 'sockets')],
     };

@@ -1,8 +1,8 @@
 import type {
   AgentRuntimeResumeCheckpoint,
+  AgentRuntimeStatus,
   AgentRuntimeStateCallbacks,
 } from '@excitedjs/dreamux-types';
-import type { DispatcherStatus } from '../../state/dispatcher-store.js';
 import type { TeamMateIdentityStore } from './identity-store.js';
 import {
   runtimeStatusToIdentityStatus,
@@ -51,7 +51,7 @@ export class TeamMateRuntimeStateStore implements AgentRuntimeStateCallbacks {
   }
 
   async setStatus(
-    status: DispatcherStatus,
+    status: AgentRuntimeStatus,
     extras: {
       last_error?: string | null;
       last_started_at?: number;

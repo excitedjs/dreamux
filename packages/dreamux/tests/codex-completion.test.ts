@@ -10,13 +10,13 @@ import {
   type CodexProcessOptions,
   CodexWsClient,
 } from '@excitedjs/agent-runtime-codex';
-import { DispatcherStore } from '../src/state/dispatcher-store.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
-import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
+import { testDispatcherConfig } from './helpers/config.js';
 import { startFakeCodex, type FakeCodex } from './fake-codex.js';
 import type {
   AgentRuntime,
   AgentRuntimePathContext,
+  AgentRuntimeStateCallbacks,
 } from '@excitedjs/dreamux-types';
 
 /** A codex app-server child stub: the runtime talks to the fake over WS instead. */
@@ -45,13 +45,10 @@ describe('codex plain completionInput delivery', () => {
 
   async function makeRuntime(fake: FakeCodex): Promise<AgentRuntime> {
     const dispatcher = testDispatcherConfig({ id: 'flow' });
-    const store = new DispatcherStore(testDreamuxConfig([dispatcher]));
-    const row = store.get('flow');
-    expect(row).not.toBeNull();
     const tmp = mkdtempSync(join(tmpdir(), 'dx-codex-completion-'));
     tmpDirs.push(tmp);
     const paths: AgentRuntimePathContext = {
-      dispatcherDir: () => tmp,
+      cacheDir: () => tmp,
       logsDir: () => tmp,
       runtimeSocketDirs: () => [join(tmp, 'sockets')],
     };
@@ -64,11 +61,11 @@ describe('codex plain completionInput delivery', () => {
       },
     });
     const runtime = provider.createRuntime({
-      identity: { runtime_id: 'flow', checkpoint_id: row!.thread_id },
+      identity: { runtime_id: 'flow', checkpoint_id: null },
       config: dispatcherCodexConfig(dispatcher),
       cwd: tmp,
       mcpServers: [],
-      state: store.bindRuntime('flow'),
+      state: noopState(),
       paths,
     });
     runtimes.push(runtime);
@@ -139,3 +136,10 @@ describe('codex plain completionInput delivery', () => {
     expect(fake.injectItemsParams).toHaveLength(0);
   });
 });
+
+function noopState(): AgentRuntimeStateCallbacks {
+  return {
+    async setStatus() {},
+    async setCheckpoint() {},
+  };
+}

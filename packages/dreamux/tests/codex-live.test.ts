@@ -194,31 +194,35 @@ function fakeInbound(
 }
 
 function liveConfig(dispatcherCwd: string, codexHomeEnv: string): DreamuxConfig {
+  const dispatcher = testDispatcherConfig({
+    id: 'live',
+    cwd: dispatcherCwd,
+    enabled: true,
+    feishu: {
+      app_id: 'app-live',
+      app_secret: 'secret-server-only',
+    },
+    codex: {
+      bin: 'codex',
+      approval_policy: 'never',
+      sandbox_mode: 'danger-full-access',
+      extra_args: [],
+      extra_env: {
+        HOME: codexHomeEnv,
+      },
+      // A longer handshake margin for the real codex app-server, now a
+      // dispatcher-local field rather than a global default.
+      initialize_timeout_ms: 15000,
+    },
+  });
   return {
-    agents: {},
-    dispatchers: [
-      testDispatcherConfig({
-        id: 'live',
-        cwd: dispatcherCwd,
-        enabled: true,
-        feishu: {
-          app_id: 'app-live',
-          app_secret: 'secret-server-only',
-        },
-        codex: {
-          bin: 'codex',
-          approval_policy: 'never',
-          sandbox_mode: 'danger-full-access',
-          extra_args: [],
-          extra_env: {
-            HOME: codexHomeEnv,
-          },
-          // A longer handshake margin for the real codex app-server, now a
-          // dispatcher-local field rather than a global default.
-          initialize_timeout_ms: 15000,
-        },
-      }),
-    ],
+    agents: {
+      [dispatcher.agentRuntime]: {
+        provider: dispatcher.runtime.provider,
+        config: dispatcher.runtime.config,
+      },
+    },
+    dispatchers: [dispatcher],
   };
 }
 

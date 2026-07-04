@@ -4,6 +4,11 @@
       "comment": "Move channel MCP descriptor ownership from ChannelSession to ChannelProvider so descriptors are assembled from provider config without requiring live channel sessions.",
       "type": "minor",
       "packageName": "@excitedjs/dreamux-types"
+    },
+    {
+      "comment": "BREAKING: Replace AgentRuntimePathContext.dispatcherDir(id) with cacheDir(), a global rebuildable cache-root seam for provider scratch. Runtime recovery remains in host-owned identity state, while providers keep logsDir() and runtimeSocketDirs() for logs and volatile sockets.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux-types"
     }
   ],
   "packageName": "@excitedjs/dreamux-types",

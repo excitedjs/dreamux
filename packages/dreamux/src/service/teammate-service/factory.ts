@@ -9,26 +9,13 @@ import type { TeamMateIdentity } from '../teammate-collection/types.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 import {
   TeammateService,
-  type RuntimeLaunchSpec,
   type TeammateServiceDeps,
   type TeammateServiceOptions,
 } from './index.js';
 
-type TeammateServiceBuildLaunch = NonNullable<TeammateServiceDeps['buildLaunch']>;
-
-export type TeammateServiceLaunch =
-  | {
-      kind: 'agent-ref';
-    }
-  | {
-      kind: 'inline';
-      build: TeammateServiceBuildLaunch;
-    };
-
 export interface CreateTeammateServiceInput {
   dispatcherId: string;
   identity: TeamMateIdentity;
-  launch: TeammateServiceLaunch;
   options?: TeammateServiceOptions;
   config: DreamuxConfig;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
@@ -55,7 +42,6 @@ export function createTeammateService(
     turnsStore: input.turnsStore,
     ...(input.worktrees !== undefined ? { worktrees: input.worktrees } : {}),
     log: input.log,
-    ...(input.launch.kind === 'inline' ? { buildLaunch: input.launch.build } : {}),
     nextSubmissionSeq: input.nextSubmissionSeq,
     trackSettleCapture: input.trackSettleCapture,
     routeSettledCompletion: input.routeSettledCompletion,
@@ -68,5 +54,3 @@ export function createTeammateService(
     input.options,
   );
 }
-
-export type { RuntimeLaunchSpec };

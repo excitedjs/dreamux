@@ -72,8 +72,8 @@ export class Dispatchers {
         service?.summary(row) ?? {
           dispatcher_id: row.dispatcher_id,
           channel_identity: row.channel_identity,
-          status: row.status,
-          thread_id: row.thread_id,
+          status: 'stopped',
+          thread_id: null,
           enabled: row.enabled === 1,
         }
       );

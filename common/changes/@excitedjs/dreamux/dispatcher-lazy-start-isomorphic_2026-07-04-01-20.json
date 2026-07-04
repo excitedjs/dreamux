@@ -4,6 +4,11 @@
       "comment": "Make Dispatcher server boot lazy-start its runtime: ordinary starts prepare channel sessions and input sources without starting the Dispatcher agent, while unbound inbound, Dispatcher cron, and valid restart-notice targets wake the runtime.",
       "type": "minor",
       "packageName": "@excitedjs/dreamux"
+    },
+    {
+      "comment": "BREAKING: Dispatcher runtime recovery now lives in the dispatcher root identity.json. Retired state/<dispatcher>/status.json files are no longer imported, read as fallback, or treated as boot blockers; a dispatcher whose only checkpoint was left in status.json starts a fresh runtime after upgrade unless the operator deliberately seeds a compatible root identity.json session_id. Rebuild: old status.json checkpoints are not automatically resumed. Dispatcher launch now resolves through identity.agent_runtime -> agents[] like TeamLeader and TeamMate, and provider scratch no longer uses state/<dispatcher>/runtime/<name>.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
     }
   ],
   "packageName": "@excitedjs/dreamux",

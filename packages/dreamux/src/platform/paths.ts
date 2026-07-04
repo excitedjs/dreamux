@@ -13,14 +13,12 @@
  *                             (see platform/runtime-sockets.ts)
  *     state/                  durable server-owned state
  *       <dispatcher-id>/      (issue #233 symmetric layout)
- *         status.json         AUTHORITATIVE dispatcher state for rebuild
  *         access.json
  *         chat-bots.json
  *         channel-bindings.json
  *         teammate/<name>/    dispatcher-owned teammates: {identity.json, turn.jsonl}
  *         team/<team>/        one dir per team: leader {identity.json, turn.jsonl},
  *                             record.json, teammate/<name>/ members
- *         runtime/<name>/     per-teammate provider scratch (mcp.json, …)
  *     logs/
  *       dreamux-server.log
  *       codex-app-server/
@@ -285,16 +283,12 @@ export function cronMcpLogPath(id: string): string {
   return join(cronMcpLogDir(), `${dispatcherPathSegment(id)}.log`);
 }
 
-export function dispatcherStatusPath(id: string): string {
-  return join(dispatcherDir(id), 'status.json');
-}
-
 /**
  * Per-dispatcher agent-collection root (issue #233 symmetric layout): the
  * `teammate/` directory whose immediate children are one directory per
  * dispatcher-owned teammate. Listing the collection is a blind `readdir` of this
  * dir, so it must hold ONLY entity directories — the dispatcher agent's own
- * pair, channel bindings, and runtime scratch live elsewhere.
+ * pair and channel bindings live elsewhere.
  */
 export function dispatcherTeamMateDir(id: string): string {
   return join(dispatcherDir(id), 'teammate');
@@ -394,19 +388,6 @@ export function dispatcherAgentTurnsPath(input: {
   role: AgentEntityRole;
 }): string {
   return join(dispatcherAgentEntityDir(input), 'turn.jsonl');
-}
-
-/**
- * Per-teammate provider runtime scratch root (mcp.json, etc.). Lives at the
- * dispatcher root under `runtime/<name>/`, a sibling of the `teammate/` and
- * `team/` blind-scan collections — never inside them — so listing a collection
- * never enumerates scratch (issue #233).
- */
-export function dispatcherTeamMateRuntimeDir(
-  id: string,
-  teammateName: string,
-): string {
-  return join(dispatcherDir(id), 'runtime', teamMateNameSegment(teammateName));
 }
 
 export function dispatcherChannelBindingsPath(id: string): string {

@@ -84,9 +84,23 @@ class FakeRuntime implements AgentRuntime {
   }
 }
 
+class DeferredStartRuntime extends FakeRuntime {
+  releaseStart: (() => void) | null = null;
+  started = false;
+
+  override async start(): Promise<void> {
+    this.started = true;
+    await new Promise<void>((resolve) => {
+      this.releaseStart = resolve;
+    });
+    await super.start();
+  }
+}
+
 function fakeRuntimeCatalog(
   runtimes: FakeRuntime[],
   contexts: AgentRuntimeCreateContext[] = [],
+  createRuntime: () => FakeRuntime = () => new FakeRuntime(),
 ): AgentRuntimeProviderCatalog {
   const provider: AgentRuntimeProvider = {
     ref: FAKE_RUNTIME_REF,
@@ -97,7 +111,7 @@ function fakeRuntimeCatalog(
     },
     getCapabilities: () => CAPABILITIES,
     createRuntime(context: AgentRuntimeCreateContext) {
-      const runtime = new FakeRuntime();
+      const runtime = createRuntime();
       contexts.push(context);
       runtimes.push(runtime);
       return runtime;
@@ -149,6 +163,7 @@ async function createTestTeamLeader(input: {
   config: ReturnType<typeof testDreamuxConfig>;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   identity?: string;
+  start?: boolean;
 }): Promise<TeammateService> {
   const log = noopLog();
   const identities = new TeamMateIdentityStore({ warn: log.warn.bind(log) });
@@ -194,7 +209,7 @@ async function createTestTeamLeader(input: {
       /* no router in this unit helper */
     },
   });
-  await leader.ensureStarted();
+  if (input.start !== false) await leader.ensureStarted();
   if (input.prompt !== undefined) {
     await leader.submitInitialPrompt(input.prompt, {
       turnOrigin: 'dispatcher',
@@ -365,6 +380,7 @@ describe('TeammateService channel input routing', () => {
       workspace,
       config,
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
+      start: false,
     });
 
     await expect(
@@ -379,6 +395,85 @@ describe('TeammateService channel input routing', () => {
     expect(runtimes[0]!.textSubmitted).toEqual([
       { text: 'scheduled report', sourceId: 'scheduled:job-1:1' },
     ]);
+  });
+
+  it('does not start a cold scheduled runtime when shouldSubmit is already false', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const leader = await createTestTeamLeader({
+      dispatcherId: 'dispatcher-a',
+      teamId: 'alpha',
+      name: 'tl-alpha-0001',
+      agentRuntime: 'agent-a',
+      workspace,
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
+      start: false,
+    });
+
+    await expect(
+      leader.scheduledInput({
+        jobId: 'job-1',
+        prompt: 'scheduled report',
+        sourceId: 'scheduled:job-1:1',
+        shouldSubmit: () => false,
+      }),
+    ).resolves.toMatchObject({ status: 'skipped' });
+    expect(runtimes).toHaveLength(0);
+  });
+
+  it('does not submit when shouldSubmit flips false during scheduled runtime start', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const created: DeferredStartRuntime[] = [];
+    let shouldSubmit = true;
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const leader = await createTestTeamLeader({
+      dispatcherId: 'dispatcher-a',
+      teamId: 'alpha',
+      name: 'tl-alpha-0001',
+      agentRuntime: 'agent-a',
+      workspace,
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes, [], () => {
+        const runtime = new DeferredStartRuntime();
+        created.push(runtime);
+        return runtime;
+      }),
+      start: false,
+    });
+
+    const scheduled = leader.scheduledInput({
+      jobId: 'job-1',
+      prompt: 'scheduled report',
+      sourceId: 'scheduled:job-1:1',
+      shouldSubmit: () => shouldSubmit,
+    });
+    await waitFor(() => created[0]?.releaseStart !== null);
+    shouldSubmit = false;
+    const runtime = created[0]!;
+    runtime.releaseStart!();
+
+    await expect(scheduled).resolves.toMatchObject({ status: 'skipped' });
+    expect(runtime.started).toBe(true);
+    expect(runtime.textSubmitted).toEqual([]);
   });
 
   it('submits scheduled input to an already-running team-scoped TeamLeader', async () => {
@@ -422,3 +517,12 @@ describe('TeammateService channel input routing', () => {
     });
   });
 });
+
+async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('waitFor timed out');
+}

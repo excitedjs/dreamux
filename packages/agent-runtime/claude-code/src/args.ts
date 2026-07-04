@@ -4,8 +4,8 @@
  * This is the concrete proof that the AgentRuntimeProvider abstraction is not
  * "Codex renamed": the same Dreamux `AgentRuntimeMcpServer[]` descriptors that
  * the Codex runtime turns into `-c mcp_servers.*` TOML CLI flags are here turned
- * into Claude Code's native MCP config — a JSON document loaded via
- * `claude --mcp-config <file>`. Two runtimes, one descriptor contract, two
+ * into Claude Code's native MCP config — an inline JSON document passed via
+ * `claude --mcp-config <json>`. Two runtimes, one descriptor contract, two
  * completely different process argument shapes.
  *
  * Pure functions only — no IO, no process spawning — so they are fully unit
@@ -27,8 +27,8 @@ const CLAUDE_DISALLOWED_TOOLS_BY_FEATURE: Record<string, readonly string[]> = {
 
 export interface ClaudeCodeResidentArgsInput {
   config: DispatcherClaudeCodeConfig;
-  /** Path to the generated Claude Code MCP config document. */
-  mcpConfigPath: string;
+  /** Inline Claude Code MCP config JSON document. */
+  mcpConfigJson: string;
   /** Resume an existing Claude Code session, when one is known (spawn-time). */
   resumeSessionId?: string | null;
   /**
@@ -95,7 +95,7 @@ function escapeXmlText(text: string): string {
  * each turn is written to stdin as a `user` message line (see
  * `claude-code/stream.ts`).
  *
- * It reads its MCP servers from the JSON config (`--mcp-config`), optionally
+ * It reads its MCP servers from the inline JSON config (`--mcp-config`), optionally
  * resumes a prior session at spawn time (`--resume`, used both for operator
  * resume and for re-spawn after an unexpected exit), and threads the operator's
  * model / permission mode / extra args through.
@@ -109,7 +109,7 @@ export function claudeCodeResidentArgs(input: ClaudeCodeResidentArgsInput): stri
     'stream-json',
     '--verbose',
     '--mcp-config',
-    input.mcpConfigPath,
+    input.mcpConfigJson,
   ];
   // Role-gated skills: add each compatible source dir so claude discovers its
   // `.claude/skills`. Present on every (re)spawn — start and resume both rebuild

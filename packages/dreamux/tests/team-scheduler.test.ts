@@ -476,9 +476,10 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     expect(dispatcher.runtimeStatus()).toEqual({
       status: 'ready',
       threadId: 'checkpoint-only-thread',
+      lastError: null,
     });
     expect(dispatcher.summary(dispatchers.get('dispatcher-a')!)).toMatchObject({
-      status: 'ready',
+      status: 'running',
       thread_id: 'checkpoint-only-thread',
     });
 
@@ -720,7 +721,11 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     await dispatcher.start();
 
     expect(runtimes).toHaveLength(0);
-    expect(dispatcher.runtimeStatus()).toEqual({ status: null, threadId: null });
+    expect(dispatcher.runtimeStatus()).toEqual({
+      status: null,
+      threadId: null,
+      lastError: null,
+    });
     expect(sessions).toHaveLength(1);
     expect(sessions[0]?.startCount).toBe(1);
     await dispatcher.stop();
@@ -1044,7 +1049,11 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     await stopped;
     await expect(run).resolves.toEqual({ id: job.id, status: 'skipped' });
     expect(runtime!.textSubmitted).toEqual([]);
-    expect(dispatcher.runtimeStatus()).toEqual({ status: null, threadId: null });
+    expect(dispatcher.runtimeStatus()).toEqual({
+      status: null,
+      threadId: null,
+      lastError: null,
+    });
   });
 
   it('server start injects notify-resumed before input sources can deliver turns', async () => {
@@ -1068,8 +1077,7 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       }),
     ]);
     const log = noopLog();
-    const first = new DispatcherStore(config);
-    await first.setCheckpoint('dispatcher-a', { id: 'checkpoint-resume' });
+    await seedDispatcherCheckpoint(config, workspace, log, 'checkpoint-resume');
     await writeRestartIntent({
       targets: ['dispatcher-a'],
       announce: 'Restart completed.',
@@ -1110,8 +1118,6 @@ describe('TeamLeader cron scheduler lifecycle', () => {
         runtimeProvider: FAKE_RUNTIME_REF,
       }),
     ]);
-    const first = new DispatcherStore(config);
-    await first.setCheckpoint('dispatcher-a', { id: 'checkpoint-resume' });
     await writeRestartIntent({
       targets: ['dispatcher-a'],
       ttlMs: 1,
@@ -1136,6 +1142,34 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     await server.shutdown();
   });
 });
+
+async function seedDispatcherCheckpoint(
+  config: ReturnType<typeof testDreamuxConfig>,
+  workspace: string,
+  log: DreamuxLogger,
+  sessionId: string,
+): Promise<void> {
+  const identities = new TeamMateIdentityStore({ warn: log.warn.bind(log) });
+  const dispatcher = config.dispatchers[0]!;
+  const identity = await identities.ensureDispatcherIdentity({
+    dispatcherId: dispatcher.id,
+    agentRuntime: dispatcher.agentRuntime,
+    sourceCwd: workspace,
+    cwd: workspace,
+    runtimeCwd: workspace,
+    worktree: {
+      mode: 'reuse-cwd',
+      slug: null,
+      path: workspace,
+      branch: null,
+      base_ref: null,
+      cleanup: 'keep',
+      cleanup_state: 'not-managed',
+      cleanup_error: null,
+    },
+  });
+  await identities.update(identity, { sessionId });
+}
 
 function makeTeams(input: {
   config: ReturnType<typeof testDreamuxConfig>;

@@ -72,10 +72,10 @@ export const adminMethods: Record<string, AdminHandler> = {
     return {
       dispatcher_id: row.dispatcher_id,
       channel_identity: row.channel_identity,
-      status: runtime.status ?? row.status,
-      thread_id: runtime.threadId ?? row.thread_id,
-      last_lost_thread_id: row.last_lost_thread_id,
-      last_error: row.last_error,
+      status: runtime.status ?? 'stopped',
+      thread_id: runtime.threadId,
+      last_lost_thread_id: null,
+      last_error: runtime.lastError,
     };
   },
 

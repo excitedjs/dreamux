@@ -1,5 +1,7 @@
-import type { AgentRuntimeCapabilities } from "@excitedjs/dreamux-types";
-import type { DispatcherStatus } from "../../state/dispatcher-store.js";
+import type {
+  AgentRuntimeCapabilities,
+  AgentRuntimeStatus,
+} from "@excitedjs/dreamux-types";
 
 export const TEAMMATE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
@@ -14,6 +16,7 @@ export const TEAMMATE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
  * Keep in sync with the probed leaves in `legacy-state.ts`.
  */
 export const RESERVED_AGENT_NAME_SEGMENTS = new Set([
+  'dispatcher',
   'identities',
   'records',
   'turns',
@@ -104,7 +107,7 @@ export interface TeamMateRuntimeStatus {
   repo: TeamMateRepoView;
   intent: string | null;
   status: TeamMateIdentityStatus;
-  runtime_status: DispatcherStatus | null;
+  runtime_status: AgentRuntimeStatus | null;
   last_error: string | null;
   closed_at: number | null;
   close_note: string | null;
@@ -232,7 +235,7 @@ export interface TeamMateRecordRow {
   updated_at: number;
   last_seen_at: number;
   status: TeamMateIdentityStatus;
-  runtime_status: DispatcherStatus | null;
+  runtime_status: AgentRuntimeStatus | null;
   intent: string | null;
   closed_at: number | null;
   close_note: string | null;
@@ -315,7 +318,7 @@ export function optionalLifecycleText(
 }
 
 export function runtimeStatusToIdentityStatus(
-  status: DispatcherStatus,
+  status: AgentRuntimeStatus,
 ): TeamMateIdentityStatus {
   switch (status) {
     case "ready":

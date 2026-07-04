@@ -43,7 +43,7 @@ Two settled shape rules govern where code lives:
 | `admin/` | admin Unix-socket server + protocol + methods | cross-process control; methods are thin and delegate to the Dispatcher Service |
 | `config/` | operator config schema / parse / validate (`config.ts`) | the only operator-editable config source |
 | `platform/` | runtime-neutral infrastructure: `paths.ts` (sole neutral path builder), `runtime-sockets` (volatile socket allocation), `logger`, `package-bin`, `atomic-write`, `fs-errors` | shared and runtime-agnostic; per-runtime path derivation lives in each provider package |
-| `state/` | server-owned dispatcher state: `dispatcher-store`, `dispatcher-id` | `status.json` etc. — rebuildable recovery state (#98) |
+| `state/` | server-owned dispatcher state: `dispatcher-store`, `dispatcher-id` | config-backed dispatcher projections and local state identifiers |
 | `cli/` `onboard/` `daemon/` | operator-facing surfaces | CLI command tree, onboarding, native user-level service manager |
 
 ## Responsibilities

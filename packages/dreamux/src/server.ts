@@ -158,7 +158,6 @@ export class Server {
 
   /** Bring up admin socket + all enabled dispatchers. */
   async start(): Promise<void> {
-    await this.repos.dispatchers.hydrate((message) => this.log.warn(message));
     this.dispatchers.setRestartIntent(
       await RestartIntentConsumer.load({
         now: Date.now(),

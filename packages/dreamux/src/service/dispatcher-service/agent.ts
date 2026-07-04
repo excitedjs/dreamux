@@ -5,11 +5,9 @@ import type {
 
 import {
   DISABLE_FEATURE_CRON,
-  dispatcherHostPaths,
   type AgentRuntimeProviderCatalog,
 } from '../../agent-runtime/index.js';
-import type { DispatcherConfig, DreamuxConfig } from '../../config/config.js';
-import type { DispatcherStore } from '../../state/dispatcher-store.js';
+import type { DreamuxConfig } from '../../config/config.js';
 import {
   completionKey,
   type CompletionEnvelope,
@@ -18,7 +16,6 @@ import {
 import type { TeamMateIdentityStore } from '../teammate-collection/identity-store.js';
 import {
   createTeammateService,
-  type RuntimeLaunchSpec,
 } from '../teammate-service/factory.js';
 import type { TeammateService } from '../teammate-service/index.js';
 import type { TeamMateTurnsStore } from '../teammate-collection/turns-store.js';
@@ -33,34 +30,27 @@ import { bundledDispatcherSkillRoot } from '../../platform/paths.js';
  * The fixed debug-record name of a dispatcher's own agent (issue #233 Phase 5).
  * Its `identity.json` + `turn.jsonl` live at the dispatcher ROOT (role
  * `dispatcher`), structurally outside the `teammate/` and `team/` collections, so
- * the `teammate.*` read chokepoints never enumerate it. The pair is write-only
- * debug data with no consumer; `status.json` (the `DispatcherStore`) stays the
- * authoritative runtime state.
+ * the `teammate.*` read chokepoints never enumerate it.
  */
-const DISPATCHER_AGENT_NAME = 'dispatcher';
+export const DISPATCHER_AGENT_NAME = 'dispatcher';
 
 export interface DispatcherAgentDeps {
   id: string;
   config: DreamuxConfig;
-  dispatchers: DispatcherStore;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   router: CompletionRouter;
   log: DreamuxLogger;
   mcpServers: readonly AgentRuntimeMcpServer[];
+  identity: TeamMateIdentity;
   /**
    * The identity + turns store pair, constructed once by `DispatcherService` and
    * shared with the dispatcher-scope `TeammateCollection` (issue #233). The stores
    * are stateless (paths by role + team_id), so one pair safely serves the
-   * dispatcher agent's write-only debug record (role `dispatcher`) and the
-   * collection's teammate reads (role `teammate`).
+   * dispatcher agent's root identity (role `dispatcher`) and the collection's
+   * teammate reads (role `teammate`).
    */
   identities: TeamMateIdentityStore;
   turnsStore: TeamMateTurnsStore;
-  /**
-   * The dispatcher's validated workspace cwd, resolved by `DispatcherService`
-   * before `agent.start()` (`ensureDispatcherWorkspace`). The runtime runs here.
-   */
-  resolveCwd: () => string;
 }
 
 /**
@@ -71,36 +61,14 @@ export interface DispatcherAgentDeps {
  * while `DispatcherService` keeps the dispatcher-only concerns (channel sessions,
  * restart-intent injection, MCP descriptor assembly).
  *
- * The agent's runtime is built from the dispatcher config (not an `agents[].id`)
- * and persists its authoritative status/thread to `status.json` via the injected
- * {@link DispatcherStore}; the entity's identity store only writes the write-only
- * debug record at the dispatcher root.
+ * The agent's runtime is resolved through the same `identity.agent_runtime ->
+ * agents[]` path used by TeamLeader and TeamMate. Its `identity.json` is the
+ * authoritative runtime recovery state.
  */
 export function createDispatcherAgent(deps: DispatcherAgentDeps): TeammateService {
-  const identity = debugIdentity(deps.id, deps.config);
-  // Best-effort: persist the write-only debug record at the dispatcher root. A
-  // failure here never blocks launch — `status.json` is the authoritative state.
-  void deps.identities
-    .create({
-      dispatcherId: deps.id,
-      name: DISPATCHER_AGENT_NAME,
-      role: 'dispatcher',
-      agentRuntime: identity.agent_runtime,
-      sourceCwd: identity.source_cwd,
-      sourceRepo: null,
-      cwd: identity.cwd,
-      runtimeCwd: identity.runtime_cwd,
-      worktree: identity.worktree,
-      status: 'running',
-    })
-    .catch(() => {
-      /* debug record only */
-    });
-
   const agent = createTeammateService({
     dispatcherId: deps.id,
-    identity,
-    launch: { kind: 'inline', build: () => buildDispatcherLaunch(deps) },
+    identity: deps.identity,
     config: deps.config,
     agentRuntimeProviders: deps.agentRuntimeProviders,
     identities: deps.identities,
@@ -139,94 +107,4 @@ async function routeSettled(
   completion: CompletionEnvelope,
 ): Promise<void> {
   await router.settle(completionKey(producerName, turnId), completion);
-}
-
-/**
- * Build the dispatcher runtime's launch from the dispatcher config. The runtime
- * persists its status/thread to `status.json` through the injected
- * {@link DispatcherStore}, which is passed as the runtime `state` — NOT the
- * entity's debug identity store.
- */
-function buildDispatcherLaunch(deps: DispatcherAgentDeps): RuntimeLaunchSpec {
-  const id = deps.id;
-  const row = deps.dispatchers.get(id);
-  if (row === null) throw new Error(`no dispatcher '${id}'`);
-  const dispatcherConfig = mustDispatcherConfig(deps.config, id);
-  const provider = deps.agentRuntimeProviders.resolve(
-    dispatcherConfig.runtime.provider,
-  );
-  const cwd = deps.resolveCwd();
-  return {
-    provider,
-    checkpointId: row.thread_id,
-    context: {
-      identity: { runtime_id: id, checkpoint_id: row.thread_id },
-      config: dispatcherConfig.runtime.config,
-      cwd,
-      // Overwritten by `TeammateServiceOptions`; kept only to satisfy the
-      // runtime create-context shape at the inline launch boundary.
-      mcpServers: [],
-      state: deps.dispatchers.bindRuntime(id),
-      paths: dispatcherHostPaths,
-      logger: deps.log,
-    },
-  };
-}
-
-function mustDispatcherConfig(
-  config: DreamuxConfig,
-  id: string,
-): DispatcherConfig {
-  const dispatcherConfig = config.dispatchers.find((entry) => entry.id === id);
-  if (dispatcherConfig === undefined) {
-    throw new Error(`dispatcher '${id}' has no config entry`);
-  }
-  return dispatcherConfig;
-}
-
-function debugIdentity(
-  dispatcherId: string,
-  config: DreamuxConfig,
-): TeamMateIdentity {
-  const now = Date.now();
-  const dispatcherConfig = config.dispatchers.find(
-    (entry) => entry.id === dispatcherId,
-  );
-  const cwd = dispatcherConfig?.cwd ?? '';
-  const agentRuntime = dispatcherConfig?.runtime.provider ?? 'dispatcher';
-  return {
-    version: 1,
-    dispatcher_id: dispatcherId,
-    name: DISPATCHER_AGENT_NAME,
-    role: 'dispatcher',
-    team_id: null,
-    agent_runtime: agentRuntime,
-    session_id: null,
-    source_cwd: cwd,
-    source_repo: null,
-    cwd,
-    runtime_cwd: cwd,
-    worktree: {
-      mode: 'reuse-cwd',
-      slug: null,
-      path: cwd,
-      branch: null,
-      base_ref: null,
-      cleanup: 'keep',
-      cleanup_state: 'not-managed',
-      cleanup_error: null,
-    },
-    intent: null,
-    identity_prompt: null,
-    created_at: now,
-    updated_at: now,
-    status: 'running',
-    last_error: null,
-    closed_at: null,
-    close_note: null,
-    turn_count: 0,
-    last_seen_at: now,
-    last_prompt_preview: null,
-    last_assistant_preview: null,
-  };
 }

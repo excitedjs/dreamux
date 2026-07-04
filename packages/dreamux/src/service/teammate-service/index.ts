@@ -6,7 +6,6 @@ import type {
   AgentRuntimeMcpServer,
   AgentRuntimeProvider,
   AgentRuntimeSkillSource,
-  AgentRuntimeStateCallbacks,
   AgentRuntimeSystemPrompt,
   AgentRuntimeTurnResult,
   DreamuxLogger,
@@ -19,7 +18,7 @@ import { resolveCompletionBody } from '@excitedjs/dreamux-utils';
 import {
   DISABLE_FEATURE_USER_INTERRUPT,
   HOST_INJECT_ENV,
-  teammateHostPaths,
+  hostRuntimePaths,
 } from '../../agent-runtime/index.js';
 import type { ResolvedAgentConfig } from '../../config/config.js';
 import { validateDispatcherId } from '../../state/dispatcher-id.js';
@@ -58,15 +57,7 @@ import type {
 } from '../completion-router/index.js';
 
 /**
- * The provider-construction inputs a {@link TeammateService} needs to build its
- * runtime, derived per entity (issue #233 Phase 5). It abstracts the one real
- * divergence between a teammate agent and the dispatcher agent: a teammate
- * resolves its runtime config from `agents[].id`, runs in its worktree, and
- * persists state to its identity record; the dispatcher resolves its inline
- * `dispatchers[].runtime`, runs in its validated workspace, and persists state to
- * the authoritative `status.json` store. Everything generic (resume-or-start,
- * `onTurnSettled` → route, completion delivery) stays in the entity.
- */
+/** The provider-construction inputs a {@link TeammateService} needs to launch. */
 export interface RuntimeLaunchSpec {
   provider: AgentRuntimeProvider;
   /** The full create context minus the generic pieces the entity supplies. */
@@ -87,16 +78,6 @@ export interface TeammateServiceDeps {
    */
   worktrees?: WorktreeManager;
   log: DreamuxLogger;
-  /**
-   * Build the provider + create context for this entity's runtime (issue #233
-   * Phase 5). Omitted for an ordinary teammate, which derives its launch from its
-   * own identity record; supplied for the dispatcher agent, whose runtime is
-   * built from the dispatcher config and persists to `status.json`.
-   */
-  buildLaunch?: (
-    identity: TeamMateIdentity,
-    state: AgentRuntimeStateCallbacks,
-  ) => RuntimeLaunchSpec;
   /** Increments per submission across the whole collection so sourceIds stay unique. */
   nextSubmissionSeq: () => number;
   /** Tracks an in-flight settle capture so the collection can drain on shutdown. */
@@ -260,6 +241,7 @@ export class TeammateService {
     sourceId: string;
     shouldSubmit?: () => boolean;
   }): Promise<AgentRuntimeTurnResult> {
+    if (input.shouldSubmit?.() === false) return { status: 'skipped' };
     await this.ensureStarted();
     if (input.shouldSubmit?.() === false) return { status: 'skipped' };
     const runtime = this.mustRuntime();
@@ -373,12 +355,7 @@ export class TeammateService {
    * in-flight start — so corrupt identity scope still fails fast.
    */
   async ensureStarted(opts: { reopenClosed?: boolean } = {}): Promise<void> {
-    // The dispatcher agent (injected `buildLaunch`) is not a roster member — it
-    // lives at the dispatcher root, outside the teammate/team collections — so
-    // the roster guard applies only to ordinary teammates (issue #233 Phase 5).
-    if (this.deps.buildLaunch === undefined) {
-      this.assertOwnRoster();
-    }
+    this.assertOwnRoster();
     if (this.runtime !== null) return;
     if (this.starting !== null) return this.starting;
     const promise = this.startFromRecord(opts).finally(() => {
@@ -418,39 +395,22 @@ export class TeammateService {
   }
 
   /**
-   * Resolve the runtime launch (issue #233 Phase 5). The dispatcher agent injects
-   * a `buildLaunch` that builds from the dispatcher config + `status.json` state;
-   * an ordinary teammate derives it from its own identity record (config resolved
-   * from `agents[].id`, state from its identity store).
+   * Resolve every agent runtime through `identity.agent_runtime -> agents[]`.
    */
   private resolveLaunch(): RuntimeLaunchSpec {
     const identity = this.current();
-    if (this.deps.buildLaunch !== undefined) {
-      return applyRoleOptions(
-        this.deps.buildLaunch(identity, this.state),
-        {
-          mcpServers: this.mcpServers,
-          skillSources: this.skillSources,
-          disableFeatures: this.disableFeatures,
-          ...(this.systemPrompt !== undefined
-            ? { systemPrompt: this.systemPrompt }
-            : {}),
-        },
-      );
-    }
     const agent: ResolvedAgentConfig = resolveAgent(
       this.deps.config,
       this.dispatcherId,
       identity.agent_runtime,
     );
     const provider = this.deps.agentRuntimeProviders.resolve(agent.provider);
-    const runtimeName = runtimeIdentityName(identity);
     return {
       provider,
       checkpointId: identity.session_id,
       context: {
         identity: {
-          runtime_id: runtimeId(identity.dispatcher_id, runtimeName),
+          runtime_id: providerRuntimeId(identity),
           checkpoint_id: identity.session_id,
         },
         config: agent.config,
@@ -461,12 +421,12 @@ export class TeammateService {
           ? { systemPrompt: this.systemPrompt }
           : {}),
         state: this.state,
-        paths: teammateHostPaths(identity.dispatcher_id, runtimeName),
+        paths: hostRuntimePaths,
         mcpServers: [...this.mcpServers],
         logger:
           this.deps.log.child?.({
             dispatcher_id: this.dispatcherId,
-            teammate: identity.name,
+            teammate: identity.role === 'dispatcher' ? undefined : identity.name,
           }) ?? this.deps.log,
       },
     };
@@ -543,6 +503,13 @@ export class TeammateService {
     if (identity.dispatcher_id !== this.dispatcherId) {
       throw new Error(`TeamMate ${JSON.stringify(identity.name)} does not exist`);
     }
+    if (
+      identity.role === 'dispatcher' &&
+      identity.team_id === null &&
+      identity.name === 'dispatcher'
+    ) {
+      return;
+    }
     if (identity.role === 'teammate' && identity.team_id === null) return;
     if (
       (identity.role === 'team_leader' || identity.role === 'team_member') &&
@@ -595,36 +562,6 @@ export class TeammateService {
   }
 }
 
-function applyRoleOptions(
-  launch: RuntimeLaunchSpec,
-  options: {
-    mcpServers: readonly AgentRuntimeMcpServer[];
-    skillSources: readonly AgentRuntimeSkillSource[];
-    disableFeatures: readonly string[];
-    systemPrompt?: AgentRuntimeSystemPrompt;
-  },
-): RuntimeLaunchSpec {
-  const {
-    mcpServers: _mcpServers,
-    skillSources: _skillSources,
-    disableFeatures: _disableFeatures,
-    systemPrompt: _systemPrompt,
-    ...context
-  } = launch.context;
-  return {
-    ...launch,
-    context: {
-      ...context,
-      mcpServers: [...options.mcpServers],
-      skillSources: options.skillSources,
-      disableFeatures: options.disableFeatures,
-      ...(options.systemPrompt !== undefined
-        ? { systemPrompt: options.systemPrompt }
-        : {}),
-    },
-  };
-}
-
 function completionStatusLine(completion: CompletionEnvelope): string {
   switch (completion.status) {
     case 'completed':
@@ -666,7 +603,15 @@ function turnResultToCompletionDelivery(
   }
 }
 
-function runtimeId(dispatcherId: string, name: string): string {
+export function providerRuntimeId(identity: TeamMateIdentity): string {
+  if (identity.role === 'dispatcher') return validateDispatcherId(identity.dispatcher_id);
+  return childRuntimeId(
+    identity.dispatcher_id,
+    runtimeIdentityName(identity),
+  );
+}
+
+function childRuntimeId(dispatcherId: string, name: string): string {
   const suffix = createHash('sha256')
     .update(`${dispatcherId}\0${name}`)
     .digest('hex')

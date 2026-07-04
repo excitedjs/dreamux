@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Pass Claude Code MCP config as inline --mcp-config JSON instead of writing mcp.json under runtime state. Move skill adapters to the AgentRuntimePathContext cacheDir() root; adapters are keyed by canonical skill source set and published atomically without deleting a live adapter directory.",
+      "type": "minor",
+      "packageName": "@excitedjs/agent-runtime-claude-code"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-claude-code",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

@@ -200,7 +200,6 @@ describe('external runtime production parity', () => {
     const teammate = createTeammateService({
       dispatcherId: 'flow',
       identity,
-      launch: { kind: 'agent-ref' },
       config,
       agentRuntimeProviders,
       identities,

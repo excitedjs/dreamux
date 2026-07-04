@@ -26,8 +26,9 @@ import {
 } from '@excitedjs/agent-runtime-claude-code';
 import { dispatcherHostPaths } from '../src/agent-runtime/host-paths.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
-import { DispatcherStore } from '../src/state/dispatcher-store.js';
-import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
+import { TeamMateIdentityStore } from '../src/service/teammate-collection/identity-store.js';
+import { TeamMateRuntimeStateStore } from '../src/service/teammate-collection/runtime-state.js';
+import { testDispatcherConfig } from './helpers/config.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -107,16 +108,32 @@ describe('claude-code live integration (opt-in)', () => {
         },
       },
     });
-    const store = new DispatcherStore(testDreamuxConfig([dispatcher]));
-    const row = store.get('live');
-    expect(row).not.toBeNull();
+    const identities = new TeamMateIdentityStore({ warn: () => {} });
+    const identity = await identities.ensureDispatcherIdentity({
+      dispatcherId: 'live',
+      agentRuntime: dispatcher.agentRuntime,
+      sourceCwd: home,
+      cwd: home,
+      runtimeCwd: home,
+      worktree: {
+        mode: 'reuse-cwd',
+        slug: null,
+        path: home,
+        branch: null,
+        base_ref: null,
+        cleanup: 'keep',
+        cleanup_state: 'not-managed',
+        cleanup_error: null,
+      },
+    });
+    const state = new TeamMateRuntimeStateStore(identities, identity);
 
     const runtime = claudeCodeProvider().createRuntime({
-      identity: { runtime_id: 'live', checkpoint_id: row!.thread_id },
+      identity: { runtime_id: 'live', checkpoint_id: null },
       config: dispatcherClaudeCodeConfig(dispatcher),
       cwd: home,
       mcpServers: [],
-      state: store.bindRuntime('live'),
+      state,
       paths: dispatcherHostPaths,
     });
 

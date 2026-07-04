@@ -112,12 +112,12 @@ logs:
 | `~/.dreamux/run/admin.sock` | Admin Unix socket (+ `admin.sock.lock`); volatile run file | the server |
 | `~/.dreamux/run/restart-intent.json` | One-shot daemon restart marker; volatile run file | the server |
 | `~/.dreamux/run/sockets/` | Fallback root for ephemeral Codex app-server rendezvous sockets (preferred root: `$XDG_RUNTIME_DIR/dreamux/sockets/`); random per start, never persisted | the server |
-| `~/.dreamux/state/<id>/status.json` | Dispatcher runtime status and runtime thread/session id | the server |
 | `~/.dreamux/state/<id>/access.json` | Dispatcher-local access-gate state | the server |
-| `~/.dreamux/state/<id>/claude-code-mcp.json` | Claude Code MCP config generated from Dreamux-owned descriptors | the server |
+| `~/.dreamux/state/<id>/identity.json` | Dispatcher root agent identity and runtime recovery state | the server |
 | `~/.dreamux/state/<id>/teammate/` | TeamMate task ledger, results, and delivery retry state | the server |
 | `~/.dreamux/cache/<id>/spill/` | Over-budget teammate completion spill files; rebuildable cache, only the path is inlined into a dispatcher turn | the server |
 | `~/.dreamux/cache/<id>/` | Per-dispatcher provider cache root; providers own subdirectories such as Feishu attachment cache | the server |
+| `~/.dreamux/cache/claude-code/` | Claude Code MCP config and skill adapters; rebuildable provider cache | the server |
 | `~/.dreamux/logs/codex-app-server/<id>.log` | Codex app-server stdout/stderr | the server |
 | `~/.dreamux/logs/channel/<id>.log` | Per-dispatcher channel logs | the server |
 | `~/.dreamux/logs/teammate-mcp/<id>.log` | TeamMate MCP shim diagnostics | the server |

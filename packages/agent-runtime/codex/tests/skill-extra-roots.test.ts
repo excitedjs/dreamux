@@ -156,7 +156,7 @@ class FakeProcess {
 }
 
 const PATHS: AgentRuntimePathContext = {
-  dispatcherDir: (id) => join('/fake/state', id),
+  cacheDir: () => '/fake/cache',
   logsDir: () => '/fake/logs',
   runtimeSocketDirs: () => ['/fake/run/sockets'],
 };

@@ -373,7 +373,7 @@ describe('architecture ownership gate (#233)', () => {
     ).resolves.toMatchObject({ identity_prompt: null });
   });
 
-  it('builds conversational agents through the factory with named launch strategies', async () => {
+  it('builds conversational agents through the factory without launch forks', async () => {
     const leaderAgent = await readServiceSource('team-service/leader-agent.ts');
     assertContains(
       leaderAgent,
@@ -381,11 +381,9 @@ describe('architecture ownership gate (#233)', () => {
       'T2 leader factory invariant violated: createTeamLeaderAgent must call createTeammateService.',
       'team-service/leader-agent.ts',
     );
-    assertContains(
-      leaderAgent,
-      /launch:\s*\{\s*kind:\s*'agent-ref'\s*\}/,
-      "T2 leader factory invariant violated: createTeamLeaderAgent must use launch: { kind: 'agent-ref' }.",
-      'team-service/leader-agent.ts',
+    assertNoHits(
+      'T2 leader factory invariant violated: createTeamLeaderAgent must not pass a launch strategy.',
+      hitsInSource('team-service/leader-agent.ts', leaderAgent, /launch:/),
     );
 
     const dispatcherAgent = await readServiceSource('dispatcher-service/agent.ts');
@@ -395,11 +393,9 @@ describe('architecture ownership gate (#233)', () => {
       'T2 dispatcher factory invariant violated: createDispatcherAgent must call createTeammateService.',
       'dispatcher-service/agent.ts',
     );
-    assertContains(
-      dispatcherAgent,
-      /launch:\s*\{\s*kind:\s*'inline'\s*,\s*build:/,
-      "T2 dispatcher factory invariant violated: createDispatcherAgent must use launch: { kind: 'inline', build: ... }.",
-      'dispatcher-service/agent.ts',
+    assertNoHits(
+      'T2 dispatcher factory invariant violated: createDispatcherAgent must not pass a launch strategy.',
+      hitsInSource('dispatcher-service/agent.ts', dispatcherAgent, /launch:|buildDispatcherLaunch/),
     );
   });
 

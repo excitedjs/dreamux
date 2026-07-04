@@ -14,8 +14,8 @@
  *   `init`/`assistant`/`result` envelopes on stdout (see `./stream.ts`). There
  *   is no `initialize` handshake — the child emits `init` lazily with the first
  *   turn — so readiness is "child spawned", not "handshake completed".
- * - **MCP injection is a JSON config document** (`--mcp-config <file>`), not
- *   Codex's `-c mcp_servers.*` TOML CLI flags.
+ * - **MCP injection is an inline JSON config document** (`--mcp-config <json>`),
+ *   not Codex's `-c mcp_servers.*` TOML CLI flags.
  * - **Runtime-owned config** is `DispatcherClaudeCodeConfig` (bin / model /
  *   permission_mode / remote_control / extra_args / extra_env), distinct from
  *   the Codex config.
@@ -56,13 +56,26 @@
  * Dreamux's own, per `.agents/decisions/agent-runtime-provider.md`.
  */
 
-import { mkdir, readdir, rm, symlink, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import {
+  mkdir,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { dirname, join, resolve } from 'node:path';
 
 import { BUILTIN_CLAUDE_CODE_PROVIDER_REF } from './provider-ref.js';
 import type { DispatcherClaudeCodeConfig } from './config.js';
 import { claudeCodeResidentArgs } from './args.js';
 import { stringifyClaudeCodeMcpConfig } from './mcp-config.js';
+import {
+  adapterExists,
+  skillAdapterKey,
+  skillDirsInRoot,
+  uniqueSkillSources,
+} from './skill-adapter.js';
 import {
   type ClaudeCodeSession,
   type ClaudeCodeSessionFactory,
@@ -104,7 +117,7 @@ export interface ClaudeCodeRuntimeDeps {
   cwd: string;
   /** Neutral state sink for status/thread transitions. */
   state: AgentRuntimeStateCallbacks;
-  /** Neutral path context: the runtime derives its mcp-config / log subpaths here. */
+  /** Neutral path context: the runtime derives its cache/log subpaths here. */
   paths: AgentRuntimePathContext;
   /** MCP server descriptors translated into the `--mcp-config` JSON document. */
   mcpServers: readonly AgentRuntimeMcpServer[];
@@ -165,8 +178,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   private readonly config: DispatcherClaudeCodeConfig;
   private readonly bin: string;
   private readonly cwd: string;
-  private readonly mcpConfigPath: string;
-  private readonly mcpConfigDoc: string;
+  private readonly mcpConfigJson: string;
   private readonly skillAddDirRoot: string;
   private readonly stderrLogPath: string;
   private readonly logger: DreamuxLogger;
@@ -194,15 +206,13 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     this.config = deps.config;
     this.bin = deps.resolveBinPath(this.config.bin);
     this.cwd = deps.cwd;
-    this.mcpConfigPath = join(
-      deps.paths.dispatcherDir(this.dispatcherId),
-      'mcp.json',
-    );
     this.skillAddDirRoot = join(
-      deps.paths.dispatcherDir(this.dispatcherId),
-      'claude-code-skills',
+      deps.paths.cacheDir(),
+      'claude-code',
+      'skills',
+      skillAdapterKey(deps.skillSources ?? []),
     );
-    this.mcpConfigDoc = stringifyClaudeCodeMcpConfig(deps.mcpServers);
+    this.mcpConfigJson = stringifyClaudeCodeMcpConfig(deps.mcpServers);
     // Compose the resident stream-json child's stderr log under the neutral
     // central logs root (B2): core no longer names a per-runtime log file. The
     // host supplies a unique, filesystem-safe `runtime_id`.
@@ -247,8 +257,6 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   async start(): Promise<void> {
     await this.setStatus('starting');
     try {
-      await mkdir(dirname(this.mcpConfigPath), { recursive: true });
-      await writeFile(this.mcpConfigPath, this.mcpConfigDoc, { mode: 0o600 });
       await this.materializeSkillAddDir();
       // Spawn the resident child up front so the runtime is truly resident
       // (Codex-aligned). A missing/broken `claude` binary fails here and drives
@@ -486,7 +494,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     if (this.session !== null && this.session.isAlive()) return this.session;
     const args = claudeCodeResidentArgs({
       config: this.config,
-      mcpConfigPath: this.mcpConfigPath,
+      mcpConfigJson: this.mcpConfigJson,
       resumeSessionId: this.threadId,
       systemPromptAppend: this.deps.systemPromptAppend,
       skillAddDirs:
@@ -520,19 +528,49 @@ export class ClaudeCodeRuntime implements AgentRuntime {
 
   private async materializeSkillAddDir(): Promise<void> {
     const sources = this.deps.skillSources ?? [];
-    const skillsRoot = join(this.skillAddDirRoot, '.claude', 'skills');
-    await rm(skillsRoot, { recursive: true, force: true });
     if (sources.length === 0) return;
-    await mkdir(skillsRoot, { recursive: true });
-    const linkedNames = new Set<string>();
-    for (const source of sources) {
-      for (const skill of await skillDirsInRoot(source.path)) {
-        if (linkedNames.has(skill.name)) {
-          throw new Error(`duplicate Claude skill name from skill root: ${skill.name}`);
+    const manifest = join(this.skillAddDirRoot, '.dreamux-skill-adapter.json');
+    if (await adapterExists(manifest)) return;
+    const tmpRoot = `${this.skillAddDirRoot}.${randomUUID()}.tmp`;
+    const tmpSkillsRoot = join(tmpRoot, '.claude', 'skills');
+    try {
+      await mkdir(tmpSkillsRoot, { recursive: true });
+      const linkedNames = new Map<string, string>();
+      for (const source of uniqueSkillSources(sources)) {
+        for (const skill of await skillDirsInRoot(source.path)) {
+          const previous = linkedNames.get(skill.name);
+          if (previous !== undefined && previous !== skill.path) {
+            throw new Error(
+              `duplicate Claude skill name ${JSON.stringify(skill.name)} from ` +
+                `${previous} and ${skill.path}`,
+            );
+          }
+          if (previous !== undefined) continue;
+          linkedNames.set(skill.name, skill.path);
+          await symlink(skill.path, join(tmpSkillsRoot, skill.name), 'dir');
         }
-        linkedNames.add(skill.name);
-        await symlink(skill.path, join(skillsRoot, skill.name), 'dir');
       }
+      await writeFile(
+        join(tmpRoot, '.dreamux-skill-adapter.json'),
+        `${JSON.stringify({
+          version: 1,
+          key: skillAdapterKey(sources),
+          sources: uniqueSkillSources(sources).map((source) => ({
+            name: source.name,
+            path: resolve(source.path),
+          })),
+        }, null, 2)}\n`,
+        { mode: 0o600 },
+      );
+      await mkdir(dirname(this.skillAddDirRoot), { recursive: true });
+      await rename(tmpRoot, this.skillAddDirRoot);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
+        await rm(tmpRoot, { recursive: true, force: true }).catch(() => undefined);
+        return;
+      }
+      await rm(tmpRoot, { recursive: true, force: true }).catch(() => undefined);
+      throw err;
     }
   }
 
@@ -634,13 +672,4 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   ): void {
     this.logger[level](err !== undefined ? { err } : {}, msg);
   }
-}
-
-async function skillDirsInRoot(
-  root: string,
-): Promise<Array<{ name: string; path: string }>> {
-  const entries = await readdir(root, { withFileTypes: true });
-  return entries
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => ({ name: entry.name, path: join(root, entry.name) }));
 }

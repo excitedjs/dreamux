@@ -466,7 +466,6 @@ export class TeammateCollection implements TeammateOps {
     const entity = createTeammateService({
       dispatcherId: this.dispatcherId,
       identity,
-      launch: { kind: 'agent-ref' },
       ...(systemPromptOptions !== undefined ? { options: systemPromptOptions } : {}),
       config: this.opts.config,
       agentRuntimeProviders: this.opts.agentRuntimeProviders,

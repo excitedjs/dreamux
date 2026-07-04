@@ -45,7 +45,6 @@ export function createTeamLeaderAgent(
   return createTeammateService({
     dispatcherId: deps.dispatcherId,
     identity: deps.identity,
-    launch: { kind: 'agent-ref' },
     options: {
       mcpServers: deps.mcpServers,
       skillSources: deps.skillSources,

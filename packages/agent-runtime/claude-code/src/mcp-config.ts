@@ -2,12 +2,12 @@
  * Claude Code MCP config document translation.
  *
  * Mirrors `codex/mcp-config.ts`: the same Dreamux MCP descriptors become
- * Claude Code's native JSON document loaded via `--mcp-config <file>`.
+ * Claude Code's native JSON document passed inline via `--mcp-config <json>`.
  */
 
 import type { AgentRuntimeMcpServer } from '@excitedjs/dreamux-types';
 
-/** Claude Code MCP config document shape (`--mcp-config <file>`). */
+/** Claude Code MCP config document shape (`--mcp-config <json>`). */
 export interface ClaudeCodeMcpConfig {
   mcpServers: Record<string, { command: string; args: string[] }>;
 }
@@ -26,9 +26,9 @@ export function claudeCodeMcpConfig(
   return { mcpServers };
 }
 
-/** Serialize the Claude Code MCP config for writing to disk. */
+/** Serialize the Claude Code MCP config for inline CLI use. */
 export function stringifyClaudeCodeMcpConfig(
   servers: readonly AgentRuntimeMcpServer[],
 ): string {
-  return `${JSON.stringify(claudeCodeMcpConfig(servers), null, 2)}\n`;
+  return JSON.stringify(claudeCodeMcpConfig(servers));
 }
