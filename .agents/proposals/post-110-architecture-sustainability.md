@@ -59,7 +59,9 @@ The original mining conflated these into one ~20-count theme; they must be separ
 - (#159) "stale KB doc still advertises a removed dispatcher-facing MCP `resume` verb."
 
 **T5b — human-facing KB / changelog / path-table drift (not self-reinforcing).** Reference prose or path tables describe a superseded layout. A maintainer can be misled, but the *agent's own loop* doesn't re-inject it:
-- (#193) "`top-level-design.md` 仍描述旧的 #182 前布局…会让后续维护者按错误的状态/运行时边界实现."
+- (#193) "the former monolithic architecture baseline still described the old
+  pre-#182 layout... which could make later maintainers implement against the
+  wrong state/runtime boundary."
 
 Only **T5a** is the "KB actively misleading the next agent in a self-reinforcing loop" that *causes* the next T1/T3/T4 violation. Backlog #4 targets T5a specifically.
 

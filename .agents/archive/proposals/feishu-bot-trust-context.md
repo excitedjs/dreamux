@@ -110,6 +110,6 @@ assumption.
 
 When the review converges and PR1 lands, promote the settled parts into the
 relevant settled docs — `domains/feishu-introduce.md` (trust context / listing),
-`decisions/top-level-design.md` (MCP tool surface), and
+`domains/channel-routing-and-binding.md` (channel MCP tool surface), and
 `domains/non-blocking-dispatcher-inbound.md` (reaction replacement ordering) —
 and retire this proposal.

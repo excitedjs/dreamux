@@ -14,10 +14,11 @@
 
 ## Context
 
-The current runtime is intentionally narrow: one dispatcher owns one Feishu
-channel, one Codex app-server child, one Codex thread, and one dispatcher-scoped
-Feishu MCP shim. That MVP boundary is documented in
-[top-level-design](../../decisions/top-level-design.md).
+The original MVP runtime was intentionally narrow: one dispatcher owned one
+Feishu channel, one Codex app-server child, one Codex thread, and one
+dispatcher-scoped Feishu MCP shim. The current providerized runtime boundary is
+documented in [Provider runtime](../../domains/provider-runtime.md) and
+[Channel routing and binding](../../domains/channel-routing-and-binding.md).
 
 Issue #110 changes the target architecture. Dreamux needs a full extension
 surface that covers:

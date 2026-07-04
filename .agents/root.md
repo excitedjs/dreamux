@@ -10,6 +10,9 @@ For current behavior, read the linked source code too.
 
 - [Current architecture](reference/current-architecture.md) — compact current
   system map with source-code pointers.
+- [Domain knowledge](domains/README.md) — module-oriented stable contracts for
+  provider runtime, channels, orchestration, state/files, scheduled work, and
+  repository operations.
 - [Repository structure](reference/repo-structure.md) — package layout,
   install/build/test path, Rush change files, and public package/bin surface.
 - [State and paths](reference/state-and-paths.md) — current config, workspace,
@@ -33,22 +36,22 @@ For current behavior, read the linked source code too.
 |---|---|
 | answer "how is Dreamux shaped now?" | [Current architecture](reference/current-architecture.md), then source |
 | add/change a package or move source between packages | [Repository structure](reference/repo-structure.md) |
-| install/build/test the repo or debug workspace install issues | [Repository structure](reference/repo-structure.md), [install model](decisions/install-model.md) |
+| install/build/test the repo or debug workspace install issues | [Repository operations and release](domains/repository-operations-and-release.md), [Repository structure](reference/repo-structure.md), [install model](decisions/install-model.md) |
 | add or verify Rush change files | [Repository structure: Rush change files](reference/repo-structure.md#rush-change-files) |
-| modify config loading, `agents[]`, `dispatchers[]`, provider refs, or config compatibility | [Current architecture](reference/current-architecture.md), [agents config normalization](decisions/agents-config-normalization.md), [providerized config compatibility](decisions/providerized-config-state-compatibility.md) |
-| modify state/cache/run/log paths | [State and paths](reference/state-and-paths.md), [runtime run root](decisions/runtime-run-root.md), [top-level design](decisions/top-level-design.md) |
-| modify provider loading, Agent Runtime providers, Channel providers, or capabilities | [Current architecture](reference/current-architecture.md), [Channel runtime](reference/channel-runtime.md), [Provider architecture realignment](decisions/provider-architecture-realignment.md), [provider refs and registry](decisions/provider-references-and-capability-registry.md), [NPM package split and channel targets](decisions/npm-package-split-and-channel-targets.md) |
-| modify dispatcher runtime lifecycle or MCP injection | [Current architecture](reference/current-architecture.md), [dispatcher local aggregate](decisions/dispatcher-local-aggregate.md), [service architecture refactor](decisions/service-architecture-refactor.md), source |
+| modify config loading, `agents[]`, `dispatchers[]`, provider refs, or config compatibility | [Provider runtime](domains/provider-runtime.md), [State, config, and files](domains/state-config-and-files.md), [agents config normalization](decisions/agents-config-normalization.md), [providerized config compatibility](decisions/providerized-config-state-compatibility.md) |
+| modify state/cache/run/log paths | [State, config, and files](domains/state-config-and-files.md), [State and paths](reference/state-and-paths.md), [runtime run root](decisions/runtime-run-root.md) |
+| modify provider loading, Agent Runtime providers, Channel providers, or capabilities | [Provider runtime](domains/provider-runtime.md), [Channel routing and binding](domains/channel-routing-and-binding.md), [Current architecture](reference/current-architecture.md), [provider refs and registry](decisions/provider-references-and-capability-registry.md), [NPM package split and channel targets](decisions/npm-package-split-and-channel-targets.md) |
+| modify dispatcher runtime lifecycle or MCP injection | [Dispatcher orchestration](domains/dispatcher-orchestration.md), [Current architecture](reference/current-architecture.md), [dispatcher local aggregate](decisions/dispatcher-local-aggregate.md), [service architecture refactor](decisions/service-architecture-refactor.md), source |
 | modify scheduled tasks / cron jobs | [Scheduled tasks](reference/scheduled-tasks.md), [Agent activity capability](decisions/agent-activity-capability.md), [Json document store](decisions/json-document-store.md), source |
 | refactor/move a service class or change who-owns-what | [Service topology](reference/service-topology.md) FIRST, then source |
-| modify TeamMate / Team lifecycle, read surfaces, or bundled dispatcher skills | [Dispatcher skill reference](reference/dispatcher-skill.md), [Model-facing writing](reference/model-facing-writing.md), [provider architecture realignment](decisions/provider-architecture-realignment.md), [top-level design](decisions/top-level-design.md), [service architecture refactor](decisions/service-architecture-refactor.md) |
+| modify TeamMate / Team lifecycle, read surfaces, or bundled dispatcher skills | [Dispatcher orchestration](domains/dispatcher-orchestration.md), [Dispatcher skill reference](reference/dispatcher-skill.md), [Model-facing writing](reference/model-facing-writing.md), [provider architecture realignment](decisions/provider-architecture-realignment.md), [service architecture refactor](decisions/service-architecture-refactor.md) |
 | modify bundled skills, system prompts, MCP tool descriptions, MCP result field names, or tests that lock model-visible text | [Model-facing writing](reference/model-facing-writing.md), then source |
-| modify channel binding or channel target routing | [Channel runtime](reference/channel-runtime.md), [NPM package split and channel targets](decisions/npm-package-split-and-channel-targets.md), source |
+| modify channel binding or channel target routing | [Channel routing and binding](domains/channel-routing-and-binding.md), [Channel runtime](reference/channel-runtime.md), [NPM package split and channel targets](decisions/npm-package-split-and-channel-targets.md), source |
 | modify Feishu inbound, `/introduce`, trusted bot context, or reaction timing | [Channel runtime](reference/channel-runtime.md), [Feishu introduce](domains/feishu-introduce.md), [Feishu pairing access](domains/feishu-pairing-access.md), [non-blocking dispatcher inbound](domains/non-blocking-dispatcher-inbound.md), source |
 | modify Feishu attachment download/cache behavior | [Feishu inbound attachments](decisions/feishu-inbound-attachments.md) |
-| modify onboard, daemon, uninstall, or public CLI names | [Global bin/onboard/serve](decisions/global-bin-onboard-serve.md), [CLI and package naming](decisions/cli-and-package-naming.md) |
-| modify the anti-leak guardrail, `.gitleaks.toml`, `.npmrc`, CI, or hooks | [Anti-leak guardrail](decisions/anti-leak-guardrail.md) |
-| modify npm publishing or release workflows | [NPM release OIDC](decisions/npm-release-oidc.md) |
+| modify onboard, daemon, uninstall, or public CLI names | [Repository operations and release](domains/repository-operations-and-release.md), [Global bin/onboard/serve](decisions/global-bin-onboard-serve.md), [CLI and package naming](decisions/cli-and-package-naming.md) |
+| modify the anti-leak guardrail, `.gitleaks.toml`, `.npmrc`, CI, or hooks | [Repository operations and release](domains/repository-operations-and-release.md), [Anti-leak guardrail](decisions/anti-leak-guardrail.md) |
+| modify npm publishing or release workflows | [Repository operations and release](domains/repository-operations-and-release.md), [NPM release OIDC](decisions/npm-release-oidc.md) |
 | inspect historical hardening backlog | [Archived Post-MVP hardening](archive/proposals/post-mvp-hardening.md) |
 | write or move KB content | [KB contributing guide](CONTRIBUTING.md) |
 
@@ -90,6 +93,12 @@ history and rationale; when you need current behavior, pair them with
 
 ## Domains
 
+- [Provider runtime](domains/provider-runtime.md)
+- [Channel routing and binding](domains/channel-routing-and-binding.md)
+- [Dispatcher orchestration](domains/dispatcher-orchestration.md)
+- [State, config, and files](domains/state-config-and-files.md)
+- [Scheduled work](domains/scheduled-work.md)
+- [Repository operations and release](domains/repository-operations-and-release.md)
 - [Feishu introduce](domains/feishu-introduce.md)
 - [Feishu pairing access](domains/feishu-pairing-access.md)
 - [Non-blocking dispatcher inbound](domains/non-blocking-dispatcher-inbound.md)

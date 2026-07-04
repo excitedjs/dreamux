@@ -153,9 +153,9 @@ Key source:
 - `/packages/agent-runtime/codex/src/skill-roots.ts`
 - `/packages/agent-runtime/claude-code/src/args.ts`
 
-## Decision Trail
+## Related Docs And Decision Trail
 
-- [Top-level design](../decisions/top-level-design.md)
+- [State, config, and files](../domains/state-config-and-files.md)
 - [Runtime run root](../decisions/runtime-run-root.md)
 - [Providerized config and state compatibility](../decisions/providerized-config-state-compatibility.md)
 - [Provider architecture realignment](../decisions/provider-architecture-realignment.md)

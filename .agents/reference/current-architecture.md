@@ -316,12 +316,12 @@ Key source:
 - `/packages/dreamux/src/service/teammate-service/index.ts`
 - `/packages/agent-runtime/claude-code/src/args.ts`
 
-## Decision Trail
+## Related Docs And Decision Trail
 
 - [Provider architecture realignment](../decisions/provider-architecture-realignment.md)
 - [NPM package split and channel targets](../decisions/npm-package-split-and-channel-targets.md)
-- [Top-level design](../decisions/top-level-design.md) for unchanged local
-  state/log/access foundations
+- [Domain knowledge](../domains/README.md) for stable provider, channel,
+  orchestration, state/file, scheduled-work, and repository contracts
 - [Runtime run root](../decisions/runtime-run-root.md)
 - [Agents config normalization](../decisions/agents-config-normalization.md)
 - Historical proposal:

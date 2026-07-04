@@ -15,8 +15,8 @@ Only the Codex app-server child's stdout/stderr persists to disk
 itself decides — gate deliver/drop, trust-domain warnings, `/introduce`,
 inbound submit, outbound `reply`/`react`, reaction-ledger errors, dispatcher
 restart — is `console.error` only (48 call sites) and is lost when `serve` runs
-as a daemon. `top-level-design.md` already reserves `logs/dreamux-server.log`
-and `logs/feishu-channel/<id>.log`, and `paths.ts` exposes `serverLogPath()` /
+as a daemon. The current stable file contract reserves host and channel log
+locations under `~/.dreamux/logs/`, and `paths.ts` exposes `serverLogPath()` /
 `feishuChannelLogDir()`, but nothing writes them. Dropped messages and failed
 introduces are therefore undiagnosable after the fact.
 
