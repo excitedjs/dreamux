@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Use an image extension for cached Feishu image attachments when Feishu does not provide a file name.",
+      "type": "patch",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

@@ -308,10 +308,14 @@ function renderAttachment(
 function attachmentPath(cacheRoot: string, resource: InboundResource): string {
   const key = resource.key ?? 'missing-key';
   const digest = createHash('sha256').update(key).digest('hex').slice(0, 16);
-  const displayName = sanitizeFileName(resource.name ?? `${resource.type}.bin`);
+  const displayName = sanitizeFileName(resource.name ?? defaultAttachmentName(resource.type));
   const path = resolve(cacheRoot, `${resource.type}-${digest}-${displayName}`);
   if (!isInside(cacheRoot, path)) throw new CachePathError();
   return path;
+}
+
+function defaultAttachmentName(type: string): string {
+  return type === 'image' ? 'image.jpg' : `${type}.bin`;
 }
 
 function sanitizeFileName(value: string): string {

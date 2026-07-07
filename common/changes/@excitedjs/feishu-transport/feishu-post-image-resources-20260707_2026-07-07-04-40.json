@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Expose embedded Feishu post images as inbound resources so the channel can download them for runtime attachments.",
+      "type": "patch",
+      "packageName": "@excitedjs/feishu-transport"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-transport",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

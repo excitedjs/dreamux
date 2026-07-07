@@ -68,8 +68,13 @@ export function parseInbound(message: InboundMessage): ParsedInbound {
       const text = typeof content.text === 'string' ? content.text : ''
       return { text: applyMentions(text, message.mentions) }
     }
-    case 'post':
-      return { text: extractPostText(content) }
+    case 'post': {
+      const resources = extractPostResources(content)
+      return {
+        text: extractPostText(content),
+        ...(resources.length > 0 ? { resources } : {}),
+      }
+    }
     case 'image':
       return {
         text: '(image message)',
@@ -312,6 +317,33 @@ export function extractPostText(content: Record<string, unknown>): string {
     }
   }
   return lines.join('\n')
+}
+
+function extractPostResources(content: Record<string, unknown>): InboundResource[] {
+  const post = pickPostLocale(content)
+  const body = post.content
+  const resources: InboundResource[] = []
+  const seen = new Set<string>()
+  if (!Array.isArray(body)) return resources
+
+  for (const paragraph of body) {
+    if (!Array.isArray(paragraph)) continue
+    for (const el of paragraph) {
+      if (!el || typeof el !== 'object') continue
+      const e = el as Record<string, unknown>
+      if (e.tag !== 'img') continue
+      const key = typeof e.image_key === 'string' ? e.image_key : undefined
+      const dedupeKey = key ?? `missing:${resources.length}`
+      if (seen.has(dedupeKey)) continue
+      seen.add(dedupeKey)
+      resources.push({
+        type: 'image',
+        ...(key !== undefined ? { key } : {}),
+      })
+    }
+  }
+
+  return resources
 }
 
 /** Pick the first present locale block of a post, falling back to the raw object. */

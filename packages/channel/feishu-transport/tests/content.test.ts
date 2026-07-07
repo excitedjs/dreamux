@@ -44,6 +44,21 @@ describe('parseInbound — attachments', () => {
     })
   })
 
+  test('a post message exposes embedded image resources', () => {
+    const post = {
+      zh_cn: {
+        content: [[
+          { tag: 'text', text: 'see ' },
+          { tag: 'img', image_key: 'img_v3_inline' },
+        ]],
+      },
+    }
+    expect(parseInbound(message('post', post))).toEqual({
+      text: 'see (image)',
+      resources: [{ type: 'image', key: 'img_v3_inline' }],
+    })
+  })
+
   test('a file message exposes a structured resource', () => {
     expect(parseInbound(message('file', { file_name: 'report.pdf', file_key: 'k' }))).toEqual({
       text: '(file message)',
