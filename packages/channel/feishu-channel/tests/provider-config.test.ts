@@ -28,30 +28,24 @@ describe('feishu channel readConfig', () => {
       appSecret: 'secret-x',
       topicContext: {
         enabled: false,
-        allowChatIds: [],
-        denyChatIds: [],
       },
     });
   });
 
-  it('parses topicContext controls with de-duplicated chat id lists', () => {
+  it('parses topicContext.enabled', () => {
     expect(
       readConfig({
         app_id: 'app-x',
         app_secret: 'secret-x',
         topicContext: {
-          enabled: false,
-          allowChatIds: ['oc_a', ' oc_a ', 'oc_b'],
-          denyChatIds: ['oc_c', 'oc_c'],
+          enabled: true,
         },
       }),
     ).toEqual({
       appId: 'app-x',
       appSecret: 'secret-x',
       topicContext: {
-        enabled: false,
-        allowChatIds: ['oc_a', 'oc_b'],
-        denyChatIds: ['oc_c'],
+        enabled: true,
       },
     });
   });
@@ -100,16 +94,16 @@ describe('feishu channel readConfig', () => {
       readConfig({
         app_id: 'app-x',
         app_secret: 's',
-        topicContext: { allowChatIds: ['oc_a', ''] },
+        topicContext: { allowChatIds: ['oc_a'] },
       }),
-    ).toThrow(/topicContext\.allowChatIds\[1\] must be a non-empty string/);
+    ).toThrow(/topicContext has unknown key\(s\): 'allowChatIds'/);
     expect(() =>
       readConfig({
         app_id: 'app-x',
         app_secret: 's',
-        topicContext: { denyChatIds: 'oc_a' },
+        topicContext: { denyChatIds: ['oc_a'] },
       }),
-    ).toThrow(/topicContext\.denyChatIds must be an array/);
+    ).toThrow(/topicContext has unknown key\(s\): 'denyChatIds'/);
     expect(() =>
       readConfig({
         app_id: 'app-x',

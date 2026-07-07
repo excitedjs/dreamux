@@ -18,6 +18,9 @@ of the Lark SDK.
 - **Inbound normalization**: turning Feishu events into agent-facing channel
   results, including the `<channel source="feishu" …>` envelope and
   `<attachment>` blocks.
+- **Topic-group target resolution**: optionally routing Feishu topic-group
+  messages by topic (`chat_id + thread_id/root_id`) while ordinary groups remain
+  chat-scoped.
 - **Attachment handling**: downloading inbound attachments after the host access
   gate allows delivery, plus cache layout, path sanitization, permissions, and
   honest fallback references when a resource is not downloaded.
@@ -52,6 +55,52 @@ of the Lark SDK.
 > `ChannelSession.start(routes)` path is real and contract-tested, but is not the
 > production wiring today. See
 > [`.agents/decisions/npm-package-split-and-channel-targets.md`](../../../.agents/decisions/npm-package-split-and-channel-targets.md).
+
+## Channel config: topic context isolation
+
+Feishu topic context isolation is configured in the channel provider-owned
+`config` block under a dispatcher channel entry. It is disabled by default.
+The example shows only the fields relevant to the Feishu channel; keep the
+dispatcher's existing `cwd`, `agentRuntime`, and runtime configuration.
+
+```json
+{
+  "dispatchers": [
+    {
+      "id": "main",
+      "channels": [
+        {
+          "id": "feishu",
+          "provider": "builtin:feishu",
+          "config": {
+            "app_id": "cli_xxx",
+            "app_secret": "xxx",
+            "topicContext": {
+              "enabled": true
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+Semantics:
+
+- `topicContext.enabled` defaults to `false`.
+- If `enabled` is `true`, all Feishu topic groups can use topic-scoped Dreamux
+  targets.
+- Ordinary Feishu groups stay chat-scoped even if their messages carry
+  `thread_id` / `root_id`.
+- If Dreamux cannot resolve Feishu chat mode for a threaded group message, it
+  fails closed and keeps the historical chat-scoped target.
+- Restart Dreamux after editing the config file; channel sessions read this
+  config at startup.
+
+Topic-scoped targets affect routing and Codex checkpoint isolation only. Feishu
+replies still use the original `chat_id` and optional `message_id` so messages
+are sent back to the real Feishu chat/thread.
 
 ## Build / test
 

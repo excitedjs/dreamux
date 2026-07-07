@@ -402,16 +402,13 @@ function readTopicContextConfig(raw: unknown): FeishuTopicContextPolicy {
   }
   const obj = raw as Record<string, unknown>;
   const unknown = Object.keys(obj).filter(
-    (key) =>
-      key !== 'enabled' &&
-      key !== 'allowChatIds' &&
-      key !== 'denyChatIds',
+    (key) => key !== 'enabled',
   );
   if (unknown.length > 0) {
     throw new Error(
       `feishu channel config topicContext has unknown key(s): ${unknown
         .map((key) => `'${key}'`)
-        .join(', ')}. Allowed: enabled, allowChatIds, denyChatIds.`,
+        .join(', ')}. Allowed: enabled.`,
     );
   }
   const enabledRaw = obj['enabled'];
@@ -420,32 +417,7 @@ function readTopicContextConfig(raw: unknown): FeishuTopicContextPolicy {
   }
   return {
     enabled: enabledRaw ?? DEFAULT_FEISHU_TOPIC_CONTEXT_POLICY.enabled,
-    allowChatIds: readChatIdList(
-      'topicContext.allowChatIds',
-      obj['allowChatIds'],
-    ),
-    denyChatIds: readChatIdList(
-      'topicContext.denyChatIds',
-      obj['denyChatIds'],
-    ),
   };
-}
-
-function readChatIdList(field: string, raw: unknown): string[] {
-  if (raw === undefined) return [];
-  if (!Array.isArray(raw)) {
-    throw new Error(`feishu channel config ${field} must be an array`);
-  }
-  const ids = new Set<string>();
-  for (const [index, value] of raw.entries()) {
-    if (typeof value !== 'string' || value.trim() === '') {
-      throw new Error(
-        `feishu channel config ${field}[${index}] must be a non-empty string`,
-      );
-    }
-    ids.add(value.trim());
-  }
-  return [...ids];
 }
 
 /**

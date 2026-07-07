@@ -120,14 +120,10 @@ export interface FeishuConversationTargetInput {
 
 export interface FeishuTopicContextPolicy {
   enabled: boolean;
-  allowChatIds: readonly string[];
-  denyChatIds: readonly string[];
 }
 
 export const DEFAULT_FEISHU_TOPIC_CONTEXT_POLICY: FeishuTopicContextPolicy = {
   enabled: false,
-  allowChatIds: [],
-  denyChatIds: [],
 };
 
 /**
@@ -137,11 +133,10 @@ export const DEFAULT_FEISHU_TOPIC_CONTEXT_POLICY: FeishuTopicContextPolicy = {
  * Messages in Feishu topic groups use the stable Feishu topic id (`thread_id`,
  * falling back to `root_id`) so two topics in the same topic group route to
  * different Dreamux channel targets while replies in the same topic share one.
- * The optional policy can disable topic routing globally, restrict it to an
- * allow-list, or block it with a higher-priority deny-list. If chat-mode lookup
- * fails, `chatMode` is intentionally absent and the key stays chat-scoped: the
- * channel should isolate only when Feishu explicitly identifies the chat as a
- * topic group.
+ * The optional policy disables topic routing by default and enables it only for
+ * Feishu topic groups. If chat-mode lookup fails, `chatMode` is intentionally
+ * absent and the key stays chat-scoped: the channel should isolate only when
+ * Feishu explicitly identifies the chat as a topic group.
  */
 export function feishuConversationTargetKey(
   input: FeishuConversationTargetInput,
@@ -159,13 +154,6 @@ function shouldUseTopicScopedTarget(input: FeishuConversationTargetInput): boole
   if (firstNonEmpty(input.threadId, input.rootId) === undefined) return false;
   const policy = input.topicContext ?? DEFAULT_FEISHU_TOPIC_CONTEXT_POLICY;
   if (!policy.enabled) return false;
-  if (policy.denyChatIds.includes(input.chatId)) return false;
-  if (
-    policy.allowChatIds.length > 0 &&
-    !policy.allowChatIds.includes(input.chatId)
-  ) {
-    return false;
-  }
   return input.chatMode === 'topic';
 }
 

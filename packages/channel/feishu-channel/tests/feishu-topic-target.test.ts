@@ -234,67 +234,6 @@ describe('Feishu topic channel targets', () => {
     });
   });
 
-  it('restricts topic scoped targets to an allow-list when configured', async () => {
-    const bot = createFakeFeishuBot('app');
-    bot.setChatMode('oc_group', 'topic');
-    bot.setChatMode('oc_allowed_group', 'topic');
-    const session = createSession(stateDir, bot, {
-      topicContext: {
-        enabled: true,
-        allowChatIds: ['oc_allowed_group'],
-      },
-    });
-    const delivered: ChannelInboundEnvelope[] = [];
-
-    await session.start({
-      deliver: async (_input, envelope, hooks) => {
-        delivered.push(envelope);
-        await hooks?.onAccepted?.(_input);
-        return { status: 'submitted', turnId: 'turn-1' };
-      },
-    });
-
-    await bot.inject(inboundEvent({ messageId: 'om_blocked' }));
-    await bot.inject(
-      inboundEvent({
-        messageId: 'om_allowed',
-        chatId: 'oc_allowed_group',
-        threadId: 'om_allowed_thread',
-        rootId: 'om_allowed_root',
-      }),
-    );
-
-    expect(delivered[0]?.target.target_key).toBe('oc_group');
-    expect(delivered[1]?.target.target_key).toBe(
-      'oc_allowed_group#thread:om_allowed_thread',
-    );
-  });
-
-  it('lets the deny-list override the allow-list', async () => {
-    const bot = createFakeFeishuBot('app');
-    bot.setChatMode('oc_group', 'topic');
-    const session = createSession(stateDir, bot, {
-      topicContext: {
-        enabled: true,
-        allowChatIds: ['oc_group'],
-        denyChatIds: ['oc_group'],
-      },
-    });
-    const delivered: ChannelInboundEnvelope[] = [];
-
-    await session.start({
-      deliver: async (_input, envelope, hooks) => {
-        delivered.push(envelope);
-        await hooks?.onAccepted?.(_input);
-        return { status: 'submitted', turnId: 'turn-1' };
-      },
-    });
-
-    await bot.inject(inboundEvent());
-
-    expect(delivered[0]?.target.target_key).toBe('oc_group');
-  });
-
   it('keeps plain group messages on the historical chat-scoped target key', async () => {
     const bot = createFakeFeishuBot('app');
     bot.setChatMode('oc_group', 'group');
@@ -404,46 +343,4 @@ describe('Feishu topic channel targets', () => {
     expect(delivered[0]?.target.meta).not.toHaveProperty('chat_mode');
   });
 
-  it('keeps lookup-failure messages chat-scoped regardless of allow and deny controls', async () => {
-    const deniedBot = createFakeFeishuBot('app');
-    deniedBot.setChatModeError(new Error('lookup failed'));
-    const deniedSession = createSession(stateDir, deniedBot, {
-      topicContext: {
-        enabled: true,
-        denyChatIds: ['oc_group'],
-      },
-    });
-    const denied: ChannelInboundEnvelope[] = [];
-    await deniedSession.start({
-      deliver: async (_input, envelope, hooks) => {
-        denied.push(envelope);
-        await hooks?.onAccepted?.(_input);
-        return { status: 'submitted', turnId: 'turn-1' };
-      },
-    });
-
-    await deniedBot.inject(inboundEvent({ messageId: 'om_denied' }));
-
-    const allowLimitedBot = createFakeFeishuBot('app');
-    allowLimitedBot.setChatModeError(new Error('lookup failed'));
-    const allowLimitedSession = createSession(stateDir, allowLimitedBot, {
-      topicContext: {
-        enabled: true,
-        allowChatIds: ['oc_other'],
-      },
-    });
-    const allowLimited: ChannelInboundEnvelope[] = [];
-    await allowLimitedSession.start({
-      deliver: async (_input, envelope, hooks) => {
-        allowLimited.push(envelope);
-        await hooks?.onAccepted?.(_input);
-        return { status: 'submitted', turnId: 'turn-1' };
-      },
-    });
-
-    await allowLimitedBot.inject(inboundEvent({ messageId: 'om_not_allowed' }));
-
-    expect(denied[0]?.target.target_key).toBe('oc_group');
-    expect(allowLimited[0]?.target.target_key).toBe('oc_group');
-  });
 });

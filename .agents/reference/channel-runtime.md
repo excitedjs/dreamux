@@ -81,11 +81,31 @@ For Feishu, plain chats and ordinary group chats use the historical `chat_id`
 target key. When a group message carries `thread_id`/`root_id`, the provider
 queries Feishu chat mode; only topic groups use a topic-scoped key derived from
 `chat_id + thread_id` (falling back to `root_id` when `thread_id` is absent).
-If the chat-mode lookup fails, the provider preserves the split target as a
-fail-closed fallback rather than merging a real topic group. The original
-`chat_id`, `chat_type`, chat mode, and any topic metadata remain in
-`target.meta` so replies still send to the real chat while binding/routing can
-distinguish two topics in the same Feishu topic group.
+If the chat-mode lookup fails, the provider fails closed and keeps the
+historical `chat_id` target key; Dreamux isolates by topic only when Feishu
+explicitly identifies the chat as a topic group. The original `chat_id`,
+`chat_type`, chat mode, and any topic metadata remain in `target.meta` so
+replies still send to the real chat while binding/routing can distinguish two
+topics in the same Feishu topic group.
+
+Feishu topic isolation is opt-in provider config on
+`dispatchers[].channels[].config.topicContext`:
+
+```json
+{
+  "topicContext": {
+    "enabled": true
+  }
+}
+```
+
+- `enabled` defaults to `false`.
+- When `enabled` is `true`, every Feishu topic group may use topic-scoped
+  targets.
+- Ordinary groups never use topic-scoped targets, even when they carry threaded
+  message metadata.
+- Config changes are read when the channel session is created; restart Dreamux
+  after editing the file.
 
 Unbound bindable channel targets are still isolated at the Dispatcher fallback
 layer. Team bindings win first; when no open Team owns a bindable target,
