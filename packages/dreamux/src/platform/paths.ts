@@ -17,6 +17,9 @@
  *         access.json
  *         chat-bots.json
  *         channel-bindings.json
+ *         channel-runtime/<channel>/<target-hash>/
+ *           status.json    per-channel-target fallback runtime checkpoint
+ *           runtime/        per-channel-target provider scratch
  *         teammate/<name>/    dispatcher-owned teammates: {identity.json, turn.jsonl}
  *         team/<team>/        one dir per team: leader {identity.json, turn.jsonl},
  *                             record.json, teammate/<name>/ members
@@ -287,6 +290,35 @@ export function cronMcpLogPath(id: string): string {
 
 export function dispatcherStatusPath(id: string): string {
   return join(dispatcherDir(id), 'status.json');
+}
+
+export function dispatcherChannelTargetRuntimeDir(input: {
+  dispatcherId: string;
+  channelId: string;
+  targetKeyHash: string;
+}): string {
+  return join(
+    dispatcherDir(input.dispatcherId),
+    'channel-runtime',
+    teamMateNameSegment(input.channelId),
+    teamMateNameSegment(input.targetKeyHash),
+  );
+}
+
+export function dispatcherChannelTargetRuntimeStatusPath(input: {
+  dispatcherId: string;
+  channelId: string;
+  targetKeyHash: string;
+}): string {
+  return join(dispatcherChannelTargetRuntimeDir(input), 'status.json');
+}
+
+export function dispatcherChannelTargetRuntimeScratchDir(input: {
+  dispatcherId: string;
+  channelId: string;
+  targetKeyHash: string;
+}): string {
+  return join(dispatcherChannelTargetRuntimeDir(input), 'runtime');
 }
 
 /**

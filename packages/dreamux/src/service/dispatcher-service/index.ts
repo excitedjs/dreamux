@@ -24,6 +24,7 @@ import type {
   DispatcherStore,
 } from '../../state/dispatcher-store.js';
 import { createDispatcherAgent } from './agent.js';
+import { ChannelTargetRuntimePool } from './channel-target-runtime.js';
 import type { ChannelMcpCallerScope } from './mcp-descriptors.js';
 import { assertRunnableChannelShape } from './runnable-channel.js';
 import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
@@ -93,6 +94,7 @@ export class DispatcherService {
   private readonly _teammates: TeammateCollection;
   private readonly teams: TeamCollection;
   private readonly channels: ChannelService;
+  private readonly channelTargetRuntimes: ChannelTargetRuntimePool;
   private readonly agent: TeammateService;
   private readonly scheduler_: SchedulerService;
   private restartIntent: RestartIntentConsumer | null = null;
@@ -133,6 +135,16 @@ export class DispatcherService {
       ...(opts.adminSocketPath !== undefined
         ? { adminSocketPath: opts.adminSocketPath }
         : {}),
+    });
+
+    this.channelTargetRuntimes = new ChannelTargetRuntimePool({
+      dispatcherId: opts.id,
+      config: opts.config,
+      agentRuntimeProviders: opts.agentRuntimeProviders,
+      adminSocketPath: adminSocket,
+      log: opts.log,
+      resolveCwd: () => this.mustWorkspaceCwd(),
+      liveChannels: () => this.channels.live(),
     });
 
     this.agent = createDispatcherAgent({
@@ -308,6 +320,7 @@ export class DispatcherService {
     this.scheduler.stop();
     this.teams.stopSchedulers();
     await this.channels.closeAll(this.log);
+    await this.channelTargetRuntimes.stopAll();
     try {
       await this.agent.stop();
     } catch (err) {
@@ -491,6 +504,12 @@ export class DispatcherService {
         if (result.status === 'submitted') await hooks?.onAccepted?.(input);
         return result;
       }
+      return this.channelTargetRuntimes.channelInput({
+        channelId,
+        turn: input,
+        envelope,
+        ...(hooks !== undefined ? { hooks } : {}),
+      });
     }
     const runtime = this.agent.getRuntime();
     if (runtime === null) return { status: 'stopped' };

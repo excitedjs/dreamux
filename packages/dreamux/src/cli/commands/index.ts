@@ -3,6 +3,7 @@ import { createChannelMcpCommand } from './channel-mcp.js';
 import { createConfigCommand } from './config.js';
 import { createCronMcpCommand } from './cron-mcp.js';
 import { createDaemonCommand } from './daemon.js';
+import { createDevCommand } from './dev.js';
 import { createDispatcherCommand } from './dispatcher.js';
 import { createDoctorCommand } from './doctor.js';
 import { createOnboardCommand } from './onboard.js';
@@ -30,5 +31,6 @@ export function createDreamuxCommands(deps: CliDeps): DreamuxCommand[] {
     createCronMcpCommand(),
     createConfigCommand(),
     createChangelogCommand(),
+    createDevCommand(),
   ];
 }

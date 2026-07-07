@@ -36,9 +36,11 @@ import type {
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
 import {
+  DEFAULT_FEISHU_TOPIC_CONTEXT_POLICY,
   FeishuChannelSession,
   toWireChatBot,
   type FeishuInboundEnvelope,
+  type FeishuTopicContextPolicy,
 } from './feishu-channel.js';
 import type { FeishuBot } from './bot.js';
 import { listChatBots } from './chat-bots-store.js';
@@ -57,6 +59,7 @@ const FEISHU_MCP_SERVER_NAME = 'feishu';
 export interface FeishuChannelConfig {
   appId: string;
   appSecret: string;
+  topicContext?: FeishuTopicContextPolicy;
 }
 
 const DEFAULT_FEISHU_DESCRIPTOR: ChannelProviderDescriptor = {
@@ -108,16 +111,25 @@ function inboundEnvelopeToChannelEnvelope(
   channelId: string,
   envelope: FeishuInboundEnvelope,
 ): ChannelInboundEnvelope {
+  const meta = {
+    chat_id: envelope.chatId,
+    chat_type: envelope.chatType,
+    ...(envelope.chatMode !== undefined ? { chat_mode: envelope.chatMode } : {}),
+    ...(envelope.threadId !== undefined ? { thread_id: envelope.threadId } : {}),
+    ...(envelope.rootId !== undefined ? { root_id: envelope.rootId } : {}),
+    ...(envelope.parentId !== undefined ? { parent_id: envelope.parentId } : {}),
+  };
   return {
     provider: BUILTIN_FEISHU_PROVIDER_REF,
     channel_id: channelId,
     target: {
       target_type: envelope.chatType,
-      target_key: envelope.chatId,
+      target_key: envelope.targetKey,
       bindable: envelope.chatType === 'group',
-      meta: { chat_id: envelope.chatId, chat_type: envelope.chatType },
+      meta,
     },
     message_id: envelope.messageId,
+    metadata: meta,
   };
 }
 
@@ -233,9 +245,9 @@ class FeishuChannelSessionAdapter implements ChannelSession {
     target: ChannelTarget;
     message_id: string;
   }): boolean {
-    return this.session.messageBelongsToChat(
+    return this.session.messageBelongsToTargetKey(
       input.message_id,
-      targetChatId(input.target),
+      input.target.target_key,
     );
   }
 }
@@ -253,9 +265,9 @@ export interface CreateFeishuChannelProviderOptions {
 
 /**
  * Create the built-in Feishu `ChannelProvider`. `readConfig` validates the
- * `{ app_id, app_secret }` block; `createSession` builds the package's Feishu
- * session from the neutral create context (state/cache roots, logger) and wraps
- * it in the neutral `ChannelSession` adapter.
+ * `{ app_id, app_secret, topicContext? }` block; `createSession` builds the
+ * package's Feishu session from the neutral create context (state/cache roots,
+ * logger) and wraps it in the neutral `ChannelSession` adapter.
  */
 export function createFeishuChannelProvider(
   options: CreateFeishuChannelProviderOptions = {},
@@ -331,13 +343,16 @@ export function createFeishuChannelProvider(
       // secret is config-sourced, so a non-empty app_secret is required at
       // config-load time to preserve fail-loud — not deferred to session start.
       const unknown = Object.keys(obj).filter(
-        (key) => key !== 'app_id' && key !== 'app_secret',
+        (key) =>
+          key !== 'app_id' &&
+          key !== 'app_secret' &&
+          key !== 'topicContext',
       );
       if (unknown.length > 0) {
         throw new Error(
           `feishu channel config has unknown key(s): ${unknown
             .map((key) => `'${key}'`)
-            .join(', ')}. Allowed: app_id, app_secret.`,
+            .join(', ')}. Allowed: app_id, app_secret, topicContext.`,
         );
       }
       const appId = obj['app_id'];
@@ -348,7 +363,11 @@ export function createFeishuChannelProvider(
       if (typeof appSecret !== 'string' || appSecret.trim() === '') {
         throw new Error('feishu channel config requires a non-empty app_secret');
       }
-      return { appId, appSecret };
+      return {
+        appId,
+        appSecret,
+        topicContext: readTopicContextConfig(obj['topicContext']),
+      };
     },
     createSession(
       context: ChannelSessionCreateContext<FeishuChannelConfig>,
@@ -360,6 +379,8 @@ export function createFeishuChannelProvider(
         appId: context.config.appId,
         appSecret: context.config.appSecret,
         stateDir,
+        topicContext:
+          context.config.topicContext ?? DEFAULT_FEISHU_TOPIC_CONTEXT_POLICY,
         // The channel owns its cache-subdir layout; core supplies only a
         // per-dispatcher cache root (issue #209 de-leak — core no longer names a
         // `feishu-attachments` dir). Effective path is unchanged.
@@ -372,6 +393,59 @@ export function createFeishuChannelProvider(
       return new FeishuChannelSessionAdapter(context.channel_id, session);
     },
   };
+}
+
+function readTopicContextConfig(raw: unknown): FeishuTopicContextPolicy {
+  if (raw === undefined) return DEFAULT_FEISHU_TOPIC_CONTEXT_POLICY;
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('feishu channel config topicContext must be an object');
+  }
+  const obj = raw as Record<string, unknown>;
+  const unknown = Object.keys(obj).filter(
+    (key) =>
+      key !== 'enabled' &&
+      key !== 'allowChatIds' &&
+      key !== 'denyChatIds',
+  );
+  if (unknown.length > 0) {
+    throw new Error(
+      `feishu channel config topicContext has unknown key(s): ${unknown
+        .map((key) => `'${key}'`)
+        .join(', ')}. Allowed: enabled, allowChatIds, denyChatIds.`,
+    );
+  }
+  const enabledRaw = obj['enabled'];
+  if (enabledRaw !== undefined && typeof enabledRaw !== 'boolean') {
+    throw new Error('feishu channel config topicContext.enabled must be boolean');
+  }
+  return {
+    enabled: enabledRaw ?? DEFAULT_FEISHU_TOPIC_CONTEXT_POLICY.enabled,
+    allowChatIds: readChatIdList(
+      'topicContext.allowChatIds',
+      obj['allowChatIds'],
+    ),
+    denyChatIds: readChatIdList(
+      'topicContext.denyChatIds',
+      obj['denyChatIds'],
+    ),
+  };
+}
+
+function readChatIdList(field: string, raw: unknown): string[] {
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw)) {
+    throw new Error(`feishu channel config ${field} must be an array`);
+  }
+  const ids = new Set<string>();
+  for (const [index, value] of raw.entries()) {
+    if (typeof value !== 'string' || value.trim() === '') {
+      throw new Error(
+        `feishu channel config ${field}[${index}] must be a non-empty string`,
+      );
+    }
+    ids.add(value.trim());
+  }
+  return [...ids];
 }
 
 /**

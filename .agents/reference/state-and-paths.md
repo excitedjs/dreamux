@@ -67,6 +67,12 @@ Important children:
   saved Agent Runtime thread/session identity. **Authoritative** for the
   dispatcher agent's rebuild/recovery (the dispatcher agent is a contained
   `TeammateService`, Phase 5 / #233).
+- `~/.dreamux/state/<dispatcher-id>/channel-runtime/<channel-id>/<target-key-hash>/`:
+  dispatcher fallback runtime state for one unbound bindable channel target.
+  `status.json` stores that target runtime's saved thread/session identity;
+  `runtime/` is the provider scratch root for that target. The directory uses a
+  hash of the provider-owned `target_key` so raw channel target ids are not
+  embedded in path segments.
 - `~/.dreamux/state/<dispatcher-id>/identity.json` + `turn.jsonl`: the dispatcher
   agent's own write-only **debug** record at the dispatcher *root* (not under
   `teammate/`), so the `teammate.*` read chokepoints never enumerate it. No

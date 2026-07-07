@@ -95,6 +95,9 @@ export async function formatFeishuMessageForRuntime(
     ['sender_name', event.senderName],
     ['create_time', formatFeishuCreateTime(event.createTime)],
   ];
+  if (event.threadId !== undefined) attrs.push(['thread_id', event.threadId]);
+  if (event.rootId !== undefined) attrs.push(['root_id', event.rootId]);
+  if (event.parentId !== undefined) attrs.push(['parent_id', event.parentId]);
   const body = renderMessageBody(event);
   const fallback = shouldAddFallbackNote(event)
     ? `\n\n${FEISHU_SKILL_FALLBACK_NOTE}`

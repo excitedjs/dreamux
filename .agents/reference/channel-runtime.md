@@ -77,6 +77,23 @@ Channel providers normalize routing endpoints into `ChannelTarget` objects. The
 target carries provider-owned metadata; Dreamux core treats that metadata as an
 opaque selector and routes by the normalized target key.
 
+For Feishu, plain chats and ordinary group chats use the historical `chat_id`
+target key. When a group message carries `thread_id`/`root_id`, the provider
+queries Feishu chat mode; only topic groups use a topic-scoped key derived from
+`chat_id + thread_id` (falling back to `root_id` when `thread_id` is absent).
+If the chat-mode lookup fails, the provider preserves the split target as a
+fail-closed fallback rather than merging a real topic group. The original
+`chat_id`, `chat_type`, chat mode, and any topic metadata remain in
+`target.meta` so replies still send to the real chat while binding/routing can
+distinguish two topics in the same Feishu topic group.
+
+Unbound bindable channel targets are still isolated at the Dispatcher fallback
+layer. Team bindings win first; when no open Team owns a bindable target,
+Dreamux starts or resumes a dispatcher-owned runtime scoped to
+`channel_id + target_key`. This gives each Feishu topic target its own Codex
+checkpoint/context even before it is bound to a Team. Non-bindable targets
+continue to fall back to the dispatcher's global runtime.
+
 Team channel binding is Dreamux core state exposed through role-gated Team MCP
 projections:
 
@@ -98,6 +115,7 @@ Key source:
 
 - `/packages/dreamux/src/service/channel-service/`
 - `/packages/dreamux/src/service/channel-binding/`
+- `/packages/dreamux/src/service/dispatcher-service/channel-target-runtime.ts`
 - `/packages/dreamux/src/mcp/team-mcp.ts`
 - `/packages/channel/feishu-channel/src/provider.ts`
 

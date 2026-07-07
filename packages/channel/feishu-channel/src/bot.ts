@@ -1,24 +1,7 @@
 /**
- * The `FeishuBot` adapter — one per Dispatcher (D3: 1 Dispatcher = 1 Bot).
- *
- * Since issue #25 PR1 this is a thin adapter over `@excitedjs/feishu-transport`
- * (the shared platform-I/O core): all Feishu SDK I/O — the inbound WebSocket,
- * markdown→card render, content parse, the outbound message API — lives in the
- * core, the single importer of `@larksuiteoapi/node-sdk`. This file only shapes
- * the core's surface into the `FeishuBot` interface the server already wires:
- *   - `start(routes)` takes one handler per Feishu event type (issue #62 seam):
- *     `onMessage` for `im.message.receive_v1` (normalized via the core's
- *     `parseInbound` into a `FeishuInboundEvent`) and an optional
- *     `onBotMemberAdded` for `im.chat.member.bot.added_v1`. Each route awaits
- *     its handler, so the server gates and submits accepted inbound before the
- *     SDK acks.
- *   - `send(target, text)` delegates to the core transport, preserving reply
- *     threading / @-back metadata from the in-memory inbound batch.
- *   - `botOpenId` / `botDisplayName` surface the core transport's bot-info
- *     fields, resolved from `/open-apis/bot/v3/info` during startup.
- *
- * Tests inject a `FakeFeishuBot` via `createFakeFeishuBot()` instead of opening
- * a live connection.
+ * FeishuBot is the per-Dispatcher adapter over `@excitedjs/feishu-transport`.
+ * The transport owns SDK I/O; this file only shapes typed routes, outbound
+ * calls, bot identity, chat-mode lookup, and the fake bot used by tests.
  */
 
 import {
@@ -29,6 +12,7 @@ import {
   parseInbound,
   toChannelInbound,
   type FeishuBotMemberAddedEvent,
+  type FeishuChatMode,
   type FeishuMessageResourceFetcher,
   type FeishuMessageResourceRequest,
   type FeishuMessageResourceResponse,
@@ -78,6 +62,18 @@ export interface FeishuInboundEvent {
   /** Structured Feishu resources discovered in the message content. */
   resources?: InboundResource[];
   mentions: Mention[];
+  /**
+   * Feishu topic/thread identifier, when Feishu supplies it. Topic groups use
+   * this to keep all messages in one topic on the same channel target.
+   */
+  threadId?: string;
+  /**
+   * Root message id for a topic reply, when Feishu supplies it. Kept for
+   * routing fallback and model-visible diagnostics.
+   */
+  rootId?: string;
+  /** Parent message id for a nested reply, when Feishu supplies it. */
+  parentId?: string;
   createTime: string;
   /** The full original Feishu event payload (for storage / audit). */
   raw: unknown;
@@ -132,6 +128,7 @@ export interface FeishuBot extends FeishuMessageResourceFetcher {
   send(target: OutboundTarget, text: string): Promise<FeishuSendResult>;
   sendCard(target: OutboundTarget, card: unknown): Promise<FeishuSendResult>;
   inviteMembers(input: FeishuInviteMembersInput): Promise<FeishuInviteMembersResult>;
+  getChatMode(chatId: string): Promise<FeishuChatMode>;
   addReaction(messageId: string, emoji: string): Promise<string>;
   removeReaction(messageId: string, reactionId: string): Promise<void>;
   fetchMessageResource(
@@ -144,14 +141,7 @@ export interface FeishuBot extends FeishuMessageResourceFetcher {
 export interface CreateBotOptions {
   appId: string;
   appSecret: string;
-  /**
-   * Structured logger for the underlying transport's own diagnostics (Lark SDK
-   * logging, WebSocket connection lifecycle, best-effort fetch/close failures).
-   * Forwarded verbatim to `createFeishuTransport`. Omit to keep the transport's
-   * historical stderr behavior. The server injects the dispatcher's
-   * per-dispatcher channel logger here so connection/SDK lines land in
-   * `logs/channel/<id>.log` alongside the host's own channel decisions.
-   */
+  /** Structured logger forwarded verbatim to the underlying transport. */
   logger?: TransportLogger;
 }
 
@@ -243,6 +233,10 @@ export function createFeishuBot(
       return transport.inviteMembers(input);
     },
 
+    getChatMode(chatId: string): Promise<FeishuChatMode> {
+      return transport.getChatMode(chatId);
+    },
+
     addReaction(messageId: string, emoji: string): Promise<string> {
       return transport.addReaction(messageId, emoji);
     },
@@ -313,6 +307,9 @@ function normalizeInboundEvent(raw: unknown): FeishuInboundEvent | null {
   const senderId = payload.meta['sender_id'] ?? '';
   const senderUnionId = payload.meta['sender_union_id'] ?? '';
   const senderType = payload.meta['sender_type'] ?? '';
+  const threadId = payload.meta['thread_id'] ?? '';
+  const rootId = payload.meta['root_id'] ?? '';
+  const parentId = payload.meta['parent_id'] ?? '';
   const createTime = payload.meta['create_time'] ?? '';
   const senderName = extractSenderName(raw);
 
@@ -331,6 +328,9 @@ function normalizeInboundEvent(raw: unknown): FeishuInboundEvent | null {
     parsedText: payload.text,
     resources: parsed.resources ?? [],
     mentions,
+    ...(threadId !== '' ? { threadId } : {}),
+    ...(rootId !== '' ? { rootId } : {}),
+    ...(parentId !== '' ? { parentId } : {}),
     createTime,
     raw,
   };
@@ -529,6 +529,8 @@ export interface FakeFeishuBot extends FeishuBot {
   injectBotMemberAdded(event: FeishuBotMemberAddedEvent): Promise<void>;
   injectCardAction(event: FeishuCardActionEvent): Promise<unknown>;
   setAppOwner(owner: FeishuAppOwnerIdentity): void;
+  setChatMode(chatId: string, mode: FeishuChatMode): void;
+  setChatModeError(err: Error | null): void;
   setSendError(err: Error | null): void;
   setReactionError(err: Error | null): void;
   setRemoveReactionError(err: Error | null): void;
@@ -552,7 +554,9 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
   let sendError: Error | null = null;
   let reactionError: Error | null = null;
   let removeReactionError: Error | null = null;
+  let chatModeError: Error | null = null;
   let appOwner: FeishuAppOwnerIdentity = {};
+  const chatModes = new Map<string, FeishuChatMode>();
   const messageResources = new Map<string, FeishuMessageResourceResponse | Error>();
   const openId: string | undefined = `fake-open-id-${appId}`;
   const displayName = `Fake ${appId}`;
@@ -596,6 +600,10 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
     },
     async inviteMembers(input: FeishuInviteMembersInput): Promise<FeishuInviteMembersResult> {
       return { addedOpenIds: input.userOpenIds };
+    },
+    async getChatMode(chatId: string): Promise<FeishuChatMode> {
+      if (chatModeError !== null) throw chatModeError;
+      return chatModes.get(chatId) ?? 'group';
     },
     async addReaction(messageId: string, emoji: string): Promise<string> {
       if (reactionError !== null) {
@@ -658,6 +666,12 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
     },
     setAppOwner(owner: FeishuAppOwnerIdentity): void {
       appOwner = owner;
+    },
+    setChatMode(chatId: string, mode: FeishuChatMode): void {
+      chatModes.set(chatId, mode);
+    },
+    setChatModeError(err: Error | null): void {
+      chatModeError = err;
     },
     setSendError(err: Error | null): void {
       sendError = err;

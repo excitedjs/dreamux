@@ -127,12 +127,13 @@ function stubClient() {
     getReadableStream: () => Readable.from([Buffer.from('resource bytes')]),
     headers: { 'content-type': 'application/octet-stream' },
   }))
+  const chatGet = vi.fn(async () => ({ data: { chat_mode: 'group' } }))
   const chatCreate = vi.fn(async () => ({ data: { chat_id: 'oc_created' } }))
   const memberCreate = vi.fn(async () => ({}))
   const request = vi.fn(async () => ({}))
   const stub = {
     im: {
-      v1: { messageResource: { get: messageResourceGet } },
+      v1: { messageResource: { get: messageResourceGet }, chat: { get: chatGet } },
       message: { create, reply, patch, update },
       messageReaction: { create: reactionCreate, delete: reactionDelete },
       chat: { create: chatCreate, members: { create: memberCreate } },
@@ -152,6 +153,7 @@ function stubClient() {
     reactionCreate,
     reactionDelete,
     messageResourceGet,
+    chatGet,
     chatCreate,
     memberCreate,
     request,
@@ -375,6 +377,38 @@ describe('createFeishuTransport — reactions', () => {
 })
 
 describe('createFeishuTransport — group chats', () => {
+  test('resolves Feishu topic-group mode from chat_mode', async () => {
+    const stub = stubClient()
+    stub.chatGet.mockResolvedValueOnce({ data: { chat_mode: 'topic' } } as never)
+    const transport = buildTransport(stub)
+
+    await expect(transport.getChatMode('oc_topic')).resolves.toBe('topic')
+    expect(stub.chatGet).toHaveBeenCalledWith({
+      path: { chat_id: 'oc_topic' },
+      params: { user_id_type: 'open_id' },
+    })
+  })
+
+  test('treats group_message_type thread as topic mode', async () => {
+    const stub = stubClient()
+    stub.chatGet.mockResolvedValueOnce({
+      data: { chat_mode: 'group', group_message_type: 'thread' },
+    } as never)
+    const transport = buildTransport(stub)
+
+    await expect(transport.getChatMode('oc_topic')).resolves.toBe('topic')
+  })
+
+  test('maps p2p and default chat modes', async () => {
+    const stub = stubClient()
+    stub.chatGet.mockResolvedValueOnce({ data: { chat_mode: 'p2p' } } as never)
+    stub.chatGet.mockResolvedValueOnce({ data: {} } as never)
+    const transport = buildTransport(stub)
+
+    await expect(transport.getChatMode('oc_p2p')).resolves.toBe('p2p')
+    await expect(transport.getChatMode('oc_group')).resolves.toBe('group')
+  })
+
   test('creates a group chat and returns chat_id', async () => {
     const stub = stubClient()
     const transport = buildTransport(stub)

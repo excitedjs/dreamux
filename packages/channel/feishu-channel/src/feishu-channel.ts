@@ -2,6 +2,7 @@ import type {
   ChannelTarget,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
+import type { FeishuChatMode } from '@excitedjs/feishu-transport';
 import type {
   CreateBotOptions,
   FeishuBot,
@@ -29,6 +30,7 @@ import {
   sendReply as sessionSendReply,
   addReaction as sessionAddReaction,
   sessionHandle,
+  resolveThreadedGroupChatMode,
   type FeishuChannelState,
   type SessionHandle,
 } from './feishu-session-ops.js';
@@ -77,6 +79,12 @@ export interface FeishuChannelSessionOptions {
    * pino-compatible, so there is no per-boundary adapter.
    */
   log: import('@excitedjs/dreamux-types').DreamuxLogger;
+  /**
+   * Provider config controlling whether Feishu topic groups route by topic
+   * target key. Omitted means the default policy: keep topic-group messages
+   * chat-scoped unless the channel config explicitly enables topic isolation.
+   */
+  topicContext?: FeishuTopicContextPolicy;
   /** Inject a fake bot (tests). Host wraps its `(row, secret)` seam into this. */
   botFactory?: () => FeishuBot;
 }
@@ -93,7 +101,71 @@ export interface FeishuInboundEnvelope {
   provider: 'builtin:feishu';
   chatId: string;
   chatType: 'group' | 'p2p';
+  targetKey: string;
   messageId: string;
+  chatMode?: FeishuChatMode;
+  threadId?: string;
+  rootId?: string;
+  parentId?: string;
+}
+
+export interface FeishuConversationTargetInput {
+  chatId: string;
+  chatType: string;
+  chatMode?: FeishuChatMode;
+  threadId?: string;
+  rootId?: string;
+  topicContext?: FeishuTopicContextPolicy;
+}
+
+export interface FeishuTopicContextPolicy {
+  enabled: boolean;
+  allowChatIds: readonly string[];
+  denyChatIds: readonly string[];
+}
+
+export const DEFAULT_FEISHU_TOPIC_CONTEXT_POLICY: FeishuTopicContextPolicy = {
+  enabled: false,
+  allowChatIds: [],
+  denyChatIds: [],
+};
+
+/**
+ * Build the provider-owned routing key for a Feishu conversation target.
+ *
+ * Plain chats and ordinary group chats keep the historical `chat_id` key.
+ * Messages in Feishu topic groups use the stable Feishu topic id (`thread_id`,
+ * falling back to `root_id`) so two topics in the same topic group route to
+ * different Dreamux channel targets while replies in the same topic share one.
+ * The optional policy can disable topic routing globally, restrict it to an
+ * allow-list, or block it with a higher-priority deny-list. If chat-mode lookup
+ * fails, `chatMode` is intentionally absent and the key preserves the old topic
+ * split only when the policy still permits isolation.
+ */
+export function feishuConversationTargetKey(
+  input: FeishuConversationTargetInput,
+): string {
+  const topicId = shouldUseTopicScopedTarget(input)
+    ? firstNonEmpty(input.threadId, input.rootId)
+    : undefined;
+  return topicId === undefined
+    ? input.chatId
+    : `${input.chatId}#thread:${topicId}`;
+}
+
+function shouldUseTopicScopedTarget(input: FeishuConversationTargetInput): boolean {
+  if (input.chatType !== 'group') return false;
+  if (firstNonEmpty(input.threadId, input.rootId) === undefined) return false;
+  const policy = input.topicContext ?? DEFAULT_FEISHU_TOPIC_CONTEXT_POLICY;
+  if (!policy.enabled) return false;
+  if (policy.denyChatIds.includes(input.chatId)) return false;
+  if (
+    policy.allowChatIds.length > 0 &&
+    !policy.allowChatIds.includes(input.chatId)
+  ) {
+    return false;
+  }
+  return input.chatMode !== 'group';
 }
 
 export class FeishuChannelCapabilityError extends Error {
@@ -116,7 +188,8 @@ export class FeishuChannelSession {
   readonly state: FeishuChannelState = {
     inboundReactions: new Map(),
     pendingReceivedReactionClears: new Set(),
-    messageChats: new Map(),
+    messageTargets: new Map(),
+    chatModes: new Map(),
   };
   private readonly _accessMutex = new AsyncMutex();
 
@@ -245,29 +318,62 @@ export class FeishuChannelSession {
     };
   }
 
-  messageBelongsToChat(messageId: string, chatId: string): boolean {
-    return this.state.messageChats.get(messageId) === chatId;
+  messageBelongsToTargetKey(messageId: string, targetKey: string): boolean {
+    return this.state.messageTargets.get(messageId) === targetKey;
   }
 
   /**
    * Provider-owned target resolution (issue #209 binding store v2). Normalizes a
-   * Feishu selector `{ chat_id, chat_type }` into a neutral `ChannelTarget` whose
-   * `target_key` is the durable routing key core stores and routes by. For Feishu
-   * the stable key is the chat id itself; group chats are bindable, P2P chats are
-   * not (they always route to the dispatcher). Pure — no platform call.
+   * Feishu selector `{ chat_id, chat_type, thread_id?, root_id?, message_id? }`
+   * into a neutral `ChannelTarget` whose `target_key` is the durable routing
+   * key core stores and routes by. Plain chats and ordinary group chats keep
+   * the historical chat id key; Feishu topic groups use the topic/thread id
+   * when supplied. When a tool call references an observed `message_id`, use
+   * that message's recorded target key so a reply can stay scoped to the topic
+   * even if the model only supplied `chat_id + message_id`.
    */
-  resolveTarget(meta: unknown): ChannelTarget {
+  async resolveTarget(meta: unknown): Promise<ChannelTarget> {
     const obj = (meta ?? {}) as Record<string, unknown>;
     const chatId = obj['chat_id'];
     if (typeof chatId !== 'string' || chatId === '') {
       throw new Error('feishu resolveTarget requires a non-empty chat_id');
     }
     const type = obj['chat_type'] === 'p2p' ? 'p2p' : 'group';
+    const threadId = optionalString(obj['thread_id']);
+    const rootId = optionalString(obj['root_id']);
+    const parentId = optionalString(obj['parent_id']);
+    const messageId = optionalString(obj['message_id']);
+    const chatMode = await resolveThreadedGroupChatMode(this.handle, {
+      chatId,
+      chatType: type,
+      ...(threadId !== undefined ? { threadId } : {}),
+      ...(rootId !== undefined ? { rootId } : {}),
+    });
+    const explicitTargetKey = feishuConversationTargetKey({
+      chatId,
+      chatType: type,
+      ...(chatMode !== undefined ? { chatMode } : {}),
+      ...(threadId !== undefined ? { threadId } : {}),
+      ...(rootId !== undefined ? { rootId } : {}),
+      ...(this.opts.topicContext !== undefined
+        ? { topicContext: this.opts.topicContext }
+        : {}),
+    });
+    const targetKey = messageId !== undefined
+      ? this.state.messageTargets.get(messageId) ?? explicitTargetKey
+      : explicitTargetKey;
     return {
       target_type: type,
-      target_key: chatId,
+      target_key: targetKey,
       bindable: type === 'group',
-      meta: { chat_id: chatId, chat_type: type },
+      meta: {
+        chat_id: chatId,
+        chat_type: type,
+        ...(chatMode !== undefined ? { chat_mode: chatMode } : {}),
+        ...(threadId !== undefined ? { thread_id: threadId } : {}),
+        ...(rootId !== undefined ? { root_id: rootId } : {}),
+        ...(parentId !== undefined ? { parent_id: parentId } : {}),
+      },
     };
   }
 
@@ -330,4 +436,12 @@ function errInfo(err: unknown): { message: string; stack?: string } {
       : { message: err.message };
   }
   return { message: String(err) };
+}
+
+function firstNonEmpty(...values: Array<string | undefined>): string | undefined {
+  return values.find((value) => value !== undefined && value !== '');
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === 'string' && value !== '' ? value : undefined;
 }

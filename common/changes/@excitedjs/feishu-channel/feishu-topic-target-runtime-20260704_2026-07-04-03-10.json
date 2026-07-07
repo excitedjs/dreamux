@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Include Feishu topic identifiers in inbound envelopes and use chat-mode-aware topic target keys so topic-group messages route independently while ordinary group threads stay chat-scoped.",
+      "type": "patch",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

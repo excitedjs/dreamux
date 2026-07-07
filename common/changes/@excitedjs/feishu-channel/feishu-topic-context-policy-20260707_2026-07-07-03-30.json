@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Add Feishu topicContext controls for opt-in topic-context isolation, allow-listing topic groups, and deny-listing topic groups with deny precedence.",
+      "type": "patch",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

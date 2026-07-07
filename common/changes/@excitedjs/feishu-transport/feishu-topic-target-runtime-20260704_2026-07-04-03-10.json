@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Preserve Feishu thread_id in inbound event metadata and expose chat-mode lookup so channel providers can build topic-scoped routing targets only for topic groups.",
+      "type": "patch",
+      "packageName": "@excitedjs/feishu-transport"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-transport",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

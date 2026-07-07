@@ -45,12 +45,14 @@ import {
   sendIntroduceAck,
   sendCard,
   sendReply,
+  resolveThreadedGroupChatMode,
   setInboundReaction,
   type SessionHandle,
 } from './feishu-session-ops.js';
 import {
   IN_PROGRESS_REACTION_EMOJI,
   RECEIVED_REACTION_EMOJI,
+  feishuConversationTargetKey,
   type FeishuInboundEnvelope,
   type FeishuInboundSubmitter,
 } from './feishu-channel.js';
@@ -308,7 +310,23 @@ export async function onMessage(
   }
 
   // deliver
-  h.state.messageChats.set(event.messageId, event.chatId);
+  const chatMode = await resolveThreadedGroupChatMode(h, {
+    chatId: event.chatId,
+    chatType: event.chatType,
+    ...(event.threadId !== undefined ? { threadId: event.threadId } : {}),
+    ...(event.rootId !== undefined ? { rootId: event.rootId } : {}),
+  });
+  const targetKey = feishuConversationTargetKey({
+    chatId: event.chatId,
+    chatType: event.chatType,
+    ...(chatMode !== undefined ? { chatMode } : {}),
+    ...(event.threadId !== undefined ? { threadId: event.threadId } : {}),
+    ...(event.rootId !== undefined ? { rootId: event.rootId } : {}),
+    ...(h.opts.topicContext !== undefined
+      ? { topicContext: h.opts.topicContext }
+      : {}),
+  });
+  h.state.messageTargets.set(event.messageId, targetKey);
 
   const baseline =
     event.chatType === 'group'
@@ -345,7 +363,12 @@ export async function onMessage(
     provider: BUILTIN_FEISHU_PROVIDER_REF,
     chatId: event.chatId,
     chatType: event.chatType === 'group' ? 'group' : 'p2p',
+    targetKey,
     messageId: event.messageId,
+    ...(chatMode !== undefined ? { chatMode } : {}),
+    ...(event.threadId !== undefined ? { threadId: event.threadId } : {}),
+    ...(event.rootId !== undefined ? { rootId: event.rootId } : {}),
+    ...(event.parentId !== undefined ? { parentId: event.parentId } : {}),
   };
   const delivery: AgentRuntimeTurnResult = await submitter.submitTurn(
     input,

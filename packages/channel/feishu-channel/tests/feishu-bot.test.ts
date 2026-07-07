@@ -7,6 +7,7 @@ import {
 } from '../src/bot.js';
 import type {
   FeishuAppOwnerIdentity,
+  FeishuChatMode,
   FeishuCreateGroupInput,
   FeishuCreateGroupResult,
   FeishuDocComment,
@@ -50,6 +51,10 @@ class FakeTransport implements FeishuTransport {
 
   async inviteMembers(input: FeishuInviteMembersInput): Promise<FeishuInviteMembersResult> {
     return { addedOpenIds: input.userOpenIds };
+  }
+
+  async getChatMode(): Promise<FeishuChatMode> {
+    return 'group';
   }
 
   async addReaction(): Promise<string> {
@@ -144,6 +149,9 @@ describe('createFeishuBot inbound channel', () => {
           message_id: 'message-id-1',
           chat_id: 'chat-id-1',
           chat_type: 'group',
+          thread_id: 'message-thread-1',
+          root_id: 'message-root-1',
+          parent_id: 'message-parent-1',
           message_type: 'text',
           content: JSON.stringify({ text: 'hello @_user_1' }),
           create_time: '1710000000000',
@@ -170,6 +178,9 @@ describe('createFeishuBot inbound channel', () => {
       messageType: 'text',
       rawContent: JSON.stringify({ text: 'hello @_user_1' }),
       parsedText: 'hello @Ada',
+      threadId: 'message-thread-1',
+      rootId: 'message-root-1',
+      parentId: 'message-parent-1',
       createTime: '1710000000000',
     });
     expect(received[0]?.mentions).toHaveLength(1);

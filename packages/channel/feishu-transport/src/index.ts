@@ -69,6 +69,7 @@ export {
   type FeishuTransportOptions,
   type FeishuAppOwnerIdentity,
   type FeishuSendResult,
+  type FeishuChatMode,
   type FeishuCreateGroupInput,
   type FeishuCreateGroupResult,
   type FeishuInviteMembersInput,

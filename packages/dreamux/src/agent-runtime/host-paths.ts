@@ -16,6 +16,7 @@
 import type { AgentRuntimePathContext } from '@excitedjs/dreamux-types';
 
 import {
+  dispatcherChannelTargetRuntimeScratchDir,
   dispatcherDir,
   dispatcherTeamMateRuntimeDir,
   logsRoot,
@@ -54,6 +55,29 @@ export function teammateHostPaths(
   return {
     dispatcherDir: () =>
       dispatcherTeamMateRuntimeDir(operatorDispatcherId, runtimeName),
+    logsDir: logsRoot,
+    runtimeSocketDirs: () => runtimeSocketDirCandidates(),
+  };
+}
+
+/**
+ * Build the path context for a dispatcher-owned channel-target runtime. These
+ * runtimes are the dispatcher fallback for unbound bindable channel targets, so
+ * each target gets a separate scratch root and checkpoint while sharing the
+ * host-wide logs and sockets.
+ */
+export function channelTargetHostPaths(
+  dispatcherId: string,
+  channelId: string,
+  targetKeyHash: string,
+): AgentRuntimePathContext {
+  return {
+    dispatcherDir: () =>
+      dispatcherChannelTargetRuntimeScratchDir({
+        dispatcherId,
+        channelId,
+        targetKeyHash,
+      }),
     logsDir: logsRoot,
     runtimeSocketDirs: () => runtimeSocketDirCandidates(),
   };

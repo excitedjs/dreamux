@@ -11,6 +11,7 @@
 
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import { FEISHU_APP_OWNER_TYPE_ENTERPRISE_MEMBER } from '@excitedjs/feishu-transport';
+import type { FeishuChatMode } from '@excitedjs/feishu-transport';
 import type {
   FeishuBot,
   FeishuCardActionEvent,
@@ -63,7 +64,8 @@ export interface InboundReactionLedgerEntry {
 export interface FeishuChannelState {
   inboundReactions: Map<string, InboundReactionLedgerEntry>;
   pendingReceivedReactionClears: Set<string>;
-  messageChats: Map<string, string>;
+  messageTargets: Map<string, string>;
+  chatModes: Map<string, FeishuChatMode>;
 }
 
 export interface PairingApprovalResult {
@@ -106,6 +108,40 @@ function errInfo(err: unknown): { message: string; stack?: string } {
 }
 
 const log = (h: SessionHandle): DreamuxLogger => h.opts.log;
+
+export async function resolveThreadedGroupChatMode(
+  h: SessionHandle,
+  input: {
+    chatId: string;
+    chatType: string;
+    threadId?: string;
+    rootId?: string;
+  },
+): Promise<FeishuChatMode | undefined> {
+  if (
+    input.chatType !== 'group' ||
+    (input.threadId === undefined && input.rootId === undefined)
+  ) {
+    return undefined;
+  }
+  const cached = h.state.chatModes.get(input.chatId);
+  if (cached !== undefined) return cached;
+  try {
+    const mode = await h.bot.getChatMode(input.chatId);
+    h.state.chatModes.set(input.chatId, mode);
+    return mode;
+  } catch (err) {
+    log(h).warn(
+      {
+        dispatcher_id: h.opts.dispatcherId,
+        chat_id: input.chatId,
+        err: errInfo(err),
+      },
+      'failed to resolve feishu chat mode; preserving topic target split',
+    );
+    return undefined;
+  }
+}
 
 function pairingTokenLogFields(token: string): Record<string, unknown> {
   return { pairing_token_len: token.length };
