@@ -324,10 +324,12 @@ describe('Feishu topic channel targets', () => {
     });
   });
 
-  it('keeps threaded messages in ordinary groups on the chat target key', async () => {
+  it('keeps threaded messages in ordinary groups on the chat target key even when topicContext is enabled', async () => {
     const bot = createFakeFeishuBot('app');
     bot.setChatMode('oc_group', 'group');
-    const session = createSession(stateDir, bot);
+    const session = createSession(stateDir, bot, {
+      topicContext: { enabled: true },
+    });
     const delivered: ChannelInboundEnvelope[] = [];
 
     await session.start({
@@ -375,7 +377,7 @@ describe('Feishu topic channel targets', () => {
     });
   });
 
-  it('preserves topic splitting when chat mode lookup fails', async () => {
+  it('keeps threaded messages chat-scoped when chat mode lookup fails', async () => {
     const bot = createFakeFeishuBot('app');
     bot.setChatModeError(new Error('lookup failed'));
     const session = createSession(stateDir, bot, {
@@ -393,7 +395,7 @@ describe('Feishu topic channel targets', () => {
 
     await bot.inject(inboundEvent());
 
-    expect(delivered[0]?.target.target_key).toBe('oc_group#thread:om_thread');
+    expect(delivered[0]?.target.target_key).toBe('oc_group');
     expect(delivered[0]?.target.meta).toMatchObject({
       chat_id: 'oc_group',
       chat_type: 'group',
@@ -402,7 +404,7 @@ describe('Feishu topic channel targets', () => {
     expect(delivered[0]?.target.meta).not.toHaveProperty('chat_mode');
   });
 
-  it('applies allow and deny controls even when chat mode lookup fails', async () => {
+  it('keeps lookup-failure messages chat-scoped regardless of allow and deny controls', async () => {
     const deniedBot = createFakeFeishuBot('app');
     deniedBot.setChatModeError(new Error('lookup failed'));
     const deniedSession = createSession(stateDir, deniedBot, {

@@ -139,8 +139,9 @@ export const DEFAULT_FEISHU_TOPIC_CONTEXT_POLICY: FeishuTopicContextPolicy = {
  * different Dreamux channel targets while replies in the same topic share one.
  * The optional policy can disable topic routing globally, restrict it to an
  * allow-list, or block it with a higher-priority deny-list. If chat-mode lookup
- * fails, `chatMode` is intentionally absent and the key preserves the old topic
- * split only when the policy still permits isolation.
+ * fails, `chatMode` is intentionally absent and the key stays chat-scoped: the
+ * channel should isolate only when Feishu explicitly identifies the chat as a
+ * topic group.
  */
 export function feishuConversationTargetKey(
   input: FeishuConversationTargetInput,
@@ -165,7 +166,7 @@ function shouldUseTopicScopedTarget(input: FeishuConversationTargetInput): boole
   ) {
     return false;
   }
-  return input.chatMode !== 'group';
+  return input.chatMode === 'topic';
 }
 
 export class FeishuChannelCapabilityError extends Error {

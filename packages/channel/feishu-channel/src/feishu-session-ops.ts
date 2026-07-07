@@ -137,7 +137,7 @@ export async function resolveThreadedGroupChatMode(
         chat_id: input.chatId,
         err: errInfo(err),
       },
-      'failed to resolve feishu chat mode; preserving topic target split',
+      'failed to resolve feishu chat mode; keeping threaded group message chat-scoped',
     );
     return undefined;
   }
