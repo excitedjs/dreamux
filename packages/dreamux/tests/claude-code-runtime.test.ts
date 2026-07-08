@@ -802,6 +802,146 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     ]);
   });
 
+  it('folds Dreamux-owned completionInput sends into the active logical turn', async () => {
+    // PR #282 E2E regression: spawn a TeamMate turn that does `sleep 30`, then
+    // `send` two follow-ups (S30_B, S30_C) while the first is in-flight. Before
+    // the fix each `send` (which routes through `completionInput`) created its
+    // own logical turn + its own completion, so B/C produced "收到 S30_B" /
+    // "收到 S30_C" instead of folding into the active turn. The runtime must
+    // treat `completionInput` the same way it already treated `channelInput`:
+    // same active steerable slot, same turnId, one settled signal.
+    const settled: TurnSettledSignal[] = [];
+    const fleet = controllableFleet();
+    const { runtime } = await makeRuntime(fleet, {
+      onTurnSettled: (s) => settled.push(s),
+    });
+    await runtime.start();
+
+    const first = await runtime.completionInput({
+      text: 'sleep 30; echo CLAUDE_SLEEP30_BURST_FINAL tokens=S30_A,S30_B,S30_C',
+      sourceId: 'send:mate-1:first',
+    });
+    expect(first.status).toBe('submitted');
+    await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
+
+    const second = await runtime.completionInput({
+      text: 'S30_B',
+      sourceId: 'send:mate-1:second',
+    });
+    const third = await runtime.completionInput({
+      text: 'S30_C',
+      sourceId: 'send:mate-1:third',
+    });
+    // Both follow-ups fold into the active logical turn and return its id.
+    expect(second).toEqual(first);
+    expect(third).toEqual(first);
+
+    // The first prompt is the original send; S30_B and S30_C are steered in
+    // with `priority: 'next'` (the Codex-aligned active-slot semantics).
+    expect(fleet.sessions[0]?.prompts).toEqual([
+      'sleep 30; echo CLAUDE_SLEEP30_BURST_FINAL tokens=S30_A,S30_B,S30_C',
+      'S30_B',
+      'S30_C',
+    ]);
+    expect(fleet.sessions[0]?.submitOptions).toEqual([
+      { isSynthetic: false },
+      { priority: 'next' },
+      { priority: 'next' },
+    ]);
+
+    // A single logical turn settles.
+    fleet.resolveNext(okOutcome('session-abc'));
+    await waitFor(() => settled.length === 1);
+    if (first.status !== 'submitted') {
+      throw new Error('expected first submitted');
+    }
+    expect(settled).toEqual([
+      {
+        turnId: first.turnId,
+        status: 'completed',
+        result: { text: 'done' },
+      },
+    ]);
+  });
+
+  it('folds a channel inbound into an active completionInput turn', async () => {
+    // The active slot is shared, not channel-only: a Dreamux-owned send that
+    // started the turn must also accept channel-XML inbound as a steer. When
+    // the steer arrives before the resident child has picked up the initial
+    // submit, it lands in `pendingSteers` and is prepended to the full prompt
+    // at turn-start (same path the existing channel-folding test uses for the
+    // pre-session window).
+    const settled: TurnSettledSignal[] = [];
+    const fleet = fakeFleet([okOutcome('session-abc')]);
+    const { runtime } = await makeRuntime(fleet, {
+      onTurnSettled: (s) => settled.push(s),
+    });
+    await runtime.start();
+
+    const first = await runtime.completionInput({
+      text: 'first send',
+      sourceId: 'send:mate-1:first',
+    });
+    expect(first.status).toBe('submitted');
+
+    const second = await runtime.channelInput({
+      sourceId: 'm-inbound',
+      text: 'inbound follow-up',
+      body: 'inbound follow-up',
+      source: 'feishu',
+      attrs: [
+        ['chat_id', 'oc:chat-1'],
+        ['message_id', 'om:msg-2'],
+      ],
+    });
+    // Channel inbound folds into the active turn and returns the same id.
+    expect(second).toEqual(first);
+
+    await waitFor(() => settled.length === 1);
+    // The single submitted prompt carries both the original plain text and the
+    // channel-rendered inbound (the steer was pending and got joined).
+    const fullPrompt = fleet.sessions[0]?.prompts[0] ?? '';
+    expect(fullPrompt).toContain('first send');
+    expect(fullPrompt).toContain('<channel source="feishu"');
+    expect(fullPrompt).toContain('inbound follow-up');
+    // The initial completionInput turn is a real user turn, not synthetic.
+    expect(fleet.sessions[0]?.submitOptions[0]).toEqual({ isSynthetic: false });
+    if (first.status !== 'submitted') {
+      throw new Error('expected first submitted');
+    }
+    expect(settled[0]?.turnId).toBe(first.turnId);
+  });
+
+  it('starts a fresh logical turn for completionInput after the prior turn settled', async () => {
+    // Preserves the existing "sequential turns get distinct ids" invariant for
+    // the plain-text path (the channel path already has this test).
+    const settled: TurnSettledSignal[] = [];
+    const fleet = fakeFleet([okOutcome('session-abc'), okOutcome('session-abc')]);
+    const { runtime } = await makeRuntime(fleet, {
+      onTurnSettled: (s) => settled.push(s),
+    });
+    await runtime.start();
+
+    const first = await runtime.completionInput({
+      text: 'first',
+      sourceId: 'send:mate-1:first',
+    });
+    await waitFor(() => settled.length === 1);
+    const second = await runtime.completionInput({
+      text: 'second',
+      sourceId: 'send:mate-1:second',
+    });
+    await waitFor(() => settled.length === 2);
+
+    expect(first.status).toBe('submitted');
+    expect(second.status).toBe('submitted');
+    if (first.status !== 'submitted' || second.status !== 'submitted') {
+      throw new Error('expected submitted turns');
+    }
+    expect(first.turnId).not.toBe(second.turnId);
+    expect(settled.map((s) => s.turnId)).toEqual([first.turnId, second.turnId]);
+  });
+
   it('does not reuse the prior successful result for a later empty successful turn', async () => {
     const settled: TurnSettledSignal[] = [];
     const fleet = fakeFleet([

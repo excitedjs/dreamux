@@ -19,7 +19,10 @@ aggregate and owns:
 - the per-dispatcher `TeamCollection`;
 - one `CompletionRouter`;
 - one `WorktreeManager`;
-- shared stateless identity/turn stores;
+- one shared `AgentIdentityStore` + `AgentTurnsStore` pair (built at
+  construction in `service/agent-entity/` and injected into the dispatcher
+  agent, dispatcher-scope teammate collection, and each Team's collection /
+  TeamService / member collection);
 - the dispatcher scheduler.
 
 `server.ts` should stay wiring-only. Per-dispatcher behavior belongs under
@@ -29,6 +32,7 @@ Source:
 
 - `/packages/dreamux/src/server.ts`
 - `/packages/dreamux/src/service/CLAUDE.md`
+- `/packages/dreamux/src/service/agent-entity/`
 - `/packages/dreamux/src/service/dispatchers/index.ts`
 - `/packages/dreamux/src/service/dispatcher-service/index.ts`
 - `/packages/dreamux/src/service/index.ts`
@@ -220,8 +224,14 @@ roles:
 - `teammate-mcp` for TeamMate lifecycle and reads;
 - `team-mcp` for Team lifecycle and Team channel binding;
 - `cron-mcp` for scheduled prompt-agent jobs;
-- provider-owned `channel-mcp` tools for channel actions such as Feishu
+- core-owned `channel-mcp` shims for provider-owned channel actions such as Feishu
   `reply`, `react`, and `list_chat_bots`.
+
+Channel MCP descriptor rendering is a core-owned capability built in
+`service/channel-service/mcp-descriptors.ts`; `dispatcher-service/mcp-descriptors.ts`
+only composes the dispatcher-root aggregate (channel + team + teammate + cron).
+The channel service never imports back from `dispatcher-service`, and provider
+packages stay core-agnostic.
 
 Nested dispatch is prevented by MCP injection and caller scope, not by a runtime
 implementation check.
@@ -229,6 +239,7 @@ implementation check.
 Source:
 
 - `/packages/dreamux/src/service/dispatcher-service/mcp-descriptors.ts`
+- `/packages/dreamux/src/service/channel-service/mcp-descriptors.ts`
 - `/packages/dreamux/src/mcp/teammate-mcp.ts`
 - `/packages/dreamux/src/mcp/team-mcp.ts`
 - `/packages/dreamux/src/mcp/channel-mcp.ts`

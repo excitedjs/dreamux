@@ -1,6 +1,6 @@
 # Dispatcher Agent Entity Isomorphism
 
-- **Status:** Draft revision after PR #282 review comments
+- **Status:** Accepted / implemented in PR #282
 - **Date:** 2026-07-04
 - **Affects:** `@excitedjs/dreamux-types`, `@excitedjs/dreamux`,
   `@excitedjs/feishu-channel`, `@excitedjs/agent-runtime-claude-code`,

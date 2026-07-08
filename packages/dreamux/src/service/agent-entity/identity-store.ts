@@ -14,7 +14,8 @@ import {
 } from '../../platform/paths.js';
 import { assertNoRemovedRecordFields, LegacyStateError } from '../legacy-state.js';
 import {
-  validateTeamMateName,
+  DISPATCHER_AGENT_NAME,
+  validateAgentEntityName,
   type AgentEntityIdentity,
   type AgentEntityIdentityStatus,
   type AgentEntityRole,
@@ -76,7 +77,7 @@ export class AgentIdentityStore {
     name: string,
     teamId?: string,
   ): Promise<AgentEntityIdentity | null> {
-    validateTeamMateName(name);
+    validateAgentEntityName(name);
     const candidates =
       teamId === undefined
         ? [dispatcherAgentIdentityPath({ dispatcherId, name, teamId: null, role: 'teammate' })]
@@ -231,14 +232,14 @@ export class AgentIdentityStore {
           path,
           error: err instanceof Error ? err.message : String(err),
         },
-        'skipping unreadable TeamMate identity',
+        'skipping unreadable agent identity',
       );
       return null;
     }
   }
 
   async create(input: AgentIdentityCreateInput): Promise<AgentEntityIdentity> {
-    validateTeamMateName(input.name);
+    validateAgentEntityName(input.name);
     const now = Date.now();
     const identity: AgentEntityIdentity = {
       version: 1,
@@ -340,14 +341,14 @@ function readIdentity(
     typeof value['provider_ref'] === 'string'
   ) {
     throw new LegacyStateError(
-      `TeamMate identity ${JSON.stringify(storedName)} uses the legacy provider_ref ` +
-        'format (pre-#148). Teammate identities now reference an agents[].id via ' +
-        'agent_runtime. Close and respawn this teammate, or delete its identity ' +
+      `agent identity ${JSON.stringify(storedName)} uses the legacy provider_ref ` +
+        'format (pre-#148). Agent identities now reference an agents[].id via ' +
+        'agent_runtime. Close and respawn this agent, or delete its identity ' +
         'file to rebuild it.',
     );
   }
   assertNoRemovedRecordFields(
-    `TeamMate record ${JSON.stringify(storedName)}`,
+    `agent record ${JSON.stringify(storedName)}`,
     value,
     ['checkpoint', 'checkpoint_kind', 'session_ref', 'display_name', 'close_status'],
     'close and respawn this teammate, or delete its identity directory to rebuild it.',
@@ -360,7 +361,7 @@ function readIdentity(
     typeof value['agent_runtime'] !== 'string' ||
     typeof value['cwd'] !== 'string'
   ) {
-    throw new Error(`invalid TeamMate identity ${JSON.stringify(storedName)}`);
+    throw new Error(`invalid agent identity ${JSON.stringify(storedName)}`);
   }
   const name = value['name'] as string;
   const record = value as Record<string, unknown>;
@@ -435,8 +436,6 @@ function readRole(value: unknown): AgentEntityRole {
   if (value === 'team_leader' || value === 'team_member') return value;
   return 'teammate';
 }
-
-const DISPATCHER_AGENT_NAME = 'dispatcher';
 
 function readWorktreeIdentity(
   value: unknown,

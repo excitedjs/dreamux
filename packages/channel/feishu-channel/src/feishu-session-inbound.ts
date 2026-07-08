@@ -354,7 +354,28 @@ export async function onMessage(
     RECEIVED_REACTION_EMOJI,
     'received',
   );
-  const delivery: AgentRuntimeTurnResult = await submitter.submitTurn(input, envelope);
+  let delivery: AgentRuntimeTurnResult;
+  try {
+    delivery = await submitter.submitTurn(input, envelope);
+  } catch (err) {
+    // Pre-delivery `received` reaction was set; if submit threw we must not
+    // leave it hanging (PR #282 review). Clear the reaction and record the
+    // failure so the operator sees the error, not a stuck "received" mark.
+    await clearInboundReaction(h, event.messageId);
+    const message =
+      err instanceof Error ? err.message : String(err);
+    const stack = err instanceof Error ? err.stack : undefined;
+    log(h).error(
+      {
+        chat_id: event.chatId,
+        sender_id: event.senderId,
+        message_id: event.messageId,
+        err: { message, stack },
+      },
+      'feishu inbound submit threw before delivery',
+    );
+    return;
+  }
   if (delivery.status === 'submitted') {
     log(h).info(
       {

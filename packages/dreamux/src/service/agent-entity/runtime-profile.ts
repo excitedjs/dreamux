@@ -1,7 +1,10 @@
 import { createHash } from 'node:crypto';
 
 import { validateDispatcherId } from '../../state/dispatcher-id.js';
-import type { AgentEntityIdentity } from './types.js';
+import {
+  DISPATCHER_AGENT_NAME,
+  type AgentEntityIdentity,
+} from './types.js';
 
 export function dispatcherRuntimeId(dispatcherId: string): string {
   return validateDispatcherId(dispatcherId);
@@ -25,7 +28,7 @@ export function assertDispatcherScopedTeammate(
   ) {
     return;
   }
-  throw new Error(`TeamMate ${JSON.stringify(identity.name)} does not exist`);
+  throw new Error(`agent ${JSON.stringify(identity.name)} does not exist`);
 }
 
 export function assertTeamScopedAgent(
@@ -39,7 +42,7 @@ export function assertTeamScopedAgent(
     ) {
       return;
     }
-    throw new Error(`TeamMate ${JSON.stringify(identity.name)} does not exist`);
+    throw new Error(`agent ${JSON.stringify(identity.name)} does not exist`);
   };
 }
 
@@ -51,11 +54,11 @@ export function assertDispatcherRootAgent(
     identity.dispatcher_id === dispatcherId &&
     identity.role === 'dispatcher' &&
     identity.team_id === null &&
-    identity.name === 'dispatcher'
+    identity.name === DISPATCHER_AGENT_NAME
   ) {
     return;
   }
-  throw new Error(`TeamMate ${JSON.stringify(identity.name)} does not exist`);
+  throw new Error(`agent ${JSON.stringify(identity.name)} does not exist`);
 }
 
 function childRuntimeId(dispatcherId: string, name: string): string {

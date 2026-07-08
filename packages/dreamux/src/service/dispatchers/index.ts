@@ -39,6 +39,14 @@ export class Dispatchers {
   private readonly adminSocketPath: string | undefined;
   private readonly channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
   private readonly log: DreamuxLogger;
+  /**
+   * Read-only identity reader shared by {@link summarize} and {@link status}
+   * (issue #233 / PR #282 review). Built once so the read-model probes don't
+   * `new` a throwaway store per dispatcher row. This is a plain path-based
+   * reader, never a DispatcherService trigger — it does not prepare or start
+   * any aggregate.
+   */
+  private readonly identities: AgentIdentityStore;
   private restartIntent: RestartIntentConsumer | null = null;
 
   constructor(opts: DispatchersOptions) {
@@ -49,6 +57,9 @@ export class Dispatchers {
     this.adminSocketPath = opts.adminSocketPath;
     this.channelLoggerFactory = opts.channelLoggerFactory;
     this.log = opts.log;
+    this.identities = new AgentIdentityStore({
+      warn: opts.log.warn.bind(opts.log),
+    });
   }
 
   get(id: string): DispatcherService {
@@ -69,9 +80,6 @@ export class Dispatchers {
   }
 
   async summarize(): Promise<DispatcherSummary[]> {
-    const identities = new AgentIdentityStore({
-      warn: this.log.warn.bind(this.log),
-    });
     return Promise.all(this.dispatcherStore.list().map(async (row) => {
       const service = this.services.get(row.dispatcher_id);
       const live = service?.liveRuntimeStatus() ?? null;
@@ -86,7 +94,7 @@ export class Dispatchers {
           enabled: row.enabled === 1,
         };
       }
-      const identity = await identities.dispatcherIdentity(row.dispatcher_id);
+      const identity = await this.identities.dispatcherIdentity(row.dispatcher_id);
       return {
         dispatcher_id: row.dispatcher_id,
         channel_identity: row.channel_identity,
@@ -101,10 +109,7 @@ export class Dispatchers {
     const service = this.services.get(id);
     const live = service?.liveRuntimeStatus() ?? null;
     if (live !== null) return live;
-    const identities = new AgentIdentityStore({
-      warn: this.log.warn.bind(this.log),
-    });
-    const identity = await identities.dispatcherIdentity(id);
+    const identity = await this.identities.dispatcherIdentity(id);
     return {
       status: identity?.status ?? null,
       threadId: identity?.session_id ?? null,

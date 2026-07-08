@@ -68,7 +68,9 @@ state mechanisms:
 - no persisted inbound message queue;
 - no persisted reaction ledger;
 - no persisted runtime socket path;
-- no workspace-local `.codex/skills` installation.
+- no workspace-local `.codex/skills` installation;
+- no dispatcher-root `status.json` recovery authority (identity + turn archive are the agent entity state);
+- no durable `runtime/<name>/` scratch under the dispatcher state root (runtime scratch is volatile and lives under `run/`).
 
 Removed paths may be detected to produce fail-loud diagnostics, but current
 readers must not treat them as source data, auto-migrate them, or delete them.
@@ -110,14 +112,12 @@ symmetric by agent entity:
 
 ```text
 state/<dispatcher-id>/
-  status.json
   access.json
   chat-bots.json
   channel-bindings.json
   cron-jobs.json
   identity.json
   turn.jsonl
-  runtime/<name>/
   teammate/<name>/
     identity.json
     turn.jsonl
@@ -131,17 +131,19 @@ state/<dispatcher-id>/
       turn.jsonl
 ```
 
-`status.json` is authoritative for dispatcher-agent rebuild/recovery. The
-dispatcher root `identity.json` + `turn.jsonl` are write-only debug data and are
-structurally outside the `teammate/` collection. TeamLeader state lives at the
-Team root; Team member state lives under that Team's member collection.
+The dispatcher root `identity.json` + `turn.jsonl` are the dispatcher agent's
+entity state and sit structurally outside the `teammate/` collection. TeamLeader
+state lives at the Team root; Team member state lives under that Team's member
+collection. There is no separate `status.json` recovery authority and no durable
+`runtime/<name>/` scratch under the dispatcher state root — runtime scratch is
+volatile and lives under `run/`.
 
 Source:
 
 - `/packages/dreamux/src/platform/paths.ts`
 - `/packages/dreamux/src/state/dispatcher-store.ts`
-- `/packages/dreamux/src/service/teammate-collection/identity-store.ts`
-- `/packages/dreamux/src/service/teammate-collection/turns-store.ts`
+- `/packages/dreamux/src/service/agent-entity/identity-store.ts`
+- `/packages/dreamux/src/service/agent-entity/turns-store.ts`
 - `/packages/dreamux/src/service/team-collection/store.ts`
 - `/packages/channel/feishu-channel/src/chat-bots-store.ts`
 
@@ -165,7 +167,7 @@ Source:
 
 - `/packages/dreamux/src/platform/json-document-store.ts`
 - `/packages/dreamux/src/service/scheduler/store.ts`
-- `/packages/dreamux/src/service/teammate-collection/turns-store.ts`
+- `/packages/dreamux/src/service/agent-entity/turns-store.ts`
 
 ## Run Files And Runtime Sockets
 

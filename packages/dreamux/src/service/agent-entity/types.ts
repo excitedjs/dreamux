@@ -6,6 +6,13 @@ import type {
 export const TEAMMATE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 /**
+ * The fixed name of the dispatcher's own agent entity (issue #233 Phase 5).
+ * Single source of truth: identity-store, dispatcher-agent factory, and
+ * runtime-profile scope assertion all import this one constant.
+ */
+export const DISPATCHER_AGENT_NAME = 'dispatcher';
+
+/**
  * Directory segments an agent (teammate or team) name MUST NOT take (issue
  * #233). With the symmetric layout each entity is a directory whose name is the
  * agent name, sitting beside the legacy leaves that `legacy-state.ts` fail-loud
@@ -255,16 +262,30 @@ export interface AgentEntityCapabilities {
   agent_runtimes: AgentEntityRuntimeCapability[];
 }
 
-export function validateTeamMateName(name: string): string {
+/**
+ * Validate an agent entity name (dispatcher, teammate, team leader, or team
+ * member). The neutral name used by the agent-entity stores and shared
+ * runtime holder; teammate-facing request/types may keep a `TeamMate*`
+ * wrapper or alias on top.
+ */
+export function validateAgentEntityName(name: string): string {
   if (!TEAMMATE_NAME_PATTERN.test(name)) {
     throw new Error(
-      "TeamMate name must be 1-64 ASCII letters, digits, dots, underscores, " +
+      "Agent entity name must be 1-64 ASCII letters, digits, dots, underscores, " +
         `or dashes, starting with a letter or digit: ${name}`,
     );
   }
   assertNotReservedAgentName(name);
   return name;
 }
+
+/**
+ * TeamMate-facing alias of {@link validateAgentEntityName}. Kept so
+ * teammate-collection request types can express the teammate-specific
+ * validation word without the neutral agent-entity layer carrying
+ * teammate-only terminology.
+ */
+export const validateTeamMateName = validateAgentEntityName;
 
 export function requireLifecycleText(value: unknown, label: string): string {
   if (typeof value !== "string" || value.trim() === "") {

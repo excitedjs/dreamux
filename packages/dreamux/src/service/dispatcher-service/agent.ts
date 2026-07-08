@@ -30,14 +30,6 @@ import {
 } from './base-prompt.js';
 import { bundledDispatcherSkillRoot } from '../../platform/paths.js';
 
-/**
- * The fixed debug-record name of a dispatcher's own agent (issue #233 Phase 5).
- * Its `identity.json` + `turn.jsonl` live at the dispatcher ROOT (role
- * `dispatcher`), structurally outside the `teammate/` and `team/` collections, so
- * the `teammate.*` read chokepoints never enumerate it.
- */
-export const DISPATCHER_AGENT_NAME = 'dispatcher';
-
 export interface DispatcherAgentDeps {
   id: string;
   config: DreamuxConfig;

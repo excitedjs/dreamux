@@ -1,7 +1,8 @@
 import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
-import type {
-  AgentEntityIdentity,
-  AgentEntityWorktreeIdentity,
+import {
+  DISPATCHER_AGENT_NAME,
+  type AgentEntityIdentity,
+  type AgentEntityWorktreeIdentity,
 } from '../agent-entity/types.js';
 
 export interface DispatcherIdentityEnsureInput {
@@ -28,7 +29,7 @@ export async function ensureDispatcherIdentity(
     const identity: AgentEntityIdentity = {
       version: 1,
       dispatcher_id: input.dispatcherId,
-      name: 'dispatcher',
+      name: DISPATCHER_AGENT_NAME,
       role: 'dispatcher',
       team_id: null,
       agent_runtime: input.agentRuntime,
@@ -61,7 +62,7 @@ export async function ensureDispatcherIdentity(
     worktreeIdentityEquals(existing.worktree, input.worktree);
   const updated: AgentEntityIdentity = {
     ...existing,
-    name: 'dispatcher',
+    name: DISPATCHER_AGENT_NAME,
     role: 'dispatcher',
     team_id: null,
     agent_runtime: input.agentRuntime,

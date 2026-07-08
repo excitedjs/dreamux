@@ -17,7 +17,7 @@ import {
 import {
   channelMcpServerDescriptorsForCaller,
   type ChannelMcpCallerScope,
-} from '../dispatcher-service/mcp-descriptors.js';
+} from './mcp-descriptors.js';
 
 interface ChannelToolInvocation {
   /** Provider ref carried by the channel MCP descriptor. Used to select/verify the session. */

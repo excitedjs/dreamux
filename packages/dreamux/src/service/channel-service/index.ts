@@ -12,7 +12,7 @@ import type {
 } from '../../config/config.js';
 import type { ChannelBinding } from '../channel-binding/store.js';
 import { ChannelBindingStore } from '../channel-binding/store.js';
-import type { ChannelMcpCallerScope } from '../dispatcher-service/mcp-descriptors.js';
+import type { ChannelMcpCallerScope } from './mcp-descriptors.js';
 import { ChannelSessions } from './channel-sessions.js';
 import { ChannelToolAuthorizationError } from './errors.js';
 

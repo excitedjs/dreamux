@@ -24,7 +24,7 @@ import type {
 } from '../../state/dispatcher-store.js';
 import { createDispatcherAgent } from './agent.js';
 import { dispatcherMcpServerDescriptors } from './mcp-descriptors.js';
-import type { ChannelMcpCallerScope } from './mcp-descriptors.js';
+import type { ChannelMcpCallerScope } from '../channel-service/mcp-descriptors.js';
 import { ensureDispatcherIdentity as ensureDispatcherRootIdentity } from './identity.js';
 import { assertRunnableChannelShape } from './runnable-channel.js';
 import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';

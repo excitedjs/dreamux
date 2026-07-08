@@ -181,6 +181,7 @@ channel tools only for their bound Team channels.
 Source:
 
 - `/packages/dreamux/src/service/channel-service/index.ts`
+- `/packages/dreamux/src/service/channel-service/mcp-descriptors.ts`
 - `/packages/dreamux/src/service/channel-service/errors.ts`
 - `/packages/dreamux/src/service/dispatcher-service/mcp-descriptors.ts`
 

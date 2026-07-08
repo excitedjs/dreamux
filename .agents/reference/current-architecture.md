@@ -81,7 +81,7 @@ Each live dispatcher owns:
 
 - one selected Agent Runtime instance
 - a map of live Channel sessions keyed by dispatcher-local `channel_id`
-- provider-owned channel MCP shims for channel tools
+- core-owned `channel-mcp` shims for provider-owned channel tools
 - Team and TeamMate MCP shims owned by Dreamux core
 
 The first declared channel is the primary/default egress channel. A dispatcher
@@ -92,6 +92,7 @@ Key source:
 
 - `/packages/dreamux/src/service/dispatcher-service/index.ts`
 - `/packages/dreamux/src/service/dispatcher-service/mcp-descriptors.ts`
+- `/packages/dreamux/src/service/channel-service/mcp-descriptors.ts`
 - `/packages/dreamux/src/mcp/channel-mcp.ts`
 - `/packages/dreamux/src/mcp/team-mcp.ts`
 - `/packages/dreamux/src/mcp/teammate-mcp.ts`
@@ -120,6 +121,15 @@ semi-resident agents. `spawn` creates one, `send` submits follow-up turns and
 reopens closed agents, and read tools (`history`, `list`, `status`, `last`) do
 not start a runtime.
 
+Agent entity state — identity, turn archive, runtime state, and the shared
+types/name validation — lives in the neutral
+`/packages/dreamux/src/service/agent-entity/` layer. It is path-based and
+role-agnostic: `DispatcherService` builds one shared `AgentIdentityStore` +
+`AgentTurnsStore` pair at construction and injects it into the dispatcher
+agent, the dispatcher-scope `TeammateCollection`, and each Team's
+`TeamCollection` / `TeamService` / member `TeammateCollection`. Stores are
+never self-built inside a collection (PR #282 owner-boundary fix).
+
 Team lifecycle is addressed by `team_name`. Channel binding is a Team MCP
 capability. The Team MCP is caller-scoped:
 
@@ -146,6 +156,7 @@ is never cached in the collection's entity map.
 
 Key source:
 
+- `/packages/dreamux/src/service/agent-entity/`
 - `/packages/dreamux/src/service/teammate-collection/`
 - `/packages/dreamux/src/service/team-collection/`
 - `/packages/dreamux/src/service/team-service/`
