@@ -4,6 +4,10 @@ import type { Readable, Writable } from 'node:stream';
 import { AdminClientError, sendAdminRequest } from '../admin/client.js';
 import { adminSocketPath as defaultAdminSocketPath } from '../platform/paths.js';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
+import {
+  appendTaskDispatchSuccessReminder,
+  TEAM_DISPATCH_SUCCESS_REMINDER,
+} from './task-dispatch-reminder.js';
 import { optionalRepoInput, repoInputSchema } from './teammate-mcp.js';
 
 export type TeamMcpCallerKind = 'dispatcher' | 'team_leader';
@@ -195,7 +199,14 @@ async function callTool(
       { socketPath: ctx.socketPath },
     );
     return {
-      content: [{ type: 'text', text: `${call.name} forwarded to dreamux serve` }],
+      content: [{
+        type: 'text',
+        text: appendTaskDispatchSuccessReminder(
+          `${call.name} forwarded to dreamux serve`,
+          result,
+          TEAM_DISPATCH_SUCCESS_REMINDER,
+        ),
+      }],
       structuredContent: result,
     };
   } catch (err) {

@@ -8,6 +8,10 @@ import {
 import { adminSocketPath as defaultAdminSocketPath } from '../platform/paths.js';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
 import { validateTeamId } from '../service/team-collection/types.js';
+import {
+  appendTaskDispatchSuccessReminder,
+  TEAMMATE_DISPATCH_SUCCESS_REMINDER,
+} from './task-dispatch-reminder.js';
 
 export type TeamMateMcpCallerKind = 'dispatcher' | 'team_leader';
 
@@ -293,7 +297,14 @@ async function forwardToolCall(
   try {
     const result = await sendAdminRequest(method, params, { socketPath });
     return {
-      content: [{ type: 'text', text: `${label} forwarded to dreamux serve` }],
+      content: [{
+        type: 'text',
+        text: appendTaskDispatchSuccessReminder(
+          `${label} forwarded to dreamux serve`,
+          result,
+          TEAMMATE_DISPATCH_SUCCESS_REMINDER,
+        ),
+      }],
       structuredContent: result,
     };
   } catch (err) {

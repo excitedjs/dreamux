@@ -417,14 +417,15 @@ describe('TeamCollection identity prompt launch behavior', () => {
       'team-leader',
     ]);
     const append = contexts[0]?.systemPrompt?.append ?? [];
-    expect(append).toHaveLength(3);
+    expect(append).toHaveLength(4);
     expect(append[0]).toBe('You are the TeamLeader of Dreamux Team "alpha".');
     expect(append[1]).toContain('team-workflow');
     expect(append[1]).toMatch(/TeamMate/i);
     expect(append[1]).toMatch(/channel/i);
     expect(append[1]).toMatch(/cron/i);
     expect(append[1]).toMatch(/transfer/i);
-    expect(append[2]).toBe('architecture reviewer');
+    expect(append[2]).toMatch(/task was submitted successfully[\s\S]*end the turn naturally/i);
+    expect(append[3]).toBe('architecture reviewer');
     expect(contexts[0]?.systemPrompt).not.toHaveProperty('replace');
     const summary = await team.status();
     expect(summary.leader).not.toHaveProperty('identity_prompt');

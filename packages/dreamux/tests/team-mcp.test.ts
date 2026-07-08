@@ -7,6 +7,10 @@ import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 
 import type { AdminRequest, AdminResponse } from '../src/admin/protocol.js';
+import {
+  TEAM_DISPATCH_SUCCESS_REMINDER,
+  TEAMMATE_DISPATCH_SUCCESS_REMINDER,
+} from '../src/mcp/task-dispatch-reminder.js';
 import { runTeamMcp } from '../src/mcp/team-mcp.js';
 
 class JsonLineReader {
@@ -221,7 +225,12 @@ describe('team-mcp stdio shim', () => {
     const admin = await startFakeAdminServer((request) => ({
       id: request.id,
       ok: true,
-      result: { team: { team_name: 'alpha' }, leader: null, member_count: 0, turn: null },
+      result: {
+        team: { team_name: 'alpha' },
+        leader: null,
+        member_count: 0,
+        turn: { status: 'submitted', turn_id: 'turn-1' },
+      },
     }));
     try {
       const input = new PassThrough();
@@ -251,15 +260,20 @@ describe('team-mcp stdio shim', () => {
         },
       });
 
-      expect(await reader.next()).toMatchObject({
+      const response = await reader.next();
+      expect(response).toMatchObject({
         jsonrpc: '2.0',
         id: 1,
         result: {
+          content: [{
+            text: expect.stringContaining(TEAM_DISPATCH_SUCCESS_REMINDER) as string,
+          }],
           structuredContent: {
             team: { team_name: 'alpha' },
           },
         },
       });
+      expect(JSON.stringify(response)).not.toContain(TEAMMATE_DISPATCH_SUCCESS_REMINDER);
       expect(admin.requests).toHaveLength(1);
       expect(admin.requests[0]).toMatchObject({
         method: 'mcp.team.create',
@@ -303,7 +317,11 @@ describe('team-mcp stdio shim', () => {
           items: [{ team_name: 'alpha', bound_target: boundTarget }],
           next_cursor: null,
         },
-        'mcp.team.send': { ok: true },
+        'mcp.team.send': {
+          team: { team_name: 'alpha' },
+          leader: { name: 'alpha-leader', status: 'running' },
+          turn: { status: 'submitted', turn_id: 'turn-2' },
+        },
       };
       return {
         id: request.id,
@@ -360,7 +378,7 @@ describe('team-mcp stdio shim', () => {
           },
         },
       });
-      await reader.next();
+      const sendResponse = await reader.next();
 
       expect(admin.requests.map((r) => r.method)).toEqual([
         'mcp.team.list',
@@ -391,6 +409,14 @@ describe('team-mcp stdio shim', () => {
           },
         },
       });
+      expect(sendResponse).toMatchObject({
+        result: {
+          content: [{
+            text: expect.stringContaining(TEAM_DISPATCH_SUCCESS_REMINDER) as string,
+          }],
+        },
+      });
+      expect(JSON.stringify(sendResponse)).not.toContain(TEAMMATE_DISPATCH_SUCCESS_REMINDER);
       expect(admin.requests[1]?.params).toMatchObject({ team_name: 'alpha' });
       expect(admin.requests[2]?.params).toMatchObject({
         grep: 'auth',
@@ -406,6 +432,56 @@ describe('team-mcp stdio shim', () => {
       });
       // #199 Slice 1: the legacy `close_status` filter is not part of the surface.
       expect(admin.requests[1]?.params).not.toHaveProperty('close_status');
+
+      input.end();
+      await run;
+    } finally {
+      await admin.close();
+    }
+  });
+
+  it('omits the reminder when a Team prompt turn is not submitted', async () => {
+    const admin = await startFakeAdminServer((request) => ({
+      id: request.id,
+      ok: true,
+      result: {
+        team: { team_name: 'alpha' },
+        leader: { name: 'alpha-leader', status: 'degraded' },
+        turn: { status: 'failed', error: 'runtime unavailable' },
+      },
+    }));
+    try {
+      const input = new PassThrough();
+      const output = new PassThrough();
+      const reader = new JsonLineReader(output);
+      const run = runTeamMcp({
+        dispatcherId: 'dispatcher-a',
+        adminSocketPath: admin.socketPath,
+        input,
+        output,
+        log: () => {},
+      });
+
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'send',
+          arguments: { team_name: 'alpha', prompt: 'Continue.' },
+        },
+      });
+
+      expect(await reader.next()).toMatchObject({
+        jsonrpc: '2.0',
+        id: 1,
+        result: {
+          content: [{ text: 'send forwarded to dreamux serve' }],
+          structuredContent: {
+            turn: { status: 'failed', error: 'runtime unavailable' },
+          },
+        },
+      });
 
       input.end();
       await run;

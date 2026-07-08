@@ -442,14 +442,15 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       'team-leader',
     ]);
     const append = leaderContext?.systemPrompt?.append ?? [];
-    expect(append).toHaveLength(3);
+    expect(append).toHaveLength(4);
     expect(append[0]).toBe('You are the TeamLeader of Dreamux Team "alpha".');
     expect(append[1]).toContain('team-workflow');
     expect(append[1]).toMatch(/TeamMate/i);
     expect(append[1]).toMatch(/channel/i);
     expect(append[1]).toMatch(/cron/i);
     expect(append[1]).toMatch(/transfer/i);
-    expect(append[2]).toBe('team coordinator');
+    expect(append[2]).toMatch(/task was submitted successfully[\s\S]*end the turn naturally/i);
+    expect(append[3]).toBe('team coordinator');
     expect(leaderContext?.systemPrompt).not.toHaveProperty('replace');
     expect(memberContext?.mcpServers.map((server) => server.name)).not.toContain('team');
     expect(memberContext?.mcpServers.map((server) => server.name)).not.toContain('cron');
