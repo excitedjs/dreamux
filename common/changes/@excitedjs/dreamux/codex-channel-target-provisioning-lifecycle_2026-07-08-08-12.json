@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Add collaboration-space MCP and provider-neutral channel container lifecycle contracts.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

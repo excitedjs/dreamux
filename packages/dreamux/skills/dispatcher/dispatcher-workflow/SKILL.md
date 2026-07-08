@@ -43,6 +43,22 @@ daemon/service/config/log work, or missing-reply investigations.
   `transfer_back` returns success.
 - `dissolve` closes a recoverable Team and its agents. Include a clear `note`.
 
+## Collaboration Space MCP Notes
+
+- `bind`, `dissolve`, `status`, and `list` operate on dispatcher-owned
+  collaboration spaces.
+- Use `bind` only for an external collaboration space that already exists. If
+  the space is unknown to Dreamux, pass the provider-owned opaque `container`
+  selector; Dreamux core does not create the external space through a channel
+  provider.
+- `bind.identity`, when supplied, becomes the default TeamLeader identity for
+  future Teams automatically created under that bound collaboration space.
+- `dissolve` releases Dreamux routing/provisioning for the collaboration space.
+  It does not delete the external space and does not dissolve already-created
+  Teams; those Teams remain visible and can be closed with Team MCP.
+- Use `status` or `list` for inspection. There is no `history` tool for
+  collaboration spaces.
+
 ## Channel Notes
 
 - If a provider-exposed channel reply tool is available for the source message,

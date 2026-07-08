@@ -101,6 +101,46 @@ Key source:
 - `/packages/dreamux/src/mcp/team-mcp.ts`
 - `/packages/channel/feishu-channel/src/provider.ts`
 
+## Collaboration Spaces
+
+Dreamux core also exposes a dispatcher-only `collaboration_space` MCP namespace
+for externally created provider containers that should be bound to a repository.
+This is not a provider Channel MCP surface. For Feishu, creating or finding the
+topic group remains a dispatcher-agent action through `lark-cli`; the core tool
+only records and releases Dreamux's repository/provisioning binding.
+
+The current core surface is:
+
+- `bind`: register an existing external container when needed and bind it to a
+  repository, managed-worktree policy, TeamLeader runtime, and optional default
+  TeamLeader identity;
+- `dissolve`: release the current collaboration-space routing/provisioning
+  binding. It does not delete the external container and does not dissolve
+  already provisioned Teams;
+- `status` / `list`: read compact public state. There is no first-version
+  `history` or recovery tool.
+
+The Channel contract has optional provider-neutral collaboration-space fields:
+providers may attach `ChannelInboundEnvelope.container` and may call
+`ChannelRoutes.targetLifecycle` with `target_created` / `target_closed` events.
+Core uses only `(channel_id, container_key, target_key)` plus the current
+binding generation; it must not parse Feishu `chat_id`, `thread_id`, chat mode,
+or provider-specific `target.meta` to infer collaboration-space membership.
+
+When a bound collaboration-space target is created, the dispatcher-local
+`CollaborationSpaceService` provisions a managed worktree and Team through the
+dispatcher-owned `TeamCollection`, then binds the target through
+`ChannelService`. This path bypasses the dispatcher agent runtime but still goes
+through `DispatcherService` and core stores. When the space is dissolved, future
+deliveries fall back to the normal dispatcher path unless the space is rebound.
+
+Key source:
+
+- `/packages/dreamux-types/src/channel.ts`
+- `/packages/dreamux/src/service/collaboration-space/`
+- `/packages/dreamux/src/mcp/collaboration-space-mcp.ts`
+- `/packages/dreamux/src/service/dispatcher-service/index.ts`
+
 ## Feishu Domain Contracts
 
 Current cross-cutting Feishu contracts live in domain docs:

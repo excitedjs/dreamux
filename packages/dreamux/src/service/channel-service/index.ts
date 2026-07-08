@@ -166,11 +166,19 @@ export class ChannelService {
   }): Promise<ChannelBinding> {
     const channelId = this.resolveChannelId(input.channelId);
     const target = await this.resolveTarget(input.meta, channelId);
+    return this.bindResolvedTarget({ owner: input.owner, channelId, target });
+  }
+
+  async bindResolvedTarget(input: {
+    owner: ChannelRouteOwner;
+    channelId: string;
+    target: ChannelTarget;
+  }): Promise<ChannelBinding> {
     return this.bindings.bind({
       dispatcherId: this.dispatcherId,
-      channelId,
-      provider: this.channelProviderRef(channelId),
-      target,
+      channelId: input.channelId,
+      provider: this.channelProviderRef(input.channelId),
+      target: input.target,
       teamName: input.owner.teamName,
       leaderName: input.owner.leaderName,
     });
@@ -205,6 +213,36 @@ export class ChannelService {
       dispatcherId: this.dispatcherId,
       channelId,
       targetKey: target.target_key,
+    });
+  }
+
+  async transferResolvedTargetBack(input: {
+    expectedOwner?: ChannelRouteOwner;
+    channelId: string;
+    target: ChannelTarget;
+  }): Promise<ChannelBinding | null> {
+    const binding = await this.bindings.resolve({
+      dispatcherId: this.dispatcherId,
+      channelId: input.channelId,
+      targetKey: input.target.target_key,
+    });
+    if (binding === null) return null;
+    if (
+      input.expectedOwner !== undefined &&
+      !ownerMatchesBinding(input.expectedOwner, binding)
+    ) {
+      throw new Error(
+        `channel target '${input.target.target_key}' is bound to Team ` +
+          `${JSON.stringify(binding.team_name)} leader ` +
+          `${JSON.stringify(binding.leader_name)}, not Team ` +
+          `${JSON.stringify(input.expectedOwner.teamName)} leader ` +
+          `${JSON.stringify(input.expectedOwner.leaderName)}`,
+      );
+    }
+    return this.bindings.transferBack({
+      dispatcherId: this.dispatcherId,
+      channelId: input.channelId,
+      targetKey: input.target.target_key,
     });
   }
 

@@ -47,7 +47,7 @@ For current behavior, read the linked source code too.
 | modify TeamMate / Team lifecycle, read surfaces, or bundled dispatcher skills | [Dispatcher orchestration](domains/dispatcher-orchestration.md), [Dispatcher skill reference](reference/dispatcher-skill.md), [Model-facing writing](reference/model-facing-writing.md), [provider architecture realignment](decisions/provider-architecture-realignment.md), [service architecture refactor](decisions/service-architecture-refactor.md) |
 | modify agent-entity identity/turn/runtime-state stores or name validation | [Dispatcher orchestration](domains/dispatcher-orchestration.md), [State, config, and files](domains/state-config-and-files.md), source `packages/dreamux/src/service/agent-entity/` |
 | modify bundled skills, system prompts, MCP tool descriptions, MCP result field names, or tests that lock model-visible text | [Model-facing writing](reference/model-facing-writing.md), then source |
-| modify channel binding or channel target routing | [Channel routing and binding](domains/channel-routing-and-binding.md), [Channel runtime](reference/channel-runtime.md), [NPM package split and channel targets](decisions/npm-package-split-and-channel-targets.md), source |
+| modify channel binding, channel target routing, or collaboration-space lifecycle | [Channel routing and binding](domains/channel-routing-and-binding.md), [Channel runtime](reference/channel-runtime.md), [NPM package split and channel targets](decisions/npm-package-split-and-channel-targets.md), source |
 | modify Feishu inbound, `/introduce`, trusted bot context, or reaction timing | [Channel runtime](reference/channel-runtime.md), [Feishu introduce](domains/feishu-introduce.md), [Feishu pairing access](domains/feishu-pairing-access.md), [non-blocking dispatcher inbound](domains/non-blocking-dispatcher-inbound.md), source |
 | modify Feishu attachment download/cache behavior | [Feishu inbound attachments](decisions/feishu-inbound-attachments.md) |
 | modify onboard, daemon, uninstall, or public CLI names | [Repository operations and release](domains/repository-operations-and-release.md), [Global bin/onboard/serve](decisions/global-bin-onboard-serve.md), [CLI and package naming](decisions/cli-and-package-naming.md) |
@@ -128,6 +128,12 @@ history and rationale; when you need current behavior, pair them with
   that submits turns to an existing Team's TeamLeader, registers completion
   delivery back to the dispatcher at send time, and leaves Team peer messaging
   out of this slice.
+- [Collaboration space provisioning](proposals/collaboration-space-provisioning.md)
+  — draft requirement/spec for a provider-neutral collaboration-space MCP and
+  Channel container/target lifecycle capability where an externally created
+  space binds to a repository, target creation deterministically provisions a
+  managed worktree and Team, and target closure dissolves that Team without
+  routing through the dispatcher agent runtime.
 - [TeamLeader-scoped Team MCP transfer back](proposals/team-mcp-teamleader-transfer-back.md)
   — draft requirement/spec for exposing only `transfer_back` from Team MCP to
   TeamLeaders, keeping dispatcher Team lifecycle tools private, keeping explicit

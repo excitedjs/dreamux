@@ -6,7 +6,6 @@ import type {
   ChannelInboundEnvelope,
   ChannelSession,
   DreamuxLogger,
-  InboundDeliveryResult,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
 
@@ -27,6 +26,7 @@ import { dispatcherMcpServerDescriptors } from './mcp-descriptors.js';
 import type { ChannelMcpCallerScope } from '../channel-service/mcp-descriptors.js';
 import { ensureDispatcherIdentity as ensureDispatcherRootIdentity } from './identity.js';
 import { assertRunnableChannelShape } from './runnable-channel.js';
+import { asInboundDeliveryResult, closeAllBuilt, errInfo } from './runtime-helpers.js';
 import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
 import { CompletionRouter, type CompletionInitiator } from '../completion-router/index.js';
 import { TeammateCollection, type TeammateOps } from '../teammate-collection/index.js';
@@ -46,6 +46,14 @@ import {
   ChannelService,
   type ChannelRouteOwner,
 } from '../channel-service/index.js';
+import {
+  CollaborationSpaceService,
+} from '../collaboration-space/index.js';
+import type {
+  CollaborationSpaceBindInput,
+  CollaborationSpaceDissolveInput,
+  CollaborationSpaceStatusInput,
+} from '../collaboration-space/types.js';
 import type {
   TeamCreateInput,
   TeamDissolveInput,
@@ -98,6 +106,7 @@ export class DispatcherService {
   private readonly _teammates: TeammateCollection;
   private readonly teams: TeamCollection;
   private readonly channels: ChannelService;
+  private readonly collaborationSpaces: CollaborationSpaceService;
   private agent: TeammateService | null = null;
   private readonly scheduler_: SchedulerService;
   private readonly identities: AgentIdentityStore;
@@ -189,6 +198,15 @@ export class DispatcherService {
           }),
         ],
       log: opts.log,
+    });
+
+    this.collaborationSpaces = new CollaborationSpaceService({
+      dispatcherId: opts.id,
+      config: opts.config,
+      teams: this.teams,
+      channels: this.channels,
+      log: opts.log,
+      isShuttingDown: () => this.shuttingDown,
     });
   }
 
@@ -304,6 +322,50 @@ export class DispatcherService {
             asInboundDeliveryResult(
               await this.routeChannelInput(channelId, turn, envelope),
             ),
+          targetLifecycle: async (event) => {
+            if (event.kind === 'target_created') {
+              const input = {
+                channelId,
+                provider: this.channels.channelProviderRef(channelId),
+                container: event.container,
+                target: event.target,
+                ...(event.title !== undefined ? { title: event.title } : {}),
+                ...(event.event_id !== undefined ? { eventId: event.event_id } : {}),
+              };
+              const accepted = await this.collaborationSpaces.acceptTargetCreated(input);
+              if (!accepted) return;
+              void this.collaborationSpaces.provisionTarget(input).catch((err) => {
+                this.log.error(
+                  {
+                    dispatcher_id: this.id,
+                    channel_id: channelId,
+                    err: errInfo(err),
+                  },
+                  'collaboration target lifecycle provisioning failed',
+                );
+              });
+              return;
+            }
+            const input = {
+              channelId,
+              provider: this.channels.channelProviderRef(channelId),
+              container: event.container,
+              target: event.target,
+              ...(event.event_id !== undefined ? { eventId: event.event_id } : {}),
+            };
+            const accepted = await this.collaborationSpaces.acceptTargetClosed(input);
+            if (!accepted) return;
+            void this.collaborationSpaces.closeTarget(input).catch((err) => {
+              this.log.error(
+                {
+                  dispatcher_id: this.id,
+                  channel_id: channelId,
+                  err: errInfo(err),
+                },
+                'collaboration target lifecycle close failed',
+              );
+            });
+          },
         });
         this.assertNotShuttingDown();
         liveChannels.set(channelId, session);
@@ -505,6 +567,22 @@ export class DispatcherService {
 
   getTeamHistory(input: TeamHistoryQuery) { return this.teams.history(input); }
 
+  bindCollaborationSpace(input: CollaborationSpaceBindInput) {
+    return this.collaborationSpaces.bind(input);
+  }
+
+  dissolveCollaborationSpace(input: CollaborationSpaceDissolveInput) {
+    return this.collaborationSpaces.dissolve(input);
+  }
+
+  getCollaborationSpaceStatus(input: CollaborationSpaceStatusInput) {
+    return this.collaborationSpaces.status(input);
+  }
+
+  listCollaborationSpaces() {
+    return this.collaborationSpaces.list();
+  }
+
   activeTeamBindingSummary(owner: ChannelRouteOwner) {
     return this.channels.activeBindingSummaryForOwner(owner);
   }
@@ -559,10 +637,53 @@ export class DispatcherService {
         const team = await this.teams.get(routed.owner.teamName);
         return team.deliverToLeader(input);
       }
+      if (envelope.container !== undefined) {
+        try {
+          const provisionInput = {
+            channelId,
+            provider: envelope.provider,
+            container: envelope.container,
+            target,
+            ...(envelope.event_id !== undefined ? { eventId: envelope.event_id } : {}),
+          };
+          const accepted = await this.collaborationSpaces.acceptTargetCreated(
+            provisionInput,
+          );
+          const provisioned = accepted
+            ? await this.collaborationSpaces.provisionTarget(provisionInput)
+            : null;
+          if (provisioned !== null && provisioned.lifecycle_status === 'active') {
+            const provisionedRoute = await this.channels.resolveInboundBinding({
+              channelId,
+              target,
+            });
+            if (
+              provisionedRoute !== null &&
+              (await this.teams.isOpenTeam(provisionedRoute.owner.teamName))
+            ) {
+              const team = await this.teams.get(provisionedRoute.owner.teamName);
+              const result = await team.deliverToLeader(input);
+              return result;
+            }
+          }
+        } catch (err) {
+          return {
+            status: 'failed',
+            error: err instanceof Error ? err : new Error(String(err)),
+          };
+        }
+      }
     }
     return this.mustAgent().channelInput(input);
   }
 
+  /**
+   * Resolve the delivery target of a send-initiated turn from its producer's
+   * identity (issue #233). A team member's completion routes to its leader's
+   * `TeammateService`; a dispatcher-owned teammate or a team leader routes to the
+   * dispatcher agent. Topology is fixed by #199 visibility, so the producer's
+   * role + team is enough — no caller principal is threaded.
+   */
   async initiatorFor(
     producer: AgentEntityIdentity,
   ): Promise<CompletionInitiator | null> {
@@ -640,31 +761,4 @@ export class DispatcherService {
       },
     });
   }
-}
-
-function asInboundDeliveryResult(
-  result: AgentRuntimeTurnResult,
-): InboundDeliveryResult {
-  return result.status === 'skipped' ? { status: 'stopped' } : result;
-}
-
-async function closeAllBuilt(
-  channels: Map<string, ChannelSession>,
-): Promise<void> {
-  for (const session of channels.values()) {
-    try {
-      await session.close();
-    } catch {
-      /* best effort */
-    }
-  }
-}
-
-function errInfo(err: unknown): { message: string; stack?: string } {
-  if (err instanceof Error) {
-    return err.stack !== undefined
-      ? { message: err.message, stack: err.stack }
-      : { message: err.message };
-  }
-  return { message: String(err) };
 }

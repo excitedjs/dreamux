@@ -72,6 +72,9 @@ Important children:
   bot store owned by the Feishu Channel provider.
 - `~/.dreamux/state/<dispatcher-id>/cron-jobs.json`: durable scheduled-task
   definitions owned by the scheduler service.
+- `~/.dreamux/state/<dispatcher-id>/collaboration-spaces.json`: dispatcher-local
+  collaboration-space bindings and target provisioning records. This is
+  Dreamux core state, not Channel provider state.
 - `~/.dreamux/state/<dispatcher-id>/teammate/`: TeamMate durable task ledgers.
   Each `identity.json` may include `identity_prompt`, the persisted append-only
   model-facing role guidance for that TeamMate; old records without it read as
@@ -89,6 +92,7 @@ Key source:
 - `/packages/dreamux/src/service/agent-entity/identity-store.ts`
 - `/packages/dreamux/src/service/agent-entity/turns-store.ts`
 - `/packages/dreamux/src/service/team-collection/store.ts`
+- `/packages/dreamux/src/service/collaboration-space/store.ts`
 - `/packages/dreamux/src/service/scheduler/store.ts`
 - `/packages/channel/feishu-channel/src/chat-bots-store.ts`
 
