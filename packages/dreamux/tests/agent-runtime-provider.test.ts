@@ -16,7 +16,7 @@ import {
 } from '@excitedjs/agent-runtime-codex';
 import { createClaudeCodeAgentRuntimeProvider } from '@excitedjs/agent-runtime-claude-code';
 import { codexAgentRuntimeCatalog } from './helpers/fake-agent-runtime.js';
-import { dispatcherHostPaths } from '../src/agent-runtime/host-paths.js';
+import { hostRuntimePaths } from '../src/agent-runtime/host-paths.js';
 import { asAgentRuntimeDescriptor } from './helpers/provider.js';
 import type {
   AgentRuntime,
@@ -25,6 +25,7 @@ import type {
   AgentRuntimeLastResult,
   AgentRuntimeProvider,
   AgentRuntimeProviderConfigReadContext,
+  AgentRuntimeStateCallbacks,
   AgentRuntimeTextInput,
   AgentRuntimeTurnResult,
   InboundTurnInput,
@@ -33,8 +34,7 @@ import {
   UnknownBuiltinProviderError,
   createBuiltinProviderRegistry,
 } from '../src/registry/index.js';
-import { DispatcherStore } from '../src/state/dispatcher-store.js';
-import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
+import { testDispatcherConfig } from './helpers/config.js';
 
 const EXTERNAL_CAPABILITIES: AgentRuntimeCapabilities = {
   resume: { supported: true },
@@ -137,17 +137,14 @@ describe('AgentRuntimeProviderCatalog', () => {
 
   it('creates a Codex-backed AgentRuntime without starting it', () => {
     const dispatcher = testDispatcherConfig({ id: 'flow' });
-    const store = new DispatcherStore(testDreamuxConfig([dispatcher]));
-    const row = store.get('flow');
-    expect(row).not.toBeNull();
 
     const runtime = builtinCatalog().resolve('builtin:codex').createRuntime({
-      identity: { runtime_id: 'flow', checkpoint_id: row!.thread_id },
+      identity: { runtime_id: 'flow', checkpoint_id: null },
       config: dispatcherCodexConfig(dispatcher),
       cwd: '/tmp/dreamux-test-cwd',
       mcpServers: [],
-      state: store.bindRuntime('flow'),
-      paths: dispatcherHostPaths,
+      state: noopState(),
+      paths: hostRuntimePaths,
     });
 
     expect(runtime.providerRef).toBe('builtin:codex');
@@ -227,15 +224,13 @@ describe('AgentRuntimeProviderCatalog', () => {
     expect(provider.getCapabilities().resume).toEqual({
       supported: true,
     });
-    const dispatcher = testDispatcherConfig({ id: 'flow' });
-    const store = new DispatcherStore(testDreamuxConfig([dispatcher]));
     const runtime = provider.createRuntime({
-      identity: { runtime_id: 'flow', checkpoint_id: store.get('flow')!.thread_id },
+      identity: { runtime_id: 'flow', checkpoint_id: null },
       config: {},
       cwd: '/tmp/dreamux-test-cwd',
       mcpServers: [],
-      state: store.bindRuntime('flow'),
-      paths: dispatcherHostPaths,
+      state: noopState(),
+      paths: hostRuntimePaths,
     });
 
     expect(runtime.providerRef).toBe('npm:@example/dreamux-runtime#named');
@@ -452,3 +447,10 @@ describe('AgentRuntimeProviderCatalog', () => {
     ]);
   });
 });
+
+function noopState(): AgentRuntimeStateCallbacks {
+  return {
+    async setStatus() {},
+    async setCheckpoint() {},
+  };
+}

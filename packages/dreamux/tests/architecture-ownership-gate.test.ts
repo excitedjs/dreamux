@@ -12,9 +12,9 @@ import {
   resetRuntimeConfig,
 } from '../src/platform/paths.js';
 import { TeammateCollection } from '../src/service/teammate-collection/index.js';
-import { TeamMateIdentityStore } from '../src/service/teammate-collection/identity-store.js';
-import { TeamMateTurnsStore } from '../src/service/teammate-collection/turns-store.js';
-import type { TeamMateWorktreeIdentity } from '../src/service/teammate-collection/types.js';
+import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.js';
+import { AgentTurnsStore } from '../src/service/agent-entity/turns-store.js';
+import type { AgentEntityWorktreeIdentity } from '../src/service/agent-entity/types.js';
 import { WorktreeManager } from '../src/service/worktree/manager.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 
@@ -267,8 +267,8 @@ describe('architecture ownership gate (#233)', () => {
     const workspace = join(root, 'workspace');
     await mkdir(workspace, { recursive: true });
     const log = noopLog();
-    const identities = new TeamMateIdentityStore({ warn: log.warn.bind(log) });
-    const turnsStore = new TeamMateTurnsStore({ warn: log.warn.bind(log) });
+    const identities = new AgentIdentityStore(log);
+    const turnsStore = new AgentTurnsStore(log);
     const worktree = {
       mode: 'reuse-cwd',
       slug: null,
@@ -278,7 +278,7 @@ describe('architecture ownership gate (#233)', () => {
       cleanup: 'keep',
       cleanup_state: 'not-managed',
       cleanup_error: null,
-    } satisfies TeamMateWorktreeIdentity;
+    } satisfies AgentEntityWorktreeIdentity;
 
     await identities.create({
       dispatcherId: 'dispatcher-a',
@@ -321,7 +321,7 @@ describe('architecture ownership gate (#233)', () => {
     const workspace = join(root, 'workspace');
     await mkdir(workspace, { recursive: true });
     const log = noopLog();
-    const identities = new TeamMateIdentityStore({ warn: log.warn.bind(log) });
+    const identities = new AgentIdentityStore(log);
     const worktree = {
       mode: 'reuse-cwd',
       slug: null,
@@ -331,7 +331,7 @@ describe('architecture ownership gate (#233)', () => {
       cleanup: 'keep',
       cleanup_state: 'not-managed',
       cleanup_error: null,
-    } satisfies TeamMateWorktreeIdentity;
+    } satisfies AgentEntityWorktreeIdentity;
     const path = dispatcherAgentIdentityPath({
       dispatcherId: 'dispatcher-a',
       name: 'legacy-worker',
@@ -373,7 +373,7 @@ describe('architecture ownership gate (#233)', () => {
     ).resolves.toMatchObject({ identity_prompt: null });
   });
 
-  it('builds conversational agents through the factory with named launch strategies', async () => {
+  it('builds conversational agents through the factory without launch forks', async () => {
     const leaderAgent = await readServiceSource('team-service/leader-agent.ts');
     assertContains(
       leaderAgent,
@@ -381,11 +381,9 @@ describe('architecture ownership gate (#233)', () => {
       'T2 leader factory invariant violated: createTeamLeaderAgent must call createTeammateService.',
       'team-service/leader-agent.ts',
     );
-    assertContains(
-      leaderAgent,
-      /launch:\s*\{\s*kind:\s*'agent-ref'\s*\}/,
-      "T2 leader factory invariant violated: createTeamLeaderAgent must use launch: { kind: 'agent-ref' }.",
-      'team-service/leader-agent.ts',
+    assertNoHits(
+      'T2 leader factory invariant violated: createTeamLeaderAgent must not pass a launch strategy.',
+      hitsInSource('team-service/leader-agent.ts', leaderAgent, /launch:/),
     );
 
     const dispatcherAgent = await readServiceSource('dispatcher-service/agent.ts');
@@ -395,11 +393,9 @@ describe('architecture ownership gate (#233)', () => {
       'T2 dispatcher factory invariant violated: createDispatcherAgent must call createTeammateService.',
       'dispatcher-service/agent.ts',
     );
-    assertContains(
-      dispatcherAgent,
-      /launch:\s*\{\s*kind:\s*'inline'\s*,\s*build:/,
-      "T2 dispatcher factory invariant violated: createDispatcherAgent must use launch: { kind: 'inline', build: ... }.",
-      'dispatcher-service/agent.ts',
+    assertNoHits(
+      'T2 dispatcher factory invariant violated: createDispatcherAgent must not pass a launch strategy.',
+      hitsInSource('dispatcher-service/agent.ts', dispatcherAgent, /launch:|buildDispatcherLaunch/),
     );
   });
 

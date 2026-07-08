@@ -15,6 +15,8 @@ import {
   DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
 } from '../src/service/dispatcher-service/base-prompt.js';
 import { dispatcherMcpServerDescriptors } from '../src/service/dispatcher-service/mcp-descriptors.js';
+import { ChannelProviderCatalog } from '../src/channel/catalog.js';
+import { createBuiltinProviderRegistry } from '../src/registry/index.js';
 
 interface RegisteredTool {
   server: string;
@@ -81,7 +83,10 @@ describe('dispatcher prompt matches registered Dreamux MCP tools', () => {
   it('keeps dispatcher Dreamux MCP server registration aligned with this gate', () => {
     const servers = dispatcherMcpServerDescriptors({
       dispatcherId: 'dispatcher-a',
-      channels: new Map(),
+      channels: [],
+      channelProviders: new ChannelProviderCatalog({
+        registry: createBuiltinProviderRegistry(),
+      }),
       adminSocketPath: '/tmp/dreamux-admin.sock',
     }).map((server) => server.name);
 

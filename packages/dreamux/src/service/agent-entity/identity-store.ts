@@ -14,19 +14,18 @@ import {
 } from '../../platform/paths.js';
 import { assertNoRemovedRecordFields, LegacyStateError } from '../legacy-state.js';
 import {
-  validateTeamMateName,
-  type TeamMateIdentity,
-  type TeamMateIdentityStatus,
-  type TeamMateRole,
-  type TeamMateWorktreeIdentity,
+  DISPATCHER_AGENT_NAME,
+  validateAgentEntityName,
+  type AgentEntityIdentity,
+  type AgentEntityIdentityStatus,
+  type AgentEntityRole,
+  type AgentEntityWorktreeIdentity,
 } from './types.js';
 
-export type TeamMateIdentityStoreLog = Pick<DreamuxLogger, 'warn'>;
-
-export interface TeamMateIdentityCreateInput {
+export interface AgentIdentityCreateInput {
   dispatcherId: string;
   name: string;
-  role?: TeamMateRole;
+  role?: AgentEntityRole;
   teamId?: string | null;
   agentRuntime: string;
   sessionId?: string | null;
@@ -34,34 +33,34 @@ export interface TeamMateIdentityCreateInput {
   sourceRepo: string | null;
   cwd: string;
   runtimeCwd: string;
-  worktree: TeamMateWorktreeIdentity;
+  worktree: AgentEntityWorktreeIdentity;
   intent?: string | null;
   identityPrompt?: string | null;
-  status?: TeamMateIdentityStatus;
+  status?: AgentEntityIdentityStatus;
 }
 
-export interface TeamMateIdentityUpdateInput {
+export interface AgentIdentityUpdateInput {
   agentRuntime?: string;
   sessionId?: string | null;
   sourceCwd?: string;
   sourceRepo?: string | null;
   cwd?: string;
   runtimeCwd?: string;
-  worktree?: TeamMateWorktreeIdentity;
+  worktree?: AgentEntityWorktreeIdentity;
   intent?: string | null;
   identityPrompt?: string | null;
-  status?: TeamMateIdentityStatus;
+  status?: AgentEntityIdentityStatus;
   lastError?: string | null;
   closedAt?: number | null;
   closeNote?: string | null;
-    turnCount?: number;
+  turnCount?: number;
   lastSeenAt?: number;
   lastPromptPreview?: string | null;
   lastAssistantPreview?: string | null;
 }
 
-export class TeamMateIdentityStore {
-  constructor(private readonly log: TeamMateIdentityStoreLog) {}
+export class AgentIdentityStore {
+  constructor(private readonly log: DreamuxLogger) {}
 
   /**
    * Read one identity by name within a scope (issue #233 symmetric layout).
@@ -75,8 +74,8 @@ export class TeamMateIdentityStore {
     dispatcherId: string,
     name: string,
     teamId?: string,
-  ): Promise<TeamMateIdentity | null> {
-    validateTeamMateName(name);
+  ): Promise<AgentEntityIdentity | null> {
+    validateAgentEntityName(name);
     const candidates =
       teamId === undefined
         ? [dispatcherAgentIdentityPath({ dispatcherId, name, teamId: null, role: 'teammate' })]
@@ -103,7 +102,7 @@ export class TeamMateIdentityStore {
    * `readdir` of the scope's entity directories; physical scoping replaces the
    * former role/team_id roster filter.
    */
-  async list(dispatcherId: string, teamId?: string): Promise<TeamMateIdentity[]> {
+  async list(dispatcherId: string, teamId?: string): Promise<AgentEntityIdentity[]> {
     const dir =
       teamId === undefined
         ? dispatcherTeamMateDir(dispatcherId)
@@ -115,11 +114,27 @@ export class TeamMateIdentityStore {
   async leaderIdentity(
     dispatcherId: string,
     teamId: string,
-  ): Promise<TeamMateIdentity | null> {
+  ): Promise<AgentEntityIdentity | null> {
     return this.readAt(
       dispatcherId,
       null,
       join(dispatcherTeamScopeDir(dispatcherId, teamId), 'identity.json'),
+    );
+  }
+
+  /** Read the root dispatcher identity, which lives outside teammate collections. */
+  async dispatcherIdentity(
+    dispatcherId: string,
+  ): Promise<AgentEntityIdentity | null> {
+    return this.readAt(
+      dispatcherId,
+      null,
+      dispatcherAgentIdentityPath({
+        dispatcherId,
+        name: DISPATCHER_AGENT_NAME,
+        teamId: null,
+        role: 'dispatcher',
+      }),
     );
   }
 
@@ -165,7 +180,7 @@ export class TeamMateIdentityStore {
   private async listCollection(
     dispatcherId: string,
     dir: string,
-  ): Promise<TeamMateIdentity[]> {
+  ): Promise<AgentEntityIdentity[]> {
     let entries: import('node:fs').Dirent[];
     try {
       entries = await readdir(dir, { withFileTypes: true });
@@ -173,7 +188,7 @@ export class TeamMateIdentityStore {
       if (isNotFound(err)) return [];
       throw err;
     }
-    const identities: TeamMateIdentity[] = [];
+    const identities: AgentEntityIdentity[] = [];
     for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
       if (!entry.isDirectory()) continue;
       const identity = await this.readAt(
@@ -196,7 +211,7 @@ export class TeamMateIdentityStore {
     dispatcherId: string,
     name: string | null,
     path: string,
-  ): Promise<TeamMateIdentity | null> {
+  ): Promise<AgentEntityIdentity | null> {
     let raw: string;
     try {
       raw = await readFile(path, 'utf8');
@@ -215,16 +230,16 @@ export class TeamMateIdentityStore {
           path,
           error: err instanceof Error ? err.message : String(err),
         },
-        'skipping unreadable TeamMate identity',
+        'skipping unreadable agent identity',
       );
       return null;
     }
   }
 
-  async create(input: TeamMateIdentityCreateInput): Promise<TeamMateIdentity> {
-    validateTeamMateName(input.name);
+  async create(input: AgentIdentityCreateInput): Promise<AgentEntityIdentity> {
+    validateAgentEntityName(input.name);
     const now = Date.now();
-    const identity: TeamMateIdentity = {
+    const identity: AgentEntityIdentity = {
       version: 1,
       dispatcher_id: input.dispatcherId,
       name: input.name,
@@ -255,10 +270,10 @@ export class TeamMateIdentityStore {
   }
 
   async update(
-    identity: TeamMateIdentity,
-    input: TeamMateIdentityUpdateInput,
-  ): Promise<TeamMateIdentity> {
-    const updated: TeamMateIdentity = {
+    identity: AgentEntityIdentity,
+    input: AgentIdentityUpdateInput,
+  ): Promise<AgentEntityIdentity> {
+    const updated: AgentEntityIdentity = {
       ...identity,
       ...(input.agentRuntime !== undefined ? { agent_runtime: input.agentRuntime } : {}),
       ...(input.sessionId !== undefined ? { session_id: input.sessionId } : {}),
@@ -289,8 +304,13 @@ export class TeamMateIdentityStore {
     return updated;
   }
 
+  async upsert(identity: AgentEntityIdentity): Promise<AgentEntityIdentity> {
+    await this.write(identity);
+    return identity;
+  }
+
   /** Derive the entity directory from the identity's own role + team (issue #233). */
-  private async write(identity: TeamMateIdentity): Promise<void> {
+  private async write(identity: AgentEntityIdentity): Promise<void> {
     const path = dispatcherAgentIdentityPath({
       dispatcherId: identity.dispatcher_id,
       name: identity.name,
@@ -311,7 +331,7 @@ function readIdentity(
   dispatcherId: string,
   expectedName: string | null,
   raw: string,
-): TeamMateIdentity {
+): AgentEntityIdentity {
   const value = JSON.parse(raw) as Record<string, unknown>;
   const storedName = typeof value['name'] === 'string' ? value['name'] : expectedName;
   if (
@@ -319,14 +339,14 @@ function readIdentity(
     typeof value['provider_ref'] === 'string'
   ) {
     throw new LegacyStateError(
-      `TeamMate identity ${JSON.stringify(storedName)} uses the legacy provider_ref ` +
-        'format (pre-#148). Teammate identities now reference an agents[].id via ' +
-        'agent_runtime. Close and respawn this teammate, or delete its identity ' +
+      `agent identity ${JSON.stringify(storedName)} uses the legacy provider_ref ` +
+        'format (pre-#148). Agent identities now reference an agents[].id via ' +
+        'agent_runtime. Close and respawn this agent, or delete its identity ' +
         'file to rebuild it.',
     );
   }
   assertNoRemovedRecordFields(
-    `TeamMate record ${JSON.stringify(storedName)}`,
+    `agent record ${JSON.stringify(storedName)}`,
     value,
     ['checkpoint', 'checkpoint_kind', 'session_ref', 'display_name', 'close_status'],
     'close and respawn this teammate, or delete its identity directory to rebuild it.',
@@ -339,7 +359,7 @@ function readIdentity(
     typeof value['agent_runtime'] !== 'string' ||
     typeof value['cwd'] !== 'string'
   ) {
-    throw new Error(`invalid TeamMate identity ${JSON.stringify(storedName)}`);
+    throw new Error(`invalid agent identity ${JSON.stringify(storedName)}`);
   }
   const name = value['name'] as string;
   const record = value as Record<string, unknown>;
@@ -395,7 +415,7 @@ function readIdentity(
   };
 }
 
-const IDENTITY_STATUSES = new Set<TeamMateIdentityStatus>([
+const IDENTITY_STATUSES = new Set<AgentEntityIdentityStatus>([
   'starting',
   'running',
   'degraded',
@@ -403,13 +423,14 @@ const IDENTITY_STATUSES = new Set<TeamMateIdentityStatus>([
   'stopped',
 ]);
 
-function readStatus(value: unknown): TeamMateIdentityStatus {
-  return typeof value === 'string' && IDENTITY_STATUSES.has(value as TeamMateIdentityStatus)
-    ? (value as TeamMateIdentityStatus)
+function readStatus(value: unknown): AgentEntityIdentityStatus {
+  return typeof value === 'string' && IDENTITY_STATUSES.has(value as AgentEntityIdentityStatus)
+    ? (value as AgentEntityIdentityStatus)
     : 'stopped';
 }
 
-function readRole(value: unknown): TeamMateRole {
+function readRole(value: unknown): AgentEntityRole {
+  if (value === 'dispatcher') return value;
   if (value === 'team_leader' || value === 'team_member') return value;
   return 'teammate';
 }
@@ -417,7 +438,7 @@ function readRole(value: unknown): TeamMateRole {
 function readWorktreeIdentity(
   value: unknown,
   runtimeCwd: string,
-): TeamMateWorktreeIdentity {
+): AgentEntityWorktreeIdentity {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return {
       mode: 'reuse-cwd',
@@ -443,7 +464,7 @@ function readWorktreeIdentity(
       record['cleanup'] === 'delete-on-close' ? 'delete-on-close' : 'keep',
     cleanup_state:
       typeof record['cleanup_state'] === 'string'
-        ? (record['cleanup_state'] as TeamMateWorktreeIdentity['cleanup_state'])
+        ? (record['cleanup_state'] as AgentEntityWorktreeIdentity['cleanup_state'])
         : mode === 'managed'
           ? 'managed-active'
           : 'not-managed',

@@ -7,6 +7,7 @@ import {
   DREAMUX_UNIX_SOCKET_PATH_MAX_BYTES,
   unixSocketPathFitsBudget,
 } from '@excitedjs/dreamux-utils';
+import { hostRuntimePaths } from '../src/agent-runtime/host-paths.js';
 import {
   adminSocketPath,
   cacheRoot,
@@ -20,14 +21,12 @@ import {
   dispatcherTeamRecordPath,
   dispatcherTeamScopeDir,
   dispatcherTeamTeamMateDir,
-  dispatcherTeamMateRuntimeDir,
   channelLogDir,
   channelLogPath,
   channelMcpLogDir,
   channelMcpLogPath,
   teammateMcpLogDir,
   teammateMcpLogPath,
-  dispatcherStatusPath,
   dreamuxRoot,
   logsRoot,
   resetRuntimeConfig,
@@ -77,9 +76,6 @@ describe('runtime paths', () => {
     expect(dispatcherDir('dispatcher-a')).toBe(
       join(stateRoot(), 'dispatcher-a'),
     );
-    expect(dispatcherStatusPath('dispatcher-a')).toBe(
-      join(stateRoot(), 'dispatcher-a', 'status.json'),
-    );
     // Cache, not durable state (issue #182 PR-2). The per-channel attachment
     // cache subdir is the channel package's concern now (issue #209 de-leak);
     // core only exposes the neutral dispatcher cache root.
@@ -88,8 +84,7 @@ describe('runtime paths', () => {
     );
     // #233 symmetric layout: each agent is a directory holding
     // {identity.json, turn.jsonl}. The dispatcher `teammate/` and `team/` dirs
-    // hold ONLY entity dirs; channel bindings live at the dispatcher root and
-    // runtime scratch beside (not inside) the blind-scan collections.
+    // hold ONLY entity dirs; channel bindings live at the dispatcher root.
     expect(dispatcherTeamMateDir('dispatcher-a')).toBe(
       join(stateRoot(), 'dispatcher-a', 'teammate'),
     );
@@ -141,11 +136,6 @@ describe('runtime paths', () => {
     ).toBe(
       join(stateRoot(), 'dispatcher-a', 'team', 'alpha', 'teammate', 'member-1', 'turn.jsonl'),
     );
-    // Provider runtime scratch sits beside the collections, at the dispatcher
-    // root under runtime/<name>/ (issue #233).
-    expect(dispatcherTeamMateRuntimeDir('dispatcher-a', 'reviewer-1')).toBe(
-      join(stateRoot(), 'dispatcher-a', 'runtime', 'reviewer-1'),
-    );
     // Per-runtime app-server log paths are no longer core path builders: each
     // runtime package composes a flat `<logsDir>/<engine>/<runtime_id>.log`
     // keyed by its own runtime_id (issue #209). Core owns only logsRoot().
@@ -153,12 +143,20 @@ describe('runtime paths', () => {
 
   it('keeps cache artifacts under cache/, never under durable state (issue #182 PR-2)', () => {
     expect(cacheRoot()).toBe(join(dreamuxRoot(), 'cache'));
+    expect(hostRuntimePaths.cacheDir()).toBe(cacheRoot());
+    expect(hostRuntimePaths.cacheDir()).not.toBe(dispatcherDir('dispatcher-a'));
     for (const cachePath of [
       dispatcherCompletionSpillDir('dispatcher-a'),
     ]) {
       expect(cachePath.startsWith(cacheRoot())).toBe(true);
       expect(cachePath.startsWith(stateRoot())).toBe(false);
     }
+    const retiredStateRuntimeDir = join(
+      dispatcherDir('dispatcher-a'),
+      'runtime',
+      'dispatcher',
+    );
+    expect(hostRuntimePaths.cacheDir()).not.toBe(retiredStateRuntimeDir);
   });
 
   it('places logs under component log directories', () => {

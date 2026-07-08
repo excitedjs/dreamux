@@ -25,10 +25,13 @@ the explicit `service/index.ts` facade.
   by `dispatcher-service/agent.ts` (Phase 5, #233) — that owns the agent runtime
   lifecycle (start/resume/stop). `DispatcherService` keeps the dispatcher-only
   concerns the removed `DispatcherRuntimeService` held: the live `ChannelService`,
-  restart-notice injection (post-`agent.start()` hook), role MCP descriptor
-  assembly, channel-tool dispatch, channel binding ownership, and completion routing. It launches the agent
-  runtime first, then the channel sessions (slot-before-session ordering, #209
-  fix #7). It resolves a settled turn's delivery target via `initiatorFor` (a team
+  restart-notice injection for explicit resume notices, provider/config-based
+  role MCP descriptor assembly, channel-tool dispatch, channel binding ownership,
+  and completion routing. Ordinary start prepares channel sessions and input
+  sources while leaving the dispatcher runtime dormant; unbound channel inbound,
+  dispatcher cron, or an explicit resume notice lazy-starts the contained agent.
+  A channel session is published as live only after provider start succeeds. It
+  resolves a settled turn's delivery target via `initiatorFor` (a team
   member → its leader's `TeammateService`; a dispatcher-owned teammate / leader →
   the dispatcher's own `agent` `TeammateService`, the unified router path) and
   orchestrates Team route-owner facts with ChannelService binding operations.
@@ -42,11 +45,10 @@ the explicit `service/index.ts` facade.
   separate files for the one-class-per-file rule (issue #233).
 - **`dispatcher-service/` (agent-side parts)** — the dispatcher agent's parts (Phase 5, #233):
   `agent.ts` builds the dispatcher's own agent as a contained `TeammateService`
-  (runtime built from the dispatcher config, status/thread persisted to the
-  authoritative `status.json` via `DispatcherStore`, a write-only debug
-  `identity.json`+`turn.jsonl` at the dispatcher *root* via role `dispatcher` —
-  structurally outside the `teammate/` collection, so the read chokepoints never
-  enumerate it). `mcp-descriptors.ts` is the role-based MCP descriptor
+  from the dispatcher root `identity.json` (role `dispatcher`), structurally
+  outside the `teammate/` collection so read chokepoints never enumerate it.
+  Runtime launch resolves through the same `identity.agent_runtime -> agents[]`
+  path as child roles. `mcp-descriptors.ts` is the role-based MCP descriptor
   builder.
 - **`channel-service/`** — the dispatcher-local core Channel service. It wraps the
   private live `ChannelSessions` helper, owns channel-tool dispatch, provider
@@ -121,8 +123,7 @@ the explicit `service/index.ts` facade.
   *leader* (its pair sits at the team root, beside `record.json`), and
   `team/<team>/teammate/<name>/` for team members. The `teammate/` and `team/`
   dirs are blind-scan collections of entity dirs only — `channel-bindings.json`
-  sits at the dispatcher root and provider runtime scratch under `runtime/<name>/`,
-  never inside a collection. Writing is a blind `mkdir -p` + write; the store
+  sits at the dispatcher root, never inside a collection. Writing is a blind `mkdir -p` + write; the store
   derives every path from the identity's `role` + `team_id` (`paths.ts`
   `dispatcherAgentEntityDir`). Reads/lists scan `<scope>/teammate/<name>/`; a
   team-scoped read-by-name two-probes (member dir, then team root for the

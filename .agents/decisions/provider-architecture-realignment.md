@@ -102,9 +102,11 @@ see its `verbs/` (spawn/resume/history), `persistence/history-index.ts` and
   lifecycle; `history`, `list`, `status`, `last`, `get_capabilities` for
   read/recovery. `history` is the recovery search surface, served from the
   per-name records; `last` reads a teammate's most recent settled turn(s) by
-  concrete name from the per-name turns archive (issue #188 reworked both and
+  concrete name from the per-name turns archive. Issue #188 reworked both and
   removed the obsolete `ctx` and raw `history_events` verbs; issue #199 Slice 3
-  moved both off the session ledger — see top-level-design). `spawn`/`send` return after submitting
+  moved both off the session ledger. See
+  [Dispatcher orchestration](../domains/dispatcher-orchestration.md).
+  `spawn`/`send` return after submitting
   the runtime turn; the dispatcher recovers through history/last instead of a
   task result ledger. (Issue #155 dropped the original standalone `resume`
   verb — see below.)
@@ -131,7 +133,8 @@ see its `verbs/` (spawn/resume/history), `persistence/history-index.ts` and
   through `/packages/dreamux/src/platform/paths.ts`. (Issue #199 Slice 3 settled
   the layout on the per-name `records/<name>.json` recovery record plus the
   per-name `turns/<name>.jsonl` archive, retiring the `sessions.jsonl` session
-  ledger and the persisted `checkpoint` object — see top-level-design.)
+  ledger and the persisted `checkpoint` object; see
+  [State, config, and files](../domains/state-config-and-files.md).)
 - **Ownership.** The Dispatcher Service owns TeamMate identity and history
   through focused modules under
   `/packages/dreamux/src/service/teammate-collection/`.

@@ -6,7 +6,7 @@ import type {
 } from '@excitedjs/dreamux-types';
 
 import type { AgentRuntimeProviderCatalog } from './agent-runtime/catalog.js';
-import { dispatcherHostPaths } from './agent-runtime/host-paths.js';
+import { hostRuntimePaths } from './agent-runtime/host-paths.js';
 import type { ChannelProviderCatalog } from './channel/catalog.js';
 import type { DispatcherConfig, DreamuxConfig } from './config/config.js';
 import {
@@ -62,7 +62,7 @@ export async function runDispatcherProviderDiagnostics(
             config: dispatcher.runtime.config,
             env,
             scope,
-            paths: dispatcherHostPaths,
+            paths: hostRuntimePaths,
           },
           runner,
         );
@@ -122,7 +122,7 @@ export function providerBinChecksForConfig(
       config: agent.config,
       env: options.env,
       scope: options.scope,
-      paths: dispatcherHostPaths,
+      paths: hostRuntimePaths,
     })) {
       add(check);
     }

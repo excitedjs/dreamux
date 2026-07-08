@@ -7,7 +7,7 @@ import {
   detectLegacyDispatcherState,
   legacyDispatcherStateMessage,
 } from '../src/service/legacy-state.js';
-import { TeamMateIdentityStore } from '../src/service/teammate-collection/identity-store.js';
+import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.js';
 import {
   ChannelBindingStore,
   detectLegacyChannelBindingStore,
@@ -19,9 +19,16 @@ import {
   dispatcherTeamMateDir,
   resetRuntimeConfig,
 } from '../src/platform/paths.js';
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 const DISPATCHER = 'flow';
-const silentLog = { warn(): void {} };
+const silentLog: DreamuxLogger = {
+  error: () => {},
+  warn: () => {},
+  info: () => {},
+  debug: () => {},
+  trace: () => {},
+};
 
 /** The #233 per-entity identity path for a dispatcher-owned teammate. */
 function teammateIdentityPath(name: string): string {
@@ -106,7 +113,7 @@ describe('issue #199 Slice 5 — pre-#199 local state fails loud', () => {
           ...base,
           [field]: 'legacy',
         });
-        const store = new TeamMateIdentityStore(silentLog);
+        const store = new AgentIdentityStore(silentLog);
         await expect(store.get(DISPATCHER, 'alice')).rejects.toThrow(
           new RegExp(`removed in issue #199 \\(${field}\\)`),
         );
@@ -115,7 +122,7 @@ describe('issue #199 Slice 5 — pre-#199 local state fails loud', () => {
 
     it('reads a clean record without complaint', async () => {
       writeRaw(teammateIdentityPath('alice'), base);
-      const store = new TeamMateIdentityStore(silentLog);
+      const store = new AgentIdentityStore(silentLog);
       const identity = await store.get(DISPATCHER, 'alice');
       expect(identity?.name).toBe('alice');
     });
@@ -130,7 +137,7 @@ describe('issue #199 Slice 5 — pre-#199 local state fails loud', () => {
         name: 'stale',
         checkpoint: null,
       });
-      const store = new TeamMateIdentityStore(silentLog);
+      const store = new AgentIdentityStore(silentLog);
       await expect(store.list(DISPATCHER)).rejects.toThrow(/removed in issue #199/);
     });
 
@@ -142,7 +149,7 @@ describe('issue #199 Slice 5 — pre-#199 local state fails loud', () => {
       const brokenPath = teammateIdentityPath('broken');
       mkdirSync(dirname(brokenPath), { recursive: true });
       writeFileSync(brokenPath, '{ not json', { mode: 0o600 });
-      const store = new TeamMateIdentityStore(silentLog);
+      const store = new AgentIdentityStore(silentLog);
       const names = (await store.list(DISPATCHER)).map((identity) => identity.name);
       expect(names).toEqual(['alice']);
     });

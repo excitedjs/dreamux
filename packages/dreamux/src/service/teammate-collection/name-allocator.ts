@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 
-import type { TeamMateRole } from './types.js';
+import type { AgentEntityRole } from '../agent-entity/types.js';
 
 /**
  * Concrete TeamMate name allocation (issue #188).
@@ -50,7 +50,7 @@ export function generateNameSuffix(): string {
   return out;
 }
 
-function rolePrefix(role: TeamMateRole): string {
+function rolePrefix(role: AgentEntityRole): string {
   if (role === 'team_leader') return 'tl-';
   if (role === 'team_member') return 'tm-';
   return '';
@@ -61,7 +61,7 @@ function rolePrefix(role: TeamMateRole): string {
  * slug is truncated so `${prefix}${slug}-${suffix}` is at most 64 chars.
  */
 export function buildConcreteName(input: {
-  role: TeamMateRole;
+  role: AgentEntityRole;
   base: string;
   teamSlug?: string;
   suffix: string;
@@ -84,7 +84,7 @@ export function buildConcreteName(input: {
  * is exhausted rather than returning a possibly-colliding name.
  */
 export function allocateConcreteName(input: {
-  role: TeamMateRole;
+  role: AgentEntityRole;
   base: string;
   teamSlug?: string;
   exists: (name: string) => boolean;

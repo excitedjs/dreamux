@@ -141,5 +141,5 @@ Codex owns `~/.codex/` for its auth, memory, and config. Dispatcher app-server
 processes do not set `CODEX_HOME`; they use Codex's global default home.
 Bundled skills are injected at runtime by role (#209 slice 6), not written into
 the workspace. See [State and paths](state-and-paths.md),
-[top-level-design](../decisions/top-level-design.md), and
+[State, config, and files](../domains/state-config-and-files.md), and
 [dispatcher-tm-packaging](../decisions/dispatcher-tm-packaging.md).

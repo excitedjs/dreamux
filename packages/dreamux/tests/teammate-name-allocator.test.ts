@@ -8,7 +8,10 @@ import {
   generateNameSuffix,
   slugifyName,
 } from '../src/service/teammate-collection/name-allocator.js';
-import { TEAMMATE_NAME_PATTERN } from '../src/service/teammate-collection/types.js';
+import {
+  assertNotReservedAgentName,
+  TEAMMATE_NAME_PATTERN,
+} from '../src/service/agent-entity/types.js';
 
 /**
  * Unit coverage for the concrete-name allocator (issue #188): role prefixes,
@@ -99,5 +102,10 @@ describe('TeamMate concrete-name allocation (#188)', () => {
         maxAttempts: 4,
       }),
     ).toThrow(/could not allocate a unique TeamMate name after 4 attempts/);
+  });
+
+  it('reserves dispatcher as an ordinary agent or team name', () => {
+    expect(() => assertNotReservedAgentName('dispatcher')).toThrow(/reserved/);
+    expect(() => assertNotReservedAgentName('Dispatcher')).toThrow(/reserved/);
   });
 });

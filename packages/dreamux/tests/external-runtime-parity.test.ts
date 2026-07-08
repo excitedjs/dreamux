@@ -12,11 +12,11 @@ import type {
 import { AgentRuntimeProviderCatalog } from '../src/agent-runtime/catalog.js';
 import { loadConfig } from '../src/config/config.js';
 import { createTeammateService } from '../src/service/teammate-service/factory.js';
-import { TeamMateIdentityStore } from '../src/service/teammate-collection/identity-store.js';
-import { TeamMateTurnsStore } from '../src/service/teammate-collection/turns-store.js';
+import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.js';
+import { AgentTurnsStore } from '../src/service/agent-entity/turns-store.js';
 import type {
-  TeamMateWorktreeIdentity,
-} from '../src/service/teammate-collection/types.js';
+  AgentEntityWorktreeIdentity,
+} from '../src/service/agent-entity/types.js';
 import { WorktreeManager } from '../src/service/worktree/manager.js';
 import type { ExternalChannelProviderFactory } from '../src/channel/external-channel-provider.js';
 import { testConfigFileObject } from './helpers/config.js';
@@ -38,7 +38,7 @@ function noopLog(): DreamuxLogger {
   return log as DreamuxLogger;
 }
 
-function reuseCwd(path: string): TeamMateWorktreeIdentity {
+function reuseCwd(path: string): AgentEntityWorktreeIdentity {
   return {
     mode: 'reuse-cwd',
     slug: null,
@@ -175,8 +175,8 @@ describe('external runtime production parity', () => {
     );
 
     const log = noopLog();
-    const identities = new TeamMateIdentityStore({ warn: log.warn.bind(log) });
-    const turnsStore = new TeamMateTurnsStore({ warn: log.warn.bind(log) });
+    const identities = new AgentIdentityStore(log);
+    const turnsStore = new AgentTurnsStore(log);
     const identity = await identities.create({
       dispatcherId: 'flow',
       name: 'external-peer',
@@ -200,7 +200,10 @@ describe('external runtime production parity', () => {
     const teammate = createTeammateService({
       dispatcherId: 'flow',
       identity,
-      launch: { kind: 'agent-ref' },
+      options: {
+        runtimeId: 'flow.tm.external',
+        ownsWorktreeOnClose: true,
+      },
       config,
       agentRuntimeProviders,
       identities,

@@ -3,41 +3,28 @@ import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { CompletionEnvelope } from '../completion-router/index.js';
-import type { TeamMateIdentityStore } from '../teammate-collection/identity-store.js';
-import type { TeamMateTurnsStore } from '../teammate-collection/turns-store.js';
-import type { TeamMateIdentity } from '../teammate-collection/types.js';
+import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
+import type { AgentTurnsStore } from '../agent-entity/turns-store.js';
+import type { AgentEntityIdentity } from '../agent-entity/types.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 import {
   TeammateService,
-  type RuntimeLaunchSpec,
   type TeammateServiceDeps,
   type TeammateServiceOptions,
 } from './index.js';
 
-type TeammateServiceBuildLaunch = NonNullable<TeammateServiceDeps['buildLaunch']>;
-
-export type TeammateServiceLaunch =
-  | {
-      kind: 'agent-ref';
-    }
-  | {
-      kind: 'inline';
-      build: TeammateServiceBuildLaunch;
-    };
-
 export interface CreateTeammateServiceInput {
   dispatcherId: string;
-  identity: TeamMateIdentity;
-  launch: TeammateServiceLaunch;
-  options?: TeammateServiceOptions;
+  identity: AgentEntityIdentity;
+  options: TeammateServiceOptions;
   config: DreamuxConfig;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
-  identities: TeamMateIdentityStore;
-  turnsStore: TeamMateTurnsStore;
+  identities: AgentIdentityStore;
+  turnsStore: AgentTurnsStore;
   worktrees?: WorktreeManager;
   log: DreamuxLogger;
   nextSubmissionSeq: () => number;
-  trackSettleCapture: (capture: Promise<void>) => void;
+  trackSettleCapture?: (capture: Promise<void>) => void;
   routeSettledCompletion: (
     producerName: string,
     turnId: string,
@@ -55,9 +42,10 @@ export function createTeammateService(
     turnsStore: input.turnsStore,
     ...(input.worktrees !== undefined ? { worktrees: input.worktrees } : {}),
     log: input.log,
-    ...(input.launch.kind === 'inline' ? { buildLaunch: input.launch.build } : {}),
     nextSubmissionSeq: input.nextSubmissionSeq,
-    trackSettleCapture: input.trackSettleCapture,
+    ...(input.trackSettleCapture !== undefined
+      ? { trackSettleCapture: input.trackSettleCapture }
+      : {}),
     routeSettledCompletion: input.routeSettledCompletion,
   };
 
@@ -68,5 +56,3 @@ export function createTeammateService(
     input.options,
   );
 }
-
-export type { RuntimeLaunchSpec };

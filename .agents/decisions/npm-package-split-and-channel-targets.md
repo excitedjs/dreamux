@@ -20,13 +20,9 @@ the implementation is still mostly host-local:
 - Built-in runtimes still live under
   `/packages/dreamux/src/agent-runtime/builtin/` and are directly imported by
   the host catalog.
-- `@excitedjs/dreamux-types` includes an interface-only reservation for future
-  one-way subscription channels such as GitHub/Jira issue or PR feeds
-  (`SubscribeChannelProvider`, kind `subscribeChannel`). Core has no runnable
-  subscription loader/catalog yet. The live bidirectional Feishu session, MCP
-  surface, access gate, introduce/trusted-peer behavior, and message ownership
-  tracking have been extracted into `@excitedjs/feishu-channel` as a
-  `ChannelProvider`.
+- The live bidirectional Feishu session, MCP surface, access gate,
+  introduce/trusted-peer behavior, and message ownership tracking have been
+  extracted into `@excitedjs/feishu-channel` as a `ChannelProvider`.
 - `@excitedjs/feishu-channel` is the publishable built-in Feishu Channel provider
   package behind `builtin:feishu`.
 - `/packages/dreamux/src/config/config.ts` accepts a
@@ -120,8 +116,6 @@ flowchart TD
   turn/result shapes, and completion delivery shapes;
 - Channel provider/session contracts, target shapes, inbound envelope shapes,
   tool descriptor/call shapes, and config/session contexts;
-- One-way subscription channel contracts (`SubscribeChannelProvider`) reserved
-  for future event-feed channels such as GitHub/Jira issue or PR subscriptions;
 - a minimal public logger type.
 
 It must not export runtime implementations, default loggers, loader logic,
@@ -403,21 +397,6 @@ Provider-specific channel tools (for Feishu, `reply` / `react` /
 `list_chat_bots`) stay on the provider-owned `feishu` MCP server; this epic does
 not introduce a generic standard tool set or a `list_peers` capability.
 
-## Bidirectional vs subscription channels
-
-`ChannelProvider` is the bidirectional/chat-channel contract. Feishu, Slack, and
-Telegram-style channels have provider-local chat ids, message ids, reply/react
-surfaces, `ChannelTarget`, Team binding, and TeamLeader authorization. Core owns
-the binding state and asks the provider only to normalize opaque `meta` into a
-target and to handle provider-owned tools.
-
-`SubscribeChannelProvider` is the one-way subscription contract. GitHub/Jira
-issue or PR feeds publish subscribed events into Dreamux; they do not expose
-`chat_id`, `message_id`, `reply`, `react`, `ChannelTarget`, Team binding, or
-transfer-back semantics. They may contribute provider-specific MCP descriptors,
-but those tools are not chat reply tools and cannot bind a Team. This separation
-keeps one-way event feeds from inheriting Feishu/Slack chat assumptions.
-
 ## Channel Targets and Binding
 
 `bind_channel` is a core-owned **Team MCP** capability for conversational
@@ -578,11 +557,8 @@ for this epic.
   `@excitedjs/dreamux-types` without depending on the Dreamux host package.
 - Dreamux core stays the only owner of Team routing and binding authorization,
   even when platform packages provide rich MCP tools.
-- Bidirectional chat channels and one-way subscription channels do **not** share
-  one target model. Feishu, Slack, and Telegram resolve `ChannelTarget`s for
-  chat routing/binding; GitHub, Jira, and similar providers use the separate
-  `SubscribeChannelProvider` event contract and do not inherit chat ids,
-  reply/react, or Team binding.
+- Chat channels resolve `ChannelTarget`s for routing and binding, while core
+  remains the owner of Team routing, binding, and authorization.
 - Runtime packages own runtime-specific skill mechanics while Dreamux core owns
   role selection and bundled skill source selection.
 - The old workspace symlink skill model is removed, eliminating managed

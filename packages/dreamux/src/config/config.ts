@@ -270,9 +270,15 @@ async function mergeWithDefaults(
   rejectUnknownKeys(raw, new Set(['agents', 'dispatchers']), file, '');
 
   const agents = await readAgents(raw['agents'], file, providerRegistry);
+  const dispatchers = await readDispatchers(
+    raw['dispatchers'],
+    file,
+    agents,
+    providerRegistry,
+  );
   return {
     agents,
-    dispatchers: await readDispatchers(raw['dispatchers'], file, agents, providerRegistry),
+    dispatchers,
   };
 }
 

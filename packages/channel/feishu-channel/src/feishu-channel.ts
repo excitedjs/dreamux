@@ -85,7 +85,6 @@ export interface FeishuInboundSubmitter {
   submitTurn(
     input: InboundTurnInput,
     envelope: FeishuInboundEnvelope,
-    hooks?: import('@excitedjs/dreamux-types').InboundDeliveryHooks,
   ): Promise<import('@excitedjs/dreamux-types').AgentRuntimeTurnResult>;
 }
 

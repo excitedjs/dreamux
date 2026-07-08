@@ -6,10 +6,13 @@ import type {
 } from '@excitedjs/dreamux-types';
 
 import type { ChannelProviderCatalog } from '../../channel/catalog.js';
-import type { DreamuxConfig } from '../../config/config.js';
+import type {
+  DispatcherChannelConfig,
+  DreamuxConfig,
+} from '../../config/config.js';
 import type { ChannelBinding } from '../channel-binding/store.js';
 import { ChannelBindingStore } from '../channel-binding/store.js';
-import type { ChannelMcpCallerScope } from '../dispatcher-service/mcp-descriptors.js';
+import type { ChannelMcpCallerScope } from './mcp-descriptors.js';
 import { ChannelSessions } from './channel-sessions.js';
 import { ChannelToolAuthorizationError } from './errors.js';
 
@@ -46,13 +49,11 @@ export interface ChannelToolInvocation {
 
 export class ChannelService {
   private readonly dispatcherId: string;
-  private readonly config: DreamuxConfig;
   private readonly sessions: ChannelSessions;
   private readonly bindings: ChannelBindingStore;
 
   constructor(opts: ChannelServiceOptions) {
     this.dispatcherId = opts.dispatcherId;
-    this.config = opts.config;
     this.bindings = opts.bindings ?? new ChannelBindingStore();
     this.sessions = new ChannelSessions({
       dispatcherId: opts.dispatcherId,
@@ -75,6 +76,10 @@ export class ChannelService {
 
   adopt(channels: Map<string, ChannelSession>): void {
     this.sessions.adopt(channels);
+  }
+
+  configuredChannels(): readonly DispatcherChannelConfig[] {
+    return this.sessions.configuredChannels();
   }
 
   clear(): void {
@@ -287,10 +292,9 @@ export class ChannelService {
       }
       return channelId;
     }
-    const dispatcher = this.dispatcherConfig();
-    const matches =
-      dispatcher?.channels.filter((channel) => channel.provider === providerRef) ??
-      [];
+    const matches = this.dispatcherChannels().filter(
+      (channel) => channel.provider === providerRef,
+    );
     if (matches.length === 0) {
       throw new ChannelToolAuthorizationError(
         'BAD_REQUEST',
@@ -307,7 +311,7 @@ export class ChannelService {
   }
 
   resolveChannelId(requested?: string): string {
-    const ids = this.dispatcherConfig()?.channels.map((channel) => channel.id) ?? [];
+    const ids = this.dispatcherChannels().map((channel) => channel.id);
     if (requested !== undefined) {
       if (!ids.includes(requested)) {
         throw new Error(
@@ -332,7 +336,7 @@ export class ChannelService {
   }
 
   channelProviderRef(channelId: string): string {
-    const channel = this.dispatcherConfig()?.channels.find(
+    const channel = this.dispatcherChannels().find(
       (entry) => entry.id === channelId,
     );
     if (channel === undefined) {
@@ -343,10 +347,8 @@ export class ChannelService {
     return channel.provider;
   }
 
-  private dispatcherConfig() {
-    return this.config.dispatchers.find(
-      (dispatcher) => dispatcher.id === this.dispatcherId,
-    );
+  private dispatcherChannels(): readonly DispatcherChannelConfig[] {
+    return this.sessions.configuredChannels();
   }
 }
 

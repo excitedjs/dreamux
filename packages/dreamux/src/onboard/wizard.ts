@@ -38,7 +38,7 @@ import type {
   OnboardAgentRuntimeConfig,
   OnboardAnswers,
   OnboardChannelConfig,
-} from './types.js';
+} from '../onboard/types.js';
 
 export interface OnboardCliOptions {
   yes?: boolean;

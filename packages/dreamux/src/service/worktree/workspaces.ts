@@ -1,11 +1,11 @@
 import type { DreamuxConfig } from '../../config/config.js';
 import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
-import type { TeamMateIdentityStore } from '../teammate-collection/identity-store.js';
+import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
 import type {
   SpawnTeamMateRequest,
   TeamMateSharedWorkspace,
 } from '../teammate-collection/index.js';
-import type { TeamMateIdentity } from '../teammate-collection/types.js';
+import type { AgentEntityIdentity } from '../agent-entity/types.js';
 import {
   type PreparedTeamMateWorkspace,
   WorktreeManager,
@@ -57,10 +57,10 @@ export async function resolveSpawnWorkspace(input: {
 
 export async function reprepareDeletedManagedWorktree(input: {
   config: DreamuxConfig;
-  identities: TeamMateIdentityStore;
+  identities: AgentIdentityStore;
   worktrees: WorktreeManager;
-  identity: TeamMateIdentity;
-}): Promise<TeamMateIdentity> {
+  identity: AgentEntityIdentity;
+}): Promise<AgentEntityIdentity> {
   if (
     input.identity.worktree.mode !== 'managed' ||
     input.identity.worktree.cleanup_state !== 'deleted'
@@ -105,10 +105,10 @@ export async function reprepareDeletedManagedWorktree(input: {
 }
 
 export async function assertManagedWorktreeAvailable(input: {
-  identities: TeamMateIdentityStore;
+  identities: AgentIdentityStore;
   dispatcherId: string;
   name: string;
-  worktree: TeamMateIdentity['worktree'];
+  worktree: AgentEntityIdentity['worktree'];
 }): Promise<void> {
   if (input.worktree.mode !== 'managed') return;
   const identities = await input.identities.list(input.dispatcherId);

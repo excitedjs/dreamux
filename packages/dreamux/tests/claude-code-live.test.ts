@@ -24,10 +24,21 @@ import {
   dispatcherClaudeCodeConfig,
   type ClaudeCodeAgentRuntimeProviderOptions,
 } from '@excitedjs/agent-runtime-claude-code';
-import { dispatcherHostPaths } from '../src/agent-runtime/host-paths.js';
+import { hostRuntimePaths } from '../src/agent-runtime/host-paths.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
-import { DispatcherStore } from '../src/state/dispatcher-store.js';
-import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
+import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.js';
+import { ensureDispatcherIdentity } from '../src/service/dispatcher-service/identity.js';
+import { AgentRuntimeStateStore } from '../src/service/agent-entity/runtime-state.js';
+import { testDispatcherConfig } from './helpers/config.js';
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
+
+const noopLogger: DreamuxLogger = {
+  error: () => {},
+  warn: () => {},
+  info: () => {},
+  debug: () => {},
+  trace: () => {},
+};
 
 const execFileAsync = promisify(execFile);
 
@@ -107,17 +118,33 @@ describe('claude-code live integration (opt-in)', () => {
         },
       },
     });
-    const store = new DispatcherStore(testDreamuxConfig([dispatcher]));
-    const row = store.get('live');
-    expect(row).not.toBeNull();
+    const identities = new AgentIdentityStore(noopLogger);
+    const identity = await ensureDispatcherIdentity(identities, {
+      dispatcherId: 'live',
+      agentRuntime: dispatcher.agentRuntime,
+      sourceCwd: home,
+      cwd: home,
+      runtimeCwd: home,
+      worktree: {
+        mode: 'reuse-cwd',
+        slug: null,
+        path: home,
+        branch: null,
+        base_ref: null,
+        cleanup: 'keep',
+        cleanup_state: 'not-managed',
+        cleanup_error: null,
+      },
+    });
+    const state = new AgentRuntimeStateStore(identities, identity);
 
     const runtime = claudeCodeProvider().createRuntime({
-      identity: { runtime_id: 'live', checkpoint_id: row!.thread_id },
+      identity: { runtime_id: 'live', checkpoint_id: null },
       config: dispatcherClaudeCodeConfig(dispatcher),
       cwd: home,
       mcpServers: [],
-      state: store.bindRuntime('live'),
-      paths: dispatcherHostPaths,
+      state,
+      paths: hostRuntimePaths,
     });
 
     await runtime.start();

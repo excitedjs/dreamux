@@ -39,7 +39,7 @@ describe('claudeCodeResidentArgs --add-dir', () => {
   it('threads runtime-owned skill add-dirs into the resident argv', () => {
     const args = claudeCodeResidentArgs({
       config: defaultDispatcherClaudeCodeConfig(),
-      mcpConfigPath: '/tmp/mcp.json',
+      mcpConfigJson: '{}',
       skillAddDirs: ['/runtime/team-skills'],
     });
     const i = args.indexOf('--add-dir');
@@ -50,7 +50,7 @@ describe('claudeCodeResidentArgs --add-dir', () => {
   it('emits no --add-dir when no runtime-owned skill add-dir exists', () => {
     const args = claudeCodeResidentArgs({
       config: defaultDispatcherClaudeCodeConfig(),
-      mcpConfigPath: '/tmp/mcp.json',
+      mcpConfigJson: '{}',
     });
     expect(args).not.toContain('--add-dir');
   });
@@ -60,7 +60,7 @@ describe('claudeCodeResidentArgs disableFeatures', () => {
   function argsFor(disableFeatures?: readonly string[]): string[] {
     return claudeCodeResidentArgs({
       config: defaultDispatcherClaudeCodeConfig(),
-      mcpConfigPath: '/tmp/mcp.json',
+      mcpConfigJson: '{}',
       ...(disableFeatures !== undefined ? { disableFeatures } : {}),
     });
   }

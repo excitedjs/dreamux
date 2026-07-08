@@ -1,8 +1,9 @@
 # Volatile run root and ephemeral runtime sockets
 
-- **Status:** Accepted. Supersedes the socket-placement and
-  `state/admin.sock` / `state/restart-intent.json` / `server.json` parts of
-  [top-level-design](top-level-design.md).
+- **Status:** Accepted. Supersedes the historical socket-placement baseline for
+  `state/admin.sock`, `state/restart-intent.json`, and `server.json`. Current
+  stable path guidance is consolidated in
+  [State, config, and files](../domains/state-config-and-files.md).
 - **Date:** 2026-06-10
 - **Affects:** `~/.dreamux` layout, admin IPC path contract, Codex app-server
   socket placement, completion spill + attachment cache placement,

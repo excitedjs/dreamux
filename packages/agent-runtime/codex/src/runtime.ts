@@ -35,7 +35,6 @@ import type {
   AgentRuntimeTextInput,
   AgentRuntimeTurnResult,
   DreamuxLogger,
-  InboundDeliveryHooks,
   InboundTurnInput,
   TurnSettledSignal,
 } from '@excitedjs/dreamux-types';
@@ -320,17 +319,11 @@ export class CodexRuntime implements AgentRuntime {
     return params;
   }
 
-  async channelInput(
-    input: InboundTurnInput,
-    hooks: InboundDeliveryHooks = {},
-  ): Promise<AgentRuntimeTurnResult> {
+  async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
     if (this.turnManager === null) {
       return { status: 'failed', error: new Error('turn manager not initialized') };
     }
-    return this.turnManager.enqueue(
-      { ...input, text: renderChannelInput(input) },
-      hooks,
-    );
+    return this.turnManager.enqueue({ ...input, text: renderChannelInput(input) });
   }
 
   waitIdle(): Promise<void> {

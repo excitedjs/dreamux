@@ -7,7 +7,7 @@ import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import { isNotFound } from '../../platform/fs-errors.js';
 import { dispatcherAgentTurnsPath } from '../../platform/paths.js';
-import type { TeamMateRole, TeamMateTurnRecord } from './types.js';
+import type { AgentEntityRole, AgentEntityTurnRecord } from './types.js';
 
 /**
  * The identity facts that place a turns archive on disk (issue #233 symmetric
@@ -19,7 +19,7 @@ export interface AgentTurnsScope {
   dispatcherId: string;
   name: string;
   teamId: string | null;
-  role: TeamMateRole;
+  role: AgentEntityRole;
 }
 
 function turnsPath(scope: AgentTurnsScope): string {
@@ -31,9 +31,6 @@ function turnsPath(scope: AgentTurnsScope): string {
   });
 }
 
-/** Reuse the neutral logger's `warn` — no forked, message-first shape. */
-export type TeamMateTurnsStoreLog = Pick<DreamuxLogger, 'warn'>;
-
 const PREVIEW_MAX = 500;
 const PREVIEW_HEAD = 497;
 
@@ -41,21 +38,21 @@ const PREVIEW_HEAD = 497;
  * Hard cap on the durable assistant output captured in a `settled` turn row
  * (issue #188). The full final output (up to this many chars) is the
  * failed-completion-delivery fallback `last` returns; beyond it the text is
- * truncated and {@link TeamMateTurnRecord.assistant_truncated} is set.
+ * truncated and {@link AgentEntityTurnRecord.assistant_truncated} is set.
  */
 export const ASSISTANT_TEXT_MAX = 160_000;
 
-export interface TeamMateTurnSubmitInput {
+export interface AgentTurnSubmitInput {
   turnId: string | null;
-  turnOrigin: TeamMateTurnRecord['turn_origin'];
+  turnOrigin: AgentEntityTurnRecord['turn_origin'];
   prompt: string | null;
   intent: string | null;
 }
 
-export interface TeamMateTurnSettledInput {
+export interface AgentTurnSettledInput {
   turnId: string | null;
   assistant: string | null;
-  settleStatus: TeamMateTurnRecord['settle_status'];
+  settleStatus: AgentEntityTurnRecord['settle_status'];
 }
 
 /**
@@ -69,12 +66,12 @@ export interface TeamMateTurnSettledInput {
  * settled row can carry up to 160k chars of assistant text) is never buffered
  * whole.
  */
-export class TeamMateTurnsStore {
-  constructor(private readonly log: TeamMateTurnsStoreLog) {}
+export class AgentTurnsStore {
+  constructor(private readonly log: DreamuxLogger) {}
 
   async appendSubmit(
     scope: AgentTurnsScope,
-    input: TeamMateTurnSubmitInput,
+    input: AgentTurnSubmitInput,
   ): Promise<void> {
     await this.append(scope, {
       version: 1,
@@ -93,7 +90,7 @@ export class TeamMateTurnsStore {
 
   async appendSettled(
     scope: AgentTurnsScope,
-    input: TeamMateTurnSettledInput,
+    input: AgentTurnSettledInput,
   ): Promise<void> {
     const raw = input.assistant ?? null;
     const truncated = raw !== null && raw.length > ASSISTANT_TEXT_MAX;
@@ -119,15 +116,15 @@ export class TeamMateTurnsStore {
    * caller folds with bounded memory. A missing archive yields nothing; a
    * torn/partial line is skipped rather than failing the read.
    */
-  async *stream(scope: AgentTurnsScope): AsyncGenerator<TeamMateTurnRecord> {
+  async *stream(scope: AgentTurnsScope): AsyncGenerator<AgentEntityTurnRecord> {
     const stream = createReadStream(turnsPath(scope), { encoding: 'utf8' });
     const lines = createInterface({ input: stream, crlfDelay: Infinity });
     try {
       for await (const line of lines) {
         if (line.trim() === '') continue;
-        let parsed: TeamMateTurnRecord;
+        let parsed: AgentEntityTurnRecord;
         try {
-          parsed = JSON.parse(line) as TeamMateTurnRecord;
+          parsed = JSON.parse(line) as AgentEntityTurnRecord;
         } catch {
           continue;
         }
@@ -151,7 +148,7 @@ export class TeamMateTurnsStore {
 
   private async append(
     scope: AgentTurnsScope,
-    row: TeamMateTurnRecord,
+    row: AgentEntityTurnRecord,
   ): Promise<void> {
     try {
       const path = turnsPath(scope);
@@ -176,7 +173,7 @@ export function turnsScopeOf(identity: {
   dispatcher_id: string;
   name: string;
   team_id: string | null;
-  role: TeamMateRole;
+  role: AgentEntityRole;
 }): AgentTurnsScope {
   return {
     dispatcherId: identity.dispatcher_id,

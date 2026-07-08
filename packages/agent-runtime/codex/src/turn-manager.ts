@@ -19,7 +19,6 @@ import { DEFAULT_MESSAGE_ID_DEDUPE_WINDOW } from '@excitedjs/dreamux-utils';
 import type {
   InboundTurnInput,
   InboundDeliveryResult,
-  InboundDeliveryHooks,
   AgentRuntimeTextInput,
   TurnSettledSignal,
 } from '@excitedjs/dreamux-types';
@@ -112,17 +111,13 @@ export class TurnManager {
    * Submit one accepted inbound message to Codex. Returns duplicate when this
    * process already saw the message_id.
    */
-  async enqueue(
-    input: InboundTurnInput,
-    hooks: InboundDeliveryHooks = {},
-  ): Promise<InboundDeliveryResult> {
+  async enqueue(input: InboundTurnInput): Promise<InboundDeliveryResult> {
     if (this.stopped) return { status: 'stopped' };
     if (!this.rememberMessageId(input.sourceId)) {
       return { status: 'duplicate' };
     }
     const threadId = this.opts.getThreadId();
     if (threadId === null) {
-      await this.notifyAccepted(input, hooks);
       const error = new Error('inbound submitted without thread_id');
       this.log('error', error.message);
       return { status: 'failed', error };
@@ -130,7 +125,6 @@ export class TurnManager {
 
     const activeTurn = this.claimActiveTurnSlot(threadId);
     activeTurn.slot.pendingSubmissions += 1;
-    await this.notifyAccepted(input, hooks);
 
     let res: Awaited<ReturnType<typeof submitTurnStart>>;
     try {
@@ -358,22 +352,6 @@ export class TurnManager {
         }
       },
     );
-  }
-
-  private async notifyAccepted(
-    input: InboundTurnInput,
-    hooks: InboundDeliveryHooks,
-  ): Promise<void> {
-    if (hooks.onAccepted === undefined) return;
-    try {
-      await hooks.onAccepted(input);
-    } catch (err) {
-      this.log(
-        'warn',
-        `accepted-inbound hook failed for message ${input.sourceId === '' ? '<none>' : input.sourceId}`,
-        err,
-      );
-    }
   }
 
   private rememberMessageId(messageId: string): boolean {

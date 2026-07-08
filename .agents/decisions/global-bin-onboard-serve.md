@@ -5,10 +5,12 @@
 - **Affects:** public CLI surface, onboarding UX, service registration, Codex app-server runtime
 - **PR / Issue:** [issue #18](https://github.com/excitedjs/dreamux/issues/18)
 
-Runtime state, socket path, Feishu MCP transport, and workspace-skill uninstall
+Runtime state, socket path, channel MCP transport, and workspace-skill uninstall
 ownership details in this record are superseded by
-[top-level-design](top-level-design.md). The single-bin, onboard, and
-foreground `serve` decisions still stand.
+[State, config, and files](../domains/state-config-and-files.md),
+[Channel routing and binding](../domains/channel-routing-and-binding.md), and
+[Provider runtime](../domains/provider-runtime.md). The single-bin, onboard,
+and foreground `serve` decisions still stand.
 Dispatcher `tm` packaging and dispatcher-skill install location are superseded
 by [dispatcher-tm-packaging](dispatcher-tm-packaging.md).
 
@@ -137,7 +139,8 @@ The dispatcher Codex app-server launched by `dreamux serve` must:
 - receive bundled skills through runtime role-gated skill injection, not
   workspace symlinks
 - use dreamux-owned state paths defined by
-  [top-level-design](top-level-design.md) for control sockets
+  [State, config, and files](../domains/state-config-and-files.md) for control
+  sockets
 - keep Unix socket paths short enough for macOS and Linux `sun_path` limits
 
 Onboarding must be path-transparent: every file path created or modified by

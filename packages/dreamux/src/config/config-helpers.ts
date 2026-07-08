@@ -65,10 +65,6 @@ export function agentProviderRefs(raw: unknown): string[] {
   return providerRefsFrom(raw['agents'], (agent) => agent['provider']);
 }
 
-/**
- * Every well-formed `dispatchers[].channels[].provider` ref the loader should
- * resolve. Mirrors {@link agentProviderRefs}.
- */
 export function channelProviderRefs(raw: unknown): string[] {
   if (!isPlainObject(raw)) return [];
   const dispatchers = raw['dispatchers'];

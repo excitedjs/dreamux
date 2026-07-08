@@ -9,14 +9,14 @@ import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 import { dispatcherWorkspace } from '../worktree/workspaces.js';
-import type { TeamMateIdentityStore } from '../teammate-collection/identity-store.js';
-import type { TeamMateTurnsStore } from '../teammate-collection/turns-store.js';
+import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
+import type { AgentTurnsStore } from '../agent-entity/turns-store.js';
 import type {
   CompletionInitiator,
   CompletionRouter,
 } from '../completion-router/index.js';
-import { requireLifecycleText } from '../teammate-collection/types.js';
-import type { TeamMateIdentity } from '../teammate-collection/types.js';
+import { requireLifecycleText } from '../agent-entity/types.js';
+import type { AgentEntityIdentity } from '../agent-entity/types.js';
 import type { SchedulerService } from '../scheduler/service.js';
 import type { ChannelRouteOwner } from '../channel-service/index.js';
 import { TeamStore } from './store.js';
@@ -31,7 +31,7 @@ import type {
   TeamRecord,
 } from './types.js';
 import { validateTeamId } from './types.js';
-import type { TeamMateIdentityStatus } from '../teammate-collection/types.js';
+import type { AgentEntityIdentityStatus } from '../agent-entity/types.js';
 import { TeamService, type TeamServiceDeps } from '../team-service/index.js';
 
 export interface TeamCollectionOptions {
@@ -48,13 +48,13 @@ export interface TeamCollectionOptions {
    * identity store directly, never a throwaway collection. The stores are
    * stateless (paths by role + team_id), so one pair safely serves all scopes.
    */
-  identities: TeamMateIdentityStore;
-  turnsStore: TeamMateTurnsStore;
+  identities: AgentIdentityStore;
+  turnsStore: AgentTurnsStore;
   // Shared per-dispatcher deps `DispatcherService` always supplies; forwarded
   // unchanged into each team's own collection so it stays topology-free (#233).
   router: CompletionRouter;
   initiatorFor: (
-    producer: TeamMateIdentity,
+    producer: AgentEntityIdentity,
   ) => Promise<CompletionInitiator | null>;
   isShuttingDown: () => boolean;
   adminSocketPath: string;
@@ -287,7 +287,7 @@ export class TeamCollection {
 
   private async leaderState(
     team: TeamRecord,
-  ): Promise<TeamMateIdentityStatus | null> {
+  ): Promise<AgentEntityIdentityStatus | null> {
     // Read-only probe straight from the shared identity store (issue #233 R4):
     // the leader lives at the team root, so the get is team-scoped. Equivalent to
     // the old throwaway-collection `status(name)` — that probe held no entities,

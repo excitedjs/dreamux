@@ -7,7 +7,7 @@ import type {
   ResolvedAgentConfig,
 } from '../../config/config.js';
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
-import type { TeamMateAgentRuntimeCapability } from './types.js';
+import type { AgentEntityRuntimeCapability } from '../agent-entity/types.js';
 
 export function defaultAgentRuntime(
   config: DreamuxConfig,
@@ -51,7 +51,7 @@ export function agentRuntimeCapability(
   providers: AgentRuntimeProviderCatalog,
   agentRuntimeId: string,
   agent: ResolvedAgentConfig,
-): TeamMateAgentRuntimeCapability {
+): AgentEntityRuntimeCapability {
   let capabilities: AgentRuntimeCapabilities | null = null;
   let unsupportedReason: string | null = null;
   try {

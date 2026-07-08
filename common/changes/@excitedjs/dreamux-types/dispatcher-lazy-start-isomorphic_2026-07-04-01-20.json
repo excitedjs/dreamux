@@ -1,0 +1,16 @@
+{
+  "changes": [
+    {
+      "comment": "BREAKING: Remove provider-authored channel MCP descriptor contracts. ChannelProvider.mcpServerDescriptor, ChannelMcpDescriptorContext, ChannelSession.tools, ChannelToolListContext, and InboundDeliveryHooks are removed; channel providers now expose only static tool catalogs plus handlers while Dreamux core owns MCP descriptor rendering and inbound ack/cancellation boundaries. The deferred SubscribeChannelProvider reservation is also removed from the public type package.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux-types"
+    },
+    {
+      "comment": "BREAKING: Replace AgentRuntimePathContext.dispatcherDir(id) with cacheDir(), a global rebuildable cache-root seam for provider scratch. Runtime recovery remains in host-owned identity state, while providers keep logsDir() and runtimeSocketDirs() for logs and volatile sockets.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux-types"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-types",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

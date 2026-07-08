@@ -63,14 +63,9 @@ surface.
 
 Important children:
 
-- `~/.dreamux/state/<dispatcher-id>/status.json`: dispatcher runtime status and
-  saved Agent Runtime thread/session identity. **Authoritative** for the
-  dispatcher agent's rebuild/recovery (the dispatcher agent is a contained
-  `TeammateService`, Phase 5 / #233).
 - `~/.dreamux/state/<dispatcher-id>/identity.json` + `turn.jsonl`: the dispatcher
-  agent's own write-only **debug** record at the dispatcher *root* (not under
-  `teammate/`), so the `teammate.*` read chokepoints never enumerate it. No
-  consumer; `status.json` is the authoritative state.
+  agent's authoritative runtime recovery record at the dispatcher *root* (not
+  under `teammate/`), so the `teammate.*` read chokepoints never enumerate it.
 - `~/.dreamux/state/<dispatcher-id>/access.json`: dispatcher-local Feishu access
   gate state.
 - `~/.dreamux/state/<dispatcher-id>/chat-bots.json`: Feishu known/trusted peer
@@ -91,8 +86,8 @@ Key source:
 
 - `/packages/dreamux/src/platform/paths.ts`
 - `/packages/dreamux/src/state/dispatcher-store.ts`
-- `/packages/dreamux/src/service/teammate-collection/identity-store.ts`
-- `/packages/dreamux/src/service/teammate-collection/turns-store.ts`
+- `/packages/dreamux/src/service/agent-entity/identity-store.ts`
+- `/packages/dreamux/src/service/agent-entity/turns-store.ts`
 - `/packages/dreamux/src/service/team-collection/store.ts`
 - `/packages/dreamux/src/service/scheduler/store.ts`
 - `/packages/channel/feishu-channel/src/chat-bots-store.ts`
@@ -153,9 +148,9 @@ Key source:
 - `/packages/agent-runtime/codex/src/skill-roots.ts`
 - `/packages/agent-runtime/claude-code/src/args.ts`
 
-## Decision Trail
+## Related Docs And Decision Trail
 
-- [Top-level design](../decisions/top-level-design.md)
+- [State, config, and files](../domains/state-config-and-files.md)
 - [Runtime run root](../decisions/runtime-run-root.md)
 - [Providerized config and state compatibility](../decisions/providerized-config-state-compatibility.md)
 - [Provider architecture realignment](../decisions/provider-architecture-realignment.md)

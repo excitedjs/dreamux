@@ -131,7 +131,7 @@ function state(): AgentRuntimeStateCallbacks {
 
 function paths(root: string): AgentRuntimePathContext {
   return {
-    dispatcherDir: (id) => join(root, 'state', id),
+    cacheDir: () => join(root, 'cache'),
     logsDir: () => join(root, 'logs'),
     runtimeSocketDirs: () => [join(root, 'run')],
   };

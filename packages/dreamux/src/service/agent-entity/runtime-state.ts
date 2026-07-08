@@ -1,22 +1,22 @@
 import type {
   AgentRuntimeResumeCheckpoint,
+  AgentRuntimeStatus,
   AgentRuntimeStateCallbacks,
 } from '@excitedjs/dreamux-types';
-import type { DispatcherStatus } from '../../state/dispatcher-store.js';
-import type { TeamMateIdentityStore } from './identity-store.js';
+import type { AgentIdentityStore } from './identity-store.js';
 import {
   runtimeStatusToIdentityStatus,
-  type TeamMateIdentity,
+  type AgentEntityIdentity,
 } from './types.js';
 import { preview } from './turns-store.js';
 
-export class TeamMateRuntimeStateStore implements AgentRuntimeStateCallbacks {
+export class AgentRuntimeStateStore implements AgentRuntimeStateCallbacks {
   constructor(
-    private readonly store: TeamMateIdentityStore,
-    private identity: TeamMateIdentity,
+    private readonly store: AgentIdentityStore,
+    private identity: AgentEntityIdentity,
   ) {}
 
-  current(): TeamMateIdentity {
+  current(): AgentEntityIdentity {
     return this.identity;
   }
 
@@ -51,7 +51,7 @@ export class TeamMateRuntimeStateStore implements AgentRuntimeStateCallbacks {
   }
 
   async setStatus(
-    status: DispatcherStatus,
+    status: AgentRuntimeStatus,
     extras: {
       last_error?: string | null;
       last_started_at?: number;

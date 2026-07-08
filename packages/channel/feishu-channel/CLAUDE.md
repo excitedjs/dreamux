@@ -13,12 +13,10 @@ never on `@excitedjs/dreamux` core.
   session (bot start/close), access/trust behavior (the gate + chat-bots store,
   read/written under a host-supplied state dir), and provider-local
   message-to-target ownership tracking.
-- Own the Feishu MCP surface end-to-end: the **tool backing** (`reply` / `react`
-  / `list_chat_bots` tool parsing + handlers) AND the MCP **server descriptor**
-  the runtime launches (`mcpServerDescriptor`, built from the host's neutral bin
-  command + admin socket). Core owns only the generic, channel-agnostic conduit —
-  the `channel-mcp` stdio shim + the neutral `channel.invoke_tool` /
-  `channel.list_tools` admin methods; see Boundaries.)
+- Own the Feishu MCP tool surface: `reply` / `react` / `list_chat_bots` static
+  tool catalog plus parsing and handlers. Core owns every channel MCP server
+  descriptor, the `channel-mcp` stdio shim, admin socket args, and caller/team
+  routing args; see Boundaries.
 - Normalize inbound Feishu content into agent-facing channel results.
 - Download inbound attachments after the host access gate allows delivery.
 - Own attachment cache layout, path sanitization, permissions, retention, and
@@ -44,11 +42,11 @@ never on `@excitedjs/dreamux` core.
 - Do not own dispatcher lifecycle, agent/Codex process supervision, thread
   state, admin socket handling, routing, binding state, authorization, or Team
   lifecycle. The generic channel-MCP transport — the core `channel-mcp` stdio
-  shim and the neutral `channel.invoke_tool` / `channel.list_tools` admin-method
-  routing (Dreamux bin + admin socket) — stays in `@excitedjs/dreamux`; the
-  package only shapes the MCP server descriptor that points at that shim. The
-  host supplies the bot secret/app id and the state/cache dirs; the package
-  reconstructs no Dreamux host layout/path contract.
+  shim and the neutral `channel.invoke_tool` admin-method routing (Dreamux bin,
+  admin socket, caller/team args, and descriptor rendering) — stays in
+  `@excitedjs/dreamux`; the package only exposes static tool catalogs and
+  handlers. The host supplies the bot secret/app id and the state/cache dirs;
+  the package reconstructs no Dreamux host layout/path contract.
 - Do not write private Feishu identifiers, internal domains, operator paths, or
   real resource keys into committed fixtures or docs.
 - Do not make download failure look like success. If no local readable file

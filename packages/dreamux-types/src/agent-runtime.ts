@@ -6,8 +6,8 @@
  * `@excitedjs/agent-runtime-codex`) implements while importing only
  * `@excitedjs/dreamux-types`. The public create context, runtime handle, state
  * callbacks, and status are deliberately neutral: they never expose Dreamux
- * host-private types (`DispatcherRow`, `DispatcherStore`, `DispatcherStatus`,
- * `DispatcherConfig`, config/state stores, or host path-helper implementations).
+ * host-private types (`DispatcherRow`, `DispatcherStore`, `DispatcherConfig`,
+ * config/state stores, or host path-helper implementations).
  * Dreamux core adapts its private objects into these public shapes.
  *
  * Note on sequencing: Dreamux core's own launcher still threads a host-coupled
@@ -28,7 +28,6 @@ import type {
   ProviderOnboard,
 } from './provider.js';
 import type {
-  InboundDeliveryHooks,
   InboundDeliveryResult,
   InboundTurnInput,
   TurnSettledSignal,
@@ -92,11 +91,11 @@ export interface AgentRuntimeContextSnapshot {
 
 export interface AgentRuntimePathContext {
   /**
-   * The per-dispatcher root the runtime drops its own state files into.
-   * Neutral: the runtime derives its own subpaths from here. Volatile
-   * rendezvous sockets do NOT live here.
+   * The global host cache root for provider-owned rebuildable scratch.
+   * Neutral: the runtime derives its own subpaths from here. Recovery state and
+   * volatile rendezvous sockets do NOT live here.
    */
-  dispatcherDir(id: string): string;
+  cacheDir(): string;
   /**
    * The central logs root. The runtime composes its OWN log subpaths under this
    * directory (e.g. `<logsDir>/<engine>/<id>.log`), so core never has to name a
@@ -110,7 +109,7 @@ export interface AgentRuntimePathContext {
    * short name inside the first candidate whose full path fits the platform
    * socket-path budget (see `@excitedjs/dreamux-utils` `unixSocketPathFitsBudget`).
    * Neutral: a runtime that needs no socket (e.g. a stdio engine) ignores it.
-   * Sockets are never persisted and never live under {@link dispatcherDir}.
+   * Sockets are never persisted and never live under {@link cacheDir}.
    */
   runtimeSocketDirs(): readonly string[];
 }
@@ -260,10 +259,7 @@ export interface AgentRuntime {
    * Deliver a channel/user turn. The runtime owns rendering the neutral channel
    * shape into its native input format.
    */
-  channelInput(
-    input: InboundTurnInput,
-    hooks?: InboundDeliveryHooks,
-  ): Promise<AgentRuntimeTurnResult>;
+  channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult>;
   /**
    * Deliver a Dreamux-owned plain text turn. This is not channel input and must
    * not receive channel/XML rendering.

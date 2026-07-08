@@ -90,29 +90,34 @@ class JsonLineReader {
 }
 
 function configWithDispatcher(): DreamuxConfig {
+  const dispatcher = testDispatcherConfig({
+    id: 'flow',
+    // Explicit workspace cwd (issue #182 PR-4): no state-dir fallback. The
+    // e2e flow runs no managed worktree, so the per-dispatcher dir works.
+    cwd: defaultDispatcherCwd('flow'),
+    enabled: true,
+    feishu: {
+      app_id: 'app-e2e',
+      app_secret: 'secret-server-only',
+    },
+    codex: {
+      bin: 'codex',
+      approval_policy: 'never',
+      sandbox_mode: 'workspace-write',
+      extra_args: [],
+      extra_env: {},
+      initialize_timeout_ms: 10000,
+    },
+  });
   return {
     ...BUILT_IN_DEFAULTS,
-    dispatchers: [
-      testDispatcherConfig({
-        id: 'flow',
-        // Explicit workspace cwd (issue #182 PR-4): no state-dir fallback. The
-        // e2e flow runs no managed worktree, so the per-dispatcher dir works.
-        cwd: defaultDispatcherCwd('flow'),
-        enabled: true,
-        feishu: {
-          app_id: 'app-e2e',
-          app_secret: 'secret-server-only',
-        },
-        codex: {
-          bin: 'codex',
-          approval_policy: 'never',
-          sandbox_mode: 'workspace-write',
-          extra_args: [],
-          extra_env: {},
-          initialize_timeout_ms: 10000,
-        },
-      }),
-    ],
+    agents: {
+      [dispatcher.agentRuntime]: {
+        provider: dispatcher.runtime.provider,
+        config: dispatcher.runtime.config,
+      },
+    },
+    dispatchers: [dispatcher],
   };
 }
 

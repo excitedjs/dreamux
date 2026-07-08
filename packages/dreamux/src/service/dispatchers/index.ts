@@ -4,11 +4,14 @@ import type { DreamuxConfig } from '../../config/config.js';
 import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
 import type { DispatcherStore } from '../../state/dispatcher-store.js';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
+import { AgentIdentityStore } from '../agent-entity/identity-store.js';
 import {
   DispatcherService,
   type DispatcherServiceOptions,
   type DispatcherSummary,
+  type DispatcherRuntimeStatus,
 } from '../dispatcher-service/index.js';
+import { runtimeStatusToIdentityStatus } from '../agent-entity/types.js';
 
 export interface DispatchersOptions {
   config: DreamuxConfig;
@@ -36,6 +39,14 @@ export class Dispatchers {
   private readonly adminSocketPath: string | undefined;
   private readonly channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
   private readonly log: DreamuxLogger;
+  /**
+   * Read-only identity reader shared by {@link summarize} and {@link status}
+   * (issue #233 / PR #282 review). Built once so the read-model probes don't
+   * `new` a throwaway store per dispatcher row. This is a plain path-based
+   * reader, never a DispatcherService trigger — it does not prepare or start
+   * any aggregate.
+   */
+  private readonly identities: AgentIdentityStore;
   private restartIntent: RestartIntentConsumer | null = null;
 
   constructor(opts: DispatchersOptions) {
@@ -46,6 +57,7 @@ export class Dispatchers {
     this.adminSocketPath = opts.adminSocketPath;
     this.channelLoggerFactory = opts.channelLoggerFactory;
     this.log = opts.log;
+    this.identities = new AgentIdentityStore(opts.log);
   }
 
   get(id: string): DispatcherService {
@@ -65,19 +77,42 @@ export class Dispatchers {
     }
   }
 
-  summarize(): DispatcherSummary[] {
-    return this.dispatcherStore.list().map((row) => {
+  async summarize(): Promise<DispatcherSummary[]> {
+    return Promise.all(this.dispatcherStore.list().map(async (row) => {
       const service = this.services.get(row.dispatcher_id);
-      return (
-        service?.summary(row) ?? {
+      const live = service?.liveRuntimeStatus() ?? null;
+      if (live !== null) {
+        return {
           dispatcher_id: row.dispatcher_id,
           channel_identity: row.channel_identity,
-          status: row.status,
-          thread_id: row.thread_id,
+          status: live.status === null
+            ? 'stopped'
+            : runtimeStatusToIdentityStatus(live.status),
+          thread_id: live.threadId,
           enabled: row.enabled === 1,
-        }
-      );
-    });
+        };
+      }
+      const identity = await this.identities.dispatcherIdentity(row.dispatcher_id);
+      return {
+        dispatcher_id: row.dispatcher_id,
+        channel_identity: row.channel_identity,
+        status: identity?.status ?? 'stopped',
+        thread_id: identity?.session_id ?? null,
+        enabled: row.enabled === 1,
+      };
+    }));
+  }
+
+  async status(id: string): Promise<DispatcherRuntimeStatus> {
+    const service = this.services.get(id);
+    const live = service?.liveRuntimeStatus() ?? null;
+    if (live !== null) return live;
+    const identity = await this.identities.dispatcherIdentity(id);
+    return {
+      status: identity?.status ?? null,
+      threadId: identity?.session_id ?? null,
+      lastError: identity?.last_error ?? null,
+    };
   }
 
   async shutdown(): Promise<void> {

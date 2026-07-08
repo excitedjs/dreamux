@@ -16,7 +16,12 @@ import {
   type CompletionRouter,
 } from '../completion-router/index.js';
 import { createTeammateService } from '../teammate-service/factory.js';
-import { TeamMateIdentityStore } from './identity-store.js';
+import {
+  assertDispatcherScopedTeammate,
+  assertTeamScopedAgent,
+  childAgentRuntimeId,
+} from '../agent-entity/runtime-profile.js';
+import { AgentIdentityStore } from '../agent-entity/identity-store.js';
 import {
   clampHistoryLimit,
   decodeCursor,
@@ -28,7 +33,7 @@ import {
   validateLastTurns,
 } from './read-helpers.js';
 import type { TeammateService } from '../teammate-service/index.js';
-import { TeamMateTurnsStore } from './turns-store.js';
+import { AgentTurnsStore } from '../agent-entity/turns-store.js';
 import { allocateConcreteName, type SuffixGenerator } from './name-allocator.js';
 import {
   assertManagedWorktreeAvailable,
@@ -40,21 +45,23 @@ import {
   optionalLifecycleText,
   requireLifecycleText,
   validateTeamMateName,
-  type CloseTeamMateInput,
-  type SendTeamMateInput,
-  type SpawnTeamMateInput,
-  type TeamMateCapabilities,
-  type TeamMateCloseResult,
-  type TeamMateHistoryQuery,
-  type TeamMateHistoryResult,
-  type TeamMateIdentity,
-  type TeamMateLastResult,
-  type TeamMateRecordRow,
-  type TeamMateRole,
-  type TeamMateRuntimeStatus,
-  type TeamMateSendResult,
-  type TeamMateSpawnResult,
-  type TeamMateWorktreeIdentity,
+  type AgentEntityCapabilities,
+  type AgentEntityCloseResult,
+  type AgentEntityHistoryQuery,
+  type AgentEntityHistoryResult,
+  type AgentEntityIdentity,
+  type AgentEntityLastResult,
+  type AgentEntityRecordRow,
+  type AgentEntityRole,
+  type AgentEntityRuntimeStatus,
+  type AgentEntitySendResult,
+  type AgentEntitySpawnResult,
+  type AgentEntityWorktreeIdentity,
+} from '../agent-entity/types.js';
+import type {
+  CloseTeamMateInput,
+  SendTeamMateInput,
+  SpawnTeamMateInput,
 } from './types.js';
 
 export interface TeammateCollectionOptions {
@@ -75,13 +82,16 @@ export interface TeammateCollectionOptions {
   /** The per-dispatcher worktree manager, shared with the team collection. */
   worktrees: WorktreeManager;
   /**
-   * The identity + turns store pair, optionally injected (issue #233). The
-   * dispatcher-scope collection shares one pair with the dispatcher agent (passed
-   * here); per-team collections omit them and the constructor news its own. The
-   * stores are stateless (paths by role + team_id), so a shared pair is safe.
+   * The identity + turns store pair (issue #233 / PR #282 review). Required:
+   * `DispatcherService` is the per-dispatcher composition root and builds the
+   * shared pair once, then injects it into the dispatcher agent, the
+   * dispatcher-scope teammate collection, and each team-scope member
+   * collection. The stores are stateless (paths by role + team_id), so one
+   * pair safely serves all scopes; `TeammateCollection` must never hide a
+   * `new` fallback.
    */
-  identities?: TeamMateIdentityStore;
-  turnsStore?: TeamMateTurnsStore;
+  identities: AgentIdentityStore;
+  turnsStore: AgentTurnsStore;
   /**
    * The dispatcher's delivery router (issue #233). Omitted in storage-only
    * contexts (no settle delivery is then routed).
@@ -95,7 +105,7 @@ export interface TeammateCollectionOptions {
    * (the turn is then recorded but not pushed).
    */
   initiatorFor?: (
-    producer: TeamMateIdentity,
+    producer: AgentEntityIdentity,
   ) => Promise<CompletionInitiator | null>;
   /**
    * Reject any new turn while the dispatcher is shutting down (issue #233). The
@@ -112,7 +122,7 @@ export interface TeamMateSharedWorkspace {
   sourceCwd: string;
   sourceRepo: string | null;
   runtimeCwd: string;
-  worktree: TeamMateWorktreeIdentity;
+  worktree: AgentEntityWorktreeIdentity;
 }
 
 export type SpawnTeamMateRequest = SpawnTeamMateInput & {
@@ -130,14 +140,14 @@ export type SpawnTeamMateRequest = SpawnTeamMateInput & {
  * interface entirely.
  */
 export interface TeammateOps {
-  spawn(input: Omit<SpawnTeamMateRequest, 'sharedWorkspace'>): Promise<TeamMateSpawnResult>;
-  send(input: SendTeamMateInput): Promise<TeamMateSendResult>;
-  close(input: CloseTeamMateInput): Promise<TeamMateCloseResult>;
-  list(): Promise<TeamMateRuntimeStatus[]>;
-  status(name: string): Promise<TeamMateRuntimeStatus>;
-  history(input: Omit<TeamMateHistoryQuery, 'teamId'>): Promise<TeamMateHistoryResult>;
-  last(name: string, turns?: number): Promise<TeamMateLastResult>;
-  getCapabilities(): TeamMateCapabilities;
+  spawn(input: Omit<SpawnTeamMateRequest, 'sharedWorkspace'>): Promise<AgentEntitySpawnResult>;
+  send(input: SendTeamMateInput): Promise<AgentEntitySendResult>;
+  close(input: CloseTeamMateInput): Promise<AgentEntityCloseResult>;
+  list(): Promise<AgentEntityRuntimeStatus[]>;
+  status(name: string): Promise<AgentEntityRuntimeStatus>;
+  history(input: Omit<AgentEntityHistoryQuery, 'teamId'>): Promise<AgentEntityHistoryResult>;
+  last(name: string, turns?: number): Promise<AgentEntityLastResult>;
+  getCapabilities(): AgentEntityCapabilities;
 }
 
 /**
@@ -155,8 +165,8 @@ export interface TeammateOps {
 export class TeammateCollection implements TeammateOps {
   private readonly dispatcherId: string;
   private readonly teamScope: string | null;
-  private readonly identities: TeamMateIdentityStore;
-  private readonly turnsStore: TeamMateTurnsStore;
+  private readonly identities: AgentIdentityStore;
+  private readonly turnsStore: AgentTurnsStore;
   private readonly worktrees: WorktreeManager;
   private readonly entities = new Map<string, TeammateService>();
   private submissionSeq = 0;
@@ -166,12 +176,8 @@ export class TeammateCollection implements TeammateOps {
     this.dispatcherId = opts.dispatcherId;
     this.teamScope = opts.teamScope;
     this.worktrees = opts.worktrees;
-    this.identities =
-      opts.identities ??
-      new TeamMateIdentityStore({ warn: opts.log.warn.bind(opts.log) });
-    this.turnsStore =
-      opts.turnsStore ??
-      new TeamMateTurnsStore({ warn: opts.log.warn.bind(opts.log) });
+    this.identities = opts.identities;
+    this.turnsStore = opts.turnsStore;
   }
 
   /** The live runtime for a cached entity, or null (drives status projection). */
@@ -179,7 +185,7 @@ export class TeammateCollection implements TeammateOps {
     return this.entities.get(name)?.getRuntime() ?? null;
   }
 
-  turns(): TeamMateTurnsStore {
+  turns(): AgentTurnsStore {
     return this.turnsStore;
   }
 
@@ -190,7 +196,7 @@ export class TeammateCollection implements TeammateOps {
    * for the per-dispatcher router (issue #233).
    */
   private async allocateName(
-    role: TeamMateRole,
+    role: AgentEntityRole,
     base: string,
     teamSlug?: string,
   ): Promise<string> {
@@ -206,7 +212,7 @@ export class TeammateCollection implements TeammateOps {
     });
   }
 
-  async spawn(input: SpawnTeamMateRequest): Promise<TeamMateSpawnResult> {
+  async spawn(input: SpawnTeamMateRequest): Promise<AgentEntitySpawnResult> {
     if (this.opts.isShuttingDown?.())
       throw new Error(`dispatcher '${this.dispatcherId}' is shutting down`);
     requireLifecycleText(input.name, 'TeamMate spawn name');
@@ -222,7 +228,7 @@ export class TeammateCollection implements TeammateOps {
     if (teamId !== undefined && input.sharedWorkspace === undefined) {
       throw new Error('Team member spawn requires a shared team workspace');
     }
-    const role: TeamMateRole = teamId !== undefined ? 'team_member' : 'teammate';
+    const role: AgentEntityRole = teamId !== undefined ? 'team_member' : 'teammate';
     const name = await this.allocateName(role, input.name);
     const agentRuntimeId =
       input.agentRuntime ?? defaultAgentRuntime(this.opts.config, this.dispatcherId);
@@ -265,7 +271,7 @@ export class TeammateCollection implements TeammateOps {
     return { teammate: entity.status(), turn };
   }
 
-  async send(input: SendTeamMateInput): Promise<TeamMateSendResult> {
+  async send(input: SendTeamMateInput): Promise<AgentEntitySendResult> {
     if (this.opts.isShuttingDown?.())
       throw new Error(`dispatcher '${this.dispatcherId}' is shutting down`);
     const teamId = this.teamScope ?? undefined;
@@ -279,7 +285,7 @@ export class TeammateCollection implements TeammateOps {
     return result;
   }
 
-  async close(input: CloseTeamMateInput): Promise<TeamMateCloseResult> {
+  async close(input: CloseTeamMateInput): Promise<AgentEntityCloseResult> {
     const entity = await this.mustEntity(input.name);
     const closed = await entity.close({ note: input.note });
     return closed;
@@ -294,25 +300,25 @@ export class TeammateCollection implements TeammateOps {
    */
   async applyWorktreeCleanup(
     name: string,
-    worktree: TeamMateWorktreeIdentity,
+    worktree: AgentEntityWorktreeIdentity,
   ): Promise<void> {
     const entity = await this.mustEntity(name);
     await entity.applyWorktreeCleanup(worktree);
   }
 
-  async list(): Promise<TeamMateRuntimeStatus[]> {
+  async list(): Promise<AgentEntityRuntimeStatus[]> {
     return (await this.rosterList()).map((identity) =>
       toStatus(identity, this.runtimeFor(identity.name)),
     );
   }
 
-  async status(name: string): Promise<TeamMateRuntimeStatus> {
+  async status(name: string): Promise<AgentEntityRuntimeStatus> {
     const identity = await this.mustIdentity(validateTeamMateName(name));
     return toStatus(identity, this.runtimeFor(identity.name));
   }
 
-  async history(input: TeamMateHistoryQuery): Promise<TeamMateHistoryResult> {
-    const rows: TeamMateRecordRow[] = [];
+  async history(input: AgentEntityHistoryQuery): Promise<AgentEntityHistoryResult> {
+    const rows: AgentEntityRecordRow[] = [];
     for (const identity of await this.rosterList()) {
       const row = toRecordRow(identity, this.runtimeFor(identity.name));
       if (matchesRecordQuery(row, input)) {
@@ -334,7 +340,7 @@ export class TeammateCollection implements TeammateOps {
     };
   }
 
-  async last(name: string, turns?: number): Promise<TeamMateLastResult> {
+  async last(name: string, turns?: number): Promise<AgentEntityLastResult> {
     const requestedTurns = validateLastTurns(turns);
     const identity = await this.mustIdentity(validateTeamMateName(name));
     const teammate = toStatus(identity, this.runtimeFor(identity.name));
@@ -356,7 +362,7 @@ export class TeammateCollection implements TeammateOps {
    * not exist" for a missing or wrong-scope name (the single read-by-name
    * chokepoint, issue #233).
    */
-  private async mustIdentity(name: string): Promise<TeamMateIdentity> {
+  private async mustIdentity(name: string): Promise<AgentEntityIdentity> {
     const teamId = this.teamScope ?? undefined;
     const identity = await this.identities.get(this.dispatcherId, name, teamId);
     if (identity === null) {
@@ -373,11 +379,11 @@ export class TeammateCollection implements TeammateOps {
    * the team root and is a contained `TeammateService`, never a member row, so no
    * post-filter is needed.
    */
-  private async rosterList(): Promise<TeamMateIdentity[]> {
+  private async rosterList(): Promise<AgentEntityIdentity[]> {
     return this.identities.list(this.dispatcherId, this.teamScope ?? undefined);
   }
 
-  getCapabilities(): TeamMateCapabilities {
+  getCapabilities(): AgentEntityCapabilities {
     return {
       verbs: [
         'spawn',
@@ -444,7 +450,7 @@ export class TeammateCollection implements TeammateOps {
     return this.entityFor(identity);
   }
 
-  private assertInCollection(identity: TeamMateIdentity): void {
+  private assertInCollection(identity: AgentEntityIdentity): void {
     const inCollection =
       identity.dispatcher_id === this.dispatcherId &&
       (this.teamScope === null
@@ -457,7 +463,7 @@ export class TeammateCollection implements TeammateOps {
   /** Build (and cache) the entity for an identity. The collection owns only
    * caller-supplied identity guidance; it does not invent default teammate role
    * policy. */
-  private entityFor(identity: TeamMateIdentity): TeammateService {
+  private entityFor(identity: AgentEntityIdentity): TeammateService {
     const existing = this.entities.get(identity.name);
     if (existing !== undefined) return existing;
     const systemPromptOptions = callerIdentitySystemPromptOptions(
@@ -466,8 +472,16 @@ export class TeammateCollection implements TeammateOps {
     const entity = createTeammateService({
       dispatcherId: this.dispatcherId,
       identity,
-      launch: { kind: 'agent-ref' },
-      ...(systemPromptOptions !== undefined ? { options: systemPromptOptions } : {}),
+      options: {
+        runtimeId: childAgentRuntimeId(identity),
+        ownsWorktreeOnClose: this.teamScope === null,
+        loggerFields: { teammate: identity.name },
+        assertIdentityScope:
+          this.teamScope === null
+            ? assertDispatcherScopedTeammate
+            : assertTeamScopedAgent(this.teamScope),
+        ...(systemPromptOptions ?? {}),
+      },
       config: this.opts.config,
       agentRuntimeProviders: this.opts.agentRuntimeProviders,
       identities: this.identities,

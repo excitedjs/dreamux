@@ -1,6 +1,6 @@
 import { execa } from 'execa';
 
-import type { CommandRunner } from './types.js';
+import type { CommandRunner } from '../onboard/types.js';
 
 interface CommandOptions {
   cwd?: string;

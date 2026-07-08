@@ -15,16 +15,16 @@ import {
   managedWorktreePath,
 } from './paths.js';
 import type {
-  TeamMateWorktreeCleanupState,
-  TeamMateWorktreeIdentity,
-  TeamMateWorktreeRequest,
-} from '../teammate-collection/types.js';
+  AgentEntityWorktreeCleanupState,
+  AgentEntityWorktreeIdentity,
+} from '../agent-entity/types.js';
+import type { TeamMateWorktreeRequest } from '../teammate-collection/types.js';
 
 export interface PreparedTeamMateWorkspace {
   sourceCwd: string;
   sourceRepo: string | null;
   runtimeCwd: string;
-  worktree: TeamMateWorktreeIdentity;
+  worktree: AgentEntityWorktreeIdentity;
 }
 
 export class WorktreeManager {
@@ -178,8 +178,8 @@ export class WorktreeManager {
   async cleanup(identity: {
     source_cwd: string;
     source_repo: string | null;
-    worktree: TeamMateWorktreeIdentity;
-  }): Promise<TeamMateWorktreeIdentity> {
+    worktree: AgentEntityWorktreeIdentity;
+  }): Promise<AgentEntityWorktreeIdentity> {
     const worktree = identity.worktree;
     if (worktree.mode !== 'managed') {
       return worktree;
@@ -267,8 +267,8 @@ async function boundaryGitignoreIsSafe(gitignorePath: string): Promise<boolean> 
 
 async function retainedState(
   repo: string,
-  worktree: TeamMateWorktreeIdentity,
-): Promise<TeamMateWorktreeCleanupState | null> {
+  worktree: AgentEntityWorktreeIdentity,
+): Promise<AgentEntityWorktreeCleanupState | null> {
   const unmerged = await git(worktree.path, ['ls-files', '-u']);
   if (unmerged.stdout.trim() !== '') return 'retained-unmerged';
   const status = await git(worktree.path, ['status', '--porcelain=v1', '-uall']);
@@ -297,7 +297,7 @@ async function retainedState(
 
 async function safeReachabilityRefs(
   repo: string,
-  worktree: TeamMateWorktreeIdentity,
+  worktree: AgentEntityWorktreeIdentity,
 ): Promise<string[]> {
   const refs = await git(repo, [
     'for-each-ref',

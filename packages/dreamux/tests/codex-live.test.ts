@@ -26,9 +26,16 @@
 import { describe, it, expect } from 'vitest';
 // eslint-disable-next-line no-restricted-imports -- live-Codex probe: a one-shot `execSync` reads the operator's interactive Codex auth/login state to decide whether the live model-gate case can run at all; it is setup, not the code under test, and must complete before the suite proceeds (issue #85 test-scope carve-out).
 import { execSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
+import { join } from 'node:path';
 
 import { CodexProcess } from '@excitedjs/agent-runtime-codex';
 import { CodexWsClient, type CodexWsClientOptions } from '@excitedjs/agent-runtime-codex';
@@ -38,13 +45,11 @@ import {
   codexMcpServerArgs,
   parseCodexArgs,
 } from '@excitedjs/agent-runtime-codex';
-import { dreamuxBinPath } from '../src/platform/package-bin.js';
 import { Server } from '../src/server.js';
 import {
   IN_PROGRESS_REACTION_EMOJI,
   RECEIVED_REACTION_EMOJI,
   createFakeFeishuBot,
-  createFeishuChannelProvider,
   type FeishuInboundEvent,
 } from '@excitedjs/feishu-channel';
 import { feishuChannelCatalog } from './helpers/fake-channel.js';
@@ -57,6 +62,9 @@ import type {
   ThreadStartResponse,
 } from '@excitedjs/agent-runtime-codex';
 import { testDispatcherConfig } from './helpers/config.js';
+import { ChannelProviderCatalog } from '../src/channel/catalog.js';
+import { dispatcherMcpServerDescriptors } from '../src/service/dispatcher-service/mcp-descriptors.js';
+import { adminSocketPath } from '../src/platform/paths.js';
 
 export const SKIP_ENV = 'DREAMUX_SKIP_LIVE_CODEX';
 export const MODEL_GATE_ENV = 'DREAMUX_RUN_LIVE_MODEL_GATE';
@@ -194,32 +202,59 @@ function fakeInbound(
 }
 
 function liveConfig(dispatcherCwd: string, codexHomeEnv: string): DreamuxConfig {
+  const dispatcher = testDispatcherConfig({
+    id: 'live',
+    cwd: dispatcherCwd,
+    enabled: true,
+    feishu: {
+      app_id: 'app-live',
+      app_secret: 'secret-server-only',
+    },
+    codex: {
+      bin: 'codex',
+      approval_policy: 'never',
+      sandbox_mode: 'danger-full-access',
+      extra_args: [],
+      extra_env: {
+        HOME: codexHomeEnv,
+      },
+      // A longer handshake margin for the real codex app-server, now a
+      // dispatcher-local field rather than a global default.
+      initialize_timeout_ms: 15000,
+    },
+  });
   return {
-    agents: {},
-    dispatchers: [
-      testDispatcherConfig({
-        id: 'live',
-        cwd: dispatcherCwd,
-        enabled: true,
-        feishu: {
-          app_id: 'app-live',
-          app_secret: 'secret-server-only',
-        },
-        codex: {
-          bin: 'codex',
-          approval_policy: 'never',
-          sandbox_mode: 'danger-full-access',
-          extra_args: [],
-          extra_env: {
-            HOME: codexHomeEnv,
-          },
-          // A longer handshake margin for the real codex app-server, now a
-          // dispatcher-local field rather than a global default.
-          initialize_timeout_ms: 15000,
-        },
-      }),
-    ],
+    agents: {
+      [dispatcher.agentRuntime]: {
+        provider: dispatcher.runtime.provider,
+        config: dispatcher.runtime.config,
+      },
+    },
+    dispatchers: [dispatcher],
   };
+}
+
+function createIsolatedCodexHome(dir: string): string {
+  const codexHome = join(dir, 'codex-home');
+  mkdirSync(codexHome, { recursive: true });
+  const sourceAuth = join(process.env['CODEX_HOME'] ?? join(homedir(), '.codex'), 'auth.json');
+  if (existsSync(sourceAuth)) {
+    copyFileSync(sourceAuth, join(codexHome, 'auth.json'));
+  }
+  writeFileSync(
+    join(codexHome, 'config.toml'),
+    [
+      'approval_policy = "never"',
+      'sandbox_mode = "danger-full-access"',
+      '',
+      '[apps._default]',
+      'enabled = false',
+      'destructive_enabled = false',
+      'open_world_enabled = false',
+      '',
+    ].join('\n'),
+  );
+  return codexHome;
 }
 
 async function waitFor(
@@ -255,6 +290,34 @@ function hasCommandExecutionStarted(client: RecordingCodexWsClient): boolean {
       (item as Record<string, unknown>)['type'] === 'commandExecution'
     );
   });
+}
+
+function notificationDebugSummary(client: RecordingCodexWsClient): string {
+  return client.notifications
+    .slice(-20)
+    .map((entry) => {
+      const params = entry.notification.params;
+      let itemType: unknown = null;
+      let detail = '';
+      if (params !== null && typeof params === 'object') {
+        const record = params as Record<string, unknown>;
+        const item = record['item'];
+        if (item !== null && typeof item === 'object') {
+          itemType = (item as Record<string, unknown>)['type'];
+        }
+        const error = record['error'];
+        if (error !== null && typeof error === 'object') {
+          const message = (error as Record<string, unknown>)['message'];
+          if (typeof message === 'string') detail = `:${message}`;
+        }
+        const status = record['status'];
+        if (typeof status === 'string') detail = `:${status}`;
+        const errorText = record['error'];
+        if (typeof errorText === 'string') detail += `:${errorText}`;
+      }
+      return `${entry.notification.method}:${String(itemType)}${detail}`;
+    })
+    .join(', ');
 }
 
 function turnStartRequests(client: RecordingCodexWsClient): RecordedRequest[] {
@@ -364,45 +427,30 @@ describe('codex live integration', () => {
         );
       }
 
-      const dreamuxBin = dreamuxBinPath();
-      if (!isAbsolute(dreamuxBin) || !existsSync(dreamuxBin)) {
-        throw new Error(
-          `dreamux Feishu MCP live test requires an absolute built dreamux bin path; got ${dreamuxBin}`,
-        );
-      }
-
       const dir = mkdtempSync(join(homedir(), '.dreamux-e2e-'));
       const socketPath = join(dir, 'codex.sock');
       const cwd = join(dir, 'cwd');
+      const dispatcher = testDispatcherConfig({
+        id: 'live',
+        cwd,
+        feishu: {
+          app_id: 'app-live',
+          app_secret: 'secret-server-only',
+        },
+      });
+      const channelProviders = feishuChannelCatalog(() =>
+        createFakeFeishuBot('app-live'),
+      );
       const extraArgs = [
         ...codexArgsToCli(
           parseCodexArgs('{"sandboxMode":"danger-full-access"}'),
         ),
-        // Build the channel MCP descriptor via the feishu provider's own
-        // session so the test does not hard-code core's neutral conduit shape.
-        ...(() => {
-          const provider = createFeishuChannelProvider({
-            botFactory: () => createFakeFeishuBot('stub'),
-          });
-          const session = provider.createSession({
-            dispatcher_id: 'dispatcher-a',
-            channel_id: 'primary',
-            provider: 'builtin:feishu',
-            config: { appId: 'stub', appSecret: 'stub' } as never,
-            logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {}, child: () => ({} as never) } as never,
-            state_root: dir,
-            cache_root: dir,
-          });
-          const descriptor = session.mcpServerDescriptor?.({
-            command: dreamuxBin,
-            adminSocketPath: join(dir, 'admin.sock'),
-            dispatcher_id: 'dispatcher-a',
-            provider: 'builtin:feishu',
-            channel_id: 'primary',
-            callerKind: 'dispatcher',
-          });
-          return descriptor != null ? codexMcpServerArgs([descriptor]) : [];
-        })(),
+        ...codexMcpServerArgs(dispatcherMcpServerDescriptors({
+          dispatcherId: dispatcher.id,
+          channels: dispatcher.channels,
+          channelProviders: channelProviders as ChannelProviderCatalog,
+          adminSocketPath: adminSocketPath(),
+        })),
       ];
 
       const proc = new CodexProcess({
@@ -448,18 +496,12 @@ describe('codex live integration', () => {
         );
       }
 
-      const dreamuxBin = dreamuxBinPath();
-      if (!isAbsolute(dreamuxBin) || !existsSync(dreamuxBin)) {
-        throw new Error(
-          `dreamux issue #63 live gate requires an absolute built dreamux bin path; got ${dreamuxBin}`,
-        );
-      }
-
       const operatorHome = homedir();
       const previousHome = process.env['HOME'];
       const previousCodexHome = process.env['CODEX_HOME'];
       const dir = mkdtempSync(join(operatorHome, '.dreamux-issue63-live-'));
       const runtimeHome = join(dir, 'home');
+      const isolatedCodexHome = createIsolatedCodexHome(dir);
       const dispatcherCwd = join(dir, 'cwd');
       const adminSocket = join(dir, 'admin.sock');
       const bot = createFakeFeishuBot('app-live');
@@ -468,7 +510,7 @@ describe('codex live integration', () => {
 
       mkdirSync(dispatcherCwd, { recursive: true });
       process.env['HOME'] = runtimeHome;
-      process.env['CODEX_HOME'] = previousCodexHome ?? join(operatorHome, '.codex');
+      process.env['CODEX_HOME'] = isolatedCodexHome;
       // Onboard the live sender onto the global allow-user list so the folded
       // group messages are delivered (empty `allow_users` authorizes nobody
       // under the follow-user gate).
@@ -502,8 +544,6 @@ describe('codex live integration', () => {
           }),
         });
         await server.start();
-        expect(client).not.toBeNull();
-        const liveClient = client!;
         const marker = `ISSUE63_LIVE_MARKER_${Date.now()}`;
         const startMessageId = 'msg-live-start';
         const markerMessageId = 'msg-live-marker';
@@ -518,16 +558,25 @@ describe('codex live integration', () => {
         ].join('\n');
 
         await bot.inject(fakeInbound('chat-live', startPrompt, startMessageId));
+        await waitFor(() => client !== null, 10_000, 'dispatcher runtime started');
+        const liveClient = client!;
         await waitFor(
           () => turnStartRequests(liveClient).length === 1,
           10_000,
           'first turn/start accepted',
         );
-        await waitFor(
-          () => hasCommandExecutionStarted(liveClient),
-          45_000,
-          'command execution started before marker injection',
-        );
+        try {
+          await waitFor(
+            () => hasCommandExecutionStarted(liveClient),
+            45_000,
+            'command execution started before marker injection',
+          );
+        } catch (err) {
+          const suffix = notificationDebugSummary(liveClient);
+          throw new Error(
+            `${err instanceof Error ? err.message : String(err)}; recent notifications: ${suffix}`,
+          );
+        }
         expect(notifications(liveClient, 'turn/completed')).toHaveLength(0);
 
         await bot.inject(

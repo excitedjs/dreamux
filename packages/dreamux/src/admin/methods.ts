@@ -36,10 +36,10 @@ export type AdminHandler = (
 ) => Promise<unknown> | unknown;
 
 export const adminMethods: Record<string, AdminHandler> = {
-  'server.status': (server) => ({
+  'server.status': async (server) => ({
     pid: process.pid,
     uptimeSec: Math.floor(process.uptime()),
-    dispatchers: server.summarize(),
+    dispatchers: await server.summarize(),
   }),
 
   'dispatcher.add': (server, params) => {
@@ -60,22 +60,22 @@ export const adminMethods: Record<string, AdminHandler> = {
     );
   },
 
-  'dispatcher.list': (server) => ({ dispatchers: server.summarize() }),
+  'dispatcher.list': async (server) => ({ dispatchers: await server.summarize() }),
 
-  'dispatcher.status': (server, params) => {
+  'dispatcher.status': async (server, params) => {
     const id = mustDispatcherId(params);
     const row = server.repos.dispatchers.get(id);
     if (row === null) {
       throw new AdminError('DISPATCHER_NOT_FOUND', `no dispatcher with id '${id}'`);
     }
-    const runtime = server.getDispatcher(id).runtimeStatus();
+    const runtime = await server.dispatchers.status(id);
     return {
       dispatcher_id: row.dispatcher_id,
       channel_identity: row.channel_identity,
-      status: runtime.status ?? row.status,
-      thread_id: runtime.threadId ?? row.thread_id,
-      last_lost_thread_id: row.last_lost_thread_id,
-      last_error: row.last_error,
+      status: runtime.status ?? 'stopped',
+      thread_id: runtime.threadId,
+      last_lost_thread_id: null,
+      last_error: runtime.lastError,
     };
   },
 

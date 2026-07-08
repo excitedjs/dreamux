@@ -1,6 +1,8 @@
 # Global config in `~/.dreamux/config.json`
 
-- **Status:** Superseded by [top-level-design](top-level-design.md); historical context only
+- **Status:** Superseded by
+  [State, config, and files](../domains/state-config-and-files.md) and the
+  providerized config decisions; historical context only
 - **Date:** 2026-05-28
 - **Affects:** server startup, Codex CLI invocation, config ownership
 - **PR / Issue:** feat/global-config-dir
@@ -11,9 +13,11 @@ This record originally introduced a user-editable dreamux config file so
 operators did not have to repeat Codex defaults and local Feishu credentials in
 source code or service environment variables.
 
-Current implementation guidance lives in [top-level-design](top-level-design.md).
-The current MVP keeps the same high-level ownership split but replaces the
-older runtime/config shape:
+Current implementation guidance lives in
+[State, config, and files](../domains/state-config-and-files.md) and
+[Provider runtime](../domains/provider-runtime.md). The current implementation
+keeps the same high-level ownership split but replaces the older runtime/config
+shape:
 
 - `~/.dreamux/config.json` is the only operator-editable dreamux config source.
 - Dispatcher declarations live in the top-level `dispatchers` array.

@@ -98,7 +98,7 @@ describe('builtin:claude-code loads the real @excitedjs/agent-runtime-claude-cod
     const tmp = mkdtempSync(join(tmpdir(), 'dx-claude-loader-'));
     tmpDirs.push(tmp);
     const paths: AgentRuntimePathContext = {
-      dispatcherDir: () => tmp,
+      cacheDir: () => tmp,
       logsDir: () => tmp,
       runtimeSocketDirs: () => [join(tmp, 'sockets')],
     };
