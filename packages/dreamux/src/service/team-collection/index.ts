@@ -9,6 +9,7 @@ import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 import { dispatcherWorkspace } from '../worktree/workspaces.js';
+import { defaultWorkspaceEnabled } from '../../config/config.js';
 import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
 import type { AgentTurnsStore } from '../agent-entity/turns-store.js';
 import type {
@@ -116,6 +117,7 @@ export class TeamCollection {
         ? await this.worktrees.prepareDefaultWorkspace({
             dispatcherWorkspace: workspaceRoot,
             slug: teamId,
+            workspaceEnabled: defaultWorkspaceEnabled(this.opts.config),
           })
         : await this.worktrees.prepare({
             dispatcherId: this.dispatcherId,

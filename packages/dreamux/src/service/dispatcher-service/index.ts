@@ -329,6 +329,7 @@ export class DispatcherService {
           targetLifecycle: (event) =>
             handleCollaborationTargetLifecycle({
               dispatcherId: this.id,
+              dispatcherAgentRuntime: this.dispatcherAgentRuntime(),
               channelId,
               event,
               channels: this.channels,
@@ -595,6 +596,7 @@ export class DispatcherService {
     this.assertNotShuttingDown();
     return routeTeamOrCollaborationChannelInput({
       channelId,
+      dispatcherAgentRuntime: this.dispatcherAgentRuntime(),
       turn: input,
       envelope,
       channels: this.channels,
@@ -663,16 +665,21 @@ export class DispatcherService {
     return agent;
   }
 
-  private async ensureDispatcherIdentity(cwd: string): Promise<AgentEntityIdentity> {
+  private dispatcherAgentRuntime(): string {
     const dispatcherConfig = this.config.dispatchers.find(
       (dispatcher) => dispatcher.id === this.id,
     );
     if (dispatcherConfig === undefined) {
       throw new Error(`dispatcher '${this.id}' has no config entry`);
     }
+    return dispatcherConfig.agentRuntime;
+  }
+
+  private async ensureDispatcherIdentity(cwd: string): Promise<AgentEntityIdentity> {
+    const agentRuntime = this.dispatcherAgentRuntime();
     return ensureDispatcherRootIdentity(this.identities, {
       dispatcherId: this.id,
-      agentRuntime: dispatcherConfig.agentRuntime,
+      agentRuntime,
       sourceCwd: cwd,
       cwd,
       runtimeCwd: cwd,

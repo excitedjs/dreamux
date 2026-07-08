@@ -35,6 +35,21 @@ export function hashTarget(input: {
     .slice(0, 12);
 }
 
+export function hashContainer(input: {
+  dispatcherId: string;
+  channelId: string;
+  containerKey: string;
+}): string {
+  return createHash('sha256')
+    .update(input.dispatcherId)
+    .update('\0')
+    .update(input.channelId)
+    .update('\0')
+    .update(input.containerKey)
+    .digest('hex')
+    .slice(0, 12);
+}
+
 export function slugFor(value: string | null): string {
   if (value === null) return 'target';
   const slug = value

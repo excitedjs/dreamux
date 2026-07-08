@@ -167,20 +167,26 @@ Key source:
 
 ## Collaboration Spaces
 
-`CollaborationSpaceService` is a dispatcher-local control-plane service for
-externally created provider containers that Dreamux binds to repositories. It
+`CollaborationSpaceService` is a dispatcher-local control-plane facade for
+externally created provider containers that Dreamux binds to worktree policy. It
 does not have an agent runtime, does not wrap `TeammateService`, and is not a
-Channel provider implementation. It owns core collaboration-space state and uses
-the dispatcher's existing `ChannelService` plus single dispatcher-level
-`TeamCollection` to provision Teams for channel targets.
+Channel provider implementation. Space-level MCP/admin behavior stays in the
+facade; target accept/provision/close state transitions live in the contained
+`CollaborationTargetLifecycle`. That target worker uses the dispatcher's existing
+`ChannelService` plus single dispatcher-level `TeamCollection` to provision Teams
+for channel targets.
 
 The dispatcher-only `collaboration_space` MCP exposes `bind`, `dissolve`,
 `status`, and `list`. Binding registers an existing external container and a
-repository policy; it does not call provider Channel MCP to create the external
-space. Dissolve releases Dreamux routing/provisioning ownership without deleting
-the external container or dissolving already provisioned Teams. Team cleanup
-still belongs to `TeamService.dissolve` when a target lifecycle close or explicit
-Team operation dissolves that Team.
+worktree policy; `repo` is optional and omitted repo follows the global default
+workspace policy. It does not call provider Channel MCP to create the external
+space. A dispatcher channel may also enable core-owned
+`collaborationSpace.defaultBinding` so unknown provider containers with neutral
+`container` membership auto-bind without an explicit MCP call. Dissolve releases
+Dreamux routing/provisioning ownership without deleting the external container
+or dissolving already provisioned Teams, and it prevents implicit auto-rebind of
+that known unbound space. Team cleanup still belongs to `TeamService.dissolve`
+when a target lifecycle close or explicit Team operation dissolves that Team.
 
 Scheduler ownership does not move into collaboration spaces. The dispatcher has
 its dispatcher scheduler, and each `TeamService` owns the TeamLeader scheduler it

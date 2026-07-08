@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "Add collaboration-space MCP and provider-neutral channel container lifecycle contracts.",
+      "comment": "Add collaboration-space provisioning, channel lifecycle contracts, and default workspace/binding controls.",
       "type": "minor",
       "packageName": "@excitedjs/dreamux-types"
     }

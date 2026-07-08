@@ -460,8 +460,11 @@ export const adminMethods: Record<string, AdminHandler> = {
     const channelId = optionalString(params, 'channel_id');
     const identity = optionalNonBlankString(params, 'identity');
     const display = optionalString(params, 'display');
-    const repo = mustRecord(params, 'repo');
-    const baseRef = optionalString(repo, 'base_ref');
+    const rawRepo = params?.['repo'];
+    const repo = rawRepo === undefined || rawRepo === null
+      ? null
+      : mustRecord(params, 'repo');
+    const baseRef = repo === null ? null : optionalString(repo, 'base_ref');
     const container = optionalCollaborationContainer(params);
     try {
       return await server.getDispatcher(id).bindCollaborationSpace({
@@ -469,10 +472,14 @@ export const adminMethods: Record<string, AdminHandler> = {
         ...(channelId !== null ? { channelId } : {}),
         ...(container !== null ? { container } : {}),
         ...(display !== null ? { display } : {}),
-        repo: {
-          cwd: mustNonEmptyString(repo, 'cwd'),
-          ...(baseRef !== null ? { baseRef } : {}),
-        },
+        ...(repo !== null
+          ? {
+              repo: {
+                cwd: mustNonEmptyString(repo, 'cwd'),
+                ...(baseRef !== null ? { baseRef } : {}),
+              },
+            }
+          : {}),
         leaderAgentRuntime: mustString(params, 'leader_agent_runtime'),
         ...(identity !== null ? { identity } : {}),
       });

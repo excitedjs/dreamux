@@ -7,9 +7,11 @@ import type {
 
 import type { ChannelProviderCatalog } from '../../channel/catalog.js';
 import type {
+  DispatcherChannelCollaborationSpaceConfig,
   DispatcherChannelConfig,
   DreamuxConfig,
 } from '../../config/config.js';
+import { defaultChannelCollaborationSpaceConfig } from '../../config/config.js';
 import type { ChannelBinding } from '../channel-binding/store.js';
 import { ChannelBindingStore } from '../channel-binding/store.js';
 import type { ChannelMcpCallerScope } from './mcp-descriptors.js';
@@ -80,6 +82,16 @@ export class ChannelService {
 
   configuredChannels(): readonly DispatcherChannelConfig[] {
     return this.sessions.configuredChannels();
+  }
+
+  collaborationSpaceConfig(
+    channelId: string,
+  ): DispatcherChannelCollaborationSpaceConfig {
+    const channel = this.configuredChannels().find((entry) => entry.id === channelId);
+    if (channel === undefined) {
+      throw new Error(`unknown channel '${channelId}'`);
+    }
+    return channel.collaborationSpace ?? defaultChannelCollaborationSpaceConfig();
   }
 
   clear(): void {

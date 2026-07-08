@@ -13,6 +13,7 @@ import { errInfo } from './runtime-helpers.js';
 
 export async function handleCollaborationTargetLifecycle(input: {
   dispatcherId: string;
+  dispatcherAgentRuntime: string;
   channelId: string;
   event: ChannelTargetLifecycleEvent;
   channels: ChannelService;
@@ -21,6 +22,7 @@ export async function handleCollaborationTargetLifecycle(input: {
 }): Promise<void> {
   const {
     dispatcherId,
+    dispatcherAgentRuntime,
     channelId,
     event,
     channels,
@@ -28,17 +30,24 @@ export async function handleCollaborationTargetLifecycle(input: {
     log,
   } = input;
   if (event.kind === 'target_created') {
-    const provisionInput = {
+    const provisionInput = provisionInputForTarget({
       channelId,
-      provider: channels.channelProviderRef(channelId),
       container: event.container,
       target: event.target,
       ...(event.title !== undefined ? { title: event.title } : {}),
       ...(event.event_id !== undefined ? { eventId: event.event_id } : {}),
-    };
-    const accepted = await collaborationSpaces.acceptTargetCreated(provisionInput);
-    if (!accepted) return;
-    void collaborationSpaces.provisionTarget(provisionInput).catch((err) => {
+      channels,
+    });
+    const accepted = await collaborationSpaces.acceptTargetCreatedForProvision(provisionInput, {
+      allowMissing: true,
+      defaultBinding: defaultBindingForChannel({
+        channels,
+        channelId,
+        dispatcherAgentRuntime,
+      }),
+    });
+    if (accepted === null) return;
+    void accepted.provision().catch((err) => {
       log.error(
         {
           dispatcher_id: dispatcherId,
@@ -74,6 +83,7 @@ export async function handleCollaborationTargetLifecycle(input: {
 
 export async function routeTeamOrCollaborationChannelInput(input: {
   channelId: string;
+  dispatcherAgentRuntime: string;
   turn: InboundTurnInput;
   envelope: ChannelInboundEnvelope;
   channels: ChannelService;
@@ -83,6 +93,7 @@ export async function routeTeamOrCollaborationChannelInput(input: {
 }): Promise<AgentRuntimeTurnResult> {
   const {
     channelId,
+    dispatcherAgentRuntime,
     turn,
     envelope,
     channels,
@@ -99,16 +110,30 @@ export async function routeTeamOrCollaborationChannelInput(input: {
     }
     if (envelope.container !== undefined) {
       try {
-        const provisionInput = {
+        const provisionInput = provisionInputForTarget({
           channelId,
-          provider: envelope.provider,
           container: envelope.container,
           target,
           ...(envelope.event_id !== undefined ? { eventId: envelope.event_id } : {}),
-        };
+          channels,
+        });
         const provisioned =
-          await collaborationSpaces.acceptAndProvisionTarget(provisionInput);
-        if (provisioned !== null && provisioned.lifecycle_status === 'active') {
+          await collaborationSpaces.acceptAndProvisionTarget(provisionInput, {
+            defaultBinding: defaultBindingForChannel({
+              channels,
+              channelId,
+              dispatcherAgentRuntime,
+            }),
+          });
+        if (provisioned !== null) {
+          if (provisioned.lifecycle_status !== 'active') {
+            return {
+              status: 'failed',
+              error: new Error(
+                `collaboration target '${target.target_key}' is not active`,
+              ),
+            };
+          }
           const provisionedRoute = await channels.resolveInboundBinding({
             channelId,
             target,
@@ -120,6 +145,12 @@ export async function routeTeamOrCollaborationChannelInput(input: {
             const team = await teams.get(provisionedRoute.owner.teamName);
             return team.deliverToLeader(turn);
           }
+          return {
+            status: 'failed',
+            error: new Error(
+              `collaboration target '${target.target_key}' is active but has no open Team route`,
+            ),
+          };
         }
       } catch (err) {
         return {
@@ -130,4 +161,48 @@ export async function routeTeamOrCollaborationChannelInput(input: {
     }
   }
   return fallback(turn);
+}
+
+function provisionInputForTarget(input: {
+  channelId: string;
+  channels: ChannelService;
+  container: ChannelInboundEnvelope['container'];
+  target: ChannelInboundEnvelope['target'];
+  title?: string;
+  eventId?: string;
+}) {
+  if (input.container === undefined) {
+    throw new Error('collaboration-space provisioning requires a channel container');
+  }
+  return {
+    channelId: input.channelId,
+    provider: input.channels.channelProviderRef(input.channelId),
+    container: input.container,
+    target: input.target,
+    ...(input.title !== undefined ? { title: input.title } : {}),
+    ...(input.eventId !== undefined ? { eventId: input.eventId } : {}),
+  };
+}
+
+function defaultBindingForChannel(input: {
+  channels: ChannelService;
+  channelId: string;
+  dispatcherAgentRuntime: string;
+}) {
+  const binding = input.channels
+    .collaborationSpaceConfig(input.channelId)
+    .defaultBinding;
+  if (!binding.enabled) return undefined;
+  return {
+    leaderAgentRuntime: input.dispatcherAgentRuntime,
+    ...(binding.repo !== null
+      ? {
+          repo: {
+            cwd: binding.repo.cwd,
+            ...(binding.repo.baseRef !== null ? { baseRef: binding.repo.baseRef } : {}),
+          },
+        }
+      : {}),
+    ...(binding.identity !== null ? { identity: binding.identity } : {}),
+  };
 }

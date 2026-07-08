@@ -240,10 +240,39 @@ describe('Collaboration Space MCP admin methods', () => {
     await expectBadRequest('mcp.collaboration_space.bind', {
       dispatcher_id: 'flow',
       space_name: 'space-alpha',
-      repo: { cwd: '/repo/a' },
       leader_agent_runtime: 'agent-a',
       identity: '   ',
     });
+  });
+
+  it('allows collaboration_space.bind without repo', async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const server = {
+      repos: { dispatchers: { get: () => ({ dispatcher_id: 'flow' }) } },
+      getDispatcher: () => ({
+        bindCollaborationSpace: async (input: Record<string, unknown>) => {
+          seen.push(input);
+          return { space: { space_name: input['spaceName'] } };
+        },
+      }),
+    } as unknown as Server;
+
+    await expect(
+      adminMethods['mcp.collaboration_space.bind']!(server, {
+        dispatcher_id: 'flow',
+        space_name: 'space-alpha',
+        container: {
+          container_type: 'topic_group',
+          container_key: 'chat-1',
+        },
+        leader_agent_runtime: 'agent-a',
+      }),
+    ).resolves.toMatchObject({ space: { space_name: 'space-alpha' } });
+    expect(seen[0]).toMatchObject({
+      spaceName: 'space-alpha',
+      leaderAgentRuntime: 'agent-a',
+    });
+    expect(seen[0]).not.toHaveProperty('repo');
   });
 });
 

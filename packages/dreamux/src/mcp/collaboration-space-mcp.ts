@@ -105,7 +105,7 @@ async function handleRequest(
 
 export function collaborationSpaceTools(): Array<Record<string, unknown>> {
   return [
-    tool('bind', 'Bind an existing external collaboration space to a repository. If the space is unknown, pass container to register its provider-owned opaque container selector. bind does not create the external group and does not create a Team immediately; future targets in the bound space create Teams automatically.', {
+    tool('bind', 'Bind an existing external collaboration space. If the space is unknown, pass container to register its provider-owned opaque container selector. repo is optional: omit it to let Dreamux allocate Teams with the default no-repo workspace policy. bind does not create the external group and does not create a Team immediately; future targets in the bound space create Teams automatically.', {
       channel_id: { type: 'string', minLength: 1, maxLength: 64 },
       space_name: { type: 'string', minLength: 1, maxLength: 64 },
       container: {
@@ -132,7 +132,7 @@ export function collaborationSpaceTools(): Array<Record<string, unknown>> {
       },
       leader_agent_runtime: { type: 'string', minLength: 1, maxLength: 128 },
       identity: { type: 'string', minLength: 1, maxLength: 4000 },
-    }, ['space_name', 'repo', 'leader_agent_runtime']),
+    }, ['space_name', 'leader_agent_runtime']),
     tool('dissolve', 'Unbind a collaboration space from Dreamux routing and provisioning. The external space remains in the provider, already-created Teams are not dissolved, and later deliveries fall back to the dispatcher unless the space is bound again.', {
       space_name: { type: 'string', minLength: 1, maxLength: 64 },
       note: { type: 'string', minLength: 1, maxLength: 2000 },
@@ -192,12 +192,13 @@ function bindArgs(value: unknown): Record<string, unknown> {
   const container = optionalRecord(obj, 'container');
   const display = optionalString(obj, 'display');
   const identity = optionalString(obj, 'identity');
+  const repo = optionalRecord(obj, 'repo');
   return {
     space_name: requireString(obj, 'space_name'),
     ...(channelId !== null ? { channel_id: channelId } : {}),
     ...(container !== null ? { container: containerArgs(container) } : {}),
     ...(display !== null ? { display } : {}),
-    repo: repoArgs(requireRecord(obj, 'repo')),
+    ...(repo !== null ? { repo: repoArgs(repo) } : {}),
     leader_agent_runtime: requireString(obj, 'leader_agent_runtime'),
     ...(identity !== null ? { identity } : {}),
   };
@@ -262,17 +263,6 @@ function asToolCallParams(params: unknown): ToolCall {
 function asRecord(value: unknown, label: string): Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error(`${label} must be an object`);
-  }
-  return value as Record<string, unknown>;
-}
-
-function requireRecord(
-  obj: Record<string, unknown>,
-  key: string,
-): Record<string, unknown> {
-  const value = obj[key];
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error(`${key} must be an object`);
   }
   return value as Record<string, unknown>;
 }

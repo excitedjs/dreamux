@@ -131,9 +131,9 @@ history and rationale; when you need current behavior, pair them with
 - [Collaboration space provisioning](proposals/collaboration-space-provisioning.md)
   — draft requirement/spec for a provider-neutral collaboration-space MCP and
   Channel container/target lifecycle capability where an externally created
-  space binds to a repository, target creation deterministically provisions a
-  managed worktree and Team, and target closure dissolves that Team without
-  routing through the dispatcher agent runtime.
+  space binds to a worktree policy, target creation deterministically provisions
+  a Team, and target closure dissolves that Team without routing through the
+  dispatcher agent runtime.
 - [TeamLeader-scoped Team MCP transfer back](proposals/team-mcp-teamleader-transfer-back.md)
   — draft requirement/spec for exposing only `transfer_back` from Team MCP to
   TeamLeaders, keeping dispatcher Team lifecycle tools private, keeping explicit

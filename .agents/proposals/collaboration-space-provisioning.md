@@ -15,15 +15,15 @@
 ## Intent
 
 Dreamux needs a provider-neutral way to model collaborative spaces that contain
-independently routable work items. A product may want one repository bound to
-one collaboration space, then one automatically managed Team per target created
-inside that space.
+independently routable work items. A product may want one worktree policy bound
+to one collaboration space, then one automatically managed Team per target
+created inside that space.
 
 The motivating Feishu shape is:
 
-- one repository maps to one Feishu topic group;
+- one worktree policy maps to one Feishu topic group;
 - each Feishu topic maps to one Dreamux Team;
-- creating a topic automatically creates a managed worktree, creates a Team, and
+- creating a topic automatically creates a Team workspace, creates a Team, and
   binds the topic target to that Team;
 - closing the topic automatically dissolves the Team and lets
   `TeamService.dissolve` apply the configured worktree cleanup policy.
@@ -63,8 +63,8 @@ first provider that can implement this shape, not the shape baked into core.
 ## Terminology
 
 **Collaboration space** is a core-owned concept for a provider-owned
-collaboration container bound to a repository. In Feishu this is a topic group.
-In a future provider it may be a project, repository discussion space, or
+collaboration container bound to a worktree policy. In Feishu this is a topic
+group. In a future provider it may be a project, repository discussion space, or
 another container shape.
 
 **Channel container** is the provider contract object that represents the
@@ -75,8 +75,7 @@ and display metadata.
 unit core can bind to a Team. In Feishu topic-group mode this is one topic.
 
 **Provisioning policy** is core-owned state that binds one collaboration space
-to one repository/worktree policy and decides what happens when targets appear
-or close.
+to one worktree policy and decides what happens when targets appear or close.
 
 **Provisioned target** is the durable core mapping from one channel target to
 the Team that was automatically created for it.
@@ -93,7 +92,7 @@ flowchart TD
   Provisioning["CollaborationSpaceProvisioningService"]
   TeamService["Team / TeamMate services"]
   BindingStore["Channel binding store"]
-  Worktree["Managed worktree"]
+  Worktree["Team workspace / worktree"]
 
   DispatcherAgent -->|"create external group"| LarkCli
   DispatcherAgent -->|"bind / dissolve / inspect space"| SpaceMcp
@@ -102,13 +101,13 @@ flowchart TD
   ChannelProvider -->|"target_created / target_closed"| ChannelService
   ChannelService --> Provisioning
   Provisioning -->|"create / dissolve Team"| TeamService
-  Provisioning -->|"managed worktree request"| Worktree
+  Provisioning -->|"workspace request"| Worktree
   Provisioning -->|"bind / transfer target"| BindingStore
 ```
 
 Core owns the deterministic orchestration. The dispatcher agent creates or finds
 the external Feishu topic group with `lark-cli`, then binds that existing
-external space to a repository through a core-owned MCP namespace. The
+external space to a worktree policy through a core-owned MCP namespace. The
 dispatcher agent is not in the hot path for target lifecycle:
 
 - external group creation is an intentful dispatcher-agent action outside
@@ -138,8 +137,8 @@ groups by calling the Feishu Channel provider.
 The namespace should mirror Team-style lifecycle/read surfaces:
 
 - `bind`: register an existing external collaboration space if needed, then bind
-  it to a repository/worktree policy;
-- `dissolve`: remove the current repository/provisioning binding and release
+  it to a worktree policy;
+- `dissolve`: remove the current provisioning binding and release
   provisioned target routing so future deliveries use the dispatcher default
   path;
 - `status`: inspect one collaboration space and its target provisioning summary;
@@ -159,7 +158,7 @@ interface CollaborationSpaceBindInput {
     meta?: Record<string, unknown>;
   };
   display?: string;
-  repo: {
+  repo?: {
     cwd: string;
     base_ref?: string;
   };
@@ -183,27 +182,30 @@ interface CollaborationSpaceBindInput {
   `(channel_id, container_key)`;
 - reject rebinding while the collaboration space is currently `bound`; callers
   must `dissolve` first to release routing before binding the same external
-  space to a repository again;
+  space to a worktree policy again;
 - validate `leader_agent_runtime` as a configured `agents[]` id, matching the
   existing Team/TeamMate runtime selection contract;
 - validate optional `identity` with the same Team identity constraints used by
   `team.create`;
 - generate a new binding generation by incrementing the space record's
   `last_binding_generation`;
-- persist the collaboration-space binding with the selected repository and
-  managed-worktree policy, default TeamLeader runtime, and optional default
-  TeamLeader identity;
+- persist the collaboration-space binding with the selected worktree policy,
+  default TeamLeader runtime, and optional default TeamLeader identity;
 - transition the collaboration space status to `bound`;
 - return the neutral collaboration-space record;
 - do not create a Team during collaboration-space binding.
 
-`repo.cwd` is an explicit repository source path for managed worktrees. It may
-equal the dispatcher workspace when that is what the caller selected, but it is
-not inferred from provider metadata and is not passed to Channel providers.
+`repo` is optional. When supplied, `repo.cwd` is an explicit repository source
+path for managed worktrees. It may equal the dispatcher workspace when that is
+what the caller selected, but it is not inferred from provider metadata and is
+not passed to Channel providers. When omitted, provisioned Teams follow the
+same default-workspace policy as `team.create` without an explicit repo:
+`workspace.enabled: true` uses `<dispatcher cwd>/.workspace/work/<team>/`, and
+`workspace.enabled: false` uses `<dispatcher cwd>/<team>/`.
 
 The first implementation does not support `reuse-cwd` collaboration spaces.
-Every provisioned target gets a managed worktree with `cleanup:
-'delete-on-close'`.
+Targets under an explicit repo get managed worktrees with `cleanup:
+'delete-on-close'`; targets without repo use the default Team workspace policy.
 
 `identity`, when present on `bind`, becomes the default identity for every
 TeamLeader automatically created from future targets in that bound collaboration
@@ -218,17 +220,16 @@ records `detached`, aborts or detaches in-flight `creating` records under the
 current binding generation through the same target lock, and leaves the external
 container known but unbound. It does not delete or archive the external provider
 container, and it does not dissolve the provisioned Teams. Detached Teams and
-their managed worktrees remain operator-visible Teams; reclaiming them is an
-explicit `team.dissolve` action. After dissolve, messages from the external
-topic group follow the normal dispatcher fallback path unless the space is bound
-again.
+their workspaces remain operator-visible Teams; reclaiming them is an explicit
+`team.dissolve` action. After dissolve, messages from the external topic group
+follow the normal dispatcher fallback path unless the space is bound again.
 
 `collaboration_space.status` and `list` are read-only inspection surfaces. They
 should return public collaboration-space views and compact target provisioning
 summaries, not raw local repo paths, worktree paths, or provider secret/config
 data. A collaboration space has no special recovery flow; it is either bound or
 unbound, and an unbound space may be bound again to the same or a different
-repository. A separate `history` tool is out of scope for the first
+worktree policy. A separate `history` tool is out of scope for the first
 implementation.
 
 ## Channel Lifecycle Contract
@@ -299,6 +300,35 @@ Provider obligations:
 This is a public `@excitedjs/dreamux-types` contract change. It requires Rush
 change coverage and compatibility documentation.
 
+## Channel Default Binding Policy
+
+Core may enable a dispatcher-channel default binding policy:
+
+```ts
+interface DispatcherChannelCollaborationSpaceConfig {
+  defaultBinding: {
+    enabled: boolean;
+    repo?: {
+      cwd: string;
+      baseRef?: string;
+    };
+    identity?: string;
+  };
+}
+```
+
+This policy is Dreamux core config, not provider config. When enabled and a
+neutral `container` arrives for an unknown collaboration space, core may create
+a derived safe `space_name`, bind the space with the dispatcher's default
+Agent Runtime, and apply the configured optional `repo` and `identity`.
+Providers still only report container/target membership; they do not receive
+repo paths or Team policy.
+
+The policy is not a resurrection mechanism. If a space is already known but
+currently `unbound` because `collaboration_space.dissolve` was called, inbound
+and lifecycle traffic should follow the normal unbound behavior until an
+explicit `collaboration_space.bind` reattaches that space.
+
 ## Durable Records
 
 Add core-owned provisioning state under a path owned by
@@ -331,12 +361,14 @@ interface CollaborationSpaceRecord {
 
 interface CollaborationSpaceBinding {
   generation: number;
-  repo_cwd: string;
-  worktree: {
-    mode: 'managed';
-    base_ref: string | null;
-    cleanup: 'delete-on-close';
-  };
+  repo_cwd: string | null;
+  worktree:
+    | { mode: 'default' }
+    | {
+        mode: 'managed';
+        base_ref: string | null;
+        cleanup: 'delete-on-close';
+      };
   leader_agent_runtime: string;
   identity: string | null;
   bound_at: number;
@@ -346,8 +378,8 @@ interface CollaborationSpaceBinding {
 The target record is keyed by
 `(dispatcher_id, channel_id, container_key, binding_generation, target_key)`.
 The binding generation is required because the same external collaboration
-space can be unbound, rebound to a different repository, and then receive a new
-target with the same provider `target_key`:
+space can be unbound, rebound to a different worktree policy, and then receive a
+new target with the same provider `target_key`:
 
 ```ts
 type ProvisionedTargetStatus =
@@ -408,7 +440,7 @@ For each target, derive:
   characters; if absent after sanitization, use `target`.
 - `team_name = "space-" + title_slug + "-" + target_hash`
 - `worktree_slug = team_name`
-- managed worktree branch = `team_name`
+- managed worktree branch = `team_name` when the binding uses an explicit repo
 
 The generated names must pass `TEAM_ID_PATTERN`,
 `assertNotReservedAgentName`, and the worktree slug validator. If a collision is
@@ -451,9 +483,9 @@ Required behavior:
   overwrite it;
 - write a durable `creating` claim record before worktree, Team, or binding
   side effects;
-- create or resume the managed worktree and Team using the recorded
-  `team_name`, `worktree_slug`, intent, bound `leader_agent_runtime`, and bound
-  default identity;
+- create or resume the Team workspace and Team using the recorded `team_name`,
+  `worktree_slug`, intent, bound worktree policy, bound
+  `leader_agent_runtime`, and bound default identity;
 - if a retry finds an existing non-closed Team with the recorded `team_name`
   before `phase` reached `team_created`, reconcile to that Team instead of
   calling create again;
@@ -510,7 +542,8 @@ delivery.
 
 Core lifecycle intake should:
 
-- validate the event belongs to a known collaboration space;
+- validate the event belongs to a known collaboration space, or to an unknown
+  container on a channel whose default binding policy is enabled;
 - accept creation/provisioning events only for the current bound generation;
 - ignore or audit detached/unbound close events without treating them as
   provisioning failures;
@@ -544,8 +577,12 @@ provision-before-delivery:
   non-collaboration-space routing behavior because `dissolve` released Dreamux
   ownership for that binding generation;
 - if no target provisioning record exists and the inbound envelope carries a
-  `container` matching a bound collaboration space, inbound creates the durable
+  `container` matching a bound collaboration space, or an unknown container on a
+  channel whose default binding policy is enabled, inbound creates the durable
   claim for the current binding generation and provisions before delivery;
+- if the container is already known but currently unbound, inbound follows the
+  current non-collaboration-space routing behavior until explicit `bind`
+  reattaches that space;
 - if no target provisioning record exists and the inbound envelope does not carry
   a neutral `container`, core must not parse provider metadata to infer one; it
   follows the current non-collaboration-space routing behavior;
@@ -569,6 +606,8 @@ surface can support the claimed behavior:
   `lark-cli`, outside the Feishu Channel provider;
 - `collaboration_space.bind` registers the already-created topic group as a
   Dreamux collaboration space when it is not known yet;
+- core channel config may enable default collaboration-space binding so Feishu
+  topic groups can enter collaboration-space mode without an explicit MCP bind;
 - `ChannelContainer.container_key` is the Feishu chat identifier, but core treats
   it as opaque;
 - each topic is normalized as a `ChannelTarget` whose `target_key` includes the
@@ -591,6 +630,8 @@ grow Feishu-specific knobs.
 - Feishu topic-group creation is a dispatcher-agent `lark-cli` action, not a
   Feishu Channel provider action.
 - Channel providers must not receive repository paths or Team policy.
+- Channel default collaboration-space binding is core config, not provider
+  config.
 - Core must use neutral `ChannelInboundEnvelope.container` or lifecycle events to
   identify collaboration-space membership; it must not infer membership by
   parsing provider-specific `target.meta`.
@@ -625,8 +666,8 @@ grow Feishu-specific knobs.
 - Reopening a closed target under the same `target_key`.
 - Multiple repositories per collaboration space or multiple collaboration
   spaces for one target.
-- Automatic provisioning for collaboration spaces that have not been bound to a
-  repository.
+- Automatic resurrection of a known unbound collaboration space after
+  `collaboration_space.dissolve`.
 
 ## Acceptance Criteria
 
@@ -635,22 +676,31 @@ grow Feishu-specific knobs.
 - The dispatcher sees a core-owned `collaboration_space` MCP namespace, and
   does not get a provider Channel MCP tool for collaboration-space creation.
 - `collaboration_space.bind` registers an already-created external container
-  when needed, persists a repository provisioning policy, and does not call
+  when needed, persists a worktree provisioning policy, and does not call
   provider Channel MCP.
+- `collaboration_space.bind` accepts omitted `repo`; provisioned Teams then use
+  the same global workspace policy as Team creation without an explicit repo.
 - `collaboration_space.bind` accepts optional `identity` and applies it as the
   default identity for future automatically created TeamLeaders in that bound
   collaboration space.
+- `workspace.enabled: false` places default no-repo TeamMate/Team work
+  directories directly under the dispatcher cwd; the default `true` keeps the
+  current `.workspace/work/` layout.
+- Channel default binding config can auto-register and bind an unknown neutral
+  container without an explicit `collaboration_space.bind` call, while a known
+  unbound space is not auto-rebound.
 - `collaboration_space.dissolve` releases collaboration-space and target routing
   bindings without deleting the external container or dissolving provisioned
   Teams; later deliveries use the dispatcher fallback path unless rebound.
 - Rebinding a previously dissolved collaboration space increments the binding
-  generation, may point at a different repository, and may choose a different
+  generation, may point at a different worktree policy, and may choose a different
   default identity without mutating already-created Teams.
 - A target-created lifecycle event for a bound collaboration space creates
-  exactly one Team, exactly one managed worktree, and exactly one active channel
+  exactly one Team workspace, exactly one Team, and exactly one active channel
   binding for the target.
 - Concurrent `target_created` handling for the same target still creates exactly
   one Team.
+- Concurrent durable accepts for different targets preserve all target records.
 - A repeated target-created event for the same active provisioned target is
   idempotent.
 - Partial failure after a durable claim can be retried without creating a

@@ -3,120 +3,16 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import type { ChannelRouteOwner, ChannelService } from '../src/service/channel-service/index.js';
 import { CollaborationSpaceService } from '../src/service/collaboration-space/index.js';
 import type { TeamCollection } from '../src/service/team-collection/index.js';
 import { resetRuntimeConfig } from '../src/platform/paths.js';
-import { testDreamuxConfig } from './helpers/config.js';
-
-const log = {
-  error: () => undefined,
-  warn: () => undefined,
-  info: () => undefined,
-  debug: () => undefined,
-  trace: () => undefined,
-};
-
-interface CreatedTeam {
-  name: string;
-  leaderAgentRuntime: string;
-  identity?: string;
-  repoCwd?: string;
-  worktree?: Record<string, unknown>;
-}
-
-function fakeConfig() {
-  return {
-    ...testDreamuxConfig([]),
-    agents: {
-      'agent-a': { provider: 'test:runtime', config: {} },
-      'agent-b': { provider: 'test:runtime', config: {} },
-    },
-  };
-}
-
-function fakeTeams(created: CreatedTeam[], dissolved: string[]) {
-  const open = new Map<string, string>();
-  return {
-    async create(input: CreatedTeam & { name: string }) {
-      created.push(input);
-      open.set(input.name, `${input.name}-leader`);
-      return {
-        team: { team_name: input.name, leader_name: `${input.name}-leader` },
-        leader: null,
-        member_count: 0,
-        turn: null,
-      };
-    },
-    async isOpenTeam(name: string) {
-      return open.has(name);
-    },
-    async requireOpenTeamRouteOwner(name: string) {
-      const leader = open.get(name);
-      if (leader === undefined) throw new Error(`Team ${name} is not open`);
-      return { kind: 'team' as const, teamName: name, leaderName: leader };
-    },
-    async get(name: string) {
-      return {
-        async dissolve() {
-          dissolved.push(name);
-          open.delete(name);
-          return {
-            team: { team_name: name },
-            leader: null,
-            member_count: 0,
-          };
-        },
-      };
-    },
-  } as unknown as TeamCollection;
-}
-
-function fakeChannels() {
-  const boundOwners = new Map<string, ChannelRouteOwner>();
-  const service = {
-    resolveChannelId(requested?: string) {
-      return requested ?? 'primary';
-    },
-    channelProviderRef(channelId: string) {
-      if (channelId !== 'primary') throw new Error(`unknown channel ${channelId}`);
-      return 'builtin:test';
-    },
-    async resolveInboundBinding(input: { target: { target_key: string } }) {
-      const owner = boundOwners.get(input.target.target_key);
-      return owner === undefined
-        ? null
-        : { binding: { active: true }, owner };
-    },
-    async bindResolvedTarget(input: {
-      owner: ChannelRouteOwner;
-      target: { target_key: string };
-    }) {
-      boundOwners.set(input.target.target_key, input.owner);
-      return { active: true, team_name: input.owner.teamName };
-    },
-    async transferResolvedTargetBack(input: {
-      expectedOwner?: ChannelRouteOwner;
-      target: { target_key: string };
-    }) {
-      const owner = boundOwners.get(input.target.target_key);
-      if (owner === undefined) return null;
-      if (
-        input.expectedOwner !== undefined &&
-        (owner.teamName !== input.expectedOwner.teamName ||
-          owner.leaderName !== input.expectedOwner.leaderName)
-      ) {
-        throw new Error('owner mismatch');
-      }
-      boundOwners.delete(input.target.target_key);
-      return { active: false, team_name: owner.teamName };
-    },
-  };
-  return {
-    boundOwners,
-    service: service as unknown as ChannelService,
-  };
-}
+import {
+  fakeChannels,
+  fakeConfig,
+  fakeTeams,
+  log,
+  type CreatedTeam,
+} from './helpers/collaboration-space.js';
 
 describe('CollaborationSpaceService', () => {
   let root: string;
@@ -303,6 +199,95 @@ describe('CollaborationSpaceService', () => {
     expect(dissolved).toEqual([provisioned?.team_name]);
   });
 
+  it('binds without repo and provisions targets with the default workspace policy', async () => {
+    const created: CreatedTeam[] = [];
+    const dissolved: string[] = [];
+    const channels = fakeChannels();
+    const service = new CollaborationSpaceService({
+      dispatcherId: 'flow',
+      config: fakeConfig(),
+      teams: fakeTeams(created, dissolved),
+      channels: channels.service,
+      log: log as never,
+      isShuttingDown: () => false,
+    });
+
+    const bound = await service.bind({
+      spaceName: 'space-default',
+      container: { container_type: 'topic_group', container_key: 'container-default' },
+      leaderAgentRuntime: 'agent-a',
+    });
+    expect(bound.space.current_binding).toMatchObject({
+      worktree: { mode: 'default' },
+    });
+
+    const provisioned = await service.provisionTarget({
+      channelId: 'primary',
+      provider: 'builtin:test',
+      container: { container_type: 'topic_group', container_key: 'container-default' },
+      target: {
+        target_type: 'topic',
+        target_key: 'topic-default',
+        bindable: true,
+      },
+    });
+
+    expect(provisioned).toMatchObject({ lifecycle_status: 'active' });
+    expect(created).toHaveLength(1);
+    expect(created[0]).not.toHaveProperty('repoCwd');
+    expect(created[0]).not.toHaveProperty('worktree');
+  });
+
+  it('concurrent accepts for different targets preserve both durable claims', async () => {
+    const created: CreatedTeam[] = [];
+    const dissolved: string[] = [];
+    const channels = fakeChannels();
+    const service = new CollaborationSpaceService({
+      dispatcherId: 'flow',
+      config: fakeConfig(),
+      teams: fakeTeams(created, dissolved),
+      channels: channels.service,
+      log: log as never,
+      isShuttingDown: () => false,
+    });
+
+    await service.bind({
+      spaceName: 'space-alpha',
+      container: { container_type: 'topic_group', container_key: 'container-1' },
+      repo: { cwd: '/repo/a' },
+      leaderAgentRuntime: 'agent-a',
+    });
+
+    await Promise.all([
+      service.acceptTargetCreated({
+        channelId: 'primary',
+        provider: 'builtin:test',
+        container: { container_type: 'topic_group', container_key: 'container-1' },
+        target: {
+          target_type: 'topic',
+          target_key: 'topic-a',
+          bindable: true,
+        },
+      }),
+      service.acceptTargetCreated({
+        channelId: 'primary',
+        provider: 'builtin:test',
+        container: { container_type: 'topic_group', container_key: 'container-1' },
+        target: {
+          target_type: 'topic',
+          target_key: 'topic-b',
+          bindable: true,
+        },
+      }),
+    ]);
+
+    const status = await service.status({ spaceName: 'space-alpha' });
+    expect(status.targets.map((target) => target.target_key).sort()).toEqual([
+      'topic-a',
+      'topic-b',
+    ]);
+  });
+
   it('concurrent target_created provisions create exactly one Team', async () => {
     const created: CreatedTeam[] = [];
     const dissolved: string[] = [];
@@ -438,6 +423,9 @@ describe('CollaborationSpaceService', () => {
 
     // Try to provision again - should throw
     await expect(service.provisionTarget(targetInput)).rejects.toThrow(
+      /closed and cannot be reopened/,
+    );
+    await expect(service.acceptAndProvisionTarget(targetInput)).rejects.toThrow(
       /closed and cannot be reopened/,
     );
     // Still only one Team was ever created
@@ -663,6 +651,12 @@ describe('CollaborationSpaceService', () => {
 
     // acceptTargetClosed should still return true (retryable)
     await expect(service.acceptTargetClosed(targetInput)).resolves.toBe(true);
+    await expect(service.provisionTarget(targetInput)).rejects.toThrow(
+      /closing and cannot be provisioned/,
+    );
+    await expect(service.acceptAndProvisionTarget(targetInput)).rejects.toThrow(
+      /closing and cannot be provisioned/,
+    );
   });
 
   it('acceptAndProvisionTarget returns null for unbound containers', async () => {

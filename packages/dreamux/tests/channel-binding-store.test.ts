@@ -146,4 +146,35 @@ describe('ChannelBindingStore v2', () => {
       store.resolve({ dispatcherId: DISPATCHER, channelId: 'primary', targetKey: 'chat-a' }),
     ).resolves.toMatchObject({ team_name: 'beta' });
   });
+
+  it('preserves concurrent binds for different targets in the same file', async () => {
+    const store = new ChannelBindingStore();
+    const mutableStore = store as unknown as {
+      write: (dispatcherId: string, file: unknown) => Promise<void>;
+    };
+    const write = mutableStore.write.bind(store);
+    mutableStore.write = async (dispatcherId, file) => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      await write(dispatcherId, file);
+    };
+
+    await Promise.all(
+      Array.from({ length: 12 }, (_, idx) =>
+        store.bind({
+          dispatcherId: DISPATCHER,
+          channelId: 'primary',
+          provider: 'builtin:feishu',
+          target: groupTarget(`chat-${idx}`),
+          teamName: `team-${idx}`,
+          leaderName: `team-${idx}-leader`,
+        }),
+      ),
+    );
+
+    const all = await store.list(DISPATCHER);
+    expect(all).toHaveLength(12);
+    expect(all.map((binding) => binding.target_key).sort()).toEqual(
+      Array.from({ length: 12 }, (_, idx) => `chat-${idx}`).sort(),
+    );
+  });
 });

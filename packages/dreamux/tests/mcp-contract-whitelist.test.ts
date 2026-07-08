@@ -295,7 +295,7 @@ describe('issue #199 Slice 1 — public MCP contract whitelist', () => {
     expect(tools.map((tool) => tool['name'])).not.toContain('create');
     expect(tools.map((tool) => tool['name'])).not.toContain('history');
     const bind = schemaOf(tools, 'bind');
-    expect(bind.required).toEqual(['space_name', 'repo', 'leader_agent_runtime']);
+    expect(bind.required).toEqual(['space_name', 'leader_agent_runtime']);
     expect(bind.properties).toHaveProperty('container');
     expect(bind.properties).toHaveProperty('identity');
     expect(bind.properties).not.toHaveProperty('provider');

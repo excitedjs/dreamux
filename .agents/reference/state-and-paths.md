@@ -13,12 +13,17 @@ runtime socket allocation belongs in
 
 It declares:
 
+- `workspace.enabled`: global default-work-area policy. It defaults to `true`.
+  When `false`, TeamMate/Team creation without an explicit repo uses a direct
+  directory under the dispatcher cwd instead of `.workspace/work/`.
 - `agents[]`: Agent Runtime provider configs, such as `builtin:codex` or
   `builtin:claude-code`.
 - `dispatchers[]`: dispatcher id, explicit `cwd`, configured `channels[]`, and
   `agentRuntime`.
 - `dispatchers[].channels[]`: dispatcher-local channel id, Channel provider ref,
-  and provider-owned channel config.
+  provider-owned channel config, and optional core-owned
+  `collaborationSpace.defaultBinding` policy for automatic collaboration-space
+  binding.
 
 `dreamux serve` fails loudly when the config is missing, when an enabled
 dispatcher has no explicit `cwd`, or when providerized config cannot be parsed.
@@ -27,6 +32,7 @@ The operator fix path is to run `dreamux onboard` or rebuild the config by hand.
 Key source:
 
 - `/packages/dreamux/src/config/config.ts`
+- `/packages/dreamux/src/config/collaboration-space-config.ts`
 - `/packages/dreamux/src/config/config-helpers.ts`
 - `/packages/dreamux/src/cli/commands/onboard.ts`
 - `/packages/dreamux/src/onboard/run.ts`
@@ -39,14 +45,16 @@ areas live under that dispatcher workspace, not under `~/.dreamux`.
 Current workspace paths:
 
 - `<dispatcher cwd>/.workspace/work/<name>/`: default plain work directory when
-  TeamMate or Team creation omits `repo`.
+  TeamMate or Team creation omits `repo` and `workspace.enabled` is true.
+- `<dispatcher cwd>/<name>/`: direct plain work directory when TeamMate or Team
+  creation omits `repo` and `workspace.enabled` is false.
 - `<dispatcher cwd>/.workspace/worktree/<repo-slug>/<slug>/`: Dreamux-managed
   Git worktree when the request explicitly asks for `repo: { mode:
   'managed' }`.
 
-`.workspace/` self-ignores with a `*` `.gitignore` so generated work areas do
-not become repo content. Managed worktree creation fails loud if the destination
-would live under `~/.dreamux`.
+When the `.workspace/` boundary is used, it self-ignores with a `*` `.gitignore`
+so generated work areas do not become repo content. Managed worktree creation
+fails loud if the destination would live under `~/.dreamux`.
 
 Key source:
 

@@ -135,7 +135,6 @@ describe('collaboration-space-mcp stdio shim', () => {
               display: 'Alpha',
               meta: { opaque: true },
             },
-            repo: { cwd: '/repo/a', base_ref: 'main' },
             leader_agent_runtime: 'agent-a',
             identity: 'default leader identity',
           },
@@ -182,10 +181,10 @@ describe('collaboration-space-mcp stdio shim', () => {
           container_key: 'chat-1',
           meta: { opaque: true },
         },
-        repo: { cwd: '/repo/a', base_ref: 'main' },
         leader_agent_runtime: 'agent-a',
         identity: 'default leader identity',
       });
+      expect(admin.requests[0]?.params).not.toHaveProperty('repo');
 
       input.end();
       await run;

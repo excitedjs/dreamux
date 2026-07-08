@@ -9,12 +9,14 @@ export type CollaborationSpaceStatus = 'bound' | 'unbound';
 
 export interface CollaborationSpaceBindingRecord {
   generation: number;
-  repo_cwd: string;
-  worktree: {
-    mode: 'managed';
-    base_ref: string | null;
-    cleanup: 'delete-on-close';
-  };
+  repo_cwd: string | null;
+  worktree:
+    | { mode: 'default' }
+    | {
+        mode: 'managed';
+        base_ref: string | null;
+        cleanup: 'delete-on-close';
+      };
   leader_agent_runtime: string;
   identity: string | null;
   bound_at: number;
@@ -89,11 +91,7 @@ export interface CollaborationSpaceView {
   status: CollaborationSpaceStatus;
   current_binding: null | {
     generation: number;
-    worktree: {
-      mode: 'managed';
-      base_ref: string | null;
-      cleanup: 'delete-on-close';
-    };
+    worktree: CollaborationSpaceBindingRecord['worktree'];
     leader_agent_runtime: string;
     has_identity: boolean;
     bound_at: number;
@@ -131,7 +129,7 @@ export interface CollaborationSpaceBindInput {
   spaceName: string;
   container?: ChannelContainer;
   display?: string;
-  repo: {
+  repo?: {
     cwd: string;
     baseRef?: string;
   };
@@ -155,6 +153,15 @@ export interface CollaborationSpaceProvisionInput {
   target: ChannelTarget;
   title?: string;
   eventId?: string;
+}
+
+export interface CollaborationSpaceDefaultBindingInput {
+  repo?: {
+    cwd: string;
+    baseRef?: string;
+  };
+  leaderAgentRuntime: string;
+  identity?: string;
 }
 
 export interface CollaborationSpaceCloseTargetInput {
