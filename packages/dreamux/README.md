@@ -75,10 +75,9 @@ Design background:
   WebSocket path. Webhook-only verification/encryption fields are not part of
   the config schema.
 
-Explicitly **not** in the current contract: runnable subscription-channel
-lifecycles, per-chat threads, durable inbound buffers, automatic assistant-text
-outbound, HTTP MCP listeners by default, reaction ledgers, streaming outbound,
-cross-machine coordination, and a web UI.
+Explicitly **not** in the current contract: per-chat threads, durable inbound
+buffers, automatic assistant-text outbound, HTTP MCP listeners by default,
+reaction ledgers, streaming outbound, cross-machine coordination, and a web UI.
 
 ## Install / build / test
 

@@ -9,7 +9,6 @@
 
 import { AgentRuntimeProviderCatalog } from './agent-runtime/index.js';
 import { ChannelProviderCatalog } from './channel/catalog.js';
-import { SubscribeChannelProviderCatalog } from './subscribe-channel/catalog.js';
 import {
   createBuiltinProviderRegistry,
   type ProviderRegistry,
@@ -74,7 +73,6 @@ export interface ServerOptions {
    * built from the provider registry.
    */
   channelProviderCatalog?: ChannelProviderCatalog;
-  subscribeChannelProviderCatalog?: SubscribeChannelProviderCatalog;
   /**
    * Server-level logger (admin socket, dispatcher supervision, shutdown). When
    * omitted, a stderr-only logger is used — the CLI entry point injects a
@@ -120,7 +118,6 @@ export class Server {
   private readonly providerRegistry: ProviderRegistry;
   private readonly agentRuntimeProviders: AgentRuntimeProviderCatalog;
   private readonly channelProviders: ChannelProviderCatalog;
-  private readonly subscribeChannelProviders: SubscribeChannelProviderCatalog;
 
   constructor(opts: ServerOptions = {}) {
     this.opts = opts;
@@ -134,9 +131,6 @@ export class Server {
     if (opts.agentRuntimeProviderCatalog === undefined) {
       assertRuntimeImplementationsLoaded(config, this.providerRegistry);
     }
-    if (opts.subscribeChannelProviderCatalog === undefined) {
-      assertSubscribeChannelImplementationsLoaded(config, this.providerRegistry);
-    }
     setRuntimeConfig(config);
     this.log = opts.logger ?? createLogger({ name: 'server' });
     const channelLoggerFactory =
@@ -148,9 +142,6 @@ export class Server {
     this.channelProviders =
       opts.channelProviderCatalog ??
       new ChannelProviderCatalog({ registry: this.providerRegistry });
-    this.subscribeChannelProviders =
-      opts.subscribeChannelProviderCatalog ??
-      new SubscribeChannelProviderCatalog({ registry: this.providerRegistry });
     this.repos = {
       dispatchers: new DispatcherStore(config),
     };
@@ -159,7 +150,6 @@ export class Server {
       dispatchers: this.repos.dispatchers,
       agentRuntimeProviders: this.agentRuntimeProviders,
       channelProviders: this.channelProviders,
-      subscribeChannelProviders: this.subscribeChannelProviders,
       adminSocketPath: opts.adminSocketPath ?? adminSocketPath(),
       channelLoggerFactory,
       log: this.log,
@@ -298,40 +288,6 @@ export class Server {
     return this.dispatchers.get(id);
   }
 
-  invokeSubscribeChannelTool(input: {
-    dispatcherId: string;
-    providerRef?: string;
-    subscriptionId: string;
-    name: string;
-    arguments: Record<string, unknown>;
-  }): Promise<unknown> | unknown {
-    const subscription = (this.opts.config ?? BUILT_IN_DEFAULTS).subscriptions
-      ?.find((candidate) =>
-        candidate.dispatcher_id === input.dispatcherId &&
-        candidate.id === input.subscriptionId &&
-        (input.providerRef === undefined || candidate.provider === input.providerRef),
-      );
-    if (subscription === undefined) {
-      throw new Error(
-        `dispatcher '${input.dispatcherId}' has no configured subscription '${input.subscriptionId}'`,
-      );
-    }
-    const provider = this.subscribeChannelProviders.resolve(subscription.provider);
-    if (provider.handleTool === undefined) {
-      throw new Error(
-        `subscribeChannel provider '${provider.ref}' exposes no provider tool surface`,
-      );
-    }
-    return provider.handleTool(
-      { name: input.name, arguments: input.arguments },
-      {
-        dispatcher_id: input.dispatcherId,
-        subscription_id: subscription.id,
-        logger: this.log,
-      },
-    );
-  }
-
   /** Graceful shutdown — drain dispatchers and close the admin socket. */
   async shutdown(): Promise<void> {
     if (this.shuttingDown) return;
@@ -387,28 +343,6 @@ function assertRuntimeImplementationsLoaded(
         `${JSON.stringify(ref)} whose implementation is not loaded; Server was ` +
         'not constructed with the providerRegistry returned by loadConfig() ' +
         '(or an injected agentRuntimeProviderCatalog).',
-    );
-  }
-}
-
-function assertSubscribeChannelImplementationsLoaded(
-  config: DreamuxConfig,
-  registry: ProviderRegistry,
-): void {
-  for (const subscription of config.subscriptions ?? []) {
-    const ref = subscription.provider;
-    let loaded = false;
-    try {
-      loaded = registry.getImplementation(registry.resolve(ref).id) !== undefined;
-    } catch {
-      loaded = false;
-    }
-    if (loaded) continue;
-    throw new Error(
-      `subscription '${subscription.id}' for dispatcher '${subscription.dispatcher_id}' uses ` +
-        `subscribeChannel provider ${JSON.stringify(ref)} whose implementation is not loaded; Server was ` +
-        'not constructed with the providerRegistry returned by loadConfig() ' +
-        '(or an injected subscribeChannelProviderCatalog).',
     );
   }
 }

@@ -36,7 +36,7 @@ export interface NpmProviderRef {
 export type ProviderRef = BuiltinProviderRef | NpmProviderRef;
 
 /** Kinds of provider the registry can hold. */
-export type ProviderKind = 'channel' | 'subscribeChannel' | 'agentRuntime';
+export type ProviderKind = 'channel' | 'agentRuntime';
 
 /** A registered provider descriptor. Capabilities live on provider instances. */
 export interface ProviderDescriptor {
@@ -54,11 +54,6 @@ export type AgentRuntimeProviderDescriptor = ProviderDescriptor & {
 /** A descriptor narrowed to the Channel kind. */
 export type ChannelProviderDescriptor = ProviderDescriptor & {
   kind: 'channel';
-};
-
-/** A descriptor narrowed to the one-way subscription Channel kind. */
-export type SubscribeChannelProviderDescriptor = ProviderDescriptor & {
-  kind: 'subscribeChannel';
 };
 
 /**

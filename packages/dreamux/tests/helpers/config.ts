@@ -91,7 +91,7 @@ export function testDreamuxConfig(
       config: dispatcher.runtime.config,
     };
   }
-  return { agents, dispatchers, subscriptions: [] };
+  return { agents, dispatchers };
 }
 
 /** One agents[] file entry: a named runtime declaration. */

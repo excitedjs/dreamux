@@ -2,7 +2,6 @@ import type {
   AgentRuntimeProviderDescriptor,
   ChannelProviderDescriptor,
   ProviderDescriptor,
-  SubscribeChannelProviderDescriptor,
 } from '@excitedjs/dreamux-types';
 
 /**
@@ -31,18 +30,6 @@ export function asChannelDescriptor(
   if (descriptor.kind !== 'channel') {
     throw new Error(
       `expected a channel descriptor (got ${JSON.stringify(descriptor.kind)})`,
-    );
-  }
-  return { ...descriptor, kind: descriptor.kind };
-}
-
-/** Validate + narrow a registry descriptor to the SubscribeChannel kind. */
-export function asSubscribeChannelDescriptor(
-  descriptor: ProviderDescriptor,
-): SubscribeChannelProviderDescriptor {
-  if (descriptor.kind !== 'subscribeChannel') {
-    throw new Error(
-      `expected a subscribeChannel descriptor (got ${JSON.stringify(descriptor.kind)})`,
     );
   }
   return { ...descriptor, kind: descriptor.kind };

@@ -100,15 +100,6 @@ const ALLOWLIST = [
   'ProviderOnboardTextPrompt',
   'ProviderRef',
   'ProviderRefSource',
-  'SubscribeChannelConfigContext',
-  'SubscribeChannelEvent',
-    'SubscribeChannelProvider',
-  'SubscribeChannelProviderDescriptor',
-  'SubscribeChannelProviderFactory',
-  'SubscribeChannelRoutes',
-  'SubscribeChannelSession',
-  'SubscribeChannelSessionCreateContext',
-  'SubscribeChannelToolContext',
   'TurnSettledSignal',
 ];
 

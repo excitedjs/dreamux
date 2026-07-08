@@ -19,7 +19,6 @@ export function dreamuxConfigFromAnswers(
   const base: DreamuxConfig = existing ?? {
     agents: {},
     dispatchers: [],
-    subscriptions: [],
   };
   const dispatchers = base.dispatchers
     .filter((dispatcher) => dispatcher.id !== answers.dispatcherId)
@@ -53,7 +52,6 @@ export function dreamuxConfigFromAnswers(
   const next: DreamuxConfig = {
     agents,
     dispatchers,
-    ...(base.subscriptions === undefined ? {} : { subscriptions: base.subscriptions }),
   };
   return next;
 }

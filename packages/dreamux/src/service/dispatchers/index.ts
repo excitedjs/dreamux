@@ -1,6 +1,5 @@
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { ChannelProviderCatalog } from '../../channel/catalog.js';
-import type { SubscribeChannelProviderCatalog } from '../../subscribe-channel/catalog.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
 import type { DispatcherStore } from '../../state/dispatcher-store.js';
@@ -19,7 +18,6 @@ export interface DispatchersOptions {
   dispatchers: DispatcherStore;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   channelProviders: ChannelProviderCatalog;
-  subscribeChannelProviders: SubscribeChannelProviderCatalog;
   adminSocketPath?: string;
   channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
   log: DreamuxLogger;
@@ -38,7 +36,6 @@ export class Dispatchers {
   private readonly dispatcherStore: DispatcherStore;
   private readonly agentRuntimeProviders: AgentRuntimeProviderCatalog;
   private readonly channelProviders: ChannelProviderCatalog;
-  private readonly subscribeChannelProviders: SubscribeChannelProviderCatalog;
   private readonly adminSocketPath: string | undefined;
   private readonly channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
   private readonly log: DreamuxLogger;
@@ -49,7 +46,6 @@ export class Dispatchers {
     this.dispatcherStore = opts.dispatchers;
     this.agentRuntimeProviders = opts.agentRuntimeProviders;
     this.channelProviders = opts.channelProviders;
-    this.subscribeChannelProviders = opts.subscribeChannelProviders;
     this.adminSocketPath = opts.adminSocketPath;
     this.channelLoggerFactory = opts.channelLoggerFactory;
     this.log = opts.log;
@@ -129,7 +125,6 @@ export class Dispatchers {
       dispatchers: this.dispatcherStore,
       agentRuntimeProviders: this.agentRuntimeProviders,
       channelProviders: this.channelProviders,
-      subscribeChannelProviders: this.subscribeChannelProviders,
       ...(this.adminSocketPath !== undefined
         ? { adminSocketPath: this.adminSocketPath }
         : {}),

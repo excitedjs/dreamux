@@ -161,24 +161,6 @@ export const adminMethods: Record<string, AdminHandler> = {
     }
   },
 
-  'subscribe_channel.invoke_tool': async (server, params) => {
-    const id = mustDispatcherId(params);
-    mustExistingDispatcher(server, id);
-    const providerRef = optionalString(params, 'provider_ref');
-    try {
-      return await server.invokeSubscribeChannelTool({
-        dispatcherId: id,
-        subscriptionId: mustString(params, 'subscription_id'),
-        name: mustString(params, 'name'),
-        arguments: mustToolArguments(params),
-        ...(providerRef !== null ? { providerRef } : {}),
-      });
-    } catch (err) {
-      if (err instanceof AdminError) throw err;
-      throw new AdminError('SUBSCRIBE_CHANNEL_TOOL_FAILED', parseMessage(err));
-    }
-  },
-
   'mcp.teammate.spawn': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);

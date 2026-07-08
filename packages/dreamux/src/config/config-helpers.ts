@@ -79,17 +79,6 @@ export function channelProviderRefs(raw: unknown): string[] {
   return out;
 }
 
-/**
- * Every well-formed `subscriptions[].provider` ref the loader should resolve.
- * Mirrors {@link agentProviderRefs}.
- */
-export function subscribeChannelProviderRefs(raw: unknown): string[] {
-  if (!isPlainObject(raw)) return [];
-  return providerRefsFrom(raw['subscriptions'], (subscription) =>
-    subscription['provider'],
-  );
-}
-
 function providerRefsFrom(
   entries: unknown,
   pick: (entry: Record<string, unknown>) => unknown,

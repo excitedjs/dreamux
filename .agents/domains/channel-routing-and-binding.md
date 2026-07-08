@@ -184,18 +184,6 @@ Source:
 - `/packages/dreamux/src/service/channel-service/errors.ts`
 - `/packages/dreamux/src/service/dispatcher-service/mcp-descriptors.ts`
 
-## Subscription Channels
-
-Bidirectional conversational channels use `ChannelProvider`. One-way event-feed
-channels use the reserved `SubscribeChannelProvider` contract. Subscription
-channels publish events into Dreamux and may expose provider MCP tools, but they
-do not inherit chat ids, reply/react, `ChannelTarget`, Team binding, or
-TeamLeader egress authorization.
-
-Source:
-
-- `/packages/dreamux-types/src/subscribe-channel.ts`
-
 ## Feishu-Specific Contracts
 
 Detailed Feishu behavior lives in focused domain pages:

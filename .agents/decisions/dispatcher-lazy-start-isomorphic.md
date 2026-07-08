@@ -111,11 +111,8 @@ important point is that provider packages do not compose core command lines.
 ## Channel MCP Ownership
 
 Remove `ChannelProvider.mcpServerDescriptor()` and
-`ChannelMcpDescriptorContext` as provider-authoring concepts. Apply the same
-rule to subscription channels: `SubscribeChannelSession.mcpServerDescriptors()`
-and `SubscribeChannelMcpDescriptorContext` are also removed as
-provider/session-authoring concepts because they carry the same core-owned
-command and admin-socket state.
+`ChannelMcpDescriptorContext` as provider-authoring concepts because they carry
+core-owned command and admin-socket state.
 
 Add or reuse a provider-owned static tool catalog seam. The provider can expose
 tool metadata from config and provider context, for example:
@@ -140,14 +137,6 @@ must be this:
   `--channel-id`, `--dispatcher`, `--caller`, `--team-id`, `--leader-name`,
   `--channel-tools-b64`, and `--admin-socket`;
 - core remains the only owner of admin-socket and shim protocol flags.
-
-Subscription channels use the same ownership split. A subscription provider may
-expose static subscription tool metadata and handlers, but launch-time
-subscription `tools/list` metadata must not require a live or started
-subscription session. Dreamux core renders the subscription MCP descriptor,
-command, admin socket, and subscription id routing arguments. Subscription
-descriptors do not need Dispatcher/TeamLeader caller scope, but they still must
-not be assembled by the provider package.
 
 Feishu becomes a provider of:
 
@@ -463,14 +452,10 @@ fixing the ownership mistakes around it.
 The revised implementation is acceptable only when these statements are true:
 
 - `ChannelProvider` no longer exposes `mcpServerDescriptor()`.
-- `SubscribeChannelSession` no longer exposes `mcpServerDescriptors()`.
 - No provider package builds `dreamux channel-mcp` command lines or knows admin
   socket argument layout.
 - Core renders all channel MCP descriptors from dispatcher-scoped channel config
   and provider tool catalogs.
-- Core renders all subscription MCP descriptors from subscription config and
-  provider/config static tool catalogs. Launch metadata does not require a live
-  or started subscription session.
 - Provider/config static catalog is the only launch-time source for
   `tools/list`; live sessions do not supply runtime MCP metadata.
 - `ChannelToolListContext` is removed or merged into a core-owned
@@ -515,17 +500,11 @@ The revised implementation is acceptable only when these statements are true:
   `dreamuxBinPath()` usage and reject provider-owned core shim construction.
   It must also reject any provider package implementation of
   `mcpServerDescriptor`.
-- Architecture review must reject `SubscribeChannelSession.mcpServerDescriptors`
-  and `SubscribeChannelMcpDescriptorContext` for the same ownership reason.
 - Architecture review must inspect Dispatcher, TeamLeader, and TeamMate
   factories and reject no-op callbacks used to satisfy shared-holder deps.
   Unsupported capabilities must be absent, not represented as empty functions.
 - Type tests must prove provider authors can expose channel tools without
   receiving core command or admin socket context.
-- Type tests must prove subscription-channel authors also do not receive core
-  command or admin socket context for MCP descriptor construction.
-- Tests must prove subscription MCP `tools/list` launch metadata does not
-  require a live or started subscription session.
 - Tests must prove `tools/list` metadata comes only from provider/config static
   catalog. Session-level metadata is removed or ignored by descriptor/list
   paths.

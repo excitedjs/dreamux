@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "BREAKING: Remove provider-authored channel MCP descriptor contracts. ChannelProvider.mcpServerDescriptor, ChannelMcpDescriptorContext, ChannelSession.tools, ChannelToolListContext, SubscribeChannelSession.mcpServerDescriptors, SubscribeChannelMcpDescriptorContext, and InboundDeliveryHooks are removed; channel and subscription providers now expose only static tool catalogs plus handlers while Dreamux core owns MCP descriptor rendering and inbound ack/cancellation boundaries.",
+      "comment": "BREAKING: Remove provider-authored channel MCP descriptor contracts. ChannelProvider.mcpServerDescriptor, ChannelMcpDescriptorContext, ChannelSession.tools, ChannelToolListContext, and InboundDeliveryHooks are removed; channel providers now expose only static tool catalogs plus handlers while Dreamux core owns MCP descriptor rendering and inbound ack/cancellation boundaries. The deferred SubscribeChannelProvider reservation is also removed from the public type package.",
       "type": "minor",
       "packageName": "@excitedjs/dreamux-types"
     },

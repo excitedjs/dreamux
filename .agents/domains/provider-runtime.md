@@ -42,9 +42,8 @@ Source:
 
 `@excitedjs/dreamux-types` is the provider-authoring contract. It exports
 declarations only: provider descriptors, Agent Runtime contracts, Channel
-contracts, turn shapes, diagnostics, and the reserved subscription-channel
-contract. It does not export host stores, path helpers, provider loaders, or
-runtime implementations.
+contracts, turn shapes, and diagnostics. It does not export host stores, path
+helpers, provider loaders, or runtime implementations.
 
 Agent Runtime providers implement `AgentRuntimeProvider` and return one
 `AgentRuntime` instance per launched agent. The runtime interface is
@@ -58,7 +57,6 @@ Source:
 
 - `/packages/dreamux-types/src/agent-runtime.ts`
 - `/packages/dreamux-types/src/channel.ts`
-- `/packages/dreamux-types/src/subscribe-channel.ts`
 - `/packages/dreamux-types/tests/root-exports.test.ts`
 - `/packages/dreamux-types/tests/no-host-types.test.ts`
 

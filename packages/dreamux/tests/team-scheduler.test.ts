@@ -44,7 +44,6 @@ import { ChannelProviderCatalog } from '../src/channel/catalog.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
 import { Server } from '../src/server.js';
 import { writeRestartIntent } from '../src/daemon/restart-intent.js';
-import { SubscribeChannelProviderCatalog } from '../src/subscribe-channel/catalog.js';
 
 const FAKE_RUNTIME_REF = 'test:runtime';
 
@@ -178,15 +177,6 @@ function fakeChannelCatalog(): ChannelProviderCatalog {
       throw new Error(`unexpected channel provider ${JSON.stringify(ref)}`);
     },
   } as unknown as ChannelProviderCatalog;
-}
-
-function emptySubscribeChannelCatalog(): SubscribeChannelProviderCatalog {
-  return {
-    list: () => [],
-    resolve(ref: string) {
-      throw new Error(`unexpected subscribeChannel provider ${JSON.stringify(ref)}`);
-    },
-  } as unknown as SubscribeChannelProviderCatalog;
 }
 
 const CHANNEL_PROVIDER_REF = 'builtin:feishu';
@@ -454,7 +444,6 @@ describe('TeamLeader cron scheduler lifecycle', () => {
         },
       }),
       channelProviders: fakeChannelCatalog(),
-      subscribeChannelProviders: emptySubscribeChannelCatalog(),
       adminSocketPath: '/tmp/dreamux-admin.sock',
       channelLoggerFactory: () => log,
       log,
@@ -507,7 +496,6 @@ describe('TeamLeader cron scheduler lifecycle', () => {
         contexts,
       }),
       channelProviders: fakeChannelCatalog(),
-      subscribeChannelProviders: emptySubscribeChannelCatalog(),
       adminSocketPath: '/tmp/dreamux-admin.sock',
       channelLoggerFactory: () => log,
       log,
@@ -654,7 +642,6 @@ describe('TeamLeader cron scheduler lifecycle', () => {
         contexts,
       }),
       channelProviders: fakeChannelCatalog(),
-      subscribeChannelProviders: emptySubscribeChannelCatalog(),
       adminSocketPath: '/tmp/dreamux-admin.sock',
       channelLoggerFactory: () => log,
       log,
@@ -712,7 +699,6 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: fakeRuntimeCatalog({ runtimes }),
       channelProviders: capturingChannelCatalog(sessions),
-      subscribeChannelProviders: emptySubscribeChannelCatalog(),
       adminSocketPath: '/tmp/dreamux-admin.sock',
       channelLoggerFactory: () => log,
       log,
@@ -757,7 +743,6 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: fakeRuntimeCatalog({ runtimes: [] }),
       channelProviders: capturingChannelCatalog(sessions),
-      subscribeChannelProviders: emptySubscribeChannelCatalog(),
       adminSocketPath: '/tmp/dreamux-admin.sock',
       channelLoggerFactory: () => log,
       log,
@@ -807,7 +792,6 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       channelProviders: capturingChannelCatalog(sessions, {
         startBlockers: { secondary: secondaryBlocker },
       }),
-      subscribeChannelProviders: emptySubscribeChannelCatalog(),
       adminSocketPath: '/tmp/dreamux-admin.sock',
       channelLoggerFactory: () => log,
       log,
@@ -863,7 +847,6 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: fakeRuntimeCatalog({ runtimes }),
       channelProviders: capturingChannelCatalog(sessions),
-      subscribeChannelProviders: emptySubscribeChannelCatalog(),
       adminSocketPath: '/tmp/dreamux-admin.sock',
       channelLoggerFactory: () => log,
       log,
@@ -909,7 +892,6 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: fakeRuntimeCatalog({ runtimes, contexts }),
       channelProviders: capturingChannelCatalog(sessions),
-      subscribeChannelProviders: emptySubscribeChannelCatalog(),
       adminSocketPath: '/tmp/dreamux-admin.sock',
       channelLoggerFactory: () => log,
       log,
@@ -933,7 +915,6 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: fakeRuntimeCatalog({ runtimes, contexts }),
       channelProviders: capturingChannelCatalog(sessions),
-      subscribeChannelProviders: emptySubscribeChannelCatalog(),
       adminSocketPath: '/tmp/dreamux-admin.sock',
       channelLoggerFactory: () => log,
       log,
@@ -973,7 +954,6 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       dispatchers: new DispatcherStore(config),
       agentRuntimeProviders: fakeRuntimeCatalog({ runtimes }),
       channelProviders: fakeChannelCatalog(),
-      subscribeChannelProviders: emptySubscribeChannelCatalog(),
       adminSocketPath: '/tmp/dreamux-admin.sock',
       channelLoggerFactory: () => log,
       log,
@@ -1024,7 +1004,6 @@ describe('TeamLeader cron scheduler lifecycle', () => {
         },
       }),
       channelProviders: fakeChannelCatalog(),
-      subscribeChannelProviders: emptySubscribeChannelCatalog(),
       adminSocketPath: '/tmp/dreamux-admin.sock',
       channelLoggerFactory: () => log,
       log,

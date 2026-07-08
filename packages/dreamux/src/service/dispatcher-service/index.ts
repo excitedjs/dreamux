@@ -12,7 +12,6 @@ import type {
 
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { ChannelProviderCatalog } from '../../channel/catalog.js';
-import type { SubscribeChannelProviderCatalog } from '../../subscribe-channel/catalog.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
 import {
@@ -25,7 +24,6 @@ import type {
 } from '../../state/dispatcher-store.js';
 import { createDispatcherAgent } from './agent.js';
 import { dispatcherMcpServerDescriptors } from './mcp-descriptors.js';
-import { subscribeChannelMcpServerDescriptors } from '../../subscribe-channel/mcp-descriptors.js';
 import type { ChannelMcpCallerScope } from './mcp-descriptors.js';
 import { ensureDispatcherIdentity as ensureDispatcherRootIdentity } from './identity.js';
 import { assertRunnableChannelShape } from './runnable-channel.js';
@@ -61,7 +59,6 @@ export interface DispatcherServiceOptions {
   dispatchers: DispatcherStore;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   channelProviders: ChannelProviderCatalog;
-  subscribeChannelProviders: SubscribeChannelProviderCatalog;
   adminSocketPath?: string;
   channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
   log: DreamuxLogger;
@@ -96,7 +93,6 @@ export class DispatcherService {
   private readonly config: DreamuxConfig;
   private readonly dispatchers: DispatcherStore;
   private readonly channelProviders: ChannelProviderCatalog;
-  private readonly subscribeChannelProviders: SubscribeChannelProviderCatalog;
   private readonly log: DreamuxLogger;
   private readonly router: CompletionRouter;
   private readonly _teammates: TeammateCollection;
@@ -123,7 +119,6 @@ export class DispatcherService {
     this.config = opts.config;
     this.dispatchers = opts.dispatchers;
     this.channelProviders = opts.channelProviders;
-    this.subscribeChannelProviders = opts.subscribeChannelProviders;
     this.log = opts.log;
     const adminSocket = opts.adminSocketPath ?? defaultAdminSocketPath();
     this.agentRuntimeProviders = opts.agentRuntimeProviders;
@@ -250,12 +245,7 @@ export class DispatcherService {
         channels: this.channels.configuredChannels(),
         channelProviders: this.channelProviders,
         adminSocketPath: this.adminSocket,
-      }).concat(subscribeChannelMcpServerDescriptors({
-        dispatcherId: id,
-        subscriptions: this.config.subscriptions ?? [],
-        subscribeChannelProviders: this.subscribeChannelProviders,
-        adminSocketPath: this.adminSocket,
-      })),
+      }),
       identity,
     });
 
