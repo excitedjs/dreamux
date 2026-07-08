@@ -7,7 +7,10 @@ import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 
 import type { AdminRequest, AdminResponse } from '../src/admin/protocol.js';
-import { TASK_DISPATCH_SUCCESS_REMINDER } from '../src/mcp/task-dispatch-reminder.js';
+import {
+  TEAM_DISPATCH_SUCCESS_REMINDER,
+  TEAMMATE_DISPATCH_SUCCESS_REMINDER,
+} from '../src/mcp/task-dispatch-reminder.js';
 import { runTeamMcp } from '../src/mcp/team-mcp.js';
 
 class JsonLineReader {
@@ -263,13 +266,14 @@ describe('team-mcp stdio shim', () => {
         id: 1,
         result: {
           content: [{
-            text: expect.stringContaining(TASK_DISPATCH_SUCCESS_REMINDER) as string,
+            text: expect.stringContaining(TEAM_DISPATCH_SUCCESS_REMINDER) as string,
           }],
           structuredContent: {
             team: { team_name: 'alpha' },
           },
         },
       });
+      expect(JSON.stringify(response)).not.toContain(TEAMMATE_DISPATCH_SUCCESS_REMINDER);
       expect(admin.requests).toHaveLength(1);
       expect(admin.requests[0]).toMatchObject({
         method: 'mcp.team.create',
@@ -408,10 +412,11 @@ describe('team-mcp stdio shim', () => {
       expect(sendResponse).toMatchObject({
         result: {
           content: [{
-            text: expect.stringContaining(TASK_DISPATCH_SUCCESS_REMINDER) as string,
+            text: expect.stringContaining(TEAM_DISPATCH_SUCCESS_REMINDER) as string,
           }],
         },
       });
+      expect(JSON.stringify(sendResponse)).not.toContain(TEAMMATE_DISPATCH_SUCCESS_REMINDER);
       expect(admin.requests[1]?.params).toMatchObject({ team_name: 'alpha' });
       expect(admin.requests[2]?.params).toMatchObject({
         grep: 'auth',

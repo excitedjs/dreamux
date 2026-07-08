@@ -1,12 +1,16 @@
-export const TASK_DISPATCH_SUCCESS_REMINDER =
-  'Reminder: The task was submitted successfully. Dreamux core will automatically push the Team or TeamMate completion back when it finishes. Do not poll last or other read tools for completion; if you have no other work, you may end this turn naturally.';
+export const TEAM_DISPATCH_SUCCESS_REMINDER =
+  'Reminder: The Team task was submitted successfully. Dreamux core will automatically push the Team completion back when it finishes. Do not poll last or other read tools for completion; if you have no other work, you may end this turn naturally.';
+
+export const TEAMMATE_DISPATCH_SUCCESS_REMINDER =
+  'Reminder: The TeamMate task was submitted successfully. Dreamux core will automatically push the TeamMate completion back when it finishes. Do not poll last or other read tools for completion; if you have no other work, you may end this turn naturally.';
 
 export function appendTaskDispatchSuccessReminder(
   text: string,
   result: unknown,
+  reminder: string,
 ): string {
   return hasSubmittedTurn(result)
-    ? `${text}\n\n${TASK_DISPATCH_SUCCESS_REMINDER}`
+    ? `${text}\n\n${reminder}`
     : text;
 }
 

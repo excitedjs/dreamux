@@ -7,7 +7,10 @@ import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 
 import type { AdminRequest, AdminResponse } from '../src/admin/protocol.js';
-import { TASK_DISPATCH_SUCCESS_REMINDER } from '../src/mcp/task-dispatch-reminder.js';
+import {
+  TEAM_DISPATCH_SUCCESS_REMINDER,
+  TEAMMATE_DISPATCH_SUCCESS_REMINDER,
+} from '../src/mcp/task-dispatch-reminder.js';
 import { runTeamMateMcp } from '../src/mcp/teammate-mcp.js';
 
 class JsonLineReader {
@@ -313,7 +316,7 @@ describe('teammate-mcp stdio shim', () => {
         id: 1,
         result: {
           content: [{
-            text: expect.stringContaining(TASK_DISPATCH_SUCCESS_REMINDER) as string,
+            text: expect.stringContaining(TEAMMATE_DISPATCH_SUCCESS_REMINDER) as string,
           }],
           structuredContent: {
             teammate: { name: 'reviewer', status: 'running' },
@@ -321,6 +324,7 @@ describe('teammate-mcp stdio shim', () => {
           },
         },
       });
+      expect(JSON.stringify(response)).not.toContain(TEAM_DISPATCH_SUCCESS_REMINDER);
       // #199 Slice 2: the shim forwards the validated `repo` object verbatim; the
       // admin layer maps it onto the internal cwd + worktree request.
       expect(admin.requests).toEqual([
