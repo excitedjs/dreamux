@@ -413,6 +413,60 @@ describe('teammate-mcp stdio shim', () => {
     }
   });
 
+  it('omits the reminder when closing a TeamMate without submitting a turn', async () => {
+    const admin = await startFakeAdminServer((request) => ({
+      id: request.id,
+      ok: true,
+      result: {
+        teammate: { name: 'reviewer', status: 'closed' },
+      },
+    }));
+    try {
+      const input = new PassThrough();
+      const output = new PassThrough();
+      const reader = new JsonLineReader(output);
+      const run = runTeamMateMcp({
+        dispatcherId: 'dispatcher-a',
+        callerKind: 'dispatcher',
+        adminSocketPath: admin.socketPath,
+        input,
+        output,
+        log: () => {},
+      });
+
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'close',
+          arguments: { name: 'reviewer', note: 'done' },
+        },
+      });
+
+      const response = await reader.next();
+      expect(response).toMatchObject({
+        jsonrpc: '2.0',
+        id: 1,
+        result: {
+          content: [{ text: 'close forwarded to dreamux serve' }],
+          structuredContent: {
+            teammate: { name: 'reviewer', status: 'closed' },
+          },
+        },
+      });
+      expect(JSON.stringify(response)).not.toContain(
+        TEAMMATE_DISPATCH_SUCCESS_REMINDER,
+      );
+      expect(admin.requests[0]?.method).toBe('mcp.teammate.close');
+
+      input.end();
+      await run;
+    } finally {
+      await admin.close();
+    }
+  });
+
   it('rejects a repo input with an invalid mode before admin IPC (#199 Slice 2)', async () => {
     const admin = await startFakeAdminServer((request) => ({
       id: request.id,

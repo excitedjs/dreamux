@@ -296,6 +296,65 @@ describe('team-mcp stdio shim', () => {
     }
   });
 
+  it('omits the reminder when Team create starts an idle leader without a prompt', async () => {
+    const admin = await startFakeAdminServer((request) => ({
+      id: request.id,
+      ok: true,
+      result: {
+        team: { team_name: 'alpha' },
+        leader: { name: 'alpha-leader', status: 'running' },
+        member_count: 0,
+        turn: null,
+      },
+    }));
+    try {
+      const input = new PassThrough();
+      const output = new PassThrough();
+      const reader = new JsonLineReader(output);
+      const run = runTeamMcp({
+        dispatcherId: 'dispatcher-a',
+        adminSocketPath: admin.socketPath,
+        input,
+        output,
+        log: () => {},
+      });
+
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'create',
+          arguments: {
+            team_name: 'alpha',
+            leader_agent_runtime: 'codex',
+            intent: 'lead alpha',
+          },
+        },
+      });
+
+      const response = await reader.next();
+      expect(response).toMatchObject({
+        jsonrpc: '2.0',
+        id: 1,
+        result: {
+          content: [{ text: 'create forwarded to dreamux serve' }],
+          structuredContent: {
+            team: { team_name: 'alpha' },
+            turn: null,
+          },
+        },
+      });
+      expect(JSON.stringify(response)).not.toContain(TEAM_DISPATCH_SUCCESS_REMINDER);
+      expect(admin.requests[0]?.params).not.toHaveProperty('prompt');
+
+      input.end();
+      await run;
+    } finally {
+      await admin.close();
+    }
+  });
+
   it('forwards redesigned read verbs and preserves bound_target results (#182 PR-7)', async () => {
     const boundTarget = {
       channel_id: 'primary',
@@ -559,6 +618,58 @@ describe('team-mcp stdio shim', () => {
       expect(dissolveResponse.result).not.toHaveProperty('structuredContent');
 
       expect(admin.requests).toEqual([]);
+      input.end();
+      await run;
+    } finally {
+      await admin.close();
+    }
+  });
+
+  it('omits the reminder when dissolving a Team without submitting a turn', async () => {
+    const admin = await startFakeAdminServer((request) => ({
+      id: request.id,
+      ok: true,
+      result: {
+        team: { team_name: 'alpha', status: 'closed' },
+        leader: { name: 'alpha-leader', status: 'closed' },
+      },
+    }));
+    try {
+      const input = new PassThrough();
+      const output = new PassThrough();
+      const reader = new JsonLineReader(output);
+      const run = runTeamMcp({
+        dispatcherId: 'dispatcher-a',
+        adminSocketPath: admin.socketPath,
+        input,
+        output,
+        log: () => {},
+      });
+
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'dissolve',
+          arguments: { team_name: 'alpha', note: 'done' },
+        },
+      });
+
+      const response = await reader.next();
+      expect(response).toMatchObject({
+        jsonrpc: '2.0',
+        id: 1,
+        result: {
+          content: [{ text: 'dissolve forwarded to dreamux serve' }],
+          structuredContent: {
+            team: { team_name: 'alpha', status: 'closed' },
+          },
+        },
+      });
+      expect(JSON.stringify(response)).not.toContain(TEAM_DISPATCH_SUCCESS_REMINDER);
+      expect(admin.requests[0]?.method).toBe('mcp.team.dissolve');
+
       input.end();
       await run;
     } finally {
