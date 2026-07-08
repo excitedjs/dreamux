@@ -14,6 +14,18 @@ export function appendTaskDispatchSuccessReminder(
     : text;
 }
 
+export function appendStructuredTaskDispatchSuccessReminder(
+  result: unknown,
+  reminder: string,
+): unknown {
+  return hasSubmittedTurn(result)
+    ? {
+        ...(result as Record<string, unknown>),
+        reminder,
+      }
+    : result;
+}
+
 function hasSubmittedTurn(result: unknown): boolean {
   if (result === null || typeof result !== 'object' || Array.isArray(result)) {
     return false;

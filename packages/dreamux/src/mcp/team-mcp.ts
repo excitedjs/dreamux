@@ -6,6 +6,7 @@ import { adminSocketPath as defaultAdminSocketPath } from '../platform/paths.js'
 import { validateDispatcherId } from '../state/dispatcher-id.js';
 import {
   appendTaskDispatchSuccessReminder,
+  appendStructuredTaskDispatchSuccessReminder,
   TEAM_DISPATCH_SUCCESS_REMINDER,
 } from './task-dispatch-reminder.js';
 import { optionalRepoInput, repoInputSchema } from './teammate-mcp.js';
@@ -207,7 +208,10 @@ async function callTool(
           TEAM_DISPATCH_SUCCESS_REMINDER,
         ),
       }],
-      structuredContent: result,
+      structuredContent: appendStructuredTaskDispatchSuccessReminder(
+        result,
+        TEAM_DISPATCH_SUCCESS_REMINDER,
+      ),
     };
   } catch (err) {
     const prefix = err instanceof AdminClientError ? `[${err.code}] ` : '';

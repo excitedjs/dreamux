@@ -321,6 +321,7 @@ describe('teammate-mcp stdio shim', () => {
           structuredContent: {
             teammate: { name: 'reviewer', status: 'running' },
             turn: { status: 'submitted', turn_id: 'turn-1' },
+            reminder: TEAMMATE_DISPATCH_SUCCESS_REMINDER,
           },
         },
       });
@@ -390,7 +391,8 @@ describe('teammate-mcp stdio shim', () => {
         },
       });
 
-      expect(await reader.next()).toMatchObject({
+      const response = await reader.next();
+      expect(response).toMatchObject({
         jsonrpc: '2.0',
         id: 1,
         result: {
@@ -400,6 +402,9 @@ describe('teammate-mcp stdio shim', () => {
           },
         },
       });
+      expect(JSON.stringify(response)).not.toContain(
+        TEAMMATE_DISPATCH_SUCCESS_REMINDER,
+      );
 
       input.end();
       await run;
@@ -584,6 +589,7 @@ describe('teammate-mcp stdio shim', () => {
         result: {
           structuredContent: {
             teammate: { name: 'builder', status: 'running' },
+            reminder: TEAMMATE_DISPATCH_SUCCESS_REMINDER,
           },
         },
       });

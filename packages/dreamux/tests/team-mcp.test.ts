@@ -270,6 +270,7 @@ describe('team-mcp stdio shim', () => {
           }],
           structuredContent: {
             team: { team_name: 'alpha' },
+            reminder: TEAM_DISPATCH_SUCCESS_REMINDER,
           },
         },
       });
@@ -414,6 +415,9 @@ describe('team-mcp stdio shim', () => {
           content: [{
             text: expect.stringContaining(TEAM_DISPATCH_SUCCESS_REMINDER) as string,
           }],
+          structuredContent: {
+            reminder: TEAM_DISPATCH_SUCCESS_REMINDER,
+          },
         },
       });
       expect(JSON.stringify(sendResponse)).not.toContain(TEAMMATE_DISPATCH_SUCCESS_REMINDER);
@@ -472,7 +476,8 @@ describe('team-mcp stdio shim', () => {
         },
       });
 
-      expect(await reader.next()).toMatchObject({
+      const response = await reader.next();
+      expect(response).toMatchObject({
         jsonrpc: '2.0',
         id: 1,
         result: {
@@ -482,6 +487,9 @@ describe('team-mcp stdio shim', () => {
           },
         },
       });
+      expect(JSON.stringify(response)).not.toContain(
+        TEAM_DISPATCH_SUCCESS_REMINDER,
+      );
 
       input.end();
       await run;

@@ -10,6 +10,7 @@ import { validateDispatcherId } from '../state/dispatcher-id.js';
 import { validateTeamId } from '../service/team-collection/types.js';
 import {
   appendTaskDispatchSuccessReminder,
+  appendStructuredTaskDispatchSuccessReminder,
   TEAMMATE_DISPATCH_SUCCESS_REMINDER,
 } from './task-dispatch-reminder.js';
 
@@ -305,7 +306,10 @@ async function forwardToolCall(
           TEAMMATE_DISPATCH_SUCCESS_REMINDER,
         ),
       }],
-      structuredContent: result,
+      structuredContent: appendStructuredTaskDispatchSuccessReminder(
+        result,
+        TEAMMATE_DISPATCH_SUCCESS_REMINDER,
+      ),
     };
   } catch (err) {
     const prefix = err instanceof AdminClientError ? `[${err.code}] ` : '';
