@@ -394,6 +394,7 @@ describe('team-mcp stdio shim', () => {
           },
         },
       });
+      expect(JSON.stringify(listResponse)).not.toContain(TEAM_DISPATCH_SUCCESS_REMINDER);
       expect(statusResponse).toMatchObject({
         result: {
           structuredContent: {
@@ -402,6 +403,7 @@ describe('team-mcp stdio shim', () => {
           },
         },
       });
+      expect(JSON.stringify(statusResponse)).not.toContain(TEAM_DISPATCH_SUCCESS_REMINDER);
       expect(historyResponse).toMatchObject({
         result: {
           structuredContent: {
@@ -410,6 +412,7 @@ describe('team-mcp stdio shim', () => {
           },
         },
       });
+      expect(JSON.stringify(historyResponse)).not.toContain(TEAM_DISPATCH_SUCCESS_REMINDER);
       expect(sendResponse).toMatchObject({
         result: {
           content: [{
@@ -526,7 +529,8 @@ describe('team-mcp stdio shim', () => {
           arguments: { team_name: 'alpha', repo_cwd: '/repo', leader_agent_runtime: 'codex' },
         },
       });
-      expect(await reader.next()).toMatchObject({
+      const createResponse = (await reader.next()) as { result: Record<string, unknown> };
+      expect(createResponse).toMatchObject({
         jsonrpc: '2.0',
         id: 1,
         result: {
@@ -534,6 +538,7 @@ describe('team-mcp stdio shim', () => {
           content: [{ text: 'intent must be a non-empty string' }],
         },
       });
+      expect(createResponse.result).not.toHaveProperty('structuredContent');
 
       // dissolve without note → rejected before admin IPC.
       writeJson(input, {
@@ -542,7 +547,8 @@ describe('team-mcp stdio shim', () => {
         method: 'tools/call',
         params: { name: 'dissolve', arguments: { team_name: 'alpha' } },
       });
-      expect(await reader.next()).toMatchObject({
+      const dissolveResponse = (await reader.next()) as { result: Record<string, unknown> };
+      expect(dissolveResponse).toMatchObject({
         jsonrpc: '2.0',
         id: 2,
         result: {
@@ -550,6 +556,7 @@ describe('team-mcp stdio shim', () => {
           content: [{ text: 'note must be a non-empty string' }],
         },
       });
+      expect(dissolveResponse.result).not.toHaveProperty('structuredContent');
 
       expect(admin.requests).toEqual([]);
       input.end();

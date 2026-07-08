@@ -449,7 +449,8 @@ describe('teammate-mcp stdio shim', () => {
         },
       });
 
-      expect(await reader.next()).toMatchObject({
+      const repoResponse = (await reader.next()) as { result: Record<string, unknown> };
+      expect(repoResponse).toMatchObject({
         jsonrpc: '2.0',
         id: 1,
         result: {
@@ -457,6 +458,7 @@ describe('teammate-mcp stdio shim', () => {
           content: [{ text: "repo.mode must be 'reuse-cwd' or 'managed'" }],
         },
       });
+      expect(repoResponse.result).not.toHaveProperty('structuredContent');
       expect(admin.requests).toEqual([]);
 
       input.end();
@@ -495,7 +497,8 @@ describe('teammate-mcp stdio shim', () => {
           arguments: { name_prefix: 'reviewer', prompt: 'go', cwd: '/workspace' },
         },
       });
-      expect(await reader.next()).toMatchObject({
+      const spawnResponse = (await reader.next()) as { result: Record<string, unknown> };
+      expect(spawnResponse).toMatchObject({
         jsonrpc: '2.0',
         id: 1,
         result: {
@@ -503,6 +506,7 @@ describe('teammate-mcp stdio shim', () => {
           content: [{ text: 'intent must be a non-empty string' }],
         },
       });
+      expect(spawnResponse.result).not.toHaveProperty('structuredContent');
 
       // close without note → rejected before admin IPC.
       writeJson(input, {
@@ -511,7 +515,8 @@ describe('teammate-mcp stdio shim', () => {
         method: 'tools/call',
         params: { name: 'close', arguments: { name: 'reviewer' } },
       });
-      expect(await reader.next()).toMatchObject({
+      const closeResponse = (await reader.next()) as { result: Record<string, unknown> };
+      expect(closeResponse).toMatchObject({
         jsonrpc: '2.0',
         id: 2,
         result: {
@@ -519,6 +524,7 @@ describe('teammate-mcp stdio shim', () => {
           content: [{ text: 'note must be a non-empty string' }],
         },
       });
+      expect(closeResponse.result).not.toHaveProperty('structuredContent');
 
       expect(admin.requests).toEqual([]);
       input.end();
@@ -661,6 +667,9 @@ describe('teammate-mcp stdio shim', () => {
           { id: 'codex', spawn: { agent_runtime: 'codex' } },
         ],
       });
+      expect(JSON.stringify(response)).not.toContain(
+        TEAMMATE_DISPATCH_SUCCESS_REMINDER,
+      );
       expect(JSON.stringify(response.result.structuredContent)).not.toContain(
         'provider_ref',
       );
@@ -708,11 +717,15 @@ describe('teammate-mcp stdio shim', () => {
           },
         },
       });
-      expect(await reader.next()).toMatchObject({
+      const historyResponse = await reader.next();
+      expect(historyResponse).toMatchObject({
         jsonrpc: '2.0',
         id: 1,
         result: { structuredContent: { ok: true } },
       });
+      expect(JSON.stringify(historyResponse)).not.toContain(
+        TEAMMATE_DISPATCH_SUCCESS_REMINDER,
+      );
 
       // last without turns forwards just the name; last with turns forwards both.
       writeJson(input, {
@@ -721,11 +734,15 @@ describe('teammate-mcp stdio shim', () => {
         method: 'tools/call',
         params: { name: 'last', arguments: { name: 'reviewer' } },
       });
-      expect(await reader.next()).toMatchObject({
+      const lastResponse = await reader.next();
+      expect(lastResponse).toMatchObject({
         jsonrpc: '2.0',
         id: 2,
         result: { structuredContent: { ok: true } },
       });
+      expect(JSON.stringify(lastResponse)).not.toContain(
+        TEAMMATE_DISPATCH_SUCCESS_REMINDER,
+      );
 
       writeJson(input, {
         jsonrpc: '2.0',
@@ -733,11 +750,15 @@ describe('teammate-mcp stdio shim', () => {
         method: 'tools/call',
         params: { name: 'last', arguments: { name: 'reviewer', turns: 3 } },
       });
-      expect(await reader.next()).toMatchObject({
+      const lastWithTurnsResponse = await reader.next();
+      expect(lastWithTurnsResponse).toMatchObject({
         jsonrpc: '2.0',
         id: 3,
         result: { structuredContent: { ok: true } },
       });
+      expect(JSON.stringify(lastWithTurnsResponse)).not.toContain(
+        TEAMMATE_DISPATCH_SUCCESS_REMINDER,
+      );
 
       expect(admin.requests.map((request) => request.method)).toEqual([
         'mcp.teammate.history',
