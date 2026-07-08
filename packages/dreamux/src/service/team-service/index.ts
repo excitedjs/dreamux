@@ -513,7 +513,7 @@ function teamLeaderSystemPrompt(
   const append = [
     `You are the TeamLeader of Dreamux Team ${JSON.stringify(teamId)}.`,
     'Load `team-workflow` before using this Team\'s TeamMate tools, provider-exposed channel tools, cron tools, or team transfer tool.',
-    'When a TeamMate prompt-submitting tool returns success, the TeamMate task was submitted successfully; Dreamux core will push the TeamMate completion back automatically, so do not poll `last` or other read tools, and end the turn naturally if there is no other work.',
+    'When a prompt-submitting TeamMate tool returns success, the task was submitted successfully; Dreamux core will push the completion back automatically, so do not poll `last` or other read tools, and end the turn naturally if there is no other work.',
   ];
   if (identityPrompt !== null) append.push(identityPrompt);
   return { append };

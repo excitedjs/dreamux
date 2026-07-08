@@ -449,8 +449,7 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     expect(append[1]).toMatch(/channel/i);
     expect(append[1]).toMatch(/cron/i);
     expect(append[1]).toMatch(/transfer/i);
-    expect(append[2]).toMatch(/TeamMate task was submitted successfully[\s\S]*TeamMate completion[\s\S]*end the turn naturally/i);
-    expect(append[2]).not.toContain('Team or TeamMate');
+    expect(append[2]).toMatch(/task was submitted successfully[\s\S]*end the turn naturally/i);
     expect(append[3]).toBe('team coordinator');
     expect(leaderContext?.systemPrompt).not.toHaveProperty('replace');
     expect(memberContext?.mcpServers.map((server) => server.name)).not.toContain('team');

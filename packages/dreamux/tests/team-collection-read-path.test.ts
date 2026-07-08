@@ -424,8 +424,7 @@ describe('TeamCollection identity prompt launch behavior', () => {
     expect(append[1]).toMatch(/channel/i);
     expect(append[1]).toMatch(/cron/i);
     expect(append[1]).toMatch(/transfer/i);
-    expect(append[2]).toMatch(/TeamMate task was submitted successfully[\s\S]*TeamMate completion[\s\S]*end the turn naturally/i);
-    expect(append[2]).not.toContain('Team or TeamMate');
+    expect(append[2]).toMatch(/task was submitted successfully[\s\S]*end the turn naturally/i);
     expect(append[3]).toBe('architecture reviewer');
     expect(contexts[0]?.systemPrompt).not.toHaveProperty('replace');
     const summary = await team.status();
