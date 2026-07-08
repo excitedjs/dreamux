@@ -129,10 +129,12 @@ describe('dispatcher prompt matches registered Dreamux MCP tools', () => {
     expect(basePrompt).toMatch(/simple request[\s\S]{0,120}terminal command/i);
     expect(basePrompt).toMatch(/meaningful progress[\s\S]{0,120}key task milestones/i);
     expect(basePrompt).toMatch(/do not poll `last`[\s\S]{0,120}pushes task completions/i);
+    expect(basePrompt).toMatch(/task was submitted successfully[\s\S]{0,160}end the turn naturally/i);
     expect(appendPrompt).toContain('Load `dispatcher-workflow` before');
     expect(appendPrompt).toContain('Load `dreamux-maintenance` before');
     expect(appendPrompt).toMatch(/Do not read or edit repository code files/i);
     expect(appendPrompt).toMatch(/do not poll `last`[\s\S]{0,120}pushes task results/i);
+    expect(appendPrompt).toMatch(/task was submitted successfully[\s\S]{0,160}end the turn naturally/i);
     expect(allDispatcherPrompts).not.toContain('bind_channel({ team_name, channel_id?, meta })');
     expect(allDispatcherPrompts).not.toContain('create, send, list, status, history, dissolve');
     expect(allDispatcherPrompts).not.toContain('ctx and history_events');
