@@ -19,9 +19,16 @@ import {
   dispatcherTeamMateDir,
   resetRuntimeConfig,
 } from '../src/platform/paths.js';
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 const DISPATCHER = 'flow';
-const silentLog = { warn(): void {} };
+const silentLog: DreamuxLogger = {
+  error: () => {},
+  warn: () => {},
+  info: () => {},
+  debug: () => {},
+  trace: () => {},
+};
 
 /** The #233 per-entity identity path for a dispatcher-owned teammate. */
 function teammateIdentityPath(name: string): string {

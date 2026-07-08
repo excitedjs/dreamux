@@ -495,6 +495,15 @@ The revised implementation is acceptable only when these statements are true:
 - Architecture review must grep the shared runtime holder for role literals and
   reject behavior branches on `dispatcher`, `teammate`, `team_leader`, or
   `team_member`.
+
+  > **Scope-guard assertions are not behavior branches.**
+  > `service/agent-entity/runtime-profile.ts` contains role-name predicates
+  > (`assertDispatcherScopedTeammate`, `assertTeamScopedAgent`,
+  > `assertDispatcherRootAgent`). These throw on scope mismatch — they validate
+  > that a caller is reading the right scope, not *doing different things* by
+  > role. The grep gate targets conditional logic that selects different code
+  > paths by role name (e.g. `if (role === 'team_leader') { useLeaderPath() }`),
+  > not scope validation that fails closed.
 - Architecture review must grep provider packages for `channel-mcp`,
   `--admin-socket`, `--caller`, `--team-id`, `--leader-name`, and
   `dreamuxBinPath()` usage and reject provider-owned core shim construction.

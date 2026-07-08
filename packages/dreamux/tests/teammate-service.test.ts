@@ -166,8 +166,8 @@ async function createTestTeamLeader(input: {
   start?: boolean;
 }): Promise<TeammateService> {
   const log = noopLog();
-  const identities = new AgentIdentityStore({ warn: log.warn.bind(log) });
-  const turnsStore = new AgentTurnsStore({ warn: log.warn.bind(log) });
+  const identities = new AgentIdentityStore(log);
+  const turnsStore = new AgentTurnsStore(log);
   const identity = await identities.create({
     dispatcherId: input.dispatcherId,
     name: input.name,

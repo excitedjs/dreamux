@@ -49,8 +49,17 @@ import type {
   AgentRuntimeMcpServer,
   AgentRuntimeSkillSource,
   AgentRuntimeSystemPrompt,
+  DreamuxLogger,
   TurnSettledSignal,
 } from '@excitedjs/dreamux-types';
+
+const noopLogger: DreamuxLogger = {
+  error: () => {},
+  warn: () => {},
+  info: () => {},
+  debug: () => {},
+  trace: () => {},
+};
 
 const FEISHU_MCP: AgentRuntimeMcpServer = {
   name: 'feishu',
@@ -406,7 +415,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     fleet: FakeFleet;
   }> {
     const dispatcher = claudeDispatcher('flow', opts.config ?? {});
-    const identities = new AgentIdentityStore({ warn: () => {} });
+    const identities = new AgentIdentityStore(noopLogger);
     const cwd = defaultDispatcherCwd('flow');
     let identity = await ensureDispatcherIdentity(identities, {
       dispatcherId: 'flow',

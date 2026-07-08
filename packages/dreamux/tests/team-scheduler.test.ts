@@ -1123,7 +1123,7 @@ async function seedDispatcherCheckpoint(
   log: DreamuxLogger,
   sessionId: string,
 ): Promise<void> {
-  const identities = new AgentIdentityStore({ warn: log.warn.bind(log) });
+  const identities = new AgentIdentityStore(log);
   const dispatcher = config.dispatchers[0]!;
   const identity = await ensureDispatcherIdentity(identities, {
     dispatcherId: dispatcher.id,
@@ -1159,8 +1159,8 @@ function makeTeams(input: {
       contexts: input.contexts,
     }),
     worktrees: new WorktreeManager(),
-    identities: new AgentIdentityStore({ warn: input.log.warn.bind(input.log) }),
-    turnsStore: new AgentTurnsStore({ warn: input.log.warn.bind(input.log) }),
+    identities: new AgentIdentityStore(input.log),
+    turnsStore: new AgentTurnsStore(input.log),
     router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log: input.log }),
     initiatorFor: async () => null,
     isShuttingDown: () => false,

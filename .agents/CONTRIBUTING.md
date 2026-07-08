@@ -14,6 +14,23 @@ Before finishing any non-trivial change, ask:
 If **yes**: update the KB in the same PR. A correct system with a stale KB is
 worse than a buggy system whose KB tells you exactly where to look.
 
+Also ask:
+
+> Did this change add a callback seam that threads through three or more
+> layers (container → collection → service → entity)? If so, should it be
+> a named capability on an interface instead?
+
+Current callback seams in the codebase:
+
+- `initiatorFor` — `DispatcherService` → `CompletionRouter` (delivery target resolution)
+- `leaderChannelDescriptors` — `DispatcherService` → `TeamCollection` → `TeamService` → `buildLeader()` (channel MCP descriptor provisioning)
+- `getRuntime` + `submitScheduled` — container → `SchedulerService` (runtime access and scheduled input submission)
+
+Each is acceptable because it back-references a capability the caller owns but the
+callee cannot import without a cycle. But a new three-layer callback is a smell:
+prefer extracting a named interface or capability object that the callee can
+depend on directly.
+
 If **no** (bug fix inside one function, an obvious refactor, a TODO): don't
 write a KB entry just to look diligent. The KB earns its keep by being terse.
 

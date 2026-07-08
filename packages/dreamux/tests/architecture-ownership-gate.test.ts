@@ -267,8 +267,8 @@ describe('architecture ownership gate (#233)', () => {
     const workspace = join(root, 'workspace');
     await mkdir(workspace, { recursive: true });
     const log = noopLog();
-    const identities = new AgentIdentityStore({ warn: log.warn.bind(log) });
-    const turnsStore = new AgentTurnsStore({ warn: log.warn.bind(log) });
+    const identities = new AgentIdentityStore(log);
+    const turnsStore = new AgentTurnsStore(log);
     const worktree = {
       mode: 'reuse-cwd',
       slug: null,
@@ -321,7 +321,7 @@ describe('architecture ownership gate (#233)', () => {
     const workspace = join(root, 'workspace');
     await mkdir(workspace, { recursive: true });
     const log = noopLog();
-    const identities = new AgentIdentityStore({ warn: log.warn.bind(log) });
+    const identities = new AgentIdentityStore(log);
     const worktree = {
       mode: 'reuse-cwd',
       slug: null,

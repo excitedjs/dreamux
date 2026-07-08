@@ -22,8 +22,6 @@ import {
   type AgentEntityWorktreeIdentity,
 } from './types.js';
 
-export type AgentIdentityStoreLog = Pick<DreamuxLogger, 'warn'>;
-
 export interface AgentIdentityCreateInput {
   dispatcherId: string;
   name: string;
@@ -62,7 +60,7 @@ export interface AgentIdentityUpdateInput {
 }
 
 export class AgentIdentityStore {
-  constructor(private readonly log: AgentIdentityStoreLog) {}
+  constructor(private readonly log: DreamuxLogger) {}
 
   /**
    * Read one identity by name within a scope (issue #233 symmetric layout).

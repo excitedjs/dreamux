@@ -30,6 +30,15 @@ import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.j
 import { ensureDispatcherIdentity } from '../src/service/dispatcher-service/identity.js';
 import { AgentRuntimeStateStore } from '../src/service/agent-entity/runtime-state.js';
 import { testDispatcherConfig } from './helpers/config.js';
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
+
+const noopLogger: DreamuxLogger = {
+  error: () => {},
+  warn: () => {},
+  info: () => {},
+  debug: () => {},
+  trace: () => {},
+};
 
 const execFileAsync = promisify(execFile);
 
@@ -109,7 +118,7 @@ describe('claude-code live integration (opt-in)', () => {
         },
       },
     });
-    const identities = new AgentIdentityStore({ warn: () => {} });
+    const identities = new AgentIdentityStore(noopLogger);
     const identity = await ensureDispatcherIdentity(identities, {
       dispatcherId: 'live',
       agentRuntime: dispatcher.agentRuntime,

@@ -128,12 +128,8 @@ export class DispatcherService {
 
     const worktrees = new WorktreeManager();
 
-    const identities = new AgentIdentityStore({
-      warn: opts.log.warn.bind(opts.log),
-    });
-    const turnsStore = new AgentTurnsStore({
-      warn: opts.log.warn.bind(opts.log),
-    });
+    const identities = new AgentIdentityStore(opts.log);
+    const turnsStore = new AgentTurnsStore(opts.log);
     this.identities = identities;
     this.turnsStore = turnsStore;
 

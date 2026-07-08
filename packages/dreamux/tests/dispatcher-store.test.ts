@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import type { DreamuxConfig } from '../src/config/config.js';
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
 import { dispatcherDir, resetRuntimeConfig } from '../src/platform/paths.js';
 import { testDispatcherConfig } from './helpers/config.js';
@@ -13,6 +14,14 @@ import { Server } from '../src/server.js';
 import { adminMethods } from '../src/admin/methods.js';
 import { codexAgentRuntimeCatalog } from './helpers/fake-agent-runtime.js';
 import { stubChannelCatalog } from './helpers/fake-channel.js';
+
+const noopLogger: DreamuxLogger = {
+  error: () => {},
+  warn: () => {},
+  info: () => {},
+  debug: () => {},
+  trace: () => {},
+};
 
 function configWith(id = 'flow'): DreamuxConfig {
   return {
@@ -99,7 +108,7 @@ describe('dispatcher root identity authority', () => {
   });
 
   it('upsert preserves compatible runtime recovery fields and dispatcher role', async () => {
-    const identities = new AgentIdentityStore({ warn: () => {} });
+    const identities = new AgentIdentityStore(noopLogger);
     const workspace = join(root, 'workspace');
     const first = await ensureDispatcherIdentity(identities, {
       dispatcherId: 'flow',
@@ -153,7 +162,7 @@ describe('dispatcher root identity authority', () => {
     ['runtime_cwd', { runtimeCwd: 'runtime-workspace-b' }],
     ['worktree', { worktreePath: 'worktree-b' }],
   ])('clears checkpoint/status/error when %s changes', async (_field, change) => {
-    const identities = new AgentIdentityStore({ warn: () => {} });
+    const identities = new AgentIdentityStore(noopLogger);
     const workspace = join(root, 'workspace-a');
     const first = await ensureDispatcherIdentity(identities, {
       dispatcherId: 'flow',
@@ -202,7 +211,7 @@ describe('dispatcher root identity authority', () => {
         config: config.dispatchers[0]!.runtime.config,
       },
     };
-    const identities = new AgentIdentityStore({ warn: () => {} });
+    const identities = new AgentIdentityStore(noopLogger);
     const identity = await ensureDispatcherIdentity(identities, {
       dispatcherId: 'flow',
       agentRuntime: config.dispatchers[0]!.agentRuntime,
@@ -246,7 +255,7 @@ describe('dispatcher root identity authority', () => {
         config: config.dispatchers[0]!.runtime.config,
       },
     };
-    const identities = new AgentIdentityStore({ warn: () => {} });
+    const identities = new AgentIdentityStore(noopLogger);
     const identity = await ensureDispatcherIdentity(identities, {
       dispatcherId: 'flow',
       agentRuntime: config.dispatchers[0]!.agentRuntime,

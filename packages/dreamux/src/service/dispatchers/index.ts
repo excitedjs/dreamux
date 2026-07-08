@@ -57,9 +57,7 @@ export class Dispatchers {
     this.adminSocketPath = opts.adminSocketPath;
     this.channelLoggerFactory = opts.channelLoggerFactory;
     this.log = opts.log;
-    this.identities = new AgentIdentityStore({
-      warn: opts.log.warn.bind(opts.log),
-    });
+    this.identities = new AgentIdentityStore(opts.log);
   }
 
   get(id: string): DispatcherService {

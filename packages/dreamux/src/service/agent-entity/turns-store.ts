@@ -31,9 +31,6 @@ function turnsPath(scope: AgentTurnsScope): string {
   });
 }
 
-/** Reuse the neutral logger's `warn` — no forked, message-first shape. */
-export type AgentTurnsStoreLog = Pick<DreamuxLogger, 'warn'>;
-
 const PREVIEW_MAX = 500;
 const PREVIEW_HEAD = 497;
 
@@ -70,7 +67,7 @@ export interface AgentTurnSettledInput {
  * whole.
  */
 export class AgentTurnsStore {
-  constructor(private readonly log: AgentTurnsStoreLog) {}
+  constructor(private readonly log: DreamuxLogger) {}
 
   async appendSubmit(
     scope: AgentTurnsScope,
