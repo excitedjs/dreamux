@@ -7,6 +7,7 @@ import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 
 import type { AdminRequest, AdminResponse } from '../src/admin/protocol.js';
+import { TASK_DISPATCH_SUCCESS_REMINDER } from '../src/mcp/task-dispatch-reminder.js';
 import { runTeamMateMcp } from '../src/mcp/teammate-mcp.js';
 
 class JsonLineReader {
@@ -306,10 +307,14 @@ describe('teammate-mcp stdio shim', () => {
         },
       });
 
-      expect(await reader.next()).toMatchObject({
+      const response = await reader.next();
+      expect(response).toMatchObject({
         jsonrpc: '2.0',
         id: 1,
         result: {
+          content: [{
+            text: expect.stringContaining(TASK_DISPATCH_SUCCESS_REMINDER) as string,
+          }],
           structuredContent: {
             teammate: { name: 'reviewer', status: 'running' },
             turn: { status: 'submitted', turn_id: 'turn-1' },
@@ -341,6 +346,56 @@ describe('teammate-mcp stdio shim', () => {
           },
         },
       ]);
+
+      input.end();
+      await run;
+    } finally {
+      await admin.close();
+    }
+  });
+
+  it('omits the reminder when a TeamMate prompt turn is not submitted', async () => {
+    const admin = await startFakeAdminServer((request) => ({
+      id: request.id,
+      ok: true,
+      result: {
+        teammate: { name: 'reviewer', status: 'degraded' },
+        turn: { status: 'failed', error: 'runtime unavailable' },
+      },
+    }));
+    try {
+      const input = new PassThrough();
+      const output = new PassThrough();
+      const reader = new JsonLineReader(output);
+      const run = runTeamMateMcp({
+        dispatcherId: 'dispatcher-a',
+        callerKind: 'dispatcher',
+        adminSocketPath: admin.socketPath,
+        input,
+        output,
+        log: () => {},
+      });
+
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'send',
+          arguments: { name: 'reviewer', prompt: 'Continue.' },
+        },
+      });
+
+      expect(await reader.next()).toMatchObject({
+        jsonrpc: '2.0',
+        id: 1,
+        result: {
+          content: [{ text: 'send forwarded to dreamux serve' }],
+          structuredContent: {
+            turn: { status: 'failed', error: 'runtime unavailable' },
+          },
+        },
+      });
 
       input.end();
       await run;
