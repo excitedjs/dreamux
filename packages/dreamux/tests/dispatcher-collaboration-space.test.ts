@@ -19,6 +19,9 @@ import type {
 
 import type { AgentRuntimeProviderCatalog } from '../src/agent-runtime/index.js';
 import type { ChannelProviderCatalog } from '../src/channel/catalog.js';
+import type { ChannelService } from '../src/service/channel-service/index.js';
+import type { CollaborationSpaceService } from '../src/service/collaboration-space/index.js';
+import { handleCollaborationTargetLifecycle } from '../src/service/dispatcher-service/collaboration-routing.js';
 import { DispatcherService } from '../src/service/dispatcher-service/index.js';
 import { resetRuntimeConfig } from '../src/platform/paths.js';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
@@ -150,6 +153,14 @@ function noopLog(): DreamuxLogger {
   return log as DreamuxLogger;
 }
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
 describe('DispatcherService collaboration-space routing', () => {
   let root: string;
   let previousHome: string | undefined;
@@ -252,5 +263,63 @@ describe('DispatcherService collaboration-space routing', () => {
         phase: 'bound',
       },
     ]);
+  });
+
+  it('awaits target lifecycle accept but not heavy provisioning', async () => {
+    const accepted = deferred<boolean>();
+    const provisioned = deferred<unknown>();
+    let returned = false;
+    let provisionCalled = false;
+    const channels = {
+      channelProviderRef(channelId: string) {
+        expect(channelId).toBe('primary');
+        return CHANNEL_REF;
+      },
+    } as unknown as ChannelService;
+    const collaborationSpaces = {
+      async acceptTargetCreated(input: unknown) {
+        expect(input).toMatchObject({
+          channelId: 'primary',
+          provider: CHANNEL_REF,
+          target: { target_key: 'topic-1' },
+        });
+        return accepted.promise;
+      },
+      provisionTarget(input: unknown) {
+        provisionCalled = true;
+        expect(input).toMatchObject({
+          channelId: 'primary',
+          provider: CHANNEL_REF,
+          target: { target_key: 'topic-1' },
+        });
+        return provisioned.promise;
+      },
+    } as unknown as CollaborationSpaceService;
+
+    const running = handleCollaborationTargetLifecycle({
+      dispatcherId: 'flow',
+      channelId: 'primary',
+      event: {
+        kind: 'target_created',
+        container: { container_type: 'topic_group', container_key: 'container-1' },
+        target: { target_type: 'topic', target_key: 'topic-1', bindable: true },
+      },
+      channels,
+      collaborationSpaces,
+      log: noopLog(),
+    }).then(() => {
+      returned = true;
+    });
+
+    await Promise.resolve();
+    expect(returned).toBe(false);
+    expect(provisionCalled).toBe(false);
+
+    accepted.resolve(true);
+    await running;
+
+    expect(returned).toBe(true);
+    expect(provisionCalled).toBe(true);
+    provisioned.resolve({});
   });
 });

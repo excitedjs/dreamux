@@ -22,6 +22,10 @@ import type {
   DispatcherStore,
 } from '../../state/dispatcher-store.js';
 import { createDispatcherAgent } from './agent.js';
+import {
+  handleCollaborationTargetLifecycle,
+  routeTeamOrCollaborationChannelInput,
+} from './collaboration-routing.js';
 import { dispatcherMcpServerDescriptors } from './mcp-descriptors.js';
 import type { ChannelMcpCallerScope } from '../channel-service/mcp-descriptors.js';
 import { ensureDispatcherIdentity as ensureDispatcherRootIdentity } from './identity.js';
@@ -322,50 +326,15 @@ export class DispatcherService {
             asInboundDeliveryResult(
               await this.routeChannelInput(channelId, turn, envelope),
             ),
-          targetLifecycle: async (event) => {
-            if (event.kind === 'target_created') {
-              const input = {
-                channelId,
-                provider: this.channels.channelProviderRef(channelId),
-                container: event.container,
-                target: event.target,
-                ...(event.title !== undefined ? { title: event.title } : {}),
-                ...(event.event_id !== undefined ? { eventId: event.event_id } : {}),
-              };
-              const accepted = await this.collaborationSpaces.acceptTargetCreated(input);
-              if (!accepted) return;
-              void this.collaborationSpaces.provisionTarget(input).catch((err) => {
-                this.log.error(
-                  {
-                    dispatcher_id: this.id,
-                    channel_id: channelId,
-                    err: errInfo(err),
-                  },
-                  'collaboration target lifecycle provisioning failed',
-                );
-              });
-              return;
-            }
-            const input = {
+          targetLifecycle: (event) =>
+            handleCollaborationTargetLifecycle({
+              dispatcherId: this.id,
               channelId,
-              provider: this.channels.channelProviderRef(channelId),
-              container: event.container,
-              target: event.target,
-              ...(event.event_id !== undefined ? { eventId: event.event_id } : {}),
-            };
-            const accepted = await this.collaborationSpaces.acceptTargetClosed(input);
-            if (!accepted) return;
-            void this.collaborationSpaces.closeTarget(input).catch((err) => {
-              this.log.error(
-                {
-                  dispatcher_id: this.id,
-                  channel_id: channelId,
-                  err: errInfo(err),
-                },
-                'collaboration target lifecycle close failed',
-              );
-            });
-          },
+              event,
+              channels: this.channels,
+              collaborationSpaces: this.collaborationSpaces,
+              log: this.log,
+            }),
         });
         this.assertNotShuttingDown();
         liveChannels.set(channelId, session);
@@ -624,57 +593,15 @@ export class DispatcherService {
     envelope: ChannelInboundEnvelope,
   ): Promise<AgentRuntimeTurnResult> {
     this.assertNotShuttingDown();
-    const target = envelope.target;
-    if (target.bindable) {
-      const routed = await this.channels.resolveInboundBinding({
-        channelId,
-        target,
-      });
-      if (
-        routed !== null &&
-        (await this.teams.isOpenTeam(routed.owner.teamName))
-      ) {
-        const team = await this.teams.get(routed.owner.teamName);
-        return team.deliverToLeader(input);
-      }
-      if (envelope.container !== undefined) {
-        try {
-          const provisionInput = {
-            channelId,
-            provider: envelope.provider,
-            container: envelope.container,
-            target,
-            ...(envelope.event_id !== undefined ? { eventId: envelope.event_id } : {}),
-          };
-          const accepted = await this.collaborationSpaces.acceptTargetCreated(
-            provisionInput,
-          );
-          const provisioned = accepted
-            ? await this.collaborationSpaces.provisionTarget(provisionInput)
-            : null;
-          if (provisioned !== null && provisioned.lifecycle_status === 'active') {
-            const provisionedRoute = await this.channels.resolveInboundBinding({
-              channelId,
-              target,
-            });
-            if (
-              provisionedRoute !== null &&
-              (await this.teams.isOpenTeam(provisionedRoute.owner.teamName))
-            ) {
-              const team = await this.teams.get(provisionedRoute.owner.teamName);
-              const result = await team.deliverToLeader(input);
-              return result;
-            }
-          }
-        } catch (err) {
-          return {
-            status: 'failed',
-            error: err instanceof Error ? err : new Error(String(err)),
-          };
-        }
-      }
-    }
-    return this.mustAgent().channelInput(input);
+    return routeTeamOrCollaborationChannelInput({
+      channelId,
+      turn: input,
+      envelope,
+      channels: this.channels,
+      teams: this.teams,
+      collaborationSpaces: this.collaborationSpaces,
+      fallback: (turn) => this.mustAgent().channelInput(turn),
+    });
   }
 
   /**

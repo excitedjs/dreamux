@@ -1,7 +1,7 @@
 # Collaboration space provisioning
 
-- **Status:** Draft spec under final review
-- **Source baseline:** `origin/next` at `702fa30`
+- **Status:** Implementation draft in PR #287
+- **Source baseline:** `origin/next` at `6417434`
 - **Affects:** core MCP surfaces, collaboration-space lifecycle state,
   `@excitedjs/dreamux-types` Channel lifecycle contracts, core Channel/Team
   orchestration, channel binding state, Team worktree provisioning, Feishu
@@ -272,6 +272,16 @@ interface ChannelInboundEnvelope {
 
 - `targetLifecycle(event): Promise<void>`
 
+**Implementation note (post-#282):** The existing `deliver(input, envelope):
+Promise<InboundDeliveryResult>` route carries the inbound turn plus the
+routing envelope (including optional `container`). The channel provider owns
+any platform ACK or reaction lifecycle around this call; core returns the
+neutral `InboundDeliveryResult` and never directly acknowledges the platform.
+`targetLifecycle` is a separate optional callback for target-created and
+target-closed events. The implementation does **not** use any legacy
+`InboundDeliveryHooks` / `onAccepted` interface — those were removed in the
+#282 dispatcher entity refactor.
+
 Provider obligations:
 
 - `container_key` and `target_key` are provider-owned opaque strings.
@@ -488,6 +498,12 @@ implementation. A later proposal must define whether this creates a new Team,
 revives the old Team, or fails loud.
 
 ## Lifecycle Intake And ACK Semantics
+
+This section applies to `targetLifecycle` events only. For the `deliver()`
+route, the ACK model is simpler: the provider calls `deliver(input, envelope)`,
+core returns the neutral `InboundDeliveryResult` synchronously, and the
+provider owns any platform ACK or reaction lifecycle around that call. Core
+never directly acknowledges the platform for `deliver()`.
 
 Provider lifecycle callbacks must durably accept before acknowledging platform
 delivery.

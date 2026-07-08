@@ -121,17 +121,34 @@ The current core surface is:
   `history` or recovery tool.
 
 The Channel contract has optional provider-neutral collaboration-space fields:
-providers may attach `ChannelInboundEnvelope.container` and may call
-`ChannelRoutes.targetLifecycle` with `target_created` / `target_closed` events.
+providers may attach `ChannelInboundEnvelope.container` on inbound deliveries
+and may call `ChannelRoutes.targetLifecycle` with `target_created` /
+`target_closed` events. `ChannelRoutes.deliver(input, envelope)` returns the
+neutral `InboundDeliveryResult`; the channel provider owns any platform ACK or
+reaction lifecycle around this call. Core never directly acknowledges the
+platform.
+
 Core uses only `(channel_id, container_key, target_key)` plus the current
 binding generation; it must not parse Feishu `chat_id`, `thread_id`, chat mode,
 or provider-specific `target.meta` to infer collaboration-space membership.
 
-When a bound collaboration-space target is created, the dispatcher-local
-`CollaborationSpaceService` provisions a managed worktree and Team through the
-dispatcher-owned `TeamCollection`, then binds the target through
-`ChannelService`. This path bypasses the dispatcher agent runtime but still goes
-through `DispatcherService` and core stores. When the space is dissolved, future
+Provisioning has two entry points:
+
+- **Target lifecycle events.** When the provider calls
+  `ChannelRoutes.targetLifecycle` with `target_created` for a container with a
+  bound collaboration-space record, `CollaborationSpaceService` writes the
+  durable claim and returns; heavy worktree/Team provisioning runs
+  asynchronously. For `target_closed`, the service accepts the close event and
+  asynchronously dissolves the Team and releases the binding.
+- **First-inbound provisioning.** When a bindable target has no existing binding
+  and `envelope.container` is set on `deliver()`, `routeChannelInput` calls
+  `acceptAndProvisionTarget` synchronously before routing. If provisioning
+  succeeds and the Team is active, the inbound is delivered to the TeamLeader;
+  if it fails, a failed `InboundDeliveryResult` is returned. This path never
+  falls back to the dispatcher agent for bound collaboration spaces.
+
+Both paths bypass the dispatcher agent runtime but still go through
+`DispatcherService` and core stores. When the space is dissolved, future
 deliveries fall back to the normal dispatcher path unless the space is rebound.
 
 Key source:

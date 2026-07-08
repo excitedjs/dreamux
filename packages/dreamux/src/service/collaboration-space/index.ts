@@ -241,6 +241,11 @@ export class CollaborationSpaceService {
     );
   }
 
+  async acceptAndProvisionTarget(input: CollaborationSpaceProvisionInput): Promise<ProvisionedTargetRecord | null> {
+    const accepted = await this.acceptTargetCreated(input);
+    return accepted ? this.provisionTarget(input) : null;
+  }
+
   async acceptTargetCreated(input: CollaborationSpaceProvisionInput): Promise<boolean> {
     this.assertNotShuttingDown();
     if (!input.target.bindable) {
@@ -323,17 +328,27 @@ export class CollaborationSpaceService {
         updated_at: Date.now(),
       });
       if (closing.leader_name !== null) {
-        await this.channels.transferResolvedTargetBack({
-          expectedOwner: ownerForTarget(closing),
-          channelId: closing.channel_id,
-          target: targetFromRecord(closing),
-        });
-        await this.teams.get(closing.team_name).then((team) =>
-          team.dissolve({
-            teamId: closing.team_name,
-            note: `Collaboration target ${closing.target_key} closed.`,
-          }),
-        );
+        try {
+          await this.channels.transferResolvedTargetBack({
+            expectedOwner: ownerForTarget(closing),
+            channelId: closing.channel_id,
+            target: targetFromRecord(closing),
+          });
+          await this.teams.get(closing.team_name).then((team) =>
+            team.dissolve({
+              teamId: closing.team_name,
+              note: `Collaboration target ${closing.target_key} closed.`,
+            }),
+          );
+        } catch (err) {
+          const msg = parseMessage(err);
+          await this.store.saveTarget({ ...closing, last_error: msg, updated_at: Date.now() });
+          this.opts.log.error(
+            { dispatcher_id: this.dispatcherId, space_name: closing.space_name, target_key: closing.target_key, err: { message: msg } },
+            'collaboration target close failed (target remains in closing state for retry)',
+          );
+          throw err;
+        }
       }
       const closed = await this.store.saveTarget({
         ...closing,
