@@ -270,6 +270,7 @@ describe('team-mcp stdio shim', () => {
           }],
           structuredContent: {
             team: { team_name: 'alpha' },
+            reminder: TEAM_DISPATCH_SUCCESS_REMINDER,
           },
         },
       });
@@ -287,6 +288,65 @@ describe('team-mcp stdio shim', () => {
           prompt: 'start',
         },
       });
+
+      input.end();
+      await run;
+    } finally {
+      await admin.close();
+    }
+  });
+
+  it('omits the reminder when Team create starts an idle leader without a prompt', async () => {
+    const admin = await startFakeAdminServer((request) => ({
+      id: request.id,
+      ok: true,
+      result: {
+        team: { team_name: 'alpha' },
+        leader: { name: 'alpha-leader', status: 'running' },
+        member_count: 0,
+        turn: null,
+      },
+    }));
+    try {
+      const input = new PassThrough();
+      const output = new PassThrough();
+      const reader = new JsonLineReader(output);
+      const run = runTeamMcp({
+        dispatcherId: 'dispatcher-a',
+        adminSocketPath: admin.socketPath,
+        input,
+        output,
+        log: () => {},
+      });
+
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'create',
+          arguments: {
+            team_name: 'alpha',
+            leader_agent_runtime: 'codex',
+            intent: 'lead alpha',
+          },
+        },
+      });
+
+      const response = await reader.next();
+      expect(response).toMatchObject({
+        jsonrpc: '2.0',
+        id: 1,
+        result: {
+          content: [{ text: 'create forwarded to dreamux serve' }],
+          structuredContent: {
+            team: { team_name: 'alpha' },
+            turn: null,
+          },
+        },
+      });
+      expect(JSON.stringify(response)).not.toContain(TEAM_DISPATCH_SUCCESS_REMINDER);
+      expect(admin.requests[0]?.params).not.toHaveProperty('prompt');
 
       input.end();
       await run;
@@ -393,6 +453,7 @@ describe('team-mcp stdio shim', () => {
           },
         },
       });
+      expect(JSON.stringify(listResponse)).not.toContain(TEAM_DISPATCH_SUCCESS_REMINDER);
       expect(statusResponse).toMatchObject({
         result: {
           structuredContent: {
@@ -401,6 +462,7 @@ describe('team-mcp stdio shim', () => {
           },
         },
       });
+      expect(JSON.stringify(statusResponse)).not.toContain(TEAM_DISPATCH_SUCCESS_REMINDER);
       expect(historyResponse).toMatchObject({
         result: {
           structuredContent: {
@@ -409,11 +471,15 @@ describe('team-mcp stdio shim', () => {
           },
         },
       });
+      expect(JSON.stringify(historyResponse)).not.toContain(TEAM_DISPATCH_SUCCESS_REMINDER);
       expect(sendResponse).toMatchObject({
         result: {
           content: [{
             text: expect.stringContaining(TEAM_DISPATCH_SUCCESS_REMINDER) as string,
           }],
+          structuredContent: {
+            reminder: TEAM_DISPATCH_SUCCESS_REMINDER,
+          },
         },
       });
       expect(JSON.stringify(sendResponse)).not.toContain(TEAMMATE_DISPATCH_SUCCESS_REMINDER);
@@ -472,7 +538,8 @@ describe('team-mcp stdio shim', () => {
         },
       });
 
-      expect(await reader.next()).toMatchObject({
+      const response = await reader.next();
+      expect(response).toMatchObject({
         jsonrpc: '2.0',
         id: 1,
         result: {
@@ -482,6 +549,9 @@ describe('team-mcp stdio shim', () => {
           },
         },
       });
+      expect(JSON.stringify(response)).not.toContain(
+        TEAM_DISPATCH_SUCCESS_REMINDER,
+      );
 
       input.end();
       await run;
@@ -518,7 +588,8 @@ describe('team-mcp stdio shim', () => {
           arguments: { team_name: 'alpha', repo_cwd: '/repo', leader_agent_runtime: 'codex' },
         },
       });
-      expect(await reader.next()).toMatchObject({
+      const createResponse = (await reader.next()) as { result: Record<string, unknown> };
+      expect(createResponse).toMatchObject({
         jsonrpc: '2.0',
         id: 1,
         result: {
@@ -526,6 +597,7 @@ describe('team-mcp stdio shim', () => {
           content: [{ text: 'intent must be a non-empty string' }],
         },
       });
+      expect(createResponse.result).not.toHaveProperty('structuredContent');
 
       // dissolve without note → rejected before admin IPC.
       writeJson(input, {
@@ -534,7 +606,8 @@ describe('team-mcp stdio shim', () => {
         method: 'tools/call',
         params: { name: 'dissolve', arguments: { team_name: 'alpha' } },
       });
-      expect(await reader.next()).toMatchObject({
+      const dissolveResponse = (await reader.next()) as { result: Record<string, unknown> };
+      expect(dissolveResponse).toMatchObject({
         jsonrpc: '2.0',
         id: 2,
         result: {
@@ -542,8 +615,61 @@ describe('team-mcp stdio shim', () => {
           content: [{ text: 'note must be a non-empty string' }],
         },
       });
+      expect(dissolveResponse.result).not.toHaveProperty('structuredContent');
 
       expect(admin.requests).toEqual([]);
+      input.end();
+      await run;
+    } finally {
+      await admin.close();
+    }
+  });
+
+  it('omits the reminder when dissolving a Team without submitting a turn', async () => {
+    const admin = await startFakeAdminServer((request) => ({
+      id: request.id,
+      ok: true,
+      result: {
+        team: { team_name: 'alpha', status: 'closed' },
+        leader: { name: 'alpha-leader', status: 'closed' },
+      },
+    }));
+    try {
+      const input = new PassThrough();
+      const output = new PassThrough();
+      const reader = new JsonLineReader(output);
+      const run = runTeamMcp({
+        dispatcherId: 'dispatcher-a',
+        adminSocketPath: admin.socketPath,
+        input,
+        output,
+        log: () => {},
+      });
+
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'dissolve',
+          arguments: { team_name: 'alpha', note: 'done' },
+        },
+      });
+
+      const response = await reader.next();
+      expect(response).toMatchObject({
+        jsonrpc: '2.0',
+        id: 1,
+        result: {
+          content: [{ text: 'dissolve forwarded to dreamux serve' }],
+          structuredContent: {
+            team: { team_name: 'alpha', status: 'closed' },
+          },
+        },
+      });
+      expect(JSON.stringify(response)).not.toContain(TEAM_DISPATCH_SUCCESS_REMINDER);
+      expect(admin.requests[0]?.method).toBe('mcp.team.dissolve');
+
       input.end();
       await run;
     } finally {
