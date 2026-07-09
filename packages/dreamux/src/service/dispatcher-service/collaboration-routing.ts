@@ -9,7 +9,6 @@ import type {
 import type { ChannelService } from '../channel-service/index.js';
 import type { CollaborationSpaceService } from '../collaboration-space/index.js';
 import type { TeamCollection } from '../team-collection/index.js';
-import { errInfo } from './runtime-helpers.js';
 
 export async function handleCollaborationTargetLifecycle(input: {
   dispatcherId: string;
@@ -21,13 +20,11 @@ export async function handleCollaborationTargetLifecycle(input: {
   log: DreamuxLogger;
 }): Promise<void> {
   const {
-    dispatcherId,
     dispatcherAgentRuntime,
     channelId,
     event,
     channels,
     collaborationSpaces,
-    log,
   } = input;
   if (event.kind === 'target_created') {
     const provisionInput = provisionInputForTarget({
@@ -47,16 +44,7 @@ export async function handleCollaborationTargetLifecycle(input: {
       }),
     });
     if (accepted === null) return;
-    void accepted.provision().catch((err) => {
-      log.error(
-        {
-          dispatcher_id: dispatcherId,
-          channel_id: channelId,
-          err: errInfo(err),
-        },
-        'collaboration target lifecycle provisioning failed',
-      );
-    });
+    collaborationSpaces.startAcceptedTargetProvision(accepted);
     return;
   }
 
@@ -69,16 +57,7 @@ export async function handleCollaborationTargetLifecycle(input: {
   };
   const accepted = await collaborationSpaces.acceptTargetClosed(closeInput);
   if (!accepted) return;
-  void collaborationSpaces.closeTarget(closeInput).catch((err) => {
-    log.error(
-      {
-        dispatcher_id: dispatcherId,
-        channel_id: channelId,
-        err: errInfo(err),
-      },
-      'collaboration target lifecycle close failed',
-    );
-  });
+  collaborationSpaces.startTargetClose(closeInput);
 }
 
 export async function routeTeamOrCollaborationChannelInput(input: {
@@ -158,6 +137,48 @@ export async function routeTeamOrCollaborationChannelInput(input: {
           error: err instanceof Error ? err : new Error(String(err)),
         };
       }
+    }
+    let claimed: Awaited<
+      ReturnType<CollaborationSpaceService['provisionClaimedTarget']>
+    >;
+    try {
+      claimed = await collaborationSpaces.provisionClaimedTarget({
+        channelId,
+        provider: channels.channelProviderRef(channelId),
+        target,
+      });
+    } catch (err) {
+      return {
+        status: 'failed',
+        error: err instanceof Error ? err : new Error(String(err)),
+      };
+    }
+    if (claimed !== null) {
+      if (claimed.lifecycle_status !== 'active') {
+        return {
+          status: 'failed',
+          error: new Error(
+            `collaboration target '${target.target_key}' is not active`,
+          ),
+        };
+      }
+      const claimedRoute = await channels.resolveInboundBinding({
+        channelId,
+        target,
+      });
+      if (
+        claimedRoute !== null &&
+        (await teams.isOpenTeam(claimedRoute.owner.teamName))
+      ) {
+        const team = await teams.get(claimedRoute.owner.teamName);
+        return team.deliverToLeader(turn);
+      }
+      return {
+        status: 'failed',
+        error: new Error(
+          `collaboration target '${target.target_key}' is active but has no open Team route`,
+        ),
+      };
     }
   }
   return fallback(turn);

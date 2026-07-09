@@ -174,7 +174,10 @@ Channel provider implementation. Space-level MCP/admin behavior stays in the
 facade; target accept/provision/close state transitions live in the contained
 `CollaborationTargetLifecycle`. That target worker uses the dispatcher's existing
 `ChannelService` plus single dispatcher-level `TeamCollection` to provision Teams
-for channel targets.
+for channel targets. Accepted lifecycle work is tracked by
+`CollaborationSpaceService`: startup resumes durable `creating` / `closing`
+target records, and dispatcher stop/shutdown drains accepted background target
+tasks before closing the service graph.
 
 The dispatcher-only `collaboration_space` MCP exposes `bind`, `dissolve`,
 `status`, and `list`. Binding registers an existing external container and a

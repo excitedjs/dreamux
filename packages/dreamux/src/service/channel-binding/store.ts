@@ -55,18 +55,36 @@ export interface BindChannelInput {
   leaderName: string;
 }
 
+export interface ChannelBindingOwnerInput {
+  teamName: string;
+  leaderName: string;
+}
+
 export interface ResolveChannelInput {
   dispatcherId: string;
   channelId: string;
   targetKey: string;
 }
 
-export type TransferChannelBackInput = ResolveChannelInput;
+export type TransferChannelBackInput = ResolveChannelInput & {
+  expectedOwner?: ChannelBindingOwnerInput;
+};
 
 export class ChannelBindingStore {
   private readonly writes = new KeyedAsyncQueue();
 
   async bind(input: BindChannelInput): Promise<ChannelBinding> {
+    return this.bindInternal(input, 'replace');
+  }
+
+  async claim(input: BindChannelInput): Promise<ChannelBinding> {
+    return this.bindInternal(input, 'claim');
+  }
+
+  private async bindInternal(
+    input: BindChannelInput,
+    mode: 'replace' | 'claim',
+  ): Promise<ChannelBinding> {
     if (!input.target.bindable) {
       throw new Error(
         `channel target ${JSON.stringify(input.target.target_key)} (type ` +
@@ -106,9 +124,21 @@ export class ChannelBindingStore {
         await this.write(input.dispatcherId, file);
         return next;
       }
+      const previous = file.bindings[idx]!;
+      if (
+        mode === 'claim' &&
+        previous.active &&
+        (previous.team_name !== input.teamName ||
+          previous.leader_name !== input.leaderName)
+      ) {
+        throw new Error(
+          `channel target ${JSON.stringify(input.target.target_key)} is already ` +
+            `bound to Team ${JSON.stringify(previous.team_name)}`,
+        );
+      }
       const merged: ChannelBinding = {
         ...next,
-        created_at: file.bindings[idx]!.created_at,
+        created_at: previous.created_at,
       };
       file.bindings[idx] = merged;
       await this.write(input.dispatcherId, file);
@@ -119,6 +149,29 @@ export class ChannelBindingStore {
   async transferBack(
     input: TransferChannelBackInput,
   ): Promise<ChannelBinding | null> {
+    return this.transferBackInternal(input, 'throw-on-mismatch');
+  }
+
+  async transferBackIfOwned(
+    input: ResolveChannelInput & {
+      owner: ChannelBindingOwnerInput;
+    },
+  ): Promise<ChannelBinding | null> {
+    return this.transferBackInternal(
+      {
+        dispatcherId: input.dispatcherId,
+        channelId: input.channelId,
+        targetKey: input.targetKey,
+        expectedOwner: input.owner,
+      },
+      'ignore-mismatch',
+    );
+  }
+
+  private async transferBackInternal(
+    input: TransferChannelBackInput,
+    mode: 'throw-on-mismatch' | 'ignore-mismatch',
+  ): Promise<ChannelBinding | null> {
     return this.writes.run(input.dispatcherId, async () => {
       const file = await this.read(input.dispatcherId);
       const binding = file.bindings.find(
@@ -128,6 +181,20 @@ export class ChannelBindingStore {
           entry.active,
       );
       if (binding === undefined) return null;
+      if (
+        input.expectedOwner !== undefined &&
+        (binding.team_name !== input.expectedOwner.teamName ||
+          binding.leader_name !== input.expectedOwner.leaderName)
+      ) {
+        if (mode === 'ignore-mismatch') return null;
+        throw new Error(
+          `channel target '${input.targetKey}' is bound to Team ` +
+            `${JSON.stringify(binding.team_name)} leader ` +
+            `${JSON.stringify(binding.leader_name)}, not Team ` +
+            `${JSON.stringify(input.expectedOwner.teamName)} leader ` +
+            `${JSON.stringify(input.expectedOwner.leaderName)}`,
+        );
+      }
       binding.active = false;
       binding.updated_at = Date.now();
       binding.deactivated_at = binding.updated_at;

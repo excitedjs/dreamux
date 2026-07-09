@@ -307,6 +307,9 @@ describe('DispatcherService collaboration-space routing', () => {
         expect(options).toMatchObject({ allowMissing: true });
         return accepted.promise;
       },
+      startAcceptedTargetProvision(value: { provision: () => Promise<unknown> }) {
+        void value.provision();
+      },
     } as unknown as CollaborationSpaceService;
 
     const running = handleCollaborationTargetLifecycle({
@@ -449,6 +452,87 @@ describe('DispatcherService collaboration-space routing', () => {
     if (result.status === 'failed') {
       expect(result.error.message).toContain('simulated provision failure');
     }
+    expect(fallback).not.toHaveBeenCalled();
+  });
+
+  it('routes an existing durable claim even when the inbound envelope has no container', async () => {
+    const fallback = vi.fn(async (): Promise<AgentRuntimeTurnResult> => ({
+      status: 'submitted',
+      turnId: 'fallback',
+    }));
+    const delivered: InboundTurnInput[] = [];
+    const routeOwner = {
+      kind: 'team' as const,
+      teamName: 'space-topic-team',
+      leaderName: 'space-topic-leader',
+    };
+    const channels = {
+      async resolveInboundBinding(input: { target: { target_key: string } }) {
+        return input.target.target_key === 'topic-claimed'
+          ? { binding: { active: true }, owner: routeOwner }
+          : null;
+      },
+      channelProviderRef(channelId: string) {
+        expect(channelId).toBe('primary');
+        return CHANNEL_REF;
+      },
+    } as unknown as ChannelService;
+    const collaborationSpaces = {
+      async provisionClaimedTarget(input: unknown) {
+        expect(input).toMatchObject({
+          channelId: 'primary',
+          provider: CHANNEL_REF,
+          target: { target_key: 'topic-claimed' },
+        });
+        return {
+          lifecycle_status: 'active',
+          target_key: 'topic-claimed',
+          team_name: routeOwner.teamName,
+        };
+      },
+    } as unknown as CollaborationSpaceService;
+    const teams = {
+      async isOpenTeam(teamName: string) {
+        return teamName === routeOwner.teamName;
+      },
+      async get(teamName: string) {
+        expect(teamName).toBe(routeOwner.teamName);
+        return {
+          async deliverToLeader(turn: InboundTurnInput) {
+            delivered.push(turn);
+            return { status: 'submitted' as const, turnId: 'team-turn' };
+          },
+        };
+      },
+    } as unknown as TeamCollection;
+
+    const result = await routeTeamOrCollaborationChannelInput({
+      channelId: 'primary',
+      dispatcherAgentRuntime: 'dispatcher-runtime',
+      turn: {
+        text: 'claim-only',
+        body: 'claim-only',
+        sourceId: 'msg-claim-only',
+      },
+      envelope: {
+        provider: CHANNEL_REF,
+        channel_id: 'primary',
+        target: {
+          target_type: 'topic',
+          target_key: 'topic-claimed',
+          bindable: true,
+        },
+      },
+      channels,
+      teams,
+      collaborationSpaces,
+      fallback,
+    });
+
+    expect(result).toEqual({ status: 'submitted', turnId: 'team-turn' });
+    expect(delivered).toEqual([
+      { text: 'claim-only', body: 'claim-only', sourceId: 'msg-claim-only' },
+    ]);
     expect(fallback).not.toHaveBeenCalled();
   });
 

@@ -147,6 +147,65 @@ describe('ChannelBindingStore v2', () => {
     ).resolves.toMatchObject({ team_name: 'beta' });
   });
 
+  it('claim rejects an active target owned by another Team', async () => {
+    const store = new ChannelBindingStore();
+    await store.bind({
+      dispatcherId: DISPATCHER,
+      channelId: 'primary',
+      provider: 'builtin:feishu',
+      target: groupTarget('chat-a'),
+      teamName: 'alpha',
+      leaderName: 'alpha-leader',
+    });
+
+    await expect(
+      store.claim({
+        dispatcherId: DISPATCHER,
+        channelId: 'primary',
+        provider: 'builtin:feishu',
+        target: groupTarget('chat-a'),
+        teamName: 'beta',
+        leaderName: 'beta-leader',
+      }),
+    ).rejects.toThrow(/already bound to Team "alpha"/);
+    await expect(
+      store.resolve({ dispatcherId: DISPATCHER, channelId: 'primary', targetKey: 'chat-a' }),
+    ).resolves.toMatchObject({ team_name: 'alpha', active: true });
+  });
+
+  it('transferBackIfOwned ignores owner mismatches without deactivating the new owner', async () => {
+    const store = new ChannelBindingStore();
+    await store.bind({
+      dispatcherId: DISPATCHER,
+      channelId: 'primary',
+      provider: 'builtin:feishu',
+      target: groupTarget('chat-a'),
+      teamName: 'beta',
+      leaderName: 'beta-leader',
+    });
+
+    await expect(
+      store.transferBackIfOwned({
+        dispatcherId: DISPATCHER,
+        channelId: 'primary',
+        targetKey: 'chat-a',
+        owner: { teamName: 'alpha', leaderName: 'alpha-leader' },
+      }),
+    ).resolves.toBeNull();
+    await expect(
+      store.resolve({ dispatcherId: DISPATCHER, channelId: 'primary', targetKey: 'chat-a' }),
+    ).resolves.toMatchObject({ team_name: 'beta', active: true });
+
+    await expect(
+      store.transferBack({
+        dispatcherId: DISPATCHER,
+        channelId: 'primary',
+        targetKey: 'chat-a',
+        expectedOwner: { teamName: 'alpha', leaderName: 'alpha-leader' },
+      }),
+    ).rejects.toThrow(/not Team "alpha"/);
+  });
+
   it('preserves concurrent binds for different targets in the same file', async () => {
     const store = new ChannelBindingStore();
     const mutableStore = store as unknown as {

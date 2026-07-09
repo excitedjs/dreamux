@@ -14,6 +14,14 @@ import {
   type CreatedTeam,
 } from './helpers/collaboration-space.js';
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
 describe('CollaborationSpaceService', () => {
   let root: string;
   let previousHome: string | undefined;
@@ -686,5 +694,226 @@ describe('CollaborationSpaceService', () => {
 
     expect(result).toBeNull();
     expect(created).toHaveLength(0);
+  });
+
+  it('resumes pending creating targets after durable accept', async () => {
+    const created: CreatedTeam[] = [];
+    const dissolved: string[] = [];
+    const channels = fakeChannels();
+    const service = new CollaborationSpaceService({
+      dispatcherId: 'flow',
+      config: fakeConfig(),
+      teams: fakeTeams(created, dissolved),
+      channels: channels.service,
+      log: log as never,
+      isShuttingDown: () => false,
+    });
+
+    await service.bind({
+      spaceName: 'space-alpha',
+      container: { container_type: 'topic_group', container_key: 'container-1' },
+      repo: { cwd: '/repo/a' },
+      leaderAgentRuntime: 'agent-a',
+    });
+    await expect(
+      service.acceptTargetCreated({
+        channelId: 'primary',
+        provider: 'builtin:test',
+        container: { container_type: 'topic_group', container_key: 'container-1' },
+        target: {
+          target_type: 'topic',
+          target_key: 'topic-resume-create',
+          bindable: true,
+        },
+      }),
+    ).resolves.toBe(true);
+    expect(created).toHaveLength(0);
+
+    await service.resumePendingTargets();
+
+    expect(created).toHaveLength(1);
+    expect(channels.boundOwners.has('topic-resume-create')).toBe(true);
+    await expect(service.status({ spaceName: 'space-alpha' })).resolves.toMatchObject({
+      targets: [{ target_key: 'topic-resume-create', lifecycle_status: 'active' }],
+    });
+  });
+
+  it('resumes pending closing targets after durable close accept', async () => {
+    const created: CreatedTeam[] = [];
+    const dissolved: string[] = [];
+    const channels = fakeChannels();
+    const service = new CollaborationSpaceService({
+      dispatcherId: 'flow',
+      config: fakeConfig(),
+      teams: fakeTeams(created, dissolved),
+      channels: channels.service,
+      log: log as never,
+      isShuttingDown: () => false,
+    });
+
+    await service.bind({
+      spaceName: 'space-alpha',
+      container: { container_type: 'topic_group', container_key: 'container-1' },
+      repo: { cwd: '/repo/a' },
+      leaderAgentRuntime: 'agent-a',
+    });
+    const targetInput = {
+      channelId: 'primary',
+      provider: 'builtin:test',
+      container: { container_type: 'topic_group', container_key: 'container-1' },
+      target: {
+        target_type: 'topic',
+        target_key: 'topic-resume-close',
+        bindable: true,
+      },
+    };
+    const provisioned = await service.provisionTarget(targetInput);
+    await expect(service.acceptTargetClosed(targetInput)).resolves.toBe(true);
+    expect(dissolved).toEqual([]);
+
+    await service.resumePendingTargets();
+
+    expect(channels.boundOwners.has('topic-resume-close')).toBe(false);
+    expect(dissolved).toEqual([provisioned?.team_name]);
+    await expect(service.status({ spaceName: 'space-alpha' })).resolves.toMatchObject({
+      targets: [{ target_key: 'topic-resume-close', lifecycle_status: 'closed' }],
+    });
+  });
+
+  it('dissolve detaches an accepted target before its deferred provision can bind', async () => {
+    const created: CreatedTeam[] = [];
+    const dissolved: string[] = [];
+    const channels = fakeChannels();
+    const service = new CollaborationSpaceService({
+      dispatcherId: 'flow',
+      config: fakeConfig(),
+      teams: fakeTeams(created, dissolved),
+      channels: channels.service,
+      log: log as never,
+      isShuttingDown: () => false,
+    });
+
+    await service.bind({
+      spaceName: 'space-alpha',
+      container: { container_type: 'topic_group', container_key: 'container-1' },
+      repo: { cwd: '/repo/a' },
+      leaderAgentRuntime: 'agent-a',
+    });
+    const accepted = await service.acceptTargetCreatedForProvision({
+      channelId: 'primary',
+      provider: 'builtin:test',
+      container: { container_type: 'topic_group', container_key: 'container-1' },
+      target: {
+        target_type: 'topic',
+        target_key: 'topic-dissolve-race',
+        bindable: true,
+      },
+    });
+    expect(accepted).not.toBeNull();
+
+    await expect(
+      service.dissolve({ spaceName: 'space-alpha', note: 'unbind before provision' }),
+    ).resolves.toMatchObject({
+      detached_targets: 1,
+      released_bindings: 0,
+      space: { status: 'unbound' },
+    });
+    await expect(accepted?.provision()).resolves.toMatchObject({
+      lifecycle_status: 'detached',
+    });
+    await expect(
+      service.provisionClaimedTarget({
+        channelId: 'primary',
+        provider: 'builtin:test',
+        target: {
+          target_type: 'topic',
+          target_key: 'topic-dissolve-race',
+          bindable: true,
+        },
+      }),
+    ).resolves.toBeNull();
+    expect(created).toEqual([]);
+    expect(channels.boundOwners.has('topic-dissolve-race')).toBe(false);
+  });
+
+  it('provisions an existing durable claim without requiring a fresh container', async () => {
+    const created: CreatedTeam[] = [];
+    const dissolved: string[] = [];
+    const channels = fakeChannels();
+    const service = new CollaborationSpaceService({
+      dispatcherId: 'flow',
+      config: fakeConfig(),
+      teams: fakeTeams(created, dissolved),
+      channels: channels.service,
+      log: log as never,
+      isShuttingDown: () => false,
+    });
+
+    await service.bind({
+      spaceName: 'space-alpha',
+      container: { container_type: 'topic_group', container_key: 'container-1' },
+      repo: { cwd: '/repo/a' },
+      leaderAgentRuntime: 'agent-a',
+    });
+    await service.acceptTargetCreated({
+      channelId: 'primary',
+      provider: 'builtin:test',
+      container: { container_type: 'topic_group', container_key: 'container-1' },
+      target: {
+        target_type: 'topic',
+        target_key: 'topic-claim-only',
+        bindable: true,
+      },
+    });
+
+    const provisioned = await service.provisionClaimedTarget({
+      channelId: 'primary',
+      provider: 'builtin:test',
+      target: {
+        target_type: 'topic',
+        target_key: 'topic-claim-only',
+        bindable: true,
+      },
+    });
+
+    expect(provisioned).toMatchObject({ lifecycle_status: 'active' });
+    expect(created).toHaveLength(1);
+    expect(channels.boundOwners.has('topic-claim-only')).toBe(true);
+  });
+
+  it('drains accepted lifecycle tasks before stop completes', async () => {
+    const created: CreatedTeam[] = [];
+    const dissolved: string[] = [];
+    const channels = fakeChannels();
+    const service = new CollaborationSpaceService({
+      dispatcherId: 'flow',
+      config: fakeConfig(),
+      teams: fakeTeams(created, dissolved),
+      channels: channels.service,
+      log: log as never,
+      isShuttingDown: () => false,
+    });
+    const pending = deferred<void>();
+    let provisionFinished = false;
+
+    service.startAcceptedTargetProvision({
+      provision: async () => {
+        await pending.promise;
+        provisionFinished = true;
+        return {} as never;
+      },
+    });
+    let drained = false;
+    const drain = service.drainLifecycleTasks().then(() => {
+      drained = true;
+    });
+    await Promise.resolve();
+    expect(drained).toBe(false);
+
+    pending.resolve();
+    await drain;
+
+    expect(provisionFinished).toBe(true);
+    expect(drained).toBe(true);
   });
 });

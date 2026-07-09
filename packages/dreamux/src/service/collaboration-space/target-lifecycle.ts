@@ -14,6 +14,7 @@ import {
 } from './naming.js';
 import { CollaborationSpaceStore } from './store.js';
 import {
+  containerFromSpace,
   lockKey,
   parseMessage,
   requiredBinding,
@@ -46,6 +47,7 @@ export interface CollaborationTargetLifecycleOptions {
   teams: TeamCollection;
   channels: ChannelService;
   store: CollaborationSpaceStore;
+  spaceLocks: KeyedAsyncQueue;
   log: DreamuxLogger;
   isShuttingDown: () => boolean;
 }
@@ -91,8 +93,8 @@ export class CollaborationTargetLifecycle {
           return;
         }
         if (latest.leader_name !== null) {
-          const bindingRow = await this.opts.channels.transferResolvedTargetBack({
-            expectedOwner: ownerForTarget(latest),
+          const bindingRow = await this.opts.channels.releaseResolvedTargetIfOwned({
+            owner: ownerForTarget(latest),
             channelId: latest.channel_id,
             target: targetFromRecord(latest),
           });
@@ -113,21 +115,23 @@ export class CollaborationTargetLifecycle {
   async provisionTarget(
     input: CollaborationSpaceProvisionInput,
   ): Promise<ProvisionedTargetRecord | null> {
-    this.assertNotShuttingDown();
-    if (!input.target.bindable) {
-      throw new Error(
-        `collaboration-space target ${JSON.stringify(input.target.target_key)} is not bindable`,
-      );
-    }
-    const space = await this.opts.store.findSpaceByContainer({
-      dispatcherId: this.opts.dispatcherId,
-      channelId: input.channelId,
-      containerKey: input.container.container_key,
+    return this.opts.spaceLocks.run(spaceLockKey(input), async () => {
+      this.assertNotShuttingDown();
+      if (!input.target.bindable) {
+        throw new Error(
+          `collaboration-space target ${JSON.stringify(input.target.target_key)} is not bindable`,
+        );
+      }
+      const space = await this.opts.store.findSpaceByContainer({
+        dispatcherId: this.opts.dispatcherId,
+        channelId: input.channelId,
+        containerKey: input.container.container_key,
+      });
+      if (space === null || space.current_binding === null || space.status !== 'bound') {
+        return null;
+      }
+      return this.provisionTargetForSpace(space, input);
     });
-    if (space === null || space.current_binding === null || space.status !== 'bound') {
-      return null;
-    }
-    return this.provisionTargetForSpace(space, input);
   }
 
   async acceptAndProvisionTarget(
@@ -184,58 +188,7 @@ export class CollaborationTargetLifecycle {
         bindingGeneration: generation,
         targetKey: input.target.target_key,
       });
-      if (record === null || record.lifecycle_status === 'detached') {
-        return { closed: false, target: record === null ? null : targetView(record) };
-      }
-      if (record.lifecycle_status === 'closed') {
-        return { closed: false, target: targetView(record) };
-      }
-      const closing = await this.opts.store.saveTarget({
-        ...record,
-        lifecycle_status: 'closing',
-        close_event_id: input.eventId ?? record.close_event_id,
-        updated_at: Date.now(),
-      });
-      if (closing.leader_name !== null) {
-        try {
-          await this.opts.channels.transferResolvedTargetBack({
-            expectedOwner: ownerForTarget(closing),
-            channelId: closing.channel_id,
-            target: targetFromRecord(closing),
-          });
-          await this.opts.teams.get(closing.team_name).then((team) =>
-            team.dissolve({
-              teamId: closing.team_name,
-              note: `Collaboration target ${closing.target_key} closed.`,
-            }),
-          );
-        } catch (err) {
-          const msg = parseMessage(err);
-          await this.opts.store.saveTarget({
-            ...closing,
-            last_error: msg,
-            updated_at: Date.now(),
-          });
-          this.opts.log.error(
-            {
-              dispatcher_id: this.opts.dispatcherId,
-              space_name: closing.space_name,
-              target_key: closing.target_key,
-              err: { message: msg },
-            },
-            'collaboration target close failed (target remains in closing state for retry)',
-          );
-          throw err;
-        }
-      }
-      const closed = await this.opts.store.saveTarget({
-        ...closing,
-        lifecycle_status: 'closed',
-        phase: 'closed',
-        updated_at: Date.now(),
-        closed_at: Date.now(),
-      });
-      return { closed: true, target: targetView(closed) };
+      return this.closeTargetUnderLock(record, input.eventId);
     });
   }
 
@@ -277,6 +230,48 @@ export class CollaborationTargetLifecycle {
     });
   }
 
+  async provisionClaimedTarget(input: {
+    channelId: string;
+    provider: string;
+    target: CollaborationSpaceProvisionInput['target'];
+  }): Promise<ProvisionedTargetRecord | null> {
+    const record = await this.opts.store.findOpenTargetByChannelTarget(
+      this.opts.dispatcherId,
+      {
+        channelId: input.channelId,
+        targetKey: input.target.target_key,
+      },
+    );
+    if (record === null) return null;
+    const resumed = await this.resumeTargetRecord(record, input.provider);
+    return resumed?.lifecycle_status === 'detached' ? null : resumed;
+  }
+
+  async resumePendingTargets(): Promise<void> {
+    const targets = await this.opts.store.listTargets(this.opts.dispatcherId);
+    for (const target of targets) {
+      if (
+        target.lifecycle_status !== 'creating' &&
+        target.lifecycle_status !== 'closing'
+      ) {
+        continue;
+      }
+      try {
+        await this.resumeTargetRecord(target, target.provider);
+      } catch (err) {
+        this.opts.log.error(
+          {
+            dispatcher_id: this.opts.dispatcherId,
+            space_name: target.space_name,
+            target_key: target.target_key,
+            err: { message: parseMessage(err) },
+          },
+          'collaboration target resume failed',
+        );
+      }
+    }
+  }
+
   private async provisionTargetForSpace(
     space: CollaborationSpaceRecord,
     input: CollaborationSpaceProvisionInput,
@@ -297,53 +292,55 @@ export class CollaborationTargetLifecycle {
     input: CollaborationSpaceProvisionInput,
     options: AcceptTargetCreatedOptions,
   ): Promise<AcceptedTargetCreated | null> {
-    this.assertNotShuttingDown();
-    if (!input.target.bindable) {
-      throw new Error(
-        `collaboration-space target ${JSON.stringify(input.target.target_key)} is not bindable`,
-      );
-    }
-    const space = await this.boundSpaceForTarget(input, options.defaultBinding);
-    if (space === null) {
-      if (options.allowMissing === true) return null;
-      throw new Error(
-        `collaboration space for channel container ` +
-          `${JSON.stringify(input.container.container_key)} is not bound`,
-      );
-    }
-    const binding = requiredBinding(space);
-    await this.locks.run(
-      lockKey({
-        channelId: input.channelId,
-        containerKey: input.container.container_key,
-        bindingGeneration: binding.generation,
-        targetKey: input.target.target_key,
-      }),
-      async () => {
-        const key = {
+    return this.opts.spaceLocks.run(spaceLockKey(input), async () => {
+      this.assertNotShuttingDown();
+      if (!input.target.bindable) {
+        throw new Error(
+          `collaboration-space target ${JSON.stringify(input.target.target_key)} is not bindable`,
+        );
+      }
+      const space = await this.boundSpaceForTarget(input, options.defaultBinding);
+      if (space === null) {
+        if (options.allowMissing === true) return null;
+        throw new Error(
+          `collaboration space for channel container ` +
+            `${JSON.stringify(input.container.container_key)} is not bound`,
+        );
+      }
+      const binding = requiredBinding(space);
+      await this.locks.run(
+        lockKey({
           channelId: input.channelId,
           containerKey: input.container.container_key,
           bindingGeneration: binding.generation,
           targetKey: input.target.target_key,
-        };
-        const existing = await this.opts.store.getTarget(this.opts.dispatcherId, key);
-        if (existing === null) {
-          await this.createTargetClaim(space, input);
-          return;
-        }
-        if (existing.lifecycle_status === 'closed') {
-          throw new Error(
-            `collaboration target ${JSON.stringify(input.target.target_key)} is closed and cannot be reopened`,
-          );
-        }
-        if (existing.lifecycle_status === 'closing') {
-          throw new Error(
-            `collaboration target ${JSON.stringify(input.target.target_key)} is closing and cannot be provisioned`,
-          );
-        }
-      },
-    );
-    return { space };
+        }),
+        async () => {
+          const key = {
+            channelId: input.channelId,
+            containerKey: input.container.container_key,
+            bindingGeneration: binding.generation,
+            targetKey: input.target.target_key,
+          };
+          const existing = await this.opts.store.getTarget(this.opts.dispatcherId, key);
+          if (existing === null) {
+            await this.createTargetClaim(space, input);
+            return;
+          }
+          if (existing.lifecycle_status === 'closed') {
+            throw new Error(
+              `collaboration target ${JSON.stringify(input.target.target_key)} is closed and cannot be reopened`,
+            );
+          }
+          if (existing.lifecycle_status === 'closing') {
+            throw new Error(
+              `collaboration target ${JSON.stringify(input.target.target_key)} is closing and cannot be provisioned`,
+            );
+          }
+        },
+      );
+      return { space };
+    });
   }
 
   private async boundSpaceForTarget(
@@ -458,7 +455,7 @@ export class CollaborationTargetLifecycle {
             `${JSON.stringify(latestBinding.owner.teamName)}`,
         );
       }
-      await this.opts.channels.bindResolvedTarget({
+      await this.opts.channels.claimResolvedTarget({
         owner,
         channelId: input.channelId,
         target: input.target,
@@ -538,9 +535,140 @@ export class CollaborationTargetLifecycle {
     });
   }
 
+  private async resumeTargetRecord(
+    target: ProvisionedTargetRecord,
+    provider: string,
+  ): Promise<ProvisionedTargetRecord | null> {
+    return this.locks.run(targetKey(target), async () => {
+      const latest = await this.opts.store.getTarget(this.opts.dispatcherId, {
+        channelId: target.channel_id,
+        containerKey: target.container_key,
+        bindingGeneration: target.binding_generation,
+        targetKey: target.target_key,
+      });
+      if (latest === null) return null;
+      if (latest.lifecycle_status === 'active') return latest;
+      if (
+        latest.lifecycle_status === 'closed' ||
+        latest.lifecycle_status === 'detached'
+      ) {
+        return null;
+      }
+      const space = await this.opts.store.getSpace(
+        this.opts.dispatcherId,
+        latest.space_name,
+      );
+      if (space === null) {
+        throw new Error(
+          `collaboration space ${JSON.stringify(latest.space_name)} does not exist`,
+        );
+      }
+      if (latest.lifecycle_status === 'closing') {
+        const result = await this.closeTargetUnderLock(
+          latest,
+          latest.close_event_id ?? undefined,
+        );
+        if (!result.closed) return latest;
+        return this.opts.store.getTarget(this.opts.dispatcherId, {
+          channelId: latest.channel_id,
+          containerKey: latest.container_key,
+          bindingGeneration: latest.binding_generation,
+          targetKey: latest.target_key,
+        });
+      }
+      if (
+        space.current_binding === null ||
+        space.status !== 'bound' ||
+        space.current_binding.generation !== latest.binding_generation
+      ) {
+        return this.opts.store.saveTarget({
+          ...latest,
+          lifecycle_status: 'detached',
+          updated_at: Date.now(),
+          detached_at: Date.now(),
+        });
+      }
+      return this.provisionUnderLock(space, {
+        channelId: latest.channel_id,
+        provider,
+        container: containerFromSpace(space),
+        target: targetFromRecord(latest),
+        ...(latest.claim_event_id !== null ? { eventId: latest.claim_event_id } : {}),
+      });
+    });
+  }
+
+  private async closeTargetUnderLock(
+    record: ProvisionedTargetRecord | null,
+    eventId: string | undefined,
+  ): Promise<{
+    closed: boolean;
+    target: ProvisionedTargetView | null;
+  }> {
+    if (record === null || record.lifecycle_status === 'detached') {
+      return { closed: false, target: record === null ? null : targetView(record) };
+    }
+    if (record.lifecycle_status === 'closed') {
+      return { closed: false, target: targetView(record) };
+    }
+    const closing = await this.opts.store.saveTarget({
+      ...record,
+      lifecycle_status: 'closing',
+      close_event_id: eventId ?? record.close_event_id,
+      updated_at: Date.now(),
+    });
+    if (closing.leader_name !== null) {
+      try {
+        await this.opts.channels.releaseResolvedTargetIfOwned({
+          owner: ownerForTarget(closing),
+          channelId: closing.channel_id,
+          target: targetFromRecord(closing),
+        });
+        await this.opts.teams.get(closing.team_name).then((team) =>
+          team.dissolve({
+            teamId: closing.team_name,
+            note: `Collaboration target ${closing.target_key} closed.`,
+          }),
+        );
+      } catch (err) {
+        const msg = parseMessage(err);
+        await this.opts.store.saveTarget({
+          ...closing,
+          last_error: msg,
+          updated_at: Date.now(),
+        });
+        this.opts.log.error(
+          {
+            dispatcher_id: this.opts.dispatcherId,
+            space_name: closing.space_name,
+            target_key: closing.target_key,
+            err: { message: msg },
+          },
+          'collaboration target close failed (target remains in closing state for retry)',
+        );
+        throw err;
+      }
+    }
+    const closed = await this.opts.store.saveTarget({
+      ...closing,
+      lifecycle_status: 'closed',
+      phase: 'closed',
+      updated_at: Date.now(),
+      closed_at: Date.now(),
+    });
+    return { closed: true, target: targetView(closed) };
+  }
+
   private assertNotShuttingDown(): void {
     if (this.opts.isShuttingDown()) {
       throw new Error(`dispatcher '${this.opts.dispatcherId}' is shutting down`);
     }
   }
+}
+
+function spaceLockKey(input: {
+  channelId: string;
+  container: { container_key: string };
+}): string {
+  return [input.channelId, input.container.container_key].join('\0');
 }

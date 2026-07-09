@@ -128,6 +128,61 @@ describe('ChannelService binding ownership', () => {
     ).resolves.toBeNull();
   });
 
+  it('claims and conditionally releases resolved targets for automatic routing', async () => {
+    const service = new ChannelService({
+      dispatcherId: 'dispatcher-a',
+      config: testDreamuxConfig([
+        testDispatcherConfig({ id: 'dispatcher-a', channelId: 'primary' }),
+      ]),
+      channelProviders: channelProviderCatalog(),
+      channelLoggerFactory: () => ({}) as never,
+    });
+    const sessions = await service.build();
+    service.adopt(sessions);
+    const alpha = {
+      kind: 'team' as const,
+      teamName: 'alpha',
+      leaderName: 'leader-a',
+    };
+    const beta = {
+      kind: 'team' as const,
+      teamName: 'beta',
+      leaderName: 'leader-b',
+    };
+    const target = groupTarget('chat-claim');
+
+    await service.claimResolvedTarget({
+      owner: alpha,
+      channelId: 'primary',
+      target,
+    });
+    await expect(
+      service.claimResolvedTarget({ owner: beta, channelId: 'primary', target }),
+    ).rejects.toThrow(/already bound to Team "alpha"/);
+
+    await expect(
+      service.releaseResolvedTargetIfOwned({
+        owner: beta,
+        channelId: 'primary',
+        target,
+      }),
+    ).resolves.toBeNull();
+    await expect(
+      service.resolveInboundBinding({ channelId: 'primary', target }),
+    ).resolves.toMatchObject({ owner: alpha });
+
+    await expect(
+      service.releaseResolvedTargetIfOwned({
+        owner: alpha,
+        channelId: 'primary',
+        target,
+      }),
+    ).resolves.toMatchObject({ active: false, team_name: 'alpha' });
+    await expect(
+      service.resolveInboundBinding({ channelId: 'primary', target }),
+    ).resolves.toBeNull();
+  });
+
   it('builds provider channel MCP descriptors from configured dispatcher channels before sessions are live', () => {
     const toolConfigReads: unknown[] = [];
     const service = new ChannelService({

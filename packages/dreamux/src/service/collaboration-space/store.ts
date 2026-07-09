@@ -100,6 +100,7 @@ export class CollaborationSpaceStore {
       channelId?: string;
       containerKey?: string;
       bindingGeneration?: number;
+      targetKey?: string;
     } = {},
   ): Promise<ProvisionedTargetRecord[]> {
     return (await this.read(dispatcherId)).targets.filter(
@@ -108,8 +109,31 @@ export class CollaborationSpaceStore {
         (filter.channelId === undefined || target.channel_id === filter.channelId) &&
         (filter.containerKey === undefined || target.container_key === filter.containerKey) &&
         (filter.bindingGeneration === undefined ||
-          target.binding_generation === filter.bindingGeneration),
+          target.binding_generation === filter.bindingGeneration) &&
+        (filter.targetKey === undefined || target.target_key === filter.targetKey),
     );
+  }
+
+  async findOpenTargetByChannelTarget(
+    dispatcherId: string,
+    input: {
+      channelId: string;
+      targetKey: string;
+    },
+  ): Promise<ProvisionedTargetRecord | null> {
+    const targets = (await this.read(dispatcherId)).targets
+      .filter(
+        (target) =>
+          target.channel_id === input.channelId &&
+          target.target_key === input.targetKey &&
+          target.lifecycle_status !== 'closed' &&
+          target.lifecycle_status !== 'detached',
+      )
+      .sort((left, right) =>
+        right.binding_generation - left.binding_generation ||
+        right.updated_at - left.updated_at,
+      );
+    return targets[0] ?? null;
   }
 
   async getTarget(

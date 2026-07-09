@@ -88,6 +88,21 @@ export function fakeChannels() {
       boundOwners.set(input.target.target_key, input.owner);
       return { active: true, team_name: input.owner.teamName };
     },
+    async claimResolvedTarget(input: {
+      owner: ChannelRouteOwner;
+      target: { target_key: string };
+    }) {
+      const owner = boundOwners.get(input.target.target_key);
+      if (
+        owner !== undefined &&
+        (owner.teamName !== input.owner.teamName ||
+          owner.leaderName !== input.owner.leaderName)
+      ) {
+        throw new Error(`target already bound to Team ${owner.teamName}`);
+      }
+      boundOwners.set(input.target.target_key, input.owner);
+      return { active: true, team_name: input.owner.teamName };
+    },
     async transferResolvedTargetBack(input: {
       expectedOwner?: ChannelRouteOwner;
       target: { target_key: string };
@@ -100,6 +115,21 @@ export function fakeChannels() {
           owner.leaderName !== input.expectedOwner.leaderName)
       ) {
         throw new Error('owner mismatch');
+      }
+      boundOwners.delete(input.target.target_key);
+      return { active: false, team_name: owner.teamName };
+    },
+    async releaseResolvedTargetIfOwned(input: {
+      owner: ChannelRouteOwner;
+      target: { target_key: string };
+    }) {
+      const owner = boundOwners.get(input.target.target_key);
+      if (owner === undefined) return null;
+      if (
+        owner.teamName !== input.owner.teamName ||
+        owner.leaderName !== input.owner.leaderName
+      ) {
+        return null;
       }
       boundOwners.delete(input.target.target_key);
       return { active: false, team_name: owner.teamName };

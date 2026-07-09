@@ -149,11 +149,14 @@ Provisioning has two entry points:
   `ChannelRoutes.targetLifecycle` with `target_created` for a container with a
   bound collaboration-space record, or a channel default binding policy can
   create one, the collaboration target lifecycle path writes the durable claim
-  and returns; heavy worktree/Team provisioning runs asynchronously. For
-  unknown containers without default binding, and for known unbound spaces, the
-  create event is ignored without claiming a target. For
-  `target_closed`, the target lifecycle path accepts the close event and
-  asynchronously dissolves the Team and releases the binding.
+  and returns; heavy worktree/Team provisioning runs asynchronously under the
+  `CollaborationSpaceService` lifecycle-task tracker. `DispatcherService`
+  resumes durable `creating` / `closing` targets after channel sessions start,
+  and drains accepted lifecycle tasks during stop/shutdown. For unknown
+  containers without default binding, and for known unbound spaces, the create
+  event is ignored without claiming a target. For `target_closed`, the target
+  lifecycle path accepts the close event and asynchronously dissolves the Team
+  and releases the binding.
 - **First-inbound provisioning.** When a bindable target has no existing binding
   and `envelope.container` is set on `deliver()`, `routeChannelInput` calls
   `acceptAndProvisionTarget` synchronously before routing. This may use channel
@@ -161,7 +164,9 @@ Provisioning has two entry points:
   succeeds and the Team is active, the inbound is delivered to the TeamLeader;
   if it fails, a failed `InboundDeliveryResult` is returned. This path never
   falls back to the dispatcher agent after collaboration-space provisioning has
-  claimed the target.
+  claimed the target. If a later inbound for the same `(channel_id, target_key)`
+  omits `envelope.container`, core still checks for an existing durable
+  collaboration-space target claim before falling back to the dispatcher agent.
 
 Both paths bypass the dispatcher agent runtime but still go through
 `DispatcherService` and core stores. When the space is dissolved, future

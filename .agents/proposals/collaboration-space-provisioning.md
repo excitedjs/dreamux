@@ -467,7 +467,9 @@ space's current binding generation.
 Required behavior:
 
 - reject lifecycle targets whose `target.bindable` is false;
-- fail loud if the collaboration space is currently unbound;
+- ignore unknown containers without default binding and known unbound spaces
+  without claiming a target; explicit `bind` is required to reattach a dissolved
+  space;
 - acquire an in-process lock keyed by `(dispatcher_id, channel_id,
   container_key, binding_generation, target_key)`;
 - check the target provisioning record:
@@ -571,6 +573,8 @@ For bound collaboration spaces, an unbound bindable target must never fall back
 to the dispatcher agent runtime. The first implementation chooses deterministic
 provision-before-delivery:
 
+- if a target provisioning record exists for `(channel_id, target_key)`, inbound
+  uses that durable claim even when the current envelope omits `container`;
 - if a target provisioning record is `creating`, inbound waits for or resumes the
   in-flight provisioning operation;
 - if a target provisioning record is `detached`, inbound follows the current
@@ -720,6 +724,9 @@ grow Feishu-specific knobs.
 - Core tests cover first-inbound provisioning from
   `ChannelInboundEnvelope.container` and prove provider-specific `target.meta`
   is not parsed for collaboration-space membership.
+- Core tests cover an already durable target claim receiving a later inbound
+  envelope without `container`; it must route through the claim and must not fall
+  back to the dispatcher agent.
 - Core tests prove that no Feishu-specific field is required to provision a
   target.
 - Feishu tests, if Feishu implements the capability, prove that topic-group

@@ -2,6 +2,7 @@ import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import type { DreamuxConfig } from '../../config/config.js';
 import type { ChannelService } from '../channel-service/index.js';
+import { KeyedAsyncQueue } from '../serial-queue.js';
 import type { TeamCollection } from '../team-collection/index.js';
 import { resolveAgent } from '../teammate-collection/agent-config.js';
 import { validateTeamId } from '../team-collection/types.js';
@@ -27,6 +28,7 @@ import { spaceView, targetView } from './view.js';
 import {
   assertSameContainer,
   containerFromSpace,
+  parseMessage,
   requiredSpace,
 } from './support.js';
 
@@ -47,6 +49,8 @@ export class CollaborationSpaceService {
   private readonly channels: ChannelService;
   private readonly store: CollaborationSpaceStore;
   private readonly targets: CollaborationTargetLifecycle;
+  private readonly spaceLocks = new KeyedAsyncQueue();
+  private readonly lifecycleTasks = new Set<Promise<void>>();
 
   constructor(private readonly opts: CollaborationSpaceServiceOptions) {
     this.dispatcherId = opts.dispatcherId;
@@ -60,6 +64,7 @@ export class CollaborationSpaceService {
       teams: this.teams,
       channels: this.channels,
       store: this.store,
+      spaceLocks: this.spaceLocks,
       log: opts.log,
       isShuttingDown: opts.isShuttingDown,
     });
@@ -143,29 +148,32 @@ export class CollaborationSpaceService {
     released_bindings: number;
   }> {
     this.assertNotShuttingDown();
-    const space = await this.mustSpace(input.spaceName);
-    if (space.current_binding === null || space.status === 'unbound') {
+    const initial = await this.mustSpace(input.spaceName);
+    return this.spaceLocks.run(spaceLockKey(initial), async () => {
+      const space = await this.mustSpace(input.spaceName);
+      if (space.current_binding === null || space.status === 'unbound') {
+        return {
+          space: await this.view(space),
+          detached_targets: 0,
+          released_bindings: 0,
+        };
+      }
+      const now = Date.now();
+      const saved = await this.store.saveSpace({
+        ...space,
+        current_binding: null,
+        status: 'unbound',
+        updated_at: now,
+        unbound_at: now,
+        unbound_note: input.note,
+      });
+      const detached = await this.targets.detachActiveTargets(space);
       return {
-        space: await this.view(space),
-        detached_targets: 0,
-        released_bindings: 0,
+        space: await this.view(saved),
+        detached_targets: detached.detached_targets,
+        released_bindings: detached.released_bindings,
       };
-    }
-    const detached = await this.targets.detachActiveTargets(space);
-    const now = Date.now();
-    const saved = await this.store.saveSpace({
-      ...space,
-      current_binding: null,
-      status: 'unbound',
-      updated_at: now,
-      unbound_at: now,
-      unbound_note: input.note,
     });
-    return {
-      space: await this.view(saved),
-      detached_targets: detached.detached_targets,
-      released_bindings: detached.released_bindings,
-    };
   }
 
   async status(input: CollaborationSpaceStatusInput): Promise<{
@@ -224,6 +232,38 @@ export class CollaborationSpaceService {
     return this.targets.acceptTargetClosed(input);
   }
 
+  async provisionClaimedTarget(input: {
+    channelId: string;
+    provider: string;
+    target: CollaborationSpaceProvisionInput['target'];
+  }): Promise<ProvisionedTargetRecord | null> {
+    return this.targets.provisionClaimedTarget(input);
+  }
+
+  startAcceptedTargetProvision(accepted: AcceptedTargetProvision): void {
+    this.trackLifecycleTask(
+      'provision',
+      accepted.provision().then(() => undefined),
+    );
+  }
+
+  startTargetClose(input: CollaborationSpaceCloseTargetInput): void {
+    this.trackLifecycleTask(
+      'close',
+      this.closeTarget(input).then(() => undefined),
+    );
+  }
+
+  async resumePendingTargets(): Promise<void> {
+    await this.targets.resumePendingTargets();
+  }
+
+  async drainLifecycleTasks(): Promise<void> {
+    while (this.lifecycleTasks.size > 0) {
+      await Promise.allSettled([...this.lifecycleTasks]);
+    }
+  }
+
   private async mustSpace(spaceName: string): Promise<CollaborationSpaceRecord> {
     const name = validateTeamId(spaceName);
     const space = await this.store.getSpace(this.dispatcherId, name);
@@ -245,4 +285,29 @@ export class CollaborationSpaceService {
       throw new Error(`dispatcher '${this.dispatcherId}' is shutting down`);
     }
   }
+
+  private trackLifecycleTask(
+    kind: 'provision' | 'close',
+    task: Promise<void>,
+  ): void {
+    const tracked = task
+      .catch((err) => {
+        this.opts.log.error(
+          {
+            dispatcher_id: this.dispatcherId,
+            kind,
+            err: { message: parseMessage(err) },
+          },
+          'collaboration target lifecycle task failed',
+        );
+      })
+      .finally(() => {
+        this.lifecycleTasks.delete(tracked);
+      });
+    this.lifecycleTasks.add(tracked);
+  }
+}
+
+function spaceLockKey(space: CollaborationSpaceRecord): string {
+  return [space.channel_id, space.container_key].join('\0');
 }
