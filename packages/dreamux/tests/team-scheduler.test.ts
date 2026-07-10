@@ -403,9 +403,28 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     });
     expect(runtimes).toHaveLength(1);
 
+    teams.stopSchedulers();
+    await new CronJobStore({
+      dispatcherId: 'dispatcher-a',
+      cronJobsPath: dispatcherTeamCronJobsPath('dispatcher-a', 'alpha'),
+    }).create(
+      {
+        cron: '* * * * *',
+        tz: 'UTC',
+        recurring: false,
+        action: { kind: 'prompt-agent', prompt: 'scheduled after warm restart' },
+        nextRunAt: Date.now() + 2000,
+      },
+      128,
+    );
     await teams.startSchedulers();
 
     expect(runtimes).toHaveLength(1);
+    await waitFor(() => runtimes[0]!.textSubmitted.length === 1, 4000);
+    expect(runtimes[0]!.textSubmitted[0]).toEqual({
+      text: 'scheduled after warm restart',
+      sourceId: expect.stringMatching(/^scheduled:job-/),
+    });
     teams.stopSchedulers();
     await teams.stopAll();
   });
