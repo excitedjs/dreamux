@@ -69,6 +69,31 @@ importers:
         specifier: ^2.1.0
         version: 2.1.9(@types/node@22.19.19)
 
+  ../../packages/agent-runtime/mimo-code:
+    dependencies:
+      '@excitedjs/dreamux-types':
+        specifier: workspace:*
+        version: link:../../dreamux-types
+      '@excitedjs/dreamux-utils':
+        specifier: workspace:*
+        version: link:../../dreamux-utils
+    devDependencies:
+      '@excitedjs/eslint-config':
+        specifier: workspace:*
+        version: link:../../eslint-config
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.19.19
+      eslint:
+        specifier: ^9.39.0
+        version: 9.39.4
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@22.19.19)
+
   ../../packages/channel/feishu-channel:
     dependencies:
       '@excitedjs/dreamux-types':

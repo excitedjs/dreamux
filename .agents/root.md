@@ -128,6 +128,12 @@ history and rationale; when you need current behavior, pair them with
   that submits turns to an existing Team's TeamLeader, registers completion
   delivery back to the dispatcher at send time, and leaves Team peer messaging
   out of this slice.
+- [MiMo Code Agent Runtime Provider](proposals/mimo-code-agent-runtime.md)
+  — draft requirement/spec for integrating MiMo Code as an external
+  `agentRuntime` npm provider, using `mimo serve` as the production driver,
+  keeping MiMo-specific session/event/permission/state behavior inside the
+  provider package, and limiting `mimo run` to diagnostics or smoke use unless a
+  later source-backed decision changes that driver choice.
 - [TeamLeader-scoped Team MCP transfer back](proposals/team-mcp-teamleader-transfer-back.md)
   — draft requirement/spec for exposing only `transfer_back` from Team MCP to
   TeamLeaders, keeping dispatcher Team lifecycle tools private, keeping explicit

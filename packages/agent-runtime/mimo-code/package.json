@@ -1,0 +1,55 @@
+{
+  "name": "@excitedjs/agent-runtime-mimo-code",
+  "version": "0.0.0",
+  "description": "External MiMo Code Agent Runtime provider for Dreamux. Implements the @excitedjs/dreamux-types AgentRuntimeProvider contract against a private `mimo serve` process.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/excitedjs/dreamux.git",
+    "directory": "packages/agent-runtime/mimo-code"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./config": {
+      "types": "./dist/config.d.ts",
+      "import": "./dist/config.js",
+      "default": "./dist/config.js"
+    }
+  },
+  "engines": {
+    "node": ">=22.7"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:tests": "tsc -p tsconfig.tests.json",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@excitedjs/dreamux-types": "workspace:*",
+    "@excitedjs/dreamux-utils": "workspace:*"
+  },
+  "devDependencies": {
+    "@excitedjs/eslint-config": "workspace:*",
+    "@types/node": "^22.10.0",
+    "eslint": "^9.39.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  }
+}
