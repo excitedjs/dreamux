@@ -310,6 +310,9 @@ describe('DispatcherService collaboration-space routing', () => {
       startAcceptedTargetProvision(value: { provision: () => Promise<unknown> }) {
         void value.provision();
       },
+      trackLifecycleTask(_kind: string, _task: Promise<unknown>) {
+        /* test double: no-op */
+      },
     } as unknown as CollaborationSpaceService;
 
     const running = handleCollaborationTargetLifecycle({
@@ -370,6 +373,9 @@ describe('DispatcherService collaboration-space routing', () => {
         });
         expect(options).toMatchObject({ allowMissing: true });
         return null;
+      },
+      trackLifecycleTask(_kind: string, _task: Promise<unknown>) {
+        /* test double: no-op */
       },
     } as unknown as CollaborationSpaceService;
 
@@ -466,9 +472,12 @@ describe('DispatcherService collaboration-space routing', () => {
       teamName: 'space-topic-team',
       leaderName: 'space-topic-leader',
     };
+    let resolveCalls = 0;
+    let claimCalls = 0;
     const channels = {
       async resolveInboundBinding(input: { target: { target_key: string } }) {
-        return input.target.target_key === 'topic-claimed'
+        resolveCalls += 1;
+        return input.target.target_key === 'topic-claimed' && resolveCalls > 1
           ? { binding: { active: true }, owner: routeOwner }
           : null;
       },
@@ -479,6 +488,7 @@ describe('DispatcherService collaboration-space routing', () => {
     } as unknown as ChannelService;
     const collaborationSpaces = {
       async provisionClaimedTarget(input: unknown) {
+        claimCalls += 1;
         expect(input).toMatchObject({
           channelId: 'primary',
           provider: CHANNEL_REF,
@@ -530,6 +540,8 @@ describe('DispatcherService collaboration-space routing', () => {
     });
 
     expect(result).toEqual({ status: 'submitted', turnId: 'team-turn' });
+    expect(resolveCalls).toBe(2);
+    expect(claimCalls).toBe(1);
     expect(delivered).toEqual([
       { text: 'claim-only', body: 'claim-only', sourceId: 'msg-claim-only' },
     ]);

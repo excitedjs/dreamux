@@ -210,7 +210,7 @@ export class DispatcherService {
       teams: this.teams,
       channels: this.channels,
       log: opts.log,
-      isShuttingDown: () => this.shuttingDown,
+      isShuttingDown: () => this.shuttingDown || this.stopping,
     });
   }
 
@@ -344,11 +344,11 @@ export class DispatcherService {
       if (channels.size === 0) this.channels.adopt(liveChannels);
       this.preparedChannels = null;
       this.assertNotShuttingDown();
-      await this.collaborationSpaces.resumePendingTargets();
-      this.assertNotShuttingDown();
       await this.scheduler.start();
       this.assertNotShuttingDown();
       await this.teams.startSchedulers();
+      this.assertNotShuttingDown();
+      await this.collaborationSpaces.resumePendingTargets();
       this.assertNotShuttingDown();
       this.inputSourcesStarted = true;
     } catch (err) {
@@ -383,15 +383,15 @@ export class DispatcherService {
     try {
       if (this.preparing !== null) await this.preparing.catch(() => {});
       if (this.inputSourcesStarting !== null) await this.inputSourcesStarting.catch(() => {});
-      await this.collaborationSpaces.drainLifecycleTasks();
-      this.scheduler.stop();
-      this.teams.stopSchedulers();
       await this.channels.closeAll(this.log);
       if (this.preparedChannels !== null) {
         await closeAllBuilt(this.preparedChannels);
         this.preparedChannels = null;
       }
       this.channels.clear();
+      await this.collaborationSpaces.drainLifecycleTasks();
+      this.scheduler.stop();
+      this.teams.stopSchedulers();
       this.inputSourcesStarted = false;
       try {
         await this.agent?.stop();
@@ -458,12 +458,10 @@ export class DispatcherService {
   }
 
   async shutdown(): Promise<void> {
-    this.stopping = true;
-    await this.collaborationSpaces.drainLifecycleTasks();
     this.shuttingDown = true;
+    await this.stop();
     await this._teammates.stopAll();
     await this.teams.stopAll();
-    await this.stop();
   }
 
   private assertNotShuttingDown(): void {

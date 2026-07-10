@@ -26,6 +26,31 @@ export async function handleCollaborationTargetLifecycle(input: {
     channels,
     collaborationSpaces,
   } = input;
+  const task = doHandleCollaborationTargetLifecycle({
+    dispatcherAgentRuntime,
+    channelId,
+    event,
+    channels,
+    collaborationSpaces,
+  });
+  collaborationSpaces.trackLifecycleTask('accept', task);
+  return task;
+}
+
+async function doHandleCollaborationTargetLifecycle(input: {
+  dispatcherAgentRuntime: string;
+  channelId: string;
+  event: ChannelTargetLifecycleEvent;
+  channels: ChannelService;
+  collaborationSpaces: CollaborationSpaceService;
+}): Promise<void> {
+  const {
+    dispatcherAgentRuntime,
+    channelId,
+    event,
+    channels,
+    collaborationSpaces,
+  } = input;
   if (event.kind === 'target_created') {
     const provisionInput = provisionInputForTarget({
       channelId,
@@ -55,9 +80,9 @@ export async function handleCollaborationTargetLifecycle(input: {
     target: event.target,
     ...(event.event_id !== undefined ? { eventId: event.event_id } : {}),
   };
-  const accepted = await collaborationSpaces.acceptTargetClosed(closeInput);
-  if (!accepted) return;
-  collaborationSpaces.startTargetClose(closeInput);
+  const accepted = await collaborationSpaces.acceptTargetClosedForClose(closeInput);
+  if (accepted === null) return;
+  collaborationSpaces.startTargetClose(accepted);
 }
 
 export async function routeTeamOrCollaborationChannelInput(input: {

@@ -381,6 +381,35 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     });
   });
 
+  it('startSchedulers reuses cached Team services', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const runtimes: FakeRuntime[] = [];
+    const log = noopLog();
+    const teams = makeTeams({ config, log, runtimes });
+
+    await teams.create({
+      name: 'alpha',
+      leaderAgentRuntime: 'agent-a',
+      intent: 'lead alpha',
+    });
+    expect(runtimes).toHaveLength(1);
+
+    await teams.startSchedulers();
+
+    expect(runtimes).toHaveLength(1);
+    teams.stopSchedulers();
+    await teams.stopAll();
+  });
+
   it('dissolve stops the TeamLeader scheduler and deletes its cron store', async () => {
     const workspace = join(root, 'workspace');
     mkdirSync(workspace, { recursive: true });

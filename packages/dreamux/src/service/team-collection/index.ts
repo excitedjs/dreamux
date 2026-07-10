@@ -338,7 +338,7 @@ export class TeamCollection {
     for (const team of teams) {
       if (team.status === 'closed') continue;
       try {
-        await this.serviceFor(team);
+        await this.get(team.team_id);
       } catch (err) {
         this.opts.log.error(
           { dispatcher_id: this.dispatcherId, team_id: team.team_id, err: errInfo(err) },

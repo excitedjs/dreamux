@@ -667,6 +667,128 @@ describe('CollaborationSpaceService', () => {
     );
   });
 
+  it('dissolve retries when release fails before the space is marked unbound', async () => {
+    const created: CreatedTeam[] = [];
+    const dissolved: string[] = [];
+    const channels = fakeChannels();
+    const releaser = channels.service as unknown as {
+      releaseResolvedTargetIfOwned(input: {
+        owner: unknown;
+        channelId: string;
+        target: { target_key: string };
+      }): Promise<unknown>;
+    };
+    const originalRelease = releaser.releaseResolvedTargetIfOwned.bind(releaser);
+    let failRelease = true;
+    releaser.releaseResolvedTargetIfOwned = async (input) => {
+      if (failRelease) throw new Error('simulated release failure');
+      return originalRelease(input);
+    };
+    const service = new CollaborationSpaceService({
+      dispatcherId: 'flow',
+      config: fakeConfig(),
+      teams: fakeTeams(created, dissolved),
+      channels: channels.service,
+      log: log as never,
+      isShuttingDown: () => false,
+    });
+
+    await service.bind({
+      spaceName: 'space-alpha',
+      container: { container_type: 'topic_group', container_key: 'container-1' },
+      repo: { cwd: '/repo/a' },
+      leaderAgentRuntime: 'agent-a',
+    });
+    await service.provisionTarget({
+      channelId: 'primary',
+      provider: 'builtin:test',
+      container: { container_type: 'topic_group', container_key: 'container-1' },
+      target: {
+        target_type: 'topic',
+        target_key: 'topic-release-retry',
+        bindable: true,
+      },
+    });
+
+    await expect(
+      service.dissolve({ spaceName: 'space-alpha', note: 'release fails first' }),
+    ).rejects.toThrow(/simulated release failure/);
+    await expect(service.status({ spaceName: 'space-alpha' })).resolves.toMatchObject({
+      space: { status: 'bound' },
+      targets: [{ target_key: 'topic-release-retry', lifecycle_status: 'active' }],
+    });
+    expect(channels.boundOwners.has('topic-release-retry')).toBe(true);
+
+    failRelease = false;
+    await expect(
+      service.dissolve({ spaceName: 'space-alpha', note: 'retry succeeds' }),
+    ).resolves.toMatchObject({
+      detached_targets: 1,
+      released_bindings: 1,
+      space: { status: 'unbound' },
+    });
+    expect(channels.boundOwners.has('topic-release-retry')).toBe(false);
+  });
+
+  it('uses the accepted target-close generation even after a later rebind', async () => {
+    const created: CreatedTeam[] = [];
+    const dissolved: string[] = [];
+    const channels = fakeChannels();
+    const service = new CollaborationSpaceService({
+      dispatcherId: 'flow',
+      config: fakeConfig(),
+      teams: fakeTeams(created, dissolved),
+      channels: channels.service,
+      log: log as never,
+      isShuttingDown: () => false,
+    });
+
+    await service.bind({
+      spaceName: 'space-alpha',
+      container: { container_type: 'topic_group', container_key: 'container-1' },
+      repo: { cwd: '/repo/a' },
+      leaderAgentRuntime: 'agent-a',
+    });
+    const targetInput = {
+      channelId: 'primary',
+      provider: 'builtin:test',
+      container: { container_type: 'topic_group', container_key: 'container-1' },
+      target: {
+        target_type: 'topic',
+        target_key: 'topic-close-generation',
+        bindable: true,
+      },
+    };
+    const first = await service.provisionTarget(targetInput);
+    const accepted = await service.acceptTargetClosedForClose(targetInput);
+    if (accepted === null) throw new Error('target close was not accepted');
+
+    channels.boundOwners.delete('topic-close-generation');
+    await service.dissolve({ spaceName: 'space-alpha', note: 'switch generation' });
+    await service.bind({
+      spaceName: 'space-alpha',
+      repo: { cwd: '/repo/b' },
+      leaderAgentRuntime: 'agent-b',
+    });
+    const second = await service.provisionTarget(targetInput);
+    expect(second?.team_name).not.toBe(first?.team_name);
+    expect(channels.boundOwners.get('topic-close-generation')).toMatchObject({
+      teamName: second?.team_name,
+    });
+
+    await expect(accepted.close()).resolves.toMatchObject({
+      closed: true,
+      target: {
+        binding_generation: first?.binding_generation,
+        lifecycle_status: 'closed',
+      },
+    });
+    expect(dissolved).toEqual([first?.team_name]);
+    expect(channels.boundOwners.get('topic-close-generation')).toMatchObject({
+      teamName: second?.team_name,
+    });
+  });
+
   it('acceptAndProvisionTarget returns null for unbound containers', async () => {
     const created: CreatedTeam[] = [];
     const dissolved: string[] = [];

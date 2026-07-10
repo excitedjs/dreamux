@@ -7,6 +7,7 @@ import type { TeamCollection } from '../team-collection/index.js';
 import { resolveAgent } from '../teammate-collection/agent-config.js';
 import { validateTeamId } from '../team-collection/types.js';
 import {
+  type AcceptedTargetClose,
   type AcceptedTargetProvision,
   type AcceptTargetCreatedOptions,
   CollaborationTargetLifecycle,
@@ -158,6 +159,7 @@ export class CollaborationSpaceService {
           released_bindings: 0,
         };
       }
+      const detached = await this.targets.detachActiveTargets(space);
       const now = Date.now();
       const saved = await this.store.saveSpace({
         ...space,
@@ -167,7 +169,6 @@ export class CollaborationSpaceService {
         unbound_at: now,
         unbound_note: input.note,
       });
-      const detached = await this.targets.detachActiveTargets(space);
       return {
         space: await this.view(saved),
         detached_targets: detached.detached_targets,
@@ -232,6 +233,12 @@ export class CollaborationSpaceService {
     return this.targets.acceptTargetClosed(input);
   }
 
+  async acceptTargetClosedForClose(
+    input: CollaborationSpaceCloseTargetInput,
+  ): Promise<AcceptedTargetClose | null> {
+    return this.targets.acceptTargetClosedForClose(input);
+  }
+
   async provisionClaimedTarget(input: {
     channelId: string;
     provider: string;
@@ -247,10 +254,10 @@ export class CollaborationSpaceService {
     );
   }
 
-  startTargetClose(input: CollaborationSpaceCloseTargetInput): void {
+  startTargetClose(accepted: AcceptedTargetClose): void {
     this.trackLifecycleTask(
       'close',
-      this.closeTarget(input).then(() => undefined),
+      accepted.close().then(() => undefined),
     );
   }
 
@@ -286,8 +293,8 @@ export class CollaborationSpaceService {
     }
   }
 
-  private trackLifecycleTask(
-    kind: 'provision' | 'close',
+  trackLifecycleTask(
+    kind: 'accept' | 'provision' | 'close',
     task: Promise<void>,
   ): void {
     const tracked = task
