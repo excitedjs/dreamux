@@ -118,6 +118,11 @@ history and rationale; when you need current behavior, pair them with
   terminal completion-delivery semantics, instance-scoped runtime state facts,
   provider-owned role prompt injection, and external runtime handle validation
   while keeping native CLI/daemon details provider-owned.
+- [Kimi Code ACP Agent Runtime provider](proposals/kimi-code-acp-agent-runtime-provider.md)
+  — draft technical design for integrating Kimi Code through its public ACP
+  server as an external Agent Runtime provider, including prompt append and
+  skill materialization through `KIMI_CODE_HOME`, MCP descriptor mapping,
+  logical turn semantics, and checkpoint replacement on lost ACP sessions.
 - [TeamMate identity system prompt](proposals/teammate-identity-system-prompt.md)
   — draft requirement/spec for adding a minimal `identity` input to
   `teammate.spawn` and `team.create`, persisting it on TeamMate identity records,

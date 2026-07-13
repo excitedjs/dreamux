@@ -72,6 +72,11 @@
       "packageName": "@excitedjs/agent-runtime-claude-code",
       "projectFolder": "packages/agent-runtime/claude-code",
       "shouldPublish": true
+    },
+    {
+      "packageName": "@excitedjs/agent-runtime-kimi-code",
+      "projectFolder": "packages/agent-runtime/kimi-code",
+      "shouldPublish": true
     }
   ]
 }

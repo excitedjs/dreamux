@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/agent-runtime-kimi-code",
+      "comment": "Add the Kimi Code ACP Agent Runtime provider package.",
+      "type": "patch"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-kimi-code"
+}
