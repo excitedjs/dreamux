@@ -453,6 +453,75 @@ export const adminMethods: Record<string, AdminHandler> = {
     });
     return { ...dissolved, bound_target: null };
   },
+
+  'mcp.collaboration_space.bind': async (server, params) => {
+    const id = mustDispatcherId(params);
+    mustExistingDispatcher(server, id);
+    const channelId = optionalString(params, 'channel_id');
+    const identity = optionalNonBlankString(params, 'identity');
+    const display = optionalString(params, 'display');
+    const rawRepo = params?.['repo'];
+    const repo = rawRepo === undefined || rawRepo === null
+      ? null
+      : mustRecord(params, 'repo');
+    const baseRef = repo === null ? null : optionalString(repo, 'base_ref');
+    const container = optionalCollaborationContainer(params);
+    try {
+      return await server.getDispatcher(id).bindCollaborationSpace({
+        spaceName: mustString(params, 'space_name'),
+        ...(channelId !== null ? { channelId } : {}),
+        ...(container !== null ? { container } : {}),
+        ...(display !== null ? { display } : {}),
+        ...(repo !== null
+          ? {
+              repo: {
+                cwd: mustNonEmptyString(repo, 'cwd'),
+                ...(baseRef !== null ? { baseRef } : {}),
+              },
+            }
+          : {}),
+        leaderAgentRuntime: mustString(params, 'leader_agent_runtime'),
+        ...(identity !== null ? { identity } : {}),
+      });
+    } catch (err) {
+      throw new AdminError('COLLABORATION_SPACE_BIND_FAILED', parseMessage(err));
+    }
+  },
+
+  'mcp.collaboration_space.dissolve': async (server, params) => {
+    const id = mustDispatcherId(params);
+    mustExistingDispatcher(server, id);
+    try {
+      return await server.getDispatcher(id).dissolveCollaborationSpace({
+        spaceName: mustString(params, 'space_name'),
+        note: mustNonEmptyString(params, 'note'),
+      });
+    } catch (err) {
+      throw new AdminError('COLLABORATION_SPACE_DISSOLVE_FAILED', parseMessage(err));
+    }
+  },
+
+  'mcp.collaboration_space.status': async (server, params) => {
+    const id = mustDispatcherId(params);
+    mustExistingDispatcher(server, id);
+    try {
+      return await server.getDispatcher(id).getCollaborationSpaceStatus({
+        spaceName: mustString(params, 'space_name'),
+      });
+    } catch (err) {
+      throw new AdminError('COLLABORATION_SPACE_STATUS_FAILED', parseMessage(err));
+    }
+  },
+
+  'mcp.collaboration_space.list': async (server, params) => {
+    const id = mustDispatcherId(params);
+    mustExistingDispatcher(server, id);
+    try {
+      return await server.getDispatcher(id).listCollaborationSpaces();
+    } catch (err) {
+      throw new AdminError('COLLABORATION_SPACE_LIST_FAILED', parseMessage(err));
+    }
+  },
 };
 
 async function cronTargetFor(
@@ -521,6 +590,28 @@ function ownerForTeamRead(input: {
     kind: 'team',
     teamName: input.team_name,
     leaderName: input.leader_name,
+  };
+}
+
+function optionalCollaborationContainer(
+  params: Record<string, unknown> | undefined,
+): import('@excitedjs/dreamux-types').ChannelContainer | null {
+  if (params === undefined || params['container'] === undefined || params['container'] === null) {
+    return null;
+  }
+  const container = mustRecord(params, 'container');
+  const display = optionalString(container, 'display');
+  const canonicalUrl = optionalString(container, 'canonical_url');
+  const meta = container['meta'];
+  if (meta !== undefined && (meta === null || typeof meta !== 'object' || Array.isArray(meta))) {
+    throw new AdminError('BAD_REQUEST', "param 'container.meta' must be an object");
+  }
+  return {
+    container_type: mustNonEmptyString(container, 'container_type'),
+    container_key: mustNonEmptyString(container, 'container_key'),
+    ...(display !== null ? { display } : {}),
+    ...(canonicalUrl !== null ? { canonical_url: canonicalUrl } : {}),
+    ...(meta !== undefined ? { meta: meta as Record<string, unknown> } : {}),
   };
 }
 

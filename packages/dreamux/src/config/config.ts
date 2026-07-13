@@ -34,12 +34,27 @@ import {
   redactConfigSecrets,
   resolveConfigProvider,
 } from './config-helpers.js';
+import {
+  defaultChannelCollaborationSpaceConfig,
+  readChannelCollaborationSpace,
+  stringifyChannelCollaborationSpace,
+  type DispatcherChannelCollaborationSpaceConfig,
+} from './collaboration-space-config.js';
 
 export { expandHome } from './config-helpers.js';
+export {
+  defaultChannelCollaborationSpaceConfig,
+  type DispatcherChannelCollaborationSpaceConfig,
+} from './collaboration-space-config.js';
 
 export interface DreamuxConfig {
+    workspace: DreamuxWorkspaceConfig;
     agents: Record<string, ResolvedAgentConfig>;
     dispatchers: DispatcherConfig[];
+}
+
+export interface DreamuxWorkspaceConfig {
+  enabled: boolean;
 }
 
 export interface ResolvedAgentConfig {
@@ -60,6 +75,7 @@ export interface DispatcherConfig {
 export interface DispatcherChannelConfig {
   id: string;
   provider: string;
+    collaborationSpace?: DispatcherChannelCollaborationSpaceConfig;
     config: DispatcherProviderConfig;
     rawConfig?: DispatcherProviderConfig;
     identity?: string;
@@ -74,6 +90,7 @@ export interface DispatcherRuntimeConfig {
 export type DispatcherProviderConfig = Record<string, unknown>;
 
 export const BUILT_IN_DEFAULTS: DreamuxConfig = {
+  workspace: { enabled: true },
   agents: {},
   dispatchers: [],
 };
@@ -140,6 +157,7 @@ export async function loadConfig(
 
 export function stringifyConfig(config: DreamuxConfig): string {
   const fileShape = {
+    workspace: { enabled: config.workspace.enabled },
     agents: Object.entries(config.agents).map(([id, agent]) => ({
       id,
       provider: agent.provider,
@@ -152,6 +170,14 @@ export function stringifyConfig(config: DreamuxConfig): string {
       channels: dispatcher.channels.map((channel) => ({
         id: channel.id,
         provider: channel.provider,
+        ...((channel.collaborationSpace ?? defaultChannelCollaborationSpaceConfig())
+          .defaultBinding.enabled
+          ? {
+              collaborationSpace: stringifyChannelCollaborationSpace(
+                channel.collaborationSpace ?? defaultChannelCollaborationSpaceConfig(),
+              ),
+            }
+          : {}),
         config: channel.rawConfig ?? channel.config,
       })),
       agentRuntime: dispatcher.agentRuntime,
@@ -267,8 +293,9 @@ async function mergeWithDefaults(
     throw new Error(`dreamux config error in ${file}: top-level must be an object`);
   }
   rejectTopLevelCodex(raw, file);
-  rejectUnknownKeys(raw, new Set(['agents', 'dispatchers']), file, '');
+  rejectUnknownKeys(raw, new Set(['workspace', 'agents', 'dispatchers']), file, '');
 
+  const workspace = readWorkspaceConfig(raw['workspace'], file);
   const agents = await readAgents(raw['agents'], file, providerRegistry);
   const dispatchers = await readDispatchers(
     raw['dispatchers'],
@@ -277,9 +304,27 @@ async function mergeWithDefaults(
     providerRegistry,
   );
   return {
+    workspace,
     agents,
     dispatchers,
   };
+}
+
+function readWorkspaceConfig(rawWorkspace: unknown, file: string): DreamuxWorkspaceConfig {
+  if (rawWorkspace === undefined) return { enabled: true };
+  if (!isPlainObject(rawWorkspace)) {
+    throw new Error(
+      `dreamux config error in ${file}: workspace must be an object (got ${describeType(rawWorkspace)})`,
+    );
+  }
+  rejectUnknownKeys(rawWorkspace, new Set(['enabled']), file, 'workspace.');
+  return {
+    enabled: readOptionalBoolean(rawWorkspace, 'enabled', true, file, 'workspace.'),
+  };
+}
+
+export function defaultWorkspaceEnabled(config: DreamuxConfig): boolean {
+  return config.workspace.enabled;
 }
 
 function rejectTopLevelCodex(raw: Record<string, unknown>, file: string): void {
@@ -492,7 +537,12 @@ async function readDispatcherChannels(
         `dreamux config error in ${file}: ${channelPrefix.slice(0, -1)} must be an object (got ${describeType(raw)})`,
       );
     }
-    rejectUnknownKeys(raw, new Set(['id', 'provider', 'config']), file, channelPrefix);
+    rejectUnknownKeys(
+      raw,
+      new Set(['id', 'provider', 'config', 'collaborationSpace']),
+      file,
+      channelPrefix,
+    );
     const id = requireNonEmptyString(raw, 'id', file, channelPrefix);
     if (channelIds.has(id)) {
       throw new Error(
@@ -518,6 +568,11 @@ async function readDispatcherChannels(
       file,
       `${channelPrefix}config`,
       { allowMissing: true },
+    );
+    const collaborationSpace = readChannelCollaborationSpace(
+      raw['collaborationSpace'],
+      file,
+      `${channelPrefix}collaborationSpace.`,
     );
     const channelProvider = asChannelProvider(
       providerRegistry.getImplementation(provider.descriptor.id),
@@ -546,6 +601,7 @@ async function readDispatcherChannels(
     out.push({
       id,
       provider: provider.ref,
+      collaborationSpace,
       config: parsed,
       rawConfig,
       identity,

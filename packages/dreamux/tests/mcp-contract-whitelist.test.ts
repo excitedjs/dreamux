@@ -2,6 +2,7 @@ import { PassThrough } from 'node:stream';
 
 import { describe, expect, it } from 'vitest';
 
+import { collaborationSpaceTools } from '../src/mcp/collaboration-space-mcp.js';
 import { cronTools } from '../src/mcp/cron-mcp.js';
 import { runTeamMateMcp } from '../src/mcp/teammate-mcp.js';
 import { runTeamMcp } from '../src/mcp/team-mcp.js';
@@ -175,6 +176,12 @@ const TEAM_HISTORY_PARAMS = [
   'limit',
   'cursor',
 ];
+const COLLABORATION_SPACE_TOOLS = [
+  'bind',
+  'dissolve',
+  'status',
+  'list',
+];
 
 describe('issue #199 Slice 1 — public MCP contract whitelist', () => {
   it('teammate.spawn requests by name_prefix, never the concrete name', async () => {
@@ -280,6 +287,21 @@ describe('issue #199 Slice 1 — public MCP contract whitelist', () => {
     expect(descriptions).not.toContain('.workspace/work/');
     expect(descriptions).not.toContain('dispatcher cwd');
     expect(descriptions).not.toContain('does NOT');
+  });
+
+  it('collaboration_space surface is bind/dissolve/status/list only', () => {
+    const tools = collaborationSpaceTools();
+    expect(tools.map((tool) => tool['name'])).toEqual(COLLABORATION_SPACE_TOOLS);
+    expect(tools.map((tool) => tool['name'])).not.toContain('create');
+    expect(tools.map((tool) => tool['name'])).not.toContain('history');
+    const bind = schemaOf(tools, 'bind');
+    expect(bind.required).toEqual(['space_name', 'leader_agent_runtime']);
+    expect(bind.properties).toHaveProperty('container');
+    expect(bind.properties).toHaveProperty('identity');
+    expect(bind.properties).not.toHaveProperty('provider');
+    expect(JSON.stringify(bind.properties['repo'])).toContain('cwd');
+    const dissolve = schemaOf(tools, 'dissolve');
+    expect(dissolve.required).toEqual(['space_name', 'note']);
   });
 
   it('cron MCP descriptions describe product behavior, not release milestones', () => {

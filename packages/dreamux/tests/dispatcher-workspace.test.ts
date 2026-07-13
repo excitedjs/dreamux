@@ -11,6 +11,8 @@ import {
   ensureDispatcherWorkspace,
 } from '../src/service/dispatcher-workspace.js';
 import {
+  defaultWorkspaceWorkPath,
+  directWorkspaceWorkPath,
   managedWorkspaceGitignorePath,
   managedWorktreePath,
   managedWorktreeRoot,
@@ -233,6 +235,13 @@ describe('managed worktree path builders (issue #182 PR-4)', () => {
     expect(managedWorkspaceGitignorePath(workspace)).toBe(
       '/work/space/.workspace/.gitignore',
     );
+  });
+
+  it('maps default work dirs under the workspace boundary or dispatcher dir', () => {
+    expect(defaultWorkspaceWorkPath({ dispatcherWorkspace: workspace, slug: 'alpha' }))
+      .toBe('/work/space/.workspace/work/alpha');
+    expect(directWorkspaceWorkPath({ dispatcherWorkspace: workspace, slug: 'alpha' }))
+      .toBe('/work/space/alpha');
   });
 
   it('maps the same repo to a stable repo-disambiguated slug', () => {

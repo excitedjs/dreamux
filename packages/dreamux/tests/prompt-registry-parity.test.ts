@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { collaborationSpaceTools } from '../src/mcp/collaboration-space-mcp.js';
 import { cronTools } from '../src/mcp/cron-mcp.js';
 import { teamTools } from '../src/mcp/team-mcp.js';
 import { teammateTools } from '../src/mcp/teammate-mcp.js';
@@ -25,6 +26,7 @@ interface RegisteredTool {
 
 function registeredDreamuxMcpTools(): RegisteredTool[] {
   return [
+    ...toolNames('collaboration_space', collaborationSpaceTools()),
     ...toolNames('teammate', teammateTools('dispatcher')),
     ...toolNames('team', teamTools()),
     ...toolNames('cron', cronTools()),
@@ -90,7 +92,7 @@ describe('dispatcher prompt matches registered Dreamux MCP tools', () => {
       adminSocketPath: '/tmp/dreamux-admin.sock',
     }).map((server) => server.name);
 
-    expect(servers).toEqual(['team', 'teammate', 'cron']);
+    expect(servers).toEqual(['collaboration_space', 'team', 'teammate', 'cron']);
   });
 
   it('names dispatcher-visible tools in dispatcher-workflow', () => {

@@ -101,6 +101,86 @@ Key source:
 - `/packages/dreamux/src/mcp/team-mcp.ts`
 - `/packages/channel/feishu-channel/src/provider.ts`
 
+## Collaboration Spaces
+
+Dreamux core also exposes a dispatcher-only `collaboration_space` MCP namespace
+for externally created provider containers that should be bound to a worktree
+policy. This is not a provider Channel MCP surface. For Feishu, creating or
+finding the topic group remains a dispatcher-agent action through `lark-cli`;
+the core tool only records and releases Dreamux's provisioning binding.
+
+The current core surface is:
+
+- `bind`: register an existing external container when needed and bind it to a
+  worktree policy, TeamLeader runtime, and optional default TeamLeader identity.
+  `repo` is optional: supplied repo creates managed worktrees, omitted repo
+  follows the global default workspace policy;
+- `dissolve`: release the current collaboration-space routing/provisioning
+  binding. It does not delete the external container and does not dissolve
+  already provisioned Teams;
+- `status` / `list`: read compact public state. There is no first-version
+  `history` or recovery tool.
+
+The Channel contract has optional provider-neutral collaboration-space fields:
+providers may attach `ChannelInboundEnvelope.container` on inbound deliveries
+and may call `ChannelRoutes.targetLifecycle` with `target_created` /
+`target_closed` events. `ChannelRoutes.deliver(input, envelope)` returns the
+neutral `InboundDeliveryResult`; the channel provider owns any platform ACK or
+reaction lifecycle around this call. Core never directly acknowledges the
+platform.
+
+Core uses only `(channel_id, container_key, target_key)` plus the current
+binding generation; it must not parse Feishu `chat_id`, `thread_id`, chat mode,
+or provider-specific `target.meta` to infer collaboration-space membership.
+
+Dispatcher channel config may enable a core-owned automatic binding policy at
+`dispatchers[].channels[].collaborationSpace.defaultBinding.enabled`. When
+enabled, an inbound/lifecycle event with a neutral `container` for an unknown
+external space can create a safe derived collaboration-space record and bind it
+with the dispatcher's default agent runtime plus optional configured `repo` and
+`identity`. The provider still only supplies `container`/`target`; it does not
+create Dreamux spaces, Teams, worktrees, or bindings. A known unbound space
+created by `collaboration_space.dissolve` is not auto-bound again; explicit
+`bind` is required to reattach it.
+
+Provisioning has two entry points:
+
+- **Target lifecycle events.** When the provider calls
+  `ChannelRoutes.targetLifecycle` with `target_created` for a container with a
+  bound collaboration-space record, or a channel default binding policy can
+  create one, the collaboration target lifecycle path writes the durable claim
+  and returns; heavy worktree/Team provisioning runs asynchronously under the
+  `CollaborationSpaceService` lifecycle-task tracker. `DispatcherService`
+  resumes durable `creating` / `closing` targets after channel sessions start,
+  and drains accepted lifecycle tasks during stop/shutdown. For unknown
+  containers without default binding, and for known unbound spaces, the create
+  event is ignored without claiming a target. For `target_closed`, the target
+  lifecycle path accepts the close event and asynchronously dissolves the Team
+  and releases the binding.
+- **First-inbound provisioning.** When a bindable target has no existing binding
+  and `envelope.container` is set on `deliver()`, `routeChannelInput` calls
+  `acceptAndProvisionTarget` synchronously before routing. This may use channel
+  default binding to register an unknown collaboration space. If provisioning
+  succeeds and the Team is active, the inbound is delivered to the TeamLeader;
+  if it fails, a failed `InboundDeliveryResult` is returned. This path never
+  falls back to the dispatcher agent after collaboration-space provisioning has
+  claimed the target. If a later inbound for the same `(channel_id, target_key)`
+  omits `envelope.container`, core still checks for an existing durable
+  collaboration-space target claim before falling back to the dispatcher agent.
+
+Both paths bypass the dispatcher agent runtime but still go through
+`DispatcherService` and core stores. When the space is dissolved, future
+deliveries fall back to the normal dispatcher path unless the space is rebound.
+
+Key source:
+
+- `/packages/dreamux-types/src/channel.ts`
+- `/packages/dreamux/src/config/collaboration-space-config.ts`
+- `/packages/dreamux/src/service/collaboration-space/`
+- `/packages/dreamux/src/mcp/collaboration-space-mcp.ts`
+- `/packages/dreamux/src/service/dispatcher-service/index.ts`
+- `/packages/dreamux/src/service/dispatcher-service/collaboration-routing.ts`
+
 ## Feishu Domain Contracts
 
 Current cross-cutting Feishu contracts live in domain docs:

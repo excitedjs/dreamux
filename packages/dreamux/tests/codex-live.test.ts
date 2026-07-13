@@ -224,6 +224,7 @@ function liveConfig(dispatcherCwd: string, codexHomeEnv: string): DreamuxConfig 
     },
   });
   return {
+    workspace: { enabled: true },
     agents: {
       [dispatcher.agentRuntime]: {
         provider: dispatcher.runtime.provider,

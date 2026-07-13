@@ -22,9 +22,9 @@ daemon/service/config/log work, or missing-reply investigations.
 - `history` is compact recovery search. `last` reads recent settled turns by
   concrete name without starting a runtime.
 - Use `get_capabilities.agent_runtimes[].id` for `spawn.agent_runtime`.
-- `spawn.repo` is optional. Omitted creates a plain per-TeamMate work directory;
-  `mode: managed` creates a git worktree; `mode: reuse-cwd` runs in an existing
-  path.
+- `spawn.repo` is optional. Omitted creates a plain per-TeamMate work directory
+  following the dispatcher's global workspace policy; `mode: managed` creates a
+  git worktree; `mode: reuse-cwd` runs in an existing path.
 
 ## Team MCP Notes
 
@@ -42,6 +42,28 @@ daemon/service/config/log work, or missing-reply investigations.
   success. Do not claim a channel target is released from Team routing unless
   `transfer_back` returns success.
 - `dissolve` closes a recoverable Team and its agents. Include a clear `note`.
+
+## Collaboration Space MCP Notes
+
+- `bind`, `dissolve`, `status`, and `list` operate on dispatcher-owned
+  collaboration spaces.
+- Use `bind` only for an external collaboration space that already exists. If
+  the space is unknown to Dreamux, pass the provider-owned opaque `container`
+  selector; Dreamux core does not create the external space through a channel
+  provider.
+- `bind.repo` is optional. Omitted uses the same default workspace policy as
+  Team creation without an explicit repo; supplied repo creates managed
+  worktrees for future target Teams.
+- `bind.identity`, when supplied, becomes the default TeamLeader identity for
+  future Teams automatically created under that bound collaboration space.
+- Some channels may enable core-owned default collaboration-space binding; then
+  a neutral provider `container` can be auto-bound on first target inbound
+  without an explicit `collaboration_space.bind` call.
+- `dissolve` releases Dreamux routing/provisioning for the collaboration space.
+  It does not delete the external space and does not dissolve already-created
+  Teams; those Teams remain visible and can be closed with Team MCP.
+- Use `status` or `list` for inspection. There is no `history` tool for
+  collaboration spaces.
 
 ## Channel Notes
 

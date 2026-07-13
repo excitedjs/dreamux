@@ -16,6 +16,7 @@
  *         access.json
  *         chat-bots.json
  *         channel-bindings.json
+ *         collaboration-spaces.json
  *         teammate/<name>/    dispatcher-owned teammates: {identity.json, turn.jsonl}
  *         team/<team>/        one dir per team: leader {identity.json, turn.jsonl},
  *                             record.json, teammate/<name>/ members
@@ -392,6 +393,10 @@ export function dispatcherAgentTurnsPath(input: {
 
 export function dispatcherChannelBindingsPath(id: string): string {
   return join(dispatcherDir(id), 'channel-bindings.json');
+}
+
+export function dispatcherCollaborationSpacesPath(id: string): string {
+  return join(dispatcherDir(id), 'collaboration-spaces.json');
 }
 
 export function dispatcherCronJobsPath(id: string): string {

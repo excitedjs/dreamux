@@ -7,6 +7,7 @@ import { channelMcpServerDescriptorsForCaller } from '../channel-service/mcp-des
 import { teamMcpServerDescriptor } from '../team-collection/mcp-config.js';
 import { teammateMcpServerDescriptor } from '../teammate-collection/mcp-config.js';
 import { cronMcpServerDescriptor } from '../scheduler/mcp-config.js';
+import { collaborationSpaceMcpServerDescriptor } from '../collaboration-space/mcp-config.js';
 
 /**
  * Assemble the dispatcher-root MCP descriptor set (issue #209 / PR #282
@@ -34,6 +35,7 @@ export function dispatcherMcpServerDescriptors(input: {
       adminSocketPath: input.adminSocketPath,
       scope: { callerKind: 'dispatcher' },
     }),
+    collaborationSpaceMcpServerDescriptor(context),
     teamMcpServerDescriptor(context),
     teammateMcpServerDescriptor({
       ...context,

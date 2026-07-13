@@ -6,6 +6,7 @@ import { writeFileAtomic } from '../../platform/atomic-write.js';
 import { isNotFound } from '../../platform/fs-errors.js';
 import { dispatcherChannelBindingsPath } from '../../platform/paths.js';
 import { LegacyStateError } from '../legacy-state.js';
+import { KeyedAsyncQueue } from '../serial-queue.js';
 
 /** A channel provider ref (e.g. `builtin:feishu`); core never narrows to one. */
 export type ChannelProviderRef = string;
@@ -54,16 +55,36 @@ export interface BindChannelInput {
   leaderName: string;
 }
 
+export interface ChannelBindingOwnerInput {
+  teamName: string;
+  leaderName: string;
+}
+
 export interface ResolveChannelInput {
   dispatcherId: string;
   channelId: string;
   targetKey: string;
 }
 
-export type TransferChannelBackInput = ResolveChannelInput;
+export type TransferChannelBackInput = ResolveChannelInput & {
+  expectedOwner?: ChannelBindingOwnerInput;
+};
 
 export class ChannelBindingStore {
+  private readonly writes = new KeyedAsyncQueue();
+
   async bind(input: BindChannelInput): Promise<ChannelBinding> {
+    return this.bindInternal(input, 'replace');
+  }
+
+  async claim(input: BindChannelInput): Promise<ChannelBinding> {
+    return this.bindInternal(input, 'claim');
+  }
+
+  private async bindInternal(
+    input: BindChannelInput,
+    mode: 'replace' | 'claim',
+  ): Promise<ChannelBinding> {
     if (!input.target.bindable) {
       throw new Error(
         `channel target ${JSON.stringify(input.target.target_key)} (type ` +
@@ -71,61 +92,115 @@ export class ChannelBindingStore {
           'can be handed to a Team (P2P always routes to the dispatcher)',
       );
     }
-    const file = await this.read(input.dispatcherId);
-    const now = Date.now();
-    const next: ChannelBinding = {
-      channel_id: input.channelId,
-      provider: input.provider,
-      target_type: input.target.target_type,
-      target_key: input.target.target_key,
-      display: input.target.display ?? null,
-      canonical_url: input.target.canonical_url ?? null,
-      meta: input.target.meta ?? {},
-      team_name: input.teamName,
-      leader_name: input.leaderName,
-      active: true,
-      created_at: now,
-      updated_at: now,
-      deactivated_at: null,
-    };
-    // Active uniqueness is `(channel_id, target_key)`: a channel target is active
-    // for at most one Team. Re-binding the same target reassigns it (last-bind-
-    // wins, preserving created_at), so there is always exactly one row per key.
-    const idx = file.bindings.findIndex(
-      (binding) =>
-        binding.channel_id === input.channelId &&
-        binding.target_key === input.target.target_key,
-    );
-    if (idx === -1) {
-      file.bindings.push(next);
+    return this.writes.run(input.dispatcherId, async () => {
+      const file = await this.read(input.dispatcherId);
+      const now = Date.now();
+      const next: ChannelBinding = {
+        channel_id: input.channelId,
+        provider: input.provider,
+        target_type: input.target.target_type,
+        target_key: input.target.target_key,
+        display: input.target.display ?? null,
+        canonical_url: input.target.canonical_url ?? null,
+        meta: input.target.meta ?? {},
+        team_name: input.teamName,
+        leader_name: input.leaderName,
+        active: true,
+        created_at: now,
+        updated_at: now,
+        deactivated_at: null,
+      };
+      // Active uniqueness is `(channel_id, target_key)`: a channel target is
+      // active for at most one Team. Re-binding the same target reassigns it
+      // (last-bind-wins, preserving created_at), so there is always exactly one
+      // row per key.
+      const idx = file.bindings.findIndex(
+        (binding) =>
+          binding.channel_id === input.channelId &&
+          binding.target_key === input.target.target_key,
+      );
+      if (idx === -1) {
+        file.bindings.push(next);
+        await this.write(input.dispatcherId, file);
+        return next;
+      }
+      const previous = file.bindings[idx]!;
+      if (
+        mode === 'claim' &&
+        previous.active &&
+        (previous.team_name !== input.teamName ||
+          previous.leader_name !== input.leaderName)
+      ) {
+        throw new Error(
+          `channel target ${JSON.stringify(input.target.target_key)} is already ` +
+            `bound to Team ${JSON.stringify(previous.team_name)}`,
+        );
+      }
+      const merged: ChannelBinding = {
+        ...next,
+        created_at: previous.created_at,
+      };
+      file.bindings[idx] = merged;
       await this.write(input.dispatcherId, file);
-      return next;
-    }
-    const merged: ChannelBinding = {
-      ...next,
-      created_at: file.bindings[idx]!.created_at,
-    };
-    file.bindings[idx] = merged;
-    await this.write(input.dispatcherId, file);
-    return merged;
+      return merged;
+    });
   }
 
   async transferBack(
     input: TransferChannelBackInput,
   ): Promise<ChannelBinding | null> {
-    const file = await this.read(input.dispatcherId);
-    const binding = file.bindings.find(
-      (entry) =>
-        entry.channel_id === input.channelId &&
-        entry.target_key === input.targetKey &&
-        entry.active,
+    return this.transferBackInternal(input, 'throw-on-mismatch');
+  }
+
+  async transferBackIfOwned(
+    input: ResolveChannelInput & {
+      owner: ChannelBindingOwnerInput;
+    },
+  ): Promise<ChannelBinding | null> {
+    return this.transferBackInternal(
+      {
+        dispatcherId: input.dispatcherId,
+        channelId: input.channelId,
+        targetKey: input.targetKey,
+        expectedOwner: input.owner,
+      },
+      'ignore-mismatch',
     );
-    if (binding === undefined) return null;
-    binding.active = false;
-    binding.updated_at = Date.now();
-    binding.deactivated_at = binding.updated_at;
-    await this.write(input.dispatcherId, file);
-    return binding;
+  }
+
+  private async transferBackInternal(
+    input: TransferChannelBackInput,
+    mode: 'throw-on-mismatch' | 'ignore-mismatch',
+  ): Promise<ChannelBinding | null> {
+    return this.writes.run(input.dispatcherId, async () => {
+      const file = await this.read(input.dispatcherId);
+      const binding = file.bindings.find(
+        (entry) =>
+          entry.channel_id === input.channelId &&
+          entry.target_key === input.targetKey &&
+          entry.active,
+      );
+      if (binding === undefined) return null;
+      if (
+        input.expectedOwner !== undefined &&
+        (binding.team_name !== input.expectedOwner.teamName ||
+          binding.leader_name !== input.expectedOwner.leaderName)
+      ) {
+        if (mode === 'ignore-mismatch') return null;
+        throw new Error(
+          `channel target '${input.targetKey}' is bound to Team ` +
+            `${JSON.stringify(binding.team_name)} leader ` +
+            `${JSON.stringify(binding.leader_name)}, not Team ` +
+            `${JSON.stringify(input.expectedOwner.teamName)} leader ` +
+            `${JSON.stringify(input.expectedOwner.leaderName)}`,
+        );
+      }
+      binding.active = false;
+      binding.updated_at = Date.now();
+      binding.deactivated_at = binding.updated_at;
+      await this.write(input.dispatcherId, file);
+      return binding;
+    });
   }
 
   async resolve(input: ResolveChannelInput): Promise<ChannelBinding | null> {

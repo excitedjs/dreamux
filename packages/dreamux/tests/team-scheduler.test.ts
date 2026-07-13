@@ -381,6 +381,54 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     });
   });
 
+  it('startSchedulers reuses cached Team services', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const runtimes: FakeRuntime[] = [];
+    const log = noopLog();
+    const teams = makeTeams({ config, log, runtimes });
+
+    await teams.create({
+      name: 'alpha',
+      leaderAgentRuntime: 'agent-a',
+      intent: 'lead alpha',
+    });
+    expect(runtimes).toHaveLength(1);
+
+    teams.stopSchedulers();
+    await new CronJobStore({
+      dispatcherId: 'dispatcher-a',
+      cronJobsPath: dispatcherTeamCronJobsPath('dispatcher-a', 'alpha'),
+    }).create(
+      {
+        cron: '* * * * *',
+        tz: 'UTC',
+        recurring: false,
+        action: { kind: 'prompt-agent', prompt: 'scheduled after warm restart' },
+        nextRunAt: Date.now() + 2000,
+      },
+      128,
+    );
+    await teams.startSchedulers();
+
+    expect(runtimes).toHaveLength(1);
+    await waitFor(() => runtimes[0]!.textSubmitted.length === 1, 4000);
+    expect(runtimes[0]!.textSubmitted[0]).toEqual({
+      text: 'scheduled after warm restart',
+      sourceId: expect.stringMatching(/^scheduled:job-/),
+    });
+    teams.stopSchedulers();
+    await teams.stopAll();
+  });
+
   it('dissolve stops the TeamLeader scheduler and deletes its cron store', async () => {
     const workspace = join(root, 'workspace');
     mkdirSync(workspace, { recursive: true });

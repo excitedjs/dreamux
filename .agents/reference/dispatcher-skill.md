@@ -62,6 +62,12 @@ Dispatcher `cron` MCP tools are `cron_create`, `cron_list`, `cron_update`,
 Dispatcher; they are not a TeamMate spawn target or channel delivery mechanism by
 themselves.
 
+Dispatcher `collaboration_space` MCP tools are `bind`, `dissolve`, `status`,
+and `list`. They register and inspect already-created neutral channel
+containers, such as topic-group spaces, and route future targets in those spaces
+to provisioned Teams. They do not create the external provider space, delete it,
+or expose a `history` surface.
+
 ## TeamLeader-Visible MCP
 
 TeamLeader `teammate` MCP tools are `spawn`, `send`, `close`, `list`, `status`,

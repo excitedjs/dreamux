@@ -7,9 +7,11 @@ import type {
 
 import type { ChannelProviderCatalog } from '../../channel/catalog.js';
 import type {
+  DispatcherChannelCollaborationSpaceConfig,
   DispatcherChannelConfig,
   DreamuxConfig,
 } from '../../config/config.js';
+import { defaultChannelCollaborationSpaceConfig } from '../../config/config.js';
 import type { ChannelBinding } from '../channel-binding/store.js';
 import { ChannelBindingStore } from '../channel-binding/store.js';
 import type { ChannelMcpCallerScope } from './mcp-descriptors.js';
@@ -80,6 +82,16 @@ export class ChannelService {
 
   configuredChannels(): readonly DispatcherChannelConfig[] {
     return this.sessions.configuredChannels();
+  }
+
+  collaborationSpaceConfig(
+    channelId: string,
+  ): DispatcherChannelCollaborationSpaceConfig {
+    const channel = this.configuredChannels().find((entry) => entry.id === channelId);
+    if (channel === undefined) {
+      throw new Error(`unknown channel '${channelId}'`);
+    }
+    return channel.collaborationSpace ?? defaultChannelCollaborationSpaceConfig();
   }
 
   clear(): void {
@@ -166,11 +178,34 @@ export class ChannelService {
   }): Promise<ChannelBinding> {
     const channelId = this.resolveChannelId(input.channelId);
     const target = await this.resolveTarget(input.meta, channelId);
+    return this.bindResolvedTarget({ owner: input.owner, channelId, target });
+  }
+
+  async bindResolvedTarget(input: {
+    owner: ChannelRouteOwner;
+    channelId: string;
+    target: ChannelTarget;
+  }): Promise<ChannelBinding> {
     return this.bindings.bind({
       dispatcherId: this.dispatcherId,
-      channelId,
-      provider: this.channelProviderRef(channelId),
-      target,
+      channelId: input.channelId,
+      provider: this.channelProviderRef(input.channelId),
+      target: input.target,
+      teamName: input.owner.teamName,
+      leaderName: input.owner.leaderName,
+    });
+  }
+
+  async claimResolvedTarget(input: {
+    owner: ChannelRouteOwner;
+    channelId: string;
+    target: ChannelTarget;
+  }): Promise<ChannelBinding> {
+    return this.bindings.claim({
+      dispatcherId: this.dispatcherId,
+      channelId: input.channelId,
+      provider: this.channelProviderRef(input.channelId),
+      target: input.target,
       teamName: input.owner.teamName,
       leaderName: input.owner.leaderName,
     });
@@ -183,28 +218,56 @@ export class ChannelService {
   }): Promise<ChannelBinding | null> {
     const channelId = this.resolveChannelId(input.channelId);
     const target = await this.resolveTarget(input.meta, channelId);
-    const binding = await this.bindings.resolve({
+    const binding = await this.bindings.transferBack({
       dispatcherId: this.dispatcherId,
       channelId,
       targetKey: target.target_key,
+      ...(input.expectedOwner !== undefined
+        ? {
+            expectedOwner: {
+              teamName: input.expectedOwner.teamName,
+              leaderName: input.expectedOwner.leaderName,
+            },
+          }
+        : {}),
     });
-    if (binding === null) return null;
-    if (
-      input.expectedOwner !== undefined &&
-      !ownerMatchesBinding(input.expectedOwner, binding)
-    ) {
-      throw new Error(
-        `channel target '${target.target_key}' is bound to Team ` +
-          `${JSON.stringify(binding.team_name)} leader ` +
-          `${JSON.stringify(binding.leader_name)}, not Team ` +
-          `${JSON.stringify(input.expectedOwner.teamName)} leader ` +
-          `${JSON.stringify(input.expectedOwner.leaderName)}`,
-      );
-    }
-    return this.bindings.transferBack({
+    return binding;
+  }
+
+  async transferResolvedTargetBack(input: {
+    expectedOwner?: ChannelRouteOwner;
+    channelId: string;
+    target: ChannelTarget;
+  }): Promise<ChannelBinding | null> {
+    const binding = await this.bindings.transferBack({
       dispatcherId: this.dispatcherId,
-      channelId,
-      targetKey: target.target_key,
+      channelId: input.channelId,
+      targetKey: input.target.target_key,
+      ...(input.expectedOwner !== undefined
+        ? {
+            expectedOwner: {
+              teamName: input.expectedOwner.teamName,
+              leaderName: input.expectedOwner.leaderName,
+            },
+          }
+        : {}),
+    });
+    return binding;
+  }
+
+  async releaseResolvedTargetIfOwned(input: {
+    owner: ChannelRouteOwner;
+    channelId: string;
+    target: ChannelTarget;
+  }): Promise<ChannelBinding | null> {
+    return this.bindings.transferBackIfOwned({
+      dispatcherId: this.dispatcherId,
+      channelId: input.channelId,
+      targetKey: input.target.target_key,
+      owner: {
+        teamName: input.owner.teamName,
+        leaderName: input.owner.leaderName,
+      },
     });
   }
 
@@ -261,6 +324,10 @@ export class ChannelService {
         dispatcherId: this.dispatcherId,
         channelId: binding.channel_id,
         targetKey: binding.target_key,
+        expectedOwner: {
+          teamName: owner.teamName,
+          leaderName: owner.leaderName,
+        },
       });
       if (result !== null) transferred.push(result);
     }

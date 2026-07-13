@@ -9,6 +9,7 @@ import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 import { dispatcherWorkspace } from '../worktree/workspaces.js';
+import { defaultWorkspaceEnabled } from '../../config/config.js';
 import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
 import type { AgentTurnsStore } from '../agent-entity/turns-store.js';
 import type {
@@ -116,6 +117,7 @@ export class TeamCollection {
         ? await this.worktrees.prepareDefaultWorkspace({
             dispatcherWorkspace: workspaceRoot,
             slug: teamId,
+            workspaceEnabled: defaultWorkspaceEnabled(this.opts.config),
           })
         : await this.worktrees.prepare({
             dispatcherId: this.dispatcherId,
@@ -336,7 +338,8 @@ export class TeamCollection {
     for (const team of teams) {
       if (team.status === 'closed') continue;
       try {
-        await this.serviceFor(team);
+        const service = await this.get(team.team_id);
+        await service.scheduler.start();
       } catch (err) {
         this.opts.log.error(
           { dispatcher_id: this.dispatcherId, team_id: team.team_id, err: errInfo(err) },

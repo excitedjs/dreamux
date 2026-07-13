@@ -42,6 +42,14 @@ function managedWorkRoot(dispatcherWorkspace: string): string {
   return join(managedWorkspaceDir(dispatcherWorkspace), WORK_SUBDIR);
 }
 
+/** `<workspace>/<name>` — legacy-direct default work dir when workspace is disabled. */
+export function directWorkspaceWorkPath(input: {
+  dispatcherWorkspace: string;
+  slug: string;
+}): string {
+  return join(input.dispatcherWorkspace, teamMateNameSegment(input.slug));
+}
+
 /**
  * Absolute path of the default (no-`repo`) plain work directory for a concrete
  * TeamMate/Team name under a dispatcher workspace (issue #199). Unlike a managed

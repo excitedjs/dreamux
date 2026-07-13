@@ -48,6 +48,9 @@ export function testDispatcherConfig(
         {
           id: options.channelId ?? 'primary',
           provider: options.channelProvider ?? BUILTIN_FEISHU_PROVIDER_REF,
+          collaborationSpace: {
+            defaultBinding: { enabled: false, repo: null, identity: null },
+          },
           config: defaultChannelConfig,
           // Mirror the feishu provider's getIdentity (`config.app_id`) so a store
           // built directly from this fixture seeds the same `channel_identity`
@@ -83,6 +86,7 @@ export function testDispatcherConfig(
  */
 export function testDreamuxConfig(
   dispatchers: DispatcherConfig[] = [testDispatcherConfig()],
+  options: { workspaceEnabled?: boolean } = {},
 ): DreamuxConfig {
   const agents: DreamuxConfig['agents'] = {};
   for (const dispatcher of dispatchers) {
@@ -91,7 +95,11 @@ export function testDreamuxConfig(
       config: dispatcher.runtime.config,
     };
   }
-  return { agents, dispatchers };
+  return {
+    workspace: { enabled: options.workspaceEnabled ?? true },
+    agents,
+    dispatchers,
+  };
 }
 
 /** One agents[] file entry: a named runtime declaration. */
@@ -110,6 +118,7 @@ export interface TestFileDispatcher {
   feishu?: { app_id: string; app_secret: string };
   channelId?: string;
   channelProvider?: string;
+  collaborationSpace?: Record<string, unknown>;
 }
 
 /**
@@ -121,10 +130,12 @@ export interface TestFileDispatcher {
  * etc.
  */
 export function testConfigFileObject(input: {
+  workspace?: Record<string, unknown>;
   agents?: TestFileAgent[];
   dispatchers?: TestFileDispatcher[];
 }): Record<string, unknown> {
   return {
+    ...(input.workspace !== undefined ? { workspace: input.workspace } : {}),
     agents: (input.agents ?? []).map((agent) => ({
       id: agent.id,
       provider: agent.provider ?? BUILTIN_CODEX_PROVIDER_REF,
@@ -138,6 +149,9 @@ export function testConfigFileObject(input: {
         {
           id: dispatcher.channelId ?? 'primary',
           provider: dispatcher.channelProvider ?? BUILTIN_FEISHU_PROVIDER_REF,
+          ...(dispatcher.collaborationSpace !== undefined
+            ? { collaborationSpace: dispatcher.collaborationSpace }
+            : {}),
           config: dispatcher.feishu ?? {
             app_id: `app-${dispatcher.id}`,
             app_secret: `secret-${dispatcher.id}`,

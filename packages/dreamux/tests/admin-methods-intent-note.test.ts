@@ -194,6 +194,88 @@ describe('Channel MCP admin methods replace the Team binding methods (#209 slice
   });
 });
 
+describe('Collaboration Space MCP admin methods', () => {
+  it('parses bind identity, container, and repo policy', async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const server = {
+      repos: { dispatchers: { get: () => ({ dispatcher_id: 'flow' }) } },
+      getDispatcher: () => ({
+        bindCollaborationSpace: async (input: Record<string, unknown>) => {
+          seen.push(input);
+          return { space: { space_name: input['spaceName'] } };
+        },
+      }),
+    } as unknown as Server;
+
+    await expect(
+      adminMethods['mcp.collaboration_space.bind']!(server, {
+        dispatcher_id: 'flow',
+        channel_id: 'primary',
+        space_name: 'space-alpha',
+        container: {
+          container_type: 'topic_group',
+          container_key: 'chat-1',
+          display: 'Alpha',
+        },
+        repo: { cwd: '/repo/a', base_ref: 'main' },
+        leader_agent_runtime: 'agent-a',
+        identity: 'default identity',
+      }),
+    ).resolves.toMatchObject({ space: { space_name: 'space-alpha' } });
+    expect(seen[0]).toMatchObject({
+      channelId: 'primary',
+      spaceName: 'space-alpha',
+      container: {
+        container_type: 'topic_group',
+        container_key: 'chat-1',
+        display: 'Alpha',
+      },
+      repo: { cwd: '/repo/a', baseRef: 'main' },
+      leaderAgentRuntime: 'agent-a',
+      identity: 'default identity',
+    });
+  });
+
+  it('rejects collaboration_space.bind with blank identity', async () => {
+    await expectBadRequest('mcp.collaboration_space.bind', {
+      dispatcher_id: 'flow',
+      space_name: 'space-alpha',
+      leader_agent_runtime: 'agent-a',
+      identity: '   ',
+    });
+  });
+
+  it('allows collaboration_space.bind without repo', async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const server = {
+      repos: { dispatchers: { get: () => ({ dispatcher_id: 'flow' }) } },
+      getDispatcher: () => ({
+        bindCollaborationSpace: async (input: Record<string, unknown>) => {
+          seen.push(input);
+          return { space: { space_name: input['spaceName'] } };
+        },
+      }),
+    } as unknown as Server;
+
+    await expect(
+      adminMethods['mcp.collaboration_space.bind']!(server, {
+        dispatcher_id: 'flow',
+        space_name: 'space-alpha',
+        container: {
+          container_type: 'topic_group',
+          container_key: 'chat-1',
+        },
+        leader_agent_runtime: 'agent-a',
+      }),
+    ).resolves.toMatchObject({ space: { space_name: 'space-alpha' } });
+    expect(seen[0]).toMatchObject({
+      spaceName: 'space-alpha',
+      leaderAgentRuntime: 'agent-a',
+    });
+    expect(seen[0]).not.toHaveProperty('repo');
+  });
+});
+
 describe('Team MCP admin read methods compose channel binding summaries', () => {
   it('team.send forwards to the dispatcher and returns only team, leader, and turn', async () => {
     const sent = {

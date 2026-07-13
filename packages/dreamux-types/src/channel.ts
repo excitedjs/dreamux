@@ -33,6 +33,28 @@ export interface ChannelTarget {
   meta?: Record<string, unknown>;
 }
 
+export interface ChannelContainer {
+  container_type: string;
+  container_key: string;
+  display?: string;
+  canonical_url?: string;
+  meta?: Record<string, unknown>;
+}
+
+export type ChannelTargetLifecycleKind =
+  | 'target_created'
+  | 'target_closed';
+
+export interface ChannelTargetLifecycleEvent {
+  kind: ChannelTargetLifecycleKind;
+  event_id?: string;
+  container: ChannelContainer;
+  target: ChannelTarget;
+  title?: string;
+  timestamp?: number;
+  meta?: Record<string, unknown>;
+}
+
 export interface ChannelToolDescriptor {
   name: string;
   description?: string;
@@ -53,6 +75,7 @@ export interface ChannelInboundEnvelope {
   provider: string;
   channel_id: string;
   target: ChannelTarget;
+  container?: ChannelContainer;
   event_id?: string;
   message_id?: string;
   sender?: ChannelSender;
@@ -119,6 +142,7 @@ export interface ChannelRoutes {
     input: InboundTurnInput,
     envelope: ChannelInboundEnvelope,
   ): Promise<InboundDeliveryResult>;
+  targetLifecycle?(event: ChannelTargetLifecycleEvent): Promise<void>;
 }
 
 /**

@@ -1,4 +1,7 @@
-import type { DreamuxConfig } from '../../config/config.js';
+import {
+  defaultWorkspaceEnabled,
+  type DreamuxConfig,
+} from '../../config/config.js';
 import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
 import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
 import type {
@@ -31,6 +34,7 @@ export async function resolveSpawnWorkspace(input: {
         input.dispatcherId,
       ),
       slug: input.name,
+      workspaceEnabled: defaultWorkspaceEnabled(input.config),
     });
   }
   const cwd = input.request.cwd;

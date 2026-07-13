@@ -79,6 +79,7 @@ export type {
 export type {
   ChannelBinCheck,
   ChannelConfigContext,
+  ChannelContainer,
   ChannelDiagnostic,
   ChannelDiagnosticContext,
   ChannelDiagnosticRunner,
@@ -95,6 +96,8 @@ export type {
   ChannelSessionCreateContext,
   ChannelSessionlessToolContext,
   ChannelTarget,
+  ChannelTargetLifecycleEvent,
+  ChannelTargetLifecycleKind,
   ChannelToolCall,
   ChannelToolContext,
   ChannelToolDescriptor,

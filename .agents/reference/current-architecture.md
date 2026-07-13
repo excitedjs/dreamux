@@ -81,8 +81,8 @@ Each live dispatcher owns:
 
 - one selected Agent Runtime instance
 - a map of live Channel sessions keyed by dispatcher-local `channel_id`
-- core-owned `channel-mcp` shims for provider-owned channel tools
-- Team and TeamMate MCP shims owned by Dreamux core
+- provider-owned channel MCP shims for channel tools
+- Team, TeamMate, and collaboration-space MCP shims owned by Dreamux core
 
 The first declared channel is the primary/default egress channel. A dispatcher
 with multiple channel providers can route and egress by `channel_id`; with only
@@ -94,6 +94,7 @@ Key source:
 - `/packages/dreamux/src/service/dispatcher-service/mcp-descriptors.ts`
 - `/packages/dreamux/src/service/channel-service/mcp-descriptors.ts`
 - `/packages/dreamux/src/mcp/channel-mcp.ts`
+- `/packages/dreamux/src/mcp/collaboration-space-mcp.ts`
 - `/packages/dreamux/src/mcp/team-mcp.ts`
 - `/packages/dreamux/src/mcp/teammate-mcp.ts`
 
@@ -163,6 +164,44 @@ Key source:
 - `/packages/dreamux/src/service/channel-service/`
 - `/packages/dreamux/src/service/channel-binding/`
 - `/packages/dreamux/src/mcp/team-mcp.ts`
+
+## Collaboration Spaces
+
+`CollaborationSpaceService` is a dispatcher-local control-plane facade for
+externally created provider containers that Dreamux binds to worktree policy. It
+does not have an agent runtime, does not wrap `TeammateService`, and is not a
+Channel provider implementation. Space-level MCP/admin behavior stays in the
+facade; target accept/provision/close state transitions live in the contained
+`CollaborationTargetLifecycle`. That target worker uses the dispatcher's existing
+`ChannelService` plus single dispatcher-level `TeamCollection` to provision Teams
+for channel targets. Accepted lifecycle work is tracked by
+`CollaborationSpaceService`: startup resumes durable `creating` / `closing`
+target records, and dispatcher stop/shutdown drains accepted background target
+tasks before closing the service graph.
+
+The dispatcher-only `collaboration_space` MCP exposes `bind`, `dissolve`,
+`status`, and `list`. Binding registers an existing external container and a
+worktree policy; `repo` is optional and omitted repo follows the global default
+workspace policy. It does not call provider Channel MCP to create the external
+space. A dispatcher channel may also enable core-owned
+`collaborationSpace.defaultBinding` so unknown provider containers with neutral
+`container` membership auto-bind without an explicit MCP call. Dissolve releases
+Dreamux routing/provisioning ownership without deleting the external container
+or dissolving already provisioned Teams, and it prevents implicit auto-rebind of
+that known unbound space. Team cleanup still belongs to `TeamService.dissolve`
+when a target lifecycle close or explicit Team operation dissolves that Team.
+
+Scheduler ownership does not move into collaboration spaces. The dispatcher has
+its dispatcher scheduler, and each `TeamService` owns the TeamLeader scheduler it
+starts through the existing Team path.
+
+Key source:
+
+- `/packages/dreamux/src/service/collaboration-space/`
+- `/packages/dreamux/src/service/dispatcher-service/index.ts`
+- `/packages/dreamux/src/mcp/collaboration-space-mcp.ts`
+- `/packages/dreamux/src/service/team-collection/`
+- `/packages/dreamux/src/service/team-service/`
 
 ## State, Cache, Run Files, And Logs
 

@@ -8,7 +8,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
@@ -134,15 +134,74 @@ describe('global config (~/.dreamux/config.json)', () => {
     expect(readFileSync(configFile, 'utf8')).toBe(DEFAULT_CONFIG_JSON);
     // The default config is empty agents + dispatchers: there is no top-level
     // codex block, and no inline dispatcher runtime.
-    expect(config).toEqual({ agents: {}, dispatchers: [] });
+    expect(config).toEqual({
+      workspace: { enabled: true },
+      agents: {},
+      dispatchers: [],
+    });
     expect(JSON.parse(readFileSync(configFile, 'utf8'))).not.toHaveProperty(
       'codex',
     );
     // First boot writes the on-disk file shape (agents[] array), which the
     // parser then accepts on the next boot.
     expect(JSON.parse(readFileSync(configFile, 'utf8'))).toEqual({
+      workspace: { enabled: true },
       agents: [],
       dispatchers: [],
+    });
+  });
+
+  it('defaults workspace.enabled to true when the block is omitted', async () => {
+    writeConfigObject(
+      testConfigFileObject({
+        agents: [{ id: 'flow' }],
+        dispatchers: [
+          {
+            id: 'flow',
+            cwd: '/workspace/flow',
+            agentRuntime: 'flow',
+          },
+        ],
+      }),
+    );
+
+    const { config } = await loadConfig({ configDir });
+    expect(config.workspace.enabled).toBe(true);
+  });
+
+  it('parses workspace.enabled and channel collaboration-space default binding', async () => {
+    writeConfigObject(
+      testConfigFileObject({
+        workspace: { enabled: false },
+        agents: [{ id: 'flow' }],
+        dispatchers: [
+          {
+            id: 'flow',
+            cwd: '/workspace/flow',
+            agentRuntime: 'flow',
+            collaborationSpace: {
+              defaultBinding: {
+                enabled: true,
+                repo: { cwd: '~/repo/main', baseRef: 'origin/next' },
+                identity: 'Default topic leader',
+              },
+            },
+          },
+        ],
+      }),
+    );
+
+    const { config } = await loadConfig({ configDir });
+    expect(config.workspace.enabled).toBe(false);
+    expect(config.dispatchers[0]?.channels[0]?.collaborationSpace).toEqual({
+      defaultBinding: {
+        enabled: true,
+        repo: {
+          cwd: join(homedir(), 'repo/main'),
+          baseRef: 'origin/next',
+        },
+        identity: 'Default topic leader',
+      },
     });
   });
 

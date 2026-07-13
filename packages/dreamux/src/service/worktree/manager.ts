@@ -10,6 +10,7 @@ import {
 } from '../../platform/paths.js';
 import {
   defaultWorkspaceWorkPath,
+  directWorkspaceWorkPath,
   managedWorkspaceDir,
   managedWorkspaceGitignorePath,
   managedWorktreePath,
@@ -147,6 +148,7 @@ export class WorktreeManager {
   async prepareDefaultWorkspace(input: {
     dispatcherWorkspace: string;
     slug: string;
+    workspaceEnabled: boolean;
   }): Promise<PreparedTeamMateWorkspace> {
     const dispatcherWorkspace = await realpath(input.dispatcherWorkspace);
     if (await isRealPathUnderDreamuxRoot(dispatcherWorkspace)) {
@@ -155,8 +157,12 @@ export class WorktreeManager {
           `Dreamux home (~/.dreamux); dispatcher workspace resolves there: ${dispatcherWorkspace}`,
       );
     }
-    await this.ensureWorkspaceBoundary(dispatcherWorkspace);
-    const path = defaultWorkspaceWorkPath({ dispatcherWorkspace, slug: input.slug });
+    if (input.workspaceEnabled) {
+      await this.ensureWorkspaceBoundary(dispatcherWorkspace);
+    }
+    const path = input.workspaceEnabled
+      ? defaultWorkspaceWorkPath({ dispatcherWorkspace, slug: input.slug })
+      : directWorkspaceWorkPath({ dispatcherWorkspace, slug: input.slug });
     await mkdir(path, { recursive: true });
     return {
       sourceCwd: path,
