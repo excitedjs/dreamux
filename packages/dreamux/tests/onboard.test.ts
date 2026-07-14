@@ -200,6 +200,7 @@ describe('dreamux onboard', () => {
       id: 'flow',
       cwd: join(root, 'dispatcher-cwd'),
       enabled: true,
+      workspace: { enabled: true },
       channels: [
         {
           id: 'primary',
@@ -540,6 +541,7 @@ describe('dreamux onboard', () => {
         id: 'flow',
         cwd: join(root, 'flow-cwd'),
         enabled: true,
+        workspace: { enabled: true },
         channels: [
           {
             id: 'primary',
@@ -556,6 +558,7 @@ describe('dreamux onboard', () => {
         id: 'docs',
         cwd: join(root, 'docs-cwd'),
         enabled: true,
+        workspace: { enabled: true },
         channels: [
           {
             id: 'primary',

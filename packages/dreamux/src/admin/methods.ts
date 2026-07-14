@@ -3,11 +3,11 @@ import type { Server } from '../server.js';
 import type {
   ChannelToolCaller,
   DispatcherService,
+  TeamLeaderHandle,
 } from '../service/dispatcher-service/index.js';
 import type { ChannelRouteOwner } from '../service/channel-service/index.js';
 import { ChannelToolAuthorizationError } from '../service/channel-service/errors.js';
-import type { TeamService } from '../service/team-service/index.js';
-import type { SchedulerService } from '../service/scheduler/service.js';
+import type { SchedulerCommands } from '../service/scheduler/service.js';
 import { TeamUnavailableError } from '../service/team-collection/index.js';
 import { AdminError } from './protocol.js';
 import {
@@ -207,16 +207,18 @@ export const adminMethods: Record<string, AdminHandler> = {
   'mcp.teammate.send': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    const target = await teammateTargetFor(server.getDispatcher(id), params);
+    const dispatcher = server.getDispatcher(id);
+    const target = await teammateTargetFor(dispatcher, params);
     const name = mustString(params, 'name');
     const prompt = mustString(params, 'prompt');
     const intent = optionalString(params, 'intent');
     try {
-      return await target.service.teammates.send({
+      const send = () => target.service.teammates.send({
         name,
         prompt,
         ...(intent !== null ? { intent } : {}),
       });
+      return await send();
     } catch (err) {
       throw new AdminError('TEAMMATE_SEND_FAILED', parseMessage(err));
     }
@@ -225,14 +227,16 @@ export const adminMethods: Record<string, AdminHandler> = {
   'mcp.teammate.close': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    const target = await teammateTargetFor(server.getDispatcher(id), params);
+    const dispatcher = server.getDispatcher(id);
+    const target = await teammateTargetFor(dispatcher, params);
     const name = mustString(params, 'name');
     const note = mustNonEmptyString(params, 'note');
     try {
-      return await target.service.teammates.close({
+      const close = () => target.service.teammates.close({
         name,
         note,
       });
+      return await close();
     } catch (err) {
       throw new AdminError('TEAMMATE_CLOSE_FAILED', parseMessage(err));
     }
@@ -527,7 +531,7 @@ export const adminMethods: Record<string, AdminHandler> = {
 async function cronTargetFor(
   server: Server,
   params: Record<string, unknown> | undefined,
-): Promise<SchedulerService> {
+): Promise<SchedulerCommands> {
   const id = mustDispatcherId(params);
   mustExistingDispatcher(server, id);
   const teamId = optionalString(params, 'team_id');
@@ -620,7 +624,7 @@ async function teammateTargetFor(
   params: Record<string, unknown> | undefined,
 ): Promise<
   | { callerKind: 'dispatcher'; service: DispatcherService }
-  | { callerKind: 'team_leader'; service: TeamService }
+  | { callerKind: 'team_leader'; service: TeamLeaderHandle }
 > {
   const callerKind = optionalString(params, 'caller_kind') ?? 'dispatcher';
   if (callerKind === 'dispatcher') {

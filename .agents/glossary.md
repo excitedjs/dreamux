@@ -20,5 +20,5 @@ authoritative for behavior.
 | Provider registry | Process-local registry/loader for `agentRuntime` and `channel` providers. |
 | MCP shim | Stdio server injected into an agent runtime and forwarding tool calls to Dreamux core or a provider session. |
 | Primary channel | First channel declared by a dispatcher; used as the default egress channel when no `channel_id` is provided. |
-| Work directory | Plain dispatcher-local `.workspace/work/<name>/` directory used when TeamMate/Team creation omits a repo object. |
+| Work directory | Plain dispatcher-local directory used when TeamMate/Team creation omits a repo object: isolated under `.workspace/work/<name>/` by default, or the dispatcher cwd itself when that dispatcher's workspace policy is disabled. |
 | Managed worktree | Dreamux-created Git worktree under `.workspace/worktree/`, requested by an explicit managed repo object. |

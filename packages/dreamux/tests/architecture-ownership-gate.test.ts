@@ -200,6 +200,84 @@ describe('architecture ownership gate (#233)', () => {
     });
   });
 
+  it('exposes scheduler commands without leaking owner lifecycle verbs', async () => {
+    const dispatcherSource = await readServiceSource('dispatcher-service/index.ts');
+    const teamHandleSource = await readServiceSource(
+      'dispatcher-service/team-leader-handle.ts',
+    );
+    const teamSource = await readServiceSource('team-service/index.ts');
+    const adminSource = await readSource('admin/methods.ts');
+    assertContains(
+      teamHandleSource,
+      /export interface TeamLeaderHandle\s*\{[\s\S]*spawnTeamMate/,
+      'scheduler command invariant violated: DispatcherService must expose a narrow TeamLeaderHandle instead of concrete TeamService.',
+      'dispatcher-service/team-leader-handle.ts',
+    );
+    const teamLeaderOps = teamHandleSource.match(
+      /export interface TeamLeaderTeammateOps\s*\{([\s\S]*?)\n\}/,
+    )?.[1];
+    if (teamLeaderOps === undefined || /\bspawn\b/.test(teamLeaderOps)) {
+      failInvariant(
+        'scheduler command invariant violated: TeamLeaderHandle teammate ops must not expose raw spawn.',
+        'Offending file: /packages/dreamux/src/service/dispatcher-service/team-leader-handle.ts',
+      );
+    }
+    assertContains(
+      teamHandleSource,
+      /withService:\s*<T>\([\s\S]*lease:\s*TeamLeaderLease[\s\S]*task:\s*\(service:\s*TeamService\)\s*=>\s*Promise<T>/,
+      'scheduler command invariant violated: TeamLeaderHandle operations must route through a Team generation lease.',
+      'dispatcher-service/team-leader-handle.ts',
+    );
+    assertContains(
+      dispatcherSource,
+      /team\(teamId: string\): Promise<TeamLeaderHandle>/,
+      'scheduler command invariant violated: DispatcherService.team() must not return concrete TeamService.',
+      'dispatcher-service/index.ts',
+    );
+    assertContains(
+      dispatcherSource,
+      /lease: await this\.teams\.teamLeaderLease\(teamId\)/,
+      'scheduler command invariant violated: DispatcherService.team() must bind TeamLeaderHandle to a Team generation lease.',
+      'dispatcher-service/index.ts',
+    );
+    assertContains(
+      dispatcherSource,
+      /get scheduler\(\): SchedulerCommands\s*\{\s*return this\.scheduler_\.commands;/,
+      'scheduler command invariant violated: DispatcherService must expose SchedulerCommands, not concrete SchedulerService lifecycle verbs.',
+      'dispatcher-service/index.ts',
+    );
+    assertContains(
+      teamSource,
+      /get scheduler\(\): SchedulerCommands\s*\{\s*return this\.scheduler_\.commands;/,
+      'scheduler command invariant violated: TeamService must expose SchedulerCommands, not concrete SchedulerService lifecycle verbs.',
+      'team-service/index.ts',
+    );
+    if (/\b(?:start|stop)Scheduler\s*\(/.test(teamSource)) {
+      failInvariant(
+        'scheduler command invariant violated: TeamService must not expose scheduler lifecycle wrapper methods.',
+        'Offending file: /packages/dreamux/src/service/team-service/index.ts',
+      );
+    }
+    if (/this\.schedulerLifecycle|private readonly schedulerLifecycle/.test(teamSource)) {
+      failInvariant(
+        'scheduler command invariant violated: TeamService instances must not retain scheduler lifecycle capability fields.',
+        'Offending file: /packages/dreamux/src/service/team-service/index.ts',
+      );
+    }
+    if (/service\/team-service\/index/.test(adminSource)) {
+      failInvariant(
+        'scheduler command invariant violated: admin methods must target TeamLeaderHandle, not concrete TeamService.',
+        'Offending file: /packages/dreamux/src/admin/methods.ts',
+      );
+    }
+    if (/SchedulerService/.test(adminSource) || !/Promise<SchedulerCommands>/.test(adminSource)) {
+      failInvariant(
+        'scheduler command invariant violated: admin cron target must depend on SchedulerCommands only.',
+        'Offending file: /packages/dreamux/src/admin/methods.ts',
+      );
+    }
+  });
+
   it('constructs TeammateService only through the single factory', async () => {
     await assertConstructedOnlyIn({
       invariant:

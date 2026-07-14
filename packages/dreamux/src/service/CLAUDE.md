@@ -19,7 +19,13 @@ the explicit `service/index.ts` facade.
   each `DispatcherService` builds and owns its own object graph (collections,
   stores, worktree manager, `CompletionRouter`, `ChannelService`, and the
   dispatcher agent). This collection only keys them by dispatcher id (Phase 3,
-  #233).
+  #233), and shutdown closes its factory admission before sweeping existing
+  aggregates so no new dispatcher can materialize after the sweep snapshot.
+- **`server.ts` + `admin/socket.ts`** — the process admission boundary. Admin
+  socket requests execute through `Server.admitAdminRequest()`; shutdown closes
+  this admission, drains accepted admin requests, then shuts down dispatchers and
+  the socket. Do not let admin handlers call mutating services outside this
+  process-level gate.
 - **`dispatcher-service/index.ts`** — one dispatcher-local aggregate
   (`DispatcherService`). It *has an* agent — a contained `TeammateService` built
   by `dispatcher-service/agent.ts` (Phase 5, #233) — that owns the agent runtime
@@ -27,14 +33,17 @@ the explicit `service/index.ts` facade.
   concerns the removed `DispatcherRuntimeService` held: the live `ChannelService`,
   restart-notice injection for explicit resume notices, provider/config-based
   role MCP descriptor assembly, channel-tool dispatch, channel binding ownership,
-  and completion routing. Ordinary start prepares channel sessions and input
-  sources while leaving the dispatcher runtime dormant; unbound channel inbound,
+  completion routing, dispatcher-owned admission/drain for mutating external
+  operations, Team/channel lifecycle coordination, and all-settled runtime
+  shutdown sweeps. Ordinary start prepares channel sessions and input sources
+  while leaving the dispatcher runtime dormant; unbound channel inbound,
   dispatcher cron, or an explicit resume notice lazy-starts the contained agent.
   A channel session is published as live only after provider start succeeds. It
   resolves a settled turn's delivery target via `initiatorFor` (a team
   member → its leader's `TeammateService`; a dispatcher-owned teammate / leader →
   the dispatcher's own `agent` `TeammateService`, the unified router path) and
-  orchestrates Team route-owner facts with ChannelService binding operations.
+  orchestrates Team route-owner facts with ChannelService binding operations via
+  `TeamChannelCoordinator` and collaboration route reconciliation.
 - **`team-collection/index.ts`** — `TeamCollection` (split out of the old
   `TeamManager`): owns the team store and worktrees; does `create` / `list` /
   `history`, open-Team route-owner fact lookup, and `get(id) → TeamService`.
@@ -43,13 +52,36 @@ the explicit `service/index.ts` facade.
   `sharedWorkspace` plus the teammate forwards the admin `team_leader` target
   calls and the shared `teamView` helper. The two classes were split into
   separate files for the one-class-per-file rule (issue #233).
+  `TeamCollection` holds the Team scheduler lifecycle capability separately;
+  do not add scheduler start/stop wrappers to the public `TeamService` surface.
+  `DispatcherService.team()` returns only `TeamLeaderHandle` for admin/MCP
+  team-leader callers, never concrete `TeamService`; keep `dissolve`,
+  scheduler lifecycle, and route ownership inside dispatcher/team-collection
+  orchestration. The handle is bound to a `TeamCollection` TeamLeader lease
+  (`team_id` + current `leader_name` generation); every handle mutation rechecks
+  open/not-closing/current generation before touching members, and its teammate
+  sub-surface must not expose raw `spawn`.
 - **`dispatcher-service/` (agent-side parts)** — the dispatcher agent's parts (Phase 5, #233):
   `agent.ts` builds the dispatcher's own agent as a contained `TeammateService`
   from the dispatcher root `identity.json` (role `dispatcher`), structurally
   outside the `teammate/` collection so read chokepoints never enumerate it.
   Runtime launch resolves through the same `identity.agent_runtime -> agents[]`
   path as child roles. `mcp-descriptors.ts` is the role-based MCP descriptor
-  builder.
+  builder. `inbound-task-drain.ts` owns the dispatcher admission/drain gate for
+  external work that may publish runtime, scheduler, route, or durable state.
+  `team-channel-coordinator.ts` coordinates explicit Team dissolve/bind/transfer
+  with collaboration-space route reconciliation. `channel-tool-invocation.ts`
+  keeps TeamLeader egress authorization beside channel tool dispatch.
+  `teammate-ops.ts` wraps dispatcher-scope mutating teammate ops with the
+  dispatcher admission gate. Dispatcher and Team schedulers also receive this
+  gate in their options and expose only `SchedulerCommands` to external callers,
+  so public cron mutations and timer fires cannot write cron state or submit
+  after dispatcher shutdown begins, and lifecycle verbs (`start` / `stop` /
+  `deleteStoreFile`) remain owner-only through the dispatcher container or
+  `TeamCollection`'s private capability map. `restart-notice.ts` owns explicit
+  resume-notice injection. `team-runtime-stop.ts` keeps Team runtime stop
+  failures contained so dispatcher shutdown can keep sweeping later-owned
+  resources before returning an aggregate error.
 - **`channel-service/`** — the dispatcher-local core Channel service. It wraps the
   private live `ChannelSessions` helper, owns channel-tool dispatch, provider
   target resolution, TeamLeader egress checks, and all `ChannelBindingStore`
@@ -58,6 +90,13 @@ the explicit `service/index.ts` facade.
   is **no** `DispatcherRuntimeService`; the at-most-once policy lives in the
   `CompletionRouter`, while `TeammateService.completionInput` is the core-side
   delivery target that renders a completion envelope into a plain runtime turn.
+- **`collaboration-space/route-reconciliation.ts`** — the route reconciler owned
+  by `CollaborationSpaceService`: it is the single place that reconciles
+  collaboration target intent with authoritative channel bindings, coordinates
+  explicit Team binds/transfers, releases managed routes by exact `claim_id`, and
+  detaches stale collaboration target records. Keep route provenance here and in
+  `ChannelBindingStore`; do not re-infer managed ownership from a Team owner
+  tuple elsewhere.
 - **`teammate-collection/` + `teammate-service/` + `completion-router/`** —
   `TeammateCollection` (the collection: stores, worktrees, `spawn` / `list` /
   `history` / `close`, factory paths, per-turn router registration) +
@@ -66,7 +105,8 @@ the explicit `service/index.ts` facade.
   delivery target) + `CompletionRouter` (per-dispatcher delivery service, keyed by
   `producerName:turnId`, terminal-cache at-most-once) + identity-store +
   runtime-state + types + the teammate MCP descriptor. The cross-cutting helpers
-  `worktree/`, `channel-binding/`, `legacy-state.ts`, and `dispatcher-workspace.ts`
+  `worktree/`, `channel-binding/`, `legacy-state.ts`, `shutdown-errors.ts`, and
+  `dispatcher-workspace.ts`
   (the issue #182 dispatcher-cwd policy used by `server.ts` startup, the dispatcher
   service, `dreamux doctor`, and the `worktree/` layer) live at the `service/` root
   because no single service owns them.
@@ -88,12 +128,14 @@ the explicit `service/index.ts` facade.
   field — never derived inside the runtime. Managed TeamMate/Team git worktrees
   live under that workspace at `<cwd>/.workspace/worktree/<repo-slug>/<slug>/`,
   never under `~/.dreamux`. When a `spawn`/`create` omits `repo` (issue #199),
-  the work directory is instead a plain `<cwd>/.workspace/work/<name>/` dir
-  (`WorktreeManager.prepareDefaultWorkspace`) — `mkdir -p`, no git worktree, so
-  the dispatcher cwd need not be a git repo; it is persisted as a `reuse-cwd`
-  worktree with `source_repo: null`. `WorktreeManager` resolves all three modes
-  (default work dir, reuse-cwd, managed); the admin layer signals "default" by
-  forwarding no cwd/worktree.
+  the work directory is dispatcher-local policy: isolated
+  `<cwd>/.workspace/work/<name>/` when `dispatchers[].workspace.enabled` is true,
+  or `<cwd>` itself when it is false (`WorktreeManager.prepareDefaultWorkspace`).
+  Both are plain directories, not git worktrees, so the dispatcher cwd need not
+  be a git repo; the result is persisted as a `reuse-cwd` worktree with
+  `source_repo: null`. `WorktreeManager` resolves all three modes (default work
+  dir, reuse-cwd, managed); the admin layer signals "default" by forwarding no
+  cwd/worktree.
 - **Nested dispatch is prevented by MCP injection, not a runtime check.** A
   teammate/team-leader agent is simply not injected the "spawn teammate" tool;
   role differentiation is done by the MCP tool set + system prompt this service

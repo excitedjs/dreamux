@@ -34,7 +34,7 @@ export async function resolveSpawnWorkspace(input: {
         input.dispatcherId,
       ),
       slug: input.name,
-      workspaceEnabled: defaultWorkspaceEnabled(input.config),
+      workspaceEnabled: defaultWorkspaceEnabled(input.config, input.dispatcherId),
     });
   }
   const cwd = input.request.cwd;

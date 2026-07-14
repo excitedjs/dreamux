@@ -73,16 +73,24 @@ async function doHandleCollaborationTargetLifecycle(input: {
     return;
   }
 
-  const closeInput = {
-    channelId,
-    provider: channels.channelProviderRef(channelId),
-    container: event.container,
-    target: event.target,
-    ...(event.event_id !== undefined ? { eventId: event.event_id } : {}),
-  };
-  const accepted = await collaborationSpaces.acceptTargetClosedForClose(closeInput);
-  if (accepted === null) return;
-  collaborationSpaces.startTargetClose(accepted);
+  if (event.kind === 'target_closed') {
+    const closeInput = {
+      channelId,
+      provider: channels.channelProviderRef(channelId),
+      container: event.container,
+      target: event.target,
+      ...(event.event_id !== undefined ? { eventId: event.event_id } : {}),
+    };
+    const accepted = await collaborationSpaces.acceptTargetClosedForClose(closeInput);
+    if (accepted === null) return;
+    collaborationSpaces.startTargetClose(accepted);
+    return;
+  }
+  throw new Error(
+    `unknown channel target lifecycle event kind ${JSON.stringify(
+      (event as { kind?: unknown }).kind,
+    )}`,
+  );
 }
 
 export async function routeTeamOrCollaborationChannelInput(input: {
@@ -107,7 +115,19 @@ export async function routeTeamOrCollaborationChannelInput(input: {
   } = input;
   const target = envelope.target;
   if (target.bindable) {
-    const routed = await channels.resolveInboundBinding({ channelId, target });
+    let routed: Awaited<ReturnType<ChannelService['resolveInboundBinding']>>;
+    try {
+      await collaborationSpaces.reconcileInboundTargetRoute({
+        channelId,
+        target,
+      });
+      routed = await channels.resolveInboundBinding({ channelId, target });
+    } catch (err) {
+      return {
+        status: 'failed',
+        error: err instanceof Error ? err : new Error(String(err)),
+      };
+    }
     if (routed !== null && (await teams.isOpenTeam(routed.owner.teamName))) {
       const team = await teams.get(routed.owner.teamName);
       return team.deliverToLeader(turn);
@@ -130,6 +150,7 @@ export async function routeTeamOrCollaborationChannelInput(input: {
             }),
           });
         if (provisioned !== null) {
+          if (provisioned.lifecycle_status === 'detached') return fallback(turn);
           if (provisioned.lifecycle_status !== 'active') {
             return {
               status: 'failed',

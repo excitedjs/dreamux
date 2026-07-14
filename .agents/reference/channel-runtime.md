@@ -114,12 +114,13 @@ The current core surface is:
 - `bind`: register an existing external container when needed and bind it to a
   worktree policy, TeamLeader runtime, and optional default TeamLeader identity.
   `repo` is optional: supplied repo creates managed worktrees, omitted repo
-  follows the global default workspace policy;
+  follows that dispatcher's default workspace policy;
 - `dissolve`: release the current collaboration-space routing/provisioning
   binding. It does not delete the external container and does not dissolve
   already provisioned Teams;
 - `status` / `list`: read compact public state. There is no first-version
-  `history` or recovery tool.
+  `history` or recovery tool. Target failures are public-safe summaries; raw
+  provider/runtime/worktree errors remain local diagnostics.
 
 The Channel contract has optional provider-neutral collaboration-space fields:
 providers may attach `ChannelInboundEnvelope.container` on inbound deliveries
@@ -132,6 +133,9 @@ platform.
 Core uses only `(channel_id, container_key, target_key)` plus the current
 binding generation; it must not parse Feishu `chat_id`, `thread_id`, chat mode,
 or provider-specific `target.meta` to infer collaboration-space membership.
+The store allocates the generation in the same atomic transition that validates
+the unbound state and commits the complete binding policy. Dispatcher state has
+one process-level writer authority; separate store objects share that fence.
 
 Dispatcher channel config may enable a core-owned automatic binding policy at
 `dispatchers[].channels[].collaborationSpace.defaultBinding.enabled`. When
@@ -151,31 +155,65 @@ Provisioning has two entry points:
   create one, the collaboration target lifecycle path writes the durable claim
   and returns; heavy worktree/Team provisioning runs asynchronously under the
   `CollaborationSpaceService` lifecycle-task tracker. `DispatcherService`
-  resumes durable `creating` / `closing` targets after channel sessions start,
-  and drains accepted lifecycle tasks during stop/shutdown. For unknown
-  containers without default binding, and for known unbound spaces, the create
-  event is ignored without claiming a target. For `target_closed`, the target
-  lifecycle path accepts the close event and asynchronously dissolves the Team
-  and releases the binding.
+  resumes durable `creating` / `failed` / `closing` targets after channel
+  sessions start, releases stale managed claims for inactive targets, and drains
+  accepted lifecycle tasks during stop/shutdown. For unknown containers without
+  default binding, and for known unbound spaces, the create event is ignored
+  without claiming a target. For `target_closed`, the target lifecycle path
+  accepts the close event and asynchronously dissolves the Team and releases
+  the binding.
 - **First-inbound provisioning.** When a bindable target has no existing binding
   and `envelope.container` is set on `deliver()`, `routeChannelInput` calls
   `acceptAndProvisionTarget` synchronously before routing. This may use channel
   default binding to register an unknown collaboration space. If provisioning
-  succeeds and the Team is active, the inbound is delivered to the TeamLeader;
-  if it fails, a failed `InboundDeliveryResult` is returned. This path never
-  falls back to the dispatcher agent after collaboration-space provisioning has
-  claimed the target. If a later inbound for the same `(channel_id, target_key)`
-  omits `envelope.container`, core still checks for an existing durable
-  collaboration-space target claim before falling back to the dispatcher agent.
+  succeeds and the Team and TeamLeader are routable, the inbound is delivered
+  to the TeamLeader; if it fails, a failed `InboundDeliveryResult` is returned.
+  This path never falls back to the dispatcher agent after collaboration-space
+  provisioning has claimed the target. If a later inbound for the same
+  `(channel_id, target_key)` omits `envelope.container`, core still checks for
+  an existing durable collaboration-space target claim before falling back to
+  the dispatcher agent.
 
 Both paths bypass the dispatcher agent runtime but still go through
-`DispatcherService` and core stores. When the space is dissolved, future
-deliveries fall back to the normal dispatcher path unless the space is rebound.
+`DispatcherService` and core stores. Direct inbound promises are admitted and
+tracked by `DispatcherService`, so stop rejects later callbacks and drains older
+ones before sweeping materialized Team runtimes. Dispatcher and Team cron command
+surfaces expose only `SchedulerCommands`; cron fires use the same owner
+admission, while scheduler lifecycle methods stay owner-only through the
+dispatcher container or TeamCollection's private lifecycle capability. Stop
+closes admission, closes channel sessions, aborts held scheduler fires, drains
+accepted work, then stops schedulers again before sweeping runtimes. The sweep
+retains partially booted Team services that failed before live-cache
+publication, and one runtime stop failure does not prevent sibling members or the
+TeamLeader from receiving a stop attempt. Accepted provisioning rechecks the
+shutdown fence before creating a Team, starting its leader, or claiming a route;
+a Team whose in-flight create crosses that fence is closed before the drain
+settles, and a late create failure stops any leader it already launched.
+Explicit Team transfer, dissolve, or route replacement shares a `(channel_id,
+target_key)` lock with collaboration provisioning and first detaches matching
+intent for transfer-back; explicit bind instead commits the replacement before
+detaching intent, so a rejected bind does not destroy the managed route. Route
+publication also holds a Team lifecycle lease. Every Team close raises the
+closing fence, detaches matching collaboration intent, transfers all routes
+owned by that Team, and only then dissolves it. Managed bindings carry an opaque
+`claim_id`, while explicit binds clear it; reconciliation therefore releases
+only the stale matching claim and preserves an explicit replacement even when it
+names the former Team. The binding store is v3; v2 rows that already have
+`(channel_id, target_key)` are reused as explicit routes with `claim_id: null`
+only when no open collaboration target shares that route key. If such an
+overlap exists, startup/doctor fails loud because the old row could be either
+explicit or collaboration-managed. Older rows without route keys still fail
+loud. A missing route is reclaimed only when the original Team is still
+routable. Detached targets fall back to the normal dispatcher path.
+When the space is dissolved, future deliveries also fall back unless the space
+is rebound.
 
 Key source:
 
 - `/packages/dreamux-types/src/channel.ts`
 - `/packages/dreamux/src/config/collaboration-space-config.ts`
+- `/packages/dreamux/src/service/channel-binding/store.ts`
+- `/packages/dreamux/src/service/channel-binding/preflight.ts`
 - `/packages/dreamux/src/service/collaboration-space/`
 - `/packages/dreamux/src/mcp/collaboration-space-mcp.ts`
 - `/packages/dreamux/src/service/dispatcher-service/index.ts`

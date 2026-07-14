@@ -23,6 +23,7 @@ import type {
 
 import type { AgentRuntimeProviderCatalog } from '../src/agent-runtime/index.js';
 import { TeamCollection } from '../src/service/team-collection/index.js';
+import { TeamStore } from '../src/service/team-collection/store.js';
 import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.js';
 import { AgentTurnsStore } from '../src/service/agent-entity/turns-store.js';
 import {
@@ -42,11 +43,18 @@ const CAPABILITIES: AgentRuntimeCapabilities = {
 class FakeRuntime implements AgentRuntime {
   readonly providerRef = FAKE_RUNTIME_REF;
   readonly submitted: InboundTurnInput[] = [];
+  stopAttempts = 0;
   private status: AgentRuntimeStatus = 'declared';
   private onTurnSettled: ((settled: TurnSettledSignal) => void) | undefined;
+  private readonly queuedStopErrors: Error[] = [];
 
   constructor(
-    private readonly opts: { settleImmediately?: boolean; lastText?: string } = {},
+    private readonly opts: {
+      settleImmediately?: boolean;
+      lastText?: string;
+      submitError?: Error;
+      stopError?: Error;
+    } = {},
   ) {}
 
   setOnTurnSettled(onTurnSettled: (settled: TurnSettledSignal) => void): void {
@@ -70,10 +78,18 @@ class FakeRuntime implements AgentRuntime {
   }
 
   async stop(): Promise<void> {
+    this.stopAttempts += 1;
+    const error = this.queuedStopErrors.shift() ?? this.opts.stopError;
+    if (error !== undefined) throw error;
     this.status = 'stopped';
   }
 
+  failNextStop(error: Error): void {
+    this.queuedStopErrors.push(error);
+  }
+
   async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
+    if (this.opts.submitError !== undefined) throw this.opts.submitError;
     this.submitted.push(input);
     const turnId = `turn-${this.submitted.length}`;
     if (this.opts.settleImmediately) {
@@ -89,6 +105,7 @@ class FakeRuntime implements AgentRuntime {
   }
 
   async completionInput(input: AgentRuntimeTextInput): Promise<AgentRuntimeTurnResult> {
+    if (this.opts.submitError !== undefined) throw this.opts.submitError;
     this.submitted.push({ sourceId: input.sourceId ?? '', text: input.text });
     const turnId = `turn-${this.submitted.length}`;
     return { status: 'submitted', turnId };
@@ -121,7 +138,12 @@ class FakeRuntime implements AgentRuntime {
 
 function fakeRuntimeCatalog(
   runtimes: FakeRuntime[],
-  opts: { settleImmediately?: boolean; lastText?: string } = {},
+  opts: {
+    settleImmediately?: boolean;
+    lastText?: string;
+    submitError?: Error;
+    stopError?: Error;
+  } = {},
   contexts: AgentRuntimeCreateContext[] = [],
 ): AgentRuntimeProviderCatalog {
   const provider: AgentRuntimeProvider = {
@@ -174,6 +196,14 @@ function noopLog(): DreamuxLogger {
     child: () => log,
   };
   return log as DreamuxLogger;
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
 }
 
 /**
@@ -290,6 +320,141 @@ describe('TeamCollection read path (issue #233 R4)', () => {
  * exists and is started (resumable), so a later bound channel or dispatcher
  * `send` drives its first real turn.
  */
+describe('TeamCollection route readiness recovery', () => {
+  let root: string;
+  let previousHome: string | undefined;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'dreamux-team-route-ready-'));
+    previousHome = process.env['HOME'];
+    process.env['HOME'] = join(root, 'home');
+    mkdirSync(process.env['HOME'], { recursive: true });
+  });
+
+  afterEach(() => {
+    if (previousHome === undefined) delete process.env['HOME'];
+    else process.env['HOME'] = previousHome;
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('materializes a valid stale starting Team before returning its route owner', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const log = noopLog();
+    const identities = new AgentIdentityStore(log);
+    const makeTeams = () => new TeamCollection({
+      dispatcherId: 'dispatcher-a',
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
+      worktrees: new WorktreeManager(),
+      identities,
+      turnsStore: new AgentTurnsStore(log),
+      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
+      initiatorFor: async () => null,
+      isShuttingDown: () => false,
+      adminSocketPath: '/tmp/admin.sock',
+      leaderChannelDescriptors: () => [],
+      log,
+    });
+    const first = makeTeams();
+    await first.create({
+      name: 'alpha',
+      leaderAgentRuntime: 'agent-a',
+      intent: 'lead alpha',
+    });
+    await first.stopAll();
+    const store = new TeamStore();
+    const record = await store.get('dispatcher-a', 'alpha');
+    if (record === null) throw new Error('Team record was not created');
+    await store.update(record, { status: 'starting' });
+
+    const recovered = makeTeams();
+    await expect(recovered.requireRoutableTeamOwner('alpha')).resolves.toMatchObject({
+      teamName: 'alpha',
+      leaderName: record.leader_name,
+    });
+    await expect(store.get('dispatcher-a', 'alpha')).resolves.toMatchObject({
+      status: 'running',
+    });
+    expect(runtimes.at(-1)?.getStatus()).toBe('ready');
+    await recovered.stopAll();
+  });
+
+  it('serializes route publication with the start of Team closure', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const log = noopLog();
+    const teams = new TeamCollection({
+      dispatcherId: 'dispatcher-a',
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
+      worktrees: new WorktreeManager(),
+      identities: new AgentIdentityStore(log),
+      turnsStore: new AgentTurnsStore(log),
+      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
+      initiatorFor: async () => null,
+      isShuttingDown: () => false,
+      adminSocketPath: '/tmp/admin.sock',
+      leaderChannelDescriptors: () => [],
+      log,
+    });
+    await teams.create({
+      name: 'alpha',
+      leaderAgentRuntime: 'agent-a',
+      intent: 'lead alpha',
+    });
+    const routeEntered = deferred<void>();
+    const releaseRoute = deferred<void>();
+    const closingEntered = deferred<void>();
+    const releaseClosing = deferred<void>();
+    const routeLease = teams.withRoutableTeamOwner('alpha', async () => {
+      routeEntered.resolve();
+      await releaseRoute.promise;
+    });
+    await routeEntered.promise;
+
+    const closing = teams.withTeamRouteClosing('alpha', async () => {
+      closingEntered.resolve();
+      await releaseClosing.promise;
+    });
+    let closureStarted = false;
+    void closingEntered.promise.then(() => {
+      closureStarted = true;
+    });
+    await Promise.resolve();
+    expect(closureStarted).toBe(false);
+
+    releaseRoute.resolve();
+    await routeLease;
+    await closingEntered.promise;
+    await expect(
+      teams.withRoutableTeamOwner('alpha', async () => undefined),
+    ).rejects.toThrow(/closing/);
+
+    releaseClosing.resolve();
+    await closing;
+    await teams.stopAll();
+  });
+});
+
 describe('TeamCollection create without a prompt fires no leader turn', () => {
   let root: string;
   let previousHome: string | undefined;
@@ -354,6 +519,155 @@ describe('TeamCollection create without a prompt fires no leader turn', () => {
     const status = await (await teams.get('beta')).status();
     expect(status.leader).not.toBeNull();
     expect(status.member_count).toBe(0);
+  });
+
+  it('stops a started leader when Team creation fails after launch', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const log = noopLog();
+    const teams = new TeamCollection({
+      dispatcherId: 'dispatcher-a',
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes, {
+        submitError: new Error('initial prompt failed'),
+      }),
+      worktrees: new WorktreeManager(),
+      identities: new AgentIdentityStore(log),
+      turnsStore: new AgentTurnsStore(log),
+      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
+      initiatorFor: async () => null,
+      isShuttingDown: () => false,
+      adminSocketPath: '/tmp/admin.sock',
+      leaderChannelDescriptors: () => [],
+      log,
+    });
+
+    await expect(teams.create({
+      name: 'failed-create',
+      leaderAgentRuntime: 'agent-a',
+      intent: 'exercise create compensation',
+      prompt: 'fail after leader launch',
+    })).rejects.toThrow(/initial prompt failed/);
+    expect(runtimes).toHaveLength(1);
+    expect(runtimes[0]?.getStatus()).toBe('stopped');
+  });
+
+  it('continues stopping sibling members and the leader after a member stop fails', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const log = noopLog();
+    const teams = new TeamCollection({
+      dispatcherId: 'dispatcher-a',
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
+      worktrees: new WorktreeManager(),
+      identities: new AgentIdentityStore(log),
+      turnsStore: new AgentTurnsStore(log),
+      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
+      initiatorFor: async () => null,
+      isShuttingDown: () => false,
+      adminSocketPath: '/tmp/admin.sock',
+      leaderChannelDescriptors: () => [],
+      log,
+    });
+    await teams.create({
+      name: 'stop-all',
+      leaderAgentRuntime: 'agent-a',
+      intent: 'exercise Team runtime cleanup',
+    });
+    const team = await teams.get('stop-all');
+    await team.spawnTeamMate({
+      name: 'worker-a',
+      prompt: 'work a',
+      agentRuntime: 'agent-a',
+      intent: 'first worker',
+    });
+    await team.spawnTeamMate({
+      name: 'worker-b',
+      prompt: 'work b',
+      agentRuntime: 'agent-a',
+      intent: 'second worker',
+    });
+    expect(runtimes).toHaveLength(3);
+    const leaderStopError = new Error('leader stop failed');
+    const memberStopError = new Error('member stop failed');
+    runtimes[0]?.failNextStop(leaderStopError);
+    runtimes[1]?.failNextStop(memberStopError);
+
+    await expect(teams.stopAll()).rejects.toMatchObject({
+      errors: [memberStopError, leaderStopError],
+    });
+
+    expect(runtimes.map((runtime) => runtime.stopAttempts)).toEqual([1, 1, 1]);
+    expect(runtimes.map((runtime) => runtime.getStatus())).toEqual([
+      'ready',
+      'ready',
+      'stopped',
+    ]);
+  });
+
+  it('retries an uncached failed-create leader during stopAll and fails loud', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const log = noopLog();
+    const leaderStopError = new Error('persistent leader stop failure');
+    const teams = new TeamCollection({
+      dispatcherId: 'dispatcher-a',
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes, {
+        submitError: new Error('initial prompt failed'),
+        stopError: leaderStopError,
+      }),
+      worktrees: new WorktreeManager(),
+      identities: new AgentIdentityStore(log),
+      turnsStore: new AgentTurnsStore(log),
+      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
+      initiatorFor: async () => null,
+      isShuttingDown: () => false,
+      adminSocketPath: '/tmp/admin.sock',
+      leaderChannelDescriptors: () => [],
+      log,
+    });
+
+    await expect(teams.create({
+      name: 'failed-create-stop',
+      leaderAgentRuntime: 'agent-a',
+      intent: 'exercise retained failed-create ownership',
+      prompt: 'fail after leader launch',
+    })).rejects.toThrow(/creation and leader cleanup failed/);
+    expect(runtimes).toHaveLength(1);
+    expect(runtimes[0]?.stopAttempts).toBe(1);
+
+    await expect(teams.stopAll()).rejects.toBe(leaderStopError);
+    expect(runtimes[0]?.stopAttempts).toBe(2);
+    expect(runtimes[0]?.getStatus()).toBe('ready');
   });
 });
 

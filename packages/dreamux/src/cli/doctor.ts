@@ -33,6 +33,7 @@ import {
   detectLegacyDispatcherState,
   legacyDispatcherStateMessage,
 } from '../service/legacy-state.js';
+import { detectAmbiguousV2ChannelBindingRoutes } from '../service/channel-binding/preflight.js';
 import { detectLegacyChannelBindingStore } from '../service/channel-binding/store.js';
 import { detectLegacyCronJobStore } from '../service/scheduler/store.js';
 import { TeamStore } from '../service/team-collection/store.js';
@@ -136,14 +137,14 @@ export async function runDreamuxDoctor(
         ok: true,
         detail: 'disabled; workspace cwd contract not enforced',
       });
-      continue;
+    } else {
+      const diagnosis = await diagnoseDispatcherWorkspace(config, dispatcher.id);
+      checks.push({
+        name: `dispatcher ${dispatcher.id} workspace`,
+        ok: diagnosis.ok,
+        detail: diagnosis.detail,
+      });
     }
-    const diagnosis = await diagnoseDispatcherWorkspace(config, dispatcher.id);
-    checks.push({
-      name: `dispatcher ${dispatcher.id} workspace`,
-      ok: diagnosis.ok,
-      detail: diagnosis.detail,
-    });
     const legacy = await detectLegacyDispatcherState(dispatcher.id);
     checks.push({
       name: `dispatcher ${dispatcher.id} legacy state`,
@@ -153,11 +154,15 @@ export async function runDreamuxDoctor(
           ? 'no pre-#199 state paths found'
           : legacyDispatcherStateMessage(dispatcher.id, legacy),
     });
-    const bindingLegacy = await detectLegacyChannelBindingStore(dispatcher.id);
+    const bindingLegacy =
+      (await detectLegacyChannelBindingStore(dispatcher.id)) ??
+      (await detectAmbiguousV2ChannelBindingRoutes(dispatcher.id));
     checks.push({
       name: `dispatcher ${dispatcher.id} channel bindings`,
       ok: bindingLegacy === null,
-      detail: bindingLegacy ?? 'channel binding store is current (v2) or absent',
+      detail:
+        bindingLegacy ??
+        'channel binding store is current (v3), non-overlapping reusable v2, or absent',
     });
     const cronLegacy = await detectLegacyCronJobStore(
       dispatcherCronJobsPath(dispatcher.id),

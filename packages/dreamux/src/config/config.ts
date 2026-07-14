@@ -48,7 +48,6 @@ export {
 } from './collaboration-space-config.js';
 
 export interface DreamuxConfig {
-    workspace: DreamuxWorkspaceConfig;
     agents: Record<string, ResolvedAgentConfig>;
     dispatchers: DispatcherConfig[];
 }
@@ -67,6 +66,7 @@ export interface DispatcherConfig {
   id: string;
   cwd: string | null;
   enabled: boolean;
+  workspace: DreamuxWorkspaceConfig;
   channels: DispatcherChannelConfig[];
     agentRuntime: string;
     runtime: DispatcherRuntimeConfig;
@@ -90,7 +90,6 @@ export interface DispatcherRuntimeConfig {
 export type DispatcherProviderConfig = Record<string, unknown>;
 
 export const BUILT_IN_DEFAULTS: DreamuxConfig = {
-  workspace: { enabled: true },
   agents: {},
   dispatchers: [],
 };
@@ -157,7 +156,6 @@ export async function loadConfig(
 
 export function stringifyConfig(config: DreamuxConfig): string {
   const fileShape = {
-    workspace: { enabled: config.workspace.enabled },
     agents: Object.entries(config.agents).map(([id, agent]) => ({
       id,
       provider: agent.provider,
@@ -167,6 +165,9 @@ export function stringifyConfig(config: DreamuxConfig): string {
       id: dispatcher.id,
       cwd: dispatcher.cwd,
       enabled: dispatcher.enabled,
+      workspace: {
+        enabled: dispatcher.workspace.enabled,
+      },
       channels: dispatcher.channels.map((channel) => ({
         id: channel.id,
         provider: channel.provider,
@@ -293,9 +294,8 @@ async function mergeWithDefaults(
     throw new Error(`dreamux config error in ${file}: top-level must be an object`);
   }
   rejectTopLevelCodex(raw, file);
-  rejectUnknownKeys(raw, new Set(['workspace', 'agents', 'dispatchers']), file, '');
+  rejectUnknownKeys(raw, new Set(['agents', 'dispatchers']), file, '');
 
-  const workspace = readWorkspaceConfig(raw['workspace'], file);
   const agents = await readAgents(raw['agents'], file, providerRegistry);
   const dispatchers = await readDispatchers(
     raw['dispatchers'],
@@ -304,27 +304,36 @@ async function mergeWithDefaults(
     providerRegistry,
   );
   return {
-    workspace,
     agents,
     dispatchers,
   };
 }
 
-function readWorkspaceConfig(rawWorkspace: unknown, file: string): DreamuxWorkspaceConfig {
+function readWorkspaceConfig(
+  rawWorkspace: unknown,
+  file: string,
+  prefix: string,
+): DreamuxWorkspaceConfig {
   if (rawWorkspace === undefined) return { enabled: true };
   if (!isPlainObject(rawWorkspace)) {
     throw new Error(
-      `dreamux config error in ${file}: workspace must be an object (got ${describeType(rawWorkspace)})`,
+      `dreamux config error in ${file}: ${prefix.slice(0, -1)} must be an object (got ${describeType(rawWorkspace)})`,
     );
   }
-  rejectUnknownKeys(rawWorkspace, new Set(['enabled']), file, 'workspace.');
+  rejectUnknownKeys(rawWorkspace, new Set(['enabled']), file, prefix);
   return {
-    enabled: readOptionalBoolean(rawWorkspace, 'enabled', true, file, 'workspace.'),
+    enabled: readOptionalBoolean(rawWorkspace, 'enabled', true, file, prefix),
   };
 }
 
-export function defaultWorkspaceEnabled(config: DreamuxConfig): boolean {
-  return config.workspace.enabled;
+export function defaultWorkspaceEnabled(
+  config: DreamuxConfig,
+  dispatcherId: string,
+): boolean {
+  return (
+    config.dispatchers.find((dispatcher) => dispatcher.id === dispatcherId)?.workspace
+      .enabled ?? true
+  );
 }
 
 function rejectTopLevelCodex(raw: Record<string, unknown>, file: string): void {
@@ -436,7 +445,7 @@ async function readDispatchers(
     }
     rejectUnknownKeys(
       raw,
-      new Set(['id', 'cwd', 'enabled', 'channels', 'agentRuntime']),
+      new Set(['id', 'cwd', 'enabled', 'workspace', 'channels', 'agentRuntime']),
       file,
       prefix,
     );
@@ -466,6 +475,11 @@ async function readDispatchers(
       id,
       cwd: cwd === null ? null : expandHome(cwd),
       enabled: readOptionalBoolean(raw, 'enabled', true, file, prefix),
+      workspace: readWorkspaceConfig(
+        raw['workspace'],
+        file,
+        `${prefix}workspace.`,
+      ),
       channels,
       agentRuntime: agentRuntimeId,
       runtime: {

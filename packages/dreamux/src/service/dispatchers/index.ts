@@ -12,6 +12,7 @@ import {
   type DispatcherRuntimeStatus,
 } from '../dispatcher-service/index.js';
 import { runtimeStatusToIdentityStatus } from '../agent-entity/types.js';
+import { throwShutdownFailures } from '../shutdown-errors.js';
 
 export interface DispatchersOptions {
   config: DreamuxConfig;
@@ -48,6 +49,7 @@ export class Dispatchers {
    */
   private readonly identities: AgentIdentityStore;
   private restartIntent: RestartIntentConsumer | null = null;
+  private accepting = true;
 
   constructor(opts: DispatchersOptions) {
     this.config = opts.config;
@@ -63,6 +65,9 @@ export class Dispatchers {
   get(id: string): DispatcherService {
     let service = this.services.get(id);
     if (service === undefined) {
+      if (!this.accepting) {
+        throw new Error('dreamux dispatchers are shutting down');
+      }
       service = new DispatcherService(this.dispatcherOptions(id));
       service.setRestartIntent(this.restartIntent);
       this.services.set(id, service);
@@ -116,9 +121,14 @@ export class Dispatchers {
   }
 
   async shutdown(): Promise<void> {
-    for (const service of this.services.values()) {
-      await service.shutdown();
-    }
+    this.accepting = false;
+    const results = await Promise.allSettled(
+      [...this.services.values()].map((service) => service.shutdown()),
+    );
+    const failures = results
+      .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+      .map((result) => result.reason);
+    throwShutdownFailures(failures, 'multiple dispatchers failed to shut down');
   }
 
   private dispatcherOptions(id: string): DispatcherServiceOptions {

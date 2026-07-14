@@ -14,6 +14,7 @@ import { ChannelProviderCatalog } from '../src/channel/catalog.js';
 import { resetRuntimeConfig } from '../src/platform/paths.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
 import { ChannelService } from '../src/service/channel-service/index.js';
+import { ChannelSessions } from '../src/service/channel-service/channel-sessions.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 
 const PROVIDER_REF = 'builtin:feishu';
@@ -31,6 +32,14 @@ function groupTarget(chatId: string): ChannelTarget {
     bindable: true,
     meta: { chat_id: chatId },
   };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
 }
 
 function channelProviderCatalog(
@@ -155,9 +164,15 @@ describe('ChannelService binding ownership', () => {
       owner: alpha,
       channelId: 'primary',
       target,
+      claimId: 'claim-alpha',
     });
     await expect(
-      service.claimResolvedTarget({ owner: beta, channelId: 'primary', target }),
+      service.claimResolvedTarget({
+        owner: beta,
+        channelId: 'primary',
+        target,
+        claimId: 'claim-beta',
+      }),
     ).rejects.toThrow(/already bound to Team "alpha"/);
 
     await expect(
@@ -231,5 +246,52 @@ describe('ChannelService binding ownership', () => {
       expect.objectContaining({ marker: 'dispatcher-a' }),
     ]);
     expect(service.live().size).toBe(0);
+  });
+
+  it('detaches closing sessions before await so an older close cannot clear a restart', async () => {
+    const release = deferred<void>();
+    let oldCloseCalls = 0;
+    let newCloseCalls = 0;
+    const sessions = new ChannelSessions({
+      dispatcherId: 'dispatcher-a',
+      config: testDreamuxConfig([testDispatcherConfig({ id: 'dispatcher-a' })]),
+      channelProviders: channelProviderCatalog(),
+      channelLoggerFactory: () => ({}) as never,
+    });
+    const oldSession = {
+      provider: PROVIDER_REF,
+      channel_id: 'primary',
+      async start() {},
+      async close() {
+        oldCloseCalls += 1;
+        await release.promise;
+      },
+      async resolveTarget() {
+        return groupTarget('old');
+      },
+    } satisfies ChannelSession;
+    const newSession = {
+      provider: PROVIDER_REF,
+      channel_id: 'primary',
+      async start() {},
+      async close() {
+        newCloseCalls += 1;
+      },
+      async resolveTarget() {
+        return groupTarget('new');
+      },
+    } satisfies ChannelSession;
+    sessions.adopt(new Map([['primary', oldSession]]));
+
+    const closing = sessions.closeAll({ error: () => undefined } as never);
+    expect(sessions.live().size).toBe(0);
+    await sessions.closeAll({ error: () => undefined } as never);
+    expect(oldCloseCalls).toBe(1);
+    sessions.adopt(new Map([['primary', newSession]]));
+    release.resolve();
+    await closing;
+
+    expect(sessions.live().get('primary')).toBe(newSession);
+    expect(newCloseCalls).toBe(0);
   });
 });

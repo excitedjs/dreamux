@@ -1,7 +1,7 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdir, stat, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -14,12 +14,16 @@ import {
   defaultWorkspaceWorkPath,
   directWorkspaceWorkPath,
   managedWorkspaceGitignorePath,
+  managedWorkspaceDir,
   managedWorktreePath,
   managedWorktreeRoot,
   repoDisambiguatedSlug,
 } from '../src/service/worktree/paths.js';
+import { WorktreeManager } from '../src/service/worktree/manager.js';
 import {
   dreamuxRoot,
+  dispatcherChannelBindingsPath,
+  dispatcherCollaborationSpacesPath,
   isRealPathUnderDreamuxRoot,
   isUnderDreamuxRoot,
   resetRuntimeConfig,
@@ -40,6 +44,11 @@ function noopLog(): DreamuxLogger {
     child: () => log,
   };
   return log as unknown as DreamuxLogger;
+}
+
+async function writeJson(path: string, value: unknown): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
 }
 
 describe('dispatcher workspace cwd contract (issue #182 PR-4)', () => {
@@ -189,6 +198,78 @@ describe('dispatcher workspace cwd contract (issue #182 PR-4)', () => {
       expect(error).toMatch(/docs/);
       await server.shutdown();
     });
+
+    it('fails loud on ambiguous v2 bindings for disabled dispatchers', async () => {
+      const config = testDreamuxConfig([
+        testDispatcherConfig({
+          id: 'flow',
+          cwd: join(root, 'disabled-workspace'),
+          enabled: false,
+        }),
+      ]);
+      await writeJson(dispatcherChannelBindingsPath('flow'), {
+        version: 2,
+        bindings: [
+          {
+            channel_id: 'primary',
+            provider: 'builtin:feishu',
+            target_type: 'group',
+            target_key: 'chat-x',
+            display: null,
+            canonical_url: null,
+            meta: { chat_id: 'chat-x', chat_type: 'group' },
+            team_name: 'gamma',
+            leader_name: 'lead-1',
+            active: true,
+            created_at: 1,
+            updated_at: 1,
+            deactivated_at: null,
+          },
+        ],
+      });
+      await writeJson(dispatcherCollaborationSpacesPath('flow'), {
+        version: 1,
+        spaces: [],
+        targets: [
+          {
+            version: 1,
+            dispatcher_id: 'flow',
+            space_name: 'space-a',
+            channel_id: 'primary',
+            provider: 'builtin:feishu',
+            container_key: 'container-a',
+            binding_generation: 1,
+            target_key: 'chat-x',
+            target_type: 'group',
+            target_display: null,
+            team_name: 'gamma',
+            leader_name: 'lead-1',
+            worktree_slug: 'space-a-chat-x',
+            lifecycle_status: 'active',
+            phase: 'bound',
+            claim_event_id: null,
+            close_event_id: null,
+            last_error: null,
+            created_at: 1,
+            updated_at: 1,
+            closed_at: null,
+            detached_at: null,
+          },
+        ],
+      });
+      const server = new Server({
+        config,
+        adminSocketPath: join(root, 'admin.sock'),
+        logger: noopLog(),
+        channelLoggerFactory: () => noopLog(),
+        agentRuntimeProviderCatalog: codexAgentRuntimeCatalog(),
+      });
+
+      await expect(server.start()).rejects.toThrow(
+        /incompatible local state[\s\S]*version 2[\s\S]*open collaboration target route/,
+      );
+      await server.shutdown();
+    });
   });
 
   describe('isUnderDreamuxRoot', () => {
@@ -241,7 +322,7 @@ describe('managed worktree path builders (issue #182 PR-4)', () => {
     expect(defaultWorkspaceWorkPath({ dispatcherWorkspace: workspace, slug: 'alpha' }))
       .toBe('/work/space/.workspace/work/alpha');
     expect(directWorkspaceWorkPath({ dispatcherWorkspace: workspace, slug: 'alpha' }))
-      .toBe('/work/space/alpha');
+      .toBe('/work/space');
   });
 
   it('maps the same repo to a stable repo-disambiguated slug', () => {
@@ -280,5 +361,45 @@ describe('managed worktree path builders (issue #182 PR-4)', () => {
       slug: 'has spaces/and@symbols',
     });
     expect(sanitized.endsWith('/has_spaces_and_symbols')).toBe(true);
+  });
+});
+
+describe('default workspace preparation (issue #199)', () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = realpathSync(mkdtempSync(join(tmpdir(), 'dreamux-default-workspace-')));
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('uses the self-ignored workspace boundary when workspace isolation is enabled', async () => {
+    const manager = new WorktreeManager();
+    const workspace = await manager.prepareDefaultWorkspace({
+      dispatcherWorkspace: root,
+      slug: 'alpha',
+      workspaceEnabled: true,
+    });
+
+    expect(workspace.runtimeCwd).toBe(join(root, '.workspace', 'work', 'alpha'));
+    expect((await stat(workspace.runtimeCwd)).isDirectory()).toBe(true);
+    expect(readFileSync(managedWorkspaceGitignorePath(root), 'utf8')).toContain('*');
+  });
+
+  it('uses the dispatcher cwd directly when workspace isolation is disabled', async () => {
+    const manager = new WorktreeManager();
+    const workspace = await manager.prepareDefaultWorkspace({
+      dispatcherWorkspace: root,
+      slug: 'alpha',
+      workspaceEnabled: false,
+    });
+
+    expect(workspace.runtimeCwd).toBe(root);
+    expect(workspace.sourceCwd).toBe(root);
+    await expect(stat(managedWorkspaceDir(root))).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
   });
 });

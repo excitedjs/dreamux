@@ -18,8 +18,9 @@ import type {
 } from '../completion-router/index.js';
 import { requireLifecycleText } from '../agent-entity/types.js';
 import type { AgentEntityIdentity } from '../agent-entity/types.js';
-import type { SchedulerService } from '../scheduler/service.js';
+import type { SchedulerCommands } from '../scheduler/service.js';
 import type { ChannelRouteOwner } from '../channel-service/index.js';
+import { KeyedAsyncQueue } from '../serial-queue.js';
 import { TeamStore } from './store.js';
 import type {
   TeamCreateInput,
@@ -27,13 +28,18 @@ import type {
   TeamHistoryQuery,
   TeamHistoryResult,
   TeamHistoryRow,
+  TeamLeaderLease,
   TeamLeaderSendResult,
   TeamListRow,
   TeamRecord,
 } from './types.js';
 import { validateTeamId } from './types.js';
 import type { AgentEntityIdentityStatus } from '../agent-entity/types.js';
-import { TeamService, type TeamServiceDeps } from '../team-service/index.js';
+import {
+  TeamService,
+  type TeamSchedulerLifecycle,
+  type TeamServiceDeps,
+} from '../team-service/index.js';
 
 export interface TeamCollectionOptions {
   /** The dispatcher this collection belongs to (issue #233 ownership sinking). */
@@ -58,6 +64,7 @@ export interface TeamCollectionOptions {
     producer: AgentEntityIdentity,
   ) => Promise<CompletionInitiator | null>;
   isShuttingDown: () => boolean;
+  admitOperation?: <T>(task: () => Promise<T>) => Promise<T>;
   adminSocketPath: string;
   /**
    * Build a team_leader's channel-egress MCP descriptors from the dispatcher's
@@ -87,11 +94,35 @@ export class TeamCollection {
   private readonly worktrees: WorktreeManager;
   /** Live {@link TeamService} cache keyed by team id (issue #233 factory). */
   private readonly cache = new Map<string, TeamService>();
+  /**
+   * Owner-only scheduler lifecycle capabilities for cached Teams. `TeamService`
+   * exposes only `SchedulerCommands`; start/stop stay inside this collection.
+   */
+  private readonly schedulerLifecycles = new Map<
+    string,
+    {
+      service: TeamService;
+      lifecycle: TeamSchedulerLifecycle;
+    }
+  >();
+  /**
+   * Every service constructed by this collection, including a create/rebuild
+   * attempt that failed before entering the live cache. Shutdown must retain
+   * ownership of those partially booted runtimes so it can retry cleanup.
+   */
+  private readonly materialized = new Set<TeamService>();
   /** In-flight `create` per team id (concurrent same-id creates share one). */
   private readonly creating = new Map<string, Promise<TeamCreateResult>>();
   /** In-flight cache-miss `get`, so a cold-cache race rebuilds one TeamService
    * (one leader runtime), not two (issue #233 concurrency guard). */
   private readonly rebuilding = new Map<string, Promise<TeamService>>();
+  /**
+   * Serializes route publication with the start of Team closure. The closing
+   * marker is deliberately separate from persisted Team status: it is a
+   * process-lifetime write fence, while `closed` remains the durable fact.
+   */
+  private readonly routeLifecycle = new KeyedAsyncQueue();
+  private readonly routeClosing = new Set<string>();
 
   constructor(private readonly opts: TeamCollectionOptions) {
     this.dispatcherId = opts.dispatcherId;
@@ -99,25 +130,41 @@ export class TeamCollection {
   }
 
   async create(input: TeamCreateInput): Promise<TeamCreateResult> {
-    return dedupe(this.creating, validateTeamId(input.name), () =>
-      this.doCreate(input),
+    const teamId = validateTeamId(input.name);
+    return dedupe(this.creating, teamId, () =>
+      this.routeLifecycle.run(teamId, async () => {
+        if (this.routeClosing.has(teamId)) {
+          throw new TeamUnavailableError(
+            `Team ${JSON.stringify(teamId)} is closing`,
+          );
+        }
+        return this.doCreate(input, teamId);
+      }),
     );
   }
 
-  private async doCreate(input: TeamCreateInput): Promise<TeamCreateResult> {
+  private async doCreate(
+    input: TeamCreateInput,
+    teamId: string,
+  ): Promise<TeamCreateResult> {
     requireLifecycleText(input.intent, 'Team create intent');
-    const teamId = validateTeamId(input.name);
     const existing = await this.store.get(this.dispatcherId, teamId);
     if (existing !== null && existing.status !== 'closed') {
       throw new Error(`Team ${JSON.stringify(teamId)} already exists`);
     }
-    const workspaceRoot = await dispatcherWorkspace(this.opts.config, this.dispatcherId);
+    const workspaceRoot = await dispatcherWorkspace(
+      this.opts.config,
+      this.dispatcherId,
+    );
     const workspace =
       input.worktree === undefined && input.repoCwd === undefined
         ? await this.worktrees.prepareDefaultWorkspace({
             dispatcherWorkspace: workspaceRoot,
             slug: teamId,
-            workspaceEnabled: defaultWorkspaceEnabled(this.opts.config),
+            workspaceEnabled: defaultWorkspaceEnabled(
+              this.opts.config,
+              this.dispatcherId,
+            ),
           })
         : await this.worktrees.prepare({
             dispatcherId: this.dispatcherId,
@@ -130,22 +177,27 @@ export class TeamCollection {
               cleanup: 'keep',
             },
           });
-    const { service, leaderResult } = await TeamService.createNew(
-      { ...this.depsBase(), evict: () => this.cache.delete(teamId) },
-      {
-        teamId,
-        name: input.name,
-        ...(input.prompt !== undefined ? { prompt: input.prompt } : {}),
-        leaderAgentRuntime: input.leaderAgentRuntime,
-        intent: input.intent,
-        ...(input.identity !== undefined ? { identity: input.identity } : {}),
-        workspace,
-        existing,
-      },
-    );
+    const { service, schedulerLifecycle, leaderResult } =
+      await TeamService.createNew(
+        { ...this.depsBase(), evict: (evicted) => this.evict(teamId, evicted) },
+        {
+          teamId,
+          name: input.name,
+          ...(input.prompt !== undefined ? { prompt: input.prompt } : {}),
+          leaderAgentRuntime: input.leaderAgentRuntime,
+          intent: input.intent,
+          ...(input.identity !== undefined ? { identity: input.identity } : {}),
+          workspace,
+          existing,
+        },
+      );
     // Cache the live service so later `get`s reuse this leader + collection and
     // record mutations route through it (issue #233).
     this.cache.set(teamId, service);
+    this.schedulerLifecycles.set(teamId, {
+      service,
+      lifecycle: schedulerLifecycle,
+    });
     return {
       team: service.view(),
       leader: leaderResult.teammate,
@@ -207,6 +259,100 @@ export class TeamCollection {
     };
   }
 
+  /**
+   * Return a route owner only after the persisted Team can be materialized and
+   * its TeamLeader can start. Collaboration provisioning uses this stronger fact
+   * so a stale `starting`/`running` row is never enough to publish an active
+   * channel route.
+   */
+  async requireRoutableTeamOwner(teamId: string): Promise<ChannelRouteOwner> {
+    const id = validateTeamId(teamId);
+    if (this.routeClosing.has(id)) {
+      throw new TeamUnavailableError(`Team ${JSON.stringify(id)} is closing`);
+    }
+    await this.mustOpenTeam(id);
+    const service = await this.get(id);
+    await service.ensureRouteReady();
+    if (this.routeClosing.has(id)) {
+      throw new TeamUnavailableError(`Team ${JSON.stringify(id)} is closing`);
+    }
+    return {
+      kind: 'team',
+      teamName: id,
+      leaderName: service.leaderName,
+    };
+  }
+
+  /**
+   * Hold a process-local route lease while publishing or repairing a route.
+   * A concurrent Team close cannot announce its closing fence until `task`
+   * finishes; once closing is announced, later leases fail before mutation.
+   */
+  async withRoutableTeamOwner<T>(
+    teamId: string,
+    task: (owner: ChannelRouteOwner) => Promise<T>,
+  ): Promise<T> {
+    const id = validateTeamId(teamId);
+    return this.routeLifecycle.run(id, async () => {
+      if (this.routeClosing.has(id)) {
+        throw new TeamUnavailableError(`Team ${JSON.stringify(id)} is closing`);
+      }
+      return task(await this.requireRoutableTeamOwner(id));
+    });
+  }
+
+  async teamLeaderLease(teamId: string): Promise<TeamLeaderLease> {
+    const id = validateTeamId(teamId);
+    return this.routeLifecycle.run(id, async () => {
+      const service = await this.currentOpenService(id);
+      return { teamId: id, leaderName: service.leaderName };
+    });
+  }
+
+  async withTeamLeaderLease<T>(
+    lease: TeamLeaderLease,
+    task: (service: TeamService) => Promise<T>,
+  ): Promise<T> {
+    const id = validateTeamId(lease.teamId);
+    return this.routeLifecycle.run(id, async () => {
+      const service = await this.currentOpenService(id);
+      if (service.leaderName !== lease.leaderName) {
+        throw new TeamUnavailableError(
+          `Team ${JSON.stringify(id)} generation is no longer current`,
+        );
+      }
+      return task(service);
+    });
+  }
+
+  /**
+   * Announce Team closure before cross-service route cleanup, then keep the
+   * fence raised until the caller has durably closed (or failed to close) the
+   * Team. Route cleanup itself must not run under the queue lock because it
+   * takes per-target locks in the opposite domain.
+   */
+  async withTeamRouteClosing<T>(
+    teamId: string,
+    task: (owner: ChannelRouteOwner) => Promise<T>,
+  ): Promise<T> {
+    const id = validateTeamId(teamId);
+    const owner = await this.routeLifecycle.run(id, async () => {
+      if (this.routeClosing.has(id)) {
+        throw new TeamUnavailableError(`Team ${JSON.stringify(id)} is closing`);
+      }
+      const current = await this.requireOpenTeamRouteOwner(id);
+      this.routeClosing.add(id);
+      return current;
+    });
+    try {
+      return await task(owner);
+    } finally {
+      await this.routeLifecycle.run(id, async () => {
+        this.routeClosing.delete(id);
+      });
+    }
+  }
+
   async sendToLeader(
     teamId: string,
     input: {
@@ -225,14 +371,43 @@ export class TeamCollection {
     return team !== null && team.status !== 'closed';
   }
 
+  private async currentOpenService(teamId: string): Promise<TeamService> {
+    const id = validateTeamId(teamId);
+    if (this.routeClosing.has(id)) {
+      throw new TeamUnavailableError(`Team ${JSON.stringify(id)} is closing`);
+    }
+    await this.mustOpenTeam(id);
+    const service = await this.get(id);
+    if (this.routeClosing.has(id)) {
+      throw new TeamUnavailableError(`Team ${JSON.stringify(id)} is closing`);
+    }
+    return service;
+  }
+
   /** Rebuild a team's live service from its record and cache it (issue #233). */
   private async serviceFor(record: TeamRecord): Promise<TeamService> {
-    const service = await TeamService.rebuild(
-      { ...this.depsBase(), evict: () => this.cache.delete(record.team_id) },
+    const { service, schedulerLifecycle } = await TeamService.rebuild(
+      {
+        ...this.depsBase(),
+        evict: (evicted) => this.evict(record.team_id, evicted),
+      },
       record,
     );
     this.cache.set(record.team_id, service);
+    this.schedulerLifecycles.set(record.team_id, {
+      service,
+      lifecycle: schedulerLifecycle,
+    });
     return service;
+  }
+
+  private evict(teamId: string, expectedService: TeamService): void {
+    if (this.cache.get(teamId) !== expectedService) return;
+    this.cache.delete(teamId);
+    const lifecycle = this.schedulerLifecycles.get(teamId);
+    if (lifecycle?.service === expectedService) {
+      this.schedulerLifecycles.delete(teamId);
+    }
   }
 
   private depsBase(): Omit<TeamServiceDeps, 'evict'> {
@@ -246,9 +421,11 @@ export class TeamCollection {
       router: this.opts.router,
       initiatorFor: this.opts.initiatorFor,
       isShuttingDown: this.opts.isShuttingDown,
+      admitOperation: this.opts.admitOperation ?? ((task) => task()),
       store: this.store,
       adminSocketPath: this.opts.adminSocketPath,
       leaderChannelDescriptors: this.opts.leaderChannelDescriptors,
+      trackMaterialized: (service) => this.materialized.add(service),
       log: this.opts.log,
     };
   }
@@ -328,7 +505,7 @@ export class TeamCollection {
     return team;
   }
 
-  async scheduler(teamId: string): Promise<SchedulerService> {
+  async scheduler(teamId: string): Promise<SchedulerCommands> {
     await this.mustOpenTeam(teamId);
     return (await this.get(teamId)).scheduler;
   }
@@ -339,7 +516,16 @@ export class TeamCollection {
       if (team.status === 'closed') continue;
       try {
         const service = await this.get(team.team_id);
-        await service.scheduler.start();
+        const schedulerLifecycle = this.schedulerLifecycles.get(service.id);
+        if (
+          schedulerLifecycle === undefined ||
+          schedulerLifecycle.service !== service
+        ) {
+          throw new Error(
+            `Team ${JSON.stringify(service.id)} scheduler lifecycle is unavailable`,
+          );
+        }
+        await schedulerLifecycle.lifecycle.start();
       } catch (err) {
         this.opts.log.error(
           { dispatcher_id: this.dispatcherId, team_id: team.team_id, err: errInfo(err) },
@@ -350,17 +536,27 @@ export class TeamCollection {
   }
 
   stopSchedulers(): void {
-    for (const service of this.cache.values()) service.scheduler.stop();
+    for (const schedulerLifecycle of this.schedulerLifecycles.values()) {
+      schedulerLifecycle.lifecycle.stop();
+    }
   }
 
   /**
-   * Stop every live team's runtimes on server shutdown (issue #233). Only the
-   * currently materialized {@link TeamService}s are swept (live cache ≡ process
-   * lifetime), so this never reads the durable store or lazily starts a runtime.
+   * Stop every live team's runtimes on server shutdown (issue #233). The
+   * materialized set also retains failed create/rebuild attempts that never
+   * reached the live cache, so their partially booted runtimes remain owned.
+   * This never reads the durable store or lazily starts a runtime.
    */
   async stopAll(): Promise<void> {
-    for (const service of this.cache.values()) {
-      await service.stopAll();
+    const results = await Promise.allSettled(
+      [...this.materialized].map((service) => service.stopAll()),
+    );
+    const failures = results
+      .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+      .map((result) => result.reason);
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) {
+      throw new AggregateError(failures, 'multiple Team runtimes failed to stop');
     }
   }
 }

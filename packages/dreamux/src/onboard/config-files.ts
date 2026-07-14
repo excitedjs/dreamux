@@ -18,14 +18,21 @@ export function dreamuxConfigFromAnswers(
 ): DreamuxConfig {
   validateDispatcherId(answers.dispatcherId);
   const base: DreamuxConfig = existing ?? {
-    workspace: { enabled: true },
     agents: {},
     dispatchers: [],
   };
+  const existingDispatcher = base.dispatchers.find(
+    (dispatcher) => dispatcher.id === answers.dispatcherId,
+  );
   const dispatchers = base.dispatchers
     .filter((dispatcher) => dispatcher.id !== answers.dispatcherId)
     .map(cloneDispatcherConfig);
-  dispatchers.push(dispatcherConfigFromAnswers(answers));
+  dispatchers.push(
+    dispatcherConfigFromAnswers(
+      answers,
+      existingDispatcher?.workspace ?? { enabled: true },
+    ),
+  );
   // Runtime config lands only in agents[]. Onboard creates or updates the
   // selected agent id, preserving provider-owned raw config so the file
   // round-trips after provider parsers normalize defaults.
@@ -52,18 +59,21 @@ export function dreamuxConfigFromAnswers(
     };
   }
   const next: DreamuxConfig = {
-    workspace: base.workspace,
     agents,
     dispatchers,
   };
   return next;
 }
 
-function dispatcherConfigFromAnswers(answers: OnboardAnswers): DispatcherConfig {
+function dispatcherConfigFromAnswers(
+  answers: OnboardAnswers,
+  workspace: DispatcherConfig['workspace'],
+): DispatcherConfig {
   return {
     id: answers.dispatcherId,
     cwd: answers.dispatcherCwd,
     enabled: true,
+    workspace,
     channels: answers.channels.map((channel) => ({
       id: channel.id,
       provider: channel.provider,
@@ -85,6 +95,7 @@ function cloneDispatcherConfig(dispatcher: DispatcherConfig): DispatcherConfig {
     id: dispatcher.id,
     cwd: dispatcher.cwd,
     enabled: dispatcher.enabled,
+    workspace: { enabled: dispatcher.workspace.enabled },
     channels: dispatcher.channels.map((channel) => ({
       id: channel.id,
       provider: channel.provider,

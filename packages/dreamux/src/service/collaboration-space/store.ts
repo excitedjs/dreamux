@@ -5,11 +5,16 @@ import { isNotFound } from '../../platform/fs-errors.js';
 import { dispatcherCollaborationSpacesPath } from '../../platform/paths.js';
 import { KeyedAsyncQueue } from '../serial-queue.js';
 import type {
+  CollaborationSpaceBindingRecord,
   CollaborationSpaceRecord,
   ProvisionedTargetRecord,
 } from './types.js';
+import { COLLABORATION_SPACE_RECORD_VERSION } from './types.js';
 
 const STORE_VERSION = 1;
+// One dispatcher has one process-level writer authority. Keep the fence at
+// module scope so test/preflight store instances cannot bypass that authority.
+const STORE_WRITES = new KeyedAsyncQueue();
 
 interface CollaborationSpaceStoreFile {
   version: typeof STORE_VERSION;
@@ -24,8 +29,105 @@ export interface TargetKeyInput {
   targetKey: string;
 }
 
+export interface BindSpaceInput {
+  dispatcherId: string;
+  spaceName: string;
+  channelId: string;
+  provider: string;
+  container?: {
+    container_type: string;
+    container_key: string;
+    display?: string;
+    canonical_url?: string;
+  };
+  display?: string;
+  binding: Omit<CollaborationSpaceBindingRecord, 'generation' | 'bound_at'>;
+}
+
 export class CollaborationSpaceStore {
-  private readonly writes = new KeyedAsyncQueue();
+  /**
+   * Commit one collaboration-space bind transition. The bound-state check,
+   * container uniqueness check, generation allocation, and policy write share
+   * one store critical section so a generation always identifies one immutable
+   * binding policy.
+  */
+  async bindSpace(input: BindSpaceInput): Promise<CollaborationSpaceRecord> {
+    return STORE_WRITES.run(input.dispatcherId, async () => {
+      const file = await this.read(input.dispatcherId);
+      const existing = file.spaces.find(
+        (space) => space.space_name === input.spaceName,
+      ) ?? null;
+      if (existing === null && input.container === undefined) {
+        throw new Error('container is required when binding a new collaboration space');
+      }
+      const container = input.container ?? {
+        container_type: existing!.container_type,
+        container_key: existing!.container_key,
+        ...(existing!.display !== null ? { display: existing!.display } : {}),
+        ...(existing!.canonical_url !== null
+          ? { canonical_url: existing!.canonical_url }
+          : {}),
+      };
+      if (
+        existing !== null &&
+        (existing.channel_id !== input.channelId ||
+          existing.container_type !== container.container_type ||
+          existing.container_key !== container.container_key)
+      ) {
+        throw new Error(
+          `collaboration space ${JSON.stringify(input.spaceName)} is already ` +
+            'registered for a different channel container',
+        );
+      }
+      if (existing?.status === 'bound') {
+        throw new Error(
+          `collaboration space ${JSON.stringify(input.spaceName)} is already bound; ` +
+            'dissolve it before binding it again',
+        );
+      }
+      const existingByContainer = file.spaces.find(
+        (space) =>
+          space.space_name !== input.spaceName &&
+          space.channel_id === input.channelId &&
+          space.container_key === container.container_key,
+      );
+      if (existingByContainer !== undefined) {
+        throw new Error(
+          `channel container ${JSON.stringify(container.container_key)} is already ` +
+            `registered as collaboration space ` +
+            `${JSON.stringify(existingByContainer.space_name)}`,
+        );
+      }
+
+      const now = Date.now();
+      const generation = (existing?.last_binding_generation ?? 0) + 1;
+      const saved: CollaborationSpaceRecord = {
+        version: COLLABORATION_SPACE_RECORD_VERSION,
+        dispatcher_id: input.dispatcherId,
+        space_name: input.spaceName,
+        channel_id: input.channelId,
+        provider: input.provider,
+        container_type: container.container_type,
+        container_key: container.container_key,
+        display: input.display ?? container.display ?? existing?.display ?? null,
+        canonical_url: container.canonical_url ?? existing?.canonical_url ?? null,
+        current_binding: {
+          ...input.binding,
+          generation,
+          bound_at: now,
+        },
+        last_binding_generation: generation,
+        status: 'bound',
+        created_at: existing?.created_at ?? now,
+        updated_at: now,
+        unbound_at: null,
+        unbound_note: null,
+      };
+      this.upsertSpace(file, saved);
+      await this.write(input.dispatcherId, file);
+      return saved;
+    });
+  }
 
   async listSpaces(dispatcherId: string): Promise<CollaborationSpaceRecord[]> {
     return (await this.read(dispatcherId)).spaces;
@@ -57,7 +159,7 @@ export class CollaborationSpaceStore {
   }
 
   async saveSpace(space: CollaborationSpaceRecord): Promise<CollaborationSpaceRecord> {
-    await this.writes.run(space.dispatcher_id, async () => {
+    await STORE_WRITES.run(space.dispatcher_id, async () => {
       const file = await this.read(space.dispatcher_id);
       this.upsertSpace(file, space);
       await this.write(space.dispatcher_id, file);
@@ -69,7 +171,7 @@ export class CollaborationSpaceStore {
     space: CollaborationSpaceRecord,
   ): Promise<CollaborationSpaceRecord> {
     let saved = space;
-    await this.writes.run(space.dispatcher_id, async () => {
+    await STORE_WRITES.run(space.dispatcher_id, async () => {
       const file = await this.read(space.dispatcher_id);
       const byContainer = file.spaces.find((entry) =>
         sameContainer(entry, space),
@@ -136,6 +238,26 @@ export class CollaborationSpaceStore {
     return targets[0] ?? null;
   }
 
+  async findLatestTargetByChannelTarget(
+    dispatcherId: string,
+    input: {
+      channelId: string;
+      targetKey: string;
+    },
+  ): Promise<ProvisionedTargetRecord | null> {
+    const targets = (await this.read(dispatcherId)).targets
+      .filter(
+        (target) =>
+          target.channel_id === input.channelId &&
+          target.target_key === input.targetKey,
+      )
+      .sort((left, right) =>
+        right.binding_generation - left.binding_generation ||
+        right.updated_at - left.updated_at,
+      );
+    return targets[0] ?? null;
+  }
+
   async getTarget(
     dispatcherId: string,
     key: TargetKeyInput,
@@ -153,7 +275,7 @@ export class CollaborationSpaceStore {
   async saveTarget(
     target: ProvisionedTargetRecord,
   ): Promise<ProvisionedTargetRecord> {
-    await this.writes.run(target.dispatcher_id, async () => {
+    await STORE_WRITES.run(target.dispatcher_id, async () => {
       const file = await this.read(target.dispatcher_id);
       const idx = file.targets.findIndex((entry) =>
         entry.channel_id === target.channel_id &&

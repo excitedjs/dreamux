@@ -35,9 +35,9 @@ export interface TeamCreateInput {
   /**
    * Explicit repository cwd for the Team workspace (issue #199). Omitted when
    * the caller passes no `repo`: the Team then runs in a plain
-   * `<dispatcher cwd>/.workspace/work/<team_name>/` directory (no git worktree,
-   * dispatcher cwd need not be a git repo). A managed git worktree is created
-   * only for an explicit `worktree` request.
+   * dispatcher-default workspace (isolated under `.workspace/work/<team_name>/`,
+   * or the dispatcher cwd itself when workspace isolation is disabled). A managed
+   * git worktree is created only for an explicit `worktree` request.
    */
   repoCwd?: string;
   leaderAgentRuntime: string;
@@ -167,6 +167,11 @@ export interface TeamLeaderSendResult {
   team: TeamView;
   leader: AgentEntityRuntimeStatus;
   turn: AgentEntityTurnResult;
+}
+
+export interface TeamLeaderLease {
+  teamId: string;
+  leaderName: string;
 }
 
 export function validateTeamId(id: string): string {

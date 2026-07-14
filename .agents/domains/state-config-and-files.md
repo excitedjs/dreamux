@@ -233,6 +233,7 @@ not under `~/.dreamux`:
 
 ```text
 <dispatcher cwd>/.workspace/work/<name>/
+<dispatcher cwd>/                # when dispatchers[].workspace.enabled is false
 <dispatcher cwd>/.workspace/worktree/<repo-slug>/<slug>/
 ```
 

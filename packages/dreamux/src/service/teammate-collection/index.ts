@@ -408,11 +408,18 @@ export class TeammateCollection implements TeammateOps {
 
   /** Stop every live teammate runtime in this collection (server shutdown). */
   async stopAll(): Promise<void> {
-    for (const entity of this.entities.values()) {
-      await entity.stop();
-    }
+    const results = await Promise.allSettled(
+      [...this.entities.values()].map((entity) => entity.stop()),
+    );
     while (this.inFlightSettleCaptures.size > 0) {
       await Promise.allSettled([...this.inFlightSettleCaptures]);
+    }
+    const failures = results
+      .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+      .map((result) => result.reason);
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) {
+      throw new AggregateError(failures, 'multiple TeamMate runtimes failed to stop');
     }
   }
 

@@ -135,12 +135,17 @@ target can be active for only one Team at a time; rebinding reassigns it.
 Rows carry provider ref, target type/key, display/canonical URL, provider
 `meta`, Team name, TeamLeader name, active flag, and timestamps.
 
-Legacy binding layouts fail loud. Dreamux 0.x does not migrate old binding
-rows, old `team_id`-keyed rows, or pre-target-key schemas.
+The binding store is v3. Version 2 rows that already carry `channel_id` and
+`target_key` are reused as explicit routes with `claim_id: null` only when no
+open collaboration target shares the route key. If such an overlap exists,
+startup/doctor fails loud because the old row could be either an explicit bind
+or a collaboration-managed route. Older rows, old `team_id`-keyed rows, or
+pre-target-key schemas also fail loud and must be rebuilt.
 
 Source:
 
 - `/packages/dreamux/src/platform/paths.ts`
+- `/packages/dreamux/src/service/channel-binding/preflight.ts`
 - `/packages/dreamux/src/service/channel-binding/store.ts`
 - `/packages/dreamux/src/service/legacy-state.ts`
 

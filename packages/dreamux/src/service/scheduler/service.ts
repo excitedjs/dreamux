@@ -50,6 +50,7 @@ export interface SchedulerServiceOptions {
   ownerId: string;
   store: CronJobStore;
   absentRuntimeStrategy: 'miss' | 'submit';
+  admit<T>(task: () => Promise<T>): Promise<T>;
   getRuntime(): AgentRuntime | null;
   submitScheduled(input: {
     jobId: string;
@@ -62,7 +63,16 @@ export interface SchedulerServiceOptions {
   now?: () => number;
 }
 
+export interface SchedulerCommands {
+  list(): Promise<{ jobs: CronJob[] }>;
+  create(input: CronCreateRequest): Promise<CronJob>;
+  update(input: CronUpdateRequest): Promise<CronJob>;
+  delete(id: string): Promise<{ id: string; deleted: boolean }>;
+  runNow(id: string): Promise<{ id: string; status: string }>;
+}
+
 export class SchedulerService {
+  readonly commands: SchedulerCommands;
   private readonly ownerId: string;
   private readonly store: CronJobStore;
   private readonly log: DreamuxLogger;
@@ -79,6 +89,13 @@ export class SchedulerService {
     this.store = opts.store;
     this.log = opts.log;
     this.now = opts.now ?? (() => Date.now());
+    this.commands = {
+      list: () => this.list(),
+      create: (input) => this.create(input),
+      update: (input) => this.update(input),
+      delete: (id) => this.delete(id),
+      runNow: (id) => this.runNow(id),
+    };
   }
 
   async start(): Promise<void> {
@@ -114,6 +131,10 @@ export class SchedulerService {
   }
 
   async create(input: CronCreateRequest): Promise<CronJob> {
+    return this.admit(() => this.doCreate(input));
+  }
+
+  private async doCreate(input: CronCreateRequest): Promise<CronJob> {
     const normalized = this.normalizeCreate(input);
     const nextRunAt = nextRunAfter(normalized.cron, normalized.tz, this.now());
     const job = await this.store.create(
@@ -132,6 +153,10 @@ export class SchedulerService {
   }
 
   async update(input: CronUpdateRequest): Promise<CronJob> {
+    return this.admit(() => this.doUpdate(input));
+  }
+
+  private async doUpdate(input: CronUpdateRequest): Promise<CronJob> {
     const current = await this.mustJob(input.id);
     const normalized = this.normalizeUpdate(current, input);
     // Use the EFFECTIVE enabled state (an omitted `enabled` keeps the current
@@ -155,6 +180,10 @@ export class SchedulerService {
   }
 
   async delete(id: string): Promise<{ id: string; deleted: boolean }> {
+    return this.admit(() => this.doDelete(id));
+  }
+
+  private async doDelete(id: string): Promise<{ id: string; deleted: boolean }> {
     this.clearTimer(id);
     this.abortHeldFire(id);
     this.heldFires.delete(id);
@@ -171,7 +200,7 @@ export class SchedulerService {
   }
 
   async runNow(id: string): Promise<{ id: string; status: string }> {
-    return this.dispatch(id, { manual: true });
+    return this.dispatchAdmitted(id, { manual: true });
   }
 
   private async reconcile(job: CronJob): Promise<CronJob | null> {
@@ -217,7 +246,12 @@ export class SchedulerService {
         return;
       }
       this.timers.delete(jobId);
-      void this.dispatch(jobId, { manual: false });
+      void this.dispatchAdmitted(jobId, { manual: false }).catch((err) => {
+        this.log.debug(
+          { owner_id: this.ownerId, job_id: jobId, err: errInfo(err) },
+          'cron job dispatch rejected by owner admission',
+        );
+      });
     }, segment);
     timer.unref();
     this.timers.set(jobId, { dueAt, timer });
@@ -257,6 +291,17 @@ export class SchedulerService {
       if (!opts.manual) await this.rearmAfterDispatchError(jobId);
       return { id: jobId, status: 'failed' };
     }
+  }
+
+  private async dispatchAdmitted(
+    jobId: string,
+    opts: { manual: boolean },
+  ): Promise<{ id: string; status: string }> {
+    return this.admit(() => this.dispatch(jobId, opts));
+  }
+
+  private admit<T>(task: () => Promise<T>): Promise<T> {
+    return this.opts.admit(task);
   }
 
   private async rearmAfterDispatchError(jobId: string): Promise<void> {

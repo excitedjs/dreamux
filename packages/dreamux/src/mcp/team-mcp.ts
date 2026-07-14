@@ -256,7 +256,7 @@ function createArgs(value: unknown): Record<string, unknown> {
   const identity = optionalString(obj, 'identity');
   // #199 Slice 2: the public work-directory input is a single optional `repo`
   // object (replacing the old required `repo_cwd`). Omitted → a plain shared
-  // .workspace/work/<team_name>/ dir (no git worktree, issue #199).
+  // dispatcher-default workspace (no git worktree, issue #199).
   const repo = optionalRepoInput(obj, 'repo');
   return {
     team_name: requireString(obj, 'team_name'),
