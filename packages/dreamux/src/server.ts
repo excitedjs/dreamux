@@ -31,6 +31,7 @@ import {
   createAdminSocketServer,
   type AdminSocketServer,
 } from './admin/socket.js';
+import { AdminError } from './admin/protocol.js';
 import { RestartIntentConsumer } from './daemon/restart-intent.js';
 import {
   Dispatchers,
@@ -41,9 +42,14 @@ import {
   detectLegacyDispatcherState,
   legacyDispatcherStateMessage,
 } from './service/legacy-state.js';
+import { detectAmbiguousV2ChannelBindingRoutes } from './service/channel-binding/preflight.js';
 import { detectLegacyChannelBindingStore } from './service/channel-binding/store.js';
 import { detectLegacyCronJobStore } from './service/scheduler/store.js';
 import { TeamStore } from './service/team-collection/store.js';
+import {
+  collectShutdownFailure,
+  throwShutdownFailures,
+} from './service/shutdown-errors.js';
 
 export interface ServerOptions {
   /**
@@ -112,7 +118,9 @@ export class Server {
   readonly repos: Repos;
   readonly dispatchers: Dispatchers;
   private admin: AdminSocketServer | null = null;
-  private shuttingDown = false;
+  private shutdownTask: Promise<void> | null = null;
+  private acceptingAdminRequests = true;
+  private readonly adminRequests = new Set<Promise<unknown>>();
   private readonly opts: ServerOptions;
   private readonly log: DreamuxLogger;
   private readonly providerRegistry: ProviderRegistry;
@@ -262,15 +270,22 @@ export class Server {
    */
   private async assertNoLegacyDispatcherState(): Promise<void> {
     const messages: string[] = [];
-    for (const row of this.repos.dispatchers.listEnabled()) {
+    for (const row of this.repos.dispatchers.list()) {
       const findings = await detectLegacyDispatcherState(row.dispatcher_id);
       if (findings.length > 0) {
         messages.push(legacyDispatcherStateMessage(row.dispatcher_id, findings));
       }
-      // Issue #209 binding store v2: a pre-v2 channel-binding store fails loud at
-      // boot with rebuild guidance, not lazily on the first inbound message.
+      // Issue #209 binding store v3: incompatible channel-binding state fails
+      // loud at boot with rebuild guidance, not lazily on first inbound.
       const bindingLegacy = await detectLegacyChannelBindingStore(row.dispatcher_id);
-      if (bindingLegacy !== null) messages.push(bindingLegacy);
+      if (bindingLegacy !== null) {
+        messages.push(bindingLegacy);
+      } else {
+        const ambiguousBinding = await detectAmbiguousV2ChannelBindingRoutes(
+          row.dispatcher_id,
+        );
+        if (ambiguousBinding !== null) messages.push(ambiguousBinding);
+      }
       messages.push(...(await detectLegacyCronStores(row.dispatcher_id)));
     }
     if (messages.length > 0) {
@@ -288,15 +303,47 @@ export class Server {
     return this.dispatchers.get(id);
   }
 
+  admitAdminRequest<T>(task: () => Promise<T> | T): Promise<T> {
+    if (!this.acceptingAdminRequests) {
+      throw new AdminError(
+        'SERVER_SHUTTING_DOWN',
+        'dreamux server is shutting down',
+      );
+    }
+    const promise = Promise.resolve().then(task);
+    this.adminRequests.add(promise);
+    void promise.finally(() => {
+      this.adminRequests.delete(promise);
+    }).catch(() => {});
+    return promise;
+  }
+
   /** Graceful shutdown — drain dispatchers and close the admin socket. */
   async shutdown(): Promise<void> {
-    if (this.shuttingDown) return;
-    this.shuttingDown = true;
+    if (this.shutdownTask !== null) return this.shutdownTask;
+    this.shutdownTask = this.doShutdown().finally(() => {
+      this.shutdownTask = null;
+    });
+    return this.shutdownTask;
+  }
+
+  private async doShutdown(): Promise<void> {
     this.log.info('shutting down');
-    await this.dispatchers.shutdown();
-    if (this.admin !== null) {
+    const failures: unknown[] = [];
+    this.acceptingAdminRequests = false;
+    await collectShutdownFailure(failures, () => this.drainAdminRequests());
+    await collectShutdownFailure(failures, () => this.dispatchers.shutdown());
+    await collectShutdownFailure(failures, async () => {
+      if (this.admin === null) return;
       await this.admin.close();
       this.admin = null;
+    });
+    throwShutdownFailures(failures, 'server shutdown failed');
+  }
+
+  private async drainAdminRequests(): Promise<void> {
+    while (this.adminRequests.size > 0) {
+      await Promise.allSettled([...this.adminRequests]);
     }
   }
 }

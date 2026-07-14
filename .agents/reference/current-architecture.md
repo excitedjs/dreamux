@@ -174,22 +174,57 @@ Channel provider implementation. Space-level MCP/admin behavior stays in the
 facade; target accept/provision/close state transitions live in the contained
 `CollaborationTargetLifecycle`. That target worker uses the dispatcher's existing
 `ChannelService` plus single dispatcher-level `TeamCollection` to provision Teams
-for channel targets. Accepted lifecycle work is tracked by
-`CollaborationSpaceService`: startup resumes durable `creating` / `closing`
-target records, and dispatcher stop/shutdown drains accepted background target
-tasks before closing the service graph.
+for channel targets. Accepted background lifecycle work is tracked by
+`CollaborationSpaceService`; `DispatcherService` separately tracks direct
+inbound delivery/provisioning promises. Startup resumes durable `creating`,
+`failed`, and `closing` target records and releases stale managed claims left on
+inactive targets. Stop/shutdown closes admission, drains both task sets, and
+then sweeps every materialized Team runtime before closing the rest of the
+service graph. Already accepted provisioning rechecks the shutdown fence before
+Team creation, TeamLeader readiness, and route claim side effects. If a Team
+create was already in flight when the fence rose, provisioning closes that new
+Team before its drained promise settles. A create failure after leader launch
+also stops that leader before propagating the failure. `TeamCollection` retains
+ownership of partially booted services that never reached its live cache, so
+shutdown can retry failed create-time cleanup. Team/member/leader stop sweeps
+attempt every materialized runtime and aggregate failures instead of failing
+fast after the first provider error.
 
 The dispatcher-only `collaboration_space` MCP exposes `bind`, `dissolve`,
 `status`, and `list`. Binding registers an existing external container and a
-worktree policy; `repo` is optional and omitted repo follows the global default
-workspace policy. It does not call provider Channel MCP to create the external
-space. A dispatcher channel may also enable core-owned
+worktree policy; `repo` is optional and omitted repo follows that dispatcher's
+default workspace policy. It does not call provider Channel MCP to create the
+external space. A dispatcher channel may also enable core-owned
 `collaborationSpace.defaultBinding` so unknown provider containers with neutral
 `container` membership auto-bind without an explicit MCP call. Dissolve releases
 Dreamux routing/provisioning ownership without deleting the external container
 or dissolving already provisioned Teams, and it prevents implicit auto-rebind of
 that known unbound space. Team cleanup still belongs to `TeamService.dissolve`
 when a target lifecycle close or explicit Team operation dissolves that Team.
+
+Binding is one process-writer-serialized store transition: the unbound check,
+container uniqueness, next generation, and complete policy write commit
+together. A generation never names two policies. Collaboration target records
+are the durable provisioning intent, while the channel binding remains the
+authoritative live route. Managed bindings carry an opaque target-generation
+`claim_id`; explicit Team binds clear it. The binding store is v3; v2 rows that
+already have `(channel_id, target_key)` are reused as explicit routes with
+`claim_id: null` only when no open collaboration target shares that route key.
+If such an overlap exists, startup/doctor fails loud because the old row could
+be either explicit or collaboration-managed. Older rows without route keys still
+fail loud. Provisioning, reconciliation, and explicit Team route mutation share a
+`(channel_id, target_key)` lock, so intent detach and route replacement cannot
+cross. Explicit bind commits the
+authoritative replacement before detaching collaboration intent, so a rejected
+bind leaves the managed claim intact. Reconciliation releases only the matching
+claim, preserves an explicit replacement even when it uses the same Team owner
+tuple, and reclaims a missing route only while the original Team is actually
+routable. Route publication also holds a TeamCollection route lease. Every Team
+close path raises the matching closing fence, detaches all matching collaboration
+intent, transfers every owned channel route, and only then dissolves the Team;
+a waiting bind or repair therefore cannot publish a route to the Team being
+closed. Public target views expose a fixed failure summary; raw downstream
+errors remain local diagnostics and are not returned through MCP/status views.
 
 Scheduler ownership does not move into collaboration spaces. The dispatcher has
 its dispatcher scheduler, and each `TeamService` owns the TeamLeader scheduler it

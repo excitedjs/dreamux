@@ -6,6 +6,9 @@ import type {
   ProvisionedTargetView,
 } from './types.js';
 
+export const PUBLIC_TARGET_LIFECYCLE_ERROR =
+  'Collaboration target lifecycle operation failed; see dispatcher logs for details.';
+
 export function targetCounts(
   targets: ProvisionedTargetRecord[],
 ): Record<ProvisionedTargetStatus, number> {
@@ -33,7 +36,10 @@ export function targetView(target: ProvisionedTargetRecord): ProvisionedTargetVi
     leader_name: target.leader_name,
     lifecycle_status: target.lifecycle_status,
     phase: target.phase,
-    last_error: target.last_error,
+    // Persisted errors remain available to local diagnostics and logs. Public
+    // status/MCP projections must not expose host paths, provider payloads, or
+    // credentials carried by arbitrary downstream error messages.
+    last_error: target.last_error === null ? null : PUBLIC_TARGET_LIFECYCLE_ERROR,
     created_at: target.created_at,
     updated_at: target.updated_at,
     closed_at: target.closed_at,

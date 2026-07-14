@@ -42,12 +42,12 @@ function managedWorkRoot(dispatcherWorkspace: string): string {
   return join(managedWorkspaceDir(dispatcherWorkspace), WORK_SUBDIR);
 }
 
-/** `<workspace>/<name>` — legacy-direct default work dir when workspace is disabled. */
+/** `<workspace>` — direct dispatcher cwd when workspace isolation is disabled. */
 export function directWorkspaceWorkPath(input: {
   dispatcherWorkspace: string;
-  slug: string;
+  slug?: string;
 }): string {
-  return join(input.dispatcherWorkspace, teamMateNameSegment(input.slug));
+  return input.dispatcherWorkspace;
 }
 
 /**

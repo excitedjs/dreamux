@@ -1,10 +1,10 @@
 /**
- * Channel binding store v2 invariants (issue #209 binding store v2). The store
+ * Channel binding store v3 invariants (issue #209 binding store v3). The store
  * keys active bindings by `(channel_id, target_key)`; `target_key` is the
  * provider-owned routing key (Feishu: the chat id) and provider selectors live
- * in `meta`. These pin: bind/resolve/transfer-back by key, non-bindable (P2P)
- * rejection, the one-active-row-per-target reassignment rule, and the persisted
- * v2 shape.
+ * in `meta`. v3 also requires `claim_id` route provenance. These pin:
+ * bind/resolve/transfer-back by key, non-bindable (P2P) rejection, the
+ * one-active-row-per-target reassignment rule, and the persisted v3 shape.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -39,12 +39,12 @@ function p2pTarget(chatId: string): ChannelTarget {
   };
 }
 
-describe('ChannelBindingStore v2', () => {
+describe('ChannelBindingStore v3', () => {
   let root: string;
   let previousHome: string | undefined;
 
   beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), 'dreamux-binding-v2-'));
+    root = mkdtempSync(join(tmpdir(), 'dreamux-binding-v3-'));
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(root, 'home');
     resetRuntimeConfig();
@@ -77,13 +77,15 @@ describe('ChannelBindingStore v2', () => {
       active: true,
     });
 
-    // The persisted file is v2 and keeps chat_id out of the top-level columns.
+    // The persisted file is v3, keeps chat_id out of the top-level columns, and
+    // records explicit-bind provenance as claim_id: null.
     const onDisk = JSON.parse(
       readFileSync(dispatcherChannelBindingsPath(DISPATCHER), 'utf8'),
     );
-    expect(onDisk.version).toBe(2);
+    expect(onDisk.version).toBe(3);
     expect(onDisk.bindings[0]).not.toHaveProperty('chat_id');
     expect(onDisk.bindings[0].meta.chat_id).toBe('chat-a');
+    expect(onDisk.bindings[0].claim_id).toBeNull();
 
     await expect(
       store.resolve({ dispatcherId: DISPATCHER, channelId: 'primary', targetKey: 'chat-a' }),
@@ -166,11 +168,42 @@ describe('ChannelBindingStore v2', () => {
         target: groupTarget('chat-a'),
         teamName: 'beta',
         leaderName: 'beta-leader',
+        claimId: 'claim-beta',
       }),
     ).rejects.toThrow(/already bound to Team "alpha"/);
     await expect(
       store.resolve({ dispatcherId: DISPATCHER, channelId: 'primary', targetKey: 'chat-a' }),
     ).resolves.toMatchObject({ team_name: 'alpha', active: true });
+  });
+
+  it('does not release an explicit same-owner rebind with an older claim id', async () => {
+    const store = new ChannelBindingStore();
+    const input = {
+      dispatcherId: DISPATCHER,
+      channelId: 'primary',
+      provider: 'builtin:feishu',
+      target: groupTarget('chat-a'),
+      teamName: 'alpha',
+      leaderName: 'alpha-leader',
+    };
+    await store.claim({ ...input, claimId: 'collaboration-claim' });
+    await store.bind(input);
+
+    await expect(store.transferBackIfClaimed({
+      dispatcherId: DISPATCHER,
+      channelId: 'primary',
+      targetKey: 'chat-a',
+      claimId: 'collaboration-claim',
+    })).resolves.toBeNull();
+    await expect(store.resolve({
+      dispatcherId: DISPATCHER,
+      channelId: 'primary',
+      targetKey: 'chat-a',
+    })).resolves.toMatchObject({
+      team_name: 'alpha',
+      claim_id: null,
+      active: true,
+    });
   });
 
   it('transferBackIfOwned ignores owner mismatches without deactivating the new owner', async () => {

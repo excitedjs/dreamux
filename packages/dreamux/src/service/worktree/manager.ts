@@ -138,12 +138,12 @@ export class WorktreeManager {
 
   /**
    * Prepare the default (no-`repo`) workspace for a concrete TeamMate/Team name
-   * (issue #199): a plain `<dispatcherWorkspace>/.workspace/work/<slug>/`
-   * directory, NOT a git worktree. The dispatcher cwd need not be a git repo —
-   * no git command runs — so `source_repo` is reported as null even if the
-   * directory happens to sit inside a repo. The `.workspace/` boundary is
-   * self-ignored exactly as for managed worktrees, so the work dir never becomes
-   * dispatcher-repo content.
+   * (issue #199): either a plain `<dispatcherWorkspace>/.workspace/work/<slug>/`
+   * directory when workspace isolation is enabled, or the dispatcher workspace
+   * itself when explicitly disabled. Neither mode creates a git worktree. The
+   * dispatcher cwd need not be a git repo — no git command runs — so
+   * `source_repo` is reported as null even if the directory happens to sit inside
+   * a repo. The `.workspace/` boundary is only created for the isolated mode.
    */
   async prepareDefaultWorkspace(input: {
     dispatcherWorkspace: string;

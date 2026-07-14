@@ -14,6 +14,41 @@ export interface DispatcherIdentityEnsureInput {
   worktree: AgentEntityWorktreeIdentity;
 }
 
+export interface DispatcherRootIdentityInput {
+  identities: AgentIdentityStore;
+  dispatcherId: string;
+  agentRuntime: string;
+  cwd: string;
+}
+
+export function dispatcherRootWorktreeIdentity(
+  cwd: string,
+): AgentEntityWorktreeIdentity {
+  return {
+    mode: 'reuse-cwd',
+    slug: null,
+    path: cwd,
+    branch: null,
+    base_ref: null,
+    cleanup: 'keep',
+    cleanup_state: 'not-managed',
+    cleanup_error: null,
+  };
+}
+
+export function ensureDispatcherRootIdentity(
+  input: DispatcherRootIdentityInput,
+): Promise<AgentEntityIdentity> {
+  return ensureDispatcherIdentity(input.identities, {
+    dispatcherId: input.dispatcherId,
+    agentRuntime: input.agentRuntime,
+    sourceCwd: input.cwd,
+    cwd: input.cwd,
+    runtimeCwd: input.cwd,
+    worktree: dispatcherRootWorktreeIdentity(input.cwd),
+  });
+}
+
 /**
  * Upsert the dispatcher-owned root identity while preserving compatible runtime
  * recovery state. This policy is dispatcher config compatibility, not a generic

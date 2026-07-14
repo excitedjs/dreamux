@@ -309,7 +309,7 @@ async function processLine(server: Server, sock: Socket, line: string): Promise<
   }
 
   try {
-    const result = await handler(server, req.params);
+    const result = await server.admitAdminRequest(() => handler(server, req.params));
     write(sock, { id: req.id, ok: true, result });
   } catch (err) {
     if (err instanceof AdminError) {

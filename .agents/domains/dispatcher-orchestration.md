@@ -202,6 +202,7 @@ Current workspace paths:
 
 ```text
 <dispatcher cwd>/.workspace/work/<name>/
+<dispatcher cwd>/                # when dispatchers[].workspace.enabled is false
 <dispatcher cwd>/.workspace/worktree/<repo-slug>/<slug>/
 ```
 

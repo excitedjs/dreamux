@@ -200,8 +200,9 @@ path for managed worktrees. It may equal the dispatcher workspace when that is
 what the caller selected, but it is not inferred from provider metadata and is
 not passed to Channel providers. When omitted, provisioned Teams follow the
 same default-workspace policy as `team.create` without an explicit repo:
-`workspace.enabled: true` uses `<dispatcher cwd>/.workspace/work/<team>/`, and
-`workspace.enabled: false` uses `<dispatcher cwd>/<team>/`.
+`dispatchers[].workspace.enabled: true` uses
+`<dispatcher cwd>/.workspace/work/<team>/`, and
+`dispatchers[].workspace.enabled: false` uses `<dispatcher cwd>`.
 
 The first implementation does not support `reuse-cwd` collaboration spaces.
 Targets under an explicit repo get managed worktrees with `cleanup:
@@ -683,13 +684,14 @@ grow Feishu-specific knobs.
   when needed, persists a worktree provisioning policy, and does not call
   provider Channel MCP.
 - `collaboration_space.bind` accepts omitted `repo`; provisioned Teams then use
-  the same global workspace policy as Team creation without an explicit repo.
+  the same dispatcher-local workspace policy as Team creation without an
+  explicit repo.
 - `collaboration_space.bind` accepts optional `identity` and applies it as the
   default identity for future automatically created TeamLeaders in that bound
   collaboration space.
-- `workspace.enabled: false` places default no-repo TeamMate/Team work
-  directories directly under the dispatcher cwd; the default `true` keeps the
-  current `.workspace/work/` layout.
+- `dispatchers[].workspace.enabled: false` places default no-repo TeamMate/Team
+  work directly in the dispatcher cwd; the default `true` keeps the current
+  `.workspace/work/` layout.
 - Channel default binding config can auto-register and bind an unknown neutral
   container without an explicit `collaboration_space.bind` call, while a known
   unbound space is not auto-rebound.

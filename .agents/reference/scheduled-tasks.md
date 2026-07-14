@@ -58,10 +58,11 @@ dispatcher agent / the team leader) via that agent's neutral `getRuntime()` /
 `scheduledInput()` seam. `TeammateService` itself carries no scheduler, so "only
 the dispatcher and each team leader have cron" is structural — only those two
 container types hold a `SchedulerService`, with no per-instance capability policy.
-The dispatcher
-scheduler starts after the dispatcher agent, channel sessions, and restart-notice
-injection have completed, and stops before channel sessions and the agent runtime
-are stopped; Team schedulers are armed at dispatcher boot (without starting the
+The dispatcher scheduler starts after the dispatcher agent, channel sessions, and
+restart-notice injection have completed. Dispatcher shutdown closes channel
+sessions first, stops dispatcher and Team schedulers to abort held fires, drains
+accepted work, stops schedulers again to catch re-armed timers, then stops
+runtimes; Team schedulers are armed at dispatcher boot (without starting the
 TeamLeader runtime) and stopped/deleted with their team.
 
 For `prompt-agent` jobs the scheduler:

@@ -27,6 +27,7 @@ interface TestDispatcherOptions {
   codex?: Record<string, unknown>;
   channels?: DispatcherConfig['channels'];
   runtime?: DispatcherConfig['runtime'];
+  workspaceEnabled?: boolean;
 }
 
 export function testDispatcherConfig(
@@ -42,6 +43,7 @@ export function testDispatcherConfig(
     id,
     cwd: options.cwd ?? null,
     enabled: options.enabled ?? true,
+    workspace: { enabled: options.workspaceEnabled ?? true },
     channels:
       options.channels ??
       [
@@ -86,7 +88,6 @@ export function testDispatcherConfig(
  */
 export function testDreamuxConfig(
   dispatchers: DispatcherConfig[] = [testDispatcherConfig()],
-  options: { workspaceEnabled?: boolean } = {},
 ): DreamuxConfig {
   const agents: DreamuxConfig['agents'] = {};
   for (const dispatcher of dispatchers) {
@@ -96,7 +97,6 @@ export function testDreamuxConfig(
     };
   }
   return {
-    workspace: { enabled: options.workspaceEnabled ?? true },
     agents,
     dispatchers,
   };
@@ -119,6 +119,7 @@ export interface TestFileDispatcher {
   channelId?: string;
   channelProvider?: string;
   collaborationSpace?: Record<string, unknown>;
+  workspace?: Record<string, unknown>;
 }
 
 /**
@@ -130,12 +131,10 @@ export interface TestFileDispatcher {
  * etc.
  */
 export function testConfigFileObject(input: {
-  workspace?: Record<string, unknown>;
   agents?: TestFileAgent[];
   dispatchers?: TestFileDispatcher[];
 }): Record<string, unknown> {
   return {
-    ...(input.workspace !== undefined ? { workspace: input.workspace } : {}),
     agents: (input.agents ?? []).map((agent) => ({
       id: agent.id,
       provider: agent.provider ?? BUILTIN_CODEX_PROVIDER_REF,
@@ -145,6 +144,9 @@ export function testConfigFileObject(input: {
       id: dispatcher.id,
       ...(dispatcher.cwd !== undefined ? { cwd: dispatcher.cwd } : {}),
       ...(dispatcher.enabled !== undefined ? { enabled: dispatcher.enabled } : {}),
+      ...(dispatcher.workspace !== undefined
+        ? { workspace: dispatcher.workspace }
+        : {}),
       channels: [
         {
           id: dispatcher.channelId ?? 'primary',

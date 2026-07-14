@@ -25,7 +25,6 @@ const noopLogger: DreamuxLogger = {
 
 function configWith(id = 'flow'): DreamuxConfig {
   return {
-    workspace: { enabled: true },
     agents: {},
     dispatchers: [
       testDispatcherConfig({
@@ -301,7 +300,6 @@ describe('dispatcher root identity authority', () => {
 describe('dispatcher store channel identity resolution (multi-channel config)', () => {
   it('populates channel_identity from the single channel\'s provider-reported identity', () => {
     const store = new DispatcherStore({
-      workspace: { enabled: true },
       agents: {},
       dispatchers: [
         testDispatcherConfig({
@@ -324,7 +322,6 @@ describe('dispatcher store channel identity resolution (multi-channel config)', 
     let store: DispatcherStore | undefined;
     expect(() => {
       store = new DispatcherStore({
-        workspace: { enabled: true },
         agents: {},
         dispatchers: [
           testDispatcherConfig({

@@ -1,11 +1,17 @@
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import type { DreamuxConfig } from '../../config/config.js';
-import type { ChannelService } from '../channel-service/index.js';
+import type {
+  ChannelRouteOwner,
+  ChannelService,
+} from '../channel-service/index.js';
 import { KeyedAsyncQueue } from '../serial-queue.js';
 import type { TeamCollection } from '../team-collection/index.js';
 import { resolveAgent } from '../teammate-collection/agent-config.js';
-import { validateTeamId } from '../team-collection/types.js';
+import {
+  type TeamDissolveInput,
+  validateTeamId,
+} from '../team-collection/types.js';
 import {
   type AcceptedTargetClose,
   type AcceptedTargetProvision,
@@ -23,11 +29,10 @@ import type {
   ProvisionedTargetRecord,
   ProvisionedTargetView,
 } from './types.js';
-import { COLLABORATION_SPACE_RECORD_VERSION } from './types.js';
 import { CollaborationSpaceStore } from './store.js';
+import { CollaborationRouteReconciler } from './route-reconciliation.js';
 import { spaceView, targetView } from './view.js';
 import {
-  assertSameContainer,
   containerFromSpace,
   parseMessage,
   requiredSpace,
@@ -50,6 +55,7 @@ export class CollaborationSpaceService {
   private readonly channels: ChannelService;
   private readonly store: CollaborationSpaceStore;
   private readonly targets: CollaborationTargetLifecycle;
+  private readonly routes: CollaborationRouteReconciler;
   private readonly spaceLocks = new KeyedAsyncQueue();
   private readonly lifecycleTasks = new Set<Promise<void>>();
 
@@ -59,6 +65,15 @@ export class CollaborationSpaceService {
     this.teams = opts.teams;
     this.channels = opts.channels;
     this.store = opts.store ?? new CollaborationSpaceStore();
+    const targetLocks = new KeyedAsyncQueue();
+    this.routes = new CollaborationRouteReconciler({
+      dispatcherId: this.dispatcherId,
+      teams: this.teams,
+      channels: this.channels,
+      store: this.store,
+      locks: targetLocks,
+      isShuttingDown: opts.isShuttingDown,
+    });
     this.targets = new CollaborationTargetLifecycle({
       dispatcherId: this.dispatcherId,
       config: this.config,
@@ -66,6 +81,8 @@ export class CollaborationSpaceService {
       channels: this.channels,
       store: this.store,
       spaceLocks: this.spaceLocks,
+      targetLocks,
+      routes: this.routes,
       log: opts.log,
       isShuttingDown: opts.isShuttingDown,
     });
@@ -80,67 +97,39 @@ export class CollaborationSpaceService {
     const provider = this.channels.channelProviderRef(channelId);
     resolveAgent(this.config, this.dispatcherId, input.leaderAgentRuntime);
 
-    const existing = await this.store.getSpace(this.dispatcherId, spaceName);
-    if (existing === null && input.container === undefined) {
-      throw new Error('container is required when binding a new collaboration space');
-    }
-    const container = input.container ?? containerFromSpace(requiredSpace(existing));
-    if (existing !== null) {
-      assertSameContainer(existing, channelId, container);
-      if (existing.status === 'bound') {
-        throw new Error(
-          `collaboration space ${JSON.stringify(spaceName)} is already bound; ` +
-            'dissolve it before binding it again',
-        );
-      }
-    }
-    const byContainer = await this.store.findSpaceByContainer({
-      dispatcherId: this.dispatcherId,
-      channelId,
-      containerKey: container.container_key,
-    });
-    if (byContainer !== null && byContainer.space_name !== spaceName) {
-      throw new Error(
-        `channel container ${JSON.stringify(container.container_key)} is already ` +
-          `registered as collaboration space ${JSON.stringify(byContainer.space_name)}`,
-      );
-    }
-
-    const now = Date.now();
-    const generation = (existing?.last_binding_generation ?? 0) + 1;
-    const record: CollaborationSpaceRecord = {
-      version: COLLABORATION_SPACE_RECORD_VERSION,
-      dispatcher_id: this.dispatcherId,
-      space_name: spaceName,
-      channel_id: channelId,
-      provider,
-      container_type: container.container_type,
-      container_key: container.container_key,
-      display: input.display ?? container.display ?? existing?.display ?? null,
-      canonical_url: container.canonical_url ?? existing?.canonical_url ?? null,
-      current_binding: {
-        generation,
-        repo_cwd: input.repo?.cwd ?? null,
-        worktree: input.repo === undefined
-          ? { mode: 'default' }
-          : {
-              mode: 'managed',
-              base_ref: input.repo.baseRef ?? null,
-              cleanup: 'delete-on-close',
-            },
-        leader_agent_runtime: input.leaderAgentRuntime,
-        identity: input.identity ?? null,
-        bound_at: now,
+    const existingForContainer = input.container === undefined
+      ? await this.store.getSpace(this.dispatcherId, spaceName)
+      : null;
+    const container = input.container ?? containerFromSpace(
+      requiredSpace(existingForContainer),
+    );
+    return this.spaceLocks.run(
+      spaceContainerLockKey(channelId, container.container_key),
+      async () => {
+        this.assertNotShuttingDown();
+        const saved = await this.store.bindSpace({
+          dispatcherId: this.dispatcherId,
+          spaceName,
+          channelId,
+          provider,
+          container,
+          ...(input.display !== undefined ? { display: input.display } : {}),
+          binding: {
+            repo_cwd: input.repo?.cwd ?? null,
+            worktree: input.repo === undefined
+              ? { mode: 'default' }
+              : {
+                  mode: 'managed',
+                  base_ref: input.repo.baseRef ?? null,
+                  cleanup: 'delete-on-close',
+                },
+            leader_agent_runtime: input.leaderAgentRuntime,
+            identity: input.identity ?? null,
+          },
+        });
+        return { space: await this.view(saved) };
       },
-      last_binding_generation: generation,
-      status: 'bound',
-      created_at: existing?.created_at ?? now,
-      updated_at: now,
-      unbound_at: null,
-      unbound_note: null,
-    };
-    const saved = await this.store.saveSpace(record);
-    return { space: await this.view(saved) };
+    );
   }
 
   async dissolve(input: CollaborationSpaceDissolveInput): Promise<{
@@ -247,6 +236,37 @@ export class CollaborationSpaceService {
     return this.targets.provisionClaimedTarget(input);
   }
 
+  mutateTargetRoute<T>(input: {
+    channelId: string;
+    target: CollaborationSpaceProvisionInput['target'];
+    expectedOwner?: ChannelRouteOwner;
+  }, mutation: () => Promise<T>): Promise<T> {
+    return this.routes.mutateTargetRoute(input, mutation);
+  }
+
+  bindTargetRoute(input: {
+    teamId: string;
+    channelId: string;
+    target: CollaborationSpaceProvisionInput['target'];
+  }) {
+    return this.routes.bindTargetRoute(input);
+  }
+
+  dissolveTeam(input: TeamDissolveInput) {
+    return this.routes.dissolveTeam(input);
+  }
+
+  detachTargetsForOwner(owner: ChannelRouteOwner): Promise<number> {
+    return this.routes.detachTargetsForOwner(owner);
+  }
+
+  reconcileInboundTargetRoute(input: {
+    channelId: string;
+    target: CollaborationSpaceProvisionInput['target'];
+  }): Promise<ProvisionedTargetRecord | null> {
+    return this.routes.reconcileInboundTargetRoute(input);
+  }
+
   startAcceptedTargetProvision(accepted: AcceptedTargetProvision): void {
     this.trackLifecycleTask(
       'provision',
@@ -316,5 +336,9 @@ export class CollaborationSpaceService {
 }
 
 function spaceLockKey(space: CollaborationSpaceRecord): string {
-  return [space.channel_id, space.container_key].join('\0');
+  return spaceContainerLockKey(space.channel_id, space.container_key);
+}
+
+function spaceContainerLockKey(channelId: string, containerKey: string): string {
+  return [channelId, containerKey].join('\0');
 }

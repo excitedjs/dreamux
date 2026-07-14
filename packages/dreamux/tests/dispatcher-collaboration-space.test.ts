@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
 import type {
@@ -27,6 +27,7 @@ import {
   routeTeamOrCollaborationChannelInput,
 } from '../src/service/dispatcher-service/collaboration-routing.js';
 import { DispatcherService } from '../src/service/dispatcher-service/index.js';
+import { Server } from '../src/server.js';
 import { resetRuntimeConfig } from '../src/platform/paths.js';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
@@ -178,7 +179,7 @@ describe('DispatcherService collaboration-space routing', () => {
   let previousHome: string | undefined;
 
   beforeEach(() => {
-    root = mkdtempSync(join('/tmp', 'dx-'));
+    root = realpathSync(mkdtempSync(join('/tmp', 'dx-')));
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(root, 'home');
     mkdirSync(process.env['HOME'], { recursive: true });
@@ -396,6 +397,34 @@ describe('DispatcherService collaboration-space routing', () => {
     ).resolves.toBeUndefined();
   });
 
+  it('fails loud for an unknown target lifecycle kind without closing a target', async () => {
+    let closeAccepts = 0;
+    const collaborationSpaces = {
+      async acceptTargetClosedForClose() {
+        closeAccepts += 1;
+        return null;
+      },
+      trackLifecycleTask(_kind: string, _task: Promise<unknown>) {
+        /* test double: no-op */
+      },
+    } as unknown as CollaborationSpaceService;
+
+    await expect(handleCollaborationTargetLifecycle({
+      dispatcherId: 'flow',
+      dispatcherAgentRuntime: 'dispatcher-runtime',
+      channelId: 'primary',
+      event: {
+        kind: 'target_renamed',
+        container: { container_type: 'topic_group', container_key: 'container-1' },
+        target: { target_type: 'topic', target_key: 'topic-1', bindable: true },
+      } as never,
+      channels: {} as ChannelService,
+      collaborationSpaces,
+      log: noopLog(),
+    })).rejects.toThrow(/unknown channel target lifecycle event kind.*target_renamed/);
+    expect(closeAccepts).toBe(0);
+  });
+
   it('does not fall back to the dispatcher when collaboration provisioning fails', async () => {
     const fallback = vi.fn(async (): Promise<AgentRuntimeTurnResult> => ({
       status: 'submitted',
@@ -420,6 +449,9 @@ describe('DispatcherService collaboration-space routing', () => {
       },
     } as unknown as ChannelService;
     const collaborationSpaces = {
+      async reconcileInboundTargetRoute() {
+        return null;
+      },
       async acceptAndProvisionTarget() {
         throw new Error('simulated provision failure');
       },
@@ -461,6 +493,58 @@ describe('DispatcherService collaboration-space routing', () => {
     expect(fallback).not.toHaveBeenCalled();
   });
 
+  it('falls back when an explicitly detached collaboration target is inbound', async () => {
+    const fallback = vi.fn(async (): Promise<AgentRuntimeTurnResult> => ({
+      status: 'submitted',
+      turnId: 'fallback',
+    }));
+    const channels = {
+      async resolveInboundBinding() {
+        return null;
+      },
+      channelProviderRef() {
+        return CHANNEL_REF;
+      },
+      collaborationSpaceConfig() {
+        return {
+          defaultBinding: { enabled: false, repo: null, identity: null },
+        };
+      },
+    } as unknown as ChannelService;
+    const collaborationSpaces = {
+      async reconcileInboundTargetRoute() {
+        return { lifecycle_status: 'detached' };
+      },
+      async acceptAndProvisionTarget() {
+        return { lifecycle_status: 'detached' };
+      },
+    } as unknown as CollaborationSpaceService;
+    const teams = {
+      async isOpenTeam() {
+        return false;
+      },
+    } as unknown as TeamCollection;
+
+    const result = await routeTeamOrCollaborationChannelInput({
+      channelId: 'primary',
+      dispatcherAgentRuntime: 'dispatcher-runtime',
+      turn: { text: 'detached', body: 'detached', sourceId: 'msg-detached' },
+      envelope: {
+        provider: CHANNEL_REF,
+        channel_id: 'primary',
+        container: { container_type: 'topic_group', container_key: 'container-1' },
+        target: { target_type: 'topic', target_key: 'topic-detached', bindable: true },
+      },
+      channels,
+      teams,
+      collaborationSpaces,
+      fallback,
+    });
+
+    expect(result).toEqual({ status: 'submitted', turnId: 'fallback' });
+    expect(fallback).toHaveBeenCalledOnce();
+  });
+
   it('routes an existing durable claim even when the inbound envelope has no container', async () => {
     const fallback = vi.fn(async (): Promise<AgentRuntimeTurnResult> => ({
       status: 'submitted',
@@ -474,10 +558,11 @@ describe('DispatcherService collaboration-space routing', () => {
     };
     let resolveCalls = 0;
     let claimCalls = 0;
+    let claimed = false;
     const channels = {
       async resolveInboundBinding(input: { target: { target_key: string } }) {
         resolveCalls += 1;
-        return input.target.target_key === 'topic-claimed' && resolveCalls > 1
+        return input.target.target_key === 'topic-claimed' && claimed
           ? { binding: { active: true }, owner: routeOwner }
           : null;
       },
@@ -487,8 +572,12 @@ describe('DispatcherService collaboration-space routing', () => {
       },
     } as unknown as ChannelService;
     const collaborationSpaces = {
+      async reconcileInboundTargetRoute() {
+        return null;
+      },
       async provisionClaimedTarget(input: unknown) {
         claimCalls += 1;
+        claimed = true;
         expect(input).toMatchObject({
           channelId: 'primary',
           provider: CHANNEL_REF,
@@ -557,6 +646,7 @@ describe('DispatcherService collaboration-space routing', () => {
       agentRuntime: 'dispatcher-runtime',
       runtimeProvider: RUNTIME_REF,
       channelProvider: CHANNEL_REF,
+      workspaceEnabled: false,
     });
     dispatcherConfig.channels[0]!.collaborationSpace = {
       defaultBinding: {
@@ -565,9 +655,7 @@ describe('DispatcherService collaboration-space routing', () => {
         identity: 'Auto topic leader',
       },
     };
-    const config = testDreamuxConfig([dispatcherConfig], {
-      workspaceEnabled: false,
-    });
+    const config = testDreamuxConfig([dispatcherConfig]);
     const runtimes: FakeRuntime[] = [];
     const contexts: AgentRuntimeCreateContext[] = [];
     const dispatcher = new DispatcherService({
@@ -602,7 +690,7 @@ describe('DispatcherService collaboration-space routing', () => {
     if (result.status === 'failed') throw result.error;
     expect(result).toMatchObject({ status: 'submitted' });
     expect(runtimes).toHaveLength(1);
-    expect(contexts[0]?.cwd).toMatch(/\/workspace\/space-/);
+    expect(contexts[0]?.cwd).toBe(workspace);
     const list = await dispatcher.listCollaborationSpaces();
     expect(list.spaces).toMatchObject([
       {
@@ -625,6 +713,7 @@ describe('DispatcherService collaboration-space routing', () => {
       agentRuntime: 'dispatcher-runtime',
       runtimeProvider: RUNTIME_REF,
       channelProvider: CHANNEL_REF,
+      workspaceEnabled: false,
     });
     dispatcherConfig.channels[0]!.collaborationSpace = {
       defaultBinding: {
@@ -633,9 +722,7 @@ describe('DispatcherService collaboration-space routing', () => {
         identity: 'Auto topic leader',
       },
     };
-    const config = testDreamuxConfig([dispatcherConfig], {
-      workspaceEnabled: false,
-    });
+    const config = testDreamuxConfig([dispatcherConfig]);
     const runtimes: FakeRuntime[] = [];
     const contexts: AgentRuntimeCreateContext[] = [];
     const dispatcher = new DispatcherService({
@@ -750,5 +837,354 @@ describe('DispatcherService collaboration-space routing', () => {
     await expect(dispatcher.listCollaborationSpaces()).resolves.toEqual({
       spaces: [],
     });
+  });
+
+  it('single-flights stop and drains direct inbound collaboration provisioning', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'flow',
+        cwd: workspace,
+        agentRuntime: 'dispatcher-runtime',
+        runtimeProvider: RUNTIME_REF,
+        channelProvider: CHANNEL_REF,
+      }),
+    ]);
+    const dispatcher = new DispatcherService({
+      id: 'flow',
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: fakeRuntimeCatalog([], []),
+      channelProviders: fakeChannelCatalog(),
+      channelLoggerFactory: () => noopLog(),
+      log: noopLog(),
+    });
+    const accepted = deferred<void>();
+    const release = deferred<void>();
+    const collaborationSpaces = (
+      dispatcher as unknown as { collaborationSpaces: CollaborationSpaceService }
+    ).collaborationSpaces;
+    collaborationSpaces.reconcileInboundTargetRoute = async () => null;
+    collaborationSpaces.acceptAndProvisionTarget = async () => {
+      accepted.resolve();
+      await release.promise;
+      return null;
+    };
+    const envelope = {
+      provider: CHANNEL_REF,
+      channel_id: 'primary',
+      container: { container_type: 'topic_group', container_key: 'container-1' },
+      target: { target_type: 'topic', target_key: 'topic-stop', bindable: true },
+    } as const;
+    const inbound = dispatcher.routeChannelInput(
+      'primary',
+      { text: 'in flight', body: 'in flight', sourceId: 'msg-stop' },
+      envelope,
+    );
+    void inbound.catch(() => {});
+    await accepted.promise;
+
+    const firstStop = dispatcher.stop();
+    const secondStop = dispatcher.stop();
+    expect(secondStop).toBe(firstStop);
+    let stopped = false;
+    void firstStop.then(() => {
+      stopped = true;
+    });
+    await Promise.resolve();
+    expect(stopped).toBe(false);
+    expect(() => dispatcher.routeChannelInput(
+      'primary',
+      { text: 'late', body: 'late', sourceId: 'msg-late' },
+      envelope,
+    )).toThrow(/shutting down/);
+
+    release.resolve();
+    await Promise.allSettled([inbound, firstStop, secondStop]);
+    expect(stopped).toBe(true);
+  });
+
+  it('drains an already-admitted Team create before stop completes', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'flow',
+        cwd: workspace,
+        agentRuntime: 'dispatcher-runtime',
+        runtimeProvider: RUNTIME_REF,
+        channelProvider: CHANNEL_REF,
+      }),
+    ]);
+    const dispatcher = new DispatcherService({
+      id: 'flow',
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: fakeRuntimeCatalog([], []),
+      channelProviders: fakeChannelCatalog(),
+      channelLoggerFactory: () => noopLog(),
+      log: noopLog(),
+    });
+    const accepted = deferred<void>();
+    const release = deferred<void>();
+    const teams = (dispatcher as unknown as {
+      teams: { create: (input: unknown) => Promise<unknown> };
+    }).teams;
+    teams.create = async () => {
+      accepted.resolve();
+      await release.promise;
+      return {
+        team: {},
+        leader: {},
+        member_count: 0,
+        turn: null,
+      };
+    };
+
+    const create = dispatcher.createTeam({
+      name: 'admitted-create',
+      leaderAgentRuntime: 'dispatcher-runtime',
+      intent: 'verify dispatcher admission drain',
+    });
+    void create.catch(() => {});
+    await accepted.promise;
+
+    const stop = dispatcher.stop();
+    let stopped = false;
+    void stop.then(() => {
+      stopped = true;
+    });
+    await Promise.resolve();
+    expect(stopped).toBe(false);
+    expect(() => dispatcher.createTeam({
+      name: 'late-create',
+      leaderAgentRuntime: 'dispatcher-runtime',
+      intent: 'too late',
+    })).toThrow(/shutting down/);
+
+    release.resolve();
+    await Promise.all([create, stop]);
+    expect(stopped).toBe(true);
+  });
+
+  it('continues dispatcher shutdown cleanup after an earlier stop failure', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'flow',
+        cwd: workspace,
+        agentRuntime: 'dispatcher-runtime',
+        runtimeProvider: RUNTIME_REF,
+        channelProvider: CHANNEL_REF,
+      }),
+    ]);
+    const dispatcher = new DispatcherService({
+      id: 'flow',
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: fakeRuntimeCatalog([], []),
+      channelProviders: fakeChannelCatalog(),
+      channelLoggerFactory: () => noopLog(),
+      log: noopLog(),
+    });
+    const calls: string[] = [];
+    const stopError = new Error('stop failed');
+    const teamError = new Error('team stop failed');
+    const mutable = dispatcher as unknown as {
+      stop: () => Promise<void>;
+      _teammates: { stopAll: () => Promise<void> };
+      teams: { stopAll: () => Promise<void> };
+    };
+    mutable.stop = async () => {
+      calls.push('stop');
+      throw stopError;
+    };
+    mutable._teammates = {
+      stopAll: async () => {
+        calls.push('teammates');
+      },
+    };
+    mutable.teams = {
+      stopAll: async () => {
+        calls.push('teams');
+        throw teamError;
+      },
+    };
+
+    await expect(dispatcher.shutdown()).rejects.toMatchObject({
+      errors: [stopError, teamError],
+    });
+    expect(calls).toEqual(['stop', 'teammates', 'teams']);
+  });
+
+  it('continues server shutdown to the admin socket after dispatcher cleanup fails', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'flow',
+        cwd: workspace,
+        agentRuntime: 'dispatcher-runtime',
+        runtimeProvider: RUNTIME_REF,
+        channelProvider: CHANNEL_REF,
+      }),
+    ]);
+    const server = new Server({
+      config,
+      agentRuntimeProviderCatalog: fakeRuntimeCatalog([], []),
+      channelProviderCatalog: fakeChannelCatalog(),
+      logger: noopLog(),
+      channelLoggerFactory: () => noopLog(),
+    });
+    const calls: string[] = [];
+    const dispatcherError = new Error('dispatcher shutdown failed');
+    const mutable = server as unknown as {
+      dispatchers: { shutdown: () => Promise<void> };
+      admin: { close: () => Promise<void> } | null;
+    };
+    mutable.dispatchers = {
+      shutdown: async () => {
+        calls.push('dispatchers');
+        throw dispatcherError;
+      },
+    };
+    mutable.admin = {
+      close: async () => {
+        calls.push('admin');
+      },
+    };
+
+    await expect(server.shutdown()).rejects.toBe(dispatcherError);
+    expect(calls).toEqual(['dispatchers', 'admin']);
+    expect(mutable.admin).toBeNull();
+
+    mutable.dispatchers = {
+      shutdown: async () => {
+        calls.push('dispatchers-retry');
+      },
+    };
+    await expect(server.shutdown()).resolves.toBeUndefined();
+    expect(calls).toEqual(['dispatchers', 'admin', 'dispatchers-retry']);
+  });
+
+  it('drains accepted admin requests before dispatcher shutdown and rejects late requests', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'flow',
+        cwd: workspace,
+        agentRuntime: 'dispatcher-runtime',
+        runtimeProvider: RUNTIME_REF,
+        channelProvider: CHANNEL_REF,
+      }),
+    ]);
+    const server = new Server({
+      config,
+      agentRuntimeProviderCatalog: fakeRuntimeCatalog([], []),
+      channelProviderCatalog: fakeChannelCatalog(),
+      logger: noopLog(),
+      channelLoggerFactory: () => noopLog(),
+    });
+    const accepted = deferred<void>();
+    const release = deferred<void>();
+    const calls: string[] = [];
+    const request = server.admitAdminRequest(async () => {
+      calls.push('request-start');
+      accepted.resolve();
+      await release.promise;
+      calls.push('request-done');
+      return 'ok';
+    });
+    await accepted.promise;
+
+    const mutable = server as unknown as {
+      dispatchers: { shutdown: () => Promise<void> };
+      admin: { close: () => Promise<void> } | null;
+    };
+    mutable.dispatchers = {
+      shutdown: async () => {
+        calls.push('dispatchers');
+      },
+    };
+    mutable.admin = {
+      close: async () => {
+        calls.push('admin');
+      },
+    };
+
+    const shutdown = server.shutdown();
+    await Promise.resolve();
+    expect(() => server.admitAdminRequest(async () => 'late')).toThrow(
+      /shutting down/,
+    );
+    expect(calls).toEqual(['request-start']);
+
+    release.resolve();
+    await expect(request).resolves.toBe('ok');
+    await expect(shutdown).resolves.toBeUndefined();
+    expect(calls).toEqual(['request-start', 'request-done', 'dispatchers', 'admin']);
+  });
+
+  it('does not materialize a new dispatcher after dispatcher shutdown starts', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'flow',
+        cwd: workspace,
+        agentRuntime: 'dispatcher-runtime',
+        runtimeProvider: RUNTIME_REF,
+        channelProvider: CHANNEL_REF,
+      }),
+    ]);
+    const server = new Server({
+      config,
+      agentRuntimeProviderCatalog: fakeRuntimeCatalog([], []),
+      channelProviderCatalog: fakeChannelCatalog(),
+      logger: noopLog(),
+      channelLoggerFactory: () => noopLog(),
+    });
+
+    await server.dispatchers.shutdown();
+
+    expect(() => server.getDispatcher('flow')).toThrow(/shutting down/);
+  });
+
+  it('stops Team leaders before dispatcher stop completes', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'flow',
+        cwd: workspace,
+        agentRuntime: 'dispatcher-runtime',
+        runtimeProvider: RUNTIME_REF,
+        channelProvider: CHANNEL_REF,
+      }),
+    ]);
+    const dispatcher = new DispatcherService({
+      id: 'flow',
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes, []),
+      channelProviders: fakeChannelCatalog(),
+      channelLoggerFactory: () => noopLog(),
+      log: noopLog(),
+    });
+    await dispatcher.createTeam({
+      name: 'stop-sweep',
+      leaderAgentRuntime: 'dispatcher-runtime',
+      intent: 'verify Team runtime shutdown',
+    });
+    expect(runtimes).toHaveLength(1);
+    expect(runtimes[0]?.getStatus()).toBe('ready');
+
+    await dispatcher.stop();
+
+    expect(runtimes[0]?.getStatus()).toBe('stopped');
   });
 });

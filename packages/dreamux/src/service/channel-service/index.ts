@@ -200,6 +200,7 @@ export class ChannelService {
     owner: ChannelRouteOwner;
     channelId: string;
     target: ChannelTarget;
+    claimId: string;
   }): Promise<ChannelBinding> {
     return this.bindings.claim({
       dispatcherId: this.dispatcherId,
@@ -208,6 +209,7 @@ export class ChannelService {
       target: input.target,
       teamName: input.owner.teamName,
       leaderName: input.owner.leaderName,
+      claimId: input.claimId,
     });
   }
 
@@ -268,6 +270,19 @@ export class ChannelService {
         teamName: input.owner.teamName,
         leaderName: input.owner.leaderName,
       },
+    });
+  }
+
+  async releaseResolvedTargetIfClaimed(input: {
+    claimId: string;
+    channelId: string;
+    target: ChannelTarget;
+  }): Promise<ChannelBinding | null> {
+    return this.bindings.transferBackIfClaimed({
+      dispatcherId: this.dispatcherId,
+      channelId: input.channelId,
+      targetKey: input.target.target_key,
+      claimId: input.claimId,
     });
   }
 

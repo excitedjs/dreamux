@@ -13,17 +13,18 @@ runtime socket allocation belongs in
 
 It declares:
 
-- `workspace.enabled`: global default-work-area policy. It defaults to `true`.
-  When `false`, TeamMate/Team creation without an explicit repo uses a direct
-  directory under the dispatcher cwd instead of `.workspace/work/`.
 - `agents[]`: Agent Runtime provider configs, such as `builtin:codex` or
   `builtin:claude-code`.
-- `dispatchers[]`: dispatcher id, explicit `cwd`, configured `channels[]`, and
-  `agentRuntime`.
+- `dispatchers[]`: dispatcher id, explicit `cwd`, dispatcher-local
+  `workspace.enabled`, configured `channels[]`, and `agentRuntime`.
 - `dispatchers[].channels[]`: dispatcher-local channel id, Channel provider ref,
   provider-owned channel config, and optional core-owned
   `collaborationSpace.defaultBinding` policy for automatic collaboration-space
   binding.
+
+Legacy top-level `workspace.enabled` is not accepted. Set
+`dispatchers[].workspace.enabled` on each dispatcher instead; omitted dispatcher
+workspace policy defaults to enabled.
 
 `dreamux serve` fails loudly when the config is missing, when an enabled
 dispatcher has no explicit `cwd`, or when providerized config cannot be parsed.
@@ -45,9 +46,10 @@ areas live under that dispatcher workspace, not under `~/.dreamux`.
 Current workspace paths:
 
 - `<dispatcher cwd>/.workspace/work/<name>/`: default plain work directory when
-  TeamMate or Team creation omits `repo` and `workspace.enabled` is true.
-- `<dispatcher cwd>/<name>/`: direct plain work directory when TeamMate or Team
-  creation omits `repo` and `workspace.enabled` is false.
+  TeamMate or Team creation omits `repo` and
+  `dispatchers[].workspace.enabled` is true.
+- `<dispatcher cwd>`: direct plain work directory when TeamMate or Team creation
+  omits `repo` and `dispatchers[].workspace.enabled` is false.
 - `<dispatcher cwd>/.workspace/worktree/<repo-slug>/<slug>/`: Dreamux-managed
   Git worktree when the request explicitly asks for `repo: { mode:
   'managed' }`.

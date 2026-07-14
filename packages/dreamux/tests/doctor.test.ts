@@ -22,6 +22,8 @@ import type {
 } from '../src/provider-diagnostics.js';
 import {
   defaultDispatcherCwd,
+  dispatcherChannelBindingsPath,
+  dispatcherCollaborationSpacesPath,
   dispatcherTeamCronJobsPath,
   dispatcherTeamRecordPath,
   resetRuntimeConfig,
@@ -261,6 +263,101 @@ describe('dreamux doctor command', () => {
     );
     expect(workspaceCheck?.ok).toBe(true);
     expect(workspaceCheck?.detail).toMatch(/disabled/);
+  });
+
+  it('still preflights disabled dispatcher channel-binding state', async () => {
+    const runner = new FakeRunner();
+    runner.nodeVersions.set('codex', 'codex-cli 0.137.0');
+    const configPath = join(root, 'config', 'config.json');
+    mkdirSync(dirname(configPath), { recursive: true });
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        testSingleDispatcherFileObject({
+          id: 'flow',
+          enabled: false,
+          feishu: { app_id: 'app-test', app_secret: 'secret-test' },
+          codex: {
+            approval_policy: 'never',
+            sandbox_mode: 'workspace-write',
+            extra_args: [],
+            extra_env: {},
+          },
+        }),
+      ),
+      { mode: 0o600 },
+    );
+    writeDispatcherHome({ auth: true });
+    writeJson(dispatcherChannelBindingsPath('flow'), {
+      version: 2,
+      bindings: [
+        {
+          channel_id: 'primary',
+          provider: 'builtin:feishu',
+          target_type: 'group',
+          target_key: 'chat-x',
+          display: null,
+          canonical_url: null,
+          meta: { chat_id: 'chat-x', chat_type: 'group' },
+          team_name: 'gamma',
+          leader_name: 'lead-1',
+          active: true,
+          created_at: 1,
+          updated_at: 1,
+          deactivated_at: null,
+        },
+      ],
+    });
+    writeJson(dispatcherCollaborationSpacesPath('flow'), {
+      version: 1,
+      spaces: [],
+      targets: [
+        {
+          version: 1,
+          dispatcher_id: 'flow',
+          space_name: 'space-a',
+          channel_id: 'primary',
+          provider: 'builtin:feishu',
+          container_key: 'container-a',
+          binding_generation: 1,
+          target_key: 'chat-x',
+          target_type: 'group',
+          target_display: null,
+          team_name: 'gamma',
+          leader_name: 'lead-1',
+          worktree_slug: 'space-a-chat-x',
+          lifecycle_status: 'active',
+          phase: 'bound',
+          claim_event_id: null,
+          close_event_id: null,
+          last_error: null,
+          created_at: 1,
+          updated_at: 1,
+          closed_at: null,
+          detached_at: null,
+        },
+      ],
+    });
+
+    const result = await runDreamuxDoctor({
+      runner,
+      platform: 'linux',
+      homeDir: join(root, 'home'),
+      env: {},
+    });
+
+    expect(result.ok).toBe(false);
+    expect(
+      result.checks.find((check) => check.name === 'dispatcher flow workspace'),
+    ).toMatchObject({ ok: true, detail: expect.stringContaining('disabled') });
+    expect(
+      result.checks.find((check) => check.name === 'dispatcher flow channel bindings'),
+    ).toMatchObject({
+      ok: false,
+      detail: expect.stringMatching(
+        /version 2 .*open collaboration target route.*channel-bindings\.json/s,
+      ),
+    });
   });
 
   it('does not expose Feishu app secrets in doctor results', async () => {
@@ -846,6 +943,11 @@ describe('dreamux doctor command', () => {
       ),
       { mode: 0o600 },
     );
+  }
+
+  function writeJson(path: string, value: unknown): void {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
   }
 
   function writeClaudeCodeConfig(): void {

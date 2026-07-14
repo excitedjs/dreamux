@@ -113,6 +113,10 @@ class ChannelSessions {
   async closeAll(log: DreamuxLogger): Promise<void> {
     const sessions = this.sessions;
     if (sessions === null) return;
+    // Detach before awaiting provider shutdown. A concurrent stop now observes
+    // no live map, and a later restart/adopt cannot be clobbered when this older
+    // close finishes.
+    this.sessions = null;
     for (const [channelId, session] of sessions) {
       try {
         await session.close();
@@ -127,7 +131,6 @@ class ChannelSessions {
         );
       }
     }
-    this.sessions = null;
   }
 
   channelMcpServerDescriptorsForCaller(
@@ -204,9 +207,9 @@ class ChannelSessions {
   }
 
   /**
-   * Resolve a provider selector to a `ChannelTarget` via the live channel session
-   * (issue #209 binding store v2). Requires a running dispatcher — both call paths
-   * (bind tool, inbound router) run only while a channel session is live.
+   * Resolve a provider selector to a `ChannelTarget` via the live channel
+   * session. Requires a running dispatcher — both call paths (bind tool, inbound
+   * router) run only while a channel session is live.
    */
   async resolveTarget(
     meta: unknown,

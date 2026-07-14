@@ -22,7 +22,7 @@ import type {
 } from '../completion-router/index.js';
 import { completionKey } from '../completion-router/index.js';
 import { cronMcpServerDescriptor } from '../scheduler/mcp-config.js';
-import { SchedulerService } from '../scheduler/service.js';
+import { SchedulerService, type SchedulerCommands } from '../scheduler/service.js';
 import { CronJobStore } from '../scheduler/store.js';
 import {
   TeammateCollection,
@@ -66,13 +66,15 @@ export interface TeamServiceDeps {
     producer: AgentEntityIdentity,
   ) => Promise<CompletionInitiator | null>;
   isShuttingDown: () => boolean;
+  admitOperation: <T>(task: () => Promise<T>) => Promise<T>;
   adminSocketPath: string;
   leaderChannelDescriptors: (input: {
     teamId: string;
     leaderName: string;
   }) => readonly AgentRuntimeMcpServer[];
+  trackMaterialized: (service: TeamService) => void;
   store: TeamStore;
-  evict: () => void;
+  evict: (service: TeamService) => void;
   log: DreamuxLogger;
 }
 
@@ -89,10 +91,16 @@ export interface TeamServiceCreateInput {
 
 export interface TeamServiceCreateOutput {
   service: TeamService;
+  schedulerLifecycle: TeamSchedulerLifecycle;
   leaderResult: {
     teammate: AgentEntityRuntimeStatus;
     turn: AgentEntityTurnResult | null;
   };
+}
+
+export interface TeamSchedulerLifecycle {
+  start(): Promise<void>;
+  stop(): void;
 }
 
 /**
@@ -113,9 +121,9 @@ export class TeamService {
    * as the concrete class internally because the lifecycle methods the team
    * drives (`stopAll` / `applyWorktreeCleanup` / workspace-injecting `spawn`)
    * live off `TeammateOps`. The PUBLIC surface stays the narrow admin op set via
-   * the `teammates` getter — never re-expose those internal verbs to callers. */
+  * the `teammates` getter — never re-expose those internal verbs to callers. */
   private readonly teammateCollection: TeammateCollection;
-  readonly scheduler: SchedulerService;
+  private readonly scheduler_: SchedulerService;
 
   private constructor(private readonly deps: TeamServiceDeps, teamId: string) {
     this.id = teamId;
@@ -132,13 +140,14 @@ export class TeamService {
       isShuttingDown: deps.isShuttingDown,
       log: deps.log,
     });
-    this.scheduler = new SchedulerService({
+    this.scheduler_ = new SchedulerService({
       ownerId: `${deps.dispatcherId}/team/${teamId}`,
       store: new CronJobStore({
         cronJobsPath: dispatcherTeamCronJobsPath(deps.dispatcherId, teamId),
         dispatcherId: deps.dispatcherId,
       }),
       absentRuntimeStrategy: 'submit',
+      admit: (task) => deps.admitOperation(task),
       getRuntime: () => this.leader_?.getRuntime() ?? null,
       submitScheduled: (input) => this.mustLeader().scheduledInput(input),
       log: deps.log,
@@ -204,25 +213,49 @@ export class TeamService {
       status: 'starting',
     });
     const leader = service.buildLeader(identity);
-    await leader.ensureStarted();
-    let turn: AgentEntityTurnResult | null = null;
-    if (input.prompt !== undefined) {
-      turn = await leader.submitInitialPrompt(input.prompt, {
-        turnOrigin: 'dispatcher',
-      });
-      await service.registerLeaderCompletion(leader, turn.turn_id ?? null);
-    }
+    // Publish ownership before starting: if any later create step and its first
+    // cleanup attempt both fail, the collection's shutdown sweep can retry this
+    // same runtime even though the service never reaches the live cache.
     service.leader_ = leader;
-    team = await deps.store.update(team, { status: 'running' });
-    service.record = team;
-    await service.scheduler.start();
-    return { service, leaderResult: { teammate: leader.status(), turn } };
+    deps.trackMaterialized(service);
+    try {
+      await leader.ensureStarted();
+      let turn: AgentEntityTurnResult | null = null;
+      if (input.prompt !== undefined) {
+        turn = await leader.submitInitialPrompt(input.prompt, {
+          turnOrigin: 'dispatcher',
+        });
+        await service.registerLeaderCompletion(leader, turn.turn_id ?? null);
+      }
+      team = await deps.store.update(team, { status: 'running' });
+      service.record = team;
+      await service.scheduler_.start();
+      return {
+        service,
+        schedulerLifecycle: TeamService.schedulerLifecycleFor(service),
+        leaderResult: { teammate: leader.status(), turn },
+      };
+    } catch (error) {
+      service.scheduler_.stop();
+      try {
+        await leader.stop();
+      } catch (stopError) {
+        throw new AggregateError(
+          [error, stopError],
+          `Team ${JSON.stringify(input.teamId)} creation and leader cleanup failed`,
+        );
+      }
+      throw error;
+    }
   }
 
   static async rebuild(
     deps: TeamServiceDeps,
     record: TeamRecord,
-  ): Promise<TeamService> {
+  ): Promise<{
+    service: TeamService;
+    schedulerLifecycle: TeamSchedulerLifecycle;
+  }> {
     const service = new TeamService(deps, record.team_id);
     service.record = record;
     const identity = await deps.identities.get(
@@ -236,18 +269,25 @@ export class TeamService {
       );
     }
     service.leader_ = service.buildLeader(identity);
-    if (record.status !== 'closed') await service.scheduler.start();
-    return service;
+    deps.trackMaterialized(service);
+    if (record.status !== 'closed') await service.scheduler_.start();
+    return {
+      service,
+      schedulerLifecycle: TeamService.schedulerLifecycleFor(service),
+    };
   }
 
   get leader(): TeammateService {
     return this.mustLeader();
   }
 
-  /** This team's members, as the narrow admin-facing op surface (issue #233):
-   * the verbs the admin `team_leader` target needs run directly through this
-   * collection. `spawnTeamMate` stays a separate method because it injects the
-   * shared workspace — the raw `spawn` is deliberately not on `TeammateOps`. */
+  get scheduler(): SchedulerCommands {
+    return this.scheduler_.commands;
+  }
+
+  /** This team's members as concrete internal ops. `TeamLeaderHandle` wraps this
+   * surface before it reaches admin/MCP callers, so raw `spawn` never bypasses
+   * `spawnTeamMate`'s shared-workspace injection there. */
   get teammates(): TeammateOps {
     return this.teammateCollection;
   }
@@ -272,9 +312,26 @@ export class TeamService {
     };
   }
 
+  /**
+   * Materialize the TeamLeader before another service publishes this Team as a
+   * routable owner. A persisted `starting` Team with a valid leader identity is
+   * the recoverable tail of Team creation; only mark it running after the leader
+   * can actually start.
+   */
+  async ensureRouteReady(): Promise<void> {
+    const record = this.mustRecord();
+    if (record.status === 'closed') {
+      throw new Error(`Team ${JSON.stringify(this.id)} is closed`);
+    }
+    await this.leader.ensureStarted();
+    if (record.status === 'starting') {
+      this.record = await this.deps.store.update(record, { status: 'running' });
+    }
+  }
+
   async dissolve(input: TeamDissolveInput): Promise<TeamSummary> {
     requireLifecycleText(input.note, 'Team dissolve note');
-    this.scheduler.stop();
+    this.scheduler_.stop();
     const record = this.mustRecord();
     const members = await this.members();
     for (const member of members) {
@@ -305,18 +362,34 @@ export class TeamService {
     for (const member of members) {
       await this.teammateCollection.applyWorktreeCleanup(member.name, cleaned);
     }
-    await this.scheduler.deleteStoreFile();
+    await this.scheduler_.deleteStoreFile();
     const summary = await this.status();
     // Evict so a later `get` rebuilds from disk and reads `status: closed`.
-    this.deps.evict();
+    this.deps.evict(this);
     return summary;
   }
 
-  /** Stop this team's live runtimes on server shutdown (issue #233): members in
-   * the owned collection, then the leader. Persisted records stay intact. */
+  /** Stop every live runtime owned by this Team, without one failure preventing
+   * the remaining members or leader from receiving their stop attempt. */
   async stopAll(): Promise<void> {
-    await this.teammateCollection.stopAll();
-    await this.stopLeader();
+    const failures: unknown[] = [];
+    try {
+      await this.teammateCollection.stopAll();
+    } catch (err) {
+      failures.push(err);
+    }
+    try {
+      await this.stopLeader();
+    } catch (err) {
+      failures.push(err);
+    }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) {
+      throw new AggregateError(
+        failures,
+        `multiple runtimes in Team ${JSON.stringify(this.id)} failed to stop`,
+      );
+    }
   }
 
   async deliverToLeader(turn: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
@@ -502,6 +575,14 @@ export class TeamService {
     return this.leader_;
   }
 
+  private static schedulerLifecycleFor(
+    service: TeamService,
+  ): TeamSchedulerLifecycle {
+    return {
+      start: () => service.scheduler_.start(),
+      stop: () => service.scheduler_.stop(),
+    };
+  }
 }
 
 function teamLeaderSystemPrompt(

@@ -495,6 +495,7 @@ function service(
     ownerId: 'flow',
     store: store ?? cronStore('flow', cronJobsPath),
     absentRuntimeStrategy,
+    admit: (task) => task(),
     getRuntime: typeof runtime === 'function' ? runtime : () => runtime,
     submitScheduled,
     log: {

@@ -429,6 +429,47 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     await teams.stopAll();
   });
 
+  it('rejects same-name create while Team route closing is in flight', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const log = noopLog();
+    const teams = makeTeams({ config, log, runtimes: [] });
+    await teams.create({
+      name: 'alpha',
+      leaderAgentRuntime: 'agent-a',
+      intent: 'lead alpha',
+    });
+
+    const closingEntered = deferred<void>();
+    const releaseClosing = deferred<void>();
+    const closing = teams.withTeamRouteClosing('alpha', async () => {
+      closingEntered.resolve();
+      await releaseClosing.promise;
+      return null;
+    });
+    await closingEntered.promise;
+
+    await expect(
+      teams.create({
+        name: 'alpha',
+        leaderAgentRuntime: 'agent-a',
+        intent: 'new alpha',
+      }),
+    ).rejects.toThrow(/closing/);
+
+    releaseClosing.resolve();
+    await closing;
+    await teams.stopAll();
+  });
+
   it('dissolve stops the TeamLeader scheduler and deletes its cron store', async () => {
     const workspace = join(root, 'workspace');
     mkdirSync(workspace, { recursive: true });
@@ -718,6 +759,179 @@ describe('TeamLeader cron scheduler lifecycle', () => {
         dispatcher.sendTeamLeader({ teamId: 'alpha', prompt: 'too late' }),
       ),
     ).rejects.toThrow(/shutting down/);
+  });
+
+  it('rejects scheduler mutations after dispatcher shutdown through held references', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        channels: [],
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const log = noopLog();
+    const dispatcher = new DispatcherService({
+      id: 'dispatcher-a',
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: fakeRuntimeCatalog({ runtimes }),
+      channelProviders: fakeChannelCatalog(),
+      adminSocketPath: '/tmp/dreamux-admin.sock',
+      channelLoggerFactory: () => log,
+      log,
+    });
+    const dispatcherScheduler = dispatcher.scheduler;
+    const dispatcherJob = await dispatcherScheduler.create({
+      cron: '* * * * *',
+      prompt: 'scheduled dispatcher',
+      tz: 'UTC',
+    });
+    await dispatcher.createTeam({
+      name: 'alpha',
+      leaderAgentRuntime: 'agent-a',
+      intent: 'lead alpha',
+    });
+    const heldTeam = await dispatcher.team('alpha');
+    const teamScheduler = await dispatcher.teamScheduler('alpha');
+    const teamJob = await teamScheduler.create({
+      cron: '* * * * *',
+      prompt: 'scheduled alpha',
+      tz: 'UTC',
+    });
+    expect(dispatcherScheduler).not.toHaveProperty('start');
+    expect(dispatcherScheduler).not.toHaveProperty('deleteStoreFile');
+    expect(teamScheduler).not.toHaveProperty('start');
+    expect(teamScheduler).not.toHaveProperty('deleteStoreFile');
+    expect(heldTeam).not.toHaveProperty('scheduler');
+    expect(heldTeam).not.toHaveProperty('scheduler_');
+    expect(heldTeam).not.toHaveProperty('schedulerLifecycle');
+    expect(heldTeam).not.toHaveProperty('dissolve');
+    expect(heldTeam).not.toHaveProperty('startScheduler');
+    expect(heldTeam).not.toHaveProperty('stopScheduler');
+    expect(heldTeam.teammates).not.toHaveProperty('spawn');
+
+    await dispatcher.shutdown();
+
+    await expect(
+      dispatcherScheduler.create({
+        cron: '* * * * *',
+        prompt: 'late dispatcher',
+        tz: 'UTC',
+      }),
+    ).rejects.toThrow(/shutting down/);
+    await expect(dispatcherScheduler.runNow(dispatcherJob.id)).rejects.toThrow(
+      /shutting down/,
+    );
+    await expect(
+      teamScheduler.create({
+        cron: '* * * * *',
+        prompt: 'late alpha',
+        tz: 'UTC',
+      }),
+    ).rejects.toThrow(/shutting down/);
+    await expect(teamScheduler.runNow(teamJob.id)).rejects.toThrow(
+      /shutting down/,
+    );
+    await expect(
+      heldTeam.spawnTeamMate({
+        name: 'late',
+        prompt: 'late member',
+        intent: 'late member',
+      }),
+    ).rejects.toThrow(/shutting down/);
+  });
+
+  it('rejects held TeamLeader handles after Team dissolve or replacement', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        channels: [],
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const log = noopLog();
+    const dispatcher = new DispatcherService({
+      id: 'dispatcher-a',
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: fakeRuntimeCatalog({ runtimes }),
+      channelProviders: fakeChannelCatalog(),
+      adminSocketPath: '/tmp/dreamux-admin.sock',
+      channelLoggerFactory: () => log,
+      log,
+    });
+    await dispatcher.createTeam({
+      name: 'alpha',
+      leaderAgentRuntime: 'agent-a',
+      intent: 'lead alpha',
+    });
+    const oldHandle = await dispatcher.team('alpha');
+    const member = await oldHandle.spawnTeamMate({
+      name: 'worker',
+      prompt: 'start worker',
+      intent: 'work alpha',
+    });
+    expect(oldHandle.teammates).not.toHaveProperty('spawn');
+
+    await dispatcher.dissolveTeam({ teamId: 'alpha', note: 'done' });
+    await expect(
+      oldHandle.teammates.send({
+        name: member.teammate.name,
+        prompt: 'after close',
+      }),
+    ).rejects.toThrow(/closed/);
+    await expect(
+      oldHandle.spawnTeamMate({
+        name: 'late',
+        prompt: 'late worker',
+        intent: 'late alpha',
+      }),
+    ).rejects.toThrow(/closed/);
+
+    await dispatcher.createTeam({
+      name: 'alpha',
+      leaderAgentRuntime: 'agent-a',
+      intent: 'lead replacement alpha',
+    });
+    await expect(oldHandle.teammates.list()).rejects.toThrow(
+      /generation is no longer current/,
+    );
+    await expect(
+      oldHandle.teammates.send({
+        name: member.teammate.name,
+        prompt: 'after replacement',
+      }),
+    ).rejects.toThrow(/generation is no longer current/);
+    await expect(
+      oldHandle.spawnTeamMate({
+        name: 'stale',
+        prompt: 'stale worker',
+        intent: 'stale alpha',
+      }),
+    ).rejects.toThrow(/generation is no longer current/);
+
+    const replacementHandle = await dispatcher.team('alpha');
+    await expect(
+      replacementHandle.spawnTeamMate({
+        name: 'fresh',
+        prompt: 'fresh worker',
+        intent: 'fresh alpha',
+      }),
+    ).resolves.toMatchObject({
+      teammate: { name: expect.stringMatching(/^tm-fresh-/) },
+      turn: { status: 'submitted' },
+    });
+    await dispatcher.shutdown();
   });
 
   it('ordinary dispatcher start prepares inputs without starting its runtime', async () => {
@@ -1225,4 +1439,14 @@ async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error('waitFor timed out');
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
 }

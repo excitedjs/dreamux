@@ -51,27 +51,25 @@ export function assertSameContainer(
   }
 }
 
-export function lockKey(input: {
+export function spaceKey(input: {
   channelId: string;
-  containerKey: string;
-  bindingGeneration: number;
-  targetKey: string;
+  container: { container_key: string };
 }): string {
-  return [
-    input.channelId,
-    input.containerKey,
-    String(input.bindingGeneration),
-    input.targetKey,
-  ].join('\0');
+  return [input.channelId, input.container.container_key].join('\0');
 }
 
-export function targetKey(target: ProvisionedTargetRecord): string {
-  return lockKey({
+export function targetRouteKey(target: ProvisionedTargetRecord): string {
+  return routeKey({
     channelId: target.channel_id,
-    containerKey: target.container_key,
-    bindingGeneration: target.binding_generation,
     targetKey: target.target_key,
   });
+}
+
+export function routeKey(input: {
+  channelId: string;
+  targetKey: string;
+}): string {
+  return [input.channelId, input.targetKey].join('\0');
 }
 
 export function parseMessage(err: unknown): string {
