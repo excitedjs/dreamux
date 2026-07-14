@@ -118,6 +118,11 @@ history and rationale; when you need current behavior, pair them with
   terminal completion-delivery semantics, instance-scoped runtime state facts,
   provider-owned role prompt injection, and external runtime handle validation
   while keeping native CLI/daemon details provider-owned.
+- [Admin control plane surface](proposals/admin-control-plane-surface.md)
+  — draft requirement/spec for making admin.sock the stable external control
+  plane, removing MCP-specific prefixes from Team, TeamMate, and
+  collaboration-space admin methods, keeping model-facing filtering in the MCP
+  adapters, and recording admin capability gaps for later slices.
 - [TeamMate identity system prompt](proposals/teammate-identity-system-prompt.md)
   — draft requirement/spec for adding a minimal `identity` input to
   `teammate.spawn` and `team.create`, persisting it on TeamMate identity records,
