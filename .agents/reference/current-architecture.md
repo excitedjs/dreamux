@@ -117,10 +117,13 @@ product/control-plane wording rather than describing MCP visibility.
 
 Admin callers may pass strictly validated `skill_sources` when calling
 `teammate.spawn` or `team.create`. These are additional runtime-neutral skill
-roots, not replacements for Dreamux's required role roots. They are persisted
-on the created agent identity and restored when that TeamMate, team member, or
-TeamLeader is rebuilt. The MCP adapters neither advertise nor forward this
-parameter.
+roots, not replacements for Dreamux's required role roots. Core requires each
+custom root to be an existing readable absolute directory, persists its
+canonical realpath, removes duplicate roots, and rejects direct-child skill
+name collisions. TeamLeader creation also fences the bundled `team-workflow`
+skill name so custom roots cannot replace the required Team workflow. The
+stored roots are restored when that TeamMate, team member, or TeamLeader is
+rebuilt. The MCP adapters neither advertise nor forward this parameter.
 
 Key source:
 

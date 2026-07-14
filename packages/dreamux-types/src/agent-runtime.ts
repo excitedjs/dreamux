@@ -46,7 +46,10 @@ export interface AgentRuntimeMcpServer {
  */
 export interface AgentRuntimeSkillSource {
   name: string;
-  /** Directory whose direct children are skill directories. */
+  /**
+   * Absolute canonical directory whose direct children are skill directories.
+   * Dreamux core validates and normalizes custom roots before persistence.
+   */
   path: string;
   source: 'dreamux-core' | string;
 }

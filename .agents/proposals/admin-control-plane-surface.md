@@ -347,7 +347,10 @@ the flat `caller_kind/team_id/leader_name` tuple as sufficient authorization.
 `teammate.spawn` and `team.create` accept an optional `skill_sources` array on
 the admin wire. Each entry must be an object with non-empty string `name`,
 `path`, and `source` fields; malformed input returns `BAD_REQUEST`. The shape is
-runtime-neutral and reuses `AgentRuntimeSkillSource`.
+runtime-neutral and reuses `AgentRuntimeSkillSource`. Core canonicalizes custom
+roots before persistence: paths must be existing readable absolute directories,
+are stored as realpaths, duplicate roots collapse, and direct-child skill name
+collisions are rejected.
 
 The capability applies to dispatcher-scope TeamMates, TeamLeaders, and direct
 admin calls that spawn a Team-scoped member. The service boundary already owns
@@ -358,9 +361,9 @@ parameter.
 Only custom roots are persisted on the agent identity. At runtime the owning
 service recomposes required built-in role roots with the stored additions; a
 TeamLeader therefore always keeps the bundled Dreamux Team workflow root.
-Custom roots do not reintroduce workspace skill installation or symlink
-behavior. Admin DTOs and public model-facing views do not project the stored
-paths.
+Custom roots cannot shadow the bundled `team-workflow` skill name, and they do
+not reintroduce workspace skill installation or symlink behavior. Admin DTOs
+and public model-facing views do not project the stored paths.
 
 This is deliberately an admin-only capability. MCP tool schemas, descriptions,
 argument parsing, and forwarded requests omit `skill_sources`, including when
@@ -411,6 +414,9 @@ must preserve backward compatibility or provide an explicit versioned migration.
 - Admin `team.create` forwards validated custom roots to TeamLeader runtime
   creation.
 - Malformed `skill_sources` input returns `BAD_REQUEST` before domain mutation.
+- Custom root paths are canonical absolute readable directories; relative or
+  missing paths and direct-child skill-name conflicts are rejected before domain
+  mutation.
 - Custom roots survive runtime and process rebuild through agent identity state.
 - Required bundled role roots remain present alongside custom roots.
 - MCP schemas and descriptions do not expose `skill_sources`, and MCP adapters

@@ -105,7 +105,9 @@ The context is neutral:
 - `systemPrompt` with optional `replace` and `append` forms;
 - exactly the MCP server descriptors core selected for this role;
 - effective `skillSources`, composed by core from required role roots and any
-  authorized custom roots;
+  authorized custom roots. Core stores custom roots as canonical absolute
+  directories and guarantees each path is a skill root whose direct children are
+  skill directories;
 - optional feature-disable names such as `cron`;
 - neutral logger, path, state, and environment injection seams;
 - optional `onTurnSettled` callback.

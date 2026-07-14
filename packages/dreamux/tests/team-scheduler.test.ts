@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -169,6 +169,23 @@ function skillSourceNames(
     ))
     ?.skillSources
     ?.map((source) => source.name);
+}
+
+function skillSourcesFor(
+  contexts: readonly AgentRuntimeCreateContext[],
+  requiredName: string,
+) {
+  return contexts
+    .find((context) => context.skillSources?.some(
+      (source) => source.name === requiredName,
+    ))
+    ?.skillSources;
+}
+
+function createSkillRoot(parent: string, rootName: string, skillName: string): string {
+  const root = join(parent, rootName);
+  mkdirSync(join(root, skillName), { recursive: true });
+  return root;
 }
 
 function noopLog(): DreamuxLogger {
@@ -753,19 +770,35 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       },
       getDispatcher: () => dispatcher,
     } as unknown as Server;
+    const skillRoots = join(root, 'admin-skills');
+    const teammateRoot = createSkillRoot(
+      skillRoots,
+      'teammate-root',
+      'teammate-skill',
+    );
+    const leaderRoot = createSkillRoot(
+      skillRoots,
+      'team-leader-root',
+      'team-leader-skill',
+    );
+    const memberRoot = createSkillRoot(
+      skillRoots,
+      'team-member-root',
+      'team-member-skill',
+    );
     const teammateSource = {
       name: 'admin-teammate',
-      path: '/skills/admin/teammate',
+      path: join(teammateRoot, '..', 'teammate-root'),
       source: 'admin',
     };
     const leaderSource = {
       name: 'admin-team-leader',
-      path: '/skills/admin/team-leader',
+      path: join(leaderRoot, '..', 'team-leader-root'),
       source: 'admin',
     };
     const memberSource = {
       name: 'admin-team-member',
-      path: '/skills/admin/team-member',
+      path: join(memberRoot, '..', 'team-member-root'),
       source: 'admin',
     };
 
@@ -796,14 +829,32 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     expect(skillSourceNames(contexts, 'admin-teammate')).toEqual([
       'admin-teammate',
     ]);
+    expect(skillSourcesFor(contexts, 'admin-teammate')).toEqual([{
+      name: 'admin-teammate',
+      path: realpathSync(teammateRoot),
+      source: 'admin',
+    }]);
     expect(skillSourceNames(contexts, 'admin-team-leader')).toEqual([
       'team-leader',
       'admin-team-leader',
     ]);
+    expect(skillSourcesFor(contexts, 'admin-team-leader')).toEqual([
+      expect.objectContaining({ name: 'team-leader', source: 'dreamux-core' }),
+      {
+        name: 'admin-team-leader',
+        path: realpathSync(leaderRoot),
+        source: 'admin',
+      },
+    ]);
     expect(skillSourceNames(contexts, 'admin-team-member')).toEqual([
       'admin-team-member',
     ]);
-    expect(JSON.stringify({ teammate, team, member })).not.toContain('/skills/admin/');
+    expect(skillSourcesFor(contexts, 'admin-team-member')).toEqual([{
+      name: 'admin-team-member',
+      path: realpathSync(memberRoot),
+      source: 'admin',
+    }]);
+    expect(JSON.stringify({ teammate, team, member })).not.toContain(skillRoots);
     await dispatcher.stop();
 
     const rebuiltContexts: AgentRuntimeCreateContext[] = [];
@@ -838,13 +889,31 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     expect(skillSourceNames(rebuiltContexts, 'admin-teammate')).toEqual([
       'admin-teammate',
     ]);
+    expect(skillSourcesFor(rebuiltContexts, 'admin-teammate')).toEqual([{
+      name: 'admin-teammate',
+      path: realpathSync(teammateRoot),
+      source: 'admin',
+    }]);
     expect(skillSourceNames(rebuiltContexts, 'admin-team-leader')).toEqual([
       'team-leader',
       'admin-team-leader',
     ]);
+    expect(skillSourcesFor(rebuiltContexts, 'admin-team-leader')).toEqual([
+      expect.objectContaining({ name: 'team-leader', source: 'dreamux-core' }),
+      {
+        name: 'admin-team-leader',
+        path: realpathSync(leaderRoot),
+        source: 'admin',
+      },
+    ]);
     expect(skillSourceNames(rebuiltContexts, 'admin-team-member')).toEqual([
       'admin-team-member',
     ]);
+    expect(skillSourcesFor(rebuiltContexts, 'admin-team-member')).toEqual([{
+      name: 'admin-team-member',
+      path: realpathSync(memberRoot),
+      source: 'admin',
+    }]);
     await rebuilt.stop();
   });
 

@@ -1,5 +1,6 @@
 
 import type { Server } from '../server.js';
+import { bundledTeamLeaderSkillRoot } from '../platform/paths.js';
 import type {
   ChannelToolCaller,
   DispatcherService,
@@ -35,6 +36,12 @@ export type AdminHandler = (
   server: Server,
   params: Record<string, unknown> | undefined,
 ) => Promise<unknown> | unknown;
+
+const TEAM_LEADER_REQUIRED_SKILL_SOURCES = [{
+  name: 'team-leader',
+  path: bundledTeamLeaderSkillRoot(),
+  source: 'dreamux-core',
+}] as const;
 
 export const adminMethods: Record<string, AdminHandler> = {
   'server.status': async (server) => ({
@@ -152,7 +159,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     const intent = mustNonEmptyString(params, 'intent');
     const agentRuntime = optionalString(params, 'agent_runtime');
     const identity = optionalNonBlankString(params, 'identity');
-    const skillSources = optionalSkillSources(params);
+    const skillSources = await optionalSkillSources(params);
     const dispatcher = server.getDispatcher(id);
     const target = await teammateTargetFor(dispatcher, params);
     if (target.callerKind === 'team_leader' && params?.['repo'] !== undefined) {
@@ -289,7 +296,9 @@ export const adminMethods: Record<string, AdminHandler> = {
     const worktree = repo?.worktree ?? null;
     const prompt = optionalString(params, 'prompt');
     const identity = optionalNonBlankString(params, 'identity');
-    const skillSources = optionalSkillSources(params);
+    const skillSources = await optionalSkillSources(params, {
+      requiredSources: TEAM_LEADER_REQUIRED_SKILL_SOURCES,
+    });
     try {
       const created = await dispatcher.createTeam({
         name,

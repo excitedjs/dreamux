@@ -1,6 +1,9 @@
 import type { AgentRuntimeSkillSource } from '@excitedjs/dreamux-types';
 
-import { parseAgentRuntimeSkillSources } from '../agent-runtime/skill-sources.js';
+import {
+  normalizeAgentRuntimeSkillSources,
+  parseAgentRuntimeSkillSources,
+} from '../agent-runtime/skill-sources.js';
 import type { Server } from '../server.js';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
 import type {
@@ -79,15 +82,24 @@ export function optionalNonBlankString(
   return value;
 }
 
-export function optionalSkillSources(
+export async function optionalSkillSources(
   params: Record<string, unknown> | undefined,
-): readonly AgentRuntimeSkillSource[] | null {
+  options: {
+    requiredSources?: readonly AgentRuntimeSkillSource[];
+  } = {},
+): Promise<readonly AgentRuntimeSkillSource[] | null> {
   if (params === undefined || params['skill_sources'] === undefined) return null;
   try {
-    return parseAgentRuntimeSkillSources(
+    const parsed = parseAgentRuntimeSkillSources(
       params['skill_sources'],
       "param 'skill_sources'",
     );
+    return await normalizeAgentRuntimeSkillSources(parsed, {
+      label: "param 'skill_sources'",
+      ...(options.requiredSources !== undefined
+        ? { requiredSources: options.requiredSources }
+        : {}),
+    });
   } catch (err) {
     throw new AdminError('BAD_REQUEST', parseMessage(err));
   }

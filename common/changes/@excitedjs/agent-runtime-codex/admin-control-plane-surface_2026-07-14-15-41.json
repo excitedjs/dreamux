@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/agent-runtime-codex",
+      "comment": "Reject relative skill source root paths before applying Codex extra roots.",
+      "type": "patch"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-codex"
+}

@@ -1,6 +1,7 @@
 import type {
   AgentRuntimeSkillSource,
 } from '@excitedjs/dreamux-types';
+import { isAbsolute } from 'node:path';
 
 import type { CodexWsClient } from './rpc.js';
 
@@ -10,6 +11,7 @@ export async function applyCodexSkillExtraRoots(input: {
   log: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
 }): Promise<void> {
   if (input.sources.length === 0) return;
+  assertAbsoluteSkillRootPaths(input.sources);
   const extraRoots = [
     ...new Set(
       input.sources.map((source) => source.path),
@@ -33,6 +35,18 @@ export async function applyCodexSkillExtraRoots(input: {
     'info',
     `applied ${extraRoots.length} skill extra root(s): ${extraRoots.join(', ')}`,
   );
+}
+
+function assertAbsoluteSkillRootPaths(
+  sources: readonly AgentRuntimeSkillSource[],
+): void {
+  for (const source of sources) {
+    if (!isAbsolute(source.path)) {
+      throw new Error(
+        `skill source ${JSON.stringify(source.name)} path must be absolute`,
+      );
+    }
+  }
 }
 
 /**

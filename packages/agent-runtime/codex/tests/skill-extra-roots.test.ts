@@ -225,6 +225,16 @@ describe('codex skills/extraRoots/set injection', () => {
     expect(startIdx).toBeGreaterThan(setIdx);
   });
 
+  it('rejects relative skill root paths instead of applying cwd-dependent roots', async () => {
+    const client = new FakeClient();
+    const runtime = buildRuntime(client, [
+      { name: 'relative', path: 'relative/skills', source: 'test' },
+    ]);
+
+    await expect(runtime.start()).rejects.toThrow(/path must be absolute/);
+    expect(client.extraRootsCalls).toEqual([]);
+  });
+
   it('passes append-only systemPrompt as developerInstructions before first turn', async () => {
     const client = new FakeClient();
     const runtime = buildRuntime(

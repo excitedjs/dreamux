@@ -39,6 +39,12 @@ sites pass role-specific skill roots through the Agent Runtime create context as
 - Claude Code materializes runtime-owned `.claude/skills/<name>` add-dir roots
   and passes them through `--add-dir`.
 
+Admin-supplied custom skill roots use the same neutral create-context shape, but
+core first normalizes them into canonical absolute readable directories and
+rejects duplicate roots or duplicate direct-child skill names. TeamLeader roots
+also reserve the bundled `team-workflow` skill name, so custom roots cannot
+shadow the required Team workflow skill.
+
 `dreamux onboard` and dispatcher startup do not install bundled skills into a
 workspace. Bundled skills are package-shipped runtime injection sources.
 
