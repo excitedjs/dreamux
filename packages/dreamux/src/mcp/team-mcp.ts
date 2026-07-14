@@ -230,21 +230,21 @@ function mapToolCall(
   }
   switch (call.name) {
     case 'create':
-      return { method: 'mcp.team.create', params: createArgs(call.arguments) };
+      return { method: 'team.create', params: createArgs(call.arguments) };
     case 'send':
-      return { method: 'mcp.team.send', params: sendArgs(call.arguments) };
+      return { method: 'team.send', params: sendArgs(call.arguments) };
     case 'list':
-      return { method: 'mcp.team.list', params: {} };
+      return { method: 'team.list', params: {} };
     case 'status':
-      return { method: 'mcp.team.status', params: teamNameArgs(call.arguments) };
+      return { method: 'team.status', params: teamNameArgs(call.arguments) };
     case 'history':
-      return { method: 'mcp.team.history', params: historyArgs(call.arguments) };
+      return { method: 'team.history', params: historyArgs(call.arguments) };
     case 'dissolve':
-      return { method: 'mcp.team.dissolve', params: dissolveArgs(call.arguments) };
+      return { method: 'team.dissolve', params: dissolveArgs(call.arguments) };
     case 'bind_channel':
-      return { method: 'mcp.team.bind_channel', params: bindChannelArgs(call.arguments) };
+      return { method: 'team.bind_channel', params: bindChannelArgs(call.arguments) };
     case 'transfer_back':
-      return { method: 'mcp.team.transfer_back', params: transferBackArgs(call.arguments) };
+      return { method: 'team.transfer_back', params: transferBackArgs(call.arguments) };
     default:
       throw new Error(`unknown Team tool '${String(call.name)}'`);
   }

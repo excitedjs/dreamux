@@ -2,7 +2,8 @@
 
 - **Status:** Draft
 - **Date:** 2026-07-14
-- **Affects:** `/packages/dreamux/src/admin/`, `/packages/dreamux/src/mcp/`, admin socket consumers
+- **Affects:** `/packages/dreamux/src/admin/`, `/packages/dreamux/src/mcp/`, agent identity/runtime creation, admin socket consumers
+- **Issue:** [#295](https://github.com/excitedjs/dreamux/issues/295)
 
 ## Intent
 
@@ -13,9 +14,8 @@ tool set, adapts model-friendly arguments, and may compose one or more admin
 socket calls when that is the cleanest way to implement an MCP tool.
 
 The admin socket should therefore use product/control-plane names and errors,
-not MCP-specific names. In particular, the `mcp.` prefix currently present on
-Team, TeamMate, and collaboration-space admin RPCs should be removed from the
-admin method namespace.
+not MCP-specific names. The namespace slice removes the pre-stable `mcp.`
+prefix from Team, TeamMate, and collaboration-space admin RPCs.
 
 The same control plane must also support outbound events. A larger system
 cannot integrate with Dreamux only by polling passive request/response methods;
@@ -23,9 +23,19 @@ it needs to observe state transitions such as submitted turns, settled turns,
 Team/TeamMate lifecycle changes, channel route changes, scheduler fires, and
 collaboration target lifecycle changes.
 
-## Current Admin Surface
+## Namespace Slice Status
 
-Admin socket requests are one-line NDJSON RPC envelopes with dotted lowercase
+The namespace-cleanup slice implements the canonical product method names,
+removes the pre-stable `mcp.*` names and dispatcher mutation placeholders, and
+keeps Dreamux-owned MCP shims on their existing model-facing surface. It also
+adds admin-only custom skill roots to TeamMate and TeamLeader creation. The
+event surface, protocol baseline, introspection, inventory, and authentication
+work in this proposal remain future slices.
+
+## Pre-Cleanup Admin Surface
+
+Before the namespace slice, admin socket requests were one-line NDJSON RPC
+envelopes with dotted lowercase
 method names. The method registry lives in
 [`/packages/dreamux/src/admin/methods.ts`](/packages/dreamux/src/admin/methods.ts),
 and dispatch happens in
@@ -36,16 +46,16 @@ The current socket protocol is request/response only: protocol comments say
 and `processLine()` writes exactly one response for each request in
 [`/packages/dreamux/src/admin/socket.ts`](/packages/dreamux/src/admin/socket.ts).
 
-Current non-MCP-prefixed methods:
+The non-MCP-prefixed methods were:
 
 | Area | Methods | Notes |
 |---|---|---|
 | Server | `server.status` | Returns process status plus dispatcher summaries. |
-| Dispatcher | `dispatcher.list`, `dispatcher.status`, `dispatcher.start`, `dispatcher.stop` | Dispatcher declarations are config-owned. The current unsupported `dispatcher.add` and `dispatcher.remove` placeholders should be deleted rather than promoted. |
+| Dispatcher | `dispatcher.list`, `dispatcher.status`, `dispatcher.start`, `dispatcher.stop` | Dispatcher declarations are config-owned. The unsupported `dispatcher.add` and `dispatcher.remove` placeholders were deletion targets rather than product capabilities. |
 | Scheduler | `scheduler.cron.list`, `scheduler.cron.create`, `scheduler.cron.update`, `scheduler.cron.delete`, `scheduler.cron.run_now` | Already scoped as a scheduler/admin capability rather than an MCP capability. |
 | Channel tools | `channel.invoke_tool` | Generic provider-owned tool conduit. Provider tool metadata remains descriptor-owned; calls route through the live channel session and caller authorization. |
 
-Current MCP-prefixed admin methods:
+The pre-cleanup MCP-prefixed admin methods were:
 
 | Area | Methods | Notes |
 |---|---|---|
@@ -53,7 +63,7 @@ Current MCP-prefixed admin methods:
 | Team | `mcp.team.create`, `mcp.team.send`, `mcp.team.list`, `mcp.team.status`, `mcp.team.history`, `mcp.team.bind_channel`, `mcp.team.transfer_back`, `mcp.team.dissolve` | Dispatcher MCP exposes the lifecycle/read tools; TeamLeader MCP only exposes `transfer_back`. |
 | Collaboration space | `mcp.collaboration_space.bind`, `mcp.collaboration_space.dissolve`, `mcp.collaboration_space.status`, `mcp.collaboration_space.list` | This is already a control-plane capability in behavior, but the method names still carry MCP terminology. |
 
-## Current MCP Adapter Surface
+## Pre-Cleanup MCP Adapter Surface
 
 The MCP shims are stdio JSON-RPC adapters. They expose model-facing tool schemas
 and translate `tools/call` into admin socket calls.
@@ -66,8 +76,8 @@ and translate `tools/call` into admin socket calls.
 | Channel MCP | Lists static provider descriptors and forwards raw provider tool calls to `channel.invoke_tool`. See [`channel-mcp.ts`](/packages/dreamux/src/mcp/channel-mcp.ts). | Already maps to `channel.invoke_tool`. |
 | Collaboration-space MCP | Exposes `bind`, `dissolve`, `status`, `list`. | Maps to `mcp.collaboration_space.*` in [`collaboration-space-mcp.ts`](/packages/dreamux/src/mcp/collaboration-space-mcp.ts). |
 
-Some filtering is still expressed in the admin layer. For example, Team MCP
-TeamLeader callers are rejected for `mcp.team.send` with MCP-specific wording
+Before cleanup, some filtering was still expressed with MCP wording in the
+admin layer. For example, TeamLeader callers were rejected for `mcp.team.send`
 in [`methods.ts`](/packages/dreamux/src/admin/methods.ts). TeamLeader TeamMate
 spawn also rejects `repo`, but that message already describes the product rule:
 Team TeamMates use the Team shared workspace, while dispatcher callers may pass
@@ -83,7 +93,7 @@ These gaps matter if admin.sock is the external system integration surface:
 | Method and schema introspection | No admin method lists its supported params/result shape through the socket. Consumers must know method names out of band or read source/docs. |
 | Adapter diagnostics | Admin can create runtime descriptors internally, but there is no diagnostic method to ask which MCP servers/tools a dispatcher or TeamLeader adapter would expose. This is not a domain control-plane capability unless an external consumer explicitly needs adapter diagnostics. |
 | Channel inventory and binding inventory | Admin can invoke provider tools and bind/transfer Team routes, but there is no first-class `channel.list`, `channel.status`, `channel.binding.list`, or `channel.resolve_target`. |
-| Dispatcher declaration mutation | This should not be a control-plane capability for now. Config editing remains outside admin.sock, and the unsupported `dispatcher.add` / `dispatcher.remove` placeholders should be removed. |
+| Dispatcher declaration mutation | This is not a control-plane capability. Config editing remains outside admin.sock, and the unsupported `dispatcher.add` / `dispatcher.remove` placeholders were removed in the namespace slice. |
 | Dispatcher-root turn submission | Admin can send a TeamLeader turn and TeamMate turns; there is no direct dispatcher-agent submit method. |
 | Collaboration target control | Admin can bind/list/status/dissolve spaces; target-level inspection, retry, detach, or close controls are not exposed as first-class methods. |
 | Channel session lifecycle detail | `dispatcher.status` summarizes dispatcher runtime, not per-channel live session status. |
@@ -148,14 +158,14 @@ admin namespace.
 
 ## Compatibility Boundary
 
-Treat the current `mcp.*` admin methods as pre-stable internal names. This is
+The pre-cleanup `mcp.*` admin methods were pre-stable internal names. This was
 the cleanup window before admin.sock is advertised as the external integration
-contract, so the namespace change should replace the old methods rather than
-keep deprecated aliases.
+contract, so the namespace change replaces the old methods rather than keeping
+deprecated aliases.
 
-The first implementation should update Dreamux-owned MCP adapters and tests to
-the canonical names, remove `mcp.*` admin registry entries, and let old names
-fail as unknown methods. After the stable external control-plane protocol is
+The implemented slice updates Dreamux-owned MCP adapters and tests to the
+canonical names, removes `mcp.*` admin registry entries, and lets old names fail
+as unknown methods. After the stable external control-plane protocol is
 published, future namespace or protocol changes must follow backward-compatible
 migration rules.
 
@@ -332,6 +342,30 @@ The owner-only socket mode remains the current coarse security boundary. Any
 external system integration that needs multiple local principals must not treat
 the flat `caller_kind/team_id/leader_name` tuple as sufficient authorization.
 
+## Admin-Only Creation Skill Sources
+
+`teammate.spawn` and `team.create` accept an optional `skill_sources` array on
+the admin wire. Each entry must be an object with non-empty string `name`,
+`path`, and `source` fields; malformed input returns `BAD_REQUEST`. The shape is
+runtime-neutral and reuses `AgentRuntimeSkillSource`.
+
+The capability applies to dispatcher-scope TeamMates, TeamLeaders, and direct
+admin calls that spawn a Team-scoped member. The service boundary already owns
+member runtime context cleanly, so Team-scoped support does not alter shared
+workspace or role policy. TeamLeader-scoped MCP calls still cannot supply the
+parameter.
+
+Only custom roots are persisted on the agent identity. At runtime the owning
+service recomposes required built-in role roots with the stored additions; a
+TeamLeader therefore always keeps the bundled Dreamux Team workflow root.
+Custom roots do not reintroduce workspace skill installation or symlink
+behavior. Admin DTOs and public model-facing views do not project the stored
+paths.
+
+This is deliberately an admin-only capability. MCP tool schemas, descriptions,
+argument parsing, and forwarded requests omit `skill_sources`, including when
+an untrusted caller adds the field to raw MCP call arguments.
+
 ## Backward Compatibility
 
 The current admin namespace is treated as pre-stable for this cleanup. Do not
@@ -359,8 +393,8 @@ must preserve backward compatibility or provide an explicit versioned migration.
   ownership gate that verifies Team read composition remains in
   `admin/methods.ts`.
 - Admin-layer rejection messages do not refer to "MCP caller" or "MCP tool";
-  the currently verified MCP-specific message is the TeamLeader rejection for
-  `mcp.team.send`.
+  the previously MCP-specific TeamLeader rejection now identifies the
+  dispatcher-only `team.send` product rule.
 - MCP adapter tests assert that Team, TeamMate, and collaboration-space tools
   call the renamed admin methods.
 - MCP tool visibility remains unchanged for dispatcher and TeamLeader callers.
@@ -369,6 +403,18 @@ must preserve backward compatibility or provide an explicit versioned migration.
 - The KB records admin.sock as the target external control plane and MCP as an
   adapter surface, with source links to the method registry and adapters. It
   does not claim that the stable external protocol baseline is complete.
+
+### Admin-Only Skill Injection
+
+- Admin `teammate.spawn` forwards validated custom roots for dispatcher and
+  Team-scoped TeamMate creation.
+- Admin `team.create` forwards validated custom roots to TeamLeader runtime
+  creation.
+- Malformed `skill_sources` input returns `BAD_REQUEST` before domain mutation.
+- Custom roots survive runtime and process rebuild through agent identity state.
+- Required bundled role roots remain present alongside custom roots.
+- MCP schemas and descriptions do not expose `skill_sources`, and MCP adapters
+  do not forward it even when it appears in raw call arguments.
 
 ### Future Event Slice
 
@@ -405,6 +451,7 @@ must preserve backward compatibility or provide an explicit versioned migration.
   owner-only socket remains the coarse boundary until a separate design changes
   it.
 - Changing provider-owned channel tool descriptors.
+- Exposing custom creation skill roots through any MCP or model-facing surface.
 
 ## Review Focus
 

@@ -98,6 +98,40 @@ Key source:
 - `/packages/dreamux/src/mcp/team-mcp.ts`
 - `/packages/dreamux/src/mcp/teammate-mcp.ts`
 
+## Admin Control Plane
+
+The owner-only local `admin.sock` is Dreamux's target external control-plane
+entry point. Its current protocol is still the v0 one-request/one-response
+NDJSON shape, so it is not yet a completed stable external protocol.
+
+The product method namespaces are `teammate.*`, `team.*`, and
+`collaboration_space.*`. Scheduler methods remain `scheduler.cron.*`, and
+provider tool calls use `channel.invoke_tool`. No `mcp.*` aliases are
+registered, and dispatcher declarations remain config-owned rather than
+mutable through `dispatcher.add` or `dispatcher.remove`.
+
+Dreamux-owned MCP shims call those canonical admin methods but retain ownership
+of model-facing schemas, caller-specific visibility, and scope projection. The
+admin registry independently enforces domain and caller safety; its errors use
+product/control-plane wording rather than describing MCP visibility.
+
+Admin callers may pass strictly validated `skill_sources` when calling
+`teammate.spawn` or `team.create`. These are additional runtime-neutral skill
+roots, not replacements for Dreamux's required role roots. They are persisted
+on the created agent identity and restored when that TeamMate, team member, or
+TeamLeader is rebuilt. The MCP adapters neither advertise nor forward this
+parameter.
+
+Key source:
+
+- `/packages/dreamux/src/admin/methods.ts`
+- `/packages/dreamux/src/admin/params.ts`
+- `/packages/dreamux/src/admin/socket.ts`
+- `/packages/dreamux/src/agent-runtime/skill-sources.ts`
+- `/packages/dreamux/src/mcp/collaboration-space-mcp.ts`
+- `/packages/dreamux/src/mcp/team-mcp.ts`
+- `/packages/dreamux/src/mcp/teammate-mcp.ts`
+
 ## Channels And Feishu
 
 The Channel provider owns provider-specific session behavior. The built-in
@@ -262,11 +296,14 @@ Key source:
 ## Bundled Skills
 
 Dreamux ships bundled skills under `/packages/dreamux/skills/`. Core selects
-skill sources by role:
+required skill sources by role and may compose authorized admin-supplied roots:
 
 - Dispatcher roles receive Dreamux workflow and maintenance skills; TeamLeader
   roles receive the Team workflow skill.
 - Ordinary TeamMate and team-member roles receive none by default.
+- Additional roots supplied through admin creation are persisted with the
+  agent identity. TeamLeader launch always prepends the required bundled role
+  root before those additions; custom roots cannot replace or disable it.
 - Core emits only role-specific skill roots (`skills/dispatcher/` and
   `skills/team-leader/`), never per-skill selector paths. Codex passes those
   roots directly to `skills/extraRoots/set` so root scanning cannot expose
@@ -281,6 +318,8 @@ onboard or runtime startup.
 Key source:
 
 - `/packages/dreamux/src/service/dispatcher-service/agent.ts`
+- `/packages/dreamux/src/service/agent-entity/identity-store.ts`
+- `/packages/dreamux/src/service/team-service/index.ts`
 - `/packages/dreamux/src/service/teammate-service/index.ts`
 - `/packages/dreamux/src/platform/paths.ts`
 - `/packages/agent-runtime/codex/src/skill-roots.ts`

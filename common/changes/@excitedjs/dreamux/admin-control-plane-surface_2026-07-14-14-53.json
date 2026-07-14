@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux",
+      "comment": "BREAKING: Rename the pre-stable TeamMate, Team, and collaboration-space admin socket methods to product namespaces without compatibility aliases; remove the unsupported public dreamux dispatcher add/remove commands and their admin registry entries; and add persistent admin-only custom skill sources for TeamMate and TeamLeader creation. Dreamux-owned MCP tools keep their existing model-facing surface; direct admin clients must use canonical method names.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux"
+}

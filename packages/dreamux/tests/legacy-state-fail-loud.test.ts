@@ -127,6 +127,7 @@ describe('issue #199 Slice 5 — pre-#199 local state fails loud', () => {
       const store = new AgentIdentityStore(silentLog);
       const identity = await store.get(DISPATCHER, 'alice');
       expect(identity?.name).toBe('alice');
+      expect(identity?.skill_sources).toEqual([]);
     });
 
     it('fails loud (does NOT skip) on the list() path for a removed-field record', async () => {

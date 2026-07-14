@@ -174,13 +174,13 @@ function mapToolCall(
 ): { method: string; params: Record<string, unknown> } {
   switch (call.name) {
     case 'bind':
-      return { method: 'mcp.collaboration_space.bind', params: bindArgs(call.arguments) };
+      return { method: 'collaboration_space.bind', params: bindArgs(call.arguments) };
     case 'dissolve':
-      return { method: 'mcp.collaboration_space.dissolve', params: dissolveArgs(call.arguments) };
+      return { method: 'collaboration_space.dissolve', params: dissolveArgs(call.arguments) };
     case 'status':
-      return { method: 'mcp.collaboration_space.status', params: spaceNameArgs(call.arguments) };
+      return { method: 'collaboration_space.status', params: spaceNameArgs(call.arguments) };
     case 'list':
-      return { method: 'mcp.collaboration_space.list', params: {} };
+      return { method: 'collaboration_space.list', params: {} };
     default:
       throw new Error(`unknown collaboration_space tool '${String(call.name)}'`);
   }

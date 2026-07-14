@@ -165,7 +165,7 @@ export class ChannelService {
     if (allowedChannelId !== channelId) {
       throw new ChannelToolAuthorizationError(
         'CHANNEL_SCOPE_DENIED',
-        'TeamLeader may use only the channel MCP server bound to the target',
+        'TeamLeader may use only the configured channel bound to the target',
       );
     }
     return { channelId, target };

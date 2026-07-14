@@ -2,9 +2,9 @@
 
 - **Status:** Accepted; bin-alias portion superseded by [global-bin-onboard-serve](global-bin-onboard-serve.md), historical dispatcher `tm` bin surface superseded by MCP-only workflow skills
 - **Date:** 2026-05-28
-- **Updated:** 2026-07-02
+- **Updated:** 2026-07-14
 - **Affects:** public CLI surface, npm package name, package bin entries
-- **PR / Issue:** [issue #4](https://github.com/excitedjs/dreamux/issues/4), [issue #18](https://github.com/excitedjs/dreamux/issues/18)
+- **PR / Issue:** [issue #4](https://github.com/excitedjs/dreamux/issues/4), [issue #18](https://github.com/excitedjs/dreamux/issues/18), [issue #295](https://github.com/excitedjs/dreamux/issues/295)
 
 ## Context
 
@@ -35,8 +35,6 @@ delegation, but the MCP-only workflow-skill update removed that wrapper again.
   dreamux serve
   dreamux status
   dreamux doctor
-  dreamux dispatcher add
-  dreamux dispatcher remove
   dreamux dispatcher list
   dreamux dispatcher status
   dreamux dispatcher start
@@ -48,8 +46,9 @@ delegation, but the MCP-only workflow-skill update removed that wrapper again.
   ```
 
 - Runtime support subcommands injected by Dreamux-managed MCP descriptors:
-  `dreamux feishu-mcp` and `dreamux teammate-mcp`. These are process shims, not
-  operator-facing admin command groups.
+  `dreamux channel-mcp`, `dreamux collaboration-space-mcp`,
+  `dreamux teammate-mcp`, `dreamux team-mcp`, and `dreamux cron-mcp`. These are
+  process shims, not operator-facing admin command groups.
 
 - `dreamux changelog` prints the installed package's rush-generated
   `CHANGELOG.md` (`--json` prints `CHANGELOG.json`). It is an offline,
@@ -60,6 +59,9 @@ delegation, but the MCP-only workflow-skill update removed that wrapper again.
 
 - `dreamux serve` is the foreground server entry point. Service managers also
   invoke `dreamux serve`.
+- Dispatcher declarations are config-owned. Add or remove entries in
+  `~/.dreamux/config.json` and restart `dreamux serve`; the operator CLI has no
+  `dispatcher add` or `dispatcher remove` commands.
 - `src/cli/server.ts` and `src/cli/server-ctl.ts` remain internal delegated
   modules while the CLI is migrated. They are not package-global bins.
 - Repo-root `/bin/dreamux` remains as a source-checkout convenience shim. There

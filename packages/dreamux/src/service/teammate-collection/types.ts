@@ -1,3 +1,5 @@
+import type { AgentRuntimeSkillSource } from '@excitedjs/dreamux-types';
+
 export interface TeamMateWorktreeRequest {
   mode: 'reuse-cwd' | 'managed';
   slug?: string;
@@ -14,6 +16,8 @@ export interface SpawnTeamMateInput {
   worktree?: TeamMateWorktreeRequest;
   intent: string;
   identity?: string;
+  /** Additional admin-supplied runtime skill roots; bundled role policy is separate. */
+  skillSources?: readonly AgentRuntimeSkillSource[];
 }
 
 export interface SendTeamMateInput {

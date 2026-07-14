@@ -255,21 +255,21 @@ function mapToolCall(
 } {
   switch (call.name) {
     case 'spawn':
-      return { method: 'mcp.teammate.spawn', params: spawnArgs(call.arguments, callerKind) };
+      return { method: 'teammate.spawn', params: spawnArgs(call.arguments, callerKind) };
     case 'send':
-      return { method: 'mcp.teammate.send', params: sendArgs(call.arguments) };
+      return { method: 'teammate.send', params: sendArgs(call.arguments) };
     case 'close':
-      return { method: 'mcp.teammate.close', params: closeArgs(call.arguments) };
+      return { method: 'teammate.close', params: closeArgs(call.arguments) };
     case 'history':
-      return { method: 'mcp.teammate.history', params: historyArgs(call.arguments) };
+      return { method: 'teammate.history', params: historyArgs(call.arguments) };
     case 'list':
-      return { method: 'mcp.teammate.list', params: {} };
+      return { method: 'teammate.list', params: {} };
     case 'status':
-      return { method: 'mcp.teammate.status', params: nameArgs(call.arguments) };
+      return { method: 'teammate.status', params: nameArgs(call.arguments) };
     case 'last':
-      return { method: 'mcp.teammate.last', params: lastArgs(call.arguments) };
+      return { method: 'teammate.last', params: lastArgs(call.arguments) };
     case 'get_capabilities':
-      return { method: 'mcp.teammate.capabilities', params: {} };
+      return { method: 'teammate.capabilities', params: {} };
     default:
       throw new Error(`unknown TeamMate tool '${String(call.name)}'`);
   }

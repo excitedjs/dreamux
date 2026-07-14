@@ -158,6 +158,8 @@ describe('team-mcp stdio shim', () => {
     // The create-time `bind_group` convenience is removed; bind a channel after
     // create with the dedicated Team `bind_channel` tool.
     expect(schemaOf(tools, 'create').properties).not.toHaveProperty('bind_group');
+    expect(schemaOf(tools, 'create').properties).not.toHaveProperty('skill_sources');
+    expect(JSON.stringify(tools)).not.toContain('skill_sources');
     // #199 Slice 1: public addressing is by the concrete `team_name`.
     expect(schemaOf(tools, 'create').required).toContain('team_name');
     expect(schemaOf(tools, 'create').properties).not.toHaveProperty('name');
@@ -256,6 +258,11 @@ describe('team-mcp stdio shim', () => {
             intent: 'lead alpha',
             identity: 'architecture lead',
             prompt: 'start',
+            skill_sources: [{
+              name: 'must-not-forward',
+              path: '/skills/untrusted-leader',
+              source: 'mcp',
+            }],
           },
         },
       });
@@ -277,7 +284,7 @@ describe('team-mcp stdio shim', () => {
       expect(JSON.stringify(response)).not.toContain(TEAMMATE_DISPATCH_SUCCESS_REMINDER);
       expect(admin.requests).toHaveLength(1);
       expect(admin.requests[0]).toMatchObject({
-        method: 'mcp.team.create',
+        method: 'team.create',
         params: {
           dispatcher_id: 'dispatcher-a',
           caller_kind: 'dispatcher',
@@ -288,6 +295,7 @@ describe('team-mcp stdio shim', () => {
           prompt: 'start',
         },
       });
+      expect(admin.requests[0]?.params).not.toHaveProperty('skill_sources');
 
       input.end();
       await run;
@@ -366,18 +374,18 @@ describe('team-mcp stdio shim', () => {
     };
     const admin = await startFakeAdminServer((request) => {
       const results: Record<string, unknown> = {
-        'mcp.team.list': {
+        'team.list': {
           teams: [{ team_name: 'alpha', bound_target: boundTarget }],
         },
-        'mcp.team.status': {
+        'team.status': {
           team: { team_name: 'alpha' },
           bound_target: boundTarget,
         },
-        'mcp.team.history': {
+        'team.history': {
           items: [{ team_name: 'alpha', bound_target: boundTarget }],
           next_cursor: null,
         },
-        'mcp.team.send': {
+        'team.send': {
           team: { team_name: 'alpha' },
           leader: { name: 'alpha-leader', status: 'running' },
           turn: { status: 'submitted', turn_id: 'turn-2' },
@@ -441,10 +449,10 @@ describe('team-mcp stdio shim', () => {
       const sendResponse = await reader.next();
 
       expect(admin.requests.map((r) => r.method)).toEqual([
-        'mcp.team.list',
-        'mcp.team.status',
-        'mcp.team.history',
-        'mcp.team.send',
+        'team.list',
+        'team.status',
+        'team.history',
+        'team.send',
       ]);
       expect(listResponse).toMatchObject({
         result: {
@@ -668,7 +676,7 @@ describe('team-mcp stdio shim', () => {
         },
       });
       expect(JSON.stringify(response)).not.toContain(TEAM_DISPATCH_SUCCESS_REMINDER);
-      expect(admin.requests[0]?.method).toBe('mcp.team.dissolve');
+      expect(admin.requests[0]?.method).toBe('team.dissolve');
 
       input.end();
       await run;
@@ -713,7 +721,7 @@ describe('team-mcp stdio shim', () => {
       });
       await reader.next();
 
-      expect(admin.requests[0]?.method).toBe('mcp.team.transfer_back');
+      expect(admin.requests[0]?.method).toBe('team.transfer_back');
       expect(admin.requests[0]?.params).toMatchObject({
         caller_kind: 'team_leader',
         team_id: 'alpha',
@@ -742,7 +750,7 @@ describe('team-mcp stdio shim', () => {
         });
       }
       expect(admin.requests.map((request) => request.method)).toEqual([
-        'mcp.team.transfer_back',
+        'team.transfer_back',
       ]);
 
       input.end();

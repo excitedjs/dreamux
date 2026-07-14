@@ -76,6 +76,7 @@ export async function ensureDispatcherIdentity(
       worktree: input.worktree,
       intent: null,
       identity_prompt: null,
+      skill_sources: [],
       created_at: now,
       updated_at: now,
       status: 'stopped',

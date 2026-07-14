@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux-types",
+      "comment": "Clarify the AgentRuntimeSkillSource create-context contract to cover core-composed required and authorized custom skill roots.",
+      "type": "none"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-types"
+}

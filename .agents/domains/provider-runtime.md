@@ -104,7 +104,8 @@ The context is neutral:
 - launcher-supplied `cwd`;
 - `systemPrompt` with optional `replace` and `append` forms;
 - exactly the MCP server descriptors core selected for this role;
-- role-selected `skillSources`;
+- effective `skillSources`, composed by core from required role roots and any
+  authorized custom roots;
 - optional feature-disable names such as `cron`;
 - neutral logger, path, state, and environment injection seams;
 - optional `onTurnSettled` callback.
@@ -124,13 +125,19 @@ Source:
 
 Dreamux ships bundled skills under `/packages/dreamux/skills/`, but it does not
 install them into dispatcher workspaces during `onboard` or runtime startup.
-Core passes role-specific skill roots through `AgentRuntimeCreateContext`.
+Core passes effective skill roots through `AgentRuntimeCreateContext`.
 
 Current role gate:
 
 - Dispatcher roles receive the dispatcher workflow and maintenance root.
 - TeamLeader roles receive the Team workflow root.
 - Ordinary TeamMate and team-member roles receive no bundled Dreamux skills.
+
+The admin creation surface may add runtime-neutral custom roots for a
+TeamMate, team member, or TeamLeader. Core persists only those additions on the
+agent identity and recomposes them on every launch. TeamLeader composition
+always retains the required bundled Team workflow root. This capability is not
+part of MCP tool schemas or model-facing runtime discovery.
 
 Runtime packages own engine-specific application:
 
@@ -142,6 +149,8 @@ Source:
 
 - `/packages/dreamux/src/platform/paths.ts`
 - `/packages/dreamux/src/service/dispatcher-service/agent.ts`
+- `/packages/dreamux/src/service/agent-entity/identity-store.ts`
+- `/packages/dreamux/src/service/teammate-collection/index.ts`
 - `/packages/dreamux/src/service/team-service/index.ts`
 - `/packages/agent-runtime/codex/src/skill-roots.ts`
 - `/packages/agent-runtime/claude-code/src/args.ts`

@@ -23,6 +23,7 @@ import {
   optionalNullableRecordField,
   optionalNullableStringField,
   optionalRecordField,
+  optionalSkillSources,
   optionalString,
   optionalStringField,
   optionalTeamStatus,
@@ -41,24 +42,6 @@ export const adminMethods: Record<string, AdminHandler> = {
     uptimeSec: Math.floor(process.uptime()),
     dispatchers: await server.summarize(),
   }),
-
-  'dispatcher.add': (server, params) => {
-    void server;
-    void params;
-    throw new AdminError(
-      'UNSUPPORTED',
-      'dispatcher declarations live in ~/.dreamux/config.json; edit the dispatchers array and restart dreamux serve',
-    );
-  },
-
-  'dispatcher.remove': async (server, params) => {
-    void server;
-    void params;
-    throw new AdminError(
-      'UNSUPPORTED',
-      'dispatcher declarations live in ~/.dreamux/config.json; edit the dispatchers array and restart dreamux serve',
-    );
-  },
 
   'dispatcher.list': async (server) => ({ dispatchers: await server.summarize() }),
 
@@ -161,7 +144,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     }
   },
 
-  'mcp.teammate.spawn': async (server, params) => {
+  'teammate.spawn': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     const name = mustString(params, 'name_prefix');
@@ -169,6 +152,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     const intent = mustNonEmptyString(params, 'intent');
     const agentRuntime = optionalString(params, 'agent_runtime');
     const identity = optionalNonBlankString(params, 'identity');
+    const skillSources = optionalSkillSources(params);
     const dispatcher = server.getDispatcher(id);
     const target = await teammateTargetFor(dispatcher, params);
     if (target.callerKind === 'team_leader' && params?.['repo'] !== undefined) {
@@ -190,6 +174,7 @@ export const adminMethods: Record<string, AdminHandler> = {
       ...(cwd !== null ? { cwd } : {}),
       ...(agentRuntime !== null ? { agentRuntime } : {}),
       ...(identity !== null ? { identity } : {}),
+      ...(skillSources !== null ? { skillSources } : {}),
       ...(worktree !== null ? { worktree } : {}),
     };
     try {
@@ -204,7 +189,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     }
   },
 
-  'mcp.teammate.send': async (server, params) => {
+  'teammate.send': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     const dispatcher = server.getDispatcher(id);
@@ -224,7 +209,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     }
   },
 
-  'mcp.teammate.close': async (server, params) => {
+  'teammate.close': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     const dispatcher = server.getDispatcher(id);
@@ -242,7 +227,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     }
   },
 
-  'mcp.teammate.history': async (server, params) => {
+  'teammate.history': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     return (
@@ -250,7 +235,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     ).service.teammates.history(historyQuery(params));
   },
 
-  'mcp.teammate.list': async (server, params) => {
+  'teammate.list': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     return {
@@ -260,7 +245,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     };
   },
 
-  'mcp.teammate.status': async (server, params) => {
+  'teammate.status': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     const name = mustString(params, 'name');
@@ -271,7 +256,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     };
   },
 
-  'mcp.teammate.last': async (server, params) => {
+  'teammate.last': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     const name = mustString(params, 'name');
@@ -281,7 +266,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     ).service.teammates.last(name, turns ?? undefined);
   },
 
-  'mcp.teammate.capabilities': async (server, params) => {
+  'teammate.capabilities': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     return (
@@ -289,7 +274,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     ).service.teammates.getCapabilities();
   },
 
-  'mcp.team.create': async (server, params) => {
+  'team.create': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     const name = mustString(params, 'team_name');
@@ -304,6 +289,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     const worktree = repo?.worktree ?? null;
     const prompt = optionalString(params, 'prompt');
     const identity = optionalNonBlankString(params, 'identity');
+    const skillSources = optionalSkillSources(params);
     try {
       const created = await dispatcher.createTeam({
         name,
@@ -313,6 +299,7 @@ export const adminMethods: Record<string, AdminHandler> = {
         ...(worktree !== null ? { worktree } : {}),
         ...(prompt !== null ? { prompt } : {}),
         ...(identity !== null ? { identity } : {}),
+        ...(skillSources !== null ? { skillSources } : {}),
       });
       return { ...created, bound_target: null };
     } catch (err) {
@@ -320,13 +307,13 @@ export const adminMethods: Record<string, AdminHandler> = {
     }
   },
 
-  'mcp.team.send': async (server, params) => {
+  'team.send': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     if (teamCallerKind(params) === 'team_leader') {
       throw new AdminError(
         'BAD_REQUEST',
-        'mcp.team.send is not available for this Team MCP caller',
+        'team.send is available only to dispatcher callers',
       );
     }
     const name = mustString(params, 'team_name');
@@ -346,7 +333,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     }
   },
 
-  'mcp.team.list': async (server, params) => {
+  'team.list': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     const dispatcher = server.getDispatcher(id);
@@ -361,7 +348,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     };
   },
 
-  'mcp.team.status': async (server, params) => {
+  'team.status': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     const name = mustString(params, 'team_name');
@@ -375,7 +362,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     };
   },
 
-  'mcp.team.history': async (server, params) => {
+  'team.history': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     const name = optionalString(params, 'team_name');
@@ -407,7 +394,7 @@ export const adminMethods: Record<string, AdminHandler> = {
       ),
     };
   },
-  'mcp.team.bind_channel': async (server, params) => {
+  'team.bind_channel': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     const channelId = optionalString(params, 'channel_id');
@@ -418,7 +405,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     });
   },
 
-  'mcp.team.transfer_back': async (server, params) => {
+  'team.transfer_back': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     const channelId = optionalString(params, 'channel_id');
@@ -446,7 +433,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     };
   },
 
-  'mcp.team.dissolve': async (server, params) => {
+  'team.dissolve': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     const name = mustString(params, 'team_name');
@@ -458,7 +445,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     return { ...dissolved, bound_target: null };
   },
 
-  'mcp.collaboration_space.bind': async (server, params) => {
+  'collaboration_space.bind': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     const channelId = optionalString(params, 'channel_id');
@@ -492,7 +479,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     }
   },
 
-  'mcp.collaboration_space.dissolve': async (server, params) => {
+  'collaboration_space.dissolve': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     try {
@@ -505,7 +492,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     }
   },
 
-  'mcp.collaboration_space.status': async (server, params) => {
+  'collaboration_space.status': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     try {
@@ -517,7 +504,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     }
   },
 
-  'mcp.collaboration_space.list': async (server, params) => {
+  'collaboration_space.list': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     try {

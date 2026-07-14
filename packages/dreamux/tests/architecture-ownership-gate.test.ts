@@ -519,20 +519,20 @@ describe('architecture ownership gate (#233)', () => {
     const adminMethods = await readSource('admin/methods.ts');
     assertContains(
       adminMethods,
-      /'mcp\.team\.list'[\s\S]*bound_target:\s*await dispatcher\.activeTeamBindingSummary/,
-      'Team read composition invariant violated: mcp.team.list must add bound_target in admin/methods.ts.',
+      /'team\.list'[\s\S]*bound_target:\s*await dispatcher\.activeTeamBindingSummary/,
+      'Team read composition invariant violated: team.list must add bound_target in admin/methods.ts.',
       '../admin/methods.ts',
     );
     assertContains(
       adminMethods,
-      /'mcp\.team\.status'[\s\S]*bound_target:\s*await dispatcher\.activeTeamBindingSummary/,
-      'Team read composition invariant violated: mcp.team.status must add bound_target in admin/methods.ts.',
+      /'team\.status'[\s\S]*bound_target:\s*await dispatcher\.activeTeamBindingSummary/,
+      'Team read composition invariant violated: team.status must add bound_target in admin/methods.ts.',
       '../admin/methods.ts',
     );
     assertContains(
       adminMethods,
-      /'mcp\.team\.history'[\s\S]*bound_target:\s*await dispatcher\.activeTeamBindingSummary/,
-      'Team read composition invariant violated: mcp.team.history must add bound_target in admin/methods.ts.',
+      /'team\.history'[\s\S]*bound_target:\s*await dispatcher\.activeTeamBindingSummary/,
+      'Team read composition invariant violated: team.history must add bound_target in admin/methods.ts.',
       '../admin/methods.ts',
     );
   });

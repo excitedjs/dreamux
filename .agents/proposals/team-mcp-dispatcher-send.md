@@ -1,11 +1,15 @@
 # Proposal: Dispatcher Team MCP send to TeamLeader
 
-- **Status:** Draft proposal for review
+- **Status:** Implemented design history; current behavior is in [Current architecture](../reference/current-architecture.md)
 - **Date:** 2026-06-30
 - **Affects:** `@excitedjs/dreamux` Team MCP surface, admin IPC routing,
   TeamLeader turn submission, completion reverse delivery, bundled dispatcher
   prompt and skill text
 - **Companion design:** [Dispatcher Team MCP send to TeamLeader technical design](team-mcp-dispatcher-send-technical-design.md)
+
+Admin method strings in this proposal preserve the pre-namespace-cleanup names
+used when it was implemented. Current product names are documented in
+[Current architecture](../reference/current-architecture.md).
 
 ## Context
 
@@ -13,12 +17,12 @@ The previous Team MCP slice made the Team MCP caller-scoped and exposed
 `transfer_back` to TeamLeaders. That work also recorded a future `team.send`
 requirement, but it intentionally did not implement it.
 
-Current Team MCP behavior on `next` is:
+At this proposal's source baseline, Team MCP behavior on `next` was:
 
 - the dispatcher Team MCP exposes lifecycle tools, channel binding, and
   `transfer_back`;
 - the TeamLeader Team MCP exposes only `transfer_back`;
-- there is no `team.send` tool or `mcp.team.send` admin method;
+- there is no `team.send` tool or pre-cleanup `mcp.team.send` admin method;
 - the Team `create` tool already documents that an idle TeamLeader can later be
   driven by a send, but that send surface does not exist yet.
 

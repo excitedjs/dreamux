@@ -119,17 +119,18 @@ history and rationale; when you need current behavior, pair them with
   provider-owned role prompt injection, and external runtime handle validation
   while keeping native CLI/daemon details provider-owned.
 - [Admin control plane surface](proposals/admin-control-plane-surface.md)
-  — draft requirement/spec for making admin.sock the stable external control
-  plane, removing MCP-specific prefixes from Team, TeamMate, and
-  collaboration-space admin methods, keeping model-facing filtering in the MCP
-  adapters, and recording admin capability gaps for later slices.
+  — draft requirement/spec for making admin.sock the target external control
+  plane. Its implemented namespace slice uses product method names, keeps
+  model-facing filtering in the MCP adapters, and permits additional runtime
+  skill roots only on admin TeamMate/TeamLeader creation; event and protocol
+  gaps remain later slices.
 - [TeamMate identity system prompt](proposals/teammate-identity-system-prompt.md)
   — draft requirement/spec for adding a minimal `identity` input to
   `teammate.spawn` and `team.create`, persisting it on TeamMate identity records,
   and rendering it as provider-neutral system-prompt append guidance rather than
   first-turn prompt text.
 - [Dispatcher Team MCP send to TeamLeader](proposals/team-mcp-dispatcher-send.md)
-  — draft requirement/spec for adding a dispatcher-only Team MCP `send` tool
+  — retained implementation design for the dispatcher-only Team MCP `send` tool
   that submits turns to an existing Team's TeamLeader, registers completion
   delivery back to the dispatcher at send time, and leaves Team peer messaging
   out of this slice.
@@ -140,12 +141,11 @@ history and rationale; when you need current behavior, pair them with
   a Team, and target closure dissolves that Team without routing through the
   dispatcher agent runtime.
 - [TeamLeader-scoped Team MCP transfer back](proposals/team-mcp-teamleader-transfer-back.md)
-  — draft requirement/spec for exposing only `transfer_back` from Team MCP to
+  — retained implementation design for exposing only `transfer_back` from Team MCP to
   TeamLeaders, keeping dispatcher Team lifecycle tools private, keeping explicit
   provider target `meta`, moving channel binding ownership to a core
-  `ChannelService` over live sessions plus `ChannelBindingStore`, and recording
-  the future `team.send` parity requirement without implementing it in this
-  slice.
+  `ChannelService` over live sessions plus `ChannelBindingStore`; the later
+  dispatcher `team.send` slice is recorded separately above.
 - [Post-#110 architecture sustainability](proposals/post-110-architecture-sustainability.md)
   — diagnostic of why agent-written code drifted from the intended architecture
   after the #110 pluginization inflection (load-bearing invariants are prose with
