@@ -1,8 +1,12 @@
 # Dispatcher Team MCP send to TeamLeader technical design
 
-- **Status:** Draft design for review
+- **Status:** Implemented design history; current behavior is in [Current architecture](../reference/current-architecture.md)
 - **Companion to:** [Dispatcher Team MCP send to TeamLeader](team-mcp-dispatcher-send.md)
 - **Source baseline:** `origin/next` at `c88ec2e`
+
+Admin method strings in this design preserve the pre-namespace-cleanup names
+from that source baseline. Current product names are documented in
+[Current architecture](../reference/current-architecture.md).
 
 ## Settled choices
 
@@ -20,7 +24,7 @@
 | TeamLeader caller | Reject `mcp.team.send` with `BAD_REQUEST`; peer send stays future. |
 | Future peer send | Preserve a reusable initiator seam, but do not expose peer send here. |
 
-## Current source facts
+## Source-baseline facts
 
 - `packages/dreamux/src/mcp/team-mcp.ts` defines a caller kind split:
   `dispatcher` sees the full Team MCP surface and `team_leader` sees only

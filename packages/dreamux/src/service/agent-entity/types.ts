@@ -1,5 +1,6 @@
 import type {
   AgentRuntimeCapabilities,
+  AgentRuntimeSkillSource,
   AgentRuntimeStatus,
 } from "@excitedjs/dreamux-types";
 
@@ -69,6 +70,8 @@ export interface AgentEntityIdentity {
   worktree: AgentEntityWorktreeIdentity;
   intent: string | null;
   identity_prompt: string | null;
+  /** Persisted admin-supplied sources only; bundled role sources stay owner-composed. */
+  skill_sources: readonly AgentRuntimeSkillSource[];
   created_at: number;
   updated_at: number;
   status: AgentEntityIdentityStatus;

@@ -28,7 +28,7 @@ describe('admin no-repo spawn/create → default work dir (#199)', () => {
     const server = spawnStub((input) => {
       captured = input as Record<string, unknown>;
     });
-    await adminMethods['mcp.teammate.spawn']!(server, {
+    await adminMethods['teammate.spawn']!(server, {
       dispatcher_id: 'flow',
       name_prefix: 'solo',
       prompt: 'go',
@@ -43,7 +43,7 @@ describe('admin no-repo spawn/create → default work dir (#199)', () => {
     const server = spawnStub((input) => {
       captured = input as Record<string, unknown>;
     });
-    await adminMethods['mcp.teammate.spawn']!(server, {
+    await adminMethods['teammate.spawn']!(server, {
       dispatcher_id: 'flow',
       name_prefix: 'solo',
       prompt: 'go',
@@ -58,7 +58,7 @@ describe('admin no-repo spawn/create → default work dir (#199)', () => {
     const server = spawnStub((input) => {
       captured = input as Record<string, unknown>;
     });
-    await adminMethods['mcp.teammate.spawn']!(server, {
+    await adminMethods['teammate.spawn']!(server, {
       dispatcher_id: 'flow',
       name_prefix: 'solo',
       prompt: 'go',
@@ -83,7 +83,7 @@ describe('admin no-repo spawn/create → default work dir (#199)', () => {
         },
       }),
     } as unknown as Server;
-    await adminMethods['mcp.team.create']!(server, {
+    await adminMethods['team.create']!(server, {
       dispatcher_id: 'flow',
       team_name: 'plain',
       leader_agent_runtime: 'codex',
@@ -107,7 +107,7 @@ describe('admin no-repo spawn/create → default work dir (#199)', () => {
         },
       }),
     } as unknown as Server;
-    await adminMethods['mcp.team.create']!(server, {
+    await adminMethods['team.create']!(server, {
       dispatcher_id: 'flow',
       team_name: 'plain',
       leader_agent_runtime: 'codex',

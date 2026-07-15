@@ -79,8 +79,6 @@ function resolveMethod(obj: string | undefined, verb: string | undefined): strin
   if (o === 'server' && v === 'status') return 'server.status';
   if (o === 'dispatcher') {
     switch (v) {
-      case 'add': return 'dispatcher.add';
-      case 'remove': return 'dispatcher.remove';
       case 'list': return 'dispatcher.list';
       case 'status': return 'dispatcher.status';
       case 'start': return 'dispatcher.start';

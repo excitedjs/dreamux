@@ -11,7 +11,7 @@ import {
   type DreamuxCommand,
 } from './types.js';
 
-type DispatcherVerb = 'remove' | 'status' | 'start' | 'stop';
+type DispatcherVerb = 'status' | 'start' | 'stop';
 
 interface DispatcherArgv {
   id: string;
@@ -25,8 +25,6 @@ export function createDispatcherCommand(deps: CliDeps): CommandModule {
       y
         .command([
           createDispatcherListCommand(deps),
-          createDispatcherAddCommand(deps),
-          createDispatcherVerbCommand(deps, 'remove'),
           createDispatcherVerbCommand(deps, 'status'),
           createDispatcherVerbCommand(deps, 'start'),
           createDispatcherVerbCommand(deps, 'stop'),
@@ -43,23 +41,6 @@ function createDispatcherListCommand(deps: CliDeps): CommandModule {
     describe: 'List configured dispatchers',
     handler: async () =>
       deps.execEntry(deps.serverCtlEntry, ['dispatcher', 'list'], adminEnv()),
-  };
-}
-
-function createDispatcherAddCommand(
-  deps: CliDeps,
-): CommandModule<{}, DispatcherArgv> {
-  return {
-    command: 'add',
-    describe: 'Add a dispatcher',
-    builder: withRequiredDispatcherId,
-    handler: async (argv) => {
-      await deps.execEntry(
-        deps.serverCtlEntry,
-        ['dispatcher', 'add', '--id', requiredDispatcherId(argv.id)],
-        adminEnv(),
-      );
-    },
   };
 }
 

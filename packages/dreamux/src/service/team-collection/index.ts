@@ -187,6 +187,9 @@ export class TeamCollection {
           leaderAgentRuntime: input.leaderAgentRuntime,
           intent: input.intent,
           ...(input.identity !== undefined ? { identity: input.identity } : {}),
+          ...(input.skillSources !== undefined
+            ? { skillSources: input.skillSources }
+            : {}),
           workspace,
           existing,
         },

@@ -1,8 +1,12 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import type { DreamuxLogger } from '@excitedjs/dreamux-types';
+import type {
+  AgentRuntimeSkillSource,
+  DreamuxLogger,
+} from '@excitedjs/dreamux-types';
 
+import { parseAgentRuntimeSkillSources } from '../../agent-runtime/skill-sources.js';
 import { writeFileAtomic } from '../../platform/atomic-write.js';
 import { isNotFound } from '../../platform/fs-errors.js';
 import {
@@ -36,6 +40,7 @@ export interface AgentIdentityCreateInput {
   worktree: AgentEntityWorktreeIdentity;
   intent?: string | null;
   identityPrompt?: string | null;
+  skillSources?: readonly AgentRuntimeSkillSource[];
   status?: AgentEntityIdentityStatus;
 }
 
@@ -254,6 +259,7 @@ export class AgentIdentityStore {
       worktree: input.worktree,
       intent: input.intent ?? null,
       identity_prompt: input.identityPrompt ?? null,
+      skill_sources: [...(input.skillSources ?? [])],
       created_at: now,
       updated_at: now,
       status: input.status ?? 'starting',
@@ -395,6 +401,10 @@ function readIdentity(
       typeof record['identity_prompt'] === 'string'
         ? record['identity_prompt']
         : null,
+    skill_sources: parseAgentRuntimeSkillSources(
+      record['skill_sources'] ?? [],
+      `agent identity ${JSON.stringify(storedName)} skill_sources`,
+    ),
     created_at: createdAt,
     updated_at: updatedAt,
     status: readStatus(record['status']),

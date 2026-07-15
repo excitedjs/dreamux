@@ -40,12 +40,16 @@ export interface AgentRuntimeMcpServer {
 }
 
 /**
- * A bundled skill root core hands to a runtime. Core selects roots by role; the
- * runtime package owns the mechanics of applying them to its engine.
+ * A skill root core hands to a runtime. Core composes required bundled roots
+ * with any authorized custom roots; the runtime package owns the mechanics of
+ * applying them to its engine.
  */
 export interface AgentRuntimeSkillSource {
   name: string;
-  /** Directory whose direct children are skill directories. */
+  /**
+   * Absolute canonical directory whose direct children are skill directories.
+   * Dreamux core validates and normalizes custom roots before persistence.
+   */
   path: string;
   source: 'dreamux-core' | string;
 }
@@ -216,8 +220,8 @@ export interface AgentRuntimeCreateContext<TConfig = unknown> {
    */
   mcpServers: readonly AgentRuntimeMcpServer[];
   /**
-   * Bundled skill sources core selected for this role. Empty for roles that
-   * receive no bundled Dreamux skills (ordinary teammate/team-member).
+   * Effective skill sources core selected for this runtime. This can include
+   * required bundled role roots and authorized custom roots.
    */
   skillSources?: readonly AgentRuntimeSkillSource[];
   /**

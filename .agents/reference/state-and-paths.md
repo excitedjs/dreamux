@@ -92,6 +92,15 @@ Important children:
 - `~/.dreamux/state/<dispatcher-id>/team/`: Team durable ledgers and channel
   binding state.
 
+TeamMate, team-member, and TeamLeader identities persist admin-supplied
+`skill_sources` so runtime relaunch and process restart preserve authorized
+extra skill roots. Stored paths are canonical absolute skill-root directories;
+relative paths and unreadable/missing directories are rejected, duplicate roots
+are collapsed, and direct child skill-name collisions are rejected at the admin
+boundary. Old identity
+records without that field read as an empty list. Required bundled role roots
+remain code-owned and are recomposed at launch rather than persisted.
+
 Legacy identity records that point at old under-state worktree paths are read
 verbatim. Dreamux does not rewrite or delete them during ordinary startup.
 

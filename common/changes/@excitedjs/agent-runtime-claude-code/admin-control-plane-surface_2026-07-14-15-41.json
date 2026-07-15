@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/agent-runtime-claude-code",
+      "comment": "Reject relative skill source root paths before materializing Claude add-dir links.",
+      "type": "patch"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-claude-code"
+}

@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { adminMethods } from '../src/admin/methods.js';
 import { AdminError } from '../src/admin/protocol.js';
@@ -40,12 +43,12 @@ describe('admin layer enforces required non-empty intent/note (#182 PR-3)', () =
 
   it('rejects teammate.spawn with missing or empty intent', async () => {
     const base = { dispatcher_id: 'flow', name_prefix: 'a', prompt: 'go' };
-    await expectBadRequest('mcp.teammate.spawn', base);
-    await expectBadRequest('mcp.teammate.spawn', { ...base, intent: '' });
+    await expectBadRequest('teammate.spawn', base);
+    await expectBadRequest('teammate.spawn', { ...base, intent: '' });
   });
 
   it('rejects teammate.spawn with blank identity', async () => {
-    await expectBadRequest('mcp.teammate.spawn', {
+    await expectBadRequest('teammate.spawn', {
       dispatcher_id: 'flow',
       name_prefix: 'a',
       prompt: 'go',
@@ -54,10 +57,58 @@ describe('admin layer enforces required non-empty intent/note (#182 PR-3)', () =
     });
   });
 
+  it('strictly rejects malformed admin-only skill_sources before creation', async () => {
+    const malformed: unknown[] = [
+      null,
+      {},
+      [{}],
+      [{ name: 'custom', path: '/skills/custom', source: '' }],
+      [{ name: 'custom', path: 'relative/skills', source: 'admin' }],
+      [{ name: 'custom', path: 42, source: 'admin' }],
+      [{ name: '   ', path: '/skills/custom', source: 'admin' }],
+    ];
+    for (const skill_sources of malformed) {
+      await expectBadRequest('teammate.spawn', {
+        dispatcher_id: 'flow',
+        name_prefix: 'a',
+        prompt: 'go',
+        intent: 'work',
+        skill_sources,
+      });
+      await expectBadRequest('team.create', {
+        dispatcher_id: 'flow',
+        team_name: 'alpha',
+        leader_agent_runtime: 'codex',
+        intent: 'work',
+        skill_sources,
+      });
+    }
+  });
+
+  it('rejects TeamLeader skill roots that shadow required bundled skills', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dreamux-skill-shadow-'));
+    try {
+      mkdirSync(join(root, 'team-workflow'), { recursive: true });
+      await expectBadRequest('team.create', {
+        dispatcher_id: 'flow',
+        team_name: 'alpha',
+        leader_agent_runtime: 'codex',
+        intent: 'work',
+        skill_sources: [{
+          name: 'shadow-root',
+          path: root,
+          source: 'admin',
+        }],
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('rejects teammate.close with missing or empty note', async () => {
     const base = { dispatcher_id: 'flow', name: 'a' };
-    await expectBadRequest('mcp.teammate.close', base);
-    await expectBadRequest('mcp.teammate.close', { ...base, note: '' });
+    await expectBadRequest('teammate.close', base);
+    await expectBadRequest('teammate.close', { ...base, note: '' });
   });
 
   it('rejects team.create with missing or empty intent', async () => {
@@ -66,12 +117,12 @@ describe('admin layer enforces required non-empty intent/note (#182 PR-3)', () =
       team_name: 'alpha',
       leader_agent_runtime: 'codex',
     };
-    await expectBadRequest('mcp.team.create', base);
-    await expectBadRequest('mcp.team.create', { ...base, intent: '' });
+    await expectBadRequest('team.create', base);
+    await expectBadRequest('team.create', { ...base, intent: '' });
   });
 
   it('rejects team.create with blank identity', async () => {
-    await expectBadRequest('mcp.team.create', {
+    await expectBadRequest('team.create', {
       dispatcher_id: 'flow',
       team_name: 'alpha',
       leader_agent_runtime: 'codex',
@@ -82,33 +133,45 @@ describe('admin layer enforces required non-empty intent/note (#182 PR-3)', () =
 
   it('rejects team.dissolve with missing or empty note', async () => {
     const base = { dispatcher_id: 'flow', team_name: 'alpha' };
-    await expectBadRequest('mcp.team.dissolve', base);
-    await expectBadRequest('mcp.team.dissolve', { ...base, note: '' });
+    await expectBadRequest('team.dissolve', base);
+    await expectBadRequest('team.dissolve', { ...base, note: '' });
   });
 
   it('rejects team.send for TeamLeader callers and requires a non-empty prompt', async () => {
     const base = { dispatcher_id: 'flow', team_name: 'alpha' };
-    await expectBadRequest('mcp.team.send', base);
-    await expectBadRequest('mcp.team.send', { ...base, prompt: '' });
-    await expectBadRequest('mcp.team.send', {
+    await expectBadRequest('team.send', base);
+    await expectBadRequest('team.send', { ...base, prompt: '' });
+    await expectBadRequest('team.send', {
       ...base,
       caller_kind: 'team_leader',
       team_id: 'alpha',
       leader_name: 'alpha-leader',
       prompt: 'follow up',
     });
+    await expect(
+      adminMethods['team.send']!(stubServer, {
+        ...base,
+        caller_kind: 'team_leader',
+        team_id: 'alpha',
+        leader_name: 'alpha-leader',
+        prompt: 'follow up',
+      }),
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'team.send is available only to dispatcher callers',
+    });
   });
 });
 
-describe('Channel MCP admin methods replace the Team binding methods (#209 slice 8)', () => {
+describe('Team channel admin methods replace the old binding methods (#209 slice 8)', () => {
   it('removes the old Feishu binding methods without aliases', () => {
-    expect(adminMethods['mcp.team.bind_group']).toBeUndefined();
-    expect(adminMethods['mcp.team.transfer_channel_back']).toBeUndefined();
+    expect(adminMethods['team.bind_group']).toBeUndefined();
+    expect(adminMethods['team.transfer_channel_back']).toBeUndefined();
   });
 
-  it('registers the Team MCP channel-binding methods (and no generic channel.* aliases)', () => {
-    expect(typeof adminMethods['mcp.team.bind_channel']).toBe('function');
-    expect(typeof adminMethods['mcp.team.transfer_back']).toBe('function');
+  it('registers the Team channel-binding methods (and no generic channel.* aliases)', () => {
+    expect(typeof adminMethods['team.bind_channel']).toBe('function');
+    expect(typeof adminMethods['team.transfer_back']).toBe('function');
     expect(adminMethods['mcp.channel.bind_channel']).toBeUndefined();
     expect(adminMethods['mcp.channel.transfer_back']).toBeUndefined();
   });
@@ -130,12 +193,12 @@ describe('Channel MCP admin methods replace the Team binding methods (#209 slice
       }),
     } as unknown as Server;
 
-    const bound = await adminMethods['mcp.team.bind_channel']!(channelStub, {
+    const bound = await adminMethods['team.bind_channel']!(channelStub, {
       dispatcher_id: 'flow',
       team_name: 'alpha',
       meta: { chat_id: 'chat-demo' },
     });
-    const transferred = await adminMethods['mcp.team.transfer_back']!(channelStub, {
+    const transferred = await adminMethods['team.transfer_back']!(channelStub, {
       dispatcher_id: 'flow',
       meta: { chat_id: 'chat-demo' },
     });
@@ -161,7 +224,7 @@ describe('Channel MCP admin methods replace the Team binding methods (#209 slice
       }),
     } as unknown as Server;
 
-    const transferred = await adminMethods['mcp.team.transfer_back']!(channelStub, {
+    const transferred = await adminMethods['team.transfer_back']!(channelStub, {
       dispatcher_id: 'flow',
       caller_kind: 'team_leader',
       team_id: 'alpha',
@@ -186,7 +249,7 @@ describe('Channel MCP admin methods replace the Team binding methods (#209 slice
       getDispatcher: () => ({ bindTeamChannel: async () => ({}) }),
     } as unknown as Server;
     await expect(
-      adminMethods['mcp.team.bind_channel']!(channelStub, {
+      adminMethods['team.bind_channel']!(channelStub, {
         dispatcher_id: 'flow',
         team_name: 'alpha',
       }),
@@ -194,7 +257,7 @@ describe('Channel MCP admin methods replace the Team binding methods (#209 slice
   });
 });
 
-describe('Collaboration Space MCP admin methods', () => {
+describe('Collaboration Space admin methods', () => {
   it('parses bind identity, container, and repo policy', async () => {
     const seen: Array<Record<string, unknown>> = [];
     const server = {
@@ -208,7 +271,7 @@ describe('Collaboration Space MCP admin methods', () => {
     } as unknown as Server;
 
     await expect(
-      adminMethods['mcp.collaboration_space.bind']!(server, {
+      adminMethods['collaboration_space.bind']!(server, {
         dispatcher_id: 'flow',
         channel_id: 'primary',
         space_name: 'space-alpha',
@@ -237,7 +300,7 @@ describe('Collaboration Space MCP admin methods', () => {
   });
 
   it('rejects collaboration_space.bind with blank identity', async () => {
-    await expectBadRequest('mcp.collaboration_space.bind', {
+    await expectBadRequest('collaboration_space.bind', {
       dispatcher_id: 'flow',
       space_name: 'space-alpha',
       leader_agent_runtime: 'agent-a',
@@ -258,7 +321,7 @@ describe('Collaboration Space MCP admin methods', () => {
     } as unknown as Server;
 
     await expect(
-      adminMethods['mcp.collaboration_space.bind']!(server, {
+      adminMethods['collaboration_space.bind']!(server, {
         dispatcher_id: 'flow',
         space_name: 'space-alpha',
         container: {
@@ -276,7 +339,7 @@ describe('Collaboration Space MCP admin methods', () => {
   });
 });
 
-describe('Team MCP admin read methods compose channel binding summaries', () => {
+describe('Team admin read methods compose channel binding summaries', () => {
   it('team.send forwards to the dispatcher and returns only team, leader, and turn', async () => {
     const sent = {
       team: {
@@ -324,7 +387,7 @@ describe('Team MCP admin read methods compose channel binding summaries', () => 
       }),
     } as unknown as Server;
 
-    const result = await adminMethods['mcp.team.send']!(server, {
+    const result = await adminMethods['team.send']!(server, {
       dispatcher_id: 'flow',
       caller_kind: 'dispatcher',
       team_name: 'alpha',
@@ -355,7 +418,7 @@ describe('Team MCP admin read methods compose channel binding summaries', () => 
     } as unknown as Server;
 
     await expect(
-      adminMethods['mcp.team.send']!(server, {
+      adminMethods['team.send']!(server, {
         dispatcher_id: 'flow',
         team_name: 'ghost',
         prompt: 'follow up',
@@ -439,12 +502,12 @@ describe('Team MCP admin read methods compose channel binding summaries', () => 
     } as unknown as Server;
 
     await expect(
-      adminMethods['mcp.team.list']!(server, { dispatcher_id: 'flow' }),
+      adminMethods['team.list']!(server, { dispatcher_id: 'flow' }),
     ).resolves.toMatchObject({
       teams: [{ team_name: 'alpha', bound_target: binding }],
     });
     await expect(
-      adminMethods['mcp.team.status']!(server, {
+      adminMethods['team.status']!(server, {
         dispatcher_id: 'flow',
         team_name: 'alpha',
       }),
@@ -453,7 +516,7 @@ describe('Team MCP admin read methods compose channel binding summaries', () => 
       bound_target: binding,
     });
     await expect(
-      adminMethods['mcp.team.history']!(server, { dispatcher_id: 'flow' }),
+      adminMethods['team.history']!(server, { dispatcher_id: 'flow' }),
     ).resolves.toMatchObject({
       items: [{ team_name: 'alpha', bound_target: binding }],
       next_cursor: null,

@@ -103,7 +103,7 @@ describe('collaboration-space-mcp stdio shim', () => {
     ]);
   });
 
-  it('forwards bind and dissolve to admin IPC', async () => {
+  it('forwards every tool through the canonical admin namespace', async () => {
     const admin = await startFakeAdminServer((request) => ({
       id: request.id,
       ok: true,
@@ -147,7 +147,7 @@ describe('collaboration-space-mcp stdio shim', () => {
           content: [{ text: 'bind forwarded to dreamux serve' }],
           structuredContent: {
             ok: true,
-            method: 'mcp.collaboration_space.bind',
+            method: 'collaboration_space.bind',
           },
         },
       });
@@ -164,14 +164,47 @@ describe('collaboration-space-mcp stdio shim', () => {
       expect(await reader.next()).toMatchObject({
         result: {
           structuredContent: {
-            method: 'mcp.collaboration_space.dissolve',
+            method: 'collaboration_space.dissolve',
+          },
+        },
+      });
+
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 3,
+        method: 'tools/call',
+        params: {
+          name: 'status',
+          arguments: { space_name: 'space-alpha' },
+        },
+      });
+      expect(await reader.next()).toMatchObject({
+        result: {
+          structuredContent: {
+            method: 'collaboration_space.status',
+          },
+        },
+      });
+
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 4,
+        method: 'tools/call',
+        params: { name: 'list', arguments: {} },
+      });
+      expect(await reader.next()).toMatchObject({
+        result: {
+          structuredContent: {
+            method: 'collaboration_space.list',
           },
         },
       });
 
       expect(admin.requests.map((request) => request.method)).toEqual([
-        'mcp.collaboration_space.bind',
-        'mcp.collaboration_space.dissolve',
+        'collaboration_space.bind',
+        'collaboration_space.dissolve',
+        'collaboration_space.status',
+        'collaboration_space.list',
       ]);
       expect(admin.requests[0]?.params).toMatchObject({
         dispatcher_id: 'dispatcher-a',

@@ -1,6 +1,6 @@
 # Proposal: TeamLeader-scoped Team MCP transfer back
 
-- **Status:** Active proposal (draft for review)
+- **Status:** Implemented design history; current behavior is in [Current architecture](../reference/current-architecture.md)
 - **Date:** 2026-06-29
 - **Affects:** `@excitedjs/dreamux` Team MCP surface, TeamLeader launch MCP
   descriptors, admin IPC routing, channel binding ownership, bundled dispatcher
@@ -8,10 +8,14 @@
 - **PR / Issue:** TBD
 - **Implementation design:** [TeamLeader-scoped Team MCP transfer back technical design](team-mcp-teamleader-transfer-back-technical-design.md)
 
+Admin method strings in this proposal preserve the pre-namespace-cleanup names
+used when it was implemented. Current product names are documented in
+[Current architecture](../reference/current-architecture.md).
+
 ## Context
 
-The Team MCP is currently dispatcher-scoped. It exposes Team lifecycle tools and
-the channel-binding verbs:
+At this proposal's source baseline, the Team MCP was dispatcher-scoped. It
+exposed Team lifecycle tools and the channel-binding verbs:
 
 - `create`, `list`, `status`, `history`, `dissolve`
 - `bind_channel({ team_name, channel_id?, meta })`
@@ -24,7 +28,7 @@ tool implementation is in `/packages/dreamux/src/mcp/team-mcp.ts`.
 Team leaders already receive caller-scoped MCP descriptors for other surfaces:
 channel tools are scoped by `callerKind: 'team_leader'`, `team_id`, and
 `leader_name`, and the TeamMate MCP already has a dispatcher-vs-team-leader
-projection. This proposal records the next Team MCP slice: make
+projection. This proposal recorded the next Team MCP slice: make
 `transfer_back` available to TeamLeaders without exposing the dispatcher-only
 Team lifecycle surface.
 
@@ -189,10 +193,9 @@ Suggested issue title:
 
 ## Future send requirement record
 
-`team.send` is intentionally out of scope for this slice, but the requirement is
-recorded here so the transfer-back work does not block the future shape.
-
-A future Team MCP `send` capability should align with `teammate.send`:
+`team.send` was intentionally out of scope for this slice and was implemented
+later by [Dispatcher Team MCP send to TeamLeader](team-mcp-dispatcher-send.md).
+That later capability aligns with `teammate.send`:
 
 - submit a turn to the addressed Team participant;
 - preserve the runtime-native continuation semantics of the target;

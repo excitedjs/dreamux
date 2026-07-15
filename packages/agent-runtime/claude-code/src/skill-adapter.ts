@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { access, readdir } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 
 import type { AgentRuntimeSkillSource } from '@excitedjs/dreamux-types';
 
@@ -32,7 +32,14 @@ export function uniqueSkillSources(
   sources: readonly AgentRuntimeSkillSource[],
 ): AgentRuntimeSkillSource[] {
   const byRoot = new Map<string, AgentRuntimeSkillSource>();
-  for (const source of sources) byRoot.set(resolve(source.path), source);
+  for (const source of sources) {
+    if (!isAbsolute(source.path)) {
+      throw new Error(
+        `skill source ${JSON.stringify(source.name)} path must be absolute`,
+      );
+    }
+    byRoot.set(resolve(source.path), source);
+  }
   return [...byRoot.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([, source]) => source);

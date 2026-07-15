@@ -498,6 +498,14 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     ).toBe(skillDir);
   });
 
+  it('rejects relative skill source roots instead of materializing cwd-dependent links', async () => {
+    const fleet = fakeFleet();
+    await expect(makeRuntime(fleet, {
+      skillSources: [{ name: 'relative', path: 'relative/skills', source: 'test' }],
+    })).rejects.toThrow(/path must be absolute/);
+    expect(fleet.sessions).toEqual([]);
+  });
+
   it('removes stale materialized skill links before rebuilding add-dir roots', async () => {
     const fleet = fakeFleet();
     const staleSource = join(home, 'stale-source');

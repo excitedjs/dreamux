@@ -260,6 +260,9 @@ export class TeammateCollection implements TeammateOps {
       worktree: workspace.worktree,
       intent: input.intent,
       identityPrompt,
+      ...(input.skillSources !== undefined
+        ? { skillSources: input.skillSources }
+        : {}),
       status: 'starting',
     });
     const entity = this.entityFor(identity);
@@ -487,6 +490,7 @@ export class TeammateCollection implements TeammateOps {
           this.teamScope === null
             ? assertDispatcherScopedTeammate
             : assertTeamScopedAgent(this.teamScope),
+        skillSources: identity.skill_sources,
         ...(systemPromptOptions ?? {}),
       },
       config: this.opts.config,

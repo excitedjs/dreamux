@@ -197,6 +197,8 @@ describe('teammate-mcp stdio shim', () => {
     expect(spawn.inputSchema.properties).toHaveProperty('repo');
     expect(spawn.inputSchema.properties).not.toHaveProperty('cwd');
     expect(spawn.inputSchema.properties).not.toHaveProperty('worktree');
+    expect(spawn.inputSchema.properties).not.toHaveProperty('skill_sources');
+    expect(JSON.stringify(tools)).not.toContain('skill_sources');
     // The repo object exposes the reuse-cwd / managed work modes + cleanup.
     const repo = JSON.stringify(spawn.inputSchema.properties['repo']);
     expect(repo).toContain('reuse-cwd');
@@ -306,6 +308,11 @@ describe('teammate-mcp stdio shim', () => {
             },
             intent: 'review',
             identity: 'architecture reviewer',
+            skill_sources: [{
+              name: 'must-not-forward',
+              path: '/skills/untrusted-teammate',
+              source: 'mcp',
+            }],
           },
         },
       });
@@ -331,7 +338,7 @@ describe('teammate-mcp stdio shim', () => {
       expect(admin.requests).toEqual([
         {
           id: expect.any(String) as string,
-          method: 'mcp.teammate.spawn',
+          method: 'teammate.spawn',
           params: {
             dispatcher_id: 'dispatcher-a',
             caller_kind: 'dispatcher',
@@ -458,7 +465,7 @@ describe('teammate-mcp stdio shim', () => {
       expect(JSON.stringify(response)).not.toContain(
         TEAMMATE_DISPATCH_SUCCESS_REMINDER,
       );
-      expect(admin.requests[0]?.method).toBe('mcp.teammate.close');
+      expect(admin.requests[0]?.method).toBe('teammate.close');
 
       input.end();
       await run;
@@ -639,6 +646,11 @@ describe('teammate-mcp stdio shim', () => {
             worktree: { mode: 'managed', cleanup: 'delete-on-close' },
             intent: 'build',
             identity: 'implementation specialist',
+            skill_sources: [{
+              name: 'must-not-forward',
+              path: '/skills/untrusted-member',
+              source: 'mcp',
+            }],
           },
         },
       });
@@ -656,7 +668,7 @@ describe('teammate-mcp stdio shim', () => {
       expect(admin.requests).toEqual([
         {
           id: expect.any(String) as string,
-          method: 'mcp.teammate.spawn',
+          method: 'teammate.spawn',
           params: {
             dispatcher_id: 'dispatcher-a',
             name_prefix: 'builder',
@@ -815,9 +827,9 @@ describe('teammate-mcp stdio shim', () => {
       );
 
       expect(admin.requests.map((request) => request.method)).toEqual([
-        'mcp.teammate.history',
-        'mcp.teammate.last',
-        'mcp.teammate.last',
+        'teammate.history',
+        'teammate.last',
+        'teammate.last',
       ]);
       expect(admin.requests.map((request) => request.params)).toEqual([
         {

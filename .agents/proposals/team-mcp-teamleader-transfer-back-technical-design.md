@@ -1,10 +1,14 @@
 # TeamLeader-scoped Team MCP transfer back technical design
 
-- **Status:** Draft implementation design for review
+- **Status:** Implemented design history; current behavior is in [Current architecture](../reference/current-architecture.md)
 - **Companion to:** [TeamLeader-scoped Team MCP transfer back](team-mcp-teamleader-transfer-back.md)
 - **Source baseline:** `team/codex-next-0629-1928` at `91f02bc`
 
-This design implements only the current slice: expose `team.transfer_back` to a
+Admin method strings in this design preserve the pre-namespace-cleanup names
+from that source baseline. Current product names are documented in
+[Current architecture](../reference/current-architecture.md).
+
+This design implemented only its original slice: expose `team.transfer_back` to a
 TeamLeader and create a clear core Channel service boundary for channel-binding
 ownership. It does not implement `team.send` or Team peer messaging.
 
@@ -23,7 +27,7 @@ ownership. It does not implement `team.send` or Team peer messaging.
 | Admin IPC trust | Do not add per-tool/admin-method identity restrictions; local admin IPC remains trusted. |
 | Future `team.send` | Record the requirement, but leave it out of this slice. |
 
-## Current source facts
+## Source-baseline facts
 
 - Team MCP is currently dispatcher-only in practice: the descriptor is assembled
   for the dispatcher at

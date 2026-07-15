@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -23,6 +23,7 @@ import type {
 } from '@excitedjs/dreamux-types';
 
 import type { AgentRuntimeProviderCatalog } from '../src/agent-runtime/index.js';
+import { adminMethods } from '../src/admin/methods.js';
 import { CompletionRouter } from '../src/service/completion-router/index.js';
 import { DispatcherService } from '../src/service/dispatcher-service/index.js';
 import { CronJobStore } from '../src/service/scheduler/store.js';
@@ -156,6 +157,35 @@ function fakeRuntimeCatalog(input: {
       return provider;
     },
   } as AgentRuntimeProviderCatalog;
+}
+
+function skillSourceNames(
+  contexts: readonly AgentRuntimeCreateContext[],
+  requiredName: string,
+): string[] | undefined {
+  return contexts
+    .find((context) => context.skillSources?.some(
+      (source) => source.name === requiredName,
+    ))
+    ?.skillSources
+    ?.map((source) => source.name);
+}
+
+function skillSourcesFor(
+  contexts: readonly AgentRuntimeCreateContext[],
+  requiredName: string,
+) {
+  return contexts
+    .find((context) => context.skillSources?.some(
+      (source) => source.name === requiredName,
+    ))
+    ?.skillSources;
+}
+
+function createSkillRoot(parent: string, rootName: string, skillName: string): string {
+  const root = join(parent, rootName);
+  mkdirSync(join(root, skillName), { recursive: true });
+  return root;
 }
 
 function noopLog(): DreamuxLogger {
@@ -705,6 +735,186 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     expect(teammateContext?.systemPrompt).not.toHaveProperty('replace');
 
     await dispatcher.stop();
+  });
+
+  it('keeps admin-only custom skill sources across role composition and cold rebuild', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        channels: [],
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const log = noopLog();
+    const contexts: AgentRuntimeCreateContext[] = [];
+    const dispatcher = new DispatcherService({
+      id: 'dispatcher-a',
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: fakeRuntimeCatalog({ runtimes: [], contexts }),
+      channelProviders: fakeChannelCatalog(),
+      adminSocketPath: '/tmp/dreamux-admin.sock',
+      channelLoggerFactory: () => log,
+      log,
+    });
+    await dispatcher.start();
+    const server = {
+      repos: {
+        dispatchers: {
+          get: (id: string) => id === 'dispatcher-a' ? { dispatcher_id: id } : null,
+        },
+      },
+      getDispatcher: () => dispatcher,
+    } as unknown as Server;
+    const skillRoots = join(root, 'admin-skills');
+    const teammateRoot = createSkillRoot(
+      skillRoots,
+      'teammate-root',
+      'teammate-skill',
+    );
+    const leaderRoot = createSkillRoot(
+      skillRoots,
+      'team-leader-root',
+      'team-leader-skill',
+    );
+    const memberRoot = createSkillRoot(
+      skillRoots,
+      'team-member-root',
+      'team-member-skill',
+    );
+    const teammateSource = {
+      name: 'admin-teammate',
+      path: join(teammateRoot, '..', 'teammate-root'),
+      source: 'admin',
+    };
+    const leaderSource = {
+      name: 'admin-team-leader',
+      path: join(leaderRoot, '..', 'team-leader-root'),
+      source: 'admin',
+    };
+    const memberSource = {
+      name: 'admin-team-member',
+      path: join(memberRoot, '..', 'team-member-root'),
+      source: 'admin',
+    };
+
+    const teammate = await adminMethods['teammate.spawn']!(server, {
+      dispatcher_id: 'dispatcher-a',
+      name_prefix: 'helper',
+      prompt: 'help',
+      intent: 'admin helper',
+      skill_sources: [teammateSource],
+    }) as { teammate: { name: string } };
+    const team = await adminMethods['team.create']!(server, {
+      dispatcher_id: 'dispatcher-a',
+      team_name: 'alpha',
+      leader_agent_runtime: 'agent-a',
+      intent: 'lead alpha',
+      skill_sources: [leaderSource],
+    }) as { leader: { name: string } };
+    const member = await adminMethods['teammate.spawn']!(server, {
+      dispatcher_id: 'dispatcher-a',
+      caller_kind: 'team_leader',
+      team_id: 'alpha',
+      name_prefix: 'worker',
+      prompt: 'work',
+      intent: 'admin member',
+      skill_sources: [memberSource],
+    }) as { teammate: { name: string } };
+
+    expect(skillSourceNames(contexts, 'admin-teammate')).toEqual([
+      'admin-teammate',
+    ]);
+    expect(skillSourcesFor(contexts, 'admin-teammate')).toEqual([{
+      name: 'admin-teammate',
+      path: realpathSync(teammateRoot),
+      source: 'admin',
+    }]);
+    expect(skillSourceNames(contexts, 'admin-team-leader')).toEqual([
+      'team-leader',
+      'admin-team-leader',
+    ]);
+    expect(skillSourcesFor(contexts, 'admin-team-leader')).toEqual([
+      expect.objectContaining({ name: 'team-leader', source: 'dreamux-core' }),
+      {
+        name: 'admin-team-leader',
+        path: realpathSync(leaderRoot),
+        source: 'admin',
+      },
+    ]);
+    expect(skillSourceNames(contexts, 'admin-team-member')).toEqual([
+      'admin-team-member',
+    ]);
+    expect(skillSourcesFor(contexts, 'admin-team-member')).toEqual([{
+      name: 'admin-team-member',
+      path: realpathSync(memberRoot),
+      source: 'admin',
+    }]);
+    expect(JSON.stringify({ teammate, team, member })).not.toContain(skillRoots);
+    await dispatcher.stop();
+
+    const rebuiltContexts: AgentRuntimeCreateContext[] = [];
+    const rebuilt = new DispatcherService({
+      id: 'dispatcher-a',
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: fakeRuntimeCatalog({
+        runtimes: [],
+        contexts: rebuiltContexts,
+      }),
+      channelProviders: fakeChannelCatalog(),
+      adminSocketPath: '/tmp/dreamux-admin.sock',
+      channelLoggerFactory: () => log,
+      log,
+    });
+    await rebuilt.start();
+    await rebuilt.teammates.send({
+      name: teammate.teammate.name,
+      prompt: 'resume helper',
+    });
+    await rebuilt.sendTeamLeader({
+      teamId: 'alpha',
+      prompt: 'resume leader',
+    });
+    const rebuiltTeam = await rebuilt.team('alpha');
+    await rebuiltTeam.teammates.send({
+      name: member.teammate.name,
+      prompt: 'resume member',
+    });
+
+    expect(skillSourceNames(rebuiltContexts, 'admin-teammate')).toEqual([
+      'admin-teammate',
+    ]);
+    expect(skillSourcesFor(rebuiltContexts, 'admin-teammate')).toEqual([{
+      name: 'admin-teammate',
+      path: realpathSync(teammateRoot),
+      source: 'admin',
+    }]);
+    expect(skillSourceNames(rebuiltContexts, 'admin-team-leader')).toEqual([
+      'team-leader',
+      'admin-team-leader',
+    ]);
+    expect(skillSourcesFor(rebuiltContexts, 'admin-team-leader')).toEqual([
+      expect.objectContaining({ name: 'team-leader', source: 'dreamux-core' }),
+      {
+        name: 'admin-team-leader',
+        path: realpathSync(leaderRoot),
+        source: 'admin',
+      },
+    ]);
+    expect(skillSourceNames(rebuiltContexts, 'admin-team-member')).toEqual([
+      'admin-team-member',
+    ]);
+    expect(skillSourcesFor(rebuiltContexts, 'admin-team-member')).toEqual([{
+      name: 'admin-team-member',
+      path: realpathSync(memberRoot),
+      source: 'admin',
+    }]);
+    await rebuilt.stop();
   });
 
   it('dispatcher team.send submits to the TeamLeader and rejects shutdown sends', async () => {

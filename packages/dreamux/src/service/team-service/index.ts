@@ -1,5 +1,6 @@
 import type {
   AgentRuntimeMcpServer,
+  AgentRuntimeSkillSource,
   AgentRuntimeSystemPrompt,
   AgentRuntimeTurnResult,
   DreamuxLogger,
@@ -85,6 +86,7 @@ export interface TeamServiceCreateInput {
   leaderAgentRuntime: string;
   intent: string;
   identity?: string;
+  skillSources?: readonly AgentRuntimeSkillSource[];
   workspace: TeamMateSharedWorkspace;
   existing: TeamRecord | null;
 }
@@ -210,6 +212,9 @@ export class TeamService {
       worktree: input.workspace.worktree,
       intent: input.intent,
       identityPrompt,
+      ...(input.skillSources !== undefined
+        ? { skillSources: input.skillSources }
+        : {}),
       status: 'starting',
     });
     const leader = service.buildLeader(identity);
@@ -493,11 +498,14 @@ export class TeamService {
       dispatcherId: this.deps.dispatcherId,
       identity,
       mcpServers: this.leaderMcpServers(identity.name),
-      skillSources: [{
-        name: 'team-leader',
-        path: bundledTeamLeaderSkillRoot(),
-        source: 'dreamux-core',
-      }],
+      skillSources: [
+        {
+          name: 'team-leader',
+          path: bundledTeamLeaderSkillRoot(),
+          source: 'dreamux-core',
+        },
+        ...identity.skill_sources,
+      ],
       disableFeatures: [DISABLE_FEATURE_CRON],
       systemPrompt: teamLeaderSystemPrompt(this.id, identity.identity_prompt),
       config: this.deps.config,

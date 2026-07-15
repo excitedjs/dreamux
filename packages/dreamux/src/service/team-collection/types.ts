@@ -5,6 +5,7 @@ import {
   type AgentEntityTurnResult,
   type AgentEntityWorktreeIdentity,
 } from '../agent-entity/types.js';
+import type { AgentRuntimeSkillSource } from '@excitedjs/dreamux-types';
 import type { TeamMateWorktreeRequest } from '../teammate-collection/types.js';
 
 export const TEAM_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -45,6 +46,8 @@ export interface TeamCreateInput {
   /** Required recovery subject for the Team (issue #182 PR-3). */
   intent: string;
   identity?: string;
+  /** Additional admin-supplied TeamLeader skill roots. */
+  skillSources?: readonly AgentRuntimeSkillSource[];
   prompt?: string;
 }
 
