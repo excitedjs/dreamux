@@ -35,6 +35,7 @@ import {
 import { AsyncMutex } from './lib/mutex.js';
 import type { FeishuChannelSessionOptions } from './feishu-channel.js';
 import type { PeerBot } from './chat-bots-store.js';
+import type { FeishuTargetRouter } from './feishu-target-router.js';
 
 // ─────────────────────────────────────────────────────────────────────────
 // In-memory state & constants (mirror the class fields)
@@ -63,7 +64,6 @@ export interface InboundReactionLedgerEntry {
 export interface FeishuChannelState {
   inboundReactions: Map<string, InboundReactionLedgerEntry>;
   pendingReceivedReactionClears: Set<string>;
-  messageChats: Map<string, string>;
 }
 
 export interface PairingApprovalResult {
@@ -79,6 +79,7 @@ export interface SessionHandle {
   bot: FeishuBot;
   accessMutex: AsyncMutex;
   botDisplayName: string;
+  targetRouter: FeishuTargetRouter;
 }
 
 /** Build a package-private handle from a session's internal fields. */
@@ -88,8 +89,9 @@ export function sessionHandle(
   bot: FeishuBot,
   accessMutex: AsyncMutex,
   botDisplayName: string,
+  targetRouter: FeishuTargetRouter,
 ): SessionHandle {
-  return { opts, state, bot, accessMutex, botDisplayName };
+  return { opts, state, bot, accessMutex, botDisplayName, targetRouter };
 }
 
 // ─────────────────────────────────────────────────────────────────────────

@@ -73,6 +73,7 @@ export {
   type FeishuCreateGroupResult,
   type FeishuInviteMembersInput,
   type FeishuInviteMembersResult,
+  type FeishuChatMode,
   type FeishuDocComment,
   type FeishuDocCommentReply,
   type FeishuDocMeta,

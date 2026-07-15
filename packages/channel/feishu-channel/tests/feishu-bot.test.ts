@@ -9,6 +9,7 @@ import type {
   FeishuAppOwnerIdentity,
   FeishuCreateGroupInput,
   FeishuCreateGroupResult,
+  FeishuChatMode,
   FeishuDocComment,
   FeishuDocMeta,
   FeishuInviteMembersInput,
@@ -50,6 +51,10 @@ class FakeTransport implements FeishuTransport {
 
   async inviteMembers(input: FeishuInviteMembersInput): Promise<FeishuInviteMembersResult> {
     return { addedOpenIds: input.userOpenIds };
+  }
+
+  async getChatMode(): Promise<FeishuChatMode | undefined> {
+    return 'topic';
   }
 
   async addReaction(): Promise<string> {
@@ -144,6 +149,9 @@ describe('createFeishuBot inbound channel', () => {
           message_id: 'message-id-1',
           chat_id: 'chat-id-1',
           chat_type: 'group',
+          thread_id: 'thread-id-1',
+          root_id: 'root-id-1',
+          parent_id: 'parent-id-1',
           message_type: 'text',
           content: JSON.stringify({ text: 'hello @_user_1' }),
           create_time: '1710000000000',
@@ -164,6 +172,9 @@ describe('createFeishuBot inbound channel', () => {
       messageId: 'message-id-1',
       chatId: 'chat-id-1',
       chatType: 'group',
+      threadId: 'thread-id-1',
+      rootId: 'root-id-1',
+      parentId: 'parent-id-1',
       senderId: 'sender-open-id',
       senderType: 'user',
       senderName: '',
@@ -173,6 +184,7 @@ describe('createFeishuBot inbound channel', () => {
       createTime: '1710000000000',
     });
     expect(received[0]?.mentions).toHaveLength(1);
+    await expect(bot.getChatMode('chat-id-1')).resolves.toBe('topic');
   });
 
   it('uses best-effort sender display name fields when present', async () => {

@@ -16,6 +16,11 @@ import type {
   DreamuxLogger,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
+import {
+  createFakeFeishuBot,
+  saveDispatcherAccess,
+  type FeishuInboundEvent,
+} from '@excitedjs/feishu-channel';
 
 import type { AgentRuntimeProviderCatalog } from '../src/agent-runtime/index.js';
 import type { ChannelProviderCatalog } from '../src/channel/catalog.js';
@@ -28,9 +33,10 @@ import {
 } from '../src/service/dispatcher-service/collaboration-routing.js';
 import { DispatcherService } from '../src/service/dispatcher-service/index.js';
 import { Server } from '../src/server.js';
-import { resetRuntimeConfig } from '../src/platform/paths.js';
+import { dispatcherDir, resetRuntimeConfig } from '../src/platform/paths.js';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
+import { feishuChannelCatalog } from './helpers/fake-channel.js';
 
 const RUNTIME_REF = 'test:runtime';
 const CHANNEL_REF = 'test:channel';
@@ -174,6 +180,34 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+function feishuTopicEvent(input: {
+  messageId: string;
+  chatId: string;
+  threadId: string;
+}): FeishuInboundEvent {
+  return {
+    messageId: input.messageId,
+    chatId: input.chatId,
+    chatType: 'group',
+    threadId: input.threadId,
+    senderId: 'sender-1',
+    senderType: 'user',
+    senderName: 'Ada',
+    messageType: 'text',
+    rawContent: JSON.stringify({ text: '@bot work on this' }),
+    parsedText: '@Bot work on this',
+    mentions: [
+      {
+        key: '@_user_1',
+        id: { open_id: 'fake-open-id-app-topic' },
+        name: 'Bot',
+      },
+    ],
+    createTime: '1782660000000',
+    raw: {},
+  };
+}
+
 describe('DispatcherService collaboration-space routing', () => {
   let root: string;
   let previousHome: string | undefined;
@@ -276,6 +310,153 @@ describe('DispatcherService collaboration-space routing', () => {
         phase: 'bound',
       },
     ]);
+  });
+
+  it('auto-provisions and reuses a Team through the real Feishu provider envelope', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'flow',
+        cwd: workspace,
+        agentRuntime: 'dispatcher-runtime',
+        runtimeProvider: RUNTIME_REF,
+        workspaceEnabled: false,
+      }),
+    ]);
+    const runtimes: FakeRuntime[] = [];
+    const contexts: AgentRuntimeCreateContext[] = [];
+    const bot = createFakeFeishuBot('app-topic');
+    bot.setChatMode('chat-topic', 'topic');
+    const dispatcher = new DispatcherService({
+      id: 'flow',
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes, contexts),
+      channelProviders: feishuChannelCatalog(() => bot),
+      channelLoggerFactory: () => noopLog(),
+      log: noopLog(),
+    });
+    await saveDispatcherAccess(dispatcherDir('flow'), {
+      version: 3,
+      dm_policy: 'pairing',
+      allow_users: ['sender-1'],
+      group: { policy: 'follow-user', allow_chats: [], require_mention: true },
+      pending: {},
+      observed_chats: [],
+      warnings: [],
+      last_gate: { at: 0 },
+    });
+    await dispatcher.bindCollaborationSpace({
+      spaceName: 'feishu-space',
+      channelId: 'primary',
+      container: {
+        container_type: 'topic_group',
+        container_key: 'chat-topic',
+      },
+      leaderAgentRuntime: 'dispatcher-runtime',
+    });
+
+    try {
+      await dispatcher.startInputSources();
+      await bot.inject(feishuTopicEvent({
+        messageId: 'msg-topic-root',
+        chatId: 'chat-topic',
+        threadId: 'topic-a',
+      }));
+      await bot.inject({
+        ...feishuTopicEvent({
+          messageId: 'msg-topic-reply',
+          chatId: 'chat-topic',
+          threadId: 'topic-a',
+        }),
+        rootId: 'msg-topic-root',
+        parentId: 'msg-topic-root',
+      });
+
+      expect(runtimes).toHaveLength(1);
+      expect(runtimes[0]?.submitted).toHaveLength(2);
+      await expect(dispatcher.getCollaborationSpaceStatus({
+        spaceName: 'feishu-space',
+      })).resolves.toMatchObject({
+        space: { status: 'bound' },
+        targets: [
+          {
+            target_key: 'topic-a',
+            lifecycle_status: 'active',
+            phase: 'bound',
+          },
+        ],
+      });
+    } finally {
+      await dispatcher.stop();
+    }
+  });
+
+  it('does not provision an ordinary group thread through the real Feishu provider', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'flow',
+        cwd: workspace,
+        agentRuntime: 'dispatcher-runtime',
+        runtimeProvider: RUNTIME_REF,
+        workspaceEnabled: false,
+      }),
+    ]);
+    const runtimes: FakeRuntime[] = [];
+    const contexts: AgentRuntimeCreateContext[] = [];
+    const bot = createFakeFeishuBot('app-topic');
+    bot.setChatMode('chat-normal', 'group');
+    const dispatcher = new DispatcherService({
+      id: 'flow',
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes, contexts),
+      channelProviders: feishuChannelCatalog(() => bot),
+      channelLoggerFactory: () => noopLog(),
+      log: noopLog(),
+    });
+    await saveDispatcherAccess(dispatcherDir('flow'), {
+      version: 3,
+      dm_policy: 'pairing',
+      allow_users: ['sender-1'],
+      group: { policy: 'follow-user', allow_chats: [], require_mention: true },
+      pending: {},
+      observed_chats: [],
+      warnings: [],
+      last_gate: { at: 0 },
+    });
+    await dispatcher.bindCollaborationSpace({
+      spaceName: 'ordinary-space',
+      channelId: 'primary',
+      container: {
+        container_type: 'topic_group',
+        container_key: 'chat-normal',
+      },
+      leaderAgentRuntime: 'dispatcher-runtime',
+    });
+
+    try {
+      await dispatcher.startInputSources();
+      await bot.inject(feishuTopicEvent({
+        messageId: 'msg-normal-thread',
+        chatId: 'chat-normal',
+        threadId: 'ordinary-thread',
+      }));
+
+      expect(runtimes).toHaveLength(1);
+      expect(runtimes[0]?.submitted).toHaveLength(1);
+      await expect(dispatcher.getCollaborationSpaceStatus({
+        spaceName: 'ordinary-space',
+      })).resolves.toMatchObject({
+        space: { status: 'bound' },
+        targets: [],
+      });
+    } finally {
+      await dispatcher.stop();
+    }
   });
 
   it('awaits target lifecycle accept but not heavy provisioning', async () => {

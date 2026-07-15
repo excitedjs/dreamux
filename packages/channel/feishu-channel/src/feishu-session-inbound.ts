@@ -308,7 +308,7 @@ export async function onMessage(
   }
 
   // deliver
-  h.state.messageChats.set(event.messageId, event.chatId);
+  const route = await h.targetRouter.projectInbound(event);
 
   const baseline =
     event.chatType === 'group'
@@ -345,6 +345,8 @@ export async function onMessage(
     provider: BUILTIN_FEISHU_PROVIDER_REF,
     chatId: event.chatId,
     chatType: event.chatType === 'group' ? 'group' : 'p2p',
+    target: route.target,
+    ...(route.container !== undefined ? { container: route.container } : {}),
     messageId: event.messageId,
   };
   await setInboundReaction(

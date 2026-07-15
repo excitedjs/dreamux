@@ -208,6 +208,33 @@ routable. Detached targets fall back to the normal dispatcher path.
 When the space is dissolved, future deliveries also fall back unless the space
 is rebound.
 
+The built-in Feishu provider implements first-inbound collaboration routing for
+real topic-mode groups. After the access gate accepts an inbound, the provider
+uses `message.thread_id` as the stable target key and verifies the enclosing
+chat through `im.v1.chat.get`. Only `chat_mode=topic` produces
+`ChannelContainer { container_type: "topic_group", container_key: chat_id }`
+and a bindable `ChannelTarget { target_type: "topic", target_key: thread_id }`.
+`root_id` and `parent_id` remain diagnostic ancestry and never substitute for a
+missing `thread_id`.
+
+Ordinary groups remain group targets even when Feishu exposes thread-style
+messages inside them. Missing group-information permission, API failure, and
+missing or unknown chat mode warn in the channel log and fail safe to the group
+route; unsuccessful lookups are not cached, so later accepted inbound retries.
+Operators using Feishu topic collaboration must grant the bot a group
+information read permission accepted by the chat-get API, such as
+`im:chat:readonly`.
+
+The Feishu session records the exact normalized target for accepted inbound
+message ids. TeamLeader egress target resolution uses that message ledger,
+rejects conflicting chat/thread selectors, and authorizes message ownership
+against the exact topic rather than the enclosing chat. Reply execution still
+uses Feishu's source-message reply API, which preserves the authorized topic.
+Standalone `thread_id` selectors are rejected because Feishu does not expose
+them as a safe send-to-topic primitive on this transport seam.
+The provider does not claim topic-created or topic-closed lifecycle support;
+provisioning begins on first accepted topic inbound.
+
 Key source:
 
 - `/packages/dreamux-types/src/channel.ts`
@@ -218,6 +245,10 @@ Key source:
 - `/packages/dreamux/src/mcp/collaboration-space-mcp.ts`
 - `/packages/dreamux/src/service/dispatcher-service/index.ts`
 - `/packages/dreamux/src/service/dispatcher-service/collaboration-routing.ts`
+- `/packages/channel/feishu-transport/src/parse/content.ts`
+- `/packages/channel/feishu-transport/src/transport/feishu.ts`
+- `/packages/channel/feishu-channel/src/feishu-target-router.ts`
+- `/packages/channel/feishu-channel/src/provider.ts`
 
 ## Feishu Domain Contracts
 

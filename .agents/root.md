@@ -140,6 +140,11 @@ history and rationale; when you need current behavior, pair them with
   space binds to a worktree policy, target creation deterministically provisions
   a Team, and target closure dissolves that Team without routing through the
   dispatcher agent runtime.
+- [Feishu topic collaboration routing](proposals/feishu-topic-collaboration-routing.md)
+  — implementation specification for verifying `chat_mode=topic`, projecting
+  Feishu `thread_id` as a neutral collaboration target, preserving ordinary
+  group fail-safe routing, and authorizing TeamLeader replies against the exact
+  recorded topic target.
 - [TeamLeader-scoped Team MCP transfer back](proposals/team-mcp-teamleader-transfer-back.md)
   — retained implementation design for exposing only `transfer_back` from Team MCP to
   TeamLeaders, keeping dispatcher Team lifecycle tools private, keeping explicit
