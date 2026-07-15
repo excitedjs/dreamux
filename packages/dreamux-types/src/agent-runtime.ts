@@ -63,9 +63,101 @@ export interface AgentRuntimeResumeCapability {
   supported: boolean;
 }
 
+export interface AgentRuntimeDurableTaskSubmissionCapability {
+  supported: true;
+  protocol: 'durable_task_submission_v1';
+}
+
+export interface AgentRuntimeDurableToolInvocationCapability {
+  supported: true;
+  protocol: 'durable_task_mcp_invocation_v1';
+}
+
+/**
+ * Metadata a durable runtime attaches to model-originated MCP `tools/call`
+ * requests under `_meta['dreamux/task-operation']`. The parent is the durable
+ * submission currently executing; the call id and ordinal come from the
+ * runtime's own recoverable tool-call ledger, never from JSON-RPC request ids.
+ */
+export interface AgentRuntimeDurableToolInvocation {
+  protocol: 'durable_task_mcp_invocation_v1';
+  parent_operation_id: string;
+  tool_call_id: string;
+  tool_call_ordinal: number;
+  runtime_id: string;
+  durability_namespace: string;
+}
+
+export interface AgentRuntimeDurableToolCallMeta {
+  'dreamux/task-operation'?: AgentRuntimeDurableToolInvocation;
+}
+
 export interface AgentRuntimeCapabilities {
   /** Whether this runtime can resume a prior checkpoint id from its create context. */
   resume: AgentRuntimeResumeCapability;
+  /**
+   * Present only when the runtime can durably dedupe an operation id, recover its
+   * receipt/settlement after restart, and idempotently acknowledge settlement.
+   */
+  durableTaskSubmission?: AgentRuntimeDurableTaskSubmissionCapability;
+  /**
+   * Present only when model-originated MCP calls carry stable identities from
+   * the runtime's recoverable tool-call ledger.
+   */
+  durableTaskToolInvocation?: AgentRuntimeDurableToolInvocationCapability;
+}
+
+export type AgentRuntimeDurableSubmissionDelivery =
+  | { kind: 'channel'; input: InboundTurnInput }
+  | { kind: 'text'; input: AgentRuntimeTextInput };
+
+export interface AgentRuntimeDurableSubmissionInput {
+  operation_id: string;
+  /** SHA-256 of Core's canonical delivery input. */
+  input_digest: string;
+  delivery: AgentRuntimeDurableSubmissionDelivery;
+}
+
+export interface AgentRuntimeDurableSettlement {
+  revision: number;
+  status: 'completed' | 'failed' | 'stopped';
+  result: string | null;
+}
+
+export interface AgentRuntimeDurableSubmissionRecord {
+  operation_id: string;
+  input_digest: string;
+  turn_id: string;
+  revision: number;
+  settlement: AgentRuntimeDurableSettlement | null;
+  settlement_acknowledged_revision: number;
+}
+
+export type AgentRuntimeDurableSubmissionLookupResult =
+  | { status: 'found'; submission: AgentRuntimeDurableSubmissionRecord }
+  | { status: 'absent' }
+  | {
+      status: 'in_doubt';
+      /** Bounded runtime-owned diagnostic code, not a raw error. */
+      code: string;
+    };
+
+export interface AgentRuntimeDurableTaskSubmissions {
+  /** Stable durability domain; changing credentials/storage must change it. */
+  readonly namespace: string;
+  submitOnce(
+    input: AgentRuntimeDurableSubmissionInput,
+  ): Promise<
+    | { status: 'accepted'; submission: AgentRuntimeDurableSubmissionRecord }
+    | { status: 'in_doubt'; code: string }
+  >;
+  lookupSubmission(
+    operationId: string,
+  ): Promise<AgentRuntimeDurableSubmissionLookupResult>;
+  acknowledgeSettlement(input: {
+    operation_id: string;
+    settlement_revision: number;
+  }): Promise<{ acknowledged_revision: number }>;
 }
 
 export interface AgentRuntimeSystemPrompt {
@@ -287,6 +379,8 @@ export interface AgentRuntime {
    */
   getContext(): Promise<AgentRuntimeContextSnapshot | null>;
   getCapabilities(): AgentRuntimeCapabilities;
+  /** Present iff `capabilities.durableTaskSubmission` is advertised. */
+  readonly durableTaskSubmissions?: AgentRuntimeDurableTaskSubmissions;
 }
 
 /**

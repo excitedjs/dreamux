@@ -23,6 +23,14 @@ import type {
   ProviderOnboard,
 } from './provider.js';
 import type { InboundDeliveryResult, InboundTurnInput } from './turn.js';
+import type {
+  ChannelLogicalRepositoryBinding,
+  ChannelRepositoryBindingResolveContext,
+  ChannelResolvedRepositoryBinding,
+  ChannelTaskHost,
+  ChannelTaskHostEventSink,
+  ChannelTaskProviderCapability,
+} from './channel-task.js';
 
 export interface ChannelTarget {
   target_type: string;
@@ -153,6 +161,11 @@ export interface ChannelRoutes {
     envelope: ChannelInboundEnvelope,
   ): Promise<InboundDeliveryResult>;
   targetLifecycle?(event: ChannelTargetLifecycleEvent): Promise<void>;
+  /**
+   * Strict task-oriented ingress. Omitted for a conversational-only channel.
+   * This capability never routes through the Dispatcher agent or `deliver`.
+   */
+  taskHost?: ChannelTaskHost;
 }
 
 /**
@@ -193,6 +206,12 @@ export interface ChannelSession {
   messageBelongsToTarget?(
     input: ChannelMessageTargetCheck,
   ): boolean | Promise<boolean>;
+  /**
+   * Core-to-provider task execution telemetry sink. Conversational-only
+   * sessions omit it; a provider that declares `taskChannel` must expose it so
+   * Core can push every committed host event without provider polling.
+   */
+  taskHostEvents?: ChannelTaskHostEventSink;
 }
 
 /** Channel-specific alias of the shared provider binary check. */
@@ -230,11 +249,24 @@ export interface ChannelDiagnostic<TConfig = unknown> {
 export interface ChannelProvider<TConfig = unknown> {
   readonly ref: string;
   readonly descriptor: ChannelProviderDescriptor;
+  /** Explicit opt-in to strict task ingress and Core-owned host telemetry. */
+  readonly taskChannel?: ChannelTaskProviderCapability;
   readConfig?(
     raw: unknown,
     context: ChannelConfigContext,
   ): TConfig | Promise<TConfig>;
   createSession(context: ChannelSessionCreateContext<TConfig>): ChannelSession;
+  /**
+   * Resolve a remote logical repository name through trusted, host-local channel
+   * configuration. The provider never supplies a cwd in task delivery.
+   */
+  resolveRepositoryBinding?(
+    binding: ChannelLogicalRepositoryBinding,
+    context: ChannelRepositoryBindingResolveContext<TConfig>,
+  ):
+    | ChannelResolvedRepositoryBinding
+    | null
+    | Promise<ChannelResolvedRepositoryBinding | null>;
   /**
    * Self-report a neutral, opaque channel identity for this config (e.g. the
    * bot app id). Core stores and displays the string but never interprets it,

@@ -13,6 +13,7 @@ import {
   describeConfigContext,
   fixtureChannelFactory,
   fixtureChannelProvider,
+  fixtureTaskChannelProvider,
   fixtureRuntimeFactory,
   fixtureRuntimeProvider,
 } from './fixtures/external-provider.js';
@@ -108,6 +109,38 @@ describe('external provider fixture', () => {
       target_type: 'group',
       target_key: 'group-123',
       bindable: true,
+    });
+  });
+
+  it('authors a strict task channel against the public package root', async () => {
+    expect(fixtureTaskChannelProvider.taskChannel).toEqual({
+      protocol: 'task_channel_host_v1',
+      schema_versions: [1],
+      capabilities: [
+        'durable_task_submission_v1',
+        'host_event_stream_v1',
+        'logical_repository_binding_v1',
+      ],
+    });
+    const resolved = await fixtureTaskChannelProvider.resolveRepositoryBinding?.(
+      { repository_key: 'repository-a' },
+      {
+        dispatcher_id: 'dispatcher-a',
+        channel_id: 'remote-tasks',
+        provider: fixtureTaskChannelProvider.ref,
+        config: {
+          repositories: {
+            'repository-a': {
+              cwd: '/tmp/example-repository',
+              revision: 'revision-1',
+            },
+          },
+        },
+      },
+    );
+    expect(resolved).toEqual({
+      cwd: '/tmp/example-repository',
+      binding_revision: 'revision-1',
     });
   });
 });
