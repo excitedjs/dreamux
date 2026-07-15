@@ -14,6 +14,8 @@ import {
 export interface DispatcherChannelCollaborationSpaceConfig {
   defaultBinding: {
     enabled: boolean;
+    /** Static config remains the default for backward compatibility. */
+    repositorySource: 'static' | 'channel';
     repo: null | {
       cwd: string;
       baseRef: string | null;
@@ -26,6 +28,7 @@ export function defaultChannelCollaborationSpaceConfig(): DispatcherChannelColla
   return {
     defaultBinding: {
       enabled: false,
+      repositorySource: 'static',
       repo: null,
       identity: null,
     },
@@ -56,11 +59,22 @@ export function readChannelCollaborationSpace(
   const bindingPrefix = `${prefix}defaultBinding.`;
   rejectUnknownKeys(
     rawDefault,
-    new Set(['enabled', 'repo', 'identity']),
+    new Set(['enabled', 'repositorySource', 'repo', 'identity']),
     file,
     bindingPrefix,
   );
   const repo = readDefaultBindingRepo(rawDefault['repo'], file, `${bindingPrefix}repo.`);
+  const repositorySource = readRepositorySource(
+    rawDefault,
+    file,
+    bindingPrefix,
+  );
+  if (repositorySource === 'channel' && repo !== null) {
+    throw new Error(
+      `dreamux config error in ${file}: ${bindingPrefix}repo cannot be set when ` +
+        `${bindingPrefix}repositorySource is 'channel'`,
+    );
+  }
   const identity = readOptionalString(rawDefault, 'identity', file, bindingPrefix);
   if (identity !== null && identity.trim() === '') {
     throw new Error(
@@ -70,6 +84,7 @@ export function readChannelCollaborationSpace(
   return {
     defaultBinding: {
       enabled: readOptionalBoolean(rawDefault, 'enabled', false, file, bindingPrefix),
+      repositorySource,
       repo,
       identity,
     },
@@ -83,6 +98,9 @@ export function stringifyChannelCollaborationSpace(
   return {
     defaultBinding: {
       enabled: binding.enabled,
+      ...(binding.repositorySource === 'channel'
+        ? { repositorySource: 'channel' }
+        : {}),
       ...(binding.repo !== null
         ? {
             repo: {
@@ -96,6 +114,20 @@ export function stringifyChannelCollaborationSpace(
       ...(binding.identity !== null ? { identity: binding.identity } : {}),
     },
   };
+}
+
+function readRepositorySource(
+  raw: Record<string, unknown>,
+  file: string,
+  prefix: string,
+): 'static' | 'channel' {
+  const value = readOptionalString(raw, 'repositorySource', file, prefix);
+  if (value === null) return 'static';
+  if (value === 'static' || value === 'channel') return value;
+  throw new Error(
+    `dreamux config error in ${file}: ${prefix}repositorySource must be ` +
+      `'static' or 'channel'`,
+  );
 }
 
 function readDefaultBindingRepo(

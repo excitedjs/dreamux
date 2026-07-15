@@ -26,6 +26,10 @@ import type { ChannelProviderCatalog } from '../src/channel/catalog.js';
 import type { ChannelService } from '../src/service/channel-service/index.js';
 import type { CollaborationSpaceService } from '../src/service/collaboration-space/index.js';
 import type { TeamCollection } from '../src/service/team-collection/index.js';
+import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.js';
+import { TaskHostStore } from '../src/service/channel-task-host/store.js';
+import { canonicalTaskIdentity } from '../src/service/channel-task-host/identity.js';
+import { TeamStore } from '../src/service/team-collection/store.js';
 import {
   handleCollaborationTargetLifecycle,
   routeTeamOrCollaborationChannelInput,
@@ -125,7 +129,7 @@ function fakeRuntimeCatalog(
       }
       return provider;
     },
-  } as AgentRuntimeProviderCatalog;
+  } as unknown as AgentRuntimeProviderCatalog;
 }
 
 function fakeChannelCatalog(): ChannelProviderCatalog {
@@ -158,6 +162,81 @@ function fakeChannelCatalog(): ChannelProviderCatalog {
       return provider;
     },
   } as ChannelProviderCatalog;
+}
+
+function fakeTaskChannelCatalog(): ChannelProviderCatalog {
+  const provider: ChannelProvider = {
+    ref: 'test:task-channel',
+    descriptor: {
+      id: 'test-task-channel',
+      kind: 'channel',
+      ref: { source: 'builtin', id: 'test-task-channel', raw: 'test:task-channel' },
+    },
+    taskChannel: {
+      protocol: 'task_channel_host_v1',
+      schema_versions: [1],
+      capabilities: ['durable_task_submission_v1', 'host_event_stream_v1'],
+    },
+    createSession(context) {
+      return {
+        provider: context.provider,
+        channel_id: context.channel_id,
+        taskHostEvents: {
+          async acceptHostEvents(batch) {
+            return { acknowledged_through: batch.last_sequence ?? 0 };
+          },
+        },
+        async start() {},
+        async close() {},
+        async resolveTarget() {
+          throw new Error('task session does not resolve conversational targets');
+        },
+      } satisfies ChannelSession;
+    },
+  };
+  return {
+    list: () => [provider],
+    resolve(ref: string) {
+      if (ref !== provider.ref) throw new Error(`unexpected provider ${ref}`);
+      return provider;
+    },
+  } as ChannelProviderCatalog;
+}
+
+function fakeDurableRuntimeCatalog(
+  runtimes: FakeRuntime[],
+  contexts: AgentRuntimeCreateContext[],
+): AgentRuntimeProviderCatalog {
+  const capabilities: AgentRuntimeCapabilities = {
+    resume: { supported: false },
+    durableTaskSubmission: {
+      supported: true,
+      protocol: 'durable_task_submission_v1',
+    },
+    durableTaskToolInvocation: {
+      supported: true,
+      protocol: 'durable_task_mcp_invocation_v1',
+    },
+  };
+  const provider: AgentRuntimeProvider = {
+    ref: RUNTIME_REF,
+    descriptor: {
+      id: 'test-runtime',
+      kind: 'agentRuntime',
+      ref: { source: 'builtin', id: 'test-runtime', raw: RUNTIME_REF },
+    },
+    getCapabilities: () => capabilities,
+    createRuntime(context) {
+      contexts.push(context);
+      const runtime = new FakeRuntime();
+      runtimes.push(runtime);
+      return runtime;
+    },
+  };
+  return {
+    list: () => [provider],
+    resolve: () => provider,
+  } as unknown as AgentRuntimeProviderCatalog;
 }
 
 function noopLog(): DreamuxLogger {
@@ -1138,6 +1217,7 @@ describe('DispatcherService collaboration-space routing', () => {
     dispatcherConfig.channels[0]!.collaborationSpace = {
       defaultBinding: {
         enabled: true,
+        repositorySource: 'static',
         repo: null,
         identity: 'Auto topic leader',
       },
@@ -1205,6 +1285,7 @@ describe('DispatcherService collaboration-space routing', () => {
     dispatcherConfig.channels[0]!.collaborationSpace = {
       defaultBinding: {
         enabled: true,
+        repositorySource: 'static',
         repo: null,
         identity: 'Auto topic leader',
       },
@@ -1444,11 +1525,11 @@ describe('DispatcherService collaboration-space routing', () => {
     });
     await Promise.resolve();
     expect(stopped).toBe(false);
-    expect(() => dispatcher.createTeam({
+    await expect(dispatcher.createTeam({
       name: 'late-create',
       leaderAgentRuntime: 'dispatcher-runtime',
       intent: 'too late',
-    })).toThrow(/shutting down/);
+    })).rejects.toThrow(/shutting down/);
 
     release.resolve();
     await Promise.all([create, stop]);
@@ -1613,6 +1694,171 @@ describe('DispatcherService collaboration-space routing', () => {
     await expect(request).resolves.toBe('ok');
     await expect(shutdown).resolves.toBeUndefined();
     expect(calls).toEqual(['request-start', 'request-done', 'dispatchers', 'admin']);
+  });
+
+  it('loads durable task ownership before a persisted Team is materialized', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const channelId = 'remote-tasks';
+    const provider = 'test:task-channel';
+    const dispatcherConfig = testDispatcherConfig({
+      id: 'flow',
+      cwd: workspace,
+      agentRuntime: 'dispatcher-runtime',
+      runtimeProvider: RUNTIME_REF,
+      channels: [{
+        id: channelId,
+        provider,
+        collaborationSpace: {
+          defaultBinding: {
+            enabled: true,
+            repositorySource: 'static',
+            repo: { cwd: workspace, baseRef: null },
+            identity: null,
+          },
+        },
+        config: {},
+        identity: 'remote-task-platform',
+      }],
+      workspaceEnabled: false,
+    });
+    const config = testDreamuxConfig([dispatcherConfig]);
+    const attempt = { task_key: 'task-a', attempt_key: 'attempt-1' };
+    const taskIdentity = canonicalTaskIdentity({
+      dispatcherId: 'flow',
+      channelId,
+      containerType: 'task-space',
+      containerKey: 'space-a',
+      attempt,
+    });
+    const leaderName = 'task-leader';
+    const worktree = {
+      mode: 'reuse-cwd' as const,
+      slug: null,
+      path: workspace,
+      branch: null,
+      base_ref: null,
+      cleanup: 'keep' as const,
+      cleanup_state: 'not-managed' as const,
+      cleanup_error: null,
+    };
+    await new TeamStore().create({
+      dispatcher_id: 'flow',
+      team_id: taskIdentity.teamName,
+      name: taskIdentity.teamName,
+      repo_cwd: workspace,
+      source_repo: null,
+      leader_name: leaderName,
+      leader_agent_runtime: 'dispatcher-runtime',
+      runtime_cwd: workspace,
+      worktree,
+      status: 'running',
+      intent: 'durable remote task',
+      closed_at: null,
+      close_note: null,
+    });
+    await new AgentIdentityStore(noopLog()).create({
+      dispatcherId: 'flow',
+      name: leaderName,
+      role: 'team_leader',
+      teamId: taskIdentity.teamName,
+      agentRuntime: 'dispatcher-runtime',
+      sourceCwd: workspace,
+      sourceRepo: null,
+      cwd: workspace,
+      runtimeCwd: workspace,
+      worktree,
+      intent: 'durable remote task',
+      status: 'running',
+    });
+    const taskStore = await TaskHostStore.open({
+      dispatcherId: 'flow',
+      channelId,
+      providerRef: provider,
+    });
+    const repository = {
+      source: 'static' as const,
+      logical_key: '@static',
+      binding_revision: 'static-v1',
+      fingerprint: 'a'.repeat(64),
+      repo_cwd: workspace,
+      base_ref: null,
+      base_commit: '0'.repeat(40),
+    };
+    await taskStore.claim({
+      dispatcherId: 'flow',
+      channelId,
+      provider,
+      targetId: taskIdentity.targetId,
+      canonicalTargetKey: taskIdentity.targetKey,
+      attempt,
+      container: { container_type: 'task-space', container_key: 'space-a' },
+      logicalRepository: null,
+      resolvedRepository: repository,
+      requestFingerprint: 'request-fingerprint',
+      receipt: {
+        receipt_id: taskIdentity.receiptId,
+        target_id: taskIdentity.targetId,
+        attempt,
+        revision: 1,
+        accepted_at: 1,
+      },
+      title: 'Task A',
+      turn: { sourceId: 'delivery-a', text: 'Execute task A' },
+      teamName: taskIdentity.teamName,
+      worktreeSlug: taskIdentity.worktreeSlug,
+      routeClaimId: taskIdentity.routeClaimId,
+    });
+    await taskStore.updateTarget(
+      taskIdentity.targetId,
+      null,
+      (target) => {
+        target.phase = 'blocked';
+        target.binding = {
+          space_name: 'space-a',
+          generation: 1,
+          repository,
+          leader_agent_runtime: 'dispatcher-runtime',
+          identity: null,
+        };
+        target.team.leader_name = leaderName;
+        target.blocked = {
+          from_phase: 'ready',
+          code: 'TASK_SUBMISSION_IN_DOUBT',
+          retryable: false,
+          at: 1,
+        };
+      },
+      [{
+        payload: {
+          kind: 'task.lifecycle',
+          phase: 'blocked',
+          blocked_code: 'TASK_SUBMISSION_IN_DOUBT',
+          retryable: false,
+        },
+      }],
+    );
+    const runtimes: FakeRuntime[] = [];
+    const contexts: AgentRuntimeCreateContext[] = [];
+    const dispatcher = new DispatcherService({
+      id: 'flow',
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: fakeDurableRuntimeCatalog(runtimes, contexts),
+      channelProviders: fakeTaskChannelCatalog(),
+      channelLoggerFactory: () => noopLog(),
+      log: noopLog(),
+    });
+
+    await expect(dispatcher.getTeamStatus(taskIdentity.teamName)).resolves.toMatchObject({
+      team: { team_name: taskIdentity.teamName },
+    });
+    await expect(dispatcher.sendTeamLeader({
+      teamId: taskIdentity.teamName,
+      prompt: 'must remain strict task delivery',
+    })).rejects.toThrow(/requires a durable invocation identity/);
+    expect(runtimes).toHaveLength(0);
+    await dispatcher.stop();
   });
 
   it('does not materialize a new dispatcher after dispatcher shutdown starts', async () => {

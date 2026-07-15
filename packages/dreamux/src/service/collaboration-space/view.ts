@@ -27,6 +27,7 @@ export function targetView(target: ProvisionedTargetRecord): ProvisionedTargetVi
     space_name: target.space_name,
     channel_id: target.channel_id,
     provider: target.provider,
+    container_type: target.container_type,
     container_key: target.container_key,
     binding_generation: target.binding_generation,
     target_type: target.target_type,

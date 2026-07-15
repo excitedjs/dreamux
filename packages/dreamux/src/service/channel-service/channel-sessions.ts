@@ -1,6 +1,8 @@
 import type {
   AgentRuntimeMcpServer,
   ChannelSession,
+  ChannelLogicalRepositoryBinding,
+  ChannelResolvedRepositoryBinding,
   ChannelTarget,
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
@@ -10,6 +12,7 @@ import type {
   DispatcherChannelConfig,
   DreamuxConfig,
 } from '../../config/config.js';
+import { defaultChannelCollaborationSpaceConfig } from '../../config/collaboration-space-config.js';
 import {
   dispatcherCacheDir,
   dispatcherDir,
@@ -74,9 +77,7 @@ class ChannelSessions {
     try {
       for (const channelConfig of channelConfigs) {
         const provider = this.opts.channelProviders.resolve(channelConfig.provider);
-        channels.set(
-          channelConfig.id,
-          provider.createSession({
+        const session = provider.createSession({
             dispatcher_id: this.opts.dispatcherId,
             channel_id: channelConfig.id,
             provider: channelConfig.provider,
@@ -84,8 +85,14 @@ class ChannelSessions {
             logger: providerLog,
             state_root: dispatcherDir(this.opts.dispatcherId),
             cache_root: dispatcherCacheDir(this.opts.dispatcherId),
-          }),
+          });
+        assertChannelSession(
+          session,
+          provider.ref,
+          channelConfig.id,
+          provider.taskChannel !== undefined,
         );
+        channels.set(channelConfig.id, session);
       }
     } catch (err) {
       for (const session of channels.values()) {
@@ -149,6 +156,58 @@ class ChannelSessions {
 
   configuredChannels(): readonly DispatcherChannelConfig[] {
     return this.channelConfigs();
+  }
+
+  supportsTaskHost(channelId: string): boolean {
+    const channel = this.channelConfigFor(undefined, channelId);
+    const provider = this.opts.channelProviders.resolve(channel.provider);
+    const capability = provider.taskChannel;
+    if (capability?.protocol !== 'task_channel_host_v1') return false;
+    const repositorySource = (
+      channel.collaborationSpace ?? defaultChannelCollaborationSpaceConfig()
+    ).defaultBinding.repositorySource;
+    if (
+      repositorySource === 'channel' &&
+      (!capability.capabilities.includes('logical_repository_binding_v1') ||
+        provider.resolveRepositoryBinding === undefined)
+    ) {
+      throw new Error(
+        `task-capable channel ${JSON.stringify(channelId)} uses a channel ` +
+          'repository source but its provider does not expose ' +
+          'logical_repository_binding_v1 with a resolver',
+      );
+    }
+    return true;
+  }
+
+  async resolveRepositoryBinding(
+    channelId: string,
+    binding: ChannelLogicalRepositoryBinding,
+  ): Promise<ChannelResolvedRepositoryBinding | null> {
+    const channel = this.channelConfigFor(undefined, channelId);
+    const provider = this.opts.channelProviders.resolve(channel.provider);
+    const resolveBinding = provider.resolveRepositoryBinding;
+    if (resolveBinding === undefined) return null;
+    const resolved = await resolveBinding.call(provider, binding, {
+      dispatcher_id: this.opts.dispatcherId,
+      channel_id: channel.id,
+      provider: channel.provider,
+      config: channel.config,
+    });
+    if (resolved === null) return null;
+    if (
+      typeof resolved.cwd !== 'string' ||
+      resolved.cwd.trim() === '' ||
+      typeof resolved.binding_revision !== 'string' ||
+      resolved.binding_revision.trim() === '' ||
+      (resolved.base_ref !== undefined &&
+        (typeof resolved.base_ref !== 'string' || resolved.base_ref.trim() === ''))
+    ) {
+      throw new Error(
+        `channel provider '${provider.ref}' returned an invalid repository binding`,
+      );
+    }
+    return resolved;
   }
 
   /**
@@ -336,6 +395,50 @@ class ChannelSessions {
       (dispatcher) => dispatcher.id === this.opts.dispatcherId,
     );
     return dispatcherConfig?.channels ?? [];
+  }
+}
+
+function assertChannelSession(
+  value: unknown,
+  providerRef: string,
+  channelId: string,
+  taskCapable: boolean,
+): asserts value is ChannelSession {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`channel provider '${providerRef}' createSession returned no session object`);
+  }
+  const candidate = value as Record<string, unknown>;
+  if (candidate['provider'] !== providerRef) {
+    throw new Error(
+      `channel provider '${providerRef}' session.provider must match the provider ref`,
+    );
+  }
+  if (candidate['channel_id'] !== channelId) {
+    throw new Error(
+      `channel provider '${providerRef}' session.channel_id must match the channel id`,
+    );
+  }
+  for (const method of ['start', 'close', 'resolveTarget']) {
+    if (typeof candidate[method] !== 'function') {
+      throw new Error(`channel provider '${providerRef}' session.${method} must be a function`);
+    }
+  }
+  const sink = candidate['taskHostEvents'];
+  if (taskCapable && sink === undefined) {
+    throw new Error(
+      `channel provider '${providerRef}' task-capable session must expose taskHostEvents`,
+    );
+  }
+  if (
+    sink !== undefined &&
+    (sink === null ||
+      typeof sink !== 'object' ||
+      Array.isArray(sink) ||
+      typeof (sink as Record<string, unknown>)['acceptHostEvents'] !== 'function')
+  ) {
+    throw new Error(
+      `channel provider '${providerRef}' session.taskHostEvents must expose acceptHostEvents`,
+    );
   }
 }
 

@@ -18,6 +18,7 @@ export interface TeamMcpOptions {
   callerKind?: TeamMcpCallerKind;
   teamId?: string;
   leaderName?: string;
+  taskAttemptOnly?: boolean;
   adminSocketPath?: string;
   input?: Readable;
   output?: Writable;
@@ -46,6 +47,9 @@ const DEFAULT_MCP_PROTOCOL_VERSION = '2024-11-05';
 export async function runTeamMcp(opts: TeamMcpOptions): Promise<void> {
   const dispatcherId = validateDispatcherId(opts.dispatcherId);
   const caller = teamMcpCaller(opts);
+  if (opts.taskAttemptOnly === true && caller.kind !== 'team_leader') {
+    throw new Error('task attempt MCP is available only to a TeamLeader');
+  }
   const socketPath = opts.adminSocketPath ?? defaultAdminSocketPath();
   const input = opts.input ?? process.stdin;
   const output = opts.output ?? process.stdout;
@@ -63,7 +67,13 @@ export async function runTeamMcp(opts: TeamMcpOptions): Promise<void> {
       continue;
     }
     try {
-      await handleRequest(request, { dispatcherId, socketPath, output, caller });
+      await handleRequest(request, {
+        dispatcherId,
+        socketPath,
+        output,
+        caller,
+        taskAttemptOnly: opts.taskAttemptOnly === true,
+      });
     } catch (err) {
       log(`team-mcp: ${parseMessage(err)}`);
       if (request.id !== undefined) {
@@ -80,6 +90,7 @@ async function handleRequest(
     socketPath: string;
     output: Writable;
     caller: TeamMcpCaller;
+    taskAttemptOnly: boolean;
   },
 ): Promise<void> {
   if (typeof request.method !== 'string') {
@@ -103,12 +114,17 @@ async function handleRequest(
       return;
     case 'tools/list':
       if (request.id !== undefined) {
-        write(ctx.output, okResponse(request.id, { tools: teamTools(ctx.caller.kind) }));
+        write(ctx.output, okResponse(request.id, {
+          tools: teamTools(ctx.caller.kind, ctx.taskAttemptOnly),
+        }));
       }
       return;
     case 'tools/call':
       if (request.id !== undefined) {
-        write(ctx.output, okResponse(request.id, await callTool(request.params, ctx)));
+        write(
+          ctx.output,
+          okResponse(request.id, await callTool(request.params, ctx)),
+        );
       }
       return;
     default:
@@ -120,7 +136,19 @@ async function handleRequest(
 
 export function teamTools(
   callerKind: TeamMcpCallerKind = 'dispatcher',
+  taskAttemptOnly = false,
 ): Array<Record<string, unknown>> {
+  if (taskAttemptOnly) {
+    return [tool(
+      'finish',
+      'Set the explicit business terminal outcome for this task attempt. Dreamux Core durably commits the terminal transition, cleanup, and outbound state events; this tool does not send a channel reply or report telemetry manually.',
+      {
+        outcome: { type: 'string', enum: ['completed', 'failed'] },
+        summary: { type: 'string', maxLength: 65536 },
+      },
+      ['outcome'],
+    )];
+  }
   const transferBackDescription = callerKind === 'team_leader'
     ? 'Release this Team\'s binding for the selected channel target. This is a routing-only state change with no channel-message side effect. channel_id selects the configured channel (optional; defaults to the sole channel). meta carries the provider-defined channel target selector that Dreamux normalizes through the channel provider.'
     : 'Release a bound channel target from a Team so future inbound for that target is no longer routed to the Team. channel_id selects the configured channel (optional; defaults to the sole channel). meta carries the provider-defined channel target selector that Dreamux normalizes through the channel provider.';
@@ -185,11 +213,16 @@ function tool(
 
 async function callTool(
   params: unknown,
-  ctx: { dispatcherId: string; socketPath: string; caller: TeamMcpCaller },
+  ctx: {
+    dispatcherId: string;
+    socketPath: string;
+    caller: TeamMcpCaller;
+    taskAttemptOnly: boolean;
+  },
 ): Promise<Record<string, unknown>> {
   try {
     const call = asToolCallParams(params);
-    const mapped = mapToolCall(call, ctx.caller.kind);
+    const mapped = mapToolCall(call, ctx.caller.kind, ctx.taskAttemptOnly);
     const result = await sendAdminRequest(
       mapped.method,
       {
@@ -222,7 +255,14 @@ async function callTool(
 function mapToolCall(
   call: ToolCall,
   callerKind: TeamMcpCallerKind,
+  taskAttemptOnly = false,
 ): { method: string; params: Record<string, unknown> } {
+  if (taskAttemptOnly && call.name !== 'finish') {
+    throw new Error("Task attempt tool context exposes only 'finish'.");
+  }
+  if (taskAttemptOnly) {
+    return { method: 'task.finish_attempt', params: finishAttemptArgs(call.arguments) };
+  }
   if (callerKind === 'team_leader' && call.name !== 'transfer_back') {
     throw new Error(
       `Team tool '${String(call.name)}' is not available in this context. Available Team tools: transfer_back.`,
@@ -248,6 +288,19 @@ function mapToolCall(
     default:
       throw new Error(`unknown Team tool '${String(call.name)}'`);
   }
+}
+
+function finishAttemptArgs(value: unknown): Record<string, unknown> {
+  const obj = asRecord(value, 'finish arguments');
+  const outcome = requireString(obj, 'outcome');
+  if (outcome !== 'completed' && outcome !== 'failed') {
+    throw new Error("outcome must be 'completed' or 'failed'");
+  }
+  const summary = optionalString(obj, 'summary');
+  return {
+    outcome,
+    ...(summary !== null ? { summary } : {}),
+  };
 }
 
 function createArgs(value: unknown): Record<string, unknown> {

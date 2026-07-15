@@ -51,6 +51,14 @@ export interface TeamCreateInput {
   prompt?: string;
 }
 
+/** Core-only idempotent provisioning input for a task-owned Team. */
+export type TaskTeamProvisionInput = Omit<TeamCreateInput, 'prompt'>;
+
+export interface TaskTeamFinalizationResult {
+  team_status: 'absent' | 'closed';
+  cleanup: AgentEntityWorktreeIdentity;
+}
+
 export interface TeamDissolveInput {
   teamId: string;
   /** Required dissolve reason recorded on the team record (issue #182 PR-3). */

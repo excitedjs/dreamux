@@ -117,6 +117,37 @@ describe('channel provider loader', () => {
     expect(created).toEqual(['github']);
   });
 
+  it('accepts a frozen task-capable provider without mutating it', async () => {
+    const registry = createBuiltinProviderRegistry();
+    let frozen: ChannelProvider | null = null;
+    await loadChannelProviders({
+      registry,
+      refs: ['npm:@example/dreamux-task-channel'],
+      importModule: async () => ({
+        default: async (context: Parameters<ExternalChannelProviderFactory>[0]) => {
+          const base = await channelFactory()(context);
+          frozen = Object.freeze({
+            ...base,
+            taskChannel: {
+              protocol: 'task_channel_host_v1' as const,
+              schema_versions: [1],
+              capabilities: [
+                'durable_task_submission_v1' as const,
+                'host_event_stream_v1' as const,
+              ],
+            },
+            resolveRepositoryBinding: async () => null,
+          });
+          return frozen;
+        },
+      }),
+    });
+
+    expect(frozen).not.toBeNull();
+    expect(registry.getImplementation(frozen!.descriptor.id)).toBe(frozen);
+    expect(Object.isFrozen(frozen)).toBe(true);
+  });
+
   it('skips refs already registered in the channel registry', async () => {
     const registry = createBuiltinProviderRegistry();
     let importCount = 0;
@@ -216,5 +247,48 @@ describe('channel provider loader', () => {
         }),
       }),
     ).rejects.toThrow(/provider\.descriptor\.kind must be "channel"/);
+  });
+
+  it('rejects malformed task capabilities and repository resolvers', async () => {
+    await expect(loadChannelProviders({
+      registry: createBuiltinProviderRegistry(),
+      refs: ['npm:@example/dreamux-task-channel'],
+      importModule: async () => ({
+        default: ({ ref, descriptor }: Parameters<ExternalChannelProviderFactory>[0]) => ({
+          ...channelFactory()({ ref, descriptor }),
+          taskChannel: { protocol: 'unknown' },
+        }),
+      }),
+    })).rejects.toThrow(/provider\.taskChannel/);
+
+    await expect(loadChannelProviders({
+      registry: createBuiltinProviderRegistry(),
+      refs: ['npm:@example/dreamux-task-channel'],
+      importModule: async () => ({
+        default: ({ ref, descriptor }: Parameters<ExternalChannelProviderFactory>[0]) => ({
+          ...channelFactory()({ ref, descriptor }),
+          resolveRepositoryBinding: true,
+        }),
+      }),
+    })).rejects.toThrow(/provider\.resolveRepositoryBinding/);
+
+    await expect(loadChannelProviders({
+      registry: createBuiltinProviderRegistry(),
+      refs: ['npm:@example/dreamux-task-channel'],
+      importModule: async () => ({
+        default: ({ ref, descriptor }: Parameters<ExternalChannelProviderFactory>[0]) => ({
+          ...channelFactory()({ ref, descriptor }),
+          taskChannel: {
+            protocol: 'task_channel_host_v1' as const,
+            schema_versions: [1],
+            capabilities: [
+              'durable_task_submission_v1' as const,
+              'host_event_stream_v1' as const,
+              'logical_repository_binding_v1' as const,
+            ],
+          },
+        }),
+      }),
+    })).rejects.toThrow(/resolveRepositoryBinding is required/);
   });
 });

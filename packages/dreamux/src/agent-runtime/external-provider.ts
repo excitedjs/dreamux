@@ -151,6 +151,33 @@ function assertRuntimeHandle(
   if (value['waitIdle'] !== undefined && typeof value['waitIdle'] !== 'function') {
     context.fail('runtime.waitIdle must be a function when present');
   }
+  let capabilities: AgentRuntimeCapabilities;
+  try {
+    capabilities = (value['getCapabilities'] as () => AgentRuntimeCapabilities)();
+  } catch (err) {
+    context.fail(`runtime.getCapabilities threw: ${errMessage(err)}`);
+  }
+  assertCapabilities(capabilities, context);
+  const durable = value['durableTaskSubmissions'];
+  if (capabilities.durableTaskSubmission !== undefined) {
+    if (
+      !isRecord(durable) ||
+      typeof durable['namespace'] !== 'string' ||
+      durable['namespace'].trim() === '' ||
+      typeof durable['submitOnce'] !== 'function' ||
+      typeof durable['lookupSubmission'] !== 'function' ||
+      typeof durable['acknowledgeSettlement'] !== 'function'
+    ) {
+      context.fail(
+        'runtime.durableTaskSubmissions must expose a namespace, submitOnce, lookupSubmission, ' +
+          'and acknowledgeSettlement when durable task submission is advertised',
+      );
+    }
+  } else if (durable !== undefined) {
+    context.fail(
+      'runtime.durableTaskSubmissions requires the durable task submission capability',
+    );
+  }
 }
 
 function assertOptionalOnboard(
@@ -188,6 +215,33 @@ function assertCapabilities(
   }
   const capabilities = value as Partial<AgentRuntimeCapabilities>;
   assertResumeCapability(capabilities.resume, context);
+  const durable = capabilities.durableTaskSubmission;
+  if (
+    durable !== undefined &&
+    (!isRecord(durable) ||
+      durable['supported'] !== true ||
+      durable['protocol'] !== 'durable_task_submission_v1')
+  ) {
+    context.fail(
+      "capabilities.durableTaskSubmission must be { supported: true, protocol: 'durable_task_submission_v1' } when present",
+    );
+  }
+  const durableTool = capabilities.durableTaskToolInvocation;
+  if (
+    durableTool !== undefined &&
+    (!isRecord(durableTool) ||
+      durableTool['supported'] !== true ||
+      durableTool['protocol'] !== 'durable_task_mcp_invocation_v1')
+  ) {
+    context.fail(
+      "capabilities.durableTaskToolInvocation must be { supported: true, protocol: 'durable_task_mcp_invocation_v1' } when present",
+    );
+  }
+  if ((durable === undefined) !== (durableTool === undefined)) {
+    context.fail(
+      'durableTaskSubmission and durableTaskToolInvocation capabilities must be advertised together',
+    );
+  }
 }
 
 function assertResumeCapability(

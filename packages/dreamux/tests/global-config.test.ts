@@ -196,6 +196,7 @@ describe('global config (~/.dreamux/config.json)', () => {
     expect(config.dispatchers[0]?.channels[0]?.collaborationSpace).toEqual({
       defaultBinding: {
         enabled: true,
+        repositorySource: 'static',
         repo: {
           cwd: join(homedir(), 'repo/main'),
           baseRef: 'origin/next',

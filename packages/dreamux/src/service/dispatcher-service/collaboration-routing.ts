@@ -266,6 +266,17 @@ async function deliverToFirstBoundTarget(input: {
     if (!(await input.teams.isOpenTeam(routed.owner.teamName))) {
       return { status: 'unavailable' };
     }
+    if (input.teams.hasTaskAttempt?.(routed.owner.teamName) === true) {
+      return {
+        status: 'delivered',
+        result: {
+          status: 'failed',
+          error: new Error(
+            'strict task targets do not accept conversational channel delivery',
+          ),
+        },
+      };
+    }
     const team = await input.teams.get(routed.owner.teamName);
     return {
       status: 'delivered',
@@ -304,7 +315,7 @@ function defaultBindingForChannel(input: {
   const binding = input.channels
     .collaborationSpaceConfig(input.channelId)
     .defaultBinding;
-  if (!binding.enabled) return undefined;
+  if (!binding.enabled || binding.repositorySource === 'channel') return undefined;
   return {
     leaderAgentRuntime: input.dispatcherAgentRuntime,
     ...(binding.repo !== null

@@ -4,9 +4,9 @@ import { validateTeamId } from '../team-collection/types.js';
 import type { CollaborationSpaceStore } from './store.js';
 import type {
   CollaborationSpaceDefaultBindingInput,
-  CollaborationSpaceProvisionInput,
   CollaborationSpaceRecord,
 } from './types.js';
+import type { ChannelContainer } from '@excitedjs/dreamux-types';
 import { COLLABORATION_SPACE_RECORD_VERSION } from './types.js';
 import { hashContainer } from './naming.js';
 
@@ -14,16 +14,19 @@ export async function createDefaultBoundSpace(input: {
   dispatcherId: string;
   config: DreamuxConfig;
   store: CollaborationSpaceStore;
-  provision: CollaborationSpaceProvisionInput;
+  channelId: string;
+  provider: string;
+  container: ChannelContainer;
   binding: CollaborationSpaceDefaultBindingInput;
 }): Promise<CollaborationSpaceRecord> {
-  const { dispatcherId, config, store, provision, binding } = input;
+  const { dispatcherId, config, store, channelId, provider, container, binding } = input;
   resolveAgent(config, dispatcherId, binding.leaderAgentRuntime);
   const spaceName = validateTeamId(
     `space-${hashContainer({
       dispatcherId,
-      channelId: provision.channelId,
-      containerKey: provision.container.container_key,
+      channelId,
+      containerType: container.container_type,
+      containerKey: container.container_key,
     })}`,
   );
   const now = Date.now();
@@ -31,12 +34,12 @@ export async function createDefaultBoundSpace(input: {
     version: COLLABORATION_SPACE_RECORD_VERSION,
     dispatcher_id: dispatcherId,
     space_name: spaceName,
-    channel_id: provision.channelId,
-    provider: provision.provider,
-    container_type: provision.container.container_type,
-    container_key: provision.container.container_key,
-    display: provision.container.display ?? null,
-    canonical_url: provision.container.canonical_url ?? null,
+    channel_id: channelId,
+    provider,
+    container_type: container.container_type,
+    container_key: container.container_key,
+    display: container.display ?? null,
+    canonical_url: container.canonical_url ?? null,
     current_binding: {
       generation: 1,
       repo_cwd: binding.repo?.cwd ?? null,
@@ -49,6 +52,9 @@ export async function createDefaultBoundSpace(input: {
           },
       leader_agent_runtime: binding.leaderAgentRuntime,
       identity: binding.identity ?? null,
+      ...(binding.repositoryPolicy !== undefined
+        ? { repository_policy: binding.repositoryPolicy }
+        : {}),
       bound_at: now,
     },
     last_binding_generation: 1,

@@ -53,9 +53,13 @@ export function assertSameContainer(
 
 export function spaceKey(input: {
   channelId: string;
-  container: { container_key: string };
+  container: { container_type: string; container_key: string };
 }): string {
-  return [input.channelId, input.container.container_key].join('\0');
+  return [
+    input.channelId,
+    input.container.container_type,
+    input.container.container_key,
+  ].join('\0');
 }
 
 export function targetRouteKey(target: ProvisionedTargetRecord): string {

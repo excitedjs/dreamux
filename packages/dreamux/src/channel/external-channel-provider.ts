@@ -27,7 +27,16 @@ import {
   type ProviderModuleImporter,
   type ProviderPackageLoaderSpec,
 } from '../registry/provider-loader.js';
-import type { ChannelProvider } from '@excitedjs/dreamux-types';
+import type {
+  ChannelProvider,
+  ChannelTaskHostCapability,
+} from '@excitedjs/dreamux-types';
+
+const TASK_HOST_CAPABILITIES = new Set<ChannelTaskHostCapability>([
+  'durable_task_submission_v1',
+  'host_event_stream_v1',
+  'logical_repository_binding_v1',
+]);
 
 export interface ExternalChannelProviderFactoryContext {
   /** Canonical provider ref from config, for example `builtin:feishu`. */
@@ -97,8 +106,54 @@ function assertChannelProvider(
   if (typeof candidate.createSession !== 'function') {
     context.fail('provider.createSession must be a function');
   }
+  if (
+    candidate.taskChannel !== undefined &&
+    !validTaskChannelCapability(candidate.taskChannel)
+  ) {
+    context.fail(
+      "provider.taskChannel must declare task_channel_host_v1 with supported schema_versions and capabilities",
+    );
+  }
+  if (
+    candidate.resolveRepositoryBinding !== undefined &&
+    typeof candidate.resolveRepositoryBinding !== 'function'
+  ) {
+    context.fail('provider.resolveRepositoryBinding must be a function when present');
+  }
+  if (
+    candidate.taskChannel?.capabilities.includes(
+      'logical_repository_binding_v1',
+    ) === true &&
+    candidate.resolveRepositoryBinding === undefined
+  ) {
+    context.fail(
+      'provider.resolveRepositoryBinding is required when logical_repository_binding_v1 is declared',
+    );
+  }
   assertOptionalOnboard(candidate.onboard, context);
   assertOptionalDiagnostic(candidate.diagnostic, context);
+}
+
+function validTaskChannelCapability(value: unknown): boolean {
+  if (
+    !isRecord(value) ||
+    value['protocol'] !== 'task_channel_host_v1' ||
+    !Array.isArray(value['schema_versions']) ||
+    value['schema_versions'].length === 0 ||
+    value['schema_versions'].some((entry) => entry !== 1) ||
+    new Set(value['schema_versions']).size !== value['schema_versions'].length ||
+    !Array.isArray(value['capabilities']) ||
+    value['capabilities'].length === 0 ||
+    value['capabilities'].some(
+      (entry) => typeof entry !== 'string' ||
+        !TASK_HOST_CAPABILITIES.has(entry as ChannelTaskHostCapability),
+    ) ||
+    new Set(value['capabilities']).size !== value['capabilities'].length
+  ) {
+    return false;
+  }
+  return value['capabilities'].includes('durable_task_submission_v1') &&
+    value['capabilities'].includes('host_event_stream_v1');
 }
 
 function assertOptionalOnboard(

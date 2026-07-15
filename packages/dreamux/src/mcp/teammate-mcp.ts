@@ -1,5 +1,6 @@
 import { createInterface } from 'node:readline';
 import type { Readable, Writable } from 'node:stream';
+import type { AgentRuntimeDurableToolInvocation } from '@excitedjs/dreamux-types';
 
 import {
   AdminClientError,
@@ -36,6 +37,7 @@ interface JsonRpcRequest {
 interface ToolCall {
   name: string;
   arguments: unknown;
+  taskOperation?: AgentRuntimeDurableToolInvocation;
 }
 
 const JSONRPC_VERSION = '2.0';
@@ -116,7 +118,10 @@ async function handleRequest(
       return;
     case 'tools/call':
       if (request.id !== undefined) {
-        write(ctx.output, okResponse(request.id, await callTool(request.params, ctx)));
+        write(
+          ctx.output,
+          okResponse(request.id, await callTool(request.params, ctx)),
+        );
       }
       return;
     default:
@@ -235,6 +240,9 @@ async function callTool(
       {
         dispatcher_id: ctx.dispatcherId,
         ...mapped.params,
+        ...(call.taskOperation !== undefined
+          ? { task_operation: call.taskOperation }
+          : {}),
         caller_kind: ctx.callerKind,
         ...(ctx.teamId !== undefined ? { team_id: ctx.teamId } : {}),
       },
@@ -323,7 +331,44 @@ function asToolCallParams(params: unknown): ToolCall {
   if (typeof name !== 'string' || name === '') {
     throw new Error('tools/call params.name must be a non-empty string');
   }
-  return { name, arguments: obj['arguments'] ?? {} };
+  const taskOperation = durableTaskOperation(obj['_meta']);
+  return {
+    name,
+    arguments: obj['arguments'] ?? {},
+    ...(taskOperation !== undefined ? { taskOperation } : {}),
+  };
+}
+
+function durableTaskOperation(
+  value: unknown,
+): AgentRuntimeDurableToolInvocation | undefined {
+  if (value === undefined) return undefined;
+  const meta = asRecord(value, 'tools/call params._meta');
+  const raw = meta['dreamux/task-operation'];
+  if (raw === undefined) return undefined;
+  const operation = asRecord(raw, "_meta['dreamux/task-operation']");
+  const protocol = requireString(operation, 'protocol');
+  if (protocol !== 'durable_task_mcp_invocation_v1') {
+    throw new Error(
+      "_meta['dreamux/task-operation'].protocol must be 'durable_task_mcp_invocation_v1'",
+    );
+  }
+  const parentOperationId = requireString(operation, 'parent_operation_id');
+  const toolCallId = requireString(operation, 'tool_call_id');
+  const runtimeId = requireString(operation, 'runtime_id');
+  const durabilityNamespace = requireString(operation, 'durability_namespace');
+  const ordinal = operation['tool_call_ordinal'];
+  if (!Number.isSafeInteger(ordinal) || (ordinal as number) < 0) {
+    throw new Error('tool_call_ordinal must be a non-negative safe integer');
+  }
+  return {
+    protocol,
+    parent_operation_id: parentOperationId,
+    tool_call_id: toolCallId,
+    tool_call_ordinal: ordinal as number,
+    runtime_id: runtimeId,
+    durability_namespace: durabilityNamespace,
+  };
 }
 
 function spawnArgs(

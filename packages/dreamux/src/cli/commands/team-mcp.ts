@@ -9,6 +9,7 @@ interface TeamMcpArgv {
   caller?: 'dispatcher' | 'team_leader';
   teamId?: string;
   leaderName?: string;
+  taskAttempt?: boolean;
 }
 
 export function createTeamMcpCommand(): CommandModule<{}, TeamMcpArgv> {
@@ -39,6 +40,11 @@ export function createTeamMcpCommand(): CommandModule<{}, TeamMcpArgv> {
         .option('leader-name', {
           type: 'string',
           describe: 'TeamLeader name when this Team MCP shim runs for a TeamLeader',
+        })
+        .option('task-attempt', {
+          type: 'boolean',
+          default: false,
+          describe: 'Expose only the scoped task-attempt terminal tool',
         }) as Argv<TeamMcpArgv>,
     handler: async (argv) => {
       await runTeamMcp({
@@ -46,6 +52,7 @@ export function createTeamMcpCommand(): CommandModule<{}, TeamMcpArgv> {
         callerKind: argv.caller ?? 'dispatcher',
         teamId: argv.teamId,
         leaderName: argv.leaderName,
+        taskAttemptOnly: argv.taskAttempt === true,
         adminSocketPath: argv.adminSocket,
       });
     },

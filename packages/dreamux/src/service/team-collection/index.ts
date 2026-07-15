@@ -1,5 +1,3 @@
-import { Buffer } from 'node:buffer';
-
 import type {
   AgentRuntimeMcpServer,
   DreamuxLogger,
@@ -9,7 +7,6 @@ import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 import { dispatcherWorkspace } from '../worktree/workspaces.js';
-import { defaultWorkspaceEnabled } from '../../config/config.js';
 import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
 import type { AgentTurnsStore } from '../agent-entity/turns-store.js';
 import type {
@@ -20,6 +17,8 @@ import { requireLifecycleText } from '../agent-entity/types.js';
 import type { AgentEntityIdentity } from '../agent-entity/types.js';
 import type { SchedulerCommands } from '../scheduler/service.js';
 import type { ChannelRouteOwner } from '../channel-service/index.js';
+import type { TaskTeamSubmissionBridge } from '../task-runtime-submission.js';
+import type { TaskOperationInvocation } from '../task-runtime-submission.js';
 import { KeyedAsyncQueue } from '../serial-queue.js';
 import { TeamStore } from './store.js';
 import type {
@@ -27,14 +26,23 @@ import type {
   TeamCreateResult,
   TeamHistoryQuery,
   TeamHistoryResult,
-  TeamHistoryRow,
   TeamLeaderLease,
   TeamLeaderSendResult,
   TeamListRow,
   TeamRecord,
+  TaskTeamFinalizationResult,
+  TaskTeamProvisionInput,
 } from './types.js';
 import { validateTeamId } from './types.js';
-import type { AgentEntityIdentityStatus } from '../agent-entity/types.js';
+import { prepareTeamWorkspace } from './workspace.js';
+import {
+  assertTaskFinalizationMatches,
+  assertTaskProvisioningMatches,
+  existingTaskTeamResult,
+} from './task-provisioning.js';
+import { teamErrorInfo } from './format.js';
+import { TeamCollectionReadModel } from './history.js';
+import { dedupe } from './in-flight.js';
 import {
   TeamService,
   type TeamSchedulerLifecycle,
@@ -75,6 +83,7 @@ export interface TeamCollectionOptions {
     teamId: string;
     leaderName: string;
   }) => readonly AgentRuntimeMcpServer[];
+  taskSubmissionBridgeFor?: (teamId: string) => TaskTeamSubmissionBridge | null;
   log: DreamuxLogger;
 }
 
@@ -92,6 +101,7 @@ export class TeamCollection {
   private readonly dispatcherId: string;
   private readonly store = new TeamStore();
   private readonly worktrees: WorktreeManager;
+  private readonly readModel: TeamCollectionReadModel;
   /** Live {@link TeamService} cache keyed by team id (issue #233 factory). */
   private readonly cache = new Map<string, TeamService>();
   /**
@@ -127,6 +137,11 @@ export class TeamCollection {
   constructor(private readonly opts: TeamCollectionOptions) {
     this.dispatcherId = opts.dispatcherId;
     this.worktrees = opts.worktrees;
+    this.readModel = new TeamCollectionReadModel(
+      this.dispatcherId,
+      this.store,
+      opts.identities,
+    );
   }
 
   async create(input: TeamCreateInput): Promise<TeamCreateResult> {
@@ -143,6 +158,72 @@ export class TeamCollection {
     );
   }
 
+  /**
+   * Idempotently materialize a task-owned Team. Unlike the public create path,
+   * this repairs the recoverable crash window where a `starting` Team row was
+   * committed before its leader identity.
+   */
+  async ensureProvisioned(input: TaskTeamProvisionInput): Promise<TeamCreateResult> {
+    const teamId = validateTeamId(input.name);
+    return dedupe(this.creating, teamId, () =>
+      this.routeLifecycle.run(teamId, async () => {
+        if (this.routeClosing.has(teamId)) {
+          throw new TeamUnavailableError(`Team ${JSON.stringify(teamId)} is closing`);
+        }
+        requireLifecycleText(input.intent, 'Team create intent');
+        const existing = await this.store.get(this.dispatcherId, teamId);
+        if (existing?.status === 'closed') {
+          throw new TeamUnavailableError(`Team ${JSON.stringify(teamId)} is closed`);
+        }
+        const workspace = await prepareTeamWorkspace({
+          config: this.opts.config,
+          dispatcherId: this.dispatcherId,
+          worktrees: this.worktrees,
+          teamId,
+          request: input,
+        });
+        if (existing !== null) {
+          assertTaskProvisioningMatches(existing, input, workspace);
+        }
+        const identity = existing === null
+          ? null
+          : await this.opts.identities.leaderIdentity(this.dispatcherId, teamId);
+        if (existing !== null && identity !== null) {
+          const service = await this.get(teamId);
+          await service.ensureRouteReady();
+          return existingTaskTeamResult(service);
+        }
+        if (existing !== null && existing.status !== 'starting') {
+          throw new Error(`Team ${JSON.stringify(teamId)} has no recoverable leader`);
+        }
+        const { service, schedulerLifecycle, leaderResult } =
+          await TeamService.createNew(
+            { ...this.depsBase(), evict: (evicted) => this.evict(teamId, evicted) },
+            {
+              teamId,
+              name: input.name,
+              leaderAgentRuntime: input.leaderAgentRuntime,
+              intent: input.intent,
+              ...(input.identity !== undefined ? { identity: input.identity } : {}),
+              ...(input.skillSources !== undefined
+                ? { skillSources: input.skillSources }
+                : {}),
+              workspace,
+              existing,
+            },
+          );
+        this.cache.set(teamId, service);
+        this.schedulerLifecycles.set(teamId, { service, lifecycle: schedulerLifecycle });
+        return {
+          team: service.view(),
+          leader: leaderResult.teammate,
+          member_count: await service.memberCount(),
+          turn: null,
+        };
+      }),
+    );
+  }
+
   private async doCreate(
     input: TeamCreateInput,
     teamId: string,
@@ -152,31 +233,13 @@ export class TeamCollection {
     if (existing !== null && existing.status !== 'closed') {
       throw new Error(`Team ${JSON.stringify(teamId)} already exists`);
     }
-    const workspaceRoot = await dispatcherWorkspace(
-      this.opts.config,
-      this.dispatcherId,
-    );
-    const workspace =
-      input.worktree === undefined && input.repoCwd === undefined
-        ? await this.worktrees.prepareDefaultWorkspace({
-            dispatcherWorkspace: workspaceRoot,
-            slug: teamId,
-            workspaceEnabled: defaultWorkspaceEnabled(
-              this.opts.config,
-              this.dispatcherId,
-            ),
-          })
-        : await this.worktrees.prepare({
-            dispatcherId: this.dispatcherId,
-            teammateName: `team-${teamId}`,
-            cwd: input.repoCwd ?? workspaceRoot,
-            dispatcherWorkspace: workspaceRoot,
-            request: input.worktree ?? {
-              mode: 'managed',
-              slug: `team-${teamId}`,
-              cleanup: 'keep',
-            },
-          });
+    const workspace = await prepareTeamWorkspace({
+      config: this.opts.config,
+      dispatcherId: this.dispatcherId,
+      worktrees: this.worktrees,
+      teamId,
+      request: input,
+    });
     const { service, schedulerLifecycle, leaderResult } =
       await TeamService.createNew(
         { ...this.depsBase(), evict: (evicted) => this.evict(teamId, evicted) },
@@ -210,37 +273,13 @@ export class TeamCollection {
   }
 
   async list(): Promise<TeamListRow[]> {
-    const teams = await this.store.list(this.dispatcherId);
-    const out: TeamListRow[] = [];
-    for (const team of teams) {
-      out.push(await this.listRow(team));
-    }
-    return out;
+    return this.readModel.list();
   }
 
   async history(
     input: TeamHistoryQuery,
   ): Promise<TeamHistoryResult> {
-    const teams = await this.store.list(this.dispatcherId);
-    const rows: TeamHistoryRow[] = [];
-    for (const team of teams) {
-      const row = await this.historyRow(team);
-      if (matchesTeamHistoryQuery(row, input)) rows.push(row);
-    }
-    rows.sort(
-      (a, b) =>
-        b.updated_at - a.updated_at ||
-        b.created_at - a.created_at ||
-        a.team_name.localeCompare(b.team_name),
-    );
-    const start = input.cursor !== undefined ? decodeTeamCursor(input.cursor) : 0;
-    const limit = clampTeamHistoryLimit(input.limit);
-    const items = rows.slice(start, start + limit);
-    const next = start + items.length;
-    return {
-      items,
-      next_cursor: next < rows.length ? encodeTeamCursor(next) : null,
-    };
+    return this.readModel.history(input);
   }
 
   /** Get-or-rebuild the team's service; a cold-cache miss is deduped (#233). */
@@ -362,6 +401,7 @@ export class TeamCollection {
       prompt: string;
       intent?: string;
       initiator: CompletionInitiator;
+      taskInvocation?: TaskOperationInvocation;
     },
   ): Promise<TeamLeaderSendResult> {
     const id = validateTeamId(teamId);
@@ -372,6 +412,148 @@ export class TeamCollection {
   async isOpenTeam(teamId: string): Promise<boolean> {
     const team = await this.store.get(this.dispatcherId, validateTeamId(teamId));
     return team !== null && team.status !== 'closed';
+  }
+
+  /** True while Core owns this Team as a strict task attempt execution target. */
+  hasTaskAttempt(teamId: string): boolean {
+    const bridgeFor = this.opts.taskSubmissionBridgeFor;
+    return bridgeFor !== undefined && bridgeFor(validateTeamId(teamId)) !== null;
+  }
+
+  async abortProvisioning(
+    input: TaskTeamProvisionInput,
+  ): Promise<import('../agent-entity/types.js').AgentEntityWorktreeIdentity> {
+    const teamId = validateTeamId(input.name);
+    if (input.repoCwd === undefined || input.worktree?.mode !== 'managed') {
+      throw new Error('task Team provisional cleanup requires a managed repository');
+    }
+    const existing = await this.store.get(this.dispatcherId, teamId);
+    if (existing !== null) {
+      const leader = await this.opts.identities.leaderIdentity(
+        this.dispatcherId,
+        teamId,
+      );
+      if (existing.status !== 'starting' || leader !== null) {
+        throw new Error(`Team ${JSON.stringify(teamId)} is already materialized`);
+      }
+      if (
+        existing.repo_cwd !== input.repoCwd ||
+        existing.worktree.mode !== 'managed' ||
+        existing.worktree.slug !== (input.worktree.slug ?? `team-${teamId}`) ||
+        existing.worktree.base_ref !== (input.worktree.base_ref ?? 'HEAD')
+      ) {
+        throw new Error(`Team ${JSON.stringify(teamId)} conflicts with cleanup intent`);
+      }
+      const cleaned = await this.worktrees.cleanup({
+        source_cwd: existing.repo_cwd,
+        source_repo: existing.source_repo,
+        worktree: existing.worktree,
+      });
+      await this.store.update(existing, {
+        status: 'closed',
+        closedAt: Date.now(),
+        closeNote: 'Task provisioning was terminal before TeamLeader creation',
+        worktree: cleaned,
+      });
+      return cleaned;
+    }
+    return this.worktrees.cleanupProvisional({
+      dispatcherWorkspace: await dispatcherWorkspace(
+        this.opts.config,
+        this.dispatcherId,
+      ),
+      cwd: input.repoCwd,
+      slug: input.worktree.slug ?? `team-${teamId}`,
+      baseRef: input.worktree.base_ref ?? null,
+      ...(input.worktree.branch !== undefined
+        ? { branch: input.worktree.branch }
+        : {}),
+    });
+  }
+
+  /**
+   * Idempotently converge every task-owned Team shape without requiring a live
+   * TeamLeader: absent provisional worktree, orphan starting row, materialized
+   * Team, and already-closed row all share this record-level operation.
+   */
+  async finalizeTaskProvisioning(
+    input: TaskTeamProvisionInput,
+  ): Promise<TaskTeamFinalizationResult> {
+    const teamId = validateTeamId(input.name);
+    if (input.repoCwd === undefined || input.worktree?.mode !== 'managed') {
+      throw new Error('task Team finalization requires a managed repository');
+    }
+    return this.routeLifecycle.run(teamId, async () => {
+      this.routeClosing.add(teamId);
+      try {
+        const existing = await this.store.get(this.dispatcherId, teamId);
+        if (existing === null) {
+          const cleanup = await this.worktrees.cleanupProvisional({
+            dispatcherWorkspace: await dispatcherWorkspace(
+              this.opts.config,
+              this.dispatcherId,
+            ),
+            cwd: input.repoCwd!,
+            slug: input.worktree!.slug ?? `team-${teamId}`,
+            baseRef: input.worktree!.base_ref ?? null,
+            ...(input.worktree!.branch !== undefined
+              ? { branch: input.worktree!.branch }
+              : {}),
+          });
+          return { team_status: 'absent', cleanup };
+        }
+        assertTaskFinalizationMatches(existing, input);
+        if (existing.status !== 'closed') {
+          const leader = await this.opts.identities.leaderIdentity(
+            this.dispatcherId,
+            teamId,
+          );
+          if (leader !== null) {
+            await (await this.get(teamId)).dissolve({
+              teamId,
+              note: 'Task attempt reached an explicit terminal state',
+            });
+            const closed = await this.store.get(this.dispatcherId, teamId);
+            if (closed === null || closed.status !== 'closed') {
+              throw new Error(`Team ${JSON.stringify(teamId)} did not close`);
+            }
+            return { team_status: 'closed', cleanup: closed.worktree };
+          }
+        }
+        return this.finalizeTaskRecord(existing);
+      } finally {
+        this.routeClosing.delete(teamId);
+      }
+    });
+  }
+
+  private async finalizeTaskRecord(
+    record: TeamRecord,
+  ): Promise<TaskTeamFinalizationResult> {
+    const cleanup = record.worktree.cleanup_state === 'managed-active'
+      ? await this.worktrees.cleanup({
+          source_cwd: record.repo_cwd,
+          source_repo: record.source_repo,
+          worktree: record.worktree,
+        })
+      : record.worktree;
+    const closed = await this.store.update(record, {
+      status: 'closed',
+      closedAt: record.closed_at ?? Date.now(),
+      closeNote: record.close_note ??
+        'Task provisioning was terminal before TeamLeader creation',
+      worktree: cleanup,
+    });
+    const identities = [
+      await this.opts.identities.leaderIdentity(this.dispatcherId, record.team_id),
+      ...await this.opts.identities.list(this.dispatcherId, record.team_id),
+    ].filter((identity): identity is AgentEntityIdentity => identity !== null);
+    for (const identity of identities) {
+      await this.opts.identities.update(identity, { worktree: cleanup });
+    }
+    this.cache.delete(record.team_id);
+    this.schedulerLifecycles.delete(record.team_id);
+    return { team_status: 'closed', cleanup: closed.worktree };
   }
 
   private async currentOpenService(teamId: string): Promise<TeamService> {
@@ -428,68 +610,12 @@ export class TeamCollection {
       store: this.store,
       adminSocketPath: this.opts.adminSocketPath,
       leaderChannelDescriptors: this.opts.leaderChannelDescriptors,
+      ...(this.opts.taskSubmissionBridgeFor !== undefined
+        ? { taskSubmissionBridgeFor: this.opts.taskSubmissionBridgeFor }
+        : {}),
       trackMaterialized: (service) => this.materialized.add(service),
       log: this.opts.log,
     };
-  }
-
-  private async listRow(team: TeamRecord): Promise<TeamListRow> {
-    return {
-      team_name: team.team_id,
-      status: team.status,
-      intent: team.intent,
-      source_repo: team.source_repo,
-      leader_name: team.leader_name,
-      leader_state: await this.leaderState(team),
-      member_count: await this.memberCount(team),
-      created_at: team.created_at,
-      updated_at: team.updated_at,
-      closed_at: team.closed_at,
-    };
-  }
-
-  private async historyRow(team: TeamRecord): Promise<TeamHistoryRow> {
-    return {
-      team_name: team.team_id,
-      status: team.status,
-      intent: team.intent,
-      source_repo: team.source_repo,
-      leader_name: team.leader_name,
-      leader_agent_runtime: team.leader_agent_runtime,
-      leader_state: await this.leaderState(team),
-      member_count: await this.memberCount(team),
-      created_at: team.created_at,
-      updated_at: team.updated_at,
-      closed_at: team.closed_at,
-      close_note: team.close_note,
-      close_note_preview:
-        team.close_note !== null ? previewTeamText(team.close_note) : null,
-    };
-  }
-
-  private async leaderState(
-    team: TeamRecord,
-  ): Promise<AgentEntityIdentityStatus | null> {
-    // Read-only probe straight from the shared identity store (issue #233 R4):
-    // the leader lives at the team root, so the get is team-scoped. Equivalent to
-    // the old throwaway-collection `status(name)` — that probe held no entities,
-    // so its projection was already just `identity.status` with no live runtime.
-    // The `.catch(() => null)` matches the old `status(...).catch(() => null)`:
-    // this is a scan probe, so one unreadable team record (malformed leader_name,
-    // legacy state, IO error) must degrade to a null leader_state for that row,
-    // not throw and poison the whole list/history scan.
-    const leader = await this.opts.identities
-      .get(this.dispatcherId, team.leader_name, team.team_id)
-      .catch(() => null);
-    return leader?.status ?? null;
-  }
-
-  private async memberCount(team: TeamRecord): Promise<number> {
-    // Members-only roster, read straight from the shared identity store (issue
-    // #233 R4): a team-scope list returns only that team's members. Equivalent to
-    // the old throwaway-collection `list().length` — same store call, no entities.
-    return (await this.opts.identities.list(this.dispatcherId, team.team_id))
-      .length;
   }
 
   private async mustTeam(teamId: string): Promise<TeamRecord> {
@@ -507,7 +633,6 @@ export class TeamCollection {
     }
     return team;
   }
-
   async scheduler(teamId: string): Promise<SchedulerCommands> {
     await this.mustOpenTeam(teamId);
     return (await this.get(teamId)).scheduler;
@@ -531,13 +656,16 @@ export class TeamCollection {
         await schedulerLifecycle.lifecycle.start();
       } catch (err) {
         this.opts.log.error(
-          { dispatcher_id: this.dispatcherId, team_id: team.team_id, err: errInfo(err) },
+          {
+            dispatcher_id: this.dispatcherId,
+            team_id: team.team_id,
+            err: teamErrorInfo(err),
+          },
           'TeamLeader scheduler start failed',
         );
       }
     }
   }
-
   stopSchedulers(): void {
     for (const schedulerLifecycle of this.schedulerLifecycles.values()) {
       schedulerLifecycle.lifecycle.stop();
@@ -569,87 +697,4 @@ export class TeamUnavailableError extends Error {
     super(message);
     this.name = 'TeamUnavailableError';
   }
-}
-
-/** Share one in-flight promise per key; a concurrent same-key call joins it. */
-function dedupe<T>(
-  inFlight: Map<string, Promise<T>>,
-  key: string,
-  start: () => Promise<T>,
-): Promise<T> {
-  const existing = inFlight.get(key);
-  if (existing !== undefined) return existing;
-  const promise = start().finally(() => inFlight.delete(key));
-  inFlight.set(key, promise);
-  return promise;
-}
-
-function matchesTeamHistoryQuery(
-  row: TeamHistoryRow,
-  input: Omit<TeamHistoryQuery, 'dispatcherId'>,
-): boolean {
-  if (input.name !== undefined && row.team_name !== validateTeamId(input.name)) {
-    return false;
-  }
-  if (input.status !== undefined && row.status !== input.status) return false;
-  if (input.repo !== undefined) {
-    const needle = input.repo.toLowerCase();
-    const hit = row.source_repo !== null && row.source_repo.toLowerCase().includes(needle);
-    if (!hit) return false;
-  }
-  if (input.grep !== undefined && !teamRowMatchesText(row, input.grep)) {
-    return false;
-  }
-  if (input.since !== undefined && row.updated_at < input.since) return false;
-  if (input.until !== undefined && row.updated_at > input.until) return false;
-  return true;
-}
-
-function teamRowMatchesText(row: TeamHistoryRow, grep: string): boolean {
-  const needle = grep.toLowerCase();
-  if (needle === '') return true;
-  return [
-    row.team_name,
-    row.intent,
-    row.source_repo,
-    row.leader_name,
-    row.close_note,
-  ].some((value) => value !== null && value.toLowerCase().includes(needle));
-}
-
-function clampTeamHistoryLimit(input: number | undefined): number {
-  if (input === undefined) return 20;
-  if (!Number.isInteger(input) || input < 1) {
-    throw new Error('history limit must be a positive integer');
-  }
-  return Math.min(input, 100);
-}
-
-function encodeTeamCursor(offset: number): string {
-  return Buffer.from(JSON.stringify({ offset }), 'utf8').toString('base64url');
-}
-
-function decodeTeamCursor(cursor: string): number {
-  try {
-    const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as {
-      offset?: unknown;
-    };
-    if (typeof parsed.offset === 'number' && Number.isInteger(parsed.offset) && parsed.offset >= 0) {
-      return parsed.offset;
-    }
-  } catch {
-  }
-  throw new Error('invalid history cursor');
-}
-
-function previewTeamText(text: string): string {
-  const collapsed = text.replace(/\s+/g, ' ').trim();
-  return collapsed.length <= 500 ? collapsed : `${collapsed.slice(0, 497)}...`;
-}
-
-function errInfo(err: unknown): Record<string, unknown> {
-  if (err instanceof Error) {
-    return { type: err.name, message: err.message, stack: err.stack };
-  }
-  return { value: String(err) };
 }

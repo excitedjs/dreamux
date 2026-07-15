@@ -366,6 +366,85 @@ describe('teammate-mcp stdio shim', () => {
     }
   });
 
+  it('forwards durable runtime tool identity independently of JSON-RPC request ids', async () => {
+    const admin = await startFakeAdminServer((request) => ({
+      id: request.id,
+      ok: true,
+      result: { turn: { status: 'duplicate' } },
+    }));
+    try {
+      const input = new PassThrough();
+      const output = new PassThrough();
+      const reader = new JsonLineReader(output);
+      const run = runTeamMateMcp({
+        dispatcherId: 'dispatcher-a',
+        callerKind: 'team_leader',
+        teamId: 'alpha',
+        adminSocketPath: admin.socketPath,
+        input,
+        output,
+        log: () => {},
+      });
+      const operation = {
+        protocol: 'durable_task_mcp_invocation_v1',
+        parent_operation_id: 'parent-operation-a',
+        tool_call_id: 'runtime-tool-call-a',
+        tool_call_ordinal: 3,
+        runtime_id: 'leader-runtime-a',
+        durability_namespace: 'runtime-namespace-a',
+      };
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 'transport-request-99',
+        method: 'tools/call',
+        params: {
+          name: 'send',
+          arguments: { name: 'worker-a', prompt: 'Continue.' },
+          _meta: { 'dreamux/task-operation': operation },
+        },
+      });
+      await reader.next();
+      expect(admin.requests).toEqual([{
+        id: expect.any(String) as string,
+        method: 'teammate.send',
+        params: {
+          dispatcher_id: 'dispatcher-a',
+          caller_kind: 'team_leader',
+          team_id: 'alpha',
+          name: 'worker-a',
+          prompt: 'Continue.',
+          task_operation: operation,
+        },
+      }]);
+
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 'transport-request-100',
+        method: 'tools/call',
+        params: {
+          name: 'send',
+          arguments: { name: 'worker-a', prompt: 'Continue.' },
+          _meta: {
+            'dreamux/task-operation': {
+              ...operation,
+              durability_namespace: undefined,
+            },
+          },
+        },
+      });
+      await expect(reader.next()).resolves.toMatchObject({
+        id: 'transport-request-100',
+        result: { isError: true },
+      });
+      expect(admin.requests).toHaveLength(1);
+
+      input.end();
+      await run;
+    } finally {
+      await admin.close();
+    }
+  });
+
   it('omits the reminder when a TeamMate prompt turn is not submitted', async () => {
     const admin = await startFakeAdminServer((request) => ({
       id: request.id,

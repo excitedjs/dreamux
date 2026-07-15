@@ -24,6 +24,7 @@ import {
   optionalNullableRecordField,
   optionalNullableStringField,
   optionalRecordField,
+  optionalTaskOperationInvocation,
   optionalSkillSources,
   optionalString,
   optionalStringField,
@@ -183,6 +184,7 @@ export const adminMethods: Record<string, AdminHandler> = {
       ...(identity !== null ? { identity } : {}),
       ...(skillSources !== null ? { skillSources } : {}),
       ...(worktree !== null ? { worktree } : {}),
+      ...optionalTaskOperationInvocation(params),
     };
     try {
       // The team_leader path keeps the real `spawnTeamMate` method (it injects
@@ -209,6 +211,7 @@ export const adminMethods: Record<string, AdminHandler> = {
         name,
         prompt,
         ...(intent !== null ? { intent } : {}),
+        ...optionalTaskOperationInvocation(params),
       });
       return await send();
     } catch (err) {
@@ -452,6 +455,34 @@ export const adminMethods: Record<string, AdminHandler> = {
       note,
     });
     return { ...dissolved, bound_target: null };
+  },
+
+  'task.finish_attempt': async (server, params) => {
+    const id = mustDispatcherId(params);
+    mustExistingDispatcher(server, id);
+    if (teamCallerKind(params) !== 'team_leader') {
+      throw new AdminError(
+        'BAD_REQUEST',
+        'task.finish_attempt is available only to its scoped TeamLeader',
+      );
+    }
+    const outcome = mustString(params, 'outcome');
+    if (outcome !== 'completed' && outcome !== 'failed') {
+      throw new AdminError(
+        'BAD_REQUEST',
+        "param 'outcome' must be 'completed' or 'failed'",
+      );
+    }
+    const summary = optionalString(params, 'summary');
+    const receipt = await server.getDispatcher(id).finishTaskAttempt({
+      teamId: mustString(params, 'team_id'),
+      leaderName: mustString(params, 'leader_name'),
+      result: {
+        outcome,
+        ...(summary !== null ? { summary } : {}),
+      },
+    });
+    return { status: 'accepted', receipt };
   },
 
   'collaboration_space.bind': async (server, params) => {

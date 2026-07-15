@@ -17,6 +17,7 @@ export function targetIntent(
 export function hashTarget(input: {
   dispatcherId: string;
   channelId: string;
+  containerType: string;
   containerKey: string;
   bindingGeneration: number;
   targetKey: string;
@@ -25,6 +26,8 @@ export function hashTarget(input: {
     .update(input.dispatcherId)
     .update('\0')
     .update(input.channelId)
+    .update('\0')
+    .update(input.containerType)
     .update('\0')
     .update(input.containerKey)
     .update('\0')
@@ -38,12 +41,15 @@ export function hashTarget(input: {
 export function hashContainer(input: {
   dispatcherId: string;
   channelId: string;
+  containerType: string;
   containerKey: string;
 }): string {
   return createHash('sha256')
     .update(input.dispatcherId)
     .update('\0')
     .update(input.channelId)
+    .update('\0')
+    .update(input.containerType)
     .update('\0')
     .update(input.containerKey)
     .digest('hex')

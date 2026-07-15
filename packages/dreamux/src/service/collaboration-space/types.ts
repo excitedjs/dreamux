@@ -19,7 +19,32 @@ export interface CollaborationSpaceBindingRecord {
       };
   leader_agent_runtime: string;
   identity: string | null;
+  /** Immutable repository policy for task-capable default bindings. */
+  repository_policy?: {
+    source: 'static' | 'channel';
+    logical_key: string;
+    binding_revision: string;
+    fingerprint: string;
+  };
   bound_at: number;
+}
+
+export interface ResolvedCollaborationRepositoryPolicy {
+  source: 'static' | 'channel';
+  logical_key: string;
+  binding_revision: string;
+  fingerprint: string;
+  repo_cwd: string;
+  base_ref: string | null;
+  base_commit: string;
+}
+
+export interface CollaborationBindingSnapshot {
+  space_name: string;
+  generation: number;
+  repository: ResolvedCollaborationRepositoryPolicy;
+  leader_agent_runtime: string;
+  identity: string | null;
 }
 
 export interface CollaborationSpaceRecord {
@@ -61,6 +86,7 @@ export interface ProvisionedTargetRecord {
   space_name: string;
   channel_id: string;
   provider: string;
+  container_type: string;
   container_key: string;
   binding_generation: number;
   target_key: string;
@@ -69,6 +95,7 @@ export interface ProvisionedTargetRecord {
   team_name: string;
   leader_name: string | null;
   worktree_slug: string;
+  route_claim_id: string;
   lifecycle_status: ProvisionedTargetStatus;
   phase: ProvisionedTargetPhase;
   claim_event_id: string | null;
@@ -108,6 +135,7 @@ export interface ProvisionedTargetView {
   space_name: string;
   channel_id: string;
   provider: string;
+  container_type: string;
   container_key: string;
   binding_generation: number;
   target_type: string;
@@ -162,6 +190,9 @@ export interface CollaborationSpaceDefaultBindingInput {
   };
   leaderAgentRuntime: string;
   identity?: string;
+  repositoryPolicy?: NonNullable<
+    CollaborationSpaceBindingRecord['repository_policy']
+  >;
 }
 
 export interface CollaborationSpaceCloseTargetInput {

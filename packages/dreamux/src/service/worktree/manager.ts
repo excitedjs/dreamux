@@ -91,6 +91,7 @@ export class WorktreeManager {
     const slug = validateWorktreeSlug(input.request?.slug ?? input.teammateName);
     const branch = input.request?.branch ?? `dreamux/${teamMateNameSegment(slug)}`;
     const baseRef = input.request?.base_ref ?? 'HEAD';
+    const baseCommit = await resolveCommit(sourceRepo, baseRef);
     const path = managedWorktreePath({
       dispatcherWorkspace,
       canonicalRepoRoot,
@@ -105,12 +106,25 @@ export class WorktreeManager {
         '--verify',
         `refs/heads/${branch}`,
       ]);
+      if (
+        branchExists &&
+        !(await gitOk(sourceRepo, [
+          'merge-base',
+          '--is-ancestor',
+          baseCommit,
+          `refs/heads/${branch}`,
+        ]))
+      ) {
+        throw new Error(
+          `managed worktree branch does not descend from its pinned base commit: ${branch}`,
+        );
+      }
       await git(sourceRepo, [
         'worktree',
         'add',
         ...(branchExists ? [] : ['-b', branch]),
         path,
-        branchExists ? branch : baseRef,
+        branchExists ? branch : baseCommit,
       ]);
     } else {
       await assertRegisteredWorktree({
@@ -118,6 +132,18 @@ export class WorktreeManager {
         path,
         branch,
       });
+      if (
+        !(await gitOk(sourceRepo, [
+          'merge-base',
+          '--is-ancestor',
+          baseCommit,
+          `refs/heads/${branch}`,
+        ]))
+      ) {
+        throw new Error(
+          `managed worktree branch does not descend from its pinned base commit: ${branch}`,
+        );
+      }
     }
     return {
       sourceCwd,
@@ -193,6 +219,18 @@ export class WorktreeManager {
     if (worktree.cleanup !== 'delete-on-close') {
       return { ...worktree, cleanup_state: 'kept', cleanup_error: null };
     }
+    if (!(await pathExists(worktree.path))) {
+      // Physical absence is already the desired result. Repository metadata is
+      // secondary and may itself have been deleted after the task finished.
+      try {
+        const repo = identity.source_repo ?? (await this.repoRoot(identity.source_cwd));
+        await git(repo, ['worktree', 'prune']);
+      } catch {
+        // Best effort only: stale Git administrative data cannot resurrect the
+        // managed directory and must not turn completed cleanup into failure.
+      }
+      return { ...worktree, cleanup_state: 'deleted', cleanup_error: null };
+    }
     try {
       const repo = identity.source_repo ?? (await this.repoRoot(identity.source_cwd));
       const retain = await retainedState(repo, worktree);
@@ -212,6 +250,44 @@ export class WorktreeManager {
         cleanup_error: err instanceof Error ? err.message : String(err),
       };
     }
+  }
+
+  /**
+   * Clean the deterministic worktree left by a crash before its Team row was
+   * committed. This computes the expected path without preparing or creating it.
+   */
+  async cleanupProvisional(input: {
+    dispatcherWorkspace: string;
+    cwd: string;
+    slug: string;
+    baseRef: string | null;
+    branch?: string;
+  }): Promise<AgentEntityWorktreeIdentity> {
+    const dispatcherWorkspace = await realpath(input.dispatcherWorkspace);
+    // Repository policies persist a canonical root. Do not require that root to
+    // remain present merely to compute the deterministic provisional path.
+    const sourceRepo = resolve(input.cwd);
+    const sourceCwd = sourceRepo;
+    const slug = validateWorktreeSlug(input.slug);
+    const worktree: AgentEntityWorktreeIdentity = {
+      mode: 'managed',
+      slug,
+      path: managedWorktreePath({
+        dispatcherWorkspace,
+        canonicalRepoRoot: sourceRepo,
+        slug,
+      }),
+      branch: input.branch ?? `dreamux/${teamMateNameSegment(slug)}`,
+      base_ref: input.baseRef ?? 'HEAD',
+      cleanup: 'delete-on-close',
+      cleanup_state: 'managed-active',
+      cleanup_error: null,
+    };
+    return this.cleanup({
+      source_cwd: sourceCwd,
+      source_repo: sourceRepo,
+      worktree,
+    });
   }
 
   /**
@@ -339,6 +415,15 @@ async function revParseOrNull(cwd: string, ref: string): Promise<string | null> 
   } catch {
     return null;
   }
+}
+
+async function resolveCommit(repo: string, ref: string): Promise<string> {
+  const result = await git(repo, ['rev-parse', '--verify', `${ref}^{commit}`]);
+  const commit = result.stdout.trim();
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(commit)) {
+    throw new Error('managed worktree base did not resolve to a canonical Git object ID');
+  }
+  return commit;
 }
 
 async function assertRegisteredWorktree(input: {

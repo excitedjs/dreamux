@@ -50,6 +50,11 @@ import type {
   CompletionDeliveryResult,
   CompletionEnvelope,
 } from '../completion-router/index.js';
+import type {
+  TaskRuntimeHandle,
+  TaskRuntimeRole,
+  TaskTeamSubmissionBridge,
+} from '../task-runtime-submission.js';
 
 /** The provider-construction inputs a {@link TeammateService} needs to launch. */
 export interface RuntimeLaunchSpec {
@@ -96,6 +101,10 @@ export interface TeammateServiceOptions {
   runtimeId: string;
   ownsWorktreeOnClose: boolean;
   loggerFields?: Record<string, unknown>;
+  taskSubmission?: {
+    bridge: TaskTeamSubmissionBridge;
+    role: TaskRuntimeRole;
+  };
   assertIdentityScope?: (identity: AgentEntityIdentity, dispatcherId: string) => void;
 }
 
@@ -130,6 +139,7 @@ export class TeammateService {
   private readonly runtimeId: string;
   private readonly ownsWorktreeOnClose: boolean;
   private readonly loggerFields: Record<string, unknown>;
+  private readonly taskSubmission: TeammateServiceOptions['taskSubmission'];
   private readonly assertIdentityScope: (
     identity: AgentEntityIdentity,
     dispatcherId: string,
@@ -148,6 +158,7 @@ export class TeammateService {
     this.runtimeId = options.runtimeId;
     this.ownsWorktreeOnClose = options.ownsWorktreeOnClose;
     this.loggerFields = options.loggerFields ?? { teammate: identity.name };
+    this.taskSubmission = options.taskSubmission;
     this.assertIdentityScope =
       options.assertIdentityScope ?? assertIdentityBelongsToDispatcher;
     this.state = new AgentRuntimeStateStore(deps.identities, identity);
@@ -163,6 +174,43 @@ export class TeammateService {
 
   getRuntime(): AgentRuntime | null {
     return this.runtime;
+  }
+
+  async taskRuntimeHandle(opts: { reopenClosed?: boolean } = {}): Promise<TaskRuntimeHandle> {
+    await this.ensureStarted(opts);
+    const runtime = this.mustRuntime();
+    if (
+      runtime.getCapabilities().durableTaskSubmission?.protocol !==
+        'durable_task_submission_v1' ||
+      runtime.getCapabilities().durableTaskToolInvocation?.protocol !==
+        'durable_task_mcp_invocation_v1' ||
+      runtime.durableTaskSubmissions === undefined
+    ) {
+      throw new Error('Team runtime does not provide durable task submission');
+    }
+    const role = this.taskSubmission?.role;
+    if (role === undefined) throw new Error('agent is not owned by a task attempt');
+    return { runtimeId: this.runtimeId, role, runtime };
+  }
+
+  async prepareTaskSend(intent?: string): Promise<TaskRuntimeHandle> {
+    await this.ensureStarted({ reopenClosed: true });
+    if (intent !== undefined && intent !== '') await this.state.updateIntent(intent);
+    return this.taskRuntimeHandle({ reopenClosed: true });
+  }
+
+  async recordTaskSubmission(input: {
+    prompt: string;
+    turn: AgentRuntimeTurnResult;
+    turnOrigin: AgentEntityTurnOrigin;
+  }): Promise<AgentEntityTurnResult> {
+    const turn = toTurnResult(input.turn);
+    await recordSubmittedTurn(this.turnsStore, this.live(), {
+      turnId: turn.turn_id ?? null,
+      turnOrigin: input.turnOrigin,
+      prompt: input.prompt,
+    });
+    return turn;
   }
 
   /**
@@ -476,7 +524,7 @@ export class TeammateService {
    * never gated by, or lost to, delivery.
    */
   private async deliverSettledTurn(
-    _runtime: AgentRuntime,
+    runtime: AgentRuntime,
     settled: TurnSettledSignal,
   ): Promise<void> {
     const identity = this.current();
@@ -492,12 +540,15 @@ export class TeammateService {
       assistant: result,
       settleStatus: settled.status,
     });
-    const route = this.deps.routeSettledCompletion(
-      identity.name,
-      settled.turnId,
-      envelope,
-    );
-    await Promise.allSettled([record, route]);
+    const delivery = this.taskSubmission === undefined
+      ? this.deps.routeSettledCompletion(identity.name, settled.turnId, envelope)
+      : this.taskSubmission.bridge.observeSettlement({
+          runtimeId: this.runtimeId,
+          durabilityNamespace: requiredDurabilityNamespace(runtime),
+          turnId: settled.turnId,
+        });
+    await record;
+    await delivery;
   }
 
   private async submitPrompt(prompt: string): Promise<AgentEntityTurnResult> {
@@ -551,6 +602,14 @@ function completionStatusLine(completion: CompletionEnvelope): string {
     case 'stopped':
       return `TeamMate ${completion.source}'s task was stopped.`;
   }
+}
+
+function requiredDurabilityNamespace(runtime: AgentRuntime): string {
+  const namespace = runtime.durableTaskSubmissions?.namespace;
+  if (typeof namespace !== 'string' || namespace === '') {
+    throw new Error('task runtime has no durability namespace');
+  }
+  return namespace;
 }
 
 async function buildCompletionTurnText(

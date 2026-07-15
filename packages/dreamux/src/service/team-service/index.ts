@@ -1,7 +1,6 @@
 import type {
   AgentRuntimeMcpServer,
   AgentRuntimeSkillSource,
-  AgentRuntimeSystemPrompt,
   AgentRuntimeTurnResult,
   DreamuxLogger,
   InboundTurnInput,
@@ -25,12 +24,12 @@ import { completionKey } from '../completion-router/index.js';
 import { cronMcpServerDescriptor } from '../scheduler/mcp-config.js';
 import { SchedulerService, type SchedulerCommands } from '../scheduler/service.js';
 import { CronJobStore } from '../scheduler/store.js';
-import {
-  TeammateCollection,
-  type SpawnTeamMateRequest,
-  type TeamMateSharedWorkspace,
-  type TeammateOps,
-} from '../teammate-collection/index.js';
+import { TeammateCollection } from '../teammate-collection/index.js';
+import type {
+  SpawnTeamMateRequest,
+  TeamMateSharedWorkspace,
+  TeammateOps,
+} from '../teammate-collection/types.js';
 import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
 import { teammateMcpServerDescriptor } from '../teammate-collection/mcp-config.js';
 import { teamMcpServerDescriptor } from '../team-collection/mcp-config.js';
@@ -52,8 +51,18 @@ import type {
   TeamSummary,
   TeamView,
 } from '../team-collection/types.js';
+import { teamView } from '../team-collection/format.js';
 import type { WorktreeManager } from '../worktree/manager.js';
-import { createTeamLeaderAgent } from './leader-agent.js';
+import type {
+  TaskOperationInvocation,
+  TaskRuntimeEffect,
+  TaskRuntimeHandle,
+  TaskTeamSubmissionBridge,
+} from '../task-runtime-submission.js';
+import {
+  createTeamLeaderAgent,
+  teamLeaderSystemPrompt,
+} from './leader-agent.js';
 
 export interface TeamServiceDeps {
   dispatcherId: string;
@@ -73,6 +82,7 @@ export interface TeamServiceDeps {
     teamId: string;
     leaderName: string;
   }) => readonly AgentRuntimeMcpServer[];
+  taskSubmissionBridgeFor?: (teamId: string) => TaskTeamSubmissionBridge | null;
   trackMaterialized: (service: TeamService) => void;
   store: TeamStore;
   evict: (service: TeamService) => void;
@@ -129,6 +139,7 @@ export class TeamService {
 
   private constructor(private readonly deps: TeamServiceDeps, teamId: string) {
     this.id = teamId;
+    const taskSubmissionBridge = deps.taskSubmissionBridgeFor?.(teamId) ?? null;
     this.teammateCollection = new TeammateCollection({
       dispatcherId: deps.dispatcherId,
       teamScope: teamId,
@@ -140,6 +151,7 @@ export class TeamService {
       router: deps.router,
       initiatorFor: deps.initiatorFor,
       isShuttingDown: deps.isShuttingDown,
+      ...(taskSubmissionBridge !== null ? { taskSubmissionBridge } : {}),
       log: deps.log,
     });
     this.scheduler_ = new SchedulerService({
@@ -334,6 +346,33 @@ export class TeamService {
     }
   }
 
+  /** Live runtime handle used only by the Core-owned task submission coordinator. */
+  async durableTaskRuntime(): Promise<TaskRuntimeHandle> {
+    await this.ensureRouteReady();
+    return this.leader.taskRuntimeHandle();
+  }
+
+  async ensureTaskSubmissionRuntime(input: {
+    runtimeId: string | null;
+    runtimeRole: TaskRuntimeHandle['role'];
+    effect: TaskRuntimeEffect;
+  }): Promise<TaskRuntimeHandle> {
+    if (input.runtimeRole === 'leader') {
+      const handle = input.effect.kind === 'send'
+        ? await this.leader.prepareTaskSend(input.effect.intent ?? undefined)
+        : await this.durableTaskRuntime();
+      if (input.runtimeId !== null && input.runtimeId !== handle.runtimeId) {
+        throw new Error('task submission runtime identity changed');
+      }
+      return handle;
+    }
+    return this.teammateCollection.ensureTaskSubmissionRuntime({
+      runtimeId: input.runtimeId,
+      effect: input.effect,
+      sharedWorkspace: this.sharedWorkspace(),
+    });
+  }
+
   async dissolve(input: TeamDissolveInput): Promise<TeamSummary> {
     requireLifecycleText(input.note, 'Team dissolve note');
     this.scheduler_.stop();
@@ -354,12 +393,6 @@ export class TeamService {
       source_repo: record.source_repo,
       worktree: record.worktree,
     });
-    this.record = await this.deps.store.update(record, {
-      status: 'closed',
-      closedAt: Date.now(),
-      closeNote: input.note,
-      worktree: cleaned,
-    });
     // Propagate that single result to every borrower so a leader/member
     // `cleanup_state` does not stay `managed-active` after the worktree is gone
     // (issue #237). They share the one worktree, so the same identity applies.
@@ -368,6 +401,14 @@ export class TeamService {
       await this.teammateCollection.applyWorktreeCleanup(member.name, cleaned);
     }
     await this.scheduler_.deleteStoreFile();
+    // Commit Team closure last. A crash before this point leaves an open row,
+    // so the idempotent dissolve path retries borrower propagation and cleanup.
+    this.record = await this.deps.store.update(record, {
+      status: 'closed',
+      closedAt: Date.now(),
+      closeNote: input.note,
+      worktree: cleaned,
+    });
     const summary = await this.status();
     // Evict so a later `get` rebuilds from disk and reads `status: closed`.
     this.deps.evict(this);
@@ -399,6 +440,15 @@ export class TeamService {
 
   async deliverToLeader(turn: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
     if (this.mustRecord().status === 'closed') return { status: 'stopped' };
+    const taskBridge = this.deps.taskSubmissionBridgeFor?.(this.id) ?? null;
+    if (taskBridge !== null) {
+      return {
+        status: 'failed',
+        error: new Error(
+          'strict task targets do not accept conversational channel delivery',
+        ),
+      };
+    }
     return this.leader.channelInput(turn);
   }
 
@@ -406,12 +456,37 @@ export class TeamService {
     prompt: string;
     intent?: string;
     initiator: CompletionInitiator;
+    taskInvocation?: TaskOperationInvocation;
   }): Promise<TeamLeaderSendResult> {
     const record = this.mustRecord();
     if (record.status === 'closed') {
       throw new Error(`Team ${JSON.stringify(this.id)} is closed`);
     }
     const leader = this.mustLeader();
+    const taskBridge = this.deps.taskSubmissionBridgeFor?.(this.id) ?? null;
+    if (taskBridge !== null) {
+      if (input.taskInvocation === undefined) {
+        throw new Error('task TeamLeader send requires a durable invocation identity');
+      }
+      const prepared = await taskBridge.prepareSend({
+        invocation: input.taskInvocation,
+        prompt: input.prompt,
+        intent: input.intent ?? null,
+        runtimeRole: 'leader',
+        teammateName: null,
+      });
+      const submitted = await taskBridge.submitPrepared(prepared);
+      const turn = await leader.recordTaskSubmission({
+        prompt: input.prompt,
+        turn: submitted,
+        turnOrigin: 'dispatcher',
+      });
+      return {
+        team: this.view(),
+        leader: leader.status(),
+        turn,
+      };
+    }
     const sent = await leader.send({
       prompt: input.prompt,
       ...(input.intent !== undefined ? { intent: input.intent } : {}),
@@ -435,6 +510,22 @@ export class TeamService {
       runtimeCwd: record.runtime_cwd,
       worktree: record.worktree,
     };
+  }
+
+  taskCleanupOutcome(): {
+    status: 'deleted' | 'retained';
+    reason?: 'dirty' | 'unmerged' | 'unique_commits' | 'cleanup_error';
+  } {
+    const state = this.mustRecord().worktree.cleanup_state;
+    if (state === 'deleted') return { status: 'deleted' };
+    const reason = state === 'retained-dirty'
+      ? 'dirty'
+      : state === 'retained-unmerged'
+        ? 'unmerged'
+        : state === 'retained-unique-commits'
+          ? 'unique_commits'
+          : 'cleanup_error';
+    return { status: 'retained', reason };
   }
 
   async spawnTeamMate(input: Omit<SpawnTeamMateRequest, 'sharedWorkspace'>) {
@@ -494,6 +585,8 @@ export class TeamService {
   }
 
   private buildLeader(identity: AgentEntityIdentity): TeammateService {
+    const taskSubmissionBridge =
+      this.deps.taskSubmissionBridgeFor?.(this.id) ?? null;
     return createTeamLeaderAgent({
       dispatcherId: this.deps.dispatcherId,
       identity,
@@ -518,6 +611,14 @@ export class TeamService {
       trackSettleCapture: (capture) => this.trackLeaderSettleCapture(capture),
       routeSettledCompletion: (producerName, turnId, completion) =>
         this.routeLeaderSettledCompletion(producerName, turnId, completion),
+      ...(taskSubmissionBridge !== null
+        ? {
+            taskSubmission: {
+              bridge: taskSubmissionBridge,
+              role: 'leader' as const,
+            },
+          }
+        : {}),
     });
   }
 
@@ -591,32 +692,4 @@ export class TeamService {
       stop: () => service.scheduler_.stop(),
     };
   }
-}
-
-function teamLeaderSystemPrompt(
-  teamId: string,
-  identityPrompt: string | null,
-): AgentRuntimeSystemPrompt {
-  const append = [
-    `You are the TeamLeader of Dreamux Team ${JSON.stringify(teamId)}.`,
-    'Load `team-workflow` before using this Team\'s TeamMate tools, provider-exposed channel tools, cron tools, or team transfer tool.',
-    'When a prompt-submitting TeamMate tool returns success, the task was submitted successfully; Dreamux core will push the completion back automatically, so do not poll `last` or other read tools, and end the turn naturally if there is no other work.',
-  ];
-  if (identityPrompt !== null) append.push(identityPrompt);
-  return { append };
-}
-
-export function teamView(team: TeamRecord): TeamView {
-  return {
-    team_name: team.team_id,
-    status: team.status,
-    intent: team.intent,
-    source_repo: team.source_repo,
-    leader_name: team.leader_name,
-    leader_agent_runtime: team.leader_agent_runtime,
-    created_at: team.created_at,
-    updated_at: team.updated_at,
-    closed_at: team.closed_at,
-    close_note: team.close_note,
-  };
 }

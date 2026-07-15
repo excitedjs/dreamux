@@ -67,3 +67,19 @@ export function agentRuntimeCapability(
     unsupported_reason: unsupportedReason,
   };
 }
+
+export function agentRuntimeSupportsDurableTasks(
+  config: DreamuxConfig,
+  dispatcherId: string,
+  agentRuntimeId: string,
+  providers: AgentRuntimeProviderCatalog,
+): boolean {
+  const agent = resolveAgent(config, dispatcherId, agentRuntimeId);
+  const capabilities = providers.resolve(agent.provider).getCapabilities();
+  return capabilities.durableTaskSubmission?.supported === true &&
+    capabilities.durableTaskSubmission.protocol ===
+      'durable_task_submission_v1' &&
+    capabilities.durableTaskToolInvocation?.supported === true &&
+    capabilities.durableTaskToolInvocation.protocol ===
+      'durable_task_mcp_invocation_v1';
+}

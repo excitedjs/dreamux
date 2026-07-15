@@ -10,8 +10,16 @@ import {
   routeClaimIdForTarget,
   targetFromRecord,
 } from './target.js';
-import { parseMessage, routeKey, targetRouteKey } from './support.js';
-import type { ProvisionedTargetRecord } from './types.js';
+import {
+  parseMessage,
+  requiredBinding,
+  routeKey,
+  targetRouteKey,
+} from './support.js';
+import type {
+  CollaborationSpaceRecord,
+  ProvisionedTargetRecord,
+} from './types.js';
 
 type ResolvedChannelRoute = Awaited<
   ReturnType<ChannelService['resolveInboundBinding']>
@@ -34,6 +42,46 @@ interface CollaborationRouteReconcilerOptions {
  */
 export class CollaborationRouteReconciler {
   constructor(private readonly opts: CollaborationRouteReconcilerOptions) {}
+
+  async detachActiveTargets(space: CollaborationSpaceRecord): Promise<{
+    detached_targets: number;
+    released_bindings: number;
+  }> {
+    const binding = requiredBinding(space);
+    const targets = await this.opts.store.listTargets(this.opts.dispatcherId, {
+      spaceName: space.space_name,
+      channelId: space.channel_id,
+      containerType: space.container_type,
+      containerKey: space.container_key,
+      bindingGeneration: binding.generation,
+    });
+    let detached = 0;
+    let released = 0;
+    for (const target of targets) {
+      if (!isDetachableStatus(target.lifecycle_status)) continue;
+      await this.opts.locks.run(targetRouteKey(target), async () => {
+        const latest = await this.opts.store.getTarget(this.opts.dispatcherId, {
+          channelId: target.channel_id,
+          containerType: target.container_type,
+          containerKey: target.container_key,
+          bindingGeneration: target.binding_generation,
+          targetKey: target.target_key,
+        });
+        if (latest === null || !isDetachableStatus(latest.lifecycle_status)) return;
+        const detachedTarget = latest.lifecycle_status === 'detached'
+          ? latest
+          : await this.saveDetached(latest);
+        if (latest.lifecycle_status !== 'detached') detached += 1;
+        const bindingRow = await this.opts.channels.releaseResolvedTargetIfClaimed({
+          claimId: routeClaimIdForTarget(detachedTarget),
+          channelId: detachedTarget.channel_id,
+          target: targetFromRecord(detachedTarget),
+        });
+        if (bindingRow !== null) released += 1;
+      });
+    }
+    return { detached_targets: detached, released_bindings: released };
+  }
 
   /**
    * Replace a managed route with an explicit Team binding. The authoritative
@@ -171,6 +219,7 @@ export class CollaborationRouteReconciler {
     await this.opts.locks.run(targetRouteKey(target), async () => {
       const current = await this.opts.store.getTarget(this.opts.dispatcherId, {
         channelId: target.channel_id,
+        containerType: target.container_type,
         containerKey: target.container_key,
         bindingGeneration: target.binding_generation,
         targetKey: target.target_key,
@@ -321,6 +370,15 @@ export class CollaborationRouteReconciler {
       throw new Error(`dispatcher '${this.opts.dispatcherId}' is shutting down`);
     }
   }
+}
+
+function isDetachableStatus(
+  status: ProvisionedTargetRecord['lifecycle_status'],
+): boolean {
+  return status === 'active' ||
+    status === 'creating' ||
+    status === 'failed' ||
+    status === 'detached';
 }
 
 function routeBelongsToTarget(

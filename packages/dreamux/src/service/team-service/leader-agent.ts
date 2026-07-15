@@ -20,6 +20,10 @@ import {
 } from '../agent-entity/runtime-profile.js';
 import type { TeammateService } from '../teammate-service/index.js';
 import type { WorktreeManager } from '../worktree/manager.js';
+import type {
+  TaskRuntimeRole,
+  TaskTeamSubmissionBridge,
+} from '../task-runtime-submission.js';
 
 export interface TeamLeaderAgentDeps {
   dispatcherId: string;
@@ -41,6 +45,10 @@ export interface TeamLeaderAgentDeps {
     turnId: string,
     completion: CompletionEnvelope,
   ) => Promise<void>;
+  taskSubmission?: {
+    bridge: TaskTeamSubmissionBridge;
+    role: TaskRuntimeRole;
+  };
 }
 
 export function createTeamLeaderAgent(
@@ -61,6 +69,9 @@ export function createTeamLeaderAgent(
       mcpServers: deps.mcpServers,
       skillSources: deps.skillSources,
       disableFeatures: deps.disableFeatures,
+      ...(deps.taskSubmission !== undefined
+        ? { taskSubmission: deps.taskSubmission }
+        : {}),
       ...(deps.systemPrompt !== undefined
         ? { systemPrompt: deps.systemPrompt }
         : {}),
@@ -75,4 +86,17 @@ export function createTeamLeaderAgent(
     trackSettleCapture: deps.trackSettleCapture,
     routeSettledCompletion: deps.routeSettledCompletion,
   });
+}
+
+export function teamLeaderSystemPrompt(
+  teamId: string,
+  identityPrompt: string | null,
+): AgentRuntimeSystemPrompt {
+  const append = [
+    `You are the TeamLeader of Dreamux Team ${JSON.stringify(teamId)}.`,
+    'Load `team-workflow` before using this Team\'s TeamMate tools, provider-exposed channel tools, cron tools, or team transfer tool.',
+    'When a prompt-submitting TeamMate tool returns success, the task was submitted successfully; Dreamux core will push the completion back automatically, so do not poll `last` or other read tools, and end the turn naturally if there is no other work.',
+  ];
+  if (identityPrompt !== null) append.push(identityPrompt);
+  return { append };
 }

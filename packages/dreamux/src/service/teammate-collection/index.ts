@@ -1,19 +1,15 @@
-import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type {
   AgentRuntime,
   AgentRuntimeSystemPrompt,
 } from '@excitedjs/dreamux-types';
-import type { DreamuxConfig } from '../../config/config.js';
-import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import {
   agentRuntimeCapability,
+  agentRuntimeSupportsDurableTasks,
   defaultAgentRuntime,
 } from './agent-config.js';
 import {
   completionKey,
   type CompletionEnvelope,
-  type CompletionInitiator,
-  type CompletionRouter,
 } from '../completion-router/index.js';
 import { createTeammateService } from '../teammate-service/factory.js';
 import {
@@ -34,13 +30,18 @@ import {
 } from './read-helpers.js';
 import type { TeammateService } from '../teammate-service/index.js';
 import { AgentTurnsStore } from '../agent-entity/turns-store.js';
-import { allocateConcreteName, type SuffixGenerator } from './name-allocator.js';
+import { allocateConcreteName } from './name-allocator.js';
 import {
   assertManagedWorktreeAvailable,
   dispatcherWorkspace,
   resolveSpawnWorkspace,
 } from '../worktree/workspaces.js';
 import type { WorktreeManager } from '../worktree/manager.js';
+import type {
+  TaskRuntimeEffect,
+  TaskRuntimeHandle,
+} from '../task-runtime-submission.js';
+import { TaskRuntimeCapabilityUnavailableError } from '../task-runtime-submission.js';
 import {
   optionalLifecycleText,
   requireLifecycleText,
@@ -61,94 +62,11 @@ import {
 import type {
   CloseTeamMateInput,
   SendTeamMateInput,
-  SpawnTeamMateInput,
+  SpawnTeamMateRequest,
+  TeamMateSharedWorkspace,
+  TeammateCollectionOptions,
+  TeammateOps,
 } from './types.js';
-
-export interface TeammateCollectionOptions {
-  /** The dispatcher this collection belongs to (issue #233 ownership sinking). */
-  dispatcherId: string;
-  /**
-   * The fixed scope this collection serves (issue #233): `null` = the
-   * dispatcher's own teammates (`teammate/<name>/`); a `team_id` = that team's
-   * members (`team/<team>/teammate/<name>/`). One `TeammateCollection` per
-   * scope; the scope is baked in, not threaded per call — `spawn` / `send` /
-   * `list` / `status` / `history` / `last` / `close` supply this scope to the
-   * (unchanged) stores and read model. The team leader is owned directly by
-   * `TeamService`.
-   */
-  teamScope: string | null;
-  config: DreamuxConfig;
-  agentRuntimeProviders: AgentRuntimeProviderCatalog;
-  /** The per-dispatcher worktree manager, shared with the team collection. */
-  worktrees: WorktreeManager;
-  /**
-   * The identity + turns store pair (issue #233 / PR #282 review). Required:
-   * `DispatcherService` is the per-dispatcher composition root and builds the
-   * shared pair once, then injects it into the dispatcher agent, the
-   * dispatcher-scope teammate collection, and each team-scope member
-   * collection. The stores are stateless (paths by role + team_id), so one
-   * pair safely serves all scopes; `TeammateCollection` must never hide a
-   * `new` fallback.
-   */
-  identities: AgentIdentityStore;
-  turnsStore: AgentTurnsStore;
-  /**
-   * The dispatcher's delivery router (issue #233). Omitted in storage-only
-   * contexts (no settle delivery is then routed).
-   */
-  router?: CompletionRouter;
-  /**
-   * Resolve the delivery target of a send-initiated turn from the producer's
-   * identity: a team member's leader, or the dispatcher agent otherwise. Owned by
-   * `DispatcherService` (it holds the team topology + the dispatcher runtime);
-   * the collection stays topology-free. `null` when no target can be resolved
-   * (the turn is then recorded but not pushed).
-   */
-  initiatorFor?: (
-    producer: AgentEntityIdentity,
-  ) => Promise<CompletionInitiator | null>;
-  /**
-   * Reject any new turn while the dispatcher is shutting down (issue #233). The
-   * single gate for every lazy-start path — `spawn`/`send` from a dispatcher
-   * teammate or via the team layer — so a shutdown-window turn cannot start a
-   * runtime the `stopAll` sweep already passed.
-   */
-  isShuttingDown?: () => boolean;
-  suffixGenerator?: SuffixGenerator;
-  log: DreamuxLogger;
-}
-
-export interface TeamMateSharedWorkspace {
-  sourceCwd: string;
-  sourceRepo: string | null;
-  runtimeCwd: string;
-  worktree: AgentEntityWorktreeIdentity;
-}
-
-export type SpawnTeamMateRequest = SpawnTeamMateInput & {
-  sharedWorkspace?: TeamMateSharedWorkspace;
-};
-
-/**
- * The narrow teammate-operations surface a dispatcher or team exposes to the
- * admin layer (issue #233). `TeammateCollection` implements it; the owning
- * service hands it out via a `get teammates()` so callers can drive the
- * collection without the service re-forwarding each verb. `Omit` hides the
- * scope-internal inputs — `sharedWorkspace` (injected by `TeamService.spawnTeamMate`)
- * and the history `teamId` (the scope is baked into the collection) — and the
- * lifecycle methods (`turns` / `stopAll` / `dispatcherWorkspace`) stay off the
- * interface entirely.
- */
-export interface TeammateOps {
-  spawn(input: Omit<SpawnTeamMateRequest, 'sharedWorkspace'>): Promise<AgentEntitySpawnResult>;
-  send(input: SendTeamMateInput): Promise<AgentEntitySendResult>;
-  close(input: CloseTeamMateInput): Promise<AgentEntityCloseResult>;
-  list(): Promise<AgentEntityRuntimeStatus[]>;
-  status(name: string): Promise<AgentEntityRuntimeStatus>;
-  history(input: Omit<AgentEntityHistoryQuery, 'teamId'>): Promise<AgentEntityHistoryResult>;
-  last(name: string, turns?: number): Promise<AgentEntityLastResult>;
-  getCapabilities(): AgentEntityCapabilities;
-}
 
 /**
  * A scoped teammate collection (issue #233): one instance per scope — one for the
@@ -229,9 +147,15 @@ export class TeammateCollection implements TeammateOps {
       throw new Error('Team member spawn requires a shared team workspace');
     }
     const role: AgentEntityRole = teamId !== undefined ? 'team_member' : 'teammate';
-    const name = await this.allocateName(role, input.name);
     const agentRuntimeId =
       input.agentRuntime ?? defaultAgentRuntime(this.opts.config, this.dispatcherId);
+    if (this.opts.taskSubmissionBridge !== undefined) {
+      if (teamId === undefined || input.taskInvocation === undefined) {
+        throw new Error('task TeamMate spawn requires a durable invocation identity');
+      }
+      return this.spawnTaskMember(input, agentRuntimeId);
+    }
+    const name = await this.allocateName(role, input.name);
     const workspace = await resolveSpawnWorkspace({
       config: this.opts.config,
       worktrees: this.worktrees,
@@ -278,6 +202,12 @@ export class TeammateCollection implements TeammateOps {
     if (this.opts.isShuttingDown?.())
       throw new Error(`dispatcher '${this.dispatcherId}' is shutting down`);
     const teamId = this.teamScope ?? undefined;
+    if (this.opts.taskSubmissionBridge !== undefined) {
+      if (teamId === undefined || input.taskInvocation === undefined) {
+        throw new Error('task TeamMate send requires a durable invocation identity');
+      }
+      return this.sendTaskMember(input);
+    }
     const entity = await this.mustEntity(input.name);
     const result = await entity.send({
       prompt: input.prompt,
@@ -286,6 +216,151 @@ export class TeammateCollection implements TeammateOps {
     });
     await this.registerCompletion(entity, result.turn.turn_id ?? null);
     return result;
+  }
+
+  async ensureTaskSubmissionRuntime(input: {
+    runtimeId: string | null;
+    effect: TaskRuntimeEffect;
+    sharedWorkspace: TeamMateSharedWorkspace;
+  }): Promise<TaskRuntimeHandle> {
+    if (this.teamScope === null || this.opts.taskSubmissionBridge === undefined) {
+      throw new Error('collection is not owned by a task attempt');
+    }
+    if (input.effect.kind === 'spawn') {
+      this.assertDurableTaskRuntime(input.effect.agent_runtime);
+      const entity = await this.ensureTaskMemberIdentity({
+        name: input.effect.teammate_name,
+        prompt: '',
+        intent: input.effect.intent,
+        agentRuntime: input.effect.agent_runtime,
+        identity: input.effect.identity ?? undefined,
+        skillSources: input.effect.skill_sources,
+        sharedWorkspace: input.sharedWorkspace,
+      });
+      const handle = await entity.taskRuntimeHandle({ reopenClosed: true });
+      assertExpectedRuntime(input.runtimeId, handle.runtimeId);
+      return handle;
+    }
+    if (input.effect.kind !== 'send' || input.effect.teammate_name === null) {
+      throw new Error('task member runtime recovery effect is invalid');
+    }
+    const entity = await this.mustEntity(input.effect.teammate_name);
+    const handle = await entity.prepareTaskSend(input.effect.intent ?? undefined);
+    assertExpectedRuntime(input.runtimeId, handle.runtimeId);
+    return handle;
+  }
+
+  private async spawnTaskMember(
+    input: SpawnTeamMateRequest,
+    agentRuntime: string,
+  ): Promise<AgentEntitySpawnResult> {
+    this.assertDurableTaskRuntime(agentRuntime);
+    const bridge = this.opts.taskSubmissionBridge!;
+    const prepared = await bridge.prepareSpawn({
+      invocation: input.taskInvocation!,
+      requestedName: input.name,
+      prompt: input.prompt,
+      agentRuntime,
+      intent: input.intent,
+      identity: input.identity ?? null,
+      skillSources: input.skillSources ?? [],
+    });
+    const submitted = await bridge.submitPrepared(prepared);
+    const entity = await this.mustEntity(prepared.teammateName);
+    const turn = await entity.recordTaskSubmission({
+      prompt: input.prompt,
+      turn: submitted,
+      turnOrigin: 'team_leader',
+    });
+    return { teammate: entity.status(), turn };
+  }
+
+  private assertDurableTaskRuntime(agentRuntime: string): void {
+    if (!agentRuntimeSupportsDurableTasks(
+      this.opts.config,
+      this.dispatcherId,
+      agentRuntime,
+      this.opts.agentRuntimeProviders,
+    )) {
+      throw new TaskRuntimeCapabilityUnavailableError();
+    }
+  }
+
+  private async sendTaskMember(
+    input: SendTeamMateInput,
+  ): Promise<AgentEntitySendResult> {
+    const entity = await this.mustEntity(input.name);
+    const bridge = this.opts.taskSubmissionBridge!;
+    const prepared = await bridge.prepareSend({
+      invocation: input.taskInvocation!,
+      prompt: input.prompt,
+      intent: input.intent ?? null,
+      runtimeRole: 'member',
+      teammateName: entity.name,
+    });
+    const submitted = await bridge.submitPrepared(prepared);
+    const turn = await entity.recordTaskSubmission({
+      prompt: input.prompt,
+      turn: submitted,
+      turnOrigin: 'team_leader',
+    });
+    return { teammate: entity.status(), turn };
+  }
+
+  private async ensureTaskMemberIdentity(
+    input: SpawnTeamMateRequest,
+  ): Promise<TeammateService> {
+    const teamId = this.teamScope;
+    if (teamId === null || input.sharedWorkspace === undefined) {
+      throw new Error('task TeamMate requires a shared team workspace');
+    }
+    const identityPrompt = optionalLifecycleText(
+      input.identity,
+      'TeamMate identity',
+    );
+    const workspace = await resolveSpawnWorkspace({
+      config: this.opts.config,
+      worktrees: this.worktrees,
+      dispatcherId: this.dispatcherId,
+      name: input.name,
+      request: input,
+    });
+    const agentRuntime = input.agentRuntime ??
+      defaultAgentRuntime(this.opts.config, this.dispatcherId);
+    const existing = await this.identities.get(
+      this.dispatcherId,
+      input.name,
+      teamId,
+    );
+    if (existing !== null) {
+      assertTaskMemberIdentity(existing, {
+        teamId,
+        agentRuntime,
+        workspace,
+        identityPrompt,
+        skillSources: input.skillSources ?? [],
+      });
+      return this.entityFor(existing);
+    }
+    const identity = await this.identities.create({
+      dispatcherId: this.dispatcherId,
+      name: input.name,
+      role: 'team_member',
+      teamId,
+      agentRuntime,
+      sourceCwd: workspace.sourceCwd,
+      sourceRepo: workspace.sourceRepo,
+      cwd: workspace.runtimeCwd,
+      runtimeCwd: workspace.runtimeCwd,
+      worktree: workspace.worktree,
+      intent: input.intent,
+      identityPrompt,
+      ...(input.skillSources !== undefined
+        ? { skillSources: input.skillSources }
+        : {}),
+      status: 'starting',
+    });
+    return this.entityFor(identity);
   }
 
   async close(input: CloseTeamMateInput): Promise<AgentEntityCloseResult> {
@@ -491,6 +566,14 @@ export class TeammateCollection implements TeammateOps {
             ? assertDispatcherScopedTeammate
             : assertTeamScopedAgent(this.teamScope),
         skillSources: identity.skill_sources,
+        ...(this.opts.taskSubmissionBridge !== undefined
+          ? {
+              taskSubmission: {
+                bridge: this.opts.taskSubmissionBridge,
+                role: 'member' as const,
+              },
+            }
+          : {}),
         ...(systemPromptOptions ?? {}),
       },
       config: this.opts.config,
@@ -530,4 +613,35 @@ function callerIdentitySystemPromptOptions(
   return identityPrompt !== null
     ? { systemPrompt: { append: [identityPrompt] } }
     : undefined;
+}
+
+function assertExpectedRuntime(expected: string | null, actual: string): void {
+  if (expected !== null && expected !== actual) {
+    throw new Error('task submission runtime identity changed');
+  }
+}
+
+function assertTaskMemberIdentity(
+  identity: AgentEntityIdentity,
+  expected: {
+    teamId: string;
+    agentRuntime: string;
+    workspace: TeamMateSharedWorkspace;
+    identityPrompt: string | null;
+    skillSources: readonly import('@excitedjs/dreamux-types').AgentRuntimeSkillSource[];
+  },
+): void {
+  if (
+    identity.role !== 'team_member' ||
+    identity.team_id !== expected.teamId ||
+    identity.agent_runtime !== expected.agentRuntime ||
+    identity.source_cwd !== expected.workspace.sourceCwd ||
+    identity.source_repo !== expected.workspace.sourceRepo ||
+    identity.runtime_cwd !== expected.workspace.runtimeCwd ||
+    identity.identity_prompt !== expected.identityPrompt ||
+    JSON.stringify(identity.worktree) !== JSON.stringify(expected.workspace.worktree) ||
+    JSON.stringify(identity.skill_sources) !== JSON.stringify(expected.skillSources)
+  ) {
+    throw new Error(`TeamMate ${JSON.stringify(identity.name)} conflicts with task intent`);
+  }
 }

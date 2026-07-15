@@ -22,6 +22,7 @@ export function targetClaimRecord(input: {
   const targetHash = hashTarget({
     dispatcherId: input.dispatcherId,
     channelId: provision.channelId,
+    containerType: provision.container.container_type,
     containerKey: provision.container.container_key,
     bindingGeneration: binding.generation,
     targetKey: provision.target.target_key,
@@ -35,6 +36,7 @@ export function targetClaimRecord(input: {
     space_name: input.space.space_name,
     channel_id: provision.channelId,
     provider: provision.provider,
+    container_type: provision.container.container_type,
     container_key: provision.container.container_key,
     binding_generation: binding.generation,
     target_key: provision.target.target_key,
@@ -43,6 +45,14 @@ export function targetClaimRecord(input: {
     team_name: teamName,
     leader_name: null,
     worktree_slug: teamName,
+    route_claim_id: JSON.stringify([
+      input.dispatcherId,
+      provision.channelId,
+      provision.container.container_type,
+      provision.container.container_key,
+      binding.generation,
+      provision.target.target_key,
+    ]),
     lifecycle_status: 'creating',
     phase: 'claimed',
     claim_event_id: provision.eventId ?? null,
@@ -57,13 +67,7 @@ export function targetClaimRecord(input: {
 
 /** Stable opaque claim token linking one durable target generation to its route. */
 export function routeClaimIdForTarget(target: ProvisionedTargetRecord): string {
-  return JSON.stringify([
-    target.dispatcher_id,
-    target.channel_id,
-    target.container_key,
-    target.binding_generation,
-    target.target_key,
-  ]);
+  return target.route_claim_id;
 }
 
 export function ownerForTarget(target: ProvisionedTargetRecord): ChannelRouteOwner {

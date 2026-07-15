@@ -44,58 +44,11 @@ interface AcceptedTargetCreated {
 
 export class CollaborationTargetLifecycle {
   constructor(private readonly opts: CollaborationTargetLifecycleOptions) {}
-
   async detachActiveTargets(space: CollaborationSpaceRecord): Promise<{
     detached_targets: number;
     released_bindings: number;
   }> {
-    const binding = requiredBinding(space);
-    const targets = await this.opts.store.listTargets(this.opts.dispatcherId, {
-      spaceName: space.space_name,
-      channelId: space.channel_id,
-      containerKey: space.container_key,
-      bindingGeneration: binding.generation,
-    });
-    let detached = 0;
-    let released = 0;
-    for (const target of targets) {
-      if (
-        target.lifecycle_status !== 'active' &&
-        target.lifecycle_status !== 'creating' &&
-        target.lifecycle_status !== 'failed' &&
-        target.lifecycle_status !== 'detached'
-      ) {
-        continue;
-      }
-      await this.opts.targetLocks.run(targetRouteKey(target), async () => {
-        const latest = await this.opts.store.getTarget(this.opts.dispatcherId, {
-          channelId: target.channel_id,
-          containerKey: target.container_key,
-          bindingGeneration: target.binding_generation,
-          targetKey: target.target_key,
-        });
-        if (
-          latest === null ||
-          (latest.lifecycle_status !== 'active' &&
-            latest.lifecycle_status !== 'creating' &&
-            latest.lifecycle_status !== 'failed' &&
-            latest.lifecycle_status !== 'detached')
-        ) {
-          return;
-        }
-        const detachedTarget = latest.lifecycle_status === 'detached'
-          ? latest
-          : await this.opts.routes.saveDetached(latest);
-        if (latest.lifecycle_status !== 'detached') detached += 1;
-        const bindingRow = await this.opts.channels.releaseResolvedTargetIfClaimed({
-          claimId: routeClaimIdForTarget(detachedTarget),
-          channelId: detachedTarget.channel_id,
-          target: targetFromRecord(detachedTarget),
-        });
-        if (bindingRow !== null) released += 1;
-      });
-    }
-    return { detached_targets: detached, released_bindings: released };
+    return this.opts.routes.detachActiveTargets(space);
   }
 
   async provisionTarget(
@@ -111,6 +64,7 @@ export class CollaborationTargetLifecycle {
       const space = await this.opts.store.findSpaceByContainer({
         dispatcherId: this.opts.dispatcherId,
         channelId: input.channelId,
+        containerType: input.container.container_type,
         containerKey: input.container.container_key,
       });
       if (space === null || space.current_binding === null || space.status !== 'bound') {
@@ -157,6 +111,7 @@ export class CollaborationTargetLifecycle {
     const space = await this.opts.store.findSpaceByContainer({
       dispatcherId: this.opts.dispatcherId,
       channelId: input.channelId,
+      containerType: input.container.container_type,
       containerKey: input.container.container_key,
     });
     if (space === null) return { closed: false, target: null };
@@ -168,6 +123,7 @@ export class CollaborationTargetLifecycle {
     return this.opts.targetLocks.run(key, async () => {
       const record = await this.opts.store.getTarget(this.opts.dispatcherId, {
         channelId: input.channelId,
+        containerType: input.container.container_type,
         containerKey: input.container.container_key,
         bindingGeneration: generation,
         targetKey: input.target.target_key,
@@ -186,6 +142,7 @@ export class CollaborationTargetLifecycle {
     const space = await this.opts.store.findSpaceByContainer({
       dispatcherId: this.opts.dispatcherId,
       channelId: input.channelId,
+      containerType: input.container.container_type,
       containerKey: input.container.container_key,
     });
     if (space === null) return null;
@@ -197,6 +154,7 @@ export class CollaborationTargetLifecycle {
     return this.opts.targetLocks.run(key, async () => {
       const record = await this.opts.store.getTarget(this.opts.dispatcherId, {
         channelId: input.channelId,
+        containerType: input.container.container_type,
         containerKey: input.container.container_key,
         bindingGeneration: generation,
         targetKey: input.target.target_key,
@@ -305,6 +263,7 @@ export class CollaborationTargetLifecycle {
         async () => {
           const key = {
             channelId: input.channelId,
+            containerType: input.container.container_type,
             containerKey: input.container.container_key,
             bindingGeneration: binding.generation,
             targetKey: input.target.target_key,
@@ -337,6 +296,7 @@ export class CollaborationTargetLifecycle {
     const existing = await this.opts.store.findSpaceByContainer({
       dispatcherId: this.opts.dispatcherId,
       channelId: input.channelId,
+      containerType: input.container.container_type,
       containerKey: input.container.container_key,
     });
     if (existing !== null) {
@@ -349,7 +309,9 @@ export class CollaborationTargetLifecycle {
       dispatcherId: this.opts.dispatcherId,
       config: this.opts.config,
       store: this.opts.store,
-      provision: input,
+      channelId: input.channelId,
+      provider: input.provider,
+      container: input.container,
       binding: defaultBinding,
     });
   }
@@ -362,6 +324,7 @@ export class CollaborationTargetLifecycle {
     const binding = requiredBinding(space);
     const key = {
       channelId: input.channelId,
+      containerType: input.container.container_type,
       containerKey: input.container.container_key,
       bindingGeneration: binding.generation,
       targetKey: input.target.target_key,
@@ -564,6 +527,7 @@ export class CollaborationTargetLifecycle {
     return this.opts.targetLocks.run(targetRouteKey(target), async () => {
       const latest = await this.opts.store.getTarget(this.opts.dispatcherId, {
         channelId: target.channel_id,
+        containerType: target.container_type,
         containerKey: target.container_key,
         bindingGeneration: target.binding_generation,
         targetKey: target.target_key,
@@ -592,6 +556,7 @@ export class CollaborationTargetLifecycle {
         if (!result.closed) return latest;
         return this.opts.store.getTarget(this.opts.dispatcherId, {
           channelId: latest.channel_id,
+          containerType: latest.container_type,
           containerKey: latest.container_key,
           bindingGeneration: latest.binding_generation,
           targetKey: latest.target_key,
@@ -672,6 +637,7 @@ export class CollaborationTargetLifecycle {
     return this.opts.targetLocks.run(targetRouteKey(record), async () =>
       this.closeTargetUnderLock(await this.opts.store.getTarget(this.opts.dispatcherId, {
         channelId: record.channel_id,
+        containerType: record.container_type,
         containerKey: record.container_key,
         bindingGeneration: record.binding_generation,
         targetKey: record.target_key,

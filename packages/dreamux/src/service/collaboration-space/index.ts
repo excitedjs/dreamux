@@ -24,11 +24,14 @@ import type {
   CollaborationSpaceDissolveInput,
   CollaborationSpaceProvisionInput,
   CollaborationSpaceRecord,
+  CollaborationBindingSnapshot,
   CollaborationSpaceStatusInput,
   CollaborationSpaceView,
   ProvisionedTargetRecord,
   ProvisionedTargetView,
+  ResolvedCollaborationRepositoryPolicy,
 } from './types.js';
+import { createDefaultBoundSpace } from './default-binding.js';
 import { CollaborationSpaceStore } from './store.js';
 import { CollaborationRouteReconciler } from './route-reconciliation.js';
 import { spaceView, targetView } from './view.js';
@@ -104,7 +107,11 @@ export class CollaborationSpaceService {
       requiredSpace(existingForContainer),
     );
     return this.spaceLocks.run(
-      spaceContainerLockKey(channelId, container.container_key),
+      spaceContainerLockKey(
+        channelId,
+        container.container_type,
+        container.container_key,
+      ),
       async () => {
         this.assertNotShuttingDown();
         const saved = await this.store.bindSpace({
@@ -132,7 +139,12 @@ export class CollaborationSpaceService {
     );
   }
 
-  async dissolve(input: CollaborationSpaceDissolveInput): Promise<{
+  async dissolve(
+    input: CollaborationSpaceDissolveInput,
+    options: {
+      assertCanDissolve?: (space: CollaborationSpaceRecord) => Promise<void> | void;
+    } = {},
+  ): Promise<{
     space: CollaborationSpaceView;
     detached_targets: number;
     released_bindings: number;
@@ -141,6 +153,7 @@ export class CollaborationSpaceService {
     const initial = await this.mustSpace(input.spaceName);
     return this.spaceLocks.run(spaceLockKey(initial), async () => {
       const space = await this.mustSpace(input.spaceName);
+      await options.assertCanDissolve?.(space);
       if (space.current_binding === null || space.status === 'unbound') {
         return {
           space: await this.view(space),
@@ -182,6 +195,90 @@ export class CollaborationSpaceService {
   async list(): Promise<{ spaces: CollaborationSpaceView[] }> {
     const spaces = await this.store.listSpaces(this.dispatcherId);
     return { spaces: await Promise.all(spaces.map((space) => this.view(space))) };
+  }
+
+  async inspectTaskBinding(input: {
+    channelId: string;
+    container: CollaborationSpaceProvisionInput['container'];
+    repository: ResolvedCollaborationRepositoryPolicy;
+  }): Promise<CollaborationBindingSnapshot | null> {
+    const space = await this.store.findSpaceByContainer({
+      dispatcherId: this.dispatcherId,
+      channelId: input.channelId,
+      containerType: input.container.container_type,
+      containerKey: input.container.container_key,
+    });
+    if (space === null) return null;
+    return taskBindingSnapshot(space, input.repository);
+  }
+
+  async ensureTaskBinding(input: {
+    channelId: string;
+    provider: string;
+    container: CollaborationSpaceProvisionInput['container'];
+    repository: ResolvedCollaborationRepositoryPolicy;
+    leaderAgentRuntime: string;
+    identity: string | null;
+  }): Promise<CollaborationBindingSnapshot> {
+    return this.spaceLocks.run(
+      spaceContainerLockKey(
+        input.channelId,
+        input.container.container_type,
+        input.container.container_key,
+      ),
+      async () => {
+        const existing = await this.store.findSpaceByContainer({
+          dispatcherId: this.dispatcherId,
+          channelId: input.channelId,
+          containerType: input.container.container_type,
+          containerKey: input.container.container_key,
+        });
+        let space = existing ?? await createDefaultBoundSpace({
+          dispatcherId: this.dispatcherId,
+          config: this.config,
+          store: this.store,
+          channelId: input.channelId,
+          provider: input.provider,
+          container: input.container,
+          binding: {
+            leaderAgentRuntime: input.leaderAgentRuntime,
+            repo: {
+              cwd: input.repository.repo_cwd,
+              ...(input.repository.base_ref !== null
+                ? { baseRef: input.repository.base_ref }
+                : {}),
+            },
+            repositoryPolicy: {
+              source: input.repository.source,
+              logical_key: input.repository.logical_key,
+              binding_revision: input.repository.binding_revision,
+              fingerprint: input.repository.fingerprint,
+            },
+            ...(input.identity !== null ? { identity: input.identity } : {}),
+          },
+        });
+        if (
+          space.current_binding?.repository_policy === undefined &&
+          input.repository.source === 'static'
+        ) {
+          space = await this.store.pinRepositoryPolicy({
+            dispatcherId: this.dispatcherId,
+            channelId: input.channelId,
+            containerType: input.container.container_type,
+            containerKey: input.container.container_key,
+            repoCwd: input.repository.repo_cwd,
+            baseRef: input.repository.base_ref,
+            policy: {
+              source: input.repository.source,
+              logical_key: input.repository.logical_key,
+              binding_revision: input.repository.binding_revision,
+              fingerprint: input.repository.fingerprint,
+            },
+          });
+        }
+        return taskBindingSnapshot(space, input.repository);
+      },
+    );
   }
 
   async provisionTarget(
@@ -336,9 +433,57 @@ export class CollaborationSpaceService {
 }
 
 function spaceLockKey(space: CollaborationSpaceRecord): string {
-  return spaceContainerLockKey(space.channel_id, space.container_key);
+  return spaceContainerLockKey(
+    space.channel_id,
+    space.container_type,
+    space.container_key,
+  );
 }
 
-function spaceContainerLockKey(channelId: string, containerKey: string): string {
-  return [channelId, containerKey].join('\0');
+function spaceContainerLockKey(
+  channelId: string,
+  containerType: string,
+  containerKey: string,
+): string {
+  return [channelId, containerType, containerKey].join('\0');
+}
+
+function taskBindingSnapshot(
+  space: CollaborationSpaceRecord,
+  expected: ResolvedCollaborationRepositoryPolicy,
+): CollaborationBindingSnapshot {
+  const binding = space.current_binding;
+  if (
+    space.status !== 'bound' ||
+    binding === null ||
+    binding.repo_cwd === null ||
+    binding.worktree.mode !== 'managed'
+  ) {
+    throw new Error('collaboration space has no managed repository binding');
+  }
+  const policy = binding.repository_policy;
+  const compatibleStaticPolicy =
+    policy === undefined &&
+    expected.source === 'static' &&
+    binding.repo_cwd === expected.repo_cwd &&
+    binding.worktree.base_ref === expected.base_ref;
+  if (
+    (!compatibleStaticPolicy &&
+      (policy === undefined ||
+        policy.source !== expected.source ||
+        policy.logical_key !== expected.logical_key ||
+        policy.binding_revision !== expected.binding_revision ||
+        policy.fingerprint !== expected.fingerprint)) ||
+    binding.repo_cwd !== expected.repo_cwd ||
+    binding.worktree.base_ref !== expected.base_ref
+  ) {
+    throw new Error('collaboration space repository binding does not match the task');
+  }
+  return {
+    space_name: space.space_name,
+    generation: binding.generation,
+    repository: structuredClone(expected),
+    leader_agent_runtime: binding.leader_agent_runtime,
+    identity: binding.identity,
+  };
 }

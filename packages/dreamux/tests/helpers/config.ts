@@ -51,7 +51,12 @@ export function testDispatcherConfig(
           id: options.channelId ?? 'primary',
           provider: options.channelProvider ?? BUILTIN_FEISHU_PROVIDER_REF,
           collaborationSpace: {
-            defaultBinding: { enabled: false, repo: null, identity: null },
+            defaultBinding: {
+              enabled: false,
+              repositorySource: 'static',
+              repo: null,
+              identity: null,
+            },
           },
           config: defaultChannelConfig,
           // Mirror the feishu provider's getIdentity (`config.app_id`) so a store

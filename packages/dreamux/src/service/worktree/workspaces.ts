@@ -7,7 +7,7 @@ import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
 import type {
   SpawnTeamMateRequest,
   TeamMateSharedWorkspace,
-} from '../teammate-collection/index.js';
+} from '../teammate-collection/types.js';
 import type { AgentEntityIdentity } from '../agent-entity/types.js';
 import {
   type PreparedTeamMateWorkspace,

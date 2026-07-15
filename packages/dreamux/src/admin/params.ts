@@ -11,6 +11,7 @@ import type {
   AgentEntityIdentityStatus,
 } from '../service/agent-entity/types.js';
 import type { TeamMateWorktreeRequest } from '../service/teammate-collection/types.js';
+import type { TaskOperationInvocation } from '../service/task-runtime-submission.js';
 import { AdminError } from './protocol.js';
 
 export function mustString(
@@ -242,6 +243,48 @@ export function optionalRecordField(
   return { [key]: value as Record<string, unknown> };
 }
 
+export function optionalTaskOperationInvocation(
+  params: Record<string, unknown> | undefined,
+): { taskInvocation?: TaskOperationInvocation } {
+  if (params === undefined || params['task_operation'] === undefined) return {};
+  const operation = mustRecord(params, 'task_operation');
+  const protocol = boundedNonEmptyString(operation, 'protocol', 64);
+  if (protocol !== 'durable_task_mcp_invocation_v1') {
+    throw new AdminError(
+      'BAD_REQUEST',
+      "param 'task_operation.protocol' must be 'durable_task_mcp_invocation_v1'",
+    );
+  }
+  const parentOperationId = boundedNonEmptyString(
+    operation,
+    'parent_operation_id',
+    256,
+  );
+  const callId = boundedNonEmptyString(operation, 'tool_call_id', 256);
+  const runtimeId = boundedNonEmptyString(operation, 'runtime_id', 256);
+  const durabilityNamespace = boundedNonEmptyString(
+    operation,
+    'durability_namespace',
+    256,
+  );
+  const ordinal = optionalInteger(operation, 'tool_call_ordinal');
+  if (ordinal === null || ordinal < 0) {
+    throw new AdminError(
+      'BAD_REQUEST',
+      "param 'task_operation.tool_call_ordinal' must be a non-negative integer",
+    );
+  }
+  return {
+    taskInvocation: {
+      parentOperationId,
+      callId,
+      ordinal,
+      runtimeId,
+      durabilityNamespace,
+    },
+  };
+}
+
 export function optionalNullableRecordField(
   params: Record<string, unknown> | undefined,
   key: string,
@@ -293,4 +336,19 @@ function optionalStringProp(
 ): Record<string, string> {
   const value = optionalString(params, key);
   return value === null ? {} : { [key]: value };
+}
+
+function boundedNonEmptyString(
+  params: Record<string, unknown>,
+  key: string,
+  maxLength: number,
+): string {
+  const value = mustNonEmptyString(params, key);
+  if (value.length > maxLength) {
+    throw new AdminError(
+      'BAD_REQUEST',
+      `param '${key}' must be at most ${maxLength} characters`,
+    );
+  }
+  return value;
 }

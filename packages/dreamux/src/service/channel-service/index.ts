@@ -1,6 +1,8 @@
 import type {
   AgentRuntimeMcpServer,
   ChannelSession,
+  ChannelLogicalRepositoryBinding,
+  ChannelResolvedRepositoryBinding,
   ChannelTarget,
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
@@ -92,6 +94,19 @@ export class ChannelService {
       throw new Error(`unknown channel '${channelId}'`);
     }
     return channel.collaborationSpace ?? defaultChannelCollaborationSpaceConfig();
+  }
+
+  resolveRepositoryBinding(
+    channelId: string,
+    binding: ChannelLogicalRepositoryBinding,
+  ): Promise<ChannelResolvedRepositoryBinding | null> {
+    this.resolveChannelId(channelId);
+    return this.sessions.resolveRepositoryBinding(channelId, binding);
+  }
+
+  supportsTaskHost(channelId: string): boolean {
+    this.resolveChannelId(channelId);
+    return this.sessions.supportsTaskHost(channelId);
   }
 
   clear(): void {
