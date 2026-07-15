@@ -15,7 +15,7 @@ import type {
   FeishuInboundEvent,
   FeishuInboundRoutes,
   FeishuSendResult,
-} from './bot.js';
+} from '../../src/bot.js';
 
 export interface FakeFeishuBot extends FeishuBot {
   readonly sentMessages: Array<{

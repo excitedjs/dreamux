@@ -17,8 +17,8 @@
  *   - `botOpenId` / `botDisplayName` surface the core transport's bot-info
  *     fields, resolved from `/open-apis/bot/v3/info` during startup.
  *
- * Tests inject a `FakeFeishuBot` via `createFakeFeishuBot()` instead of opening
- * a live connection.
+ * Tests supply package-local `FeishuBot` doubles through the provider's
+ * `botFactory` seam instead of opening a live connection.
  */
 
 import {
@@ -513,5 +513,3 @@ function invalidCardActionAck(
     },
   };
 }
-
-export { createFakeFeishuBot, type FakeFeishuBot } from './fake-bot.js';

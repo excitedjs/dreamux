@@ -11,16 +11,14 @@ import type {
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
 
-import {
-  createFakeFeishuBot,
-  type FeishuInboundEvent,
-} from '../src/bot.js';
+import type { FeishuInboundEvent } from '../src/bot.js';
 import {
   createFeishuChannelProvider,
   type FeishuChannelConfig,
 } from '../src/provider.js';
 import { saveDispatcherAccess } from '../src/feishu-gate.js';
 import { FeishuTargetRouter } from '../src/feishu-target-router.js';
+import { createFakeFeishuBot } from './helpers/fake-feishu-bot.js';
 
 interface Warning {
   fields: Record<string, unknown>;

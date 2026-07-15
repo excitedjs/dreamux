@@ -703,6 +703,12 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   test (`builtin-feishu-package-loader.test.ts`) exercises this against the real
   package.
 
+  The published package root and `/packages/channel/feishu-channel/src/` contain
+  production provider APIs only. Feishu bot test doubles live under
+  `/packages/channel/feishu-channel/tests/` and `/packages/dreamux/tests/` and
+  enter sessions through the production `botFactory` seam; they are neither
+  compiled into `dist/` nor exported by the package.
+
   An intermediate implementation kept a non-neutral Feishu adapter and a
   host-specific session API. That design is no longer current. The final #209
   closeout below drives the package through the neutral `ChannelProvider` /

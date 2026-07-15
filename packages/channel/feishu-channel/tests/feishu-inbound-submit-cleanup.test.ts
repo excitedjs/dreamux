@@ -9,10 +9,7 @@ import type {
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
 
-import {
-  createFakeFeishuBot,
-  type FeishuInboundEvent,
-} from '../src/bot.js';
+import type { FeishuInboundEvent } from '../src/bot.js';
 import {
   saveDispatcherAccess,
   defaultDispatcherAccessState,
@@ -29,6 +26,7 @@ import {
   sessionHandle,
   type FeishuChannelState,
 } from '../src/feishu-session-ops.js';
+import { createFakeFeishuBot } from './helpers/fake-feishu-bot.js';
 import { AsyncMutex } from '../src/lib/mutex.js';
 import { FeishuTargetRouter } from '../src/feishu-target-router.js';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';

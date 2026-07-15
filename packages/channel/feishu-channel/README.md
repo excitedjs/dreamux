@@ -46,8 +46,11 @@ of the Lark SDK.
   (`reply` / `react` / `resolveTarget` / `tools` / `handleTool` /
   `messageBelongsToTarget`).
 - The session class plus the gate, chat-bots store, message formatter, MCP tool
-  parser, and bot helpers, used by the core adapter that drives the production
-  host-shaped session path.
+  parser, and production bot adapter helpers used by the core adapter that
+  drives the host-shaped session path.
+
+Test doubles are deliberately test-local and are not part of the published
+package API.
 
 ## Feishu topic-group permission
 

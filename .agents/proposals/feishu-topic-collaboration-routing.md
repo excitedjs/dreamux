@@ -76,13 +76,20 @@ once for an accepted inbound. The same target object is recorded in the message
 ledger and passed through the provider adapter to `ChannelInboundEnvelope`; the
 adapter must not reconstruct a second routing identity.
 
-The root-exported custom-bot and transport seams remain source compatible:
+The root-exported production bot and transport seams remain source compatible:
 chat-mode lookup is an optional capability, and the public Feishu submitter
 envelope retains its legacy `chatId` and `chatType` fields. Production sessions
 also supply the normalized target; only a legacy envelope without that field
 uses the adapter's pre-topic group/P2P fallback. The root-exported raw session
 also retains synchronous target resolution and its deprecated chat-level
 ownership helper, while core authorization uses the new exact-target helper.
+
+The legacy root-exported `createFakeFeishuBot` test factory and `FakeFeishuBot`
+type are intentionally removed as a separately recorded breaking package API
+cleanup. Test doubles live under `/packages/channel/feishu-channel/tests/` and
+`/packages/dreamux/tests/` and implement the production `FeishuBot` seam through
+`botFactory`; no fake bot implementation is compiled into or exported from
+`@excitedjs/feishu-channel`.
 
 Feishu topic egress is source-message based: the provider uses the reply API to
 preserve the source message's topic. A standalone `thread_id` selector is not a
@@ -152,6 +159,8 @@ when it names the TeamLeader's own topic.
   the rendered model-visible channel envelope; missing or empty values are
   omitted. Displaying the value does not promote an ordinary group thread to a
   collaboration target.
+- The published Feishu Channel source and root API contain no fake bot test
+  double; provider and host tests use package-local `FeishuBot` implementations.
 - Transport, provider, Dispatcher integration, typecheck, lint, and relevant
   repository validation cover the new contract.
 
@@ -164,7 +173,3 @@ when it names the TeamLeader's own topic.
 - Treating ordinary groups configured with thread-style messages as
   collaboration spaces.
 - Adding Feishu-specific configuration or selectors to Dreamux core.
-- Removing the legacy root-exported `createFakeFeishuBot` test API or its
-  `FakeFeishuBot` type. Both public exports predate this change and require a
-  separately versioned breaking API migration rather than an unannounced
-  removal from this compatible fix.

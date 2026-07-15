@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/feishu-channel",
+      "comment": "BREAKING: Remove the root-exported createFakeFeishuBot test helper and FakeFeishuBot type. Tests must provide package-local FeishuBot doubles; runtime behavior and persisted state are unchanged.",
+      "type": "major"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel"
+}

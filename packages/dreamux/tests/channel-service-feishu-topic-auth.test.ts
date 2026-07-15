@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
-  createFakeFeishuBot,
   saveDispatcherAccess,
   type FeishuInboundEvent,
 } from '@excitedjs/feishu-channel';
@@ -16,6 +15,7 @@ import { ChannelService } from '../src/service/channel-service/index.js';
 import { invokeDispatcherChannelTool } from '../src/service/dispatcher-service/channel-tool-invocation.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 import { feishuChannelCatalog } from './helpers/fake-channel.js';
+import { createFakeFeishuBot } from './helpers/fake-feishu-bot.js';
 
 function noopLog(): DreamuxLogger {
   const noop = () => undefined;

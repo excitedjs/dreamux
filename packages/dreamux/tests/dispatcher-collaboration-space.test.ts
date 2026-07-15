@@ -17,7 +17,6 @@ import type {
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
 import {
-  createFakeFeishuBot,
   saveDispatcherAccess,
   type FeishuInboundEvent,
 } from '@excitedjs/feishu-channel';
@@ -37,6 +36,7 @@ import { dispatcherDir, resetRuntimeConfig } from '../src/platform/paths.js';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 import { feishuChannelCatalog } from './helpers/fake-channel.js';
+import { createFakeFeishuBot } from './helpers/fake-feishu-bot.js';
 
 const RUNTIME_REF = 'test:runtime';
 const CHANNEL_REF = 'test:channel';
