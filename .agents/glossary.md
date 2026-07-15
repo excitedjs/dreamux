@@ -10,6 +10,8 @@ authoritative for behavior.
 | Channel provider ref | Config string such as `builtin:feishu` or `npm:<package>#<export>` that resolves through the provider registry. |
 | Channel id | Dispatcher-local `dispatchers[].channels[].id`; used to select a configured channel instance. |
 | Channel target | Provider-normalized destination/source key used for routing and binding, such as a Feishu group chat target. |
+| Task Channel Host | Optional strict Channel capability that durably accepts task attempts, provisions one Team/worktree aggregate, and emits Core-derived execution telemetry without conversational delivery. |
+| Host event stream | Per-dispatcher-channel ordered task telemetry stream with stable host identity, monotonic generation/sequence, snapshot/replay, and consecutive-prefix acknowledgement. |
 | Dispatcher | Long-lived agent owned by `dreamux serve`; it receives accepted channel input and can call Dreamux MCP tools. |
 | Dispatcher Service | Core Dreamux module that owns dispatcher runtime lifecycle, TeamMate lifecycle, Team lifecycle, and channel binding/routing. |
 | TeamMate | Named, semi-resident agent controlled by the dispatcher through the TeamMate MCP. |

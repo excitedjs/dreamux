@@ -51,6 +51,47 @@ Key source:
 - `/packages/channel/feishu-channel/src/bot.ts`
 - `/packages/channel/feishu-transport/`
 
+## Strict Task Sessions
+
+A Channel provider may optionally declare `task_channel_host_v1`. Core then
+places a scoped `ChannelTaskHost` on `ChannelRoutes.taskHost` when that session
+starts. This is independent of `ChannelRoutes.deliver`: submitting a task
+attempt never reaches the Dispatcher agent, and task telemetry is never a
+Channel reply or provider tool call. Conversational sessions may omit every task
+member and keep their existing behavior.
+
+The provider first checks the Core-created handle scope and negotiates the
+required schema/capabilities. That scope carries stable host stream identity,
+stream generation, host status, and a revocable session fence; the provider
+does not assert those facts. A fresh or incompatible cursor requires the
+provider to stage every page of one immutable snapshot, atomically install the
+complete projection, persist its watermark, and acknowledge that prefix before
+its event sink can attach. Compatible cursors replay from the stored
+consecutive prefix. Late calls on a superseded session and late event-sink ACKs
+are fenced.
+
+Strict input contains bounded task/attempt, container, task body, and optional
+logical repository identity only. A provider resolver maps the logical key to
+trusted local config; Core validates the real Git repository and persists the
+binding revision/fingerprint before receipt. No remote task payload may carry a
+host `cwd`.
+
+Core commits the receipt before provisioning one Team and one managed worktree.
+It then derives host, task, Team, worktree, turn, business terminal, and cleanup
+events from Core state transitions. The LLM and TeamLeader do not report those
+facts. The provider transport projects the ordered host stream to its remote
+system; it does not poll the admin socket or reuse admin/status DTOs.
+
+Key source:
+
+- `/packages/dreamux-types/src/channel-task.ts`
+- `/packages/dreamux-types/src/channel.ts`
+- `/packages/dreamux/src/service/dispatcher-service/channel-session-start.ts`
+- `/packages/dreamux/src/service/channel-task-host/`
+- `/packages/dreamux/src/service/channel-service/channel-sessions.ts`
+
+Decision trail: [Provider-neutral Task Channel Host](../decisions/task-channel-host.md).
+
 ## Provider Tools And MCP
 
 The Feishu package owns its tool names and JSON schemas:
@@ -146,6 +187,14 @@ with the dispatcher's default agent runtime plus optional configured `repo` and
 create Dreamux spaces, Teams, worktrees, or bindings. A known unbound space
 created by `collaboration_space.dissolve` is not auto-bound again; explicit
 `bind` is required to reattach it.
+
+`defaultBinding.repositorySource` defaults to `static`, preserving the existing
+`repo.cwd` / `repo.baseRef` shape. `channel` mode instead requires a
+task-capable provider with `logical_repository_binding_v1` and
+`resolveRepositoryBinding`. The provider maps a path-free logical key to its
+trusted local allowlist, while Core validates and fingerprints the canonical
+managed repository. Collaboration binding generations persist that immutable
+policy identity; each task separately pins the base ref's resolved commit.
 
 Provisioning has two entry points:
 

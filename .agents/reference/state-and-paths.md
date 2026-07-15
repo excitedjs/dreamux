@@ -85,6 +85,11 @@ Important children:
 - `~/.dreamux/state/<dispatcher-id>/collaboration-spaces.json`: dispatcher-local
   collaboration-space bindings and target provisioning records. This is
   Dreamux core state, not Channel provider state.
+- `~/.dreamux/state/<dispatcher-id>/task-channel/<channel-id-hash>/`: one
+  provider-bound task-host manifest, checksummed transaction WAL, and
+  rebuildable target/stream projections for a task-capable channel. The WAL is
+  authoritative; projections may be regenerated after a failed write. The
+  directory hash avoids treating provider channel ids as path segments.
 - `~/.dreamux/state/<dispatcher-id>/teammate/`: TeamMate durable task ledgers.
   Each `identity.json` may include `identity_prompt`, the persisted append-only
   model-facing role guidance for that TeamMate; old records without it read as
@@ -112,6 +117,9 @@ Key source:
 - `/packages/dreamux/src/service/agent-entity/turns-store.ts`
 - `/packages/dreamux/src/service/team-collection/store.ts`
 - `/packages/dreamux/src/service/collaboration-space/store.ts`
+- `/packages/dreamux/src/service/channel-task-host/manifest.ts`
+- `/packages/dreamux/src/service/channel-task-host/store.ts`
+- `/packages/dreamux/src/service/channel-task-host/wal.ts`
 - `/packages/dreamux/src/service/scheduler/store.ts`
 - `/packages/channel/feishu-channel/src/chat-bots-store.ts`
 

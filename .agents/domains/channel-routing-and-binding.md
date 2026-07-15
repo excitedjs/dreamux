@@ -75,6 +75,42 @@ Source:
 - `/packages/channel/feishu-channel/src/provider.ts`
 - `/packages/channel/feishu-channel/src/feishu-mcp-tools.ts`
 
+## Strict Task Delivery And Telemetry
+
+Task-capable Channel sessions use the optional `task_channel_host_v1` contract,
+not conversational `deliver`. Core supplies a scoped `ChannelTaskHost` with
+negotiated capabilities, stable stream identity, snapshot/replay, consecutive
+ACK, strict submit/lookup/cancel, and a revocable session fence. The provider
+depends on `@excitedjs/dreamux-types`, not Core service or store classes.
+
+The boundary is for package compatibility and ownership, not a plugin security
+sandbox. The installed provider is trusted local code, while every remote task
+payload and resolver result is still strictly parsed, bounded, and allowlisted
+before a durable receipt.
+
+Task state synchronization is automatic:
+
+```mermaid
+flowchart LR
+  D[Core domain transition] --> W[TaskHostStore event outbox]
+  W --> S[Channel session event sink]
+  S --> P[Provider transport]
+  P --> R[Remote projector]
+```
+
+Replies, reactions, provider tools, admin DTOs, and status polling are not part
+of this path. The LLM and TeamLeader never report Team, turn, worktree,
+terminal, or cleanup state. A scoped TeamLeader finish invocation can request
+the business-terminal CAS; Core owns every durable transition and event after
+that request.
+
+Source:
+
+- `/packages/dreamux-types/src/channel-task.ts`
+- `/packages/dreamux/src/service/channel-task-host/`
+- `/packages/dreamux/src/service/dispatcher-service/channel-session-start.ts`
+- `/packages/dreamux/tests/channel-task-host-contract.test.ts`
+
 ## Targets
 
 Channel providers normalize provider-defined selectors into `ChannelTarget`:
@@ -159,6 +195,11 @@ received the event. Core routing is:
   the bound TeamLeader;
 - unbound bindable target: route to the dispatcher.
 
+These rules apply only to conversational delivery. Strict task attempts enter
+through `ChannelTaskHost.submit`, derive their own canonical target, and fail
+closed if task capability, default binding, repository policy, or durable
+runtime support is unavailable. They never fall back to the dispatcher route.
+
 P2P targets short-circuit before any binding lookup and can never be bound to a
 TeamLeader.
 
@@ -203,5 +244,6 @@ Detailed Feishu behavior lives in focused domain pages:
 - [NPM package split and channel targets](../decisions/npm-package-split-and-channel-targets.md)
 - [Channel provider](../decisions/channel-provider.md)
 - [Channel input runtime assembly](../decisions/channel-input-runtime-assembly.md)
+- [Provider-neutral Task Channel Host](../decisions/task-channel-host.md)
 - [Feishu inbound attachments](../decisions/feishu-inbound-attachments.md)
 - [Feishu pairing access v3](../decisions/feishu-pairing-access-v3.md)

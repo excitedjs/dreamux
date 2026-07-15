@@ -31,7 +31,10 @@ Current file shape:
 - `dispatchers[]` declares dispatcher ids, explicit `cwd`, `channels[]`, and
   `agentRuntime`, which references an `agents[].id`.
 - `dispatchers[].channels[]` entries carry a dispatcher-local `id`, a channel
-  provider ref, and provider-owned config.
+  provider ref, provider-owned config, and optional Core-owned collaboration
+  default-binding policy. A default binding may use static `repo` config or a
+  trusted Channel-local logical repository resolver through
+  `repositorySource: "channel"`.
 
 Current load behavior:
 
@@ -59,6 +62,12 @@ Dreamux has two provider seams:
 Built-in provider packages are loaded through the same registry/catalog shape as
 external provider refs.
 
+The Channel seam also has an optional `task_channel_host_v1` capability. It is
+separate from conversational `deliver`: a task-capable session receives a
+Core-created scoped `ChannelTaskHost`, while conversational-only providers omit
+the capability and remain unchanged. The public task ABI is exported only from
+`@excitedjs/dreamux-types`; providers do not import Core services or stores.
+
 Current built-ins:
 
 - `builtin:codex` -> `@excitedjs/agent-runtime-codex`
@@ -71,6 +80,7 @@ Key source:
 - `/packages/dreamux/src/agent-runtime/catalog.ts`
 - `/packages/dreamux/src/channel/catalog.ts`
 - `/packages/dreamux/src/registry/builtins.ts`
+- `/packages/dreamux-types/src/channel-task.ts`
 
 See also [Channel runtime](channel-runtime.md) for Channel session, target, and
 provider-tool details.
@@ -83,6 +93,8 @@ Each live dispatcher owns:
 - a map of live Channel sessions keyed by dispatcher-local `channel_id`
 - provider-owned channel MCP shims for channel tools
 - Team, TeamMate, and collaboration-space MCP shims owned by Dreamux core
+- a `TaskChannelHostCollection` when a configured or recoverable channel has
+  durable task state
 
 The first declared channel is the primary/default egress channel. A dispatcher
 with multiple channel providers can route and egress by `channel_id`; with only
@@ -151,6 +163,47 @@ Read [Channel runtime](channel-runtime.md) first, then the domain contracts:
 
 - [Feishu introduce](../domains/feishu-introduce.md)
 - [Non-blocking dispatcher inbound](../domains/non-blocking-dispatcher-inbound.md)
+
+## Task Channel Host
+
+Strict task delivery is a Core admission path, not a conversational message.
+It derives a canonical task target from dispatcher, channel, container, task,
+and attempt identity; commits a durable receipt before provisioning; lazily
+reuses the generic collaboration-space default-binding hook; provisions one
+Team and managed worktree; and submits execution only through an Agent Runtime
+that supports `durable_task_submission_v1`. There is no Dispatcher-agent or LLM
+fallback.
+
+`TaskHostStore` is the sole durable owner for task phase, binding/provisioning
+checkpoints, runtime submissions and settlement ACKs, explicit business
+terminal, finalizer progress, host events, stream ACKs, and tombstones. It uses
+a checksummed per-channel transaction WAL plus rebuildable projections. The
+generic collaboration route remains authoritative; task state keeps only the
+derived claim/reconciliation checkpoint.
+
+Core automatically derives host, task, Team, worktree, turn, and cleanup
+telemetry from committed transitions. The Channel session consumes one scoped,
+monotonic host event stream through its event sink. Replies, reactions, provider
+tools, admin-socket polling, prompts, and TeamLeader discipline are not state
+synchronization paths.
+
+Fresh or incompatible provider cursors must stage a complete immutable paged
+snapshot before the push sink can attach. Compatible cursors replay from the
+last consecutive prefix. Session fences revoke superseded handles and late
+sink acknowledgements. Startup discovers durable manifests before provider
+session start, repairs provision/finalizer/ACK crash windows, and can finish
+already-terminal cleanup without opening a provider transport.
+
+Key source:
+
+- `/packages/dreamux/src/service/channel-task-host/`
+- `/packages/dreamux/src/service/dispatcher-service/channel-session-start.ts`
+- `/packages/dreamux/src/service/task-runtime-submission.ts`
+- `/packages/dreamux/src/service/team-collection/task-provisioning.ts`
+- `/packages/dreamux-types/src/channel-task.ts`
+- `/packages/dreamux-types/src/agent-runtime.ts`
+
+Decision trail: [Provider-neutral Task Channel Host](../decisions/task-channel-host.md).
 
 ## Teams And TeamMates
 
@@ -285,7 +338,7 @@ High-level split:
 - `~/.dreamux/config.json`: operator-owned config.
 - `~/.dreamux/run/`: volatile run files and socket fallback root.
 - `~/.dreamux/state/`: durable server-owned dispatcher, Feishu, Team, and
-  TeamMate state.
+  TeamMate state, including per-channel task-host WALs and projections.
 - `~/.dreamux/cache/`: rebuildable cache such as completion spill files and
   Feishu attachments.
 - `~/.dreamux/logs/`: server, runtime, and MCP shim logs.
