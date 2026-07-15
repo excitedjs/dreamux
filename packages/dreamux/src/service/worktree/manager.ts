@@ -264,9 +264,18 @@ export class WorktreeManager {
     branch?: string;
   }): Promise<AgentEntityWorktreeIdentity> {
     const dispatcherWorkspace = await realpath(input.dispatcherWorkspace);
-    // Repository policies persist a canonical root. Do not require that root to
-    // remain present merely to compute the deterministic provisional path.
-    const sourceRepo = resolve(input.cwd);
+    // Repository policies persist a canonical root. Re-canonicalize while the
+    // root exists because some platforms expose a lexical temporary-directory
+    // alias (for example, Git reports the physical path). Once the repository
+    // is gone, retain the persisted lexical value so physical worktree absence
+    // can still converge to `deleted` without requiring the source repository.
+    let sourceRepo: string;
+    try {
+      sourceRepo = await realpath(input.cwd);
+    } catch (err) {
+      if (!isNotFound(err)) throw err;
+      sourceRepo = resolve(input.cwd);
+    }
     const sourceCwd = sourceRepo;
     const slug = validateWorktreeSlug(input.slug);
     const worktree: AgentEntityWorktreeIdentity = {

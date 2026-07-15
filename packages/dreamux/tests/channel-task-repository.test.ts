@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
@@ -52,13 +52,14 @@ describe('task repository binding policy', () => {
         expected_revision: 'allowlist-revision-7',
       },
     );
+    const canonicalRepo = await realpath(repo);
     expect(result).toMatchObject({
       status: 'resolved',
       policy: {
         source: 'channel',
         logical_key: 'repository-a',
         binding_revision: 'allowlist-revision-7',
-        repo_cwd: repo,
+        repo_cwd: canonicalRepo,
         base_ref: 'HEAD',
       },
     });
