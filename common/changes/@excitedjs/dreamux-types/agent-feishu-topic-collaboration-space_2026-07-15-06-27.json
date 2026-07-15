@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux-types",
+      "comment": "Add provider-declared binding fallbacks to ChannelTarget for less-specific route reuse.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-types"
+}

@@ -45,6 +45,12 @@ function deferred<T>() {
 function channelProviderCatalog(
   messageBelongsToTarget: ChannelSession['messageBelongsToTarget'] = () => true,
   toolConfigReads: unknown[] = [],
+  resolveTarget: ChannelSession['resolveTarget'] = async (meta) =>
+    groupTarget(
+      typeof (meta as { chat_id?: unknown })?.chat_id === 'string'
+        ? (meta as { chat_id: string }).chat_id
+        : 'chat-default',
+    ),
 ): ChannelProviderCatalog {
   const registry = createBuiltinProviderRegistry();
   const descriptor = registry.resolve(PROVIDER_REF);
@@ -66,12 +72,7 @@ function channelProviderCatalog(
         channel_id: context.channel_id,
         start: async () => undefined,
         close: async () => undefined,
-        resolveTarget: async (meta) =>
-          groupTarget(
-            typeof (meta as { chat_id?: unknown })?.chat_id === 'string'
-              ? (meta as { chat_id: string }).chat_id
-              : 'chat-default',
-          ),
+        resolveTarget,
         messageBelongsToTarget,
       };
     },
@@ -196,6 +197,56 @@ describe('ChannelService binding ownership', () => {
     await expect(
       service.resolveInboundBinding({ channelId: 'primary', target }),
     ).resolves.toBeNull();
+  });
+
+  it('requires exact message ownership before a broader binding can authorize egress', async () => {
+    const exactTarget: ChannelTarget = {
+      target_type: 'topic',
+      target_key: 'topic-a',
+      bindable: true,
+      binding_fallbacks: [groupTarget('chat-a')],
+    };
+    const service = new ChannelService({
+      dispatcherId: 'dispatcher-a',
+      config: testDreamuxConfig([
+        testDispatcherConfig({ id: 'dispatcher-a', channelId: 'primary' }),
+      ]),
+      channelProviders: channelProviderCatalog(
+        () => true,
+        [],
+        async () => exactTarget,
+      ),
+      channelLoggerFactory: () => ({}) as never,
+    });
+    const sessions = await service.build();
+    service.adopt(sessions);
+    const owner = {
+      kind: 'team' as const,
+      teamName: 'group-owner',
+      leaderName: 'group-leader',
+    };
+    await service.bindResolvedTarget({
+      owner,
+      channelId: 'primary',
+      target: groupTarget('chat-a'),
+    });
+
+    for (const argumentsWithoutProof of [
+      { target: 'topic-a' },
+      { target: 'topic-a', message_id: '' },
+    ]) {
+      await expect(service.authorizeTeamLeaderEgress({
+        owner,
+        channelId: 'primary',
+        arguments: argumentsWithoutProof,
+      })).rejects.toThrow(/bound team channels/);
+    }
+
+    await expect(service.authorizeTeamLeaderEgress({
+      owner,
+      channelId: 'primary',
+      arguments: { target: 'topic-a', message_id: 'observed-message' },
+    })).resolves.toMatchObject({ target: exactTarget });
   });
 
   it('builds provider channel MCP descriptors from configured dispatcher channels before sessions are live', () => {

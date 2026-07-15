@@ -115,22 +115,26 @@ export async function routeTeamOrCollaborationChannelInput(input: {
   } = input;
   const target = envelope.target;
   if (target.bindable) {
-    let routed: Awaited<ReturnType<ChannelService['resolveInboundBinding']>>;
+    let exactBindingUnavailable = false;
     try {
       await collaborationSpaces.reconcileInboundTargetRoute({
         channelId,
         target,
       });
-      routed = await channels.resolveInboundBinding({ channelId, target });
+      const direct = await deliverToFirstBoundTarget({
+        channelId,
+        turn,
+        targets: [target],
+        channels,
+        teams,
+      });
+      if (direct.status === 'delivered') return direct.result;
+      exactBindingUnavailable = direct.status === 'unavailable';
     } catch (err) {
       return {
         status: 'failed',
         error: err instanceof Error ? err : new Error(String(err)),
       };
-    }
-    if (routed !== null && (await teams.isOpenTeam(routed.owner.teamName))) {
-      const team = await teams.get(routed.owner.teamName);
-      return team.deliverToLeader(turn);
     }
     if (envelope.container !== undefined) {
       try {
@@ -159,16 +163,15 @@ export async function routeTeamOrCollaborationChannelInput(input: {
               ),
             };
           }
-          const provisionedRoute = await channels.resolveInboundBinding({
+          const provisionedRoute = await deliverToFirstBoundTarget({
             channelId,
-            target,
+            turn,
+            targets: [target],
+            channels,
+            teams,
           });
-          if (
-            provisionedRoute !== null &&
-            (await teams.isOpenTeam(provisionedRoute.owner.teamName))
-          ) {
-            const team = await teams.get(provisionedRoute.owner.teamName);
-            return team.deliverToLeader(turn);
+          if (provisionedRoute.status === 'delivered') {
+            return provisionedRoute.result;
           }
           return {
             status: 'failed',
@@ -208,17 +211,14 @@ export async function routeTeamOrCollaborationChannelInput(input: {
           ),
         };
       }
-      const claimedRoute = await channels.resolveInboundBinding({
+      const claimedRoute = await deliverToFirstBoundTarget({
         channelId,
-        target,
+        turn,
+        targets: [target],
+        channels,
+        teams,
       });
-      if (
-        claimedRoute !== null &&
-        (await teams.isOpenTeam(claimedRoute.owner.teamName))
-      ) {
-        const team = await teams.get(claimedRoute.owner.teamName);
-        return team.deliverToLeader(turn);
-      }
+      if (claimedRoute.status === 'delivered') return claimedRoute.result;
       return {
         status: 'failed',
         error: new Error(
@@ -226,8 +226,53 @@ export async function routeTeamOrCollaborationChannelInput(input: {
         ),
       };
     }
+    if (exactBindingUnavailable) return fallback(turn);
+    try {
+      const lessSpecific = await deliverToFirstBoundTarget({
+        channelId,
+        turn,
+        targets: target.binding_fallbacks ?? [],
+        channels,
+        teams,
+      });
+      if (lessSpecific.status === 'delivered') return lessSpecific.result;
+    } catch (err) {
+      return {
+        status: 'failed',
+        error: err instanceof Error ? err : new Error(String(err)),
+      };
+    }
   }
   return fallback(turn);
+}
+
+async function deliverToFirstBoundTarget(input: {
+  channelId: string;
+  turn: InboundTurnInput;
+  targets: ChannelInboundEnvelope['target'][];
+  channels: ChannelService;
+  teams: TeamCollection;
+}): Promise<
+  | { status: 'missing' }
+  | { status: 'unavailable' }
+  | { status: 'delivered'; result: AgentRuntimeTurnResult }
+> {
+  for (const target of input.targets) {
+    const routed = await input.channels.resolveInboundBinding({
+      channelId: input.channelId,
+      target,
+    });
+    if (routed === null) continue;
+    if (!(await input.teams.isOpenTeam(routed.owner.teamName))) {
+      return { status: 'unavailable' };
+    }
+    const team = await input.teams.get(routed.owner.teamName);
+    return {
+      status: 'delivered',
+      result: await team.deliverToLeader(input.turn),
+    };
+  }
+  return { status: 'missing' };
 }
 
 function provisionInputForTarget(input: {

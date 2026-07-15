@@ -217,6 +217,16 @@ and a bindable `ChannelTarget { target_type: "topic", target_key: thread_id }`.
 `root_id` and `parent_id` remain diagnostic ancestry and never substitute for a
 missing `thread_id`.
 
+The topic target declares the enclosing group target through the neutral
+`binding_fallbacks` capability. Routing checks an exact topic binding first,
+then accepted collaboration provisioning or an existing exact claim, then the
+provider-declared group binding, and finally the Dispatcher. Core never derives
+the group target from a container key or Feishu metadata, and fallback targets
+are never collaboration provisioning inputs. This preserves pre-topic group
+bindings without letting them preempt bound collaboration spaces or explicit
+topic bindings. If a more-specific active binding exists but its Team is not
+open, routing does not cross that ownership boundary to a broader fallback.
+
 Ordinary groups remain group targets even when Feishu exposes thread-style
 messages inside them. Missing group-information permission, API failure, and
 missing or unknown chat mode warn in the channel log and fail safe to the group
@@ -230,8 +240,16 @@ message ids. TeamLeader egress target resolution uses that message ledger,
 rejects conflicting chat/thread selectors, and authorizes message ownership
 against the exact topic rather than the enclosing chat. Reply execution still
 uses Feishu's source-message reply API, which preserves the authorized topic.
+After exact ownership succeeds, a TeamLeader may also be authorized by the
+target's explicit group binding fallback. Group-bound leaders can therefore
+reply safely to observed topic messages, while a leader bound only to another
+topic remains outside scope.
 Standalone `thread_id` selectors are rejected because Feishu does not expose
 them as a safe send-to-topic primitive on this transport seam.
+Every non-empty inbound `thread_id` is independently included in the opaque
+display attrs rendered into the model-visible `<channel>` envelope. Ordinary
+group threads expose that fact without acquiring a topic container or topic
+routing semantics.
 The provider does not claim topic-created or topic-closed lifecycle support;
 provisioning begins on first accepted topic inbound.
 

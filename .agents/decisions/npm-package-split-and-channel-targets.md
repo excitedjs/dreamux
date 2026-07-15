@@ -339,6 +339,7 @@ export interface ChannelTarget {
   display?: string;
   canonical_url?: string;
   meta?: Record<string, unknown>;
+  binding_fallbacks?: ChannelTarget[];
 }
 
 export interface ChannelToolDescriptor {
@@ -350,6 +351,16 @@ export interface ChannelToolDescriptor {
 
 `ChannelToolDescriptor.inputSchema` is intentionally unrestricted. Dreamux
 types must not constrain the tool schemas provider packages expose.
+
+`binding_fallbacks` is an ordered, provider-owned list of less-specific targets
+that may reuse existing channel bindings after the exact target and accepted
+collaboration route have both missed. Core never derives these targets from
+provider metadata or container keys, never provisions collaboration targets
+from them, and does not recursively traverse fallbacks declared by fallback
+entries. An existing binding with an unavailable Team stops fallback traversal
+rather than exposing its input to a less-specific owner. The same list may
+authorize TeamLeader egress only after the provider has confirmed exact
+message-to-target ownership for a non-empty source message id.
 
 `channel_id` is the dispatcher-local channel instance id from
 `dispatchers[].channels[].id`, not the provider ref. A dispatcher may configure

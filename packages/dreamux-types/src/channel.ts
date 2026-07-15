@@ -31,6 +31,16 @@ export interface ChannelTarget {
   display?: string;
   canonical_url?: string;
   meta?: Record<string, unknown>;
+  /**
+   * Provider-ordered, less-specific targets that may reuse existing channel
+   * bindings when this exact target has no accepted route. Core never derives
+   * these from `meta` or a container, and never provisions collaboration
+   * targets from them.
+   *
+   * Providers should keep this list shallow: fallbacks declared by an entry in
+   * this list are not traversed recursively.
+   */
+  binding_fallbacks?: ChannelTarget[];
 }
 
 export interface ChannelContainer {

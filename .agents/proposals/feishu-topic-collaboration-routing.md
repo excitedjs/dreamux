@@ -48,6 +48,29 @@ authorized source message. When a known message selector also contains
 `chat_id`, `thread_id`, or `chat_type`, each supplied value must agree with the
 recorded provider identity; a mismatch fails target resolution before egress.
 
+A topic target also carries an ordered, provider-owned group target as a
+binding fallback. This neutral capability lets core preserve an existing
+less-specific binding without parsing Feishu metadata. Core resolves an exact
+topic binding first, then gives an accepted collaboration-space binding the
+opportunity to provision or reclaim that exact topic, then tries the declared
+fallback only against existing channel bindings, and finally uses the
+Dispatcher fallback. A fallback target never becomes the collaboration target
+and never independently triggers provisioning. An existing exact binding whose
+Team is unavailable also blocks traversal to a broader binding instead of
+crossing an established ownership boundary.
+
+The same fallback participates in TeamLeader egress authorization only after
+the provider confirms that the supplied `message_id` belongs to the exact
+resolved topic. A TeamLeader with the enclosing group binding may therefore
+reply to an observed topic message through Feishu's source-message reply API,
+while a TeamLeader bound only to another exact topic remains unauthorized.
+
+The provider includes every non-empty inbound `thread_id` in its opaque display
+attributes. Both runtimes therefore render it in the model-visible
+`<channel ... thread_id="...">` envelope. This display fact is independent of
+collaboration classification: a thread-style message in an ordinary group may
+show a `thread_id` but still has only the ordinary group route.
+
 One provider-local routing capability creates `{ target, container? }` exactly
 once for an accepted inbound. The same target object is recorded in the message
 ledger and passed through the provider adapter to `ChannelInboundEnvelope`; the
@@ -70,6 +93,9 @@ when it names the TeamLeader's own topic.
 
 - Dreamux core must remain provider-neutral and must not parse `chat_id`,
   `thread_id`, `root_id`, or `chat_mode`.
+- Binding fallbacks are provider-declared targets. Core must not derive a
+  fallback from a container key or provider metadata, and must not use a
+  fallback for collaboration-space provisioning.
 - `thread_id` is the topic key. `root_id` and `parent_id` are diagnostic
   metadata only and must not independently enable topic routing.
 - A normal group whose messages use thread/reply form remains a normal group
@@ -101,10 +127,19 @@ when it names the TeamLeader's own topic.
 - A real `@excitedjs/feishu-channel` provider delivery reaches
   `DispatcherService` with the projected container and provisions the bound
   collaboration target on first inbound.
+- A topic-mode group with an active enclosing-group binding and no accepted
+  collaboration-space binding routes to that existing TeamLeader without
+  creating a Team.
+- A topic-mode group with neither an exact/group binding nor an accepted
+  collaboration-space binding continues to fall back to the Dispatcher.
+- An exact topic binding wins over collaboration provisioning and the
+  enclosing-group binding fallback.
 - Later inbound for the same topic routes to the already provisioned
   TeamLeader.
 - TeamLeader reply authorization accepts a recorded message in its own topic
   and rejects a recorded message from another topic in the same chat.
+- A TeamLeader with the enclosing-group binding may reply to an observed topic
+  message, while the exact message/topic ownership check remains mandatory.
 - Topic TeamLeader egress rejects chat-only replies, unknown message ids, and a
   standalone thread selector. It also rejects a known own-topic message combined
   with a conflicting chat or thread selector.
@@ -113,6 +148,10 @@ when it names the TeamLeader's own topic.
   unknown modes warn, remain uncached, and are retried by later accepted input.
 - Messages rejected or consumed by the access gate do not query chat mode or
   create message-target entries.
+- Non-empty `thread_id` values appear in the provider-owned display attrs and
+  the rendered model-visible channel envelope; missing or empty values are
+  omitted. Displaying the value does not promote an ordinary group thread to a
+  collaboration target.
 - Transport, provider, Dispatcher integration, typecheck, lint, and relevant
   repository validation cover the new contract.
 
@@ -125,3 +164,7 @@ when it names the TeamLeader's own topic.
 - Treating ordinary groups configured with thread-style messages as
   collaboration spaces.
 - Adding Feishu-specific configuration or selectors to Dreamux core.
+- Removing the legacy root-exported `createFakeFeishuBot` test API or its
+  `FakeFeishuBot` type. Both public exports predate this change and require a
+  separately versioned breaking API migration rather than an unannounced
+  removal from this compatible fix.

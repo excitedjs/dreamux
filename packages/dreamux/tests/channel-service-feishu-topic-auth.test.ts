@@ -192,4 +192,107 @@ describe('ChannelService Feishu topic authorization', () => {
       await service.closeAll(noopLog());
     }
   });
+
+  it('allows a group-bound TeamLeader to reply safely to observed topic messages', async () => {
+    const config = testDreamuxConfig([
+      testDispatcherConfig({ id: 'flow' }),
+    ]);
+    const bot = createFakeFeishuBot('app-auth');
+    bot.setChatMode('chat-topic', 'topic');
+    const service = new ChannelService({
+      dispatcherId: 'flow',
+      config,
+      channelProviders: feishuChannelCatalog(() => bot),
+      channelLoggerFactory: () => noopLog(),
+    });
+    await saveDispatcherAccess(dispatcherDir('flow'), {
+      version: 3,
+      dm_policy: 'pairing',
+      allow_users: ['sender-1'],
+      group: { policy: 'follow-user', allow_chats: [], require_mention: true },
+      pending: {},
+      observed_chats: [],
+      warnings: [],
+      last_gate: { at: 0 },
+    });
+    const sessions = await service.build();
+    service.adopt(sessions);
+    for (const session of sessions.values()) {
+      await session.start({
+        deliver: async () => ({ status: 'submitted', turnId: 'turn-1' }),
+      });
+    }
+
+    try {
+      await bot.inject(topicEvent({ messageId: 'msg-topic-a', threadId: 'topic-a' }));
+      await bot.inject(topicEvent({ messageId: 'msg-topic-b', threadId: 'topic-b' }));
+      const groupTarget = await service.resolveTarget({
+        chat_id: 'chat-topic',
+      });
+      const owner = {
+        kind: 'team' as const,
+        teamName: 'group-team',
+        leaderName: 'group-leader',
+      };
+      await service.bindResolvedTarget({
+        owner,
+        channelId: 'primary',
+        target: groupTarget,
+      });
+
+      for (const messageId of ['msg-topic-a', 'msg-topic-b']) {
+        await expect(invokeDispatcherChannelTool({
+          channels: service,
+          name: 'reply',
+          arguments: {
+            chat_id: 'chat-topic',
+            message_id: messageId,
+            text: `reply to ${messageId}`,
+          },
+          caller: {
+            kind: 'team_leader',
+            teamId: owner.teamName,
+            leaderName: owner.leaderName,
+          },
+        })).resolves.toMatchObject({ status: 'ok' });
+      }
+      expect(bot.sentMessages.map((message) => message.target)).toMatchObject([
+        { chatId: 'chat-topic', replyToMessageId: 'msg-topic-a' },
+        { chatId: 'chat-topic', replyToMessageId: 'msg-topic-b' },
+      ]);
+
+      const denied = [
+        {
+          chat_id: 'wrong-chat',
+          message_id: 'msg-topic-a',
+          text: 'mismatched chat',
+        },
+        {
+          chat_id: 'chat-topic',
+          message_id: 'msg-unknown',
+          text: 'unknown message',
+        },
+        {
+          chat_id: 'chat-topic',
+          thread_id: 'topic-a',
+          text: 'topic without source message',
+        },
+      ];
+      for (const args of denied) {
+        await expect(invokeDispatcherChannelTool({
+          channels: service,
+          name: 'reply',
+          arguments: args,
+          caller: {
+            kind: 'team_leader',
+            teamId: owner.teamName,
+            leaderName: owner.leaderName,
+          },
+        })).rejects.toThrow(/TeamLeader/);
+      }
+      expect(bot.sentMessages).toHaveLength(2);
+    } finally {
+      await service.closeAll(noopLog());
+    }
+  });
 });

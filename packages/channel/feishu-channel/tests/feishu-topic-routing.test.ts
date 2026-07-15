@@ -8,6 +8,7 @@ import type {
   ChannelInboundEnvelope,
   ChannelTarget,
   DreamuxLogger,
+  InboundTurnInput,
 } from '@excitedjs/dreamux-types';
 
 import {
@@ -122,8 +123,10 @@ describe('Feishu topic routing', () => {
     bot.setChatMode('chat-topic', 'topic');
     bot.setChatMode('chat-normal', 'group');
     const envelopes: ChannelInboundEnvelope[] = [];
+    const turns: InboundTurnInput[] = [];
     await session.start({
-      deliver: async (_turn, envelope) => {
+      deliver: async (turn, envelope) => {
+        turns.push(turn);
         envelopes.push(envelope);
         return { status: 'submitted', turnId: `turn-${envelopes.length}` };
       },
@@ -235,6 +238,43 @@ describe('Feishu topic routing', () => {
       undefined,
       undefined,
     ]);
+    expect(
+      envelopes.map((envelope) => envelope.target.binding_fallbacks),
+    ).toEqual([
+      [{
+        target_type: 'group',
+        target_key: 'chat-topic',
+        bindable: true,
+        meta: { chat_id: 'chat-topic', chat_type: 'group' },
+      }],
+      [{
+        target_type: 'group',
+        target_key: 'chat-topic',
+        bindable: true,
+        meta: { chat_id: 'chat-topic', chat_type: 'group' },
+      }],
+      [{
+        target_type: 'group',
+        target_key: 'chat-topic',
+        bindable: true,
+        meta: { chat_id: 'chat-topic', chat_type: 'group' },
+      }],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    ]);
+    expect(turns.map((turn) =>
+      turn.attrs?.find(([key]) => key === 'thread_id')?.[1],
+    )).toEqual([
+      'topic-a',
+      'topic-a',
+      'topic-b',
+      'ordinary-thread',
+      'ordinary-thread',
+      undefined,
+      undefined,
+    ]);
     expect(bot.chatModeRequests).toEqual(['chat-topic', 'chat-normal']);
 
     const topicA = await session.resolveTarget({
@@ -250,6 +290,9 @@ describe('Feishu topic routing', () => {
       thread_id: 'topic-a',
     })).rejects.toThrow(/observed message_id.*topic replies/);
     expect(topicA.target_key).toBe('topic-a');
+    expect(topicA.binding_fallbacks).toMatchObject([
+      { target_type: 'group', target_key: 'chat-topic' },
+    ]);
     expect(session.messageBelongsToTarget?.({
       target: topicA,
       message_id: 'msg-root',

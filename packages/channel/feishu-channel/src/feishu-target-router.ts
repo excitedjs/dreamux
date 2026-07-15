@@ -174,6 +174,7 @@ function topicTarget(input: {
       ...(input.rootId !== undefined ? { root_id: input.rootId } : {}),
       ...(input.parentId !== undefined ? { parent_id: input.parentId } : {}),
     },
+    binding_fallbacks: [chatTarget(input.chatId, 'group')],
   };
 }
 
