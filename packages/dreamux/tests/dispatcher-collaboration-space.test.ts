@@ -16,6 +16,10 @@ import type {
   DreamuxLogger,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
+import {
+  saveDispatcherAccess,
+  type FeishuInboundEvent,
+} from '@excitedjs/feishu-channel';
 
 import type { AgentRuntimeProviderCatalog } from '../src/agent-runtime/index.js';
 import type { ChannelProviderCatalog } from '../src/channel/catalog.js';
@@ -28,9 +32,11 @@ import {
 } from '../src/service/dispatcher-service/collaboration-routing.js';
 import { DispatcherService } from '../src/service/dispatcher-service/index.js';
 import { Server } from '../src/server.js';
-import { resetRuntimeConfig } from '../src/platform/paths.js';
+import { dispatcherDir, resetRuntimeConfig } from '../src/platform/paths.js';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
+import { feishuChannelCatalog } from './helpers/fake-channel.js';
+import { createFakeFeishuBot } from './helpers/fake-feishu-bot.js';
 
 const RUNTIME_REF = 'test:runtime';
 const CHANNEL_REF = 'test:channel';
@@ -174,6 +180,74 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+function feishuTopicEvent(input: {
+  messageId: string;
+  chatId: string;
+  threadId: string;
+}): FeishuInboundEvent {
+  return {
+    messageId: input.messageId,
+    chatId: input.chatId,
+    chatType: 'group',
+    threadId: input.threadId,
+    senderId: 'sender-1',
+    senderType: 'user',
+    senderName: 'Ada',
+    messageType: 'text',
+    rawContent: JSON.stringify({ text: '@bot work on this' }),
+    parsedText: '@Bot work on this',
+    mentions: [
+      {
+        key: '@_user_1',
+        id: { open_id: 'fake-open-id-app-topic' },
+        name: 'Bot',
+      },
+    ],
+    createTime: '1782660000000',
+    raw: {},
+  };
+}
+
+function realFeishuDispatcher(input: {
+  workspace: string;
+  bot: ReturnType<typeof createFakeFeishuBot>;
+}) {
+  const config = testDreamuxConfig([
+    testDispatcherConfig({
+      id: 'flow',
+      cwd: input.workspace,
+      agentRuntime: 'dispatcher-runtime',
+      runtimeProvider: RUNTIME_REF,
+      workspaceEnabled: false,
+    }),
+  ]);
+  const runtimes: FakeRuntime[] = [];
+  const contexts: AgentRuntimeCreateContext[] = [];
+  const dispatcher = new DispatcherService({
+    id: 'flow',
+    config,
+    dispatchers: new DispatcherStore(config),
+    agentRuntimeProviders: fakeRuntimeCatalog(runtimes, contexts),
+    channelProviders: feishuChannelCatalog(() => input.bot),
+    channelLoggerFactory: () => noopLog(),
+    log: noopLog(),
+  });
+  return { dispatcher, runtimes, contexts };
+}
+
+async function allowFeishuTestSender(): Promise<void> {
+  await saveDispatcherAccess(dispatcherDir('flow'), {
+    version: 3,
+    dm_policy: 'pairing',
+    allow_users: ['sender-1'],
+    group: { policy: 'follow-user', allow_chats: [], require_mention: true },
+    pending: {},
+    observed_chats: [],
+    warnings: [],
+    last_gate: { at: 0 },
+  });
+}
+
 describe('DispatcherService collaboration-space routing', () => {
   let root: string;
   let previousHome: string | undefined;
@@ -276,6 +350,319 @@ describe('DispatcherService collaboration-space routing', () => {
         phase: 'bound',
       },
     ]);
+  });
+
+  it('routes a non-collaboration topic group through its existing group binding', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const bot = createFakeFeishuBot('app-topic');
+    bot.setChatMode('chat-topic', 'topic');
+    const { dispatcher, runtimes } = realFeishuDispatcher({ workspace, bot });
+    await allowFeishuTestSender();
+
+    try {
+      await dispatcher.startInputSources();
+      await dispatcher.createTeam({
+        name: 'group-team',
+        leaderAgentRuntime: 'dispatcher-runtime',
+        intent: 'own the existing group route',
+      });
+      await dispatcher.bindTeamChannel({
+        teamId: 'group-team',
+        channelId: 'primary',
+        meta: { chat_id: 'chat-topic' },
+      });
+
+      await bot.inject(feishuTopicEvent({
+        messageId: 'msg-group-fallback',
+        chatId: 'chat-topic',
+        threadId: 'topic-a',
+      }));
+
+      expect(runtimes).toHaveLength(1);
+      expect(runtimes[0]?.submitted).toHaveLength(1);
+      expect(runtimes[0]?.submitted[0]?.attrs).toContainEqual([
+        'thread_id',
+        'topic-a',
+      ]);
+      await expect(dispatcher.listCollaborationSpaces()).resolves.toEqual({
+        spaces: [],
+      });
+      await expect(dispatcher.listTeams()).resolves.toHaveLength(1);
+    } finally {
+      await dispatcher.stop();
+    }
+  });
+
+  it('auto-provisions ahead of a group fallback and reuses the topic Team', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'flow',
+        cwd: workspace,
+        agentRuntime: 'dispatcher-runtime',
+        runtimeProvider: RUNTIME_REF,
+        workspaceEnabled: false,
+      }),
+    ]);
+    const runtimes: FakeRuntime[] = [];
+    const contexts: AgentRuntimeCreateContext[] = [];
+    const bot = createFakeFeishuBot('app-topic');
+    bot.setChatMode('chat-topic', 'topic');
+    const dispatcher = new DispatcherService({
+      id: 'flow',
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes, contexts),
+      channelProviders: feishuChannelCatalog(() => bot),
+      channelLoggerFactory: () => noopLog(),
+      log: noopLog(),
+    });
+    await saveDispatcherAccess(dispatcherDir('flow'), {
+      version: 3,
+      dm_policy: 'pairing',
+      allow_users: ['sender-1'],
+      group: { policy: 'follow-user', allow_chats: [], require_mention: true },
+      pending: {},
+      observed_chats: [],
+      warnings: [],
+      last_gate: { at: 0 },
+    });
+    try {
+      await dispatcher.startInputSources();
+      await dispatcher.createTeam({
+        name: 'group-team',
+        leaderAgentRuntime: 'dispatcher-runtime',
+        intent: 'own the enclosing group route',
+      });
+      await dispatcher.bindTeamChannel({
+        teamId: 'group-team',
+        channelId: 'primary',
+        meta: { chat_id: 'chat-topic' },
+      });
+      await dispatcher.bindCollaborationSpace({
+        spaceName: 'feishu-space',
+        channelId: 'primary',
+        container: {
+          container_type: 'topic_group',
+          container_key: 'chat-topic',
+        },
+        leaderAgentRuntime: 'dispatcher-runtime',
+      });
+      await bot.inject(feishuTopicEvent({
+        messageId: 'msg-topic-root',
+        chatId: 'chat-topic',
+        threadId: 'topic-a',
+      }));
+      await bot.inject({
+        ...feishuTopicEvent({
+          messageId: 'msg-topic-reply',
+          chatId: 'chat-topic',
+          threadId: 'topic-a',
+        }),
+        rootId: 'msg-topic-root',
+        parentId: 'msg-topic-root',
+      });
+
+      expect(runtimes).toHaveLength(2);
+      expect(runtimes[0]?.submitted).toHaveLength(0);
+      expect(runtimes[1]?.submitted).toHaveLength(2);
+      expect(runtimes[1]?.submitted.map((turn) =>
+        turn.attrs?.find(([key]) => key === 'thread_id')?.[1],
+      )).toEqual(['topic-a', 'topic-a']);
+      await expect(dispatcher.getCollaborationSpaceStatus({
+        spaceName: 'feishu-space',
+      })).resolves.toMatchObject({
+        space: { status: 'bound' },
+        targets: [
+          {
+            target_key: 'topic-a',
+            lifecycle_status: 'active',
+            phase: 'bound',
+          },
+        ],
+      });
+    } finally {
+      await dispatcher.stop();
+    }
+  });
+
+  it('keeps Dispatcher fallback for a topic group with no accepted route', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const bot = createFakeFeishuBot('app-topic');
+    bot.setChatMode('chat-topic', 'topic');
+    const { dispatcher, runtimes } = realFeishuDispatcher({ workspace, bot });
+    await allowFeishuTestSender();
+
+    try {
+      await dispatcher.startInputSources();
+      await bot.inject(feishuTopicEvent({
+        messageId: 'msg-dispatcher-fallback',
+        chatId: 'chat-topic',
+        threadId: 'topic-a',
+      }));
+
+      expect(runtimes).toHaveLength(1);
+      expect(runtimes[0]?.submitted).toHaveLength(1);
+      expect(runtimes[0]?.submitted[0]?.attrs).toContainEqual([
+        'thread_id',
+        'topic-a',
+      ]);
+      await expect(dispatcher.listTeams()).resolves.toEqual([]);
+      await expect(dispatcher.listCollaborationSpaces()).resolves.toEqual({
+        spaces: [],
+      });
+    } finally {
+      await dispatcher.stop();
+    }
+  });
+
+  it('keeps an exact topic binding ahead of collaboration and group routes', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const bot = createFakeFeishuBot('app-topic');
+    bot.setChatMode('chat-topic', 'topic');
+    const { dispatcher, runtimes } = realFeishuDispatcher({ workspace, bot });
+    await allowFeishuTestSender();
+
+    try {
+      await dispatcher.startInputSources();
+      await dispatcher.createTeam({
+        name: 'group-team',
+        leaderAgentRuntime: 'dispatcher-runtime',
+        intent: 'own the enclosing group route',
+      });
+      await dispatcher.bindTeamChannel({
+        teamId: 'group-team',
+        channelId: 'primary',
+        meta: { chat_id: 'chat-topic' },
+      });
+      await bot.inject(feishuTopicEvent({
+        messageId: 'msg-topic-root',
+        chatId: 'chat-topic',
+        threadId: 'topic-a',
+      }));
+
+      await dispatcher.createTeam({
+        name: 'exact-topic-team',
+        leaderAgentRuntime: 'dispatcher-runtime',
+        intent: 'own one exact topic route',
+      });
+      await dispatcher.bindTeamChannel({
+        teamId: 'exact-topic-team',
+        channelId: 'primary',
+        meta: {
+          chat_id: 'chat-topic',
+          message_id: 'msg-topic-root',
+        },
+      });
+      await dispatcher.bindCollaborationSpace({
+        spaceName: 'feishu-space',
+        channelId: 'primary',
+        container: {
+          container_type: 'topic_group',
+          container_key: 'chat-topic',
+        },
+        leaderAgentRuntime: 'dispatcher-runtime',
+      });
+      await bot.inject({
+        ...feishuTopicEvent({
+          messageId: 'msg-topic-reply',
+          chatId: 'chat-topic',
+          threadId: 'topic-a',
+        }),
+        rootId: 'msg-topic-root',
+        parentId: 'msg-topic-root',
+      });
+
+      expect(runtimes).toHaveLength(2);
+      expect(runtimes[0]?.submitted.map((turn) => turn.sourceId)).toEqual([
+        'msg-topic-root',
+      ]);
+      expect(runtimes[1]?.submitted.map((turn) => turn.sourceId)).toEqual([
+        'msg-topic-reply',
+      ]);
+      await expect(dispatcher.getCollaborationSpaceStatus({
+        spaceName: 'feishu-space',
+      })).resolves.toMatchObject({
+        space: { status: 'bound' },
+        targets: [],
+      });
+    } finally {
+      await dispatcher.stop();
+    }
+  });
+
+  it('does not provision an ordinary group thread through the real Feishu provider', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'flow',
+        cwd: workspace,
+        agentRuntime: 'dispatcher-runtime',
+        runtimeProvider: RUNTIME_REF,
+        workspaceEnabled: false,
+      }),
+    ]);
+    const runtimes: FakeRuntime[] = [];
+    const contexts: AgentRuntimeCreateContext[] = [];
+    const bot = createFakeFeishuBot('app-topic');
+    bot.setChatMode('chat-normal', 'group');
+    const dispatcher = new DispatcherService({
+      id: 'flow',
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes, contexts),
+      channelProviders: feishuChannelCatalog(() => bot),
+      channelLoggerFactory: () => noopLog(),
+      log: noopLog(),
+    });
+    await saveDispatcherAccess(dispatcherDir('flow'), {
+      version: 3,
+      dm_policy: 'pairing',
+      allow_users: ['sender-1'],
+      group: { policy: 'follow-user', allow_chats: [], require_mention: true },
+      pending: {},
+      observed_chats: [],
+      warnings: [],
+      last_gate: { at: 0 },
+    });
+    await dispatcher.bindCollaborationSpace({
+      spaceName: 'ordinary-space',
+      channelId: 'primary',
+      container: {
+        container_type: 'topic_group',
+        container_key: 'chat-normal',
+      },
+      leaderAgentRuntime: 'dispatcher-runtime',
+    });
+
+    try {
+      await dispatcher.startInputSources();
+      await bot.inject(feishuTopicEvent({
+        messageId: 'msg-normal-thread',
+        chatId: 'chat-normal',
+        threadId: 'ordinary-thread',
+      }));
+
+      expect(runtimes).toHaveLength(1);
+      expect(runtimes[0]?.submitted).toHaveLength(1);
+      expect(runtimes[0]?.submitted[0]?.attrs).toContainEqual([
+        'thread_id',
+        'ordinary-thread',
+      ]);
+      await expect(dispatcher.getCollaborationSpaceStatus({
+        spaceName: 'ordinary-space',
+      })).resolves.toMatchObject({
+        space: { status: 'bound' },
+        targets: [],
+      });
+    } finally {
+      await dispatcher.stop();
+    }
   });
 
   it('awaits target lifecycle accept but not heavy provisioning', async () => {
@@ -491,6 +878,106 @@ describe('DispatcherService collaboration-space routing', () => {
       expect(result.error.message).toContain('simulated provision failure');
     }
     expect(fallback).not.toHaveBeenCalled();
+  });
+
+  it('does not cross an unavailable exact binding to a broader fallback binding', async () => {
+    const fallback = vi.fn(async (): Promise<AgentRuntimeTurnResult> => ({
+      status: 'submitted',
+      turnId: 'fallback',
+    }));
+    const resolvedTargetKeys: string[] = [];
+    const exactOwner = {
+      kind: 'team' as const,
+      teamName: 'exact-team',
+      leaderName: 'exact-leader',
+    };
+    const groupOwner = {
+      kind: 'team' as const,
+      teamName: 'group-team',
+      leaderName: 'group-leader',
+    };
+    const channels = {
+      async resolveInboundBinding(input: { target: { target_key: string } }) {
+        resolvedTargetKeys.push(input.target.target_key);
+        if (input.target.target_key === 'topic-a') {
+          return { binding: { active: true }, owner: exactOwner };
+        }
+        if (input.target.target_key === 'chat-topic') {
+          return { binding: { active: true }, owner: groupOwner };
+        }
+        return null;
+      },
+      channelProviderRef() {
+        return CHANNEL_REF;
+      },
+      collaborationSpaceConfig() {
+        return {
+          defaultBinding: { enabled: false, repo: null, identity: null },
+        };
+      },
+    } as unknown as ChannelService;
+    const collaborationSpaces = {
+      async reconcileInboundTargetRoute() {
+        return null;
+      },
+      async acceptAndProvisionTarget() {
+        return null;
+      },
+      async provisionClaimedTarget() {
+        return null;
+      },
+    } as unknown as CollaborationSpaceService;
+    const groupDelivery = vi.fn(async (): Promise<AgentRuntimeTurnResult> => ({
+      status: 'submitted',
+      turnId: 'group-turn',
+    }));
+    const teams = {
+      async isOpenTeam(teamName: string) {
+        return teamName === groupOwner.teamName;
+      },
+      async get() {
+        return { deliverToLeader: groupDelivery };
+      },
+    } as unknown as TeamCollection;
+
+    const result = await routeTeamOrCollaborationChannelInput({
+      channelId: 'primary',
+      dispatcherAgentRuntime: 'dispatcher-runtime',
+      turn: {
+        text: 'exact route is unavailable',
+        body: 'exact route is unavailable',
+        sourceId: 'msg-unavailable',
+      },
+      envelope: {
+        provider: CHANNEL_REF,
+        channel_id: 'primary',
+        container: {
+          container_type: 'topic_group',
+          container_key: 'chat-topic',
+        },
+        target: {
+          target_type: 'topic',
+          target_key: 'topic-a',
+          bindable: true,
+          binding_fallbacks: [
+            {
+              target_type: 'group',
+              target_key: 'chat-topic',
+              bindable: true,
+            },
+          ],
+        },
+      },
+      channels,
+      teams,
+      collaborationSpaces,
+      fallback,
+    });
+
+    expect(result).toEqual({ status: 'submitted', turnId: 'fallback' });
+    expect(resolvedTargetKeys).toEqual(['topic-a']);
+    expect(groupDelivery).not.toHaveBeenCalled();
+    expect(fallback).toHaveBeenCalledOnce();
   });
 
   it('falls back when an explicitly detached collaboration target is inbound', async () => {

@@ -9,10 +9,7 @@ import type {
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
 
-import {
-  createFakeFeishuBot,
-  type FeishuInboundEvent,
-} from '../src/bot.js';
+import type { FeishuInboundEvent } from '../src/bot.js';
 import {
   saveDispatcherAccess,
   defaultDispatcherAccessState,
@@ -29,7 +26,9 @@ import {
   sessionHandle,
   type FeishuChannelState,
 } from '../src/feishu-session-ops.js';
+import { createFakeFeishuBot } from './helpers/fake-feishu-bot.js';
 import { AsyncMutex } from '../src/lib/mutex.js';
+import { FeishuTargetRouter } from '../src/feishu-target-router.js';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 function noopLogger(): DreamuxLogger {
@@ -83,6 +82,7 @@ describe('feishu inbound submit-throw cleanup (PR #282)', () => {
   }
 
   function buildHandle(state: FeishuChannelState, bot: ReturnType<typeof createFakeFeishuBot>) {
+    const log = noopLogger();
     return sessionHandle(
       {
         dispatcherId: 'dispatcher-a',
@@ -90,13 +90,14 @@ describe('feishu inbound submit-throw cleanup (PR #282)', () => {
         appSecret: '',
         stateDir,
         attachmentCacheDir: stateDir,
-        log: noopLogger(),
+        log,
         botFactory: () => bot,
       },
       state,
       bot,
       new AsyncMutex(),
       'Dreamux bot',
+      new FeishuTargetRouter({ chatModes: bot, log }),
     );
   }
 
@@ -106,7 +107,6 @@ describe('feishu inbound submit-throw cleanup (PR #282)', () => {
     const state: FeishuChannelState = {
       inboundReactions: new Map(),
       pendingReceivedReactionClears: new Set(),
-      messageChats: new Map(),
     };
     const handle = buildHandle(state, bot);
 
@@ -142,7 +142,6 @@ describe('feishu inbound submit-throw cleanup (PR #282)', () => {
     const state: FeishuChannelState = {
       inboundReactions: new Map(),
       pendingReceivedReactionClears: new Set(),
-      messageChats: new Map(),
     };
     const handle = buildHandle(state, bot);
 

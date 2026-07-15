@@ -5,12 +5,10 @@ import { join } from 'node:path';
 
 import type { InboundTurnInput } from '@excitedjs/dreamux-types';
 import {
-  createFakeFeishuBot,
   defaultDispatcherAccessState,
   FeishuChannelSession,
   loadDispatcherAccess,
   saveDispatcherAccess,
-  type FakeFeishuBot,
   type FeishuCardActionResponse,
   type FeishuInboundEnvelope,
 } from '../src/index.js';
@@ -21,6 +19,10 @@ import {
   DREAMUX_PAIRING_TOKEN_KEY,
 } from '../src/feishu-pairing-card.js';
 import { PAIRING_TOKEN_REGEX, generatePairingToken } from '../src/feishu-gate.js';
+import {
+  createFakeFeishuBot,
+  type FakeFeishuBot,
+} from './helpers/fake-feishu-bot.js';
 
 function logger() {
   return {

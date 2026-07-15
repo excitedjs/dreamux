@@ -50,6 +50,8 @@ export interface FeishuInviteMembersResult {
   addedOpenIds: string[]
 }
 
+export type FeishuChatMode = 'p2p' | 'group' | 'topic'
+
 export function textMessageContent(text: string): string {
   return JSON.stringify({ text })
 }
@@ -81,6 +83,7 @@ function renderSingleCard(text: string): RenderedCard {
 function feishuChatClient(client: lark.Client): {
   chat?: {
     create?: (input: unknown) => Promise<{ data?: { chat_id?: string } }>
+    get?: (input: unknown) => Promise<{ data?: { chat_mode?: string } }>
     members?: { create?: (input: unknown) => Promise<unknown> }
   }
 } {
@@ -88,6 +91,7 @@ function feishuChatClient(client: lark.Client): {
     im?: {
       chat?: {
         create?: (input: unknown) => Promise<{ data?: { chat_id?: string } }>
+        get?: (input: unknown) => Promise<{ data?: { chat_mode?: string } }>
         members?: { create?: (input: unknown) => Promise<unknown> }
       }
     }
@@ -211,6 +215,8 @@ export interface FeishuTransport {
     sendCard(target: OutboundTarget, card: unknown): Promise<FeishuSendResult>
     createGroup(input: FeishuCreateGroupInput): Promise<FeishuCreateGroupResult>
     inviteMembers(input: FeishuInviteMembersInput): Promise<FeishuInviteMembersResult>
+    /** Optional capability for custom transports; callers must fail safe when absent. */
+    getChatMode?(chatId: string): Promise<FeishuChatMode | undefined>
     addReaction(messageId: string, emoji: string): Promise<string>
     removeReaction(messageId: string, reactionId: string): Promise<void>
     editText(messageId: string, text: string): Promise<void>
@@ -359,6 +365,20 @@ export function createFeishuTransport(
         params: { member_id_type: 'open_id' },
       })
       return { addedOpenIds: input.userOpenIds }
+    },
+
+    async getChatMode(chatId: string): Promise<FeishuChatMode | undefined> {
+      const chatClient = feishuChatClient(client)
+      if (chatClient.chat?.get === undefined) {
+        throw new Error(
+          'Feishu chat get API is not available in this SDK/client; upgrade the Feishu transport client.',
+        )
+      }
+      const res = await chatClient.chat.get({ path: { chat_id: chatId } })
+      const mode = res.data?.chat_mode
+      return mode === 'p2p' || mode === 'group' || mode === 'topic'
+        ? mode
+        : undefined
     },
 
     async addReaction(messageId: string, emoji: string): Promise<string> {

@@ -46,10 +46,8 @@ export {
 
 export {
   createFeishuBot,
-  createFakeFeishuBot,
   channelOutboundToFeishuTarget,
   type FeishuBot,
-  type FakeFeishuBot,
   type CreateBotOptions,
   type FeishuInboundEvent,
   type FeishuCardActionEvent,

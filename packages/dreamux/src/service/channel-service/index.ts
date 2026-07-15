@@ -142,8 +142,10 @@ export class ChannelService {
     }
 
     const messageId = input.arguments['message_id'];
+    const hasExactMessageTargetProof =
+      typeof messageId === 'string' && messageId !== '';
     if (
-      typeof messageId === 'string' &&
+      hasExactMessageTargetProof &&
       !(await this.messageBelongsToTarget(target, messageId, channelId))
     ) {
       throw new ChannelToolAuthorizationError(
@@ -152,20 +154,16 @@ export class ChannelService {
       );
     }
 
-    const allowedChannelId = await this.ownerCanUseTarget({
+    const ownerHasBinding = await this.ownerCanUseResolvedTarget({
       owner: input.owner,
-      targetKey: target.target_key,
+      channelId,
+      target,
+      allowBindingFallbacks: hasExactMessageTargetProof,
     });
-    if (allowedChannelId === null) {
+    if (!ownerHasBinding) {
       throw new ChannelToolAuthorizationError(
         'CHANNEL_SCOPE_DENIED',
         'TeamLeader may use channels only for bound team channels',
-      );
-    }
-    if (allowedChannelId !== channelId) {
-      throw new ChannelToolAuthorizationError(
-        'CHANNEL_SCOPE_DENIED',
-        'TeamLeader may use only the configured channel bound to the target',
       );
     }
     return { channelId, target };
@@ -311,6 +309,31 @@ export class ChannelService {
         ownerMatchesBinding(input.owner, binding),
     );
     return match?.channel_id ?? null;
+  }
+
+  private async ownerCanUseResolvedTarget(input: {
+    owner: ChannelRouteOwner;
+    channelId: string;
+    target: ChannelTarget;
+    allowBindingFallbacks: boolean;
+  }): Promise<boolean> {
+    const candidates = [
+      input.target,
+      ...(input.allowBindingFallbacks
+        ? (input.target.binding_fallbacks ?? [])
+        : []),
+    ];
+    for (const target of candidates) {
+      const binding = await this.bindings.resolve({
+        dispatcherId: this.dispatcherId,
+        channelId: input.channelId,
+        targetKey: target.target_key,
+      });
+      if (binding !== null && ownerMatchesBinding(input.owner, binding)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   async activeBindingSummaryForOwner(

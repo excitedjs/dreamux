@@ -49,10 +49,10 @@ import { Server } from '../src/server.js';
 import {
   IN_PROGRESS_REACTION_EMOJI,
   RECEIVED_REACTION_EMOJI,
-  createFakeFeishuBot,
   type FeishuInboundEvent,
 } from '@excitedjs/feishu-channel';
 import { feishuChannelCatalog } from './helpers/fake-channel.js';
+import { createFakeFeishuBot } from './helpers/fake-feishu-bot.js';
 import { codexAgentRuntimeCatalog } from './helpers/fake-agent-runtime.js';
 import { saveDispatcherAccess } from '@excitedjs/feishu-channel';
 import { dispatcherDir } from '../src/platform/paths.js';

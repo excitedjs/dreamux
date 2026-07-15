@@ -1,4 +1,5 @@
 import type {
+  ChannelContainer,
   ChannelTarget,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
@@ -33,6 +34,7 @@ import {
   type SessionHandle,
 } from './feishu-session-ops.js';
 import { onMessage as sessionOnMessage } from './feishu-session-inbound.js';
+import { FeishuTargetRouter } from './feishu-target-router.js';
 
 /**
  * Logger shape used throughout the Feishu channel session — pino-style,
@@ -90,8 +92,12 @@ export interface FeishuInboundSubmitter {
 
 export interface FeishuInboundEnvelope {
   provider: 'builtin:feishu';
+  /** Retained for compatibility with the pre-topic public submitter contract. */
   chatId: string;
   chatType: 'group' | 'p2p';
+  /** Production sessions always supply the provider-normalized target. */
+  target?: ChannelTarget;
+  container?: ChannelContainer;
   messageId: string;
 }
 
@@ -115,8 +121,8 @@ export class FeishuChannelSession {
   readonly state: FeishuChannelState = {
     inboundReactions: new Map(),
     pendingReceivedReactionClears: new Set(),
-    messageChats: new Map(),
   };
+  private readonly targetRouter: FeishuTargetRouter;
   private readonly _accessMutex = new AsyncMutex();
 
   constructor(private readonly opts: FeishuChannelSessionOptions) {
@@ -129,6 +135,10 @@ export class FeishuChannelSession {
           // the same fields-first shape, so it passes through directly.
           logger: opts.log,
         } satisfies CreateBotOptions);
+    this.targetRouter = new FeishuTargetRouter({
+      chatModes: this.bot,
+      log: opts.log,
+    });
   }
 
   /**
@@ -144,6 +154,7 @@ export class FeishuChannelSession {
       this.bot,
       this._accessMutex,
       this.bot.botDisplayName ?? 'Dreamux bot',
+      this.targetRouter,
     );
   }
 
@@ -244,30 +255,23 @@ export class FeishuChannelSession {
     };
   }
 
+  messageBelongsToTarget(messageId: string, target: ChannelTarget): boolean {
+    return this.targetRouter.messageBelongsToTarget(messageId, target);
+  }
+
+  /** @deprecated Prefer exact target ownership for topic-safe authorization. */
   messageBelongsToChat(messageId: string, chatId: string): boolean {
-    return this.state.messageChats.get(messageId) === chatId;
+    return this.targetRouter.messageBelongsToChat(messageId, chatId);
   }
 
   /**
-   * Provider-owned target resolution (issue #209 binding store v2). Normalizes a
-   * Feishu selector `{ chat_id, chat_type }` into a neutral `ChannelTarget` whose
-   * `target_key` is the durable routing key core stores and routes by. For Feishu
-   * the stable key is the chat id itself; group chats are bindable, P2P chats are
-   * not (they always route to the dispatcher). Pure — no platform call.
+   * Provider-owned target resolution. A known `message_id` resolves through the
+   * session's authoritative inbound ledger. Standalone topic selectors are
+   * rejected because safe topic egress requires replying to an observed source
+   * message. Core receives only the resulting neutral target.
    */
   resolveTarget(meta: unknown): ChannelTarget {
-    const obj = (meta ?? {}) as Record<string, unknown>;
-    const chatId = obj['chat_id'];
-    if (typeof chatId !== 'string' || chatId === '') {
-      throw new Error('feishu resolveTarget requires a non-empty chat_id');
-    }
-    const type = obj['chat_type'] === 'p2p' ? 'p2p' : 'group';
-    return {
-      target_type: type,
-      target_key: chatId,
-      bindable: type === 'group',
-      meta: { chat_id: chatId, chat_type: type },
-    };
+    return this.targetRouter.resolveTarget(meta);
   }
 
   private async readChatBots(

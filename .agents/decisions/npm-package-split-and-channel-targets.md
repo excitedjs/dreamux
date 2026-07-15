@@ -339,6 +339,7 @@ export interface ChannelTarget {
   display?: string;
   canonical_url?: string;
   meta?: Record<string, unknown>;
+  binding_fallbacks?: ChannelTarget[];
 }
 
 export interface ChannelToolDescriptor {
@@ -350,6 +351,16 @@ export interface ChannelToolDescriptor {
 
 `ChannelToolDescriptor.inputSchema` is intentionally unrestricted. Dreamux
 types must not constrain the tool schemas provider packages expose.
+
+`binding_fallbacks` is an ordered, provider-owned list of less-specific targets
+that may reuse existing channel bindings after the exact target and accepted
+collaboration route have both missed. Core never derives these targets from
+provider metadata or container keys, never provisions collaboration targets
+from them, and does not recursively traverse fallbacks declared by fallback
+entries. An existing binding with an unavailable Team stops fallback traversal
+rather than exposing its input to a less-specific owner. The same list may
+authorize TeamLeader egress only after the provider has confirmed exact
+message-to-target ownership for a non-empty source message id.
 
 `channel_id` is the dispatcher-local channel instance id from
 `dispatchers[].channels[].id`, not the provider ref. A dispatcher may configure
@@ -691,6 +702,12 @@ These guards are epic-wide; they land across the issue #209 slices. Status:
   `tools`/`handleTool`/`messageBelongsToTarget` wired to the real session); a core
   test (`builtin-feishu-package-loader.test.ts`) exercises this against the real
   package.
+
+  The published package root and `/packages/channel/feishu-channel/src/` contain
+  production provider APIs only. Feishu bot test doubles live under
+  `/packages/channel/feishu-channel/tests/` and `/packages/dreamux/tests/` and
+  enter sessions through the production `botFactory` seam; they are neither
+  compiled into `dist/` nor exported by the package.
 
   An intermediate implementation kept a non-neutral Feishu adapter and a
   host-specific session API. That design is no longer current. The final #209

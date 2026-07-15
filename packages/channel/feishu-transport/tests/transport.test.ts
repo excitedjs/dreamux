@@ -128,6 +128,7 @@ function stubClient() {
     headers: { 'content-type': 'application/octet-stream' },
   }))
   const chatCreate = vi.fn(async () => ({ data: { chat_id: 'oc_created' } }))
+  const chatGet = vi.fn(async () => ({ data: { chat_mode: 'group' } }))
   const memberCreate = vi.fn(async () => ({}))
   const request = vi.fn(async () => ({}))
   const stub = {
@@ -135,7 +136,7 @@ function stubClient() {
       v1: { messageResource: { get: messageResourceGet } },
       message: { create, reply, patch, update },
       messageReaction: { create: reactionCreate, delete: reactionDelete },
-      chat: { create: chatCreate, members: { create: memberCreate } },
+      chat: { create: chatCreate, get: chatGet, members: { create: memberCreate } },
     },
     drive: {
       fileComment: { batchQuery: vi.fn(async () => ({ data: { items: [] } })) },
@@ -153,6 +154,7 @@ function stubClient() {
     reactionDelete,
     messageResourceGet,
     chatCreate,
+    chatGet,
     memberCreate,
     request,
   }
@@ -375,6 +377,40 @@ describe('createFeishuTransport — reactions', () => {
 })
 
 describe('createFeishuTransport — group chats', () => {
+  test.each(['p2p', 'group', 'topic'] as const)(
+    'reads the %s chat mode from the group information API',
+    async (chatMode) => {
+      const stub = stubClient()
+      stub.chatGet.mockResolvedValueOnce({ data: { chat_mode: chatMode } })
+      const transport = buildTransport(stub)
+
+      await expect(transport.getChatMode('oc_chat')).resolves.toBe(chatMode)
+      expect(stub.chatGet).toHaveBeenCalledWith({ path: { chat_id: 'oc_chat' } })
+    },
+  )
+
+  test('returns undefined for a missing or unknown chat mode', async () => {
+    const stub = stubClient()
+    stub.chatGet
+      .mockResolvedValueOnce({ data: {} })
+      .mockResolvedValueOnce({ data: { chat_mode: 'future-mode' } })
+    const transport = buildTransport(stub)
+
+    await expect(transport.getChatMode('oc_missing')).resolves.toBeUndefined()
+    await expect(transport.getChatMode('oc_unknown')).resolves.toBeUndefined()
+  })
+
+  test('fails loud when the chat information API is unavailable', async () => {
+    const stub = stubClient()
+    const raw = stub.client as unknown as { im: { chat: { get?: unknown } } }
+    delete raw.im.chat.get
+    const transport = buildTransport(stub)
+
+    await expect(transport.getChatMode('oc_chat')).rejects.toThrow(
+      /chat get API is not available/,
+    )
+  })
+
   test('creates a group chat and returns chat_id', async () => {
     const stub = stubClient()
     const transport = buildTransport(stub)

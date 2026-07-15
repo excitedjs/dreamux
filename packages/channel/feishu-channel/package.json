@@ -29,11 +29,12 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:tests": "tsc -p tsconfig.tests.json",
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
     "clean": "rm -rf dist",
-    "prepublishOnly": "npm run build"
+    "prepack": "npm run clean && npm run build"
   },
   "dependencies": {
     "@excitedjs/dreamux-types": "workspace:*",

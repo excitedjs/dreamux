@@ -90,7 +90,7 @@ function inboundEvent(overrides: Partial<FeishuInboundEvent> = {}): FeishuInboun
 }
 
 describe('formatFeishuMessageForRuntime (structured, no pre-rendered XML)', () => {
-  it('returns the six display attrs and an unwrapped body (no pre-rendered envelope)', async () => {
+  it('returns the six baseline attrs and omits an absent thread id', async () => {
     const result = await formatFeishuMessageForRuntime(inboundEvent());
     expect(result.attrs.map(([k]) => k)).toEqual([
       'chat_id',
@@ -105,6 +105,38 @@ describe('formatFeishuMessageForRuntime (structured, no pre-rendered XML)', () =
     expect(result.body).not.toContain('<channel');
     expect(result.body).not.toContain('source="feishu"');
     expect(result.attrs.find(([k]) => k === 'chat_id')?.[1]).toBe('chat-1');
+    expect(result.attrs.find(([k]) => k === 'thread_id')).toBeUndefined();
+  });
+
+  it('renders a non-empty Feishu thread id into the model-visible channel attrs', async () => {
+    const result = await formatFeishuMessageForRuntime(inboundEvent({
+      threadId: 'topic-a',
+    }));
+    expect(result.attrs.map(([key]) => key)).toEqual([
+      'chat_id',
+      'chat_type',
+      'thread_id',
+      'message_id',
+      'sender_id',
+      'sender_name',
+      'create_time',
+    ]);
+
+    const wrapped = renderChannelInput({
+      sourceId: 'msg-1',
+      source: 'feishu',
+      text: result.body,
+      attrs: result.attrs,
+      body: result.body,
+    });
+    expect(wrapped).toContain(' thread_id="topic-a"');
+  });
+
+  it('omits an empty Feishu thread id', async () => {
+    const result = await formatFeishuMessageForRuntime(inboundEvent({
+      threadId: '',
+    }));
+    expect(result.attrs.find(([key]) => key === 'thread_id')).toBeUndefined();
   });
 
   it('keeps attachment refs and the group_bots block inside the rendered <channel>', async () => {

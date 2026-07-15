@@ -25,12 +25,14 @@ import {
   type CodexProcessOptions,
 } from '@excitedjs/agent-runtime-codex';
 import {
-  createFakeFeishuBot,
-  type FakeFeishuBot,
   type FeishuInboundEvent,
 } from '@excitedjs/feishu-channel';
 import { feishuChannelCatalog } from './helpers/fake-channel.js';
 import { codexAgentRuntimeCatalog } from './helpers/fake-agent-runtime.js';
+import {
+  createFakeFeishuBot,
+  type FakeFeishuBot,
+} from './helpers/fake-feishu-bot.js';
 import { runChannelMcp } from '../src/mcp/channel-mcp.js';
 import { BUILT_IN_DEFAULTS, type DreamuxConfig } from '../src/config/config.js';
 import { defaultDispatcherCwd, dispatcherDir } from '../src/platform/paths.js';

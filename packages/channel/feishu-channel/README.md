@@ -18,6 +18,9 @@ of the Lark SDK.
 - **Inbound normalization**: turning Feishu events into agent-facing channel
   results, including the `<channel source="feishu" …>` envelope and
   `<attachment>` blocks.
+- **Topic routing**: verifying `chat_mode=topic`, projecting `thread_id` as a
+  neutral collaboration target, and recording exact per-message targets for
+  scoped TeamLeader replies.
 - **Attachment handling**: downloading inbound attachments after the host access
   gate allows delivery, plus cache layout, path sanitization, permissions, and
   honest fallback references when a resource is not downloaded.
@@ -43,8 +46,36 @@ of the Lark SDK.
   (`reply` / `react` / `resolveTarget` / `tools` / `handleTool` /
   `messageBelongsToTarget`).
 - The session class plus the gate, chat-bots store, message formatter, MCP tool
-  parser, and bot helpers, used by the core adapter that drives the production
-  host-shaped session path.
+  parser, and production bot adapter helpers used by the core adapter that
+  drives the host-shaped session path.
+
+Test doubles are deliberately test-local and are not part of the published
+package API.
+
+## Feishu topic-group permission
+
+Topic collaboration routing reads the enclosing chat through Feishu's
+`im.v1.chat.get` API. The bot must have a group information read permission
+accepted by that API, such as `im:chat:readonly`, and must be a member of the
+group. If the API fails or omits a recognized `chat_mode`, the channel logs a
+warning and deliberately treats the inbound as an ordinary group message; it
+does not infer topic mode from `root_id`, `parent_id`, or `thread_id` alone.
+Every non-empty inbound `thread_id` is also included in the provider-owned
+display attributes, so runtimes render it in the model-visible `<channel>`
+envelope. Displaying that identifier does not classify an ordinary group
+thread as a collaboration topic.
+
+A confirmed topic target declares its enclosing group as a less-specific
+binding fallback. An exact topic binding wins first; a bound collaboration
+space then provisions or reuses the exact topic Team; only a topic group that
+has no accepted collaboration route may reuse an existing group binding. If no
+such binding exists, delivery stays with the Dispatcher. This fallback is also
+used for TeamLeader egress authorization after exact message/topic ownership is
+verified, allowing a group-bound TeamLeader to reply to an observed topic
+message without weakening cross-topic authorization for topic-bound leaders.
+Topic replies still require an observed source `message_id`; a standalone
+`thread_id` is rejected because the transport preserves topic placement through
+Feishu's reply-to-message API rather than a send-to-thread endpoint.
 
 > Production note: `@excitedjs/dreamux` drives this package through a thin
 > core-owned adapter that uses the richer host-shaped session API (a

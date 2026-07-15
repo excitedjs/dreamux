@@ -6,8 +6,8 @@ The single place that imports the Feishu SDK.
 ## Scope
 
 - **transport** — connect / receive / send / `addReaction` / `removeReaction` /
-  `editText` / `fetchDocComment` / `fetchDocMeta` / bot open_id resolution /
-  auth via the `@larksuiteoapi/node-sdk` SDK.
+  `editText` / `getChatMode` / `fetchDocComment` / `fetchDocMeta` / bot open_id
+  resolution / auth via the `@larksuiteoapi/node-sdk` SDK.
 - **render** — markdown → Feishu v2 card (including inline `<@open_id>` parsing
   for @-mentions embedded in message text).
 - **parse** — Feishu message content → forwardable text, including:
@@ -24,11 +24,12 @@ Callers supply route handlers (`onMessage`, `onBotMemberAdded`, `onComment`, …
 on `transport.start(routes)`; inbound events are parsed on arrival and projected
 into the `parse/`-normalized shapes before being forwarded.
 
-Outbound calls (`transport.send`, `transport.addReaction`, `transport.removeReaction`,
-`transport.fetchDocMeta`, `transport.fetchDocComment`, `transport.downloadMessageResource`)
-are thin wrappers around the corresponding Lark SDK endpoints. They accept
-platform-native parameters (Feishu `chat_id`, `message_id`, `file_key`, …) and
-return platform-native results with the minimum of re-shaping required to make
+Outbound and lookup calls (`transport.send`, `transport.addReaction`,
+`transport.removeReaction`, `transport.getChatMode`, `transport.fetchDocMeta`,
+`transport.fetchDocComment`, `transport.downloadMessageResource`) are thin
+wrappers around the corresponding Lark SDK endpoints. They accept platform-native
+parameters (Feishu `chat_id`, `message_id`, `file_key`, …) and return
+platform-native results with the minimum of re-shaping required to make
 success/error handling uniform.
 
 ## Parse / render helpers

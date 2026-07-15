@@ -1,0 +1,195 @@
+import type {
+  FeishuAppOwnerIdentity,
+  FeishuBotMemberAddedEvent,
+  FeishuChatMode,
+  FeishuInviteMembersInput,
+  FeishuInviteMembersResult,
+  FeishuMessageResourceRequest,
+  FeishuMessageResourceResponse,
+  OutboundTarget,
+} from '@excitedjs/feishu-transport';
+
+import type {
+  FeishuBot,
+  FeishuCardActionEvent,
+  FeishuInboundEvent,
+  FeishuInboundRoutes,
+  FeishuSendResult,
+} from '../../src/bot.js';
+
+export interface FakeFeishuBot extends FeishuBot {
+  readonly sentMessages: Array<{
+    chatId: string;
+    target: OutboundTarget;
+    text: string;
+    messageIds: string[];
+  }>;
+  readonly sentCards: Array<{
+    chatId: string;
+    target: OutboundTarget;
+    card: unknown;
+    messageIds: string[];
+  }>;
+  readonly reactions: Array<{
+    messageId: string;
+    emoji: string;
+    reactionId: string;
+  }>;
+  readonly removedReactions: Array<{
+    messageId: string;
+    reactionId: string;
+  }>;
+  /** Combined add/remove timeline, in call order (tests assert ordering). */
+  readonly reactionOps: Array<
+    | { op: 'add'; messageId: string; emoji: string; reactionId: string }
+    | { op: 'remove'; messageId: string; reactionId: string }
+  >;
+  readonly chatModeRequests: string[];
+  inject(event: FeishuInboundEvent): Promise<void>;
+  injectBotMemberAdded(event: FeishuBotMemberAddedEvent): Promise<void>;
+  injectCardAction(event: FeishuCardActionEvent): Promise<unknown>;
+  setAppOwner(owner: FeishuAppOwnerIdentity): void;
+  setChatMode(chatId: string, mode: FeishuChatMode | Error | undefined): void;
+  setSendError(err: Error | null): void;
+  setReactionError(err: Error | null): void;
+  setRemoveReactionError(err: Error | null): void;
+  setMessageResource(
+    fileKey: string,
+    resource: FeishuMessageResourceResponse | Error | null,
+  ): void;
+}
+
+export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
+  const sent: FakeFeishuBot['sentMessages'] = [];
+  const sentCards: FakeFeishuBot['sentCards'] = [];
+  let routes: FeishuInboundRoutes | null = null;
+  let nextMessageId = 1;
+  let nextReactionId = 1;
+  let sendError: Error | null = null;
+  let reactionError: Error | null = null;
+  let removeReactionError: Error | null = null;
+  let appOwner: FeishuAppOwnerIdentity = {};
+  const messageResources = new Map<string, FeishuMessageResourceResponse | Error>();
+  const chatModes = new Map<string, FeishuChatMode | Error>();
+  const chatModeRequests: string[] = [];
+  const openId: string | undefined = `fake-open-id-${appId}`;
+  const displayName = `Fake ${appId}`;
+  const reactions: FakeFeishuBot['reactions'] = [];
+  const removedReactions: FakeFeishuBot['removedReactions'] = [];
+  const reactionOps: FakeFeishuBot['reactionOps'] = [];
+
+  return {
+    appId,
+    get botOpenId(): string | undefined {
+      return openId;
+    },
+    get botDisplayName(): string | undefined {
+      return displayName;
+    },
+    async start(r: FeishuInboundRoutes): Promise<void> {
+      routes = r;
+    },
+    async send(target: OutboundTarget, text: string): Promise<FeishuSendResult> {
+      if (sendError !== null) throw sendError;
+      const id = `message-fake-${nextMessageId++}`;
+      sent.push({ chatId: target.chatId, target, text, messageIds: [id] });
+      return { messageIds: [id] };
+    },
+    async sendCard(target: OutboundTarget, card: unknown): Promise<FeishuSendResult> {
+      if (sendError !== null) throw sendError;
+      const id = `message-fake-${nextMessageId++}`;
+      sentCards.push({ chatId: target.chatId, target, card, messageIds: [id] });
+      return { messageIds: [id] };
+    },
+    async inviteMembers(input: FeishuInviteMembersInput): Promise<FeishuInviteMembersResult> {
+      return { addedOpenIds: input.userOpenIds };
+    },
+    async getChatMode(chatId: string): Promise<FeishuChatMode | undefined> {
+      chatModeRequests.push(chatId);
+      const result = chatModes.get(chatId);
+      if (result instanceof Error) throw result;
+      return result;
+    },
+    async addReaction(messageId: string, emoji: string): Promise<string> {
+      if (reactionError !== null) throw reactionError;
+      const reactionId = `reaction-fake-${nextReactionId++}`;
+      reactions.push({ messageId, emoji, reactionId });
+      reactionOps.push({ op: 'add', messageId, emoji, reactionId });
+      return reactionId;
+    },
+    async removeReaction(messageId: string, reactionId: string): Promise<void> {
+      if (removeReactionError !== null) throw removeReactionError;
+      removedReactions.push({ messageId, reactionId });
+      reactionOps.push({ op: 'remove', messageId, reactionId });
+    },
+    async fetchMessageResource(
+      request: FeishuMessageResourceRequest,
+    ): Promise<FeishuMessageResourceResponse> {
+      const resource = messageResources.get(request.fileKey);
+      if (resource === undefined) {
+        throw new Error(`no fake Feishu resource for key ${request.fileKey}`);
+      }
+      if (resource instanceof Error) throw resource;
+      return resource;
+    },
+    async resolveAppOwner(): Promise<FeishuAppOwnerIdentity> {
+      return appOwner;
+    },
+    async close(): Promise<void> {
+      routes = null;
+    },
+    get sentMessages() {
+      return sent;
+    },
+    get sentCards() {
+      return sentCards;
+    },
+    get reactions() {
+      return reactions;
+    },
+    get removedReactions() {
+      return removedReactions;
+    },
+    get reactionOps() {
+      return reactionOps;
+    },
+    get chatModeRequests() {
+      return chatModeRequests;
+    },
+    async inject(event: FeishuInboundEvent): Promise<void> {
+      if (routes === null) throw new Error('fake bot not started');
+      await routes.onMessage(event);
+    },
+    async injectBotMemberAdded(event: FeishuBotMemberAddedEvent): Promise<void> {
+      if (routes === null) throw new Error('fake bot not started');
+      await routes.onBotMemberAdded?.(event);
+    },
+    async injectCardAction(event: FeishuCardActionEvent): Promise<unknown> {
+      if (routes === null) throw new Error('fake bot not started');
+      return routes.onCardAction?.(event);
+    },
+    setAppOwner(owner: FeishuAppOwnerIdentity): void {
+      appOwner = owner;
+    },
+    setChatMode(chatId: string, mode: FeishuChatMode | Error | undefined): void {
+      if (mode === undefined) chatModes.delete(chatId);
+      else chatModes.set(chatId, mode);
+    },
+    setSendError(err: Error | null): void {
+      sendError = err;
+    },
+    setReactionError(err: Error | null): void {
+      reactionError = err;
+    },
+    setRemoveReactionError(err: Error | null): void {
+      removeReactionError = err;
+    },
+    setMessageResource(
+      fileKey: string,
+      resource: FeishuMessageResourceResponse | Error | null,
+    ): void {
+      if (resource === null) messageResources.delete(fileKey);
+      else messageResources.set(fileKey, resource);
+    },
+  };
+}

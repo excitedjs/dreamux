@@ -38,6 +38,7 @@ const RELATIVE_ESCAPE = /from\s+['"]\.\.\/\.\.\//;
 // `@excitedjs/feishu-transport` is the SOLE owner of the Lark SDK import; the
 // channel package must reach the platform only through it, never directly.
 const LARK_SDK_IMPORT = /from\s+['"]@larksuiteoapi\//;
+const TEST_DOUBLE_EXPORT = /\b(?:createFakeFeishuBot|FakeFeishuBot)\b/;
 
 describe('feishu-channel import boundary', () => {
   const files = walk(join(pkgRoot, 'src'));
@@ -59,6 +60,13 @@ describe('feishu-channel import boundary', () => {
   it('package src never imports the Lark SDK directly', () => {
     const offenders = files.filter((file) =>
       LARK_SDK_IMPORT.test(readFileSync(file, 'utf8')),
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it('package src contains no test-only fake bot implementation or export', () => {
+    const offenders = files.filter((file) =>
+      TEST_DOUBLE_EXPORT.test(readFileSync(file, 'utf8')),
     );
     expect(offenders).toEqual([]);
   });

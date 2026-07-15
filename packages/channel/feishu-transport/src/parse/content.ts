@@ -121,6 +121,7 @@ export function narrowMetaFromEvent(rawEvent: unknown): Record<string, unknown> 
     // "different entity" after the fact. It is never used for access matching.
     sender_union_id: asString(senderId?.union_id),
     sender_type: asString(sender.sender_type),
+    thread_id: asString(message.thread_id),
     root_id: asString(message.root_id),
     parent_id: asString(message.parent_id),
     create_time: asString(message.create_time),

@@ -63,9 +63,9 @@ export interface FormattedFeishuAttachment {
 export interface FormatFeishuMessageResult {
   /**
    * Opaque display attributes for the runtime's channel block (chat_id,
-   * chat_type, message_id, sender_id, sender_name, create_time). The channel
-   * no longer renders the final XML — each runtime wraps these into its own
-   * channel envelope.
+   * chat_type, optional thread_id, message_id, sender_id, sender_name,
+   * create_time). The channel no longer renders the final XML — each runtime
+   * wraps these into its own channel envelope.
    */
   attrs: Array<[string, string]>;
   /**
@@ -90,11 +90,16 @@ export async function formatFeishuMessageForRuntime(
   const attrs: Array<[string, string]> = [
     ['chat_id', event.chatId],
     ['chat_type', event.chatType],
+  ];
+  if (event.threadId !== undefined && event.threadId !== '') {
+    attrs.push(['thread_id', event.threadId]);
+  }
+  attrs.push(
     ['message_id', event.messageId],
     ['sender_id', event.senderId],
     ['sender_name', event.senderName],
     ['create_time', formatFeishuCreateTime(event.createTime)],
-  ];
+  );
   const body = renderMessageBody(event);
   const fallback = shouldAddFallbackNote(event)
     ? `\n\n${FEISHU_SKILL_FALLBACK_NOTE}`

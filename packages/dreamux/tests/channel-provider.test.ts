@@ -6,7 +6,6 @@ import { join } from 'node:path';
 import {
   RECEIVED_REACTION_EMOJI,
   createFeishuChannelProvider,
-  createFakeFeishuBot,
   saveDispatcherAccess,
 } from '@excitedjs/feishu-channel';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
@@ -15,6 +14,7 @@ import {
   BUILTIN_FEISHU_PROVIDER_REF,
   createBuiltinProviderRegistry,
 } from '../src/registry/index.js';
+import { createFakeFeishuBot } from './helpers/fake-feishu-bot.js';
 
 const log = ((): DreamuxLogger => {
   const noop = {

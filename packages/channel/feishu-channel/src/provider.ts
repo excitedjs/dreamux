@@ -99,15 +99,17 @@ function inboundEnvelopeToChannelEnvelope(
   channelId: string,
   envelope: FeishuInboundEnvelope,
 ): ChannelInboundEnvelope {
+  const target = envelope.target ?? {
+    target_type: envelope.chatType,
+    target_key: envelope.chatId,
+    bindable: envelope.chatType === 'group',
+    meta: { chat_id: envelope.chatId, chat_type: envelope.chatType },
+  };
   return {
     provider: BUILTIN_FEISHU_PROVIDER_REF,
     channel_id: channelId,
-    target: {
-      target_type: envelope.chatType,
-      target_key: envelope.chatId,
-      bindable: envelope.chatType === 'group',
-      meta: { chat_id: envelope.chatId, chat_type: envelope.chatType },
-    },
+    target,
+    ...(envelope.container !== undefined ? { container: envelope.container } : {}),
     message_id: envelope.messageId,
   };
 }
@@ -171,10 +173,7 @@ class FeishuChannelSessionAdapter implements ChannelSession {
     target: ChannelTarget;
     message_id: string;
   }): boolean {
-    return this.session.messageBelongsToChat(
-      input.message_id,
-      targetChatId(input.target),
-    );
+    return this.session.messageBelongsToTarget(input.message_id, input.target);
   }
 }
 
