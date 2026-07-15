@@ -1,6 +1,15 @@
 # Change Log - @excitedjs/agent-runtime-codex
 
-This log was last generated on Fri, 03 Jul 2026 04:51:35 GMT and should not be manually modified.
+This log was last generated on Wed, 15 Jul 2026 02:54:37 GMT and should not be manually modified.
+
+## 0.3.1
+Wed, 15 Jul 2026 02:54:37 GMT
+
+### Patches
+
+- Reject relative skill source root paths before applying Codex extra roots.
+- Update Codex runtime path tests to use the AgentRuntimePathContext cacheDir() contract.
+- Update Codex skill extra-root handling and tests to consume role-specific skill roots directly.
 
 ## 0.3.0
 Fri, 03 Jul 2026 04:51:35 GMT

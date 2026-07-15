@@ -2,6 +2,31 @@
   "name": "@excitedjs/feishu-channel",
   "entries": [
     {
+      "version": "2.1.0",
+      "tag": "@excitedjs/feishu-channel_v2.1.0",
+      "date": "Wed, 15 Jul 2026 02:54:37 GMT",
+      "comments": {
+        "minor": [
+          {
+            "comment": "BREAKING: Stop authoring channel MCP descriptors in the Feishu provider. The package now exposes only the static Feishu tool catalog plus reply/react/list_chat_bots handlers; Dreamux core renders the channel-mcp descriptor, admin socket, caller, team, and leader routing args."
+          }
+        ],
+        "patch": [
+          {
+            "comment": "Clear the optimistic Feishu inbound received reaction when core submission throws before delivery, preventing a stale received marker on failed inbound turns."
+          }
+        ],
+        "dependency": [
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-types\" to `0.4.0`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-utils\" to `0.3.1`"
+          }
+        ]
+      }
+    },
+    {
       "version": "2.0.0",
       "tag": "@excitedjs/feishu-channel_v2.0.0",
       "date": "Fri, 03 Jul 2026 04:51:35 GMT",

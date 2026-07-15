@@ -2,6 +2,32 @@
   "name": "@excitedjs/agent-runtime-codex",
   "entries": [
     {
+      "version": "0.3.1",
+      "tag": "@excitedjs/agent-runtime-codex_v0.3.1",
+      "date": "Wed, 15 Jul 2026 02:54:37 GMT",
+      "comments": {
+        "patch": [
+          {
+            "comment": "Reject relative skill source root paths before applying Codex extra roots."
+          },
+          {
+            "comment": "Update Codex runtime path tests to use the AgentRuntimePathContext cacheDir() contract."
+          },
+          {
+            "comment": "Update Codex skill extra-root handling and tests to consume role-specific skill roots directly."
+          }
+        ],
+        "dependency": [
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-types\" to `0.4.0`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-utils\" to `0.3.1`"
+          }
+        ]
+      }
+    },
+    {
       "version": "0.3.0",
       "tag": "@excitedjs/agent-runtime-codex_v0.3.0",
       "date": "Fri, 03 Jul 2026 04:51:35 GMT",

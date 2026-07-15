@@ -1,6 +1,16 @@
 # Change Log - @excitedjs/dreamux-types
 
-This log was last generated on Fri, 03 Jul 2026 04:51:35 GMT and should not be manually modified.
+This log was last generated on Wed, 15 Jul 2026 02:54:37 GMT and should not be manually modified.
+
+## 0.4.0
+Wed, 15 Jul 2026 02:54:37 GMT
+
+### Minor changes
+
+- Add collaboration-space provisioning, channel lifecycle contracts, and default workspace/binding controls.
+- BREAKING: Remove provider-authored channel MCP descriptor contracts. ChannelProvider.mcpServerDescriptor, ChannelMcpDescriptorContext, ChannelSession.tools, ChannelToolListContext, and InboundDeliveryHooks are removed; channel providers now expose only static tool catalogs plus handlers while Dreamux core owns MCP descriptor rendering and inbound ack/cancellation boundaries. The deferred SubscribeChannelProvider reservation is also removed from the public type package.
+- BREAKING: Replace AgentRuntimePathContext.dispatcherDir(id) with cacheDir(), a global rebuildable cache-root seam for provider scratch. Runtime recovery remains in host-owned identity state, while providers keep logsDir() and runtimeSocketDirs() for logs and volatile sockets.
+- BREAKING: Change the AgentRuntimeSkillSource.path contract from a single skill directory to a skill root whose direct children are skill directories. Runtime providers must apply or materialize skills from the direct child directories of each source root.
 
 ## 0.3.0
 Fri, 03 Jul 2026 04:51:35 GMT

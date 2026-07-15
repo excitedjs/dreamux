@@ -1,6 +1,11 @@
 # Change Log - @excitedjs/dreamux-utils
 
-This log was last generated on Fri, 03 Jul 2026 04:51:35 GMT and should not be manually modified.
+This log was last generated on Wed, 15 Jul 2026 02:54:37 GMT and should not be manually modified.
+
+## 0.3.1
+Wed, 15 Jul 2026 02:54:37 GMT
+
+_Version update only_
 
 ## 0.3.0
 Fri, 03 Jul 2026 04:51:35 GMT

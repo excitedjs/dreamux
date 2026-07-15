@@ -1,6 +1,17 @@
 # Change Log - @excitedjs/feishu-channel
 
-This log was last generated on Fri, 03 Jul 2026 04:51:35 GMT and should not be manually modified.
+This log was last generated on Wed, 15 Jul 2026 02:54:37 GMT and should not be manually modified.
+
+## 2.1.0
+Wed, 15 Jul 2026 02:54:37 GMT
+
+### Minor changes
+
+- BREAKING: Stop authoring channel MCP descriptors in the Feishu provider. The package now exposes only the static Feishu tool catalog plus reply/react/list_chat_bots handlers; Dreamux core renders the channel-mcp descriptor, admin socket, caller, team, and leader routing args.
+
+### Patches
+
+- Clear the optimistic Feishu inbound received reaction when core submission throws before delivery, preventing a stale received marker on failed inbound turns.
 
 ## 2.0.0
 Fri, 03 Jul 2026 04:51:35 GMT

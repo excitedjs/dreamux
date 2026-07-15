@@ -1,6 +1,19 @@
 # Change Log - @excitedjs/agent-runtime-claude-code
 
-This log was last generated on Fri, 03 Jul 2026 04:51:35 GMT and should not be manually modified.
+This log was last generated on Wed, 15 Jul 2026 02:54:37 GMT and should not be manually modified.
+
+## 0.4.0
+Wed, 15 Jul 2026 02:54:37 GMT
+
+### Minor changes
+
+- Pass Claude Code MCP config as inline --mcp-config JSON instead of writing mcp.json under runtime state. Move skill adapters to the AgentRuntimePathContext cacheDir() root; adapters are keyed by canonical skill source set and published atomically without deleting a live adapter directory.
+
+### Patches
+
+- Reject relative skill source root paths before materializing Claude add-dir links.
+- Fold Dreamux-owned completionInput sends into the active Claude Code logical turn so in-flight TeamMate follow-ups steer the current turn instead of creating separate completions.
+- Update Claude Code skill materialization to consume role-specific skill roots and expose only the skills under the selected root.
 
 ## 0.3.0
 Fri, 03 Jul 2026 04:51:35 GMT

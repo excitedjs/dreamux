@@ -2,6 +2,37 @@
   "name": "@excitedjs/agent-runtime-claude-code",
   "entries": [
     {
+      "version": "0.4.0",
+      "tag": "@excitedjs/agent-runtime-claude-code_v0.4.0",
+      "date": "Wed, 15 Jul 2026 02:54:37 GMT",
+      "comments": {
+        "patch": [
+          {
+            "comment": "Reject relative skill source root paths before materializing Claude add-dir links."
+          },
+          {
+            "comment": "Fold Dreamux-owned completionInput sends into the active Claude Code logical turn so in-flight TeamMate follow-ups steer the current turn instead of creating separate completions."
+          },
+          {
+            "comment": "Update Claude Code skill materialization to consume role-specific skill roots and expose only the skills under the selected root."
+          }
+        ],
+        "minor": [
+          {
+            "comment": "Pass Claude Code MCP config as inline --mcp-config JSON instead of writing mcp.json under runtime state. Move skill adapters to the AgentRuntimePathContext cacheDir() root; adapters are keyed by canonical skill source set and published atomically without deleting a live adapter directory."
+          }
+        ],
+        "dependency": [
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-types\" to `0.4.0`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-utils\" to `0.3.1`"
+          }
+        ]
+      }
+    },
+    {
       "version": "0.3.0",
       "tag": "@excitedjs/agent-runtime-claude-code_v0.3.0",
       "date": "Fri, 03 Jul 2026 04:51:35 GMT",

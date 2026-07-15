@@ -1,6 +1,25 @@
 # Change Log - @excitedjs/dreamux
 
-This log was last generated on Fri, 03 Jul 2026 04:51:35 GMT and should not be manually modified.
+This log was last generated on Wed, 15 Jul 2026 02:54:37 GMT and should not be manually modified.
+
+## 0.18.0
+Wed, 15 Jul 2026 02:54:37 GMT
+
+### Minor changes
+
+- BREAKING: Rename the pre-stable TeamMate, Team, and collaboration-space admin socket methods to product namespaces without compatibility aliases; remove the unsupported public dreamux dispatcher add/remove commands and their admin registry entries; and add persistent admin-only custom skill sources for TeamMate and TeamLeader creation. Dreamux-owned MCP tools keep their existing model-facing surface; direct admin clients must use canonical method names.
+- Add collaboration-space provisioning, channel lifecycle contracts, and default workspace/binding controls.
+- Make Dispatcher server boot lazy-start its runtime: ordinary starts prepare channel sessions and input sources without starting the Dispatcher agent, while unbound inbound, Dispatcher cron, and valid restart-notice targets wake the runtime.
+- BREAKING: Dispatcher runtime recovery now lives in the dispatcher root identity.json. Retired state/<dispatcher>/status.json files are no longer imported, read as fallback, or treated as boot blockers; a dispatcher whose only checkpoint was left in status.json starts a fresh runtime after upgrade unless the operator deliberately seeds a compatible root identity.json session_id. Rebuild: old status.json checkpoints are not automatically resumed. Dispatcher launch now resolves through identity.agent_runtime -> agents[] like TeamLeader and TeamMate, and provider scratch no longer uses state/<dispatcher>/runtime/<name>.
+- Rebuild: channel MCP descriptors are now rendered only by Dreamux core from provider static tool catalogs. Providers no longer construct descriptor command/admin-socket/caller/team args, inbound delivery hooks are removed, scheduler held-fire cancellation uses AbortSignal, and shared agent identity/turn/runtime-state storage moved to the neutral agent-entity module.
+
+### Patches
+
+- Normalize admin skill_sources to canonical absolute skill roots and reject collisions before persistence.
+- Fix Team and TeamMate MCP success reminders so they are visible in structured tool results.
+- Add success-only MCP reminders for Team and TeamMate prompt submission.
+- BREAKING: Fix workspace and collaboration route ownership semantics. workspace.enabled is now dispatcher-local; top-level workspace.enabled is no longer accepted, and config must use dispatchers[].workspace.enabled. When a dispatcher disables workspace isolation, no-repo TeamMate/Team creation now runs directly in the dispatcher cwd instead of a per-name child directory. Channel binding state now uses v3 route claim provenance so collaboration-managed routes are not mistaken for explicit binds; v2 channel-binding rows that already have channel_id and target_key are reused as explicit routes with claim_id: null only when they do not overlap open collaboration targets. Rebuild: move any old top-level workspace.enabled setting into each dispatcher entry before restarting; delete and re-bind channel-bindings.json if startup reports binding rows without route keys or ambiguous v2 collaboration overlap.
+- Fix bundled Dreamux skill injection so Dispatcher and TeamLeader runtimes receive role-specific skill roots. Codex now passes those roots directly to skills/extraRoots/set, and Claude Code materializes only the skills under the selected root, preventing cross-role skill exposure.
 
 ## 0.17.0
 Fri, 03 Jul 2026 04:51:35 GMT
