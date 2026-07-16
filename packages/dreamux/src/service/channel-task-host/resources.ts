@@ -120,6 +120,34 @@ export function resourceEvent(resource: ChannelTaskResource): TaskStoreEventInpu
   return { payload: { kind: 'resource.lifecycle', resource } };
 }
 
+export function taskLifecycleEvent(record: TaskTargetRecord): TaskStoreEventInput {
+  if (record.phase === 'terminal') {
+    if (record.terminal === null) throw new Error('terminal task has no outcome');
+    return {
+      payload: {
+        kind: 'task.lifecycle',
+        phase: 'terminal',
+        outcome: record.terminal.outcome,
+        ...(record.terminal.summary !== undefined
+          ? { summary: record.terminal.summary }
+          : {}),
+      },
+    };
+  }
+  if (record.phase === 'blocked') {
+    if (record.blocked === null) throw new Error('blocked task has no reason');
+    return {
+      payload: {
+        kind: 'task.lifecycle',
+        phase: 'blocked',
+        blocked_code: record.blocked.code,
+        retryable: record.blocked.retryable,
+      },
+    };
+  }
+  return { payload: { kind: 'task.lifecycle', phase: record.phase } };
+}
+
 function memberResource(
   record: TaskTargetRecord,
   key: string,

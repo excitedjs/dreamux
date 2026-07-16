@@ -8,6 +8,7 @@ import type { TaskHostStore } from './store.js';
 import {
   leaderResource,
   resourceEvent,
+  taskLifecycleEvent,
   teamResource,
   worktreeResource,
 } from './resources.js';
@@ -122,7 +123,7 @@ export async function provisionTaskTarget(
         (next) => {
           next.team.route_reconciled_at = Date.now();
         },
-        [{ payload: { kind: 'task.lifecycle', phase: target.phase } }],
+        (next) => [taskLifecycleEvent(next)],
       );
     }
     await opts.executor.executeRoot(targetId);

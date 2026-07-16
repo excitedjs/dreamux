@@ -15,7 +15,10 @@ import type {
   TaskTargetRecord,
 } from './types.js';
 import { canonicalJson } from './canonical-json.js';
-import { submissionResourceEvents } from './resources.js';
+import {
+  submissionResourceEvents,
+  taskLifecycleEvent,
+} from './resources.js';
 
 export class RuntimeSubmissionIndex {
   constructor(private readonly store: TaskHostStore) {}
@@ -260,9 +263,7 @@ export class RuntimeSubmissionIndex {
         submission.updated_at = Date.now();
         return true;
       },
-      (record) => [{
-        payload: { kind: 'task.lifecycle', phase: record.phase },
-      }],
+      (record) => [taskLifecycleEvent(record)],
     );
     return requiredSubmission(target, input.operationId);
   }

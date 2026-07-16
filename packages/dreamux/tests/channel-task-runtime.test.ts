@@ -552,6 +552,19 @@ describe('durable task runtime submission recovery', () => {
       submission_view: { active_operation_ids: [], quiescent: true },
       submissions: [{ state: 'settled' }, { state: 'settled' }],
     });
+    const terminalEvents = store.replay(0, 500).events.filter(
+      (event) =>
+        event.payload.kind === 'task.lifecycle' &&
+        event.payload.phase === 'terminal',
+    );
+    expect(terminalEvents.length).toBeGreaterThan(1);
+    expect(terminalEvents.every(
+      (event) =>
+        event.payload.kind === 'task.lifecycle' &&
+        event.payload.phase === 'terminal' &&
+        event.payload.outcome === 'completed' &&
+        event.payload.summary === 'business result',
+    )).toBe(true);
   });
 
   it('reserves terminal WAL capacity when an operation intent is too large', async () => {
