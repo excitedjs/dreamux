@@ -5,12 +5,12 @@ import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
 import type { DispatcherStore } from '../../state/dispatcher-store.js';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import { AgentIdentityStore } from '../agent-entity/identity-store.js';
-import {
-  DispatcherService,
-  type DispatcherServiceOptions,
-  type DispatcherSummary,
-  type DispatcherRuntimeStatus,
-} from '../dispatcher-service/index.js';
+import { DispatcherService } from '../dispatcher-service/index.js';
+import type {
+  DispatcherRuntimeStatus,
+  DispatcherServiceOptions,
+  DispatcherSummary,
+} from '../dispatcher-service/types.js';
 import { runtimeStatusToIdentityStatus } from '../agent-entity/types.js';
 import { throwShutdownFailures } from '../shutdown-errors.js';
 

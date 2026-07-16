@@ -84,9 +84,10 @@ Channel providers normalize provider-defined selectors into `ChannelTarget`:
 - `bindable`
 - optional `display`, `canonical_url`, and `meta`
 
-Core routes by `(channel_id, target_key)`. Provider selector metadata stays in
-`meta`; core does not promote provider-specific fields such as chat ids to
-generic top-level columns.
+Core routes by `(channel_id, target_key)`. A provider must therefore keep
+`target_key` stable and unique across the whole Channel, not merely within one
+container. Provider selector metadata stays in `meta`; core does not promote
+provider-specific fields such as chat ids to generic top-level columns.
 
 If a conversational target cannot be normalized to a stable key, the provider
 must fail loudly rather than store an ambiguous selector.
@@ -168,6 +169,58 @@ Source:
 - `/packages/dreamux/src/service/channel-service/index.ts`
 - `/packages/dreamux-types/src/channel.ts`
 
+## Optional Strict Collaboration Operations
+
+`ChannelRoutes` retains the existing conversational `deliver` and asynchronous
+`targetLifecycle` behavior. It also offers two optional, provider-neutral
+capabilities for sessions that require a synchronous ready boundary:
+
+- `ensureCollaborationTarget({ container, target, title? })` reuses the current
+  collaboration-space target claim and provisioning owner. A ready result means
+  the Space binding, local workspace, Team, TeamLeader, active target, and exact
+  claimed route are ready, and returns only the existing Team name. Providers
+  cannot pass repository, cwd, workspace mode, dispatcher, channel, or provider
+  authority; workspace placement remains local dispatcher policy.
+- `deliverExact({ target, expected_team_name, turn })` validates the same exact
+  claimed route under the target and Team lifecycle fences, then submits
+  directly to that TeamLeader. It fails closed on a missing, replaced, detached,
+  closing, closed, or stale route and never uses target fallbacks or the
+  dispatcher agent.
+
+Both methods enter dispatcher admission and return bounded rejection DTOs
+instead of raw errors. `turn.sourceId` remains a runtime-local hint; the strict
+surface adds no retained submission state or cross-restart delivery guarantee.
+There is no corresponding remote close/cancel method.
+
+Source:
+
+- `/packages/dreamux-types/src/channel.ts`
+- `/packages/dreamux/src/service/dispatcher-service/collaboration-routing.ts`
+- `/packages/dreamux/src/service/collaboration-space/target-lifecycle.ts`
+- `/packages/dreamux/src/service/dispatcher-service/index.ts`
+
+## Core Fact Subscriptions
+
+Each dispatcher has an in-process typed event bus fed by the existing Team,
+agent-identity, and turn owners. A Channel session receives only a scoped,
+read-only event source with owned subscription handles. The DTO allowlist covers
+Team and Team agent state changes plus Team-owned turn submitted/settled facts,
+including settle status, nullable Assistant text, and truncation.
+
+The source is installed before session start and revoked on stop or failed
+start. It is live-session-only and best-effort: it retains no history and
+provides no eventual-delivery, historical-query, or ordering guarantee. The bus
+does not become a new state owner, and providers never receive core
+service/store instances or raw `EventEmitter` management methods.
+
+Source:
+
+- `/packages/dreamux/src/service/dispatcher-core-events/`
+- `/packages/dreamux/src/service/agent-entity/identity-store.ts`
+- `/packages/dreamux/src/service/agent-entity/turns-store.ts`
+- `/packages/dreamux/src/service/team-collection/store.ts`
+- `/packages/dreamux/src/service/dispatcher-service/index.ts`
+
 ## TeamLeader Egress Authorization
 
 TeamLeader channel tool calls are authorized by core. Provider facts such as
@@ -200,6 +253,7 @@ Detailed Feishu behavior lives in focused domain pages:
 
 ## Decision Trail
 
+- [Channel-scoped collaboration and core events](../decisions/channel-scoped-collaboration-and-core-events.md)
 - [NPM package split and channel targets](../decisions/npm-package-split-and-channel-targets.md)
 - [Channel provider](../decisions/channel-provider.md)
 - [Channel input runtime assembly](../decisions/channel-input-runtime-assembly.md)

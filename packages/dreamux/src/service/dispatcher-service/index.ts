@@ -1,7 +1,6 @@
 import type {
   AgentRuntime,
   AgentRuntimeMcpServer,
-  AgentRuntimeStatus,
   AgentRuntimeTurnResult,
   ChannelInboundEnvelope,
   ChannelSession,
@@ -16,12 +15,13 @@ import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
 import { adminSocketPath as defaultAdminSocketPath, dispatcherCronJobsPath } from '../../platform/paths.js';
 import type { DispatcherRow, DispatcherStore } from '../../state/dispatcher-store.js';
 import { createDispatcherAgent } from './agent.js';
-import { handleCollaborationTargetLifecycle, routeTeamOrCollaborationChannelInput } from './collaboration-routing.js';
+import { handleCollaborationTargetLifecycle } from './collaboration-routing.js';
 import { dispatcherMcpServerDescriptors } from './mcp-descriptors.js';
 import type { ChannelMcpCallerScope } from '../channel-service/mcp-descriptors.js';
 import { ensureDispatcherRootIdentity } from './identity.js';
 import { assertRunnableChannelShape } from './runnable-channel.js';
 import { asInboundDeliveryResult, closeAllBuilt, errInfo } from './runtime-helpers.js';
+import { DispatcherScopedChannelRouting } from './scoped-channel-routing.js';
 import { DispatcherTaskDrain } from './inbound-task-drain.js';
 import { TeamChannelCoordinator } from './team-channel-coordinator.js';
 import { stopTeamRuntimes } from './team-runtime-stop.js';
@@ -49,13 +49,13 @@ import { WorktreeManager } from '../worktree/manager.js';
 import {
   runtimeStatusToIdentityStatus,
   type AgentEntityIdentity,
-  type AgentEntityIdentityStatus,
 } from '../agent-entity/types.js';
 import { TeamCollection } from '../team-collection/index.js';
 import { SchedulerService, type SchedulerCommands } from '../scheduler/service.js';
 import { CronJobStore } from '../scheduler/store.js';
 import { ChannelService, type ChannelRouteOwner } from '../channel-service/index.js';
 import { CollaborationSpaceService } from '../collaboration-space/index.js';
+import { DispatcherCoreEventBus } from '../dispatcher-core-events/index.js';
 import type {
   CollaborationSpaceBindInput,
   CollaborationSpaceDissolveInput,
@@ -67,37 +67,12 @@ import type {
   TeamHistoryQuery,
   TeamLeaderSendResult,
 } from '../team-collection/types.js';
-
-export interface DispatcherServiceOptions {
-  id: string;
-  config: DreamuxConfig;
-  dispatchers: DispatcherStore;
-  agentRuntimeProviders: AgentRuntimeProviderCatalog;
-  channelProviders: ChannelProviderCatalog;
-  adminSocketPath?: string;
-  channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
-  log: DreamuxLogger;
-}
-
-export interface DispatcherSummary {
-  dispatcher_id: string;
-  channel_identity: string;
-  status: AgentEntityIdentityStatus;
-  thread_id: string | null;
-  enabled: boolean;
-}
-
-export interface DispatcherRuntimeStatus {
-  status: string | null;
-  threadId: string | null;
-  lastError: string | null;
-}
-
-interface LiveDispatcherRuntimeStatus {
-  status: AgentRuntimeStatus;
-  threadId: string | null;
-  lastError: string | null;
-}
+import type {
+  DispatcherRuntimeStatus,
+  DispatcherServiceOptions,
+  DispatcherSummary,
+  LiveDispatcherRuntimeStatus,
+} from './types.js';
 
 export type { ChannelToolCaller, TeamLeaderHandle };
 
@@ -112,7 +87,9 @@ export class DispatcherService {
   private readonly teams: TeamCollection;
   private readonly channels: ChannelService;
   private readonly collaborationSpaces: CollaborationSpaceService;
+  private readonly coreEvents: DispatcherCoreEventBus;
   private readonly teamChannels: TeamChannelCoordinator;
+  private readonly channelRoutes: DispatcherScopedChannelRouting;
   private agent: TeammateService | null = null;
   private readonly scheduler_: SchedulerService;
   private readonly identities: AgentIdentityStore;
@@ -147,10 +124,19 @@ export class DispatcherService {
 
     this.router = new CompletionRouter({ dispatcherId: opts.id, log: opts.log });
 
+    const configuredChannelCount =
+      opts.config.dispatchers.find((dispatcher) => dispatcher.id === opts.id)
+        ?.channels.length ?? 0;
+    this.coreEvents = new DispatcherCoreEventBus({
+      dispatcherId: opts.id,
+      log: opts.log,
+      maxSources: configuredChannelCount,
+    });
+
     const worktrees = new WorktreeManager();
 
-    const identities = new AgentIdentityStore(opts.log);
-    const turnsStore = new AgentTurnsStore(opts.log);
+    const identities = new AgentIdentityStore(opts.log, this.coreEvents.publisher);
+    const turnsStore = new AgentTurnsStore(opts.log, this.coreEvents.publisher);
     this.identities = identities;
     this.turnsStore = turnsStore;
 
@@ -216,6 +202,7 @@ export class DispatcherService {
           }),
         ],
       log: opts.log,
+      coreEvents: this.coreEvents.publisher,
     });
 
     this.collaborationSpaces = new CollaborationSpaceService({
@@ -230,6 +217,17 @@ export class DispatcherService {
       teams: this.teams,
       channels: this.channels,
       collaborationSpaces: this.collaborationSpaces,
+    });
+    this.channelRoutes = new DispatcherScopedChannelRouting({
+      dispatcherId: this.id,
+      dispatcherAgentRuntime: () => this.dispatcherAgentRuntime(),
+      channels: this.channels,
+      teams: this.teams,
+      collaborationSpaces: this.collaborationSpaces,
+      log: this.log,
+      admit: (task) => this.admitOperation(task),
+      fallback: (turn) => this.mustAgent().channelInput(turn),
+      isUnavailable: () => this.shuttingDown || this.stopping,
     });
   }
 
@@ -346,11 +344,14 @@ export class DispatcherService {
         await this.startAgentRuntime();
       }
       this.assertNotShuttingDown();
+      await this.collaborationSpaces.resumePendingTargets();
+      this.assertNotShuttingDown();
       for (const [channelId, session] of channels) {
+        const coreEvents = this.coreEvents.createSource(channelId);
         await session.start({
           deliver: async (turn, envelope) =>
             asInboundDeliveryResult(
-              await this.routeChannelInput(channelId, turn, envelope),
+              await this.channelRoutes.route(channelId, turn, envelope),
             ),
           targetLifecycle: (event) =>
             handleCollaborationTargetLifecycle({
@@ -362,6 +363,11 @@ export class DispatcherService {
               collaborationSpaces: this.collaborationSpaces,
               log: this.log,
             }),
+          coreEvents: coreEvents.source,
+          ensureCollaborationTarget: (request) =>
+            this.channelRoutes.ensure(channelId, request),
+          deliverExact: (request) =>
+            this.channelRoutes.deliverExact(channelId, request),
         });
         this.assertNotShuttingDown();
         liveChannels.set(channelId, session);
@@ -374,12 +380,11 @@ export class DispatcherService {
       this.assertNotShuttingDown();
       await this.teams.startSchedulers();
       this.assertNotShuttingDown();
-      await this.collaborationSpaces.resumePendingTargets();
-      this.assertNotShuttingDown();
       this.inputSourcesStarted = true;
     } catch (err) {
       this.scheduler_.stop();
       this.teams.stopSchedulers();
+      this.coreEvents.revokeSources();
       this.channels.clear();
       await closeAllBuilt(channels);
       try {
@@ -422,6 +427,7 @@ export class DispatcherService {
     try {
       if (this.preparing !== null) await this.preparing.catch(() => {});
       if (this.inputSourcesStarting !== null) await this.inputSourcesStarting.catch(() => {});
+      this.coreEvents.revokeSources();
       await this.channels.closeAll(this.log);
       if (this.preparedChannels !== null) {
         await closeAllBuilt(this.preparedChannels);
@@ -638,18 +644,7 @@ export class DispatcherService {
     input: InboundTurnInput,
     envelope: ChannelInboundEnvelope,
   ): Promise<AgentRuntimeTurnResult> {
-    return this.admitOperation(() =>
-      routeTeamOrCollaborationChannelInput({
-        channelId,
-        dispatcherAgentRuntime: this.dispatcherAgentRuntime(),
-        turn: input,
-        envelope,
-        channels: this.channels,
-        teams: this.teams,
-        collaborationSpaces: this.collaborationSpaces,
-        fallback: (turn) => this.mustAgent().channelInput(turn),
-      }),
-    );
+    return this.channelRoutes.route(channelId, input, envelope);
   }
 
   admitOperation<T>(task: () => Promise<T>): Promise<T> {

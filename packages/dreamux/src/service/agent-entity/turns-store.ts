@@ -7,6 +7,7 @@ import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import { isNotFound } from '../../platform/fs-errors.js';
 import { dispatcherAgentTurnsPath } from '../../platform/paths.js';
+import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
 import type { AgentEntityRole, AgentEntityTurnRecord } from './types.js';
 
 /**
@@ -53,6 +54,7 @@ export interface AgentTurnSettledInput {
   turnId: string | null;
   assistant: string | null;
   settleStatus: AgentEntityTurnRecord['settle_status'];
+  assistantTruncated?: boolean;
 }
 
 /**
@@ -67,13 +69,16 @@ export interface AgentTurnSettledInput {
  * whole.
  */
 export class AgentTurnsStore {
-  constructor(private readonly log: DreamuxLogger) {}
+  constructor(
+    private readonly log: DreamuxLogger,
+    private readonly coreEvents?: DispatcherCoreEventPublisher,
+  ) {}
 
   async appendSubmit(
     scope: AgentTurnsScope,
     input: AgentTurnSubmitInput,
   ): Promise<void> {
-    await this.append(scope, {
+    const row: AgentEntityTurnRecord = {
       version: 1,
       type: 'submit',
       turn_id: input.turnId,
@@ -85,7 +90,9 @@ export class AgentTurnsStore {
       assistant: null,
       assistant_preview: null,
       assistant_truncated: false,
-    });
+    };
+    await this.append(scope, row);
+    this.publishTurn(scope, row);
   }
 
   async appendSettled(
@@ -93,10 +100,15 @@ export class AgentTurnsStore {
     input: AgentTurnSettledInput,
   ): Promise<void> {
     const raw = input.assistant ?? null;
-    const truncated = raw !== null && raw.length > ASSISTANT_TEXT_MAX;
+    const truncated = input.assistantTruncated === true ||
+      (raw !== null && raw.length > ASSISTANT_TEXT_MAX);
     const assistant =
-      raw === null ? null : truncated ? raw.slice(0, ASSISTANT_TEXT_MAX) : raw;
-    await this.append(scope, {
+      raw === null
+        ? null
+        : raw.length > ASSISTANT_TEXT_MAX
+          ? raw.slice(0, ASSISTANT_TEXT_MAX)
+          : raw;
+    const row: AgentEntityTurnRecord = {
       version: 1,
       type: 'settled',
       turn_id: input.turnId,
@@ -108,6 +120,46 @@ export class AgentTurnsStore {
       assistant,
       assistant_preview: raw !== null ? preview(raw) : null,
       assistant_truncated: truncated,
+    };
+    await this.append(scope, row);
+    this.publishTurn(scope, row);
+  }
+
+  private publishTurn(
+    scope: AgentTurnsScope,
+    row: AgentEntityTurnRecord,
+  ): void {
+    if (
+      scope.teamId === null ||
+      (scope.role !== 'team_leader' && scope.role !== 'team_member') ||
+      row.turn_id === null
+    ) {
+      return;
+    }
+    if (row.type === 'submit') {
+      this.coreEvents?.publish(scope.dispatcherId, {
+        schema_version: 1,
+        kind: 'turn.submitted',
+        occurred_at: row.timestamp,
+        team_name: scope.teamId,
+        agent_name: scope.name,
+        role: scope.role,
+        turn_id: row.turn_id,
+      });
+      return;
+    }
+    if (row.settle_status === null) return;
+    this.coreEvents?.publish(scope.dispatcherId, {
+      schema_version: 1,
+      kind: 'turn.settled',
+      occurred_at: row.timestamp,
+      team_name: scope.teamId,
+      agent_name: scope.name,
+      role: scope.role,
+      turn_id: row.turn_id,
+      status: row.settle_status,
+      assistant: row.assistant,
+      assistant_truncated: row.assistant_truncated,
     });
   }
 

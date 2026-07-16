@@ -11,10 +11,17 @@ import type {
   AgentRuntimeStatus,
   AgentRuntimeTextInput,
   AgentRuntimeTurnResult,
+  ChannelCollaborationTargetEnsureResult,
+  ChannelCoreEvent,
+  ChannelCoreEventSource,
+  ChannelCoreEventSubscription,
   ChannelProvider,
+  ChannelRoutes,
   ChannelSession,
+  ChannelTeamStateEvent,
   DreamuxLogger,
   InboundTurnInput,
+  TurnSettledSignal,
 } from '@excitedjs/dreamux-types';
 import {
   saveDispatcherAccess,
@@ -34,6 +41,7 @@ import { DispatcherService } from '../src/service/dispatcher-service/index.js';
 import { Server } from '../src/server.js';
 import { dispatcherDir, resetRuntimeConfig } from '../src/platform/paths.js';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
+import { defaultWorkspaceWorkPath } from '../src/service/worktree/paths.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 import { feishuChannelCatalog } from './helpers/fake-channel.js';
 import { createFakeFeishuBot } from './helpers/fake-feishu-bot.js';
@@ -50,6 +58,10 @@ class FakeRuntime implements AgentRuntime {
   readonly submitted: InboundTurnInput[] = [];
   readonly textSubmitted: AgentRuntimeTextInput[] = [];
   private status: AgentRuntimeStatus = 'declared';
+
+  constructor(
+    private readonly onTurnSettled?: (settled: TurnSettledSignal) => void,
+  ) {}
 
   async start(): Promise<void> {
     this.status = 'ready';
@@ -96,6 +108,10 @@ class FakeRuntime implements AgentRuntime {
   getCapabilities(): AgentRuntimeCapabilities {
     return CAPABILITIES;
   }
+
+  settle(signal: TurnSettledSignal): void {
+    this.onTurnSettled?.(signal);
+  }
 }
 
 function fakeRuntimeCatalog(
@@ -112,7 +128,7 @@ function fakeRuntimeCatalog(
     getCapabilities: () => CAPABILITIES,
     createRuntime(context: AgentRuntimeCreateContext) {
       contexts.push(context);
-      const runtime = new FakeRuntime();
+      const runtime = new FakeRuntime(context.onTurnSettled);
       runtimes.push(runtime);
       return runtime;
     },
@@ -128,7 +144,9 @@ function fakeRuntimeCatalog(
   } as AgentRuntimeProviderCatalog;
 }
 
-function fakeChannelCatalog(): ChannelProviderCatalog {
+function fakeChannelCatalog(
+  onStart?: (routes: ChannelRoutes) => void | Promise<void>,
+): ChannelProviderCatalog {
   const provider: ChannelProvider = {
     ref: CHANNEL_REF,
     descriptor: {
@@ -140,7 +158,9 @@ function fakeChannelCatalog(): ChannelProviderCatalog {
       return {
         provider: context.provider,
         channel_id: context.channel_id,
-        async start() {},
+        async start(routes) {
+          await onStart?.(routes);
+        },
         async close() {},
         async resolveTarget() {
           throw new Error('test session does not resolve targets');
@@ -158,6 +178,56 @@ function fakeChannelCatalog(): ChannelProviderCatalog {
       return provider;
     },
   } as ChannelProviderCatalog;
+}
+
+function strictChannelDispatcher(input: {
+  workspace: string;
+  workspaceEnabled: boolean;
+  defaultBindingEnabled?: boolean;
+  onStart?: (routes: ChannelRoutes) => void | Promise<void>;
+}) {
+  const dispatcherConfig = testDispatcherConfig({
+    id: 'strict-dispatcher',
+    cwd: input.workspace,
+    agentRuntime: 'dispatcher-runtime',
+    runtimeProvider: RUNTIME_REF,
+    channelProvider: CHANNEL_REF,
+    workspaceEnabled: input.workspaceEnabled,
+  });
+  const primaryChannel = dispatcherConfig.channels[0];
+  if (primaryChannel === undefined) throw new Error('missing primary Channel');
+  primaryChannel.collaborationSpace = {
+    defaultBinding: {
+      enabled: input.defaultBindingEnabled ?? true,
+      repo: null,
+      identity: null,
+    },
+  };
+  const config = testDreamuxConfig([dispatcherConfig]);
+  const runtimes: FakeRuntime[] = [];
+  const contexts: AgentRuntimeCreateContext[] = [];
+  let routes: ChannelRoutes | null = null;
+  const dispatcher = new DispatcherService({
+    id: 'strict-dispatcher',
+    config,
+    dispatchers: new DispatcherStore(config),
+    agentRuntimeProviders: fakeRuntimeCatalog(runtimes, contexts),
+    channelProviders: fakeChannelCatalog(async (startedRoutes) => {
+      routes = startedRoutes;
+      await input.onStart?.(startedRoutes);
+    }),
+    channelLoggerFactory: () => noopLog(),
+    log: noopLog(),
+  });
+  return {
+    dispatcher,
+    runtimes,
+    contexts,
+    routes(): ChannelRoutes {
+      if (routes === null) throw new Error('test channel has not started');
+      return routes;
+    },
+  };
 }
 
 function noopLog(): DreamuxLogger {
@@ -265,6 +335,405 @@ describe('DispatcherService collaboration-space routing', () => {
     else process.env['HOME'] = previousHome;
     resetRuntimeConfig();
     rmSync(root, { recursive: true, force: true });
+  });
+
+  it.each([true, false])(
+    'strict ensure follows dispatcher-local workspace policy (enabled=%s)',
+    async (workspaceEnabled) => {
+      const workspace = join(root, `strict-workspace-${String(workspaceEnabled)}`);
+      mkdirSync(workspace, { recursive: true });
+      const harness = strictChannelDispatcher({ workspace, workspaceEnabled });
+
+      try {
+        await harness.dispatcher.start();
+        const routes = harness.routes();
+        expect(routes.ensureCollaborationTarget).toBeTypeOf('function');
+        const request = {
+          container: {
+            container_type: 'conversation',
+            container_key: `container-${String(workspaceEnabled)}`,
+          },
+          target: {
+            target_type: 'thread',
+            target_key: `target-${String(workspaceEnabled)}`,
+            bindable: true,
+          },
+        } as const;
+
+        const [first, concurrent] = await Promise.all([
+          routes.ensureCollaborationTarget!(request),
+          routes.ensureCollaborationTarget!(request),
+        ]);
+        if (first.status !== 'ready') throw new Error(first.rejection.code);
+        expect(Object.keys(first).sort()).toEqual(['status', 'team_name']);
+        expect(concurrent).toEqual(first);
+        await expect(routes.ensureCollaborationTarget!(request)).resolves.toEqual(
+          first,
+        );
+
+        expect(harness.runtimes).toHaveLength(1);
+        expect(harness.contexts).toHaveLength(1);
+        expect(harness.contexts[0]?.identity.runtime_id).not.toBe(
+          'strict-dispatcher',
+        );
+        expect(harness.contexts[0]?.cwd).toBe(
+          workspaceEnabled
+            ? defaultWorkspaceWorkPath({
+                dispatcherWorkspace: workspace,
+                slug: first.team_name,
+              })
+            : workspace,
+        );
+        expect(harness.runtimes[0]?.submitted).toEqual([]);
+      } finally {
+        await harness.dispatcher.stop();
+      }
+    },
+  );
+
+  it('makes the live event source usable before session start triggers ensure', async () => {
+    const workspace = join(root, 'start-time-ensure-workspace');
+    mkdirSync(workspace, { recursive: true });
+    const events: ChannelTeamStateEvent[] = [];
+    const observed: { ready?: ChannelCollaborationTargetEnsureResult } = {};
+    const harness = strictChannelDispatcher({
+      workspace,
+      workspaceEnabled: true,
+      onStart: async (routes) => {
+        routes.coreEvents!.on('team.state', (event) => {
+          events.push(event);
+        });
+        observed.ready = await routes.ensureCollaborationTarget!({
+          container: {
+            container_type: 'conversation',
+            container_key: 'start-time-container',
+          },
+          target: {
+            target_type: 'thread',
+            target_key: 'start-time-target',
+            bindable: true,
+          },
+        });
+      },
+    });
+
+    try {
+      await harness.dispatcher.start();
+      const ready = observed.ready;
+      if (ready?.status !== 'ready') throw new Error('target was not ready');
+      expect(events.map((event) => event.status)).toEqual([
+        'starting',
+        'running',
+      ]);
+      expect(new Set(events.map((event) => event.team_name))).toEqual(
+        new Set([ready.team_name]),
+      );
+    } finally {
+      await harness.dispatcher.stop();
+    }
+  });
+
+  it('revokes the event source when Channel session start fails', async () => {
+    const workspace = join(root, 'failed-start-workspace');
+    mkdirSync(workspace, { recursive: true });
+    const captured: {
+      source?: ChannelCoreEventSource;
+      subscription?: ChannelCoreEventSubscription;
+    } = {};
+    const harness = strictChannelDispatcher({
+      workspace,
+      workspaceEnabled: false,
+      onStart: (routes) => {
+        captured.source = routes.coreEvents!;
+        captured.subscription = captured.source.on(
+          'team.state',
+          () => undefined,
+        );
+        throw new Error('intentional Channel start failure');
+      },
+    });
+
+    await expect(harness.dispatcher.start()).rejects.toThrow(
+      'intentional Channel start failure',
+    );
+    const source = captured.source;
+    const subscription = captured.subscription;
+    if (source === undefined || subscription === undefined) {
+      throw new Error('Channel did not receive the event source');
+    }
+    expect(() => source.on('team.state', () => undefined)).toThrow(
+      'no longer active',
+    );
+    subscription.unsubscribe();
+    subscription.unsubscribe();
+    await harness.dispatcher.stop();
+  });
+
+  it('fails strict ensure closed when no collaboration binding is available', async () => {
+    const workspace = join(root, 'missing-binding-workspace');
+    mkdirSync(workspace, { recursive: true });
+    const harness = strictChannelDispatcher({
+      workspace,
+      workspaceEnabled: true,
+      defaultBindingEnabled: false,
+    });
+
+    try {
+      await harness.dispatcher.start();
+      await expect(
+        harness.routes().ensureCollaborationTarget!({
+          container: {
+            container_type: 'conversation',
+            container_key: 'missing-binding-container',
+          },
+          target: {
+            target_type: 'thread',
+            target_key: 'missing-binding-target',
+            bindable: true,
+          },
+        }),
+      ).resolves.toEqual({
+        status: 'rejected',
+        rejection: {
+          code: 'collaboration_space_unavailable',
+          retryable: true,
+        },
+      });
+      expect(harness.runtimes).toEqual([]);
+    } finally {
+      await harness.dispatcher.stop();
+    }
+  });
+
+  it('uses the exact authoritative TeamLeader route and publishes scoped live facts', async () => {
+    const workspace = join(root, 'strict-route-workspace');
+    mkdirSync(workspace, { recursive: true });
+    const harness = strictChannelDispatcher({
+      workspace,
+      workspaceEnabled: false,
+    });
+    let stopped = false;
+
+    try {
+      await harness.dispatcher.start();
+      const routes = harness.routes();
+      expect(routes.deliverExact).toBeTypeOf('function');
+      expect(routes.coreEvents).toBeDefined();
+      const events: ChannelCoreEvent[] = [];
+      const subscriptions = [
+        routes.coreEvents!.on('team.state', (event) => {
+          events.push(event);
+        }),
+        routes.coreEvents!.on('agent.state', (event) => {
+          events.push(event);
+        }),
+        routes.coreEvents!.on('turn.submitted', (event) => {
+          events.push(event);
+        }),
+        routes.coreEvents!.on('turn.settled', (event) => {
+          events.push(event);
+        }),
+      ];
+      const container = {
+        container_type: 'conversation',
+        container_key: 'container-strict-route',
+      } as const;
+      const target = {
+        target_type: 'thread',
+        target_key: 'target-strict-route',
+        bindable: true,
+        meta: { provider_private: 'ignored' },
+      } as const;
+
+      const ensured = await routes.ensureCollaborationTarget!({
+        container,
+        target,
+        title: 'Strict route',
+      });
+      if (ensured.status !== 'ready') throw new Error(ensured.rejection.code);
+      expect(harness.runtimes).toHaveLength(1);
+      await expect(
+        routes.ensureCollaborationTarget!({
+          container,
+          target: {
+            target_type: 'thread',
+            target_key: 'not-bindable',
+            bindable: false,
+          },
+        }),
+      ).resolves.toEqual({
+        status: 'rejected',
+        rejection: { code: 'invalid_input', retryable: false },
+      });
+
+      await expect(
+        routes.deliverExact!({
+          target,
+          expected_team_name: ensured.team_name,
+          turn: {
+            text: 'strict delivery',
+            body: 'strict delivery',
+            sourceId: 'runtime-local-source',
+          },
+        }),
+      ).resolves.toEqual({ status: 'submitted', turn_id: 'turn-1' });
+      expect(harness.runtimes[0]?.submitted).toEqual([
+        {
+          text: 'strict delivery',
+          body: 'strict delivery',
+          sourceId: 'runtime-local-source',
+        },
+      ]);
+
+      await expect(
+        routes.deliverExact!({
+          target,
+          expected_team_name: 'stale-team-owner',
+          turn: { text: 'must not deliver', sourceId: 'stale-source' },
+        }),
+      ).resolves.toEqual({
+        status: 'rejected',
+        rejection: { code: 'target_conflict', retryable: false },
+      });
+      await expect(
+        routes.deliverExact!({
+          target: {
+            target_type: 'thread',
+            target_key: 'missing-exact-target',
+            bindable: true,
+            binding_fallbacks: [target],
+          },
+          expected_team_name: ensured.team_name,
+          turn: { text: 'must not fallback', sourceId: 'fallback-source' },
+        }),
+      ).resolves.toEqual({
+        status: 'rejected',
+        rejection: { code: 'route_unavailable', retryable: true },
+      });
+      expect(harness.runtimes[0]?.submitted).toHaveLength(1);
+
+      await expect(
+        routes.ensureCollaborationTarget!({
+          container: {
+            container_type: 'conversation',
+            container_key: 'different-container',
+          },
+          target,
+        }),
+      ).resolves.toEqual({
+        status: 'rejected',
+        rejection: { code: 'target_conflict', retryable: false },
+      });
+      await expect(
+        routes.ensureCollaborationTarget!({
+          container: { ...container, container_type: 'different-container-type' },
+          target,
+        }),
+      ).resolves.toEqual({
+        status: 'rejected',
+        rejection: { code: 'target_conflict', retryable: false },
+      });
+      await expect(
+        routes.ensureCollaborationTarget!({
+          container,
+          target: { ...target, target_type: 'different-target-type' },
+        }),
+      ).resolves.toEqual({
+        status: 'rejected',
+        rejection: { code: 'target_conflict', retryable: false },
+      });
+      expect(harness.runtimes).toHaveLength(1);
+
+      harness.runtimes[0]!.settle({
+        turnId: 'turn-1',
+        status: 'completed',
+        result: { text: 'strict answer', truncated: true },
+      });
+      await vi.waitFor(() => {
+        expect(events.some((event) => event.kind === 'turn.settled')).toBe(true);
+      });
+
+      const leaderName = events.find(
+        (event) => event.kind === 'team.state',
+      )?.leader_name;
+      if (leaderName === undefined) throw new Error('missing Team state event');
+      expect(events).toContainEqual({
+        schema_version: 1,
+        kind: 'team.state',
+        occurred_at: expect.any(Number),
+        team_name: ensured.team_name,
+        leader_name: leaderName,
+        status: 'running',
+      });
+      expect(events).toContainEqual({
+        schema_version: 1,
+        kind: 'agent.state',
+        occurred_at: expect.any(Number),
+        team_name: ensured.team_name,
+        agent_name: leaderName,
+        role: 'team_leader',
+        status: 'starting',
+      });
+      expect(events).toContainEqual({
+        schema_version: 1,
+        kind: 'turn.submitted',
+        occurred_at: expect.any(Number),
+        team_name: ensured.team_name,
+        agent_name: leaderName,
+        role: 'team_leader',
+        turn_id: 'turn-1',
+      });
+      expect(events).toContainEqual({
+        schema_version: 1,
+        kind: 'turn.settled',
+        occurred_at: expect.any(Number),
+        team_name: ensured.team_name,
+        agent_name: leaderName,
+        role: 'team_leader',
+        turn_id: 'turn-1',
+        status: 'completed',
+        assistant: 'strict answer',
+        assistant_truncated: true,
+      });
+      expect(
+        events.every(
+          (event) =>
+            event.team_name === ensured.team_name &&
+            (event.kind === 'team.state' || event.agent_name === leaderName),
+        ),
+      ).toBe(true);
+
+      await harness.dispatcher.dissolveTeam({
+        teamId: ensured.team_name,
+        note: 'Verify exact delivery fails closed after Team dissolution.',
+      });
+      await expect(
+        routes.deliverExact!({
+          target,
+          expected_team_name: ensured.team_name,
+          turn: {
+            text: 'must not reach a closed Team',
+            sourceId: 'closed-source',
+          },
+        }),
+      ).resolves.toEqual({
+        status: 'rejected',
+        rejection: { code: 'route_unavailable', retryable: true },
+      });
+      expect(harness.runtimes[0]?.submitted).toHaveLength(1);
+
+      await harness.dispatcher.stop();
+      stopped = true;
+      for (const subscription of subscriptions) {
+        subscription.unsubscribe();
+        subscription.unsubscribe();
+      }
+      expect(() =>
+        routes.coreEvents!.on('team.state', () => undefined),
+      ).toThrow('no longer active');
+    } finally {
+      if (!stopped) await harness.dispatcher.stop();
+    }
   });
 
   it('provisions from neutral inbound container before delivery', async () => {

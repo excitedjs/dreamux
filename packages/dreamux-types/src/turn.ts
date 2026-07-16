@@ -25,8 +25,8 @@ export interface InboundTurnInput {
   /** The turn text to deliver to the agent (used when no channel body is set). */
   text: string;
   /**
-   * Stable dedupe / correlation id for this inbound. An empty string disables
-   * dedupe.
+   * Runtime-local dedupe / correlation hint for this inbound. An empty string
+   * disables dedupe. This carries no cross-restart delivery guarantee.
    */
   sourceId: string;
   /**

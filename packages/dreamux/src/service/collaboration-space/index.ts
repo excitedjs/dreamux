@@ -1,4 +1,7 @@
-import type { DreamuxLogger } from '@excitedjs/dreamux-types';
+import type {
+  DreamuxLogger,
+  InboundTurnInput,
+} from '@excitedjs/dreamux-types';
 
 import type { DreamuxConfig } from '../../config/config.js';
 import type {
@@ -31,6 +34,7 @@ import type {
 } from './types.js';
 import { CollaborationSpaceStore } from './store.js';
 import { CollaborationRouteReconciler } from './route-reconciliation.js';
+import { CollaborationTargetStrictOperations } from './strict-operations.js';
 import { spaceView, targetView } from './view.js';
 import {
   containerFromSpace,
@@ -55,6 +59,7 @@ export class CollaborationSpaceService {
   private readonly channels: ChannelService;
   private readonly store: CollaborationSpaceStore;
   private readonly targets: CollaborationTargetLifecycle;
+  private readonly strictOperations: CollaborationTargetStrictOperations;
   private readonly routes: CollaborationRouteReconciler;
   private readonly spaceLocks = new KeyedAsyncQueue();
   private readonly lifecycleTasks = new Set<Promise<void>>();
@@ -74,6 +79,13 @@ export class CollaborationSpaceService {
       locks: targetLocks,
       isShuttingDown: opts.isShuttingDown,
     });
+    this.strictOperations = new CollaborationTargetStrictOperations({
+      dispatcherId: this.dispatcherId,
+      teams: this.teams,
+      channels: this.channels,
+      store: this.store,
+      targetLocks,
+    });
     this.targets = new CollaborationTargetLifecycle({
       dispatcherId: this.dispatcherId,
       config: this.config,
@@ -83,6 +95,7 @@ export class CollaborationSpaceService {
       spaceLocks: this.spaceLocks,
       targetLocks,
       routes: this.routes,
+      strictOperations: this.strictOperations,
       log: opts.log,
       isShuttingDown: opts.isShuttingDown,
     });
@@ -195,6 +208,22 @@ export class CollaborationSpaceService {
     options: AcceptTargetCreatedOptions = {},
   ): Promise<ProvisionedTargetRecord | null> {
     return this.targets.acceptAndProvisionTarget(input, options);
+  }
+
+  requireReadyTarget(input: {
+    record: ProvisionedTargetRecord;
+    target: CollaborationSpaceProvisionInput['target'];
+  }): Promise<ProvisionedTargetRecord> {
+    return this.strictOperations.requireReadyTarget(input);
+  }
+
+  deliverExact(input: {
+    channelId: string;
+    target: CollaborationSpaceProvisionInput['target'];
+    expectedTeamName: string;
+    turn: InboundTurnInput;
+  }) {
+    return this.strictOperations.deliverExact(input);
   }
 
   async acceptTargetCreated(

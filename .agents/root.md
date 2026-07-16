@@ -18,7 +18,8 @@ For current behavior, read the linked source code too.
 - [State and paths](reference/state-and-paths.md) — current config, workspace,
   state, run, cache, log, and external-home ownership.
 - [Channel runtime](reference/channel-runtime.md) — Channel provider sessions,
-  Feishu tools, target routing, and binding.
+  scoped collaboration operations, live core facts, target routing, and
+  binding.
 - [Service topology](reference/service-topology.md) — source-anchored
   service-layer ownership and construction map.
 - [Model-facing writing](reference/model-facing-writing.md) — current
