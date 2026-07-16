@@ -566,6 +566,46 @@ describe('Task Channel Host public boundary', () => {
     expect(store.acknowledgedThrough).toBe(store.watermark);
   });
 
+  it('allows the event sink to durably ACK its offered prefix before returning', async () => {
+    const { service, store } = await openService({
+      root,
+      repo,
+      durableRuntime: false,
+    });
+    await service.recover();
+    const host = service.beginSession();
+    const negotiation = await negotiate(host);
+    const snapshot = await host.snapshot();
+    if (snapshot.status !== 'page' || !snapshot.page.complete) {
+      throw new Error('expected a complete task Host snapshot');
+    }
+    await host.acknowledgeHostEvents({
+      host_stream_id: negotiation.host_stream_id,
+      stream_generation: negotiation.stream_generation,
+      acknowledged_through: snapshot.page.watermark,
+    });
+
+    const delivered: number[] = [];
+    service.attachEventSink(host.scope.session_fence, {
+      async acceptHostEvents(batch) {
+        if (batch.last_sequence === null) throw new Error('missing event prefix');
+        const acknowledged = await host.acknowledgeHostEvents({
+          host_stream_id: batch.host_stream_id,
+          stream_generation: batch.stream_generation,
+          acknowledged_through: batch.last_sequence,
+        });
+        delivered.push(acknowledged.acknowledged_through);
+        return acknowledged;
+      },
+    });
+    await store.appendHostStatus('degraded');
+    await waitFor(() =>
+      delivered.length === 1 && store.acknowledgedThrough === store.watermark,
+    );
+
+    expect(delivered).toEqual([store.watermark]);
+  });
+
   it('rejects oversized remote DTOs before repository or runtime side effects', async () => {
     const { service, store, channels, collaborationSpaces } = await openService({
       root,

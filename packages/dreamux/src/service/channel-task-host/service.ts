@@ -627,7 +627,7 @@ export class TaskChannelHostService {
     if (input.host_stream_id !== this.store.hostStreamId) {
       throw new Error('host event acknowledgement has the wrong stream id');
     }
-    if (input.acknowledged_through > this.sessionAckEligibleThrough) {
+    if (!this.pump.isOffered(input.acknowledged_through, this.sessionAckEligibleThrough)) {
       throw new Error('host event acknowledgement exceeds the offered prefix');
     }
     return this.store.acknowledge(

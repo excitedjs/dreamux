@@ -11,12 +11,14 @@ export class TaskHostEventPump {
   private retry: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
   private sinkEpoch = 0;
+  offeredThrough = 0;
 
   constructor(
     private readonly store: TaskHostStore,
     private readonly log: DreamuxLogger,
     private readonly retryDelayMs = 1_000,
   ) {
+    this.offeredThrough = store.acknowledgedThrough;
     store.setCommitListener(() => this.kick());
   }
 
@@ -25,13 +27,19 @@ export class TaskHostEventPump {
     if (this.retry !== null) clearTimeout(this.retry);
     this.retry = null;
     this.sink = sink;
+    this.offeredThrough = this.store.acknowledgedThrough;
     this.stopped = false;
     this.kick();
+  }
+
+  isOffered(through: number, sessionThrough: number): boolean {
+    return through <= Math.max(sessionThrough, this.offeredThrough);
   }
 
   detach(): void {
     this.sinkEpoch += 1;
     this.sink = null;
+    this.offeredThrough = this.store.acknowledgedThrough;
     if (this.retry !== null) clearTimeout(this.retry);
     this.retry = null;
   }
@@ -78,12 +86,16 @@ export class TaskHostEventPump {
       const batch = this.store.replay(this.store.acknowledgedThrough, 100);
       if (batch.events.length === 0) return;
       const before = this.store.acknowledgedThrough;
+      const last = batch.last_sequence;
+      if (last === null) {
+        throw new Error('task channel event batch has no consecutive prefix');
+      }
+      this.offeredThrough = Math.max(this.offeredThrough, last);
+      if (this.sink !== sink || this.sinkEpoch !== epoch || this.stopped) return;
       const result = await sink.acceptHostEvents(batch);
       if (this.sink !== sink || this.sinkEpoch !== epoch || this.stopped) return;
       const through = result.acknowledged_through;
-      const last = batch.last_sequence;
       if (
-        last === null ||
         !Number.isSafeInteger(through) ||
         through < before ||
         through > last
