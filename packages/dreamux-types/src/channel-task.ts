@@ -388,23 +388,16 @@ export type ChannelTaskHostEventPayload =
     }
   | {
       kind: 'task.lifecycle';
-      phase: Exclude<ChannelTaskPhase, 'blocked' | 'terminal'>;
+      phase: ChannelTaskPhase;
+      /** Required when phase is terminal. */
+      outcome?: ChannelTaskTerminalOutcome;
+      /** Business result text for a terminal transition. */
+      summary?: string;
+      /** Required with retryable when phase is blocked. */
       blocked_code?: ChannelTaskBlockedCode;
       retryable?: boolean;
       /** The acknowledged finalized aggregate was reduced to durable identity. */
       tombstone?: true;
-    }
-  | {
-      kind: 'task.lifecycle';
-      phase: 'blocked';
-      blocked_code: ChannelTaskBlockedCode;
-      retryable: boolean;
-    }
-  | {
-      kind: 'task.lifecycle';
-      phase: 'terminal';
-      outcome: ChannelTaskTerminalOutcome;
-      summary?: string;
     }
   | {
       kind: 'container_manifest.applied';

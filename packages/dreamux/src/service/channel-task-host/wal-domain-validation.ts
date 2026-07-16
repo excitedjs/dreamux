@@ -77,6 +77,7 @@ export function validateHostEventEnvelope(
   ) {
     throw new Error('task host WAL event target fence is invalid');
   }
+  validateTaskLifecycleEvent(event, target, tx.checkpoint !== null);
 }
 
 export function validateManifestTransaction(tx: TaskHostTransaction): void {
@@ -117,5 +118,44 @@ function validateHostWideEvent(event: ChannelTaskHostEvent): void {
     event.container !== null
   ) {
     throw new Error('task host WAL host-wide event carries target identity');
+  }
+}
+
+function validateTaskLifecycleEvent(
+  event: ChannelTaskHostEvent,
+  target: TaskTargetRecord,
+  historical: boolean,
+): void {
+  const payload = event.payload;
+  if (payload.kind !== 'task.lifecycle') return;
+  if (payload.phase === 'terminal') {
+    if (
+      payload.outcome === undefined ||
+      (!historical && (
+        target.phase !== 'terminal' ||
+        target.terminal?.outcome !== payload.outcome ||
+        target.terminal.summary !== payload.summary
+      ))
+    ) {
+      throw new Error('task host terminal lifecycle is not authoritative');
+    }
+    return;
+  }
+  if (payload.phase === 'blocked') {
+    if (
+      payload.blocked_code === undefined ||
+      payload.retryable === undefined ||
+      (!historical && (
+        target.phase !== 'blocked' ||
+        target.blocked?.code !== payload.blocked_code ||
+        target.blocked.retryable !== payload.retryable
+      ))
+    ) {
+      throw new Error('task host blocked lifecycle is not authoritative');
+    }
+    return;
+  }
+  if (!historical && payload.phase !== target.phase) {
+    throw new Error('task host lifecycle phase does not match its target');
   }
 }

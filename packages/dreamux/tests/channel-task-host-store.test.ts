@@ -308,6 +308,27 @@ describe('TaskHostStore WAL and projections', () => {
     });
   });
 
+  it('rejects terminal lifecycle events without their authoritative outcome', async () => {
+    const store = await openReadyStore(root, () => clock++);
+    const claim = taskClaim('task-a', 'attempt-1', 'container-a');
+    await store.claim(claim);
+
+    await expect(store.updateTarget(
+      claim.targetId,
+      1,
+      (target) => {
+        target.phase = 'terminal';
+        target.terminal = { outcome: 'completed', summary: 'done' };
+      },
+      [{ payload: { kind: 'task.lifecycle', phase: 'terminal' } }],
+    )).rejects.toThrow(/terminal lifecycle is not authoritative/);
+    expect(store.get(claim.targetId)).toMatchObject({
+      revision: 1,
+      phase: 'received',
+      terminal: null,
+    });
+  });
+
   it('enforces monotonic terminal and finalized transitions during live writes', async () => {
     const store = await openReadyStore(root, () => clock++);
     const claim = taskClaim('task-a', 'attempt-1', 'container-a');
