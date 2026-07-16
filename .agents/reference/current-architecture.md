@@ -167,31 +167,35 @@ Read [Channel runtime](channel-runtime.md) first, then the domain contracts:
 ## Task Channel Host
 
 Strict task delivery is a Core admission path, not a conversational message.
-It derives a canonical task target from dispatcher, channel, container, task,
-and attempt identity; commits a durable receipt before provisioning; lazily
-reuses the generic collaboration-space default-binding hook; provisions one
-Team and managed worktree; and submits execution only through an Agent Runtime
-that supports `durable_task_submission_v1`. There is no Dispatcher-agent or LLM
-fallback.
+The scoped Host first durably applies a complete revisioned container manifest;
+each command must match its current revision and active container generation.
+Core then derives a canonical task target from dispatcher, channel, container,
+task, and attempt identity; commits a durable receipt before provisioning;
+lazily reuses the generic collaboration-space default-binding hook; provisions
+one Team and managed worktree; and submits execution only through an Agent
+Runtime that supports `durable_task_submission_v1`. There is no Dispatcher-agent
+or LLM fallback.
 
-`TaskHostStore` is the sole durable owner for task phase, binding/provisioning
-checkpoints, runtime submissions and settlement ACKs, explicit business
-terminal, finalizer progress, host events, stream ACKs, and tombstones. It uses
-a checksummed per-channel transaction WAL plus rebuildable projections. The
-generic collaboration route remains authoritative; task state keeps only the
-derived claim/reconciliation checkpoint.
+`TaskHostStore` is the sole durable owner for the container manifest, task phase,
+binding/provisioning checkpoints, runtime submissions and settlement ACKs,
+explicit business terminal, finalizer progress, host events, stream ACKs, and
+tombstones. It uses a checksummed per-channel transaction WAL plus rebuildable
+manifest/target/stream projections. The generic collaboration route remains
+authoritative; task state keeps only the derived claim/reconciliation
+checkpoint.
 
-Core automatically derives host, task, Team, worktree, turn, and cleanup
-telemetry from committed transitions. The Channel session consumes one scoped,
-monotonic host event stream through its event sink. Replies, reactions, provider
-tools, admin-socket polling, prompts, and TeamLeader discipline are not state
-synchronization paths.
+Core automatically derives host, task, cleanup, and stable opaque
+Team/leader/member/turn/worktree resource telemetry from committed transitions.
+The Channel session consumes one scoped, monotonic host event stream through its
+event sink. Replies, reactions, provider tools, admin-socket polling, prompts,
+and TeamLeader discipline are not state synchronization paths.
 
 Fresh or incompatible provider cursors must stage a complete immutable paged
 snapshot before the push sink can attach. Compatible cursors replay from the
 last consecutive prefix. Session fences revoke superseded handles and late
-sink acknowledgements. Startup discovers durable manifests before provider
-session start, repairs provision/finalizer/ACK crash windows, and can finish
+sink acknowledgements, including calls already waiting for the WAL writer.
+Startup discovers durable Host manifests before provider session start, repairs
+provision/finalizer/ACK crash windows, and can finish
 already-terminal cleanup without opening a provider transport.
 
 Key source:

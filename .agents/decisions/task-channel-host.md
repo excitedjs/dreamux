@@ -1,7 +1,7 @@
 # Provider-neutral Task Channel Host
 
 - **Status:** Accepted
-- **Date:** 2026-07-15
+- **Date:** 2026-07-16
 - **Affects:** `@excitedjs/dreamux-types`, Channel providers, dispatcher lifecycle,
   collaboration spaces, Teams, managed worktrees, durable runtime submission,
   and dispatcher state
@@ -38,18 +38,24 @@ The public ABI lives entirely in `@excitedjs/dreamux-types`:
   `session_fence` before negotiation;
 - negotiation selects the schema and requires either event replay or a complete
   snapshot;
+- a complete, revisioned container manifest is durably applied before any task
+  command under that revision can execute; removals are explicit tombstones and
+  repository rebinds require a higher container generation;
 - strict submit, lookup, and cancel use bounded task-attempt and container
   identities;
 - logical repository input carries a key and optional expected policy revision,
   never a host path;
-- Core emits bounded host, task, Team, worktree, turn, and cleanup events;
+- Core emits bounded host/task/cleanup events plus one allowlisted
+  `resource.lifecycle` union for Team, leader, member, turn, and worktree state;
+  every resource has a stable opaque identity and explicit parent identity;
 - providers acknowledge only a consecutive processed event prefix;
 - snapshot pages have one immutable snapshot id, watermark, total item count,
   ordered offset, session fence, and completeness proof, so an adapter can stage
   all pages and atomically replace its remote projection only after the final
   page;
-- superseding or detaching a Channel session revokes its handle and fences late
-  calls and late sink acknowledgements.
+- superseding or detaching a Channel session revokes its handle. Provider calls
+  waiting for the WAL writer recheck that fence inside the write critical
+  section, and late sink acknowledgements cannot advance the prefix.
 
 The provider's event transport and remote command sequencing remain
 provider-owned. Core does not expose services, stores, admin DTOs, the admin
@@ -130,40 +136,48 @@ trusted local configuration. Core then requires an allowlisted, real managed
 Git repository, resolves the configured base ref to a commit, and persists:
 
 - source mode, logical key, binding revision, canonical repository path, and
-  base ref as the immutable collaboration-space binding fingerprint;
-- the resolved commit as the task-local execution pin used to create that
-  task's worktree.
+  base ref and resolved commit as the immutable fingerprint and execution pin;
+- that complete resolved policy in the Task Host manifest generation before a
+  receipt can be issued.
 
-The commit is deliberately not part of the collaboration-space fingerprint.
-Two attempts in one container may pin different commits after the same symbolic
-base ref advances, while the generation still rejects logical key, binding
-revision, canonical path, base-ref, or fingerprint mismatch. The optional
-remote expected revision is checked before receipt. Missing binding,
-disabled auto-binding, resolver failure, allowlist miss, and generation mismatch
-are typed strict rejections; none falls back to conversational routing.
+The resolved commit is part of the fingerprint. A symbolic ref advancing is a
+policy change and therefore requires a new remote container generation. On the
+first task for that generation, the generic collaboration-space hook advances
+its own binding generation atomically. Older task attempts retain their WAL
+binding snapshots, while an open conversational target on the current
+collaboration binding generation fences automatic rebind. Only the deterministic
+default space created by this hook is eligible; an explicitly named binding is
+never advanced by task delivery. The optional remote
+expected revision is checked before receipt. Missing binding, disabled
+auto-binding, resolver failure, allowlist miss, and generation mismatch are
+typed strict rejections; none falls back to conversational routing.
 
 Key source:
 
 - `/packages/dreamux/src/config/collaboration-space-config.ts`
 - `/packages/dreamux/src/service/channel-service/channel-sessions.ts`
 - `/packages/dreamux/src/service/channel-task-host/repository-policy.ts`
+- `/packages/dreamux/src/service/channel-task-host/container-manifest.ts`
 - `/packages/dreamux/src/service/collaboration-space/default-binding.ts`
 - `/packages/dreamux/src/service/collaboration-space/store.ts`
 
 ## Durable Aggregate And Runtime Protocol
 
-`TaskHostStore` is the sole durable owner for task-kind target claim, phase,
-binding generation, provisioning checkpoints, runtime submissions, terminal
-state, finalizer progress, host events, stream ACK, and tombstones.
+`TaskHostStore` is the sole durable owner for the complete container manifest,
+task-kind target claim, phase, binding generation, provisioning checkpoints,
+runtime submissions, terminal state, finalizer progress, host events, stream
+ACK, and tombstones.
 `CollaborationSpaceStore` continues to own spaces, binding generations, and
 conversational targets only.
 
 Version 1 uses a checksummed per-channel transaction WAL rather than SQLite. A
-committed frame contains target deltas, host events, sequence allocation,
-consecutive-prefix ACK movement, previous checksum, checksum, and commit marker.
-The frame is appended and fsynced before a receipt or state transition is
-reported durable. Rebuildable target and stream projections are written after
-the WAL commit and never become authoritative.
+committed frame contains any container-manifest or target delta, its host events,
+sequence allocation, consecutive-prefix ACK movement, previous checksum,
+checksum, and commit marker. A manifest-apply frame contains exactly one complete
+manifest delta and its `container_manifest.applied` event. The frame is appended
+and fsynced before a receipt or state transition is reported durable.
+Rebuildable manifest, target, and stream projections are written after the WAL
+commit and never become authoritative.
 
 The selected Agent Runtime must advertise `durable_task_submission_v1` before
 receipt, again before provisioning, and during recovery. Root, completion,
@@ -250,9 +264,11 @@ The taxonomy is deliberately bounded:
 - `host.lifecycle`: recovering, ready, degraded, stopping, stopped;
 - `task.lifecycle`: task phase, explicit terminal outcome, retryable blocked
   code, and acknowledged tombstone;
-- `team.lifecycle`: provisioning, ready, closing, closed;
-- `worktree.lifecycle`: provisional, ready, cleaning, deleted, retained;
-- `turn.lifecycle`: submitted, running, completed, failed, stopped, in doubt;
+- `container_manifest.applied`: revision, digest, and entry count for the
+  complete-set barrier;
+- `resource.lifecycle`: stable opaque Team, leader, member, turn, or worktree
+  identity, parent identity where applicable, target revision, and allowlisted
+  lifecycle state;
 - `cleanup.lifecycle`: started, completed.
 
 An event ACK is valid only for a prefix that the current session was offered by
@@ -261,6 +277,9 @@ a complete snapshot before the sink can attach. Snapshot cursors are opaque,
 session-fenced, expiring, and bound to one immutable capture. A provider stages
 all pages, verifies offsets and totals, atomically installs the complete
 projection, durably persists the watermark, then acknowledges that prefix.
+The complete path-free container manifest and its resolution proofs repeat on
+every page so a provider can atomically install one coherent authorization and
+execution projection.
 
 Compaction rewrites physical WAL history without changing stream identity,
 generation, watermark, unacknowledged event ids, or logical target state. Once a

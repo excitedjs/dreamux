@@ -62,13 +62,17 @@ member and keep their existing behavior.
 
 The provider first checks the Core-created handle scope and negotiates the
 required schema/capabilities. That scope carries stable host stream identity,
-stream generation, host status, and a revocable session fence; the provider
-does not assert those facts. A fresh or incompatible cursor requires the
+stream generation, host status, the required capabilities, and a revocable
+session fence; the provider does not assert those facts. Before commands can
+run, the provider applies one complete container manifest with a monotonic
+revision, explicit revoked tombstones, and positive container generations. A
+successful apply is an fsynced WAL barrier. A fresh or incompatible cursor requires the
 provider to stage every page of one immutable snapshot, atomically install the
 complete projection, persist its watermark, and acknowledge that prefix before
 its event sink can attach. Compatible cursors replay from the stored
-consecutive prefix. Late calls on a superseded session and late event-sink ACKs
-are fenced.
+consecutive prefix. Every page repeats the same complete path-free manifest and
+resolution proofs. Late calls on a superseded session, including writes waiting
+for the WAL critical section, and late event-sink ACKs are fenced.
 
 Strict input contains bounded task/attempt, container, task body, and optional
 logical repository identity only. A provider resolver maps the logical key to
@@ -77,10 +81,11 @@ binding revision/fingerprint before receipt. No remote task payload may carry a
 host `cwd`.
 
 Core commits the receipt before provisioning one Team and one managed worktree.
-It then derives host, task, Team, worktree, turn, business terminal, and cleanup
-events from Core state transitions. The LLM and TeamLeader do not report those
-facts. The provider transport projects the ordered host stream to its remote
-system; it does not poll the admin socket or reuse admin/status DTOs.
+It then derives host, task, cleanup, and stable opaque
+Team/leader/member/turn/worktree resource events from Core state transitions.
+The LLM and TeamLeader do not report those facts. The provider transport
+projects the ordered host stream to its remote system; it does not poll the
+admin socket or reuse admin/status DTOs.
 
 Key source:
 
@@ -193,8 +198,11 @@ created by `collaboration_space.dissolve` is not auto-bound again; explicit
 task-capable provider with `logical_repository_binding_v1` and
 `resolveRepositoryBinding`. The provider maps a path-free logical key to its
 trusted local allowlist, while Core validates and fingerprints the canonical
-managed repository. Collaboration binding generations persist that immutable
-policy identity; each task separately pins the base ref's resolved commit.
+managed repository, base ref, and resolved commit. The complete policy is frozen
+for the remote container generation. A changed policy requires a higher remote
+generation and advances the generic collaboration binding generation on first
+task delivery; older tasks keep their accepted snapshot. An open conversational
+target fences that automatic rebind rather than having its binding rewritten.
 
 Provisioning has two entry points:
 

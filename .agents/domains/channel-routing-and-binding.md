@@ -80,8 +80,10 @@ Source:
 Task-capable Channel sessions use the optional `task_channel_host_v1` contract,
 not conversational `deliver`. Core supplies a scoped `ChannelTaskHost` with
 negotiated capabilities, stable stream identity, snapshot/replay, consecutive
-ACK, strict submit/lookup/cancel, and a revocable session fence. The provider
-depends on `@excitedjs/dreamux-types`, not Core service or store classes.
+ACK, a durable complete-container-manifest barrier, strict submit/lookup/cancel,
+stable opaque execution-resource identities, and a revocable session fence. The
+provider depends on `@excitedjs/dreamux-types`, not Core service or store
+classes.
 
 The boundary is for package compatibility and ownership, not a plugin security
 sandbox. The installed provider is trusted local code, while every remote task
