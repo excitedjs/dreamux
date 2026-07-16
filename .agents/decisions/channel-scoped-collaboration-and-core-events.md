@@ -45,9 +45,13 @@ dispatcher configuration.
 - The bus is distribution infrastructure only. Team, identity, and turn stores
   remain authoritative and publish allowlisted facts after their normal write
   point.
-- Channel sessions receive owned subscription handles, not the bus or its
-  listener-management surface. Core revokes a session generation on stop or
-  failed start.
+- Each `ChannelSession.start` receives fresh process-local leases for strict
+  routes and core events. Core revokes both before session close on stop or
+  failed start. A later call through an old strict closure returns
+  `dispatcher_unavailable` without entering routing or materializing a runtime.
+- Failed start closes dispatcher admission, drains accepted work, and reuses the
+  existing materialized-Team runtime sweep. Durable Team and target facts remain
+  available for a later session generation to recover.
 - Events are best-effort and live-session-only. The bus retains no history and
   provides no delivery guarantee or historical query.
 - The public surface has no remote close or cancel operation and does not add a

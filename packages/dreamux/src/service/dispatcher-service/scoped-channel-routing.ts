@@ -32,9 +32,45 @@ interface DispatcherScopedChannelRoutingOptions {
   isUnavailable: () => boolean;
 }
 
+export interface DispatcherChannelSessionRouteLease {
+  ensure(
+    request: ChannelCollaborationTargetEnsureInput,
+  ): Promise<ChannelCollaborationTargetEnsureResult>;
+  deliverExact(
+    request: ChannelExactDeliveryInput,
+  ): Promise<ChannelExactDeliveryResult>;
+  revoke(): void;
+}
+
 /** Dispatcher-owned adapters for the optional Channel collaboration ABI. */
 export class DispatcherScopedChannelRouting {
+  private readonly sessionLeases = new Set<DispatcherChannelSessionRouteLease>();
+
   constructor(private readonly opts: DispatcherScopedChannelRoutingOptions) {}
+
+  createSessionLease(channelId: string): DispatcherChannelSessionRouteLease {
+    let active = true;
+    const lease: DispatcherChannelSessionRouteLease = {
+      ensure: (request) =>
+        active
+          ? this.ensure(channelId, request)
+          : Promise.resolve(rejectedChannelOperation('dispatcher_unavailable')),
+      deliverExact: (request) =>
+        active
+          ? this.deliverExact(channelId, request)
+          : Promise.resolve(rejectedChannelOperation('dispatcher_unavailable')),
+      revoke: () => {
+        active = false;
+        this.sessionLeases.delete(lease);
+      },
+    };
+    this.sessionLeases.add(lease);
+    return lease;
+  }
+
+  revokeSessionLeases(): void {
+    for (const lease of [...this.sessionLeases]) lease.revoke();
+  }
 
   route(
     channelId: string,

@@ -190,7 +190,13 @@ capabilities for sessions that require a synchronous ready boundary:
 Both methods enter dispatcher admission and return bounded rejection DTOs
 instead of raw errors. `turn.sourceId` remains a runtime-local hint; the strict
 surface adds no retained submission state or cross-restart delivery guarantee.
-There is no corresponding remote close/cancel method.
+Each `ChannelSession.start` gets a fresh process-local lease for these strict
+closures. Stop and failed-start rollback revoke that lease before closing the
+session, so later calls through an old generation return
+`dispatcher_unavailable` without creating, starting, or reviving a runtime.
+Failed-start rollback then closes admission, drains accepted strict and lifecycle
+work, and sweeps materialized Team runtimes while retaining durable Team and
+target facts for recovery. There is no corresponding remote close/cancel method.
 
 Source:
 
@@ -207,9 +213,10 @@ read-only event source with owned subscription handles. The DTO allowlist covers
 Team and Team agent state changes plus Team-owned turn submitted/settled facts,
 including settle status, nullable Assistant text, and truncation.
 
-The source is installed before session start and revoked on stop or failed
-start. It is live-session-only and best-effort: it retains no history and
-provides no eventual-delivery, historical-query, or ordering guarantee. The bus
+The source is installed before session start and revoked before session close on
+stop or failed start. It is live-session-only and best-effort: it retains no
+history and provides no eventual-delivery, historical-query, or ordering
+guarantee. The bus
 does not become a new state owner, and providers never receive core
 service/store instances or raw `EventEmitter` management methods.
 

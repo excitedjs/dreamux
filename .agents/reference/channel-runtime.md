@@ -186,12 +186,20 @@ Collaboration target work has three entry points:
   `binding_fallbacks` or invokes the dispatcher agent. Both methods use bounded
   public rejection codes and participate in dispatcher admission and shutdown
   drain. They add no remote close operation or retained submission state;
-  `sourceId` remains a live-runtime correlation/dedupe hint.
+  `sourceId` remains a live-runtime correlation/dedupe hint. Every
+  `ChannelSession.start` receives a fresh process-local lease for the two strict
+  closures. Stop and failed-start rollback revoke it before session close; an
+  old generation thereafter returns `dispatcher_unavailable` without entering
+  routing or materializing a runtime.
 
 Both paths bypass the dispatcher agent runtime but still go through
-`DispatcherService` and core stores. Direct inbound promises are admitted and
-tracked by `DispatcherService`, so stop rejects later callbacks and drains older
-ones before sweeping materialized Team runtimes. Dispatcher and Team cron command
+`DispatcherService` and core stores. Direct inbound and strict promises are
+admitted and tracked by `DispatcherService`; session-lease revocation permanently
+rejects later strict callbacks from an old generation, while dispatcher drain
+waits for calls that crossed admission before sweeping materialized Team runtimes.
+Failed Channel start uses the same fence and sweep after closing its sessions,
+while retaining durable target and Team facts for the next generation.
+Dispatcher and Team cron command
 surfaces expose only `SchedulerCommands`; cron fires use the same owner
 admission, while scheduler lifecycle methods stay owner-only through the
 dispatcher container or TeamCollection's private lifecycle capability. Stop
@@ -242,8 +250,9 @@ error, platform identity, cursor, or acknowledgement.
 
 Core installs the source before calling `ChannelSession.start`, so a session may
 subscribe before triggering a strict ensure. Stop and start-failure cleanup
-revoke the whole session source before closing sessions; later subscription
-attempts fail and old subscription handles become no-ops. Events are
+revoke the whole session source and strict-route lease before closing sessions;
+later subscription attempts fail and old subscription handles become no-ops.
+Events are
 live-session-only: the bus retains no history and provides no eventual-delivery
 or historical-query guarantee. A settled Assistant uses the same 160k core cap
 as the turn archive, and `assistant_truncated` is true when either the runtime

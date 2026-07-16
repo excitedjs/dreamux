@@ -206,6 +206,7 @@ function strictChannelDispatcher(input: {
   const config = testDreamuxConfig([dispatcherConfig]);
   const runtimes: FakeRuntime[] = [];
   const contexts: AgentRuntimeCreateContext[] = [];
+  const routeGenerations: ChannelRoutes[] = [];
   let routes: ChannelRoutes | null = null;
   const dispatcher = new DispatcherService({
     id: 'strict-dispatcher',
@@ -213,6 +214,7 @@ function strictChannelDispatcher(input: {
     dispatchers: new DispatcherStore(config),
     agentRuntimeProviders: fakeRuntimeCatalog(runtimes, contexts),
     channelProviders: fakeChannelCatalog(async (startedRoutes) => {
+      routeGenerations.push(startedRoutes);
       routes = startedRoutes;
       await input.onStart?.(startedRoutes);
     }),
@@ -223,6 +225,7 @@ function strictChannelDispatcher(input: {
     dispatcher,
     runtimes,
     contexts,
+    routeGenerations,
     routes(): ChannelRoutes {
       if (routes === null) throw new Error('test channel has not started');
       return routes;
@@ -466,6 +469,139 @@ describe('DispatcherService collaboration-space routing', () => {
     );
     subscription.unsubscribe();
     subscription.unsubscribe();
+    await harness.dispatcher.stop();
+  });
+
+  it('revokes old strict routes across stop and restart generations', async () => {
+    const workspace = join(root, 'strict-route-generation-workspace');
+    mkdirSync(workspace, { recursive: true });
+    const harness = strictChannelDispatcher({
+      workspace,
+      workspaceEnabled: false,
+    });
+    const request = {
+      container: {
+        container_type: 'conversation',
+        container_key: 'route-generation-container',
+      },
+      target: {
+        target_type: 'thread',
+        target_key: 'route-generation-target',
+        bindable: true,
+      },
+    } as const;
+    const unavailable = {
+      status: 'rejected',
+      rejection: { code: 'dispatcher_unavailable', retryable: true },
+    } as const;
+
+    try {
+      await harness.dispatcher.start();
+      const oldRoutes = harness.routes();
+      const ready = await oldRoutes.ensureCollaborationTarget!(request);
+      if (ready.status !== 'ready') throw new Error(ready.rejection.code);
+      expect(harness.runtimes).toHaveLength(1);
+
+      await harness.dispatcher.stop();
+      expect(harness.runtimes[0]?.getStatus()).toBe('stopped');
+      await expect(
+        oldRoutes.ensureCollaborationTarget!(request),
+      ).resolves.toEqual(unavailable);
+      await expect(
+        oldRoutes.deliverExact!({
+          target: request.target,
+          expected_team_name: ready.team_name,
+          turn: { text: 'old stopped route', sourceId: 'old-stopped-route' },
+        }),
+      ).resolves.toEqual(unavailable);
+      expect(harness.runtimes).toHaveLength(1);
+      expect(harness.runtimes[0]?.getStatus()).toBe('stopped');
+
+      await harness.dispatcher.start();
+      const newRoutes = harness.routes();
+      expect(newRoutes).not.toBe(oldRoutes);
+      expect(harness.routeGenerations).toEqual([oldRoutes, newRoutes]);
+      await expect(
+        oldRoutes.ensureCollaborationTarget!(request),
+      ).resolves.toEqual(unavailable);
+      await expect(
+        oldRoutes.deliverExact!({
+          target: request.target,
+          expected_team_name: ready.team_name,
+          turn: { text: 'old restarted route', sourceId: 'old-restarted-route' },
+        }),
+      ).resolves.toEqual(unavailable);
+      expect(harness.runtimes).toHaveLength(1);
+      expect(harness.runtimes[0]?.getStatus()).toBe('stopped');
+
+      await expect(
+        newRoutes.ensureCollaborationTarget!(request),
+      ).resolves.toEqual(ready);
+      expect(harness.runtimes).toHaveLength(2);
+      await expect(
+        newRoutes.deliverExact!({
+          target: request.target,
+          expected_team_name: ready.team_name,
+          turn: { text: 'new route', sourceId: 'new-route' },
+        }),
+      ).resolves.toEqual({ status: 'submitted', turn_id: 'turn-1' });
+      expect(harness.runtimes[1]?.submitted).toEqual([
+        { text: 'new route', sourceId: 'new-route' },
+      ]);
+    } finally {
+      await harness.dispatcher.stop();
+    }
+  });
+
+  it('rolls back Team runtimes materialized before Channel start fails', async () => {
+    const workspace = join(root, 'strict-start-rollback-workspace');
+    mkdirSync(workspace, { recursive: true });
+    const request = {
+      container: {
+        container_type: 'conversation',
+        container_key: 'start-rollback-container',
+      },
+      target: {
+        target_type: 'thread',
+        target_key: 'start-rollback-target',
+        bindable: true,
+      },
+    } as const;
+    let ready: ChannelCollaborationTargetEnsureResult | undefined;
+    const harness = strictChannelDispatcher({
+      workspace,
+      workspaceEnabled: false,
+      onStart: async (routes) => {
+        ready = await routes.ensureCollaborationTarget!(request);
+        if (ready.status !== 'ready') throw new Error(ready.rejection.code);
+        throw new Error('intentional failure after strict ensure');
+      },
+    });
+    const unavailable = {
+      status: 'rejected',
+      rejection: { code: 'dispatcher_unavailable', retryable: true },
+    } as const;
+
+    await expect(harness.dispatcher.start()).rejects.toThrow(
+      'intentional failure after strict ensure',
+    );
+    if (ready?.status !== 'ready') throw new Error('target was not ready');
+    const oldRoutes = harness.routes();
+    expect(harness.runtimes).toHaveLength(1);
+    expect(harness.runtimes[0]?.getStatus()).toBe('stopped');
+    await expect(
+      oldRoutes.ensureCollaborationTarget!(request),
+    ).resolves.toEqual(unavailable);
+    await expect(
+      oldRoutes.deliverExact!({
+        target: request.target,
+        expected_team_name: ready.team_name,
+        turn: { text: 'must stay stopped', sourceId: 'failed-start-route' },
+      }),
+    ).resolves.toEqual(unavailable);
+    expect(harness.runtimes).toHaveLength(1);
+    expect(harness.runtimes[0]?.getStatus()).toBe('stopped');
+    expect(harness.runtimes[0]?.submitted).toEqual([]);
     await harness.dispatcher.stop();
   });
 

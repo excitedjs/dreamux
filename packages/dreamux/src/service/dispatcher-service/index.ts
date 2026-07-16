@@ -23,6 +23,7 @@ import { assertRunnableChannelShape } from './runnable-channel.js';
 import { asInboundDeliveryResult, closeAllBuilt, errInfo } from './runtime-helpers.js';
 import { DispatcherScopedChannelRouting } from './scoped-channel-routing.js';
 import { DispatcherTaskDrain } from './inbound-task-drain.js';
+import { rollbackFailedInputSourceStart } from './input-source-start-rollback.js';
 import { TeamChannelCoordinator } from './team-channel-coordinator.js';
 import { stopTeamRuntimes } from './team-runtime-stop.js';
 import { admittedTeammateOps } from './teammate-ops.js';
@@ -348,6 +349,7 @@ export class DispatcherService {
       this.assertNotShuttingDown();
       for (const [channelId, session] of channels) {
         const coreEvents = this.coreEvents.createSource(channelId);
+        const strictRoutes = this.channelRoutes.createSessionLease(channelId);
         await session.start({
           deliver: async (turn, envelope) =>
             asInboundDeliveryResult(
@@ -364,10 +366,8 @@ export class DispatcherService {
               log: this.log,
             }),
           coreEvents: coreEvents.source,
-          ensureCollaborationTarget: (request) =>
-            this.channelRoutes.ensure(channelId, request),
-          deliverExact: (request) =>
-            this.channelRoutes.deliverExact(channelId, request),
+          ensureCollaborationTarget: strictRoutes.ensure,
+          deliverExact: strictRoutes.deliverExact,
         });
         this.assertNotShuttingDown();
         liveChannels.set(channelId, session);
@@ -382,18 +382,23 @@ export class DispatcherService {
       this.assertNotShuttingDown();
       this.inputSourcesStarted = true;
     } catch (err) {
-      this.scheduler_.stop();
-      this.teams.stopSchedulers();
-      this.coreEvents.revokeSources();
-      this.channels.clear();
-      await closeAllBuilt(channels);
-      try {
-        await this.agent?.stop();
-      } catch {
-        /* best effort */
-      }
+      this.channelRoutes.revokeSessionLeases();
+      this.admittedTasks.closeAdmission();
+      await rollbackFailedInputSourceStart({
+        dispatcherId: this.id,
+        sessions: channels,
+        channels: this.channels,
+        coreEvents: this.coreEvents,
+        scheduler: this.scheduler_,
+        teams: this.teams,
+        admittedTasks: this.admittedTasks,
+        collaborationSpaces: this.collaborationSpaces,
+        agent: this.agent,
+        log: this.log,
+      });
       this.preparedChannels = null;
       this.inputSourcesStarted = false;
+      if (!this.shuttingDown && !this.stopping) this.admittedTasks.openAdmission();
       throw err;
     }
 
@@ -412,6 +417,7 @@ export class DispatcherService {
   stop(): Promise<void> {
     if (this.stoppingTask !== null) return this.stoppingTask;
     this.stopping = true;
+    this.channelRoutes.revokeSessionLeases();
     this.admittedTasks.closeAdmission();
     const task = this.doStop().finally(() => {
       this.stopping = false;

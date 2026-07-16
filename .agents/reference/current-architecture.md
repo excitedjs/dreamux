@@ -154,7 +154,8 @@ read-only core fact source. Providers cannot select repository/cwd/workspace
 mode or claim dispatcher/channel authority through these methods. Exact
 delivery never falls back to another target or the dispatcher agent, and the
 fact source is live-session-only and best-effort rather than a historical state
-surface.
+surface. Every Channel session generation receives revocable strict-route and
+event-source leases; stop or failed start revokes them before session close.
 
 Read [Channel runtime](channel-runtime.md) first, then the domain contracts:
 
@@ -280,7 +281,11 @@ running Team, ready leader, local workspace, and exact claimed route agree.
 Exact delivery validates the current Team/leader/claim under the existing target
 and Team route fences before calling `TeamService.deliverToLeader`. Neither path
 creates a new target owner, remote close surface, retained submission state, or
-dispatcher-agent turn.
+dispatcher-agent turn. The dispatcher gives each session start a fresh strict
+route lease; revocation makes old closures return `dispatcher_unavailable`
+without reaching those owners. Failed-start rollback revokes first, closes and
+drains admission, then uses the existing materialized-Team runtime sweep while
+leaving durable Team and target facts intact.
 
 `DispatcherService` also owns one in-process `DispatcherCoreEventBus` and the
 Channel source leases created from it. Team, identity, and turn stores remain
